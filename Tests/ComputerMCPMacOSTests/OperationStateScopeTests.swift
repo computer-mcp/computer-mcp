@@ -1,5 +1,6 @@
 import ComputerMCPDownstream
 import ComputerMCPMacOS
+import ComputerMCPTestSupport
 import Foundation
 import NIOConcurrencyHelpers
 import Testing
@@ -7,6 +8,10 @@ import Testing
 @testable import ComputerMCPConfiguration
 @testable import ComputerMCPCore
 @testable import ComputerMCPGateway
+
+#if os(macOS)
+  import ComputerMCPDarwinTestSupport
+#endif
 
 struct OperationStateScopeTests {
   @Test(arguments: ["file.write", "archive.create"], ["direct", "alias", "generic"])
@@ -36,7 +41,7 @@ struct OperationStateScopeTests {
       context: .init(caller: .secureTunnel, profileID: .chatGPTOperate, projectID: "fixture"),
       database: database,
       registeredProjects: [.init(id: "fixture", displayName: "Fixture", rootPath: root.path)],
-      platform: MacOSPlatform.services, mcpClient: client)
+      platform: MacOSPlatform.services(launcher: testExecutionLauncher()), mcpClient: client)
     do {
       let input: JSONValue =
         tool == "file.write"
@@ -97,7 +102,8 @@ struct OperationStateScopeTests {
       context: .init(caller: .secureTunnel, profileID: .chatGPTOperate, projectID: "fixture"),
       database: database,
       registeredProjects: [.init(id: "fixture", displayName: "Fixture", rootPath: root.path)],
-      platform: MacOSPlatform.services, mcpClient: StateScopeMCPClient())
+      platform: MacOSPlatform.services(launcher: testExecutionLauncher()),
+      mcpClient: StateScopeMCPClient())
     do {
       let target: JSONValue =
         tool == "mcp.tools.call"
@@ -160,7 +166,7 @@ struct OperationStateScopeTests {
         profiles: [profile], builtin: .init(enabled: ["file.read", "file.write"])),
       context: context, database: database,
       registeredProjects: [.init(id: "fixture", displayName: "Fixture", rootPath: root.path)],
-      platform: MacOSPlatform.services)
+      platform: MacOSPlatform.services(launcher: testExecutionLauncher()))
     do {
       #expect(try runtime.listTools(context: .empty).contains { $0.name == "file.read" })
       var revoked = try #require(database.profiles().first)

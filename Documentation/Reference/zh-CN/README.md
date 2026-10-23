@@ -4,6 +4,7 @@
 - [连接 ChatGPT](ChatGPT.md)
 - [连接 Cloudflare](Cloudflare.md)
 - [常见故障](Troubleshooting.md)
+- [执行工具](Executions.md)：游标续读、输入、取消、限额与重启恢复。
 - [隔离编辑交付](Delivery.md)：工具、范围配置与恢复。
 
 这些文档镜像用户上手与故障恢复路径。完整 CLI、MCP 协议、工具 Schema、发行与

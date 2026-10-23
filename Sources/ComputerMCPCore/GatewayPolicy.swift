@@ -314,6 +314,7 @@ package struct ProfileGrant: Codable, Equatable, Sendable {
     "shell.cancel",
     "cli.exec",
     "process.spawn",
+    "process.write",
   ]
 
   package func applyingPersistedRuntimeState(_ persisted: ProfileGrant) -> ProfileGrant {

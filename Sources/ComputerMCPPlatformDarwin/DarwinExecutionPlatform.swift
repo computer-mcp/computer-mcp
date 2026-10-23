@@ -6,6 +6,21 @@ import Subprocess
 import System
 
 package struct DarwinExecutionPlatform: ExecutionPlatform {
+  package var supportsRecovery: Bool { true }
+  package var bootSessionID: String? {
+    var buffer = [CChar](repeating: 0, count: 128)
+    var count = buffer.count
+    guard sysctlbyname("kern.bootsessionuuid", &buffer, &count, nil, 0) == 0 else { return nil }
+    return String(cString: buffer)
+  }
+
+  package var hostSystemReadPaths: [SandboxPath] {
+    [
+      "/System", "/usr", "/bin", "/sbin", "/Library/Apple",
+      "/Library/Preferences/SystemConfiguration",
+      "/private/etc", "/private/var/run", "/dev",
+    ].compactMap { try? SandboxPath($0) }
+  }
   private let responsibility: DarwinPrivacyResponsibility
   private let bootstrapExecutable: URL?
   private let table: DarwinExecutionProcessTable
@@ -29,6 +44,14 @@ package struct DarwinExecutionPlatform: ExecutionPlatform {
     self.bootstrapExecutable = bootstrapExecutable
     self.table = table
     self.makeSentinel = makeSentinel
+  }
+
+  package func interrupt(_ members: [ExecutionMember]) async throws {
+    guard !members.isEmpty else { return }
+    let identities = members.map { DarwinProcessIdentity(pid: $0.processID, uniqueID: $0.identity) }
+    let ownership = DarwinExecutionOwnership(marker: nil, table: table)
+    try ownership.recover(identities)
+    _ = try await ownership.cancel()
   }
 
   package func start(
@@ -94,7 +117,7 @@ package struct DarwinExecutionPlatform: ExecutionPlatform {
               switch result.terminationStatus {
               case .exited(let status): ownership.exited(.success(ExecutionExit(status: status)))
               case .signaled(let signal):
-                ownership.exited(.success(ExecutionExit(status: 128 + signal)))
+                ownership.exited(.success(ExecutionExit(status: 128 + signal, signal: signal)))
               }
             } catch {
               channel.disconnect()
@@ -102,7 +125,7 @@ package struct DarwinExecutionPlatform: ExecutionPlatform {
             }
           }
         } else {
-          DispatchQueue.global(qos: .userInitiated).async {
+          DispatchQueue(label: "execution.launch", qos: .userInitiated).async {
             do {
               let result: ExecutionExit
               if method == .foundation {
@@ -159,7 +182,8 @@ package struct DarwinExecutionPlatform: ExecutionPlatform {
     process.waitUntilExit()
     return ExecutionExit(
       status: process.terminationReason == .exit
-        ? process.terminationStatus : 128 + process.terminationStatus)
+        ? process.terminationStatus : 128 + process.terminationStatus,
+      signal: process.terminationReason == .exit ? nil : process.terminationStatus)
   }
 
   private static func locateBootstrap() throws -> URL {
@@ -219,11 +243,20 @@ package struct DarwinExecutionPlatform: ExecutionPlatform {
     var pid: pid_t = 0
     try argv.withUnsafeBufferPointer { args in
       try envp.withUnsafeBufferPointer { environment in
-        try check(
-          posix_spawn(
-            &pid, executable, &actions, &attributes,
-            UnsafeMutablePointer(mutating: args.baseAddress!),
-            UnsafeMutablePointer(mutating: environment.baseAddress!)))
+        let result = posix_spawn(
+          &pid, executable, &actions, &attributes,
+          UnsafeMutablePointer(mutating: args.baseAddress!),
+          UnsafeMutablePointer(mutating: environment.baseAddress!))
+        guard result == 0 else {
+          var isDirectory: ObjCBool = false
+          let directoryExists =
+            FileManager.default.fileExists(
+              atPath: command.directory.value, isDirectory: &isDirectory) && isDirectory.boolValue
+          let bootstrapExists = FileManager.default.isExecutableFile(atPath: executable)
+          throw ExecutionEnvironmentError.launchFailed(
+            "Process launch failed: \(result); bootstrap available: \(bootstrapExists); working directory available: \(directoryExists)"
+          )
+        }
       }
     }
     var failure: Error?
@@ -237,7 +270,8 @@ package struct DarwinExecutionPlatform: ExecutionPlatform {
     }
     if let failure { throw failure }
     let signal = status & 0x7f
-    return ExecutionExit(status: signal == 0 ? (status >> 8) & 0xff : 128 + signal)
+    return ExecutionExit(
+      status: signal == 0 ? (status >> 8) & 0xff : 128 + signal, signal: signal == 0 ? nil : signal)
   }
 
   private func check(_ status: Int32) throws {
@@ -282,7 +316,7 @@ private final class ExecutionBootstrapChannel: @unchecked Sendable {
     close(child)
     child = -1
     let identity = try DarwinProcessIdentity.receive(from: parent, pid: pid)
-    ownership.launched(identity)
+    try ownership.launched(identity)
     // Darwin CMSG_LEN/CMSG_SPACE align the header and payload to four bytes.
     var control: [UInt32] = [16, UInt32(SOL_SOCKET), UInt32(SCM_RIGHTS), UInt32(bitPattern: input)]
     var acknowledgement: UInt8 = 1

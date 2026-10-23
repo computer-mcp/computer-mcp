@@ -14,6 +14,10 @@ import Testing
 @testable import ComputerMCPGateway
 @testable import ComputerMCPPlatform
 
+#if os(macOS)
+  import ComputerMCPDarwinTestSupport
+#endif
+
 @Suite(.nativeIntegration)
 struct GatewayToolCatalogTests {
   @Test
@@ -355,7 +359,8 @@ struct GatewayToolCatalogTests {
       ]))
     let router = try GatewayProviderRouter(
       registry: MacOSToolProviders().makeProviders(
-        toolEnvironment: ToolEnvironment(configuration: configuration), mcpClient: client))
+        toolEnvironment: ToolEnvironment(
+          launcher: testExecutionLauncher(), configuration: configuration), mcpClient: client))
     let events = router.toolChanges(context: .empty)
     client.replace(names: ["sample", "hidden"], revision: 1)
     try await router.refreshTools(context: .empty)
@@ -434,7 +439,7 @@ struct GatewayToolCatalogTests {
         configuration: nativeConfiguration,
         registeredProjects: [
           .init(id: "fixture", displayName: "Fixture", rootPath: fixture.root.path)
-        ], platform: MacOSPlatform.services)
+        ], platform: MacOSPlatform.services(launcher: testExecutionLauncher()))
     }
     let origin =
       downstreamHTTP
@@ -459,7 +464,7 @@ struct GatewayToolCatalogTests {
             configuration: proxyConfiguration,
             registeredProjects: [
               .init(id: "fixture", displayName: "Fixture", rootPath: fixture.root.path)
-            ], platform: MacOSPlatform.services)
+            ], platform: MacOSPlatform.services(launcher: testExecutionLauncher()))
         }
       } else {
         runtime = nativeRuntime

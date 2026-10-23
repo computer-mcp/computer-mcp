@@ -19,7 +19,12 @@ import ComputerMCPToolsStructured
 import ComputerMCPToolsSystem
 
 package struct MacOSToolProviders: GatewayToolProviderFactory {
-  package init() {}
+  private let launcher: ExecutionLauncher
+
+  package init(launcher: ExecutionLauncher = ExecutionLauncher(platform: DarwinExecutionPlatform()))
+  {
+    self.launcher = launcher
+  }
 
   package func makeProviders(
     configuration: GatewayConfiguration,
@@ -30,7 +35,7 @@ package struct MacOSToolProviders: GatewayToolProviderFactory {
     hostContext: MCPHostContext
   ) -> GatewayToolRegistry {
     let environment = ToolEnvironment(
-      configuration: configuration, commandRunner: commandRunner,
+      launcher: launcher, configuration: configuration, commandRunner: commandRunner,
       processManager: processManager, shellManager: shellManager,
       mediaInspector: DarwinMediaInspector(),
       sqliteCommand: .init(id: "sqlite3", executable: "/usr/bin/sqlite3"),
@@ -39,7 +44,7 @@ package struct MacOSToolProviders: GatewayToolProviderFactory {
         "mdls": "/usr/bin/mdls", "diff": "/usr/bin/diff", "curl": "/usr/bin/curl",
         "zipinfo": "/usr/bin/zipinfo", "tar": "/usr/bin/tar", "unzip": "/usr/bin/unzip",
         "zip": "/usr/bin/zip",
-        "sw_vers": "/usr/bin/sw_vers", "pmset": "/usr/bin/pmset", "ps": "/bin/ps",
+        "sw_vers": "/usr/bin/sw_vers", "pmset": "/usr/bin/pmset",
         "log": "/usr/bin/log", "launchctl": "/bin/launchctl", "ifconfig": "/sbin/ifconfig",
         "scutil": "/usr/sbin/scutil", "networksetup": "/usr/sbin/networksetup",
         "netstat": "/usr/sbin/netstat", "arp": "/usr/sbin/arp", "ping": "/sbin/ping",
@@ -91,6 +96,7 @@ package struct MacOSToolProviders: GatewayToolProviderFactory {
         await delivery.shutdown()
         await environment.shellManager.shutdown()
         await environment.registeredCommands.execution.shutdown()
+        await environment.registeredCommands.inspectionExecution.shutdown()
         await client.shutdown()
       })
   }

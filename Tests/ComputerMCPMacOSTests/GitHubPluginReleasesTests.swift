@@ -9,6 +9,10 @@ import Testing
 @testable import ComputerMCPPlatform
 @testable import ComputerMCPPlugins
 
+#if os(macOS)
+  import ComputerMCPDarwinTestSupport
+#endif
+
 @Suite(.timeLimit(.minutes(1)))
 struct GitHubPluginReleasesTests {
   @Test
@@ -66,7 +70,8 @@ struct GitHubPluginReleasesTests {
   @Test
   func cancellationDuringDownloadReclaimsOnlyItsReceiptedStaging() async throws {
     let fixture = try await PreparationFixture.make(
-      directoryFactory: MacOSPlatform.services.pluginDirectories, format: "zip")
+      directoryFactory: MacOSPlatform.services(launcher: testExecutionLauncher()).pluginDirectories,
+      format: "zip")
     defer { fixture.files.remove() }
     let bytes = try Data(contentsOf: fixture.archive)
     let server = try await CatalogHTTPFixture.start(script: pluginDownloadHTTPFixture(bytes: bytes))
@@ -77,7 +82,8 @@ struct GitHubPluginReleasesTests {
     await http.setAssets([releaseAssetFixture(id: 20, artifact: artifact)], page: 1)
     let database = try GatewayDatabase(
       path: fixture.files.root.appendingPathComponent("cancel.sqlite").path)
-    let store = PluginStore(database: database, platform: MacOSPlatform.services)
+    let store = PluginStore(
+      database: database, platform: MacOSPlatform.services(launcher: testExecutionLauncher()))
     let root = fixture.files.root.appendingPathComponent("Plugins")
     let download = GitHubPluginDownload(origin: server.origin)
     let task = Task {
@@ -93,8 +99,10 @@ struct GitHubPluginReleasesTests {
       #expect(try database.pluginOwnedDirectories().count == 1)
       #expect(try await store.snapshot().installations.isEmpty)
       await #expect(throws: PluginStoreError.installationBusy) {
-        try await PluginStore(database: database, platform: MacOSPlatform.services)
-          .recoverInstallations(storageRoot: root)
+        try await PluginStore(
+          database: database, platform: MacOSPlatform.services(launcher: testExecutionLauncher())
+        )
+        .recoverInstallations(storageRoot: root)
       }
       task.cancel()
       await #expect(throws: CancellationError.self) { try await task.value }
@@ -112,7 +120,8 @@ struct GitHubPluginReleasesTests {
   @Test
   func downloadedCompositionUsesTheOwnedInstallationTransaction() async throws {
     let fixture = try await PreparationFixture.make(
-      directoryFactory: MacOSPlatform.services.pluginDirectories, format: "zip")
+      directoryFactory: MacOSPlatform.services(launcher: testExecutionLauncher()).pluginDirectories,
+      format: "zip")
     defer { fixture.files.remove() }
     let bytes = try Data(contentsOf: fixture.archive)
     let server = try await CatalogHTTPFixture.start(script: pluginDownloadHTTPFixture(bytes: bytes))
@@ -121,7 +130,8 @@ struct GitHubPluginReleasesTests {
     let artifact = pluginArtifactFixture(bytes: bytes, manifest: PreparationFixture.manifest)
     let database = try GatewayDatabase(
       path: fixture.files.root.appendingPathComponent("download.sqlite").path)
-    let store = PluginStore(database: database, platform: MacOSPlatform.services)
+    let store = PluginStore(
+      database: database, platform: MacOSPlatform.services(launcher: testExecutionLauncher()))
     let root = fixture.files.root.appendingPathComponent("Plugins")
     let result = try await store.installGitHubArtifact(
       artifact, hostVersion: PluginVersion("1.0.0"), architecture: "arm64", storageRoot: root,
@@ -149,7 +159,7 @@ struct GitHubPluginReleasesTests {
     let reopened = PluginStore(
       database: try GatewayDatabase(
         path: fixture.files.root.appendingPathComponent("download.sqlite").path),
-      platform: MacOSPlatform.services)
+      platform: MacOSPlatform.services(launcher: testExecutionLauncher()))
     #expect(try await reopened.snapshot() == result.snapshot)
     #expect(try await reopened.recoverInstallations(storageRoot: root).isEmpty)
     let removed = try await reopened.uninstallArtifact(
@@ -162,7 +172,8 @@ struct GitHubPluginReleasesTests {
   @Test(arguments: ["manifest", "download", "release", "revision"])
   func failedDownloadInstallationPreservesTheSelectedPackage(_ fault: String) async throws {
     let fixture = try await PreparationFixture.make(
-      directoryFactory: MacOSPlatform.services.pluginDirectories, format: "zip")
+      directoryFactory: MacOSPlatform.services(launcher: testExecutionLauncher()).pluginDirectories,
+      format: "zip")
     defer { fixture.files.remove() }
     let bytes = try Data(contentsOf: fixture.archive)
     let manifest =
@@ -173,7 +184,8 @@ struct GitHubPluginReleasesTests {
     defer { server.stop() }
     let database = try GatewayDatabase(
       path: fixture.files.root.appendingPathComponent("failure.sqlite").path)
-    let store = PluginStore(database: database, platform: MacOSPlatform.services)
+    let store = PluginStore(
+      database: database, platform: MacOSPlatform.services(launcher: testExecutionLauncher()))
     let root = fixture.files.root.appendingPathComponent("Plugins")
     let original = try await store.installArchive(
       at: fixture.archive, expectedSHA256: fixture.digest, pluginID: "combined",

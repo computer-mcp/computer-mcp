@@ -8,11 +8,16 @@ import Testing
 
 @testable import ComputerMCPToolsStructured
 
+#if os(macOS)
+  import ComputerMCPDarwinTestSupport
+#endif
+
 struct StructuredToolProviderContractTests {
   @Test
   func enablementAndDomainDispatch() throws {
     let provider = StructuredToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: .fixture(builtin: .init(enabled: ["json.read", "skills.list"]))))
     #expect(provider.id == "structured")
     #expect(try provider.definitions().map(\.tool.name) == ["json.read"])
@@ -31,6 +36,7 @@ struct StructuredToolProviderContractTests {
       to: directory.url.appendingPathComponent("value.json"))
     let provider = StructuredToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration(
           builtin: .init(enabled: ["json.read"]), projectDirectory: directory.url)))
     let invocation = ToolInvocation(
@@ -45,6 +51,7 @@ struct StructuredToolProviderContractTests {
     try Data([1, 2, 3]).write(to: file)
     let provider = StructuredToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration(
           builtin: .init(enabled: [name]), projectDirectory: directory.url),
         mediaInspector: InspectionStub(expectedURL: file)))

@@ -1,4 +1,5 @@
 import ComputerMCPMacOS
+import ComputerMCPTestSupport
 import Foundation
 import Testing
 
@@ -6,6 +7,10 @@ import Testing
 @testable import ComputerMCPCore
 @testable import ComputerMCPGateway
 @testable import ComputerMCPPlatformDarwin
+
+#if os(macOS)
+  import ComputerMCPDarwinTestSupport
+#endif
 
 @Suite(.timeLimit(.minutes(1)))
 struct GatewayProjectScopeTests {
@@ -33,14 +38,18 @@ struct GatewayProjectScopeTests {
         builtin: .init(enabled: ["file.read"]), projectDirectory: root),
       database: persisted ? database : nil, registeredProjects: persisted ? nil : [project],
       platform: PlatformServices(
+        launcher: testExecutionLauncher(),
         projectGrants: ProjectBookmarkService(adapter: adapter),
-        pluginDirectories: MacOSPlatform.services.pluginDirectories,
-        applications: MacOSPlatform.services.applications,
-        toolProviders: MacOSPlatform.services.toolProviders,
-        managementToolNames: MacOSPlatform.services.managementToolNames,
-        executableSearchDirectories: MacOSPlatform.services.executableSearchDirectories,
-        gitExecutable: MacOSPlatform.services.gitExecutable,
-        fileChanges: MacOSPlatform.services.fileChanges),
+        pluginDirectories: MacOSPlatform.services(launcher: testExecutionLauncher())
+          .pluginDirectories,
+        applications: MacOSPlatform.services(launcher: testExecutionLauncher()).applications,
+        toolProviders: MacOSPlatform.services(launcher: testExecutionLauncher()).toolProviders,
+        managementToolNames: MacOSPlatform.services(launcher: testExecutionLauncher())
+          .managementToolNames,
+        executableSearchDirectories: MacOSPlatform.services(launcher: testExecutionLauncher())
+          .executableSearchDirectories,
+        gitExecutable: MacOSPlatform.services(launcher: testExecutionLauncher()).gitExecutable,
+        fileChanges: MacOSPlatform.services(launcher: testExecutionLauncher()).fileChanges),
       bundledPlugins: .load(directory: nil))
     do {
       let arguments: JSONValue = .object([
@@ -129,14 +138,18 @@ struct GatewayProjectScopeTests {
         builtin: .init(enabled: ["file.read"]), projectDirectory: root),
       database: database,
       platform: PlatformServices(
+        launcher: testExecutionLauncher(),
         projectGrants: ProjectBookmarkService(adapter: adapter),
-        pluginDirectories: MacOSPlatform.services.pluginDirectories,
-        applications: MacOSPlatform.services.applications,
-        toolProviders: MacOSPlatform.services.toolProviders,
-        managementToolNames: MacOSPlatform.services.managementToolNames,
-        executableSearchDirectories: MacOSPlatform.services.executableSearchDirectories,
-        gitExecutable: MacOSPlatform.services.gitExecutable,
-        fileChanges: MacOSPlatform.services.fileChanges),
+        pluginDirectories: MacOSPlatform.services(launcher: testExecutionLauncher())
+          .pluginDirectories,
+        applications: MacOSPlatform.services(launcher: testExecutionLauncher()).applications,
+        toolProviders: MacOSPlatform.services(launcher: testExecutionLauncher()).toolProviders,
+        managementToolNames: MacOSPlatform.services(launcher: testExecutionLauncher())
+          .managementToolNames,
+        executableSearchDirectories: MacOSPlatform.services(launcher: testExecutionLauncher())
+          .executableSearchDirectories,
+        gitExecutable: MacOSPlatform.services(launcher: testExecutionLauncher()).gitExecutable,
+        fileChanges: MacOSPlatform.services(launcher: testExecutionLauncher()).fileChanges),
       bundledPlugins: .load(directory: nil))
     do {
       var project = try #require(try database.project(id: "project"))

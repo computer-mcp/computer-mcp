@@ -2,11 +2,54 @@
 
 The reusable execution components have no MCP or permission-store dependencies.
 The caller authorizes the operation, provides canonical resolved paths and an
-execution ID, and retains ownership through the complete process lifetime. `ExecutionLauncher` in
+execution ID, and retains ownership through the complete process lifetime.
+`ExecutionLauncher` in
 `ComputerMCPProcess` constructs the child environment and calls an injected
-`ExecutionPlatform`. The existing Shell, Process and CLI tool paths retain their
-current launch behavior; callers adopting this entry point must supply its
-configuration and retain the returned ownership handle.
+`ExecutionPlatform`. Shell sessions, registered processes, CLI execution and host
+command runners use this entry point. The macOS composition root supplies the
+Darwin backend; neutral modules never construct it. Full Shell authorization
+continues to gate arbitrary shell, process and CLI execution.
+
+## Tool executions
+
+`ShellSessionRuntime` owns launches, stdin, output and completion through the
+launcher. `ManagedProcessRegistry` adapts registered commands to the same session
+store. `ProcessCommandRunner`, `ManagedCommandRunner` and `CLIProcessExecution`
+share this lifecycle. Their synchronous adapters use the same input and output
+ownership as background sessions.
+
+Executions have stable UUIDs. Independent absolute stdout and stderr byte cursors
+support incremental reads across transport reconnects. A shared ring budget keeps
+the newest 8 MiB across both streams by default; reads report the discarded byte
+count and whether a cursor precedes retained output. Waiting calls default to two
+minutes and accept at most ten minutes. Background executions have no deadline
+unless supplied. Snapshots report the applied limits, exit code or signal, and
+an end reason. Cancellation delegates to `ExecutionOwnership` and completes only
+after ownership confirms termination; the Full access membership limitations
+described below still apply.
+
+The host selects `HostExecutionPolicy` after authorization. Read-only and
+project-independent command calls, CLI compatibility checks and catalog exporters
+use the read-only sandbox variant: only a private temporary directory is writable,
+and HOME and caches reside within it. The environment is rebuilt from the fixed
+sandbox allowlist. Host network diagnostics use system read roots, a temporary
+working directory and network access; they receive no project read root. Arbitrary
+Full Shell execution retains its explicit caller environment and working directory.
+
+`GatewayTerminalSessions` owns optional durable execution records separately from
+runtime generations and transport connections. App listeners and standalone servers
+select distinct journal directories and hold an exclusive lease. Records contain
+scope, output, cursors, limits, boot session and kernel process identities; updates
+are atomic. The initial root identity is persisted before the bootstrap acknowledges
+the command. Periodic checkpoints follow while running. Reopening a journal verifies
+saved identities from the same boot before cancelling surviving members, then marks
+unfinished records
+`interrupted`. Recovery exposes the last checkpoint, never restarts a command, and
+retains principal/profile/project scope checks. Recovered outputs require the
+same standing client trust ID and revision, or the same configured grant identity.
+Connection-only consent permits crash cleanup but does not retain readable output
+for another connection. Completed results remain subject to
+the session store's retention limits. Explicit owner shutdown discards its results.
 
 ## Configuration and Seatbelt
 
@@ -29,13 +72,19 @@ form; the host's path resolver owns filesystem identity and symlink resolution.
   Their actual interaction with inherited TCC grants requires the explicit local
   acceptance fixture described below.
 
-The environment is an explicit fixed set: selected search paths, private
+The sandbox environment is an explicit fixed set: selected search paths, private
 HOME/TMPDIR/cache paths, locale, terminal, optional developer directory, Git
-settings and proxy URLs. It never merges the host environment. Sandboxed SwiftPM
+settings and proxy URLs. Host registration reads may additionally supply a canonical
+`CODEX_HOME` so the CLI reads the selected configuration without writable access to
+it. The sandbox
+environment never merges host credentials. Sandboxed SwiftPM
 builds use `ExecutionEnvironment.swiftBuildArguments()` with the native build
 system and private caches, preserving TMPDIR in link tasks.
-`UnsupportedExecutionPlatform` refuses sandbox execution until a Linux backend
-is available.
+`UnsupportedExecutionPlatform` refuses execution when no backend is injected.
+The Linux `POSIXExecutionPlatform` preserves Full access process-group execution;
+its bootstrap stops before exec, and cancellation uses the unreaped process group
+and identity-checked pidfds for observed descendants. Read-only, sandbox and durable
+recovery calls fail closed until corresponding Linux backends are available.
 
 ## Launch and Cancellation
 
@@ -102,8 +151,8 @@ marker results in `zombproc` are unclassifiable, even before its state becomes
 `SZOMB`. Negative marker classification also requires a successful non-zombie identity lookup
 (`PROC_PIDUNIQIDENTIFIERINFO`, argument 0), since a process may enter `zombproc`
 after enumeration and before state inspection. These records require independent
-provenance or a verified live nonmember parent; otherwise they block completion
-until reaped.
+provenance or a verified live nonmember parent of a zombie with readable BSD flags
+that confirm it is untraced; otherwise they block completion until reaped.
 
 For each user-process PID, classification reads `(pid, p_uniqueid)` before and
 after querying its sandbox marker. Both reads must agree and `p_uniqueid < W`.
@@ -186,11 +235,21 @@ sandbox between queries. The host resolves marker paths with `realpath` and keep
 the files until confirmed completion. Disappearing PIDs, identity/query failures
 and identities at or above the watermark make a scan incomplete. The watermark also
 detects reuse before the first identity read. Zombie state comes from the cross-user
-`PROC_PIDT_SHORTBSDINFO` query with argument 1. A zombie can be classified as a
-nonmember when its live parent is neither launchd, this host nor an execution
-member: the parent's `PROC_PIDUNIQIDENTIFIERINFO` unique ID must match the zombie's
-`p_puniqueid`, and identity-checked sandbox queries must confirm the parent is a
-nonmember. Other zombies retain member or unclassifiable status until reaped.
+`PROC_PIDT_SHORTBSDINFO` query with argument 1. Parent-based nonmember classification
+also requires readable zombie BSD info (`PROC_PIDTBSDINFO`, argument 1) with
+`PROC_FLAG_TRACED` clear. An untraced zombie can be classified as a nonmember when its
+live parent is neither launchd, this host nor an execution member: the parent's
+`PROC_PIDUNIQIDENTIFIERINFO` unique ID must match the zombie's `p_puniqueid`, and
+identity-checked sandbox queries must confirm the parent is a nonmember. Traced
+zombies, unreadable BSD info and other unproven zombies retain member or
+unclassifiable status until reaped.
+
+This proof trusts processes outside the execution that hold debugging rights over its
+members. Such a process can reparent a member to itself, and exec then rewrites the
+member's `p_puniqueid`; after a detach the traced flag is clear again. A member cannot
+arrange this itself: attaching needs task rights over a sandboxed process, which only
+the owner's own tools hold, and a process with those rights already controls the
+member completely.
 Membership survives parent exit, reparenting, process-group/session changes and exec.
 
 Full access uses the bootstrap's isolated process group, the exact root identity,
@@ -205,7 +264,14 @@ members born during cancellation.
 
 Normal Full access completion is collection of the root's exit, confirmation that
 known members have exited, and a non-blocking observation that the group is empty.
-It does not await machine-wide classification. This is best effort: descendants
+An exit or cancellation arriving during an observation requests a fresh round
+immediately when that observation returns. Root exit always requests an immediate
+observation; empty-group completion does not wait for a timer tick or machine-wide
+classification. Background rounds continue while observed members remain alive or
+ownership is unconfirmed. On macOS 15 and later, each lifecycle task uses its own
+executor so synchronous file I/O does not monopolize a shared execution queue.
+The swift-subprocess launch handshake runs on a per-execution worker.
+This is best effort: descendants
 that leave the group before being observed, or work started through another
 service, may escape tracking. A nonempty group without a validated ownership
 anchor remains unconfirmed; it cannot acquire unrelated work through identifier
@@ -253,6 +319,21 @@ and Git boundaries, offline native SwiftPM building, proxy policy, network bypas
 denials, routing and resource lifecycle. Ownership tests cover parent retirement,
 double-fork and setsid, PID-1 adoption, exec, ignored TERM, members born during
 cancellation, waiting for all members, concurrent isolation and simulated PID reuse.
+A deterministic Full access regression runs 128 short commands across eight lanes
+through `ManagedCommandRunner` and independently counts full snapshots, watermark
+probes, sentinel spawns and sandbox membership checks, asserting zero for each.
+A sandboxed control verifies that all counters observe their actual operations.
+The informational timing printout separates worker execution from wall time, which
+also includes scheduling the async test's resumption. A gated observation with a
+long timer interval verifies that a concurrent exit or cancellation triggers
+immediate completion.
+An executor test stalls one lifecycle task while another continues. Injected process
+tables also verify lazy sandbox classification, cancellation completing during
+grace, nonempty unanchored groups and group anchors that leave during confirmation.
+Native integration functions reserve their process and I/O budget before case
+deadlines start. Parameterized functions reserve a batch while retaining their
+existing case parallelism. Independent hosts run concurrently, each retaining its
+own sentinel while both executions complete.
 Injected process tables exercise fork-after-enumeration/exit races, descendants born
 during classification, signal and enumeration failures, pending KILL, zombies, deadlines,
 recoverable startup cancellation and resource retention. Additional regressions cover

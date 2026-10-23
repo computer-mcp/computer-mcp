@@ -13,12 +13,17 @@ import Testing
 @testable import ComputerMCPCore
 @testable import ComputerMCPGateway
 
+#if os(macOS)
+  import ComputerMCPDarwinTestSupport
+#endif
+
 struct MCPReexportNamingTests {
   @Test(arguments: [
     "system.inspect", "network.inspect", "macos.inspect", "mcp.inspect", "git.inspect",
   ])
   func configuredRoutesKeepTheirProviderAcrossNamespaces(name: String) throws {
     let environment = ToolEnvironment(
+      launcher: testExecutionLauncher(),
       configuration: .fixture(mcp: .init(servers: [Self.server("first", prefix: "")])))
     let registry = MacOSToolProviders().makeProviders(
       toolEnvironment: environment, mcpClient: ReexportNamingClient(["first": [name]]))
@@ -58,7 +63,8 @@ struct MCPReexportNamingTests {
       skills: .init(enabled: true, roots: [.init(id: "fixture", path: project.url.path)]))
     configuration.projectDirectory = project.url
     try configuration.validate()
-    let environment = ToolEnvironment(configuration: configuration)
+    let environment = ToolEnvironment(
+      launcher: testExecutionLauncher(), configuration: configuration)
     let treeTools = try CLIToolProvider(environment: environment).treeProviders().flatMap {
       try $0.definitions().map(\.tool.name)
     }
@@ -74,7 +80,7 @@ struct MCPReexportNamingTests {
       let expected =
         [
           "cli.list", "cli.describe", "cli.status", "cli.help", "cli.exec",
-          "process.spawn", "process.list", "process.read", "process.cancel",
+          "process.spawn", "process.list", "process.read", "process.write", "process.cancel",
           "mcp.servers.list", "mcp.servers.status", "mcp.tools.list", "mcp.tools.describe",
           "mcp.tools.find", "mcp.tools.call", "mcp.resources.list", "mcp.resources.templates.list",
           "mcp.resources.read", "mcp.prompts.list", "mcp.prompts.get", "mcp.events.read",
@@ -156,7 +162,8 @@ struct MCPReexportNamingTests {
       mcp: .init(servers: [Self.server("first", prefix: ""), Self.server("second", prefix: "")]))
     try configuration.validate()
     let registry = MacOSToolProviders().makeProviders(
-      toolEnvironment: ToolEnvironment(configuration: configuration), mcpClient: client)
+      toolEnvironment: ToolEnvironment(
+        launcher: testExecutionLauncher(), configuration: configuration), mcpClient: client)
     let router = try GatewayProviderRouter(registry: registry)
     do {
       #expect(
@@ -184,7 +191,8 @@ struct MCPReexportNamingTests {
     let configuration = GatewayConfiguration.fixture(
       mcp: .init(servers: [Self.server("first", prefix: "")]),
       policy: .init(shellEnabled: true), builtin: .init(enabled: ["git.status"]))
-    let environment = ToolEnvironment(configuration: configuration)
+    let environment = ToolEnvironment(
+      launcher: testExecutionLauncher(), configuration: configuration)
     let client = ReexportNamingClient(["first": [name]])
     #expect(throws: (any Error).self) {
       _ = try GatewayProviderRouter(providers: [
@@ -209,7 +217,8 @@ struct MCPReexportNamingTests {
       _ = try GatewayRuntime(
         configuration: configuration,
         registeredProjects: [.init(id: "fixture", displayName: "Fixture", rootPath: root.path)],
-        platform: MacOSPlatform.services, mcpClient: ReexportNamingClient(["first": [name]]))
+        platform: MacOSPlatform.services(launcher: testExecutionLauncher()),
+        mcpClient: ReexportNamingClient(["first": [name]]))
     }
   }
 
@@ -226,7 +235,8 @@ struct MCPReexportNamingTests {
         registeredProjects: [
           .init(id: "fixture", displayName: "Fixture", rootPath: root.url.path)
         ],
-        platform: MacOSPlatform.services, mcpClient: ReexportNamingClient(["first": [name]]),
+        platform: MacOSPlatform.services(launcher: testExecutionLauncher()),
+        mcpClient: ReexportNamingClient(["first": [name]]),
         bundledPlugins: .load(directory: nil), remoteManagement: nil)
       await runtime.shutdown()
     }
@@ -237,6 +247,7 @@ struct MCPReexportNamingTests {
     let client = ReexportNamingClient(["first": ["available"]])
     let registry = MacOSToolProviders().makeProviders(
       toolEnvironment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: .fixture(mcp: .init(servers: [Self.server("first", prefix: "")]))),
       mcpClient: client)
     let router = try GatewayProviderRouter(

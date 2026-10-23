@@ -10,6 +10,10 @@ import Testing
 @testable import ComputerMCPProcess
 @testable import ComputerMCPToolsCLI
 
+#if os(macOS)
+  import ComputerMCPDarwinTestSupport
+#endif
+
 #if canImport(Darwin)
   import Darwin
 #elseif canImport(Glibc)
@@ -20,7 +24,7 @@ import Testing
 
 @Suite(.nativeIntegration, .timeLimit(.minutes(1)))
 struct CLIExecutableCheckTests {
-  @Test
+  @Test(.enabled(if: nativeSandboxAvailable))
   func boundScriptInterpreterIsUsedForBothCompatibilityAndAction() async throws {
     let fixture = try ExecutableCheckFixture()
     defer { fixture.cleanup() }
@@ -29,7 +33,8 @@ struct CLIExecutableCheckTests {
       if [ "$1" = --version ]; then printf 'compatible\\n'; exit 0; fi
       printf '%s\\n' "$1" > action
       """, shebang: "#!/usr/bin/env -S fixture-runtime -e")
-    let execution = CLIProcessExecution(inheritsEnvironment: false)
+    let execution = CLIProcessExecution(
+      launcher: testExecutionLauncher(), inheritsEnvironment: false)
     do {
       let result = try await execution.runAsync(
         executable: fixture.file("tool").path,
@@ -92,9 +97,9 @@ struct CLIExecutableCheckTests {
     #expect(throws: CLITreeError.self) { try check.validate() }
   }
 
-  @Test
+  @Test(.enabled(if: nativeSandboxAvailable))
   func exactBytesAndDigestRunSequentiallyWithoutLeakingProbeOutput() async throws {
-    let execution = CLIProcessExecution()
+    let execution = CLIProcessExecution(launcher: testExecutionLauncher())
     let text = "检查 ' \" $(not-executed)\n"
     let checks: [CLIExecutableCheck] = [
       .init(args: ["%s", text], stdout: text),
@@ -139,7 +144,7 @@ struct CLIExecutableCheckTests {
     await execution.shutdown()
   }
 
-  @Test
+  @Test(.enabled(if: nativeSandboxAvailable))
   func everyCallChecksCurrentContextAndClosedStdin() async throws {
     let fixture = try ExecutableCheckFixture()
     defer { fixture.cleanup() }
@@ -147,18 +152,22 @@ struct CLIExecutableCheckTests {
       """
       if [ "$1" = "--version" ]; then
         if read -r input; then exit 9; fi
-        printf '%s\n%s\n' "$CLI_CHECK_VALUE" "$PWD"
+        test -z "$CLI_CHECK_VALUE" || exit 8
+        cat check-value
+        printf '%s\n' "$PWD"
         exit 0
       fi
       printf target > action
       """)
-    let execution = CLIProcessExecution()
+    let execution = CLIProcessExecution(launcher: testExecutionLauncher())
+    try Data("first\n".utf8).write(to: fixture.file("check-value"))
     let checks = [CLIExecutableCheck(args: ["--version"], stdout: "first\n\(fixture.root.path)\n")]
     do {
       let result = try await fixture.run(
         execution, checks: checks, environment: ["CLI_CHECK_VALUE": "first"])
       #expect(result.exitCode == 0)
       try FileManager.default.removeItem(at: fixture.file("action"))
+      try Data("second\n".utf8).write(to: fixture.file("check-value"))
       await #expect(throws: CLITreeError.self) {
         try await fixture.run(execution, checks: checks, environment: ["CLI_CHECK_VALUE": "second"])
       }
@@ -170,7 +179,7 @@ struct CLIExecutableCheckTests {
     await execution.shutdown()
   }
 
-  @Test(arguments: [false, true])
+  @Test(.enabled(if: nativeSandboxAvailable), arguments: [false, true])
   func executableOrInterpreterMutationBlocksAction(_ interpreter: Bool) async throws {
     let fixture = try ExecutableCheckFixture()
     defer { fixture.cleanup() }
@@ -179,7 +188,6 @@ struct CLIExecutableCheckTests {
       try fixture.script(
         """
         if [ "$2" = "--version" ]; then
-          /bin/chmod 700 "$0"
           printf 'compatible\n'
           exit 0
         fi
@@ -189,14 +197,20 @@ struct CLIExecutableCheckTests {
       try fixture.script(
         """
         if [ "$1" = "--version" ]; then
-          /bin/chmod 700 "$0"
           printf 'compatible\n'
           exit 0
         fi
         printf target > action
         """)
     }
-    let execution = CLIProcessExecution()
+    let observations = ExecutionObservations { command in
+      if command.arguments.contains("--version") {
+        try FileManager.default.setAttributes(
+          [.posixPermissions: 0o700],
+          ofItemAtPath: fixture.file(interpreter ? "fixture-runtime" : "tool").path)
+      }
+    }
+    let execution = CLIProcessExecution(launcher: testExecutionLauncher(observations: observations))
     await #expect(
       throws: CLITreeError.invalid(
         "CLI executable or interpreter changed during compatibility checks; retry after the update completes."
@@ -210,7 +224,8 @@ struct CLIExecutableCheckTests {
     #expect(!fixture.exists("action"))
   }
 
-  @Test(arguments: ["mismatch", "exit", "overflow", "timeout"])
+  @Test(
+    .enabled(if: nativeSandboxAvailable), arguments: ["mismatch", "exit", "overflow", "timeout"])
   func failedProbeNeverRunsActionOrEchoesOutput(_ failure: String) async throws {
     let fixture = try ExecutableCheckFixture()
     defer { fixture.cleanup() }
@@ -218,7 +233,7 @@ struct CLIExecutableCheckTests {
     switch failure {
     case "exit": probe = "printf 'compatible\\n'; exit 7"
     case "overflow": probe = "/bin/dd if=/dev/zero bs=1048576 count=5 2>/dev/null"
-    case "timeout": probe = "echo $$ > pid; exec /bin/sleep 30"
+    case "timeout": probe = "exec /bin/sleep 30"
     default: probe = "printf 'private-probe-value\\n'"
     }
     try fixture.script(
@@ -229,7 +244,8 @@ struct CLIExecutableCheckTests {
       fi
       printf target > action
       """)
-    let execution = CLIProcessExecution()
+    let observations = ExecutionObservations()
+    let execution = CLIProcessExecution(launcher: testExecutionLauncher(observations: observations))
     await #expect(
       throws: CLITreeError.invalid(
         "CLI executable failed its compatibility check; target command was not executed.")
@@ -240,10 +256,10 @@ struct CLIExecutableCheckTests {
     }
     await execution.shutdown()
     #expect(!fixture.exists("action"))
-    if failure == "timeout" { try fixture.expectReaped() }
+    if failure == "timeout" { try fixture.expectReaped(observations) }
   }
 
-  @Test
+  @Test(.enabled(if: nativeSandboxAvailable))
   func laterAssertionAndRetargetedExecutableAreRechecked() async throws {
     let fixture = try ExecutableCheckFixture()
     defer { fixture.cleanup() }
@@ -260,7 +276,7 @@ struct CLIExecutableCheckTests {
       """, name: "second")
     try FileManager.default.createSymbolicLink(
       at: fixture.file("tool"), withDestinationURL: fixture.file("first"))
-    let execution = CLIProcessExecution()
+    let execution = CLIProcessExecution(launcher: testExecutionLauncher())
     let version = CLIExecutableCheck(args: ["--version"], stdout: "compatible\n")
     do {
       await #expect(throws: CLITreeError.self) {
@@ -285,25 +301,25 @@ struct CLIExecutableCheckTests {
     await execution.shutdown()
   }
 
-  @Test(arguments: [false, true])
+  @Test(.enabled(if: nativeSandboxAvailable), arguments: [false, true])
   func cancellationAndShutdownOwnTheProbeAndConcurrencySlot(_ shutdown: Bool) async throws {
     let fixture = try ExecutableCheckFixture()
     defer { fixture.cleanup() }
     try fixture.script(
       """
       if [ "$1" = "--version" ]; then
-        echo $$ > pid.pending
-        /bin/mv pid.pending pid
         exec /bin/sleep 30
       fi
       printf target > action
       """)
-    let execution = CLIProcessExecution(maxConcurrentCalls: 1)
+    let observations = ExecutionObservations()
+    let execution = CLIProcessExecution(
+      launcher: testExecutionLauncher(observations: observations), maxConcurrentCalls: 1)
     let task = Task {
       try await fixture.run(execution, checks: [.init(args: ["--version"], stdout: "compatible\n")])
     }
     let deadline = ContinuousClock.now.advanced(by: .seconds(5))
-    while !fixture.exists("pid"), ContinuousClock.now < deadline {
+    while observations.members.isEmpty, ContinuousClock.now < deadline {
       _ = try? await Task.sleep(for: .milliseconds(10))
     }
     await #expect(throws: CLITreeError.invalid("CLI invocation limit reached.")) {
@@ -312,7 +328,7 @@ struct CLIExecutableCheckTests {
     if shutdown { await execution.shutdown() } else { task.cancel() }
     await #expect(throws: CancellationError.self) { try await task.value }
     await execution.shutdown()
-    try fixture.expectReaped()
+    try fixture.expectReaped(observations)
     #expect(!fixture.exists("action"))
   }
 
@@ -354,11 +370,8 @@ private struct ExecutableCheckFixture: Sendable {
       environment: environment, timeoutMilliseconds: timeout, maxOutputBytes: 4_096,
       executableChecks: checks)
   }
-  func expectReaped() throws {
-    let pid = try #require(
-      Int32(
-        String(contentsOf: file("pid"), encoding: .utf8)
-          .trimmingCharacters(in: .whitespacesAndNewlines)))
+  func expectReaped(_ observations: ExecutionObservations) throws {
+    let pid = try #require(observations.members.first?.processID)
     #expect(kill(pid, 0) == -1)
     #expect(errno == ESRCH)
   }

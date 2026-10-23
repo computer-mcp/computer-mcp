@@ -106,6 +106,8 @@ package struct SandboxProxyPorts: Sendable, Equatable {
 }
 
 package struct SandboxConfiguration: Sendable, Equatable {
+  package let readOnly: Bool
+  package let hostNetwork: Bool
   package let worktree: SandboxPath
   package let temporaryDirectory: SandboxPath
   package let homeDirectory: SandboxPath
@@ -119,13 +121,28 @@ package struct SandboxConfiguration: Sendable, Equatable {
   package let services: SandboxSystemServices
 
   package init(
+    readOnly: Bool = false, hostNetwork: Bool = false,
     worktree: SandboxPath, temporaryDirectory: SandboxPath, homeDirectory: SandboxPath,
     cacheDirectory: SandboxPath, readableRoots: [SandboxPath],
     deniedReadRegions: [SandboxReadRegion] = [], forbiddenReads: [SandboxPath] = [],
     listableAncestors: [SandboxPath] = [], git: SandboxGitConfiguration? = nil,
     proxy: SandboxProxyPorts? = nil, services: SandboxSystemServices = .init()
   ) throws {
-    let writable = [worktree, temporaryDirectory, homeDirectory, cacheDirectory]
+    guard !hostNetwork || (readOnly && proxy == nil) else {
+      throw ExecutionEnvironmentError.invalidConfiguration(
+        "Host network diagnostics require read-only execution without a proxy")
+    }
+    let writable =
+      readOnly
+      ? [temporaryDirectory] : [worktree, temporaryDirectory, homeDirectory, cacheDirectory]
+    guard
+      !readOnly
+        || (temporaryDirectory.contains(homeDirectory)
+          && temporaryDirectory.contains(cacheDirectory) && git == nil)
+    else {
+      throw ExecutionEnvironmentError.invalidConfiguration(
+        "Read-only executions keep home and caches inside temporary storage")
+    }
     let hasForbiddenRoot = writable.contains { path in
       forbiddenReads.contains { $0.contains(path) }
     }
@@ -133,6 +150,8 @@ package struct SandboxConfiguration: Sendable, Equatable {
       throw ExecutionEnvironmentError.invalidConfiguration(
         "Writable locations intersect a forbidden root")
     }
+    self.readOnly = readOnly
+    self.hostNetwork = hostNetwork
     self.worktree = worktree
     self.temporaryDirectory = temporaryDirectory
     self.homeDirectory = homeDirectory
@@ -147,6 +166,6 @@ package struct SandboxConfiguration: Sendable, Equatable {
   }
 
   package var writableDirectories: [SandboxPath] {
-    [worktree, temporaryDirectory, homeDirectory, cacheDirectory]
+    readOnly ? [temporaryDirectory] : [worktree, temporaryDirectory, homeDirectory, cacheDirectory]
   }
 }

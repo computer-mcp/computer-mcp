@@ -8,6 +8,10 @@ import Testing
 @testable import ComputerMCPPlatform
 @testable import ComputerMCPProcess
 
+#if os(macOS)
+  import ComputerMCPDarwinTestSupport
+#endif
+
 @Suite(.serialized)
 
 final class ShellSessionRuntimeTests {
@@ -15,7 +19,7 @@ final class ShellSessionRuntimeTests {
 
   @Test
   func testRunCapturesStdoutAndStderr() async throws {
-    let runtime = SubprocessShellRuntime()
+    let runtime = ShellSessionRuntime(launcher: testExecutionLauncher())
     let result = try await BlockingOperationExecutor(label: "test.shell-call").perform {
       [project] in
       try runtime.run(
@@ -26,8 +30,7 @@ final class ShellSessionRuntimeTests {
         defaultWorkingDirectory: project,
         timeoutMilliseconds: 2_000,
         maxOutputBytes: 1_024,
-        maxSessions: 4,
-        terminationGraceMilliseconds: 100
+        maxSessions: 4
       )
     }
 
@@ -40,7 +43,7 @@ final class ShellSessionRuntimeTests {
 
   @Test
   func testArgvModeSupportsEnvironmentAndWorkingDirectory() async throws {
-    let runtime = SubprocessShellRuntime()
+    let runtime = ShellSessionRuntime(launcher: testExecutionLauncher())
     let result = try await BlockingOperationExecutor(label: "test.shell-call").perform {
       [project] in
       try runtime.run(
@@ -55,8 +58,7 @@ final class ShellSessionRuntimeTests {
         defaultWorkingDirectory: URL(fileURLWithPath: "/"),
         timeoutMilliseconds: 2_000,
         maxOutputBytes: 64 * 1_024,
-        maxSessions: 4,
-        terminationGraceMilliseconds: 100
+        maxSessions: 4
       )
     }
 
@@ -66,7 +68,7 @@ final class ShellSessionRuntimeTests {
 
   @Test
   func testRunWritesStandardInputAndClosesPipe() async throws {
-    let runtime = SubprocessShellRuntime()
+    let runtime = ShellSessionRuntime(launcher: testExecutionLauncher())
     let result = try await BlockingOperationExecutor(label: "test.shell-call").perform {
       [project] in
       try runtime.run(
@@ -76,8 +78,7 @@ final class ShellSessionRuntimeTests {
         standardInput: Data("stdin-payload".utf8),
         timeoutMilliseconds: 2_000,
         maxOutputBytes: 1_024,
-        maxSessions: 4,
-        terminationGraceMilliseconds: 100
+        maxSessions: 4
       )
     }
 
@@ -89,7 +90,7 @@ final class ShellSessionRuntimeTests {
 
   @Test
   func testSpawnWriteCloseAndIncrementalRead() async throws {
-    let runtime = SubprocessShellRuntime()
+    let runtime = ShellSessionRuntime(launcher: testExecutionLauncher())
     let sessionID = try await BlockingOperationExecutor(label: "test.shell-call").perform {
       [project] in
       try runtime.spawn(
@@ -98,8 +99,7 @@ final class ShellSessionRuntimeTests {
         defaultWorkingDirectory: project,
         timeoutMilliseconds: nil,
         maxOutputBytes: 1_024,
-        maxSessions: 4,
-        terminationGraceMilliseconds: 100
+        maxSessions: 4
       )
     }
 
@@ -131,14 +131,14 @@ final class ShellSessionRuntimeTests {
   @Test
   func processOwnershipOutlivesSpawnAndEndsAfterProcessCleanup() async throws {
     let ownedWork = GatewayOwnedWork()
-    let runtime = SubprocessShellRuntime(ownedWork: ownedWork, projectID: "fixture")
+    let runtime = ShellSessionRuntime(
+      launcher: testExecutionLauncher(), ownedWork: ownedWork, projectID: "fixture")
     let sessionID = try await BlockingOperationExecutor(label: "test.shell-call").perform {
       [project] in
       try runtime.spawn(
         request: ShellLaunchRequest(mode: .argv, executable: "/bin/cat"),
         defaultShell: "/bin/zsh", defaultWorkingDirectory: project,
-        timeoutMilliseconds: nil, maxOutputBytes: 1_024, maxSessions: 4,
-        terminationGraceMilliseconds: 100)
+        timeoutMilliseconds: nil, maxOutputBytes: 1_024, maxSessions: 4)
     }
     defer { _ = try? runtime.cancel(sessionID: sessionID) }
     let record = try #require(ownedWork.snapshot.first)
@@ -162,7 +162,7 @@ final class ShellSessionRuntimeTests {
 
   @Test(arguments: [false, true])
   func testSpawnExposesShortOutputBeforeProcessExit(standardError: Bool) async throws {
-    let runtime = SubprocessShellRuntime()
+    let runtime = ShellSessionRuntime(launcher: testExecutionLauncher())
     let sessionID = try await BlockingOperationExecutor(label: "test.shell-call").perform {
       [project] in
       try runtime.spawn(
@@ -177,8 +177,7 @@ final class ShellSessionRuntimeTests {
         defaultWorkingDirectory: project,
         timeoutMilliseconds: nil,
         maxOutputBytes: 1_024,
-        maxSessions: 4,
-        terminationGraceMilliseconds: 100
+        maxSessions: 4
       )
     }
     defer { _ = try? runtime.cancel(sessionID: sessionID) }
@@ -209,25 +208,35 @@ final class ShellSessionRuntimeTests {
   }
 
   @Test
-  func testSpawnDoesNotReportZombieLauncherAsRunningWhenDescendantKeepsPipeOpen() async throws {
-    let runtime = SubprocessShellRuntime()
+  func testSpawnOwnsDescendantsAfterLauncherExits() async throws {
+    let observations = ExecutionObservations()
+    let runtime = ShellSessionRuntime(launcher: testExecutionLauncher(observations: observations))
     let sessionID = try await BlockingOperationExecutor(label: "test.shell-call").perform {
       [project] in
       try runtime.spawn(
         request: ShellLaunchRequest(
           mode: .argv,
           executable: "/bin/sh",
-          argv: ["-c", "sleep 30 &"]
+          argv: ["-c", "sleep 30 & read token"]
         ),
         defaultShell: "/bin/zsh",
         defaultWorkingDirectory: project,
         timeoutMilliseconds: nil,
         maxOutputBytes: 1_024,
-        maxSessions: 4,
-        terminationGraceMilliseconds: 100
+        maxSessions: 4
       )
     }
     defer { _ = try? runtime.cancel(sessionID: sessionID) }
+
+    let owner = try #require(observations.ownerships.first)
+    let discoveryDeadline = ContinuousClock.now.advanced(by: .seconds(5))
+    var members = try await owner.members()
+    while members.count < 2 && ContinuousClock.now < discoveryDeadline {
+      try await Task.sleep(for: .milliseconds(10))
+      members = try await owner.members()
+    }
+    try #require(members.count >= 2)
+    _ = try await runtime.writeAsync(sessionID: sessionID, data: Data("exit\n".utf8), close: true)
 
     let deadline = Date().addingTimeInterval(2)
     var snapshot = try runtime.read(
@@ -248,14 +257,20 @@ final class ShellSessionRuntimeTests {
       )
     }
 
-    #expect(!(snapshot.isRunning))
-    #expect(
-      snapshot.streamErrors.contains("Process exited before inherited output streams closed."))
+    #expect(snapshot.isRunning)
+    _ = try runtime.cancel(sessionID: sessionID)
+    await runtime.shutdown()
+    snapshot = try runtime.read(
+      sessionID: sessionID, stdoutCursor: 0, stderrCursor: 0,
+      maxReadBytes: 1024, encoding: .utf8)
+    #expect(!snapshot.isRunning)
+    #expect(snapshot.endReason == .cancelled)
+    #expect(snapshot.streamErrors.isEmpty)
   }
 
   @Test
   func testTimeoutTerminatesProcessGroup() async throws {
-    let runtime = SubprocessShellRuntime()
+    let runtime = ShellSessionRuntime(launcher: testExecutionLauncher())
     let result = try await BlockingOperationExecutor(label: "test.shell-call").perform {
       [project] in
       try runtime.run(
@@ -264,8 +279,7 @@ final class ShellSessionRuntimeTests {
         defaultWorkingDirectory: project,
         timeoutMilliseconds: 100,
         maxOutputBytes: 1_024,
-        maxSessions: 4,
-        terminationGraceMilliseconds: 100
+        maxSessions: 4
       )
     }
 
@@ -276,7 +290,7 @@ final class ShellSessionRuntimeTests {
 
   @Test
   func testRingBufferReportsMissedBytesWithAbsoluteCursor() async throws {
-    let runtime = SubprocessShellRuntime()
+    let runtime = ShellSessionRuntime(launcher: testExecutionLauncher())
     let result = try await BlockingOperationExecutor(label: "test.shell-call").perform {
       [project] in
       try runtime.run(
@@ -285,8 +299,7 @@ final class ShellSessionRuntimeTests {
         defaultWorkingDirectory: project,
         timeoutMilliseconds: 2_000,
         maxOutputBytes: 4,
-        maxSessions: 4,
-        terminationGraceMilliseconds: 100
+        maxSessions: 4
       )
     }
 
@@ -300,15 +313,14 @@ final class ShellSessionRuntimeTests {
   @Test(arguments: [false, true])
   func bulkOutputFinishesWithinItsBudgetWhileRetentionStaysBounded(standardError: Bool) async throws
   {
-    let runtime = SubprocessShellRuntime()
+    let runtime = ShellSessionRuntime(launcher: testExecutionLauncher())
     let command = "/bin/dd if=/dev/zero bs=1048576 count=5 2>/dev/null"
     let result = try await BlockingOperationExecutor(label: "test.shell-bulk").perform {
       [project] in
       try runtime.run(
         request: ShellLaunchRequest(command: standardError ? "{ \(command); } >&2" : command),
         defaultShell: "/bin/sh", defaultWorkingDirectory: project,
-        timeoutMilliseconds: 5_000, maxOutputBytes: 4_096, maxSessions: 1,
-        terminationGraceMilliseconds: 250)
+        timeoutMilliseconds: 5_000, maxOutputBytes: 4_096, maxSessions: 1)
     }
     #expect(result.exitCode == 0)
     #expect(!result.timedOut)
@@ -320,7 +332,7 @@ final class ShellSessionRuntimeTests {
   }
 
   private func waitForExit(
-    runtime: SubprocessShellRuntime,
+    runtime: ShellSessionRuntime,
     sessionID: String
   ) async throws -> ShellSessionSnapshot {
     let deadline = Date().addingTimeInterval(2)

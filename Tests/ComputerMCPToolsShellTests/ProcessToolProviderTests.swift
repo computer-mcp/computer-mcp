@@ -9,6 +9,10 @@ import Testing
 @testable import ComputerMCPProcess
 @testable import ComputerMCPToolsShell
 
+#if os(macOS)
+  import ComputerMCPDarwinTestSupport
+#endif
+
 @Suite(.nativeIntegration, .serialized)
 final class ProcessToolProviderTests {
   @Test
@@ -17,6 +21,7 @@ final class ProcessToolProviderTests {
     let processes = FakeProcessManager()
     let provider = ProcessToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: .fixture(), commandRunner: runner, processManager: processes))
     let task = Task {
       withUnsafeCurrentTask { $0?.cancel() }
@@ -48,6 +53,7 @@ final class ProcessToolProviderTests {
     ]
     let provider = ProcessToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: .fixture(),
         processManager: processManager
       ))
@@ -67,6 +73,7 @@ final class ProcessToolProviderTests {
   func testProcessSpawnRejectsCommandThatDisallowsArbitraryArgs() {
     let provider = ProcessToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: .fixture(
           cli: CLISectionConfig(commands: [
             CLICommandConfig(id: "echo", executable: "/bin/echo", allowAnyArgs: false)
@@ -116,11 +123,17 @@ private final class FakeProcessManager: ProcessManaging, @unchecked Sendable {
     snapshots
   }
 
-  func read(processID: String) throws -> ManagedProcessSnapshot {
+  func read(processID: String, stdoutCursor: Int64, stderrCursor: Int64, maxReadBytes: Int) throws
+    -> ManagedProcessSnapshot
+  {
     guard let snapshot = snapshots.first(where: { $0.processID == processID }) else {
       throw ProcessRegistryError.unknownProcess(processID)
     }
     return snapshot
+  }
+
+  func write(processID: String, data: Data, close: Bool) throws -> ShellWriteResult {
+    .init(sessionID: processID, bytesWritten: data.count, inputClosed: close)
   }
 
   func cancel(processID: String) throws -> ManagedProcessCancelResult {

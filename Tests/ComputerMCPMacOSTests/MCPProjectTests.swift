@@ -13,6 +13,10 @@ import Testing
 @testable import ComputerMCPPlatform
 @testable import ComputerMCPPlatformPOSIX
 
+#if os(macOS)
+  import ComputerMCPDarwinTestSupport
+#endif
+
 @Suite(.nativeIntegration)
 struct MCPProjectTests {
   @Test(arguments: [false, true])
@@ -71,10 +75,13 @@ struct MCPProjectTests {
     secondConfiguration.projectDirectory = fixture.second
     let first = try GatewayProviderRouter(
       registry: MacOSToolProviders().makeProviders(
-        toolEnvironment: ToolEnvironment(configuration: firstConfiguration), mcpClient: client))
+        toolEnvironment: ToolEnvironment(
+          launcher: testExecutionLauncher(), configuration: firstConfiguration), mcpClient: client))
     let second = try GatewayProviderRouter(
       registry: MacOSToolProviders().makeProviders(
-        toolEnvironment: ToolEnvironment(configuration: secondConfiguration), mcpClient: client))
+        toolEnvironment: ToolEnvironment(
+          launcher: testExecutionLauncher(), configuration: secondConfiguration), mcpClient: client)
+    )
     let executor = BlockingOperationExecutor(label: "test.mcp-project")
     do {
       let firstValue = try await executor.perform { try fixture.read(first) }
@@ -114,7 +121,8 @@ struct MCPProjectTests {
       registeredProjects: [
         .init(id: "first", displayName: "First", rootPath: fixture.first.path),
         .init(id: "second", displayName: "Second", rootPath: fixture.second.path),
-      ], platform: MacOSPlatform.services, mcpClient: MCPProxyClient(), plugins: [])
+      ], platform: MacOSPlatform.services(launcher: testExecutionLauncher()),
+      mcpClient: MCPProxyClient(), plugins: [])
     do {
       async let first = gateway.callToolAsync(
         name: "fixture.context",
@@ -209,6 +217,7 @@ struct MCPProjectTests {
     let registry = try GatewayProviderRouter(
       registry: MacOSToolProviders().makeProviders(
         toolEnvironment: ToolEnvironment(
+          launcher: testExecutionLauncher(),
           configuration: configuration,
           environment: [
             "PATH": "/unrelated", "SCOPE_VALUE": "parent", "EMPTY": "parent",

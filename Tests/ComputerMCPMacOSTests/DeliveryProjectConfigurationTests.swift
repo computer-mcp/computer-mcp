@@ -6,6 +6,10 @@ import ComputerMCPTestSupport
 import Foundation
 import Testing
 
+#if os(macOS)
+  import ComputerMCPDarwinTestSupport
+#endif
+
 struct DeliveryProjectConfigurationTests {
   @Test
   func eachProjectReceivesOnlyItsDeclaredScopes() async throws {
@@ -24,7 +28,8 @@ struct DeliveryProjectConfigurationTests {
     try configuration.validate()
     let runtime = try await GatewayRuntime.make(
       configuration: configuration,
-      platform: MacOSPlatform.services, plugins: [], bundledPlugins: .load(directory: nil))
+      platform: MacOSPlatform.services(launcher: testExecutionLauncher()), plugins: [],
+      bundledPlugins: .load(directory: nil))
     do {
       for (project, scope) in [("first", "first-notes"), ("second", "second-exports")] {
         let response = try runtime.callTool(

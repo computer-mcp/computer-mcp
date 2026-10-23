@@ -1,10 +1,15 @@
 import ComputerMCPMacOS
+import ComputerMCPTestSupport
 import Foundation
 import Testing
 
 @testable import ComputerMCPConfiguration
 @testable import ComputerMCPCore
 @testable import ComputerMCPGateway
+
+#if os(macOS)
+  import ComputerMCPDarwinTestSupport
+#endif
 
 struct GatewayControlSessionTests {
   @Test
@@ -165,7 +170,8 @@ private struct Fixture {
         caller: .secureTunnel, profileID: .chatGPTOperate, trustedPrincipalID: "verified-client"),
       database: database,
       registeredProjects: [.init(id: "fixture", displayName: "Fixture", rootPath: root.path)],
-      platform: MacOSPlatform.services, requiresControlSession: true)
+      platform: MacOSPlatform.services(launcher: testExecutionLauncher()),
+      requiresControlSession: true)
   }
 
   func content() throws -> String {

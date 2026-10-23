@@ -501,8 +501,9 @@ extension AppControlPlaneService {
   private func cloudflaredVersionResult(_ executable: String) async throws -> CommandResult {
     try Task.checkCancellation()
     let environment = ProcessInfo.processInfo.environment
+    let launcher = platform.launcher
     let result = try await providerProbeOperations.perform {
-      try ManagedCommandRunner().run(
+      try ManagedCommandRunner(launcher: launcher, policy: .readOnly).run(
         executable: executable, arguments: ["version"], workingDirectory: nil,
         environment: environment, timeoutMilliseconds: 5_000, maxOutputBytes: 16_384)
     }

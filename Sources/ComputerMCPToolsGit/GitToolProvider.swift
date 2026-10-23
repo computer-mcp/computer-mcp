@@ -1,4 +1,5 @@
 import ComputerMCPCore
+import ComputerMCPProcess
 import ComputerMCPToolKit
 
 package struct GitToolProvider: GatewayToolProvider {
@@ -17,6 +18,14 @@ package struct GitToolProvider: GatewayToolProvider {
   }
 
   package func callTool(_ invocation: ToolInvocation) throws -> JSONValue {
+    let descriptor = try definitions().first { $0.tool.name == invocation.name }?.capability
+    let policy: HostExecutionPolicy =
+      descriptor == nil || descriptor?.risk == .readOnly
+        || descriptor?.projectRequirement == ProjectRequirement.none ? .readOnly : .fullAccess
+    return try HostExecutionPolicy.$current.withValue(policy) { try dispatch(invocation) }
+  }
+
+  private func dispatch(_ invocation: ToolInvocation) throws -> JSONValue {
     let name = invocation.name
     let object = invocation.arguments?.objectValue ?? [:]
     switch name {

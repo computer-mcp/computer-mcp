@@ -257,7 +257,7 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
     var accessByID: [String: ResolvedProjectAccess] = [:]
     var errorByID: [String: ProjectBookmarkError] = [:]
     var providerRouterByID: [String: GatewayProviderRouter] = [:]
-    let commandRunner = ProcessCommandRunner()
+    let commandRunner = ProcessCommandRunner(launcher: platform.launcher)
     var resolution = GatewayConfigurationResolution()
 
     for project in configuredProjects {
@@ -278,15 +278,16 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
       projectConfiguration.delivery.scopes = configuration.delivery.scopes.filter {
         $0.project == project.id
       }
-      let shellManager = SubprocessShellRuntime(
+      let shellManager = ShellSessionRuntime(
+        launcher: platform.launcher,
         ownedWork: ownedWork, projectID: project.id, sessions: terminalSessions,
         scope: .project(
           context: effectiveContext, project: access.project, root: access.rootIdentity,
-          registered: registeredProjects != nil || !persistedProjects.isEmpty))
-      let processManager = SubprocessProcessRegistry(
+          registered: registeredProjects != nil || !persistedProjects.isEmpty),
+        recoveryKey: { ExecutionRecovery.key })
+      let processManager = ManagedProcessRegistry(
         shellManager: shellManager,
-        maxSessions: configuration.policy.maxShellSessions,
-        terminationGraceMilliseconds: configuration.policy.shellTerminationGraceMs
+        maxSessions: configuration.policy.maxShellSessions
       )
       projectByID[project.id] = access.project
       accessByID[project.id] = access
@@ -734,7 +735,8 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
     try validateHostOrigin(projectID: context.launchMetadata.project.id, origin: origin)
     return MCPBoundHostServices(
       database: database, directory: hostToolDirectory, context: context, origin: origin,
-      gitExecutable: platform.gitExecutable)
+      gitExecutable: platform.gitExecutable,
+      commandRunner: ManagedCommandRunner(launcher: platform.launcher, policy: .readOnly))
   }
 
   deinit {
@@ -1329,7 +1331,9 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
           context: InvocationContext(
             admission: InvocationAdmission(
               descriptor: descriptor, hostInvocationID: hostInvocation?.id),
-            session: routed.context.controlSession, continuation: invocationContext.continuation))
+            session: routed.context.controlSession, continuation: invocationContext.continuation,
+            executionRecoveryKey: Self.executionRecoveryKey(
+              context: routed.context, grant: authorizedGrant)))
         rawResult = try providerRouter.callTool(
           name: invocation.name, arguments: invocation.arguments,
           expectedCapability: name == "mcp.tools.call" ? nil : descriptor,
@@ -1484,7 +1488,9 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
           context: InvocationContext(
             admission: InvocationAdmission(
               descriptor: descriptor, hostInvocationID: hostInvocation?.id),
-            session: routed.context.controlSession, continuation: invocationContext.continuation))
+            session: routed.context.controlSession, continuation: invocationContext.continuation,
+            executionRecoveryKey: Self.executionRecoveryKey(
+              context: routed.context, grant: authorizedGrant)))
         rawResult = try await providerRouter.callToolAsync(
           name: invocation.name, arguments: invocation.arguments,
           expectedCapability: name == "mcp.tools.call" ? nil : descriptor,
@@ -2137,6 +2143,30 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
 
   private var firstProviderRouter: GatewayProviderRouter? {
     projectOrder.lazy.compactMap { self.providerRouters[$0] }.first
+  }
+
+  private static func executionRecoveryKey(context: ExecutionContext, grant: ProfileGrant)
+    -> String?
+  {
+    if let authority = context.controlSession {
+      guard let session = authority as? GatewayControlSession else { return nil }
+      let snapshot = session.snapshot
+      guard !snapshot.ended, let consent = snapshot.fullAccessConsent,
+        consent.lifetime == .alwaysAllowClient,
+        let trustID = consent.trustID, let revision = consent.trustRevision
+      else { return nil }
+      return "trust:" + trustID + ":" + String(revision)
+    }
+    do {
+      let encoded = try JSONEncoder().encode(grant)
+      guard var fields = try JSONSerialization.jsonObject(with: encoded) as? [String: Any]
+      else { return nil }
+      for (key, value) in fields {
+        if let values = value as? [String] { fields[key] = values.sorted() }
+      }
+      let data = try JSONSerialization.data(withJSONObject: fields, options: [.sortedKeys])
+      return SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
+    } catch { return nil }
   }
 
   private func contextForCall(_ invocationContext: InvocationContext) -> ExecutionContext {

@@ -12,17 +12,22 @@ import Testing
 @testable import ComputerMCPPlatform
 @testable import ComputerMCPPlugins
 
+#if os(macOS)
+  import ComputerMCPDarwinTestSupport
+#endif
+
 @Suite(.nativeIntegration, .timeLimit(.minutes(1)))
 struct PluginStoreInstallationTests {
   @Test
   func newerPluginAPIIsRefusedBeforeAnInstallationCommits() async throws {
     let fixture = try await PreparationFixture.make(
-      directoryFactory: MacOSPlatform.services.pluginDirectories,
+      directoryFactory: MacOSPlatform.services(launcher: testExecutionLauncher()).pluginDirectories,
       manifest: PreparationFixture.manifest.replacingOccurrences(
         of: "plugin_api = 1", with: "plugin_api = 2\nfuture = true"))
     defer { fixture.files.remove() }
     let database = try GatewayDatabase(path: fixture.files.root.appendingPathComponent("db").path)
-    let store = PluginStore(database: database, platform: MacOSPlatform.services)
+    let store = PluginStore(
+      database: database, platform: MacOSPlatform.services(launcher: testExecutionLauncher()))
     let refusal = try #require(
       PluginAPIVersions.supported.refusal(
         pluginID: "combined", version: PluginVersion("1.2.3"), declared: 2))
@@ -34,10 +39,12 @@ struct PluginStoreInstallationTests {
   @Test
   func recoveryRefreshesDurableRollbackMetadataWithoutChangingHostChoices() async throws {
     let fixture = try await PreparationFixture.make(
-      directoryFactory: MacOSPlatform.services.pluginDirectories, )
+      directoryFactory: MacOSPlatform.services(launcher: testExecutionLauncher()).pluginDirectories,
+    )
     defer { fixture.files.remove() }
     let database = try GatewayDatabase(inMemory: ())
-    let store = PluginStore(database: database, platform: MacOSPlatform.services)
+    let store = PluginStore(
+      database: database, platform: MacOSPlatform.services(launcher: testExecutionLauncher()))
     let installed = try await fixture.install(into: store, revision: 0)
     let modern = try #require(database.pluginOwnedDirectories().first)
     var document = try #require(
@@ -56,11 +63,13 @@ struct PluginStoreInstallationTests {
     changedDevice: Bool
   ) async throws {
     let fixture = try await PreparationFixture.make(
-      directoryFactory: MacOSPlatform.services.pluginDirectories, )
+      directoryFactory: MacOSPlatform.services(launcher: testExecutionLauncher()).pluginDirectories,
+    )
     defer { fixture.files.remove() }
     let database = try GatewayDatabase(
       path: fixture.files.root.appendingPathComponent("legacy.sqlite").path)
-    let store = PluginStore(database: database, platform: MacOSPlatform.services)
+    let store = PluginStore(
+      database: database, platform: MacOSPlatform.services(launcher: testExecutionLauncher()))
     let installed = try await fixture.install(into: store, revision: 0)
     let modern = try #require(database.pluginOwnedDirectories().first)
     var status = stat()
@@ -86,7 +95,7 @@ struct PluginStoreInstallationTests {
       }
       let reopened = PluginStore(
         database: try GatewayDatabase(path: try #require(database.fileURL).path),
-        platform: MacOSPlatform.services)
+        platform: MacOSPlatform.services(launcher: testExecutionLauncher()))
       #expect(
         try await reopened.recoverInstallations(storageRoot: fixture.installationRoot).isEmpty)
       #expect(try await reopened.snapshot() == installed.snapshot)
@@ -96,14 +105,15 @@ struct PluginStoreInstallationTests {
   @Test
   func installedArchiveRetainsTargetForReopenedActivation() async throws {
     let fixture = try await PreparationFixture.make(
-      directoryFactory: MacOSPlatform.services.pluginDirectories,
+      directoryFactory: MacOSPlatform.services(launcher: testExecutionLauncher()).pluginDirectories,
       manifest: PreparationFixture.platformManifest, format: "zip")
     defer { fixture.files.remove() }
     let archive = fixture.files.root.appendingPathComponent("mac.zip")
     try FileManager.default.copyItem(at: fixture.archive, to: archive)
     let path = fixture.files.root.appendingPathComponent("target.sqlite").path
     let store = PluginStore(
-      database: try GatewayDatabase(path: path), platform: MacOSPlatform.services)
+      database: try GatewayDatabase(path: path),
+      platform: MacOSPlatform.services(launcher: testExecutionLauncher()))
     let installed = try await store.installArchive(
       at: archive, expectedSHA256: fixture.digest, pluginID: "combined",
       version: PluginVersion("1.2.3"),
@@ -111,7 +121,8 @@ struct PluginStoreInstallationTests {
       storageRoot: fixture.files.root.appendingPathComponent("Plugins"),
       workerExecutable: fixture.preparation.workerExecutable, expectedRevision: 0)
     let reopened = PluginStore(
-      database: try GatewayDatabase(path: path), platform: MacOSPlatform.services)
+      database: try GatewayDatabase(path: path),
+      platform: MacOSPlatform.services(launcher: testExecutionLauncher()))
     let snapshot = try await reopened.snapshot()
     #expect(snapshot == installed.snapshot)
     let record = try #require(snapshot.installations.first)
@@ -139,10 +150,12 @@ struct PluginStoreInstallationTests {
   @Test
   func candidatesAcquireIndependentArtifactLeasesInsideTheInstallationTransaction() async throws {
     let fixture = try await PreparationFixture.make(
-      directoryFactory: MacOSPlatform.services.pluginDirectories, manifest: Self.skillsManifest)
+      directoryFactory: MacOSPlatform.services(launcher: testExecutionLauncher()).pluginDirectories,
+      manifest: Self.skillsManifest)
     defer { fixture.files.remove() }
     let database = try GatewayDatabase(inMemory: ())
-    let store = PluginStore(database: database, platform: MacOSPlatform.services)
+    let store = PluginStore(
+      database: database, platform: MacOSPlatform.services(launcher: testExecutionLauncher()))
     let installed = try await fixture.install(into: store, revision: 0)
     let record = try #require(installed.snapshot.installations.first)
     let original = try database.configurationState()
@@ -152,12 +165,14 @@ struct PluginStoreInstallationTests {
       projects: original.projects, projectAliases: original.projectAliases,
       profiles: original.profiles, plugins: proposed)
     let storage = try PluginInstallationStorage(
-      at: fixture.installationRoot, directoryFactory: MacOSPlatform.services.pluginDirectories)
+      at: fixture.installationRoot,
+      directoryFactory: MacOSPlatform.services(launcher: testExecutionLauncher()).pluginDirectories)
     defer { storage.finishTransaction() }
     #expect(throws: PluginStoreError.installationBusy) {
       try GatewayRuntime.retainPluginArtifacts(
         state: proposed, plugins: nil, database: database,
-        directoryFactory: MacOSPlatform.services.pluginDirectories)
+        directoryFactory: MacOSPlatform.services(launcher: testExecutionLauncher())
+          .pluginDirectories)
     }
     var candidates: [GatewayRuntimePreparation] = []
     do {
@@ -168,7 +183,7 @@ struct PluginStoreInstallationTests {
           try await GatewayRuntime.prepare(
             configuration: GatewayConfiguration(projectDirectory: fixture.files.root),
             context: context, database: database, state: state,
-            platform: MacOSPlatform.services,
+            platform: MacOSPlatform.services(launcher: testExecutionLauncher()),
             bundledPlugins: BundledPlugins(packages: [], issues: []), artifactStorage: storage))
       }
       #expect(candidates.allSatisfy { $0.runtime.pluginOrigins.count == 1 })
@@ -194,10 +209,12 @@ struct PluginStoreInstallationTests {
     async throws
   {
     let fixture = try await PreparationFixture.make(
-      directoryFactory: MacOSPlatform.services.pluginDirectories, manifest: Self.skillsManifest)
+      directoryFactory: MacOSPlatform.services(launcher: testExecutionLauncher()).pluginDirectories,
+      manifest: Self.skillsManifest)
     defer { fixture.files.remove() }
     let database = try GatewayDatabase(inMemory: ())
-    let store = PluginStore(database: database, platform: MacOSPlatform.services)
+    let store = PluginStore(
+      database: database, platform: MacOSPlatform.services(launcher: testExecutionLauncher()))
     let installed = try await fixture.install(into: store, revision: 0)
     let record = try #require(installed.snapshot.installations.first)
     var proposed = installed.snapshot
@@ -209,11 +226,13 @@ struct PluginStoreInstallationTests {
     let plugins =
       try resolved
       ? PluginHost.resolve(
-        proposed, bundled: bundled, applications: MacOSPlatform.services.applications
+        proposed, bundled: bundled,
+        applications: MacOSPlatform.services(launcher: testExecutionLauncher()).applications
       ).plugins : nil
     let runtime = try await GatewayRuntime.make(
       configuration: GatewayConfiguration(projectDirectory: fixture.files.root),
-      database: database, platform: MacOSPlatform.services, plugins: plugins, pluginState: proposed,
+      database: database, platform: MacOSPlatform.services(launcher: testExecutionLauncher()),
+      plugins: plugins, pluginState: proposed,
       bundledPlugins: bundled)
     var authenticated: GatewayRuntime?
     do {
@@ -240,10 +259,12 @@ struct PluginStoreInstallationTests {
   @Test
   func failedUnpublishedRuntimeJoinsArtifactLeaseCleanup() async throws {
     let fixture = try await PreparationFixture.make(
-      directoryFactory: MacOSPlatform.services.pluginDirectories, manifest: Self.skillsManifest)
+      directoryFactory: MacOSPlatform.services(launcher: testExecutionLauncher()).pluginDirectories,
+      manifest: Self.skillsManifest)
     defer { fixture.files.remove() }
     let database = try GatewayDatabase(inMemory: ())
-    let store = PluginStore(database: database, platform: MacOSPlatform.services)
+    let store = PluginStore(
+      database: database, platform: MacOSPlatform.services(launcher: testExecutionLauncher()))
     let installed = try await fixture.install(into: store, revision: 0)
     let record = try #require(installed.snapshot.installations.first)
     var proposed = installed.snapshot
@@ -257,7 +278,7 @@ struct PluginStoreInstallationTests {
       try await GatewayRuntime.make(
         configuration: GatewayConfiguration(projectDirectory: fixture.files.root),
         database: database, registeredProjects: [project, project],
-        platform: MacOSPlatform.services, pluginState: proposed,
+        platform: MacOSPlatform.services(launcher: testExecutionLauncher()), pluginState: proposed,
         bundledPlugins: BundledPlugins(packages: [], issues: []))
     }
     #expect(try await store.recoverInstallations(storageRoot: fixture.installationRoot).isEmpty)
@@ -281,10 +302,12 @@ struct PluginStoreInstallationTests {
   @Test(arguments: [false, true])
   func processReceiptRetainsArtifactAfterRuntimeReleasesIt(uncertain: Bool) async throws {
     let fixture = try await PreparationFixture.make(
-      directoryFactory: MacOSPlatform.services.pluginDirectories, )
+      directoryFactory: MacOSPlatform.services(launcher: testExecutionLauncher()).pluginDirectories,
+    )
     defer { fixture.files.remove() }
     let database = try GatewayDatabase(path: fixture.files.root.appendingPathComponent("db").path)
-    let store = PluginStore(database: database, platform: MacOSPlatform.services)
+    let store = PluginStore(
+      database: database, platform: MacOSPlatform.services(launcher: testExecutionLauncher()))
     let installed = try await fixture.install(into: store, revision: 0)
     let record = try #require(installed.snapshot.installations.first)
     let artifact = try #require(database.pluginOwnedDirectories().first).identity
@@ -324,20 +347,22 @@ struct PluginStoreInstallationTests {
   @Test
   func uninstallRetainsFilesUntilEveryRuntimeOwnerReleasesThem() async throws {
     let fixture = try await PreparationFixture.make(
-      directoryFactory: MacOSPlatform.services.pluginDirectories, )
+      directoryFactory: MacOSPlatform.services(launcher: testExecutionLauncher()).pluginDirectories,
+    )
     defer { fixture.files.remove() }
     let database = try GatewayDatabase(inMemory: ())
-    let store = PluginStore(database: database, platform: MacOSPlatform.services)
+    let store = PluginStore(
+      database: database, platform: MacOSPlatform.services(launcher: testExecutionLauncher()))
     let installed = try await fixture.install(into: store, revision: 0)
     let record = try #require(installed.snapshot.installations.first)
     _ = try await store.setEnabled(true, for: record.pluginID, expectedRevision: 1)
     let state = try await store.snapshot()
     let first = try GatewayRuntime.retainPluginArtifacts(
       state: state, plugins: nil, database: database,
-      directoryFactory: MacOSPlatform.services.pluginDirectories)
+      directoryFactory: MacOSPlatform.services(launcher: testExecutionLauncher()).pluginDirectories)
     let second = try GatewayRuntime.retainPluginArtifacts(
       state: state, plugins: nil, database: database,
-      directoryFactory: MacOSPlatform.services.pluginDirectories)
+      directoryFactory: MacOSPlatform.services(launcher: testExecutionLauncher()).pluginDirectories)
     defer { for lease in first + second { lease.close() } }
     #expect(first.count == 1 && second.count == 1)
     let removed = try await store.uninstallArtifact(
@@ -347,7 +372,8 @@ struct PluginStoreInstallationTests {
     #expect(removed.issues.count == 1)
     #expect(try PluginPackage.load(at: record.source.root).manifest.id == record.pluginID)
     for lease in first { lease.close() }
-    let reopened = PluginStore(database: database, platform: MacOSPlatform.services)
+    let reopened = PluginStore(
+      database: database, platform: MacOSPlatform.services(launcher: testExecutionLauncher()))
     #expect(
       try await reopened.recoverInstallations(storageRoot: fixture.installationRoot).count == 1)
     #expect(try database.pluginOwnedDirectories().count == 1)
@@ -360,15 +386,18 @@ struct PluginStoreInstallationTests {
   @Test
   func finishedRuntimeLeaseDoesNotRemainHeldByIncidentalDescriptorCopies() async throws {
     let fixture = try await PreparationFixture.make(
-      directoryFactory: MacOSPlatform.services.pluginDirectories, )
+      directoryFactory: MacOSPlatform.services(launcher: testExecutionLauncher()).pluginDirectories,
+    )
     defer { fixture.files.remove() }
     let database = try GatewayDatabase(inMemory: ())
-    let store = PluginStore(database: database, platform: MacOSPlatform.services)
+    let store = PluginStore(
+      database: database, platform: MacOSPlatform.services(launcher: testExecutionLauncher()))
     let installed = try await fixture.install(into: store, revision: 0)
     let record = try #require(installed.snapshot.installations.first)
     let artifact = try #require(database.pluginOwnedDirectories().first).identity
     let storage = try PluginInstallationStorage(
-      at: fixture.installationRoot, directoryFactory: MacOSPlatform.services.pluginDirectories)
+      at: fixture.installationRoot,
+      directoryFactory: MacOSPlatform.services(launcher: testExecutionLauncher()).pluginDirectories)
     let lease = try storage.retainArtifact(artifact)
     storage.finishTransaction()
     defer { lease.close() }
@@ -398,10 +427,12 @@ struct PluginStoreInstallationTests {
   @Test
   func artifactLeaseRejectsASymlinkWithoutTouchingItsTarget() async throws {
     let fixture = try await PreparationFixture.make(
-      directoryFactory: MacOSPlatform.services.pluginDirectories, )
+      directoryFactory: MacOSPlatform.services(launcher: testExecutionLauncher()).pluginDirectories,
+    )
     defer { fixture.files.remove() }
     let database = try GatewayDatabase(inMemory: ())
-    let store = PluginStore(database: database, platform: MacOSPlatform.services)
+    let store = PluginStore(
+      database: database, platform: MacOSPlatform.services(launcher: testExecutionLauncher()))
     let installed = try await fixture.install(into: store, revision: 0)
     let record = try #require(installed.snapshot.installations.first)
     let directory = try #require(database.pluginOwnedDirectories().first)
@@ -411,7 +442,8 @@ struct PluginStoreInstallationTests {
       at: directory.identity.url.appendingPathComponent("artifact.lock"),
       withDestinationURL: target)
     let storage = try PluginInstallationStorage(
-      at: fixture.installationRoot, directoryFactory: MacOSPlatform.services.pluginDirectories)
+      at: fixture.installationRoot,
+      directoryFactory: MacOSPlatform.services(launcher: testExecutionLauncher()).pluginDirectories)
     #expect(throws: PluginArchiveError.fileSystemFailure) {
       try storage.retainArtifact(directory.identity)
     }
@@ -426,15 +458,17 @@ struct PluginStoreInstallationTests {
   @Test
   func installUpdateRollbackAndUninstallPreserveHostChoicesAndExternalFiles() async throws {
     let fixture = try await PreparationFixture.make(
-      directoryFactory: MacOSPlatform.services.pluginDirectories, )
+      directoryFactory: MacOSPlatform.services(launcher: testExecutionLauncher()).pluginDirectories,
+    )
     defer { fixture.files.remove() }
     let update = try await PreparationFixture.make(
-      directoryFactory: MacOSPlatform.services.pluginDirectories,
+      directoryFactory: MacOSPlatform.services(launcher: testExecutionLauncher()).pluginDirectories,
       manifest: PreparationFixture.manifest.replacingOccurrences(of: "1.2.3", with: "1.2.4"))
     defer { update.files.remove() }
     let databaseURL = fixture.files.root.appendingPathComponent("gateway.sqlite")
     let database = try GatewayDatabase(path: databaseURL.path)
-    let store = PluginStore(database: database, platform: MacOSPlatform.services)
+    let store = PluginStore(
+      database: database, platform: MacOSPlatform.services(launcher: testExecutionLauncher()))
     try database.saveProject(
       .init(id: "unrelated", displayName: "Keep", rootPath: fixture.files.root.path))
     let first = try await fixture.install(into: store, revision: 0)
@@ -469,7 +503,8 @@ struct PluginStoreInstallationTests {
       installationID: original.id, for: "combined", expectedRevision: 3)
     #expect(rollback.selectedInstallations["combined"] == original.id)
     let reopened = PluginStore(
-      database: try GatewayDatabase(path: databaseURL.path), platform: MacOSPlatform.services)
+      database: try GatewayDatabase(path: databaseURL.path),
+      platform: MacOSPlatform.services(launcher: testExecutionLauncher()))
     #expect(try await reopened.snapshot() == rollback)
     #expect(try await reopened.recoverInstallations(storageRoot: fixture.installationRoot).isEmpty)
     let removed = try await reopened.uninstallArtifact(
@@ -496,17 +531,22 @@ struct PluginStoreInstallationTests {
   @Test(arguments: ["hash", "manifest", "composition"])
   func failedInstallationDoesNotChangeTheSelectedVersion(failure: String) async throws {
     let fixture = try await PreparationFixture.make(
-      directoryFactory: MacOSPlatform.services.pluginDirectories, )
+      directoryFactory: MacOSPlatform.services(launcher: testExecutionLauncher()).pluginDirectories,
+    )
     defer { fixture.files.remove() }
     let database = try GatewayDatabase(inMemory: ())
-    let store = PluginStore(database: database, platform: MacOSPlatform.services)
+    let store = PluginStore(
+      database: database, platform: MacOSPlatform.services(launcher: testExecutionLauncher()))
     let first = try await fixture.install(into: store, revision: 0)
-    let rejecting = PluginStore(database: database, platform: MacOSPlatform.services) { _ in
+    let rejecting = PluginStore(
+      database: database, platform: MacOSPlatform.services(launcher: testExecutionLauncher())
+    ) { _ in
       throw PluginArchiveError.conflictingPath
     }
     if failure == "manifest" {
       let bad = try await PreparationFixture.make(
-        directoryFactory: MacOSPlatform.services.pluginDirectories, manifest: "invalid")
+        directoryFactory: MacOSPlatform.services(launcher: testExecutionLauncher())
+          .pluginDirectories, manifest: "invalid")
       defer { bad.files.remove() }
       await #expect(throws: PluginArchiveError.invalidPackage) {
         try await bad.install(into: store, revision: 1, storageRoot: fixture.installationRoot)
@@ -531,15 +571,17 @@ struct PluginStoreInstallationTests {
     async throws
   {
     let fixture = try await PreparationFixture.make(
-      directoryFactory: MacOSPlatform.services.pluginDirectories, )
+      directoryFactory: MacOSPlatform.services(launcher: testExecutionLauncher()).pluginDirectories,
+    )
     defer { fixture.files.remove() }
     let path = fixture.files.root.appendingPathComponent("gateway.sqlite").path
     let database = try GatewayDatabase(path: path)
     let concurrent = try GatewayDatabase(path: path)
     let store = PluginStore(
-      database: database, platform: MacOSPlatform.services,
+      database: database, platform: MacOSPlatform.services(launcher: testExecutionLauncher()),
       expectedConfiguration: try database.configurationState())
-    let other = PluginStore(database: concurrent, platform: MacOSPlatform.services)
+    let other = PluginStore(
+      database: concurrent, platform: MacOSPlatform.services(launcher: testExecutionLauncher()))
     let ready = fixture.files.root.appendingPathComponent("ready")
     let release = fixture.files.root.appendingPathComponent("release")
     let worker = try await fixture.stub(
@@ -596,10 +638,12 @@ struct PluginStoreInstallationTests {
   @Test
   func cancellationReapsWorkerBeforeRemovingOwnedFiles() async throws {
     let fixture = try await PreparationFixture.make(
-      directoryFactory: MacOSPlatform.services.pluginDirectories, )
+      directoryFactory: MacOSPlatform.services(launcher: testExecutionLauncher()).pluginDirectories,
+    )
     defer { fixture.files.remove() }
     let database = try GatewayDatabase(inMemory: ())
-    let store = PluginStore(database: database, platform: MacOSPlatform.services)
+    let store = PluginStore(
+      database: database, platform: MacOSPlatform.services(launcher: testExecutionLauncher()))
     let ready = fixture.files.root.appendingPathComponent("ready")
     let worker = try await fixture.stub(
       """
@@ -631,10 +675,12 @@ struct PluginStoreInstallationTests {
   @Test
   func workerKeepsLockAfterParentReferenceCloses() async throws {
     let fixture = try await PreparationFixture.make(
-      directoryFactory: MacOSPlatform.services.pluginDirectories, )
+      directoryFactory: MacOSPlatform.services(launcher: testExecutionLauncher()).pluginDirectories,
+    )
     defer { fixture.files.remove() }
     var storage: PluginInstallationStorage? = try PluginInstallationStorage(
-      at: fixture.installationRoot, directoryFactory: MacOSPlatform.services.pluginDirectories)
+      at: fixture.installationRoot,
+      directoryFactory: MacOSPlatform.services(launcher: testExecutionLauncher()).pluginDirectories)
     var preparation = fixture.preparation
     preparation.inheritedLockDescriptor = try #require(storage).lockDescriptor
     let ready = fixture.files.root.appendingPathComponent("ready")
@@ -648,7 +694,7 @@ struct PluginStoreInstallationTests {
     let lockedPreparation = PluginArchivePreparation(
       workerExecutable: worker, stagingParent: preparation.stagingParent,
       inheritedLockDescriptor: preparation.inheritedLockDescriptor,
-      directoryFactory: MacOSPlatform.services.pluginDirectories)
+      directoryFactory: MacOSPlatform.services(launcher: testExecutionLauncher()).pluginDirectories)
     let task = Task {
       try await lockedPreparation.withPreparedPackage(
         archive: fixture.archive, expectedSHA256: fixture.digest,
@@ -666,18 +712,23 @@ struct PluginStoreInstallationTests {
     storage?.close()
     #expect(throws: PluginStoreError.installationBusy) {
       try PluginInstallationStorage(
-        at: fixture.installationRoot, directoryFactory: MacOSPlatform.services.pluginDirectories)
+        at: fixture.installationRoot,
+        directoryFactory: MacOSPlatform.services(launcher: testExecutionLauncher())
+          .pluginDirectories)
     }
     task.cancel()
     await #expect(throws: CancellationError.self) { try await task.value }
     let next = try PluginInstallationStorage(
-      at: fixture.installationRoot, directoryFactory: MacOSPlatform.services.pluginDirectories)
+      at: fixture.installationRoot,
+      directoryFactory: MacOSPlatform.services(launcher: testExecutionLauncher()).pluginDirectories)
     storage?.close()
     storage = nil
     // Closing the retained old lease again must not close a reused descriptor.
     #expect(throws: PluginStoreError.installationBusy) {
       try PluginInstallationStorage(
-        at: fixture.installationRoot, directoryFactory: MacOSPlatform.services.pluginDirectories)
+        at: fixture.installationRoot,
+        directoryFactory: MacOSPlatform.services(launcher: testExecutionLauncher())
+          .pluginDirectories)
     }
     next.close()
     withExtendedLifetime(next) {}
@@ -686,14 +737,17 @@ struct PluginStoreInstallationTests {
   @Test
   func recoveryRemovesOnlyReceiptedUncommittedDirectories() async throws {
     let fixture = try await PreparationFixture.make(
-      directoryFactory: MacOSPlatform.services.pluginDirectories, )
+      directoryFactory: MacOSPlatform.services(launcher: testExecutionLauncher()).pluginDirectories,
+    )
     defer { fixture.files.remove() }
     let databaseURL = fixture.files.root.appendingPathComponent("gateway.sqlite")
     let database = try GatewayDatabase(path: databaseURL.path)
     let owned: PluginOwnedDirectory
     do {
       let storage = try PluginInstallationStorage(
-        at: fixture.installationRoot, directoryFactory: MacOSPlatform.services.pluginDirectories)
+        at: fixture.installationRoot,
+        directoryFactory: MacOSPlatform.services(launcher: testExecutionLauncher())
+          .pluginDirectories)
       defer { storage.finishTransaction() }
       let identity = try storage.createInstallation()
       owned = PluginOwnedDirectory(
@@ -704,7 +758,8 @@ struct PluginStoreInstallationTests {
     let unknown = fixture.installationRoot.appendingPathComponent(UUID().uuidString)
     try FileManager.default.createDirectory(at: unknown, withIntermediateDirectories: false)
     let store = PluginStore(
-      database: try GatewayDatabase(path: databaseURL.path), platform: MacOSPlatform.services)
+      database: try GatewayDatabase(path: databaseURL.path),
+      platform: MacOSPlatform.services(launcher: testExecutionLauncher()))
     #expect(try await store.recoverInstallations(storageRoot: fixture.installationRoot).isEmpty)
     #expect(!FileManager.default.fileExists(atPath: owned.identity.url.path))
     #expect(FileManager.default.fileExists(atPath: unknown.path))
@@ -716,13 +771,16 @@ struct PluginStoreInstallationTests {
   @Test(arguments: [false, true])
   func recoveryPreservesReplacedAndOutOfRootDirectories(outside: Bool) async throws {
     let fixture = try await PreparationFixture.make(
-      directoryFactory: MacOSPlatform.services.pluginDirectories, )
+      directoryFactory: MacOSPlatform.services(launcher: testExecutionLauncher()).pluginDirectories,
+    )
     defer { fixture.files.remove() }
     let database = try GatewayDatabase(inMemory: ())
     let owned: PluginOwnedDirectory
     do {
       let storage = try PluginInstallationStorage(
-        at: fixture.installationRoot, directoryFactory: MacOSPlatform.services.pluginDirectories)
+        at: fixture.installationRoot,
+        directoryFactory: MacOSPlatform.services(launcher: testExecutionLauncher())
+          .pluginDirectories)
       defer { storage.finishTransaction() }
       let identity = try storage.createInstallation()
       owned = PluginOwnedDirectory(
@@ -736,7 +794,8 @@ struct PluginStoreInstallationTests {
         at: owned.identity.url, withIntermediateDirectories: false,
         attributes: [.posixPermissions: 0o700])
     }
-    let store = PluginStore(database: database, platform: MacOSPlatform.services)
+    let store = PluginStore(
+      database: database, platform: MacOSPlatform.services(launcher: testExecutionLauncher()))
     let issues = try await store.recoverInstallations(
       storageRoot: outside
         ? fixture.files.root.appendingPathComponent("other-store") : fixture.installationRoot)
@@ -748,10 +807,12 @@ struct PluginStoreInstallationTests {
   @Test
   func restoringOriginalDirectoryPreservesItsReceiptAndSelectedInstallation() async throws {
     let fixture = try await PreparationFixture.make(
-      directoryFactory: MacOSPlatform.services.pluginDirectories, )
+      directoryFactory: MacOSPlatform.services(launcher: testExecutionLauncher()).pluginDirectories,
+    )
     defer { fixture.files.remove() }
     let database = try GatewayDatabase(inMemory: ())
-    let store = PluginStore(database: database, platform: MacOSPlatform.services)
+    let store = PluginStore(
+      database: database, platform: MacOSPlatform.services(launcher: testExecutionLauncher()))
     let installed = try await fixture.install(into: store, revision: 0)
     let owned = try #require(database.pluginOwnedDirectories().first)
     let original = fixture.files.root.appendingPathComponent("original-installation")
@@ -775,10 +836,13 @@ struct PluginStoreInstallationTests {
   @Test
   func postCommitCleanupFailureKeepsInstalledPayloadAndRecoversOnReopen() async throws {
     let fixture = try await PreparationFixture.make(
-      directoryFactory: MacOSPlatform.services.pluginDirectories, )
+      directoryFactory: MacOSPlatform.services(launcher: testExecutionLauncher()).pluginDirectories,
+    )
     defer { fixture.files.remove() }
     let database = try GatewayDatabase(inMemory: ())
-    let store = PluginStore(database: database, platform: MacOSPlatform.services) { proposed in
+    let store = PluginStore(
+      database: database, platform: MacOSPlatform.services(launcher: testExecutionLauncher())
+    ) { proposed in
       let record = try #require(proposed.installations.first)
       let staging = record.source.root.deletingLastPathComponent().appendingPathComponent("staging")
       let name = try #require(FileManager.default.contentsOfDirectory(atPath: staging.path).first)
@@ -792,7 +856,8 @@ struct PluginStoreInstallationTests {
     let record = try #require(installed.snapshot.installations.first)
     #expect(try PluginPackage.load(at: record.source.root).manifest.id == "combined")
     #expect(try database.pluginOwnedDirectories().count == 1)
-    let reopened = PluginStore(database: database, platform: MacOSPlatform.services)
+    let reopened = PluginStore(
+      database: database, platform: MacOSPlatform.services(launcher: testExecutionLauncher()))
     #expect(try await reopened.recoverInstallations(storageRoot: fixture.installationRoot).isEmpty)
     #expect(try await reopened.snapshot() == installed.snapshot)
     #expect(
@@ -804,10 +869,12 @@ struct PluginStoreInstallationTests {
   @Test
   func uninstallCommitsRevocationButNeverDeletesAReplacementDirectory() async throws {
     let fixture = try await PreparationFixture.make(
-      directoryFactory: MacOSPlatform.services.pluginDirectories, )
+      directoryFactory: MacOSPlatform.services(launcher: testExecutionLauncher()).pluginDirectories,
+    )
     defer { fixture.files.remove() }
     let database = try GatewayDatabase(inMemory: ())
-    let store = PluginStore(database: database, platform: MacOSPlatform.services)
+    let store = PluginStore(
+      database: database, platform: MacOSPlatform.services(launcher: testExecutionLauncher()))
     let installed = try await fixture.install(into: store, revision: 0)
     let record = try #require(installed.snapshot.installations.first)
     let container = record.source.root.deletingLastPathComponent()
@@ -833,10 +900,12 @@ struct PluginInstallationStorageTests {
   @Test
   func liveProcessOwnershipKeepsPluginCleanupErrorAndFiles() async throws {
     let fixture = try await PreparationFixture.make(
-      directoryFactory: MacOSPlatform.services.pluginDirectories, )
+      directoryFactory: MacOSPlatform.services(launcher: testExecutionLauncher()).pluginDirectories,
+    )
     defer { fixture.files.remove() }
     let storage = try PluginInstallationStorage(
-      at: fixture.installationRoot, directoryFactory: MacOSPlatform.services.pluginDirectories)
+      at: fixture.installationRoot,
+      directoryFactory: MacOSPlatform.services(launcher: testExecutionLauncher()).pluginDirectories)
     defer { storage.finishTransaction() }
     let identity = try storage.createInstallation()
     let processRoot = fixture.installationRoot.deletingLastPathComponent().appendingPathComponent(
@@ -857,21 +926,26 @@ struct PluginInstallationStorageTests {
   @Test
   func completedTransactionReleasesLockEvenWhileAnUnrelatedDuplicateSurvives() async throws {
     let fixture = try await PreparationFixture.make(
-      directoryFactory: MacOSPlatform.services.pluginDirectories, )
+      directoryFactory: MacOSPlatform.services(launcher: testExecutionLauncher()).pluginDirectories,
+    )
     defer { fixture.files.remove() }
     let storage = try PluginInstallationStorage(
-      at: fixture.installationRoot, directoryFactory: MacOSPlatform.services.pluginDirectories)
+      at: fixture.installationRoot,
+      directoryFactory: MacOSPlatform.services(launcher: testExecutionLauncher()).pluginDirectories)
     let duplicate = fcntl(storage.lockDescriptor, F_DUPFD_CLOEXEC, 0)
     try #require(duplicate >= 0)
     defer { close(duplicate) }
     storage.finishTransaction()
     let next = try PluginInstallationStorage(
-      at: fixture.installationRoot, directoryFactory: MacOSPlatform.services.pluginDirectories)
+      at: fixture.installationRoot,
+      directoryFactory: MacOSPlatform.services(launcher: testExecutionLauncher()).pluginDirectories)
     defer { next.finishTransaction() }
     storage.finishTransaction()
     #expect(throws: PluginStoreError.installationBusy) {
       try PluginInstallationStorage(
-        at: fixture.installationRoot, directoryFactory: MacOSPlatform.services.pluginDirectories)
+        at: fixture.installationRoot,
+        directoryFactory: MacOSPlatform.services(launcher: testExecutionLauncher())
+          .pluginDirectories)
     }
     #expect(throws: PluginArchiveError.fileSystemFailure) { try storage.createInstallation() }
   }
@@ -879,10 +953,12 @@ struct PluginInstallationStorageTests {
   @Test(arguments: ["missing", "symlink", "file", "public"])
   func recoveryReportsInvalidCommittedPayloadWithoutRevokingItsRecord(kind: String) async throws {
     let fixture = try await PreparationFixture.make(
-      directoryFactory: MacOSPlatform.services.pluginDirectories, )
+      directoryFactory: MacOSPlatform.services(launcher: testExecutionLauncher()).pluginDirectories,
+    )
     defer { fixture.files.remove() }
     let database = try GatewayDatabase(inMemory: ())
-    let store = PluginStore(database: database, platform: MacOSPlatform.services)
+    let store = PluginStore(
+      database: database, platform: MacOSPlatform.services(launcher: testExecutionLauncher()))
     let installed = try await fixture.install(into: store, revision: 0)
     let record = try #require(installed.snapshot.installations.first)
     if kind == "public" {
@@ -907,10 +983,12 @@ struct PluginInstallationStorageTests {
   @Test
   func anotherRegistrationInsideThePackagePreventsUninstall() async throws {
     let fixture = try await PreparationFixture.make(
-      directoryFactory: MacOSPlatform.services.pluginDirectories, )
+      directoryFactory: MacOSPlatform.services(launcher: testExecutionLauncher()).pluginDirectories,
+    )
     defer { fixture.files.remove() }
     let database = try GatewayDatabase(inMemory: ())
-    let store = PluginStore(database: database, platform: MacOSPlatform.services)
+    let store = PluginStore(
+      database: database, platform: MacOSPlatform.services(launcher: testExecutionLauncher()))
     let installed = try await fixture.install(into: store, revision: 0)
     let record = try #require(installed.snapshot.installations.first)
     let registered = try await store.registerDevelopment(
@@ -926,12 +1004,15 @@ struct PluginInstallationStorageTests {
   @Test
   func recoveryForgetsAlreadyMissingUncommittedDirectoryWithoutChangingSettings() async throws {
     let fixture = try await PreparationFixture.make(
-      directoryFactory: MacOSPlatform.services.pluginDirectories, )
+      directoryFactory: MacOSPlatform.services(launcher: testExecutionLauncher()).pluginDirectories,
+    )
     defer { fixture.files.remove() }
     let database = try GatewayDatabase(inMemory: ())
     do {
       let storage = try PluginInstallationStorage(
-        at: fixture.installationRoot, directoryFactory: MacOSPlatform.services.pluginDirectories)
+        at: fixture.installationRoot,
+        directoryFactory: MacOSPlatform.services(launcher: testExecutionLauncher())
+          .pluginDirectories)
       defer { storage.finishTransaction() }
       let identity = try storage.createInstallation()
       try database.recordPluginDirectory(
@@ -939,7 +1020,8 @@ struct PluginInstallationStorageTests {
           installationID: identity.url.lastPathComponent, pluginID: "combined", identity: identity))
       try storage.clean(identity, keepingPackage: false)
     }
-    let store = PluginStore(database: database, platform: MacOSPlatform.services)
+    let store = PluginStore(
+      database: database, platform: MacOSPlatform.services(launcher: testExecutionLauncher()))
     #expect(try await store.recoverInstallations(storageRoot: fixture.installationRoot).isEmpty)
     #expect(try database.pluginOwnedDirectories().isEmpty)
     #expect(try await store.snapshot() == PluginStoreSnapshot())
@@ -950,7 +1032,8 @@ struct PluginInstallationStorageTests {
   ])
   func rejectsUnsafeStorageWithoutChangingExternalFiles(kind: String) async throws {
     let fixture = try await PreparationFixture.make(
-      directoryFactory: MacOSPlatform.services.pluginDirectories, )
+      directoryFactory: MacOSPlatform.services(launcher: testExecutionLauncher()).pluginDirectories,
+    )
     defer { fixture.files.remove() }
     let external = fixture.files.root.appendingPathComponent("external")
     try Data("keep".utf8).write(to: external)
@@ -979,7 +1062,9 @@ struct PluginInstallationStorageTests {
     }
     #expect(throws: PluginArchiveError.self) {
       try PluginInstallationStorage(
-        at: root, directoryFactory: MacOSPlatform.services.pluginDirectories)
+        at: root,
+        directoryFactory: MacOSPlatform.services(launcher: testExecutionLauncher())
+          .pluginDirectories)
     }
     #expect(try String(contentsOf: external, encoding: .utf8) == "keep")
   }

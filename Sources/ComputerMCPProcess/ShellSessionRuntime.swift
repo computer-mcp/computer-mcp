@@ -1,19 +1,14 @@
 import ComputerMCPCore
+import ComputerMCPPlatform
 import ComputerMCPPlatformPOSIX
+import ComputerMCPSandbox
 import Foundation
 import NIOConcurrencyHelpers
-import Subprocess
 
 #if canImport(Darwin)
   import Darwin
 #elseif canImport(Glibc)
   import Glibc
-#endif
-
-#if canImport(System)
-  @preconcurrency import System
-#else
-  import SystemPackage
 #endif
 
 package enum ShellLaunchMode: String, Codable, Sendable {
@@ -162,7 +157,31 @@ package struct ShellStreamRead: Codable, Equatable, Sendable {
   }
 }
 
+package struct ExecutionLimits: Codable, Equatable, Sendable {
+  package var timeoutMilliseconds: Int?
+  package var outputBytes: Int
+  package static let defaultTimeoutMilliseconds = 120_000
+  package static let maximumTimeoutMilliseconds = 600_000
+  package static let defaultOutputBytes = 8 * 1_024 * 1_024
+
+  private enum CodingKeys: String, CodingKey {
+    case timeoutMilliseconds = "timeout_ms"
+    case outputBytes = "output_bytes"
+  }
+}
+
+package enum ExecutionEndReason: String, Codable, Sendable {
+  case exited, signalled, cancelled, interrupted
+  case timeout
+  case launchFailed = "launch_failed"
+  case executionFailed = "execution_failed"
+}
+
 package struct ShellSessionSnapshot: Codable, Equatable, Sendable {
+  package var members: [ExecutionMember] = []
+  package var limits: ExecutionLimits
+  package var endReason: ExecutionEndReason?
+  package var droppedBytes: Int64
   package var sessionID: String
   package var processID: Int32?
   package var isRunning: Bool
@@ -178,6 +197,9 @@ package struct ShellSessionSnapshot: Codable, Equatable, Sendable {
   package var stderr: ShellStreamRead
 
   private enum CodingKeys: String, CodingKey {
+    case limits
+    case endReason = "end_reason"
+    case droppedBytes = "dropped_bytes"
     case sessionID = "session_id"
     case processID = "process_id"
     case isRunning = "is_running"
@@ -210,8 +232,15 @@ package struct ShellSessionSnapshot: Codable, Equatable, Sendable {
     launchError: String?,
     streamErrors: [String],
     stdout: ShellStreamRead,
-    stderr: ShellStreamRead
+    stderr: ShellStreamRead,
+    limits: ExecutionLimits = .init(
+      timeoutMilliseconds: nil, outputBytes: ExecutionLimits.defaultOutputBytes),
+    endReason: ExecutionEndReason? = nil, droppedBytes: Int64 = 0, members: [ExecutionMember] = []
   ) {
+    self.members = members
+    self.limits = limits
+    self.endReason = endReason
+    self.droppedBytes = droppedBytes
     self.sessionID = sessionID
     self.processID = processID
     self.isRunning = isRunning
@@ -230,8 +259,8 @@ package struct ShellSessionSnapshot: Codable, Equatable, Sendable {
 
 package struct ShellWriteResult: Codable, Equatable, Sendable {
   internal var sessionID: String
-  internal var bytesWritten: Int
-  internal var inputClosed: Bool
+  package var bytesWritten: Int
+  package var inputClosed: Bool
 
   private enum CodingKeys: String, CodingKey {
     case sessionID = "session_id"
@@ -268,8 +297,7 @@ package protocol ShellManaging: Sendable {
     standardInput: Data,
     timeoutMilliseconds: Int,
     maxOutputBytes: Int,
-    maxSessions: Int,
-    terminationGraceMilliseconds: Int
+    maxSessions: Int
   ) throws -> ShellSessionSnapshot
 
   func spawn(
@@ -278,8 +306,7 @@ package protocol ShellManaging: Sendable {
     defaultWorkingDirectory: URL,
     timeoutMilliseconds: Int?,
     maxOutputBytes: Int,
-    maxSessions: Int,
-    terminationGraceMilliseconds: Int
+    maxSessions: Int
   ) throws -> String
 
   func list(
@@ -317,7 +344,7 @@ extension ShellManaging {
 
 /// Listener-owned output storage. Possessing this store never grants tool authorization.
 package final class GatewayTerminalSessions: @unchecked Sendable {
-  package enum Scope: Hashable, Sendable {
+  package enum Scope: Codable, Hashable, Sendable {
     case isolated(UUID)
     case project(
       principal: String, profile: GatewayProfileID, caller: GatewayCallerKind,
@@ -335,11 +362,14 @@ package final class GatewayTerminalSessions: @unchecked Sendable {
   }
 
   private struct Entry {
+    let recoveryKey: String?
+    var restored = false
     let scope: Scope
     let session: ShellSession
     let isRegisteredProcess: Bool
   }
 
+  private var journal: TerminalSessionJournal?
   private let lock = NSLock()
   private var entries: [String: Entry] = [:]
   private let retention: TimeInterval
@@ -365,8 +395,100 @@ package final class GatewayTerminalSessions: @unchecked Sendable {
     self.now = now
   }
 
+  package func enablePersistence(in root: URL, ownerID: String, launcher: ExecutionLauncher) throws
+  {
+    let encoded = Data(ownerID.utf8).base64EncodedString()
+      .replacingOccurrences(of: "/", with: "_").replacingOccurrences(of: "+", with: "-")
+    let characters = Array(encoded)
+    let directory = stride(from: 0, to: characters.count, by: 120).reduce(root) { url, offset in
+      url.appendingPathComponent(
+        String(characters[offset..<min(offset + 120, characters.count)]),
+        isDirectory: true)
+    }
+    try enablePersistence(at: directory, launcher: launcher)
+  }
+
+  /// The lifecycle owner opens a stable namespace once, before admitting executions.
+  /// A lifetime lease prevents another host from recovering records that are still running.
+  package func enablePersistence(at directory: URL, launcher: ExecutionLauncher) throws {
+    guard launcher.supportsRecovery else {
+      throw ShellRuntimeError.invalidRequest("Execution recovery is unavailable on this platform")
+    }
+    try lock.withLock {
+      guard journal == nil else { return }
+      precondition(entries.isEmpty)
+      let journal = try TerminalSessionJournal(
+        directory: directory, bootSessionID: launcher.bootSessionID)
+      var restored: [String: Entry] = [:]
+      for record in try journal.load() {
+        if record.snapshot.isRunning, !record.members.isEmpty {
+          guard let recordedBoot = record.bootSessionID, let currentBoot = launcher.bootSessionID
+          else {
+            throw ShellRuntimeError.invalidRequest(
+              "Cannot establish execution recovery boot identity")
+          }
+          if recordedBoot == currentBoot {
+            try blockingAsync { try await launcher.interrupt(record.members) }
+          }
+        }
+        guard record.recoveryKey != nil else {
+          try journal.remove(record.snapshot.sessionID)
+          continue
+        }
+        let session = ShellSession(restoring: record.snapshot)
+        let snapshot = session.snapshot(
+          stdoutCursor: 0, stderrCursor: 0,
+          maxReadBytes: session.maxOutputBytes, encoding: .base64)
+        try journal.save(
+          .init(
+            recoveryKey: record.recoveryKey, bootSessionID: journal.bootSessionID,
+            scope: record.scope, isRegisteredProcess: record.isRegisteredProcess,
+            snapshot: snapshot, members: []))
+        restored[session.id] = Entry(
+          recoveryKey: record.recoveryKey, restored: true,
+          scope: record.scope, session: session,
+          isRegisteredProcess: record.isRegisteredProcess)
+      }
+      entries = restored
+      self.journal = journal
+      pruneLocked()
+    }
+  }
+
+  /// Explicit listener disposal ends result retention for that owner.
+  package func discardResults() throws {
+    try lock.withLock {
+      guard !entries.values.contains(where: { $0.session.isRunningOrStarting }) else {
+        throw ShellRuntimeError.invalidRequest("Cannot discard running executions")
+      }
+      for id in entries.keys { try journal?.remove(id) }
+      entries.removeAll()
+      journal = nil
+    }
+  }
+
+  fileprivate func checkpoint(_ session: ShellSession) throws {
+    try lock.withLock {
+      guard let entry = entries[session.id] else { return }
+      try checkpointLocked(entry)
+    }
+  }
+
+  private func checkpointLocked(_ entry: Entry) throws {
+    guard let journal else { return }
+    let snapshot = entry.session.snapshot(
+      stdoutCursor: 0, stderrCursor: 0,
+      maxReadBytes: entry.session.maxOutputBytes, encoding: .base64)
+    try journal.save(
+      .init(
+        recoveryKey: entry.recoveryKey, bootSessionID: journal.bootSessionID, scope: entry.scope,
+        isRegisteredProcess: entry.isRegisteredProcess,
+        snapshot: snapshot, members: snapshot.members))
+  }
+
   fileprivate func insert(
-    _ session: ShellSession, scope: Scope, maxSessions: Int, isRegisteredProcess: Bool
+    _ session: ShellSession, scope: Scope, recoveryKey: String?, maxSessions: Int,
+    isRegisteredProcess: Bool
   ) throws {
     try lock.withLock {
       pruneLocked()
@@ -374,17 +496,23 @@ package final class GatewayTerminalSessions: @unchecked Sendable {
         $0.scope == scope && $0.session.isRunningOrStarting
       }.count
       guard active < maxSessions else { throw ShellRuntimeError.sessionLimitReached(maxSessions) }
-      entries[session.id] = Entry(
-        scope: scope, session: session, isRegisteredProcess: isRegisteredProcess)
+      let entry = Entry(
+        recoveryKey: recoveryKey, scope: scope, session: session,
+        isRegisteredProcess: isRegisteredProcess)
+      try checkpointLocked(entry)
+      entries[session.id] = entry
     }
   }
 
-  fileprivate func session(_ id: String, scope: Scope, processOnly: Bool = false) throws
+  fileprivate func session(
+    _ id: String, scope: Scope, recoveryKey: String?, processOnly: Bool = false
+  ) throws
     -> ShellSession
   {
     try lock.withLock {
       pruneLocked()
       guard let entry = entries[id], entry.scope == scope,
+        !entry.restored || (recoveryKey != nil && recoveryKey == entry.recoveryKey),
         !processOnly || entry.isRegisteredProcess
       else {
         if processOnly { throw ProcessRegistryError.unknownProcess(id) }
@@ -394,11 +522,14 @@ package final class GatewayTerminalSessions: @unchecked Sendable {
     }
   }
 
-  fileprivate func sessions(scope: Scope, processOnly: Bool = false) -> [ShellSession] {
+  fileprivate func sessions(scope: Scope, recoveryKey: String?, processOnly: Bool = false)
+    -> [ShellSession]
+  {
     lock.withLock {
       pruneLocked()
       return entries.values.filter {
         $0.scope == scope && (!processOnly || $0.isRegisteredProcess)
+          && (!$0.restored || (recoveryKey != nil && recoveryKey == $0.recoveryKey))
       }.sorted { $0.session.id < $1.session.id }.map(\.session)
     }
   }
@@ -419,6 +550,7 @@ package final class GatewayTerminalSessions: @unchecked Sendable {
       if finishedAt <= cutoff || count >= maximumCompletedSessions
         || size > maximumCompletedOutputBytes - bytes
       {
+        try? journal?.remove(id)
         entries.removeValue(forKey: id)
       } else {
         count += 1
@@ -428,7 +560,7 @@ package final class GatewayTerminalSessions: @unchecked Sendable {
   }
 }
 
-package final class SubprocessShellRuntime: ShellManaging, Sendable {
+package final class ShellSessionRuntime: ShellManaging, Sendable {
   private struct ExecutionOwner {
     let session: ShellSession
     let task: Task<Void, Never>
@@ -439,22 +571,31 @@ package final class SubprocessShellRuntime: ShellManaging, Sendable {
     var shutdown: Task<Void, Never>?
   }
 
+  private let policy: HostExecutionPolicy
+  private let launcher: ExecutionLauncher
   private let executionState = NIOLockedValueBox(ExecutionState())
   private let sessions: GatewayTerminalSessions
   private let scope: GatewayTerminalSessions.Scope
+  private let recoveryKey: @Sendable () -> String?
   private let ownedWork: (any OwnedWorkTracking)?
   private let projectID: String?
 
   package init(
+    launcher: ExecutionLauncher = ExecutionLauncher(),
+    policy: HostExecutionPolicy = .fullAccess,
     ownedWork: (any OwnedWorkTracking)? = nil, projectID: String? = nil,
     sessions: GatewayTerminalSessions = GatewayTerminalSessions(),
-    scope: GatewayTerminalSessions.Scope = .isolated(UUID())
+    scope: GatewayTerminalSessions.Scope = .isolated(UUID()),
+    recoveryKey: @escaping @Sendable () -> String? = { "isolated" }
   ) {
+    self.policy = policy
+    self.launcher = launcher
     installBrokenPipeHandler()
     self.ownedWork = ownedWork
     self.projectID = projectID
     self.sessions = sessions
     self.scope = scope
+    self.recoveryKey = recoveryKey
   }
 
   package func run(
@@ -464,8 +605,7 @@ package final class SubprocessShellRuntime: ShellManaging, Sendable {
     standardInput: Data = Data(),
     timeoutMilliseconds: Int,
     maxOutputBytes: Int,
-    maxSessions: Int,
-    terminationGraceMilliseconds: Int
+    maxSessions: Int
   ) throws -> ShellSessionSnapshot {
     let session = try start(
       request: request,
@@ -474,14 +614,14 @@ package final class SubprocessShellRuntime: ShellManaging, Sendable {
       timeoutMilliseconds: timeoutMilliseconds,
       maxOutputBytes: maxOutputBytes,
       maxSessions: maxSessions,
-      terminationGraceMilliseconds: terminationGraceMilliseconds, isRegisteredProcess: false
+      isRegisteredProcess: false
     )
     do {
       _ = try session.write(data: standardInput, close: true)
     } catch ShellRuntimeError.sessionNotRunning where standardInput.isEmpty {
       // A command that never reads stdin may finish before the close reaches its pipe.
     }
-    let waitMilliseconds = timeoutMilliseconds + max(terminationGraceMilliseconds, 250) + 2_000
+    let waitMilliseconds = timeoutMilliseconds + 5_000
     return try wait(
       session: session, timeoutMilliseconds: waitMilliseconds,
       maxReadBytes: maxOutputBytes, encoding: .utf8)
@@ -517,38 +657,42 @@ package final class SubprocessShellRuntime: ShellManaging, Sendable {
     defaultWorkingDirectory: URL,
     timeoutMilliseconds: Int?,
     maxOutputBytes: Int,
-    maxSessions: Int,
-    terminationGraceMilliseconds: Int
+    maxSessions: Int
   ) throws -> String {
     try start(
       request: request, defaultShell: defaultShell,
       defaultWorkingDirectory: defaultWorkingDirectory,
       timeoutMilliseconds: timeoutMilliseconds, maxOutputBytes: maxOutputBytes,
-      maxSessions: maxSessions, terminationGraceMilliseconds: terminationGraceMilliseconds,
-      isRegisteredProcess: false
+      maxSessions: maxSessions, isRegisteredProcess: false
     ).id
   }
 
   internal func spawnProcess(
     request: ShellLaunchRequest, defaultWorkingDirectory: URL, maxOutputBytes: Int,
-    maxSessions: Int, terminationGraceMilliseconds: Int
+    maxSessions: Int
   ) throws -> String {
     try start(
       request: request, defaultShell: "/bin/zsh", defaultWorkingDirectory: defaultWorkingDirectory,
       timeoutMilliseconds: nil, maxOutputBytes: maxOutputBytes, maxSessions: maxSessions,
-      terminationGraceMilliseconds: terminationGraceMilliseconds, isRegisteredProcess: true
+      isRegisteredProcess: true
     ).id
   }
 
   private func start(
     request: ShellLaunchRequest, defaultShell: String, defaultWorkingDirectory: URL,
     timeoutMilliseconds: Int?, maxOutputBytes: Int, maxSessions: Int,
-    terminationGraceMilliseconds: Int, isRegisteredProcess: Bool
+    isRegisteredProcess: Bool
   ) throws -> ShellSession {
     let resolved = try request.resolved(
       defaultShell: defaultShell,
       defaultWorkingDirectory: defaultWorkingDirectory
     )
+    guard
+      timeoutMilliseconds.map({ (1...ExecutionLimits.maximumTimeoutMilliseconds).contains($0) })
+        ?? true
+    else {
+      throw ShellRuntimeError.invalidRequest("timeout_ms must be between 1 and 600000.")
+    }
     guard maxOutputBytes > 0 else {
       throw ShellRuntimeError.invalidRequest("maxOutputBytes must be greater than zero.")
     }
@@ -559,35 +703,61 @@ package final class SubprocessShellRuntime: ShellManaging, Sendable {
     let session = ShellSession(
       id: UUID().uuidString,
       maxOutputBytes: maxOutputBytes,
-      terminationGraceMilliseconds: terminationGraceMilliseconds
+      timeoutMilliseconds: timeoutMilliseconds
     )
 
     try executionState.withLockedValue { state in
       guard state.shutdown == nil else { throw ShellRuntimeError.stopped }
       try sessions.insert(
-        session, scope: scope, maxSessions: maxSessions, isRegisteredProcess: isRegisteredProcess)
+        session, scope: scope, recoveryKey: recoveryKey(), maxSessions: maxSessions,
+        isRegisteredProcess: isRegisteredProcess)
       let ownership = ownedWork?.retainShell(projectID: projectID, sessionID: session.id)
-      let task = Task.detached(priority: .userInitiated) { [sessions, weak self] in
+      let launcher = self.launcher
+      let policy = self.policy
+      let task = ExecutionTasks.start(priority: .userInitiated) { [sessions, weak self] in
         defer {
           ownership?.finish()
+          do { try sessions.checkpoint(session) } catch {
+            session.recordStreamError("Execution journal: \(error)")
+          }
           sessions.prune()
           _ = self?.executionState.withLockedValue { $0.running.removeValue(forKey: session.id) }
         }
-        await Self.launch(resolved, session: session)
+        let checkpoint = ExecutionTasks.start {
+          while !Task.isCancelled {
+            do { try await Task.sleep(for: .seconds(1)) } catch { return }
+            await session.refreshMembers()
+            do { try sessions.checkpoint(session) } catch {
+              session.recordStreamError("Execution journal: \(error)")
+              _ = session.cancel()
+              return
+            }
+          }
+        }
+        await Self.launch(resolved, session: session, launcher: launcher, policy: policy) {
+          try sessions.checkpoint(session)
+        }
+        checkpoint.cancel()
+        await checkpoint.value
       }
       state.running[session.id] = ExecutionOwner(session: session, task: task)
     }
 
     guard session.waitForStart(timeoutMilliseconds: 10_000) else {
       _ = try? cancel(sessionID: session.id)
-      throw ShellRuntimeError.launchFailed("Timed out while starting shell session.")
+      throw ShellRuntimeError.timeoutWaitingForTermination(session.id)
     }
     if let launchError = session.launchError {
       throw ShellRuntimeError.launchFailed(launchError)
     }
 
+    do { try sessions.checkpoint(session) } catch {
+      _ = session.cancel()
+      throw error
+    }
+
     if let timeoutMilliseconds, timeoutMilliseconds > 0 {
-      Task.detached { [weak session] in
+      ExecutionTasks.start { [weak session] in
         try? await Task.sleep(for: .milliseconds(timeoutMilliseconds))
         session?.timeoutIfRunning()
       }
@@ -601,7 +771,7 @@ package final class SubprocessShellRuntime: ShellManaging, Sendable {
     let task = executionState.withLockedValue { state -> Task<Void, Never> in
       if let task = state.shutdown { return task }
       let running = Array(state.running.values)
-      let task = Task {
+      let task = ExecutionTasks.start {
         for owner in running { _ = owner.session.cancel() }
         for owner in running { await owner.task.value }
       }
@@ -615,7 +785,7 @@ package final class SubprocessShellRuntime: ShellManaging, Sendable {
     maxReadBytes: Int = 0,
     encoding: ShellStreamEncoding = .utf8
   ) throws -> [ShellSessionSnapshot] {
-    sessions.sessions(scope: scope).map { session in
+    sessions.sessions(scope: scope, recoveryKey: recoveryKey()).map { session in
       session.snapshot(
         stdoutCursor: session.stdoutEndCursor,
         stderrCursor: session.stderrEndCursor,
@@ -637,7 +807,9 @@ package final class SubprocessShellRuntime: ShellManaging, Sendable {
         "Stream cursors and maxReadBytes must be non-negative."
       )
     }
-    return try requireSession(sessionID).snapshot(
+    let session = try requireSession(sessionID)
+    try sessions.checkpoint(session)
+    return session.snapshot(
       stdoutCursor: stdoutCursor,
       stderrCursor: stderrCursor,
       maxReadBytes: maxReadBytes,
@@ -688,41 +860,63 @@ package final class SubprocessShellRuntime: ShellManaging, Sendable {
   }
 
   internal func processSnapshots() -> [ManagedProcessSnapshot] {
-    sessions.sessions(scope: scope, processOnly: true).map { session in
+    sessions.sessions(scope: scope, recoveryKey: recoveryKey(), processOnly: true).map { session in
       Self.processSnapshot(session, maxOutputBytes: session.maxOutputBytes)
     }
   }
 
-  internal func processSnapshot(_ id: String) throws -> ManagedProcessSnapshot {
-    let session = try sessions.session(id, scope: scope, processOnly: true)
-    return Self.processSnapshot(session, maxOutputBytes: session.maxOutputBytes)
+  internal func processSnapshot(
+    _ id: String, stdoutCursor: Int64 = 0, stderrCursor: Int64 = 0,
+    maxReadBytes: Int = ExecutionLimits.defaultOutputBytes
+  ) throws -> ManagedProcessSnapshot {
+    guard stdoutCursor >= 0, stderrCursor >= 0, maxReadBytes >= 0 else {
+      throw ShellRuntimeError.invalidRequest(
+        "Stream cursors and maxReadBytes must be non-negative.")
+    }
+    let session = try sessions.session(
+      id, scope: scope, recoveryKey: recoveryKey(), processOnly: true)
+    try sessions.checkpoint(session)
+    return Self.processSnapshot(
+      session, maxOutputBytes: maxReadBytes, stdoutCursor: stdoutCursor, stderrCursor: stderrCursor)
   }
 
   internal func cancelProcess(_ id: String) throws -> ManagedProcessCancelResult {
-    let session = try sessions.session(id, scope: scope, processOnly: true)
+    let session = try sessions.session(
+      id, scope: scope, recoveryKey: recoveryKey(), processOnly: true)
     return ManagedProcessCancelResult(
       processID: id, cancelled: session.cancel(), exitCode: nil)
   }
 
-  private static func processSnapshot(_ session: ShellSession, maxOutputBytes: Int)
+  private static func processSnapshot(
+    _ session: ShellSession, maxOutputBytes: Int, stdoutCursor: Int64 = 0, stderrCursor: Int64 = 0
+  )
     -> ManagedProcessSnapshot
   {
     let snapshot = session.snapshot(
-      stdoutCursor: 0, stderrCursor: 0, maxReadBytes: maxOutputBytes, encoding: .utf8)
+      stdoutCursor: stdoutCursor, stderrCursor: stderrCursor, maxReadBytes: maxOutputBytes,
+      encoding: .utf8)
     return ManagedProcessSnapshot(
+      execution: snapshot,
       processID: session.id, isRunning: snapshot.isRunning, exitCode: snapshot.exitCode,
       stdout: snapshot.stdout.text ?? "", stderr: snapshot.stderr.text ?? "",
       stdoutTruncated: snapshot.stdout.truncated, stderrTruncated: snapshot.stderr.truncated)
   }
 
   private func requireSession(_ id: String) throws -> ShellSession {
-    try sessions.session(id, scope: scope)
+    try sessions.session(id, scope: scope, recoveryKey: recoveryKey())
   }
 
-  private static func launch(_ launch: ResolvedShellLaunch, session: ShellSession) async {
+  private static func launch(
+    _ launch: ResolvedShellLaunch, session: ShellSession, launcher: ExecutionLauncher,
+    policy: HostExecutionPolicy, checkpoint: @escaping @Sendable () throws -> Void
+  ) async {
+    let inputPipe = Pipe()
     let stdoutPipe = Pipe()
     let stderrPipe = Pipe()
     var readers: [ProcessOutputReader] = []
+    var setup: HostExecutionSetup?
+    var writer: DescriptorInputWriter?
+    defer { setup?.removeTemporaryDirectory() }
     do {
       let stdout = try ProcessOutputReader(
         handle: stdoutPipe.fileHandleForReading,
@@ -736,63 +930,95 @@ package final class SubprocessShellRuntime: ShellManaging, Sendable {
       readers.append(stderr)
       stdout.start()
       stderr.start()
-      let environmentOverrides = Dictionary(
-        uniqueKeysWithValues: launch.environment.map { key, value in
-          (Subprocess.Environment.Key(rawValue: key)!, Optional(value))
-        }
-      )
-      let executable: Executable =
-        launch.executable.contains("/")
-        ? .path(FilePath(launch.executable))
-        : .name(launch.executable)
-      var platformOptions = PlatformOptions()
-      platformOptions.processGroupID = 0
-      let outcome = try await Subprocess.run(
-        executable,
-        arguments: Arguments(launch.arguments),
-        environment: launch.inheritsEnvironment
-          ? .inherit.updating(environmentOverrides)
-          : .custom(environmentOverrides.compactMapValues { $0 }),
-        workingDirectory: FilePath(launch.workingDirectory.path),
-        platformOptions: platformOptions,
-        input: .inputWriter,
-        output: .fileDescriptor(
-          FileDescriptor(rawValue: stdoutPipe.fileHandleForWriting.fileDescriptor),
-          closeAfterSpawningProcess: false),
-        error: .fileDescriptor(
-          FileDescriptor(rawValue: stderrPipe.fileHandleForWriting.fileDescriptor),
-          closeAfterSpawningProcess: false)
-      ) { execution in
-        await session.input.attach(execution.standardInputWriter)
-        do {
-          try stdoutPipe.fileHandleForWriting.close()
-          try stderrPipe.fileHandleForWriting.close()
-        } catch {
-          await session.input.finish()
-          await session.input.bodyReturning()
-          throw error
-        }
-        session.attach(execution: execution)
-        await withTaskGroup(of: Void.self) { group in
-          group.addTask { await stdout.waitForEnd() }
-          group.addTask { await stderr.waitForEnd() }
-        }
-        await session.input.finish()
-        await session.input.bodyReturning()
+      let environment =
+        launch.inheritsEnvironment
+        ? ProcessInfo.processInfo.environment.merging(launch.environment) { _, value in value }
+        : launch.environment
+      let inspection = ExecutableInspection.inspect(
+        launch.executable, workingDirectory: launch.workingDirectory, environment: environment)
+      guard !inspection.hasKnownFailure, let executable = inspection.path else {
+        throw ShellRuntimeError.launchFailed(inspection.message)
       }
-      session.finish(status: outcome.terminationStatus)
+      let prepared = try policy.prepare(
+        directory: launch.workingDirectory, environment: environment,
+        systemReadPaths: launcher.hostSystemReadPaths)
+      setup = prepared
+      let directory: SandboxPath
+      if case .sandbox(let configuration) = prepared.mode {
+        directory = configuration.worktree
+      } else {
+        directory = try SandboxPath(launch.workingDirectory.standardizedFileURL.path)
+      }
+      let ownership = try await launcher.start(
+        executable: SandboxPath(URL(fileURLWithPath: executable).standardized.path),
+        arguments: launch.arguments,
+        directory: directory, environment: prepared.environment, mode: prepared.mode,
+        method: .posixSpawn,
+        input: inputPipe.fileHandleForReading.fileDescriptor,
+        output: stdoutPipe.fileHandleForWriting.fileDescriptor,
+        error: stderrPipe.fileHandleForWriting.fileDescriptor,
+        bindOwnership: { owner in
+          session.bind(owner)
+          owner.beforeStart { member in
+            session.observedLaunch(member)
+            try checkpoint()
+          }
+        })
+      try inputPipe.fileHandleForReading.close()
+      try stdoutPipe.fileHandleForWriting.close()
+      try stderrPipe.fileHandleForWriting.close()
+      let inputWriter = try DescriptorInputWriter(handle: inputPipe.fileHandleForWriting)
+      writer = inputWriter
+      ownership.onCancellation { inputWriter.cancel() }
+      await session.input.attach(inputWriter)
+      session.didStart(members: [])
+      // Background executions have no wall-clock limit. A failed confirmation retains
+      // ownership and retries; only confirmed completion can retire this session.
+      var outcome: ExecutionExit?
+      while outcome == nil {
+        do { outcome = try await ownership.wait(until: .now.advanced(by: .seconds(120))) } catch let
+          failure as ExecutionCompletionFailure
+        {
+          session.recordStreamError(failure.description)
+        }
+      }
+      inputWriter.cancel()
+      await stdout.stop(drainRemainingOutput: true)
+      await stderr.stop(drainRemainingOutput: true)
+      await session.input.finish()
+      await session.input.bodyReturning()
+      setup?.removeTemporaryDirectory()
+      setup = nil
+      session.finish(status: outcome!)
     } catch {
+      if let owner = session.executionOwnership {
+        var confirmed = false
+        while !confirmed {
+          do {
+            _ = try await owner.cancel()
+            confirmed = true
+          } catch let failure as ExecutionCompletionFailure {
+            session.recordStreamError(failure.description)
+          } catch {
+            session.recordStreamError(String(describing: error))
+            confirmed = true
+          }
+        }
+      }
+      writer?.cancel()
+      await session.input.finish()
+      await session.input.bodyReturning()
+      try? inputPipe.fileHandleForReading.close()
+      try? inputPipe.fileHandleForWriting.close()
       try? stdoutPipe.fileHandleForWriting.close()
       try? stderrPipe.fileHandleForWriting.close()
       for reader in readers { await reader.stop(drainRemainingOutput: false) }
-      session.failLaunchOrExecution(error.localizedDescription)
+      setup?.removeTemporaryDirectory()
+      setup = nil
+      session.failLaunchOrExecution(String(describing: error))
     }
   }
 }
-
-private typealias ShellExecution = Execution<
-  CustomWriteInput, FileDescriptorOutput, FileDescriptorOutput
->
 
 private struct ResolvedShellLaunch: Sendable {
   var executable: String
@@ -806,11 +1032,13 @@ private final class ShellSession: @unchecked Sendable {
   let id: String
   private let condition = NSCondition()
   let maxOutputBytes: Int
-  private let terminationGraceMilliseconds: Int
-  private var execution: ShellExecution?
+  private var execution: (any ExecutionOwnership)?
   let input: ChildProcessInput
+  private let limits: ExecutionLimits
+  private var outputOrder: [(stdout: Bool, count: Int)] = []
   private var stdout = CursorDataBuffer()
   private var stderr = CursorDataBuffer()
+  private var members: [ExecutionMember] = []
   private var processID: Int32?
   private var exitCode: Int32?
   private var signal: Int32?
@@ -820,17 +1048,43 @@ private final class ShellSession: @unchecked Sendable {
   private var finished = false
   private var streamErrors: [String] = []
   private var _launchError: String?
-  private let startedAt = Date()
+  private let startedAt: Date
+  private var restoredEndReason: ExecutionEndReason?
   private var finishedAt: Date?
-  private var launcherExitObservedAt: Date?
 
-  init(id: String, maxOutputBytes: Int, terminationGraceMilliseconds: Int) {
+  init(
+    id: String, maxOutputBytes: Int, timeoutMilliseconds: Int?
+  ) {
+    self.startedAt = Date()
+    self.limits = .init(timeoutMilliseconds: timeoutMilliseconds, outputBytes: maxOutputBytes)
     self.id = id
     self.input = ChildProcessInput(
       closedError: ShellRuntimeError.sessionNotRunning(id),
       inputClosedError: ShellRuntimeError.inputClosed(id))
     self.maxOutputBytes = maxOutputBytes
-    self.terminationGraceMilliseconds = max(0, terminationGraceMilliseconds)
+  }
+
+  init(restoring snapshot: ShellSessionSnapshot) {
+    id = snapshot.sessionID
+    limits = snapshot.limits
+    maxOutputBytes = snapshot.limits.outputBytes
+    startedAt = snapshot.startedAt
+    finishedAt = snapshot.finishedAt ?? Date()
+    started = true
+    finished = true
+    restoredEndReason = snapshot.isRunning ? .interrupted : snapshot.endReason
+    exitCode = snapshot.exitCode
+    signal = snapshot.signal
+    cancelled = snapshot.cancelled
+    timedOut = snapshot.timedOut
+    _launchError = snapshot.launchError
+    streamErrors = snapshot.streamErrors
+    stdout = CursorDataBuffer(restoring: snapshot.stdout)
+    stderr = CursorDataBuffer(restoring: snapshot.stderr)
+    input = ChildProcessInput(
+      closedError: ShellRuntimeError.sessionNotRunning(id),
+      inputClosedError: ShellRuntimeError.inputClosed(id))
+    input.stop()
   }
 
   var retainedResult: (finishedAt: Date, bytes: Int)? {
@@ -866,45 +1120,81 @@ private final class ShellSession: @unchecked Sendable {
     return stderr.endCursor
   }
 
-  func attach(execution: ShellExecution) {
+  func bind(_ execution: any ExecutionOwnership) {
     condition.lock()
     self.execution = execution
-    self.processID = Int32(execution.processIdentifier.value)
-    started = true
     let terminationRequested = cancelled || timedOut
-    condition.broadcast()
     condition.unlock()
     if terminationRequested { requestTermination(execution) }
   }
 
+  var executionOwnership: (any ExecutionOwnership)? { condition.withLock { execution } }
+
+  func observedLaunch(_ member: ExecutionMember) {
+    condition.withLock {
+      processID = member.processID
+      members = [member]
+    }
+  }
+
+  func didStart(members: [ExecutionMember]) {
+    condition.lock()
+    self.members = Array(Set(self.members).union(members))
+    self.processID = processID ?? members.first?.processID
+    started = true
+    condition.broadcast()
+    condition.unlock()
+  }
+
+  func refreshMembers() async {
+    let ownership = condition.withLock { execution }
+    guard let ownership, let members = try? await ownership.members() else { return }
+    condition.withLock { self.members = Array(Set(self.members).union(members)) }
+  }
+
   func appendStdout(_ data: Data) {
     condition.lock()
-    stdout.append(data, limit: maxOutputBytes)
+    stdout.append(data, limit: Int.max)
+    recordOutput(count: data.count, isStdout: true)
     condition.broadcast()
     condition.unlock()
   }
 
   func appendStderr(_ data: Data) {
     condition.lock()
-    stderr.append(data, limit: maxOutputBytes)
+    stderr.append(data, limit: Int.max)
+    recordOutput(count: data.count, isStdout: false)
     condition.broadcast()
     condition.unlock()
   }
 
+  /// Called under the session condition. Trims across both streams in arrival order.
+  private func recordOutput(count: Int, isStdout: Bool) {
+    guard count > 0 else { return }
+    if outputOrder.last?.stdout == isStdout {
+      outputOrder[outputOrder.count - 1].count += count
+    } else {
+      outputOrder.append((isStdout, count))
+    }
+    var overflow = stdout.data.count + stderr.data.count - maxOutputBytes
+    while overflow > 0, let first = outputOrder.first {
+      let count = min(overflow, first.count)
+      if first.stdout { stdout.discardFirst(count) } else { stderr.discardFirst(count) }
+      if count == first.count { outputOrder.removeFirst() } else { outputOrder[0].count -= count }
+      overflow -= count
+    }
+  }
+
   func recordStreamError(_ message: String) {
     condition.lock()
-    streamErrors.append(message)
+    if !streamErrors.contains(message), streamErrors.count < 16 { streamErrors.append(message) }
     condition.unlock()
   }
 
-  func finish(status: TerminationStatus) {
+  func finish(status: ExecutionExit) {
     condition.lock()
-    switch status {
-    case .exited(let code):
-      exitCode = code
-    case .signaled(let code):
-      signal = code
-    }
+    signal = status.signal
+    if status.signal == nil { exitCode = status.status }
     execution = nil
     input.stop()
     finished = true
@@ -918,7 +1208,7 @@ private final class ShellSession: @unchecked Sendable {
     if !started {
       _launchError = message
     } else {
-      streamErrors.append(message)
+      if !streamErrors.contains(message), streamErrors.count < 16 { streamErrors.append(message) }
     }
     execution = nil
     input.stop()
@@ -987,8 +1277,14 @@ private final class ShellSession: @unchecked Sendable {
   func writeAsync(data: Data, close: Bool) async throws -> ShellWriteResult {
     try Task.checkCancellation()
     try validateInput()
-    let bytesWritten = try await input.write(data, close: close)
-    return ShellWriteResult(sessionID: id, bytesWritten: bytesWritten, inputClosed: close)
+    do {
+      let bytesWritten = try await input.write(data, close: close)
+      return ShellWriteResult(sessionID: id, bytesWritten: bytesWritten, inputClosed: close)
+    } catch is CancellationError where !Task.isCancelled {
+      throw ShellRuntimeError.sessionNotRunning(id)
+    } catch let error as POSIXError where error.code == .EPIPE || error.code == .EBADF {
+      throw ShellRuntimeError.sessionNotRunning(id)
+    }
   }
 
   private func validateInput() throws {
@@ -1009,36 +1305,10 @@ private final class ShellSession: @unchecked Sendable {
     condition.lock()
     let stdoutRead = stdout.read(cursor: stdoutCursor, maxBytes: maxReadBytes)
     let stderrRead = stderr.read(cursor: stderrCursor, maxBytes: maxReadBytes)
-    // A launcher can exit while one of its descendants keeps an inherited
-    // stdout or stderr pipe open. `Subprocess.run` then continues draining the
-    // pipe and has not yet delivered its termination status, even though the
-    // launcher is already a zombie. Do not report that launcher as healthy:
-    // supervisors need to cancel the old process group and restart it.
-    let launcherHasExited = !finished && processID.map(Self.processHasExited) == true
-    if launcherHasExited, launcherExitObservedAt == nil {
-      launcherExitObservedAt = Date()
-    }
-    // A short-lived process becomes a zombie just before Subprocess has
-    // drained its pipes and committed the termination status. Under concurrent
-    // build or provider load that finalization can legitimately take longer
-    // than a scheduler timeslice. Treating the transient state as terminal
-    // exposes an impossible snapshot (not running, but with no exit status and
-    // possibly incomplete output). Allow a bounded one-second floor while
-    // retaining a two-second ceiling for inherited-pipe failure detection.
-    let finalizationGraceMilliseconds = min(max(terminationGraceMilliseconds, 1_000), 2_000)
-    let launcherExitedBeforeStreamsClosed =
-      launcherHasExited
-      && launcherExitObservedAt.map {
-        Date().timeIntervalSince($0) * 1_000 >= Double(finalizationGraceMilliseconds)
-      } == true
-    var snapshotStreamErrors = streamErrors
-    if launcherExitedBeforeStreamsClosed {
-      snapshotStreamErrors.append("Process exited before inherited output streams closed.")
-    }
     let snapshot = ShellSessionSnapshot(
       sessionID: id,
       processID: processID,
-      isRunning: !finished && !launcherExitedBeforeStreamsClosed,
+      isRunning: !finished,
       exitCode: exitCode,
       signal: signal,
       timedOut: timedOut,
@@ -1046,45 +1316,48 @@ private final class ShellSession: @unchecked Sendable {
       startedAt: startedAt,
       finishedAt: finishedAt,
       launchError: _launchError,
-      streamErrors: snapshotStreamErrors,
+      streamErrors: streamErrors,
       stdout: stdoutRead.encoded(encoding),
-      stderr: stderrRead.encoded(encoding)
+      stderr: stderrRead.encoded(encoding),
+      limits: limits,
+      endReason: restoredEndReason
+        ?? (finished
+          ? (timedOut
+            ? .timeout
+            : cancelled
+              ? .cancelled
+              : _launchError != nil
+                ? .launchFailed
+                : signal != nil ? .signalled : exitCode != nil ? .exited : .executionFailed) : nil),
+      droppedBytes: stdout.startCursor + stderr.startCursor, members: finished ? [] : members
     )
     condition.unlock()
     return snapshot
   }
 
-  private static func processHasExited(_ processID: Int32) -> Bool {
-    ProcessTable.hasExited(processID)
-  }
-
-  private func requestTermination(_ execution: ShellExecution?) {
-    guard let execution else {
-      return
-    }
-    try? execution.send(signal: .terminate, toProcessGroup: true)
-    let grace = terminationGraceMilliseconds
-    Task.detached {
-      if grace > 0 {
-        try? await Task.sleep(for: .milliseconds(grace))
-      }
-      if self.shouldEscalateTermination() {
-        try? execution.send(signal: .kill, toProcessGroup: true)
+  private func requestTermination(_ execution: (any ExecutionOwnership)?) {
+    guard let execution else { return }
+    ExecutionTasks.start {
+      do { _ = try await execution.cancel() } catch {
+        self.recordStreamError(String(describing: error))
       }
     }
   }
 
-  private func shouldEscalateTermination() -> Bool {
-    condition.lock()
-    defer { condition.unlock() }
-    return !finished
-  }
 }
 
 private struct CursorDataBuffer {
   private(set) var data = Data()
   private(set) var startCursor: Int64 = 0
   private(set) var endCursor: Int64 = 0
+
+  init() {}
+
+  init(restoring stream: ShellStreamRead) {
+    data = stream.base64.flatMap { Data(base64Encoded: $0) } ?? Data()
+    startCursor = stream.startCursor
+    endCursor = stream.nextCursor
+  }
 
   mutating func append(_ chunk: Data, limit: Int) {
     guard !chunk.isEmpty else {
@@ -1097,6 +1370,11 @@ private struct CursorDataBuffer {
       data.removeFirst(overflow)
       startCursor += Int64(overflow)
     }
+  }
+
+  mutating func discardFirst(_ count: Int) {
+    data.removeFirst(count)
+    startCursor += Int64(count)
   }
 
   func read(cursor: Int64, maxBytes: Int) -> CursorRead {
@@ -1180,7 +1458,7 @@ private func blockingAsync<Value: Sendable>(
 ) throws -> Value {
   let semaphore = DispatchSemaphore(value: 0)
   let box = AsyncResultBox<Value>()
-  Task.detached {
+  ExecutionTasks.start {
     do {
       box.set(.success(try await operation()))
     } catch {

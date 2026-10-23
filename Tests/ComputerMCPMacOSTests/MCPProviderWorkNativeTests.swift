@@ -12,6 +12,10 @@ import Testing
 @testable import ComputerMCPGateway
 @testable import ComputerMCPPlatform
 
+#if os(macOS)
+  import ComputerMCPDarwinTestSupport
+#endif
+
 @Suite(.nativeIntegration, .serialized, .timeLimit(.minutes(1)))
 struct MCPProviderWorkNativeTests {
   @Test
@@ -28,7 +32,7 @@ struct MCPProviderWorkNativeTests {
         configuration: GatewayConfiguration(mcp: .init(servers: [server])),
         context: .init(caller: .localCLI, profileID: .localAdmin),
         registeredProjects: [.init(id: "fixture", displayName: "Fixture", rootPath: root.path)],
-        platform: MacOSPlatform.services, plugins: [],
+        platform: MacOSPlatform.services(launcher: testExecutionLauncher()), plugins: [],
         bundledPlugins: .init(packages: [], issues: []))
       do {
         _ = try await runtime.callToolAsync(
@@ -93,7 +97,7 @@ struct MCPProviderWorkNativeTests {
       let started = try await call(client, server, "start")
       try await wait { work.snapshot.contains { $0.kind == .mcpResource } }
       let arguments = JSONValue.object(["handle": .integer(9_007_199_254_740_993)])
-      let target = try continuationTarget(work, server: server, arguments: arguments)
+      let target = try await continuationTarget(work, server: server, arguments: arguments)
       var configured = server
       configured.allowAnyTool = true
       configured.toolRisks = ["inspect": .readOnly]
@@ -127,7 +131,7 @@ struct MCPProviderWorkNativeTests {
       try await wait { work.snapshot.isEmpty }
       _ = try await call(client, server, "start")
       try await wait { work.snapshot.contains { $0.kind == .mcpResource } }
-      let next = try continuationTarget(work, server: server, arguments: arguments)
+      let next = try await continuationTarget(work, server: server, arguments: arguments)
       #expect(target.connectionID == next.connectionID && target.instanceID == next.instanceID)
       #expect(target.resources != next.resources)
       await #expect(throws: GatewayToolError.self) {
@@ -155,7 +159,7 @@ struct MCPProviderWorkNativeTests {
     try await withProvider { client, server, work in
       let started = try await call(client, server, "start")
       try await wait { work.snapshot.contains { $0.kind == .mcpResource } }
-      var selected = try continuationTarget(
+      var selected = try await continuationTarget(
         work, server: server, arguments: .object(["handle": .integer(9_007_199_254_740_993)]))
       selected.selectedOwnershipID = UUID()
       let context = InvocationContext(continuation: selected)
@@ -197,6 +201,7 @@ struct MCPProviderWorkNativeTests {
       let script = try #require(server.args.first)
       let root = URL(fileURLWithPath: script).deletingLastPathComponent()
       let environment = ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: .init(mcp: .init(servers: [server]), projectDirectory: root))
       let scopedClient = client.makeScopedClient(
         workingDirectory: environment.configuration.projectDirectory,
@@ -267,6 +272,7 @@ struct MCPProviderWorkNativeTests {
         projectID: "fixture", rootURL: root, readOnly: false)
       hostContext.ownedWork = work
       let environment = ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: .init(mcp: .init(servers: [other, server]), projectDirectory: root))
       let scopedClient = client.makeScopedClient(
         workingDirectory: environment.configuration.projectDirectory,
@@ -280,7 +286,7 @@ struct MCPProviderWorkNativeTests {
           server: server, name: "start", arguments: .object([:]), requestID: nil, context: .empty)
         try await wait { work.snapshot.contains { $0.kind == .mcpResource } }
         let arguments = JSONValue.object(["handle": .integer(9_007_199_254_740_993)])
-        let target = try continuationTarget(work, server: server, arguments: arguments)
+        let target = try await continuationTarget(work, server: server, arguments: arguments)
         let context = InvocationContext(continuation: target)
         let name = prefix.isEmpty ? "inspect" : "\(prefix).inspect"
         let starts = try String(contentsOf: root.appendingPathComponent("starts"), encoding: .utf8)
@@ -326,7 +332,7 @@ struct MCPProviderWorkNativeTests {
       let started = try await call(client, server, "start")
       try await wait { work.snapshot.contains { $0.kind == .mcpResource } }
       let arguments = JSONValue.object(["handle": .integer(9_007_199_254_740_993)])
-      let target = try continuationTarget(work, server: server, arguments: arguments)
+      let target = try await continuationTarget(work, server: server, arguments: arguments)
       let blocking = BlockingOperationExecutor(label: "continuation-selection-test")
       var replacement = server
       replacement.args.append("changed")
@@ -365,14 +371,20 @@ struct MCPProviderWorkNativeTests {
 
   private func continuationTarget(
     _ work: GatewayOwnedWork, server: MCPServerConfig, arguments: JSONValue
-  ) throws -> MCPContinuationTarget {
-    let lookup = try work.continuations.lookup(
-      projectID: "fixture", registrationID: server.id, tool: "inspect", arguments: arguments)
-    let match = try #require(lookup.matches.first)
-    return MCPContinuationTarget(
-      projectID: "fixture", reference: .init(serverID: server.id, toolName: "inspect"),
-      connectionID: match.connectionID, instanceID: match.instanceID,
-      resources: [match.resource: match.acquiredBy])
+  ) async throws -> MCPContinuationTarget {
+    let deadline = ContinuousClock.now + .seconds(5)
+    while true {
+      let lookup = try work.continuations.lookup(
+        projectID: "fixture", registrationID: server.id, tool: "inspect", arguments: arguments)
+      if lookup.pendingConnections.isEmpty, let match = lookup.matches.first {
+        return MCPContinuationTarget(
+          projectID: "fixture", reference: .init(serverID: server.id, toolName: "inspect"),
+          connectionID: match.connectionID, instanceID: match.instanceID,
+          resources: [match.resource: match.acquiredBy])
+      }
+      try #require(ContinuousClock.now < deadline, "Continuation ownership did not settle")
+      try await Task.sleep(for: .milliseconds(10))
+    }
   }
 
   @Test

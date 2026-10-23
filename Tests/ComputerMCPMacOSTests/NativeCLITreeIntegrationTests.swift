@@ -1,4 +1,5 @@
 import ComputerMCPMacOS
+import ComputerMCPTestSupport
 import CryptoKit
 import Foundation
 import Testing
@@ -9,6 +10,10 @@ import Testing
 @testable import ComputerMCPPlugins
 @testable import ComputerMCPProcess
 @testable import ComputerMCPToolsCLI
+
+#if os(macOS)
+  import ComputerMCPDarwinTestSupport
+#endif
 
 /// An explicit local dependency check, isolated from production App state and sockets.
 @Suite(
@@ -61,7 +66,7 @@ struct NativeCLITreeIntegrationTests {
       ])
     let runtime = try GatewayRuntime(
       configuration: configuration, registeredProjects: projects,
-      platform: MacOSPlatform.services, plugins: [plugin])
+      platform: MacOSPlatform.services(launcher: testExecutionLauncher()), plugins: [plugin])
     do {
       let tools = try runtime.listTools(context: .empty).filter { $0.name.hasPrefix("cli_") }
       #expect(tools.count == 5)
@@ -72,7 +77,8 @@ struct NativeCLITreeIntegrationTests {
           tree: .init(kind: .file, path: treeURL.path))
       ]
       let directRuntime = try GatewayRuntime(
-        configuration: direct, registeredProjects: projects, platform: MacOSPlatform.services,
+        configuration: direct, registeredProjects: projects,
+        platform: MacOSPlatform.services(launcher: testExecutionLauncher()),
         plugins: [])
       let directTools = try directRuntime.listTools(context: .empty).filter {
         $0.name.hasPrefix("cli_")
@@ -99,7 +105,7 @@ struct NativeCLITreeIntegrationTests {
           executableVersion: tree.executableVersion, coverage: tree.coverage,
           omissions: tree.omissions, commands: tree.commands,
           executableChecks: [.init(args: ["--version"], stdout: "incompatible\n")]),
-        project: root, execution: CLIProcessExecution(),
+        project: root, execution: CLIProcessExecution(launcher: testExecutionLauncher()),
         timeoutMilliseconds: 5_000, maxOutputBytes: 4_096)
       await #expect(throws: CLITreeError.self) {
         try await incompatible.callToolAsync(
@@ -127,7 +133,8 @@ struct NativeCLITreeIntegrationTests {
       }
       let observe = try GatewayRuntime(
         configuration: direct, context: .init(caller: .secureTunnel, profileID: .chatGPTObserve),
-        registeredProjects: projects, platform: MacOSPlatform.services, plugins: [])
+        registeredProjects: projects,
+        platform: MacOSPlatform.services(launcher: testExecutionLauncher()), plugins: [])
       #expect(try !observe.listTools(context: .empty).contains { $0.name == format.name })
       await #expect(throws: (any Error).self) {
         try await observe.callToolAsync(name: format.name, arguments: arguments, context: .empty)

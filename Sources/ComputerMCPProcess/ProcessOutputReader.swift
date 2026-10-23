@@ -76,7 +76,7 @@ internal final class ProcessOutputReader: @unchecked Sendable {
         }
         if remaining <= 0 {
           let previous = consumptionTask
-          consumptionTask = Task { [onError] in
+          consumptionTask = ExecutionTasks.start { [onError] in
             await previous?.value
             await onError(POSIXError(.EOVERFLOW))
           }
@@ -124,7 +124,7 @@ internal final class ProcessOutputReader: @unchecked Sendable {
       if errno == EAGAIN || errno == EWOULDBLOCK { return nil }
       let previous = consumptionTask
       let error = POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)
-      consumptionTask = Task { [onError] in
+      consumptionTask = ExecutionTasks.start { [onError] in
         await previous?.value
         await onError(error)
       }
@@ -134,7 +134,7 @@ internal final class ProcessOutputReader: @unchecked Sendable {
 
   private func enqueueLocked(_ data: Data) {
     let previous = consumptionTask
-    consumptionTask = Task { [weak self, consume, onError] in
+    consumptionTask = ExecutionTasks.start { [weak self, consume, onError] in
       await previous?.value
       do {
         try await consume(data)

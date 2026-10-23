@@ -1,5 +1,6 @@
 import ComputerMCPProcess
 import ComputerMCPSandbox
+import ComputerMCPTestSupport
 import Darwin
 import Foundation
 import Testing
@@ -7,7 +8,7 @@ import Testing
 @testable import ComputerMCPPlatformDarwin
 
 // Process-table churn is global; keep these scenarios from invalidating each other's scans.
-@Suite(.serialized) struct ExecutionOwnershipTests {
+@Suite(.nativeIntegration, .serialized) struct ExecutionOwnershipTests {
   @Test(.timeLimit(.minutes(1)), arguments: ExecutionLaunchMethod.allCases, ["orphan", "group"])
   func sandboxFindsOrphansAfterRootExit(method: ExecutionLaunchMethod, variant: String) async throws
   {
@@ -251,7 +252,7 @@ import Testing
     var member: DarwinExecutionSentinel? = try DarwinExecutionSentinel()
     let identity = try #require(member?.identity)
     let owner = DarwinExecutionOwnership(marker: try ExecutionSandboxMarker(), sentinel: boundary)
-    owner.launched(identity)
+    try owner.launched(identity)
     // WNOWAIT collected the exit status but left the member's proc record in zombproc.
     owner.exited(.success(.init(status: 0)))
     let snapshot = try DarwinExecutionProcessTable.system.list(

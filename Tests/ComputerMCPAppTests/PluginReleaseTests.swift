@@ -1,5 +1,6 @@
 import AppKit
 import ComputerMCPMacOS
+import ComputerMCPTestSupport
 import Foundation
 import SwiftUI
 import Testing
@@ -8,6 +9,10 @@ import Testing
 @testable import ComputerMCPControlPlane
 @testable import ComputerMCPPlugins
 @testable import ComputerMCPProcess
+
+#if os(macOS)
+  import ComputerMCPDarwinTestSupport
+#endif
 
 @MainActor
 @Suite(.timeLimit(.minutes(1)))
@@ -61,7 +66,7 @@ struct PluginReleaseTests {
     let output = FileManager.default.temporaryDirectory
       .appendingPathComponent("ComputerMCPReleaseLocalization-\(UUID().uuidString)")
     defer { try? FileManager.default.removeItem(at: output) }
-    let result = try ProcessCommandRunner().run(
+    let result = try ProcessCommandRunner(launcher: testExecutionLauncher()).run(
       executable: "/usr/bin/xcrun",
       arguments: [
         "xcstringstool", "compile",
@@ -328,7 +333,9 @@ private final class ReleaseAppFake: PluginManaging {
     return result(page: page)
   }
   func fetchPlugins() async throws -> PluginHostSnapshot {
-    try PluginHostSnapshot(state: state, applications: MacOSPlatform.services.applications)
+    try PluginHostSnapshot(
+      state: state,
+      applications: MacOSPlatform.services(launcher: testExecutionLauncher()).applications)
   }
   func changePlugins(_ change: PluginHostChange, expectedRevision: Int64) async throws
     -> PluginHostSnapshot
@@ -344,7 +351,9 @@ private final class ReleaseAppFake: PluginManaging {
       throw PluginStoreError.staleRevision(expected: expectedRevision, actual: state.revision)
     }
     state.revision += 1
-    return try PluginHostSnapshot(state: state, applications: MacOSPlatform.services.applications)
+    return try PluginHostSnapshot(
+      state: state,
+      applications: MacOSPlatform.services(launcher: testExecutionLauncher()).applications)
   }
   func searchPlugins(query: String, kind: IntegrationKind?, page: Int, refresh: Bool) async throws
     -> PluginCatalogSearchResult

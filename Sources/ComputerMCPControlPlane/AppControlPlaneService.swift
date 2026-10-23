@@ -122,7 +122,8 @@ package actor AppControlPlaneService {
     self.providerDiscovery =
       providerDiscovery
       ?? AppControlPlaneProviderDiscovery(
-        executableSearchDirectories: platform.executableSearchDirectories)
+        executableSearchDirectories: platform.executableSearchDirectories,
+        commandRunner: ManagedCommandRunner(launcher: platform.launcher, policy: .readOnly))
     self.launchAtLoginController = launchAtLoginController
     self.computerUsePermissionReader = computerUsePermissionReader
     self.platform = platform

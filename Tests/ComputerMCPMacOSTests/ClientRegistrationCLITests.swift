@@ -9,7 +9,7 @@ import Testing
 
 @testable import computer_mcp
 
-@Suite(.timeLimit(.minutes(2)))
+@Suite(.nativeIntegration, .serialized, .timeLimit(.minutes(2)))
 struct ClientRegistrationCLITests {
   @Test(arguments: ["codex", "claude-code"])
   func dryRunConfirmationAndExpectedFingerprint(client: String) throws {
@@ -214,7 +214,10 @@ private struct RegistrationCLIFixture {
     root.appendingPathComponent(
       client == "codex" ? "codex/fixture-mcp.json" : "claude/.claude.json")
   }
-  func service(processRunner: any RegistrationProcessRunning = RegistrationProcessRunner())
+  func service(
+    processRunner: any RegistrationProcessRunning = RegistrationProcessRunner(
+      launcher: testExecutionLauncher())
+  )
     -> ClientRegistrationService
   {
     ClientRegistrationService(
@@ -243,7 +246,7 @@ private struct RegistrationCLIFixture {
     ).write(to: file)
   }
   func run(_ arguments: [String]) throws -> CommandResult {
-    try RegistrationProcessRunner().run(
+    try RegistrationProcessRunner(launcher: testExecutionLauncher()).run(
       executable: executable.path, arguments: arguments,
       environment: [
         "HOME": root.path, "USER": "fixture", "LOGNAME": "fixture", "LANG": "C",
@@ -268,7 +271,7 @@ private struct RecoveryCLIRegistrationRunner: RegistrationProcessRunning {
   ) throws -> CommandResult {
     let restore = arguments.contains("add-json")
     if !arguments.contains("add"), !restore || writesEntry {
-      let result = try RegistrationProcessRunner().run(
+      let result = try RegistrationProcessRunner(launcher: testExecutionLauncher()).run(
         executable: executable, arguments: arguments, environment: environment,
         timeoutMilliseconds: timeoutMilliseconds, maxOutputBytes: maxOutputBytes)
       if !restore { return result }
@@ -301,8 +304,12 @@ private final class UnconfirmedCLIRegistrationRunner: RegistrationProcessRunning
         stdout: "PRIVATE_SENTINEL", stderr: "PRIVATE_SENTINEL", stdoutTruncated: false,
         stderrTruncated: false)
     }
-    return try RegistrationProcessRunner().run(
+    return try RegistrationProcessRunner(launcher: testExecutionLauncher()).run(
       executable: executable, arguments: arguments, environment: environment,
       timeoutMilliseconds: timeoutMilliseconds, maxOutputBytes: maxOutputBytes)
   }
 }
+
+#if os(macOS)
+  import ComputerMCPDarwinTestSupport
+#endif

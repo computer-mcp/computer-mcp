@@ -11,6 +11,10 @@ import Testing
 @testable import ComputerMCPGateway
 @testable import ComputerMCPProcess
 
+#if os(macOS)
+  import ComputerMCPDarwinTestSupport
+#endif
+
 struct MCPRegistrationManagementTests {
   @Test
   func omittedEnabledPreservesExistingConfigurationAndUnknownFieldsFail() throws {
@@ -62,6 +66,7 @@ struct MCPRegistrationManagementTests {
     #expect(throws: (any Error).self) { try client.listTools(server: server, context: .empty) }
     let registry = MacOSToolProviders().makeProviders(
       toolEnvironment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: .fixture(mcp: .init(servers: [server]))), mcpClient: client)
     let router = try GatewayProviderRouter(registry: registry)
     #expect(try !router.listTools(context: .empty).contains { $0.name.hasPrefix("manual.") })

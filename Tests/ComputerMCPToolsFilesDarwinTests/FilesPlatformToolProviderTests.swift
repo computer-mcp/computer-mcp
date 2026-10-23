@@ -10,6 +10,10 @@ import Testing
 
 @testable import ComputerMCPToolsFiles
 
+#if os(macOS)
+  import ComputerMCPDarwinTestSupport
+#endif
+
 @Suite(.nativeIntegration, .serialized)
 final class FilesPlatformToolProviderTests {
   @Test
@@ -29,6 +33,7 @@ final class FilesPlatformToolProviderTests {
     )
     let provider = FilesToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["file.xattrs"]),
           projectDirectory: directory
@@ -115,6 +120,7 @@ final class FilesPlatformToolProviderTests {
     )
     let provider = FilesToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["file.xattrs"]),
           projectDirectory: directory
@@ -171,6 +177,7 @@ final class FilesPlatformToolProviderTests {
     )
     let provider = FilesToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["file.remove_xattr", "file.xattrs"]),
           projectDirectory: directory
@@ -221,6 +228,7 @@ final class FilesPlatformToolProviderTests {
     )
     let provider = FilesToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["file.remove_xattr", "file.xattrs"]),
           projectDirectory: directory
@@ -265,6 +273,7 @@ final class FilesPlatformToolProviderTests {
     try "download".write(to: file, atomically: true, encoding: .utf8)
     let provider = FilesToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["file.remove_xattr"]),
           projectDirectory: directory
@@ -317,6 +326,7 @@ final class FilesPlatformToolProviderTests {
     try "obsolete".write(to: file, atomically: true, encoding: .utf8)
     let provider = FilesToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["file.trash"]),
           projectDirectory: directory

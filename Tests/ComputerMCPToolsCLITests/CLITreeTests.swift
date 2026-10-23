@@ -1,3 +1,4 @@
+import ComputerMCPTestSupport
 import Foundation
 import Testing
 
@@ -7,6 +8,10 @@ import Testing
 @testable import ComputerMCPPlatformPOSIX
 @testable import ComputerMCPProcess
 @testable import ComputerMCPToolsCLI
+
+#if os(macOS)
+  import ComputerMCPDarwinTestSupport
+#endif
 
 #if canImport(Darwin)
   import Darwin
@@ -161,7 +166,7 @@ struct CLITreeTests {
     defer { fixture.cleanup() }
     let tree = Self.tree(Self.printCommand())
     try fixture.write(tree)
-    let execution = CLIProcessExecution()
+    let execution = CLIProcessExecution(launcher: testExecutionLauncher())
     let source = CLITreeSource(
       kind: kind, helper: kind == .helper ? "/bin/cat" : nil, args: [fixture.treeURL.path])
     let loaded = try source.load(
@@ -216,7 +221,7 @@ struct CLITreeTests {
   func cancellationReapsOnlyItsOwnedProcess() async throws {
     let fixture = try CLITreeFixture()
     defer { fixture.cleanup() }
-    let execution = CLIProcessExecution()
+    let execution = CLIProcessExecution(launcher: testExecutionLauncher())
     let marker = fixture.root.appendingPathComponent("pid")
     let task = Task {
       try await execution.runAsync(
@@ -250,7 +255,7 @@ struct CLITreeTests {
   func processContextAndTimeoutAreObservable() async throws {
     let fixture = try CLITreeFixture()
     defer { fixture.cleanup() }
-    let execution = CLIProcessExecution()
+    let execution = CLIProcessExecution(launcher: testExecutionLauncher())
     let context = try await execution.runAsync(
       executable: "/bin/sh",
       invocation: .init(
@@ -316,7 +321,7 @@ struct CLITreeTests {
       at: fixture.treeURL, withDestinationURL: outside.treeURL)
     var source = CLITreeSource(kind: .file, path: fixture.treeURL.path)
     source.packageRoot = fixture.root
-    let execution = CLIProcessExecution()
+    let execution = CLIProcessExecution(launcher: testExecutionLauncher())
     let command = CLICommandConfig(id: "fixture", executable: "/bin/cat", allowAnyArgs: false)
     #expect(throws: (any Error).self) {
       try source.load(command: command, project: fixture.root, execution: execution)
@@ -400,7 +405,7 @@ struct CLITreeTests {
     .init(
       registration: .init(id: "fixture", executable: executable, allowAnyArgs: false),
       tree: tree(command), project: URL(fileURLWithPath: "/tmp"),
-      execution: CLIProcessExecution(),
+      execution: CLIProcessExecution(launcher: testExecutionLauncher()),
       timeoutMilliseconds: 5_000, maxOutputBytes: 4_096)
   }
 

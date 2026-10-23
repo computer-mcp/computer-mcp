@@ -9,6 +9,10 @@ import Testing
 @testable import ComputerMCPGateway
 @testable import ComputerMCPPlugins
 
+#if os(macOS)
+  import ComputerMCPDarwinTestSupport
+#endif
+
 struct BundledPluginsTests {
   @Test
   func productResourcesAreLocatedFromTheRunningExecutableNotCWDOrPATH() {
@@ -36,7 +40,7 @@ struct BundledPluginsTests {
     #expect(bundled.issues.isEmpty && bundled.packages.count == 1)
     let snapshot = try PluginHostSnapshot(
       state: PluginStoreSnapshot(), bundled: bundled,
-      applications: MacOSPlatform.services.applications)
+      applications: MacOSPlatform.services(launcher: testExecutionLauncher()).applications)
     #expect(snapshot.state == PluginStoreSnapshot())
     #expect(snapshot.bundled.map(\.manifest.id) == ["test-package"])
     let settings = snapshot.settings(for: "test-package")
@@ -69,7 +73,7 @@ struct BundledPluginsTests {
     #expect(Set(bundled.issues.map(\.pluginID)) == ["test-package", "broken"])
     let snapshot = try PluginHostSnapshot(
       state: PluginStoreSnapshot(), bundled: bundled,
-      applications: MacOSPlatform.services.applications)
+      applications: MacOSPlatform.services(launcher: testExecutionLauncher()).applications)
     #expect(snapshot.issues == bundled.issues)
     #expect(snapshot.state.settings.isEmpty && snapshot.state.installations.isEmpty)
   }
@@ -113,13 +117,15 @@ struct BundledPluginsTests {
     let root = try files.makePackage(directory: "Plugins/base", text: PluginStoreFixture.manifest)
     let bundled = BundledPlugins.load(directory: root.deletingLastPathComponent())
     let database = try GatewayDatabase(path: files.databaseURL.path)
-    let store = PluginStore(database: database, platform: MacOSPlatform.services)
+    let store = PluginStore(
+      database: database, platform: MacOSPlatform.services(launcher: testExecutionLauncher()))
     var settings = files.settings
     settings.mcp["native"]?.exposure = .gateway
     settings.dependencyExecutables = ["vendor": "/usr/bin/printf"]
     let enabled = try await store.setSettings(settings, for: "test-package", expectedRevision: 0)
     let before = try PluginHostSnapshot(
-      state: enabled, bundled: bundled, applications: MacOSPlatform.services.applications)
+      state: enabled, bundled: bundled,
+      applications: MacOSPlatform.services(launcher: testExecutionLauncher()).applications)
     #expect(
       before.contributions.count == 3
         && before.contributions.allSatisfy { $0.source.kind == .bundled })
@@ -127,7 +133,8 @@ struct BundledPluginsTests {
     let id = try #require(selected.selectedInstallations["test-package"])
     #expect(
       try PluginHostSnapshot(
-        state: selected, bundled: bundled, applications: MacOSPlatform.services.applications
+        state: selected, bundled: bundled,
+        applications: MacOSPlatform.services(launcher: testExecutionLauncher()).applications
       ).contributions.allSatisfy {
         $0.source.kind == .development
       })
@@ -135,12 +142,14 @@ struct BundledPluginsTests {
       to: files.packageRoot.appendingPathComponent(PluginManifest.filename), atomically: true,
       encoding: .utf8)
     let broken = try PluginHostSnapshot(
-      state: selected, bundled: bundled, applications: MacOSPlatform.services.applications)
+      state: selected, bundled: bundled,
+      applications: MacOSPlatform.services(launcher: testExecutionLauncher()).applications)
     #expect(broken.contributions.isEmpty && broken.issues.count == 1)
     let restored = try await store.select(
       installationID: nil, for: "test-package", expectedRevision: 2)
     let fallback = try PluginHostSnapshot(
-      state: restored, bundled: bundled, applications: MacOSPlatform.services.applications)
+      state: restored, bundled: bundled,
+      applications: MacOSPlatform.services(launcher: testExecutionLauncher()).applications)
     #expect(fallback.state.settings["test-package"] == settings)
     #expect(fallback.contributions.count == 3 && fallback.issues.isEmpty)
     #expect(fallback.contributions.allSatisfy { $0.source.kind == .bundled })
@@ -149,13 +158,14 @@ struct BundledPluginsTests {
     #expect(try reopened.pluginStoreSnapshot() == restored)
     let runtime = try GatewayRuntime(
       configuration: GatewayConfiguration(projectDirectory: files.root), database: reopened,
-      platform: MacOSPlatform.services, bundledPlugins: bundled)
+      platform: MacOSPlatform.services(launcher: testExecutionLauncher()), bundledPlugins: bundled)
     #expect(runtime.pluginOrigins.count == 3 && runtime.pluginIssues.isEmpty)
     await runtime.shutdown()
     let disabled = try await store.setEnabled(false, for: "test-package", expectedRevision: 3)
     #expect(
       try PluginHostSnapshot(
-        state: disabled, bundled: bundled, applications: MacOSPlatform.services.applications
+        state: disabled, bundled: bundled,
+        applications: MacOSPlatform.services(launcher: testExecutionLauncher()).applications
       ).contributions.isEmpty)
   }
 }

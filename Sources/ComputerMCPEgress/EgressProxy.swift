@@ -10,6 +10,8 @@ import NIOPosix
 
 #if canImport(Darwin)
   import Darwin
+#elseif canImport(Glibc)
+  import Glibc
 #endif
 
 package struct EgressLimits: Sendable {

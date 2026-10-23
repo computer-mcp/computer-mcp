@@ -5,6 +5,10 @@ import Testing
 @testable import ComputerMCPPlatform
 @testable import ComputerMCPProcess
 
+#if os(macOS)
+  import ComputerMCPDarwinTestSupport
+#endif
+
 @Suite(.nativeIntegration, .timeLimit(.minutes(1)))
 struct VerificationScriptDependencyTests {
   @Test(
@@ -72,7 +76,7 @@ private struct GateFixture {
   }
 
   func run() throws -> CommandResult {
-    try ProcessCommandRunner().run(
+    try ProcessCommandRunner(launcher: testExecutionLauncher()).run(
       executable: "/bin/zsh", arguments: [script.path],
       workingDirectory: root, environment: ["RIPGREP_EXECUTABLE": dependency.path],
       timeoutMilliseconds: 30_000, maxOutputBytes: 32_768)

@@ -1323,16 +1323,14 @@ package struct PolicyConfig: Codable, Equatable, Sendable {
   package var shellExecutable: String
   package var maxShellSessions: Int
   package var maxShellInputBytes: Int
-  package var shellTerminationGraceMs: Int
 
   package init(
-    defaultTimeoutMs: Int = 30_000,
-    maxOutputBytes: Int = 1_048_576,
+    defaultTimeoutMs: Int = 120_000,
+    maxOutputBytes: Int = 8_388_608,
     shellEnabled: Bool = false,
     shellExecutable: String = "/bin/zsh",
     maxShellSessions: Int = 16,
-    maxShellInputBytes: Int = 1_048_576,
-    shellTerminationGraceMs: Int = 2_000
+    maxShellInputBytes: Int = 1_048_576
   ) {
     self.defaultTimeoutMs = defaultTimeoutMs
     self.maxOutputBytes = maxOutputBytes
@@ -1340,7 +1338,6 @@ package struct PolicyConfig: Codable, Equatable, Sendable {
     self.shellExecutable = shellExecutable
     self.maxShellSessions = maxShellSessions
     self.maxShellInputBytes = maxShellInputBytes
-    self.shellTerminationGraceMs = shellTerminationGraceMs
   }
 
   private enum CodingKeys: String, CodingKey {
@@ -1350,15 +1347,14 @@ package struct PolicyConfig: Codable, Equatable, Sendable {
     case shellExecutable = "shell_executable"
     case maxShellSessions = "max_shell_sessions"
     case maxShellInputBytes = "max_shell_input_bytes"
-    case shellTerminationGraceMs = "shell_termination_grace_ms"
   }
 
   package init(from decoder: any Decoder) throws {
     let container = try decoder.container(keyedBy: CodingKeys.self)
     defaultTimeoutMs =
-      try container.decodeIfPresent(Int.self, forKey: .defaultTimeoutMs) ?? 30_000
+      try container.decodeIfPresent(Int.self, forKey: .defaultTimeoutMs) ?? 120_000
     maxOutputBytes =
-      try container.decodeIfPresent(Int.self, forKey: .maxOutputBytes) ?? 1_048_576
+      try container.decodeIfPresent(Int.self, forKey: .maxOutputBytes) ?? 8_388_608
     shellEnabled = try container.decodeIfPresent(Bool.self, forKey: .shellEnabled) ?? false
     shellExecutable =
       try container.decodeIfPresent(String.self, forKey: .shellExecutable) ?? "/bin/zsh"
@@ -1366,8 +1362,6 @@ package struct PolicyConfig: Codable, Equatable, Sendable {
       try container.decodeIfPresent(Int.self, forKey: .maxShellSessions) ?? 16
     maxShellInputBytes =
       try container.decodeIfPresent(Int.self, forKey: .maxShellInputBytes) ?? 1_048_576
-    shellTerminationGraceMs =
-      try container.decodeIfPresent(Int.self, forKey: .shellTerminationGraceMs) ?? 2_000
   }
 
   fileprivate func validate() throws {
@@ -1388,11 +1382,6 @@ package struct PolicyConfig: Codable, Equatable, Sendable {
     guard maxShellInputBytes > 0 && maxShellInputBytes <= 67_108_864 else {
       throw ConfigurationError.invalid(
         "policy.max_shell_input_bytes must be between 1 and 67108864."
-      )
-    }
-    guard shellTerminationGraceMs >= 0 && shellTerminationGraceMs <= 60_000 else {
-      throw ConfigurationError.invalid(
-        "policy.shell_termination_grace_ms must be between 0 and 60000."
       )
     }
   }

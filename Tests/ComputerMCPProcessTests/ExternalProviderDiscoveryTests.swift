@@ -1,10 +1,15 @@
 import ComputerMCPCore
+import ComputerMCPTestSupport
 import Foundation
 import Testing
 
 @testable import ComputerMCPConfiguration
 @testable import ComputerMCPPlatform
 @testable import ComputerMCPProcess
+
+#if os(macOS)
+  import ComputerMCPDarwinTestSupport
+#endif
 
 @Suite
 
@@ -432,7 +437,7 @@ final class ExternalProviderDiscoveryTests {
     #expect(runner.recordedCalls.map(\.arguments) == [["--version"]])
   }
 
-  @Test(arguments: ["mcp", "cli"])
+  @Test(.enabled(if: nativeSandboxAvailable), arguments: ["mcp", "cli"])
   func realScriptFindsItsInterpreterAndReadsItsRegisteredDirectory(_ source: String) async throws {
     let root = try makeTemporaryDirectory()
     defer { try? FileManager.default.removeItem(at: root) }
@@ -442,9 +447,9 @@ final class ExternalProviderDiscoveryTests {
     let executable = try makeExecutable(named: "probe", in: cwd)
     try """
     #!/usr/bin/env fixture-runtime
-    [ "$PROVIDER_SECRET" = 'fixture-secret' ] || exit 12
-    [ "${EMPTY+x}" = x ] && [ "$EMPTY" = '' ] || exit 13
-    [ "$INHERITED" = host ] || exit 14
+    [ -z "$PROVIDER_SECRET" ] || exit 12
+    [ -z "${EMPTY+x}" ] || exit 13
+    [ -z "$INHERITED" ] || exit 14
     \(source == "mcp" ? "[ \"$1\" = serve ] || exit 15; shift" : "")
     [ "$1" = --version ] && [ "$#" = 1 ] || exit 16
     /bin/cat version.txt
@@ -469,6 +474,7 @@ final class ExternalProviderDiscoveryTests {
     let discovery = ExternalProviderDiscovery(
       configuration: configuration,
       definitions: [codexDefinition],
+      commandRunner: ManagedCommandRunner(launcher: testExecutionLauncher(), policy: .readOnly),
       environment: ["PATH": "/unrelated", "EMPTY": "host", "INHERITED": "host"],
       commonSearchDirectories: [])
     let results = try await BlockingOperationExecutor(label: "test.provider-context").perform {

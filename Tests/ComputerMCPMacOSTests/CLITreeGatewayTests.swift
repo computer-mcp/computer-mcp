@@ -10,6 +10,10 @@ import Testing
 @testable import ComputerMCPPlugins
 @testable import ComputerMCPToolsCLI
 
+#if os(macOS)
+  import ComputerMCPDarwinTestSupport
+#endif
+
 struct CLITreeGatewayTests {
   @Test
   func realCLIThroughFileCatalogAndRefresh() async throws {
@@ -23,7 +27,8 @@ struct CLITreeGatewayTests {
         id: "printf", executable: "/usr/bin/printf", allowAnyArgs: false,
         tree: .init(kind: .file, path: fixture.treeURL.path))
     ]
-    let environment = ToolEnvironment(configuration: configuration)
+    let environment = ToolEnvironment(
+      launcher: testExecutionLauncher(), configuration: configuration)
     let provider = CLIToolProvider(environment: environment)
     let router = try GatewayProviderRouter(
       source: { [provider] + (try provider.treeProviders()) },
@@ -116,7 +121,7 @@ struct CLITreeGatewayTests {
       ])
     let runtime = try GatewayRuntime(
       configuration: configuration, registeredProjects: projects,
-      platform: MacOSPlatform.services, plugins: [plugin])
+      platform: MacOSPlatform.services(launcher: testExecutionLauncher()), plugins: [plugin])
     let tool = try #require(runtime.listTools(context: .empty).first { $0.name.hasPrefix("cli_") })
     let result = try await runtime.callToolAsync(
       name: tool.name, arguments: .object(["values": .array([.string("plugin value")])]),
@@ -131,7 +136,8 @@ struct CLITreeGatewayTests {
         tree: .init(kind: .file, path: fixture.treeURL.path))
     ]
     let directRuntime = try GatewayRuntime(
-      configuration: direct, registeredProjects: projects, platform: MacOSPlatform.services,
+      configuration: direct, registeredProjects: projects,
+      platform: MacOSPlatform.services(launcher: testExecutionLauncher()),
       plugins: [])
     let directTool = try #require(
       directRuntime.listTools(context: .empty).first { $0.name.hasPrefix("cli_") })
@@ -140,7 +146,7 @@ struct CLITreeGatewayTests {
     let observeContext = ExecutionContext(caller: .secureTunnel, profileID: .chatGPTObserve)
     let observe = try GatewayRuntime(
       configuration: direct, context: observeContext, registeredProjects: projects,
-      platform: MacOSPlatform.services, plugins: [])
+      platform: MacOSPlatform.services(launcher: testExecutionLauncher()), plugins: [])
     #expect(try !observe.listTools(context: .empty).contains { $0.name == tool.name })
     await #expect(throws: (any Error).self) {
       try await observe.callToolAsync(

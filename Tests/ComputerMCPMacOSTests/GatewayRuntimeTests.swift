@@ -9,6 +9,10 @@ import Testing
 @testable import ComputerMCPCore
 @testable import ComputerMCPGateway
 
+#if os(macOS)
+  import ComputerMCPDarwinTestSupport
+#endif
+
 @Suite(.serialized)
 
 final class GatewayRuntimeTests {
@@ -924,7 +928,8 @@ final class GatewayRuntimeTests {
     return try GatewayRuntime(
       configuration: configuration,
       database: database,
-      registeredProjects: projects, platform: MacOSPlatform.services
+      registeredProjects: projects,
+      platform: MacOSPlatform.services(launcher: testExecutionLauncher())
     )
   }
 

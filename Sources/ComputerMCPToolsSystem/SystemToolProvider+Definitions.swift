@@ -244,7 +244,7 @@ extension SystemToolProvider {
         tool: MCPTool(
           name: "system.processes",
           description:
-            "Return a bounded read-only macOS process snapshot using fixed /bin/ps argv. This reports executable command names, not full argument strings.",
+            "Return a bounded read-only macOS process snapshot through native host APIs. Command includes readable arguments; otherwise it contains the executable path or name with [arguments unavailable]. Unreadable CPU, memory, or elapsed values are null.",
           inputSchema: objectSchema(
             properties: [
               "query": stringSchema(

@@ -17,8 +17,8 @@ access_token_env = "COMPUTER_MCP_HTTP_ACCESS_TOKEN"
 allowed_origins = ["https://chatgpt.com", "https://chat.openai.com"]
 
 [policy]
-default_timeout_ms = 30000
-max_output_bytes = 1048576
+default_timeout_ms = 120000
+max_output_bytes = 8388608
 shell_enabled = false
 
 [[projects]]

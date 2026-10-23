@@ -1,10 +1,15 @@
 import ComputerMCPMacOS
+import ComputerMCPTestSupport
 import Foundation
 import Testing
 
 @testable import ComputerMCPConfiguration
 @testable import ComputerMCPCore
 @testable import ComputerMCPGateway
+
+#if os(macOS)
+  import ComputerMCPDarwinTestSupport
+#endif
 
 @Suite(.timeLimit(.minutes(1)))
 struct GatewayProjectAvailabilityTests {
@@ -107,7 +112,8 @@ struct GatewayProjectAvailabilityTests {
     await #expect(throws: GatewayRuntimeError.duplicateProjectID("duplicate")) {
       try await GatewayRuntime.make(
         configuration: GatewayConfiguration(projectDirectory: root),
-        registeredProjects: [project, project], platform: MacOSPlatform.services,
+        registeredProjects: [project, project],
+        platform: MacOSPlatform.services(launcher: testExecutionLauncher()),
         bundledPlugins: .load(directory: nil))
     }
   }
@@ -120,7 +126,8 @@ struct GatewayProjectAvailabilityTests {
       configuration: GatewayConfiguration(
         runtime: .init(caller: .secureTunnel, profileID: .chatGPTObserve),
         builtin: .init(enabled: ["file.read"]), projectDirectory: root),
-      registeredProjects: projects(root: root), platform: MacOSPlatform.services,
+      registeredProjects: projects(root: root),
+      platform: MacOSPlatform.services(launcher: testExecutionLauncher()),
       bundledPlugins: .load(directory: nil))
     #expect(try gateway.listTools(context: .empty).contains { $0.name == "file.read" })
     await gateway.shutdown()
@@ -142,7 +149,8 @@ struct GatewayProjectAvailabilityTests {
             allowedCallers: [caller])
         ],
         builtin: .init(enabled: ["file.read"]), projectDirectory: root),
-      registeredProjects: projects, platform: MacOSPlatform.services,
+      registeredProjects: projects,
+      platform: MacOSPlatform.services(launcher: testExecutionLauncher()),
       bundledPlugins: .load(directory: nil))
   }
 

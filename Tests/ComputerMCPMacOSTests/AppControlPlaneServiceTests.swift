@@ -19,6 +19,10 @@ import Testing
 @testable import ComputerMCPPlugins
 @testable import ComputerMCPProcess
 
+#if os(macOS)
+  import ComputerMCPDarwinTestSupport
+#endif
+
 @Suite(.nativeIntegration, .serialized)
 
 final class AppControlPlaneServiceTests {
@@ -1008,7 +1012,7 @@ final class AppControlPlaneServiceTests {
         "plugins", "search", "工作", "--kind", "mcp", "--page", "2", "--refresh",
         "--control-socket", fixture.directories.controlSocket.path,
       ]
-      let success = try ProcessCommandRunner().run(
+      let success = try ProcessCommandRunner(launcher: testExecutionLauncher()).run(
         executable: executable.path, arguments: args,
         workingDirectory: fixture.root, environment: [:], timeoutMilliseconds: 30_000,
         maxOutputBytes: 1_048_576)
@@ -1023,7 +1027,7 @@ final class AppControlPlaneServiceTests {
       #expect(json.objectValue?["entries"]?.arrayValue?.count == 1)
       #expect(await catalog.refreshRequested)
       await catalog.fail()
-      let failure = try ProcessCommandRunner().run(
+      let failure = try ProcessCommandRunner(launcher: testExecutionLauncher()).run(
         executable: executable.path, arguments: args,
         workingDirectory: fixture.root, environment: [:], timeoutMilliseconds: 30_000,
         maxOutputBytes: 1_048_576)
@@ -1118,7 +1122,7 @@ final class AppControlPlaneServiceTests {
           "v1.0.0",
         ],
       ] {
-        let command = try ProcessCommandRunner().run(
+        let command = try ProcessCommandRunner(launcher: testExecutionLauncher()).run(
           executable: executable.path,
           arguments: arguments + ["--control-socket", fixture.directories.controlSocket.path],
           workingDirectory: fixture.root, environment: [:], timeoutMilliseconds: 30_000,
@@ -1167,7 +1171,7 @@ final class AppControlPlaneServiceTests {
       let executable = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
         .deletingLastPathComponent().deletingLastPathComponent()
         .appendingPathComponent(".build/debug/computer-mcp")
-      let command = try ProcessCommandRunner().run(
+      let command = try ProcessCommandRunner(launcher: testExecutionLauncher()).run(
         executable: executable.path,
         arguments: [
           "plugins", "search", "--refresh", "--control-socket",
@@ -1304,7 +1308,7 @@ final class AppControlPlaneServiceTests {
         .deletingLastPathComponent().deletingLastPathComponent()
       let executable = repository.appendingPathComponent(".build/debug/computer-mcp")
       #expect(FileManager.default.isExecutableFile(atPath: executable.path))
-      let command = try ProcessCommandRunner().run(
+      let command = try ProcessCommandRunner(launcher: testExecutionLauncher()).run(
         executable: executable.path,
         arguments: [
           "plugins", "register", packageRoot.path, "--expected-revision", "0", "--control-socket",
@@ -1330,7 +1334,7 @@ final class AppControlPlaneServiceTests {
           ]))
       }
       #expect(try fixture.database.pluginStoreSnapshot().revision == 1)
-      let stale = try ProcessCommandRunner().run(
+      let stale = try ProcessCommandRunner(launcher: testExecutionLauncher()).run(
         executable: executable.path,
         arguments: [
           "plugins", "enable", "test-package", "--expected-revision", "0", "--control-socket",
@@ -1351,7 +1355,8 @@ final class AppControlPlaneServiceTests {
       #expect(source.cli.commands.map(\.id) == ["personal"])
       #expect(source.knownPluginMCPServerIDs.contains("plugin-12-test-package-native"))
       let runtime = try GatewayRuntime(
-        configuration: source, database: fixture.database, platform: MacOSPlatform.services)
+        configuration: source, database: fixture.database,
+        platform: MacOSPlatform.services(launcher: testExecutionLauncher()))
       #expect(runtime.pluginOrigins.count == 2)
       #expect(runtime.pluginDiagnostics.isEmpty && runtime.pluginIssues.isEmpty)
       #expect(
@@ -1368,7 +1373,7 @@ final class AppControlPlaneServiceTests {
           == exportedSettings)
       let settingsFile = fixture.root.appendingPathComponent("settings.json")
       try JSONEncoder().encode(exportedSettings).write(to: settingsFile)
-      let configured = try ProcessCommandRunner().run(
+      let configured = try ProcessCommandRunner(launcher: testExecutionLauncher()).run(
         executable: executable.path,
         arguments: [
           "plugins", "configure", "test-package", "--settings-file", settingsFile.path,
@@ -1392,7 +1397,8 @@ final class AppControlPlaneServiceTests {
       #expect(
         disabled.settings["test-package"]?.dependencyExecutables == settings.dependencyExecutables)
       let disabledRuntime = try GatewayRuntime(
-        configuration: source, database: fixture.database, platform: MacOSPlatform.services)
+        configuration: source, database: fixture.database,
+        platform: MacOSPlatform.services(launcher: testExecutionLauncher()))
       #expect(disabledRuntime.pluginOrigins.isEmpty)
       await disabledRuntime.shutdown()
       let audit = try #require(
@@ -1469,7 +1475,9 @@ final class AppControlPlaneServiceTests {
     _ = try await fixture.controlPlane.activateManifest(
       GatewayConfiguration().exportedTOML(),
       expectedDigest: try? await fixture.controlPlane.configurationDigest())
-    let store = PluginStore(database: fixture.database, platform: MacOSPlatform.services)
+    let store = PluginStore(
+      database: fixture.database,
+      platform: MacOSPlatform.services(launcher: testExecutionLauncher()))
     _ = try await store.setSettings(
       .init(mcp: ["native": .init(registrationID: "plugin-native")]), for: "test-package",
       expectedRevision: 0)
@@ -2409,7 +2417,8 @@ final class AppControlPlaneServiceTests {
         projectID: project.id
       ),
       database: fixture.database,
-      registeredProjects: [project], platform: MacOSPlatform.services
+      registeredProjects: [project],
+      platform: MacOSPlatform.services(launcher: testExecutionLauncher())
     )
     let toolNames = Set(try gateway.listTools(context: .empty).map(\.name))
     #expect(!toolNames.contains("file.read"))
@@ -2885,11 +2894,14 @@ private final class AppControlPlaneServiceFixture: @unchecked Sendable {
       manifestURL: directories.manifest,
       database: database,
       loader: GatewayManifestConfigurationLoader(
-        database: database, applications: MacOSPlatform.services.applications))
+        database: database,
+        applications: MacOSPlatform.services(launcher: testExecutionLauncher()).applications))
     secretStore = try KeychainSecretStore(adapter: keychainAdapter ?? MemoryKeychainAdapter())
     let openAITunnelSupervisor = OpenAITunnelSupervisor(
+      launcher: testExecutionLauncher(),
       secretStore: secretStore,
-      executableSearchDirectories: MacOSPlatform.services.executableSearchDirectories,
+      executableSearchDirectories: MacOSPlatform.services(launcher: testExecutionLauncher())
+        .executableSearchDirectories,
       resolver: FixedOpenAITunnelClientResolver(),
       planBuilder: FixedOpenAITunnelPlanBuilder(),
       proxyResolver: FixedOpenAITunnelHTTPProxyResolver(),
@@ -2907,7 +2919,8 @@ private final class AppControlPlaneServiceFixture: @unchecked Sendable {
       providerDiscovery: providerDiscovery,
       launchAtLoginController: launchAtLoginController,
       computerUsePermissionReader: computerUsePermissionReader,
-      platform: MacOSPlatform.services, pluginCatalog: pluginCatalog
+      platform: MacOSPlatform.services(launcher: testExecutionLauncher()),
+      pluginCatalog: pluginCatalog
     )
   }
 

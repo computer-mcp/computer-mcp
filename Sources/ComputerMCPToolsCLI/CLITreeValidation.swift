@@ -98,16 +98,19 @@ package enum CLITreeValidation {
   }
 
   package static func check(
+    launcher: ExecutionLauncher = ExecutionLauncher(),
     file: URL, executable: String, workingDirectory: URL, expectedVersion: String? = nil
   ) async -> CLITreeValidationReport {
     let data: Data
     do { data = try read(file) } catch { return readFailure() }
     return await check(
+      launcher: launcher,
       data: data, executable: executable, workingDirectory: workingDirectory,
       expectedVersion: expectedVersion)
   }
 
   static func check(
+    launcher: ExecutionLauncher = ExecutionLauncher(),
     data: Data, executable: String, workingDirectory: URL, expectedVersion: String? = nil,
     environment: [String: String] = ProcessInfo.processInfo.environment
   ) async -> CLITreeValidationReport {
@@ -120,7 +123,8 @@ package enum CLITreeValidation {
           message: "Declare exact executable checks before checking compatibility."))
       return report
     }
-    let execution = CLIProcessExecution(inheritsEnvironment: false)
+    let execution = CLIProcessExecution(
+      launcher: launcher, policy: .readOnly, inheritsEnvironment: false)
     do {
       let identity = try CLIExecutableIdentity.capture(
         executable: executable, cwd: workingDirectory, environment: environment)

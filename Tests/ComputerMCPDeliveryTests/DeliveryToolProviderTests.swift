@@ -7,6 +7,10 @@ import Testing
 
 @testable import ComputerMCPDelivery
 
+#if os(macOS)
+  import ComputerMCPDarwinTestSupport
+#endif
+
 @Suite(.nativeIntegration)
 struct DeliveryToolProviderTests {
   @Test
@@ -346,7 +350,9 @@ struct DeliveryToolProviderTests {
       var configuration = fixture.tools().configuration
       configuration.cli.commands[0].executable = wrapper.path
       let provider = DeliveryToolProvider(
-        environment: .init(configuration: configuration, environment: fixture.environment),
+        environment: .init(
+          launcher: testExecutionLauncher(), configuration: configuration,
+          environment: fixture.environment),
         io: .init(), startsRecovery: false)
       let result = try fixture.apply(provider: provider)
       #expect(result["state"] == .string("committed"))

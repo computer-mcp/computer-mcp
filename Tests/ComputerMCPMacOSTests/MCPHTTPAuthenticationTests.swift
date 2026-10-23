@@ -15,6 +15,10 @@ import Testing
 @testable import ComputerMCPProcess
 @testable import ComputerMCPToolsCLI
 
+#if os(macOS)
+  import ComputerMCPDarwinTestSupport
+#endif
+
 @Suite(.nativeIntegration, .timeLimit(.minutes(1)))
 struct MCPHTTPAuthenticationTests {
   @Test(arguments: [false, true])
@@ -43,7 +47,9 @@ struct MCPHTTPAuthenticationTests {
   {
     let fixture = try MCPRegistrationControlFixture()
     defer { fixture.remove() }
-    let store = PluginStore(database: fixture.database, platform: MacOSPlatform.services)
+    let store = PluginStore(
+      database: fixture.database,
+      platform: MacOSPlatform.services(launcher: testExecutionLauncher()))
     let endpoint = "https://example.test/mcp"
     func register(_ id: String) async throws -> URL {
       let root = fixture.root.appendingPathComponent(id)
@@ -243,7 +249,7 @@ struct MCPHTTPAuthenticationTests {
         let executable = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
           .deletingLastPathComponent().deletingLastPathComponent().appendingPathComponent(
             ".build/debug/computer-mcp")
-        let execution = CLIProcessExecution()
+        let execution = CLIProcessExecution(launcher: testExecutionLauncher())
         let saved = try await execution.runAsync(
           executable: executable.path,
           invocation: .init(

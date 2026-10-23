@@ -3,6 +3,41 @@ package protocol SystemProbe: Sendable {
   func memoryStatistics() throws -> SystemMemoryStatistics
   func cpuHardware() -> SystemCPUHardware
   func thermalCondition() -> SystemThermalCondition
+  /// Visits a PID-ordered snapshot until `visit` returns false. Returns true on timeout.
+  /// Processes that exit during inspection may be omitted; unreadable fields are nil.
+  func processes(
+    deadline: ContinuousClock.Instant, visit: (SystemProcess) throws -> Bool
+  ) throws -> Bool
+}
+
+package struct SystemProcess: Sendable {
+  package let pid: Int32
+  package let parentPID: Int32
+  package let user: String
+  package let state: String
+  /// Lifetime CPU time divided by elapsed wall time, as a percentage of one CPU.
+  package let cpuPercent: Double?
+  /// Resident bytes as a percentage of physical memory.
+  package let memoryPercent: Double?
+  package let elapsedSeconds: Double?
+  package let executable: String
+  /// Nil when the kernel does not permit reading argv. Never includes environment entries.
+  package let arguments: [String]?
+
+  package init(
+    pid: Int32, parentPID: Int32, user: String, state: String, cpuPercent: Double?,
+    memoryPercent: Double?, elapsedSeconds: Double?, executable: String, arguments: [String]?
+  ) {
+    self.pid = pid
+    self.parentPID = parentPID
+    self.user = user
+    self.state = state
+    self.cpuPercent = cpuPercent
+    self.memoryPercent = memoryPercent
+    self.elapsedSeconds = elapsedSeconds
+    self.executable = executable
+    self.arguments = arguments
+  }
 }
 
 package struct SystemMemoryStatistics: Sendable {

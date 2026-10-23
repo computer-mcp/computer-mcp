@@ -9,6 +9,10 @@ import Testing
 @testable import ComputerMCPCore
 @testable import ComputerMCPGateway
 
+#if os(macOS)
+  import ComputerMCPDarwinTestSupport
+#endif
+
 @Suite(.nativeIntegration, .timeLimit(.minutes(1)))
 struct GatewayConstructionTests {
   @Test(arguments: ["catalog", "cli-tree", "duplicate-project"])
@@ -41,7 +45,7 @@ struct GatewayConstructionTests {
       do {
         let runtime = try await GatewayRuntime.make(
           configuration: configuration, registeredProjects: projects,
-          platform: MacOSPlatform.services)
+          platform: MacOSPlatform.services(launcher: testExecutionLauncher()))
         await runtime.shutdown()
         Issue.record("Expected failure at \(stage)")
       } catch {
@@ -56,7 +60,8 @@ struct GatewayConstructionTests {
     configuration.cli.commands = []
     configuration.mcp.servers[0].args = [script.path, root.path, "inspect"]
     let runtime = try await GatewayRuntime.make(
-      configuration: configuration, registeredProjects: [first], platform: MacOSPlatform.services)
+      configuration: configuration, registeredProjects: [first],
+      platform: MacOSPlatform.services(launcher: testExecutionLauncher()))
     #expect(try runtime.listTools(context: .empty).contains { $0.name == "inspect" })
     await runtime.shutdown()
     try expectProcessesExited(root)
@@ -81,7 +86,7 @@ struct GatewayConstructionTests {
           RegisteredProject(
             id: "fixture", displayName: "Fixture", rootPath: configuration.projectDirectory.path)
         ],
-        platform: MacOSPlatform.services, mcpClient: client)
+        platform: MacOSPlatform.services(launcher: testExecutionLauncher()), mcpClient: client)
       shutdown = { await runtime.shutdown() }
     }
     let entered = gate.entered.stream()
@@ -120,7 +125,7 @@ struct GatewayConstructionTests {
             id: "fixture", displayName: "Fixture",
             rootPath: FileManager.default.temporaryDirectory.path)
         ],
-        platform: MacOSPlatform.services, mcpClient: client)
+        platform: MacOSPlatform.services(launcher: testExecutionLauncher()), mcpClient: client)
     }
     var discoveries = discovery.makeAsyncIterator()
     _ = await discoveries.next()

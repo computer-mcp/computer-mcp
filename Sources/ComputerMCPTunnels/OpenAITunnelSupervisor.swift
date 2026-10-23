@@ -298,7 +298,7 @@ internal final class SubprocessOpenAITunnelProcessManager: OpenAITunnelProcessMa
 {
   private let shellManager: any ShellManaging
 
-  internal init(shellManager: any ShellManaging = SubprocessShellRuntime()) {
+  internal init(shellManager: any ShellManaging = ShellSessionRuntime()) {
     self.shellManager = shellManager
   }
 
@@ -319,8 +319,7 @@ internal final class SubprocessOpenAITunnelProcessManager: OpenAITunnelProcessMa
       defaultWorkingDirectory: FileManager.default.homeDirectoryForCurrentUser,
       timeoutMilliseconds: nil,
       maxOutputBytes: maxOutputBytes,
-      maxSessions: 8,
-      terminationGraceMilliseconds: 2_000
+      maxSessions: 8
     )
   }
 
@@ -357,24 +356,31 @@ package actor OpenAITunnelSupervisor {
   private var startupTokens: [String: UUID] = [:]
 
   package init(
+    launcher: ExecutionLauncher = ExecutionLauncher(),
     secretStore: any SecretStore,
     executableSearchDirectories: [String],
     resolver: (any OpenAITunnelClientResolving)? = nil,
     planBuilder: any OpenAITunnelPlanBuilding = OpenAITunnelPlanBuilder(),
     proxyResolver: any OpenAITunnelHTTPProxyResolving,
-    commandRunner: any CommandRunning = ProcessCommandRunner(),
-    processManager: any OpenAITunnelProcessManaging = SubprocessOpenAITunnelProcessManager(),
+    commandRunner: (any CommandRunning)? = nil,
+    processManager: (any OpenAITunnelProcessManaging)? = nil,
     maxOutputBytes: Int = 1_048_576,
     startupStabilityMilliseconds: Int = 500
   ) {
     self.secretStore = secretStore
     self.resolver =
       resolver
-      ?? OpenAITunnelClientResolver(executableSearchDirectories: executableSearchDirectories)
+      ?? OpenAITunnelClientResolver(
+        executableSearchDirectories: executableSearchDirectories,
+        commandRunner: ManagedCommandRunner(launcher: launcher, policy: .readOnly))
     self.planBuilder = planBuilder
     self.proxyResolver = proxyResolver
-    self.commandRunner = commandRunner
-    self.processManager = processManager
+    self.commandRunner =
+      commandRunner ?? ManagedCommandRunner(launcher: launcher, policy: .fullAccess)
+    self.processManager =
+      processManager
+      ?? SubprocessOpenAITunnelProcessManager(
+        shellManager: ShellSessionRuntime(launcher: launcher))
     self.maxOutputBytes = max(4_096, maxOutputBytes)
     self.startupStabilityMilliseconds = max(0, startupStabilityMilliseconds)
   }

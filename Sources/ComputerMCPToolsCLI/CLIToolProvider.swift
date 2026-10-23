@@ -1,5 +1,6 @@
 import ComputerMCPConfiguration
 import ComputerMCPCore
+import ComputerMCPProcess
 import ComputerMCPToolKit
 
 package struct CLIToolProvider: GatewayToolProvider {
@@ -17,6 +18,14 @@ package struct CLIToolProvider: GatewayToolProvider {
   }
 
   package func callTool(_ invocation: ToolInvocation) throws -> JSONValue {
+    let descriptor = try definitions().first { $0.tool.name == invocation.name }?.capability
+    let policy: HostExecutionPolicy =
+      descriptor == nil || descriptor?.risk == .readOnly
+        || descriptor?.projectRequirement == ProjectRequirement.none ? .readOnly : .fullAccess
+    return try HostExecutionPolicy.$current.withValue(policy) { try dispatch(invocation) }
+  }
+
+  private func dispatch(_ invocation: ToolInvocation) throws -> JSONValue {
     let name = invocation.name
     let object = invocation.arguments?.objectValue ?? [:]
     switch name {
@@ -53,7 +62,7 @@ package struct CLIToolProvider: GatewayToolProvider {
       command.env = environment.environment.merging(command.env) { _, value in value }
       let tree = try source.load(
         command: command, project: environment.configuration.projectDirectory,
-        execution: environment.registeredCommands.execution)
+        execution: environment.registeredCommands.inspectionExecution)
       return CLITreeToolProvider(
         registration: command, tree: tree, project: environment.configuration.projectDirectory,
         execution: environment.registeredCommands.execution,

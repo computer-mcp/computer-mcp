@@ -85,6 +85,13 @@ package enum SeatbeltProfile {
         )
       }
     }
+    if configuration.hostNetwork {
+      rules.append("(allow network-outbound)")
+      rules.append("(allow system-socket)")
+      rules.append(
+        "(allow mach-lookup (global-name \"com.apple.system.opendirectoryd.libinfo\") (global-name \"com.apple.system.opendirectoryd.membership\"))"
+      )
+    }
     if let proxy = configuration.proxy {
       for port in Set([proxy.http, proxy.socks]).sorted() {
         rules.append("(allow network-outbound (remote tcp \"localhost:\(port)\"))")

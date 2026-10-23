@@ -192,6 +192,10 @@ package actor AppGatewayService {
       return
     }
 
+    try terminalSessions.enablePersistence(
+      at: controlPlane.directories.applicationSupport
+        .appendingPathComponent("Executions/Socket", isDirectory: true), launcher: platform.launcher
+    )
     state = .starting
     listenerEpoch = UUID()
     lastError = nil
@@ -280,6 +284,10 @@ package actor AppGatewayService {
     }
     try Task.checkCancellation()
     try await controlPlane.start()
+    try administrationTerminalSessions.enablePersistence(
+      at: controlPlane.directories.applicationSupport
+        .appendingPathComponent("Executions/Administration", isDirectory: true),
+      launcher: platform.launcher)
     let epoch = UUID()
     administrationEpoch = epoch
     do {
@@ -300,6 +308,7 @@ package actor AppGatewayService {
     administrationEpoch = nil
     await stopManifestMonitoring()
     await stopRuntimes(owner: .administration)
+    try? administrationTerminalSessions.discardResults()
     administrationTerminalSessions = GatewayTerminalSessions()
     await resumeManifestMonitoring()
   }
@@ -362,7 +371,14 @@ package actor AppGatewayService {
     }
     try Task.checkCancellation()
     let id = UUID()
-    httpTerminalSessions[id] = GatewayTerminalSessions()
+    let sessions = GatewayTerminalSessions()
+    if let origin = trace.tunnelInstanceID {
+      try sessions.enablePersistence(
+        in: controlPlane.directories.applicationSupport
+          .appendingPathComponent("Executions/HTTP", isDirectory: true),
+        ownerID: trace.transport + ":" + origin, launcher: platform.launcher)
+    }
+    httpTerminalSessions[id] = sessions
     do {
       try await startManifestMonitoring()
       try Task.checkCancellation()
@@ -396,10 +412,11 @@ package actor AppGatewayService {
       await stopping.value
       return
     }
-    guard httpTerminalSessions.removeValue(forKey: id) != nil else { return }
+    guard let sessions = httpTerminalSessions.removeValue(forKey: id) else { return }
     // App shutdown can already own the socket lifecycle lock while joining its tunnels.
     let stopping = Task {
       await stopRuntimes(owner: .http(id))
+      try? sessions.discardResults()
       // Publication can still own candidates for this invalidated listener.
       // These joins are bounded by the HTTP owner capacity and cannot be cancelled.
       if preparingRuntimeCount > 0 {
@@ -452,6 +469,7 @@ package actor AppGatewayService {
     server = nil
     await activeServer?.stop()
     await stopRuntimes(owner: .listener)
+    try? terminalSessions.discardResults()
     terminalSessions = GatewayTerminalSessions()
     if let credentialFile = socketConfiguration.tunnelCredentialFile {
       GatewaySocketCredentialStore.remove(at: credentialFile)

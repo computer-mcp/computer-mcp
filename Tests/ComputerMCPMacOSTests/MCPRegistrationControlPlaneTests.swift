@@ -5,7 +5,6 @@ import ComputerMCPTransport
 import ComputerMCPTunnels
 import Darwin
 import Foundation
-import MCP
 import Testing
 
 @testable import ComputerMCPConfiguration
@@ -16,6 +15,10 @@ import Testing
 @testable import ComputerMCPPlatformDarwin
 @testable import ComputerMCPPlugins
 @testable import ComputerMCPProcess
+
+#if os(macOS)
+  import ComputerMCPDarwinTestSupport
+#endif
 
 @Suite(.nativeIntegration, .timeLimit(.minutes(1)))
 struct MCPRegistrationControlPlaneTests {
@@ -373,7 +376,7 @@ struct MCPRegistrationControlPlaneTests {
       toolRisks: ["first": .readOnly, "second": .readOnly, "hold": .readOnly])
     try JSONEncoder().encode(server).write(to: input)
     try await fixture.socket.start()
-    var clients: [Client] = []
+    var clients: [GatewayClientSession] = []
     do {
       try await fixture.apply(["add", "--registration-file", input.path])
       try fixture.database.saveProfile(
@@ -381,16 +384,17 @@ struct MCPRegistrationControlPlaneTests {
           id: .chatGPTObserve, capabilityIDs: ["*"], projectIDs: ["fixture"],
           allowedCallers: [.localCLI], mcpServerIDs: ["manual"]))
       try await fixture.gateway.start(profile: .chatGPTObserve)
-      let first = Client(name: "registration-first", version: "1")
+      let first = try await GatewayClientSession.connectSocket(
+        configuration: .init(
+          socketURL: fixture.directories.gatewaySocket, clientIdentity: .localCLI))
       clients.append(first)
-      _ = try await first.connect(transport: fixture.transport())
-      #expect(try await first.listTools().tools.contains { $0.name == "manual.first" })
+      #expect(try await first.listTools().contains { $0.name == "manual.first" })
       let firstPIDs = try fixture.processIDs(at: starts)
       try #require(firstPIDs.count == 2)
       #expect(Darwin.kill(firstPIDs[0], 0) == -1 && errno == ESRCH)
       #expect(Darwin.kill(firstPIDs[1], 0) == 0)
-      let firstCall = try await first.callTool(name: "manual.first", arguments: [:])
-      #expect(firstCall.isError != true)
+      let firstCall = try await first.call(toolName: "manual.first", arguments: .object([:]))
+      #expect(firstCall.result.objectValue?["isError"]?.boolValue != true)
 
       server.args[1] = "second"
       try JSONEncoder().encode(server).write(to: input)
@@ -404,16 +408,16 @@ struct MCPRegistrationControlPlaneTests {
       #expect(Darwin.kill(firstPIDs[1], 0) == 0)
       #expect(await fixture.gateway.snapshot().connectionCount == 1)
       let second = first
-      let currentTools = try await second.listTools().tools.map(\.name)
+      let currentTools = try await second.listTools().map(\.name)
       #expect(currentTools.contains("manual.second") && !currentTools.contains("manual.first"))
-      let secondCall = try await second.callTool(name: "manual.second", arguments: [:])
-      #expect(secondCall.isError != true)
-      let missing = try await second.callTool(name: "manual.first", arguments: [:])
-      #expect(missing.isError == true)
+      let secondCall = try await second.call(toolName: "manual.second", arguments: .object([:]))
+      #expect(secondCall.result.objectValue?["isError"]?.boolValue != true)
+      let missing = try await second.call(toolName: "manual.first", arguments: .object([:]))
+      #expect(missing.result.objectValue?["isError"]?.boolValue == true)
       let heldCall = Task {
         do {
-          let result = try await second.callTool(name: "manual.hold", arguments: [:])
-          return result.isError == true
+          let result = try await second.call(toolName: "manual.hold", arguments: .object([:]))
+          return result.result.objectValue?["isError"]?.boolValue == true
         } catch {
           return true
         }
@@ -431,12 +435,12 @@ struct MCPRegistrationControlPlaneTests {
         .split(separator: "\n").map(String.init)
       #expect(versions == ["first", "first", "second"])
       #expect(allPIDs.dropFirst().allSatisfy { Darwin.kill($0, 0) == 0 })
-      #expect(try await !second.listTools().tools.contains { $0.name.hasPrefix("manual.") })
+      #expect(try await !second.listTools().contains { $0.name.hasPrefix("manual.") })
       try Data().write(to: URL(fileURLWithPath: starts.path + ".release"))
       #expect(await heldCall.value == false)
 
       let disabled = first
-      #expect(try await !disabled.listTools().tools.contains { $0.name.hasPrefix("manual.") })
+      #expect(try await !disabled.listTools().contains { $0.name.hasPrefix("manual.") })
       #expect(try fixture.processIDs(at: starts) == allPIDs)
       #expect(try String(contentsOf: calls, encoding: .utf8) == "hold\n")
       #expect(
@@ -547,7 +551,7 @@ struct MCPRegistrationControlFixture: Sendable {
       manifestURL: directories.manifest, database: database,
       loader: GatewayManifestConfigurationLoader(
         database: database, bundledPlugins: bundled,
-        applications: MacOSPlatform.services.applications))
+        applications: MacOSPlatform.services(launcher: testExecutionLauncher()).applications))
     _ = try store.activate(manifest: GatewayConfiguration(projectDirectory: root).exportedTOML())
     let secrets = try KeychainSecretStore(adapter: MemoryKeychainAdapter())
     host = AppControlPlaneService(
@@ -555,13 +559,15 @@ struct MCPRegistrationControlFixture: Sendable {
       defaultManifest: DefaultGatewayConfiguration.manifest,
       secretStore: secrets,
       openAITunnelSupervisor: OpenAITunnelSupervisor(
+        launcher: testExecutionLauncher(),
         secretStore: secrets,
-        executableSearchDirectories: MacOSPlatform.services.executableSearchDirectories,
+        executableSearchDirectories: MacOSPlatform.services(launcher: testExecutionLauncher())
+          .executableSearchDirectories,
         proxyResolver: FixedOpenAITunnelHTTPProxyResolver()
       ),
       launchAtLoginController: SMAppServiceLaunchAtLoginController(),
       computerUsePermissionReader: FixedComputerUsePermissionReader(),
-      platform: MacOSPlatform.services, bundledPlugins: bundled)
+      platform: MacOSPlatform.services(launcher: testExecutionLauncher()), bundledPlugins: bundled)
     gateway = AppGatewayService.live(controlPlane: host, directories: directories)
     socket = ControlSocketService(
       controlPlane: host, gatewayService: gateway, socketURL: directories.controlSocket)
@@ -572,7 +578,7 @@ struct MCPRegistrationControlFixture: Sendable {
       .deletingLastPathComponent().deletingLastPathComponent()
       .appendingPathComponent(".build/debug/computer-mcp")
     return try await BlockingOperationExecutor(label: "mcp-registration-cli-test").perform {
-      try ProcessCommandRunner().run(
+      try ProcessCommandRunner(launcher: testExecutionLauncher()).run(
         executable: executable.path,
         arguments: ["mcp"] + arguments + ["--control-socket", directories.controlSocket.path],
         workingDirectory: root, environment: [:], timeoutMilliseconds: 5000,

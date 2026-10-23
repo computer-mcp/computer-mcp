@@ -16,6 +16,10 @@ import Testing
 @testable import ComputerMCPPlatformDarwin
 @testable import ComputerMCPPlugins
 
+#if os(macOS)
+  import ComputerMCPDarwinTestSupport
+#endif
+
 @MainActor
 @Suite(.serialized)
 final class LiveAppControlPlaneTests {
@@ -551,7 +555,9 @@ final class LiveAppControlPlaneTests {
       let identity: PluginDirectoryIdentity
       do {
         let storage = try PluginInstallationStorage(
-          at: directories.plugins, directoryFactory: MacOSPlatform.services.pluginDirectories)
+          at: directories.plugins,
+          directoryFactory: MacOSPlatform.services(launcher: testExecutionLauncher())
+            .pluginDirectories)
         defer { storage.finishTransaction() }
         identity = try storage.createInstallation()
         try database.recordPluginDirectory(
@@ -625,7 +631,8 @@ private final class AppControlPlaneFixture {
       manifestURL: directories.manifest,
       database: database,
       loader: GatewayManifestConfigurationLoader(
-        database: database, applications: MacOSPlatform.services.applications))
+        database: database,
+        applications: MacOSPlatform.services(launcher: testExecutionLauncher()).applications))
     _ = try manifestStore.activate(manifest: DefaultGatewayConfiguration.manifest)
     let secretStore = try KeychainSecretStore(
       service: "com.showxu.computer-mcp.tests.\(UUID().uuidString)",
@@ -639,14 +646,16 @@ private final class AppControlPlaneFixture {
       defaultManifest: DefaultGatewayConfiguration.manifest,
       secretStore: secretStore,
       openAITunnelSupervisor: OpenAITunnelSupervisor(
+        launcher: testExecutionLauncher(),
         secretStore: secretStore,
-        executableSearchDirectories: MacOSPlatform.services.executableSearchDirectories,
+        executableSearchDirectories: MacOSPlatform.services(launcher: testExecutionLauncher())
+          .executableSearchDirectories,
         proxyResolver: FixedOpenAITunnelHTTPProxyResolver()
       ),
       gatewayExecutablePath: gatewayExecutablePath,
       launchAtLoginController: AppTestLaunchAtLoginController(),
       computerUsePermissionReader: FixedComputerUsePermissionReader(),
-      platform: MacOSPlatform.services
+      platform: MacOSPlatform.services(launcher: testExecutionLauncher())
     )
     gatewayService = AppGatewayService(
       controlPlane: controlPlane,

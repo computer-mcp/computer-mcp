@@ -9,6 +9,10 @@ import Testing
 @testable import ComputerMCPProcess
 @testable import ComputerMCPToolsShell
 
+#if os(macOS)
+  import ComputerMCPDarwinTestSupport
+#endif
+
 @Suite(.nativeIntegration, .serialized)
 final class ShellToolProviderTests {
   @Test
@@ -17,6 +21,7 @@ final class ShellToolProviderTests {
     let shells = RecordingShellManager()
     let provider = ShellToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: .fixture(policy: .init(shellEnabled: true)), commandRunner: runner,
         shellManager: shells))
     let task = Task {
@@ -34,7 +39,8 @@ final class ShellToolProviderTests {
 
   @Test
   func testShellRunIsDisabledByDefault() {
-    let provider = ShellToolProvider(environment: ToolEnvironment(configuration: .fixture()))
+    let provider = ShellToolProvider(
+      environment: ToolEnvironment(launcher: testExecutionLauncher(), configuration: .fixture()))
 
     expectThrows(
       try provider.callTool(
@@ -51,12 +57,14 @@ final class ShellToolProviderTests {
   func testGatewayExposesCompleteShellSurfaceOnlyWhenEnabled() async throws {
     let disabled = ShellToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: .fixture(policy: PolicyConfig(shellEnabled: false))
       ))
     #expect(!(try disabled.definitions().map(\.tool).contains { $0.name.hasPrefix("shell.") }))
 
     let enabled = ShellToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: .fixture(policy: PolicyConfig(shellEnabled: true))
       ))
     let names = Set(try enabled.definitions().map(\.tool).map(\.name))
@@ -114,8 +122,7 @@ private final class RecordingShellManager: ShellManaging, @unchecked Sendable {
 
   func spawn(
     request: ShellLaunchRequest, defaultShell: String, defaultWorkingDirectory: URL,
-    timeoutMilliseconds: Int?, maxOutputBytes: Int, maxSessions: Int,
-    terminationGraceMilliseconds: Int
+    timeoutMilliseconds: Int?, maxOutputBytes: Int, maxSessions: Int
   ) throws -> String {
     lock.withLock { spawns += 1 }
     return "session-1"
@@ -123,8 +130,7 @@ private final class RecordingShellManager: ShellManaging, @unchecked Sendable {
 
   func run(
     request: ShellLaunchRequest, defaultShell: String, defaultWorkingDirectory: URL,
-    standardInput: Data, timeoutMilliseconds: Int, maxOutputBytes: Int, maxSessions: Int,
-    terminationGraceMilliseconds: Int
+    standardInput: Data, timeoutMilliseconds: Int, maxOutputBytes: Int, maxSessions: Int
   ) throws -> ShellSessionSnapshot {
     throw GatewayToolError.executionFailed("Unexpected shell manager call.")
   }

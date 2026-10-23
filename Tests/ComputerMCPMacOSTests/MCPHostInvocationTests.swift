@@ -7,7 +7,11 @@ import Testing
 @testable import ComputerMCPGateway
 @testable import ComputerMCPPlatform
 
-@Suite(.nativeIntegration, .serialized, .timeLimit(.minutes(1)))
+#if os(macOS)
+  import ComputerMCPDarwinTestSupport
+#endif
+
+@Suite(.nativeIntegration, .serialized, .timeLimit(.minutes(2)))
 struct MCPHostInvocationTests {
   @Test
   func backgroundWorkKeepsExactContextThroughDerivedWorkAndReleasesItAtCompletion() async throws {
@@ -36,7 +40,7 @@ struct MCPHostInvocationTests {
         ])),
       database: database,
       registeredProjects: [.init(id: "fixture", displayName: "Fixture", rootPath: root.path)],
-      platform: MacOSPlatform.services)
+      platform: MacOSPlatform.services(launcher: testExecutionLauncher()))
     do {
       // Retained contexts must not exhaust the independent 256 active-call slots.
       for _ in 0..<257 {
@@ -148,7 +152,7 @@ struct MCPHostInvocationTests {
         ])),
       database: try GatewayDatabase(path: root.appendingPathComponent("host.db").path),
       registeredProjects: [.init(id: "fixture", displayName: "Fixture", rootPath: root.path)],
-      platform: MacOSPlatform.services)
+      platform: MacOSPlatform.services(launcher: testExecutionLauncher()))
     do {
       let arguments = Self.arguments(tool: mode == "detached" ? "deferred" : "inspect")
       let result: JSONValue

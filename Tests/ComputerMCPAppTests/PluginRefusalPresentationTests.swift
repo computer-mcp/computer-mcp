@@ -1,3 +1,4 @@
+import ComputerMCPTestSupport
 import Foundation
 import Testing
 
@@ -5,6 +6,10 @@ import Testing
 @testable import ComputerMCPPlatform
 @testable import ComputerMCPPlugins
 @testable import ComputerMCPProcess
+
+#if os(macOS)
+  import ComputerMCPDarwinTestSupport
+#endif
 
 @Suite(.timeLimit(.minutes(1)))
 struct PluginRefusalPresentationTests {
@@ -69,7 +74,7 @@ struct PluginRefusalPresentationTests {
       .deletingLastPathComponent().deletingLastPathComponent()
     let output = FileManager.default.temporaryDirectory
       .appendingPathComponent("ComputerMCPRefusalLocalization-\(UUID().uuidString)")
-    let result = try ProcessCommandRunner().run(
+    let result = try ProcessCommandRunner(launcher: testExecutionLauncher()).run(
       executable: "/usr/bin/xcrun",
       arguments: [
         "xcstringstool", "compile",

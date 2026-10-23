@@ -9,6 +9,10 @@ import Testing
 
 @testable import ComputerMCPToolsProject
 
+#if os(macOS)
+  import ComputerMCPDarwinTestSupport
+#endif
+
 @Suite(.nativeIntegration, .serialized)
 final class ProjectPlatformToolProviderTests {
   @Test
@@ -17,6 +21,7 @@ final class ProjectPlatformToolProviderTests {
     let directory = try temporaryDirectory()
     let provider = ProjectToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["project.open"]),
           projectDirectory: directory
@@ -43,6 +48,7 @@ final class ProjectPlatformToolProviderTests {
     try "ready".write(to: file, atomically: true, encoding: .utf8)
     let provider = ProjectToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["project.reveal"]),
           projectDirectory: directory

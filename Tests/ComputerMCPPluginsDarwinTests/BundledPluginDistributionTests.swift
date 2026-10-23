@@ -9,6 +9,10 @@ import Testing
 @testable import ComputerMCPPlatform
 @testable import ComputerMCPPlugins
 
+#if os(macOS)
+  import ComputerMCPDarwinTestSupport
+#endif
+
 @Suite(.timeLimit(.minutes(1)))
 struct BundledPluginDistributionTests {
   @Test
@@ -27,7 +31,7 @@ struct BundledPluginDistributionTests {
       try await Self.prepare(index: index, output: output, architectures: ["arm64"])
     }
     #expect(!FileManager.default.fileExists(atPath: output.path))
-    let cli = try ProcessCommandRunner().run(
+    let cli = try ProcessCommandRunner(launcher: testExecutionLauncher()).run(
       executable: Self.worker.path,
       arguments: [
         "_bundle-plugins", "--index", index.path, "--output", output.path, "--architectures",

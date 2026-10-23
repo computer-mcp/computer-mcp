@@ -8,6 +8,10 @@ import Testing
 
 @testable import ComputerMCPToolsMCP
 
+#if os(macOS)
+  import ComputerMCPDarwinTestSupport
+#endif
+
 struct ConfiguredMCPToolProviderTests {
   @Test(arguments: ["", "namespace"], [false, true])
   func freshDirectCallsResolveDistinctNamesAcrossSharedPrefixes(
@@ -18,6 +22,7 @@ struct ConfiguredMCPToolProviderTests {
     let client = ReexportNamingClient(["first": [firstName], "second": ["right"]])
     let provider = ConfiguredMCPToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: .fixture(
           mcp: .init(servers: [
             Self.server("second", prefix: secondPrefix), Self.server("first", prefix: prefix),
@@ -44,6 +49,7 @@ struct ConfiguredMCPToolProviderTests {
     let client = ReexportNamingClient(["first": ["left"], "second": ["right"]])
     let provider = ConfiguredMCPToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: .fixture(
           mcp: .init(servers: [Self.server("first", prefix: ""), Self.server("second", prefix: "")])
         )), mcpClient: client)
@@ -82,6 +88,7 @@ struct ConfiguredMCPToolProviderTests {
     #expect(decoded.mcp.servers[0].prefix == prefix)
     let provider = ConfiguredMCPToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: .fixture(mcp: .init(servers: [server]))), mcpClient: client)
     let exposed = prefix.isEmpty ? name : "\(prefix).\(name)"
     let tool = try #require(provider.definitions().map(\.tool).first { $0.name == exposed })
@@ -113,7 +120,8 @@ struct ConfiguredMCPToolProviderTests {
           id: .chatGPTObserve, capabilityIDs: [], allowedCallers: [.secureTunnel],
           mcpServerIDs: ["first"]), derivesObserveGrant: false))
     let provider = ConfiguredMCPToolProvider(
-      environment: ToolEnvironment(configuration: configuration), mcpClient: client)
+      environment: ToolEnvironment(launcher: testExecutionLauncher(), configuration: configuration),
+      mcpClient: client)
     #expect(
       try provider.callTool(.init(name: "inspect", arguments: nil, context: .empty))
         == .string("first:inspect"))
@@ -131,6 +139,7 @@ struct ConfiguredMCPToolProviderTests {
     let client = ReexportNamingClient(["first": ["inspect", "mcp.tools.list"]])
     let provider = ConfiguredMCPToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: .fixture(mcp: .init(servers: [Self.server("first", prefix: "")]))),
       mcpClient: client)
     let conflict = GatewayToolError.invalidArguments(
@@ -155,6 +164,7 @@ struct ConfiguredMCPToolProviderTests {
     let client = ReexportNamingClient(["first": ["inspect", "mcp.tools.list"]])
     let provider = ConfiguredMCPToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: .fixture(mcp: .init(servers: [Self.server("first", prefix: "")]))),
       mcpClient: client)
     await #expect(

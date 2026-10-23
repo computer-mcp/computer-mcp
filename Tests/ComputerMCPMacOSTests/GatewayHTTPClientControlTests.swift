@@ -10,6 +10,10 @@ import Testing
 @testable import ComputerMCPPlatform
 @testable import ComputerMCPProcess
 
+#if os(macOS)
+  import ComputerMCPDarwinTestSupport
+#endif
+
 @Suite(.nativeIntegration, .serialized, .timeLimit(.minutes(2)))
 struct GatewayHTTPClientControlTests {
   @Test
@@ -278,7 +282,7 @@ private struct HTTPClientControlFixture: Sendable {
     let gateway = try GatewayRuntime(
       configuration: configuration, database: database,
       registeredProjects: [.init(id: "fixture", displayName: "Fixture", rootPath: root.path)],
-      platform: MacOSPlatform.services)
+      platform: MacOSPlatform.services(launcher: testExecutionLauncher()))
     runtime = GatewayHTTPRuntime(
       configuration: configuration, registry: gateway,
       host: "127.0.0.1", port: port, publicBaseURL: nil, accessToken: token,
@@ -317,7 +321,9 @@ private struct HTTPClientControlFixture: Sendable {
       .deletingLastPathComponent().deletingLastPathComponent().appendingPathComponent(
         ".build/debug/computer-mcp")
     let result = try await commands.perform {
-      try ProcessCommandRunner(environment: ["PATH": "/usr/bin:/bin"]).run(
+      try ProcessCommandRunner(
+        launcher: testExecutionLauncher(), environment: ["PATH": "/usr/bin:/bin"]
+      ).run(
         executable: executable.path,
         arguments: ["clients"] + arguments + ["--control-socket", socket.path],
         workingDirectory: root, environment: [:], timeoutMilliseconds: 10_000,

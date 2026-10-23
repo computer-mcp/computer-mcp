@@ -8,6 +8,10 @@ import Testing
 @testable import ComputerMCPPlatform
 @testable import ComputerMCPProcess
 
+#if os(macOS)
+  import ComputerMCPDarwinTestSupport
+#endif
+
 @Suite(.nativeIntegration, .timeLimit(.minutes(1)))
 struct GatewayHostRecoveryTests {
   @Test(arguments: [false, true])
@@ -67,7 +71,7 @@ struct GatewayHostRecoveryTests {
       .deletingLastPathComponent().deletingLastPathComponent()
       .appendingPathComponent(".build/debug/computer-mcp")
     let result = try await BlockingOperationExecutor(label: "gateway-host-crash-test").perform {
-      try ProcessCommandRunner().run(
+      try ProcessCommandRunner(launcher: testExecutionLauncher()).run(
         executable: "/usr/bin/python3",
         arguments: [
           fixture.path, mode, root.path, executable.path,

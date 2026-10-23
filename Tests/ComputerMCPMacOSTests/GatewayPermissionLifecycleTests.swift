@@ -1,4 +1,5 @@
 import ComputerMCPMacOS
+import ComputerMCPTestSupport
 import Darwin
 import Foundation
 import Testing
@@ -7,6 +8,10 @@ import Testing
 @testable import ComputerMCPCore
 @testable import ComputerMCPGateway
 @testable import ComputerMCPPersistence
+
+#if os(macOS)
+  import ComputerMCPDarwinTestSupport
+#endif
 
 struct GatewayPermissionLifecycleTests {
   @Test
@@ -263,7 +268,7 @@ private struct PermissionFixture {
         caller: .secureTunnel, profileID: .chatGPTOperate, trustedPrincipalID: "verified-first"),
       database: database,
       registeredProjects: [.init(id: "fixture", displayName: "Fixture", rootPath: root.path)],
-      platform: MacOSPlatform.services)
+      platform: MacOSPlatform.services(launcher: testExecutionLauncher()))
   }
 
   func prepare() throws -> String {

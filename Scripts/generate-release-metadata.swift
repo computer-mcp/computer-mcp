@@ -444,6 +444,7 @@ private func linkedPackages(from buildGraphURL: URL) throws -> Set<String> {
 
 private func makeNotices(
   pins: [Pin],
+  sourceRoot: URL,
   checkoutRoot: URL,
   resolvedHash: String,
   productVersion: String,
@@ -498,6 +499,14 @@ private func makeNotices(
       }
     }
   }
+  let sandboxLicense = sourceRoot.appendingPathComponent("Licenses/sandbox-runtime-Apache-2.0.txt")
+  guard FileManager.default.isReadableFile(atPath: sandboxLicense.path) else {
+    throw MetadataError.missingLegalFile(sandboxLicense.path)
+  }
+  text += "\nADAPTED SOURCE: Anthropic sandbox-runtime (Apache-2.0)\n"
+  text += "https://github.com/anthropics/sandbox-runtime/tree/aceba124fd725f4a43d7016ed3f5651d61f83115\n"
+  text += "Modified for Swift and execution-specific TCP port rules.\n\n"
+  text += try String(contentsOf: sandboxLicense, encoding: .utf8)
   return Data(text.utf8)
 }
 
@@ -600,6 +609,7 @@ do {
   )
   try makeNotices(
     pins: pins,
+    sourceRoot: options.root,
     checkoutRoot: options.checkoutRoot,
     resolvedHash: resolvedHash,
     productVersion: options.productVersion,

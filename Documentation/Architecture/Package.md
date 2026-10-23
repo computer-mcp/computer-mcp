@@ -412,3 +412,12 @@ cancellation can return a short count. `finish()` immediately unregisters and
 closes the descriptor, while a resumed write may still hold its descriptor
 number. The FIFO queue, independent admitted task, short-write check and teardown
 join together protect that descriptor's lifetime and the child's frame boundaries.
+
+## Execution ownership
+
+`CDarwinExecution` bridges the variadic Darwin sandbox query SPI to Swift with
+the platform C calling convention. `PlatformDarwin` creates existing, private
+marker files and holds them until the execution has no live members. Its
+Seatbelt profile denies the marker directory except for the execution's own
+read marker. A process belongs to that sandbox when its own marker is readable
+and the shared unsandboxed marker is denied.

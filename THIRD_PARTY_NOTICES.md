@@ -3,6 +3,12 @@
 Computer MCP original source is licensed under FSL-1.1-ALv2; see `LICENSE`.
 Third-party components keep their own licenses.
 
+Seatbelt proxy-port rules are adapted from
+[Anthropic sandbox-runtime](https://github.com/anthropics/sandbox-runtime/tree/aceba124fd725f4a43d7016ed3f5651d61f83115),
+revision `aceba124fd725f4a43d7016ed3f5651d61f83115` (Apache-2.0).
+Adaptations use Swift and execution-specific TCP port rules. Source headers identify the adapted files. The complete license is in
+`Licenses/sandbox-runtime-Apache-2.0.txt`; the upstream snapshot has no NOTICE file.
+
 The App and embedded CLI statically link the following resolved packages:
 
 - GRDB.swift, Yams, EventSource, swift-toml — MIT;

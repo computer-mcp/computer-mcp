@@ -4,7 +4,8 @@
     {
       "name": "base",
       "targets": [
-        "ComputerMCPCore"
+        "ComputerMCPCore",
+        "ComputerMCPSandbox"
       ]
     },
     {
@@ -13,6 +14,7 @@
         "ComputerMCPPlatform",
         "ComputerMCPPlatformPOSIX",
         "CSystemArchive",
+        "CDarwinExecution",
         "ComputerMCPPlatformDarwin"
       ]
     },
@@ -72,6 +74,7 @@
     "ComputerMCPPlatformDarwin->ComputerMCPPlatform",
     "ComputerMCPPlatformDarwin->ComputerMCPPlatformPOSIX",
     "ComputerMCPPlatformDarwin->CSystemArchive",
+    "ComputerMCPPlatformDarwin->CDarwinExecution",
     "ComputerMCPProcess->ComputerMCPConfiguration",
     "ComputerMCPTransport->ComputerMCPConfiguration",
     "ComputerMCPDownstream->ComputerMCPConfiguration",
@@ -99,6 +102,7 @@
   ],
   "macos_only": [
     "CSystemArchive",
+    "CDarwinExecution",
     "ComputerMCPPlatformDarwin",
     "ComputerMCPComputerUse",
     "ComputerMCPComputerUseTests",
@@ -119,6 +123,7 @@
     "AppKit",
     "ApplicationServices",
     "CSystemArchive",
+    "CDarwinExecution",
     "Cocoa",
     "Combine",
     "CoreFoundation",

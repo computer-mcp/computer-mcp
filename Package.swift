@@ -58,7 +58,8 @@ let neutralTargets: [Target] =
       name: "ComputerMCPProcess",
       dependencies: [
         "ComputerMCPConfiguration", "ComputerMCPCore", "ComputerMCPPlatform",
-        "ComputerMCPPlatformPOSIX", .product(name: "NIOConcurrencyHelpers", package: "swift-nio"),
+        "ComputerMCPPlatformPOSIX", "ComputerMCPSandbox",
+        .product(name: "NIOConcurrencyHelpers", package: "swift-nio"),
         .product(name: "Subprocess", package: "swift-subprocess"),
         .product(
           name: "SystemPackage", package: "swift-system", condition: .when(platforms: [.linux])),
@@ -439,12 +440,20 @@ let neutralTargets: [Target] =
     targets: neutralTargets + [
       .systemLibrary(name: "CSystemArchive"),
       .target(name: "CDarwinExecution"),
+      .executableTarget(
+        name: "computer-mcp-execution-bootstrap", path: "Sources/ComputerMCPExecutionBootstrap"),
+      .executableTarget(
+        name: "ComputerMCPExecutionProbe",
+        dependencies: [
+          "ComputerMCPSandbox", "ComputerMCPProcess", "ComputerMCPPlatformDarwin",
+          .product(name: "Subprocess", package: "swift-subprocess"),
+        ], path: "Tests/ComputerMCPExecutionProbe"),
       .target(
         name: "ComputerMCPPlatformDarwin",
         dependencies: [
           "CDarwinExecution", "CSystemArchive", "ComputerMCPCore", "ComputerMCPPlatform",
           "ComputerMCPPlatformPOSIX",
-          "ComputerMCPSandbox",
+          "ComputerMCPSandbox", .product(name: "Subprocess", package: "swift-subprocess"),
         ]
       ),
       .target(
@@ -578,7 +587,8 @@ let neutralTargets: [Target] =
         name: "ComputerMCPPlatformDarwinTests",
         dependencies: [
           "ComputerMCPCore", "ComputerMCPPlatform", "ComputerMCPPlatformDarwin",
-          "ComputerMCPSandbox", "ComputerMCPTestSupport",
+          "ComputerMCPSandbox", "ComputerMCPProcess",
+          "ComputerMCPExecutionProbe", "computer-mcp-execution-bootstrap", "ComputerMCPTestSupport",
         ], resources: [.copy("Fixtures")]
       ),
       .testTarget(

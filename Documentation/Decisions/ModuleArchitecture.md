@@ -8,17 +8,18 @@ Accepted.
 
 The gateway implementation is split into SwiftPM targets arranged in layers. A
 target depends only on targets in lower layers, or on lower targets within its
-own layer as listed below. Only the App and the CLI are package products, and
-every target keeps `package` access; no declaration is `public`.
+own layer as listed below. The App and CLI ship with a private execution bootstrap.
+A test executable verifies privacy responsibility under Launch Services; it is not
+bundled. Swift targets keep `package` access; no declaration is `public`.
 
 | Layer | Targets | Platform |
 | --- | --- | --- |
-| Front ends | `ComputerMCPApp`, `computer-mcp` | macOS |
+| Front ends | `ComputerMCPApp`, `computer-mcp`; test executable `ComputerMCPExecutionProbe` | macOS |
 | Composition root | `ComputerMCPMacOS` | macOS |
 | Composition | `ComputerMCPControlPlane`, `ComputerMCPGateway` | neutral |
 | Capabilities | `ComputerMCPToolKit`; tool domains `ComputerMCPToolsMCP`, `ComputerMCPToolsCLI`, `ComputerMCPToolsFiles`, `ComputerMCPToolsProject`, `ComputerMCPToolsStructured`, `ComputerMCPToolsGit`, `ComputerMCPToolsShell`, `ComputerMCPToolsSkills`, `ComputerMCPToolsSystem`; `ComputerMCPPlugins`, `ComputerMCPDelivery`, `ComputerMCPAuthorization`; `ComputerMCPComputerUse` | neutral; ComputerUse macOS |
 | Services | `ComputerMCPConfiguration`, `ComputerMCPPersistence`, `ComputerMCPProcess`, `ComputerMCPTransport`, `ComputerMCPDownstream`, `ComputerMCPTunnels` | neutral |
-| Platform | `ComputerMCPPlatform` (protocols and values), `ComputerMCPPlatformPOSIX`, `ComputerMCPPlatformDarwin`, `CSystemArchive`, `CDarwinExecution` | neutral; POSIX; macOS |
+| Platform | `ComputerMCPPlatform` (protocols and values), `ComputerMCPPlatformPOSIX`, `ComputerMCPPlatformDarwin`, `CSystemArchive`, `CDarwinExecution`, `computer-mcp-execution-bootstrap` | neutral; POSIX; macOS |
 | Base | `ComputerMCPCore`, `ComputerMCPSandbox` | neutral |
 
 Dependencies inside a layer are limited to these:
@@ -39,9 +40,11 @@ Dependencies inside a layer are limited to these:
 - `Core`: JSON values, gateway models, policy and capability descriptors, tool
   definitions and the provider protocol, workspace identity, product version
   metadata, invocation values and protocols, and the blocking executor.
-- `Sandbox`: dependency-free execution configuration and explicit environment values;
-  contains no gateway, tool definitions, or permission storage. Seatbelt profile
-  generation lives in `PlatformDarwin`.
+- `Sandbox`: dependency-free execution configuration values and platform contracts;
+  contains no gateway, tool definitions, or permission storage. Seatbelt lives in
+  `PlatformDarwin`, supplied to the process launcher through the sandbox contract.
+- `computer-mcp-execution-bootstrap`: private Darwin launch handshake executable;
+  establishes the child identity and an isolated session before executing the target command.
 - `Platform`: the platform service protocols listed below and their value types.
 - `Configuration`: manifest model and defaults, including MCP HTTP
   authentication values.

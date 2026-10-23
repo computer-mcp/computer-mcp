@@ -51,10 +51,20 @@ struct GatewayGenerationDispatchTests {
       let selected = MCPContinuationTarget(
         projectID: "fixture", reference: .init(serverID: "fixture", toolName: "inspect"),
         connectionID: UUID(), instanceID: UUID(), resources: [:])
-      let result = try await serving.callToolForMCPAsync(
-        name: "fixture.inspect",
-        arguments: .object(["project_id": .string("fixture"), "handle": handle]),
-        context: .init(continuation: selected))
+      let continuationDeadline = ContinuousClock.now + .seconds(5)
+      var result: JSONValue
+      repeat {
+        result = try await serving.callToolForMCPAsync(
+          name: "fixture.inspect",
+          arguments: .object(["project_id": .string("fixture"), "handle": handle]),
+          context: .init(continuation: selected))
+        guard
+          result.objectValue?["structuredContent"]?.objectValue?["error"]?.objectValue?["code"]
+            == .string("mcp.continuation_pending")
+        else { break }
+        try #require(ContinuousClock.now < continuationDeadline, "Work observation did not settle")
+        try await Task.sleep(for: .milliseconds(10))
+      } while true
       #expect(result.objectValue?["isError"] == .bool(true))
       #expect(String(describing: result).contains("mcp.continuation_unavailable"))
       #expect(try fixture.calls() == calls)

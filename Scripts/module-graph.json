@@ -15,7 +15,8 @@
         "ComputerMCPPlatformPOSIX",
         "CSystemArchive",
         "CDarwinExecution",
-        "ComputerMCPPlatformDarwin"
+        "ComputerMCPPlatformDarwin",
+        "computer-mcp-execution-bootstrap"
       ]
     },
     {
@@ -65,7 +66,8 @@
       "name": "front-ends",
       "targets": [
         "ComputerMCPApp",
-        "computer-mcp"
+        "computer-mcp",
+        "ComputerMCPExecutionProbe"
       ]
     }
   ],
@@ -101,6 +103,8 @@
     "ComputerMCPControlPlane->ComputerMCPGateway"
   ],
   "macos_only": [
+    "ComputerMCPExecutionProbe",
+    "computer-mcp-execution-bootstrap",
     "CSystemArchive",
     "CDarwinExecution",
     "ComputerMCPPlatformDarwin",

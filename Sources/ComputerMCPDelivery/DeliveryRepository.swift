@@ -721,7 +721,9 @@ internal struct DeliveryRepository: Sendable {
           reason: .cleanupFailed, detail: "Worktree has uncommitted changes: \(worktree.path)")
       }
       if FileManager.default.fileExists(atPath: worktree.path) {
-        try git.run(["worktree", "remove", worktree.path], at: root)
+        try git.run(
+          ["worktree", "remove", worktree.path], at: root,
+          additionalProgramOptions: pinned.programOptions(at: worktree))
       } else {
         try requireRegistrationAbsent(journal)
       }

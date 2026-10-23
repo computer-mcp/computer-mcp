@@ -162,7 +162,7 @@ public struct CapabilityFixturePlan: Sendable {
     case "cli.status":
       return invocation(["id": .string("git")], marker: "is_executable")
     case "cli.help":
-      return invocation(["id": .string("git")], marker: "cli.exec")
+      return invocation(["id": .string("git")], marker: "executed")
 
     case "skills.roots":
       return invocation([:], marker: skillRootID)
@@ -991,6 +991,7 @@ public struct CapabilityFixturePlan: Sendable {
       return repository(
         [
           "message": .string("Validation empty commit"),
+          "paths": .array([.string("staged.txt")]),
           "allow_empty": .bool(true),
           "dry_run": .bool(false),
         ],

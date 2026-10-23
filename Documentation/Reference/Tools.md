@@ -112,43 +112,16 @@ For file-backed trees, returns the declared node's description, input schema,
 coverage and help argv with `executed: false`. Unknown paths are rejected.
 Executable tree exporters are not run by this read-only capability.
 
-For a CLI without a tree, runs a registered path with `--help` and returns raw text plus
-mechanical context for constructing a follow-up `cli.exec` MCP call. MCP
-consumers should not execute the shown command outside this gateway.
+For a CLI without a tree, accepts only an empty `path` and returns registration
+metadata (`id`, `path`, `description`, `interface`, `executed: false`). Help never
+starts the registered executable or an executable tree exporter.
 
-Arguments:
+Arguments for a file-backed tree:
 
 ```json
 {
   "id": "lark",
   "path": ["im", "+chat-search"]
-}
-```
-
-Result text contains JSON like:
-
-```json
-{
-  "id": "lark",
-  "path": ["im", "+chat-search"],
-  "help_argv": ["im", "+chat-search", "--help"],
-  "exec_context": {
-    "tool": "cli.exec",
-    "id": "lark",
-    "argv_prefix": ["im", "+chat-search"]
-  },
-  "interface": {
-    "path_style": "argv",
-    "flag_style": "long_flags",
-    "flag_case": "kebab",
-    "value_style": "separate",
-    "format_flag": "--format",
-    "default_format": "json",
-    "dry_run_flag": "--dry-run"
-  },
-  "stdout": "...raw CLI help...",
-  "stderr": "",
-  "exit_code": 0
 }
 ```
 
@@ -3573,6 +3546,10 @@ read-only SQLite statement against a project-contained database using fixed
 `SELECT`, `WITH`, and non-assigning `PRAGMA`; mutating SQL, DDL, attach/detach,
 vacuum/reindex/analyze, and multiple statements are rejected before execution.
 
+The SQLite CLI runs with `-init /dev/null -safe -readonly` and a fresh private
+`HOME`, so it never reads `.sqliterc`. SQL functions such as `edit()` and
+`writefile()` cannot launch programs or write files.
+
 Arguments:
 
 ```json
@@ -3737,10 +3714,46 @@ Arguments:
 Available only when `[builtin].enabled` includes `archive.extract`. Extracts a
 project-contained zip or tar archive into a project-contained destination
 directory using fixed argv. The tool defaults to `dry_run=true`, validates all
-entry paths before extraction, refuses link entries, and requires
+entry paths before extraction, refuses link entries, checks each destination
+through directory handles, and requires
 `confirm_extract=true` when `dry_run=false`.
 
-Zip-like archives use `/usr/bin/unzip`; tar-like archives use `/usr/bin/tar`.
+One `tar -tvf` listing validates paths, types, sizes and modes, refusing absolute
+paths, `..`, Git metadata, links and special files. The host creates a private
+staging directory with `mkdirat` inside the destination (on the same volume), opens
+it with `O_DIRECTORY | O_NOFOLLOW`, and starts tar with
+`posix_spawn_file_actions_addfchdir_np` on that descriptor. No staging pathname
+is passed to tar. For both zip and tar, `tar -xOf -` reads the archive through
+standard input and streams file contents once through a pipe to a host-opened
+temporary descriptor. The same tar reader determines listing and content order
+for ZIPs, including those with a reordered central directory. The pipe preserves
+sparse holes as logical zero bytes. `--no-same-owner` and
+`--no-same-permissions` are set; extraction does not use `-P`.
+The host creates entries through anchored descriptors from the validated relative
+names, checks byte counts, and records each created device and inode immediately.
+Listing escapes are decoded before path checks; member names must be valid UTF-8.
+An additional read-only tar pass obtains exact modification times: BSD tar exports
+`mtree` time metadata with `-P` to preserve original names during this read-only
+conversion, while GNU tar uses `--full-time` in UTC. Metadata must match
+the validated member names and types; it does not determine content order or add
+write targets. Modification times, including stored nanoseconds, are restored
+through checked descriptors. Files receive their times before publication.
+Directories in staging and at the destination are created with owner read, write
+and search permission. After all contents are published and staging is cleaned,
+explicit directory members receive their archive modes and modification times
+through checked descriptors, deepest first. An existing destination keeps its own
+mode, access time and modification time; an archive `.` entry, including equivalent
+root paths, supplies metadata only when the tool creates the destination.
+Implicit parent directories have no archive mode or timestamp to restore.
+It compares the tree's paths and types, including implicit parent directories,
+with the listing and rejects foreign inodes, symlinks and multiply linked files.
+It then creates destination directories and publishes files with anchored
+exclusive renames. Cleanup removes only recorded inodes, on success or failure.
+It preserves unknown entries without descending into foreign directories, retains
+their staging directory, and fails with the retained paths in the error.
+Entries already published before a later failure remain in place;
+extraction is not an all-or-nothing transaction. `result` is the extraction command
+result.
 The destination directory must already exist unless `create_directories=true`.
 Existing destination paths are rejected unless `overwrite=true`.
 
@@ -3799,7 +3812,7 @@ Available only when `[builtin].enabled` includes `file.download`. Downloads an
 absolute HTTP or HTTPS URL to a project-contained file using fixed
 `/usr/bin/curl` argv. The tool defaults to `dry_run=true`, rejects URLs with
 userinfo credentials, sends no custom headers, cookies, or request body, writes
-through a deterministic temp file in the destination directory, and requires
+through an exclusively created temporary descriptor in the destination directory, and requires
 `confirm_download=true` when `dry_run=false`.
 
 The destination parent directory must already exist unless
@@ -3825,6 +3838,69 @@ Arguments:
   "max_output_bytes": 16384
 }
 ```
+
+## File mutation boundaries
+
+File and structured-data writes walk project-relative paths with anchored directory
+handles and `O_NOFOLLOW`. Every recursive member and extracted archive entry is
+checked. Path walks refuse symlinks; content and metadata changes reject existing
+regular files observed to have multiple hard links. This protects existing files
+from writes through pre-existing hard links to files outside the project. A file
+created by the operation can acquire a concurrent hard link while it is being
+written. Creating that link outside the project requires a process that can
+already create files there; a sandboxed principal cannot do so, and a process with
+that access could read the archive directly. After a created file is complete,
+`fstat` checks its descriptor's link count. Persistent multiple links fail the
+operation; cleanup removes only entries matching their recorded device and inode.
+The final check cannot retract bytes already exposed through a concurrent link or
+detect a link removed before the check.
+
+Writes, creation, moves, renames, deletion and archive extraction refuse any target
+with a `.git` component at any depth, compared case-insensitively after Unicode
+normalization. Moves and renames also refuse such a source. The rule covers `.git`
+directories, gitfiles and paths beneath them. Git configuration paths are protected.
+At file-access creation, the host checks the Git layout once using its isolated Git
+invocation: `rev-parse --git-dir --git-common-dir`, resolving `core.worktree`
+relative to the Git directory if set. If the project's root `.git` entry is a
+symbolic link, or the resolved Git directory or common directory is inside the
+project at a path without a `.git` component, every in-process write fails. The
+error identifies the layout and says the project must use a standard Git layout
+for these tools. Git directories outside the project cannot be reached by project
+writes. A worktree whose gitfile points outside the project supports ordinary
+writes, with `.git` still protected. Each host Git operation refuses local `include`
+or `includeIf` configuration entries before running.
+If the host cannot verify the Git layout, in-process writes fail.
+`file.symlink` can replace an explicitly selected existing
+link without following it. `file.trash` refuses the project root and recursively
+checks all members before calling macOS Trash. It refuses Git metadata and
+configuration, symlinks and special files, but allows multiply linked regular
+files because it moves entries without writing their contents. Its platform call
+uses a path and has no descriptor-based post-check or rollback; its destination
+can be outside the project.
+
+Downloads and archive output stream to host-opened temporary file descriptors;
+the host rechecks the destination directory and file before publishing the result.
+Directory entry creation, publication, rename and unlink check their parent
+handles before and after successful syscalls, walking ancestors to the pinned
+project root. On a failed post-check they attempt rollback. Removal and rename
+during rollback compare device and inode immediately before their syscalls; an
+observed mismatch leaves the entry in place and reports an error. `chmod`, `touch` and xattr removal record mode,
+access/modification times and the affected xattr values through the opened
+descriptor. After mutation they recheck the parent chain, path identity and link
+count; failure restores those values through the same descriptor.
+These are observations at check time: they do not lock out other processes or
+detect changes made and reversed between checks, or changes after the final
+check. An entry can also be replaced after the identity comparison but before its
+syscall. Metadata restoration can overwrite another writer's intervening metadata
+changes. Rollback failures are reported; this is not atomic isolation.
+Copy uses descriptor-based `fcopyfile(COPYFILE_ALL)` on macOS, preserving data,
+xattrs, resource forks, ACLs, mode and times. It checks the source again before
+publishing the staged copy and cleans its staging entries with identity checks.
+The identity record is populated at creation, not by scanning staging afterward.
+A replaced copy temporary is unlinked only if it still names the inode written
+by `fcopyfile`; foreign entries and directories remain in staging, named in the
+failure returned to the caller.
+Archive extraction uses the staging and validation procedure above.
 
 ## `file.write`
 
@@ -4035,10 +4111,13 @@ Arguments:
 ## `file.move`
 
 Available only when `[builtin].enabled` includes `file.move`. Moves or renames a
-file or directory between project-contained paths. Existing destinations are
-rejected unless `overwrite` is true. Set `dry_run` to validate source,
-destination, overwrite policy, and parent-directory creation intent without
-moving the source or overwriting the destination.
+file or directory between project-contained paths on the same volume, preserving
+metadata with an exclusive, no-follow rename. Different device numbers on the
+anchored source and destination descriptors cause an error before creating parent
+directories or overwriting the destination: copy and then delete the source.
+Existing destinations are rejected unless `overwrite` is true. Set `dry_run` to
+validate source, destination, overwrite policy, and parent-directory creation
+intent without moving the source or overwriting the destination.
 
 Arguments:
 
@@ -4077,7 +4156,9 @@ Arguments:
 
 ## `file.trash`
 
-Available only when `[builtin].enabled` includes `file.trash`. Moves a
+Available only when `[builtin].enabled` includes `file.trash`. Refuses the project
+root, checks every directory member for protected paths and unsafe types, and
+allows multiply linked regular files. Moves a
 project-contained file or directory to the macOS Trash. This is a write
 operation, but it is preferred over permanent delete for gateway-level file
 organization. Set `dry_run` to validate the path without moving it to Trash.
@@ -4307,7 +4388,10 @@ Arguments:
 ### `git.ignored`
 
 Runs fixed read-only `git check-ignore --verbose -- <paths...>` through the
-registered `git` CLI provider. It requires explicit project-relative paths.
+registered `git` CLI provider. It requires explicit project-relative paths,
+including literal names such as `:(glob)*`. `check-ignore` takes paths, so the host
+does not add `--literal-pathspecs` and prefixes colon-leading names with `./`;
+pathspec-taking commands receive the literal option.
 Git uses its exit code to distinguish ignored from non-ignored paths.
 
 Arguments:
@@ -4992,18 +5076,32 @@ Arguments:
 }
 ```
 
+Host-owned Git commands use an empty private `HOME` and `XDG_CONFIG_HOME`,
+`GIT_CONFIG_NOSYSTEM=1`, `GIT_CONFIG_GLOBAL=/dev/null` and `GIT_ATTR_NOSYSTEM=1`.
+Inherited `GIT_*` variables are removed; author name and email are read as data
+from the owner's configuration and passed explicitly when needed. Repository
+configuration with `include` or `includeIf` entries is refused. Commands disable
+filesystem and configured hooks, fsmonitor,
+editors, pagers, credential/SSH helpers, signing programs, diff/merge drivers and
+filters, reset `rebase.instructionFormat` to Git's default, and disable
+`uploadpack.packObjectsHook`. Caller-supplied revisions are first resolved with
+`rev-parse --verify --end-of-options` to validated object IDs; option-shaped
+strings such as `--output=report` remain revision input. Path arguments use
+literal pathspecs after `--`.
+
 ### `git.commit`
 
-Creates a commit with `git commit -m <message>`. The message is required and
-bounded to 10000 characters. Set `dry_run` to run `git commit --dry-run` without
-creating a commit.
+Creates a commit with `git commit --only -m <message> -- <paths>`. Both the
+message (at most 10000 characters) and a nonempty `paths` list are required.
+Only those paths are committed; other staged changes remain staged. Set
+`dry_run` to preview the same path selection without creating a commit.
 
 Arguments:
 
 ```json
 {
   "message": "Update gateway atomics",
-  "all": false,
+  "paths": ["README.md"],
   "allow_empty": false,
   "dry_run": false,
   "timeout_ms": 30000

@@ -603,8 +603,11 @@ final class ProjectToolProviderTests {
 
     #expect((runner.calls.first?.executable) == ("/bin/echo"))
     #expect(
-      (runner.calls.first?.arguments)
-        == (["status", "--porcelain=v1", "-z", "--untracked-files=all", "--", "Sources"]))
+      (runner.calls.last?.arguments)
+        == (HostGitConfiguration.arguments + [
+          "--literal-pathspecs", "status", "--porcelain=v1", "-z", "--untracked-files=all", "--",
+          "Sources",
+        ]))
     #expect((payload.objectValue?["operation"]) == (.string("project.git_changes")))
     #expect((payload.objectValue?["provider"]) == (.string("git")))
     #expect((payload.objectValue?["change_count"]) == (.number(4)))

@@ -1164,17 +1164,17 @@ extension GitToolProvider {
         tool: MCPTool(
           name: "git.commit",
           description:
-            "Create a git commit through the registered git CLI provider. This is a write operation.",
+            "Commit only the specified project-relative paths with git commit --only, preserving other staged changes. This is a write operation.",
           inputSchema: objectSchema(
             properties: [
               "message": stringSchema("Commit message, up to 10000 characters."),
-              "all": boolSchema("Whether to stage tracked modifications with --all."),
+              "paths": stringArraySchema("Required literal project-relative paths to commit."),
               "allow_empty": boolSchema("Whether to allow an empty commit."),
               "dry_run": boolSchema(
                 "Whether to run git commit --dry-run without creating a commit."),
               "timeout_ms": integerSchema("Optional timeout in milliseconds."),
             ],
-            required: ["message"]
+            required: ["message", "paths"]
           ),
           annotations: MCPToolAnnotations(
             readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false

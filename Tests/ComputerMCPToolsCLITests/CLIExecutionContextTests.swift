@@ -12,7 +12,7 @@ import Testing
 @Suite(.nativeIntegration, .timeLimit(.minutes(1)))
 struct CLIExecutionContextTests {
   @Test(arguments: ["probe", "./probe"], [String?.none, "nested"])
-  func rawHelpAndExecUseTheInspectedProjectAndEnvironment(executable: String, cwd: String?)
+  func metadataHelpAndExecUseRegisteredContext(executable: String, cwd: String?)
     async throws
   {
     let fixture = try ContextFixture(cwd: cwd)
@@ -39,7 +39,7 @@ struct CLIExecutionContextTests {
           arguments: .object([
             "id": .string("probe"), "argv": .array([.string("hello world"), .string("")]),
           ]), context: .empty)))
-    #expect(help.objectValue?["stdout"] == .string("host|override|--help\n"))
+    #expect(help.objectValue?["executed"] == .bool(false))
     #expect(execution.objectValue?["stdout"] == .string("host|override|hello world\n"))
     #expect(execution.objectValue?["executable"] == .string(executable))
     await provider.environment.registeredCommands.execution.shutdown()
@@ -106,7 +106,7 @@ struct CLIExecutionContextTests {
   }
 
   @Test
-  func aMissingInterpreterFailsBeforeRawHelpOrExecution() async throws {
+  func aMissingInterpreterAllowsMetadataHelpAndRejectsExecution() async throws {
     let fixture = try ContextFixture(cwd: nil)
     defer { fixture.cleanup() }
     try "#!/usr/bin/env unavailable-cli-context-interpreter\n".write(
@@ -122,11 +122,10 @@ struct CLIExecutionContextTests {
     #expect(
       status.objectValue?["commands"]?.arrayValue?.first?.objectValue?["resolution"]?.objectValue?[
         "status"] == .string("interpreter_unavailable"))
-    #expect(throws: CommandRunnerError.self) {
-      try provider.callTool(
-        .init(
-          name: "cli.help", arguments: .object(["id": .string("probe")]), context: .empty))
-    }
+    let help = try payload(
+      provider.callTool(
+        .init(name: "cli.help", arguments: .object(["id": .string("probe")]), context: .empty)))
+    #expect(help.objectValue?["executed"] == .bool(false))
     #expect(throws: CommandRunnerError.self) {
       try provider.callTool(
         .init(

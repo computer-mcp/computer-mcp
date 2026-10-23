@@ -118,8 +118,16 @@ its configured timeout (or the policy default). Inherited and command-configured
 `GIT_*` variables are removed. Delivery sets `GIT_TERMINAL_PROMPT=0`,
 `GIT_NO_LAZY_FETCH=1` and an empty `GIT_ALLOW_PROTOCOL` to disable prompts,
 implicit object fetching and all Git transports, including on older Git versions.
-Missing local objects cause failure. Repository
-configuration and hooks remain active. Every Git invocation supplies
+Missing local objects cause failure. Each runner uses an empty private `HOME` and
+`XDG_CONFIG_HOME`, disables system configuration and attributes, and sets
+`GIT_CONFIG_GLOBAL=/dev/null`. Author name and email are read beforehand as data
+from the owner's configuration and passed explicitly. Repository configuration
+with `include` or `includeIf` entries is refused. Host Git commands disable filesystem and configured hooks, fsmonitor, editors,
+pagers, credential/SSH helpers, signing programs, diff/merge drivers and filters.
+`rebase.instructionFormat` is reset to Git's default, and
+`uploadpack.packObjectsHook` is disabled.
+Before merging, attributes from the working tree and both commits are checked;
+any assigned filter rejects the merge and retains the delivery commit. Every Git invocation supplies
 `-c gc.auto=0 -c maintenance.auto=false` to prevent automatic object, reflog and
 worktree-registration maintenance, and `-c submodule.recurse=false` to preserve
 nested repositories' checkouts. Diff inspections use `--no-ext-diff --no-textconv`
@@ -134,7 +142,9 @@ main-checkout state for target files, branch availability and the message. Land
 mode also requires the main checkout to be on the default branch.
 Git inspections in preflight and recovery use `--no-optional-locks` so that
 checking status does not refresh or write the main checkout's index. The isolated
-worktree starts at the current default-branch commit. Sparse mode uses non-cone,
+worktree is created with `--no-checkout` at the current default-branch commit.
+Checkout runs separately after inspecting the new worktree’s effective
+configuration. Sparse mode uses non-cone,
 exact-path sparse checkout. Immediately after `worktree add -b` succeeds, delivery
 persists creation evidence containing the initial branch commit and worktree
 identity. A branch without that evidence is retained as `cleanup_pending` /
@@ -144,7 +154,7 @@ file writes, sparse-checkout changes, checkout, staging, commit and rebase.
 
 After recording the commit, delivery checks its actual paths with
 `diff --no-renames --name-only <baseline> <commit>`. The changed paths must be
-exactly the requested paths, all within scope. A hook that stages another file
+exactly the requested paths, all within scope. A concurrent writer that stages another file
 therefore returns `committed` / `scope_changed`, retains the branch and stops
 before landing.
 
@@ -158,7 +168,7 @@ in the main checkout using the immutable, validated commit ID. An ignored file
 that appears at a target path prevents landing rather than being overwritten.
 Live delivery reports
 `merged` only when that checkout's `HEAD` equals the delivery commit, including
-after a command failure, timeout or exception. A post-merge hook that creates a
+after a command failure, timeout or exception. A concurrent writer that creates a
 descendant leaves the result `committed` with its branch retained.
 
 Rebase uses `--no-update-refs --no-autostash --no-rebase-merges` so that repository

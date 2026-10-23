@@ -30,11 +30,10 @@ extension GitToolProvider {
 
     let args = ["config", "--list", "--show-origin", "--show-scope", "--null"]
     let command = try environment.registeredCommands.gitCLICommand()
-    let result = try environment.registeredCommands.runRegisteredCLI(
+    let result = try environment.registeredCommands.runHostGit(
       command: command,
       args: args,
-      timeout: optionalInt("timeout_ms", in: object),
-      requireArbitraryArgs: false
+      timeout: optionalInt("timeout_ms", in: object)
     )
 
     let parsed = parseGitConfigOutput(result.stdout, includeValues: includeValues)
@@ -195,7 +194,7 @@ extension GitToolProvider {
   }
 
   internal func gitStashShow(arguments object: [String: JSONValue]) throws -> JSONValue {
-    let stash = try optionalGitStashRef(in: object)
+    let stashRef = try optionalGitStashRef(in: object)
     let stat = try optionalBool("stat", in: object) ?? true
     let patch = try optionalBool("patch", in: object) ?? false
     let paths = try optionalGitPaths(in: object)
@@ -204,6 +203,7 @@ extension GitToolProvider {
       try validateBoundedNonNegative(contextLines, name: "context_lines", upperBound: 100)
     }
 
+    let stash = try resolvedRevision(stashRef, timeout: optionalInt("timeout_ms", in: object))
     var args = paths.isEmpty ? ["stash", "show"] : ["diff"]
     if stat {
       args.append("--stat")
@@ -218,7 +218,8 @@ extension GitToolProvider {
       args.append("-U\(contextLines)")
     }
     if !paths.isEmpty {
-      args.append("\(stash)^1")
+      args.append(
+        try resolvedRevision("\(stash)^1", timeout: optionalInt("timeout_ms", in: object)))
     }
     args.append(stash)
     if !paths.isEmpty {
@@ -254,11 +255,10 @@ extension GitToolProvider {
     var keepIndexOmittedForUntrackedOnlyPaths = false
     if !dryRun, includeUntracked, keepIndex, !allPaths {
       let command = try environment.registeredCommands.gitCLICommand()
-      let trackedPathResult = try environment.registeredCommands.runRegisteredCLI(
+      let trackedPathResult = try environment.registeredCommands.runHostGit(
         command: command,
         args: ["ls-files", "-z", "--"] + paths,
-        timeout: timeout,
-        requireArbitraryArgs: false
+        timeout: timeout
       )
       guard !trackedPathResult.timedOut else {
         throw GatewayToolError.executionFailed(
@@ -347,19 +347,18 @@ extension GitToolProvider {
     let command = try environment.registeredCommands.gitCLICommand()
     let tagRef = "refs/tags/\(tagName)"
     let existsArgs = ["show-ref", "--verify", "--quiet", tagRef]
-    var showArgs = ["show", "--date=iso-strict"]
+    var showArgs = ["show", "--no-ext-diff", "--no-textconv", "--date=iso-strict"]
     if stat {
       showArgs.append("--stat")
     } else {
       showArgs.append("--no-patch")
     }
-    showArgs.append(tagRef)
+    showArgs.append(try resolvedRevision(tagRef, kind: "object", timeout: timeout))
 
-    let existsResult = try environment.registeredCommands.runRegisteredCLI(
+    let existsResult = try environment.registeredCommands.runHostGit(
       command: command,
       args: existsArgs,
-      timeout: timeout,
-      requireArbitraryArgs: false
+      timeout: timeout
     )
     guard !existsResult.timedOut else {
       throw GatewayToolError.invalidArguments("tag existence check timed out.")
@@ -371,11 +370,10 @@ extension GitToolProvider {
       throw GatewayToolError.invalidArguments("tag existence check failed for: \(tagName)")
     }
 
-    let showResult = try environment.registeredCommands.runRegisteredCLI(
+    let showResult = try environment.registeredCommands.runHostGit(
       command: command,
       args: showArgs,
-      timeout: timeout,
-      requireArbitraryArgs: false
+      timeout: timeout
     )
 
     return .object([
@@ -405,35 +403,32 @@ extension GitToolProvider {
     let timeout = optionalInt("timeout_ms", in: object)
     let command = try environment.registeredCommands.gitCLICommand()
     let checkNameArgs = ["check-ref-format", "refs/tags/\(tagName)"]
-    let targetArgs = ["rev-parse", "--verify", "\(target)^{object}"]
+    let targetArgs = ["rev-parse", "--verify", "--end-of-options", "\(target)^{object}"]
     let existsArgs = ["show-ref", "--verify", "--quiet", "refs/tags/\(tagName)"]
 
-    let checkNameResult = try environment.registeredCommands.runRegisteredCLI(
+    let checkNameResult = try environment.registeredCommands.runHostGit(
       command: command,
       args: checkNameArgs,
-      timeout: timeout,
-      requireArbitraryArgs: false
+      timeout: timeout
     )
     guard !checkNameResult.timedOut, checkNameResult.exitCode == 0 else {
       throw GatewayToolError.invalidArguments(
         "tag name is not accepted by git check-ref-format: \(tagName)")
     }
 
-    let targetResult = try environment.registeredCommands.runRegisteredCLI(
+    let targetResult = try environment.registeredCommands.runHostGit(
       command: command,
       args: targetArgs,
-      timeout: timeout,
-      requireArbitraryArgs: false
+      timeout: timeout
     )
     guard !targetResult.timedOut, targetResult.exitCode == 0 else {
       throw GatewayToolError.invalidArguments("target is not an existing Git object: \(target)")
     }
 
-    let existsResult = try environment.registeredCommands.runRegisteredCLI(
+    let existsResult = try environment.registeredCommands.runHostGit(
       command: command,
       args: existsArgs,
-      timeout: timeout,
-      requireArbitraryArgs: false
+      timeout: timeout
     )
     guard !existsResult.timedOut else {
       throw GatewayToolError.invalidArguments("tag existence check timed out.")
@@ -445,14 +440,13 @@ extension GitToolProvider {
       throw GatewayToolError.invalidArguments("tag existence check failed for: \(tagName)")
     }
 
-    let createArgs = ["tag", tagName, target]
+    let createArgs = ["tag", "--", tagName, try objectID(targetResult)]
     var result: JSONValue = .null
     if !dryRun {
-      let createResult = try environment.registeredCommands.runRegisteredCLI(
+      let createResult = try environment.registeredCommands.runHostGit(
         command: command,
         args: createArgs,
-        timeout: timeout,
-        requireArbitraryArgs: false
+        timeout: timeout
       )
       result = createResult.json
     }
@@ -487,13 +481,14 @@ extension GitToolProvider {
     let timeout = optionalInt("timeout_ms", in: object)
     let command = try environment.registeredCommands.gitCLICommand()
     let existsArgs = ["show-ref", "--verify", "--quiet", "refs/tags/\(tagName)"]
-    let revParseArgs = ["rev-parse", "--verify", "refs/tags/\(tagName)^{object}"]
+    let revParseArgs = [
+      "rev-parse", "--verify", "--end-of-options", "refs/tags/\(tagName)^{object}",
+    ]
 
-    let existsResult = try environment.registeredCommands.runRegisteredCLI(
+    let existsResult = try environment.registeredCommands.runHostGit(
       command: command,
       args: existsArgs,
-      timeout: timeout,
-      requireArbitraryArgs: false
+      timeout: timeout
     )
     guard !existsResult.timedOut else {
       throw GatewayToolError.invalidArguments("tag existence check timed out.")
@@ -505,11 +500,10 @@ extension GitToolProvider {
       throw GatewayToolError.invalidArguments("tag existence check failed for: \(tagName)")
     }
 
-    let revParseResult = try environment.registeredCommands.runRegisteredCLI(
+    let revParseResult = try environment.registeredCommands.runHostGit(
       command: command,
       args: revParseArgs,
-      timeout: timeout,
-      requireArbitraryArgs: false
+      timeout: timeout
     )
     guard !revParseResult.timedOut, revParseResult.exitCode == 0 else {
       throw GatewayToolError.invalidArguments("tag object cannot be resolved: \(tagName)")
@@ -518,11 +512,10 @@ extension GitToolProvider {
     let deleteArgs = ["tag", "-d", tagName]
     var result: JSONValue = .null
     if !dryRun {
-      let deleteResult = try environment.registeredCommands.runRegisteredCLI(
+      let deleteResult = try environment.registeredCommands.runHostGit(
         command: command,
         args: deleteArgs,
-        timeout: timeout,
-        requireArbitraryArgs: false
+        timeout: timeout
       )
       result = deleteResult.json
     }
@@ -544,13 +537,14 @@ extension GitToolProvider {
   }
 
   internal func gitIgnored(arguments object: [String: JSONValue]) throws -> JSONValue {
-    let paths = try optionalGitPaths(in: object)
+    let paths = try optionalGitPaths(in: object, literal: true)
     guard !paths.isEmpty else {
       throw GatewayToolError.invalidArguments("git.ignored requires at least one path.")
     }
     return try gitResult(
       operation: "git.ignored",
-      arguments: ["check-ignore", "--verbose", "--"] + paths,
+      arguments: ["check-ignore", "--verbose", "--"]
+        + paths.map { $0.hasPrefix(":") ? "./" + $0 : $0 },
       timeout: optionalInt("timeout_ms", in: object)
     )
   }
@@ -601,11 +595,10 @@ extension GitToolProvider {
     args.append(contentsOf: paths)
 
     let command = try environment.registeredCommands.gitCLICommand()
-    let result = try environment.registeredCommands.runRegisteredCLI(
+    let result = try environment.registeredCommands.runHostGit(
       command: command,
       args: args,
-      timeout: optionalInt("timeout_ms", in: object),
-      requireArbitraryArgs: false
+      timeout: optionalInt("timeout_ms", in: object)
     )
     let parsed = parseGitGrepZ(result.stdout)
     let returnedMatches = Array(parsed.matches.prefix(maxResults))
@@ -676,11 +669,10 @@ extension GitToolProvider {
     args.append(paths[0])
 
     let command = try environment.registeredCommands.gitCLICommand()
-    let result = try environment.registeredCommands.runRegisteredCLI(
+    let result = try environment.registeredCommands.runHostGit(
       command: command,
       args: args,
-      timeout: optionalInt("timeout_ms", in: object),
-      requireArbitraryArgs: false
+      timeout: optionalInt("timeout_ms", in: object)
     )
     let rawLines = result.stdout.split(separator: "\n", omittingEmptySubsequences: false)
       .map(String.init)
@@ -754,14 +746,14 @@ extension GitToolProvider {
       )
     }
 
-    let objectSpec = "\(revision):\(paths[0])"
+    let resolved = try resolvedRevision(revision, timeout: optionalInt("timeout_ms", in: object))
+    let objectSpec = "\(resolved):\(paths[0])"
     let args = ["show", objectSpec]
     let command = try environment.registeredCommands.gitCLICommand()
-    let result = try environment.registeredCommands.runRegisteredCLI(
+    let result = try environment.registeredCommands.runHostGit(
       command: command,
       args: args,
-      timeout: optionalInt("timeout_ms", in: object),
-      requireArbitraryArgs: false
+      timeout: optionalInt("timeout_ms", in: object)
     )
     let stdoutData = Data(result.stdout.utf8)
     let contentTruncated = stdoutData.count > maxBytes || result.stdoutTruncated
@@ -810,11 +802,10 @@ extension GitToolProvider {
     let objectSpec = ":\(paths[0])"
     let args = ["show", objectSpec]
     let command = try environment.registeredCommands.gitCLICommand()
-    let result = try environment.registeredCommands.runRegisteredCLI(
+    let result = try environment.registeredCommands.runHostGit(
       command: command,
       args: args,
-      timeout: optionalInt("timeout_ms", in: object),
-      requireArbitraryArgs: false
+      timeout: optionalInt("timeout_ms", in: object)
     )
     let stdoutData = Data(result.stdout.utf8)
     let contentTruncated = stdoutData.count > maxBytes || result.stdoutTruncated
@@ -877,11 +868,10 @@ extension GitToolProvider {
   internal func gitTrackingStatus(arguments object: [String: JSONValue]) throws -> JSONValue {
     let command = try environment.registeredCommands.gitCLICommand()
     let args = ["status", "--branch", "--porcelain=v1"]
-    let result = try environment.registeredCommands.runRegisteredCLI(
+    let result = try environment.registeredCommands.runHostGit(
       command: command,
       args: args,
-      timeout: optionalInt("timeout_ms", in: object),
-      requireArbitraryArgs: false
+      timeout: optionalInt("timeout_ms", in: object)
     )
     let branchLine = result.stdout.split(separator: "\n", omittingEmptySubsequences: true)
       .map(String.init)
@@ -1012,11 +1002,10 @@ extension GitToolProvider {
     }
 
     let command = try environment.registeredCommands.gitCLICommand()
-    let result = try environment.registeredCommands.runRegisteredCLI(
+    let result = try environment.registeredCommands.runHostGit(
       command: command,
       args: args,
-      timeout: optionalInt("timeout_ms", in: object),
-      requireArbitraryArgs: false
+      timeout: optionalInt("timeout_ms", in: object)
     )
     let rawLines = result.stdout.split(separator: "\n", omittingEmptySubsequences: false)
       .map(String.init)
@@ -1139,11 +1128,10 @@ extension GitToolProvider {
       "\(limit)",
     ]
     let command = try environment.registeredCommands.gitCLICommand()
-    let result = try environment.registeredCommands.runRegisteredCLI(
+    let result = try environment.registeredCommands.runHostGit(
       command: command,
       args: args,
-      timeout: optionalInt("timeout_ms", in: object),
-      requireArbitraryArgs: false
+      timeout: optionalInt("timeout_ms", in: object)
     )
     let rawLines = result.stdout.split(separator: "\n", omittingEmptySubsequences: false)
       .map(String.init)
@@ -1245,11 +1233,10 @@ extension GitToolProvider {
     args.append(contentsOf: namespaces)
 
     let command = try environment.registeredCommands.gitCLICommand()
-    let result = try environment.registeredCommands.runRegisteredCLI(
+    let result = try environment.registeredCommands.runHostGit(
       command: command,
       args: args,
-      timeout: optionalInt("timeout_ms", in: object),
-      requireArbitraryArgs: false
+      timeout: optionalInt("timeout_ms", in: object)
     )
     let rawLines = result.stdout.split(separator: "\n", omittingEmptySubsequences: false)
       .map(String.init)
@@ -1335,7 +1322,9 @@ extension GitToolProvider {
     try validateBoundedPositive(maxResults, name: "max_results", upperBound: 200)
     let cherryPick = try optionalBool("cherry_pick", in: object) ?? false
     let timeout = optionalInt("timeout_ms", in: object)
-    let range = "\(base)...\(head)"
+    let baseID = try resolvedRevision(base, timeout: timeout)
+    let headID = try resolvedRevision(head, timeout: timeout)
+    let range = "\(baseID)...\(headID)"
 
     var countArgs = ["rev-list", "--left-right", "--count"]
     if cherryPick {
@@ -1343,7 +1332,7 @@ extension GitToolProvider {
     }
     countArgs.append(range)
 
-    let mergeBaseArgs = ["merge-base", base, head]
+    let mergeBaseArgs = ["merge-base", baseID, headID]
 
     var logArgs = [
       "log",
@@ -1359,23 +1348,20 @@ extension GitToolProvider {
     logArgs.append(range)
 
     let command = try environment.registeredCommands.gitCLICommand()
-    let countResult = try environment.registeredCommands.runRegisteredCLI(
+    let countResult = try environment.registeredCommands.runHostGit(
       command: command,
       args: countArgs,
-      timeout: timeout,
-      requireArbitraryArgs: false
+      timeout: timeout
     )
-    let mergeBaseResult = try environment.registeredCommands.runRegisteredCLI(
+    let mergeBaseResult = try environment.registeredCommands.runHostGit(
       command: command,
       args: mergeBaseArgs,
-      timeout: timeout,
-      requireArbitraryArgs: false
+      timeout: timeout
     )
-    let logResult = try environment.registeredCommands.runRegisteredCLI(
+    let logResult = try environment.registeredCommands.runHostGit(
       command: command,
       args: logArgs,
-      timeout: timeout,
-      requireArbitraryArgs: false
+      timeout: timeout
     )
 
     let counts = parseGitCompareCounts(countResult.stdout)
@@ -1438,12 +1424,11 @@ extension GitToolProvider {
     let timeout = optionalInt("timeout_ms", in: object)
     let command = try environment.registeredCommands.gitCLICommand()
     let objectSpec = "\(ref)^{object}"
-    let revParseArgs = ["rev-parse", "--verify", objectSpec]
-    let revParseResult = try environment.registeredCommands.runRegisteredCLI(
+    let revParseArgs = ["rev-parse", "--verify", "--end-of-options", objectSpec]
+    let revParseResult = try environment.registeredCommands.runHostGit(
       command: command,
       args: revParseArgs,
-      timeout: timeout,
-      requireArbitraryArgs: false
+      timeout: timeout
     )
     guard !revParseResult.timedOut else {
       throw GatewayToolError.invalidArguments("git.resolve_ref timed out while resolving ref.")
@@ -1453,12 +1438,12 @@ extension GitToolProvider {
       throw GatewayToolError.invalidArguments("git.resolve_ref failed for the supplied ref.")
     }
 
-    let typeArgs = ["cat-file", "-t", objectID]
-    let typeResult = try environment.registeredCommands.runRegisteredCLI(
+    let verifiedID = try self.objectID(revParseResult)
+    let typeArgs = ["cat-file", "-t", verifiedID]
+    let typeResult = try environment.registeredCommands.runHostGit(
       command: command,
       args: typeArgs,
-      timeout: timeout,
-      requireArbitraryArgs: false
+      timeout: timeout
     )
     guard !typeResult.timedOut else {
       throw GatewayToolError.invalidArguments(
@@ -1498,9 +1483,9 @@ extension GitToolProvider {
     var refs: [String] = []
     for (index, ref) in rawRefs.enumerated() {
       guard !ref.isEmpty else {
-        throw GatewayToolError.invalidArguments("refs[\(index)] must not be empty.")
+        throw GatewayToolError.invalidArguments("refs must not contain empty strings.")
       }
-      refs.append(try validateGitRefToken(ref, name: "refs[\(index)]"))
+      refs.append(try validateGitRevision(ref, name: "refs[\(index)]"))
     }
 
     let all = try optionalBool("all", in: object) ?? false
@@ -1510,13 +1495,12 @@ extension GitToolProvider {
     if all {
       args.append("--all")
     }
-    args.append(contentsOf: refs)
+    args.append(contentsOf: try refs.map { try resolvedRevision($0, timeout: timeout) })
 
-    let result = try environment.registeredCommands.runRegisteredCLI(
+    let result = try environment.registeredCommands.runHostGit(
       command: command,
       args: args,
-      timeout: timeout,
-      requireArbitraryArgs: false
+      timeout: timeout
     )
     guard !result.timedOut else {
       throw GatewayToolError.invalidArguments("git.merge_base timed out.")
@@ -1551,12 +1535,14 @@ extension GitToolProvider {
     let descendant = try validatedGitRefArgument("descendant", in: object)
     let timeout = optionalInt("timeout_ms", in: object)
     let command = try environment.registeredCommands.gitCLICommand()
-    let args = ["merge-base", "--is-ancestor", ancestor, descendant]
-    let result = try environment.registeredCommands.runRegisteredCLI(
+    let args = [
+      "merge-base", "--is-ancestor", try resolvedRevision(ancestor, timeout: timeout),
+      try resolvedRevision(descendant, timeout: timeout),
+    ]
+    let result = try environment.registeredCommands.runHostGit(
       command: command,
       args: args,
-      timeout: timeout,
-      requireArbitraryArgs: false
+      timeout: timeout
     )
     guard !result.timedOut else {
       throw GatewayToolError.invalidArguments("git.is_ancestor timed out.")
@@ -1580,7 +1566,7 @@ extension GitToolProvider {
     -> String
   {
     let ref = try requiredString(name, in: object)
-    return try validateGitRefToken(ref, name: name)
+    return try validateGitRevision(ref, name: name)
   }
 
   private func optionalValidatedGitRefArgument(_ name: String, in object: [String: JSONValue])
@@ -1590,7 +1576,36 @@ extension GitToolProvider {
     guard let ref = try optionalString(name, in: object) else {
       return nil
     }
-    return try validateGitRefToken(ref, name: name)
+    return try validateGitRevision(ref, name: name)
+  }
+
+  private func validateGitRevision(_ ref: String, name: String = "revision") throws -> String {
+    guard !ref.isEmpty, ref.utf8.count <= 1024, !ref.contains("\0"), !ref.contains("\n") else {
+      throw GatewayToolError.invalidArguments("Invalid Git \(name).")
+    }
+    return ref
+  }
+
+  private func resolvedRevision(_ ref: String, kind: String = "commit", timeout: Int?) throws
+    -> String
+  {
+    _ = try validateGitRevision(ref)
+    let result = try environment.registeredCommands.runHostGit(
+      command: environment.registeredCommands.gitCLICommand(),
+      args: ["rev-parse", "--verify", "--end-of-options", "\(ref)^{\(kind)}"], timeout: timeout)
+    return try objectID(result)
+  }
+
+  private func objectID(_ result: CommandResult) throws -> String {
+    let value = result.stdout.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard result.exitCode == 0, !result.timedOut, !result.stdoutTruncated,
+      [40, 64].contains(value.utf8.count),
+      value.utf8.allSatisfy({ (48...57).contains($0) || (97...102).contains($0) })
+    else {
+      throw GatewayToolError.invalidArguments(
+        "Git revision resolution failed: revision does not resolve to an object.")
+    }
+    return value
   }
 
   private func validateGitRefToken(_ ref: String, name: String) throws -> String {
@@ -1807,7 +1822,7 @@ extension GitToolProvider {
       try validateBoundedNonNegative(contextLines, name: "context_lines", upperBound: 100)
     }
 
-    var args = ["diff", "--no-ext-diff"]
+    var args = ["diff", "--no-ext-diff", "--no-textconv"]
     if staged {
       args.append("--cached")
     }
@@ -1835,7 +1850,7 @@ extension GitToolProvider {
     try validateBoundedPositive(maxResults, name: "max_results", upperBound: 5_000)
 
     let command = try environment.registeredCommands.gitCLICommand()
-    var baseArgs = ["diff", "--no-ext-diff", "--no-color"]
+    var baseArgs = ["diff", "--no-ext-diff", "--no-textconv", "--no-color"]
     if staged {
       baseArgs.append("--cached")
     }
@@ -1850,17 +1865,15 @@ extension GitToolProvider {
     }
 
     let timeout = optionalInt("timeout_ms", in: object)
-    let numstatResult = try environment.registeredCommands.runRegisteredCLI(
+    let numstatResult = try environment.registeredCommands.runHostGit(
       command: command,
       args: numstatArgs,
-      timeout: timeout,
-      requireArbitraryArgs: false
+      timeout: timeout
     )
-    let summaryResult = try environment.registeredCommands.runRegisteredCLI(
+    let summaryResult = try environment.registeredCommands.runHostGit(
       command: command,
       args: summaryArgs,
-      timeout: timeout,
-      requireArbitraryArgs: false
+      timeout: timeout
     )
 
     let files = parseGitDiffNumstatZ(numstatResult.stdout)
@@ -2068,7 +2081,7 @@ extension GitToolProvider {
     let maxResults = optionalInt("max_results", in: object) ?? 200
     try validateBoundedPositive(maxResults, name: "max_results", upperBound: 5_000)
 
-    var args = ["diff", "--no-ext-diff", "--no-color", "--check"]
+    var args = ["diff", "--no-ext-diff", "--no-textconv", "--no-color", "--check"]
     if staged {
       args.append("--cached")
     }
@@ -2078,11 +2091,10 @@ extension GitToolProvider {
     }
 
     let command = try environment.registeredCommands.gitCLICommand()
-    let result = try environment.registeredCommands.runRegisteredCLI(
+    let result = try environment.registeredCommands.runHostGit(
       command: command,
       args: args,
-      timeout: optionalInt("timeout_ms", in: object),
-      requireArbitraryArgs: false
+      timeout: optionalInt("timeout_ms", in: object)
     )
     let issues = parseGitDiffCheckIssues(result.stdout)
     let rawLines = result.stdout.split(separator: "\n", omittingEmptySubsequences: false)
@@ -2174,24 +2186,22 @@ extension GitToolProvider {
     let command = try environment.registeredCommands.gitCLICommand()
     let checkNameArgs = ["check-ref-format", "--branch", branchName]
     let existsArgs = ["show-ref", "--verify", "--quiet", "refs/heads/\(branchName)"]
-    let startPointArgs = ["rev-parse", "--verify", "\(startPoint)^{commit}"]
+    let startPointArgs = ["rev-parse", "--verify", "--end-of-options", "\(startPoint)^{commit}"]
 
-    let checkNameResult = try environment.registeredCommands.runRegisteredCLI(
+    let checkNameResult = try environment.registeredCommands.runHostGit(
       command: command,
       args: checkNameArgs,
-      timeout: timeout,
-      requireArbitraryArgs: false
+      timeout: timeout
     )
     guard !checkNameResult.timedOut, checkNameResult.exitCode == 0 else {
       throw GatewayToolError.invalidArguments(
         "branch name is not accepted by git check-ref-format: \(branchName)")
     }
 
-    let existsResult = try environment.registeredCommands.runRegisteredCLI(
+    let existsResult = try environment.registeredCommands.runHostGit(
       command: command,
       args: existsArgs,
-      timeout: timeout,
-      requireArbitraryArgs: false
+      timeout: timeout
     )
     guard !existsResult.timedOut else {
       throw GatewayToolError.invalidArguments("branch existence check timed out.")
@@ -2203,25 +2213,23 @@ extension GitToolProvider {
       throw GatewayToolError.invalidArguments("branch existence check failed for: \(branchName)")
     }
 
-    let startPointResult = try environment.registeredCommands.runRegisteredCLI(
+    let startPointResult = try environment.registeredCommands.runHostGit(
       command: command,
       args: startPointArgs,
-      timeout: timeout,
-      requireArbitraryArgs: false
+      timeout: timeout
     )
     guard !startPointResult.timedOut, startPointResult.exitCode == 0 else {
       throw GatewayToolError.invalidArguments(
         "start_point is not a commit-ish ref: \(startPoint)")
     }
 
-    let createArgs = ["branch", branchName, startPoint]
+    let createArgs = ["branch", "--", branchName, try objectID(startPointResult)]
     var result: JSONValue = .null
     if !dryRun {
-      let createResult = try environment.registeredCommands.runRegisteredCLI(
+      let createResult = try environment.registeredCommands.runHostGit(
         command: command,
         args: createArgs,
-        timeout: timeout,
-        requireArbitraryArgs: false
+        timeout: timeout
       )
       result = createResult.json
     }
@@ -2260,22 +2268,20 @@ extension GitToolProvider {
     let existsArgs = ["show-ref", "--verify", "--quiet", "refs/heads/\(branchName)"]
     let currentBranchArgs = ["branch", "--show-current"]
 
-    let checkNameResult = try environment.registeredCommands.runRegisteredCLI(
+    let checkNameResult = try environment.registeredCommands.runHostGit(
       command: command,
       args: checkNameArgs,
-      timeout: timeout,
-      requireArbitraryArgs: false
+      timeout: timeout
     )
     guard !checkNameResult.timedOut, checkNameResult.exitCode == 0 else {
       throw GatewayToolError.invalidArguments(
         "branch name is not accepted by git check-ref-format: \(branchName)")
     }
 
-    let existsResult = try environment.registeredCommands.runRegisteredCLI(
+    let existsResult = try environment.registeredCommands.runHostGit(
       command: command,
       args: existsArgs,
-      timeout: timeout,
-      requireArbitraryArgs: false
+      timeout: timeout
     )
     guard !existsResult.timedOut else {
       throw GatewayToolError.invalidArguments("branch existence check timed out.")
@@ -2287,11 +2293,10 @@ extension GitToolProvider {
       throw GatewayToolError.invalidArguments("branch existence check failed for: \(branchName)")
     }
 
-    let currentBranchResult = try environment.registeredCommands.runRegisteredCLI(
+    let currentBranchResult = try environment.registeredCommands.runHostGit(
       command: command,
       args: currentBranchArgs,
-      timeout: timeout,
-      requireArbitraryArgs: false
+      timeout: timeout
     )
     guard !currentBranchResult.timedOut, currentBranchResult.exitCode == 0 else {
       throw GatewayToolError.invalidArguments("current branch check failed.")
@@ -2304,11 +2309,10 @@ extension GitToolProvider {
     let deleteArgs = ["branch", force ? "-D" : "-d", branchName]
     var result: JSONValue = .null
     if !dryRun {
-      let deleteResult = try environment.registeredCommands.runRegisteredCLI(
+      let deleteResult = try environment.registeredCommands.runHostGit(
         command: command,
         args: deleteArgs,
-        timeout: timeout,
-        requireArbitraryArgs: false
+        timeout: timeout
       )
       result = deleteResult.json
     }
@@ -2354,33 +2358,30 @@ extension GitToolProvider {
     let newExistsArgs = ["show-ref", "--verify", "--quiet", "refs/heads/\(newName)"]
     let currentBranchArgs = ["branch", "--show-current"]
 
-    let checkOldNameResult = try environment.registeredCommands.runRegisteredCLI(
+    let checkOldNameResult = try environment.registeredCommands.runHostGit(
       command: command,
       args: checkOldNameArgs,
-      timeout: timeout,
-      requireArbitraryArgs: false
+      timeout: timeout
     )
     guard !checkOldNameResult.timedOut, checkOldNameResult.exitCode == 0 else {
       throw GatewayToolError.invalidArguments(
         "old_name is not accepted by git check-ref-format: \(oldName)")
     }
 
-    let checkNewNameResult = try environment.registeredCommands.runRegisteredCLI(
+    let checkNewNameResult = try environment.registeredCommands.runHostGit(
       command: command,
       args: checkNewNameArgs,
-      timeout: timeout,
-      requireArbitraryArgs: false
+      timeout: timeout
     )
     guard !checkNewNameResult.timedOut, checkNewNameResult.exitCode == 0 else {
       throw GatewayToolError.invalidArguments(
         "new_name is not accepted by git check-ref-format: \(newName)")
     }
 
-    let oldExistsResult = try environment.registeredCommands.runRegisteredCLI(
+    let oldExistsResult = try environment.registeredCommands.runHostGit(
       command: command,
       args: oldExistsArgs,
-      timeout: timeout,
-      requireArbitraryArgs: false
+      timeout: timeout
     )
     guard !oldExistsResult.timedOut else {
       throw GatewayToolError.invalidArguments("old branch existence check timed out.")
@@ -2392,11 +2393,10 @@ extension GitToolProvider {
       throw GatewayToolError.invalidArguments("old branch existence check failed for: \(oldName)")
     }
 
-    let newExistsResult = try environment.registeredCommands.runRegisteredCLI(
+    let newExistsResult = try environment.registeredCommands.runHostGit(
       command: command,
       args: newExistsArgs,
-      timeout: timeout,
-      requireArbitraryArgs: false
+      timeout: timeout
     )
     guard !newExistsResult.timedOut else {
       throw GatewayToolError.invalidArguments("new branch existence check timed out.")
@@ -2408,11 +2408,10 @@ extension GitToolProvider {
       throw GatewayToolError.invalidArguments("new branch existence check failed for: \(newName)")
     }
 
-    let currentBranchResult = try environment.registeredCommands.runRegisteredCLI(
+    let currentBranchResult = try environment.registeredCommands.runHostGit(
       command: command,
       args: currentBranchArgs,
-      timeout: timeout,
-      requireArbitraryArgs: false
+      timeout: timeout
     )
     guard !currentBranchResult.timedOut, currentBranchResult.exitCode == 0 else {
       throw GatewayToolError.invalidArguments("current branch check failed.")
@@ -2422,11 +2421,10 @@ extension GitToolProvider {
     let renameArgs = ["branch", force ? "-M" : "-m", oldName, newName]
     var result: JSONValue = .null
     if !dryRun {
-      let renameResult = try environment.registeredCommands.runRegisteredCLI(
+      let renameResult = try environment.registeredCommands.runHostGit(
         command: command,
         args: renameArgs,
-        timeout: timeout,
-        requireArbitraryArgs: false
+        timeout: timeout
       )
       result = renameResult.json
     }
@@ -2472,22 +2470,20 @@ extension GitToolProvider {
     let currentBranchArgs = ["branch", "--show-current"]
     let statusArgs = ["status", "--porcelain=v1", "-z"]
 
-    let checkNameResult = try environment.registeredCommands.runRegisteredCLI(
+    let checkNameResult = try environment.registeredCommands.runHostGit(
       command: command,
       args: checkNameArgs,
-      timeout: timeout,
-      requireArbitraryArgs: false
+      timeout: timeout
     )
     guard !checkNameResult.timedOut, checkNameResult.exitCode == 0 else {
       throw GatewayToolError.invalidArguments(
         "branch name is not accepted by git check-ref-format: \(branchName)")
     }
 
-    let existsResult = try environment.registeredCommands.runRegisteredCLI(
+    let existsResult = try environment.registeredCommands.runHostGit(
       command: command,
       args: existsArgs,
-      timeout: timeout,
-      requireArbitraryArgs: false
+      timeout: timeout
     )
     guard !existsResult.timedOut else {
       throw GatewayToolError.invalidArguments("branch existence check timed out.")
@@ -2499,22 +2495,20 @@ extension GitToolProvider {
       throw GatewayToolError.invalidArguments("branch existence check failed for: \(branchName)")
     }
 
-    let currentBranchResult = try environment.registeredCommands.runRegisteredCLI(
+    let currentBranchResult = try environment.registeredCommands.runHostGit(
       command: command,
       args: currentBranchArgs,
-      timeout: timeout,
-      requireArbitraryArgs: false
+      timeout: timeout
     )
     guard !currentBranchResult.timedOut, currentBranchResult.exitCode == 0 else {
       throw GatewayToolError.invalidArguments("current branch check failed.")
     }
     let currentBranch = firstNonEmptyLine(currentBranchResult.stdout) ?? ""
 
-    let statusResult = try environment.registeredCommands.runRegisteredCLI(
+    let statusResult = try environment.registeredCommands.runHostGit(
       command: command,
       args: statusArgs,
-      timeout: timeout,
-      requireArbitraryArgs: false
+      timeout: timeout
     )
     guard !statusResult.timedOut, statusResult.exitCode == 0 else {
       throw GatewayToolError.invalidArguments("working tree status check failed.")
@@ -2530,11 +2524,10 @@ extension GitToolProvider {
     let alreadyCurrent = currentBranch == branchName
     var result: JSONValue = .null
     if !dryRun, !alreadyCurrent {
-      let switchResult = try environment.registeredCommands.runRegisteredCLI(
+      let switchResult = try environment.registeredCommands.runHostGit(
         command: command,
         args: switchArgs,
-        timeout: timeout,
-        requireArbitraryArgs: false
+        timeout: timeout
       )
       result = switchResult.json
     }
@@ -2589,12 +2582,13 @@ extension GitToolProvider {
     let maxResults = optionalInt("max_results", in: object) ?? 200
     try validateBoundedPositive(maxResults, name: "max_results", upperBound: 5_000)
 
+    let resolved = try resolvedRevision(revision, timeout: optionalInt("timeout_ms", in: object))
     let metadataArgs = [
       "show",
       "-s",
       "--date=iso-strict",
       "--format=%H%x09%h%x09%ad%x09%an%x09%s",
-      revision,
+      resolved,
     ]
     let filesArgs = [
       "diff-tree",
@@ -2604,22 +2598,20 @@ extension GitToolProvider {
       "-M",
       "-r",
       "-z",
-      revision,
+      resolved,
     ]
 
     let timeout = optionalInt("timeout_ms", in: object)
     let command = try environment.registeredCommands.gitCLICommand()
-    let metadataResult = try environment.registeredCommands.runRegisteredCLI(
+    let metadataResult = try environment.registeredCommands.runHostGit(
       command: command,
       args: metadataArgs,
-      timeout: timeout,
-      requireArbitraryArgs: false
+      timeout: timeout
     )
-    let filesResult = try environment.registeredCommands.runRegisteredCLI(
+    let filesResult = try environment.registeredCommands.runHostGit(
       command: command,
       args: filesArgs,
-      timeout: timeout,
-      requireArbitraryArgs: false
+      timeout: timeout
     )
 
     let metadata = parseGitCommitMetadataLine(firstNonEmptyLine(metadataResult.stdout) ?? "")
@@ -2778,7 +2770,9 @@ extension GitToolProvider {
       try validateBoundedNonNegative(contextLines, name: "context_lines", upperBound: 100)
     }
 
-    var args = ["show", "--date=iso-strict"]
+    let resolved = try resolvedRevision(
+      revision, kind: "object", timeout: optionalInt("timeout_ms", in: object))
+    var args = ["show", "--no-ext-diff", "--no-textconv", "--date=iso-strict"]
     if stat {
       args.append("--stat")
     }
@@ -2788,7 +2782,7 @@ extension GitToolProvider {
     if let contextLines, patch {
       args.append("-U\(contextLines)")
     }
-    args.append(revision)
+    args.append(resolved)
     if !paths.isEmpty {
       args.append("--")
       args.append(contentsOf: paths)
@@ -2870,17 +2864,19 @@ extension GitToolProvider {
     guard message.count <= 10_000 else {
       throw GatewayToolError.invalidArguments("message must be 10000 characters or fewer.")
     }
-    var args = ["commit", "-m", message]
+    let paths = try optionalGitPaths(in: object)
+    guard !paths.isEmpty, object["all"] == nil else {
+      throw GatewayToolError.invalidArguments("git.commit requires explicit paths.")
+    }
+    var args = ["commit", "--only", "-m", message]
     let dryRun = try optionalBool("dry_run", in: object) ?? false
     if dryRun {
       args.insert("--dry-run", at: 1)
     }
-    if try optionalBool("all", in: object) ?? false {
-      args.append("--all")
-    }
     if try optionalBool("allow_empty", in: object) ?? false {
       args.append("--allow-empty")
     }
+    args += ["--"] + paths
     return try gitResult(
       operation: "git.commit",
       arguments: args,
@@ -2896,11 +2892,10 @@ extension GitToolProvider {
     extra: [String: JSONValue] = [:]
   ) throws -> JSONValue {
     let command = try environment.registeredCommands.gitCLICommand()
-    let result = try environment.registeredCommands.runRegisteredCLI(
+    let result = try environment.registeredCommands.runHostGit(
       command: command,
       args: arguments,
-      timeout: timeout,
-      requireArbitraryArgs: false
+      timeout: timeout
     )
     var payload: [String: JSONValue] = [
       "operation": .string(operation),

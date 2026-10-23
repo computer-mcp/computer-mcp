@@ -3199,7 +3199,7 @@ final class FilesToolProviderTests {
     let payload = try decodeTextPayload(result)
 
     #expect((runner.calls.first?.executable) == ("tar"))
-    #expect((runner.calls.first?.arguments) == (["-xOf", archive.path, "src/main.swift"]))
+    #expect((runner.calls.first?.arguments) == (["-xOf", archive.path, "--", "src/main.swift"]))
     #expect((payload.objectValue?["archive"]?.objectValue?["format"]) == (.string("tar")))
     #expect(
       (payload.objectValue?["entry"]?.objectValue?["normalized_path"])
@@ -3296,16 +3296,13 @@ final class FilesToolProviderTests {
     let destination = directory.appendingPathComponent("out")
     let runner = RecordingCommandRunner()
     runner.outputs = [
-      .init(stdout: "dir/\ndir/file.txt\nimage.png\n"),
       .init(
         stdout: """
-          Archive:  bundle.zip
-          drwxr-xr-x  3.0 unx        0 bx        0 stor 26-Jul-08 23:11 dir/
-          -rw-r--r--  3.0 unx        1 tx        1 stor 26-Jul-08 23:11 dir/file.txt
-          -rw-r--r--  3.0 unx        1 tx        1 stor 26-Jul-08 23:11 image.png
-          3 files, 2 bytes uncompressed, 2 bytes compressed:  0.0%
+          drwxr-xr-x  0 0 0 0 Jul 08 23:11 dir/
+          -rw-r--r--  0 0 0 1 Jul 08 23:11 dir/file.txt
+          -rw-r--r--  0 0 0 1 Jul 08 23:11 image.png
           """
-      ),
+      )
     ]
     let provider = FilesToolProvider(
       environment: ToolEnvironment(
@@ -3328,9 +3325,8 @@ final class FilesToolProviderTests {
     let payload = try decodeTextPayload(result)
     let entries = try #require(payload.objectValue?["entries"]?.arrayValue)
 
-    #expect((runner.calls.map(\.executable)) == (["zipinfo", "zipinfo"]))
-    #expect((runner.calls[0].arguments) == (["-1", archive.path]))
-    #expect((runner.calls[1].arguments) == (["-l", archive.path]))
+    #expect((runner.calls.map(\.executable)) == (["tar"]))
+    #expect((runner.calls[0].arguments) == (["--numeric-owner", "-tvf", archive.path]))
     #expect(!(FileManager.default.fileExists(atPath: destination.path)))
     #expect((payload.objectValue?["operation"]) == (.string("archive.extract")))
     #expect((payload.objectValue?["dry_run"]) == (.bool(true)))
@@ -3345,15 +3341,6 @@ final class FilesToolProviderTests {
     #expect((entries[0].objectValue?["normalized_path"]) == (.string("dir")))
     #expect((entries[0].objectValue?["is_directory"]) == (.bool(true)))
     #expect((entries[1].objectValue?["normalized_path"]) == (.string("dir/file.txt")))
-    #expect(
-      (payload.objectValue?["argv"])
-        == (.array([
-          .string("-q"),
-          .string("-n"),
-          .string(archive.path),
-          .string("-d"),
-          .string(destination.path),
-        ])))
     #expect((payload.objectValue?["result"]) == (.null))
   }
 
@@ -3364,24 +3351,22 @@ final class FilesToolProviderTests {
     let destination = directory.appendingPathComponent("out")
     try Data("tar".utf8).write(to: archive)
     try FileManager.default.createDirectory(at: destination, withIntermediateDirectories: true)
-    let runner = RecordingCommandRunner()
-    runner.outputs = [
-      .init(stdout: "src/\nsrc/main.swift\n"),
-      .init(
-        stdout: """
-          drwxr-xr-x  0 user staff       0 Jul  8 23:11 src/
-          -rw-r--r--  0 user staff       1 Jul  8 23:11 src/main.swift
-          """
-      ),
-      .init(stdout: "extracted\n"),
-    ]
+    let fixture = try ArchiveFixture()
+    defer { fixture.remove() }
+    let generated = try fixture.archive(
+      [
+        .init(name: "src/", kind: "directory", mode: 0o755),
+        .init(name: "src/main.swift", content: "extracted"),
+      ], format: "tar.gz")
+    try FileManager.default.removeItem(at: archive)
+    try FileManager.default.moveItem(at: generated, to: archive)
     let provider = FilesToolProvider(
       environment: ToolEnvironment(
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["archive.extract"]),
           projectDirectory: directory
         ),
-        commandRunner: runner, builtinExecutables: builtinExecutables))
+        builtinExecutables: builtinExecutables))
 
     let result = try provider.callTool(
       .init(
@@ -3395,14 +3380,15 @@ final class FilesToolProviderTests {
       ))
     let payload = try decodeTextPayload(result)
 
-    #expect((runner.calls.map(\.executable)) == (["tar", "tar", "tar"]))
-    #expect((runner.calls[0].arguments) == (["-tf", archive.path]))
-    #expect((runner.calls[1].arguments) == (["-tvf", archive.path]))
-    #expect((runner.calls[2].arguments) == (["-xkf", archive.path, "-C", destination.path]))
+    #expect(
+      try String(contentsOf: destination.appendingPathComponent("src/main.swift"), encoding: .utf8)
+        == "extracted")
+    #expect(try FileManager.default.contentsOfDirectory(atPath: destination.path) == ["src"])
     #expect((payload.objectValue?["operation"]) == (.string("archive.extract")))
     #expect((payload.objectValue?["dry_run"]) == (.bool(false)))
     #expect((payload.objectValue?["confirm_extract"]) == (.bool(true)))
-    #expect((payload.objectValue?["result"]?.objectValue?["exit_code"]) == (.number(0)))
+    #expect(
+      (payload.objectValue?["result"]?.objectValue?["exit_code"]) == (.number(0)))
   }
 
   @Test
@@ -3439,9 +3425,8 @@ final class FilesToolProviderTests {
 
     let traversalRunner = RecordingCommandRunner()
     traversalRunner.outputs = [
-      .init(stdout: "../outside.txt\n"),
       .init(
-        stdout: "-rw-r--r--  3.0 unx        1 tx        1 stor 26-Jul-08 23:11 ../outside.txt\n"),
+        stdout: "-rw-r--r--  0 0 0 1 Jul 08 23:11 ../outside.txt\n")
     ]
     let traversalRegistry = FilesToolProvider(
       environment: ToolEnvironment(
@@ -3465,8 +3450,7 @@ final class FilesToolProviderTests {
 
     let linkRunner = RecordingCommandRunner()
     linkRunner.outputs = [
-      .init(stdout: "link\n"),
-      .init(stdout: "lrwxr-xr-x  3.0 unx        4 bx        4 stor 26-Jul-08 23:11 link\n"),
+      .init(stdout: "lrwxr-xr-x  0 0 0 4 Jul 08 23:11 link\n")
     ]
     let linkRegistry = FilesToolProvider(
       environment: ToolEnvironment(
@@ -3490,8 +3474,7 @@ final class FilesToolProviderTests {
 
     let overwriteRunner = RecordingCommandRunner()
     overwriteRunner.outputs = [
-      .init(stdout: "existing.txt\n"),
-      .init(stdout: "-rw-r--r--  3.0 unx        1 tx        1 stor 26-Jul-08 23:11 existing.txt\n"),
+      .init(stdout: "-rw-r--r--  0 0 0 1 Jul 08 23:11 existing.txt\n")
     ]
     let overwriteRegistry = FilesToolProvider(
       environment: ToolEnvironment(
@@ -3569,7 +3552,8 @@ final class FilesToolProviderTests {
       (payload.objectValue?["argv"])
         == (.array([
           .string("-qry"),
-          .string(archive.path),
+          .string("-"),
+          .string("--"),
           .string("src"),
           .string("README.md"),
         ])))
@@ -3614,7 +3598,7 @@ final class FilesToolProviderTests {
     let payload = try decodeTextPayload(result)
 
     #expect((runner.calls.map(\.executable)) == (["tar"]))
-    #expect((runner.calls.first?.arguments) == (["-czf", archive.path, "src"]))
+    #expect((runner.calls.first?.arguments) == (["-czf", "-", "--", "src"]))
     #expect(FileManager.default.fileExists(atPath: archive.deletingLastPathComponent().path))
     #expect((payload.objectValue?["operation"]) == (.string("archive.create")))
     #expect((payload.objectValue?["dry_run"]) == (.bool(false)))
@@ -4207,7 +4191,7 @@ final class FilesToolProviderTests {
           ]), context: .empty
         ))
     ) { error in
-      #expect(error.localizedDescription.contains("parent symlink"))
+      #expect(error.localizedDescription.contains("symbolic link"))
     }
 
     expectThrows(
@@ -4248,7 +4232,6 @@ final class FilesToolProviderTests {
   func testFileDownloadDryRunBuildsCurlArgvWithoutWriting() throws {
     let directory = try temporaryDirectory()
     let destination = directory.appendingPathComponent("downloads/report.txt")
-    let temp = directory.appendingPathComponent("downloads/.report.txt.computer-mcp-download.tmp")
     let runner = RecordingCommandRunner()
     let provider = FilesToolProvider(
       environment: ToolEnvironment(
@@ -4288,11 +4271,9 @@ final class FilesToolProviderTests {
       (payload.objectValue?["destination"]?.objectValue?["would_create_parent_directories"])
         == (.bool(true)))
     #expect(
-      (payload.objectValue?["temporary_project_relative_path"])
-        == (.string("downloads/.report.txt.computer-mcp-download.tmp")))
-    #expect(
       (payload.objectValue?["argv"])
         == (.array([
+          .string("--disable"),
           .string("--fail"),
           .string("--silent"),
           .string("--show-error"),
@@ -4306,22 +4287,24 @@ final class FilesToolProviderTests {
           .string("--max-redirs"),
           .string("2"),
           .string("--output"),
-          .string(temp.path),
+          .string("-"),
           .string("--write-out"),
           .string(
-            "\n__COMPUTER_MCP_FILE_DOWNLOAD_META__\nhttp_code=%{http_code}\nurl_effective=%{url_effective}\ncontent_type=%{content_type}\nredirect_url=%{redirect_url}\ntime_total=%{time_total}\nsize_download=%{size_download}\n"
+            "%{stderr}\n__COMPUTER_MCP_FILE_DOWNLOAD_META__\nhttp_code=%{http_code}\nurl_effective=%{url_effective}\ncontent_type=%{content_type}\nredirect_url=%{redirect_url}\ntime_total=%{time_total}\nsize_download=%{size_download}\n"
           ),
+          .string("--"),
           .string("https://example.com/report.txt"),
         ])))
     #expect((payload.objectValue?["result"]) == (.null))
   }
 
   @Test
-  func testFileDownloadRunsCurlAndMovesTempAfterConfirmation() throws {
+  func testFileDownloadStreamsIntoCheckedDestinationAfterConfirmation() throws {
     let directory = try temporaryDirectory()
     let destination = directory.appendingPathComponent("downloads/report.txt")
     let runner = RecordingCommandRunner()
-    runner.stdout = """
+    runner.stdout = "report"
+    runner.stderr = """
 
       __COMPUTER_MCP_FILE_DOWNLOAD_META__
       http_code=200
@@ -4331,17 +4314,6 @@ final class FilesToolProviderTests {
       time_total=0.050000
       size_download=6
       """
-    runner.onRun = { call in
-      guard let outputIndex = call.arguments.firstIndex(of: "--output") else {
-        return
-      }
-      let temp = URL(fileURLWithPath: call.arguments[outputIndex + 1])
-      try FileManager.default.createDirectory(
-        at: temp.deletingLastPathComponent(),
-        withIntermediateDirectories: true
-      )
-      try Data("report".utf8).write(to: temp)
-    }
     let provider = FilesToolProvider(
       environment: ToolEnvironment(
         configuration: GatewayConfiguration(
@@ -4366,11 +4338,8 @@ final class FilesToolProviderTests {
     #expect((runner.calls.first?.executable) == ("curl"))
     #expect((try String(contentsOf: destination, encoding: .utf8)) == ("report"))
     #expect(
-      !(FileManager.default.fileExists(
-        atPath: directory.appendingPathComponent(
-          "downloads/.report.txt.computer-mcp-download.tmp"
-        ).path
-      )))
+      try FileManager.default.contentsOfDirectory(
+        atPath: destination.deletingLastPathComponent().path) == ["report.txt"])
     #expect((payload.objectValue?["operation"]) == (.string("file.download")))
     #expect((payload.objectValue?["dry_run"]) == (.bool(false)))
     #expect((payload.objectValue?["confirm_download"]) == (.bool(true)))
@@ -4393,8 +4362,6 @@ final class FilesToolProviderTests {
       withIntermediateDirectories: true
     )
     try "existing".write(to: existing, atomically: true, encoding: .utf8)
-    let temp = directory.appendingPathComponent("downloads/.temp.txt.computer-mcp-download.tmp")
-    try "temp".write(to: temp, atomically: true, encoding: .utf8)
 
     let missingConfirmRunner = RecordingCommandRunner()
     let provider = FilesToolProvider(
@@ -4459,18 +4426,6 @@ final class FilesToolProviderTests {
       #expect(error.localizedDescription.contains("already exists"))
     }
 
-    expectThrows(
-      try provider.callTool(
-        .init(
-          name: "file.download",
-          arguments: .object([
-            "url": .string("https://example.com/temp.txt"),
-            "path": .string("downloads/temp.txt"),
-          ]), context: .empty
-        ))
-    ) { error in
-      #expect(error.localizedDescription.contains("Temporary download path already exists"))
-    }
   }
 
   @Test

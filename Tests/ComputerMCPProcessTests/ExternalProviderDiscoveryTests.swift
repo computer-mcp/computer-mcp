@@ -294,7 +294,7 @@ final class ExternalProviderDiscoveryTests {
     let overrides = [
       "PATH": "", "PROVIDER_SECRET": "fixture-secret", "OVERRIDE": "child", "EMPTY": "",
     ]
-    var configuration = GatewayConfiguration(workspaceDirectory: root)
+    var configuration = GatewayConfiguration(projectDirectory: root)
     if source == "mcp" {
       configuration.mcp.servers = [
         .init(
@@ -454,7 +454,7 @@ final class ExternalProviderDiscoveryTests {
       to: interpreter, atomically: false, encoding: .utf8)
     try Data("fixture 7.2\n".utf8).write(to: cwd.appendingPathComponent("version.txt"))
     let overrides = ["PATH": "bin", "PROVIDER_SECRET": "fixture-secret", "EMPTY": ""]
-    var configuration = GatewayConfiguration(workspaceDirectory: root)
+    var configuration = GatewayConfiguration(projectDirectory: root)
     if source == "mcp" {
       configuration.mcp.servers = [
         .init(
@@ -490,7 +490,7 @@ final class ExternalProviderDiscoveryTests {
     let executable = try makeExecutable(named: "codex", in: root)
     try Data("#!/usr/bin/env fixture-runtime\nexit 0\n".utf8).write(to: executable)
     _ = try makeExecutable(named: "fixture-runtime", in: root)
-    var configuration = GatewayConfiguration(workspaceDirectory: root)
+    var configuration = GatewayConfiguration(projectDirectory: root)
     configuration.cli.commands = [
       .init(id: "codex", executable: "./codex", env: ["PATH": "missing-bin"])
     ]
@@ -532,7 +532,7 @@ final class ExternalProviderDiscoveryTests {
           : [["--version"], ["--help"], ["catalog"]]))
   }
 
-  @Test(arguments: [nil, "", "workspace", "child", "/tmp/provider-absolute"] as [String?])
+  @Test(arguments: [nil, "", "project", "child", "/tmp/provider-absolute"] as [String?])
   func registeredDirectoryConventionsAreShared(_ cwd: String?) {
     let base = URL(fileURLWithPath: "/tmp/provider-base")
     let mcp = MCPServerConfig(id: "fixture", transport: .stdio, command: "probe", cwd: cwd)

@@ -168,7 +168,7 @@ private struct PluginMCPSettingsFields: View {
       Text("Allow scoped host services", bundle: AppLocalization.resourceBundle)
     }
     Text(
-      "For trusted stdio adapters only. Calls retain this connection's workspace and grants; local approval authority is not delegated.",
+      "For trusted stdio adapters only. Calls retain this connection's project and grants; local approval authority is not delegated.",
       bundle: AppLocalization.resourceBundle
     )
     .font(.caption).foregroundStyle(.secondary)

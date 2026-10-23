@@ -15,7 +15,7 @@ extension SkillsToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "skills.roots", risk: .readOnly,
-          workspaceRequirement: .none,
+          projectRequirement: .none,
           localOnly: false, usesNetwork: false
         )
       ),
@@ -36,7 +36,7 @@ extension SkillsToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "skills.list", risk: .readOnly,
-          workspaceRequirement: .none,
+          projectRequirement: .none,
           localOnly: false, usesNetwork: false
         )
       ),
@@ -63,7 +63,7 @@ extension SkillsToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "skills.describe", risk: .readOnly,
-          workspaceRequirement: .none,
+          projectRequirement: .none,
           localOnly: false, usesNetwork: false
         )
       ),
@@ -93,7 +93,7 @@ extension SkillsToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "skills.validate", risk: .readOnly,
-          workspaceRequirement: .none,
+          projectRequirement: .none,
           localOnly: false, usesNetwork: false
         )
       ),
@@ -126,7 +126,7 @@ extension SkillsToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "skills.frontmatter", risk: .readOnly,
-          workspaceRequirement: .none,
+          projectRequirement: .none,
           localOnly: false, usesNetwork: false
         )
       ),
@@ -151,7 +151,7 @@ extension SkillsToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "skills.read", risk: .readOnly,
-          workspaceRequirement: .none,
+          projectRequirement: .none,
           localOnly: false, usesNetwork: false
         )
       ),
@@ -181,7 +181,7 @@ extension SkillsToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "skills.files", risk: .readOnly,
-          workspaceRequirement: .none,
+          projectRequirement: .none,
           localOnly: false, usesNetwork: false
         )
       ),
@@ -208,7 +208,7 @@ extension SkillsToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "skills.read_file", risk: .readOnly,
-          workspaceRequirement: .none,
+          projectRequirement: .none,
           localOnly: false, usesNetwork: false
         )
       ),
@@ -236,7 +236,7 @@ extension SkillsToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "skills.read_files", risk: .readOnly,
-          workspaceRequirement: .none,
+          projectRequirement: .none,
           localOnly: false, usesNetwork: false
         )
       ),
@@ -275,7 +275,7 @@ extension SkillsToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "skills.read_package", risk: .readOnly,
-          workspaceRequirement: .none,
+          projectRequirement: .none,
           localOnly: false, usesNetwork: false
         )
       ),
@@ -306,7 +306,7 @@ extension SkillsToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "skills.outline", risk: .readOnly,
-          workspaceRequirement: .none,
+          projectRequirement: .none,
           localOnly: false, usesNetwork: false
         )
       ),
@@ -345,7 +345,7 @@ extension SkillsToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "skills.section", risk: .readOnly,
-          workspaceRequirement: .none,
+          projectRequirement: .none,
           localOnly: false, usesNetwork: false
         )
       ),
@@ -378,7 +378,7 @@ extension SkillsToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "skills.tables", risk: .readOnly,
-          workspaceRequirement: .none,
+          projectRequirement: .none,
           localOnly: false, usesNetwork: false
         )
       ),
@@ -416,7 +416,7 @@ extension SkillsToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "skills.links", risk: .readOnly,
-          workspaceRequirement: .none,
+          projectRequirement: .none,
           localOnly: false, usesNetwork: false
         )
       ),
@@ -460,7 +460,7 @@ extension SkillsToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "skills.link_check", risk: .readOnly,
-          workspaceRequirement: .none,
+          projectRequirement: .none,
           localOnly: false, usesNetwork: false
         )
       ),
@@ -490,7 +490,7 @@ extension SkillsToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "skills.search", risk: .readOnly,
-          workspaceRequirement: .none,
+          projectRequirement: .none,
           localOnly: false, usesNetwork: false
         )
       ),
@@ -528,7 +528,7 @@ extension SkillsToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "skills.search_files", risk: .readOnly,
-          workspaceRequirement: .none,
+          projectRequirement: .none,
           localOnly: false, usesNetwork: false
         )
       ),

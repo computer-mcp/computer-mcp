@@ -9,7 +9,7 @@ struct CanonicalJSONCodingTests {
   func testInitialismsUseConventionalSnakeCaseKeys() throws {
     let document = InitialismDocument(
       capabilityIDs: ["file.read"],
-      workspaceIDs: ["workspace-1"],
+      projectIDs: ["project-1"],
       requestID: "request-1",
       httpURL: "https://gateway.example.com/mcp",
       mcpRequestID: "mcp-1",
@@ -23,7 +23,7 @@ struct CanonicalJSONCodingTests {
     )
 
     #expect(object["capability_ids"] != nil)
-    #expect(object["workspace_ids"] != nil)
+    #expect(object["project_ids"] != nil)
     #expect(object["request_id"] != nil)
     #expect(object["http_url"] != nil)
     #expect(object["mcp_request_id"] != nil)
@@ -35,7 +35,7 @@ struct CanonicalJSONCodingTests {
   func testCanonicalKeysRoundTripToSwiftInitialisms() throws {
     let original = InitialismDocument(
       capabilityIDs: ["file.read"],
-      workspaceIDs: ["workspace-1"],
+      projectIDs: ["project-1"],
       requestID: "request-1",
       httpURL: "https://gateway.example.com/mcp",
       mcpRequestID: "mcp-1",
@@ -61,7 +61,7 @@ struct CanonicalJSONCodingTests {
 
   private struct InitialismDocument: Codable, Equatable {
     let capabilityIDs: [String]
-    let workspaceIDs: [String]
+    let projectIDs: [String]
     let requestID: String
     let httpURL: String
     let mcpRequestID: String

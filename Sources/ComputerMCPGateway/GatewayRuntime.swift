@@ -24,14 +24,14 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
   private let requiresControlSession: Bool
   private let grant: ProfileGrant
   private let requiresPersistedGrant: Bool
-  private let persistedWorkspaceRegistrations: [String: RegisteredWorkspace]
+  private let persistedProjectRegistrations: [String: RegisteredProject]
   private let policyEvaluator: GatewayPolicyEvaluator
   private let database: GatewayDatabase?
-  private let workspaces: [String: RegisteredWorkspace]
-  private let workspaceOrder: [String]
-  private let workspaceAccesses: [String: ResolvedWorkspaceAccess]
+  private let projects: [String: RegisteredProject]
+  private let projectOrder: [String]
+  private let projectAccesses: [String: ResolvedProjectAccess]
   private let platform: PlatformServices
-  private let workspaceErrors: [String: WorkspaceBookmarkError]
+  private let projectErrors: [String: ProjectBookmarkError]
   private let providerRouters: [String: GatewayProviderRouter]
   private let lifetime: GatewayRuntimeLifetime
   private let publication = GatewayRuntimePublication()
@@ -66,7 +66,7 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
     configuration: GatewayConfiguration,
     context: ExecutionContext? = nil,
     database: GatewayDatabase? = nil,
-    registeredWorkspaces: [RegisteredWorkspace]? = nil,
+    registeredProjects: [RegisteredProject]? = nil,
     platform: PlatformServices,
     policyEvaluator: GatewayPolicyEvaluator = GatewayPolicyEvaluator(),
     mcpClient: any DownstreamMCPClient = MCPProxyClient(),
@@ -79,7 +79,7 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
   ) throws {
     try self.init(
       configuration: configuration, context: context, database: database,
-      registeredWorkspaces: registeredWorkspaces, platform: platform,
+      registeredProjects: registeredProjects, platform: platform,
       policyEvaluator: policyEvaluator, mcpClient: mcpClient, plugins: plugins,
       pluginState: pluginState,
       bundledPlugins: bundledPlugins, terminalSessions: terminalSessions,
@@ -91,7 +91,7 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
     configuration: GatewayConfiguration,
     context: ExecutionContext? = nil,
     database: GatewayDatabase? = nil,
-    registeredWorkspaces: [RegisteredWorkspace]? = nil,
+    registeredProjects: [RegisteredProject]? = nil,
     platform: PlatformServices,
     policyEvaluator: GatewayPolicyEvaluator = GatewayPolicyEvaluator(),
     mcpClient: any DownstreamMCPClient = MCPProxyClient(),
@@ -108,7 +108,7 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
       let runtime = try await construction.perform {
         try GatewayRuntime(
           configuration: configuration, context: context, database: database,
-          registeredWorkspaces: registeredWorkspaces, platform: platform,
+          registeredProjects: registeredProjects, platform: platform,
           policyEvaluator: policyEvaluator, mcpClient: mcpClient, plugins: plugins,
           pluginState: pluginState,
           bundledPlugins: bundledPlugins, terminalSessions: terminalSessions, lifetime: lifetime,
@@ -142,7 +142,7 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
       let runtime = try await construction.perform {
         try GatewayRuntime(
           configuration: configuration, context: context, database: database,
-          registeredWorkspaces: state.workspaces, platform: platform,
+          registeredProjects: state.projects, platform: platform,
           policyEvaluator: GatewayPolicyEvaluator(), mcpClient: mcpClient,
           plugins: nil, pluginState: state.plugins, bundledPlugins: bundledPlugins,
           terminalSessions: terminalSessions, lifetime: lifetime,
@@ -163,16 +163,16 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
     guard !lifetime.isClosing else { throw GatewaySocketError.notConnected }
   }
 
-  /// A repaired workspace must retain the selected folder through candidate publication.
-  package func requirePreparedWorkspace(id: String, root: WorkspaceRootIdentity) throws {
-    if let error = workspaceErrors[id] { throw error }
-    guard let workspace = workspaces[id], let admitted = workspaceAccesses[id],
+  /// A repaired project must retain the selected folder through candidate publication.
+  package func requirePreparedProject(id: String, root: ProjectRootIdentity) throws {
+    if let error = projectErrors[id] { throw error }
+    guard let project = projects[id], let admitted = projectAccesses[id],
       admitted.isActive, admitted.rootIdentity == root
-    else { throw WorkspaceBookmarkError.rootChanged(workspaceID: id) }
-    let access = try platform.workspaceGrants.resolve(workspace)
+    else { throw ProjectBookmarkError.rootChanged(projectID: id) }
+    let access = try platform.projectGrants.resolve(project)
     defer { access.close() }
     guard access.rootIdentity == root else {
-      throw WorkspaceBookmarkError.rootChanged(workspaceID: id)
+      throw ProjectBookmarkError.rootChanged(projectID: id)
     }
   }
 
@@ -183,7 +183,7 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
 
   private init(
     configuration: GatewayConfiguration, context: ExecutionContext?, database: GatewayDatabase?,
-    registeredWorkspaces: [RegisteredWorkspace]?, platform: PlatformServices,
+    registeredProjects: [RegisteredProject]?, platform: PlatformServices,
     policyEvaluator: GatewayPolicyEvaluator, mcpClient: any DownstreamMCPClient,
     plugins: [ResolvedPlugin]?, pluginState: PluginStoreSnapshot?, bundledPlugins: BundledPlugins,
     terminalSessions: GatewayTerminalSessions, lifetime: GatewayRuntimeLifetime,
@@ -248,53 +248,53 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
           derivesObserveGrant: derivesObserveGrant && (persisted?.authorizationRevision ?? 0) == 0)
       })
 
-    let persistedWorkspaces = try preparationState?.workspaces ?? database?.workspaces() ?? []
-    let configuredWorkspaces =
-      registeredWorkspaces
-      ?? (persistedWorkspaces.isEmpty ? configuration.manifestWorkspaces : persistedWorkspaces)
+    let persistedProjects = try preparationState?.projects ?? database?.projects() ?? []
+    let configuredProjects =
+      registeredProjects
+      ?? (persistedProjects.isEmpty ? configuration.manifestProjects : persistedProjects)
 
-    var workspaceByID: [String: RegisteredWorkspace] = [:]
-    var accessByID: [String: ResolvedWorkspaceAccess] = [:]
-    var errorByID: [String: WorkspaceBookmarkError] = [:]
+    var projectByID: [String: RegisteredProject] = [:]
+    var accessByID: [String: ResolvedProjectAccess] = [:]
+    var errorByID: [String: ProjectBookmarkError] = [:]
     var providerRouterByID: [String: GatewayProviderRouter] = [:]
     let commandRunner = ProcessCommandRunner()
     var resolution = GatewayConfigurationResolution()
 
-    for workspace in configuredWorkspaces {
-      guard workspaceByID[workspace.id] == nil else {
-        throw GatewayRuntimeError.duplicateWorkspaceID(workspace.id)
+    for project in configuredProjects {
+      guard projectByID[project.id] == nil else {
+        throw GatewayRuntimeError.duplicateProjectID(project.id)
       }
-      workspaceByID[workspace.id] = workspace
-      let access: ResolvedWorkspaceAccess
+      projectByID[project.id] = project
+      let access: ResolvedProjectAccess
       do {
-        access = try platform.workspaceGrants.resolve(workspace)
-      } catch let error as WorkspaceBookmarkError {
-        errorByID[workspace.id] = error
+        access = try platform.projectGrants.resolve(project)
+      } catch let error as ProjectBookmarkError {
+        errorByID[project.id] = error
         continue
       }
       lifetime.onShutdown { access.close() }
-      var workspaceConfiguration = configuration
-      workspaceConfiguration.workspaceDirectory = access.rootURL.standardizedFileURL
-      workspaceConfiguration.delivery.scopes = configuration.delivery.scopes.filter {
-        $0.workspace == workspace.id
+      var projectConfiguration = configuration
+      projectConfiguration.projectDirectory = access.rootURL.standardizedFileURL
+      projectConfiguration.delivery.scopes = configuration.delivery.scopes.filter {
+        $0.project == project.id
       }
       let shellManager = SubprocessShellRuntime(
-        ownedWork: ownedWork, workspaceID: workspace.id, sessions: terminalSessions,
-        scope: .workspace(
-          context: effectiveContext, workspace: access.workspace, root: access.rootIdentity,
-          registered: registeredWorkspaces != nil || !persistedWorkspaces.isEmpty))
+        ownedWork: ownedWork, projectID: project.id, sessions: terminalSessions,
+        scope: .project(
+          context: effectiveContext, project: access.project, root: access.rootIdentity,
+          registered: registeredProjects != nil || !persistedProjects.isEmpty))
       let processManager = SubprocessProcessRegistry(
         shellManager: shellManager,
         maxSessions: configuration.policy.maxShellSessions,
         terminationGraceMilliseconds: configuration.policy.shellTerminationGraceMs
       )
-      workspaceByID[workspace.id] = access.workspace
-      accessByID[workspace.id] = access
+      projectByID[project.id] = access.project
+      accessByID[project.id] = access
       var hostContext = MCPHostContext(
-        runtimeID: generationID, context: effectiveContext, workspaceID: workspace.id,
-        rootURL: access.rootURL, readOnly: !mcpGrant.permitsRisk(.workspaceWrite),
+        runtimeID: generationID, context: effectiveContext, projectID: project.id,
+        rootURL: access.rootURL, readOnly: !mcpGrant.permitsRisk(.projectWrite),
         tools: hostToolDirectory,
-        managedWorkspaceRoot: database?.fileURL?.deletingLastPathComponent()
+        managedProjectRoot: database?.fileURL?.deletingLastPathComponent()
           .appendingPathComponent("Managed Worktrees", isDirectory: true),
         processOwnershipRoot: database?.mcpProcessOwnershipRoot, executionDatabase: database)
       hostContext.ownedWork = ownedWork
@@ -306,7 +306,7 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
         }
       }
       let registry = platform.toolProviders.makeProviders(
-        configuration: workspaceConfiguration,
+        configuration: projectConfiguration,
         commandRunner: commandRunner,
         processManager: processManager,
         shellManager: shellManager,
@@ -319,18 +319,18 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
         reservedToolNames: Set(
           Self.coreDefinitions(databaseEnabled: true, management: nil).map(\.tool.name)
         ).union(platform.managementToolNames),
-        retainsContinuation: { [ownedWork, workspaceID = workspace.id] reference in
+        retainsContinuation: { [ownedWork, projectID = project.id] reference in
           ownedWork.continuations.retainsContinuation(
-            workspaceID: workspaceID, reference: reference)
+            projectID: projectID, reference: reference)
         }
       )
-      providerRouterByID[workspace.id] = router
+      providerRouterByID[project.id] = router
       lifetime.replaceShutdown(registryCleanup) { await router.shutdown() }
-      if access.workspace != workspace {
+      if access.project != project {
         if preparationState != nil {
-          resolution.workspaces.append(.init(original: workspace, resolved: access.workspace))
+          resolution.projects.append(.init(original: project, resolved: access.project))
         } else {
-          try database?.saveWorkspace(access.workspace, replacing: workspace)
+          try database?.saveProject(access.project, replacing: project)
         }
       }
     }
@@ -341,13 +341,13 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
     } else if effectiveContext.profileID == .chatGPTObserve
       || effectiveContext.profileID == .cloudflareObserve
     {
-      var readOnlyCapabilities: Set<String> = ["workspace.list", "workspace.describe"]
+      var readOnlyCapabilities: Set<String> = ["project.list", "project.describe"]
       // The observe risk boundary independently limits this to host-classified read-only targets.
       readOnlyCapabilities.insert("mcp.tools.call")
       if let remoteManagement {
         readOnlyCapabilities.formUnion(remoteManagement.readCapabilities)
       }
-      if let providerRouter = configuredWorkspaces.lazy.compactMap({ providerRouterByID[$0.id] })
+      if let providerRouter = configuredProjects.lazy.compactMap({ providerRouterByID[$0.id] })
         .first
       {
         // Initial profile derivation precedes caller invocations.
@@ -362,7 +362,7 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
       baseGrant = ProfileGrant(
         id: effectiveContext.profileID,
         capabilityIDs: readOnlyCapabilities,
-        workspaceIDs: Set(workspaceByID.keys),
+        projectIDs: Set(projectByID.keys),
         allowedCallers: [effectiveContext.caller]
       )
     } else {
@@ -373,7 +373,7 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
       ?? baseGrant
     if persistedGrant?.authorizationRevision == 0, let database {
       if effectiveGrant.capabilityIDs.contains("*") {
-        effectiveGrant.workspaceIDs = Set(workspaceByID.keys)
+        effectiveGrant.projectIDs = Set(projectByID.keys)
       }
       if preparationState != nil {
         resolution.profiles.append(effectiveGrant)
@@ -396,7 +396,7 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
       bound.controlSession = nil
       return try GatewayRuntime(
         configuration: initializationConfiguration, context: bound, database: database,
-        registeredWorkspaces: registeredWorkspaces, platform: platform,
+        registeredProjects: registeredProjects, platform: platform,
         policyEvaluator: policyEvaluator, mcpClient: mcpClient, plugins: plugins,
         pluginState: pluginState,
         bundledPlugins: bundledPlugins, terminalSessions: terminalSessions,
@@ -404,15 +404,15 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
         remoteManagement: remoteManagement)
     }
     self.requiresPersistedGrant = persistedGrant != nil
-    self.persistedWorkspaceRegistrations = Dictionary(
-      uniqueKeysWithValues: persistedWorkspaces.map { ($0.id, $0) })
+    self.persistedProjectRegistrations = Dictionary(
+      uniqueKeysWithValues: persistedProjects.map { ($0.id, $0) })
     self.policyEvaluator = policyEvaluator
     self.database = database
-    self.workspaces = workspaceByID
-    self.workspaceOrder = configuredWorkspaces.map(\.id)
-    self.workspaceAccesses = accessByID
+    self.projects = projectByID
+    self.projectOrder = configuredProjects.map(\.id)
+    self.projectAccesses = accessByID
     self.platform = platform
-    self.workspaceErrors = errorByID
+    self.projectErrors = errorByID
     self.providerRouters = providerRouterByID
     if preparationState == nil {
       publication.publish()
@@ -421,10 +421,10 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
     initialized = true
   }
 
-  /// Catalog and calls borrow this runtime but cannot widen its bound workspace or recurse.
-  func hostToolCatalog(workspaceID: String, origin: String) throws -> [MCPTool] {
-    try validateHostOrigin(workspaceID: workspaceID, origin: origin)
-    guard let bound = try? hostCallContext(workspaceID: workspaceID, origin: origin) else {
+  /// Catalog and calls borrow this runtime but cannot widen its bound project or recurse.
+  func hostToolCatalog(projectID: String, origin: String) throws -> [MCPTool] {
+    try validateHostOrigin(projectID: projectID, origin: origin)
+    guard let bound = try? hostCallContext(projectID: projectID, origin: origin) else {
       return []
     }
     let currentGrant = try currentHostGrant(context: bound)
@@ -437,36 +437,36 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
       else { return false }
       return policyEvaluator.evaluate(
         capability: descriptor, context: bound, grant: currentGrant,
-        registeredWorkspaceIDs: Set(workspaceOrder)
+        registeredProjectIDs: Set(projectOrder)
       ).isAllowed
     }
   }
 
   func callHostTool(
-    name: String, arguments: [String: JSONValue], workspaceID: String,
+    name: String, arguments: [String: JSONValue], projectID: String,
     origin: String, requestID: String
   ) async throws -> JSONValue {
     var bound = context
-    bound.workspaceID = workspaceID
+    bound.projectID = projectID
     bound.requestID = requestID
     var dispatched = false
     let started = ContinuousClock.now
     do {
-      try validateHostOrigin(workspaceID: workspaceID, origin: origin)
-      bound = try hostCallContext(workspaceID: workspaceID, origin: origin)
+      try validateHostOrigin(projectID: projectID, origin: origin)
+      bound = try hostCallContext(projectID: projectID, origin: origin)
       bound.requestID = requestID
       let invocationContext = InvocationContext(session: bound.controlSession)
       try validateHostTarget(
         name: name, arguments: arguments, context: bound, depth: 0,
         invocationContext: invocationContext)
-      if name == "workspace.list" {
-        let rows = workspaceList(context: bound).objectValue?["workspaces"]?.arrayValue ?? []
+      if name == "project.list" {
+        let rows = projectList(context: bound).objectValue?["projects"]?.arrayValue ?? []
         let result = Self.attachExecutionMetadata(
           to: try resultEnvelope(
             .object([
-              "workspaces": .array(
+              "projects": .array(
                 rows.filter {
-                  $0.objectValue?["id"] == .string(workspaceID)
+                  $0.objectValue?["id"] == .string(projectID)
                 })
             ])), context: bound, capabilityID: name, operationLinkage: nil)
         try recordAudit(
@@ -495,12 +495,12 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
     }
   }
 
-  private func hostCallContext(workspaceID: String, origin: String) throws -> ExecutionContext {
+  private func hostCallContext(projectID: String, origin: String) throws -> ExecutionContext {
     var bound = context
-    bound.workspaceID = workspaceID
+    bound.projectID = projectID
     if requiresControlSession {
       let invocations = hostToolDirectory.active(
-        workspaceID: workspaceID, origin: origin, includingRetainedWork: true)
+        projectID: projectID, origin: origin, includingRetainedWork: true)
       let sessions = invocations.compactMap { $0.context.controlSession }
       guard !sessions.isEmpty, sessions.count == invocations.count,
         Set(sessions.map(\.id)).count == 1
@@ -518,62 +518,61 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
     Set(configuration.mcp.servers.filter { $0.enabled && $0.hostServices }.map(\.id))
   }
 
-  private func validateHostOrigin(workspaceID: String, origin: String) throws {
+  private func validateHostOrigin(projectID: String, origin: String) throws {
     guard !lifetime.isClosing, hostServiceRegistrations.contains(origin),
-      workspaces[workspaceID] != nil
+      projects[projectID] != nil
     else {
       throw Self.invalid(
         code: "policy.host_scope_unavailable",
         message: "The originating host scope is no longer available.")
     }
-    try validateExecutionWorkspace(workspaceID)
+    try validateExecutionProject(projectID)
   }
 
-  private func currentRegisteredWorkspace(_ workspaceID: String) throws -> RegisteredWorkspace? {
-    guard persistedWorkspaceRegistrations[workspaceID] != nil, let database else { return nil }
-    guard let current = try database.workspace(id: workspaceID), current.id == workspaceID else {
+  private func currentRegisteredProject(_ projectID: String) throws -> RegisteredProject? {
+    guard persistedProjectRegistrations[projectID] != nil, let database else { return nil }
+    guard let current = try database.project(id: projectID), current.id == projectID else {
       throw Self.invalid(
-        code: "policy.workspace_denied",
-        message: "The registered workspace changed or was removed.")
+        code: "policy.project_denied",
+        message: "The registered project changed or was removed.")
     }
     return current
   }
 
-  private func validateExecutionWorkspace(_ workspaceID: String, requiresAccess: Bool = true) throws
-  {
-    let current = try currentRegisteredWorkspace(workspaceID)
+  private func validateExecutionProject(_ projectID: String, requiresAccess: Bool = true) throws {
+    let current = try currentRegisteredProject(projectID)
     if let current {
-      guard current.createdAt == persistedWorkspaceRegistrations[workspaceID]?.createdAt,
-        current.rootPath == workspaces[workspaceID]?.rootPath
+      guard current.createdAt == persistedProjectRegistrations[projectID]?.createdAt,
+        current.rootPath == projects[projectID]?.rootPath
       else {
         throw Self.invalid(
-          code: "policy.workspace_denied",
-          message: "The registered workspace changed or was removed.")
+          code: "policy.project_denied",
+          message: "The registered project changed or was removed.")
       }
     }
-    if requiresAccess, let workspace = current ?? workspaces[workspaceID],
-      let error = workspaceAccessError(workspace)
+    if requiresAccess, let project = current ?? projects[projectID],
+      let error = projectAccessError(project)
     {
       throw Self.invalid(code: error.code, message: error.localizedDescription)
     }
   }
 
-  private func workspaceAccessError(_ workspace: RegisteredWorkspace) -> WorkspaceBookmarkError? {
-    guard let admitted = workspaceAccesses[workspace.id] else {
-      return workspaceErrors[workspace.id]
+  private func projectAccessError(_ project: RegisteredProject) -> ProjectBookmarkError? {
+    guard let admitted = projectAccesses[project.id] else {
+      return projectErrors[project.id]
     }
     do {
-      let current = try currentRegisteredWorkspace(workspace.id) ?? workspace
-      let access = try platform.workspaceGrants.resolve(current)
+      let current = try currentRegisteredProject(project.id) ?? project
+      let access = try platform.projectGrants.resolve(current)
       defer { access.close() }
       guard admitted.isActive, access.rootIdentity == admitted.rootIdentity else {
-        return .rootChanged(workspaceID: workspace.id)
+        return .rootChanged(projectID: project.id)
       }
       return nil
-    } catch let error as WorkspaceBookmarkError {
+    } catch let error as ProjectBookmarkError {
       return error
     } catch {
-      return .bookmarkResolutionFailed(workspaceID: workspace.id)
+      return .bookmarkResolutionFailed(projectID: project.id)
     }
   }
 
@@ -626,7 +625,7 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
         message: "A host callback cannot enter a domain runtime recursively.")
     }
     let target = try descriptor(
-      named: name, workspaceID: arguments["workspace_id"]?.stringValue ?? context.workspaceID,
+      named: name, projectID: arguments["project_id"]?.stringValue ?? context.projectID,
       invocationContext: invocationContext)
     guard !target.localOnly,
       target.mcpReference.map({ !hostServiceRegistrations.contains($0.serverID) }) ?? true,
@@ -645,7 +644,7 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
     let current = try currentHostGrant(context: routed.context)
     let decision = policyEvaluator.evaluate(
       capability: descriptor, context: routed.context, grant: current,
-      registeredWorkspaceIDs: Set(workspaceOrder))
+      registeredProjectIDs: Set(projectOrder))
     guard case .allow = decision else {
       throw Self.invalid(
         code: "policy.host_grant_revoked",
@@ -685,30 +684,29 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
   }
 
   func requireHostInvocation(
-    workspaceID: String, origin: String, action: MCPHostServiceAction,
+    projectID: String, origin: String, action: MCPHostServiceAction,
     matching: (MCPHostInvocation) -> Bool = { _ in true }
   ) throws -> MCPHostInvocation {
-    try requireHostInvocation(workspaceID: workspaceID, origin: origin) {
+    try requireHostInvocation(projectID: projectID, origin: origin) {
       $0.admittedCapability.hostServiceAction == action && matching($0)
     }
   }
 
-  func requireHostInvocation(workspaceID: String, origin: String, id: UUID) throws
+  func requireHostInvocation(projectID: String, origin: String, id: UUID) throws
     -> MCPHostInvocation
   {
-    try requireHostInvocation(workspaceID: workspaceID, origin: origin, includingRetainedWork: true)
-    {
+    try requireHostInvocation(projectID: projectID, origin: origin, includingRetainedWork: true) {
       $0.id == id
     }
   }
 
   private func requireHostInvocation(
-    workspaceID: String, origin: String, includingRetainedWork: Bool = false,
+    projectID: String, origin: String, includingRetainedWork: Bool = false,
     matching: (MCPHostInvocation) -> Bool
   ) throws -> MCPHostInvocation {
-    try validateHostOrigin(workspaceID: workspaceID, origin: origin)
+    try validateHostOrigin(projectID: projectID, origin: origin)
     let matches = hostToolDirectory.active(
-      workspaceID: workspaceID, origin: origin, includingRetainedWork: includingRetainedWork
+      projectID: projectID, origin: origin, includingRetainedWork: includingRetainedWork
     ).filter(matching)
     guard matches.count == 1, let invocation = matches.first else {
       throw Self.invalid(
@@ -722,7 +720,7 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
       policyEvaluator.evaluate(
         capability: descriptor, context: invocation.context,
         grant: try currentHostGrant(context: invocation.context),
-        registeredWorkspaceIDs: Set(workspaceOrder)
+        registeredProjectIDs: Set(projectOrder)
       ).isAllowed
     else {
       throw Self.invalid(
@@ -733,7 +731,7 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
 
   func makeHostServices(context: MCPHostContext, origin: String) throws -> MCPBoundHostServices? {
     guard let database else { return nil }
-    try validateHostOrigin(workspaceID: context.launchMetadata.workspace.id, origin: origin)
+    try validateHostOrigin(projectID: context.launchMetadata.project.id, origin: origin)
     return MCPBoundHostServices(
       database: database, directory: hostToolDirectory, context: context, origin: origin,
       gitExecutable: platform.gitExecutable)
@@ -810,8 +808,8 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
   }
 
   package func refreshTools(context: InvocationContext) async throws {
-    for workspaceID in workspaceOrder {
-      try await providerRouters[workspaceID]?.refreshTools(context: context)
+    for projectID in projectOrder {
+      try await providerRouters[projectID]?.refreshTools(context: context)
     }
   }
 
@@ -826,7 +824,7 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
         try router.listTools(context: invocationContext).map { tool in
           let capability = try router.capability(named: tool.name, context: invocationContext)
           return ToolDefinition(
-            tool: Self.addWorkspaceID(to: tool, descriptor: capability), capability: capability)
+            tool: Self.addProjectID(to: tool, descriptor: capability), capability: capability)
         }
       } ?? []
     return (coreDefinitions + routedDefinitions)
@@ -838,13 +836,13 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
   }
 
   package struct ContinuationLookup: Sendable {
-    package let workspaceID: String
+    package let projectID: String
     package let reference: MCPToolReference
     package let observation: MCPContinuationDirectory.Lookup
   }
 
-  package var unambiguousWorkspaceID: String? {
-    context.workspaceID ?? (workspaceOrder.count == 1 ? workspaceOrder.first : nil)
+  package var unambiguousProjectID: String? {
+    context.projectID ?? (projectOrder.count == 1 ? projectOrder.first : nil)
   }
 
   package func callOwnedTool(
@@ -853,21 +851,21 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
   ) async throws -> JSONValue {
     guard owner.runtimeID == generationID,
       let record = ownedWork.snapshot.first(where: {
-        $0.id == owner.ownershipID && $0.workspaceID == owner.workspaceID && $0.kind != .invocation
+        $0.id == owner.ownershipID && $0.projectID == owner.projectID && $0.kind != .invocation
       }), var object = arguments.objectValue,
       !name.hasPrefix("runtime.owners.")
     else { throw GatewayOwnerSelection.unavailable() }
-    if let workspace = object["workspace_id"], workspace != .string(owner.workspaceID) {
+    if let project = object["project_id"], project != .string(owner.projectID) {
       throw GatewayOwnerSelection.unavailable()
     }
-    object["workspace_id"] = .string(owner.workspaceID)
+    object["project_id"] = .string(owner.projectID)
     var targetName = name
     var targetArguments = object
     if name == "operations.prepare" || name == "operations.commit" {
       targetName = try Self.requiredString("tool", in: object)
       guard !targetName.hasPrefix("runtime.owners."),
         let nested = object["arguments"]?.objectValue,
-        nested["workspace_id"] == nil || nested["workspace_id"] == .string(owner.workspaceID)
+        nested["project_id"] == nil || nested["project_id"] == .string(owner.projectID)
       else { throw GatewayOwnerSelection.unavailable() }
       targetArguments = nested
     }
@@ -875,14 +873,14 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
     if let connectionID = record.connectionID {
       let lookup: ContinuationLookup
       if let native = try continuationLookup(
-        name: name, arguments: .object(object), workspaceID: owner.workspaceID)
+        name: name, arguments: .object(object), projectID: owner.projectID)
       {
         lookup = native
       } else if targetName.hasPrefix("mcp."),
         let server = targetArguments["server"]?.stringValue, server == record.registrationID
       {
         lookup = .init(
-          workspaceID: owner.workspaceID, reference: .init(serverID: server, toolName: targetName),
+          projectID: owner.projectID, reference: .init(serverID: server, toolName: targetName),
           observation: .init())
       } else {
         throw GatewayOwnerSelection.unavailable()
@@ -911,7 +909,7 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
         else { throw GatewayOwnerSelection.unavailable() }
       }
       target = MCPContinuationTarget(
-        workspaceID: owner.workspaceID, reference: lookup.reference, connectionID: connectionID,
+        projectID: owner.projectID, reference: lookup.reference, connectionID: connectionID,
         instanceID: ownedWork.continuations.entry(connectionID: connectionID)?.instanceID,
         resources: Dictionary(uniqueKeysWithValues: matches.map { ($0.resource, $0.acquiredBy) }),
         selectedOwnershipID: record.id)
@@ -927,7 +925,7 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
       }
     }
     let reservation = try ownedWork.admitInvocation(
-      workspaceID: owner.workspaceID, resourceID: name)
+      projectID: owner.projectID, resourceID: name)
     defer { reservation.finish() }
     return try await GatewayOwnerRouting.$selection.withValue(owner) {
       try await callToolAsync(
@@ -939,14 +937,14 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
   private func executionOwners(arguments: [String: JSONValue], context: ExecutionContext) throws
     -> JSONValue
   {
-    guard let workspaceID = context.workspaceID,
+    guard let projectID = context.projectID,
       Set(arguments.keys).isSubset(of: ["server", "after", "limit"]),
       arguments["server"] == nil || arguments["server"]?.stringValue != nil,
       arguments["after"] == nil || arguments["after"]?.stringValue != nil,
       let limit = arguments["limit"]?.int64Value ?? (arguments["limit"] == nil ? 50 : nil),
       (1...100).contains(limit)
     else {
-      throw GatewayToolError.invalidArguments("Supply a workspace and a page limit from 1 to 100.")
+      throw GatewayToolError.invalidArguments("Supply a project and a page limit from 1 to 100.")
     }
     let after = arguments["after"]?.stringValue ?? ""
     if !after.isEmpty {
@@ -962,16 +960,16 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
       guard runtime.context.principalID == context.principalID,
         runtime.context.profileID == context.profileID, runtime.context.caller == context.caller,
         let grant = try? runtime.currentHostGrant(context: context),
-        grant.workspaceIDs.contains("*") || grant.workspaceIDs.contains(workspaceID),
+        grant.projectIDs.contains("*") || grant.projectIDs.contains(projectID),
         grant.allowedCallers.contains(context.caller),
-        (try? runtime.validateExecutionWorkspace(workspaceID)) != nil
+        (try? runtime.validateExecutionProject(projectID)) != nil
       else { continue }
       let policy = MCPToolAccessPolicy(
         configuration: runtime.configuration, grant: grant, derivesObserveGrant: false)
       let visibleServers = Set(
         runtime.configuration.mcp.servers.filter { policy.isVisible($0) }.map(\.id))
       for record in runtime.ownedWork.snapshot
-      where record.kind != .invocation && record.workspaceID == workspaceID {
+      where record.kind != .invocation && record.projectID == projectID {
         if let server, record.registrationID != server { continue }
         if let registration = record.registrationID {
           guard visibleServers.contains(registration) else { continue }
@@ -981,7 +979,7 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
           }
         }
         let owner = GatewayOwnerSelection(
-          runtimeID: runtime.generationID, workspaceID: workspaceID, ownershipID: record.id)
+          runtimeID: runtime.generationID, projectID: projectID, ownershipID: record.id)
         guard owner.cursor > after else { continue }
         selected.append((runtime, record, owner))
         selected.sort { $0.2.cursor < $1.2.cursor }
@@ -1023,7 +1021,7 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
       throw GatewayOwnerSelection.unavailable()
     }
     let owner = try GatewayOwnerSelection(arguments["owner"])
-    guard owner.workspaceID == context.workspaceID else {
+    guard owner.projectID == context.projectID else {
       throw GatewayOwnerSelection.unavailable()
     }
     let name = try Self.requiredString("tool", in: arguments)
@@ -1037,16 +1035,16 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
   }
 
   /// Resolves cached routing and accepted ownership without starting a provider.
-  package func continuationLookups(name: String, arguments: JSONValue?, workspaceID: String?) throws
+  package func continuationLookups(name: String, arguments: JSONValue?, projectID: String?) throws
     -> [ContinuationLookup]
   {
-    let workspaceIDs = workspaceID.map { [$0] } ?? workspaceOrder
-    return try workspaceIDs.compactMap {
-      try continuationLookup(name: name, arguments: arguments, workspaceID: $0)
+    let projectIDs = projectID.map { [$0] } ?? projectOrder
+    return try projectIDs.compactMap {
+      try continuationLookup(name: name, arguments: arguments, projectID: $0)
     }
   }
 
-  func continuationLookup(name: String, arguments: JSONValue?, workspaceID: String?) throws
+  func continuationLookup(name: String, arguments: JSONValue?, projectID: String?) throws
     -> ContinuationLookup?
   {
     var name = name
@@ -1055,8 +1053,8 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
       name = try Self.requiredString("tool", in: arguments)
       arguments = arguments["arguments"]?.objectValue ?? [:]
     }
-    guard let workspaceID = arguments["workspace_id"]?.stringValue ?? workspaceID,
-      let router = providerRouters[workspaceID]
+    guard let projectID = arguments["project_id"]?.stringValue ?? projectID,
+      let router = providerRouters[projectID]
     else { return nil }
     let reference: MCPToolReference
     let nativeArguments: JSONValue
@@ -1068,13 +1066,13 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
     } else {
       guard let nativeReference = router.continuationReference(named: name) else { return nil }
       reference = nativeReference
-      arguments.removeValue(forKey: "workspace_id")
+      arguments.removeValue(forKey: "project_id")
       nativeArguments = .object(arguments)
     }
     return try ContinuationLookup(
-      workspaceID: workspaceID, reference: reference,
+      projectID: projectID, reference: reference,
       observation: ownedWork.continuations.lookup(
-        workspaceID: workspaceID, registrationID: reference.serverID,
+        projectID: projectID, registrationID: reference.serverID,
         tool: reference.toolName, arguments: nativeArguments))
   }
 
@@ -1198,10 +1196,10 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
   {
     var callContext = contextForCall(invocationContext)
     let object = arguments?.objectValue ?? [:]
-    if let workspaceID = object["workspace_id"]?.stringValue {
-      callContext.workspaceID = workspaceID
-    } else if callContext.workspaceID == nil, workspaceOrder.count == 1 {
-      callContext.workspaceID = workspaceOrder[0]
+    if let projectID = object["project_id"]?.stringValue {
+      callContext.projectID = projectID
+    } else if callContext.projectID == nil, projectOrder.count == 1 {
+      callContext.projectID = projectOrder[0]
     }
     return callContext
   }
@@ -1213,7 +1211,7 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
     invocationContext: InvocationContext
   ) throws -> JSONValue {
     let ownership = try ownedWork.admitInvocation(
-      workspaceID: arguments?.objectValue?["workspace_id"]?.stringValue ?? context.workspaceID,
+      projectID: arguments?.objectValue?["project_id"]?.stringValue ?? context.projectID,
       resourceID: name)
     defer { ownership.finish() }
     return try perform(
@@ -1228,7 +1226,7 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
     invocationContext: InvocationContext
   ) async throws -> JSONValue {
     let ownership = try ownedWork.admitInvocation(
-      workspaceID: arguments?.objectValue?["workspace_id"]?.stringValue ?? context.workspaceID,
+      projectID: arguments?.objectValue?["project_id"]?.stringValue ?? context.projectID,
       resourceID: name)
     defer { ownership.finish() }
     return try await performAsync(
@@ -1284,16 +1282,16 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
 
       let rawResult: JSONValue
       switch name {
-      case "workspace.list":
-        rawResult = try resultEnvelope(workspaceList(context: routed.context))
+      case "project.list":
+        rawResult = try resultEnvelope(projectList(context: routed.context))
       case "runtime.owners.list":
         rawResult = try resultEnvelope(
           executionOwners(arguments: routed.arguments, context: routed.context))
       case "runtime.owners.call":
         throw GatewayToolError.invalidArguments(
           "Execution owner calls require asynchronous dispatch.")
-      case "workspace.describe":
-        rawResult = try resultEnvelope(workspaceDescribe(arguments: routed.arguments))
+      case "project.describe":
+        rawResult = try resultEnvelope(projectDescribe(arguments: routed.arguments))
       case "policy.probe":
         rawResult = try resultEnvelope(
           policyProbe(
@@ -1315,11 +1313,11 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
       case let name where remoteManagement?.containsTool(named: name) == true:
         throw GatewayToolError.invalidArguments("Management tools require asynchronous dispatch.")
       default:
-        guard let registryWorkspaceID = routed.registryWorkspaceID else {
-          throw GatewayRuntimeError.noWorkspaces
+        guard let registryProjectID = routed.registryProjectID else {
+          throw GatewayRuntimeError.noProjects
         }
-        guard let providerRouter = providerRouters[registryWorkspaceID] else {
-          throw GatewayRuntimeError.workspaceNotFound(registryWorkspaceID)
+        guard let providerRouter = providerRouters[registryProjectID] else {
+          throw GatewayRuntimeError.projectNotFound(registryProjectID)
         }
         let hostInvocation = try beginHostInvocation(
           descriptor: descriptor, name: name, arguments: routed.arguments,
@@ -1429,8 +1427,8 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
 
       let rawResult: JSONValue
       switch name {
-      case "workspace.list":
-        rawResult = try resultEnvelope(workspaceList(context: routed.context))
+      case "project.list":
+        rawResult = try resultEnvelope(projectList(context: routed.context))
       case "runtime.owners.list":
         rawResult = try resultEnvelope(
           executionOwners(arguments: routed.arguments, context: routed.context))
@@ -1438,8 +1436,8 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
         rawResult = try await selectedOwnerCall(
           arguments: routed.arguments, context: routed.context, invocationContext: invocationContext
         )
-      case "workspace.describe":
-        rawResult = try resultEnvelope(workspaceDescribe(arguments: routed.arguments))
+      case "project.describe":
+        rawResult = try resultEnvelope(projectDescribe(arguments: routed.arguments))
       case "policy.probe":
         rawResult = try await Self.performAdmission {
           try self.resultEnvelope(
@@ -1470,11 +1468,11 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
           await remoteManagement.call(
             name: name, arguments: routed.arguments, context: routed.context))
       default:
-        guard let registryWorkspaceID = routed.registryWorkspaceID else {
-          throw GatewayRuntimeError.noWorkspaces
+        guard let registryProjectID = routed.registryProjectID else {
+          throw GatewayRuntimeError.noProjects
         }
-        guard let providerRouter = providerRouters[registryWorkspaceID] else {
-          throw GatewayRuntimeError.workspaceNotFound(registryWorkspaceID)
+        guard let providerRouter = providerRouters[registryProjectID] else {
+          throw GatewayRuntimeError.projectNotFound(registryProjectID)
         }
         let hostInvocation = try beginHostInvocation(
           descriptor: descriptor, name: name, arguments: routed.arguments,
@@ -1600,7 +1598,7 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
       caller: routed.context.caller,
       profileID: routed.context.profileID,
       principalID: Self.principalID(for: routed.context),
-      workspaceID: routed.context.workspaceID,
+      projectID: routed.context.projectID,
       inputDigest: try operationInputDigest(
         descriptor: targetDescriptor, arguments: routed.arguments),
       stateDigest: stateDigest,
@@ -1624,7 +1622,7 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
       result: .object([
         "ticket_id": .string(ticket.id),
         "tool": .string(toolName),
-        "workspace_id": ticket.workspaceID.map(JSONValue.string) ?? .null,
+        "project_id": ticket.projectID.map(JSONValue.string) ?? .null,
         "state_digest": ticket.stateDigest.map(JSONValue.string) ?? .null,
         "expires_at": .string(Self.iso8601(ticket.expiresAt)),
         "single_use": .bool(true),
@@ -1662,7 +1660,7 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
       "effective_risk": .string(
         effectiveOperationDescriptor(targetDescriptor, arguments: routed.arguments).risk
           .rawValue),
-      "workspace_id": routed.context.workspaceID.map(JSONValue.string) ?? .null,
+      "project_id": routed.context.projectID.map(JSONValue.string) ?? .null,
     ])
   }
 
@@ -1708,14 +1706,14 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
         code: "operations.authorization_changed",
         message: "Authorization changed after this operation was prepared.")
     }
-    guard routed.context.workspaceID == ticket.workspaceID,
+    guard routed.context.projectID == ticket.projectID,
       try operationInputDigest(descriptor: targetDescriptor, arguments: routed.arguments)
         == ticket.inputDigest
     else {
       throw Self.invalid(
         code: "operations.ticket_arguments_mismatch",
         message:
-          "The committed arguments, provider identity or workspace do not match the prepared operation."
+          "The committed arguments, provider identity or project do not match the prepared operation."
       )
     }
     if let expectedStateDigest = ticket.stateDigest {
@@ -1775,7 +1773,7 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
       ticket.invocationID == context.requestID, ticket.parentRequestID == linkage.parentRequestID,
       ticket.capabilityID == descriptor.id, ticket.principalID == Self.principalID(for: context),
       ticket.caller == context.caller, ticket.profileID == context.profileID,
-      ticket.workspaceID == context.workspaceID
+      ticket.projectID == context.projectID
     else {
       throw Self.invalid(
         code: "operations.ticket_context_mismatch",
@@ -1869,42 +1867,42 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
     return result
   }
 
-  private func workspaceList(context: ExecutionContext) -> JSONValue {
+  private func projectList(context: ExecutionContext) -> JSONValue {
     let current = try? currentHostGrant(context: context)
-    let rows = workspaceOrder.compactMap { id -> JSONValue? in
-      guard let workspace = workspaces[id],
-        current?.workspaceIDs.contains("*") == true || current?.workspaceIDs.contains(id) == true
+    let rows = projectOrder.compactMap { id -> JSONValue? in
+      guard let project = projects[id],
+        current?.projectIDs.contains("*") == true || current?.projectIDs.contains(id) == true
       else {
         return nil
       }
       return .object([
-        "id": .string(workspace.id),
-        "display_name": .string(workspace.displayName),
-        "bookmark_stale": .bool(workspace.bookmarkIsStale),
-        "access": WorkspaceAccessReport(
-          workspace: workspace, error: workspaceAccessError(workspace)
+        "id": .string(project.id),
+        "display_name": .string(project.displayName),
+        "bookmark_stale": .bool(project.bookmarkIsStale),
+        "access": ProjectAccessReport(
+          project: project, error: projectAccessError(project)
         ).json,
-        "selected": .bool(context.workspaceID == id),
+        "selected": .bool(context.projectID == id),
       ])
     }
-    return .object(["workspaces": .array(rows)])
+    return .object(["projects": .array(rows)])
   }
 
-  private func workspaceDescribe(arguments: [String: JSONValue]) throws -> JSONValue {
-    let id = try Self.requiredString("workspace_id", in: arguments)
-    guard let workspace = workspaces[id] else {
-      throw GatewayRuntimeError.workspaceNotFound(id)
+  private func projectDescribe(arguments: [String: JSONValue]) throws -> JSONValue {
+    let id = try Self.requiredString("project_id", in: arguments)
+    guard let project = projects[id] else {
+      throw GatewayRuntimeError.projectNotFound(id)
     }
     return .object([
-      "id": .string(workspace.id),
-      "display_name": .string(workspace.displayName),
-      "root_path": .string(workspace.rootPath),
-      "bookmark_backed": .bool(workspace.bookmarkData != nil),
-      "bookmark_stale": .bool(workspace.bookmarkIsStale),
-      "access": WorkspaceAccessReport(workspace: workspace, error: workspaceAccessError(workspace))
+      "id": .string(project.id),
+      "display_name": .string(project.displayName),
+      "root_path": .string(project.rootPath),
+      "bookmark_backed": .bool(project.bookmarkData != nil),
+      "bookmark_stale": .bool(project.bookmarkIsStale),
+      "access": ProjectAccessReport(project: project, error: projectAccessError(project))
         .json,
-      "created_at": .string(Self.iso8601(workspace.createdAt)),
-      "updated_at": .string(Self.iso8601(workspace.updatedAt)),
+      "created_at": .string(Self.iso8601(project.createdAt)),
+      "updated_at": .string(Self.iso8601(project.updatedAt)),
     ])
   }
 
@@ -1914,58 +1912,58 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
     context: ExecutionContext
   ) throws -> RoutedCall {
     var cleanArguments = arguments
-    let argumentWorkspaceID: String?
-    if let value = cleanArguments.removeValue(forKey: "workspace_id") {
+    let argumentProjectID: String?
+    if let value = cleanArguments.removeValue(forKey: "project_id") {
       guard let string = value.stringValue, !string.isEmpty else {
         throw Self.invalid(
-          code: "workspace.invalid_id",
-          message: "workspace_id must be a non-empty string."
+          code: "project.invalid_id",
+          message: "project_id must be a non-empty string."
         )
       }
-      argumentWorkspaceID = string
-      if descriptor.id == "workspace.describe" {
-        cleanArguments["workspace_id"] = value
+      argumentProjectID = string
+      if descriptor.id == "project.describe" {
+        cleanArguments["project_id"] = value
       }
     } else {
-      argumentWorkspaceID = nil
+      argumentProjectID = nil
     }
-    if let argumentWorkspaceID, let contextWorkspaceID = context.workspaceID,
-      argumentWorkspaceID != contextWorkspaceID
+    if let argumentProjectID, let contextProjectID = context.projectID,
+      argumentProjectID != contextProjectID
     {
       throw Self.invalid(
-        code: PolicyDenialCode.workspaceDenied.rawValue,
-        message: "workspace_id does not match the bound execution context."
+        code: PolicyDenialCode.projectDenied.rawValue,
+        message: "project_id does not match the bound execution context."
       )
     }
 
     var routedContext = context
-    routedContext.workspaceID = argumentWorkspaceID ?? context.workspaceID
-    if routedContext.workspaceID == nil,
-      descriptor.workspaceRequirement == .required,
-      workspaceOrder.count == 1
+    routedContext.projectID = argumentProjectID ?? context.projectID
+    if routedContext.projectID == nil,
+      descriptor.projectRequirement == .required,
+      projectOrder.count == 1
     {
-      routedContext.workspaceID = workspaceOrder[0]
+      routedContext.projectID = projectOrder[0]
     }
-    if descriptor.workspaceRequirement == .required, routedContext.workspaceID == nil {
+    if descriptor.projectRequirement == .required, routedContext.projectID == nil {
       throw Self.invalid(
-        code: PolicyDenialCode.workspaceRequired.rawValue,
+        code: PolicyDenialCode.projectRequired.rawValue,
         message:
-          workspaceOrder.isEmpty
-          ? "Register and grant a workspace before calling this capability."
-          : "An explicit workspace_id is required when multiple workspaces are registered."
+          projectOrder.isEmpty
+          ? "Register and grant a project before calling this capability."
+          : "An explicit project_id is required when multiple projects are registered."
       )
     }
 
-    let registryWorkspaceID =
-      routedContext.workspaceID
-      ?? workspaceOrder.first { providerRouters[$0] != nil }
-    if let registryWorkspaceID, workspaces[registryWorkspaceID] == nil {
-      throw GatewayRuntimeError.workspaceNotFound(registryWorkspaceID)
+    let registryProjectID =
+      routedContext.projectID
+      ?? projectOrder.first { providerRouters[$0] != nil }
+    if let registryProjectID, projects[registryProjectID] == nil {
+      throw GatewayRuntimeError.projectNotFound(registryProjectID)
     }
     return RoutedCall(
       arguments: cleanArguments,
       context: routedContext,
-      registryWorkspaceID: registryWorkspaceID
+      registryProjectID: registryProjectID
     )
   }
 
@@ -1993,7 +1991,7 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
       capability: descriptor,
       context: context,
       grant: authorizedGrant,
-      registeredWorkspaceIDs: Set(workspaceOrder)
+      registeredProjectIDs: Set(projectOrder)
     )
     guard case .allow = decision else {
       if case .deny(let code, let message) = decision {
@@ -2001,14 +1999,14 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
       }
       throw Self.invalid(code: "policy.denied", message: "The capability was denied.")
     }
-    if let workspaceID = context.workspaceID {
+    if let projectID = context.projectID {
       if descriptor.id.hasPrefix("runtime.owners.") {
         // Directory access uses the current registration; the selected target separately
         // validates its original execution scope, including registration lifetime and root.
-        _ = try currentRegisteredWorkspace(workspaceID)
+        _ = try currentRegisteredProject(projectID)
       } else {
-        try validateExecutionWorkspace(
-          workspaceID,
+        try validateExecutionProject(
+          projectID,
           requiresAccess: !Self.coreDefinitions(
             databaseEnabled: database != nil, management: remoteManagement
           ).contains {
@@ -2016,7 +2014,7 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
           })
       }
     }
-    if let workspaceID = context.workspaceID, let error = workspaceErrors[workspaceID],
+    if let projectID = context.projectID, let error = projectErrors[projectID],
       !Self.coreDefinitions(
         databaseEnabled: database != nil, management: remoteManagement
       )
@@ -2039,10 +2037,10 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
     context: ExecutionContext
   ) -> Bool {
     guard let grant = try? currentHostGrant(context: context) else { return false }
-    if context.workspaceID != nil,
+    if context.projectID != nil,
       !policyEvaluator.evaluate(
         capability: descriptor, context: context, grant: grant,
-        registeredWorkspaceIDs: Set(workspaceOrder)
+        registeredProjectIDs: Set(projectOrder)
       ).isAllowed
     {
       return false
@@ -2068,7 +2066,7 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
   }
 
   private func descriptor(
-    named name: String, workspaceID: String? = nil, invocationContext: InvocationContext
+    named name: String, projectID: String? = nil, invocationContext: InvocationContext
   ) throws
     -> CapabilityDescriptor
   {
@@ -2078,7 +2076,7 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
     .first(where: { $0.tool.name == name }) {
       return definition.capability
     }
-    if let router = workspaceID.flatMap({ providerRouters[$0] }) ?? firstProviderRouter {
+    if let router = projectID.flatMap({ providerRouters[$0] }) ?? firstProviderRouter {
       return try router.capability(named: name, context: invocationContext)
     }
     throw GatewayToolError.unknownTool(name)
@@ -2096,9 +2094,9 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
         message:
           "Select a live execution owner with runtime.owners.call before closing its connection.")
     }
-    let workspaceID = arguments["workspace_id"]?.stringValue ?? context.workspaceID
+    let projectID = arguments["project_id"]?.stringValue ?? context.projectID
     var descriptor = try descriptor(
-      named: name, workspaceID: workspaceID, invocationContext: invocationContext)
+      named: name, projectID: projectID, invocationContext: invocationContext)
     if name == "mcp.tools.call" {
       let serverID = try Self.requiredString("server", in: arguments)
       let toolName = try Self.requiredString("tool", in: arguments)
@@ -2120,15 +2118,15 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
           code: "mcp.tool_not_approved",
           message: "The host has not approved this downstream MCP tool.")
       }
-      if server.hostServices { descriptor.workspaceRequirement = .required }
+      if server.hostServices { descriptor.projectRequirement = .required }
     }
     guard let reference = descriptor.mcpReference else { return descriptor }
     let routed = try route(descriptor: descriptor, arguments: arguments, context: context)
-    // Check caller and workspace authority before querying a downstream catalog.
+    // Check caller and project authority before querying a downstream catalog.
     try authorize(descriptor, context: routed.context)
-    guard let workspaceID = routed.registryWorkspaceID,
-      let router = providerRouters[workspaceID]
-    else { throw GatewayRuntimeError.noWorkspaces }
+    guard let projectID = routed.registryProjectID,
+      let router = providerRouters[projectID]
+    else { throw GatewayRuntimeError.noProjects }
     let admission = try router.downstreamPolicy(
       for: reference,
       context: .init(session: context.controlSession, continuation: invocationContext.continuation))
@@ -2138,7 +2136,7 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
   }
 
   private var firstProviderRouter: GatewayProviderRouter? {
-    workspaceOrder.lazy.compactMap { self.providerRouters[$0] }.first
+    projectOrder.lazy.compactMap { self.providerRouters[$0] }.first
   }
 
   private func contextForCall(_ invocationContext: InvocationContext) -> ExecutionContext {
@@ -2178,7 +2176,7 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
         tunnelInstanceID: context.transportTrace?.tunnelInstanceID,
         tunnelProfileID: context.transportTrace?.tunnelProfileID,
         profileID: context.profileID,
-        workspaceID: context.workspaceID,
+        projectID: context.projectID,
         capabilityID: capabilityID,
         decision: decision,
         errorCode: errorCode,
@@ -2242,7 +2240,7 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
       "request_id": .string(context.requestID),
       "caller": .string(context.caller.rawValue),
       "profile_id": .string(context.profileID.rawValue),
-      "workspace_id": context.workspaceID.map(JSONValue.string) ?? .null,
+      "project_id": context.projectID.map(JSONValue.string) ?? .null,
       "capability_id": .string(capabilityID),
     ]
     if let owner = GatewayOwnerRouting.selection { executionObject["execution_owner"] = owner.json }
@@ -2300,9 +2298,9 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
     var definitions = [
       ToolDefinition(
         tool: MCPTool(
-          name: "workspace.list",
+          name: "project.list",
           description:
-            "List workspaces registered and granted to the active profile. Approved Full Access clients on an App-managed gateway can register folders with workspace.add.",
+            "List projects registered and granted to the active profile. Approved Full Access clients on an App-managed gateway can register folders with project.add.",
           inputSchema: .object(["type": .string("object"), "additionalProperties": .bool(false)]),
           annotations: .init(
             readOnlyHint: true,
@@ -2312,24 +2310,24 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
           )
         ),
         capability: CapabilityDescriptor(
-          id: "workspace.list", risk: .readOnly,
-          workspaceRequirement: .none,
+          id: "project.list", risk: .readOnly,
+          projectRequirement: .none,
           localOnly: false, usesNetwork: false
         )
       ),
       ToolDefinition(
         tool: MCPTool(
-          name: "workspace.describe",
-          description: "Describe one registered workspace by stable workspace_id.",
+          name: "project.describe",
+          description: "Describe one registered project by stable project_id.",
           inputSchema: .object([
             "type": .string("object"),
             "properties": .object([
-              "workspace_id": .object([
+              "project_id": .object([
                 "type": .string("string"),
-                "description": .string("Stable workspace id returned by workspace.list."),
+                "description": .string("Stable project id returned by project.list."),
               ])
             ]),
-            "required": .array([.string("workspace_id")]),
+            "required": .array([.string("project_id")]),
             "additionalProperties": .bool(false),
           ]),
           annotations: .init(
@@ -2340,8 +2338,8 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
           )
         ),
         capability: CapabilityDescriptor(
-          id: "workspace.describe", risk: .readOnly,
-          workspaceRequirement: .none,
+          id: "project.describe", risk: .readOnly,
+          projectRequirement: .none,
           localOnly: false, usesNetwork: false
         )
       ),
@@ -2349,7 +2347,7 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
         tool: MCPTool(
           name: "policy.probe",
           description:
-            "Evaluate whether the active Gateway profile and workspace would authorize one capability without executing it. Policy denials return their stable error code and are audited.",
+            "Evaluate whether the active Gateway profile and project would authorize one capability without executing it. Policy denials return their stable error code and are audited.",
           inputSchema: .object([
             "type": .string("object"),
             "properties": .object([
@@ -2360,13 +2358,13 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
               "arguments": .object([
                 "type": .string("object"),
                 "description": .string(
-                  "Optional target arguments used only for workspace routing and policy evaluation."
+                  "Optional target arguments used only for project routing and policy evaluation."
                 ),
                 "additionalProperties": .bool(true),
               ]),
-              "workspace_id": .object([
+              "project_id": .object([
                 "type": .string("string"),
-                "description": .string("Optional stable workspace id for the policy context."),
+                "description": .string("Optional stable project id for the policy context."),
               ]),
             ]),
             "required": .array([.string("capability_id")]),
@@ -2381,7 +2379,7 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
         ),
         capability: CapabilityDescriptor(
           id: "policy.probe", risk: .readOnly,
-          workspaceRequirement: .optional,
+          projectRequirement: .optional,
           localOnly: false, usesNetwork: false
         )
       ),
@@ -2404,7 +2402,7 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
           ),
           capability: CapabilityDescriptor(
             id: "operations.prepare", risk: .externalWrite,
-            workspaceRequirement: .optional,
+            projectRequirement: .optional,
             localOnly: false, usesNetwork: false
           )
         )
@@ -2425,7 +2423,7 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
           ),
           capability: CapabilityDescriptor(
             id: "operations.commit", risk: .externalWrite,
-            workspaceRequirement: .optional,
+            projectRequirement: .optional,
             localOnly: false, usesNetwork: false
           )
         )
@@ -2442,7 +2440,7 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
         "type": .string("object"),
         "additionalProperties": .bool(true),
       ]),
-      "workspace_id": .object(["type": .string("string")]),
+      "project_id": .object(["type": .string("string")]),
     ]
     var required = ["tool", "arguments"]
     if commit {
@@ -2464,19 +2462,19 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
     ])
   }
 
-  private static func addWorkspaceID(
+  private static func addProjectID(
     to tool: MCPTool,
     descriptor: CapabilityDescriptor
   ) -> MCPTool {
-    guard descriptor.workspaceRequirement != .none,
+    guard descriptor.projectRequirement != .none,
       case .object(var schema) = tool.inputSchema
     else {
       return tool
     }
     var properties = schema["properties"]?.objectValue ?? [:]
-    properties["workspace_id"] = .object([
+    properties["project_id"] = .object([
       "type": .string("string"),
-      "description": .string("Stable workspace id returned by workspace.list."),
+      "description": .string("Stable project id returned by project.list."),
     ])
     schema["properties"] = .object(properties)
     return MCPTool(
@@ -2512,8 +2510,8 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
       ).mcpReference
         == nil
     else { return nil }
-    guard let workspaceID = context.workspaceID,
-      let rootURL = workspaceAccesses[workspaceID]?.rootURL.standardizedFileURL
+    guard let projectID = context.projectID,
+      let rootURL = projectAccesses[projectID]?.rootURL.standardizedFileURL
     else {
       return nil
     }
@@ -2593,11 +2591,11 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
 
   private static func operationStateURL(path: String, rootURL: URL) throws -> URL {
     do {
-      return try WorkspacePathResolver.resolve(path, relativeTo: rootURL)
+      return try ProjectPathResolver.resolve(path, relativeTo: rootURL)
     } catch {
       throw invalid(
         code: "operations.state_path_escape",
-        message: "Cannot bind operation state outside the registered workspace."
+        message: "Cannot bind operation state outside the registered project."
       )
     }
   }
@@ -2964,7 +2962,7 @@ private struct OperationInvocation: Sendable {
 private struct RoutedCall: Sendable {
   var arguments: [String: JSONValue]
   var context: ExecutionContext
-  var registryWorkspaceID: String?
+  var registryProjectID: String?
 }
 
 /// Retains each acquired resource until one shared cleanup task has joined it, including failed initialization.
@@ -3005,18 +3003,18 @@ private final class GatewayRuntimeLifetime: @unchecked Sendable {
 }
 
 package enum GatewayRuntimeError: Error, LocalizedError, Equatable {
-  case noWorkspaces
-  case duplicateWorkspaceID(String)
-  case workspaceNotFound(String)
+  case noProjects
+  case duplicateProjectID(String)
+  case projectNotFound(String)
 
   package var errorDescription: String? {
     switch self {
-    case .noWorkspaces:
-      return "No registered workspace is available."
-    case .duplicateWorkspaceID(let id):
-      return "Duplicate registered workspace id: \(id)"
-    case .workspaceNotFound(let id):
-      return "Unknown registered workspace id: \(id)"
+    case .noProjects:
+      return "No registered project is available."
+    case .duplicateProjectID(let id):
+      return "Duplicate registered project id: \(id)"
+    case .projectNotFound(let id):
+      return "Unknown registered project id: \(id)"
     }
   }
 }

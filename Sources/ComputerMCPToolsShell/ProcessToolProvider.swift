@@ -12,7 +12,7 @@ package struct ProcessToolProvider: GatewayToolProvider {
 
   package func definitions() throws -> [ToolDefinition] {
     guard !environment.configuration.cli.commands.isEmpty else { return [] }
-    return Self.toolDefinitions(toolMeta: environment.workspaceScope.toolMeta)
+    return Self.toolDefinitions(toolMeta: environment.projectScope.toolMeta)
   }
 
   package func callTool(_ invocation: ToolInvocation) throws -> JSONValue {

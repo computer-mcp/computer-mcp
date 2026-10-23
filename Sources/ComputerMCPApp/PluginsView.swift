@@ -12,7 +12,7 @@ struct PluginsView: View {
 
   var body: some View {
     VStack(spacing: 0) {
-      WorkspaceHeader("Plugins", subtitle: "Packages that contribute MCP, CLI, and skills") {
+      ProjectHeader("Plugins", subtitle: "Packages that contribute MCP, CLI, and skills") {
         Button {
           importRevision = model.snapshot?.state.revision ?? 0
           importing = true
@@ -57,7 +57,7 @@ struct PluginsView: View {
             .foregroundStyle(.orange).textSelection(.enabled).padding(16)
         }
         if model.pluginIDs.isEmpty {
-          EmptyWorkspaceView(
+          EmptyProjectView(
             title: "No plugins registered",
             detail: "Add a local package to review its contributions before enabling it.",
             systemImage: "puzzlepiece.extension")
@@ -84,9 +84,9 @@ struct PluginsView: View {
           }
         }
       } else if model.isRefreshing {
-        LoadingWorkspaceView(title: "Loading plugins")
+        LoadingProjectView(title: "Loading plugins")
       } else {
-        FailedWorkspaceView(message: model.errorMessage ?? AppLocalization.string("Unavailable")) {
+        FailedProjectView(message: model.errorMessage ?? AppLocalization.string("Unavailable")) {
           Task { await model.reload() }
         }
       }

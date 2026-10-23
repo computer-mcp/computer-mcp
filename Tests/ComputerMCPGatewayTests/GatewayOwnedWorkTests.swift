@@ -15,7 +15,7 @@ struct GatewayOwnedWorkTests {
         (admitted: Optional<GatewayOwnedWork.Lease>.none, retired: false))
       DispatchQueue.concurrentPerform(iterations: 2) { index in
         if index == 0 {
-          let lease = try? work.admitInvocation(workspaceID: "ws", resourceID: "call")
+          let lease = try? work.admitInvocation(projectID: "ws", resourceID: "call")
           outcomes.withLockedValue { $0.admitted = lease }
         } else {
           let retired = work.closeAdmissionIfDrained()
@@ -27,7 +27,7 @@ struct GatewayOwnedWorkTests {
       result.admitted?.finish()
       #expect(work.closeAdmissionIfDrained())
       #expect(throws: GatewayToolError.self) {
-        try work.admitInvocation(workspaceID: "ws", resourceID: "late")
+        try work.admitInvocation(projectID: "ws", resourceID: "late")
       }
       #expect(work.snapshot.isEmpty)
     }
@@ -36,13 +36,13 @@ struct GatewayOwnedWorkTests {
   @Test
   func backgroundAndUncertainOwnersPreventIdleRetirement() throws {
     let work = GatewayOwnedWork()
-    let invocation = try work.admitInvocation(workspaceID: "ws", resourceID: "call")
-    let background = work.retain(.mcpResource, workspaceID: "ws", resourceID: "native")
+    let invocation = try work.admitInvocation(projectID: "ws", resourceID: "call")
+    let background = work.retain(.mcpResource, projectID: "ws", resourceID: "native")
     invocation.finish()
     #expect(!work.closeAdmissionIfDrained())
     background.markUncertain()
     #expect(!work.closeAdmissionIfDrained())
-    let recovery = try work.admitInvocation(workspaceID: "ws", resourceID: "recover")
+    let recovery = try work.admitInvocation(projectID: "ws", resourceID: "recover")
     background.finish()
     #expect(!work.closeAdmissionIfDrained())
     recovery.finish()

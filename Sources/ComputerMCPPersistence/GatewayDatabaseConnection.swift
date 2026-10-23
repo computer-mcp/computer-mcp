@@ -37,6 +37,7 @@ package final class GatewayDatabaseConnection: @unchecked Sendable {
     migrator.registerMigration("audit-error-details") { database in
       try database.alter(table: "auditEvents") { $0.add(column: "errorDetailsJSON", .text) }
     }
+    migrator.registerMigration("project-terminology", migrate: ProjectSchemaMigration.migrate)
     return migrator
   }()
 

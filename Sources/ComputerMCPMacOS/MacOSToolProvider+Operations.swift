@@ -181,7 +181,7 @@ extension MacOSToolProvider {
     let target: JSONValue
     if let path, !path.isEmpty {
       try validateUTF8ByteLimit(path, name: "path", maxBytes: 4_096)
-      let fileURL = try workspaceScope.resolvedWorkspaceURL(path)
+      let fileURL = try projectScope.resolvedProjectURL(path)
       guard FileManager.default.fileExists(atPath: fileURL.path) else {
         throw GatewayToolError.invalidArguments("Path does not exist: \(path)")
       }
@@ -189,7 +189,7 @@ extension MacOSToolProvider {
       target = .object([
         "type": .string("path"),
         "path": .string(fileURL.path),
-        "workspace_relative_path": .string(workspaceScope.workspaceRelativePath(fileURL)),
+        "project_relative_path": .string(projectScope.projectRelativePath(fileURL)),
       ])
     } else {
       let urlString = urlString ?? ""
@@ -332,19 +332,19 @@ extension MacOSToolProvider {
     try validateBoundedPositive(timeout, name: "timeout_ms", upperBound: 600_000)
     try validateBoundedPositive(maxOutputBytes, name: "max_output_bytes", upperBound: 20_971_520)
 
-    let directory = try workspaceScope.resolvedWorkspaceURL(path)
+    let directory = try projectScope.resolvedProjectURL(path)
     try requireDirectory(directory, originalPath: path)
 
     let result = try commandRunner.run(
       executable: "/usr/bin/mdfind",
       arguments: ["-onlyin", directory.path, query],
-      workingDirectory: configuration.workspaceDirectory,
+      workingDirectory: configuration.projectDirectory,
       environment: [:],
       timeoutMilliseconds: timeout,
       maxOutputBytes: maxOutputBytes
     )
 
-    let base = configuration.workspaceDirectory.standardizedFileURL.resolvingSymlinksInPath()
+    let base = configuration.projectDirectory.standardizedFileURL.resolvingSymlinksInPath()
     let basePath = base.path
     let basePrefix = basePath.hasSuffix("/") ? basePath : "\(basePath)/"
     var matched: [FileInfo] = []
@@ -368,12 +368,12 @@ extension MacOSToolProvider {
       }
 
       if matched.count < maxResults {
-        matched.append(try workspaceScope.fileInfo(url: candidate))
+        matched.append(try projectScope.fileInfo(url: candidate))
       }
     }
 
     matched.sort {
-      $0.workspaceRelativePath.localizedStandardCompare($1.workspaceRelativePath)
+      $0.projectRelativePath.localizedStandardCompare($1.projectRelativePath)
         == .orderedAscending
     }
     let containedPathCount = totalReturnedPaths - skippedEscaped - skippedMissing
@@ -381,7 +381,7 @@ extension MacOSToolProvider {
     return .object([
       "operation": .string("macos.spotlight_search"),
       "path": .string(directory.path),
-      "workspace_relative_path": .string(workspaceScope.workspaceRelativePath(directory)),
+      "project_relative_path": .string(projectScope.projectRelativePath(directory)),
       "query": .string(query),
       "max_results": .integer(Int64(maxResults)),
       "max_output_bytes": .integer(Int64(maxOutputBytes)),

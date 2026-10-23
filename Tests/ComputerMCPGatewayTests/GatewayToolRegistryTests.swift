@@ -5,9 +5,9 @@ import ComputerMCPToolsCLI
 import ComputerMCPToolsFiles
 import ComputerMCPToolsGit
 import ComputerMCPToolsMCP
+import ComputerMCPToolsProject
 import ComputerMCPToolsShell
 import ComputerMCPToolsSystem
-import ComputerMCPToolsWorkspace
 import Foundation
 import Testing
 
@@ -130,7 +130,7 @@ final class GatewayToolRegistryTests {
     return try GatewayProviderRouter(providers: [
       CLIToolProvider(environment: environment), ShellToolProvider(environment: environment),
       ProcessToolProvider(environment: environment), GitToolProvider(environment: environment),
-      FilesToolProvider(environment: environment), WorkspaceToolProvider(environment: environment),
+      FilesToolProvider(environment: environment), ProjectToolProvider(environment: environment),
       SystemToolProvider(environment: environment), NetworkToolProvider(environment: environment),
       MCPToolProvider(environment: environment, mcpClient: RegistryDiscoveryStub()),
       ConfiguredMCPToolProvider(environment: environment, mcpClient: RegistryDiscoveryStub()),

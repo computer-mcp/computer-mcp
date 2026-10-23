@@ -11,7 +11,7 @@ package struct GitToolProvider: GatewayToolProvider {
   }
 
   package func definitions() throws -> [ToolDefinition] {
-    Self.toolDefinitions(toolMeta: environment.workspaceScope.toolMeta).filter {
+    Self.toolDefinitions(toolMeta: environment.projectScope.toolMeta).filter {
       environment.configuration.builtin.enabled.contains($0.tool.name)
     }.sorted { $0.tool.name < $1.tool.name }
   }

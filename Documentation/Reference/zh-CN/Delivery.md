@@ -1,24 +1,24 @@
 # 隔离编辑交付
 
-`delivery.scopes.list` 列出当前工作区的交付范围；`delivery.apply` 在隔离的 Git
+`delivery.scopes.list` 列出当前项目的交付范围；`delivery.apply` 在隔离的 Git
 worktree 内顺序编辑 UTF-8 文件，提交后快进合并到默认分支，或保留提交分支。
-两者都需要 `workspace_id`，均不使用网络；列表为只读，编辑属于工作区写入。
+两者都需要 `project_id`，均不使用网络；列表为只读，编辑属于项目写入。
 授权与单次确认沿用现有 profile 权限。
 
 ## 配置
 
 范围声明在 App 管理的清单或独立模式的 TOML 清单中，不读取仓库内的范围文件。
-每个工作区只收到指向自己的范围。App 工作区通过书签解析路径；独立模式相对路径
+每个项目只收到指向自己的范围。App 项目通过书签解析路径；独立模式相对路径
 从清单目录解析。App 暂不提供范围编辑界面。
 
 ```toml
-[[workspaces]]
+[[projects]]
 id = "journal"
-path = "../journal" # 仅独立模式填写；App 管理的工作区省略此项。
+path = "../journal" # 仅独立模式填写；App 管理的项目省略此项。
 
 [[delivery.scopes]]
 id = "training"
-workspace = "journal"
+project = "journal"
 repository = "."
 paths = ["training/**/*.md", "exports/*.csv"]
 default_branch = "main"
@@ -27,14 +27,14 @@ sparse = false
 mode = "land"
 ```
 
-ID 必须唯一，`workspace` 必须已注册。`repository` 默认为 `.`，`worktree_root`
+ID 必须唯一，`project` 必须已注册。`repository` 默认为 `.`，`worktree_root`
 默认为 `.claude/worktrees`；均为相对路径，不能包含 `..` 或 `.git`。worktree
 根必须处于仓库内且被 Git 忽略。`paths` 不能为空，`*` 不跨 `/`，`**` 跨目录，
 `**/` 也匹配零级目录；不支持其他 glob 操作符。`default_branch` 必填，`sparse`
 默认为 false，`mode` 为 `land`（默认）或 `commit-only`。
 
 还需在 `[builtin].enabled` 启用这两个工具，注册 ID 为 `git` 的 CLI 命令，并为
-调用方 profile 授予对应工具与工作区权限。启用范围后，可用现有权限界面撤回
+调用方 profile 授予对应工具与项目权限。启用范围后，可用现有权限界面撤回
 profile 的直接文件写入能力。
 
 ## 调用与结果
@@ -182,7 +182,7 @@ worktree 和分支。无法证明时保留，以 `cleanup_pending` 给出路径�
 这些核对不提供该窗口内对外部 Git 写入者的隔离。
 
 日志为 `<git-common-dir>/computer-mcp/delivery/<operation_id>.json`，schema 1
-记录操作 ID、工作区、范围、仓库、默认分支、交付分支、worktree 路径、基线 `base`、
+记录操作 ID、项目、范围、仓库、默认分支、交付分支、worktree 路径、基线 `base`、
 `phase`、可选 `commit`、`merged`、可选终态、原因、`message` 以及文件片段。
 成功创建后立即记录可选的 `creation`：`branchCommit` 为初始分支提交（等于 `base`），
 `sparse` 记录本次稀疏检出设置，`worktree` 包含公共 Git 目录下的管理目录 `directory` 与其中 `gitdir` 文件的原始内容。

@@ -11,10 +11,10 @@ These documents state the current architecture truth for `computer-mcp`.
 - [Runtime](Runtime.md): App socket, execution planes, and tool dispatch.
 - [App Control Plane](ControlPlane.md): shared SwiftUI/CLI operations and the
   local administration boundary.
-- [Gateway](Gateway.md): product topology, workspace model, and policy routing.
+- [Gateway](Gateway.md): product topology, project model, and policy routing.
 - [Capability Ownership](Ownership.md): gateway, plugin, Apple-provider, and
   builtin admission boundaries.
-- [Security and Privacy](SecurityAndPrivacy.md): profiles, workspaces, secrets,
+- [Security and Privacy](SecurityAndPrivacy.md): profiles, projects, secrets,
   TCC, logging, and Full Shell boundaries.
 - [Documentation](Documentation.md): repository documentation role model.
 - [Naming](Naming.md): frozen product, runtime, protocol, and Validation terms.

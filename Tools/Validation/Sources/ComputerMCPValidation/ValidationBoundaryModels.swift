@@ -104,7 +104,7 @@ public struct AuditEvent: Codable, Equatable, Sendable, Identifiable {
   public var tunnelInstanceID: String?
   public var tunnelProfileID: String?
   public var profileID: GatewayProfileID
-  public var workspaceID: String?
+  public var projectID: String?
   public var capabilityID: String
   public var decision: AuditDecision
   public var errorCode: String?
@@ -128,7 +128,7 @@ public struct AuditEvent: Codable, Equatable, Sendable, Identifiable {
     tunnelInstanceID: String? = nil,
     tunnelProfileID: String? = nil,
     profileID: GatewayProfileID,
-    workspaceID: String? = nil,
+    projectID: String? = nil,
     capabilityID: String,
     decision: AuditDecision,
     errorCode: String? = nil,
@@ -151,7 +151,7 @@ public struct AuditEvent: Codable, Equatable, Sendable, Identifiable {
     self.tunnelInstanceID = tunnelInstanceID
     self.tunnelProfileID = tunnelProfileID
     self.profileID = profileID
-    self.workspaceID = workspaceID
+    self.projectID = projectID
     self.capabilityID = capabilityID
     self.decision = decision
     self.errorCode = errorCode
@@ -163,7 +163,7 @@ public struct AuditEvent: Codable, Equatable, Sendable, Identifiable {
   }
 }
 
-public struct RegisteredWorkspace: Codable, Equatable, Sendable, Identifiable {
+public struct RegisteredProject: Codable, Equatable, Sendable, Identifiable {
   public var id: String
   public var displayName: String
   public var rootPath: String

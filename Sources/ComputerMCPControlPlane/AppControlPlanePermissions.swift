@@ -22,12 +22,12 @@ package struct ProfilePermissionOptions: Sendable {
   package let grant: ProfileGrant
   package let capabilities: [ProfilePermissionCapability]
   package let integrations: [ProfilePermissionIntegration]
-  package let workspaces: [RegisteredWorkspace]
+  package let projects: [RegisteredProject]
   let inputs: AppControlPlaneService.GatewayInputs
 }
 
 extension AppControlPlaneService {
-  func applyRemoteWorkspaceGrant(
+  func applyRemoteProjectGrant(
     id: String, enabled: Bool, profile: GatewayControlProfile, expectedRevision: Int64,
     inputs: GatewayInputs, authorization: GatewayManagementAuthorization
   ) async throws -> ProfileGrant {
@@ -36,16 +36,16 @@ extension AppControlPlaneService {
     try Task.checkCancellation()
     try requireCurrentGatewayInputs(inputs)
     guard profile.grant.authorizationRevision == expectedRevision,
-      inputs.workspaces.contains(where: { $0.id == id })
+      inputs.projects.contains(where: { $0.id == id })
     else { throw GatewayDatabaseError.configurationChanged }
     var grant = profile.grant
     if enabled {
-      grant.workspaceIDs.insert(id)
+      grant.projectIDs.insert(id)
     } else {
-      if grant.workspaceIDs.remove("*") != nil {
-        grant.workspaceIDs.formUnion(inputs.workspaces.map(\.id))
+      if grant.projectIDs.remove("*") != nil {
+        grant.projectIDs.formUnion(inputs.projects.map(\.id))
       }
-      grant.workspaceIDs.remove(id)
+      grant.projectIDs.remove(id)
     }
     try grant.validate()
     return try manifestStore.withCurrentConfiguration(inputs.configuration) {
@@ -104,7 +104,7 @@ extension AppControlPlaneService {
     try requireCurrentGatewayInputs(inputs)
     return ProfilePermissionOptions(
       grant: grant, capabilities: capabilities, integrations: integrations,
-      workspaces: inputs.workspaces, inputs: inputs)
+      projects: inputs.projects, inputs: inputs)
   }
 }
 

@@ -1,5 +1,5 @@
 import ComputerMCPMacOS
-import ComputerMCPToolsWorkspace
+import ComputerMCPToolsProject
 import Foundation
 import GRDB
 import Testing
@@ -14,16 +14,16 @@ import Testing
 @Suite(.timeLimit(.minutes(1)))
 struct GatewayRuntimePreparationTests {
   @Test(arguments: [false, true])
-  func workspacePreviewPublishesNoGrantTicketReceiptOrNotification(removing: Bool) async throws {
+  func projectPreviewPublishesNoGrantTicketReceiptOrNotification(removing: Bool) async throws {
     let stream = try { () -> AsyncStream<Void> in
       let fixture = try PreparationStateFixture()
       defer { fixture.cleanup() }
-      var duplicate = try #require(try fixture.database.workspace(id: "fixture"))
+      var duplicate = try #require(try fixture.database.project(id: "fixture"))
       duplicate.id = "duplicate"
       duplicate.createdAt = duplicate.createdAt.addingTimeInterval(1)
-      try fixture.database.saveWorkspace(duplicate)
+      try fixture.database.saveProject(duplicate)
       var profile = try #require(try fixture.database.profiles().first)
-      profile.workspaceIDs = [removing ? "fixture" : "duplicate"]
+      profile.projectIDs = [removing ? "fixture" : "duplicate"]
       try fixture.database.saveProfile(profile)
       try fixture.database.saveOperationTicket(
         OperationTicket(
@@ -33,19 +33,19 @@ struct GatewayRuntimePreparationTests {
       let expected = try fixture.database.configurationState()
       let ticket = try fixture.database.operationTicket(id: "pending")
       let changes = fixture.database.profileChanges(for: profile.id)
-      let plan = try fixture.database.workspaceDeduplicationPlan()
-      let mutation: WorkspaceConfigurationMutation =
+      let plan = try fixture.database.projectDeduplicationPlan()
+      let mutation: ProjectConfigurationMutation =
         removing
         ? .remove("fixture")
         : .deduplicate(expectedPlanDigest: plan.planDigest, allowMetadataConflicts: false)
-      let prepared = try fixture.database.prepareWorkspaceChange(mutation, expected: expected)
+      let prepared = try fixture.database.prepareProjectChange(mutation, expected: expected)
       #expect(prepared.proposed != expected)
       #expect(try fixture.database.configurationState() == expected)
-      #expect(try fixture.database.workspaceDeduplicationPlan() == plan)
+      #expect(try fixture.database.projectDeduplicationPlan() == plan)
       #expect(try fixture.database.operationTicket(id: "pending") == ticket)
       let connection = try DatabaseQueue(path: #require(fixture.database.fileURL).path)
       let receipts = try connection.read {
-        try Int.fetchOne($0, sql: "SELECT COUNT(*) FROM workspaceDeduplicationReceipts")
+        try Int.fetchOne($0, sql: "SELECT COUNT(*) FROM projectDeduplicationReceipts")
       }
       try connection.close()
       #expect(receipts == 0)
@@ -57,29 +57,29 @@ struct GatewayRuntimePreparationTests {
   }
 
   @Test(arguments: ["register", "remove", "deduplicate"], [false, true])
-  func workspacePreparationDefersAuthorityAndCommitsResolution(operation: String, fail: Bool)
+  func projectPreparationDefersAuthorityAndCommitsResolution(operation: String, fail: Bool)
     async throws
   {
     let fixture = try PreparationStateFixture()
     defer { fixture.cleanup() }
     let extraRoot = fixture.root.appendingPathComponent("extra")
     try FileManager.default.createDirectory(at: extraRoot, withIntermediateDirectories: true)
-    let extra = RegisteredWorkspace(
+    let extra = RegisteredProject(
       id: "extra", displayName: "Fixture",
       rootPath: operation == "deduplicate" ? fixture.root.path : extraRoot.path,
       createdAt: Date(timeIntervalSince1970: 2000))
-    if operation != "register" { try fixture.database.saveWorkspace(extra) }
+    if operation != "register" { try fixture.database.saveProject(extra) }
     let original = try fixture.database.configurationState()
-    let mutation: WorkspaceConfigurationMutation
+    let mutation: ProjectConfigurationMutation
     switch operation {
     case "register": mutation = .register(extra)
     case "remove": mutation = .remove(extra.id)
     default:
       mutation = .deduplicate(
-        expectedPlanDigest: try fixture.database.workspaceDeduplicationPlan().planDigest,
+        expectedPlanDigest: try fixture.database.projectDeduplicationPlan().planDigest,
         allowMetadataConflicts: false)
     }
-    let change = try fixture.database.prepareWorkspaceChange(mutation, expected: original)
+    let change = try fixture.database.prepareProjectChange(mutation, expected: original)
     #expect(try fixture.database.configurationState() == original)
     let prepared = try await fixture.prepare(state: change.proposed)
     do {
@@ -90,18 +90,18 @@ struct GatewayRuntimePreparationTests {
         conflict.authorizationRevision = 1
         resolution.profiles = [conflict]
         #expect(throws: GatewayDatabaseError.configurationChanged) {
-          try fixture.database.saveWorkspaceChange(change, resolution: resolution)
+          try fixture.database.saveProjectChange(change, resolution: resolution)
         }
         #expect(try fixture.database.configurationState() == original)
       } else {
-        let committed = try fixture.database.saveWorkspaceChange(change, resolution: resolution)
-        #expect(committed.workspaces.contains { $0.id == extra.id } == (operation == "register"))
+        let committed = try fixture.database.saveProjectChange(change, resolution: resolution)
+        #expect(committed.projects.contains { $0.id == extra.id } == (operation == "register"))
         #expect(committed.profiles.first?.authorizationRevision == 1)
         #expect(
-          committed.workspaces.first { $0.id == "fixture" }?.bookmarkData == Data("refreshed".utf8))
+          committed.projects.first { $0.id == "fixture" }?.bookmarkData == Data("refreshed".utf8))
         #expect(committed.plugins == original.plugins)
         if operation == "deduplicate" {
-          #expect(committed.workspaceAliases[extra.id] == "fixture")
+          #expect(committed.projectAliases[extra.id] == "fixture")
         }
       }
       await prepared.runtime.shutdown()
@@ -135,12 +135,12 @@ struct GatewayRuntimePreparationTests {
         let committed = try fixture.database.savePluginStoreSnapshot(
           proposed, expectedRevision: 0, expectedConfiguration: original, resolution: resolution)
         #expect(committed.plugins == proposed)
-        #expect(committed.workspaces.first?.bookmarkData == Data("refreshed".utf8))
+        #expect(committed.projects.first?.bookmarkData == Data("refreshed".utf8))
         #expect(committed.profiles.first?.authorizationRevision == 1)
         try prepared.runtime.requirePreparedPublication()
         prepared.runtime.publishPrepared()
         _ = try await prepared.runtime.callToolAsync(
-          name: "workspace.list", arguments: .object([:]), context: .empty)
+          name: "project.list", arguments: .object([:]), context: .empty)
       }
       #expect(fixture.adapter.startCount - fixture.adapter.stopCount == 1)
       await prepared.runtime.shutdown()
@@ -157,21 +157,21 @@ struct GatewayRuntimePreparationTests {
     defer { fixture.cleanup() }
     let original = try fixture.database.configurationState()
     let state = GatewayDatabase.ConfigurationState(
-      workspaces: fail ? original.workspaces + original.workspaces : original.workspaces,
-      workspaceAliases: original.workspaceAliases, profiles: original.profiles,
+      projects: fail ? original.projects + original.projects : original.projects,
+      projectAliases: original.projectAliases, profiles: original.profiles,
       plugins: original.plugins)
     if fail {
-      await #expect(throws: GatewayRuntimeError.duplicateWorkspaceID("fixture")) {
+      await #expect(throws: GatewayRuntimeError.duplicateProjectID("fixture")) {
         try await fixture.prepare(state: state)
       }
     } else {
       let prepared = try await fixture.prepare(state: state)
       do {
         #expect(try fixture.database.configurationState() == original)
-        let workspace = try #require(prepared.resolution.workspaces.first)
-        #expect(workspace.original == original.workspaces.first)
-        #expect(workspace.resolved.bookmarkData == Data("refreshed".utf8))
-        #expect(workspace.resolved.createdAt == workspace.original.createdAt)
+        let project = try #require(prepared.resolution.projects.first)
+        #expect(project.original == original.projects.first)
+        #expect(project.resolved.bookmarkData == Data("refreshed".utf8))
+        #expect(project.resolved.createdAt == project.original.createdAt)
         #expect(prepared.resolution.profiles.count == 1)
         #expect(prepared.resolution.profiles.first?.authorizationRevision == 0)
         #expect(throws: GatewayToolError.self) {
@@ -179,7 +179,7 @@ struct GatewayRuntimePreparationTests {
         }
         await #expect(throws: GatewayToolError.self) {
           try await prepared.runtime.callToolAsync(
-            name: "workspace.list", arguments: .object([:]), context: .empty)
+            name: "project.list", arguments: .object([:]), context: .empty)
         }
         #expect(fixture.adapter.stopCount == 0)
         await prepared.runtime.shutdown()
@@ -230,14 +230,14 @@ private struct PreparationStateFixture: Sendable {
     try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
     database = try GatewayDatabase(path: root.appendingPathComponent("gateway.sqlite").path)
     adapter = PreparationBookmarkAdapter(root: root, gated: gated)
-    try database.saveWorkspace(
-      RegisteredWorkspace(
+    try database.saveProject(
+      RegisteredProject(
         id: "fixture", displayName: "Fixture", rootPath: root.path,
         bookmarkData: Data("original".utf8), createdAt: Date(timeIntervalSince1970: 1000),
         updatedAt: Date(timeIntervalSince1970: 1000)))
     try database.saveProfile(
       ProfileGrant(
-        id: .localAdmin, capabilityIDs: ["workspace.list"], workspaceIDs: ["fixture"],
+        id: .localAdmin, capabilityIDs: ["project.list"], projectIDs: ["fixture"],
         allowedCallers: [.localCLI]))
     // Recreate the persisted pre-migration authority shape.
     let legacy = try DatabaseQueue(path: root.appendingPathComponent("gateway.sqlite").path)
@@ -250,11 +250,11 @@ private struct PreparationStateFixture: Sendable {
   func prepare(state: GatewayDatabase.ConfigurationState) async throws -> GatewayRuntimePreparation
   {
     try await GatewayRuntime.prepare(
-      configuration: GatewayConfiguration(workspaceDirectory: root),
-      context: ExecutionContext(caller: .localCLI, profileID: .localAdmin, workspaceID: "fixture"),
+      configuration: GatewayConfiguration(projectDirectory: root),
+      context: ExecutionContext(caller: .localCLI, profileID: .localAdmin, projectID: "fixture"),
       database: database, state: state,
       platform: PlatformServices(
-        workspaceGrants: WorkspaceBookmarkService(
+        projectGrants: ProjectBookmarkService(
           adapter: adapter, now: { Date(timeIntervalSince1970: 2000) }),
         pluginDirectories: MacOSPlatform.services.pluginDirectories,
         applications: MacOSPlatform.services.applications,
@@ -269,7 +269,7 @@ private struct PreparationStateFixture: Sendable {
   func cleanup() { try? FileManager.default.removeItem(at: root) }
 }
 
-private final class PreparationBookmarkAdapter: WorkspaceBookmarkAdapter, @unchecked Sendable {
+private final class PreparationBookmarkAdapter: ProjectBookmarkAdapter, @unchecked Sendable {
   private let lock = NSLock()
   private let root: URL
   private let gated: Bool
@@ -289,10 +289,10 @@ private final class PreparationBookmarkAdapter: WorkspaceBookmarkAdapter, @unche
 
   func createBookmark(for url: URL) throws -> Data { Data("refreshed".utf8) }
 
-  func resolveBookmark(_ data: Data) throws -> WorkspaceBookmarkResolution {
+  func resolveBookmark(_ data: Data) throws -> ProjectBookmarkResolution {
     lock.withLock { didStart = true }
     if gated { _ = release.wait(timeout: .now() + .seconds(15)) }
-    return WorkspaceBookmarkResolution(url: root, isStale: true)
+    return ProjectBookmarkResolution(url: root, isStale: true)
   }
 
   func startAccessing(_ url: URL) -> Bool {

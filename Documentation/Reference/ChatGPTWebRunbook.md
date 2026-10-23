@@ -49,7 +49,7 @@ Open **ChatGPT** under Get Started. The page shows dependency, account,
 configuration, credential, runtime, and real-request checks together:
 
 1. Select **Add Connection** and use `chatgpt-observe` for the initial connection.
-2. **Workspaces**: add the folders ChatGPT may inspect or operate, then turn on
+2. **Projects**: add the folders ChatGPT may inspect or operate, then turn on
    **Enabled for chatgpt-observe** for each folder. Registration creates the
    persistent bookmark; the per-profile switch grants access. These are
    separate operations.
@@ -71,7 +71,7 @@ configuration, credential, runtime, and real-request checks together:
    external request and Verified only after a matching current request.
 
 When migrating from a standalone Tunnel, stop that Tunnel before activating
-the App manifest or changing workspace grants. Each manifest/profile/workspace
+the App manifest or changing project grants. Each manifest/profile/project
 change restarts the App-owned Gateway socket. Start only the App-managed Tunnel
 after the final restart so its authenticated bridge and MCP session are
 created against the current socket instance.
@@ -142,7 +142,7 @@ Use Computer MCP to return the current local time and time zone.
 ```
 
 ```text
-Use Computer MCP to call workspace.list, then describe one returned workspace.
+Use Computer MCP to call project.list, then describe one returned project.
 ```
 
 ```text
@@ -154,7 +154,7 @@ not an end-to-end test.
 
 For an operate profile, add one narrowly authorized test only after observe
 passes. Confirm the App audit records the exact profile, capability, and
-workspace.
+project.
 
 ## 7. Metadata Refresh
 
@@ -210,7 +210,7 @@ Read Tunnel logs and the Computer MCP Audit view. Distinguish:
 
 - Tunnel transport failure;
 - policy denial;
-- missing workspace id;
+- missing project id;
 - TCC denial;
 - missing provider executable;
 - downstream provider error.

@@ -20,7 +20,7 @@ extension ProcessToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "process.spawn", risk: .fullShell,
-          workspaceRequirement: .required,
+          projectRequirement: .required,
           localOnly: false, usesNetwork: false
         )
       ),
@@ -36,7 +36,7 @@ extension ProcessToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "process.list", risk: .readOnly,
-          workspaceRequirement: .required,
+          projectRequirement: .required,
           localOnly: false, usesNetwork: false
         )
       ),
@@ -54,7 +54,7 @@ extension ProcessToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "process.read", risk: .readOnly,
-          workspaceRequirement: .required,
+          projectRequirement: .required,
           localOnly: false, usesNetwork: false
         )
       ),
@@ -72,7 +72,7 @@ extension ProcessToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "process.cancel", risk: .destructive,
-          workspaceRequirement: .required,
+          projectRequirement: .required,
           localOnly: false, usesNetwork: false
         )
       ),
@@ -95,7 +95,7 @@ extension ShellToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "shell.run", risk: .fullShell,
-          workspaceRequirement: .required,
+          projectRequirement: .required,
           localOnly: false, usesNetwork: false
         )
       ),
@@ -111,7 +111,7 @@ extension ShellToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "shell.spawn", risk: .fullShell,
-          workspaceRequirement: .required,
+          projectRequirement: .required,
           localOnly: false, usesNetwork: false
         )
       ),
@@ -135,7 +135,7 @@ extension ShellToolProvider {
         // Shell output can contain secrets, so reading sessions needs shell authority.
         capability: CapabilityDescriptor(
           id: "shell.list", risk: .fullShell,
-          workspaceRequirement: .required,
+          projectRequirement: .required,
           localOnly: false, usesNetwork: false
         )
       ),
@@ -163,7 +163,7 @@ extension ShellToolProvider {
         // Shell output can contain secrets, so reading sessions needs shell authority.
         capability: CapabilityDescriptor(
           id: "shell.read", risk: .fullShell,
-          workspaceRequirement: .required,
+          projectRequirement: .required,
           localOnly: false, usesNetwork: false
         )
       ),
@@ -187,7 +187,7 @@ extension ShellToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "shell.write", risk: .fullShell,
-          workspaceRequirement: .required,
+          projectRequirement: .required,
           localOnly: false, usesNetwork: false
         )
       ),
@@ -208,7 +208,7 @@ extension ShellToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "shell.cancel", risk: .fullShell,
-          workspaceRequirement: .required,
+          projectRequirement: .required,
           localOnly: false, usesNetwork: false
         )
       ),
@@ -230,7 +230,7 @@ extension ShellToolProvider {
         "Optional absolute shell executable override for shell mode."
       ),
       "cwd": stringSchema(
-        "Optional absolute or gateway-workspace-relative working directory."
+        "Optional absolute or gateway-project-relative working directory."
       ),
       "env": .object([
         "type": .string("object"),

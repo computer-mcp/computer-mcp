@@ -15,16 +15,16 @@ struct MCPHostLaunchMetadataTests {
           transport: "gateway_socket", socketConnectionID: "connection",
           tunnelInstanceID: "tunnel-instance", tunnelProfileID: "tunnel-profile") : nil,
       trustedPrincipalID: "host-principal")
-    let root = URL(fileURLWithPath: "/tmp/项目 / workspace")
-    let managedRoot = managed ? URL(fileURLWithPath: "/tmp/managed/../workspaces") : nil
+    let root = URL(fileURLWithPath: "/tmp/项目 / project")
+    let managedRoot = managed ? URL(fileURLWithPath: "/tmp/managed/../projects") : nil
     let metadata = MCPHostLaunchMetadata(
-      runtimeID: runtimeID, context: context, workspaceID: "project", rootURL: root,
-      readOnly: !managed, managedWorkspaceRoot: managedRoot)
+      runtimeID: runtimeID, context: context, projectID: "project", rootURL: root,
+      readOnly: !managed, managedProjectRoot: managedRoot)
     let legacy = LegacyHostLaunchContext(
       runtimeID: runtimeID, caller: context.caller, profileID: context.profileID,
-      workspace: .init(id: "project", rootPath: root.path), readOnly: !managed,
+      project: .init(id: "project", rootPath: root.path), readOnly: !managed,
       transportTrace: context.transportTrace,
-      managedWorkspaceRoot: managedRoot?.standardizedFileURL.path,
+      managedProjectRoot: managedRoot?.standardizedFileURL.path,
       principalID: context.principalID)
     let expected = try JSONDecoder().decode(
       [String: JSONValue].self, from: JSONEncoder().encode(legacy))
@@ -75,34 +75,34 @@ struct MCPHostLaunchMetadataTests {
 
   @Test
   func metadataLimitCountsEncodedUTF8BytesAndAllowsExactly16KiB() throws {
-    let overhead = try JSONEncoder().encode(makeMetadata(workspaceID: "")).count
+    let overhead = try JSONEncoder().encode(makeMetadata(projectID: "")).count
     let limit = 16_384 - overhead
-    let metadata = makeMetadata(workspaceID: String(repeating: "x", count: limit))
+    let metadata = makeMetadata(projectID: String(repeating: "x", count: limit))
     let environment = try MCPHostLaunchMetadata.launchEnvironment(
       inherited: [:], overrides: [:], context: metadata)
     #expect(environment[MCPHostLaunchMetadata.environmentKey]?.utf8.count == 16_384)
-    for workspaceID in [
+    for projectID in [
       String(repeating: "x", count: limit + 1), String(repeating: "界", count: limit),
     ] {
       #expect(
         throws: GatewayToolError.executionFailed("Downstream MCP host context exceeds 16 KiB.")
       ) {
         try MCPHostLaunchMetadata.launchEnvironment(
-          inherited: [:], overrides: [:], context: makeMetadata(workspaceID: workspaceID))
+          inherited: [:], overrides: [:], context: makeMetadata(projectID: projectID))
       }
     }
   }
 
-  private func makeMetadata(workspaceID: String = "project") -> MCPHostLaunchMetadata {
+  private func makeMetadata(projectID: String = "project") -> MCPHostLaunchMetadata {
     .init(
       runtimeID: UUID(), context: .init(caller: .localCLI, profileID: .localAdmin),
-      workspaceID: workspaceID, rootURL: URL(fileURLWithPath: "/tmp"), readOnly: false)
+      projectID: projectID, rootURL: URL(fileURLWithPath: "/tmp"), readOnly: false)
   }
 }
 
 /// The host launch wire contract, including its original optional-field encoding.
 private struct LegacyHostLaunchContext: Encodable {
-  struct Workspace: Encodable {
+  struct Project: Encodable {
     let id: String
     let rootPath: String
   }
@@ -110,14 +110,15 @@ private struct LegacyHostLaunchContext: Encodable {
   let runtimeID: UUID
   let caller: GatewayCallerKind
   let profileID: GatewayProfileID
-  let workspace: Workspace
+  let project: Project
   let readOnly: Bool
   let transportTrace: GatewayTransportTrace?
-  let managedWorkspaceRoot: String?
+  let managedProjectRoot: String?
   let principalID: String
 
   private enum CodingKeys: String, CodingKey {
-    case formatVersion, runtimeID, caller, profileID, workspace, readOnly, transportTrace,
-      managedWorkspaceRoot, principalID
+    case formatVersion, runtimeID, caller, profileID, readOnly, transportTrace, principalID
+    case project = "workspace"
+    case managedProjectRoot = "managedWorkspaceRoot"
   }
 }

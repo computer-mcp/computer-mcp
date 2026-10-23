@@ -258,7 +258,7 @@ package actor AppControlPlaneServiceClient {
   }
 }
 
-private struct ControlWorkspaceSummary: Encodable {
+private struct ControlProjectSummary: Encodable {
   let id: String
   let displayName: String
   let rootPath: String
@@ -267,13 +267,13 @@ private struct ControlWorkspaceSummary: Encodable {
   let updatedAt: Date
   let access: JSONValue?
 
-  init(_ workspace: RegisteredWorkspace, access: JSONValue? = nil) {
-    self.id = workspace.id
-    self.displayName = workspace.displayName
-    self.rootPath = workspace.rootPath
-    self.bookmarkIsStale = workspace.bookmarkIsStale
-    self.createdAt = workspace.createdAt
-    self.updatedAt = workspace.updatedAt
+  init(_ project: RegisteredProject, access: JSONValue? = nil) {
+    self.id = project.id
+    self.displayName = project.displayName
+    self.rootPath = project.rootPath
+    self.bookmarkIsStale = project.bookmarkIsStale
+    self.createdAt = project.createdAt
+    self.updatedAt = project.updatedAt
     self.access = access
   }
 }
@@ -353,7 +353,7 @@ private final class ControlToolRegistry: GatewayToolServing, @unchecked Sendable
           "gateway_socket": .string(controlPlane.directories.gatewaySocket.path),
           "gateway_desired_running": .bool(try await controlPlane.gatewayDesiredRunning()),
           "active_profile": .string(activeProfile.rawValue),
-          "workspace_count": .integer(Int64(try await controlPlane.workspaces().count)),
+          "project_count": .integer(Int64(try await controlPlane.projects().count)),
           "provider_count": .integer(Int64(try await controlPlane.providerCount())),
           "launch_at_login": .string(snapshot.launchAtLogin.rawValue),
           "openai_tunnel_count": .integer(Int64(snapshot.openAITunnelConfigurations.count)),
@@ -412,46 +412,46 @@ private final class ControlToolRegistry: GatewayToolServing, @unchecked Sendable
             to: requiredString("revision_id", in: object)
           )
         )
-      case "workspace.list":
+      case "project.list":
         payload = try encodedPayload(
-          try await controlPlane.workspaceAccessReports().map {
-            ControlWorkspaceSummary($0.workspace, access: $0.json)
+          try await controlPlane.projectAccessReports().map {
+            ControlProjectSummary($0.project, access: $0.json)
           }
         )
-      case "workspace.add":
+      case "project.add":
         let path = try requiredString("path", in: object)
-        let workspace = try await operations.registerWorkspace(
+        let project = try await operations.registerProject(
           at: URL(fileURLWithPath: path).standardizedFileURL,
           displayName: object["display_name"]?.stringValue
         )
-        payload = try encodedPayload(ControlWorkspaceSummary(workspace))
-      case "workspace.deduplicate":
+        payload = try encodedPayload(ControlProjectSummary(project))
+      case "project.deduplicate":
         if object["apply"]?.boolValue == true {
           payload = try encodedPayload(
-            try await operations.applyWorkspaceDeduplication(
+            try await operations.applyProjectDeduplication(
               expectedPlanDigest: try requiredString("expected_plan_digest", in: object),
               allowMetadataConflicts: object["allow_metadata_conflicts"]?.boolValue ?? false
             )
           )
         } else {
-          payload = try encodedPayload(try await controlPlane.workspaceDeduplicationPlan())
+          payload = try encodedPayload(try await controlPlane.projectDeduplicationPlan())
         }
-      case "workspace.repair":
-        let workspace = try await operations.repairWorkspace(
+      case "project.repair":
+        let project = try await operations.repairProject(
           id: requiredString("id", in: object),
           at: URL(fileURLWithPath: requiredString("path", in: object)).standardizedFileURL,
           displayName: object["display_name"]?.stringValue)
-        payload = try encodedPayload(ControlWorkspaceSummary(workspace))
-      case "workspace.remove":
+        payload = try encodedPayload(ControlProjectSummary(project))
+      case "project.remove":
         let id = try requiredString("id", in: object)
-        try await operations.removeWorkspace(id: id)
+        try await operations.removeProject(id: id)
         payload = .object(["removed": .string(id)])
-      case "workspace.enable", "profile.grant":
+      case "project.enable", "profile.grant":
         let profile = try requiredProfile(in: object)
-        let workspaceID = try requiredString("workspace_id", in: object)
-        let grant = try await operations.setWorkspaceEnabled(
+        let projectID = try requiredString("project_id", in: object)
+        let grant = try await operations.setProjectEnabled(
           object["enabled"]?.boolValue ?? true,
-          workspaceID: workspaceID,
+          projectID: projectID,
           profileID: profile
         )
         payload = try encodedPayload(grant)
@@ -498,7 +498,7 @@ private final class ControlToolRegistry: GatewayToolServing, @unchecked Sendable
             profileID: requiredProfile(in: object), mode: mode, confirmationPolicy: confirmation,
             fullShellEnabled: object["full_shell_enabled"]?.boolValue,
             capabilityIDs: optionalStringSet("capabilities", in: object),
-            workspaceIDs: optionalStringSet("workspaces", in: object),
+            projectIDs: optionalStringSet("projects", in: object),
             mcpServerIDs: optionalStringSet("mcp_servers", in: object), allowedCallers: callers,
             expectedRevision: object["expected_revision"]?.intValue.map(Int64.init)))
       case "provider.list":
@@ -531,11 +531,11 @@ private final class ControlToolRegistry: GatewayToolServing, @unchecked Sendable
         payload = try encodedPayload(
           try await controlPlane.doctorMCPRegistration(
             id: requiredString("id", in: object),
-            workspaceID: requiredString("workspace_id", in: object)))
+            projectID: requiredString("project_id", in: object)))
       case "mcp.process.recover":
         try await controlPlane.recoverMCPProcessReceipt(
           id: requiredString("id", in: object),
-          workspaceID: requiredString("workspace_id", in: object),
+          projectID: requiredString("project_id", in: object),
           receiptID: requiredString("receipt_id", in: object),
           expectedReceiptDigest: requiredString("expected_receipt_digest", in: object),
           expectedCurrentDigest: requiredString("expected_current_digest", in: object))
@@ -1004,16 +1004,16 @@ private final class ControlToolRegistry: GatewayToolServing, @unchecked Sendable
       arguments: ["id": .string, "expected_binding_digest": .string],
       required: ["id", "expected_binding_digest"], readOnly: false),
     ControlToolContract(
-      "mcp.doctor", arguments: ["id": .string, "workspace_id": .string],
-      required: ["id", "workspace_id"], readOnly: true),
+      "mcp.doctor", arguments: ["id": .string, "project_id": .string],
+      required: ["id", "project_id"], readOnly: true),
     ControlToolContract(
       "mcp.process.recover",
       arguments: [
-        "id": .string, "workspace_id": .string, "receipt_id": .string,
+        "id": .string, "project_id": .string, "receipt_id": .string,
         "expected_receipt_digest": .string, "expected_current_digest": .string,
       ],
       required: [
-        "id", "workspace_id", "receipt_id", "expected_receipt_digest", "expected_current_digest",
+        "id", "project_id", "receipt_id", "expected_receipt_digest", "expected_current_digest",
       ],
       readOnly: false),
     ControlToolContract("mcp.show", arguments: ["id": .string], required: ["id"], readOnly: true),
@@ -1137,15 +1137,15 @@ private final class ControlToolRegistry: GatewayToolServing, @unchecked Sendable
       required: ["toml"],
       readOnly: false
     ),
-    ControlToolContract("workspace.list", readOnly: true),
+    ControlToolContract("project.list", readOnly: true),
     ControlToolContract(
-      "workspace.add",
+      "project.add",
       arguments: ["path": .string, "display_name": .string],
       required: ["path"],
       readOnly: false
     ),
     ControlToolContract(
-      "workspace.deduplicate",
+      "project.deduplicate",
       arguments: [
         "apply": .boolean,
         "expected_plan_digest": .string,
@@ -1154,21 +1154,21 @@ private final class ControlToolRegistry: GatewayToolServing, @unchecked Sendable
       readOnly: false
     ),
     ControlToolContract(
-      "workspace.repair",
+      "project.repair",
       arguments: ["id": .string, "path": .string, "display_name": .string],
       required: ["id", "path"],
       readOnly: false
     ),
     ControlToolContract(
-      "workspace.remove",
+      "project.remove",
       arguments: ["id": .string],
       required: ["id"],
       readOnly: false
     ),
     ControlToolContract(
-      "workspace.enable",
-      arguments: ["workspace_id": .string, "profile": .string, "enabled": .boolean],
-      required: ["workspace_id", "profile"],
+      "project.enable",
+      arguments: ["project_id": .string, "profile": .string, "enabled": .boolean],
+      required: ["project_id", "profile"],
       readOnly: false
     ),
     ControlToolContract("profile.list", readOnly: true),
@@ -1186,8 +1186,8 @@ private final class ControlToolRegistry: GatewayToolServing, @unchecked Sendable
     ),
     ControlToolContract(
       "profile.grant",
-      arguments: ["profile": .string, "workspace_id": .string, "enabled": .boolean],
-      required: ["profile", "workspace_id"],
+      arguments: ["profile": .string, "project_id": .string, "enabled": .boolean],
+      required: ["profile", "project_id"],
       readOnly: false
     ),
     ControlToolContract(
@@ -1200,7 +1200,7 @@ private final class ControlToolRegistry: GatewayToolServing, @unchecked Sendable
       "profile.permissions",
       arguments: [
         "profile": .string, "mode": .string, "confirmation_policy": .string,
-        "full_shell_enabled": .boolean, "capabilities": .strings, "workspaces": .strings,
+        "full_shell_enabled": .boolean, "capabilities": .strings, "projects": .strings,
         "mcp_servers": .strings, "allowed_callers": .strings, "expected_revision": .integer,
       ],
       required: ["profile"], readOnly: false),

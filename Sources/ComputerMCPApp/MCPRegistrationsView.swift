@@ -184,7 +184,7 @@ private struct MCPRegistrationEditor: View {
           jsonEditor("Arguments (JSON array)", text: $draft.argumentsJSON)
           TextField(
             AppLocalization.string("Working directory"),
-            text: Binding(get: { draft.server.cwd ?? "workspace" }, set: { draft.server.cwd = $0 }))
+            text: Binding(get: { draft.server.cwd ?? "project" }, set: { draft.server.cwd = $0 }))
         } else {
           TextField(
             AppLocalization.string("Server URL"),

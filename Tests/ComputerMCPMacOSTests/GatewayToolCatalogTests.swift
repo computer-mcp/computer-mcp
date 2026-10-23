@@ -374,9 +374,9 @@ struct GatewayToolCatalogTests {
     defer { fixture.cleanup() }
     let configuration = GatewayConfiguration(
       runtime: .init(caller: .localMCP, profileID: .localAdmin),
-      workspaces: [.init(id: "fixture", path: fixture.root.path)],
+      projects: [.init(id: "fixture", path: fixture.root.path)],
       profiles: [Self.catalogProfile],
-      mcp: .init(servers: [fixture.server]), workspaceDirectory: fixture.root)
+      mcp: .init(servers: [fixture.server]), projectDirectory: fixture.root)
     let manifest = fixture.root.appendingPathComponent("gateway.toml")
     try Data(configuration.exportedTOML().utf8).write(to: manifest)
     let executable = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
@@ -432,7 +432,7 @@ struct GatewayToolCatalogTests {
     let nativeRuntime = try await BlockingOperationExecutor(label: "catalog-test-native").perform {
       try GatewayRuntime(
         configuration: nativeConfiguration,
-        registeredWorkspaces: [
+        registeredProjects: [
           .init(id: "fixture", displayName: "Fixture", rootPath: fixture.root.path)
         ], platform: MacOSPlatform.services)
     }
@@ -457,7 +457,7 @@ struct GatewayToolCatalogTests {
         runtime = try await BlockingOperationExecutor(label: "catalog-test-proxy").perform {
           try GatewayRuntime(
             configuration: proxyConfiguration,
-            registeredWorkspaces: [
+            registeredProjects: [
               .init(id: "fixture", displayName: "Fixture", rootPath: fixture.root.path)
             ], platform: MacOSPlatform.services)
         }
@@ -594,8 +594,8 @@ struct GatewayToolCatalogTests {
     .init(
       id: .localAdmin,
       capabilities: ["native.advance", "native.sample", "native.added"],
-      workspaces: ["fixture"], allowedCallers: [.localMCP],
-      mode: .workspaceOperations, confirmationPolicy: .never)
+      projects: ["fixture"], allowedCallers: [.localMCP],
+      mode: .projectOperations, confirmationPolicy: .never)
   }
 
   private static func nextEvent(_ stream: AsyncStream<Void>) async throws -> Bool {

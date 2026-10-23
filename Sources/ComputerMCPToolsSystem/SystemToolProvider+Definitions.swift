@@ -15,7 +15,7 @@ extension SystemToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "system.info", risk: .readOnly,
-          workspaceRequirement: .none,
+          projectRequirement: .none,
           localOnly: false, usesNetwork: false
         )
       ),
@@ -31,7 +31,7 @@ extension SystemToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "system.kernel", risk: .readOnly,
-          workspaceRequirement: .none,
+          projectRequirement: .none,
           localOnly: false, usesNetwork: false
         )
       ),
@@ -51,7 +51,7 @@ extension SystemToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "system.software", risk: .readOnly,
-          workspaceRequirement: .none,
+          projectRequirement: .none,
           localOnly: false, usesNetwork: false
         )
       ),
@@ -67,7 +67,7 @@ extension SystemToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "system.locale", risk: .readOnly,
-          workspaceRequirement: .none,
+          projectRequirement: .none,
           localOnly: false, usesNetwork: false
         )
       ),
@@ -83,7 +83,7 @@ extension SystemToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "system.memory", risk: .readOnly,
-          workspaceRequirement: .none,
+          projectRequirement: .none,
           localOnly: false, usesNetwork: false
         )
       ),
@@ -99,7 +99,7 @@ extension SystemToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "system.load", risk: .readOnly,
-          workspaceRequirement: .none,
+          projectRequirement: .none,
           localOnly: false, usesNetwork: false
         )
       ),
@@ -115,7 +115,7 @@ extension SystemToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "system.cpu", risk: .readOnly,
-          workspaceRequirement: .none,
+          projectRequirement: .none,
           localOnly: false, usesNetwork: false
         )
       ),
@@ -131,7 +131,7 @@ extension SystemToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "system.thermal", risk: .readOnly,
-          workspaceRequirement: .none,
+          projectRequirement: .none,
           localOnly: false, usesNetwork: false
         )
       ),
@@ -147,7 +147,7 @@ extension SystemToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "system.time", risk: .readOnly,
-          workspaceRequirement: .none,
+          projectRequirement: .none,
           localOnly: false, usesNetwork: false
         )
       ),
@@ -163,7 +163,7 @@ extension SystemToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "system.uptime", risk: .readOnly,
-          workspaceRequirement: .none,
+          projectRequirement: .none,
           localOnly: false, usesNetwork: false
         )
       ),
@@ -179,7 +179,7 @@ extension SystemToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "system.user", risk: .readOnly,
-          workspaceRequirement: .none,
+          projectRequirement: .none,
           localOnly: false, usesNetwork: false
         )
       ),
@@ -195,7 +195,7 @@ extension SystemToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "system.groups", risk: .readOnly,
-          workspaceRequirement: .none,
+          projectRequirement: .none,
           localOnly: false, usesNetwork: false
         )
       ),
@@ -215,7 +215,7 @@ extension SystemToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "system.power", risk: .readOnly,
-          workspaceRequirement: .none,
+          projectRequirement: .none,
           localOnly: false, usesNetwork: false
         )
       ),
@@ -236,7 +236,7 @@ extension SystemToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "system.volumes", risk: .readOnly,
-          workspaceRequirement: .none,
+          projectRequirement: .none,
           localOnly: false, usesNetwork: false
         )
       ),
@@ -261,7 +261,7 @@ extension SystemToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "system.processes", risk: .readOnly,
-          workspaceRequirement: .none,
+          projectRequirement: .none,
           localOnly: false, usesNetwork: false
         )
       ),
@@ -286,7 +286,7 @@ extension SystemToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "system.which", risk: .readOnly,
-          workspaceRequirement: .none,
+          projectRequirement: .none,
           localOnly: false, usesNetwork: false
         )
       ),
@@ -310,7 +310,7 @@ extension SystemToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "system.path", risk: .readOnly,
-          workspaceRequirement: .none,
+          projectRequirement: .none,
           localOnly: false, usesNetwork: false
         )
       ),
@@ -346,7 +346,7 @@ extension SystemToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "logs.query", risk: .readOnly,
-          workspaceRequirement: .optional,
+          projectRequirement: .optional,
           localOnly: false, usesNetwork: false
         )
       ),
@@ -377,7 +377,7 @@ extension SystemToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "service.status", risk: .readOnly,
-          workspaceRequirement: .optional,
+          projectRequirement: .optional,
           localOnly: false, usesNetwork: false
         )
       ),
@@ -393,7 +393,7 @@ extension SystemToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "env.describe", risk: .readOnly,
-          workspaceRequirement: .optional,
+          projectRequirement: .optional,
           localOnly: false, usesNetwork: false
         )
       ),

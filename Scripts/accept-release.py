@@ -102,7 +102,7 @@ def accept(app, candidate_directory, work):
     if result.returncode == 75:
         return 75
     result.check_returncode()
-    subprocess.run([sys.executable, str(ROOT / "Scripts/verify-installed-workspaces.py"),
+    subprocess.run([sys.executable, str(ROOT / "Scripts/verify-installed-projects.py"),
                     "--cli", str(cli), "--work", str(work)], check=True, timeout=120)
     plugin_result = work / "plugin-integration.json"
     atomic_json(plugin_result, inspect_installed_plugin(cli))
@@ -116,7 +116,7 @@ def accept(app, candidate_directory, work):
                "checks": {"artifact_identity": "passed", "signature_and_notarization": "passed",
                           "native_permissions": "passed", "installed_runtime": file_digest(runtime_output),
                           "navigation": file_digest(navigation),
-                          "workspace_operations": file_digest(work / "workspace-operations.json"),
+                          "project_operations": file_digest(work / "project-operations.json"),
                           "plugin_integration": file_digest(plugin_result)}}
     atomic_json(work / "acceptance.json", receipt)
     print(json.dumps({"status": "passed", "candidate": candidate["candidate"]}))

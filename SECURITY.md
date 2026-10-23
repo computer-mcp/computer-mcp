@@ -3,7 +3,7 @@
 ## Supported Scope
 
 Security reports should cover this repository's Swift package, MCP protocol
-handling, App socket and lifecycle, profiles/workspaces, CLI/MCP proxying, HTTP
+handling, App socket and lifecycle, profiles/projects, CLI/MCP proxying, HTTP
 transport, Secure MCP Tunnel, Computer Use, Codex provider paths, persistence,
 logging, and documentation that could lead users to unsafe operation.
 
@@ -27,7 +27,7 @@ Include:
 `computer-mcp` runs registered local sources on behalf of an MCP client:
 
 - CLI commands and local or remote MCP servers registered directly or through
-  plugin contributions, under the same host policy and workspace boundaries.
+  plugin contributions, under the same host policy and project boundaries.
 - Builtins explicitly enabled in TOML.
 - Optional Full Shell only when both manifest and local profile enable it.
 - Codex execution through the independent MCP adapter, with host-owned tool
@@ -37,7 +37,7 @@ Include:
   permissions; generic AX fallback subject to local TCC grants.
 
 Reports about command injection, source allowlist bypass, unexpected shell
-execution, socket peer bypass, profile/workspace bypass, token leakage, path
+execution, socket peer bypass, profile/project bypass, token leakage, path
 containment bypass, unsafe Tunnel launch, Codex policy injection, audit leakage,
 or unsafe downstream proxying are in scope.
 

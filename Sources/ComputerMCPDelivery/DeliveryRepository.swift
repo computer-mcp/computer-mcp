@@ -25,15 +25,15 @@ internal struct DeliveryRepository: Sendable {
   var journals: URL { common.appendingPathComponent("computer-mcp/delivery", isDirectory: true) }
 
   init(
-    scope: DeliveryScope, workspace: URL, git: DeliveryGit, io: DeliveryIO = .init(),
+    scope: DeliveryScope, project: URL, git: DeliveryGit, io: DeliveryIO = .init(),
     cancellation: DeliveryCancellation = .init()
   ) throws {
     self.scope = scope
     self.git = git
     self.io = io
     self.cancellation = cancellation
-    let workspace = workspace.standardizedFileURL.resolvingSymlinksInPath()
-    let repository = try Self.checkedPath(scope.repository, inside: workspace, allowRoot: true)
+    let project = project.standardizedFileURL.resolvingSymlinksInPath()
+    let repository = try Self.checkedPath(scope.repository, inside: project, allowRoot: true)
     let top = try git.run(["--no-optional-locks", "rev-parse", "--show-toplevel"], at: repository)
       .stdout
       .trimmingCharacters(in: .newlines)
@@ -176,7 +176,7 @@ internal struct DeliveryRepository: Sendable {
     )
     .filter({ $0.pathExtension == "json" }).sorted(by: { $0.path < $1.path }) {
       try cancellation.check()
-      var journal = try JSONDecoder().decode(DeliveryJournal.self, from: Data(contentsOf: url))
+      var journal = try DeliveryJournal.read(from: url)
       guard journal.schemaVersion == 1,
         journal.operationID == url.deletingPathExtension().lastPathComponent,
         UUID(uuidString: journal.operationID) != nil, journal.repository.hasPrefix("/"),

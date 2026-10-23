@@ -23,7 +23,7 @@ struct MCPHostInvocationTests {
         runtime: .init(caller: .localMCP, profileID: .localAdmin),
         profiles: [
           .init(
-            id: .localAdmin, capabilities: ["mcp.tools.call"], workspaces: ["fixture"],
+            id: .localAdmin, capabilities: ["mcp.tools.call"], projects: ["fixture"],
             allowedCallers: [.localMCP], mode: .readOnly)
         ],
         mcp: .init(servers: [
@@ -35,7 +35,7 @@ struct MCPHostInvocationTests {
             hostServices: true)
         ])),
       database: database,
-      registeredWorkspaces: [.init(id: "fixture", displayName: "Fixture", rootPath: root.path)],
+      registeredProjects: [.init(id: "fixture", displayName: "Fixture", rootPath: root.path)],
       platform: MacOSPlatform.services)
     do {
       // Retained contexts must not exhaust the independent 256 active-call slots.
@@ -63,29 +63,29 @@ struct MCPHostInvocationTests {
         original["invocation_id"]?.stringValue.flatMap(UUID.init(uuidString:)))
       #expect(
         try runtime.requireHostInvocation(
-          workspaceID: "fixture", origin: "provider", id: retainedID
+          projectID: "fixture", origin: "provider", id: retainedID
         ).reference.toolName == "background")
       // Background context is not an active operation-ticket mutation window.
       #expect(throws: (any Error).self) {
         try runtime.requireHostInvocation(
-          workspaceID: "fixture", origin: "provider", action: .diagnosticsSnapshot)
+          projectID: "fixture", origin: "provider", action: .diagnosticsSnapshot)
       }
       #expect(throws: (any Error).self) {
-        try runtime.requireHostInvocation(workspaceID: "fixture", origin: "other", id: retainedID)
+        try runtime.requireHostInvocation(projectID: "fixture", origin: "other", id: retainedID)
       }
       var grant = ProfileGrant(
-        id: .localAdmin, capabilityIDs: ["mcp.tools.call"], workspaceIDs: [],
+        id: .localAdmin, capabilityIDs: ["mcp.tools.call"], projectIDs: [],
         allowedCallers: [.localMCP], mcpServerIDs: ["provider"])
       try database.saveProfile(grant)
       #expect(throws: (any Error).self) {
         try runtime.requireHostInvocation(
-          workspaceID: "fixture", origin: "provider", id: retainedID)
+          projectID: "fixture", origin: "provider", id: retainedID)
       }
-      grant.workspaceIDs = ["fixture"]
+      grant.projectIDs = ["fixture"]
       try database.saveProfile(grant)
       #expect(
         try runtime.requireHostInvocation(
-          workspaceID: "fixture", origin: "provider", id: retainedID
+          projectID: "fixture", origin: "provider", id: retainedID
         ).id == retainedID)
       _ = try await runtime.callToolAsync(
         name: "mcp.tools.call", arguments: Self.arguments(tool: "finish"), context: .empty)
@@ -95,7 +95,7 @@ struct MCPHostInvocationTests {
       #expect(Self.payload(expired).objectValue?["isError"] == .bool(true))
       #expect(throws: (any Error).self) {
         try runtime.requireHostInvocation(
-          workspaceID: "fixture", origin: "provider", id: retainedID)
+          projectID: "fixture", origin: "provider", id: retainedID)
       }
       // The final replay also creates an observation barrier, even when it fails.
       try await Self.waitForResourceCount(0, runtime: runtime)
@@ -137,7 +137,7 @@ struct MCPHostInvocationTests {
         profiles: [
           .init(
             id: .localAdmin, capabilities: ["mcp.tools.call", "mcp.requests.read"],
-            workspaces: ["fixture"], allowedCallers: [.localMCP], mode: .readOnly)
+            projects: ["fixture"], allowedCallers: [.localMCP], mode: .readOnly)
         ],
         mcp: .init(servers: [
           .init(
@@ -147,7 +147,7 @@ struct MCPHostInvocationTests {
             hostServices: hostServices)
         ])),
       database: try GatewayDatabase(path: root.appendingPathComponent("host.db").path),
-      registeredWorkspaces: [.init(id: "fixture", displayName: "Fixture", rootPath: root.path)],
+      registeredProjects: [.init(id: "fixture", displayName: "Fixture", rootPath: root.path)],
       platform: MacOSPlatform.services)
     do {
       let arguments = Self.arguments(tool: mode == "detached" ? "deferred" : "inspect")
@@ -212,7 +212,7 @@ struct MCPHostInvocationTests {
 
   private static func arguments(tool: String) -> JSONValue {
     .object([
-      "workspace_id": .string("fixture"), "server": .string("provider"), "tool": .string(tool),
+      "project_id": .string("fixture"), "server": .string("provider"), "tool": .string(tool),
       "arguments": .object(["invocation_id": .string("caller-forged-id")]),
     ])
   }
@@ -224,7 +224,7 @@ struct MCPHostInvocationTests {
       receipt = try await runtime.callToolAsync(
         name: "mcp.requests.read",
         arguments: .object([
-          "workspace_id": .string("fixture"), "server": .string("provider"),
+          "project_id": .string("fixture"), "server": .string("provider"),
           "request_id": .string(id),
         ]), context: .empty)
       if Self.payload(receipt).objectValue?["state"] == .string("succeeded") { break }

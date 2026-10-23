@@ -140,7 +140,7 @@ package struct PluginDoctorReport: Codable, Sendable {
       if let dependency = reference.dependency { referencedDependencies.insert(dependency) }
       do {
         let directory =
-          try cwd.map { try WorkspacePathResolver.resolve($0, relativeTo: plugin.root) }
+          try cwd.map { try ProjectPathResolver.resolve($0, relativeTo: plugin.root) }
           ?? workingDirectory
         let inspection = try PluginResolver.inspectExecutable(
           reference, package: plugin, dependencyExecutables: bindings,

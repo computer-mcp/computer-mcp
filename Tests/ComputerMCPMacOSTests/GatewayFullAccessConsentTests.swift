@@ -12,15 +12,15 @@ struct GatewayFullAccessConsentTests {
   func changedRestrictedProfileRejectsAnOpenFullAccessConfirmation(persisted: Bool) throws {
     let database = try GatewayDatabase(inMemory: ())
     let original = ProfileGrant(
-      id: .chatGPTOperate, capabilityIDs: ["file.read"], workspaceIDs: ["fixture"],
-      allowedCallers: [.secureTunnel], mode: .workspaceOperations)
+      id: .chatGPTOperate, capabilityIDs: ["file.read"], projectIDs: ["fixture"],
+      allowedCallers: [.secureTunnel], mode: .projectOperations)
     if persisted { try database.saveProfile(original) }
     let session = GatewayControlSession(
       principalID: "verified-client", profileID: original.id, caller: .secureTunnel,
       database: database, profile: .init(grant: original, persisted: persisted))
     let reviewed = session.snapshot
     var changed = original
-    changed.workspaceIDs.insert("another-project")
+    changed.projectIDs.insert("another-project")
     if persisted {
       try database.saveProfile(changed, expectedRevision: original.authorizationRevision)
     } else {
@@ -30,7 +30,7 @@ struct GatewayFullAccessConsentTests {
       try session.approveFullAccess(expectedRevision: reviewed.revision)
     }
     #expect(session.snapshot.revision > reviewed.revision)
-    #expect(session.snapshot.profile?.grant.workspaceIDs == changed.workspaceIDs)
+    #expect(session.snapshot.profile?.grant.projectIDs == changed.projectIDs)
     #expect(session.snapshot.fullAccessConsent == nil)
     #expect(try database.clientTrusts().isEmpty)
     #expect(try database.auditEvents().isEmpty)
@@ -42,8 +42,8 @@ struct GatewayFullAccessConsentTests {
   func configuredProfilePublicationRevokesConsentForRetainedContexts() throws {
     let database = try GatewayDatabase(inMemory: ())
     let original = ProfileGrant(
-      id: .chatGPTOperate, capabilityIDs: ["file.read"], workspaceIDs: ["fixture"],
-      allowedCallers: [.secureTunnel], mode: .workspaceOperations)
+      id: .chatGPTOperate, capabilityIDs: ["file.read"], projectIDs: ["fixture"],
+      allowedCallers: [.secureTunnel], mode: .projectOperations)
     let session = GatewayControlSession(
       principalID: "verified-client", profileID: original.id, caller: .secureTunnel,
       database: database,
@@ -57,7 +57,7 @@ struct GatewayFullAccessConsentTests {
     #expect(effective.allowedCallers == original.allowedCallers)
     var expanded = original
     expanded.capabilityIDs.insert("new-integration.read")
-    expanded.workspaceIDs.insert("new-workspace")
+    expanded.projectIDs.insert("new-project")
     session.updateProfile(.init(grant: expanded, persisted: false, configuredGrant: original))
     #expect(session.snapshot.fullAccessConsent != nil)
     try session.requireRevision(approved.revision)
@@ -96,8 +96,8 @@ struct GatewayFullAccessConsentTests {
       #expect(try String(contentsOf: fixture.output, encoding: .utf8) == "approvedapproved")
       #expect(try fixture.database.operationApprovals().isEmpty)
       await #expect(throws: (any Error).self) { try await fixture.run(sibling) }
-      #expect(try fixture.database.profiles().first?.mode == .workspaceOperations)
-      try first.limitAccess(to: .workspaceOperations, expectedRevision: approved.revision)
+      #expect(try fixture.database.profiles().first?.mode == .projectOperations)
+      try first.limitAccess(to: .projectOperations, expectedRevision: approved.revision)
       await #expect(throws: (any Error).self) { try await fixture.run(first) }
       try first.restoreTrustedAccess()
       #expect(first.snapshot.fullAccessConsent == nil)
@@ -140,7 +140,7 @@ struct GatewayFullAccessConsentTests {
     #expect(next.snapshot.fullAccessConsent != nil)
     try reopened.revokeClientTrust(id: trust.id, expectedRevision: trust.revision)
     #expect(next.snapshot.fullAccessConsent == nil)
-    #expect(next.snapshot.accessLimit == .workspaceOperations)
+    #expect(next.snapshot.accessLimit == .projectOperations)
     let afterRevocation = fixture.session(database: reopened)
     try afterRevocation.restoreTrustedAccess()
     #expect(afterRevocation.snapshot.fullAccessConsent == nil)
@@ -276,29 +276,29 @@ private struct ConsentFixture {
   let databasePath: URL
   let database: GatewayDatabase
   let gateway: GatewayRuntime
-  var output: URL { root.appendingPathComponent("outside-workspace.txt") }
+  var output: URL { root.appendingPathComponent("outside-project.txt") }
 
   init(shellEnabled: Bool = true) throws {
     root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
-    let workspace = root.appendingPathComponent("workspace")
-    try FileManager.default.createDirectory(at: workspace, withIntermediateDirectories: true)
+    let project = root.appendingPathComponent("project")
+    try FileManager.default.createDirectory(at: project, withIntermediateDirectories: true)
     databasePath = root.appendingPathComponent("host.sqlite")
     database = try GatewayDatabase(path: databasePath.path)
     let profile = ProfileGrantConfig(
       id: .chatGPTOperate, capabilities: ["file.read", "operations.prepare", "operations.commit"],
-      workspaces: ["fixture"], allowedCallers: [.secureTunnel], mode: .workspaceOperations,
+      projects: ["fixture"], allowedCallers: [.secureTunnel], mode: .projectOperations,
       confirmationPolicy: .allWrites)
     try database.saveProfile(profile.grant)
     gateway = try GatewayRuntime(
       configuration: .init(
         runtime: .init(caller: .secureTunnel, profileID: .chatGPTOperate),
         policy: .init(shellEnabled: shellEnabled), profiles: [profile],
-        workspaceDirectory: workspace),
+        projectDirectory: project),
       context: .init(
         caller: .secureTunnel, profileID: .chatGPTOperate, trustedPrincipalID: "verified-client"),
       database: database,
-      registeredWorkspaces: [
-        .init(id: "fixture", displayName: "Fixture", rootPath: workspace.path)
+      registeredProjects: [
+        .init(id: "fixture", displayName: "Fixture", rootPath: project.path)
       ],
       platform: MacOSPlatform.services, requiresControlSession: true)
   }
@@ -313,7 +313,7 @@ private struct ConsentFixture {
 
   func run(_ session: GatewayControlSession) async throws {
     var context = ExecutionContext(
-      caller: .secureTunnel, profileID: .chatGPTOperate, workspaceID: "fixture",
+      caller: .secureTunnel, profileID: .chatGPTOperate, projectID: "fixture",
       trustedPrincipalID: "verified-client")
     context.controlSession = session
     let result = try await gateway.callToolAsync(

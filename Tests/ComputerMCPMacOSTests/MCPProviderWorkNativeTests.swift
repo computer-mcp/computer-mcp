@@ -27,7 +27,7 @@ struct MCPProviderWorkNativeTests {
       let runtime = try await GatewayRuntime.make(
         configuration: GatewayConfiguration(mcp: .init(servers: [server])),
         context: .init(caller: .localCLI, profileID: .localAdmin),
-        registeredWorkspaces: [.init(id: "fixture", displayName: "Fixture", rootPath: root.path)],
+        registeredProjects: [.init(id: "fixture", displayName: "Fixture", rootPath: root.path)],
         platform: MacOSPlatform.services, plugins: [],
         bundledPlugins: .init(packages: [], issues: []))
       do {
@@ -40,10 +40,10 @@ struct MCPProviderWorkNativeTests {
         ])
         let first = try #require(
           try runtime.continuationLookup(
-            name: "fixture.inspect", arguments: native, workspaceID: "fixture"))
+            name: "fixture.inspect", arguments: native, projectID: "fixture"))
         #expect(first.observation.matches.count == 1)
         #expect(first.reference == .init(serverID: server.id, toolName: "inspect"))
-        #expect(runtime.unambiguousWorkspaceID == "fixture")
+        #expect(runtime.unambiguousProjectID == "fixture")
         for name in ["mcp.tools.call", "operations.prepare", "operations.commit"] {
           let arguments: JSONValue =
             name == "mcp.tools.call"
@@ -52,20 +52,20 @@ struct MCPProviderWorkNativeTests {
               "tool": .string("mcp.tools.call"), "arguments": generic,
             ])
           let lookup = try #require(
-            try runtime.continuationLookup(name: name, arguments: arguments, workspaceID: "fixture")
+            try runtime.continuationLookup(name: name, arguments: arguments, projectID: "fixture")
           )
           #expect(lookup.observation == first.observation)
-          #expect(lookup.reference == first.reference && lookup.workspaceID == first.workspaceID)
+          #expect(lookup.reference == first.reference && lookup.projectID == first.projectID)
         }
         #expect(
           try runtime.continuationLookup(
-            name: "fixture.inspect", arguments: native, workspaceID: "other") == nil)
+            name: "fixture.inspect", arguments: native, projectID: "other") == nil)
         #expect(
-          try runtime.continuationLookup(name: "unknown", arguments: native, workspaceID: "fixture")
+          try runtime.continuationLookup(name: "unknown", arguments: native, projectID: "fixture")
             == nil)
         #expect(
           try runtime.continuationLookup(
-            name: "workspace.list", arguments: nil, workspaceID: "fixture") == nil)
+            name: "project.list", arguments: nil, projectID: "fixture") == nil)
         let inspected = try await runtime.callToolAsync(
           name: "fixture.inspect", arguments: native, context: .empty)
         #expect(
@@ -103,7 +103,7 @@ struct MCPProviderWorkNativeTests {
           configuration: configuration,
           grant: .init(
             id: .chatGPTOperate, capabilityIDs: allowed ? ["mcp.tools.call"] : [],
-            allowedCallers: [.secureTunnel], mode: .workspaceOperations),
+            allowedCallers: [.secureTunnel], mode: .projectOperations),
           derivesObserveGrant: false)
       }
       let current = NIOLockedValueBox(policy(true))
@@ -197,14 +197,14 @@ struct MCPProviderWorkNativeTests {
       let script = try #require(server.args.first)
       let root = URL(fileURLWithPath: script).deletingLastPathComponent()
       let environment = ToolEnvironment(
-        configuration: .init(mcp: .init(servers: [server]), workspaceDirectory: root))
+        configuration: .init(mcp: .init(servers: [server]), projectDirectory: root))
       let scopedClient = client.makeScopedClient(
-        workingDirectory: environment.configuration.workspaceDirectory,
+        workingDirectory: environment.configuration.projectDirectory,
         environment: environment.environment,
         hostContext: nil)
       let provider = ConfiguredMCPToolProvider(environment: environment, mcpClient: scopedClient)
       let selected = MCPContinuationTarget(
-        workspaceID: "fixture", reference: .init(serverID: server.id, toolName: "inspect"),
+        projectID: "fixture", reference: .init(serverID: server.id, toolName: "inspect"),
         connectionID: UUID(), instanceID: UUID(), resources: [:])
       let context = InvocationContext(continuation: selected)
       let blocking = BlockingOperationExecutor(label: "configured-selected-connection-test")
@@ -264,12 +264,12 @@ struct MCPProviderWorkNativeTests {
       let root = URL(fileURLWithPath: script).deletingLastPathComponent()
       var hostContext = MCPHostContext(
         runtimeID: UUID(), context: .init(caller: .localCLI, profileID: .localAdmin),
-        workspaceID: "fixture", rootURL: root, readOnly: false)
+        projectID: "fixture", rootURL: root, readOnly: false)
       hostContext.ownedWork = work
       let environment = ToolEnvironment(
-        configuration: .init(mcp: .init(servers: [other, server]), workspaceDirectory: root))
+        configuration: .init(mcp: .init(servers: [other, server]), projectDirectory: root))
       let scopedClient = client.makeScopedClient(
-        workingDirectory: environment.configuration.workspaceDirectory,
+        workingDirectory: environment.configuration.projectDirectory,
         environment: environment.environment,
         hostContext: hostContext)
       let provider = ConfiguredMCPToolProvider(environment: environment, mcpClient: scopedClient)
@@ -367,10 +367,10 @@ struct MCPProviderWorkNativeTests {
     _ work: GatewayOwnedWork, server: MCPServerConfig, arguments: JSONValue
   ) throws -> MCPContinuationTarget {
     let lookup = try work.continuations.lookup(
-      workspaceID: "fixture", registrationID: server.id, tool: "inspect", arguments: arguments)
+      projectID: "fixture", registrationID: server.id, tool: "inspect", arguments: arguments)
     let match = try #require(lookup.matches.first)
     return MCPContinuationTarget(
-      workspaceID: "fixture", reference: .init(serverID: server.id, toolName: "inspect"),
+      projectID: "fixture", reference: .init(serverID: server.id, toolName: "inspect"),
       connectionID: match.connectionID, instanceID: match.instanceID,
       resources: [match.resource: match.acquiredBy])
   }
@@ -442,7 +442,7 @@ struct MCPProviderWorkNativeTests {
     let work = GatewayOwnedWork()
     var context = MCPHostContext(
       runtimeID: UUID(), context: .init(caller: .localCLI, profileID: .localAdmin),
-      workspaceID: "fixture", rootURL: root, readOnly: false)
+      projectID: "fixture", rootURL: root, readOnly: false)
     context.ownedWork = work
     let client = MCPProxyClient(workingDirectory: root, hostContext: context)
     let server = MCPServerConfig(

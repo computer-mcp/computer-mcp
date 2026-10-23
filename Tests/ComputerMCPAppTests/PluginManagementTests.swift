@@ -292,8 +292,8 @@ struct PluginManagementModelTests {
 
   @Test
   func pluginManagementIsRoutedToTheConfigurationGroup() {
-    #expect(AppWorkspace.plugins.group == .configure)
-    #expect(AppWorkspace.allCases.contains(.plugins))
+    #expect(AppSection.plugins.group == .configure)
+    #expect(AppSection.allCases.contains(.plugins))
     let capabilities = AppControlCapabilityCatalog.all.filter { $0.id.hasPrefix("plugin.") }
     #expect(capabilities.count == 15)
     #expect(capabilities.allSatisfy { $0.surface == .appAndCLI && $0.localOnly })

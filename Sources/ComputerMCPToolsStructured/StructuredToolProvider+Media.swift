@@ -9,8 +9,8 @@ extension StructuredToolProvider {
     let maxPropertyDepth = optionalInt("max_property_depth", in: object) ?? 2
     try validateBoundedNonNegative(maxPropertyDepth, name: "max_property_depth", upperBound: 6)
 
-    let url = try workspaceScope.resolvedWorkspaceURL(path)
-    let info = try workspaceScope.fileInfo(url: url)
+    let url = try projectScope.resolvedProjectURL(path)
+    let info = try projectScope.fileInfo(url: url)
     guard info.type == "file" else {
       throw GatewayToolError.invalidArguments("Path is not a file: \(path)")
     }
@@ -26,7 +26,7 @@ extension StructuredToolProvider {
     }
     result["operation"] = .string("image.info")
     result["path"] = .string(url.path)
-    result["workspace_relative_path"] = .string(info.workspaceRelativePath)
+    result["project_relative_path"] = .string(info.projectRelativePath)
     result["size_bytes"] = info.size.map { .integer(Int64($0)) } ?? .null
     result["modified_at"] = info.modifiedAt.map { .string(iso8601String($0)) } ?? .null
     return .object(result)
@@ -39,8 +39,8 @@ extension StructuredToolProvider {
     let includeAttributes = try optionalBool("include_attributes", in: object) ?? true
     try validateBoundedNonNegative(maxPages, name: "max_pages", upperBound: 10_000)
 
-    let url = try workspaceScope.resolvedWorkspaceURL(path)
-    let info = try workspaceScope.fileInfo(url: url)
+    let url = try projectScope.resolvedProjectURL(path)
+    let info = try projectScope.fileInfo(url: url)
     guard info.type == "file" else {
       throw GatewayToolError.invalidArguments("Path is not a file: \(path)")
     }
@@ -56,7 +56,7 @@ extension StructuredToolProvider {
     }
     result["operation"] = .string("pdf.info")
     result["path"] = .string(url.path)
-    result["workspace_relative_path"] = .string(info.workspaceRelativePath)
+    result["project_relative_path"] = .string(info.projectRelativePath)
     result["size_bytes"] = info.size.map { .integer(Int64($0)) } ?? .null
     result["modified_at"] = info.modifiedAt.map { .string(iso8601String($0)) } ?? .null
     return .object(result)
@@ -71,8 +71,8 @@ extension StructuredToolProvider {
     try validateBoundedPositive(maxPages, name: "max_pages", upperBound: 10_000)
     try validateBoundedPositive(maxCharacters, name: "max_characters", upperBound: 5_000_000)
 
-    let url = try workspaceScope.resolvedWorkspaceURL(path)
-    let info = try workspaceScope.fileInfo(url: url)
+    let url = try projectScope.resolvedProjectURL(path)
+    let info = try projectScope.fileInfo(url: url)
     guard info.type == "file" else {
       throw GatewayToolError.invalidArguments("Path is not a file: \(path)")
     }
@@ -87,7 +87,7 @@ extension StructuredToolProvider {
     }
     result["operation"] = .string("pdf.text")
     result["path"] = .string(url.path)
-    result["workspace_relative_path"] = .string(info.workspaceRelativePath)
+    result["project_relative_path"] = .string(info.projectRelativePath)
     result["size_bytes"] = info.size.map { .integer(Int64($0)) } ?? .null
     result["modified_at"] = info.modifiedAt.map { .string(iso8601String($0)) } ?? .null
     return .object(result)
@@ -100,8 +100,8 @@ extension StructuredToolProvider {
     try validateBoundedNonNegative(maxTracks, name: "max_tracks", upperBound: 1_000)
     try validateBoundedPositive(loadTimeoutMS, name: "load_timeout_ms", upperBound: 600_000)
 
-    let url = try workspaceScope.resolvedWorkspaceURL(path)
-    let info = try workspaceScope.fileInfo(url: url)
+    let url = try projectScope.resolvedProjectURL(path)
+    let info = try projectScope.fileInfo(url: url)
     guard info.type == "file" else {
       throw GatewayToolError.invalidArguments("Path is not a file: \(path)")
     }
@@ -113,11 +113,11 @@ extension StructuredToolProvider {
       at: url, maxTracks: maxTracks, loadTimeoutMS: loadTimeoutMS)
     result["operation"] = .string("media.info")
     result["path"] = .string(url.path)
-    result["workspace_relative_path"] = .string(info.workspaceRelativePath)
+    result["project_relative_path"] = .string(info.projectRelativePath)
     result["size_bytes"] = info.size.map { .integer(Int64($0)) } ?? .null
     result["modified_at"] = info.modifiedAt.map { .string(iso8601String($0)) } ?? .null
     result["extension"] = .string(
-      (info.workspaceRelativePath as NSString).pathExtension.lowercased())
+      (info.projectRelativePath as NSString).pathExtension.lowercased())
     return .object(result)
   }
 }

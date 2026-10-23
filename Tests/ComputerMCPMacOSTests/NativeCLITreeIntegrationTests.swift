@@ -48,19 +48,19 @@ struct NativeCLITreeIntegrationTests {
       dependencyExecutables: ["formatter": URL(fileURLWithPath: executable)],
       hostVersion: PluginVersion("1.0.29"), architecture: "arm64")
     try #require(plugin.diagnostics.isEmpty && plugin.cliCommands.count == 1)
-    let workspaces = [
-      RegisteredWorkspace(id: "native-fixture", displayName: "Native fixture", rootPath: root.path)
+    let projects = [
+      RegisteredProject(id: "native-fixture", displayName: "Native fixture", rootPath: root.path)
     ]
     let configuration = GatewayConfiguration(
       runtime: .init(caller: .localCLI, profileID: .localAdmin),
       profiles: [
         .init(
-          id: .localAdmin, capabilities: ["*"], workspaces: ["native-fixture"],
+          id: .localAdmin, capabilities: ["*"], projects: ["native-fixture"],
           allowedCallers: [.localCLI], fullShellEnabled: true, mode: .localFullAccess,
           confirmationPolicy: .never)
       ])
     let runtime = try GatewayRuntime(
-      configuration: configuration, registeredWorkspaces: workspaces,
+      configuration: configuration, registeredProjects: projects,
       platform: MacOSPlatform.services, plugins: [plugin])
     do {
       let tools = try runtime.listTools(context: .empty).filter { $0.name.hasPrefix("cli_") }
@@ -72,7 +72,7 @@ struct NativeCLITreeIntegrationTests {
           tree: .init(kind: .file, path: treeURL.path))
       ]
       let directRuntime = try GatewayRuntime(
-        configuration: direct, registeredWorkspaces: workspaces, platform: MacOSPlatform.services,
+        configuration: direct, registeredProjects: projects, platform: MacOSPlatform.services,
         plugins: [])
       let directTools = try directRuntime.listTools(context: .empty).filter {
         $0.name.hasPrefix("cli_")
@@ -99,7 +99,7 @@ struct NativeCLITreeIntegrationTests {
           executableVersion: tree.executableVersion, coverage: tree.coverage,
           omissions: tree.omissions, commands: tree.commands,
           executableChecks: [.init(args: ["--version"], stdout: "incompatible\n")]),
-        workspace: root, execution: CLIProcessExecution(),
+        project: root, execution: CLIProcessExecution(),
         timeoutMilliseconds: 5_000, maxOutputBytes: 4_096)
       await #expect(throws: CLITreeError.self) {
         try await incompatible.callToolAsync(
@@ -127,7 +127,7 @@ struct NativeCLITreeIntegrationTests {
       }
       let observe = try GatewayRuntime(
         configuration: direct, context: .init(caller: .secureTunnel, profileID: .chatGPTObserve),
-        registeredWorkspaces: workspaces, platform: MacOSPlatform.services, plugins: [])
+        registeredProjects: projects, platform: MacOSPlatform.services, plugins: [])
       #expect(try !observe.listTools(context: .empty).contains { $0.name == format.name })
       await #expect(throws: (any Error).self) {
         try await observe.callToolAsync(name: format.name, arguments: arguments, context: .empty)

@@ -15,10 +15,10 @@ Xudong Xu may grant additional rights.
 
 ## Local authority and third-party services
 
-Computer MCP can execute local tools, access authorized workspaces, operate
+Computer MCP can execute local tools, access authorized projects, operate
 visible user interfaces after macOS permission grants, and connect to
 third-party services that you configure. You are responsible for the
-capabilities, profiles, workspaces, credentials, providers, and remote clients
+capabilities, profiles, projects, credentials, providers, and remote clients
 you enable, and for complying with the terms of those third parties.
 
 ## Updates and support

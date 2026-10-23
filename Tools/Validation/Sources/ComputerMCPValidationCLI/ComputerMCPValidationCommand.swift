@@ -35,15 +35,15 @@ struct FixtureCommand: ParsableCommand {
     commandName: "fixture",
     abstract: "Generate or serve deterministic validation fixtures.",
     subcommands: [
-      WorkspaceFixtureCommand.self, ManifestFixtureCommand.self, MCPFixtureCommand.self,
+      ProjectFixtureCommand.self, ManifestFixtureCommand.self, MCPFixtureCommand.self,
     ]
   )
 }
 
-struct WorkspaceFixtureCommand: ParsableCommand {
+struct ProjectFixtureCommand: ParsableCommand {
   static let configuration = CommandConfiguration(
-    commandName: "workspace",
-    subcommands: [WorkspaceFixtureGenerate.self]
+    commandName: "project",
+    subcommands: [ProjectFixtureGenerate.self]
   )
 }
 
@@ -321,15 +321,15 @@ struct Inventory: ParsableCommand {
   }
 }
 
-struct WorkspaceFixtureGenerate: ParsableCommand {
+struct ProjectFixtureGenerate: ParsableCommand {
   static let configuration = CommandConfiguration(
     commandName: "generate",
-    abstract: "Generate an isolated deterministic capability fixture workspace."
+    abstract: "Generate an isolated deterministic capability fixture project."
   )
 
   @Option(
     name: .long,
-    help: "Destination directory for the generated fixture workspace."
+    help: "Destination directory for the generated fixture project."
   )
   var destination = ".build/validation/fixtures"
 
@@ -358,7 +358,7 @@ struct WorkspaceFixtureGenerate: ParsableCommand {
     } else {
       print(String(decoding: data, as: UTF8.self))
     }
-    print("WorkspaceFixtureGenerate: \(report.entryCount) entries at \(report.rootPath).")
+    print("ProjectFixtureGenerate: \(report.entryCount) entries at \(report.rootPath).")
   }
 }
 

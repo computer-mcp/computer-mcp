@@ -44,7 +44,7 @@ package struct RegisteredCommands: Sendable {
     return try commandRunner.run(
       executable: invocation.executable,
       arguments: invocation.arguments + args,
-      workingDirectory: command.resolvedWorkingDirectory(base: configuration.workspaceDirectory),
+      workingDirectory: command.resolvedWorkingDirectory(base: configuration.projectDirectory),
       environment: command.env,
       timeoutMilliseconds: timeout ?? command.defaultTimeoutMs
         ?? configuration.policy.defaultTimeoutMs,
@@ -58,8 +58,8 @@ package struct RegisteredCommands: Sendable {
     guard !command.interpreterBindings.isEmpty else { return (command.executable, []) }
     let invocation = ExecutableInspection.invocation(
       command.executable,
-      workingDirectory: command.resolvedWorkingDirectory(base: configuration.workspaceDirectory)
-        ?? configuration.workspaceDirectory,
+      workingDirectory: command.resolvedWorkingDirectory(base: configuration.projectDirectory)
+        ?? configuration.projectDirectory,
       environment: environment.merging(command.env) { _, value in value },
       interpreterBindings: command.interpreterBindings)
     guard !invocation.inspection.hasKnownFailure, let executable = invocation.executable else {
@@ -73,8 +73,8 @@ package struct RegisteredCommands: Sendable {
   {
     ExecutableInspection.invocation(
       executable,
-      workingDirectory: command.resolvedWorkingDirectory(base: configuration.workspaceDirectory)
-        ?? configuration.workspaceDirectory,
+      workingDirectory: command.resolvedWorkingDirectory(base: configuration.projectDirectory)
+        ?? configuration.projectDirectory,
       environment: environment.merging(command.env) { _, value in value },
       interpreterBindings: command.interpreterBindings
     ).inspection

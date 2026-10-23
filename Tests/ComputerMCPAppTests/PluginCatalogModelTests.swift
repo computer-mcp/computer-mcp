@@ -26,7 +26,7 @@ struct PluginCatalogModelTests {
             revision: String(repeating: "a", count: 40),
             manifestBlobSHA: String(repeating: "b", count: 40),
             manifestSHA256: String(repeating: "c", count: 64), pluginID: "render-fixture",
-            name: "Workspace tools · 工作区工具", version: try PluginVersion("1.2.3"),
+            name: "Project tools · 项目工具", version: try PluginVersion("1.2.3"),
             summary: "Isolated render fixture with MCP, CLI and skills; not a published package.",
             mcp: ["native"], cli: ["command"], skills: ["guidance"])
         ], issues: [],

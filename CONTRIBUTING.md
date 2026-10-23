@@ -30,7 +30,7 @@ existing suite serialization are preserved. Pure unit tests run independently.
   proxying, process lifecycle, and pure model behavior.
 - Keep `cli.exec` input as an executable identifier plus `argv`; never convert
   it into shell string templating.
-- Document source, profile, workspace, token, Tunnel, Codex, and provider
+- Document source, profile, project, token, Tunnel, Codex, and provider
   behavior in both architecture and reference documentation.
 - Keep root `README.md` concise and move exhaustive details to
   `Documentation/Reference/`.

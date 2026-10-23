@@ -13,7 +13,7 @@ package struct CLIToolProvider: GatewayToolProvider {
 
   package func definitions() throws -> [ToolDefinition] {
     guard !environment.configuration.cli.commands.isEmpty else { return [] }
-    return Self.toolDefinitions(toolMeta: environment.workspaceScope.toolMeta)
+    return Self.toolDefinitions(toolMeta: environment.projectScope.toolMeta)
   }
 
   package func callTool(_ invocation: ToolInvocation) throws -> JSONValue {
@@ -52,10 +52,10 @@ package struct CLIToolProvider: GatewayToolProvider {
       var command = command
       command.env = environment.environment.merging(command.env) { _, value in value }
       let tree = try source.load(
-        command: command, workspace: environment.configuration.workspaceDirectory,
+        command: command, project: environment.configuration.projectDirectory,
         execution: environment.registeredCommands.execution)
       return CLITreeToolProvider(
-        registration: command, tree: tree, workspace: environment.configuration.workspaceDirectory,
+        registration: command, tree: tree, project: environment.configuration.projectDirectory,
         execution: environment.registeredCommands.execution,
         timeoutMilliseconds: command.defaultTimeoutMs
           ?? environment.configuration.policy.defaultTimeoutMs,

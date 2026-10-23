@@ -5,7 +5,7 @@ import NIOConcurrencyHelpers
 /// Runtime-owned observations survive loss of the connection that reported them.
 package final class MCPContinuationDirectory: Sendable {
   struct Entry: Sendable {
-    let workspaceID: String?
+    let projectID: String?
     let registrationID: String
     let instanceID: UUID?
     let declarations: [String: MCPProviderContinuation]
@@ -62,10 +62,10 @@ package final class MCPContinuationDirectory: Sendable {
     }
   }
 
-  func retainsContinuation(workspaceID: String?, reference: MCPToolReference) -> Bool {
+  func retainsContinuation(projectID: String?, reference: MCPToolReference) -> Bool {
     entries.withLockedValue { entries in
       entries.values.contains {
-        $0.workspaceID == workspaceID && $0.registrationID == reference.serverID
+        $0.projectID == projectID && $0.registrationID == reference.serverID
           && $0.declarations[reference.toolName] != nil
           && ($0.observationPending || !$0.resources.isEmpty)
       }
@@ -76,12 +76,12 @@ package final class MCPContinuationDirectory: Sendable {
 
   /// A match is a locator, not call admission. Pending observations cannot prove absence.
   func lookup(
-    workspaceID: String?, registrationID: String, tool: String, arguments: JSONValue
+    projectID: String?, registrationID: String, tool: String, arguments: JSONValue
   ) throws -> Lookup {
     let snapshot = entries.withLockedValue { $0 }
     var result = Lookup()
     for (connectionID, entry) in snapshot
-    where entry.workspaceID == workspaceID && entry.registrationID == registrationID {
+    where entry.projectID == projectID && entry.registrationID == registrationID {
       guard let declaration = entry.declarations[tool] else { continue }
       let queries = try declaration.queries(arguments: arguments)
       guard !queries.isEmpty else { continue }
@@ -102,7 +102,7 @@ package final class MCPContinuationDirectory: Sendable {
 
 /// Host-selected routing evidence is private to a call; it does not confer authority.
 package struct MCPContinuationTarget: ContinuationRoute {
-  package let workspaceID: String?
+  package let projectID: String?
   package let reference: MCPToolReference
   package let connectionID: UUID
   package let instanceID: UUID?
@@ -110,10 +110,10 @@ package struct MCPContinuationTarget: ContinuationRoute {
   var selectedOwnershipID: UUID? = nil
 
   package init(
-    workspaceID: String?, reference: MCPToolReference, connectionID: UUID,
+    projectID: String?, reference: MCPToolReference, connectionID: UUID,
     instanceID: UUID?, resources: [MCPProviderWork.Key: UUID], selectedOwnershipID: UUID? = nil
   ) {
-    self.workspaceID = workspaceID
+    self.projectID = projectID
     self.reference = reference
     self.connectionID = connectionID
     self.instanceID = instanceID

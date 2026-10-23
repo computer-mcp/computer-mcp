@@ -5,11 +5,11 @@ import ComputerMCPPlugins
 import ComputerMCPProcess
 import Foundation
 
-enum AppWorkspace: String, CaseIterable, Identifiable, Sendable {
+enum AppSection: String, CaseIterable, Identifiable, Sendable {
   case home
   case chatgpt
   case cloudflare
-  case workspaces
+  case projects
   case profiles
   case providers
   case plugins
@@ -26,7 +26,7 @@ enum AppWorkspace: String, CaseIterable, Identifiable, Sendable {
       case .home: "Home"
       case .chatgpt: "ChatGPT"
       case .cloudflare: "Cloudflare"
-      case .workspaces: "Workspaces"
+      case .projects: "Projects"
       case .profiles: "Client access"
       case .providers: "Providers"
       case .plugins: "Plugins"
@@ -43,7 +43,7 @@ enum AppWorkspace: String, CaseIterable, Identifiable, Sendable {
     case .home: "house"
     case .chatgpt: "bubble.left.and.text.bubble.right"
     case .cloudflare: "cloud"
-    case .workspaces: "folder"
+    case .projects: "folder"
     case .profiles: "person.badge.key"
     case .providers: "shippingbox"
     case .plugins: "puzzlepiece.extension"
@@ -54,17 +54,17 @@ enum AppWorkspace: String, CaseIterable, Identifiable, Sendable {
     }
   }
 
-  var group: AppWorkspaceGroup {
+  var group: AppSectionGroup {
     switch self {
     case .home, .chatgpt, .cloudflare: .getStarted
-    case .workspaces, .profiles, .providers, .plugins, .tunnels, .permissions: .configure
+    case .projects, .profiles, .providers, .plugins, .tunnels, .permissions: .configure
     case .audit: .activity
     case .diagnostics: .support
     }
   }
 }
 
-enum AppWorkspaceGroup: String, CaseIterable, Identifiable, Sendable {
+enum AppSectionGroup: String, CaseIterable, Identifiable, Sendable {
   case getStarted
   case configure
   case activity
@@ -120,7 +120,7 @@ struct AppStatusSnapshot: Sendable {
   var serviceState: ServiceState
   var version: String
   var activeProfileName: String?
-  var activeWorkspaceCount: Int
+  var activeProjectCount: Int
   var providerCount: Int
   var runningProviderCount: Int
   var runningTunnelCount: Int
@@ -149,7 +149,7 @@ enum LoginItemState: String, Sendable {
   }
 }
 
-enum WorkspaceHealth: String, Sendable {
+enum ProjectHealth: String, Sendable {
   case available
   case bookmarkStale
   case missing
@@ -167,11 +167,11 @@ enum WorkspaceHealth: String, Sendable {
   }
 }
 
-struct WorkspaceSummary: Identifiable, Sendable {
+struct ProjectSummary: Identifiable, Sendable {
   var id: String
   var displayName: String
   var path: String
-  var health: WorkspaceHealth
+  var health: ProjectHealth
   var activeProfileID: String
   var isEnabled: Bool
   var isSelected: Bool
@@ -372,7 +372,7 @@ struct AuditEntrySummary: Identifiable, Sendable {
   var decision: AuditDecision
   var caller: String
   var capability: String
-  var workspaceName: String?
+  var projectName: String?
   var summary: String
   var inputDigest: String?
   var outputByteCount: Int?
@@ -426,7 +426,7 @@ protocol AppControlPlane: PluginManaging, MCPRegistrationManaging, ClientAccessM
 
   func fetchStatus() async throws -> AppStatusSnapshot
   func fetchReadiness() async throws -> [ProductReadinessSnapshot]
-  func fetchWorkspaces() async throws -> [WorkspaceSummary]
+  func fetchProjects() async throws -> [ProjectSummary]
   func fetchProfiles() async throws -> [ProfileSummary]
   func fetchProviders() async throws -> [ProviderSummary]
   func fetchOpenAITunnels() async throws -> [OpenAITunnelSummary]
@@ -442,12 +442,12 @@ protocol AppControlPlane: PluginManaging, MCPRegistrationManaging, ClientAccessM
   func stopGateway() async throws
   func setLaunchAtLoginEnabled(_ enabled: Bool) async throws
 
-  func registerWorkspace(at url: URL) async throws
-  func repairWorkspace(id: String, at url: URL) async throws
-  func removeWorkspace(id: String) async throws
-  func setWorkspaceEnabled(
+  func registerProject(at url: URL) async throws
+  func repairProject(id: String, at url: URL) async throws
+  func removeProject(id: String) async throws
+  func setProjectEnabled(
     _ enabled: Bool,
-    workspaceID: String,
+    projectID: String,
     profileID: String
   ) async throws
 
@@ -511,7 +511,7 @@ final class UnavailableControlPlane: AppControlPlane {
   func stopApplication() async {}
   func fetchStatus() async throws -> AppStatusSnapshot { throw unavailable() }
   func fetchReadiness() async throws -> [ProductReadinessSnapshot] { throw unavailable() }
-  func fetchWorkspaces() async throws -> [WorkspaceSummary] { throw unavailable() }
+  func fetchProjects() async throws -> [ProjectSummary] { throw unavailable() }
   func fetchProfiles() async throws -> [ProfileSummary] { throw unavailable() }
   func fetchProviders() async throws -> [ProviderSummary] { throw unavailable() }
   func fetchMCPRegistrations() async throws -> MCPRegistrationSnapshot { throw unavailable() }
@@ -521,13 +521,13 @@ final class UnavailableControlPlane: AppControlPlane {
   func changeMCPCredential(id: String, expectedBindingDigest: String, token: String?) async throws {
     throw unavailable()
   }
-  func doctorMCPRegistration(id: String, workspaceID: String) async throws
+  func doctorMCPRegistration(id: String, projectID: String) async throws
     -> MCPRegistrationDoctorReport
   {
     throw unavailable()
   }
   func recoverMCPProcessReceipt(
-    id: String, workspaceID: String, receiptID: String, expectedReceiptDigest: String,
+    id: String, projectID: String, receiptID: String, expectedReceiptDigest: String,
     expectedCurrentDigest: String
   ) async throws { throw unavailable() }
   func changeMCPRegistration(
@@ -558,12 +558,12 @@ final class UnavailableControlPlane: AppControlPlane {
   func startGateway() async throws { throw unavailable() }
   func stopGateway() async throws { throw unavailable() }
   func setLaunchAtLoginEnabled(_ enabled: Bool) async throws { throw unavailable() }
-  func registerWorkspace(at url: URL) async throws { throw unavailable() }
-  func repairWorkspace(id: String, at url: URL) async throws { throw unavailable() }
-  func removeWorkspace(id: String) async throws { throw unavailable() }
-  func setWorkspaceEnabled(
+  func registerProject(at url: URL) async throws { throw unavailable() }
+  func repairProject(id: String, at url: URL) async throws { throw unavailable() }
+  func removeProject(id: String) async throws { throw unavailable() }
+  func setProjectEnabled(
     _ enabled: Bool,
-    workspaceID: String,
+    projectID: String,
     profileID: String
   ) async throws {
     throw unavailable()

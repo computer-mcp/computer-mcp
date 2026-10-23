@@ -13,12 +13,12 @@ package struct FilesToolProvider: GatewayToolProvider {
   }
 
   var configuration: GatewayConfiguration { environment.configuration }
-  var workspaceScope: WorkspaceScope { environment.workspaceScope }
+  var projectScope: ProjectScope { environment.projectScope }
   var registeredCommands: RegisteredCommands { environment.registeredCommands }
   var commandRunner: any CommandRunning { environment.commandRunner }
 
   package func definitions() throws -> [ToolDefinition] {
-    Self.toolDefinitions(toolMeta: workspaceScope.toolMeta).filter {
+    Self.toolDefinitions(toolMeta: projectScope.toolMeta).filter {
       configuration.builtin.enabled.contains($0.tool.name)
     }.sorted { $0.tool.name < $1.tool.name }
   }

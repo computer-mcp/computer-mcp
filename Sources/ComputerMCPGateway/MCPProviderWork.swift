@@ -130,7 +130,7 @@ package struct MCPProviderWork {
   }
 
   private let work: GatewayOwnedWork
-  private let workspaceID: String?
+  private let projectID: String?
   private let registrationID: String
   let connectionID: UUID
   private var invocations: [UUID: Invocation] = [:]
@@ -141,11 +141,11 @@ package struct MCPProviderWork {
   private var connected = true
 
   init(
-    work: GatewayOwnedWork, workspaceID: String?, registrationID: String,
+    work: GatewayOwnedWork, projectID: String?, registrationID: String,
     connectionID: UUID = UUID()
   ) {
     self.work = work
-    self.workspaceID = workspaceID
+    self.projectID = projectID
     self.registrationID = registrationID
     self.connectionID = connectionID
     requireObservation()
@@ -262,7 +262,7 @@ package struct MCPProviderWork {
           "kind": .string(resource.key.kind), "id": resource.key.id.json,
         ])
         let lease = work.retain(
-          .mcpResource, workspaceID: workspaceID, registrationID: registrationID,
+          .mcpResource, projectID: projectID, registrationID: registrationID,
           resourceID: String(decoding: try encoder.encode(identity), as: UTF8.self),
           connectionID: connectionID)
         replacement[resource.key] = Ownership(
@@ -300,7 +300,7 @@ package struct MCPProviderWork {
 
   func validate(_ target: MCPContinuationTarget, tool: String, arguments: JSONValue) throws {
     guard connected, target.connectionID == connectionID,
-      target.workspaceID == workspaceID,
+      target.projectID == projectID,
       target.reference == MCPToolReference(serverID: registrationID, toolName: tool),
       target.instanceID == report?.instanceID,
       let declaration = continuations[tool]
@@ -344,7 +344,7 @@ package struct MCPProviderWork {
     work.continuations.update(
       connectionID: connectionID,
       entry: .init(
-        workspaceID: workspaceID, registrationID: registrationID,
+        projectID: projectID, registrationID: registrationID,
         instanceID: report?.instanceID, declarations: continuations,
         resources: ownership.values.map(\.resource), observationPending: observation != nil,
         connected: connected))
@@ -353,7 +353,7 @@ package struct MCPProviderWork {
   private mutating func requireObservation() {
     guard observation == nil else { return }
     observation = work.retain(
-      .mcpObservation, workspaceID: workspaceID, registrationID: registrationID,
+      .mcpObservation, projectID: projectID, registrationID: registrationID,
       resourceID: connectionID.uuidString, connectionID: connectionID)
     publishContinuations()
   }

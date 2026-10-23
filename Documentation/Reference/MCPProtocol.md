@@ -26,7 +26,7 @@ this repository.
 ## Downstream tool risk
 
 A downstream tool can declare a minimum risk in
-`_meta["io.github.computer-mcp/risk"]`: `read-only`, `workspace-write`,
+`_meta["io.github.computer-mcp/risk"]`: `read-only`, `project-write`,
 `external-write`, `destructive` or `full-shell`. The host uses the higher of
 this classification and its configured tool risk. Metadata cannot lower host
 policy or grant a capability. Missing declarations retain configured behavior;
@@ -34,7 +34,7 @@ malformed or unknown declarations fail closed. Standard MCP annotations remain
 hints, not permission grants.
 
 Reexported tools, configured aliases and `mcp.tools.call` use the selected
-workspace's current definition. The effective risk applies to discovery,
+project's current definition. The effective risk applies to discovery,
 authorization, approval preparation and ticket commit. Execution rechecks the
 declaration; a higher risk observed after admission is rejected with `mcp.risk_changed`
 before dispatch. Retry through current host authorization and consent. Background
@@ -74,7 +74,7 @@ Other tool metadata, including the publisher's risk floor, remains available.
 
 For each dispatched tool call, the host supplies a unique UUID in request
 `_meta["io.github.computer-mcp/work-invocation"]`. This reference is generated
-after host admission and belongs to that connection's workspace, registration,
+after host admission and belongs to that connection's project, registration,
 principal and runtime scope. It cannot be replaced by a tool argument. It is
 separate from the optional private Host Services invocation identity and grants
 no callback access.
@@ -196,7 +196,7 @@ unique ownership across connections. Multiple matching lifetimes remain distinct
 The host validates and retains these declarations with the originating connection
 and strips them from gateway aliases/reexports. The work ledger can match them
 against accepted resource observations, including uncertain work. Observations
-are scoped to the runtime, workspace and registration. Lost connections retain
+are scoped to the runtime, project and registration. Lost connections retain
 their uncertain ownership evidence; a pending observation cannot prove a handle
 is absent. Removed tool declarations remain available to locate retained owners.
 A declaration for an existing tool cannot change while that connection retains
@@ -213,7 +213,7 @@ Ordinary MCP arguments and native handle values remain unchanged.
 
 Clients can use the host's typed `runtime.owners.list` and `runtime.owners.call`
 tools to select a retained instance explicitly. A locator binds the runtime,
-workspace and a live host ownership lease, not just a reusable native handle.
+project and a live host ownership lease, not just a reusable native handle.
 The selected lease and original connection are rechecked before dispatch.
 Current target authorization and operation approval remain mandatory; approval
 tickets also bind the selected locator. See [Execution owners](Tools.md#execution-owners)
@@ -236,9 +236,9 @@ independent admission epochs and shutdown scopes. Local administration remains
 available while the gateway listener is stopped. App shutdown joins both scopes;
 a remote caller cannot acquire the local-admin scope.
 
-Each new call also checks its registered workspace's current lifetime and root.
+Each new call also checks its registered project's current lifetime and root.
 Removal, root rebinding or re-registration invalidates the old execution scope,
-including under a wildcard workspace grant. Display metadata updates preserve
+including under a wildcard project grant. Display metadata updates preserve
 that scope. Existing work remains owned; a denied new call does not stop its
 process. Owner directory queries use the current registration and omit retained
 work whose original scope is no longer authorized.
@@ -250,7 +250,7 @@ new admission during shutdown. Pending construction and cleanup count toward the
 joins its candidate construction and invalidates its admission epoch, so a late
 candidate cannot enter a restarted service. Managed manifest activation/rollback,
 external file edits, manual MCP changes, plugin
-mutations and workspace add, repair, remove and deduplication
+mutations and project add, repair, remove and deduplication
 prepare candidates for every admitted identity and profile while existing calls
 continue. New identities wait at a bounded publication barrier. The host checks
 the manifest and persisted inputs, commits the prepared configuration and
@@ -263,9 +263,9 @@ file and exposes a gateway diagnostic; admission never rewrites that file. A
 corrected re-save is reconsidered, including changes made while the gateway was
 stopped in the same App process.
 
-When a continuation omits its workspace, cached ownership can identify its exact
-original scope across registered workspaces. Multiple matching owners require an
-explicit workspace or owner selection; the host does not dispatch by directory
+When a continuation omits its project, cached ownership can identify its exact
+original scope across registered projects. Multiple matching owners require an
+explicit project or owner selection; the host does not dispatch by directory
 order. The inferred scope still requires current authorization.
 
 ## Downstream Host Context
@@ -279,7 +279,7 @@ For stdio registrations created by `GatewayRuntime`, the host supplies
   "runtimeID": "ed2868d1-5a81-4b59-a84a-8618c174a648",
   "caller": "secure-tunnel",
   "profileID": "chatgpt-observe",
-  "workspace": { "id": "project", "rootPath": "/absolute/project" },
+  "project": { "id": "project", "rootPath": "/absolute/project" },
   "readOnly": true,
   "transportTrace": {
     "transport": "socket",
@@ -291,8 +291,8 @@ For stdio registrations created by `GatewayRuntime`, the host supplies
 ```
 
 `runtimeID` identifies one gateway runtime lifetime, shared by its independently
-scoped workspace sessions. It is not a downstream reconnect generation or a
-request ID. The workspace path comes from host-resolved workspace access, not
+scoped project sessions. It is not a downstream reconnect generation or a
+request ID. The project path comes from host-resolved project access, not
 the registration's optional launch `cwd`. Consumers must compare resolved path
 identity and containment, including symlinks, rather than textual prefixes.
 Transport trace and its connection/tunnel fields are optional provenance.
@@ -306,7 +306,7 @@ Remote HTTP registrations do not receive this stdio environment contract.
 The value contains no credential, capability grant or Full Shell approval.
 `readOnly` conveys the host profile's independent mutation boundary; `false`
 does not authorize a tool or grant unrestricted execution. The gateway checks
-the current registration selection, risk, caller and workspace grant at each
+the current registration selection, risk, caller and project grant at each
 call and retains audit ownership. Plugins cannot supply caller/transport
 identity through tool arguments. A call cannot switch its gateway connection's
 caller, profile or transport provenance while reusing that downstream session.
@@ -319,7 +319,7 @@ host-owned.
 
 When explicitly enabled by the host, `COMPUTER_MCP_HOST_FD` separately identifies
 an inherited connected Unix socket carrying standard MCP callbacks. The
-optional `managedWorkspaceRoot` metadata field supplies the host-selected
+optional `managedProjectRoot` metadata field supplies the host-selected
 managed directory. Neither value changes the northbound caller identity or
 permits a plugin to connect to the administrator socket. See
 [Scoped host services](HostServices.md) for authority, private tool discovery,

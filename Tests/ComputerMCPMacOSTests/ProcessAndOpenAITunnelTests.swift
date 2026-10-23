@@ -381,7 +381,7 @@ final class ProcessAndOpenAITunnelTests {
         executableSearchDirectories: MacOSPlatform.services.executableSearchDirectories
       ).resolve(
         requestedPath: executable.path,
-        configuration: GatewayConfiguration(workspaceDirectory: root))
+        configuration: GatewayConfiguration(projectDirectory: root))
     }
   }
 

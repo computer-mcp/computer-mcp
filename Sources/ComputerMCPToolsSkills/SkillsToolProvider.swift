@@ -20,7 +20,7 @@ package struct SkillsToolProvider: GatewayToolProvider {
 
   package func definitions() throws -> [ToolDefinition] {
     guard configuration.skills.enabled else { return [] }
-    return Self.toolDefinitions(toolMeta: environment.workspaceScope.toolMeta)
+    return Self.toolDefinitions(toolMeta: environment.projectScope.toolMeta)
   }
 
   package func callTool(_ invocation: ToolInvocation) throws -> JSONValue {

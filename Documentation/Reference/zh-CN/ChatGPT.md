@@ -6,9 +6,9 @@ ChatGPT 通过 OpenAI Secure MCP Tunnel 连接本地 Computer MCP Gateway，不�
 ## 前置条件
 
 1. 按 OpenAI 当前的[开发者模式与 MCP Apps 文档][developer-mode]确认目标账号、
-   Workspace、管理员权限和可用能力。
+   Project、管理员权限和可用能力。
 2. 在 OpenAI Platform 创建或选择 Secure MCP Tunnel，并关联准确的 ChatGPT
-   Workspace。
+   Project。
 3. 安装官方 [`tunnel-client`][tunnel-client]，准备仅有运行所需权限的 API Key。
 
 Computer MCP 只检测依赖，不自动下载，也不会自动操作 OpenAI 账号。
@@ -19,7 +19,7 @@ Computer MCP 只检测依赖，不自动下载，也不会自动操作 OpenAI �
 2. 填写 Tunnel ID、tunnel-client profile 和 Gateway Profile。第一次建议使用
    `chatgpt-observe`。
 3. 输入 API Key 并保存；Key 只进入 Keychain。
-4. 如需工作区内容，在 **Workspaces** 添加文件夹并授权给相同 Profile。
+4. 如需项目内容，在 **Projects** 添加文件夹并授权给相同 Profile。
 5. 运行 Diagnostics，修复必要检查后启动 Tunnel，等待状态进入 Ready。
 
 每次启动 Tunnel 前，App 都会先用当前 App 内嵌 CLI、Gateway Socket、Profile 和

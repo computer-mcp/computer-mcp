@@ -115,7 +115,7 @@ struct ClientAccessTests {
   func profileCeilingAndEndedStateHaveTruthfulPresentation() {
     let service = ClientAccessFake()
     var session = service.session
-    #expect(session.currentAccess == .workspaceOperations)
+    #expect(session.currentAccess == .projectOperations)
     var grant = service.profile.grant
     grant.mode = .readOnly
     session.profile = .init(grant: grant, persisted: false)
@@ -207,7 +207,7 @@ struct ClientAccessTests {
     let request = try #require(model.pendingOAuthRequests.first)
     let reviewed = try #require(model.oauthProfile(for: request))
     var observe = ProfileGrant.cloudflareObserve
-    observe.mode = .workspaceOperations
+    observe.mode = .projectOperations
     service.remoteProfiles = [observe, .cloudflareOperate]
     await model.reload()
     #expect(model.oauthProfile(for: request) == nil)
@@ -348,14 +348,14 @@ private struct CompletedOnboarding: OnboardingPreferenceStoring {
 private final class ClientAccessFake: ClientAccessManaging {
   let profile = GatewayControlProfile(
     grant: .init(
-      id: .chatGPTOperate, capabilityIDs: ["file.read"], workspaceIDs: ["fixture"],
-      allowedCallers: [.localMCP], mode: .workspaceOperations), persisted: false)
+      id: .chatGPTOperate, capabilityIDs: ["file.read"], projectIDs: ["fixture"],
+      allowedCallers: [.localMCP], mode: .projectOperations), persisted: false)
   var revision: Int64 = 4
   var ended = false
   var session: GatewayControlSessionSnapshot {
     .init(
       id: "6F83917A", principalID: "verified-client", profileID: .chatGPTOperate,
-      caller: .localMCP, revision: revision, accessLimit: .workspaceOperations, ended: ended,
+      caller: .localMCP, revision: revision, accessLimit: .projectOperations, ended: ended,
       fullAccessConsent: nil, profile: profile)
   }
   lazy var trust = GatewayClientTrust(

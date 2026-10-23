@@ -17,16 +17,16 @@ import Testing
 @Suite(.nativeIntegration, .timeLimit(.minutes(1)))
 struct MCPHostSessionTests {
   @Test(arguments: [false, true])
-  func manifestWorkspaceHostCallbacksDoNotRequirePersistedRegistration(fileBacked: Bool)
+  func manifestProjectHostCallbacksDoNotRequirePersistedRegistration(fileBacked: Bool)
     async throws
   {
-    let fixture = try HostFixture(fileBacked: fileBacked, persistWorkspaces: false)
+    let fixture = try HostFixture(fileBacked: fileBacked, persistProjects: false)
     defer { fixture.remove() }
-    #expect(try fixture.database.workspaces().isEmpty)
+    #expect(try fixture.database.projects().isEmpty)
     let result = try await fixture.call("file.read", ["path": .string("value.txt")])
     #expect(result.objectValue?["isError"] != .bool(true))
     #expect(fixture.payload(result)["content"] == .string("first"))
-    #expect(try fixture.database.workspaces().isEmpty)
+    #expect(try fixture.database.projects().isEmpty)
     await fixture.runtime.shutdown()
   }
 
@@ -34,7 +34,7 @@ struct MCPHostSessionTests {
   func deletingPersistedAuthorityDoesNotRestoreConfiguredHostAccess() async throws {
     let fixture = try HostFixture(fileBacked: true)
     defer { fixture.remove() }
-    let catalog = try fixture.runtime.hostToolCatalog(workspaceID: "first", origin: "plugin")
+    let catalog = try fixture.runtime.hostToolCatalog(projectID: "first", origin: "plugin")
     try #require(catalog.contains { $0.name == "file.read" })
     let path = try #require(fixture.database.fileURL).path
     let writer = try DatabaseQueue(path: path)
@@ -43,7 +43,7 @@ struct MCPHostSessionTests {
     }
     #expect(try fixture.database.profiles().isEmpty)
     #expect(throws: (any Error).self) {
-      try fixture.runtime.hostToolCatalog(workspaceID: "first", origin: "plugin")
+      try fixture.runtime.hostToolCatalog(projectID: "first", origin: "plugin")
     }
     let result = try await fixture.call("file.read", ["path": .string("value.txt")])
     #expect(result.objectValue?["isError"] == .bool(true))
@@ -51,7 +51,7 @@ struct MCPHostSessionTests {
   }
 
   @Test
-  func ordinaryMCPCallsUseBoundWorkspaceAndOriginalAuditIdentity() async throws {
+  func ordinaryMCPCallsUseBoundProjectAndOriginalAuditIdentity() async throws {
     let fixture = try HostFixture()
     defer { fixture.remove() }
     let session = try fixture.session()
@@ -68,19 +68,19 @@ struct MCPHostSessionTests {
           == .string("first"))
       let audit = try #require(
         try fixture.database.auditEvents().first { $0.capabilityID == "file.read" })
-      #expect(audit.workspaceID == "first")
+      #expect(audit.projectID == "first")
       #expect(audit.profileID == .chatGPTOperate)
       #expect(audit.caller == .secureTunnel)
       #expect(audit.transport == "gateway_socket")
       #expect(audit.socketConnectionID == "original-socket")
       #expect(audit.requestID.hasPrefix("host:"))
-      let listed = try await fixture.call("workspace.list")
-      #expect(fixture.payload(listed)["workspaces"]?.arrayValue?.count == 1)
+      let listed = try await fixture.call("project.list")
+      #expect(fixture.payload(listed)["projects"]?.arrayValue?.count == 1)
       let rejected = try await fixture.call(
-        "file.read", ["workspace_id": .string("second"), "path": .string("value.txt")])
+        "file.read", ["project_id": .string("second"), "path": .string("value.txt")])
       #expect(rejected.objectValue?["isError"] == .bool(true))
       #expect(
-        try fixture.database.auditEvents().contains { $0.errorCode == "policy.workspace_denied" })
+        try fixture.database.auditEvents().contains { $0.errorCode == "policy.project_denied" })
       await client.disconnect()
       await session.close()
       await fixture.runtime.shutdown()
@@ -95,15 +95,15 @@ struct MCPHostSessionTests {
 
   @Test(arguments: [
     "alias.callback", "loop.operation", "mcp.tools.call", "policy.probe", "operations.prepare",
-    "nested-workspace", "selected-owner",
+    "nested-project", "selected-owner",
   ])
-  func indirectCallsCannotReenterTheOriginOrWidenWorkspace(route: String) async throws {
+  func indirectCallsCannotReenterTheOriginOrWidenProject(route: String) async throws {
     let fixture = try HostFixture()
     defer { fixture.remove() }
     var name = route
     var arguments: [String: JSONValue] = [:]
     let ownerLease = fixture.runtime.ownedWork.retain(
-      .mcpUnreportedWork, workspaceID: "first", registrationID: "plugin",
+      .mcpUnreportedWork, projectID: "first", registrationID: "plugin",
       resourceID: "callback-owner", connectionID: UUID())
     defer { ownerLease.finish() }
     if route == "mcp.tools.call" {
@@ -117,16 +117,16 @@ struct MCPHostSessionTests {
       arguments = [
         "owner": GatewayOwnerSelection(
           runtimeID: fixture.runtime.generationID,
-          workspaceID: "first", ownershipID: ownerLease.id
+          projectID: "first", ownershipID: ownerLease.id
         ).json,
         "tool": .string("alias.callback"), "arguments": .object([:]),
       ]
-    } else if route == "nested-workspace" {
+    } else if route == "nested-project" {
       name = "policy.probe"
       arguments = [
         "capability_id": .string("file.read"),
         "arguments": .object([
-          "workspace_id": .string("second"), "path": .string("value.txt"),
+          "project_id": .string("second"), "path": .string("value.txt"),
         ]),
       ]
     }
@@ -209,19 +209,19 @@ struct MCPHostSessionTests {
   }
 
   @Test(arguments: [
-    "observe", "grant-revoked", "workspace-removed", "workspace-changed", "shutdown",
+    "observe", "grant-revoked", "project-removed", "project-changed", "shutdown",
   ])
   func liveScopeAndReadOnlyDenialsRemainAuthoritative(reason: String) async throws {
     let fixture = try HostFixture(observe: reason == "observe")
     defer { fixture.remove() }
     if reason == "grant-revoked" {
       var grant = fixture.grant
-      grant.workspaceIDs.removeAll()
+      grant.projectIDs.removeAll()
       try fixture.database.saveProfile(grant)
-    } else if reason == "workspace-removed" {
-      try fixture.database.deleteWorkspace(id: "first")
-    } else if reason == "workspace-changed" {
-      try fixture.database.saveWorkspace(
+    } else if reason == "project-removed" {
+      try fixture.database.deleteProject(id: "first")
+    } else if reason == "project-changed" {
+      try fixture.database.saveProject(
         .init(
           id: "first", displayName: "Changed",
           rootPath: fixture.root.appendingPathComponent("second").path))
@@ -238,17 +238,17 @@ struct MCPHostSessionTests {
   }
 
   @Test
-  func revokedWorkspaceGrantRemovesTheCallbackCatalog() async throws {
+  func revokedProjectGrantRemovesTheCallbackCatalog() async throws {
     let fixture = try HostFixture()
     defer { fixture.remove() }
     #expect(
-      try fixture.runtime.hostToolCatalog(workspaceID: "first", origin: "plugin").contains {
+      try fixture.runtime.hostToolCatalog(projectID: "first", origin: "plugin").contains {
         $0.name == "file.read"
       })
     var grant = fixture.grant
-    grant.workspaceIDs.removeAll()
+    grant.projectIDs.removeAll()
     try fixture.database.saveProfile(grant)
-    #expect(try fixture.runtime.hostToolCatalog(workspaceID: "first", origin: "plugin").isEmpty)
+    #expect(try fixture.runtime.hostToolCatalog(projectID: "first", origin: "plugin").isEmpty)
     await fixture.runtime.shutdown()
   }
 
@@ -329,7 +329,7 @@ private final class HostFixture: Sendable {
   let registration: MCPServerConfig
 
   init(
-    observe: Bool = false, fileBacked: Bool = false, persistWorkspaces: Bool = true,
+    observe: Bool = false, fileBacked: Bool = false, persistProjects: Bool = true,
     git: Bool = false
   ) throws {
     root = FileManager.default.temporaryDirectory.appendingPathComponent(
@@ -345,23 +345,23 @@ private final class HostFixture: Sendable {
       try fileBacked
       ? GatewayDatabase(path: root.appendingPathComponent("gateway.sqlite").path)
       : GatewayDatabase(inMemory: ())
-    let workspaces = [first, second].map {
-      RegisteredWorkspace(
+    let projects = [first, second].map {
+      RegisteredProject(
         id: $0.lastPathComponent, displayName: $0.lastPathComponent, rootPath: $0.path)
     }
-    if persistWorkspaces {
-      for workspace in workspaces { try database.saveWorkspace(workspace) }
+    if persistProjects {
+      for project in projects { try database.saveProject(project) }
     }
     let profile: GatewayProfileID = observe ? .chatGPTObserve : .chatGPTOperate
     let capabilities =
       [
-        "workspace.list", "workspace.describe", "policy.probe", "operations.prepare",
+        "project.list", "project.describe", "policy.probe", "operations.prepare",
         "operations.commit", "file.read", "file.replace_text", "mcp.tools.call", "alias.callback",
         "loop.operation", "runtime.owners.call",
       ] + (git ? ["git.add"] : [])
     grant = ProfileGrant(
-      id: profile, capabilityIDs: Set(capabilities), workspaceIDs: ["first", "second"],
-      allowedCallers: [.secureTunnel], mode: observe ? .readOnly : .workspaceOperations)
+      id: profile, capabilityIDs: Set(capabilities), projectIDs: ["first", "second"],
+      allowedCallers: [.secureTunnel], mode: observe ? .readOnly : .projectOperations)
     try database.saveProfile(grant)
     context = ExecutionContext(
       caller: .secureTunnel, profileID: profile,
@@ -373,20 +373,20 @@ private final class HostFixture: Sendable {
     runtime = try GatewayRuntime(
       configuration: .init(
         runtime: .init(caller: .secureTunnel, profileID: profile),
-        workspaces: workspaces.map {
+        projects: projects.map {
           .init(id: $0.id, displayName: $0.displayName, path: $0.rootPath)
         },
         profiles: [
           .init(
-            id: profile, capabilities: capabilities, workspaces: ["first", "second"],
-            allowedCallers: [.secureTunnel], mode: observe ? .readOnly : .workspaceOperations)
+            id: profile, capabilities: capabilities, projects: ["first", "second"],
+            allowedCallers: [.secureTunnel], mode: observe ? .readOnly : .projectOperations)
         ],
         cli: .init(commands: git ? [.init(id: "git", executable: "/usr/bin/git")] : []),
         mcp: .init(servers: [registration]),
         tools: [.init(name: "alias.callback", adapter: .mcp, source: "plugin", tool: "operation")],
         builtin: .init(enabled: ["file.read", "file.replace_text"] + (git ? ["git.add"] : []))),
       context: context, database: database,
-      registeredWorkspaces: persistWorkspaces ? workspaces : nil, platform: MacOSPlatform.services,
+      registeredProjects: persistProjects ? projects : nil, platform: MacOSPlatform.services,
       mcpClient: downstream)
   }
 
@@ -395,12 +395,12 @@ private final class HostFixture: Sendable {
     directory.attach(runtime)
     return try MCPHostSession(
       context: .init(
-        runtimeID: UUID(), context: context, workspaceID: "first", rootURL: first,
+        runtimeID: UUID(), context: context, projectID: "first", rootURL: first,
         readOnly: false, tools: directory), server: registration)
   }
   func call(_ name: String, _ arguments: [String: JSONValue] = [:]) async throws -> JSONValue {
     try await runtime.callHostTool(
-      name: name, arguments: arguments, workspaceID: "first", origin: "plugin",
+      name: name, arguments: arguments, projectID: "first", origin: "plugin",
       requestID: UUID().uuidString)
   }
   func payload(_ value: JSONValue) -> [String: JSONValue] {

@@ -25,7 +25,7 @@ struct MCPProfileGrantTests {
         .init(
           id: .chatGPTOperate,
           capabilities: grantAlias ? ["review.inspect", "mcp.tools.list"] : [],
-          workspaces: ["fixture"], allowedCallers: [.secureTunnel],
+          projects: ["fixture"], allowedCallers: [.secureTunnel],
           mcpServers: grantAlias ? [] : ["alpha"])
       ],
       mcp: .init(
@@ -37,7 +37,7 @@ struct MCPProfileGrantTests {
       tools: [.init(name: "review.inspect", adapter: .mcp, source: "alpha", tool: "inspect")])
     let runtime = try GatewayRuntime(
       configuration: configuration,
-      registeredWorkspaces: [
+      registeredProjects: [
         .init(id: "fixture", displayName: "Fixture", rootPath: fixture.root.path)
       ],
       platform: MacOSPlatform.services, mcpClient: client)
@@ -117,7 +117,7 @@ struct MCPProfileGrantTests {
     var configuration = Self.configuration()
     configuration.profiles = [
       .init(
-        id: .chatGPTOperate, workspaces: ["fixture"], allowedCallers: [.secureTunnel],
+        id: .chatGPTOperate, projects: ["fixture"], allowedCallers: [.secureTunnel],
         mcpServers: ["alpha"])
     ]
     let runtime = try fixture.runtime(configuration: configuration)
@@ -165,7 +165,7 @@ struct MCPProfileGrantTests {
         id: .chatGPTOperate,
         capabilities: [
           "alpha_alias.inspect", "mcp.tools.list", "mcp.tools.find", "mcp.tools.describe",
-        ], workspaces: ["fixture"], allowedCallers: [.secureTunnel])
+        ], projects: ["fixture"], allowedCallers: [.secureTunnel])
     ]
     let runtime = try fixture.runtime(configuration: configuration)
     let names = Set(try runtime.listTools(context: .empty).map(\.name))
@@ -318,7 +318,7 @@ struct MCPProfileGrantTests {
     let database = try GatewayDatabase(inMemory: ())
     var persisted = Self.grant(servers: ["beta"])
     persisted.capabilityIDs = ["operations.prepare", "operations.commit"]
-    persisted.workspaceIDs = ["fixture"]
+    persisted.projectIDs = ["fixture"]
     persisted.fullShellEnabled = true
     persisted.mode = .localFullAccess
     try database.saveProfile(persisted)
@@ -331,7 +331,7 @@ struct MCPProfileGrantTests {
     let client = ProfileCatalogClient()
     let runtime = try GatewayRuntime(
       configuration: configuration, database: database,
-      registeredWorkspaces: [
+      registeredProjects: [
         .init(id: "fixture", displayName: "Fixture", rootPath: fixture.root.path)
       ],
       platform: MacOSPlatform.services, mcpClient: client)
@@ -381,21 +381,21 @@ struct MCPProfileGrantTests {
     let grant = decoded.profiles[0].grant
     #expect(try JSONDecoder().decode(ProfileGrant.self, from: JSONEncoder().encode(grant)) == grant)
     var persisted = Self.grant(servers: ["beta"])
-    persisted.workspaceIDs = ["fixture"]
+    persisted.projectIDs = ["fixture"]
     let effective = grant.applyingPersistedRuntimeState(persisted)
     #expect(effective.mcpServerIDs == ["beta"])
-    #expect(effective.workspaceIDs == ["fixture"])
+    #expect(effective.projectIDs == ["fixture"])
     persisted.authorizationRevision = 0
     let legacy = grant.applyingPersistedRuntimeState(persisted)
     #expect(legacy.mcpServerIDs == ["alpha"])
-    #expect(legacy.workspaceIDs == ["fixture"])
+    #expect(legacy.projectIDs == ["fixture"])
   }
 
   @Test
   func olderProfileRecordsDecodeWithNoImplicitRegistrationGrant() throws {
     let data = Data(
       """
-      {"id":"chatgpt-operate","capabilityIDs":["mcp.tools.call"],"workspaceIDs":[],
+      {"id":"chatgpt-operate","capabilityIDs":["mcp.tools.call"],"projectIDs":[],
        "allowedCallers":["secure-tunnel"],"fullShellEnabled":false}
       """.utf8)
     let grant = try JSONDecoder().decode(ProfileGrant.self, from: data)
@@ -465,7 +465,7 @@ struct MCPProfileGrantTests {
   {
     .init(
       id: .chatGPTOperate, capabilityIDs: capabilities, allowedCallers: [.secureTunnel],
-      mcpServerIDs: servers, mode: .workspaceOperations)
+      mcpServerIDs: servers, mode: .projectOperations)
   }
 
   private static func callArguments(server: String, tool: String) -> JSONValue {
@@ -488,7 +488,7 @@ private struct ProfileRuntimeFixture {
   func runtime(configuration: GatewayConfiguration) throws -> GatewayRuntime {
     try GatewayRuntime(
       configuration: configuration,
-      registeredWorkspaces: [.init(id: "fixture", displayName: "Fixture", rootPath: root.path)],
+      registeredProjects: [.init(id: "fixture", displayName: "Fixture", rootPath: root.path)],
       platform: MacOSPlatform.services, mcpClient: ProfileCatalogClient())
   }
 

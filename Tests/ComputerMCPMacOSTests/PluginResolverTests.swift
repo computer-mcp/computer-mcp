@@ -58,7 +58,7 @@ struct PluginResolverTests {
     let registration = try #require(plugin.cliCommands.first)
     #expect(registration.executable == script)
     let commands = RegisteredCommands(
-      configuration: .init(cli: .init(commands: [registration]), workspaceDirectory: fixture.root),
+      configuration: .init(cli: .init(commands: [registration]), projectDirectory: fixture.root),
       commandRunner: ProcessCommandRunner(environment: environment), environment: environment)
     do {
       let result = try commands.runRegisteredCLI(
@@ -417,7 +417,7 @@ struct PluginResolverTests {
     settings.cli["commands"] = .init(registrationID: "commands", allowAnyArgs: true)
     let plugin = try fixture.resolve(settings: settings)
     let composition = try GatewayPluginComposition(
-      configuration: GatewayConfiguration(workspaceDirectory: fixture.root), plugins: [plugin])
+      configuration: GatewayConfiguration(projectDirectory: fixture.root), plugins: [plugin])
     let provider = CLIToolProvider(
       environment: ToolEnvironment(configuration: composition.runtimeConfiguration))
     let output = try provider.callTool(
@@ -451,14 +451,14 @@ struct PluginResolverTests {
       profiles: [
         .init(
           id: .chatGPTOperate, allowedCallers: [.secureTunnel], mcpServers: ["native"],
-          mode: .workspaceOperations)
+          mode: .projectOperations)
       ],
       mcp: .init(servers: [
         .init(id: "private", transport: .stdio, command: "/bin/cat", allowAnyTool: true)
       ]))
     let runtime = try GatewayRuntime(
       configuration: configuration,
-      registeredWorkspaces: [
+      registeredProjects: [
         .init(id: "fixture", displayName: "Fixture", rootPath: fixture.root.path)
       ],
       platform: MacOSPlatform.services, mcpClient: CompositionCatalogClient(), plugins: [plugin])

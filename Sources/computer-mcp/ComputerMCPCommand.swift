@@ -21,7 +21,7 @@ struct ComputerMCPCommand: AsyncParsableCommand {
       BuildInfo.self,
       Config.self,
       CLITreeCommands.self,
-      Workspace.self,
+      Project.self,
       Profile.self,
       Permissions.self,
       Tunnel.self,
@@ -58,8 +58,8 @@ struct StandaloneRuntimeOptions: ParsableArguments {
   @Option(name: .long, help: "Bound gateway profile for policy evaluation.")
   var profile: GatewayProfileID?
 
-  @Option(name: .long, help: "Optional default stable workspace id.")
-  var workspaceID: String?
+  @Option(name: .long, help: "Optional default stable project id.")
+  var projectID: String?
 
   @Option(
     name: .long,
@@ -91,7 +91,7 @@ struct ServeStdio: AsyncParsableCommand {
     let context = gateway.executionContext(
       caller: runtime.caller,
       profileID: runtime.profile,
-      workspaceID: runtime.workspaceID,
+      projectID: runtime.projectID,
       transportTrace: GatewayTransportTrace(
         transport: "stdio", socketConnectionID: UUID().uuidString)
     )
@@ -134,7 +134,7 @@ struct ServeHTTP: AsyncParsableCommand {
       context: gateway.executionContext(
         caller: runtime.caller,
         profileID: runtime.profile,
-        workspaceID: runtime.workspaceID,
+        projectID: runtime.projectID,
         transportTrace: GatewayTransportTrace(transport: "streamable_http")
       ),
       database: database,
@@ -244,15 +244,15 @@ struct ToolConnectionOptions: ParsableArguments {
   @Option(name: .long, help: "Standalone gateway profile; requires --config.")
   var profile: GatewayProfileID?
 
-  @Option(name: .long, help: "Standalone default workspace ID; requires --config.")
-  var workspaceID: String?
+  @Option(name: .long, help: "Standalone default project ID; requires --config.")
+  var projectID: String?
 
   func validateMode() throws {
     try owner.validateStandalone(config: config)
     guard config == nil else { return }
-    let standaloneOptions = caller != nil || profile != nil || workspaceID != nil
+    let standaloneOptions = caller != nil || profile != nil || projectID != nil
     guard !standaloneOptions else {
-      throw ValidationError("--caller, --profile, and --workspace-id require --config.")
+      throw ValidationError("--caller, --profile, and --project-id require --config.")
     }
   }
 }
@@ -345,7 +345,7 @@ private func withStandaloneToolSurface(
     context: gateway.executionContext(
       caller: options.caller,
       profileID: options.profile,
-      workspaceID: options.workspaceID
+      projectID: options.projectID
     ),
     database: GatewayDatabase(inMemory: ()),
     platform: MacOSPlatform.services

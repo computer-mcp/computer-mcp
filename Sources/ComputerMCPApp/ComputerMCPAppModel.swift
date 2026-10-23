@@ -40,20 +40,20 @@ struct ProfileConfirmation: Identifiable {
 
 @MainActor
 final class ComputerMCPAppModel: ObservableObject {
-  static let profileActivationRefresh: Set<AppWorkspace> = [
-    .profiles, .workspaces, .home, .providers, .tunnels,
+  static let profileActivationRefresh: Set<AppSection> = [
+    .profiles, .projects, .home, .providers, .tunnels,
   ]
 
-  @Published var selectedWorkspace: AppWorkspace? = .home
+  @Published var selectedSection: AppSection? = .home
   @Published private(set) var isPresentingWelcome: Bool
-  @Published var pendingWorkspaceRemoval: WorkspaceSummary?
+  @Published var pendingProjectRemoval: ProjectSummary?
   @Published var pendingProfileConfirmation: ProfileConfirmation?
   @Published var auditQuery = ""
 
   @Published private(set) var status: LoadState<AppStatusSnapshot> = .idle
   @Published private(set) var readiness: LoadState<[ProductReadinessSnapshot]> = .idle
   @Published private(set) var localMCPConnection: LoadState<LocalMCPConnectionSummary> = .idle
-  @Published private(set) var workspaces: LoadState<[WorkspaceSummary]> = .idle
+  @Published private(set) var projects: LoadState<[ProjectSummary]> = .idle
   @Published private(set) var profiles: LoadState<[ProfileSummary]> = .idle
   @Published private(set) var providers: LoadState<[ProviderSummary]> = .idle
   @Published private(set) var openAITunnels: LoadState<[OpenAITunnelSummary]> = .idle
@@ -97,9 +97,9 @@ final class ComputerMCPAppModel: ObservableObject {
       onboardingPreferences.completedVersion < UserDefaultsOnboardingPreferences.currentVersion
   }
 
-  func finishWelcome(selecting workspace: AppWorkspace = .home) {
+  func finishWelcome(selecting section: AppSection = .home) {
     onboardingPreferences.markCompleted(version: UserDefaultsOnboardingPreferences.currentVersion)
-    selectedWorkspace = workspace
+    selectedSection = section
     isPresentingWelcome = false
   }
 
@@ -161,7 +161,7 @@ final class ComputerMCPAppModel: ObservableObject {
         refresh(.home)
         refresh(.tunnels)
         await clientAccess.reload()
-        if selectedWorkspace == .permissions { await loadOperationApprovals() }
+        if selectedSection == .permissions { await loadOperationApprovals() }
       }
     }
   }
@@ -180,13 +180,13 @@ final class ComputerMCPAppModel: ObservableObject {
   }
 
   func refreshAll() {
-    for workspace in AppWorkspace.allCases {
-      refresh(workspace)
+    for section in AppSection.allCases {
+      refresh(section)
     }
   }
 
-  func refresh(_ workspace: AppWorkspace) {
-    switch workspace {
+  func refresh(_ section: AppSection) {
+    switch section {
     case .home:
       Task {
         await loadStatus()
@@ -200,13 +200,13 @@ final class ComputerMCPAppModel: ObservableObject {
         await loadOpenAITunnels()
         await loadCloudflareTunnels()
       }
-    case .workspaces:
-      Task { await loadWorkspaces() }
+    case .projects:
+      Task { await loadProjects() }
     case .profiles:
       Task {
         await clientAccess.reload()
         await loadProfiles()
-        await loadWorkspaces()
+        await loadProjects()
       }
     case .providers:
       Task { await loadProviders() }
@@ -255,49 +255,49 @@ final class ComputerMCPAppModel: ObservableObject {
     }
   }
 
-  func addWorkspace(at url: URL) {
+  func addProject(at url: URL) {
     performAction(
-      key: "workspace.add",
-      title: "Unable to register workspace",
-      refresh: [.workspaces, .home]
+      key: "project.add",
+      title: "Unable to register project",
+      refresh: [.projects, .home]
     ) {
-      try await self.controlPlane.registerWorkspace(at: url)
+      try await self.controlPlane.registerProject(at: url)
     }
   }
 
-  func repairWorkspace(id: String, at url: URL) {
+  func repairProject(id: String, at url: URL) {
     performAction(
-      key: "workspace.repair.\(id)", title: "Unable to repair workspace",
-      refresh: [.workspaces, .home, .profiles]
+      key: "project.repair.\(id)", title: "Unable to repair project",
+      refresh: [.projects, .home, .profiles]
     ) {
-      try await self.controlPlane.repairWorkspace(id: id, at: url)
+      try await self.controlPlane.repairProject(id: id, at: url)
     }
   }
 
-  func requestWorkspaceRemoval(_ workspace: WorkspaceSummary) {
-    pendingWorkspaceRemoval = workspace
+  func requestProjectRemoval(_ project: ProjectSummary) {
+    pendingProjectRemoval = project
   }
 
-  func removeWorkspace(id: String) {
+  func removeProject(id: String) {
     performAction(
-      key: "workspace.remove.\(id)",
-      title: "Unable to remove workspace",
-      refresh: [.workspaces, .home]
+      key: "project.remove.\(id)",
+      title: "Unable to remove project",
+      refresh: [.projects, .home]
     ) {
-      try await self.controlPlane.removeWorkspace(id: id)
+      try await self.controlPlane.removeProject(id: id)
     }
   }
 
-  func setWorkspaceEnabled(_ enabled: Bool, workspace: WorkspaceSummary) {
+  func setProjectEnabled(_ enabled: Bool, project: ProjectSummary) {
     performAction(
-      key: "workspace.grant.\(workspace.id)",
-      title: "Unable to update workspace access",
-      refresh: [.workspaces, .home]
+      key: "project.grant.\(project.id)",
+      title: "Unable to update project access",
+      refresh: [.projects, .home]
     ) {
-      try await self.controlPlane.setWorkspaceEnabled(
+      try await self.controlPlane.setProjectEnabled(
         enabled,
-        workspaceID: workspace.id,
-        profileID: workspace.activeProfileID
+        projectID: project.id,
+        profileID: project.activeProfileID
       )
     }
   }
@@ -594,8 +594,8 @@ final class ComputerMCPAppModel: ObservableObject {
     }
   }
 
-  func revealWorkspace(_ workspace: WorkspaceSummary) {
-    NSWorkspace.shared.selectFile(nil, inFileViewerRootedAtPath: workspace.path)
+  func revealProject(_ project: ProjectSummary) {
+    NSWorkspace.shared.selectFile(nil, inFileViewerRootedAtPath: project.path)
   }
 
   private func loadStatus() async {
@@ -626,12 +626,12 @@ final class ComputerMCPAppModel: ObservableObject {
     }
   }
 
-  private func loadWorkspaces() async {
-    workspaces.beginRefresh()
+  private func loadProjects() async {
+    projects.beginRefresh()
     do {
-      workspaces = .loaded(try await controlPlane.fetchWorkspaces())
+      projects = .loaded(try await controlPlane.fetchProjects())
     } catch {
-      workspaces.failRefresh(with: AppLocalization.errorDescription(error))
+      projects.failRefresh(with: AppLocalization.errorDescription(error))
     }
   }
 
@@ -751,7 +751,7 @@ final class ComputerMCPAppModel: ObservableObject {
   private func performAction(
     key: String,
     title: String,
-    refresh workspaces: Set<AppWorkspace>,
+    refresh sections: Set<AppSection>,
     operation: @escaping @MainActor () async throws -> Void
   ) {
     guard !runningActions.contains(key) else {
@@ -764,8 +764,8 @@ final class ComputerMCPAppModel: ObservableObject {
       }
       do {
         try await operation()
-        for workspace in workspaces {
-          refresh(workspace)
+        for section in sections {
+          refresh(section)
         }
       } catch {
         presentedError = PresentedAppError(

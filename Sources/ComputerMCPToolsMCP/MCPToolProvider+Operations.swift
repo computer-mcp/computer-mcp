@@ -60,14 +60,14 @@ extension MCPToolProvider {
       let command = server.command ?? ""
       let resolved = registeredCommands.resolveExecutable(
         command,
-        base: server.resolvedWorkingDirectory(base: configuration.workspaceDirectory),
-        defaultBase: configuration.workspaceDirectory,
+        base: server.resolvedWorkingDirectory(base: configuration.projectDirectory),
+        defaultBase: configuration.projectDirectory,
         overrides: server.env
       )
       object["command"] = .string(command)
       object["args"] = .array(server.args.map { .string($0) })
       object["cwd"] = .string(
-        server.resolvedWorkingDirectory(base: configuration.workspaceDirectory).standardizedFileURL
+        server.resolvedWorkingDirectory(base: configuration.projectDirectory).standardizedFileURL
           .path)
       object["command_resolution"] = executableResolutionJSON(resolved)
       object["ready"] = .bool(resolved.status == .passed)

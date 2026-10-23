@@ -82,18 +82,18 @@ final class DefaultGatewayConfigurationTests {
     #expect((Set(observe.capabilities)) == (Set(DefaultGatewayConfiguration.observeCapabilities)))
     #expect((Set(operate.capabilities)) == (Set(DefaultGatewayConfiguration.operateCapabilities)))
     #expect((localAdmin.capabilities) == (["*"]))
-    #expect(observe.workspaces.isEmpty)
-    #expect(operate.workspaces.isEmpty)
+    #expect(observe.projects.isEmpty)
+    #expect(operate.projects.isEmpty)
     #expect((observe.allowedCallers) == ([.secureTunnel]))
     #expect((operate.allowedCallers) == ([.secureTunnel]))
     #expect((Set(localAdmin.allowedCallers)) == ([.localApp, .localCLI, .localMCP]))
     #expect(!(observe.fullShellEnabled))
     #expect(!(operate.fullShellEnabled))
     #expect(localAdmin.fullShellEnabled)
-    #expect(localAdmin.workspaces == ["*"])
+    #expect(localAdmin.projects == ["*"])
     #expect(localAdmin.mode == .localFullAccess)
     #expect(observe.mode == .readOnly)
-    #expect(operate.mode == .workspaceOperations)
+    #expect(operate.mode == .projectOperations)
     #expect(configuration.profiles.allSatisfy { $0.confirmationPolicy == .riskBased })
 
     let operateCapabilities = Set(operate.capabilities)
@@ -114,13 +114,13 @@ final class DefaultGatewayConfigurationTests {
     defer { fixture.cleanup() }
     var configuration = try GatewayConfiguration.load(path: fixture.manifest.path)
     for index in configuration.profiles.indices {
-      configuration.profiles[index].workspaces = ["workspace"]
+      configuration.profiles[index].projects = ["project"]
     }
     try configuration.validate()
-    let workspace = RegisteredWorkspace(
-      id: "workspace",
-      displayName: "Workspace",
-      rootPath: fixture.workspace.path
+    let project = RegisteredProject(
+      id: "project",
+      displayName: "Project",
+      rootPath: fixture.project.path
     )
 
     let observeGateway = try GatewayRuntime(
@@ -128,9 +128,9 @@ final class DefaultGatewayConfigurationTests {
       context: ExecutionContext(
         caller: .secureTunnel,
         profileID: .chatGPTObserve,
-        workspaceID: workspace.id
+        projectID: project.id
       ),
-      registeredWorkspaces: [workspace], platform: MacOSPlatform.services
+      registeredProjects: [project], platform: MacOSPlatform.services
     )
     let observeTools = try observeGateway.listTools(context: .empty)
     #expect(
@@ -148,9 +148,9 @@ final class DefaultGatewayConfigurationTests {
       context: ExecutionContext(
         caller: .secureTunnel,
         profileID: .chatGPTOperate,
-        workspaceID: workspace.id
+        projectID: project.id
       ),
-      registeredWorkspaces: [workspace], platform: MacOSPlatform.services
+      registeredProjects: [project], platform: MacOSPlatform.services
     )
     let operateNames = Set(try operateGateway.listTools(context: .empty).map(\.name))
     #expect(operateNames.isSuperset(of: Set(observeTools.map(\.name))))
@@ -195,14 +195,14 @@ final class DefaultGatewayConfigurationTests {
 private final class DefaultManifestFixture {
   let root: URL
   let manifest: URL
-  let workspace: URL
+  let project: URL
 
   init() throws {
     root = FileManager.default.temporaryDirectory
       .appendingPathComponent(UUID().uuidString, isDirectory: true)
     manifest = root.appendingPathComponent("computer-mcp.toml")
-    workspace = root.appendingPathComponent("Workspace", isDirectory: true)
-    try FileManager.default.createDirectory(at: workspace, withIntermediateDirectories: true)
+    project = root.appendingPathComponent("Project", isDirectory: true)
+    try FileManager.default.createDirectory(at: project, withIntermediateDirectories: true)
     try DefaultGatewayConfiguration.manifest.write(
       to: manifest,
       atomically: true,

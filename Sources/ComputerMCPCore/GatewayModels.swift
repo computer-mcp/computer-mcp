@@ -1,7 +1,7 @@
 import Crypto
 import Foundation
 
-package struct RegisteredWorkspace: Codable, Equatable, Sendable, Identifiable {
+package struct RegisteredProject: Codable, Equatable, Sendable, Identifiable {
   package var id: String
   package var displayName: String
   package var rootPath: String
@@ -109,7 +109,7 @@ package struct AuditEvent: Codable, Equatable, Sendable, Identifiable {
   package var tunnelInstanceID: String?
   package var tunnelProfileID: String?
   package var profileID: GatewayProfileID
-  package var workspaceID: String?
+  package var projectID: String?
   package var capabilityID: String
   package var decision: AuditDecision
   package var errorCode: String?
@@ -136,7 +136,7 @@ package struct AuditEvent: Codable, Equatable, Sendable, Identifiable {
     tunnelInstanceID: String? = nil,
     tunnelProfileID: String? = nil,
     profileID: GatewayProfileID,
-    workspaceID: String? = nil,
+    projectID: String? = nil,
     capabilityID: String,
     decision: AuditDecision,
     errorCode: String? = nil,
@@ -161,7 +161,7 @@ package struct AuditEvent: Codable, Equatable, Sendable, Identifiable {
     self.tunnelInstanceID = tunnelInstanceID
     self.tunnelProfileID = tunnelProfileID
     self.profileID = profileID
-    self.workspaceID = workspaceID
+    self.projectID = projectID
     self.capabilityID = capabilityID
     self.decision = decision
     self.errorCode = errorCode
@@ -197,7 +197,7 @@ package struct OperationTicket: Codable, Equatable, Sendable, Identifiable {
   package var caller: GatewayCallerKind
   package var profileID: GatewayProfileID
   package var principalID: String
-  package var workspaceID: String?
+  package var projectID: String?
   package var inputDigest: String
   package var stateDigest: String?
   package var state: OperationTicketState
@@ -222,7 +222,7 @@ package struct OperationTicket: Codable, Equatable, Sendable, Identifiable {
     caller: GatewayCallerKind,
     profileID: GatewayProfileID,
     principalID: String? = nil,
-    workspaceID: String? = nil,
+    projectID: String? = nil,
     inputDigest: String,
     stateDigest: String? = nil,
     state: OperationTicketState = .prepared,
@@ -247,7 +247,7 @@ package struct OperationTicket: Codable, Equatable, Sendable, Identifiable {
     self.principalID =
       principalID
       ?? "\(caller.rawValue):\(profileID.rawValue)"
-    self.workspaceID = workspaceID
+    self.projectID = projectID
     self.inputDigest = inputDigest
     self.stateDigest = stateDigest
     self.state = state

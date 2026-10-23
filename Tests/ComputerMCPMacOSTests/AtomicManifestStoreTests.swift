@@ -78,8 +78,8 @@ final class AtomicManifestStoreTests {
     let original = try fixture.store.activate(
       manifest: Self.manifest(name: "original"),
       expectedDigest: try? fixture.store.admittedDigest(for: fixture.store.activeConfiguration()))
-    try fixture.database.saveWorkspace(
-      .init(id: "workspace", displayName: "Workspace", rootPath: fixture.root.path))
+    try fixture.database.saveProject(
+      .init(id: "project", displayName: "Project", rootPath: fixture.root.path))
     let before = try fixture.database.configurationState()
     let store = try AtomicManifestStore(
       manifestURL: fixture.manifestURL, database: fixture.database,
@@ -92,11 +92,11 @@ final class AtomicManifestStoreTests {
     #expect(try store.activeConfiguration().server.name == "original")
     #expect(try fixture.database.configurationState() == before)
     #expect(try store.history().map(\.id) == [original.id])
-    let workspace = try #require(before.workspaces.first)
-    var refreshed = workspace
+    let project = try #require(before.projects.first)
+    var refreshed = project
     refreshed.bookmarkData = Data([1, 2, 3])
-    let resolution = GatewayConfigurationResolution(workspaces: [
-      .init(original: workspace, resolved: refreshed)
+    let resolution = GatewayConfigurationResolution(projects: [
+      .init(original: project, resolved: refreshed)
     ])
     if outcome == "conflict" { try fixture.database.saveProfile(.operate) }
     var installed: GatewayDatabase.ConfigurationState?
@@ -104,7 +104,7 @@ final class AtomicManifestStoreTests {
       _ = try store.commit(candidate, resolution: resolution) { installed = $0 }
       #expect(installed == (try fixture.database.configurationState()))
       #expect(
-        try fixture.database.workspace(id: workspace.id)?.bookmarkData == refreshed.bookmarkData)
+        try fixture.database.project(id: project.id)?.bookmarkData == refreshed.bookmarkData)
       #expect(try store.activeConfiguration().server.name == "candidate")
       #expect(try store.history().count == 2)
     } else {
@@ -112,7 +112,7 @@ final class AtomicManifestStoreTests {
         try store.commit(candidate, resolution: resolution) { installed = $0 }
       }
       #expect(installed == nil)
-      #expect(try fixture.database.workspace(id: workspace.id) == workspace)
+      #expect(try fixture.database.project(id: project.id) == project)
       #expect(try Data(contentsOf: fixture.manifestURL) == Data(original.manifest.utf8))
       #expect(try store.activeConfiguration().server.name == "original")
       #expect(try store.history().map(\.id) == [original.id])
@@ -584,6 +584,96 @@ final class AtomicManifestStoreTests {
     }
     #expect(try store.activeConfiguration().server.name == winners[0])
     #expect(try store.history().count == 2)
+  }
+
+  @Test(arguments: ["success", "file", "database", "validation"])
+  func projectManifestUpgradeIsAtomicAndRetryable(failure: String) throws {
+    let fixture = try ManifestStoreFixture(persistent: true)
+    defer { fixture.cleanup() }
+    let text = """
+      schema_version = 1
+      [builtin]
+      enabled = ["workspace.instructions"]
+      [[workspaces]]
+      id = "workspace-id"
+      display_name = "workspace.list"
+      path = "/tmp/workspace"
+      [[profiles]]
+      id = "local-admin"
+      mode = "workspace-operations"
+      capabilities = ["workspace.list"]
+      workspaces = ["workspace-id"]
+      allowed_callers = ["local-cli"]
+      """
+    try Data(text.utf8).write(to: fixture.manifestURL)
+    let historical = ConfigurationRevision(
+      digest: try AtomicManifestStore.digest(of: Data(text.utf8)), manifest: text)
+    try fixture.database.saveConfigurationRevision(historical)
+    let loader = GatewayManifestConfigurationLoader(
+      database: fixture.database, applications: MacOSPlatform.services.applications)
+    let connection = try DatabaseQueue(path: try #require(fixture.database.fileURL).path)
+    defer { try? connection.close() }
+    if failure == "database" {
+      try connection.write {
+        try $0.execute(
+          sql:
+            "CREATE TRIGGER refuse_upgrade BEFORE INSERT ON configurationRevisions BEGIN SELECT RAISE(ABORT, 'fixture'); END"
+        )
+      }
+    }
+    if failure == "validation" {
+      try Data((text + "unknown = true\n").utf8).write(to: fixture.manifestURL)
+    }
+    let original = try Data(contentsOf: fixture.manifestURL)
+    if failure != "success" {
+      #expect(throws: (any Error).self) {
+        try AtomicManifestStore(
+          manifestURL: fixture.manifestURL, database: fixture.database, loader: loader,
+          fileManager: failure == "file"
+            ? RejectingManifestMetadata(manifestURL: fixture.manifestURL) : .default)
+      }
+      #expect(try Data(contentsOf: fixture.manifestURL) == original)
+      #expect(try fixture.database.configurationRevisions().count == 1)
+      if failure == "database" {
+        try connection.write { try $0.execute(sql: "DROP TRIGGER refuse_upgrade") }
+      }
+      if failure == "validation" { try Data(text.utf8).write(to: fixture.manifestURL) }
+    }
+    let reopenedDatabase = try GatewayDatabase(path: try #require(fixture.database.fileURL).path)
+    let store = try AtomicManifestStore(
+      manifestURL: fixture.manifestURL, database: reopenedDatabase, loader: loader)
+    let config = try store.activeConfiguration()
+    #expect(config.projects.first?.id == "workspace-id")
+    #expect(config.projects.first?.displayName == "workspace.list")
+    #expect(config.profiles.first?.projects == ["workspace-id"])
+    #expect(config.profiles.first?.capabilities == ["project.list"])
+    #expect(config.profiles.first?.mode == .projectOperations)
+    #expect(config.builtin.enabled == ["project.instructions"])
+    #expect(try store.history().count == 2)
+    #expect(try reopenedDatabase.configurationRevision(id: historical.id)?.manifest == text)
+    let bytes = try Data(contentsOf: fixture.manifestURL)
+    _ = try AtomicManifestStore(
+      manifestURL: fixture.manifestURL, database: reopenedDatabase, loader: loader)
+    #expect(try Data(contentsOf: fixture.manifestURL) == bytes)
+    #expect(try store.history().count == 2)
+
+    let savedHistorical = try #require(
+      try reopenedDatabase.configurationRevision(id: historical.id))
+    let rollback = try store.rollback(
+      to: historical.id, expectedDigest: AtomicManifestStore.digest(of: bytes))
+    #expect(rollback.id != historical.id)
+    #expect(
+      try GatewayConfiguration.load(
+        text: rollback.manifest, baseURL: fixture.manifestURL.deletingLastPathComponent()) == config
+    )
+    #expect(try store.activeConfiguration() == config)
+    #expect(try Data(contentsOf: fixture.manifestURL) == Data(rollback.manifest.utf8))
+    #expect(try store.history().count == 3)
+    #expect(try reopenedDatabase.configurationRevision(id: historical.id) == savedHistorical)
+    let stored = try #require(try reopenedDatabase.configurationRevision(id: rollback.id))
+    #expect(stored.manifest == rollback.manifest)
+    #expect(stored.digest == rollback.digest)
+    #expect(stored.activatedAt != nil)
   }
 
   private static func manifest(name: String) -> String {

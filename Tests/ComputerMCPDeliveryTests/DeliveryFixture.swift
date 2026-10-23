@@ -36,7 +36,7 @@ final class DeliveryFixture: @unchecked Sendable {
   }
 
   var scope: DeliveryScope {
-    .init(id: "notes", workspace: "fixture", paths: ["notes/**"], defaultBranch: "main")
+    .init(id: "notes", project: "fixture", paths: ["notes/**"], defaultBranch: "main")
   }
 
   func tools(
@@ -45,13 +45,13 @@ final class DeliveryFixture: @unchecked Sendable {
   ) -> ToolEnvironment {
     ToolEnvironment(
       configuration: .init(
-        workspaces: [.init(id: "fixture", path: root.path)],
+        projects: [.init(id: "fixture", path: root.path)],
         cli: .init(commands: [
           .init(
             id: "git", executable: executable, env: commandEnvironment, defaultTimeoutMs: timeout)
         ]),
         builtin: .init(enabled: ["delivery.scopes.list", "delivery.apply"]),
-        delivery: .init(scopes: [scope ?? self.scope]), workspaceDirectory: root),
+        delivery: .init(scopes: [scope ?? self.scope]), projectDirectory: root),
       environment: environment.merging(extraEnvironment) { _, value in value })
   }
 
@@ -131,7 +131,7 @@ final class DeliveryFixture: @unchecked Sendable {
     -> DeliveryRepository
   {
     try DeliveryRepository(
-      scope: scope ?? self.scope, workspace: root,
+      scope: scope ?? self.scope, project: root,
       git: DeliveryGit(environment: tools(scope: scope)), io: io)
   }
 

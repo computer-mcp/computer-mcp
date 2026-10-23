@@ -14,8 +14,8 @@ extension StructuredToolProvider {
     let maxBytes = optionalInt("max_bytes", in: object) ?? configuration.policy.maxOutputBytes
     try validateBoundedPositive(maxBytes, name: "max_bytes", upperBound: 20_971_520)
 
-    let url = try workspaceScope.resolvedWorkspaceURL(path)
-    let info = try workspaceScope.fileInfo(url: url)
+    let url = try projectScope.resolvedProjectURL(path)
+    let info = try projectScope.fileInfo(url: url)
     guard info.type == "file" else {
       throw GatewayToolError.invalidArguments("Path is not a file: \(path)")
     }
@@ -42,7 +42,7 @@ extension StructuredToolProvider {
     return .object([
       "operation": .string("json.read"),
       "path": .string(url.path),
-      "workspace_relative_path": .string(info.workspaceRelativePath),
+      "project_relative_path": .string(info.projectRelativePath),
       "bytes_read": .integer(Int64(data.count)),
       "value": value,
     ])
@@ -61,8 +61,8 @@ extension StructuredToolProvider {
     try validateBoundedNonNegative(maxErrors, name: "max_errors", upperBound: 100_000)
     try validateBoundedPositive(maxBytes, name: "max_bytes", upperBound: 20_971_520)
 
-    let url = try workspaceScope.resolvedWorkspaceURL(path)
-    let info = try workspaceScope.fileInfo(url: url)
+    let url = try projectScope.resolvedProjectURL(path)
+    let info = try projectScope.fileInfo(url: url)
     guard info.type == "file" else {
       throw GatewayToolError.invalidArguments("Path is not a file: \(path)")
     }
@@ -145,7 +145,7 @@ extension StructuredToolProvider {
     return .object([
       "operation": .string("jsonl.read"),
       "path": .string(url.path),
-      "workspace_relative_path": .string(info.workspaceRelativePath),
+      "project_relative_path": .string(info.projectRelativePath),
       "size_bytes": info.size.map { .integer(Int64($0)) } ?? .null,
       "modified_at": info.modifiedAt.map { .string(iso8601String($0)) } ?? .null,
       "encoding": .string("utf-8"),
@@ -220,7 +220,7 @@ extension StructuredToolProvider {
       throw GatewayToolError.invalidArguments("Encoded JSON exceeds max_bytes.")
     }
 
-    let url = try workspaceScope.resolvedWorkspaceURL(path)
+    let url = try projectScope.resolvedProjectURL(path)
     let parent = url.deletingLastPathComponent()
     let fileManager = FileManager.default
     var parentIsDirectory = ObjCBool(false)
@@ -263,7 +263,7 @@ extension StructuredToolProvider {
     var payload: [String: JSONValue] = [
       "operation": .string("json.write"),
       "path": .string(url.path),
-      "workspace_relative_path": .string(workspaceScope.workspaceRelativePath(url)),
+      "project_relative_path": .string(projectScope.projectRelativePath(url)),
       "dry_run": .bool(dryRun),
       "confirm_write": .bool(confirmWrite),
       "overwrite": .bool(overwrite),
@@ -300,8 +300,8 @@ extension StructuredToolProvider {
     let maxBytes = optionalInt("max_bytes", in: object) ?? configuration.policy.maxOutputBytes
     try validateBoundedPositive(maxBytes, name: "max_bytes", upperBound: 20_971_520)
 
-    let url = try workspaceScope.resolvedWorkspaceURL(path)
-    let info = try workspaceScope.fileInfo(url: url)
+    let url = try projectScope.resolvedProjectURL(path)
+    let info = try projectScope.fileInfo(url: url)
     guard info.type == "file" else {
       throw GatewayToolError.invalidArguments("Path is not a file: \(path)")
     }
@@ -337,7 +337,7 @@ extension StructuredToolProvider {
     return .object([
       "operation": .string("toml.read"),
       "path": .string(url.path),
-      "workspace_relative_path": .string(info.workspaceRelativePath),
+      "project_relative_path": .string(info.projectRelativePath),
       "bytes_read": .integer(Int64(data.count)),
       "value": tomlJSONValue(value),
     ])
@@ -352,8 +352,8 @@ extension StructuredToolProvider {
     try validateBoundedPositive(maxDocuments, name: "max_documents", upperBound: 1_000)
     try validateBoundedPositive(maxDepth, name: "max_depth", upperBound: 512)
 
-    let url = try workspaceScope.resolvedWorkspaceURL(path)
-    let info = try workspaceScope.fileInfo(url: url)
+    let url = try projectScope.resolvedProjectURL(path)
+    let info = try projectScope.fileInfo(url: url)
     guard info.type == "file" else {
       throw GatewayToolError.invalidArguments("Path is not a file: \(path)")
     }
@@ -419,7 +419,7 @@ extension StructuredToolProvider {
     return .object([
       "operation": .string("yaml.read"),
       "path": .string(url.path),
-      "workspace_relative_path": .string(info.workspaceRelativePath),
+      "project_relative_path": .string(info.projectRelativePath),
       "size_bytes": info.size.map { .integer(Int64($0)) } ?? .null,
       "modified_at": info.modifiedAt.map { .string(iso8601String($0)) } ?? .null,
       "encoding": .string("utf-8"),
@@ -449,8 +449,8 @@ extension StructuredToolProvider {
     try validateBoundedPositive(maxDepth, name: "max_depth", upperBound: 512)
     try validateBoundedPositive(maxTextBytes, name: "max_text_bytes", upperBound: 1_048_576)
 
-    let url = try workspaceScope.resolvedWorkspaceURL(path)
-    let info = try workspaceScope.fileInfo(url: url)
+    let url = try projectScope.resolvedProjectURL(path)
+    let info = try projectScope.fileInfo(url: url)
     guard info.type == "file" else {
       throw GatewayToolError.invalidArguments("Path is not a file: \(path)")
     }
@@ -494,7 +494,7 @@ extension StructuredToolProvider {
     return .object([
       "operation": .string("xml.read"),
       "path": .string(url.path),
-      "workspace_relative_path": .string(info.workspaceRelativePath),
+      "project_relative_path": .string(info.projectRelativePath),
       "size_bytes": info.size.map { .integer(Int64($0)) } ?? .null,
       "modified_at": info.modifiedAt.map { .string(iso8601String($0)) } ?? .null,
       "bytes_read": .integer(Int64(data.count)),
@@ -519,8 +519,8 @@ extension StructuredToolProvider {
     let maxBytes = optionalInt("max_bytes", in: object) ?? configuration.policy.maxOutputBytes
     try validateBoundedPositive(maxBytes, name: "max_bytes", upperBound: 20_971_520)
 
-    let url = try workspaceScope.resolvedWorkspaceURL(path)
-    let info = try workspaceScope.fileInfo(url: url)
+    let url = try projectScope.resolvedProjectURL(path)
+    let info = try projectScope.fileInfo(url: url)
     guard info.type == "file" else {
       throw GatewayToolError.invalidArguments("Path is not a file: \(path)")
     }
@@ -549,7 +549,7 @@ extension StructuredToolProvider {
     return .object([
       "operation": .string("plist.read"),
       "path": .string(url.path),
-      "workspace_relative_path": .string(info.workspaceRelativePath),
+      "project_relative_path": .string(info.projectRelativePath),
       "format": .string(propertyListFormatName(format)),
       "bytes_read": .integer(Int64(data.count)),
       "value": try propertyListJSONValue(plist),
@@ -567,8 +567,8 @@ extension StructuredToolProvider {
     try validateBoundedPositive(maxDocuments, name: "max_documents", upperBound: 1_000)
     try validateBoundedPositive(maxDepth, name: "max_depth", upperBound: 512)
 
-    let url = try workspaceScope.resolvedWorkspaceURL(path)
-    let info = try workspaceScope.fileInfo(url: url)
+    let url = try projectScope.resolvedProjectURL(path)
+    let info = try projectScope.fileInfo(url: url)
     guard info.type == "file" else {
       throw GatewayToolError.invalidArguments("Path is not a file: \(path)")
     }
@@ -591,7 +591,7 @@ extension StructuredToolProvider {
     return .object([
       "operation": .string("structured.get"),
       "path": .string(url.path),
-      "workspace_relative_path": .string(info.workspaceRelativePath),
+      "project_relative_path": .string(info.projectRelativePath),
       "format": .string(resolvedFormat),
       "requested_format": .string(format),
       "bytes_read": .integer(Int64(data.count)),
@@ -654,7 +654,7 @@ extension StructuredToolProvider {
       throw GatewayToolError.invalidArguments("Encoded property list exceeds max_bytes.")
     }
 
-    let url = try workspaceScope.resolvedWorkspaceURL(path)
+    let url = try projectScope.resolvedProjectURL(path)
     let parent = url.deletingLastPathComponent()
     let fileManager = FileManager.default
     var parentIsDirectory = ObjCBool(false)
@@ -697,7 +697,7 @@ extension StructuredToolProvider {
     var payload: [String: JSONValue] = [
       "operation": .string("plist.write"),
       "path": .string(url.path),
-      "workspace_relative_path": .string(workspaceScope.workspaceRelativePath(url)),
+      "project_relative_path": .string(projectScope.projectRelativePath(url)),
       "format": .string(formatName),
       "dry_run": .bool(dryRun),
       "confirm_write": .bool(confirmWrite),
@@ -733,8 +733,8 @@ extension StructuredToolProvider {
     try validateBoundedPositive(maxColumns, name: "max_columns", upperBound: 10_000)
     try validateBoundedPositive(maxBytes, name: "max_bytes", upperBound: 20_971_520)
 
-    let url = try workspaceScope.resolvedWorkspaceURL(path)
-    let info = try workspaceScope.fileInfo(url: url)
+    let url = try projectScope.resolvedProjectURL(path)
+    let info = try projectScope.fileInfo(url: url)
     guard info.type == "file" else {
       throw GatewayToolError.invalidArguments("Path is not a file: \(path)")
     }
@@ -783,7 +783,7 @@ extension StructuredToolProvider {
     let payload: [String: JSONValue] = [
       "operation": .string("csv.read"),
       "path": .string(url.path),
-      "workspace_relative_path": .string(info.workspaceRelativePath),
+      "project_relative_path": .string(info.projectRelativePath),
       "size_bytes": info.size.map { .integer(Int64($0)) } ?? .null,
       "modified_at": info.modifiedAt.map { .string(iso8601String($0)) } ?? .null,
       "delimiter": .string(delimiter.name),
@@ -992,8 +992,8 @@ extension StructuredToolProvider {
     try validateBoundedPositive(timeout, name: "timeout_ms", upperBound: 600_000)
     try validateBoundedPositive(maxOutputBytes, name: "max_output_bytes", upperBound: 20_971_520)
 
-    let url = try workspaceScope.resolvedWorkspaceURL(path)
-    let info = try workspaceScope.fileInfo(url: url)
+    let url = try projectScope.resolvedProjectURL(path)
+    let info = try projectScope.fileInfo(url: url)
     guard info.type == "file" else {
       throw GatewayToolError.invalidArguments("Path is not a file: \(path)")
     }
@@ -1061,7 +1061,7 @@ extension StructuredToolProvider {
       "operation": .string("sqlite.schema"),
       "database": .object([
         "path": .string(url.path),
-        "workspace_relative_path": .string(info.workspaceRelativePath),
+        "project_relative_path": .string(info.projectRelativePath),
         "size_bytes": info.size.map { .integer(Int64($0)) } ?? .null,
         "modified_at": info.modifiedAt.map { .string(iso8601String($0)) } ?? .null,
       ]),
@@ -1100,8 +1100,8 @@ extension StructuredToolProvider {
     try validateBoundedPositive(timeout, name: "timeout_ms", upperBound: 600_000)
     try validateBoundedPositive(maxOutputBytes, name: "max_output_bytes", upperBound: 20_971_520)
 
-    let url = try workspaceScope.resolvedWorkspaceURL(path)
-    let info = try workspaceScope.fileInfo(url: url)
+    let url = try projectScope.resolvedProjectURL(path)
+    let info = try projectScope.fileInfo(url: url)
     guard info.type == "file" else {
       throw GatewayToolError.invalidArguments("Path is not a file: \(path)")
     }
@@ -1159,7 +1159,7 @@ extension StructuredToolProvider {
       "operation": .string("sqlite.query"),
       "database": .object([
         "path": .string(url.path),
-        "workspace_relative_path": .string(info.workspaceRelativePath),
+        "project_relative_path": .string(info.projectRelativePath),
         "size_bytes": info.size.map { .integer(Int64($0)) } ?? .null,
         "modified_at": info.modifiedAt.map { .string(iso8601String($0)) } ?? .null,
       ]),

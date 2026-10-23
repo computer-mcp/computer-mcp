@@ -7,10 +7,10 @@ extension StructuredToolProvider {
         tool: MCPTool(
           name: "markdown.links",
           description:
-            "Extract a bounded mechanical inventory of Markdown links from a workspace-contained UTF-8 Markdown file. This reports inline links, images, reference links, reference definitions, autolinks, and local target context; it does not follow links, fetch URLs, or infer document semantics.",
+            "Extract a bounded mechanical inventory of Markdown links from a project-contained UTF-8 Markdown file. This reports inline links, images, reference links, reference definitions, autolinks, and local target context; it does not follow links, fetch URLs, or infer document semantics.",
           inputSchema: objectSchema(
             properties: [
-              "path": stringSchema("Workspace-relative Markdown file path."),
+              "path": stringSchema("Project-relative Markdown file path."),
               "include_images": boolSchema("Whether to include image links. Defaults to true."),
               "include_reference_definitions": boolSchema(
                 "Whether to include [label]: destination reference definitions. Defaults to true."
@@ -33,7 +33,7 @@ extension StructuredToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "markdown.links", risk: .readOnly,
-          workspaceRequirement: .optional,
+          projectRequirement: .optional,
           localOnly: false, usesNetwork: false
         )
       ),
@@ -41,11 +41,11 @@ extension StructuredToolProvider {
         tool: MCPTool(
           name: "markdown.tables",
           description:
-            "Extract bounded GitHub-flavored pipe tables from a workspace-contained UTF-8 Markdown file. This reports headers, alignments, rows, line ranges, raw table text, and truncation flags; it does not infer table semantics, summarize content, or execute code blocks.",
+            "Extract bounded GitHub-flavored pipe tables from a project-contained UTF-8 Markdown file. This reports headers, alignments, rows, line ranges, raw table text, and truncation flags; it does not infer table semantics, summarize content, or execute code blocks.",
           inputSchema: objectSchema(
             properties: [
               "path": stringSchema(
-                "Workspace-relative or in-workspace absolute Markdown file path."),
+                "Project-relative or in-project absolute Markdown file path."),
               "include_code_blocks": boolSchema(
                 "Whether to scan fenced code blocks for tables. Defaults to false."),
               "max_tables": integerSchema("Maximum tables to return. Defaults to 20."),
@@ -63,7 +63,7 @@ extension StructuredToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "markdown.tables", risk: .readOnly,
-          workspaceRequirement: .optional,
+          projectRequirement: .optional,
           localOnly: false, usesNetwork: false
         )
       ),
@@ -71,11 +71,11 @@ extension StructuredToolProvider {
         tool: MCPTool(
           name: "markdown.section",
           description:
-            "Extract one raw Markdown section by exact ATX heading text from a workspace-contained UTF-8 Markdown file. This uses explicit heading, optional level, and occurrence only; it does not search semantically, summarize, follow links, or parse arbitrary Markdown blocks.",
+            "Extract one raw Markdown section by exact ATX heading text from a project-contained UTF-8 Markdown file. This uses explicit heading, optional level, and occurrence only; it does not search semantically, summarize, follow links, or parse arbitrary Markdown blocks.",
           inputSchema: objectSchema(
             properties: [
               "path": stringSchema(
-                "Workspace-relative or in-workspace absolute Markdown file path."),
+                "Project-relative or in-project absolute Markdown file path."),
               "heading": stringSchema("Exact heading text as returned by file.outline."),
               "level": integerSchema("Optional heading level from 1 to 6."),
               "occurrence": integerSchema(
@@ -99,7 +99,7 @@ extension StructuredToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "markdown.section", risk: .readOnly,
-          workspaceRequirement: .optional,
+          projectRequirement: .optional,
           localOnly: false, usesNetwork: false
         )
       ),
@@ -107,11 +107,11 @@ extension StructuredToolProvider {
         tool: MCPTool(
           name: "markdown.frontmatter",
           description:
-            "Read leading YAML or TOML frontmatter from a workspace-contained UTF-8 Markdown file. This only recognizes explicit opening delimiters at the start of the file, returns raw frontmatter plus parsed structured value when valid, and does not infer skill semantics, summarize, or scan the Markdown body.",
+            "Read leading YAML or TOML frontmatter from a project-contained UTF-8 Markdown file. This only recognizes explicit opening delimiters at the start of the file, returns raw frontmatter plus parsed structured value when valid, and does not infer skill semantics, summarize, or scan the Markdown body.",
           inputSchema: objectSchema(
             properties: [
               "path": stringSchema(
-                "Workspace-relative or in-workspace absolute Markdown file path."),
+                "Project-relative or in-project absolute Markdown file path."),
               "format": stringSchema(
                 "Frontmatter format to accept: auto, yaml, or toml. Defaults to auto."
               ),
@@ -129,7 +129,7 @@ extension StructuredToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "markdown.frontmatter", risk: .readOnly,
-          workspaceRequirement: .optional,
+          projectRequirement: .optional,
           localOnly: false, usesNetwork: false
         )
       ),
@@ -137,10 +137,10 @@ extension StructuredToolProvider {
         tool: MCPTool(
           name: "markdown.link_check",
           description:
-            "Check local Markdown links in one workspace-contained UTF-8 Markdown file. This resolves reference definitions, verifies workspace-contained local targets and Markdown fragments, and reports external URLs as unchecked; it does not fetch URLs, crawl documents, or infer document semantics.",
+            "Check local Markdown links in one project-contained UTF-8 Markdown file. This resolves reference definitions, verifies project-contained local targets and Markdown fragments, and reports external URLs as unchecked; it does not fetch URLs, crawl documents, or infer document semantics.",
           inputSchema: objectSchema(
             properties: [
-              "path": stringSchema("Workspace-relative Markdown file path."),
+              "path": stringSchema("Project-relative Markdown file path."),
               "include_images": boolSchema("Whether to include image links. Defaults to true."),
               "include_reference_definitions": boolSchema(
                 "Whether to include [label]: destination reference definitions as checked rows. Defaults to true."
@@ -169,7 +169,7 @@ extension StructuredToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "markdown.link_check", risk: .readOnly,
-          workspaceRequirement: .optional,
+          projectRequirement: .optional,
           localOnly: false, usesNetwork: false
         )
       ),
@@ -177,11 +177,11 @@ extension StructuredToolProvider {
         tool: MCPTool(
           name: "image.info",
           description:
-            "Read mechanical metadata for a workspace-contained image file using ImageIO. This reports format, MIME, dimensions, frame count, color metadata, and optional bounded raw properties; it does not decode pixels, OCR, classify, or generate previews.",
+            "Read mechanical metadata for a project-contained image file using ImageIO. This reports format, MIME, dimensions, frame count, color metadata, and optional bounded raw properties; it does not decode pixels, OCR, classify, or generate previews.",
           inputSchema: objectSchema(
             properties: [
               "path": stringSchema(
-                "Workspace-relative or in-workspace absolute image file path."),
+                "Project-relative or in-project absolute image file path."),
               "include_properties": boolSchema(
                 "Whether to include bounded raw ImageIO property dictionaries. Defaults to false."
               ),
@@ -197,7 +197,7 @@ extension StructuredToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "image.info", risk: .readOnly,
-          workspaceRequirement: .optional,
+          projectRequirement: .optional,
           localOnly: false, usesNetwork: false
         )
       ),
@@ -205,11 +205,11 @@ extension StructuredToolProvider {
         tool: MCPTool(
           name: "pdf.info",
           description:
-            "Read mechanical metadata for a workspace-contained PDF file using PDFKit. This reports page count, encryption/permission flags, optional document attributes, and bounded page box metadata; it does not extract text, OCR, render pages, or summarize document contents.",
+            "Read mechanical metadata for a project-contained PDF file using PDFKit. This reports page count, encryption/permission flags, optional document attributes, and bounded page box metadata; it does not extract text, OCR, render pages, or summarize document contents.",
           inputSchema: objectSchema(
             properties: [
               "path": stringSchema(
-                "Workspace-relative or in-workspace absolute PDF file path."),
+                "Project-relative or in-project absolute PDF file path."),
               "max_pages": integerSchema(
                 "Maximum page metadata rows to return. Defaults to 20; use 0 to omit page rows."
               ),
@@ -227,7 +227,7 @@ extension StructuredToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "pdf.info", risk: .readOnly,
-          workspaceRequirement: .optional,
+          projectRequirement: .optional,
           localOnly: false, usesNetwork: false
         )
       ),
@@ -235,11 +235,11 @@ extension StructuredToolProvider {
         tool: MCPTool(
           name: "pdf.text",
           description:
-            "Extract bounded searchable text from a workspace-contained PDF file using PDFKit page.string. This is read-only, respects PDF locking/copying flags, and does not OCR, render pages, inspect images, or summarize content.",
+            "Extract bounded searchable text from a project-contained PDF file using PDFKit page.string. This is read-only, respects PDF locking/copying flags, and does not OCR, render pages, inspect images, or summarize content.",
           inputSchema: objectSchema(
             properties: [
               "path": stringSchema(
-                "Workspace-relative or in-workspace absolute PDF file path."),
+                "Project-relative or in-project absolute PDF file path."),
               "start_page": integerSchema(
                 "One-based page number to start from. Defaults to 1."),
               "max_pages": integerSchema("Maximum pages to inspect. Defaults to 10."),
@@ -254,7 +254,7 @@ extension StructuredToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "pdf.text", risk: .readOnly,
-          workspaceRequirement: .optional,
+          projectRequirement: .optional,
           localOnly: false, usesNetwork: false
         )
       ),
@@ -262,11 +262,11 @@ extension StructuredToolProvider {
         tool: MCPTool(
           name: "media.info",
           description:
-            "Read mechanical metadata for a workspace-contained audio or video file using AVFoundation. This reports duration, playability, protected-content state, track types, codecs, frame-rate, dimensions, and data-rate; it does not decode samples, transcode, extract frames, play media, or infer content semantics.",
+            "Read mechanical metadata for a project-contained audio or video file using AVFoundation. This reports duration, playability, protected-content state, track types, codecs, frame-rate, dimensions, and data-rate; it does not decode samples, transcode, extract frames, play media, or infer content semantics.",
           inputSchema: objectSchema(
             properties: [
               "path": stringSchema(
-                "Workspace-relative or in-workspace absolute media file path."),
+                "Project-relative or in-project absolute media file path."),
               "max_tracks": integerSchema(
                 "Maximum track metadata rows to return. Defaults to 20; use 0 to omit track rows."
               ),
@@ -281,7 +281,7 @@ extension StructuredToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "media.info", risk: .readOnly,
-          workspaceRequirement: .optional,
+          projectRequirement: .optional,
           localOnly: false, usesNetwork: false
         )
       ),
@@ -289,11 +289,11 @@ extension StructuredToolProvider {
         tool: MCPTool(
           name: "json.read",
           description:
-            "Read and parse a workspace-contained JSON file into a JSON value using the gateway JSON decoder. This is read-only and does not execute subprocesses.",
+            "Read and parse a project-contained JSON file into a JSON value using the gateway JSON decoder. This is read-only and does not execute subprocesses.",
           inputSchema: objectSchema(
             properties: [
               "path": stringSchema(
-                "Workspace-relative or in-workspace absolute JSON file path."),
+                "Project-relative or in-project absolute JSON file path."),
               "max_bytes": integerSchema(
                 "Maximum JSON bytes to parse. Defaults to policy.max_output_bytes."),
             ],
@@ -305,7 +305,7 @@ extension StructuredToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "json.read", risk: .readOnly,
-          workspaceRequirement: .optional,
+          projectRequirement: .optional,
           localOnly: false, usesNetwork: false
         )
       ),
@@ -313,11 +313,11 @@ extension StructuredToolProvider {
         tool: MCPTool(
           name: "jsonl.read",
           description:
-            "Read a bounded preview of a workspace-contained JSON Lines / NDJSON UTF-8 file by parsing each nonblank line as an independent JSON value. This is read-only and does not infer data semantics.",
+            "Read a bounded preview of a project-contained JSON Lines / NDJSON UTF-8 file by parsing each nonblank line as an independent JSON value. This is read-only and does not infer data semantics.",
           inputSchema: objectSchema(
             properties: [
               "path": stringSchema(
-                "Workspace-relative or in-workspace absolute JSONL/NDJSON file path."),
+                "Project-relative or in-project absolute JSONL/NDJSON file path."),
               "start_line": integerSchema("One-based line to start scanning. Defaults to 1."),
               "max_records": integerSchema(
                 "Maximum parsed records to return. Defaults to 100."),
@@ -338,7 +338,7 @@ extension StructuredToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "jsonl.read", risk: .readOnly,
-          workspaceRequirement: .optional,
+          projectRequirement: .optional,
           localOnly: false, usesNetwork: false
         )
       ),
@@ -346,11 +346,11 @@ extension StructuredToolProvider {
         tool: MCPTool(
           name: "json.write",
           description:
-            "Serialize a provided JSON value and write it to a workspace-contained file. Defaults to dry-run, sorted keys, pretty output, and requires confirm_write=true for real writes.",
+            "Serialize a provided JSON value and write it to a project-contained file. Defaults to dry-run, sorted keys, pretty output, and requires confirm_write=true for real writes.",
           inputSchema: objectSchema(
             properties: [
               "path": stringSchema(
-                "Workspace-relative or in-workspace absolute JSON file path."),
+                "Project-relative or in-project absolute JSON file path."),
               "value": .object([
                 "description": .string(
                   "Any JSON value to encode: object, array, string, number, boolean, or null.")
@@ -382,7 +382,7 @@ extension StructuredToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "json.write", risk: .destructive,
-          workspaceRequirement: .optional,
+          projectRequirement: .optional,
           localOnly: false, usesNetwork: false
         )
       ),
@@ -390,11 +390,11 @@ extension StructuredToolProvider {
         tool: MCPTool(
           name: "toml.read",
           description:
-            "Read and parse a workspace-contained TOML file into a JSON value using the existing swift-toml decoder. This is read-only and does not execute subprocesses.",
+            "Read and parse a project-contained TOML file into a JSON value using the existing swift-toml decoder. This is read-only and does not execute subprocesses.",
           inputSchema: objectSchema(
             properties: [
               "path": stringSchema(
-                "Workspace-relative or in-workspace absolute TOML file path."),
+                "Project-relative or in-project absolute TOML file path."),
               "max_bytes": integerSchema(
                 "Maximum TOML bytes to parse. Defaults to policy.max_output_bytes."),
             ],
@@ -406,7 +406,7 @@ extension StructuredToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "toml.read", risk: .readOnly,
-          workspaceRequirement: .optional,
+          projectRequirement: .optional,
           localOnly: false, usesNetwork: false
         )
       ),
@@ -414,11 +414,11 @@ extension StructuredToolProvider {
         tool: MCPTool(
           name: "yaml.read",
           description:
-            "Read and parse a workspace-contained YAML file into JSON-compatible values using Yams. This is read-only, supports multiple YAML documents, and does not execute subprocesses or infer business semantics.",
+            "Read and parse a project-contained YAML file into JSON-compatible values using Yams. This is read-only, supports multiple YAML documents, and does not execute subprocesses or infer business semantics.",
           inputSchema: objectSchema(
             properties: [
               "path": stringSchema(
-                "Workspace-relative or in-workspace absolute YAML file path."),
+                "Project-relative or in-project absolute YAML file path."),
               "max_bytes": integerSchema(
                 "Maximum YAML bytes to parse. Defaults to policy.max_output_bytes."),
               "max_documents": integerSchema(
@@ -434,7 +434,7 @@ extension StructuredToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "yaml.read", risk: .readOnly,
-          workspaceRequirement: .optional,
+          projectRequirement: .optional,
           localOnly: false, usesNetwork: false
         )
       ),
@@ -442,11 +442,11 @@ extension StructuredToolProvider {
         tool: MCPTool(
           name: "xml.read",
           description:
-            "Read and parse a workspace-contained XML file into a bounded element tree using Foundation XMLParser. This is read-only, disables external entity resolution, and does not validate schemas or infer business semantics.",
+            "Read and parse a project-contained XML file into a bounded element tree using Foundation XMLParser. This is read-only, disables external entity resolution, and does not validate schemas or infer business semantics.",
           inputSchema: objectSchema(
             properties: [
               "path": stringSchema(
-                "Workspace-relative or in-workspace absolute XML file path."),
+                "Project-relative or in-project absolute XML file path."),
               "max_bytes": integerSchema(
                 "Maximum XML bytes to parse. Defaults to policy.max_output_bytes."),
               "max_nodes": integerSchema(
@@ -467,7 +467,7 @@ extension StructuredToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "xml.read", risk: .readOnly,
-          workspaceRequirement: .optional,
+          projectRequirement: .optional,
           localOnly: false, usesNetwork: false
         )
       ),
@@ -475,11 +475,11 @@ extension StructuredToolProvider {
         tool: MCPTool(
           name: "plist.read",
           description:
-            "Read and parse a workspace-contained macOS property list file into JSON using Foundation PropertyListSerialization. This is read-only and does not execute subprocesses.",
+            "Read and parse a project-contained macOS property list file into JSON using Foundation PropertyListSerialization. This is read-only and does not execute subprocesses.",
           inputSchema: objectSchema(
             properties: [
               "path": stringSchema(
-                "Workspace-relative or in-workspace absolute plist file path."),
+                "Project-relative or in-project absolute plist file path."),
               "max_bytes": integerSchema(
                 "Maximum plist bytes to parse. Defaults to policy.max_output_bytes."),
             ],
@@ -491,7 +491,7 @@ extension StructuredToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "plist.read", risk: .readOnly,
-          workspaceRequirement: .optional,
+          projectRequirement: .optional,
           localOnly: false, usesNetwork: false
         )
       ),
@@ -499,11 +499,11 @@ extension StructuredToolProvider {
         tool: MCPTool(
           name: "structured.get",
           description:
-            "Read one value at an explicit path from a workspace-contained JSON, YAML, TOML, or plist file. query_path is a mechanical array of object keys and array indexes; this is not JSONPath/JQ, does not filter or wildcard, and does not infer field semantics.",
+            "Read one value at an explicit path from a project-contained JSON, YAML, TOML, or plist file. query_path is a mechanical array of object keys and array indexes; this is not JSONPath/JQ, does not filter or wildcard, and does not infer field semantics.",
           inputSchema: objectSchema(
             properties: [
               "path": stringSchema(
-                "Workspace-relative or in-workspace absolute structured data file path."),
+                "Project-relative or in-project absolute structured data file path."),
               "format": stringSchema(
                 "auto, json, yaml, toml, or plist. Defaults to auto from file extension."),
               "query_path": .object([
@@ -536,7 +536,7 @@ extension StructuredToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "structured.get", risk: .readOnly,
-          workspaceRequirement: .optional,
+          projectRequirement: .optional,
           localOnly: false, usesNetwork: false
         )
       ),
@@ -544,11 +544,11 @@ extension StructuredToolProvider {
         tool: MCPTool(
           name: "plist.write",
           description:
-            "Serialize a provided JSON value as a workspace-contained macOS property list using Foundation PropertyListSerialization. Defaults to dry-run XML output and requires confirm_write=true for real writes. Typed date/data objects from plist.read can be written back.",
+            "Serialize a provided JSON value as a project-contained macOS property list using Foundation PropertyListSerialization. Defaults to dry-run XML output and requires confirm_write=true for real writes. Typed date/data objects from plist.read can be written back.",
           inputSchema: objectSchema(
             properties: [
               "path": stringSchema(
-                "Workspace-relative or in-workspace absolute plist file path."),
+                "Project-relative or in-project absolute plist file path."),
               "value": .object([
                 "description": .string(
                   "Property list value to encode: object, array, string, finite number, boolean, or typed {type:\"date\", iso8601:\"...\"} / {type:\"data\", base64:\"...\"}. Null is not supported."
@@ -579,7 +579,7 @@ extension StructuredToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "plist.write", risk: .destructive,
-          workspaceRequirement: .optional,
+          projectRequirement: .optional,
           localOnly: false, usesNetwork: false
         )
       ),
@@ -587,11 +587,11 @@ extension StructuredToolProvider {
         tool: MCPTool(
           name: "csv.read",
           description:
-            "Read a bounded preview of a workspace-contained CSV/TSV-style delimited UTF-8 text file. This parses delimiter, quotes, rows, and cells mechanically; it does not infer business semantics or execute subprocesses.",
+            "Read a bounded preview of a project-contained CSV/TSV-style delimited UTF-8 text file. This parses delimiter, quotes, rows, and cells mechanically; it does not infer business semantics or execute subprocesses.",
           inputSchema: objectSchema(
             properties: [
               "path": stringSchema(
-                "Workspace-relative or in-workspace absolute CSV/TSV file path."),
+                "Project-relative or in-project absolute CSV/TSV file path."),
               "delimiter": stringSchema(
                 "auto, comma, tab, semicolon, pipe, or one non-newline character. Defaults to auto."
               ),
@@ -611,7 +611,7 @@ extension StructuredToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "csv.read", risk: .readOnly,
-          workspaceRequirement: .optional,
+          projectRequirement: .optional,
           localOnly: false, usesNetwork: false
         )
       ),
@@ -619,11 +619,11 @@ extension StructuredToolProvider {
         tool: MCPTool(
           name: "sqlite.schema",
           description:
-            "Inspect a workspace-contained SQLite database schema using fixed /usr/bin/sqlite3 -readonly -json argv. This returns sqlite_schema entries only; it does not execute user SQL or read table rows.",
+            "Inspect a project-contained SQLite database schema using fixed /usr/bin/sqlite3 -readonly -json argv. This returns sqlite_schema entries only; it does not execute user SQL or read table rows.",
           inputSchema: objectSchema(
             properties: [
               "path": stringSchema(
-                "Workspace-relative or in-workspace absolute SQLite database file path."),
+                "Project-relative or in-project absolute SQLite database file path."),
               "include_views": boolSchema("Whether to include views. Defaults to true."),
               "include_indexes": boolSchema("Whether to include indexes. Defaults to true."),
               "include_triggers": boolSchema(
@@ -646,7 +646,7 @@ extension StructuredToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "sqlite.schema", risk: .readOnly,
-          workspaceRequirement: .optional,
+          projectRequirement: .optional,
           localOnly: false, usesNetwork: false
         )
       ),
@@ -654,11 +654,11 @@ extension StructuredToolProvider {
         tool: MCPTool(
           name: "sqlite.query",
           description:
-            "Run one read-only SELECT, WITH, or non-assigning PRAGMA statement against a workspace-contained SQLite database using fixed /usr/bin/sqlite3 -readonly -json argv. SELECT/WITH queries are wrapped with a max_rows LIMIT; write, DDL, attach, detach, vacuum, and multi-statement SQL are rejected mechanically.",
+            "Run one read-only SELECT, WITH, or non-assigning PRAGMA statement against a project-contained SQLite database using fixed /usr/bin/sqlite3 -readonly -json argv. SELECT/WITH queries are wrapped with a max_rows LIMIT; write, DDL, attach, detach, vacuum, and multi-statement SQL are rejected mechanically.",
           inputSchema: objectSchema(
             properties: [
               "path": stringSchema(
-                "Workspace-relative or in-workspace absolute SQLite database file path."),
+                "Project-relative or in-project absolute SQLite database file path."),
               "query": stringSchema(
                 "One read-only SELECT, WITH, or PRAGMA statement. Multiple statements and mutating SQL are rejected."
               ),
@@ -678,7 +678,7 @@ extension StructuredToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "sqlite.query", risk: .readOnly,
-          workspaceRequirement: .optional,
+          projectRequirement: .optional,
           localOnly: false, usesNetwork: false
         )
       ),

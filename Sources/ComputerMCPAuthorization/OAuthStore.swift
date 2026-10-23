@@ -9,9 +9,9 @@ package protocol OAuthStore: Sendable {
 }
 
 package protocol OAuthStoreTransaction {
-  /// Persisted authorization and workspace membership share the grant's write transaction.
+  /// Persisted authorization and project membership share the grant's write transaction.
   func profile(id: GatewayProfileID) throws -> ProfileGrant?
-  func workspaceIDs() throws -> Set<String>
+  func projectIDs() throws -> Set<String>
   func requests(tunnelID: String) throws -> [OAuthAuthorizationRequest]
   func save(_ request: OAuthAuthorizationRequest) throws
   func grant(id: String) throws -> OAuthGrant?

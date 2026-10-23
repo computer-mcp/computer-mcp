@@ -9,7 +9,7 @@ extension DeliveryRepository {
       let operationID = UUID().uuidString.lowercased()
       let worktree = try Self.checkedPath(scope.worktreeRoot + "/" + operationID, inside: root)
       var journal = DeliveryJournal(
-        operationID: operationID, workspace: scope.workspace, scope: scope.id,
+        operationID: operationID, project: scope.project, scope: scope.id,
         repository: root.path, defaultBranch: scope.defaultBranch, branch: request.branch,
         worktree: worktree.path, base: base)
       do { try io.write(journal, to: journals) } catch {

@@ -12,8 +12,8 @@ struct GatewayOAuthTransaction: OAuthStoreTransaction {
     try ProfileRecord.fetchOne(database, key: id.rawValue)?.value()
   }
 
-  func workspaceIDs() throws -> Set<String> {
-    Set(try String.fetchAll(database, sql: "SELECT id FROM workspaces"))
+  func projectIDs() throws -> Set<String> {
+    Set(try String.fetchAll(database, sql: "SELECT id FROM projects"))
   }
 
   func requests(tunnelID: String) throws -> [OAuthAuthorizationRequest] {

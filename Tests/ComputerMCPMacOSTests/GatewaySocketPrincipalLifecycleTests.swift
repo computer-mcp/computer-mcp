@@ -49,8 +49,8 @@ struct GatewaySocketPrincipalLifecycleTests {
           capabilities: [
             "mcp.tools.call", "mcp.requests.list", "mcp.requests.read", "mcp.requests.cancel",
           ],
-          workspaces: ["fixture"], allowedCallers: [.localMCP], mcpServers: ["fixture"],
-          mode: .workspaceOperations, confirmationPolicy: .never)
+          projects: ["fixture"], allowedCallers: [.localMCP], mcpServers: ["fixture"],
+          mode: .projectOperations, confirmationPolicy: .never)
       ],
       mcp: .init(servers: [
         .init(
@@ -59,10 +59,10 @@ struct GatewaySocketPrincipalLifecycleTests {
           exposure: .reexport, prefix: "fixture", allowAnyTool: true,
           startupTimeoutMs: 5000, requestTimeoutMs: 5000,
           toolRisks: ["hang": .readOnly, "finish": .readOnly])
-      ]), workspaceDirectory: root)
+      ]), projectDirectory: root)
     _ = try await control.activateManifest(
       configuration.exportedTOML(), expectedDigest: try? await control.configurationDigest())
-    try database.saveWorkspace(.init(id: "fixture", displayName: "Fixture", rootPath: root.path))
+    try database.saveProject(.init(id: "fixture", displayName: "Fixture", rootPath: root.path))
     let service = AppGatewayService(
       controlPlane: control,
       socketConfiguration: .init(socketURL: root.appendingPathComponent("gateway.sock")))
@@ -73,7 +73,7 @@ struct GatewaySocketPrincipalLifecycleTests {
       let started = try await first.call(
         toolName: "mcp.tools.call",
         arguments: .object([
-          "workspace_id": .string("fixture"), "server": .string("fixture"), "tool": .string("hang"),
+          "project_id": .string("fixture"), "server": .string("fixture"), "tool": .string("hang"),
           "arguments": .object([:]), "request_id": .string("owned-execution"),
           "wait_for_result": .bool(false),
         ]))
@@ -86,7 +86,7 @@ struct GatewaySocketPrincipalLifecycleTests {
       let reconnected = try await GatewayClientSession.connectSocket(
         socketURL: service.socketConfiguration.socketURL)
       let selector: JSONValue = .object([
-        "workspace_id": .string("fixture"), "server": .string("fixture"),
+        "project_id": .string("fixture"), "server": .string("fixture"),
         "request_id": .string("owned-execution"),
       ])
       let active = try await reconnected.call(toolName: "mcp.requests.list", arguments: selector)
@@ -106,7 +106,7 @@ struct GatewaySocketPrincipalLifecycleTests {
       _ = try await reconnected.call(
         toolName: "mcp.tools.call",
         arguments: .object([
-          "workspace_id": .string("fixture"), "server": .string("fixture"),
+          "project_id": .string("fixture"), "server": .string("fixture"),
           "tool": .string("finish"),
           "arguments": .object([:]),
         ]))

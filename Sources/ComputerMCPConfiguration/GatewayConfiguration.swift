@@ -87,7 +87,7 @@ package struct GatewayConfiguration: Equatable, Sendable {
   package var server: ServerConfig
   package var runtime: RuntimeBindingConfig
   package var policy: PolicyConfig
-  package var workspaces: [WorkspaceManifestConfig]
+  package var projects: [ProjectManifestConfig]
   package var profiles: [ProfileGrantConfig]
   package var transports: TransportSectionConfig
   package var cli: CLISectionConfig
@@ -96,7 +96,7 @@ package struct GatewayConfiguration: Equatable, Sendable {
   package var builtin: BuiltinConfig
   package var skills: SkillsConfig
   package var delivery: DeliveryConfig
-  package var workspaceDirectory: URL
+  package var projectDirectory: URL
   /// Host-owned identities remain referenceable while their contributions are disabled or unavailable.
   package var knownPluginMCPServerIDs: Set<String> = []
 
@@ -105,7 +105,7 @@ package struct GatewayConfiguration: Equatable, Sendable {
     server: ServerConfig = ServerConfig(),
     runtime: RuntimeBindingConfig = RuntimeBindingConfig(),
     policy: PolicyConfig = PolicyConfig(),
-    workspaces: [WorkspaceManifestConfig] = [],
+    projects: [ProjectManifestConfig] = [],
     profiles: [ProfileGrantConfig] = [],
     transports: TransportSectionConfig = TransportSectionConfig(),
     cli: CLISectionConfig = CLISectionConfig(),
@@ -114,13 +114,13 @@ package struct GatewayConfiguration: Equatable, Sendable {
     builtin: BuiltinConfig = BuiltinConfig(),
     skills: SkillsConfig = SkillsConfig(),
     delivery: DeliveryConfig = DeliveryConfig(),
-    workspaceDirectory: URL = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
+    projectDirectory: URL = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
   ) {
     self.schemaVersion = schemaVersion
     self.server = server
     self.runtime = runtime
     self.policy = policy
-    self.workspaces = workspaces
+    self.projects = projects
     self.profiles = profiles
     self.transports = transports
     self.cli = cli
@@ -129,7 +129,7 @@ package struct GatewayConfiguration: Equatable, Sendable {
     self.builtin = builtin
     self.skills = skills
     self.delivery = delivery
-    self.workspaceDirectory = workspaceDirectory
+    self.projectDirectory = projectDirectory
   }
 
   package static func load(path: String, knownPluginMCPServerIDs: Set<String> = []) throws
@@ -150,13 +150,14 @@ package struct GatewayConfiguration: Equatable, Sendable {
     baseURL: URL = URL(fileURLWithPath: FileManager.default.currentDirectoryPath),
     knownPluginMCPServerIDs: Set<String> = []
   ) throws -> GatewayConfiguration {
+    try ProjectManifestUpgrade.validate(text)
     let decoder = TOMLDecoder()
     let inputShape = try decoder.decode(ConfigurationNode.self, from: text)
     var configuration = try decoder.decode(GatewayConfiguration.self, from: text)
     let base = baseURL.standardizedFileURL
-    configuration.workspaceDirectory = base
+    configuration.projectDirectory = base
     configuration.knownPluginMCPServerIDs = knownPluginMCPServerIDs
-    configuration.workspaces = configuration.workspaces.map { $0.resolved(base: base) }
+    configuration.projects = configuration.projects.map { $0.resolved(base: base) }
     configuration.skills = configuration.skills.resolved(base: base)
     try configuration.validate()
     let canonicalShape = try decoder.decode(
@@ -181,18 +182,18 @@ package struct GatewayConfiguration: Equatable, Sendable {
     try runtime.validate()
     try policy.validate()
     try skills.validate()
-    try delivery.validate(workspaces: workspaces)
-    try validateUniqueIDs(workspaces.map(\.id), label: "workspace")
+    try delivery.validate(projects: projects)
+    try validateUniqueIDs(projects.map(\.id), label: "project")
     try validateUniqueIDs(profiles.map { $0.id.rawValue }, label: "profile")
     try validateUniqueIDs(transports.openAI.map(\.id), label: "OpenAI transport")
     try validateUniqueIDs(transports.cloudflare.map(\.id), label: "Cloudflare transport")
-    for registeredWorkspace in workspaces {
-      try registeredWorkspace.validate()
+    for registeredProject in projects {
+      try registeredProject.validate()
     }
-    let workspaceIDs = Set(workspaces.map(\.id))
+    let projectIDs = Set(projects.map(\.id))
     for profile in profiles {
       try profile.validate(
-        knownWorkspaceIDs: workspaceIDs,
+        knownProjectIDs: projectIDs,
         knownMCPServerIDs: Set(mcp.servers.map(\.id)).union(knownPluginMCPServerIDs))
     }
     try transports.validate()
@@ -212,12 +213,12 @@ package struct GatewayConfiguration: Equatable, Sendable {
         )
       }
     }
-    if let defaultWorkspaceID = runtime.defaultWorkspaceID,
-      !workspaceIDs.isEmpty,
-      !workspaceIDs.contains(defaultWorkspaceID)
+    if let defaultProjectID = runtime.defaultProjectID,
+      !projectIDs.isEmpty,
+      !projectIDs.contains(defaultProjectID)
     {
       throw ConfigurationError.invalid(
-        "runtime.workspace_id references unknown workspace '\(defaultWorkspaceID)'."
+        "runtime.project_id references unknown project '\(defaultProjectID)'."
       )
     }
     if runtime.profileID == .localAdmin && runtime.caller.isRemote {
@@ -305,38 +306,38 @@ package struct GatewayConfiguration: Equatable, Sendable {
       "computer.accessibility.query",
       "computer.accessibility.action",
       "computer.verify",
-      "workspace.info",
-      "workspace.status",
-      "workspace.manifests",
-      "workspace.recent_files",
-      "workspace.directory_stats",
-      "workspace.artifact_directories",
-      "workspace.empty_directories",
-      "workspace.git_changes",
-      "workspace.file_types",
-      "workspace.large_files",
-      "workspace.symlinks",
-      "workspace.executable_files",
-      "workspace.todos",
-      "workspace.env_files",
-      "workspace.dependency_files",
-      "workspace.project_roots",
-      "workspace.documentation_files",
-      "workspace.agent_files",
-      "workspace.instructions",
-      "workspace.test_files",
-      "workspace.ci_files",
-      "workspace.infra_files",
-      "workspace.config_files",
-      "workspace.ignore_files",
-      "workspace.asset_files",
-      "workspace.archive_files",
-      "workspace.log_files",
-      "workspace.data_files",
-      "workspace.schema_files",
-      "workspace.source_files",
-      "workspace.outline",
-      "workspace.commands",
+      "project.info",
+      "project.status",
+      "project.manifests",
+      "project.recent_files",
+      "project.directory_stats",
+      "project.artifact_directories",
+      "project.empty_directories",
+      "project.git_changes",
+      "project.file_types",
+      "project.large_files",
+      "project.symlinks",
+      "project.executable_files",
+      "project.todos",
+      "project.env_files",
+      "project.dependency_files",
+      "project.project_roots",
+      "project.documentation_files",
+      "project.agent_files",
+      "project.instructions",
+      "project.test_files",
+      "project.ci_files",
+      "project.infra_files",
+      "project.config_files",
+      "project.ignore_files",
+      "project.asset_files",
+      "project.archive_files",
+      "project.log_files",
+      "project.data_files",
+      "project.schema_files",
+      "project.source_files",
+      "project.outline",
+      "project.commands",
       "system.info",
       "system.kernel",
       "system.software",
@@ -449,8 +450,8 @@ package struct GatewayConfiguration: Equatable, Sendable {
       "file.move",
       "file.symlink",
       "file.trash",
-      "workspace.open",
-      "workspace.reveal",
+      "project.open",
+      "project.reveal",
       "delivery.scopes.list",
       "delivery.apply",
       "git.root",
@@ -531,38 +532,38 @@ package struct GatewayConfiguration: Equatable, Sendable {
     }
 
     let knownBuiltins = Set([
-      "workspace.info",
-      "workspace.status",
-      "workspace.manifests",
-      "workspace.recent_files",
-      "workspace.directory_stats",
-      "workspace.artifact_directories",
-      "workspace.empty_directories",
-      "workspace.git_changes",
-      "workspace.file_types",
-      "workspace.large_files",
-      "workspace.symlinks",
-      "workspace.executable_files",
-      "workspace.todos",
-      "workspace.env_files",
-      "workspace.dependency_files",
-      "workspace.project_roots",
-      "workspace.documentation_files",
-      "workspace.agent_files",
-      "workspace.instructions",
-      "workspace.test_files",
-      "workspace.ci_files",
-      "workspace.infra_files",
-      "workspace.config_files",
-      "workspace.ignore_files",
-      "workspace.asset_files",
-      "workspace.archive_files",
-      "workspace.log_files",
-      "workspace.data_files",
-      "workspace.schema_files",
-      "workspace.source_files",
-      "workspace.outline",
-      "workspace.commands",
+      "project.info",
+      "project.status",
+      "project.manifests",
+      "project.recent_files",
+      "project.directory_stats",
+      "project.artifact_directories",
+      "project.empty_directories",
+      "project.git_changes",
+      "project.file_types",
+      "project.large_files",
+      "project.symlinks",
+      "project.executable_files",
+      "project.todos",
+      "project.env_files",
+      "project.dependency_files",
+      "project.project_roots",
+      "project.documentation_files",
+      "project.agent_files",
+      "project.instructions",
+      "project.test_files",
+      "project.ci_files",
+      "project.infra_files",
+      "project.config_files",
+      "project.ignore_files",
+      "project.asset_files",
+      "project.archive_files",
+      "project.log_files",
+      "project.data_files",
+      "project.schema_files",
+      "project.source_files",
+      "project.outline",
+      "project.commands",
       "system.info",
       "system.kernel",
       "system.software",
@@ -675,8 +676,8 @@ package struct GatewayConfiguration: Equatable, Sendable {
       "file.move",
       "file.symlink",
       "file.trash",
-      "workspace.open",
-      "workspace.reveal",
+      "project.open",
+      "project.reveal",
       "delivery.scopes.list",
       "delivery.apply",
       "git.root",
@@ -730,18 +731,18 @@ package struct GatewayConfiguration: Equatable, Sendable {
     }
   }
 
-  package var manifestWorkspaces: [RegisteredWorkspace] {
-    if workspaces.isEmpty {
+  package var manifestProjects: [RegisteredProject] {
+    if projects.isEmpty {
       return [
-        RegisteredWorkspace(
+        RegisteredProject(
           id: "default",
-          displayName: workspaceDirectory.lastPathComponent.isEmpty
-            ? "Default Workspace" : workspaceDirectory.lastPathComponent,
-          rootPath: workspaceDirectory.path
+          displayName: projectDirectory.lastPathComponent.isEmpty
+            ? "Default Project" : projectDirectory.lastPathComponent,
+          rootPath: projectDirectory.path
         )
       ]
     }
-    return workspaces.compactMap(\.registeredWorkspace)
+    return projects.compactMap(\.registeredProject)
   }
 
   package func profileGrant(for id: GatewayProfileID) -> ProfileGrant {
@@ -759,7 +760,7 @@ package struct GatewayConfiguration: Equatable, Sendable {
   package func executionContext(
     caller: GatewayCallerKind? = nil,
     profileID: GatewayProfileID? = nil,
-    workspaceID: String? = nil,
+    projectID: String? = nil,
     requestID: String = UUID().uuidString,
     transportTrace: GatewayTransportTrace? = nil
   ) -> ExecutionContext {
@@ -767,7 +768,7 @@ package struct GatewayConfiguration: Equatable, Sendable {
       requestID: requestID,
       caller: caller ?? runtime.caller,
       profileID: profileID ?? runtime.profileID,
-      workspaceID: workspaceID ?? runtime.defaultWorkspaceID,
+      projectID: projectID ?? runtime.defaultProjectID,
       transportTrace: transportTrace
     )
   }
@@ -827,7 +828,7 @@ extension GatewayConfiguration: Codable {
     case server
     case runtime
     case policy
-    case workspaces
+    case projects
     case profiles
     case transports
     case cli
@@ -848,8 +849,8 @@ extension GatewayConfiguration: Codable {
       ?? RuntimeBindingConfig()
     self.policy =
       try container.decodeIfPresent(PolicyConfig.self, forKey: .policy) ?? PolicyConfig()
-    self.workspaces =
-      try container.decodeIfPresent([WorkspaceManifestConfig].self, forKey: .workspaces) ?? []
+    self.projects =
+      try container.decodeIfPresent([ProjectManifestConfig].self, forKey: .projects) ?? []
     self.profiles =
       try container.decodeIfPresent([ProfileGrantConfig].self, forKey: .profiles) ?? []
     self.transports =
@@ -870,13 +871,13 @@ extension GatewayConfiguration: Codable {
       ?? SkillsConfig()
     self.delivery =
       try container.decodeIfPresent(DeliveryConfig.self, forKey: .delivery) ?? DeliveryConfig()
-    self.workspaceDirectory = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
+    self.projectDirectory = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
     migrateImplicitMCPApprovals(from: try ConfigurationNode(from: decoder))
     dropRetiredBuiltins()
   }
 
   /// Manifests written by earlier releases still list these builtins.
-  private static let retiredBuiltins: Set<String> = ["workspace.governance_files"]
+  private static let retiredBuiltins: Set<String> = ["project.governance_files"]
 
   private mutating func dropRetiredBuiltins() {
     builtin.enabled.removeAll { Self.retiredBuiltins.contains($0) }
@@ -907,7 +908,7 @@ extension GatewayConfiguration: Codable {
     try container.encode(server, forKey: .server)
     try container.encode(runtime, forKey: .runtime)
     try container.encode(policy, forKey: .policy)
-    try container.encode(workspaces, forKey: .workspaces)
+    try container.encode(projects, forKey: .projects)
     try container.encode(profiles, forKey: .profiles)
     try container.encode(transports, forKey: .transports)
     try container.encode(cli, forKey: .cli)
@@ -1279,22 +1280,22 @@ extension URL {
 package struct RuntimeBindingConfig: Codable, Equatable, Sendable {
   package var caller: GatewayCallerKind
   package var profileID: GatewayProfileID
-  package var defaultWorkspaceID: String?
+  package var defaultProjectID: String?
 
   package init(
     caller: GatewayCallerKind = .localMCP,
     profileID: GatewayProfileID = .localAdmin,
-    defaultWorkspaceID: String? = nil
+    defaultProjectID: String? = nil
   ) {
     self.caller = caller
     self.profileID = profileID
-    self.defaultWorkspaceID = defaultWorkspaceID
+    self.defaultProjectID = defaultProjectID
   }
 
   private enum CodingKeys: String, CodingKey {
     case caller
     case profileID = "profile"
-    case defaultWorkspaceID = "workspace_id"
+    case defaultProjectID = "project_id"
   }
 
   package init(from decoder: any Decoder) throws {
@@ -1303,14 +1304,14 @@ package struct RuntimeBindingConfig: Codable, Equatable, Sendable {
       try container.decodeIfPresent(GatewayCallerKind.self, forKey: .caller) ?? .localMCP
     profileID =
       try container.decodeIfPresent(GatewayProfileID.self, forKey: .profileID) ?? .localAdmin
-    defaultWorkspaceID = try container.decodeIfPresent(String.self, forKey: .defaultWorkspaceID)
+    defaultProjectID = try container.decodeIfPresent(String.self, forKey: .defaultProjectID)
   }
 
   fileprivate func validate() throws {
-    if let defaultWorkspaceID,
-      defaultWorkspaceID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    if let defaultProjectID,
+      defaultProjectID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     {
-      throw ConfigurationError.invalid("runtime.workspace_id must not be empty when set.")
+      throw ConfigurationError.invalid("runtime.project_id must not be empty when set.")
     }
   }
 }
@@ -1397,7 +1398,7 @@ package struct PolicyConfig: Codable, Equatable, Sendable {
   }
 }
 
-package struct WorkspaceManifestConfig: Codable, Equatable, Sendable {
+package struct ProjectManifestConfig: Codable, Equatable, Sendable {
   package var id: String
   package var displayName: String
   package var path: String?
@@ -1421,7 +1422,7 @@ package struct WorkspaceManifestConfig: Codable, Equatable, Sendable {
     path = try container.decodeIfPresent(String.self, forKey: .path)
   }
 
-  fileprivate func resolved(base: URL) -> WorkspaceManifestConfig {
+  fileprivate func resolved(base: URL) -> ProjectManifestConfig {
     guard let path else {
       return self
     }
@@ -1431,38 +1432,38 @@ package struct WorkspaceManifestConfig: Codable, Equatable, Sendable {
     } else {
       resolvedPath = base.appendingPathComponent(path).standardizedFileURL.path
     }
-    return WorkspaceManifestConfig(id: id, displayName: displayName, path: resolvedPath)
+    return ProjectManifestConfig(id: id, displayName: displayName, path: resolvedPath)
   }
 
   fileprivate func validate() throws {
-    try validateConfigIdentifier(id, label: "workspaces.id")
+    try validateConfigIdentifier(id, label: "projects.id")
     guard !displayName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-      throw ConfigurationError.invalid("workspaces.display_name must not be empty.")
+      throw ConfigurationError.invalid("projects.display_name must not be empty.")
     }
     if let path {
       guard !path.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-        throw ConfigurationError.invalid("workspaces.path must not be empty when set.")
+        throw ConfigurationError.invalid("projects.path must not be empty when set.")
       }
       guard path.hasPrefix("/") else {
         throw ConfigurationError.invalid(
-          "Resolved workspaces.path must be absolute; load configuration through GatewayConfiguration.load."
+          "Resolved projects.path must be absolute; load configuration through GatewayConfiguration.load."
         )
       }
     }
   }
 
-  package var registeredWorkspace: RegisteredWorkspace? {
+  package var registeredProject: RegisteredProject? {
     guard let path else {
       return nil
     }
-    return RegisteredWorkspace(id: id, displayName: displayName, rootPath: path)
+    return RegisteredProject(id: id, displayName: displayName, rootPath: path)
   }
 }
 
 package struct ProfileGrantConfig: Codable, Equatable, Sendable {
   package var id: GatewayProfileID
   package var capabilities: [String]
-  package var workspaces: [String]
+  package var projects: [String]
   package var allowedCallers: [GatewayCallerKind]
   package var fullShellEnabled: Bool
   package var mcpServers: [String]
@@ -1472,7 +1473,7 @@ package struct ProfileGrantConfig: Codable, Equatable, Sendable {
   package init(
     id: GatewayProfileID,
     capabilities: [String] = [],
-    workspaces: [String] = [],
+    projects: [String] = [],
     allowedCallers: [GatewayCallerKind]? = nil,
     fullShellEnabled: Bool = false,
     mcpServers: [String] = [],
@@ -1481,7 +1482,7 @@ package struct ProfileGrantConfig: Codable, Equatable, Sendable {
   ) {
     self.id = id
     self.capabilities = capabilities
-    self.workspaces = workspaces
+    self.projects = projects
     self.allowedCallers = allowedCallers ?? []
     self.fullShellEnabled = fullShellEnabled
     self.mcpServers = mcpServers
@@ -1492,7 +1493,7 @@ package struct ProfileGrantConfig: Codable, Equatable, Sendable {
   private enum CodingKeys: String, CodingKey {
     case id
     case capabilities
-    case workspaces
+    case projects
     case allowedCallers = "allowed_callers"
     case fullShellEnabled = "full_shell_enabled"
     case mcpServers = "mcp_servers"
@@ -1504,7 +1505,7 @@ package struct ProfileGrantConfig: Codable, Equatable, Sendable {
     let container = try decoder.container(keyedBy: CodingKeys.self)
     id = try container.decode(GatewayProfileID.self, forKey: .id)
     capabilities = try container.decodeIfPresent([String].self, forKey: .capabilities) ?? []
-    workspaces = try container.decodeIfPresent([String].self, forKey: .workspaces) ?? []
+    projects = try container.decodeIfPresent([String].self, forKey: .projects) ?? []
     if let configured = try container.decodeIfPresent(
       [GatewayCallerKind].self,
       forKey: .allowedCallers
@@ -1528,7 +1529,7 @@ package struct ProfileGrantConfig: Codable, Equatable, Sendable {
     var container = encoder.container(keyedBy: CodingKeys.self)
     try container.encode(id, forKey: .id)
     try container.encode(capabilities, forKey: .capabilities)
-    try container.encode(workspaces, forKey: .workspaces)
+    try container.encode(projects, forKey: .projects)
     try container.encode(allowedCallers, forKey: .allowedCallers)
     try container.encode(fullShellEnabled, forKey: .fullShellEnabled)
     try container.encode(mcpServers, forKey: .mcpServers)
@@ -1536,7 +1537,7 @@ package struct ProfileGrantConfig: Codable, Equatable, Sendable {
     try container.encode(confirmationPolicy, forKey: .confirmationPolicy)
   }
 
-  package func validate(knownWorkspaceIDs: Set<String>, knownMCPServerIDs: Set<String>) throws {
+  package func validate(knownProjectIDs: Set<String>, knownMCPServerIDs: Set<String>) throws {
     guard Set(mcpServers).count == mcpServers.count else {
       throw ConfigurationError.invalid("Profile '\(id.rawValue)' has duplicate mcp_servers.")
     }
@@ -1557,21 +1558,21 @@ package struct ProfileGrantConfig: Codable, Equatable, Sendable {
         )
       }
     }
-    var workspaceIDs = Set<String>()
-    for workspaceID in workspaces {
-      if workspaceID != "*" {
-        try validateConfigIdentifier(workspaceID, label: "profiles.workspaces")
+    var projectIDs = Set<String>()
+    for projectID in projects {
+      if projectID != "*" {
+        try validateConfigIdentifier(projectID, label: "profiles.projects")
       }
-      guard workspaceIDs.insert(workspaceID).inserted else {
+      guard projectIDs.insert(projectID).inserted else {
         throw ConfigurationError.invalid(
-          "Profile '\(id.rawValue)' contains duplicate workspace '\(workspaceID)'."
+          "Profile '\(id.rawValue)' contains duplicate project '\(projectID)'."
         )
       }
       guard
-        workspaceID == "*" || knownWorkspaceIDs.isEmpty || knownWorkspaceIDs.contains(workspaceID)
+        projectID == "*" || knownProjectIDs.isEmpty || knownProjectIDs.contains(projectID)
       else {
         throw ConfigurationError.invalid(
-          "Profile '\(id.rawValue)' references unknown workspace '\(workspaceID)'."
+          "Profile '\(id.rawValue)' references unknown project '\(projectID)'."
         )
       }
     }
@@ -1586,7 +1587,7 @@ package struct ProfileGrantConfig: Codable, Equatable, Sendable {
     ProfileGrant(
       id: id,
       capabilityIDs: Set(capabilities),
-      workspaceIDs: Set(workspaces),
+      projectIDs: Set(projects),
       allowedCallers: Set(allowedCallers),
       fullShellEnabled: fullShellEnabled,
       mcpServerIDs: Set(mcpServers),
@@ -1871,7 +1872,7 @@ package struct CLICommandConfig: Codable, Equatable, Sendable {
     guard let cwd, !cwd.isEmpty else {
       return base
     }
-    if cwd == "workspace" {
+    if cwd == "project" {
       return base
     }
     if cwd.hasPrefix("/") {
@@ -2135,7 +2136,7 @@ package struct MCPServerConfig: Codable, Equatable, Sendable {
   }
 
   package func resolvedWorkingDirectory(base: URL) -> URL {
-    guard let cwd, !cwd.isEmpty, cwd != "workspace" else { return base }
+    guard let cwd, !cwd.isEmpty, cwd != "project" else { return base }
     return cwd.hasPrefix("/") ? URL(fileURLWithPath: cwd) : base.appendingPathComponent(cwd)
   }
 }

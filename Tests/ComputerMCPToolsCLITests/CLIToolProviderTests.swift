@@ -85,7 +85,7 @@ final class CLIToolProviderTests {
         CLICommandConfig(
           id: "echo",
           executable: "/bin/echo",
-          cwd: "workspace",
+          cwd: "project",
           risk: "read-only",
           discovery: ["help"],
           interface: CLIInterfaceConfig(formatFlag: "--format", defaultFormat: "json")
@@ -102,7 +102,7 @@ final class CLIToolProviderTests {
     let payload = try decodeTextPayload(result)
 
     #expect((payload.objectValue?["id"]) == (.string("echo")))
-    #expect((payload.objectValue?["cwd"]) == (.string("workspace")))
+    #expect((payload.objectValue?["cwd"]) == (.string("project")))
     #expect((payload.objectValue?["has_interface"]) == (.bool(true)))
     #expect(
       (payload.objectValue?["interface"]?.objectValue?["format_flag"]) == (.string("--format")))

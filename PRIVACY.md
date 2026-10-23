@@ -18,10 +18,10 @@ The App stores product state under:
   and Computer MCP access tokens (development builds use the separate
   `com.showxu.computer-mcp.development.secrets` service and matching access
   group); and
-- security-scoped bookmarks in the GRDB database for workspaces selected by
+- security-scoped bookmarks in the GRDB database for projects selected by
   the user.
 
-The GRDB database records workspace and profile state, provider health,
+The GRDB database records project and profile state, provider health,
 manifest revisions, single-use operation tickets, desired transport state,
 and redacted audit metadata. It does not intentionally store complete tool
 arguments, file contents, screenshots, command output, or credential values.
@@ -74,8 +74,8 @@ System Settings stops the associated Computer Use capabilities.
 
 ## Access and deletion
 
-The App can remove individual workspace grants and tunnel profiles. Removing a
-workspace grant does not delete files in that workspace. To remove remaining
+The App can remove individual project grants and tunnel profiles. Removing a
+project grant does not delete files in that project. To remove remaining
 local state, quit Computer MCP, remove the two directories listed above, and
 delete Computer MCP items from Keychain. This is destructive and cannot be
 undone; preserve any configuration or audit material you need first.

@@ -142,7 +142,7 @@ final class ProductReadinessTests {
     input.cloudflareTunnels = [tunnel]
     func event(
       _ principal: String?, profile: GatewayProfileID = .cloudflareObserve,
-      capability: String = "workspace.list"
+      capability: String = "project.list"
     ) -> AuditEvent {
       AuditEvent(
         occurredAt: startedAt.addingTimeInterval(1), requestID: "request",
@@ -191,7 +191,7 @@ final class ProductReadinessTests {
         lastError: nil
       ),
       cliInstallation: installedCLI(),
-      workspaceCount: 1,
+      projectCount: 1,
       openAITunnels: [],
       cloudflareTunnels: [],
       auditEvents: []

@@ -6,7 +6,7 @@ import ComputerMCPProcess
 package enum MacOSPlatform {
   package static var services: PlatformServices {
     PlatformServices(
-      workspaceGrants: WorkspaceBookmarkService(),
+      projectGrants: ProjectBookmarkService(),
       pluginDirectories: DarwinPluginArchiveDirectoryFactory(),
       applications: ApplicationBundleLookup(),
       toolProviders: MacOSToolProviders(),

@@ -28,7 +28,7 @@ package final class PluginArchiveDirectory: PluginArchiveStagingDirectory {
       !requestedURL.pathComponents.contains(".."),
       requestedURL.lastPathComponent != ".", !requestedURL.lastPathComponent.isEmpty
     else { throw PluginArchiveError.invalidInput }
-    let parentURL = try WorkspacePathResolver.canonicalWorkspace(
+    let parentURL = try ProjectPathResolver.canonicalProject(
       requestedURL.deletingLastPathComponent())
     let parent = Darwin.open(parentURL.path, O_RDONLY | O_DIRECTORY | O_CLOEXEC | O_NOFOLLOW)
     guard parent >= 0 else { throw PluginArchiveError.fileSystemFailure }

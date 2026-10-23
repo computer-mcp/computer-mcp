@@ -6,25 +6,25 @@ name = "computer-mcp-chatgpt-operate"
 [runtime]
 caller = "secure-tunnel"
 profile = "chatgpt-operate"
-workspace_id = "computer-mcp"
+project_id = "computer-mcp"
 
 [policy]
 default_timeout_ms = 30000
 max_output_bytes = 1048576
 shell_enabled = false
 
-[[workspaces]]
+[[projects]]
 id = "computer-mcp"
 display_name = "Computer MCP"
 path = ".."
 
 [[profiles]]
 id = "chatgpt-operate"
-mode = "workspace-operations"
+mode = "project-operations"
 confirmation_policy = "risk-based"
 capabilities = [
-  "workspace.list",
-  "workspace.describe",
+  "project.list",
+  "project.describe",
   "computer.permissions",
   "computer.displays",
   "computer.screenshot",
@@ -38,7 +38,7 @@ capabilities = [
   "computer.accessibility.action",
   "computer.verify",
 ]
-workspaces = ["computer-mcp"]
+projects = ["computer-mcp"]
 allowed_callers = ["secure-tunnel"]
 full_shell_enabled = false
 

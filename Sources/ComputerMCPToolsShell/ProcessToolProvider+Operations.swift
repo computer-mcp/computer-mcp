@@ -30,7 +30,7 @@ extension ProcessToolProvider {
       executable: invocation.executable,
       arguments: invocation.arguments + args,
       workingDirectory: command.resolvedWorkingDirectory(
-        base: environment.configuration.workspaceDirectory),
+        base: environment.configuration.projectDirectory),
       environment: command.env,
       maxOutputBytes: environment.configuration.policy.maxOutputBytes
     )

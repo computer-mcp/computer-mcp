@@ -7,13 +7,13 @@ import Foundation
 extension FilesToolProvider {
   internal func fileExists(arguments object: [String: JSONValue]) throws -> JSONValue {
     let path = try requiredString("path", in: object)
-    let url = try workspaceScope.resolvedWorkspaceURL(path)
+    let url = try projectScope.resolvedProjectURL(path)
     var isDirectory: ObjCBool = false
     let exists = FileManager.default.fileExists(atPath: url.path, isDirectory: &isDirectory)
 
     return .object([
       "path": .string(url.path),
-      "workspace_relative_path": .string(workspaceScope.workspaceRelativePath(url)),
+      "project_relative_path": .string(projectScope.projectRelativePath(url)),
       "exists": .bool(exists),
       "is_directory": exists ? .bool(isDirectory.boolValue) : .null,
       "is_file": exists ? .bool(!isDirectory.boolValue) : .null,
@@ -40,7 +40,7 @@ extension FilesToolProvider {
       throw GatewayToolError.invalidArguments("max_entries must be less than or equal to 10000.")
     }
 
-    let directory = try workspaceScope.resolvedWorkspaceURL(path)
+    let directory = try projectScope.resolvedProjectURL(path)
     var isDirectory: ObjCBool = false
     guard FileManager.default.fileExists(atPath: directory.path, isDirectory: &isDirectory) else {
       throw GatewayToolError.invalidArguments("Directory does not exist: \(path)")
@@ -64,7 +64,7 @@ extension FilesToolProvider {
 
     return .object([
       "path": .string(directory.path),
-      "workspace_relative_path": .string(workspaceScope.workspaceRelativePath(directory)),
+      "project_relative_path": .string(projectScope.projectRelativePath(directory)),
       "recursive_depth": .integer(Int64(recursiveDepth)),
       "include_hidden": .bool(includeHidden),
       "max_entries": .integer(Int64(maxEntries)),
@@ -84,7 +84,7 @@ extension FilesToolProvider {
     try validateBoundedNonNegative(maxDepth, name: "max_depth", upperBound: 20)
     try validateBoundedPositive(maxEntries, name: "max_entries", upperBound: 50_000)
 
-    let root = try workspaceScope.resolvedWorkspaceURL(path)
+    let root = try projectScope.resolvedProjectURL(path)
     try requireDirectory(root, originalPath: path)
 
     var emitted = 0
@@ -102,7 +102,7 @@ extension FilesToolProvider {
 
     return .object([
       "path": .string(root.path),
-      "workspace_relative_path": .string(workspaceScope.workspaceRelativePath(root)),
+      "project_relative_path": .string(projectScope.projectRelativePath(root)),
       "include_hidden": .bool(includeHidden),
       "max_depth": .integer(Int64(maxDepth)),
       "max_entries": .integer(Int64(maxEntries)),
@@ -115,14 +115,14 @@ extension FilesToolProvider {
 
   internal func statFile(arguments object: [String: JSONValue]) throws -> JSONValue {
     let path = try requiredString("path", in: object)
-    let url = try workspaceScope.resolvedWorkspaceURL(path)
-    return try workspaceScope.fileInfo(url: url).json
+    let url = try projectScope.resolvedProjectURL(path)
+    return try projectScope.fileInfo(url: url).json
   }
 
   internal func filePermissions(arguments object: [String: JSONValue]) throws -> JSONValue {
     let path = try requiredString("path", in: object)
-    let url = try workspaceScope.resolvedWorkspaceURL(path)
-    let info = try workspaceScope.fileInfo(url: url)
+    let url = try projectScope.resolvedProjectURL(path)
+    let info = try projectScope.fileInfo(url: url)
     let attributes = try FileManager.default.attributesOfItem(atPath: url.path)
     let mode = (attributes[.posixPermissions] as? NSNumber)?.intValue
     let ownerID = (attributes[.ownerAccountID] as? NSNumber)?.intValue
@@ -135,7 +135,7 @@ extension FilesToolProvider {
 
     return .object([
       "path": .string(url.path),
-      "workspace_relative_path": .string(info.workspaceRelativePath),
+      "project_relative_path": .string(info.projectRelativePath),
       "type": .string(info.type),
       "mode": mode.map { .integer(Int64($0)) } ?? .null,
       "mode_octal": mode.map { .string(String(format: "%04o", $0 & 0o7777)) } ?? .null,
@@ -163,7 +163,7 @@ extension FilesToolProvider {
     let expectedCurrentMode = try optionalString("expected_current_mode", in: object)
       .map { try parsePOSIXMode($0, name: "expected_current_mode") }
     let dryRun = try optionalBool("dry_run", in: object) ?? false
-    let url = try workspaceScope.resolvedWorkspaceURL(path)
+    let url = try projectScope.resolvedProjectURL(path)
 
     guard FileManager.default.fileExists(atPath: url.path) else {
       throw GatewayToolError.invalidArguments("Path does not exist: \(path)")
@@ -186,7 +186,7 @@ extension FilesToolProvider {
     return .object([
       "operation": .string("file.chmod"),
       "path": .string(url.path),
-      "workspace_relative_path": .string(workspaceScope.workspaceRelativePath(url)),
+      "project_relative_path": .string(projectScope.projectRelativePath(url)),
       "dry_run": .bool(dryRun),
       "mode_before": normalizedModeBefore.map { .integer(Int64($0)) } ?? .null,
       "mode_before_octal": normalizedModeBefore.map { .string(String(format: "%04o", $0)) }
@@ -200,7 +200,7 @@ extension FilesToolProvider {
       "would_mode_after_octal": .string(String(format: "%04o", mode)),
       "would_change": normalizedModeBefore.map { $0 != mode }.map(JSONValue.bool) ?? .null,
       "changed": .bool(!dryRun && normalizedModeBefore.map { $0 != mode } == true),
-      "result": dryRun ? .null : try workspaceScope.fileInfo(url: url).json,
+      "result": dryRun ? .null : try projectScope.fileInfo(url: url).json,
     ])
   }
 
@@ -213,8 +213,8 @@ extension FilesToolProvider {
     try validateBoundedPositive(timeout, name: "timeout_ms", upperBound: 600_000)
     try validateBoundedPositive(maxOutputBytes, name: "max_output_bytes", upperBound: 20_971_520)
 
-    let url = try workspaceScope.resolvedWorkspaceURL(path)
-    let info = try workspaceScope.fileInfo(url: url)
+    let url = try projectScope.resolvedProjectURL(path)
+    let info = try projectScope.fileInfo(url: url)
     guard info.type == "file" else {
       throw GatewayToolError.invalidArguments("Path is not a file: \(path)")
     }
@@ -222,7 +222,7 @@ extension FilesToolProvider {
     let result = try commandRunner.run(
       executable: try registeredCommands.builtinExecutable("file"),
       arguments: ["-b", "--mime", url.path],
-      workingDirectory: configuration.workspaceDirectory,
+      workingDirectory: configuration.projectDirectory,
       environment: [:],
       timeoutMilliseconds: timeout,
       maxOutputBytes: maxOutputBytes
@@ -244,7 +244,7 @@ extension FilesToolProvider {
     return .object([
       "operation": .string("file.type"),
       "path": .string(url.path),
-      "workspace_relative_path": .string(workspaceScope.workspaceRelativePath(url)),
+      "project_relative_path": .string(projectScope.projectRelativePath(url)),
       "mime_type": mimeType.isEmpty ? .null : .string(mimeType),
       "charset": charset.map(JSONValue.string) ?? .null,
       "raw": .string(raw),
@@ -261,8 +261,8 @@ extension FilesToolProvider {
     try validateBoundedPositive(timeout, name: "timeout_ms", upperBound: 600_000)
     try validateBoundedPositive(maxOutputBytes, name: "max_output_bytes", upperBound: 20_971_520)
 
-    let url = try workspaceScope.resolvedWorkspaceURL(path)
-    let info = try workspaceScope.fileInfo(url: url)
+    let url = try projectScope.resolvedProjectURL(path)
+    let info = try projectScope.fileInfo(url: url)
     guard info.type == "file" else {
       throw GatewayToolError.invalidArguments("Path is not a file: \(path)")
     }
@@ -270,7 +270,7 @@ extension FilesToolProvider {
     let result = try commandRunner.run(
       executable: try registeredCommands.builtinExecutable("wc"),
       arguments: ["-l", "-w", "-c", url.path],
-      workingDirectory: configuration.workspaceDirectory,
+      workingDirectory: configuration.projectDirectory,
       environment: [:],
       timeoutMilliseconds: timeout,
       maxOutputBytes: maxOutputBytes
@@ -283,7 +283,7 @@ extension FilesToolProvider {
     return .object([
       "operation": .string("file.count"),
       "path": .string(url.path),
-      "workspace_relative_path": .string(workspaceScope.workspaceRelativePath(url)),
+      "project_relative_path": .string(projectScope.projectRelativePath(url)),
       "line_count": lineCount.map { .integer(Int64($0)) } ?? .null,
       "word_count": wordCount.map { .integer(Int64($0)) } ?? .null,
       "byte_count": byteCount.map { .integer(Int64($0)) } ?? .null,
@@ -300,12 +300,12 @@ extension FilesToolProvider {
     try validateBoundedPositive(timeout, name: "timeout_ms", upperBound: 600_000)
     try validateBoundedPositive(maxOutputBytes, name: "max_output_bytes", upperBound: 20_971_520)
 
-    let url = try workspaceScope.resolvedWorkspaceURL(path)
-    let info = try workspaceScope.fileInfo(url: url)
+    let url = try projectScope.resolvedProjectURL(path)
+    let info = try projectScope.fileInfo(url: url)
     let result = try commandRunner.run(
       executable: try registeredCommands.builtinExecutable("du"),
       arguments: ["-sk", url.path],
-      workingDirectory: configuration.workspaceDirectory,
+      workingDirectory: configuration.projectDirectory,
       environment: [:],
       timeoutMilliseconds: timeout,
       maxOutputBytes: maxOutputBytes
@@ -316,7 +316,7 @@ extension FilesToolProvider {
     return .object([
       "operation": .string("file.disk_usage"),
       "path": .string(url.path),
-      "workspace_relative_path": .string(workspaceScope.workspaceRelativePath(url)),
+      "project_relative_path": .string(projectScope.projectRelativePath(url)),
       "type": .string(info.type),
       "apparent_size_bytes": info.size.map { .integer(Int64($0)) } ?? .null,
       "disk_usage_kib": usageKiB.map { .integer(Int64($0)) } ?? .null,
@@ -334,8 +334,8 @@ extension FilesToolProvider {
 
   internal func fileVolumeInfo(arguments object: [String: JSONValue]) throws -> JSONValue {
     let path = try optionalString("path", in: object) ?? "."
-    let url = try workspaceScope.resolvedWorkspaceURL(path)
-    let info = try workspaceScope.fileInfo(url: url)
+    let url = try projectScope.resolvedProjectURL(path)
+    let info = try projectScope.fileInfo(url: url)
     let keys = Set(volumeResourceKeys())
     let values = try url.resourceValues(forKeys: keys)
     let volumeURL = values.volume ?? url
@@ -343,7 +343,7 @@ extension FilesToolProvider {
     return .object([
       "operation": .string("file.volume_info"),
       "path": .string(url.path),
-      "workspace_relative_path": .string(workspaceScope.workspaceRelativePath(url)),
+      "project_relative_path": .string(projectScope.projectRelativePath(url)),
       "type": .string(info.type),
       "volume": volumeInfo(url: volumeURL, keys: keys),
     ])
@@ -363,7 +363,7 @@ extension FilesToolProvider {
     try validateBoundedPositive(maxResults, name: "max_results", upperBound: 10_000)
     try validateBoundedPositive(maxVisited, name: "max_visited", upperBound: 200_000)
 
-    let directory = try workspaceScope.resolvedWorkspaceURL(path)
+    let directory = try projectScope.resolvedProjectURL(path)
     try requireDirectory(directory, originalPath: path)
 
     var results: [FileInfo] = []
@@ -384,13 +384,13 @@ extension FilesToolProvider {
       truncated: &truncated
     )
     results.sort {
-      $0.workspaceRelativePath.localizedStandardCompare($1.workspaceRelativePath)
+      $0.projectRelativePath.localizedStandardCompare($1.projectRelativePath)
         == .orderedAscending
     }
 
     return .object([
       "path": .string(directory.path),
-      "workspace_relative_path": .string(workspaceScope.workspaceRelativePath(directory)),
+      "project_relative_path": .string(projectScope.projectRelativePath(directory)),
       "query": .string(query),
       "match": .string(matchMode.rawValue),
       "case_sensitive": .bool(caseSensitive),
@@ -420,7 +420,7 @@ extension FilesToolProvider {
     try validateBoundedPositive(maxMatches, name: "max_matches", upperBound: 10_000)
     try validateBoundedPositive(maxBytesPerFile, name: "max_bytes_per_file", upperBound: 20_971_520)
 
-    let root = try workspaceScope.resolvedWorkspaceURL(path)
+    let root = try projectScope.resolvedProjectURL(path)
     var matches: [FileSearchMatch] = []
     var filesScanned = 0
     var filesSkipped = 0
@@ -428,7 +428,7 @@ extension FilesToolProvider {
     var truncatedFiles = 0
     var truncated = false
 
-    let rootInfo = try workspaceScope.fileInfo(url: root)
+    let rootInfo = try projectScope.fileInfo(url: root)
     if rootInfo.type == "directory" {
       try collectSearchMatches(
         directory: root,
@@ -467,7 +467,7 @@ extension FilesToolProvider {
 
     return .object([
       "path": .string(root.path),
-      "workspace_relative_path": .string(workspaceScope.workspaceRelativePath(root)),
+      "project_relative_path": .string(projectScope.projectRelativePath(root)),
       "query": .string(query),
       "case_sensitive": .bool(caseSensitive),
       "include_hidden": .bool(includeHidden),
@@ -503,7 +503,7 @@ extension FilesToolProvider {
     try validateBoundedPositive(maxResults, name: "max_results", upperBound: 10_000)
     try validateBoundedPositive(maxScanEntries, name: "max_scan_entries", upperBound: 200_000)
 
-    let directory = try workspaceScope.resolvedWorkspaceURL(path)
+    let directory = try projectScope.resolvedProjectURL(path)
     try requireDirectory(directory, originalPath: path)
 
     var scannedEntries = 0
@@ -539,7 +539,7 @@ extension FilesToolProvider {
       case .path:
         break
       }
-      return lhs.workspaceRelativePath.localizedStandardCompare(rhs.workspaceRelativePath)
+      return lhs.projectRelativePath.localizedStandardCompare(rhs.projectRelativePath)
         == .orderedAscending
     }
     let resultTruncated = sortedEntries.count > maxResults
@@ -548,7 +548,7 @@ extension FilesToolProvider {
     return .object([
       "operation": .string("file.timeline"),
       "path": .string(directory.path),
-      "workspace_relative_path": .string(workspaceScope.workspaceRelativePath(directory)),
+      "project_relative_path": .string(projectScope.projectRelativePath(directory)),
       "include_hidden": .bool(includeHidden),
       "modified_after": modifiedAfter.map { .string(iso8601String($0)) } ?? .null,
       "modified_before": modifiedBefore.map { .string(iso8601String($0)) } ?? .null,
@@ -575,7 +575,7 @@ extension FilesToolProvider {
       throw GatewayToolError.invalidArguments("max_bytes must be greater than zero.")
     }
 
-    let url = try workspaceScope.resolvedWorkspaceURL(path)
+    let url = try projectScope.resolvedProjectURL(path)
     let handle = try FileHandle(forReadingFrom: url)
     defer {
       try? handle.close()
@@ -615,7 +615,7 @@ extension FilesToolProvider {
     var totalBytesRead = 0
     var truncatedCount = 0
     for path in paths {
-      let file = try readWorkspaceFileEntry(
+      let file = try readProjectFileEntry(
         path: path,
         maxBytes: maxBytes,
         encoding: encoding
@@ -639,13 +639,13 @@ extension FilesToolProvider {
     ])
   }
 
-  private func readWorkspaceFileEntry(
+  private func readProjectFileEntry(
     path: String,
     maxBytes: Int,
     encoding: String
   ) throws -> FileReadEntry {
-    let url = try workspaceScope.resolvedWorkspaceURL(path)
-    let info = try workspaceScope.fileInfo(url: url)
+    let url = try projectScope.resolvedProjectURL(path)
+    let info = try projectScope.fileInfo(url: url)
     guard info.type == "file" else {
       throw GatewayToolError.invalidArguments("Path is not a file: \(path)")
     }
@@ -681,8 +681,8 @@ extension FilesToolProvider {
     try validateBoundedNonNegative(offset, name: "offset_bytes", upperBound: 9_007_199_254_740_991)
     try validateBoundedPositive(maxBytes, name: "max_bytes", upperBound: 20_971_520)
 
-    let url = try workspaceScope.resolvedWorkspaceURL(path)
-    let info = try workspaceScope.fileInfo(url: url)
+    let url = try projectScope.resolvedProjectURL(path)
+    let info = try projectScope.fileInfo(url: url)
     guard info.type == "file" else {
       throw GatewayToolError.invalidArguments("Path is not a file: \(path)")
     }
@@ -707,7 +707,7 @@ extension FilesToolProvider {
     return .object([
       "operation": .string("file.read_window"),
       "path": .string(url.path),
-      "workspace_relative_path": .string(workspaceScope.workspaceRelativePath(url)),
+      "project_relative_path": .string(projectScope.projectRelativePath(url)),
       "encoding": .string("utf-8"),
       "offset_bytes": .integer(Int64(offset)),
       "max_bytes": .integer(Int64(maxBytes)),
@@ -730,8 +730,8 @@ extension FilesToolProvider {
     try validateBoundedPositive(maxLines, name: "max_lines", upperBound: 10_000)
     try validateBoundedPositive(maxBytes, name: "max_bytes", upperBound: 20_971_520)
 
-    let url = try workspaceScope.resolvedWorkspaceURL(path)
-    let info = try workspaceScope.fileInfo(url: url)
+    let url = try projectScope.resolvedProjectURL(path)
+    let info = try projectScope.fileInfo(url: url)
     guard info.type == "file" else {
       throw GatewayToolError.invalidArguments("Path is not a file: \(path)")
     }
@@ -759,7 +759,7 @@ extension FilesToolProvider {
 
     return .object([
       "path": .string(url.path),
-      "workspace_relative_path": .string(workspaceScope.workspaceRelativePath(url)),
+      "project_relative_path": .string(projectScope.projectRelativePath(url)),
       "encoding": .string("utf-8"),
       "start_line": .integer(Int64(startLine)),
       "max_lines": .integer(Int64(maxLines)),
@@ -785,8 +785,8 @@ extension FilesToolProvider {
     let startLine = max(1, line - before)
     let endLine = line + after
 
-    let url = try workspaceScope.resolvedWorkspaceURL(path)
-    let info = try workspaceScope.fileInfo(url: url)
+    let url = try projectScope.resolvedProjectURL(path)
+    let info = try projectScope.fileInfo(url: url)
     guard info.type == "file" else {
       throw GatewayToolError.invalidArguments("Path is not a file: \(path)")
     }
@@ -820,7 +820,7 @@ extension FilesToolProvider {
     return .object([
       "operation": .string("file.read_context"),
       "path": .string(url.path),
-      "workspace_relative_path": .string(workspaceScope.workspaceRelativePath(url)),
+      "project_relative_path": .string(projectScope.projectRelativePath(url)),
       "encoding": .string("utf-8"),
       "line": .integer(Int64(line)),
       "before": .integer(Int64(before)),
@@ -845,8 +845,8 @@ extension FilesToolProvider {
     try validateBoundedPositive(maxLines, name: "max_lines", upperBound: 10_000)
     try validateBoundedPositive(maxBytes, name: "max_bytes", upperBound: 20_971_520)
 
-    let url = try workspaceScope.resolvedWorkspaceURL(path)
-    let info = try workspaceScope.fileInfo(url: url)
+    let url = try projectScope.resolvedProjectURL(path)
+    let info = try projectScope.fileInfo(url: url)
     guard info.type == "file" else {
       throw GatewayToolError.invalidArguments("Path is not a file: \(path)")
     }
@@ -883,7 +883,7 @@ extension FilesToolProvider {
 
     return .object([
       "path": .string(url.path),
-      "workspace_relative_path": .string(workspaceScope.workspaceRelativePath(url)),
+      "project_relative_path": .string(projectScope.projectRelativePath(url)),
       "encoding": .string("utf-8"),
       "max_lines": .integer(Int64(maxLines)),
       "max_bytes": .integer(Int64(maxBytes)),
@@ -906,8 +906,8 @@ extension FilesToolProvider {
     try validateBoundedPositive(maxBytes, name: "max_bytes", upperBound: 20_971_520)
     try validateBoundedPositive(maxResults, name: "max_results", upperBound: 10_000)
 
-    let url = try workspaceScope.resolvedWorkspaceURL(path)
-    let info = try workspaceScope.fileInfo(url: url)
+    let url = try projectScope.resolvedProjectURL(path)
+    let info = try projectScope.fileInfo(url: url)
     guard info.type == "file" else {
       throw GatewayToolError.invalidArguments("Path is not a file: \(path)")
     }
@@ -936,7 +936,7 @@ extension FilesToolProvider {
     return .object([
       "operation": .string("file.outline"),
       "path": .string(url.path),
-      "workspace_relative_path": .string(workspaceScope.workspaceRelativePath(url)),
+      "project_relative_path": .string(projectScope.projectRelativePath(url)),
       "language": language.map(JSONValue.string) ?? .null,
       "encoding": .string("utf-8"),
       "include_imports": .bool(includeImports),
@@ -959,8 +959,8 @@ extension FilesToolProvider {
     try validateBoundedPositive(maxLines, name: "max_lines", upperBound: 10_000)
     try validateBoundedPositive(maxBytes, name: "max_bytes", upperBound: 20_971_520)
 
-    let url = try workspaceScope.resolvedWorkspaceURL(path)
-    let info = try workspaceScope.fileInfo(url: url)
+    let url = try projectScope.resolvedProjectURL(path)
+    let info = try projectScope.fileInfo(url: url)
     guard info.type == "file" else {
       throw GatewayToolError.invalidArguments("Path is not a file: \(path)")
     }
@@ -1001,7 +1001,7 @@ extension FilesToolProvider {
 
     return .object([
       "path": .string(url.path),
-      "workspace_relative_path": .string(workspaceScope.workspaceRelativePath(url)),
+      "project_relative_path": .string(projectScope.projectRelativePath(url)),
       "encoding": .string("utf-8"),
       "max_lines": .integer(Int64(maxLines)),
       "max_bytes": .integer(Int64(maxBytes)),
@@ -1023,8 +1023,8 @@ extension FilesToolProvider {
     try validateBoundedNonNegative(offset, name: "offset_bytes", upperBound: 9_007_199_254_740_991)
     try validateBoundedPositive(maxBytes, name: "max_bytes", upperBound: 65_536)
 
-    let url = try workspaceScope.resolvedWorkspaceURL(path)
-    let info = try workspaceScope.fileInfo(url: url)
+    let url = try projectScope.resolvedProjectURL(path)
+    let info = try projectScope.fileInfo(url: url)
     guard info.type == "file" else {
       throw GatewayToolError.invalidArguments("Path is not a file: \(path)")
     }
@@ -1058,7 +1058,7 @@ extension FilesToolProvider {
 
     return .object([
       "path": .string(url.path),
-      "workspace_relative_path": .string(workspaceScope.workspaceRelativePath(url)),
+      "project_relative_path": .string(projectScope.projectRelativePath(url)),
       "offset_bytes": .integer(Int64(offset)),
       "max_bytes": .integer(Int64(maxBytes)),
       "file_size_bytes": .integer(Int64(fileSize)),
@@ -1076,8 +1076,8 @@ extension FilesToolProvider {
     let maxValueBytes = optionalInt("max_value_bytes", in: object) ?? 1_024
     try validateBoundedPositive(maxValueBytes, name: "max_value_bytes", upperBound: 65_536)
 
-    let url = try workspaceScope.resolvedWorkspaceURL(path)
-    let info = try workspaceScope.fileInfo(url: url)
+    let url = try projectScope.resolvedProjectURL(path)
+    let info = try projectScope.fileInfo(url: url)
     guard let xattrs = environment.extendedAttributes else {
       throw GatewayToolError.disabled("Extended attributes are unavailable on this platform.")
     }
@@ -1118,7 +1118,7 @@ extension FilesToolProvider {
 
     return .object([
       "path": .string(url.path),
-      "workspace_relative_path": .string(info.workspaceRelativePath),
+      "project_relative_path": .string(info.projectRelativePath),
       "type": .string(info.type),
       "include_values": .bool(includeValues),
       "max_value_bytes": .integer(Int64(maxValueBytes)),
@@ -1133,8 +1133,8 @@ extension FilesToolProvider {
     let dryRun = try optionalBool("dry_run", in: object) ?? false
     try validateExtendedAttributeName(name)
 
-    let url = try workspaceScope.resolvedWorkspaceURL(path)
-    let info = try workspaceScope.fileInfo(url: url)
+    let url = try projectScope.resolvedProjectURL(path)
+    let info = try projectScope.fileInfo(url: url)
     guard let xattrs = environment.extendedAttributes else {
       throw GatewayToolError.disabled("Extended attributes are unavailable on this platform.")
     }
@@ -1156,7 +1156,7 @@ extension FilesToolProvider {
     return .object([
       "operation": .string("file.remove_xattr"),
       "path": .string(url.path),
-      "workspace_relative_path": .string(info.workspaceRelativePath),
+      "project_relative_path": .string(info.projectRelativePath),
       "type": .string(info.type),
       "dry_run": .bool(dryRun),
       "name": .string(name),
@@ -1178,8 +1178,8 @@ extension FilesToolProvider {
     try validateBoundedPositive(timeout, name: "timeout_ms", upperBound: 600_000)
     try validateBoundedPositive(maxOutputBytes, name: "max_output_bytes", upperBound: 20_971_520)
 
-    let url = try workspaceScope.resolvedWorkspaceURL(path)
-    let info = try workspaceScope.fileInfo(url: url)
+    let url = try projectScope.resolvedProjectURL(path)
+    let info = try projectScope.fileInfo(url: url)
     for attribute in attributes {
       try validateMetadataAttributeName(attribute)
     }
@@ -1189,7 +1189,7 @@ extension FilesToolProvider {
     let result = try commandRunner.run(
       executable: try registeredCommands.builtinExecutable("mdls"),
       arguments: arguments,
-      workingDirectory: configuration.workspaceDirectory,
+      workingDirectory: configuration.projectDirectory,
       environment: [:],
       timeoutMilliseconds: timeout,
       maxOutputBytes: maxOutputBytes
@@ -1200,7 +1200,7 @@ extension FilesToolProvider {
     return .object([
       "operation": .string("file.metadata"),
       "path": .string(url.path),
-      "workspace_relative_path": .string(info.workspaceRelativePath),
+      "project_relative_path": .string(info.projectRelativePath),
       "type": .string(info.type),
       "requested_attributes": .array(attributes.map(JSONValue.string)),
       "metadata": metadata,
@@ -1220,7 +1220,7 @@ extension FilesToolProvider {
 
   internal func readSymbolicLink(arguments object: [String: JSONValue]) throws -> JSONValue {
     let path = try requiredString("path", in: object)
-    let url = try workspaceScope.resolvedWorkspaceURLPreservingFinalSymlink(path)
+    let url = try projectScope.resolvedProjectURLPreservingFinalSymlink(path)
 
     let destination: String
     do {
@@ -1234,46 +1234,46 @@ extension FilesToolProvider {
       ? URL(fileURLWithPath: destination)
       : url.deletingLastPathComponent().appendingPathComponent(destination)
     let resolvedDestination = destinationURL.standardizedFileURL.resolvingSymlinksInPath()
-    let destinationContained = workspaceScope.isWorkspaceContained(resolvedDestination)
+    let destinationContained = projectScope.isProjectContained(resolvedDestination)
     let destinationExists = FileManager.default.fileExists(atPath: resolvedDestination.path)
 
     return .object([
       "operation": .string("file.readlink"),
       "path": .string(url.path),
-      "workspace_relative_path": .string(
-        workspaceScope.workspaceRelativePathPreservingSymlinks(url)),
+      "project_relative_path": .string(
+        projectScope.projectRelativePathPreservingSymlinks(url)),
       "destination": .string(destination),
       "destination_is_absolute": .bool(destination.hasPrefix("/")),
-      "destination_workspace_contained": .bool(destinationContained),
+      "destination_project_contained": .bool(destinationContained),
       "destination_exists": .bool(destinationExists),
       "resolved_destination_path": .string(resolvedDestination.path),
-      "destination_workspace_relative_path": destinationContained
-        ? .string(workspaceScope.workspaceRelativePath(resolvedDestination)) : .null,
+      "destination_project_relative_path": destinationContained
+        ? .string(projectScope.projectRelativePath(resolvedDestination)) : .null,
     ])
   }
 
   internal func resolveFilePath(arguments object: [String: JSONValue]) throws -> JSONValue {
     let path = try requiredString("path", in: object)
-    let lexicalURL = try workspaceScope.resolvedWorkspaceURLPreservingFinalSymlink(path)
+    let lexicalURL = try projectScope.resolvedProjectURLPreservingFinalSymlink(path)
     let exists = FileManager.default.fileExists(atPath: lexicalURL.path)
     let symlinkDestination = try? FileManager.default.destinationOfSymbolicLink(
       atPath: lexicalURL.path)
     let resolvedURL = exists ? lexicalURL.resolvingSymlinksInPath() : lexicalURL
-    let resolvedContained = workspaceScope.isWorkspaceContained(resolvedURL)
+    let resolvedContained = projectScope.isProjectContained(resolvedURL)
 
     return .object([
       "operation": .string("file.resolve"),
       "input_path": .string(path),
       "path": .string(lexicalURL.path),
-      "workspace_relative_path": .string(
-        workspaceScope.workspaceRelativePathPreservingSymlinks(lexicalURL)),
+      "project_relative_path": .string(
+        projectScope.projectRelativePathPreservingSymlinks(lexicalURL)),
       "exists": .bool(exists),
       "is_symlink": .bool(symlinkDestination != nil),
       "symlink_destination": symlinkDestination.map(JSONValue.string) ?? .null,
       "resolved_path": .string(resolvedURL.path),
-      "resolved_workspace_contained": .bool(resolvedContained),
-      "resolved_workspace_relative_path": resolvedContained
-        ? .string(workspaceScope.workspaceRelativePath(resolvedURL)) : .null,
+      "resolved_project_contained": .bool(resolvedContained),
+      "resolved_project_relative_path": resolvedContained
+        ? .string(projectScope.projectRelativePath(resolvedURL)) : .null,
     ])
   }
 
@@ -1284,8 +1284,8 @@ extension FilesToolProvider {
       throw GatewayToolError.invalidArguments("algorithm must be sha256.")
     }
 
-    let url = try workspaceScope.resolvedWorkspaceURL(path)
-    let info = try workspaceScope.fileInfo(url: url)
+    let url = try projectScope.resolvedProjectURL(path)
+    let info = try projectScope.fileInfo(url: url)
     guard info.type == "file" else {
       throw GatewayToolError.invalidArguments("Path is not a file: \(path)")
     }
@@ -1293,7 +1293,7 @@ extension FilesToolProvider {
     let digest = try sha256Hex(url: url)
     return .object([
       "path": .string(url.path),
-      "workspace_relative_path": .string(workspaceScope.workspaceRelativePath(url)),
+      "project_relative_path": .string(projectScope.projectRelativePath(url)),
       "algorithm": .string(algorithm),
       "hex": .string(digest.hex),
       "bytes_read": .integer(Int64(digest.bytesRead)),
@@ -1330,10 +1330,10 @@ extension FilesToolProvider {
     try validateBoundedPositive(timeout, name: "timeout_ms", upperBound: 600_000)
     try validateBoundedPositive(maxOutputBytes, name: "max_output_bytes", upperBound: 20_971_520)
 
-    let source = try workspaceScope.resolvedWorkspaceURL(sourcePath)
-    let target = try workspaceScope.resolvedWorkspaceURL(targetPath)
-    let sourceInfo = try workspaceScope.fileInfo(url: source)
-    let targetInfo = try workspaceScope.fileInfo(url: target)
+    let source = try projectScope.resolvedProjectURL(sourcePath)
+    let target = try projectScope.resolvedProjectURL(targetPath)
+    let sourceInfo = try projectScope.fileInfo(url: source)
+    let targetInfo = try projectScope.fileInfo(url: target)
     guard sourceInfo.type == "file" else {
       throw GatewayToolError.invalidArguments("Source is not a file: \(sourcePath)")
     }
@@ -1344,7 +1344,7 @@ extension FilesToolProvider {
     let result = try commandRunner.run(
       executable: try registeredCommands.builtinExecutable("diff"),
       arguments: ["-U", "\(contextLines)", source.path, target.path],
-      workingDirectory: configuration.workspaceDirectory,
+      workingDirectory: configuration.projectDirectory,
       environment: [:],
       timeoutMilliseconds: timeout,
       maxOutputBytes: maxOutputBytes
@@ -1354,11 +1354,11 @@ extension FilesToolProvider {
       "operation": .string("file.diff"),
       "source": .object([
         "path": .string(source.path),
-        "workspace_relative_path": .string(workspaceScope.workspaceRelativePath(source)),
+        "project_relative_path": .string(projectScope.projectRelativePath(source)),
       ]),
       "target": .object([
         "path": .string(target.path),
-        "workspace_relative_path": .string(workspaceScope.workspaceRelativePath(target)),
+        "project_relative_path": .string(projectScope.projectRelativePath(target)),
       ]),
       "context_lines": .integer(Int64(contextLines)),
       "max_output_bytes": .integer(Int64(maxOutputBytes)),
@@ -1387,8 +1387,8 @@ extension FilesToolProvider {
       upperBound: 1_073_741_824
     )
 
-    let left = try workspaceScope.resolvedWorkspaceURL(leftPath)
-    let right = try workspaceScope.resolvedWorkspaceURL(rightPath)
+    let left = try projectScope.resolvedProjectURL(leftPath)
+    let right = try projectScope.resolvedProjectURL(rightPath)
     try requireDirectory(left, originalPath: leftPath)
     try requireDirectory(right, originalPath: rightPath)
 
@@ -1554,13 +1554,13 @@ extension FilesToolProvider {
       "operation": .string("file.compare_trees"),
       "left": .object([
         "path": .string(left.path),
-        "workspace_relative_path": .string(workspaceScope.workspaceRelativePath(left)),
+        "project_relative_path": .string(projectScope.projectRelativePath(left)),
         "scanned_entries": .integer(Int64(leftScanned)),
         "truncated": .bool(leftTruncated),
       ]),
       "right": .object([
         "path": .string(right.path),
-        "workspace_relative_path": .string(workspaceScope.workspaceRelativePath(right)),
+        "project_relative_path": .string(projectScope.projectRelativePath(right)),
         "scanned_entries": .integer(Int64(rightScanned)),
         "truncated": .bool(rightTruncated),
       ]),
@@ -1619,7 +1619,7 @@ extension FilesToolProvider {
     try validateBoundedPositive(maxGroups, name: "max_groups", upperBound: 10_000)
     try validateBoundedPositive(maxFilesPerGroup, name: "max_files_per_group", upperBound: 1_000)
 
-    let root = try workspaceScope.resolvedWorkspaceURL(path)
+    let root = try projectScope.resolvedProjectURL(path)
     try requireDirectory(root, originalPath: path)
 
     var scannedEntries = 0
@@ -1708,7 +1708,7 @@ extension FilesToolProvider {
     return .object([
       "operation": .string("file.duplicates"),
       "path": .string(root.path),
-      "workspace_relative_path": .string(workspaceScope.workspaceRelativePath(root)),
+      "project_relative_path": .string(projectScope.projectRelativePath(root)),
       "include_hidden": .bool(includeHidden),
       "min_size_bytes": .integer(Int64(minSizeBytes)),
       "max_depth": .integer(Int64(maxDepth)),
@@ -1770,7 +1770,7 @@ extension FilesToolProvider {
       maxDownloadBytes, name: "max_download_bytes", upperBound: 104_857_600)
     try validateBoundedPositive(maxOutputBytes, name: "max_output_bytes", upperBound: 20_971_520)
 
-    let destinationURL = try workspaceScope.resolvedWorkspaceURLPreservingFinalSymlink(path)
+    let destinationURL = try projectScope.resolvedProjectURLPreservingFinalSymlink(path)
     let parentURL = destinationURL.deletingLastPathComponent()
     let fileManager = FileManager.default
     var parentIsDirectory = ObjCBool(false)
@@ -1791,7 +1791,7 @@ extension FilesToolProvider {
       isDirectory: &destinationIsDirectory
     )
     if destinationExists {
-      let destinationInfo = try workspaceScope.fileInfo(url: destinationURL)
+      let destinationInfo = try projectScope.fileInfo(url: destinationURL)
       guard !destinationInfo.isSymlink else {
         throw GatewayToolError.invalidArguments("Download destination is a symlink: \(path)")
       }
@@ -1809,7 +1809,7 @@ extension FilesToolProvider {
     )
     if fileManager.fileExists(atPath: tempURL.path) {
       throw GatewayToolError.invalidArguments(
-        "Temporary download path already exists: \(workspaceScope.workspaceRelativePathPreservingSymlinks(tempURL))"
+        "Temporary download path already exists: \(projectScope.projectRelativePathPreservingSymlinks(tempURL))"
       )
     }
 
@@ -1849,7 +1849,7 @@ extension FilesToolProvider {
       let commandResult = try commandRunner.run(
         executable: try registeredCommands.builtinExecutable("curl"),
         arguments: arguments,
-        workingDirectory: configuration.workspaceDirectory,
+        workingDirectory: configuration.projectDirectory,
         environment: [:],
         timeoutMilliseconds: timeout,
         maxOutputBytes: maxOutputBytes
@@ -1866,7 +1866,7 @@ extension FilesToolProvider {
 
       if commandResult.exitCode == 0 && !commandResult.timedOut {
         do {
-          let tempInfo = try workspaceScope.fileInfo(url: tempURL)
+          let tempInfo = try projectScope.fileInfo(url: tempURL)
           guard !tempInfo.isSymlink, tempInfo.type == "file" else {
             try? fileManager.removeItem(at: tempURL)
             throw GatewayToolError.executionFailed("Download temp path is not a regular file.")
@@ -1881,7 +1881,7 @@ extension FilesToolProvider {
             try fileManager.removeItem(at: destinationURL)
           }
           try fileManager.moveItem(at: tempURL, to: destinationURL)
-          let finalInfo = try workspaceScope.fileInfo(url: destinationURL)
+          let finalInfo = try projectScope.fileInfo(url: destinationURL)
           downloaded = true
           downloadedSizeBytes = finalInfo.size
           downloadedFile = finalInfo.json
@@ -1901,15 +1901,15 @@ extension FilesToolProvider {
       "host": .string(validatedURL.host ?? ""),
       "destination": .object([
         "path": .string(destinationURL.path),
-        "workspace_relative_path": .string(
-          workspaceScope.workspaceRelativePathPreservingSymlinks(destinationURL)),
+        "project_relative_path": .string(
+          projectScope.projectRelativePathPreservingSymlinks(destinationURL)),
         "exists": .bool(destinationExists),
         "would_create_parent_directories": .bool(!parentExists && createDirectories),
         "would_overwrite": .bool(destinationExists && overwrite),
       ]),
       "temporary_path": .string(tempURL.path),
-      "temporary_workspace_relative_path": .string(
-        workspaceScope.workspaceRelativePathPreservingSymlinks(tempURL)),
+      "temporary_project_relative_path": .string(
+        projectScope.projectRelativePathPreservingSymlinks(tempURL)),
       "argv": .array(arguments.map(JSONValue.string)),
       "confirm_download": .bool(confirmDownload),
       "create_directories": .bool(createDirectories),
@@ -1942,7 +1942,7 @@ extension FilesToolProvider {
     let includePreview = try optionalBool("include_preview", in: object) ?? dryRun
     let previewMaxBytes = optionalInt("preview_max_bytes", in: object) ?? 8_192
     try validateBoundedPositive(previewMaxBytes, name: "preview_max_bytes", upperBound: 1_048_576)
-    let url = try workspaceScope.resolvedWorkspaceURL(path)
+    let url = try projectScope.resolvedProjectURL(path)
     let parent = url.deletingLastPathComponent()
     let fileManager = FileManager.default
 
@@ -1985,7 +1985,7 @@ extension FilesToolProvider {
 
     var payload: [String: JSONValue] = [
       "path": .string(url.path),
-      "workspace_relative_path": .string(workspaceScope.workspaceRelativePath(url)),
+      "project_relative_path": .string(projectScope.projectRelativePath(url)),
       "dry_run": .bool(dryRun),
       "overwrite": .bool(overwrite),
       "create_directories": .bool(createDirectories),
@@ -2046,7 +2046,7 @@ extension FilesToolProvider {
           "files[\(index)].content exceeds policy.max_output_bytes (\(configuration.policy.maxOutputBytes))."
         )
       }
-      let url = try workspaceScope.resolvedWorkspaceURL(path)
+      let url = try projectScope.resolvedProjectURL(path)
       guard seenPaths.insert(url.path).inserted else {
         throw GatewayToolError.invalidArguments("Duplicate output path: \(path)")
       }
@@ -2085,7 +2085,7 @@ extension FilesToolProvider {
         FileWritePlan(
           requestedPath: path,
           url: url,
-          workspaceRelativePath: workspaceScope.workspaceRelativePath(url),
+          projectRelativePath: projectScope.projectRelativePath(url),
           parent: parent,
           parentExists: parentExists,
           existed: existed,
@@ -2141,7 +2141,7 @@ extension FilesToolProvider {
     let includePreview = try optionalBool("include_preview", in: object) ?? dryRun
     let previewMaxBytes = optionalInt("preview_max_bytes", in: object) ?? 8_192
     try validateBoundedPositive(previewMaxBytes, name: "preview_max_bytes", upperBound: 1_048_576)
-    let url = try workspaceScope.resolvedWorkspaceURL(path)
+    let url = try projectScope.resolvedProjectURL(path)
     let parent = url.deletingLastPathComponent()
     let fileManager = FileManager.default
 
@@ -2203,7 +2203,7 @@ extension FilesToolProvider {
 
     var payload: [String: JSONValue] = [
       "path": .string(url.path),
-      "workspace_relative_path": .string(workspaceScope.workspaceRelativePath(url)),
+      "project_relative_path": .string(projectScope.projectRelativePath(url)),
       "dry_run": .bool(dryRun),
       "created": .bool(!dryRun && !existed),
       "would_create": .bool(!existed),
@@ -2249,8 +2249,8 @@ extension FilesToolProvider {
       )
     }
 
-    let url = try workspaceScope.resolvedWorkspaceURL(path)
-    let info = try workspaceScope.fileInfo(url: url)
+    let url = try projectScope.resolvedProjectURL(path)
+    let info = try projectScope.fileInfo(url: url)
     guard info.type == "file" else {
       throw GatewayToolError.invalidArguments("Path is not a file: \(path)")
     }
@@ -2295,7 +2295,7 @@ extension FilesToolProvider {
 
     var payload: [String: JSONValue] = [
       "path": .string(url.path),
-      "workspace_relative_path": .string(workspaceScope.workspaceRelativePath(url)),
+      "project_relative_path": .string(projectScope.projectRelativePath(url)),
       "encoding": .string("utf-8"),
       "replace_all": .bool(replaceAll),
       "dry_run": .bool(dryRun),
@@ -2343,8 +2343,8 @@ extension FilesToolProvider {
         "content exceeds policy.max_output_bytes (\(configuration.policy.maxOutputBytes)).")
     }
 
-    let url = try workspaceScope.resolvedWorkspaceURL(path)
-    let info = try workspaceScope.fileInfo(url: url)
+    let url = try projectScope.resolvedProjectURL(path)
+    let info = try projectScope.fileInfo(url: url)
     guard info.type == "file" else {
       throw GatewayToolError.invalidArguments("Path is not a file: \(path)")
     }
@@ -2397,7 +2397,7 @@ extension FilesToolProvider {
 
     var payload: [String: JSONValue] = [
       "path": .string(url.path),
-      "workspace_relative_path": .string(workspaceScope.workspaceRelativePath(url)),
+      "project_relative_path": .string(projectScope.projectRelativePath(url)),
       "encoding": .string("utf-8"),
       "line": .integer(Int64(line)),
       "position": .string(position.rawValue),
@@ -2464,8 +2464,8 @@ extension FilesToolProvider {
         "content exceeds policy.max_output_bytes (\(configuration.policy.maxOutputBytes)).")
     }
 
-    let url = try workspaceScope.resolvedWorkspaceURL(path)
-    let info = try workspaceScope.fileInfo(url: url)
+    let url = try projectScope.resolvedProjectURL(path)
+    let info = try projectScope.fileInfo(url: url)
     guard info.type == "file" else {
       throw GatewayToolError.invalidArguments("Path is not a file: \(path)")
     }
@@ -2515,7 +2515,7 @@ extension FilesToolProvider {
 
     var payload: [String: JSONValue] = [
       "path": .string(url.path),
-      "workspace_relative_path": .string(workspaceScope.workspaceRelativePath(url)),
+      "project_relative_path": .string(projectScope.projectRelativePath(url)),
       "encoding": .string("utf-8"),
       "start_line": .integer(Int64(startLine)),
       "end_line": .integer(Int64(endLine)),
@@ -2552,7 +2552,7 @@ extension FilesToolProvider {
     let createIfMissing = try optionalBool("create_if_missing", in: object) ?? true
     let createDirectories = try optionalBool("create_directories", in: object) ?? false
     let dryRun = try optionalBool("dry_run", in: object) ?? false
-    let url = try workspaceScope.resolvedWorkspaceURL(path)
+    let url = try projectScope.resolvedProjectURL(path)
     let parent = url.deletingLastPathComponent()
     var parentIsDirectory: ObjCBool = false
     let parentExists = FileManager.default.fileExists(
@@ -2607,7 +2607,7 @@ extension FilesToolProvider {
     var payload: [String: JSONValue] = [
       "operation": .string("file.touch"),
       "path": .string(url.path),
-      "workspace_relative_path": .string(workspaceScope.workspaceRelativePath(url)),
+      "project_relative_path": .string(projectScope.projectRelativePath(url)),
       "dry_run": .bool(dryRun),
       "create_if_missing": .bool(createIfMissing),
       "create_directories": .bool(createDirectories),
@@ -2618,7 +2618,7 @@ extension FilesToolProvider {
       "would_update_modification_time": .bool(existed),
       "would_create_parent_directories": .bool(createDirectories && !parentExists),
     ]
-    payload["result"] = dryRun ? .null : try workspaceScope.fileInfo(url: url).json
+    payload["result"] = dryRun ? .null : try projectScope.fileInfo(url: url).json
     return .object(payload)
   }
 
@@ -2626,7 +2626,7 @@ extension FilesToolProvider {
     let path = try requiredString("path", in: object)
     let intermediateDirectories = try optionalBool("intermediate_directories", in: object) ?? true
     let dryRun = try optionalBool("dry_run", in: object) ?? false
-    let url = try workspaceScope.resolvedWorkspaceURL(path)
+    let url = try projectScope.resolvedProjectURL(path)
     var isDirectory: ObjCBool = false
 
     if FileManager.default.fileExists(atPath: url.path, isDirectory: &isDirectory) {
@@ -2635,7 +2635,7 @@ extension FilesToolProvider {
       }
       return .object([
         "path": .string(url.path),
-        "workspace_relative_path": .string(workspaceScope.workspaceRelativePath(url)),
+        "project_relative_path": .string(projectScope.projectRelativePath(url)),
         "dry_run": .bool(dryRun),
         "intermediate_directories": .bool(intermediateDirectories),
         "created": .bool(false),
@@ -2668,7 +2668,7 @@ extension FilesToolProvider {
     }
     return .object([
       "path": .string(url.path),
-      "workspace_relative_path": .string(workspaceScope.workspaceRelativePath(url)),
+      "project_relative_path": .string(projectScope.projectRelativePath(url)),
       "dry_run": .bool(dryRun),
       "intermediate_directories": .bool(intermediateDirectories),
       "created": .bool(!dryRun),
@@ -2683,8 +2683,8 @@ extension FilesToolProvider {
     let overwrite = try optionalBool("overwrite", in: object) ?? false
     let createDirectories = try optionalBool("create_directories", in: object) ?? false
     let dryRun = try optionalBool("dry_run", in: object) ?? false
-    let source = try workspaceScope.resolvedWorkspaceURL(sourcePath)
-    let destination = try workspaceScope.resolvedWorkspaceURL(destinationPath)
+    let source = try projectScope.resolvedProjectURL(sourcePath)
+    let destination = try projectScope.resolvedProjectURL(destinationPath)
 
     guard FileManager.default.fileExists(atPath: source.path) else {
       throw GatewayToolError.invalidArguments("Source does not exist: \(sourcePath)")
@@ -2723,8 +2723,8 @@ extension FilesToolProvider {
     let overwrite = try optionalBool("overwrite", in: object) ?? false
     let createDirectories = try optionalBool("create_directories", in: object) ?? false
     let dryRun = try optionalBool("dry_run", in: object) ?? false
-    let source = try workspaceScope.resolvedWorkspaceURL(sourcePath)
-    let destination = try workspaceScope.resolvedWorkspaceURL(destinationPath)
+    let source = try projectScope.resolvedProjectURL(sourcePath)
+    let destination = try projectScope.resolvedProjectURL(destinationPath)
 
     guard FileManager.default.fileExists(atPath: source.path) else {
       throw GatewayToolError.invalidArguments("Source does not exist: \(sourcePath)")
@@ -2767,16 +2767,16 @@ extension FilesToolProvider {
       try optionalBool("allow_external_destination", in: object) ?? false
     try validateSymbolicLinkDestination(destination)
 
-    let link = try workspaceScope.resolvedWorkspaceURLPreservingFinalSymlink(path)
+    let link = try projectScope.resolvedProjectURLPreservingFinalSymlink(path)
     let destinationURL =
       destination.hasPrefix("/")
       ? URL(fileURLWithPath: destination)
       : link.deletingLastPathComponent().appendingPathComponent(destination)
     let resolvedDestination = destinationURL.standardizedFileURL.resolvingSymlinksInPath()
-    let destinationContained = workspaceScope.isWorkspaceContained(resolvedDestination)
+    let destinationContained = projectScope.isProjectContained(resolvedDestination)
     guard destinationContained || allowExternalDestination else {
       throw GatewayToolError.invalidArguments(
-        "[policy.workspace_denied] destination resolves outside workspace; set allow_external_destination to true to allow it."
+        "[policy.project_denied] destination resolves outside project; set allow_external_destination to true to allow it."
       )
     }
 
@@ -2801,17 +2801,17 @@ extension FilesToolProvider {
     return .object([
       "operation": .string("file.symlink"),
       "path": .string(link.path),
-      "workspace_relative_path": .string(
-        workspaceScope.workspaceRelativePathPreservingSymlinks(link)),
+      "project_relative_path": .string(
+        projectScope.projectRelativePathPreservingSymlinks(link)),
       "dry_run": .bool(dryRun),
       "destination": .string(destination),
       "destination_is_absolute": .bool(destination.hasPrefix("/")),
-      "destination_workspace_contained": .bool(destinationContained),
+      "destination_project_contained": .bool(destinationContained),
       "allow_external_destination": .bool(allowExternalDestination),
       "destination_exists": .bool(FileManager.default.fileExists(atPath: resolvedDestination.path)),
       "resolved_destination_path": .string(resolvedDestination.path),
-      "destination_workspace_relative_path": destinationContained
-        ? .string(workspaceScope.workspaceRelativePath(resolvedDestination)) : .null,
+      "destination_project_relative_path": destinationContained
+        ? .string(projectScope.projectRelativePath(resolvedDestination)) : .null,
       "overwritten": .bool(!dryRun && preparation.destinationExists && overwrite),
       "would_overwrite": .bool(preparation.destinationExists && overwrite),
       "would_create_parent_directories": .bool(preparation.wouldCreateParentDirectories),
@@ -2823,7 +2823,7 @@ extension FilesToolProvider {
   internal func trashFile(arguments object: [String: JSONValue]) throws -> JSONValue {
     let path = try requiredString("path", in: object)
     let dryRun = try optionalBool("dry_run", in: object) ?? false
-    let url = try workspaceScope.resolvedWorkspaceURL(path)
+    let url = try projectScope.resolvedProjectURL(path)
     guard FileManager.default.fileExists(atPath: url.path) else {
       throw GatewayToolError.invalidArguments("Path does not exist: \(path)")
     }
@@ -2838,7 +2838,7 @@ extension FilesToolProvider {
     return .object([
       "operation": .string("file.trash"),
       "source": .string(url.path),
-      "source_workspace_relative_path": .string(workspaceScope.workspaceRelativePath(url)),
+      "source_project_relative_path": .string(projectScope.projectRelativePath(url)),
       "dry_run": .bool(dryRun),
       "trashed": .bool(!dryRun),
       "would_trash": .bool(true),
@@ -2867,12 +2867,12 @@ extension FilesToolProvider {
         return
       }
 
-      let resolved = try workspaceScope.resolvedWorkspaceURLPreservingFinalSymlink(child.path)
-      let info = try workspaceScope.fileInfo(url: resolved)
+      let resolved = try projectScope.resolvedProjectURLPreservingFinalSymlink(child.path)
+      let info = try projectScope.fileInfo(url: resolved)
       entries.append(
         ListedFile(
           name: child.lastPathComponent,
-          relativePath: info.workspaceRelativePath,
+          relativePath: info.projectRelativePath,
           info: info
         ))
 
@@ -2900,13 +2900,13 @@ extension FilesToolProvider {
     emitted: inout Int,
     truncated: inout Bool
   ) throws -> JSONValue {
-    let info = try workspaceScope.fileInfo(url: url)
+    let info = try projectScope.fileInfo(url: url)
     emitted += 1
 
     var object: [String: JSONValue] = [
       "name": .string(url.lastPathComponent.isEmpty ? "." : url.lastPathComponent),
       "path": .string(info.path),
-      "workspace_relative_path": .string(info.workspaceRelativePath),
+      "project_relative_path": .string(info.projectRelativePath),
       "type": .string(info.type),
       "depth": .integer(Int64(depth)),
       "size_bytes": info.size.map { .integer(Int64($0)) } ?? .null,
@@ -2921,8 +2921,8 @@ extension FilesToolProvider {
           break
         }
 
-        let resolved = try workspaceScope.resolvedWorkspaceURLPreservingFinalSymlink(child.path)
-        let childInfo = try workspaceScope.fileInfo(url: resolved)
+        let resolved = try projectScope.resolvedProjectURLPreservingFinalSymlink(child.path)
+        let childInfo = try projectScope.fileInfo(url: resolved)
         if directoriesOnly && childInfo.type != "directory" {
           continue
         }
@@ -2994,13 +2994,13 @@ extension FilesToolProvider {
       }
 
       scannedEntries += 1
-      let lexical = try workspaceScope.resolvedWorkspaceURLPreservingFinalSymlink(child.path)
-      let info = try workspaceScope.fileInfo(url: lexical)
+      let lexical = try projectScope.resolvedProjectURLPreservingFinalSymlink(child.path)
+      let info = try projectScope.fileInfo(url: lexical)
       let relativePath = relativePathPreservingSymlinks(fromDirectoryPath: rootPath, to: lexical)
       entries[relativePath] = TreeCompareEntry(
         url: lexical,
         relativePath: relativePath,
-        workspaceRelativePath: workspaceScope.workspaceRelativePathPreservingSymlinks(lexical),
+        projectRelativePath: projectScope.projectRelativePathPreservingSymlinks(lexical),
         type: info.type,
         sizeBytes: info.size,
         modifiedAt: info.modifiedAt,
@@ -3088,8 +3088,8 @@ extension FilesToolProvider {
       }
 
       scannedEntries += 1
-      let url = try workspaceScope.resolvedWorkspaceURLPreservingFinalSymlink(child.path)
-      let info = try workspaceScope.fileInfo(url: url)
+      let url = try projectScope.resolvedProjectURLPreservingFinalSymlink(child.path)
+      let info = try projectScope.fileInfo(url: url)
 
       if info.type == "directory", !info.isSymlink, currentDepth < maxDepth {
         try collectDuplicateFileCandidates(
@@ -3126,7 +3126,7 @@ extension FilesToolProvider {
       candidates.append(
         DuplicateFileCandidate(
           url: url,
-          workspaceRelativePath: workspaceScope.workspaceRelativePathPreservingSymlinks(url),
+          projectRelativePath: projectScope.projectRelativePathPreservingSymlinks(url),
           sizeBytes: size,
           modifiedAt: info.modifiedAt,
           sha256: nil
@@ -3159,8 +3159,8 @@ extension FilesToolProvider {
       }
       visited += 1
 
-      let resolved = try workspaceScope.resolvedWorkspaceURLPreservingFinalSymlink(child.path)
-      let info = try workspaceScope.fileInfo(url: resolved)
+      let resolved = try projectScope.resolvedProjectURLPreservingFinalSymlink(child.path)
+      let info = try projectScope.fileInfo(url: resolved)
       if fileName(
         child.lastPathComponent, matches: query, mode: matchMode, caseSensitive: caseSensitive)
       {
@@ -3215,8 +3215,8 @@ extension FilesToolProvider {
       }
 
       scannedEntries += 1
-      let resolved = try workspaceScope.resolvedWorkspaceURLPreservingFinalSymlink(child.path)
-      let info = try workspaceScope.fileInfo(url: resolved)
+      let resolved = try projectScope.resolvedProjectURLPreservingFinalSymlink(child.path)
+      let info = try projectScope.fileInfo(url: resolved)
 
       if info.type == "directory", !info.isSymlink, currentDepth < maxDepth {
         try collectTimelineFiles(
@@ -3280,8 +3280,8 @@ extension FilesToolProvider {
         return
       }
 
-      let resolved = try workspaceScope.resolvedWorkspaceURLPreservingFinalSymlink(child.path)
-      let info = try workspaceScope.fileInfo(url: resolved)
+      let resolved = try projectScope.resolvedProjectURLPreservingFinalSymlink(child.path)
+      let info = try projectScope.fileInfo(url: resolved)
       if info.type == "directory" && !info.isSymlink {
         if currentDepth < maxDepth {
           try collectSearchMatches(
@@ -3408,7 +3408,7 @@ extension FilesToolProvider {
       matches.append(
         FileSearchMatch(
           path: fileInfo.path,
-          workspaceRelativePath: fileInfo.workspaceRelativePath,
+          projectRelativePath: fileInfo.projectRelativePath,
           line: lineIndex + 1,
           column: line.distance(from: line.startIndex, to: range.lowerBound) + 1,
           preview: String(line.prefix(300)),
@@ -3628,10 +3628,10 @@ extension FilesToolProvider {
     var payload: [String: JSONValue] = [
       "operation": .string(operation),
       "source": .string(source.path),
-      "source_workspace_relative_path": .string(workspaceScope.workspaceRelativePath(source)),
+      "source_project_relative_path": .string(projectScope.projectRelativePath(source)),
       "destination": .string(destination.path),
-      "destination_workspace_relative_path": .string(
-        workspaceScope.workspaceRelativePath(destination)),
+      "destination_project_relative_path": .string(
+        projectScope.projectRelativePath(destination)),
       "dry_run": .bool(dryRun),
       "overwritten": .bool(overwritten),
       "would_overwrite": .bool(wouldOverwrite),
@@ -3643,7 +3643,7 @@ extension FilesToolProvider {
       payload["source_removed"] = .bool(!dryRun)
       payload["would_remove_source"] = .bool(true)
     }
-    payload["result"] = dryRun ? .null : try workspaceScope.fileInfo(url: destination).json
+    payload["result"] = dryRun ? .null : try projectScope.fileInfo(url: destination).json
     return .object(payload)
   }
 
@@ -3788,7 +3788,7 @@ private struct ListedFile {
     .object([
       "name": .string(name),
       "path": .string(info.path),
-      "workspace_relative_path": .string(relativePath),
+      "project_relative_path": .string(relativePath),
       "type": .string(info.type),
       "size_bytes": info.size.map { .integer(Int64($0)) } ?? .null,
       "modified_at": info.modifiedAt.map { .string(iso8601String($0)) } ?? .null,
@@ -3819,14 +3819,14 @@ private struct TimelineFileEntry {
   var info: FileInfo
   var modifiedAt: Date
 
-  var workspaceRelativePath: String {
-    info.workspaceRelativePath
+  var projectRelativePath: String {
+    info.projectRelativePath
   }
 
   var json: JSONValue {
     .object([
       "path": .string(info.path),
-      "workspace_relative_path": .string(info.workspaceRelativePath),
+      "project_relative_path": .string(info.projectRelativePath),
       "type": .string(info.type),
       "size_bytes": info.size.map { .integer(Int64($0)) } ?? .null,
       "created_at": info.createdAt.map { .string(iso8601String($0)) } ?? .null,
@@ -3836,25 +3836,25 @@ private struct TimelineFileEntry {
       "read_context": .object([
         "tool": .string("file.read"),
         "arguments": .object([
-          "path": .string(info.workspaceRelativePath)
+          "path": .string(info.projectRelativePath)
         ]),
       ]),
       "stat_context": .object([
         "tool": .string("file.stat"),
         "arguments": .object([
-          "path": .string(info.workspaceRelativePath)
+          "path": .string(info.projectRelativePath)
         ]),
       ]),
       "open_context": .object([
-        "tool": .string("workspace.open"),
+        "tool": .string("project.open"),
         "arguments": .object([
-          "path": .string(info.workspaceRelativePath)
+          "path": .string(info.projectRelativePath)
         ]),
       ]),
       "reveal_context": .object([
-        "tool": .string("workspace.reveal"),
+        "tool": .string("project.reveal"),
         "arguments": .object([
-          "path": .string(info.workspaceRelativePath)
+          "path": .string(info.projectRelativePath)
         ]),
       ]),
     ])
@@ -3872,7 +3872,7 @@ private struct FileReadEntry {
   var json: JSONValue {
     .object([
       "path": .string(info.path),
-      "workspace_relative_path": .string(info.workspaceRelativePath),
+      "project_relative_path": .string(info.projectRelativePath),
       "size_bytes": info.size.map { .integer(Int64($0)) } ?? .null,
       "modified_at": info.modifiedAt.map { .string(iso8601String($0)) } ?? .null,
       "encoding": .string(encoding),
@@ -3886,43 +3886,43 @@ private struct FileReadEntry {
 
 private struct DuplicateFileCandidate: Comparable {
   var url: URL
-  var workspaceRelativePath: String
+  var projectRelativePath: String
   var sizeBytes: Int64
   var modifiedAt: Date?
   var sha256: String?
 
   static func == (lhs: DuplicateFileCandidate, rhs: DuplicateFileCandidate) -> Bool {
-    lhs.workspaceRelativePath == rhs.workspaceRelativePath
+    lhs.projectRelativePath == rhs.projectRelativePath
   }
 
   static func < (lhs: DuplicateFileCandidate, rhs: DuplicateFileCandidate) -> Bool {
-    lhs.workspaceRelativePath.localizedStandardCompare(rhs.workspaceRelativePath)
+    lhs.projectRelativePath.localizedStandardCompare(rhs.projectRelativePath)
       == .orderedAscending
   }
 
   var json: JSONValue {
     .object([
       "path": .string(url.path),
-      "workspace_relative_path": .string(workspaceRelativePath),
+      "project_relative_path": .string(projectRelativePath),
       "size_bytes": .integer(Int64(sizeBytes)),
       "modified_at": modifiedAt.map { .string(iso8601String($0)) } ?? .null,
       "sha256": sha256.map(JSONValue.string) ?? .null,
       "read_context": .object([
         "tool": .string("file.read"),
         "arguments": .object([
-          "path": .string(workspaceRelativePath)
+          "path": .string(projectRelativePath)
         ]),
       ]),
       "stat_context": .object([
         "tool": .string("file.stat"),
         "arguments": .object([
-          "path": .string(workspaceRelativePath)
+          "path": .string(projectRelativePath)
         ]),
       ]),
       "hash_context": .object([
         "tool": .string("file.hash"),
         "arguments": .object([
-          "path": .string(workspaceRelativePath)
+          "path": .string(projectRelativePath)
         ]),
       ]),
     ])
@@ -3970,7 +3970,7 @@ private struct DuplicateHashBucket: Comparable {
 private struct TreeCompareEntry {
   var url: URL
   var relativePath: String
-  var workspaceRelativePath: String
+  var projectRelativePath: String
   var type: String
   var sizeBytes: Int64?
   var modifiedAt: Date?
@@ -3982,7 +3982,7 @@ private struct TreeCompareEntry {
     .object([
       "path": .string(url.path),
       "relative_path": .string(relativePath),
-      "workspace_relative_path": .string(workspaceRelativePath),
+      "project_relative_path": .string(projectRelativePath),
       "type": .string(type),
       "size_bytes": sizeBytes.map { .integer(Int64($0)) } ?? .null,
       "modified_at": modifiedAt.map { .string(iso8601String($0)) } ?? .null,
@@ -4014,7 +4014,7 @@ private struct TreeCompareDifference {
 private struct FileWritePlan {
   var requestedPath: String
   var url: URL
-  var workspaceRelativePath: String
+  var projectRelativePath: String
   var parent: URL
   var parentExists: Bool
   var existed: Bool
@@ -4032,7 +4032,7 @@ private struct FileWritePlan {
     var object: [String: JSONValue] = [
       "requested_path": .string(requestedPath),
       "path": .string(url.path),
-      "workspace_relative_path": .string(workspaceRelativePath),
+      "project_relative_path": .string(projectRelativePath),
       "dry_run": .bool(dryRun),
       "overwrite": .bool(overwrite),
       "create_directories": .bool(createDirectories),
@@ -4061,7 +4061,7 @@ private struct FileWritePlan {
 
 private struct FileSearchMatch {
   var path: String
-  var workspaceRelativePath: String
+  var projectRelativePath: String
   var line: Int
   var column: Int
   var preview: String
@@ -4070,7 +4070,7 @@ private struct FileSearchMatch {
   var json: JSONValue {
     .object([
       "path": .string(path),
-      "workspace_relative_path": .string(workspaceRelativePath),
+      "project_relative_path": .string(projectRelativePath),
       "line": .integer(Int64(line)),
       "column": .integer(Int64(column)),
       "preview": .string(preview),

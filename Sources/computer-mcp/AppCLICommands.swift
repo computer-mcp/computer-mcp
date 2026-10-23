@@ -197,27 +197,27 @@ struct ConfigRollback: AsyncParsableCommand {
   }
 }
 
-struct Workspace: ParsableCommand {
+struct Project: ParsableCommand {
   static let configuration = CommandConfiguration(
-    commandName: "workspace",
+    commandName: "project",
     subcommands: [
-      WorkspaceList.self, WorkspaceAdd.self, WorkspaceRepair.self, WorkspaceRemove.self,
-      WorkspaceEnable.self,
-      WorkspaceDeduplicate.self,
+      ProjectList.self, ProjectAdd.self, ProjectRepair.self, ProjectRemove.self,
+      ProjectEnable.self,
+      ProjectDeduplicate.self,
     ]
   )
 }
 
-struct WorkspaceList: AsyncParsableCommand {
+struct ProjectList: AsyncParsableCommand {
   @OptionGroup var connection: AppControlConnectionOptions
 
   static let configuration = CommandConfiguration(commandName: "list")
   func run() async throws {
-    printJSON(try await connection.client().call("workspace.list"))
+    printJSON(try await connection.client().call("project.list"))
   }
 }
 
-struct WorkspaceAdd: AsyncParsableCommand {
+struct ProjectAdd: AsyncParsableCommand {
   @OptionGroup var connection: AppControlConnectionOptions
 
   static let configuration = CommandConfiguration(commandName: "add")
@@ -228,17 +228,17 @@ struct WorkspaceAdd: AsyncParsableCommand {
     if let displayName { arguments["display_name"] = .string(displayName) }
     printJSON(
       try await connection.client().call(
-        "workspace.add", arguments: .object(arguments))
+        "project.add", arguments: .object(arguments))
     )
   }
 }
 
-struct WorkspaceRepair: AsyncParsableCommand {
+struct ProjectRepair: AsyncParsableCommand {
   @OptionGroup var connection: AppControlConnectionOptions
 
   static let configuration = CommandConfiguration(
     commandName: "repair",
-    abstract: "Renew folder access or rebind a workspace while keeping its ID and grants.")
+    abstract: "Renew folder access or rebind a project while keeping its ID and grants.")
   @Argument var id: String
   @Argument var path: String
   @Option(name: .long) var displayName: String?
@@ -246,11 +246,11 @@ struct WorkspaceRepair: AsyncParsableCommand {
   func run() async throws {
     var arguments: [String: JSONValue] = ["id": .string(id), "path": .string(path)]
     if let displayName { arguments["display_name"] = .string(displayName) }
-    printJSON(try await connection.client().call("workspace.repair", arguments: .object(arguments)))
+    printJSON(try await connection.client().call("project.repair", arguments: .object(arguments)))
   }
 }
 
-struct WorkspaceRemove: AsyncParsableCommand {
+struct ProjectRemove: AsyncParsableCommand {
   @OptionGroup var connection: AppControlConnectionOptions
 
   static let configuration = CommandConfiguration(commandName: "remove")
@@ -258,13 +258,13 @@ struct WorkspaceRemove: AsyncParsableCommand {
   func run() async throws {
     printJSON(
       try await connection.client().call(
-        "workspace.remove", arguments: .object(["id": .string(id)])
+        "project.remove", arguments: .object(["id": .string(id)])
       )
     )
   }
 }
 
-struct WorkspaceEnable: AsyncParsableCommand {
+struct ProjectEnable: AsyncParsableCommand {
   @OptionGroup var connection: AppControlConnectionOptions
 
   static let configuration = CommandConfiguration(commandName: "enable")
@@ -274,16 +274,16 @@ struct WorkspaceEnable: AsyncParsableCommand {
   func run() async throws {
     printJSON(
       try await connection.client().call(
-        "workspace.enable",
+        "project.enable",
         arguments: .object([
-          "workspace_id": .string(id), "profile": .string(profile), "enabled": .bool(enabled),
+          "project_id": .string(id), "profile": .string(profile), "enabled": .bool(enabled),
         ])
       )
     )
   }
 }
 
-struct WorkspaceDeduplicate: AsyncParsableCommand {
+struct ProjectDeduplicate: AsyncParsableCommand {
   @OptionGroup var connection: AppControlConnectionOptions
 
   static let configuration = CommandConfiguration(commandName: "deduplicate")
@@ -316,7 +316,7 @@ struct WorkspaceDeduplicate: AsyncParsableCommand {
     }
     printJSON(
       try await connection.client().call(
-        "workspace.deduplicate",
+        "project.deduplicate",
         arguments: .object(arguments)
       )
     )
@@ -372,7 +372,7 @@ struct ProfileShow: AsyncParsableCommand {
 struct ProfileGrant: AsyncParsableCommand {
   static let configuration = CommandConfiguration(commandName: "grant")
   @Argument var id: String
-  @Option(name: .long) var workspace: String
+  @Option(name: .long) var project: String
   @Flag(name: .long, inversion: .prefixedNo) var enabled = true
   @OptionGroup var connection: AppControlConnectionOptions
   func run() async throws {
@@ -380,7 +380,7 @@ struct ProfileGrant: AsyncParsableCommand {
       try await connection.client().call(
         "profile.grant",
         arguments: .object([
-          "profile": .string(id), "workspace_id": .string(workspace),
+          "profile": .string(id), "project_id": .string(project),
           "enabled": .bool(enabled),
         ])
       )
@@ -426,8 +426,8 @@ struct ProfilePermissions: AsyncParsableCommand {
   @Option(
     name: .long, help: "Replace tool grants with comma-separated IDs; an empty value clears them.")
   var capabilities: String?
-  @Option(name: .long, help: "Replace granted workspace IDs; comma-separated, empty clears them.")
-  var workspaces: String?
+  @Option(name: .long, help: "Replace granted project IDs; comma-separated, empty clears them.")
+  var projects: String?
   @Option(name: .long, help: "Replace MCP registration grants; comma-separated, empty clears them.")
   var mcpServers: String?
   @Option(
@@ -444,7 +444,7 @@ struct ProfilePermissions: AsyncParsableCommand {
     }
     if let arbitraryExecution { arguments["full_shell_enabled"] = .bool(arbitraryExecution) }
     for (key, value) in [
-      ("capabilities", capabilities), ("workspaces", workspaces),
+      ("capabilities", capabilities), ("projects", projects),
       ("mcp_servers", mcpServers), ("allowed_callers", allowedCallers),
     ] {
       if let value {

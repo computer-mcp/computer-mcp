@@ -10,10 +10,10 @@ protocol MCPRegistrationManaging {
   func mcpCredentialStatus(id: String) async throws -> MCPRegistrationCredentialStatus
   func changeMCPCredential(id: String, expectedBindingDigest: String, token: String?) async throws
   func fetchMCPRegistrations() async throws -> MCPRegistrationSnapshot
-  func doctorMCPRegistration(id: String, workspaceID: String) async throws
+  func doctorMCPRegistration(id: String, projectID: String) async throws
     -> MCPRegistrationDoctorReport
   func recoverMCPProcessReceipt(
-    id: String, workspaceID: String, receiptID: String, expectedReceiptDigest: String,
+    id: String, projectID: String, receiptID: String, expectedReceiptDigest: String,
     expectedCurrentDigest: String
   ) async throws
   func changeMCPRegistration(
@@ -63,7 +63,7 @@ final class MCPRegistrationModel: ObservableObject {
     }
   }
 
-  func checkConnection(id: String, workspaceID: String) async {
+  func checkConnection(id: String, projectID: String) async {
     guard !isBusy, preview == nil else { return }
     isBusy = true
     doctorReport = nil
@@ -71,7 +71,7 @@ final class MCPRegistrationModel: ObservableObject {
     errorMessage = nil
     defer { isBusy = false }
     do {
-      doctorReport = try await controlPlane.doctorMCPRegistration(id: id, workspaceID: workspaceID)
+      doctorReport = try await controlPlane.doctorMCPRegistration(id: id, projectID: projectID)
     } catch { errorMessage = AppLocalization.errorDescription(error) }
   }
 
@@ -81,9 +81,9 @@ final class MCPRegistrationModel: ObservableObject {
     processRecovered = false
   }
 
-  func recoverProcess(id: String, workspaceID: String, receipt: MCPProcessReceiptStatus) async {
+  func recoverProcess(id: String, projectID: String, receipt: MCPProcessReceiptStatus) async {
     guard !isBusy, preview == nil, let report = doctorReport,
-      report.registrationID == id, report.workspaceID == workspaceID,
+      report.registrationID == id, report.projectID == projectID,
       receipt.recoverable, report.processReceipts?.contains(receipt) == true
     else { return }
     isBusy = true
@@ -93,7 +93,7 @@ final class MCPRegistrationModel: ObservableObject {
     defer { isBusy = false }
     do {
       try await controlPlane.recoverMCPProcessReceipt(
-        id: id, workspaceID: workspaceID, receiptID: receipt.id,
+        id: id, projectID: projectID, receiptID: receipt.id,
         expectedReceiptDigest: receipt.digest, expectedCurrentDigest: report.currentDigest)
       processRecovered = true
     } catch { errorMessage = AppLocalization.errorDescription(error) }

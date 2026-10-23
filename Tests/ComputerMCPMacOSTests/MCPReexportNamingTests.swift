@@ -31,8 +31,8 @@ struct MCPReexportNamingTests {
 
   @Test
   func downstreamToolsListWithTheirNamespaceProvidersBeforeTreesAndComputerUse() async throws {
-    let workspace = try ScopedTemporaryDirectory()
-    let treeURL = workspace.url.appendingPathComponent("tree.json")
+    let project = try ScopedTemporaryDirectory()
+    let treeURL = project.url.appendingPathComponent("tree.json")
     try JSONEncoder().encode(CLITreeGatewayTests.tree(CLITreeGatewayTests.printCommand()))
       .write(to: treeURL)
     var configuration = GatewayConfiguration.fixture(
@@ -55,8 +55,8 @@ struct MCPReexportNamingTests {
         "file.read", "file.stat", "git.root", "git.status", "system.time", "network.interfaces",
         "macos.screens", "macos.user_directories",
       ]),
-      skills: .init(enabled: true, roots: [.init(id: "fixture", path: workspace.url.path)]))
-    configuration.workspaceDirectory = workspace.url
+      skills: .init(enabled: true, roots: [.init(id: "fixture", path: project.url.path)]))
+    configuration.projectDirectory = project.url
     try configuration.validate()
     let environment = ToolEnvironment(configuration: configuration)
     let treeTools = try CLIToolProvider(environment: environment).treeProviders().flatMap {
@@ -196,7 +196,7 @@ struct MCPReexportNamingTests {
   }
 
   @Test(arguments: [
-    "workspace.list", "workspace.describe", "policy.probe", "operations.prepare",
+    "project.list", "project.describe", "policy.probe", "operations.prepare",
     "operations.commit",
   ])
   func nativeToolsCannotReplaceHostManagementTools(name: String) throws {
@@ -208,7 +208,7 @@ struct MCPReexportNamingTests {
     #expect(throws: GatewayProviderRouterError.duplicateTool(name)) {
       _ = try GatewayRuntime(
         configuration: configuration,
-        registeredWorkspaces: [.init(id: "fixture", displayName: "Fixture", rootPath: root.path)],
+        registeredProjects: [.init(id: "fixture", displayName: "Fixture", rootPath: root.path)],
         platform: MacOSPlatform.services, mcpClient: ReexportNamingClient(["first": [name]]))
     }
   }
@@ -219,11 +219,11 @@ struct MCPReexportNamingTests {
     let name = prefix.isEmpty ? "profile.show" : "show"
     let configuration = GatewayConfiguration(
       mcp: .init(servers: [Self.server("first", prefix: prefix)]),
-      workspaceDirectory: root.url)
+      projectDirectory: root.url)
     await #expect(throws: GatewayProviderRouterError.duplicateTool("profile.show")) {
       let runtime = try await GatewayRuntime.make(
         configuration: configuration,
-        registeredWorkspaces: [
+        registeredProjects: [
           .init(id: "fixture", displayName: "Fixture", rootPath: root.url.path)
         ],
         platform: MacOSPlatform.services, mcpClient: ReexportNamingClient(["first": [name]]),
@@ -240,14 +240,14 @@ struct MCPReexportNamingTests {
         configuration: .fixture(mcp: .init(servers: [Self.server("first", prefix: "")]))),
       mcpClient: client)
     let router = try GatewayProviderRouter(
-      registry: registry, reservedToolNames: ["workspace.list"])
+      registry: registry, reservedToolNames: ["project.list"])
     do {
-      client.replace("first", names: ["workspace.list"])
-      await #expect(throws: GatewayProviderRouterError.duplicateTool("workspace.list")) {
+      client.replace("first", names: ["project.list"])
+      await #expect(throws: GatewayProviderRouterError.duplicateTool("project.list")) {
         try await router.refreshTools(context: .empty)
       }
       #expect(try router.listTools(context: .empty).contains { $0.name == "available" })
-      #expect(try !router.listTools(context: .empty).contains { $0.name == "workspace.list" })
+      #expect(try !router.listTools(context: .empty).contains { $0.name == "project.list" })
       #expect(
         try router.callTool(name: "available", arguments: nil, context: .empty)
           == .string("first:available"))

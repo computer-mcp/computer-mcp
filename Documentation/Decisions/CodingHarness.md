@@ -118,7 +118,7 @@ documentation:
 
 | Term | Meaning | Source | Chinese label |
 | --- | --- | --- | --- |
-| Project | A registered folder, usually a repository; replaces "workspace" | Claude Code, Codex | 项目 |
+| Project | A registered folder, usually a repository | Claude Code, Codex | 项目 |
 | Worktree | A Git worktree; here a project derived from another | Git, Claude Code, Codex | worktree |
 | Client | An application that connects over MCP and drives Computer MCP; replaces "controller" | MCP | 客户端 |
 | Plugin | An installed package that adds tools and may run processes | Claude Code, Codex | 插件 |
@@ -130,10 +130,9 @@ documentation:
 | Permission request; Only this time, Always | A request for a missing permission and its answer | Apple privacy prompts, Codex and Claude Code approvals | 权限请求；仅这一次 / 始终 |
 | Privacy & Security | Where permissions are reviewed and revoked | Apple System Settings | 隐私与安全性 |
 
-Tools and parameters follow: the `workspace.*` tools become `project.*`,
-`workspace_id` becomes `project_id`, the CLI's `workspace` commands become
-`project`, and worktree tools take Git's command names. Profiles keep their
-name as the stored permissions of a client.
+Tools use the `project.*` namespace and the `project_id` parameter. The CLI
+uses `project` commands, and worktree tools take Git's command names. Profiles
+keep their name as the stored permissions of a client.
 
 ### Model
 

@@ -83,16 +83,16 @@ let neutralTargets: [Target] =
         "ComputerMCPConfiguration", "ComputerMCPPlatform", "ComputerMCPTestSupport",
       ]),
     .target(
-      name: "ComputerMCPToolsWorkspace",
+      name: "ComputerMCPToolsProject",
       dependencies: [
         "ComputerMCPToolsFiles", "ComputerMCPToolKit", "ComputerMCPCore",
         "ComputerMCPConfiguration",
         .product(name: "TOML", package: "swift-toml"),
       ]),
     .testTarget(
-      name: "ComputerMCPToolsWorkspaceTests",
+      name: "ComputerMCPToolsProjectTests",
       dependencies: [
-        "ComputerMCPToolsWorkspace", "ComputerMCPToolsFiles", "ComputerMCPToolKit",
+        "ComputerMCPToolsProject", "ComputerMCPToolsFiles", "ComputerMCPToolKit",
         "ComputerMCPCore", "ComputerMCPConfiguration", "ComputerMCPPlatform",
         "ComputerMCPTestSupport",
       ]),
@@ -269,7 +269,7 @@ let neutralTargets: [Target] =
       name: "ComputerMCPGateway",
       dependencies: [
         "ComputerMCPAuthorization",
-        "ComputerMCPPlugins", "ComputerMCPToolsWorkspace", "ComputerMCPConfiguration",
+        "ComputerMCPPlugins", "ComputerMCPToolsProject", "ComputerMCPConfiguration",
         "ComputerMCPCore", "ComputerMCPPersistence", "ComputerMCPPlatform",
         "ComputerMCPPlatformPOSIX", "ComputerMCPProcess", "ComputerMCPDownstream",
         "ComputerMCPTransport", "ComputerMCPTunnels",
@@ -305,7 +305,7 @@ let neutralTargets: [Target] =
         "ComputerMCPToolsMCP",
         "ComputerMCPToolsShell",
         "ComputerMCPToolsSystem",
-        "ComputerMCPToolsWorkspace",
+        "ComputerMCPToolsProject",
         .product(name: "GRDB", package: "GRDB.swift"),
         .product(name: "MCP", package: "swift-sdk"),
         .product(name: "NIOConcurrencyHelpers", package: "swift-nio"),
@@ -315,7 +315,7 @@ let neutralTargets: [Target] =
       name: "ComputerMCPControlPlane",
       dependencies: [
         "ComputerMCPAuthorization",
-        "ComputerMCPGateway", "ComputerMCPPlugins", "ComputerMCPToolsWorkspace",
+        "ComputerMCPGateway", "ComputerMCPPlugins", "ComputerMCPToolsProject",
         "ComputerMCPDownstream", "ComputerMCPConfiguration", "ComputerMCPCore",
         "ComputerMCPPersistence", "ComputerMCPPlatform", "ComputerMCPPlatformPOSIX",
         "ComputerMCPProcess", "ComputerMCPTransport", "ComputerMCPTunnels",
@@ -466,7 +466,7 @@ let neutralTargets: [Target] =
           "ComputerMCPToolsStructured",
           "ComputerMCPToolsSkills",
           "ComputerMCPToolsFiles",
-          "ComputerMCPToolsWorkspace",
+          "ComputerMCPToolsProject",
           "ComputerMCPToolsSystem",
           "ComputerMCPToolsMCP",
           "ComputerMCPDownstream",
@@ -542,7 +542,7 @@ let neutralTargets: [Target] =
           "ComputerMCPToolsShell",
           "ComputerMCPToolsSkills",
           "ComputerMCPToolsStructured",
-          "ComputerMCPToolsWorkspace",
+          "ComputerMCPToolsProject",
           "ComputerMCPTransport",
           "ComputerMCPTunnels",
           .product(name: "Crypto", package: "swift-crypto"),
@@ -584,9 +584,9 @@ let neutralTargets: [Target] =
           "ComputerMCPConfiguration", "ComputerMCPPlatformDarwin", "ComputerMCPTestSupport",
         ]),
       .testTarget(
-        name: "ComputerMCPToolsWorkspaceDarwinTests",
+        name: "ComputerMCPToolsProjectDarwinTests",
         dependencies: [
-          "ComputerMCPToolsWorkspace", "ComputerMCPToolKit", "ComputerMCPCore",
+          "ComputerMCPToolsProject", "ComputerMCPToolKit", "ComputerMCPCore",
           "ComputerMCPPlatform",
           "ComputerMCPConfiguration", "ComputerMCPPlatformDarwin", "ComputerMCPTestSupport",
         ]),

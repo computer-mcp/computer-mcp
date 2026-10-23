@@ -132,15 +132,15 @@ final class LiveAppControlPlaneTests {
       let configuration = GatewayConfiguration(
         profiles: [
           .init(
-            id: .chatGPTOperate, capabilities: ["file.read"], workspaces: ["*"],
-            allowedCallers: [.localMCP], mode: .workspaceOperations)
-        ], workspaceDirectory: fixture.root)
+            id: .chatGPTOperate, capabilities: ["file.read"], projects: ["*"],
+            allowedCallers: [.localMCP], mode: .projectOperations)
+        ], projectDirectory: fixture.root)
       _ = try await fixture.controlPlane.activateManifest(
         configuration.exportedTOML(),
         expectedDigest: try? await fixture.controlPlane.configurationDigest())
       try await fixture.controlPlane.setActiveGatewayProfile(.chatGPTOperate)
       try await fixture.app.startApplication()
-      try await fixture.app.registerWorkspace(at: fixture.root)
+      try await fixture.app.registerProject(at: fixture.root)
       try await fixture.app.startGateway()
       let client = try await GatewayClientSession.connectSocket(socketURL: fixture.socketURL)
       do {
@@ -179,10 +179,10 @@ final class LiveAppControlPlaneTests {
   func applicationStopJoinsOwnerWorkWithEitherGatewayState(gatewayRunning: Bool) async throws {
     try await withAppControlPlaneFixture { fixture in
       let database = await fixture.controlPlane.database
-      try database.saveWorkspace(
+      try database.saveProject(
         .init(id: "fixture", displayName: "Fixture", rootPath: fixture.root.path))
       _ = try await fixture.controlPlane.activateManifest(
-        GatewayConfiguration(policy: .init(shellEnabled: true), workspaceDirectory: fixture.root)
+        GatewayConfiguration(policy: .init(shellEnabled: true), projectDirectory: fixture.root)
           .exportedTOML(), expectedDigest: try? await fixture.controlPlane.configurationDigest())
       try await fixture.controlPlane.setGatewayDesiredRunning(gatewayRunning)
       try await fixture.app.startApplication()
@@ -260,21 +260,21 @@ final class LiveAppControlPlaneTests {
   }
 
   @Test
-  func workspaceHealthChecksBookmarkAccessAndMissingFolders() async throws {
+  func projectHealthChecksBookmarkAccessAndMissingFolders() async throws {
     try await withAppControlPlaneFixture { fixture in
       let database = await fixture.controlPlane.database
-      try database.saveWorkspace(
-        RegisteredWorkspace(
+      try database.saveProject(
+        RegisteredProject(
           id: "available", displayName: "Available", rootPath: fixture.root.path))
-      try database.saveWorkspace(
-        RegisteredWorkspace(
+      try database.saveProject(
+        RegisteredProject(
           id: "missing", displayName: "Missing",
           rootPath: fixture.root.appendingPathComponent("missing").path))
-      try database.saveWorkspace(
-        RegisteredWorkspace(
+      try database.saveProject(
+        RegisteredProject(
           id: "bad-bookmark", displayName: "Bad bookmark", rootPath: fixture.root.path,
           bookmarkData: Data("invalid-bookmark".utf8)))
-      let reports = try await fixture.app.fetchWorkspaces()
+      let reports = try await fixture.app.fetchProjects()
       let available = try #require(reports.first { $0.id == "available" })
       let missing = try #require(reports.first { $0.id == "missing" })
       let badBookmark = try #require(reports.first { $0.id == "bad-bookmark" })
@@ -381,14 +381,14 @@ final class LiveAppControlPlaneTests {
         runtime: .init(caller: .localMCP, profileID: .chatGPTOperate),
         profiles: [
           .init(
-            id: .chatGPTOperate, capabilities: ["system.time"], workspaces: ["project"],
-            allowedCallers: [.secureTunnel], mode: .workspaceOperations)
+            id: .chatGPTOperate, capabilities: ["system.time"], projects: ["project"],
+            allowedCallers: [.secureTunnel], mode: .projectOperations)
         ], builtin: .init(enabled: ["system.time", "file.read", "file.write"]),
-        workspaceDirectory: fixture.root)
+        projectDirectory: fixture.root)
       _ = try await fixture.controlPlane.activateManifest(
         configuration.exportedTOML(),
         expectedDigest: try? await fixture.controlPlane.configurationDigest())
-      try await fixture.controlPlane.database.saveWorkspace(
+      try await fixture.controlPlane.database.saveProject(
         .init(id: "project", displayName: "My Project", rootPath: fixture.root.path))
       try await fixture.controlPlane.setActiveGatewayProfile(.chatGPTOperate)
       try await fixture.app.startApplication()
@@ -423,18 +423,18 @@ final class LiveAppControlPlaneTests {
   }
 
   @Test
-  func workspaceWildcardIsShownAsEnabledAndCanBeRevoked() async throws {
+  func projectWildcardIsShownAsEnabledAndCanBeRevoked() async throws {
     try await withAppControlPlaneFixture { fixture in
       let database = await fixture.controlPlane.database
-      try database.saveWorkspace(.init(id: "one", displayName: "One", rootPath: fixture.root.path))
-      try database.saveWorkspace(.init(id: "two", displayName: "Two", rootPath: fixture.root.path))
+      try database.saveProject(.init(id: "one", displayName: "One", rootPath: fixture.root.path))
+      try database.saveProject(.init(id: "two", displayName: "Two", rootPath: fixture.root.path))
       _ = try await fixture.controlPlane.updateProfilePermissions(
-        profileID: .chatGPTObserve, workspaceIDs: ["*"])
-      let before = try await fixture.app.fetchWorkspaces()
+        profileID: .chatGPTObserve, projectIDs: ["*"])
+      let before = try await fixture.app.fetchProjects()
       #expect(before.allSatisfy { $0.isSelected && $0.isEnabled })
-      try await fixture.app.setWorkspaceEnabled(
-        false, workspaceID: "one", profileID: GatewayProfileID.chatGPTObserve.rawValue)
-      let after = try await fixture.app.fetchWorkspaces()
+      try await fixture.app.setProjectEnabled(
+        false, projectID: "one", profileID: GatewayProfileID.chatGPTObserve.rawValue)
+      let after = try await fixture.app.fetchProjects()
       #expect(after.first { $0.id == "one" }?.isSelected == false)
       #expect(after.first { $0.id == "one" }?.isEnabled == false)
       #expect(after.first { $0.id == "two" }?.isSelected == true)

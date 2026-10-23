@@ -11,7 +11,7 @@ struct JourneyView: View {
 
   var body: some View {
     VStack(spacing: 0) {
-      WorkspaceHeader(title, subtitle: subtitle) {
+      ProjectHeader(title, subtitle: subtitle) {
         HStack {
           Button {
             if journey == .chatgpt {
@@ -23,7 +23,7 @@ struct JourneyView: View {
             Label("Add Connection", systemImage: "plus")
           }
           RefreshButton {
-            model.refresh(workspace)
+            model.refresh(section)
           }
         }
       }
@@ -74,7 +74,7 @@ struct JourneyView: View {
     return "Cloudflare named tunnel setup, protected origin, and real-request verification"
   }
 
-  private var workspace: AppWorkspace {
+  private var section: AppSection {
     journey == .chatgpt ? .chatgpt : .cloudflare
   }
 
@@ -91,7 +91,7 @@ struct JourneyView: View {
         Text(verbatim: AppLocalization.string(message))
           .foregroundStyle(.secondary)
           .textSelection(.enabled)
-        Button("Retry") { model.refresh(workspace) }
+        Button("Retry") { model.refresh(section) }
       }
     case .loaded(let snapshots):
       if let snapshot = snapshots.first(where: { $0.journey == journey }) {
@@ -297,7 +297,7 @@ struct JourneyView: View {
         .font(.callout)
         .foregroundStyle(.secondary)
       }
-      Button("Check for Request") { model.refresh(workspace) }
+      Button("Check for Request") { model.refresh(section) }
     }
   }
 
@@ -308,9 +308,9 @@ struct JourneyView: View {
       )
       .foregroundStyle(.secondary)
       HStack {
-        Button("Retry All Checks") { model.refresh(workspace) }
+        Button("Retry All Checks") { model.refresh(section) }
         Button("Open Advanced Diagnostics") {
-          model.selectedWorkspace = .diagnostics
+          model.selectedSection = .diagnostics
         }
       }
     }
@@ -356,13 +356,13 @@ struct JourneyView: View {
     {
       model.startGateway()
     } else if action.redactedTarget == "home" {
-      model.selectedWorkspace = .home
+      model.selectedSection = .home
     } else if action.redactedTarget == "diagnostics" {
-      model.selectedWorkspace = .diagnostics
+      model.selectedSection = .diagnostics
     } else if action.redactedTarget.contains("tunnel") {
-      model.selectedWorkspace = workspace
+      model.selectedSection = section
     } else {
-      model.refresh(workspace)
+      model.refresh(section)
     }
   }
 }

@@ -1,0 +1,583 @@
+import AppKit
+import ComputerMCPControlPlane
+import SwiftUI
+
+struct HomeView: View {
+  @EnvironmentObject private var model: ComputerMCPAppModel
+  @ObservedObject var localClients: LocalClientsModel
+
+  var body: some View {
+    VStack(spacing: 0) {
+      ProjectHeader(
+        "Home",
+        subtitle: "Gateway runtime and local data plane"
+      ) {
+        HStack {
+          gatewayAction
+          RefreshButton {
+            model.refresh(.home)
+            Task { await localClients.reload(explicit: true) }
+          }
+        }
+      }
+
+      Divider()
+
+      switch model.status {
+      case .idle, .loading:
+        LoadingProjectView(title: "Loading gateway status")
+      case .failed(let message):
+        FailedProjectView(message: message) {
+          model.refresh(.home)
+        }
+      case .loaded(let snapshot):
+        statusContent(snapshot)
+      }
+    }
+    .sheet(item: $localClients.review) { review in
+      LocalClientReviewSheet(model: localClients, review: review)
+    }
+    .alert(
+      Text(verbatim: localClients.outcome?.title ?? ""),
+      isPresented: Binding(
+        get: { localClients.outcome != nil },
+        set: { if !$0 { localClients.outcome = nil } }
+      ),
+      presenting: localClients.outcome
+    ) { _ in
+      Button("OK") { localClients.outcome = nil }
+    } message: { outcome in
+      Text(verbatim: outcome.message)
+    }
+    .task { await localClients.reload() }
+  }
+
+  @ViewBuilder
+  private var gatewayAction: some View {
+    switch model.currentServiceState {
+    case .running, .degraded:
+      Button {
+        model.stopGateway()
+      } label: {
+        Label("Stop", systemImage: "stop.fill")
+      }
+      .disabled(model.isActionRunning("gateway.stop"))
+    case .starting, .stopping:
+      ProgressView()
+        .controlSize(.small)
+        .accessibilityLabel("Gateway state changing")
+    case .failed, .stopped, .none:
+      Button {
+        model.startGateway()
+      } label: {
+        Label("Start", systemImage: "play.fill")
+      }
+      .disabled(model.isActionRunning("gateway.start"))
+    }
+  }
+
+  private func statusContent(_ snapshot: AppStatusSnapshot) -> some View {
+    Form {
+      Section("Next step") {
+        if let recommendation = nextRecommendation {
+          HStack(alignment: .firstTextBaseline) {
+            VStack(alignment: .leading, spacing: 3) {
+              Text(verbatim: AppLocalization.string(recommendation.title)).font(.headline)
+              Text(verbatim: AppLocalization.string(recommendation.detail))
+                .foregroundStyle(.secondary)
+            }
+            Spacer()
+            Button(
+              AppLocalization.string(recommendation.buttonLabel),
+              action: recommendation.action
+            )
+          }
+        } else {
+          Label("All configured connections are healthy.", systemImage: "checkmark.seal.fill")
+            .foregroundStyle(.green)
+        }
+      }
+
+      Section("Gateway") {
+        LabeledContent("State") {
+          StateBadge(
+            text: snapshot.serviceState.label,
+            color: snapshot.serviceState.color,
+            systemImage: snapshot.serviceState.systemImage
+          )
+        }
+
+        LabeledContent("Version", value: snapshot.version)
+
+        if let profile = snapshot.activeProfileName {
+          LabeledContent("Active profile") {
+            Text(verbatim: AppLocalization.string(profile))
+          }
+        }
+
+        if let startedAt = snapshot.startedAt {
+          LabeledContent(
+            "Started",
+            value: DateFormatter.computerMCPDateTime.string(from: startedAt)
+          )
+        }
+
+        if let processIdentifier = snapshot.processIdentifier {
+          LabeledContent("Process ID", value: String(processIdentifier))
+        }
+
+        LabeledContent("Launch at login") {
+          HStack(spacing: 10) {
+            if snapshot.launchAtLogin == .requiresApproval
+              || snapshot.launchAtLogin == .unavailable
+            {
+              Text(verbatim: AppLocalization.string(snapshot.launchAtLogin.label))
+                .font(.caption)
+                .foregroundStyle(
+                  snapshot.launchAtLogin == .requiresApproval ? Color.orange : Color.secondary
+                )
+            }
+            Toggle(
+              "Launch at login",
+              isOn: Binding(
+                get: { snapshot.launchAtLogin == .enabled },
+                set: { model.setLaunchAtLoginEnabled($0) }
+              )
+            )
+            .labelsHidden()
+            .disabled(
+              snapshot.launchAtLogin == .unavailable
+                || model.isActionRunning("launch-at-login")
+            )
+          }
+        }
+      }
+
+      Section("Local data plane") {
+        LabeledContent("Projects", value: String(snapshot.activeProjectCount))
+        LabeledContent(
+          "Providers",
+          value: AppLocalization.formatted(
+            "%@ of %@ running",
+            String(snapshot.runningProviderCount),
+            String(snapshot.providerCount)
+          )
+        )
+        LabeledContent("Tunnels", value: String(snapshot.runningTunnelCount))
+
+        if let socketPath = snapshot.socketPath {
+          LabeledContent("Socket") {
+            Text(socketPath)
+              .font(.system(.body, design: .monospaced))
+              .textSelection(.enabled)
+          }
+        }
+      }
+
+      Section("Command line tool") {
+        if let cli = model.cliInstallationStatus {
+          LabeledContent {
+            Text(verbatim: cli.state.localizedLabel)
+          } label: {
+            Text(verbatim: "~/.local/bin/computer-mcp")
+          }
+          if !cli.destinationDirectoryIsOnPath {
+            Label(
+              "Add ~/.local/bin to PATH to invoke computer-mcp by name.",
+              systemImage: "exclamationmark.triangle"
+            )
+            .foregroundStyle(.orange)
+          }
+        }
+        Button {
+          model.installCommandLineTool()
+        } label: {
+          Label("Install Command Line Tool", systemImage: "terminal")
+        }
+        .disabled(model.isActionRunning("cli.install"))
+      }
+
+      Section("Connect a local MCP client") {
+        LabeledContent("App") {
+          StateBadge(text: "Running", color: .green, systemImage: "checkmark.circle.fill")
+        }
+        LabeledContent("Gateway") {
+          StateBadge(
+            text: snapshot.serviceState.label,
+            color: snapshot.serviceState.color,
+            systemImage: snapshot.serviceState.systemImage
+          )
+        }
+
+        LocalClientRows(model: localClients)
+
+        DisclosureGroup {
+          switch model.localMCPConnection {
+          case .idle, .loading:
+            ProgressView().accessibilityLabel("Preparing local MCP command")
+          case .failed(let message):
+            Label(AppLocalization.string(message), systemImage: "exclamationmark.triangle")
+              .foregroundStyle(.orange)
+            Button("Retry") { model.refresh(.home) }
+          case .loaded(let connection):
+            LabeledContent("CLI") {
+              Text(verbatim: connection.cliInstallation.state.localizedLabel)
+            }
+            LabeledContent("Command") {
+              Text(connection.command)
+                .font(.system(.caption, design: .monospaced))
+                .textSelection(.enabled)
+                .lineLimit(2)
+                .truncationMode(.middle)
+            }
+            LabeledContent("Arguments") {
+              Text(connection.arguments.joined(separator: " "))
+                .font(.system(.caption, design: .monospaced))
+                .textSelection(.enabled)
+            }
+            Button {
+              NSPasteboard.general.clearContents()
+              NSPasteboard.general.setString(connection.displayCommand, forType: .string)
+            } label: {
+              Label("Copy stdio Command", systemImage: "doc.on.doc")
+            }
+          }
+        } label: {
+          Text("Other MCP clients", bundle: AppLocalization.resourceBundle)
+        }
+
+        Text(
+          "Each client runs the App-owned bridge. Changes to a client's settings are shown for review first."
+        )
+        .font(.caption)
+        .foregroundStyle(.secondary)
+      }
+
+      Section("Remote connections") {
+        readinessLink(.chatgpt, section: .chatgpt)
+        readinessLink(.cloudflare, section: .cloudflare)
+      }
+
+      if let lastError = snapshot.lastError {
+        Section("Last error") {
+          Label {
+            Text(verbatim: AppLocalization.errorDescription(lastError))
+          } icon: {
+            Image(systemName: "exclamationmark.triangle.fill")
+          }
+          .foregroundStyle(.red)
+          .textSelection(.enabled)
+        }
+      }
+    }
+    .formStyle(.grouped)
+  }
+
+  @ViewBuilder
+  private func readinessLink(_ journey: ProductJourney, section: AppSection) -> some View {
+    HStack {
+      Label(
+        journey == .chatgpt ? "ChatGPT" : "Cloudflare",
+        systemImage: section.systemImage
+      )
+      Spacer()
+      if case .loaded(let snapshots) = model.readiness,
+        let snapshot = snapshots.first(where: { $0.journey == journey })
+      {
+        StateBadge(
+          text: snapshot.status.label,
+          color: snapshot.status.color,
+          systemImage: snapshot.status.systemImage
+        )
+      } else {
+        ProgressView().controlSize(.small)
+      }
+      Button("Open") { model.selectedSection = section }
+    }
+  }
+
+  private var nextRecommendation: HomeRecommendation? {
+    guard case .loaded(let snapshots) = model.readiness else {
+      return HomeRecommendation(
+        title: "Check connection health",
+        detail: "Refresh the App, gateway, and configured transports.",
+        buttonLabel: "Refresh",
+        action: { model.refresh(.home) }
+      )
+    }
+
+    if let local = snapshots.first(where: { $0.journey == .local }),
+      local.status != .ready,
+      local.status != .verified
+    {
+      if local.checks.contains(where: { $0.id == "gateway.running" && $0.status == .fail }) {
+        return HomeRecommendation(
+          title: "Start the gateway",
+          detail: "The local MCP bridge and remote transports depend on the App-owned gateway.",
+          buttonLabel: "Start",
+          action: { model.startGateway() }
+        )
+      }
+      if local.checks.contains(where: { $0.id == "local.cli" && $0.status == .fail }) {
+        return HomeRecommendation(
+          title: "Install the App-owned CLI",
+          detail: "Install the signed embedded bridge before registering a local MCP client.",
+          buttonLabel: "Install",
+          action: { model.installCommandLineTool() }
+        )
+      }
+      return HomeRecommendation(
+        title: local.nextAction?.label ?? "Finish local MCP setup",
+        detail: "Prepare the App-owned CLI bridge for local MCP clients.",
+        buttonLabel: "Review",
+        action: { model.refresh(.home) }
+      )
+    }
+
+    if let remote = snapshots.first(where: {
+      $0.journey != .local && $0.status != .verified && $0.status != .notConfigured
+    }) {
+      let target: AppSection = remote.journey == .chatgpt ? .chatgpt : .cloudflare
+      return HomeRecommendation(
+        title: remote.nextAction?.label ?? "Verify the remote connection",
+        detail: AppLocalization.formatted(
+          "Continue the %@ connection from its dedicated setup page.",
+          target.title
+        ),
+        buttonLabel: "Continue",
+        action: { model.selectedSection = target }
+      )
+    }
+
+    if snapshots.contains(where: { $0.journey != .local && $0.status == .notConfigured }) {
+      return HomeRecommendation(
+        title: "Choose a remote connection when you need one",
+        detail: "ChatGPT and Cloudflare each have a complete guided setup page.",
+        buttonLabel: "Connect ChatGPT",
+        action: { model.selectedSection = .chatgpt }
+      )
+    }
+    return nil
+  }
+}
+
+private struct HomeRecommendation {
+  let title: String
+  let detail: String
+  let buttonLabel: String
+  let action: () -> Void
+}
+
+struct ProjectsView: View {
+  @EnvironmentObject private var model: ComputerMCPAppModel
+
+  var body: some View {
+    VStack(spacing: 0) {
+      ProjectHeader(
+        "Projects",
+        subtitle: "Folder grants and persistent bookmark health"
+      ) {
+        HStack {
+          Button {
+            presentProjectPicker()
+          } label: {
+            Label("Add", systemImage: "plus")
+          }
+          .accessibilityIdentifier("project.add")
+          .disabled(model.isActionRunning("project.add"))
+
+          RefreshButton {
+            model.refresh(.projects)
+          }
+        }
+      }
+
+      Divider()
+
+      switch model.projects {
+      case .idle, .loading:
+        LoadingProjectView(title: "Loading projects")
+      case .failed(let message):
+        FailedProjectView(message: message) {
+          model.refresh(.projects)
+        }
+      case .loaded(let projects) where projects.isEmpty:
+        EmptyProjectView(
+          title: "No registered projects",
+          detail: "Add a folder to create a persistent local project grant.",
+          systemImage: "folder.badge.plus"
+        )
+      case .loaded(let projects):
+        ScrollView {
+          LazyVStack(spacing: 0) {
+            ForEach(projects) { project in
+              ProjectRow(project: project) { presentProjectPicker(repairing: project) }
+              Divider()
+            }
+          }
+          .padding(.horizontal, 16)
+        }
+      }
+    }
+    .alert(item: $model.pendingProjectRemoval) { project in
+      Alert(
+        title: AppLocalization.verbatimText(
+          AppLocalization.formatted("Remove %@?", project.displayName)
+        ),
+        message: Text(
+          "This removes the local project grant. It does not delete the folder or its contents."
+        ),
+        primaryButton: .destructive(Text("Remove")) {
+          model.removeProject(id: project.id)
+        },
+        secondaryButton: .cancel()
+      )
+    }
+  }
+
+  private func presentProjectPicker(repairing project: ProjectSummary? = nil) {
+    let panel = ProjectOpenPanelFactory.make(repairing: project)
+
+    let completion: (NSApplication.ModalResponse) -> Void = { response in
+      guard response == .OK, let url = panel.url else {
+        return
+      }
+      Task { @MainActor in
+        if let project {
+          model.repairProject(id: project.id, at: url)
+        } else {
+          model.addProject(at: url)
+        }
+      }
+    }
+
+    if let window = NSApplication.shared.keyWindow ?? NSApplication.shared.mainWindow {
+      panel.beginSheetModal(for: window, completionHandler: completion)
+    } else {
+      panel.begin(completionHandler: completion)
+    }
+  }
+}
+
+@MainActor
+enum ProjectOpenPanelFactory {
+  static func make(repairing project: ProjectSummary? = nil) -> NSOpenPanel {
+    let panel = NSOpenPanel()
+    if let project {
+      panel.title = AppLocalization.string("Repair Project")
+      panel.message = AppLocalization.formatted(
+        "Choose the folder for %@. Existing project permissions will apply to this folder.",
+        project.displayName)
+      panel.prompt = AppLocalization.string("Use Folder")
+      panel.directoryURL = URL(fileURLWithPath: project.path).deletingLastPathComponent()
+    } else {
+      panel.title = AppLocalization.string("Add Project")
+      panel.message = AppLocalization.string(
+        "Add a folder to create a persistent local project grant.")
+      panel.prompt = AppLocalization.string("Add")
+      panel.directoryURL = FileManager.default.homeDirectoryForCurrentUser
+    }
+    panel.canChooseDirectories = true
+    panel.canChooseFiles = false
+    panel.canCreateDirectories = true
+    panel.allowsMultipleSelection = false
+    panel.resolvesAliases = true
+    return panel
+  }
+}
+
+private struct ProjectRow: View {
+  @EnvironmentObject private var model: ComputerMCPAppModel
+
+  let project: ProjectSummary
+  let repair: () -> Void
+
+  var body: some View {
+    HStack(spacing: 12) {
+      Image(systemName: project.isSelected ? "folder.fill.badge.checkmark" : "folder")
+        .font(.title3)
+        .foregroundStyle(project.isEnabled ? Color.accentColor : Color.secondary)
+        .frame(width: 24)
+
+      VStack(alignment: .leading, spacing: 3) {
+        HStack(spacing: 8) {
+          Text(project.displayName)
+            .fontWeight(.medium)
+          StateBadge(
+            text: project.health.label,
+            color: project.health.color
+          )
+        }
+
+        Text(project.path)
+          .font(.system(.caption, design: .monospaced))
+          .foregroundStyle(.secondary)
+          .lineLimit(1)
+          .truncationMode(.middle)
+          .help(project.path)
+
+        if let lastResolvedAt = project.lastResolvedAt {
+          AppLocalization.verbatimText(
+            AppLocalization.formatted(
+              "Resolved %@",
+              lastResolvedAt.formatted(.relative(presentation: .named))
+            )
+          )
+          .font(.caption)
+          .foregroundStyle(.tertiary)
+        }
+        if let detail = project.healthDetail {
+          AppLocalization.verbatimText(detail)
+            .font(.caption)
+            .foregroundStyle(.secondary)
+            .textSelection(.enabled)
+        }
+      }
+
+      Spacer()
+
+      Toggle(
+        isOn: Binding(
+          get: { project.isSelected },
+          set: { enabled in
+            model.setProjectEnabled(enabled, project: project)
+          }
+        )
+      ) {
+        AppLocalization.verbatimText(
+          AppLocalization.formatted(
+            "Enabled for %@",
+            project.activeProfileID
+          )
+        )
+      }
+      .accessibilityIdentifier("project.\(project.id).enabled")
+      .toggleStyle(.switch)
+      .help("Grant this project to the active profile")
+
+      Button("Repair…", action: repair)
+        .disabled(model.isActionRunning("project.repair.\(project.id)"))
+        .accessibilityIdentifier("project.\(project.id).repair")
+        .accessibilityLabel("Repair \(project.displayName)")
+
+      Button {
+        model.revealProject(project)
+      } label: {
+        Image(systemName: "arrow.right.circle")
+      }
+      .buttonStyle(.borderless)
+      .help("Show in Finder")
+      .accessibilityLabel("Show \(project.displayName) in Finder")
+
+      Button(role: .destructive) {
+        model.requestProjectRemoval(project)
+      } label: {
+        Image(systemName: "trash")
+      }
+      .buttonStyle(.borderless)
+      .help("Remove project grant")
+      .accessibilityLabel("Remove \(project.displayName)")
+    }
+    .padding(.vertical, 6)
+  }
+}

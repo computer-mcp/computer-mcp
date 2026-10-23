@@ -56,7 +56,7 @@ struct MCPChildProcessTransportTests {
       #expect(lines == ["3"])
     #endif
     let receipts = try MCPProcessOwnership.inspect(
-      root: try #require(environment.processOwnershipRoot), workspace: root, registration: "hosted")
+      root: try #require(environment.processOwnershipRoot), project: root, registration: "hosted")
     if confirmed {
       #expect(receipts.isEmpty)
     } else {
@@ -68,7 +68,7 @@ struct MCPChildProcessTransportTests {
 }
 
 private struct HostEnvironmentProbe: MCPHostEnvironment {
-  let workspaceRoot: URL
+  let projectRoot: URL
   let processOwnershipRoot: URL?
   let launchMetadata: MCPHostLaunchMetadata
   let pluginArtifacts: [String: PluginDirectoryIdentity] = [:]
@@ -76,11 +76,11 @@ private struct HostEnvironmentProbe: MCPHostEnvironment {
   let session: SessionProbe
 
   init(root: URL, session: SessionProbe) {
-    workspaceRoot = root
+    projectRoot = root
     processOwnershipRoot = root.appendingPathComponent("ownership")
     launchMetadata = .init(
       runtimeID: UUID(), context: .init(caller: .localMCP, profileID: .localAdmin),
-      workspaceID: "test", rootURL: root, readOnly: true)
+      projectID: "test", rootURL: root, readOnly: true)
     self.session = session
   }
 

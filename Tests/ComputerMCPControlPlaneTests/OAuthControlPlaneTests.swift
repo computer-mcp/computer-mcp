@@ -138,11 +138,11 @@ struct OAuthControlPlaneTests {
 
     var observe = try #require(
       try await fixture.service.profileGrants().first { $0.id == .cloudflareObserve })
-    observe.mode = .workspaceOperations
+    observe.mode = .projectOperations
     try fixture.database.saveProfile(observe, expectedRevision: observe.authorizationRevision)
     #expect(
       try await fixture.service.profileGrants().first { $0.id == .cloudflareObserve }?.mode
-        == .workspaceOperations)
+        == .projectOperations)
     let next = try await server.authorize(fixture.fields, address: "fixture")
     do {
       _ = try await approve(next.request.pairingCode)
@@ -171,10 +171,10 @@ struct OAuthControlPlaneTests {
       try await fixture.service.profileGrants().first { $0.id == .cloudflareObserve })
     #expect(reviewed.mode == .readOnly)
     let changed = try await fixture.service.updateProfilePermissions(
-      profileID: reviewed.id, mode: changeMode ? .workspaceOperations : nil,
+      profileID: reviewed.id, mode: changeMode ? .projectOperations : nil,
       capabilityIDs: changeMode ? ["file.read", "file.write"] : ["file.read"],
       expectedRevision: reviewed.authorizationRevision)
-    #expect(changed.mode == (changeMode ? .workspaceOperations : .readOnly))
+    #expect(changed.mode == (changeMode ? .projectOperations : .readOnly))
     #expect(changed.capabilityIDs != reviewed.capabilityIDs)
     let owner = GatewayClientControl.app(fixture.operations)
     func approve(digest: String) async throws -> GatewayProfileID {
@@ -228,14 +228,14 @@ struct OAuthControlPlaneTests {
     await gate.waitUntilPaused()
     let changing = Task {
       try await fixture.service.updateProfilePermissions(
-        profileID: reviewed.grant.id, mode: .workspaceOperations,
+        profileID: reviewed.grant.id, mode: .projectOperations,
         capabilityIDs: ["file.read", "file.write"])
     }
     gate.resume()
     let grant = try await approving.value
     let changed = try await changing.value
     #expect(grant.profileID == reviewed.grant.id)
-    #expect(changed.mode == .workspaceOperations)
+    #expect(changed.mode == .projectOperations)
     #expect(
       try OAuthApprovalProfile(grant: changed).authorizationDigest != reviewed.authorizationDigest)
     #expect(try await flow.pendingRequests(approver: .localApp).isEmpty)
@@ -268,7 +268,7 @@ struct OAuthControlPlaneTests {
   }
 
   @Test(arguments: [false, true], [false, true])
-  func derivedWorkspaceAuthorizationSerializesWithApproval(removing: Bool, changeFirst: Bool)
+  func derivedProjectAuthorizationSerializesWithApproval(removing: Bool, changeFirst: Bool)
     async throws
   {
     let gate = CommitGate()
@@ -280,19 +280,19 @@ struct OAuthControlPlaneTests {
     for directory in [source, child] {
       try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
     }
-    try fixture.database.saveWorkspace(
+    try fixture.database.saveProject(
       .init(id: "source", displayName: "Source", rootPath: source.path))
     try fixture.database.saveProfile(
       .init(
-        id: .cloudflareOperate, capabilityIDs: ["workspace.list"], workspaceIDs: ["source"],
-        allowedCallers: [.cloudflareTunnel], mode: .workspaceOperations))
-    let registration = MCPDerivedWorkspaceRegistration(
-      origin: "fixture", receiptID: "derived-receipt", sourceWorkspaceID: "source",
+        id: .cloudflareOperate, capabilityIDs: ["project.list"], projectIDs: ["source"],
+        allowedCallers: [.cloudflareTunnel], mode: .projectOperations))
+    let registration = MCPDerivedProjectRegistration(
+      origin: "fixture", receiptID: "derived-receipt", sourceProjectID: "source",
       sourceRoot: source.path, receiptDigest: "fixture-digest", profileID: .cloudflareOperate,
       principalID: "existing-client", caller: .cloudflareTunnel,
-      workspace: .init(id: "child", displayName: "Child", rootPath: child.path))
+      project: .init(id: "child", displayName: "Child", rootPath: child.path))
     if removing {
-      try fixture.database.registerDerivedWorkspace(
+      try fixture.database.registerDerivedProject(
         registration, verifiedPrincipalID: "existing-client", caller: .cloudflareTunnel)
     }
     let connection = try GatewayDatabaseConnection(
@@ -301,12 +301,12 @@ struct OAuthControlPlaneTests {
       try $0.execute(sql: "PRAGMA busy_timeout = 0")
     }
     let writer = GatewayDatabase(connection: connection)
-    func changeWorkspace() throws {
+    func changeProject() throws {
       if removing {
-        try writer.unregisterDerivedWorkspace(
+        try writer.unregisterDerivedProject(
           registration, verifiedPrincipalID: "existing-client", caller: .cloudflareTunnel)
       } else {
-        try writer.registerDerivedWorkspace(
+        try writer.registerDerivedProject(
           registration, verifiedPrincipalID: "existing-client", caller: .cloudflareTunnel)
       }
     }
@@ -315,7 +315,7 @@ struct OAuthControlPlaneTests {
     let reviewed = try #require(
       try await fixture.service.oauthApprovalProfiles().first { $0.grant.id == .cloudflareOperate })
     if changeFirst {
-      try changeWorkspace()
+      try changeProject()
       await #expect(throws: (any Error).self) {
         try await fixture.service.authorizeOAuthClient(
           pairingCode: pairing.request.pairingCode, profileID: reviewed.grant.id,
@@ -331,16 +331,16 @@ struct OAuthControlPlaneTests {
       }
       await gate.waitUntilPaused()
       // This connection cannot commit between the digest comparison and grant insertion.
-      #expect(throws: DatabaseError.self) { try changeWorkspace() }
+      #expect(throws: DatabaseError.self) { try changeProject() }
       gate.resume()
       #expect(try await approving.value.profileID == reviewed.grant.id)
-      try changeWorkspace()
+      try changeProject()
       #expect(try await flow.pendingRequests(approver: .localApp).isEmpty)
     }
     let current = try #require(
       try await fixture.service.oauthApprovalProfiles().first { $0.grant.id == reviewed.grant.id })
     #expect(current.authorizationDigest != reviewed.authorizationDigest)
-    #expect(current.grant.workspaceIDs.contains("child") == !removing)
+    #expect(current.grant.projectIDs.contains("child") == !removing)
   }
 
   // These integration cases publish manifests through the macOS exclusive-rename
@@ -367,7 +367,7 @@ struct OAuthControlPlaneTests {
       #expect(try fixture.database.profiles().isEmpty)
       let flow = fixture.server()
       let pairing = try await flow.authorize(fixture.fields, address: "fixture")
-      configuration.profiles[0].mode = .workspaceOperations
+      configuration.profiles[0].mode = .projectOperations
       configuration.profiles[0].capabilities = ["file.read", "file.write"]
       _ = try await fixture.gatewayService.changeManifest(
         configuration.exportedTOML(),
@@ -1241,7 +1241,7 @@ private final class ControlFixture: Sendable {
       manifestURL: directories.manifest, database: database, loader: loader)
     let monitor = monitor
     let platform = PlatformServices(
-      workspaceGrants: UnusedPlatform(), pluginDirectories: UnusedPlatform(),
+      projectGrants: UnusedPlatform(), pluginDirectories: UnusedPlatform(),
       applications: TestApplicationBundleLocator(), toolProviders: UnusedPlatform(),
       managementToolNames: [],
       executableSearchDirectories: [], gitExecutable: "git",
@@ -1410,14 +1410,14 @@ private struct ControlDocument: CIMDFetching {
   }
 }
 
-private struct UnusedPlatform: WorkspaceBookmarkServicing, PluginArchiveDirectoryFactory,
+private struct UnusedPlatform: ProjectBookmarkServicing, PluginArchiveDirectoryFactory,
   GatewayToolProviderFactory, LaunchAtLoginControlling
 {
-  func registerFolder(at url: URL, displayName: String?) throws -> RegisteredWorkspace {
+  func registerFolder(at url: URL, displayName: String?) throws -> RegisteredProject {
     throw FixtureFailure.unused
   }
-  func resolve(_ workspace: RegisteredWorkspace) throws -> ResolvedWorkspaceAccess {
-    throw WorkspaceBookmarkError.bookmarkResolutionFailed(workspaceID: workspace.id)
+  func resolve(_ project: RegisteredProject) throws -> ResolvedProjectAccess {
+    throw ProjectBookmarkError.bookmarkResolutionFailed(projectID: project.id)
   }
   func create(at url: URL) throws -> any PluginArchiveStagingDirectory {
     throw FixtureFailure.unused

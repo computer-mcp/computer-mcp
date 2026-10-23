@@ -12,22 +12,22 @@ package struct DeliveryConfig: Codable, Equatable, Sendable {
 
   private enum CodingKeys: String, CodingKey { case scopes }
 
-  func validate(workspaces: [WorkspaceManifestConfig]) throws {
+  func validate(projects: [ProjectManifestConfig]) throws {
     var ids = Set<String>()
     for scope in scopes {
       guard ids.insert(scope.id).inserted else {
         throw ConfigurationError.invalid("Duplicate delivery scope id: \(scope.id)")
       }
-      guard workspaces.contains(where: { $0.id == scope.workspace }) else {
+      guard projects.contains(where: { $0.id == scope.project }) else {
         throw ConfigurationError.invalid(
-          "delivery.scopes.workspace references unknown workspace '\(scope.workspace)'.")
+          "delivery.scopes.project references unknown project '\(scope.project)'.")
       }
       try scope.validate()
     }
   }
 }
 
-/// A host-declared repository and path boundary, selected by workspace identity.
+/// A host-declared repository and path boundary, selected by project identity.
 package struct DeliveryScope: Codable, Equatable, Sendable {
   package enum Mode: String, Codable, Sendable {
     case land
@@ -35,7 +35,7 @@ package struct DeliveryScope: Codable, Equatable, Sendable {
   }
 
   package var id: String
-  package var workspace: String
+  package var project: String
   package var repository: String
   package var paths: [String]
   package var defaultBranch: String
@@ -44,12 +44,12 @@ package struct DeliveryScope: Codable, Equatable, Sendable {
   package var mode: Mode
 
   package init(
-    id: String, workspace: String, repository: String = ".", paths: [String],
+    id: String, project: String, repository: String = ".", paths: [String],
     defaultBranch: String, worktreeRoot: String = ".claude/worktrees", sparse: Bool = false,
     mode: Mode = .land
   ) {
     self.id = id
-    self.workspace = workspace
+    self.project = project
     self.repository = repository
     self.paths = paths
     self.defaultBranch = defaultBranch
@@ -59,7 +59,7 @@ package struct DeliveryScope: Codable, Equatable, Sendable {
   }
 
   private enum CodingKeys: String, CodingKey {
-    case id, workspace, repository, paths, sparse, mode
+    case id, project, repository, paths, sparse, mode
     case defaultBranch = "default_branch"
     case worktreeRoot = "worktree_root"
   }
@@ -67,7 +67,7 @@ package struct DeliveryScope: Codable, Equatable, Sendable {
   package init(from decoder: any Decoder) throws {
     let container = try decoder.container(keyedBy: CodingKeys.self)
     id = try container.decode(String.self, forKey: .id)
-    workspace = try container.decode(String.self, forKey: .workspace)
+    project = try container.decode(String.self, forKey: .project)
     repository = try container.decodeIfPresent(String.self, forKey: .repository) ?? "."
     paths = try container.decode([String].self, forKey: .paths)
     defaultBranch = try container.decode(String.self, forKey: .defaultBranch)

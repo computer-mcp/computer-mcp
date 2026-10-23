@@ -30,7 +30,7 @@ package final class DeliveryToolProvider: GatewayToolProvider, Sendable {
             do {
               let repository = try DeliveryRepository(
                 scope: scope,
-                workspace: environment.configuration.workspaceDirectory,
+                project: environment.configuration.projectDirectory,
                 git: DeliveryGit(environment: environment), io: io, cancellation: cancellation)
               try repository.withLock { try repository.recover() }
             } catch { continue }
@@ -40,7 +40,7 @@ package final class DeliveryToolProvider: GatewayToolProvider, Sendable {
   }
 
   package func definitions() -> [ToolDefinition] {
-    Self.toolDefinitions(toolMeta: environment.workspaceScope.toolMeta).filter {
+    Self.toolDefinitions(toolMeta: environment.projectScope.toolMeta).filter {
       environment.configuration.builtin.enabled.contains($0.tool.name)
     }
   }
@@ -97,7 +97,7 @@ package final class DeliveryToolProvider: GatewayToolProvider, Sendable {
           reason: .scopeUnknown, detail: "Unknown delivery scope: \(request.scope)")
       }
       let repository = try DeliveryRepository(
-        scope: scope, workspace: environment.configuration.workspaceDirectory,
+        scope: scope, project: environment.configuration.projectDirectory,
         git: DeliveryGit(environment: environment), io: io, cancellation: cancellation)
       let (result, failure) = try repository.apply(request)
       return try result.envelope(failure: failure)

@@ -19,10 +19,10 @@ struct DeliveryToolProviderTests {
       let definitions = provider.definitions()
       #expect(definitions.map(\.tool.name) == ["delivery.scopes.list", "delivery.apply"])
       #expect(definitions[0].capability.risk == .readOnly)
-      #expect(definitions[1].capability.risk == .workspaceWrite)
+      #expect(definitions[1].capability.risk == .projectWrite)
       for definition in definitions {
         #expect(definition.capability.id == definition.tool.name)
-        #expect(definition.capability.workspaceRequirement == .required)
+        #expect(definition.capability.projectRequirement == .required)
         #expect(!definition.capability.usesNetwork && !definition.capability.localOnly)
         #expect(definition.tool.annotations?.openWorldHint == false)
       }

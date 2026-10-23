@@ -26,13 +26,13 @@ struct AppFullCatalogProbe: AsyncParsableCommand {
   )
   var accessibilityProcessID: Int32?
 
-  @Option(name: .long, help: "Registered workspace containing the deterministic fixtures.")
-  var workspaceID: String?
+  @Option(name: .long, help: "Registered project containing the deterministic fixtures.")
+  var projectID: String?
 
-  @Option(name: .long, help: "Registered workspace containing the deterministic Git fixture.")
-  var repositoryWorkspaceID: String?
+  @Option(name: .long, help: "Registered project containing the deterministic Git fixture.")
+  var repositoryProjectID: String?
 
-  @Option(name: .long, help: "Fixture path relative to the selected workspace.")
+  @Option(name: .long, help: "Fixture path relative to the selected project.")
   var fixturePrefix = ".build/validation/fixtures"
 
   @Option(name: .long, help: "Configured Skill root used by the read-only Skill probe.")
@@ -93,8 +93,8 @@ struct AppFullCatalogProbe: AsyncParsableCommand {
         "Library/Application Support/Computer MCP/gateway.sqlite"
       )
     let gatewayDatabase = try GatewayDatabase(path: databaseURL.path)
-    let selectedWorkspaceID = try resolveWorkspaceID(
-      requested: workspaceID,
+    let selectedSectionID = try resolveProjectID(
+      requested: projectID,
       database: gatewayDatabase
     )
     let healthURL: URL?
@@ -127,8 +127,8 @@ struct AppFullCatalogProbe: AsyncParsableCommand {
         socketPath: socketURL.path,
         databasePath: databaseURL.path,
         fixturePlan: CapabilityFixturePlan(
-          workspaceID: selectedWorkspaceID,
-          repositoryWorkspaceID: repositoryWorkspaceID,
+          projectID: selectedSectionID,
+          repositoryProjectID: repositoryProjectID,
           fixturePrefix: fixturePrefix,
           skillRootID: skillRootID,
           skillName: skillName,
@@ -194,29 +194,29 @@ struct AppFullCatalogProbe: AsyncParsableCommand {
     )
   }
 
-  private func resolveWorkspaceID(
+  private func resolveProjectID(
     requested: String?,
     database: GatewayDatabase
   ) throws -> String {
-    let workspaces = try database.workspaces()
+    let projects = try database.projects()
     if let requested {
-      guard workspaces.contains(where: { $0.id == requested }) else {
-        throw ValidationError("workspace-id is not registered: \(requested)")
+      guard projects.contains(where: { $0.id == requested }) else {
+        throw ValidationError("project-id is not registered: \(requested)")
       }
       return requested
     }
-    if workspaces.count == 1, let only = workspaces.first {
+    if projects.count == 1, let only = projects.first {
       return only.id
     }
     let currentDirectory = URL(
       fileURLWithPath: FileManager.default.currentDirectoryPath,
       isDirectory: true
     ).standardizedFileURL.path
-    if let current = workspaces.first(where: { $0.rootPath == currentDirectory }) {
+    if let current = projects.first(where: { $0.rootPath == currentDirectory }) {
       return current.id
     }
     throw ValidationError(
-      "Multiple registered workspaces are available. Pass --workspace-id explicitly."
+      "Multiple registered projects are available. Pass --project-id explicitly."
     )
   }
 
@@ -485,11 +485,11 @@ private struct AppFullCatalogProbeRunner {
     var operationPrepareResult: AppFullCatalogProbeToolResult?
     var operationCommitResult: AppFullCatalogProbeToolResult?
 
-    guard let workspaceListInvocation = fixturePlan.invocation(for: "workspace.list") else {
-      throw ValidationError("The fixture plan does not support workspace.list.")
+    guard let projectListInvocation = fixturePlan.invocation(for: "project.list") else {
+      throw ValidationError("The fixture plan does not support project.list.")
     }
-    let workspaceList = await call("workspace.list", invocation: workspaceListInvocation)
-    results.append(workspaceList.result)
+    let projectList = await call("project.list", invocation: projectListInvocation)
+    results.append(projectList.result)
 
     var lifecycleResults = try await callComputerUseLifecycle(enabledTools: catalogSet)
     lifecycleResults.merge(await callExecutionLifecycle(enabledTools: catalogSet)) { current, _ in
@@ -503,7 +503,7 @@ private struct AppFullCatalogProbeRunner {
         ? left.offset < right.offset : leftPriority < rightPriority
     }.map(\.element)
     for tool in orderedCatalog
-    where tool != "workspace.list"
+    where tool != "project.list"
       && tool != "operations.prepare"
       && tool != "operations.commit"
     {
@@ -742,8 +742,8 @@ private struct AppFullCatalogProbeRunner {
       "arguments": .object(invocation.arguments),
       "ttl_ms": .number(300_000),
     ]
-    if let workspaceID = invocation.arguments["workspace_id"] {
-      operationArguments["workspace_id"] = workspaceID
+    if let projectID = invocation.arguments["project_id"] {
+      operationArguments["project_id"] = projectID
     }
     let prepareInvocation = CapabilityFixtureInvocation(arguments: operationArguments)
     let prepared = await call("operations.prepare", invocation: prepareInvocation)
@@ -894,8 +894,8 @@ private struct AppFullCatalogProbeRunner {
       return [:]
     }
 
-    let workspaceArguments: [String: JSONValue] = [
-      "workspace_id": .string(fixturePlan.workspaceID)
+    let projectArguments: [String: JSONValue] = [
+      "project_id": .string(fixturePlan.projectID)
     ]
     var results: [String: AppFullCatalogProbeToolResult] = [:]
 
@@ -903,7 +903,7 @@ private struct AppFullCatalogProbeRunner {
       results["cli.exec"] = await call(
         "cli.exec",
         invocation: CapabilityFixtureInvocation(
-          arguments: workspaceArguments.merging([
+          arguments: projectArguments.merging([
             "id": .string("git"),
             "argv": .array([.string("--version")]),
           ]) { current, _ in current },
@@ -916,7 +916,7 @@ private struct AppFullCatalogProbeRunner {
       results["process.spawn"] = await call(
         "process.spawn",
         invocation: CapabilityFixtureInvocation(
-          arguments: workspaceArguments.merging([
+          arguments: projectArguments.merging([
             "id": .string("git"),
             "argv": .array([.string("--version")]),
           ]) { current, _ in current },
@@ -929,7 +929,7 @@ private struct AppFullCatalogProbeRunner {
       results["shell.run"] = await call(
         "shell.run",
         invocation: CapabilityFixtureInvocation(
-          arguments: workspaceArguments.merging([
+          arguments: projectArguments.merging([
             "mode": .string("argv"),
             "executable": .string("/bin/echo"),
             "argv": .array([.string("CMCP_FULL_CATALOG_SHELL_RUN")]),
@@ -953,7 +953,7 @@ private struct AppFullCatalogProbeRunner {
     let spawned = await call(
       "shell.spawn",
       invocation: CapabilityFixtureInvocation(
-        arguments: workspaceArguments.merging([
+        arguments: projectArguments.merging([
           "mode": .string("argv"),
           "executable": .string("/bin/sh"),
           "argv": .array([
@@ -983,7 +983,7 @@ private struct AppFullCatalogProbeRunner {
       results["shell.list"] = await call(
         "shell.list",
         invocation: CapabilityFixtureInvocation(
-          arguments: workspaceArguments,
+          arguments: projectArguments,
           expectedMarker: sessionID
         )
       ).result
@@ -993,7 +993,7 @@ private struct AppFullCatalogProbeRunner {
       results["shell.write"] = await call(
         "shell.write",
         invocation: CapabilityFixtureInvocation(
-          arguments: workspaceArguments.merging([
+          arguments: projectArguments.merging([
             "session_id": .string(sessionID),
             "text": .string("validation-input\n"),
           ]) { current, _ in current }
@@ -1010,7 +1010,7 @@ private struct AppFullCatalogProbeRunner {
         let current = await call(
           "shell.read",
           invocation: CapabilityFixtureInvocation(
-            arguments: workspaceArguments.merging([
+            arguments: projectArguments.merging([
               "session_id": .string(sessionID)
             ]) { current, _ in current },
             expectedMarker: "CMCP_FULL_CATALOG_STDIN:validation-input"
@@ -1029,7 +1029,7 @@ private struct AppFullCatalogProbeRunner {
       results["shell.cancel"] = await call(
         "shell.cancel",
         invocation: CapabilityFixtureInvocation(
-          arguments: workspaceArguments.merging([
+          arguments: projectArguments.merging([
             "session_id": .string(sessionID)
           ]) { current, _ in current }
         )
@@ -1425,9 +1425,9 @@ private struct AppFullCatalogProbeRunner {
     }
 
     switch tool {
-    case "workspace.list":
+    case "project.list":
       guard firstStringValue(named: "id", in: payload) != nil else {
-        return (false, "workspace.list returned no registered workspace.")
+        return (false, "project.list returned no registered project.")
       }
     case "computer.permissions":
       let permissions = payload.objectValue

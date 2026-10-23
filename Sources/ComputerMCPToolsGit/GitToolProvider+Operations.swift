@@ -696,7 +696,7 @@ extension GitToolProvider {
       "provider": .string(command.id),
       "argv": .array(args.map(JSONValue.string)),
       "path": .string(paths[0]),
-      "workspace_relative_path": .string(paths[0]),
+      "project_relative_path": .string(paths[0]),
       "follow": .bool(follow),
       "include_merges": .bool(includeMerges),
       "limit": .integer(Int64(limit)),
@@ -778,7 +778,7 @@ extension GitToolProvider {
       "argv": .array(args.map(JSONValue.string)),
       "revision": .string(revision),
       "path": .string(paths[0]),
-      "workspace_relative_path": .string(paths[0]),
+      "project_relative_path": .string(paths[0]),
       "object_spec": .string(objectSpec),
       "encoding": .string("utf-8"),
       "content": .string(content),
@@ -830,7 +830,7 @@ extension GitToolProvider {
       "provider": .string(command.id),
       "argv": .array(args.map(JSONValue.string)),
       "path": .string(paths[0]),
-      "workspace_relative_path": .string(paths[0]),
+      "project_relative_path": .string(paths[0]),
       "object_spec": .string(objectSpec),
       "source": .string("index"),
       "index_stage": .number(0),
@@ -2939,9 +2939,9 @@ private struct GitDiffNumstatFile {
   var json: JSONValue {
     .object([
       "path": .string(path),
-      "workspace_relative_path": .string(path),
+      "project_relative_path": .string(path),
       "old_path": oldPath.map(JSONValue.string) ?? .null,
-      "old_workspace_relative_path": oldPath.map(JSONValue.string) ?? .null,
+      "old_project_relative_path": oldPath.map(JSONValue.string) ?? .null,
       "additions": additions.map { .integer(Int64($0)) } ?? .null,
       "deletions": deletions.map { .integer(Int64($0)) } ?? .null,
       "binary": .bool(binary),
@@ -2986,7 +2986,7 @@ private struct GitDiffSummaryItem {
     .object([
       "kind": .string(kind),
       "path": path.map(JSONValue.string) ?? .null,
-      "workspace_relative_path": path.map(JSONValue.string) ?? .null,
+      "project_relative_path": path.map(JSONValue.string) ?? .null,
       "old_path": oldPath.map(JSONValue.string) ?? .null,
       "new_path": newPath.map(JSONValue.string) ?? .null,
       "old_mode": oldMode.map(JSONValue.string) ?? .null,
@@ -3007,7 +3007,7 @@ private struct GitDiffCheckIssue {
   var json: JSONValue {
     .object([
       "path": .string(path),
-      "workspace_relative_path": .string(path),
+      "project_relative_path": .string(path),
       "line": .integer(Int64(line)),
       "message": .string(message),
       "raw_line": .string(rawLine),
@@ -3044,7 +3044,7 @@ private struct GitGrepMatch {
   var json: JSONValue {
     .object([
       "path": .string(path),
-      "workspace_relative_path": .string(path),
+      "project_relative_path": .string(path),
       "line": .integer(Int64(line)),
       "text": .string(text),
       "raw_record": .string(rawRecord),
@@ -3091,9 +3091,9 @@ private struct GitCommitFileChange {
       "status": .string(status),
       "kind": .string(kind),
       "path": .string(path),
-      "workspace_relative_path": .string(path),
+      "project_relative_path": .string(path),
       "old_path": oldPath.map(JSONValue.string) ?? .null,
-      "old_workspace_relative_path": oldPath.map(JSONValue.string) ?? .null,
+      "old_project_relative_path": oldPath.map(JSONValue.string) ?? .null,
       "score": score.map { .integer(Int64($0)) } ?? .null,
       "raw_record": .string(rawRecord),
     ])
@@ -3110,7 +3110,7 @@ private struct GitCleanPreviewItem {
     .object([
       "action": .string(action),
       "path": path.map(JSONValue.string) ?? .null,
-      "workspace_relative_path": path.map(JSONValue.string) ?? .null,
+      "project_relative_path": path.map(JSONValue.string) ?? .null,
       "directory": .bool(directory),
       "raw_line": .string(rawLine),
     ])

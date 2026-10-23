@@ -37,6 +37,6 @@ Independent plugins retain their own versions and release evidence.
 ## Evidence boundaries
 
 This report describes cloud release evidence. Native TCC permissions, local App
-navigation, workspace operations and installed-plugin integration depend on the
+navigation, project operations and installed-plugin integration depend on the
 user's Mac; this report supplies no result for those checks. Local installation
 and optional installed diagnostics are separate operations from publication.

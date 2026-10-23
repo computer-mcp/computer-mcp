@@ -16,8 +16,8 @@ package struct RuntimeSettingRecord: Codable, FetchableRecord, PersistableRecord
   }
 }
 
-package struct WorkspaceRecord: Codable, FetchableRecord, PersistableRecord {
-  package static let databaseTableName = "workspaces"
+package struct ProjectRecord: Codable, FetchableRecord, PersistableRecord {
+  package static let databaseTableName = "projects"
 
   package var id: String
   package var displayName: String
@@ -27,7 +27,7 @@ package struct WorkspaceRecord: Codable, FetchableRecord, PersistableRecord {
   package var createdAt: Date
   package var updatedAt: Date
 
-  package init(_ value: RegisteredWorkspace) {
+  package init(_ value: RegisteredProject) {
     self.id = value.id
     self.displayName = value.displayName
     self.rootPath = value.rootPath
@@ -37,8 +37,8 @@ package struct WorkspaceRecord: Codable, FetchableRecord, PersistableRecord {
     self.updatedAt = value.updatedAt
   }
 
-  package var value: RegisteredWorkspace {
-    RegisteredWorkspace(
+  package var value: RegisteredProject {
+    RegisteredProject(
       id: id,
       displayName: displayName,
       rootPath: rootPath,
@@ -50,43 +50,43 @@ package struct WorkspaceRecord: Codable, FetchableRecord, PersistableRecord {
   }
 }
 
-package struct WorkspaceCanonicalRootRecord: Codable, FetchableRecord, PersistableRecord {
-  package static let databaseTableName = "workspaceCanonicalRoots"
+package struct ProjectCanonicalRootRecord: Codable, FetchableRecord, PersistableRecord {
+  package static let databaseTableName = "projectCanonicalRoots"
 
   package var canonicalRootPath: String
-  package var workspaceID: String
+  package var projectID: String
   package var createdAt: Date
 
-  package init(canonicalRootPath: String, workspaceID: String, createdAt: Date) {
+  package init(canonicalRootPath: String, projectID: String, createdAt: Date) {
     self.canonicalRootPath = canonicalRootPath
-    self.workspaceID = workspaceID
+    self.projectID = projectID
     self.createdAt = createdAt
   }
 }
 
-package struct WorkspaceAliasRecord: Codable, FetchableRecord, PersistableRecord {
-  package static let databaseTableName = "workspaceAliases"
+package struct ProjectAliasRecord: Codable, FetchableRecord, PersistableRecord {
+  package static let databaseTableName = "projectAliases"
 
-  package var aliasWorkspaceID: String
-  package var canonicalWorkspaceID: String
+  package var aliasProjectID: String
+  package var canonicalProjectID: String
   package var canonicalRootPath: String
   package var migratedAt: Date
 
   package init(
-    aliasWorkspaceID: String, canonicalWorkspaceID: String, canonicalRootPath: String,
+    aliasProjectID: String, canonicalProjectID: String, canonicalRootPath: String,
     migratedAt: Date
   ) {
-    self.aliasWorkspaceID = aliasWorkspaceID
-    self.canonicalWorkspaceID = canonicalWorkspaceID
+    self.aliasProjectID = aliasProjectID
+    self.canonicalProjectID = canonicalProjectID
     self.canonicalRootPath = canonicalRootPath
     self.migratedAt = migratedAt
   }
 }
 
-package struct WorkspaceDeduplicationReceiptRecord: Codable, FetchableRecord,
+package struct ProjectDeduplicationReceiptRecord: Codable, FetchableRecord,
   PersistableRecord
 {
-  package static let databaseTableName = "workspaceDeduplicationReceipts"
+  package static let databaseTableName = "projectDeduplicationReceipts"
 
   package var id: String
   package var planDigest: String
@@ -107,7 +107,7 @@ package struct ProfileRecord: Codable, FetchableRecord, PersistableRecord {
   package var id: String
   package var capabilityIDsJSON: String
   package var mcpServerIDsJSON: String
-  package var workspaceIDsJSON: String
+  package var projectIDsJSON: String
   package var allowedCallersJSON: String
   package var fullShellEnabled: Bool
   package var mode: String?
@@ -119,7 +119,7 @@ package struct ProfileRecord: Codable, FetchableRecord, PersistableRecord {
     self.id = value.id.rawValue
     self.capabilityIDsJSON = try Self.encode(value.capabilityIDs)
     self.mcpServerIDsJSON = try Self.encode(value.mcpServerIDs)
-    self.workspaceIDsJSON = try Self.encode(value.workspaceIDs)
+    self.projectIDsJSON = try Self.encode(value.projectIDs)
     self.allowedCallersJSON = try Self.encode(Set(value.allowedCallers.map(\.rawValue)))
     self.fullShellEnabled = value.fullShellEnabled
     self.mode = value.mode.rawValue
@@ -143,7 +143,7 @@ package struct ProfileRecord: Codable, FetchableRecord, PersistableRecord {
     return ProfileGrant(
       id: profileID,
       capabilityIDs: try Self.decode(capabilityIDsJSON),
-      workspaceIDs: try Self.decode(workspaceIDsJSON),
+      projectIDs: try Self.decode(projectIDsJSON),
       allowedCallers: callers,
       fullShellEnabled: fullShellEnabled,
       mcpServerIDs: try Self.decode(mcpServerIDsJSON),
@@ -261,7 +261,7 @@ package struct AuditEventRecord: Codable, FetchableRecord, PersistableRecord {
   package var tunnelInstanceID: String?
   package var tunnelProfileID: String?
   package var profileID: String
-  package var workspaceID: String?
+  package var projectID: String?
   package var capabilityID: String
   package var decision: String
   package var errorCode: String?
@@ -287,7 +287,7 @@ package struct AuditEventRecord: Codable, FetchableRecord, PersistableRecord {
     self.tunnelInstanceID = value.tunnelInstanceID
     self.tunnelProfileID = value.tunnelProfileID
     self.profileID = value.profileID.rawValue
-    self.workspaceID = value.workspaceID
+    self.projectID = value.projectID
     self.capabilityID = value.capabilityID
     self.decision = value.decision.rawValue
     self.errorCode = value.errorCode
@@ -323,7 +323,7 @@ package struct AuditEventRecord: Codable, FetchableRecord, PersistableRecord {
       tunnelInstanceID: tunnelInstanceID,
       tunnelProfileID: tunnelProfileID,
       profileID: profileID,
-      workspaceID: workspaceID,
+      projectID: projectID,
       capabilityID: capabilityID,
       decision: decision,
       errorCode: errorCode,
@@ -347,7 +347,7 @@ package struct OperationTicketRecord: Codable, FetchableRecord, PersistableRecor
   package var caller: String
   package var profileID: String
   package var principalID: String
-  package var workspaceID: String?
+  package var projectID: String?
   package var inputDigest: String
   package var stateDigest: String?
   package var state: String
@@ -371,7 +371,7 @@ package struct OperationTicketRecord: Codable, FetchableRecord, PersistableRecor
     self.caller = value.caller.rawValue
     self.profileID = value.profileID.rawValue
     self.principalID = value.principalID
-    self.workspaceID = value.workspaceID
+    self.projectID = value.projectID
     self.inputDigest = value.inputDigest
     self.stateDigest = value.stateDigest
     self.state = value.state.rawValue
@@ -405,7 +405,7 @@ package struct OperationTicketRecord: Codable, FetchableRecord, PersistableRecor
       caller: caller,
       profileID: profileID,
       principalID: principalID,
-      workspaceID: workspaceID,
+      projectID: projectID,
       inputDigest: inputDigest,
       stateDigest: stateDigest,
       state: state,

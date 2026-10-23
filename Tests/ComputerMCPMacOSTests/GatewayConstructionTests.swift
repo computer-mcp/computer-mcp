@@ -11,7 +11,7 @@ import Testing
 
 @Suite(.nativeIntegration, .timeLimit(.minutes(1)))
 struct GatewayConstructionTests {
-  @Test(arguments: ["catalog", "cli-tree", "duplicate-workspace"])
+  @Test(arguments: ["catalog", "cli-tree", "duplicate-project"])
   func failedConstructionJoinsProcessesBeforeRetry(stage: String) async throws {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
     try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
@@ -23,13 +23,13 @@ struct GatewayConstructionTests {
       mcp: .init(servers: [
         .init(
           id: "fixture", transport: .stdio, command: "/usr/bin/python3",
-          args: [script.path, root.path, stage == "catalog" ? "workspace.list" : "inspect"],
+          args: [script.path, root.path, stage == "catalog" ? "project.list" : "inspect"],
           exposure: .reexport, prefix: "", allowAnyTool: true,
           startupTimeoutMs: 5000, requestTimeoutMs: 5000)
-      ]), workspaceDirectory: root)
-    let first = RegisteredWorkspace(id: "first", displayName: "First", rootPath: root.path)
-    var workspaces = [first]
-    if stage == "duplicate-workspace" { workspaces.append(first) }
+      ]), projectDirectory: root)
+    let first = RegisteredProject(id: "first", displayName: "First", rootPath: root.path)
+    var projects = [first]
+    if stage == "duplicate-project" { projects.append(first) }
     if stage == "cli-tree" {
       configuration.cli.commands = [
         .init(
@@ -40,15 +40,15 @@ struct GatewayConstructionTests {
     for _ in 0..<2 {
       do {
         let runtime = try await GatewayRuntime.make(
-          configuration: configuration, registeredWorkspaces: workspaces,
+          configuration: configuration, registeredProjects: projects,
           platform: MacOSPlatform.services)
         await runtime.shutdown()
         Issue.record("Expected failure at \(stage)")
       } catch {
         if stage == "catalog" {
-          #expect(error as? GatewayProviderRouterError == .duplicateTool("workspace.list"))
-        } else if stage == "duplicate-workspace" {
-          #expect(error as? GatewayRuntimeError == .duplicateWorkspaceID("first"))
+          #expect(error as? GatewayProviderRouterError == .duplicateTool("project.list"))
+        } else if stage == "duplicate-project" {
+          #expect(error as? GatewayRuntimeError == .duplicateProjectID("first"))
         }
       }
       try expectProcessesExited(root)
@@ -56,7 +56,7 @@ struct GatewayConstructionTests {
     configuration.cli.commands = []
     configuration.mcp.servers[0].args = [script.path, root.path, "inspect"]
     let runtime = try await GatewayRuntime.make(
-      configuration: configuration, registeredWorkspaces: [first], platform: MacOSPlatform.services)
+      configuration: configuration, registeredProjects: [first], platform: MacOSPlatform.services)
     #expect(try runtime.listTools(context: .empty).contains { $0.name == "inspect" })
     await runtime.shutdown()
     try expectProcessesExited(root)
@@ -69,7 +69,7 @@ struct GatewayConstructionTests {
     let gate = ConstructionCleanupGate()
     let client = ConstructionMCPClient(gate: gate)
     let configuration = GatewayConfiguration(
-      workspaceDirectory: FileManager.default.temporaryDirectory)
+      projectDirectory: FileManager.default.temporaryDirectory)
     let shutdown: @Sendable () async -> Void
     if routerOnly {
       let router = try GatewayProviderRouter(source: { [] }, shutdownSource: { await gate.close() })
@@ -77,9 +77,9 @@ struct GatewayConstructionTests {
     } else {
       let runtime = try await GatewayRuntime.make(
         configuration: configuration,
-        registeredWorkspaces: [
-          RegisteredWorkspace(
-            id: "fixture", displayName: "Fixture", rootPath: configuration.workspaceDirectory.path)
+        registeredProjects: [
+          RegisteredProject(
+            id: "fixture", displayName: "Fixture", rootPath: configuration.projectDirectory.path)
         ],
         platform: MacOSPlatform.services, mcpClient: client)
       shutdown = { await runtime.shutdown() }
@@ -115,8 +115,8 @@ struct GatewayConstructionTests {
               id: "fixture", transport: .stdio, command: "/unused", exposure: .reexport,
               prefix: "fixture", allowAnyTool: true)
           ])),
-        registeredWorkspaces: [
-          RegisteredWorkspace(
+        registeredProjects: [
+          RegisteredProject(
             id: "fixture", displayName: "Fixture",
             rootPath: FileManager.default.temporaryDirectory.path)
         ],

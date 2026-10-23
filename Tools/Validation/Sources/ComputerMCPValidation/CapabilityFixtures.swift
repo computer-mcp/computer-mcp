@@ -168,7 +168,7 @@ public struct CapabilityFixtureGenerator {
       """
       # Computer MCP Validation Fixture
 
-      This workspace contains deterministic files for capability testing.
+      This project contains deterministic files for capability testing.
 
       ## Links
 
@@ -213,7 +213,7 @@ public struct CapabilityFixtureGenerator {
       }
 
       print("computer-mcp fixture")
-      // TODO: fixture marker for workspace.todos
+      // TODO: fixture marker for project.todos
       """,
       to: root.appendingPathComponent("Sources/main.swift")
     )

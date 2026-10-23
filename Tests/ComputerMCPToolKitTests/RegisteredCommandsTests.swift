@@ -32,7 +32,7 @@ struct RegisteredCommandsTests {
     let commands = RegisteredCommands(
       configuration: .init(
         policy: .init(defaultTimeoutMs: 3_000, maxOutputBytes: 2_048),
-        cli: .init(commands: [command]), workspaceDirectory: root),
+        cli: .init(commands: [command]), projectDirectory: root),
       commandRunner: runner, environment: ["HOST": "host"])
     #expect(
       try commands.runRegisteredCLI(
@@ -83,7 +83,7 @@ struct RegisteredCommandsTests {
     try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: script.path)
     var command = CLICommandConfig(id: "script", executable: script.path)
     let commands = RegisteredCommands(
-      configuration: .init(workspaceDirectory: temporary.url),
+      configuration: .init(projectDirectory: temporary.url),
       commandRunner: InspectingCommandRunner { _, _, _, _, _, _ in Self.result }, environment: [:])
     #expect(try commands.resolveCLIInvocation(command).executable == script.path)
     #expect(try commands.resolveCLIInvocation(command).arguments.isEmpty)
@@ -116,7 +116,7 @@ struct RegisteredCommandsTests {
       pathExecutables("tool", allMatches: true, environment: environment)
         == [first.appendingPathComponent("tool").path, second.appendingPathComponent("tool").path])
     let commands = RegisteredCommands(
-      configuration: .init(workspaceDirectory: root),
+      configuration: .init(projectDirectory: root),
       commandRunner: InspectingCommandRunner { _, _, _, _, _, _ in Self.result },
       environment: environment)
     let resolved = commands.resolveExecutable(

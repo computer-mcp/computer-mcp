@@ -89,4 +89,4 @@ startup_timeout_ms = 30000
 request_timeout_ms = 180000
 
 [builtin]
-enabled = ["workspace.info"]
+enabled = ["project.info"]

@@ -76,35 +76,35 @@ struct GatewayRemoteManagementTests {
   }
 
   @Test
-  func connectedWorkspaceManagementUsesConsentAndPreservesItAcrossPublication() async throws {
+  func connectedProjectManagementUsesConsentAndPreservesItAcrossPublication() async throws {
     let fixture = try PluginControlFixture(bundled: .load(directory: nil))
     defer { fixture.remove() }
     let client = try await connect(fixture)
     do {
       #expect(try await client.listToolNames().contains("profile.show"))
-      #expect(try await !client.listToolNames().contains("workspace.add"))
-      _ = try await call(client, "workspace.add", ["path": .string(fixture.root.path)], fails: true)
+      #expect(try await !client.listToolNames().contains("project.add"))
+      _ = try await call(client, "project.add", ["path": .string(fixture.root.path)], fails: true)
       let approved = try await approve(fixture)
-      #expect(try await client.listToolNames().contains("workspace.add"))
+      #expect(try await client.listToolNames().contains("project.add"))
       let sibling = try await GatewayClientSession.connectSocket(
         socketURL: fixture.directories.gatewaySocket)
-      #expect(try await !sibling.listToolNames().contains("workspace.add"))
+      #expect(try await !sibling.listToolNames().contains("project.add"))
       let root = fixture.root.appendingPathComponent("project")
       let replacement = fixture.root.appendingPathComponent("replacement")
       for path in [root, replacement] {
         try FileManager.default.createDirectory(at: path, withIntermediateDirectories: true)
       }
       _ = try await call(
-        client, "workspace.add",
+        client, "project.add",
         [
           "path": .string(root.path), "principal_id": .string("forged"),
         ], fails: true)
-      let added = try await call(client, "workspace.add", ["path": .string(root.path)])
-      let id = try #require(added.objectValue?["workspace"]?.objectValue?["id"]?.stringValue)
-      #expect(try fixture.database.workspaces().contains { $0.id == id })
-      let listed = try await call(client, "workspace.list")
+      let added = try await call(client, "project.add", ["path": .string(root.path)])
+      let id = try #require(added.objectValue?["project"]?.objectValue?["id"]?.stringValue)
+      #expect(try fixture.database.projects().contains { $0.id == id })
+      let listed = try await call(client, "project.list")
       #expect(
-        listed.objectValue?["workspaces"]?.arrayValue?.contains {
+        listed.objectValue?["projects"]?.arrayValue?.contains {
           $0.objectValue?["id"] == .string(id)
         } == true)
       let afterAdd = try #require(
@@ -113,32 +113,32 @@ struct GatewayRemoteManagementTests {
         afterAdd.revision == approved.revision
           && afterAdd.fullAccessConsent == approved.fullAccessConsent)
       _ = try await call(
-        client, "workspace.remove",
+        client, "project.remove",
         [
           "id": .string(id), "expected_root_path": .string(replacement.path),
         ], fails: true)
       let reviewedRoot = try #require(
-        added.objectValue?["workspace"]?.objectValue?["root_path"]?.stringValue)
+        added.objectValue?["project"]?.objectValue?["root_path"]?.stringValue)
       #expect(
-        try WorkspaceRootIdentity(URL(fileURLWithPath: reviewedRoot)) == WorkspaceRootIdentity(root)
+        try ProjectRootIdentity(URL(fileURLWithPath: reviewedRoot)) == ProjectRootIdentity(root)
       )
       let repaired = try await call(
-        client, "workspace.repair",
+        client, "project.repair",
         [
           "id": .string(id), "expected_root_path": .string(reviewedRoot),
           "path": .string(replacement.path),
         ])
       let repairedRoot = try #require(
-        repaired.objectValue?["workspace"]?.objectValue?["root_path"]?.stringValue)
+        repaired.objectValue?["project"]?.objectValue?["root_path"]?.stringValue)
       #expect(
-        try WorkspaceRootIdentity(URL(fileURLWithPath: repairedRoot))
-          == WorkspaceRootIdentity(replacement))
+        try ProjectRootIdentity(URL(fileURLWithPath: repairedRoot))
+          == ProjectRootIdentity(replacement))
       _ = try await call(
-        client, "workspace.remove",
+        client, "project.remove",
         [
           "id": .string(id), "expected_root_path": .string(repairedRoot),
         ])
-      #expect(try fixture.database.workspaces().allSatisfy { $0.id != id })
+      #expect(try fixture.database.projects().allSatisfy { $0.id != id })
       #expect(FileManager.default.fileExists(atPath: replacement.path))
       _ = try await call(
         client, "profile.limit",
@@ -150,7 +150,7 @@ struct GatewayRemoteManagementTests {
         [
           "mode": .string("observe"), "expected_revision": .integer(approved.revision),
         ])
-      #expect(try await !client.listToolNames().contains("workspace.add"))
+      #expect(try await !client.listToolNames().contains("project.add"))
       let limited = try await call(client, "profile.show")
       #expect(limited.objectValue?["access_limit"] == .string("read-only"))
       _ = try await call(
@@ -161,7 +161,7 @@ struct GatewayRemoteManagementTests {
       let events = try fixture.database.auditEvents(limit: 100)
       #expect(
         events.contains {
-          $0.capabilityID == "workspace.add" && $0.decision == .allowed && $0.caller == .localMCP
+          $0.capabilityID == "project.add" && $0.decision == .allowed && $0.caller == .localMCP
         })
       #expect(try fixture.database.clientTrusts().isEmpty)
       await sibling.disconnect()
@@ -175,8 +175,7 @@ struct GatewayRemoteManagementTests {
   }
 
   @Test
-  func workspaceGrantChangesOnlyCurrentProfileWithExactRevisionAndInvalidatesConsent() async throws
-  {
+  func projectGrantChangesOnlyCurrentProfileWithExactRevisionAndInvalidatesConsent() async throws {
     let fixture = try PluginControlFixture(bundled: .load(directory: nil))
     defer { fixture.remove() }
     let client = try await connect(fixture)
@@ -184,24 +183,24 @@ struct GatewayRemoteManagementTests {
       let approved = try await approve(fixture)
       let profile = try #require(approved.profile)
       _ = try await call(
-        client, "workspace.grant",
+        client, "project.grant",
         [
           "id": .string("fixture"), "enabled": .bool(false),
           "expected_profile_revision": .integer(profile.grant.authorizationRevision + 1),
         ], fails: true)
       #expect(try fixture.database.profiles().isEmpty)
       _ = try await call(
-        client, "workspace.grant",
+        client, "project.grant",
         [
           "id": .string("fixture"), "enabled": .bool(false),
           "expected_profile_revision": .integer(profile.grant.authorizationRevision),
         ])
       let profiles = try fixture.database.profiles()
       #expect(profiles.count == 1 && profiles.first?.id == .chatGPTOperate)
-      #expect(profiles.first?.workspaceIDs.isEmpty == true)
+      #expect(profiles.first?.projectIDs.isEmpty == true)
       let current = try #require(await fixture.gateway.controlSessions().first)
       #expect(current.fullAccessConsent == nil)
-      #expect(try await !client.listToolNames().contains("workspace.grant"))
+      #expect(try await !client.listToolNames().contains("project.grant"))
       await client.disconnect()
       await fixture.gateway.stop()
     } catch {
@@ -300,7 +299,7 @@ struct GatewayRemoteManagementTests {
   }
 
   @Test
-  func admittedShellWorkCompletesAcrossRemoteWorkspacePublication() async throws {
+  func admittedShellWorkCompletesAcrossRemoteProjectPublication() async throws {
     let fixture = try PluginControlFixture(bundled: .load(directory: nil))
     defer { fixture.remove() }
     let client = try await connect(fixture)
@@ -309,7 +308,7 @@ struct GatewayRemoteManagementTests {
       try await call(
         client, "shell.run",
         [
-          "workspace_id": .string("fixture"), "mode": .string("argv"),
+          "project_id": .string("fixture"), "mode": .string("argv"),
           "executable": .string("/bin/sh"), "cwd": .string(fixture.root.path),
           "argv": .array([
             .string("-c"),
@@ -329,7 +328,7 @@ struct GatewayRemoteManagementTests {
       }
       let project = fixture.root.appendingPathComponent("new-project")
       try FileManager.default.createDirectory(at: project, withIntermediateDirectories: true)
-      _ = try await call(client, "workspace.add", ["path": .string(project.path)])
+      _ = try await call(client, "project.add", ["path": .string(project.path)])
       try Data().write(to: fixture.root.appendingPathComponent("release"))
       _ = try await work.value
       #expect(
@@ -519,14 +518,14 @@ struct GatewayRemoteManagementTests {
       runtime: .init(caller: .localMCP, profileID: .chatGPTOperate),
       profiles: [
         .init(
-          id: .chatGPTOperate, capabilities: ["*"], workspaces: ["fixture"],
-          allowedCallers: [.localMCP], mode: .workspaceOperations, confirmationPolicy: .never)
+          id: .chatGPTOperate, capabilities: ["*"], projects: ["fixture"],
+          allowedCallers: [.localMCP], mode: .projectOperations, confirmationPolicy: .never)
       ],
-      workspaceDirectory: fixture.root)
+      projectDirectory: fixture.root)
     configuration.policy.shellEnabled = true
     _ = try await fixture.host.activateManifest(
       configuration.exportedTOML(), expectedDigest: try? await fixture.host.configurationDigest())
-    try fixture.database.saveWorkspace(
+    try fixture.database.saveProject(
       .init(id: "fixture", displayName: "Fixture", rootPath: fixture.root.path))
     try await fixture.gateway.start(profile: .chatGPTOperate)
     return try await GatewayClientSession.connectSocket(
@@ -560,8 +559,8 @@ struct GatewayRemoteManagementAuthorityTests {
         == Set(GatewayRemoteManagement.definitions.map(\.tool.name)))
     let root = try ScopedTemporaryDirectory()
     let runtime = try GatewayRuntime(
-      configuration: GatewayConfiguration(workspaceDirectory: root.url),
-      registeredWorkspaces: [
+      configuration: GatewayConfiguration(projectDirectory: root.url),
+      registeredProjects: [
         .init(id: "fixture", displayName: "Fixture", rootPath: root.url.path)
       ],
       platform: MacOSPlatform.services,
@@ -647,17 +646,17 @@ struct GatewayRemoteManagementAuthorityTests {
     #expect(!text.contains("private-binding") && !text.contains("private-argument"))
   }
 
-  @Test(arguments: ["plugin", "workspace", "profile"])
+  @Test(arguments: ["plugin", "project", "profile"])
   func persistentTrustRevocationBetweenSessionCheckAndSQLCommitCannotWrite(kind: String) throws {
     let files = try PluginStoreFixture()
     defer { files.cleanup() }
     let database = try GatewayDatabase(path: files.databaseURL.path)
-    try database.saveWorkspace(
+    try database.saveProject(
       .init(id: "project", displayName: "Project", rootPath: files.root.path))
     let profile = GatewayControlProfile(
       grant: .init(
-        id: .chatGPTOperate, capabilityIDs: ["*"], workspaceIDs: ["project"],
-        allowedCallers: [.localMCP], mode: .workspaceOperations), persisted: false)
+        id: .chatGPTOperate, capabilityIDs: ["*"], projectIDs: ["project"],
+        allowedCallers: [.localMCP], mode: .projectOperations), persisted: false)
     let session = GatewayControlSession(
       principalID: "verified", profileID: .chatGPTOperate, caller: .localMCP, database: database,
       profile: profile)
@@ -669,7 +668,7 @@ struct GatewayRemoteManagementAuthorityTests {
     let authorization = GatewayManagementAuthorization(
       session: session, context: context, revision: consent.revision, requiresFullAccess: true)
     let before = try database.configurationState()
-    let prepared = try database.prepareWorkspaceChange(.remove("project"), expected: before)
+    let prepared = try database.prepareProjectChange(.remove("project"), expected: before)
     var changed = before.plugins
     changed.revision += 1
     #expect(throws: (any Error).self) {
@@ -680,8 +679,8 @@ struct GatewayRemoteManagementAuthorityTests {
           _ = try database.savePluginStoreSnapshot(
             changed, expectedRevision: 0, expectedConfiguration: before,
             authorization: authorization)
-        case "workspace":
-          _ = try database.saveWorkspaceChange(
+        case "project":
+          _ = try database.saveProjectChange(
             prepared, resolution: .init(), authorization: authorization)
         default:
           try database.saveProfile(
@@ -699,8 +698,8 @@ struct GatewayRemoteManagementAuthorityTests {
     let database = try GatewayDatabase(inMemory: ())
     let profile = GatewayControlProfile(
       grant: .init(
-        id: .chatGPTOperate, capabilityIDs: ["*"], workspaceIDs: ["*"],
-        allowedCallers: [.localMCP], mode: .workspaceOperations), persisted: false)
+        id: .chatGPTOperate, capabilityIDs: ["*"], projectIDs: ["*"],
+        allowedCallers: [.localMCP], mode: .projectOperations), persisted: false)
     let session = GatewayControlSession(
       principalID: "verified", profileID: .chatGPTOperate, caller: .localMCP, database: database,
       profile: profile)
@@ -724,7 +723,7 @@ struct GatewayRemoteManagementAuthorityTests {
     }
     #expect(throws: (any Error).self) {
       try session.limitAccess(
-        to: .workspaceOperations, expectedRevision: session.snapshot.revision, allowIncrease: false)
+        to: .projectOperations, expectedRevision: session.snapshot.revision, allowIncrease: false)
     }
     session.end()
     #expect(throws: (any Error).self) {

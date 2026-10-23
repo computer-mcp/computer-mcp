@@ -10,7 +10,7 @@ package struct MCPHostLaunchMetadata: Encodable, Sendable {
   package static let readHandleEnvironmentKey = "COMPUTER_MCP_HOST_READ_HANDLE"
   package static let writeHandleEnvironmentKey = "COMPUTER_MCP_HOST_WRITE_HANDLE"
 
-  package struct Workspace: Encodable, Sendable {
+  package struct Project: Encodable, Sendable {
     package let id: String
     package let rootPath: String
   }
@@ -19,28 +19,30 @@ package struct MCPHostLaunchMetadata: Encodable, Sendable {
   package let runtimeID: UUID
   package let caller: GatewayCallerKind
   package let profileID: GatewayProfileID
-  package let workspace: Workspace
+  package let project: Project
   package let readOnly: Bool
   package let transportTrace: GatewayTransportTrace?
-  package let managedWorkspaceRoot: String?
+  package let managedProjectRoot: String?
   package let principalID: String
 
   private enum CodingKeys: String, CodingKey {
-    case formatVersion, runtimeID, caller, profileID, workspace, readOnly, transportTrace,
-      managedWorkspaceRoot, principalID
+    // Launch metadata is consumed by independently installed plugins.
+    case formatVersion, runtimeID, caller, profileID, readOnly, transportTrace, principalID
+    case project = "workspace"
+    case managedProjectRoot = "managedWorkspaceRoot"
   }
 
   package init(
-    runtimeID: UUID, context: ExecutionContext, workspaceID: String, rootURL: URL,
-    readOnly: Bool, managedWorkspaceRoot: URL? = nil
+    runtimeID: UUID, context: ExecutionContext, projectID: String, rootURL: URL,
+    readOnly: Bool, managedProjectRoot: URL? = nil
   ) {
     self.runtimeID = runtimeID
     caller = context.caller
     profileID = context.profileID
-    workspace = Workspace(id: workspaceID, rootPath: rootURL.path)
+    project = Project(id: projectID, rootPath: rootURL.path)
     self.readOnly = readOnly
     transportTrace = context.transportTrace
-    self.managedWorkspaceRoot = managedWorkspaceRoot?.standardizedFileURL.path
+    self.managedProjectRoot = managedProjectRoot?.standardizedFileURL.path
     principalID = context.principalID
   }
 
@@ -68,7 +70,7 @@ package struct MCPHostLaunchMetadata: Encodable, Sendable {
 /// Host-owned launch state and session construction supplied to downstream clients.
 package protocol MCPHostEnvironment: Sendable {
   var launchMetadata: MCPHostLaunchMetadata { get }
-  var workspaceRoot: URL { get }
+  var projectRoot: URL { get }
   var processOwnershipRoot: URL? { get }
   var pluginArtifacts: [String: PluginDirectoryIdentity] { get }
   var providesHostServices: Bool { get }

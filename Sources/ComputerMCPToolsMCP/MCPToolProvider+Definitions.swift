@@ -14,7 +14,7 @@ extension MCPToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "mcp.servers.list", risk: .readOnly,
-          workspaceRequirement: .none,
+          projectRequirement: .none,
           localOnly: false, usesNetwork: true
         )
       ),
@@ -34,7 +34,7 @@ extension MCPToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "mcp.servers.status", risk: .readOnly,
-          workspaceRequirement: .none,
+          projectRequirement: .none,
           localOnly: false, usesNetwork: true
         )
       ),
@@ -52,7 +52,7 @@ extension MCPToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "mcp.tools.list", risk: .readOnly,
-          workspaceRequirement: .none,
+          projectRequirement: .none,
           localOnly: false, usesNetwork: true
         )
       ),
@@ -74,7 +74,7 @@ extension MCPToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "mcp.tools.describe", risk: .readOnly,
-          workspaceRequirement: .none,
+          projectRequirement: .none,
           localOnly: false, usesNetwork: true
         )
       ),
@@ -100,7 +100,7 @@ extension MCPToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "mcp.tools.find", risk: .readOnly,
-          workspaceRequirement: .none,
+          projectRequirement: .none,
           localOnly: false, usesNetwork: true
         )
       ),
@@ -113,8 +113,8 @@ extension MCPToolProvider {
             properties: [
               "server": stringSchema("Registered MCP server id."),
               "tool": stringSchema("Downstream tool name."),
-              "workspace_id": stringSchema(
-                "Stable workspace id returned by workspace.list. Required for host-service calls when multiple workspaces are registered."
+              "project_id": stringSchema(
+                "Stable project id returned by project.list. Required for host-service calls when multiple projects are registered."
               ),
               "request_id": stringSchema(
                 "Optional caller-stable deduplication id, at most 256 UTF-8 bytes. Reuse only for identical inputs; query using mcp.requests.read. Required when wait_for_result is false."
@@ -136,7 +136,7 @@ extension MCPToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "mcp.tools.call", risk: .destructive,
-          workspaceRequirement: .none,
+          projectRequirement: .none,
           localOnly: false, usesNetwork: true
         )
       ),
@@ -158,7 +158,7 @@ extension MCPToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "mcp.resources.list", risk: .readOnly,
-          workspaceRequirement: .none,
+          projectRequirement: .none,
           localOnly: false, usesNetwork: true
         )
       ),
@@ -180,7 +180,7 @@ extension MCPToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "mcp.resources.templates.list", risk: .readOnly,
-          workspaceRequirement: .none,
+          projectRequirement: .none,
           localOnly: false, usesNetwork: true
         )
       ),
@@ -202,7 +202,7 @@ extension MCPToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "mcp.resources.read", risk: .readOnly,
-          workspaceRequirement: .none,
+          projectRequirement: .none,
           localOnly: false, usesNetwork: true
         )
       ),
@@ -224,7 +224,7 @@ extension MCPToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "mcp.prompts.list", risk: .readOnly,
-          workspaceRequirement: .none,
+          projectRequirement: .none,
           localOnly: false, usesNetwork: true
         )
       ),
@@ -252,7 +252,7 @@ extension MCPToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "mcp.prompts.get", risk: .readOnly,
-          workspaceRequirement: .none,
+          projectRequirement: .none,
           localOnly: false, usesNetwork: true
         )
       ),
@@ -282,7 +282,7 @@ extension MCPToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "mcp.events.read", risk: .readOnly,
-          workspaceRequirement: .none,
+          projectRequirement: .none,
           localOnly: false, usesNetwork: true
         )
       ),
@@ -303,7 +303,7 @@ extension MCPToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "mcp.requests.list", risk: .readOnly,
-          workspaceRequirement: .none,
+          projectRequirement: .none,
           localOnly: false, usesNetwork: true
         )
       ),
@@ -328,7 +328,7 @@ extension MCPToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "mcp.requests.cancel", risk: .destructive,
-          workspaceRequirement: .none,
+          projectRequirement: .none,
           localOnly: false, usesNetwork: true
         )
       ),
@@ -345,7 +345,7 @@ extension MCPToolProvider {
           meta: toolMeta),
         capability: CapabilityDescriptor(
           id: "mcp.connections.close", risk: .destructive,
-          workspaceRequirement: .none,
+          projectRequirement: .none,
           localOnly: false, usesNetwork: true
         )
       ),
@@ -369,7 +369,7 @@ extension MCPToolProvider {
           meta: toolMeta),
         capability: CapabilityDescriptor(
           id: "mcp.requests.read", risk: .readOnly,
-          workspaceRequirement: .none,
+          projectRequirement: .none,
           localOnly: false, usesNetwork: true
         )
       ),

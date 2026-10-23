@@ -87,10 +87,10 @@ def verify(cli, denied_source, output):
     records = []
     with tempfile.TemporaryDirectory(prefix="computer-mcp-installed-acceptance-") as temporary:
         root = Path(temporary)
-        workspace = root / "workspace"
-        workspace.mkdir()
+        project = root / "project"
+        project.mkdir()
         nonce = uuid.uuid4().hex
-        (workspace / "nonce.txt").write_text(nonce)
+        (project / "nonce.txt").write_text(nonce)
         configuration = root / "gateway.toml"
         configuration.write_text(f'''schema_version = 1
 [runtime]
@@ -99,16 +99,16 @@ profile = "acceptance"
 [policy]
 shell_enabled = false
 default_timeout_ms = 2000
-[[workspaces]]
+[[projects]]
 id = "acceptance"
 display_name = "Fixed release acceptance"
-path = {json.dumps(str(workspace))}
+path = {json.dumps(str(project))}
 [[profiles]]
 id = "acceptance"
 mode = "read-only"
 confirmation_policy = "risk-based"
-capabilities = ["system.info", "file.read", "workspace.list"]
-workspaces = ["acceptance"]
+capabilities = ["system.info", "file.read", "project.list"]
+projects = ["acceptance"]
 allowed_callers = ["local-mcp"]
 [builtin]
 enabled = ["system.info", "file.read"]
@@ -136,7 +136,7 @@ enabled = ["system.info", "file.read"]
                     client.send("notifications/initialized")
                     client.send("tools/call", {"name": "system.info", "arguments": {}}, 0)
                     client.send("tools/call", {"name": "file.read", "arguments": {
-                        "workspace_id": "acceptance", "path": "nonce.txt", "max_bytes": 256}}, 1)
+                        "project_id": "acceptance", "path": "nonce.txt", "max_bytes": 256}}, 1)
                     client.send("initialize", initialize, 2)
                     system = success(client.receive(0))
                     file = success(client.receive(1))
@@ -149,12 +149,12 @@ enabled = ["system.info", "file.read"]
                     client.send("ping", {}, 3)
                     success(client.receive(3))
                     client.send("tools/call", {"name": "file.read", "arguments": {
-                        "workspace_id": "acceptance", "path": "../outside.txt"}}, 4)
+                        "project_id": "acceptance", "path": "../outside.txt"}}, 4)
                     denied_read = client.receive(4)
                     if "error" not in denied_read and not denied_read.get("result", {}).get("isError"):
-                        raise ValueError("Workspace boundary was not enforced")
+                        raise ValueError("Project boundary was not enforced")
                     records.append({"cycle": cycle, "concurrent_ids": [0, 1, 2], "initialization": "passed",
-                                    "workspace_read": "passed", "boundary_denial": "passed", "ping_after_cancel": "passed",
+                                    "project_read": "passed", "boundary_denial": "passed", "ping_after_cancel": "passed",
                                     "duration_seconds": round(time.monotonic() - started, 3)})
                 finally:
                     client.close()

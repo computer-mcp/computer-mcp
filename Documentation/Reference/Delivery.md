@@ -1,27 +1,27 @@
 # Isolated delivery
 
 `delivery.scopes.list` and `delivery.apply` expose host-declared repository edits
-within a selected `workspace_id`. Both require a workspace and use no network
-operations. Listing is read-only; apply has `workspace-write` risk. Profile grants,
-workspace access and action confirmation follow the ordinary gateway policy.
+within a selected `project_id`. Both require a project and use no network
+operations. Listing is read-only; apply has `project-write` risk. Profile grants,
+project access and action confirmation follow the ordinary gateway policy.
 The provider ID and namespace are `delivery`.
 
 ## Configuration
 
 Declare scopes in the App-managed manifest, or in the standalone TOML manifest.
 The App uses its existing manifest read/write and validation path; repository files
-do not define scopes. App workspace paths come from bookmarks; standalone paths
-resolve from the manifest directory. Each workspace runtime receives only its own
+do not define scopes. App project paths come from bookmarks; standalone paths
+resolve from the manifest directory. Each project runtime receives only its own
 scopes. Scope editing in the App is not yet available.
 
 ```toml
-[[workspaces]]
+[[projects]]
 id = "journal"
-path = "../journal" # Standalone only; omit for an App-managed workspace.
+path = "../journal" # Standalone only; omit for an App-managed project.
 
 [[delivery.scopes]]
 id = "training"
-workspace = "journal"
+project = "journal"
 repository = "."
 paths = ["training/**/*.md", "exports/*.csv"]
 default_branch = "main"
@@ -30,7 +30,7 @@ sparse = false
 mode = "land"
 ```
 
-Scope IDs are unique. `workspace` names a registered workspace. `repository`
+Scope IDs are unique. `project` names a registered project. `repository`
 defaults to `.` and `worktree_root` defaults to `.claude/worktrees`; both are
 relative paths without traversal or `.git` components. The worktree root must be
 inside the repository and ignored by Git. `paths` is a nonempty list of relative
@@ -39,7 +39,7 @@ matches zero directories. Other glob operators are unsupported. `default_branch`
 is required. `sparse` defaults to false. `mode` is `land` (default) or `commit-only`.
 
 Enable the two names in `[builtin].enabled`, register a CLI command with ID `git`,
-and grant the tools and workspace to the calling profile. Once scopes are enabled,
+and grant the tools and project to the calling profile. Once scopes are enabled,
 users can withdraw a profile's direct file-writing capabilities through existing
 profile permissions.
 
@@ -270,7 +270,7 @@ the next filesystem or Git mutation where no atomic primitive covers both. These
 provide isolation from external Git writers across that interval.
 
 Journals live at `<git-common-dir>/computer-mcp/delivery/<operation_id>.json`.
-Schema 1 records `operation_id`, `workspace`, `scope`, `repository`,
+Schema 1 records `operation_id`, `project`, `scope`, `repository`,
 `default_branch`, `branch`, `worktree`, baseline `base`, `phase`, optional `commit`,
 `merged`, optional terminal `state`, `reason` and `message`, and `files`. Immediately
 after successful creation, optional `creation` records `branchCommit` (equal to

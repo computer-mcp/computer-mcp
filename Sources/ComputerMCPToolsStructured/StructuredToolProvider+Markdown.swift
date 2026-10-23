@@ -30,7 +30,7 @@ extension StructuredToolProvider {
     return .object([
       "operation": .string("markdown.links"),
       "path": .string(inventory.url.path),
-      "workspace_relative_path": .string(inventory.info.workspaceRelativePath),
+      "project_relative_path": .string(inventory.info.projectRelativePath),
       "encoding": .string("utf-8"),
       "include_images": .bool(includeImages),
       "include_reference_definitions": .bool(includeReferenceDefinitions),
@@ -58,8 +58,8 @@ extension StructuredToolProvider {
     try validateBoundedPositive(maxRowsPerTable, name: "max_rows_per_table", upperBound: 100_000)
     try validateBoundedPositive(maxBytes, name: "max_bytes", upperBound: 20_971_520)
 
-    let url = try workspaceScope.resolvedWorkspaceURL(path)
-    let info = try workspaceScope.fileInfo(url: url)
+    let url = try projectScope.resolvedProjectURL(path)
+    let info = try projectScope.fileInfo(url: url)
     guard info.type == "file" else {
       throw GatewayToolError.invalidArguments("Path is not a file: \(path)")
     }
@@ -83,7 +83,7 @@ extension StructuredToolProvider {
     return .object([
       "operation": .string("markdown.tables"),
       "path": .string(url.path),
-      "workspace_relative_path": .string(info.workspaceRelativePath),
+      "project_relative_path": .string(info.projectRelativePath),
       "encoding": .string("utf-8"),
       "include_code_blocks": .bool(includeCodeBlocks),
       "max_tables": .integer(Int64(maxTables)),
@@ -265,8 +265,8 @@ extension StructuredToolProvider {
       try validateBoundedPositive(level, name: "level", upperBound: 6)
     }
 
-    let url = try workspaceScope.resolvedWorkspaceURL(path)
-    let info = try workspaceScope.fileInfo(url: url)
+    let url = try projectScope.resolvedProjectURL(path)
+    let info = try projectScope.fileInfo(url: url)
     guard info.type == "file" else {
       throw GatewayToolError.invalidArguments("Path is not a file: \(path)")
     }
@@ -324,7 +324,7 @@ extension StructuredToolProvider {
       return .object([
         "operation": .string("markdown.section"),
         "path": .string(url.path),
-        "workspace_relative_path": .string(info.workspaceRelativePath),
+        "project_relative_path": .string(info.projectRelativePath),
         "encoding": .string("utf-8"),
         "heading": .string(heading),
         "level": level.map { .integer(Int64($0)) } ?? .null,
@@ -340,7 +340,7 @@ extension StructuredToolProvider {
           "reason": .string("missing_heading")
         ]),
         "section": .null,
-        "outline_context": markdownSectionOutlineContext(info.workspaceRelativePath),
+        "outline_context": markdownSectionOutlineContext(info.projectRelativePath),
       ])
     }
 
@@ -362,7 +362,7 @@ extension StructuredToolProvider {
     return .object([
       "operation": .string("markdown.section"),
       "path": .string(url.path),
-      "workspace_relative_path": .string(info.workspaceRelativePath),
+      "project_relative_path": .string(info.projectRelativePath),
       "encoding": .string("utf-8"),
       "heading": .string(heading),
       "level": level.map { .integer(Int64($0)) } ?? .null,
@@ -391,13 +391,13 @@ extension StructuredToolProvider {
       "read_context": .object([
         "tool": .string("file.read_context"),
         "arguments": .object([
-          "path": .string(info.workspaceRelativePath),
+          "path": .string(info.projectRelativePath),
           "line": .integer(Int64(selectedHeading.line)),
           "before": .number(2),
           "after": .number(20),
         ]),
       ]),
-      "outline_context": markdownSectionOutlineContext(info.workspaceRelativePath),
+      "outline_context": markdownSectionOutlineContext(info.projectRelativePath),
     ])
   }
 
@@ -419,8 +419,8 @@ extension StructuredToolProvider {
     try validateBoundedPositive(maxDepth, name: "max_depth", upperBound: 512)
     let formats = try markdownFrontmatterFormats(requestedFormat)
 
-    let url = try workspaceScope.resolvedWorkspaceURL(path)
-    let info = try workspaceScope.fileInfo(url: url)
+    let url = try projectScope.resolvedProjectURL(path)
+    let info = try projectScope.fileInfo(url: url)
     guard info.type == "file" else {
       throw GatewayToolError.invalidArguments("Path is not a file: \(path)")
     }
@@ -435,7 +435,7 @@ extension StructuredToolProvider {
     else {
       return markdownFrontmatterPayload(
         path: url.path,
-        workspaceRelativePath: info.workspaceRelativePath,
+        projectRelativePath: info.projectRelativePath,
         requestedFormat: requestedFormat,
         format: nil,
         maxBytes: maxBytes,
@@ -468,7 +468,7 @@ extension StructuredToolProvider {
     guard let closingOffset = closingIndex else {
       return markdownFrontmatterPayload(
         path: url.path,
-        workspaceRelativePath: info.workspaceRelativePath,
+        projectRelativePath: info.projectRelativePath,
         requestedFormat: requestedFormat,
         format: opening.format,
         maxBytes: maxBytes,
@@ -514,7 +514,7 @@ extension StructuredToolProvider {
 
     return markdownFrontmatterPayload(
       path: url.path,
-      workspaceRelativePath: info.workspaceRelativePath,
+      projectRelativePath: info.projectRelativePath,
       requestedFormat: requestedFormat,
       format: opening.format,
       maxBytes: maxBytes,
@@ -575,7 +575,7 @@ extension StructuredToolProvider {
 
   private func markdownFrontmatterPayload(
     path: String,
-    workspaceRelativePath: String,
+    projectRelativePath: String,
     requestedFormat: String,
     format: String?,
     maxBytes: Int,
@@ -599,7 +599,7 @@ extension StructuredToolProvider {
     .object([
       "operation": .string("markdown.frontmatter"),
       "path": .string(path),
-      "workspace_relative_path": .string(workspaceRelativePath),
+      "project_relative_path": .string(projectRelativePath),
       "encoding": .string("utf-8"),
       "requested_format": .string(requestedFormat),
       "format": format.map(JSONValue.string) ?? .null,
@@ -706,7 +706,7 @@ extension StructuredToolProvider {
     return .object([
       "operation": .string("markdown.link_check"),
       "path": .string(inventory.url.path),
-      "workspace_relative_path": .string(inventory.info.workspaceRelativePath),
+      "project_relative_path": .string(inventory.info.projectRelativePath),
       "encoding": .string("utf-8"),
       "include_images": .bool(includeImages),
       "include_reference_definitions": .bool(includeReferenceDefinitions),
@@ -742,8 +742,8 @@ extension StructuredToolProvider {
     includeCodeBlocks: Bool,
     maxBytes: Int
   ) throws -> MarkdownLinkInventory {
-    let url = try workspaceScope.resolvedWorkspaceURL(path)
-    let info = try workspaceScope.fileInfo(url: url)
+    let url = try projectScope.resolvedProjectURL(path)
+    let info = try projectScope.fileInfo(url: url)
     guard info.type == "file" else {
       throw GatewayToolError.invalidArguments("Path is not a file: \(path)")
     }
@@ -943,15 +943,15 @@ extension StructuredToolProvider {
       )
 
     case "relative_path", "absolute_path":
-      guard target.targetWorkspaceContained == true, let targetPath = target.targetPath else {
+      guard target.targetProjectContained == true, let targetPath = target.targetPath else {
         return MarkdownLinkCheckResult(
           link: link,
           resolvedDestination: destination,
           resolvedViaReferenceDefinition: resolvedViaReferenceDefinition,
           referenceDefinitionLine: referenceDefinitionLine,
-          status: "outside_workspace",
+          status: "outside_project",
           category: "broken",
-          issue: "Local link target is outside the configured workspace.",
+          issue: "Local link target is outside the configured project.",
           target: target,
           isLocal: true
         )
@@ -1544,14 +1544,14 @@ extension StructuredToolProvider {
         .standardizedFileURL
       kind = "relative_path"
     }
-    let contained = workspaceScope.isWorkspaceContained(targetURL)
+    let contained = projectScope.isProjectContained(targetURL)
     return MarkdownLinkTargetInfo(
       kind: kind,
       fragment: split.fragment,
       targetPath: targetURL.path,
-      targetWorkspaceRelativePath: contained
-        ? workspaceScope.workspaceRelativePath(targetURL) : nil,
-      targetWorkspaceContained: contained
+      targetProjectRelativePath: contained
+        ? projectScope.projectRelativePath(targetURL) : nil,
+      targetProjectContained: contained
     )
   }
 
@@ -1732,8 +1732,8 @@ package struct MarkdownLinkTargetInfo {
   package var scheme: String? = nil
   package var fragment: String? = nil
   package var targetPath: String? = nil
-  package var targetWorkspaceRelativePath: String? = nil
-  package var targetWorkspaceContained: Bool? = nil
+  package var targetProjectRelativePath: String? = nil
+  package var targetProjectContained: Bool? = nil
 
   package var json: JSONValue {
     .object([
@@ -1741,8 +1741,8 @@ package struct MarkdownLinkTargetInfo {
       "scheme": scheme.map(JSONValue.string) ?? .null,
       "fragment": fragment.map(JSONValue.string) ?? .null,
       "target_path": targetPath.map(JSONValue.string) ?? .null,
-      "target_workspace_relative_path": targetWorkspaceRelativePath.map(JSONValue.string) ?? .null,
-      "target_workspace_contained": targetWorkspaceContained.map(JSONValue.bool) ?? .null,
+      "target_project_relative_path": targetProjectRelativePath.map(JSONValue.string) ?? .null,
+      "target_project_contained": targetProjectContained.map(JSONValue.bool) ?? .null,
     ])
   }
 }

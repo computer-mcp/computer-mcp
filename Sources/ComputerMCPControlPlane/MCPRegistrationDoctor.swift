@@ -11,7 +11,7 @@ import Foundation
 package struct MCPRegistrationDoctorReport: Codable, Equatable, Sendable {
   package enum Status: String, Codable, Sendable { case passed, failed, disabled }
   package let registrationID: String
-  package let workspaceID: String
+  package let projectID: String
   package let currentDigest: String
   package let checkedAt: Date
   package var status: Status
@@ -30,7 +30,7 @@ package struct MCPRegistrationDoctorReport: Codable, Equatable, Sendable {
 }
 
 extension AppControlPlaneService {
-  package func doctorMCPRegistration(id: String, workspaceID: String) async throws
+  package func doctorMCPRegistration(id: String, projectID: String) async throws
     -> MCPRegistrationDoctorReport
   {
     guard !configurationMutationInProgress else { throw PluginHostError.changeInProgress }
@@ -38,11 +38,11 @@ extension AppControlPlaneService {
     guard let entry = snapshot.registrations.first(where: { $0.id == id }) else {
       throw GatewayToolError.unknownMCPServer(id)
     }
-    guard let workspace = try database.workspace(id: workspaceID) else {
-      throw GatewayToolError.invalidArguments("Unknown registered workspace.")
+    guard let project = try database.project(id: projectID) else {
+      throw GatewayToolError.invalidArguments("Unknown registered project.")
     }
     var report = MCPRegistrationDoctorReport(
-      registrationID: id, workspaceID: workspaceID, currentDigest: snapshot.currentDigest,
+      registrationID: id, projectID: projectID, currentDigest: snapshot.currentDigest,
       checkedAt: Date(), status: .disabled, stage: "configuration",
       message: "The registration is disabled; no connection was started.")
     let ownershipRoot =
@@ -51,10 +51,10 @@ extension AppControlPlaneService {
         "computer-mcp-mcp-processes", isDirectory: true)
     func inspectCleanup() throws {
       guard entry.server.transport == .stdio else { return }
-      let access = try platform.workspaceGrants.resolve(workspace)
+      let access = try platform.projectGrants.resolve(project)
       defer { access.close() }
       report.processReceipts = try MCPProcessOwnership.inspect(
-        root: ownershipRoot, workspace: access.rootURL, registration: id)
+        root: ownershipRoot, project: access.rootURL, registration: id)
       if report.processReceipts?.contains(where: \.blocksLaunch) == true {
         report.status = .failed
         report.stage = "cleanup"
@@ -83,7 +83,7 @@ extension AppControlPlaneService {
       }
     }
     if entry.server.transport == .stdio {
-      let access = try platform.workspaceGrants.resolve(workspace)
+      let access = try platform.projectGrants.resolve(project)
       defer { access.close() }
       let inspection = ExecutableInspection.inspect(
         entry.server.command ?? "",
@@ -110,17 +110,17 @@ extension AppControlPlaneService {
       profiles: [
         .init(
           id: .chatGPTObserve, capabilities: ["mcp.tools.list", "mcp.servers.status"],
-          workspaces: [workspaceID], allowedCallers: [.localCLI], mcpServers: [id])
+          projects: [projectID], allowedCallers: [.localCLI], mcpServers: [id])
       ],
       mcp: .init(servers: [server]))
     // This ephemeral read-only scope has no persistence authority or unrelated providers.
     let runtime = try await GatewayRuntime.make(
-      configuration: configuration, registeredWorkspaces: [workspace],
+      configuration: configuration, registeredProjects: [project],
       platform: platform,
       mcpClient: MCPProxyClient(secretStore: secretStore, processOwnershipRoot: ownershipRoot),
       plugins: [], bundledPlugins: .load(directory: nil))
     let arguments: JSONValue = .object([
-      "server": .string(id), "workspace_id": .string(workspaceID),
+      "server": .string(id), "project_id": .string(projectID),
     ])
     do {
       let catalog = try await runtime.callToolForMCPAsync(
@@ -158,7 +158,7 @@ extension AppControlPlaneService {
   }
 
   package func recoverMCPProcessReceipt(
-    id: String, workspaceID: String, receiptID: String, expectedReceiptDigest: String,
+    id: String, projectID: String, receiptID: String, expectedReceiptDigest: String,
     expectedCurrentDigest: String
   ) throws {
     guard !configurationMutationInProgress else { throw PluginHostError.changeInProgress }
@@ -169,17 +169,17 @@ extension AppControlPlaneService {
     }
     guard let entry = snapshot.registrations.first(where: { $0.id == id }),
       entry.server.transport == .stdio,
-      let workspace = try database.workspace(id: workspaceID)
+      let project = try database.project(id: projectID)
     else {
-      throw GatewayToolError.invalidArguments("Select a stdio MCP and a registered workspace.")
+      throw GatewayToolError.invalidArguments("Select a stdio MCP and a registered project.")
     }
-    let access = try platform.workspaceGrants.resolve(workspace)
+    let access = try platform.projectGrants.resolve(project)
     defer { access.close() }
     try MCPProcessOwnership.recover(
       root: database.mcpProcessOwnershipRoot
         ?? FileManager.default.temporaryDirectory.appendingPathComponent(
           "computer-mcp-mcp-processes", isDirectory: true),
-      workspace: access.rootURL, registration: id, id: receiptID,
+      project: access.rootURL, registration: id, id: receiptID,
       expectedDigest: expectedReceiptDigest)
   }
 }

@@ -44,8 +44,9 @@ final class GatewayDatabaseSchemaTests {
         sql: "INSERT INTO runtimeSettings VALUES ('fixture', 'preserved', '2026-10-21')")
     }
     try earlier.close()
-    let connection = try GatewayDatabaseConnection(path: path)
-    let after = try Self.schema(connection.writer)
+    let writer = try DatabaseQueue(path: path)
+    try GatewayDatabaseConnection.migrator.migrate(writer, upTo: "audit-error-details")
+    let after = try Self.schema(writer)
     let oldNames = Set(before.map(\.name))
     #expect(
       after.filter { oldNames.contains($0.name) && $0.name != "auditEvents" }
@@ -55,7 +56,7 @@ final class GatewayDatabaseSchemaTests {
       Set(additions.filter { $0.type == "table" }.map(\.name)) == [
         "oauthAuthorizationRequests", "oauthGrants", "oauthAuthorizationCodes", "oauthTokens",
       ])
-    try connection.writer.read { (database: Database) throws in
+    try writer.read { (database: Database) throws in
       #expect(
         try String.fetchAll(database, sql: "SELECT identifier FROM grdb_migrations ORDER BY rowid")
           == ["gateway-initial", "remote-oauth", "audit-error-details"])

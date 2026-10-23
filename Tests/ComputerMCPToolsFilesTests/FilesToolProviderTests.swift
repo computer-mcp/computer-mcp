@@ -36,13 +36,13 @@ final class FilesToolProviderTests {
   }
 
   @Test
-  func testEnabledFileBuiltinsReadWriteWorkspaceFiles() throws {
+  func testEnabledFileBuiltinsReadWriteProjectFiles() throws {
     let directory = try temporaryDirectory()
     let provider = FilesToolProvider(
       environment: ToolEnvironment(
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["file.read", "file.read_files", "file.write"]),
-          workspaceDirectory: directory
+          projectDirectory: directory
         ), builtinExecutables: builtinExecutables))
 
     let names = try provider.definitions().map(\.tool.name)
@@ -89,9 +89,9 @@ final class FilesToolProviderTests {
     #expect((batchPayload.objectValue?["operation"]) == (.string("file.read_files")))
     #expect((batchPayload.objectValue?["file_count"]) == (.number(2)))
     #expect((batchPayload.objectValue?["truncated_file_count"]) == (.number(0)))
-    #expect((files[0].objectValue?["workspace_relative_path"]) == (.string("notes/debug.txt")))
+    #expect((files[0].objectValue?["project_relative_path"]) == (.string("notes/debug.txt")))
     #expect((files[0].objectValue?["content"]) == (.string("codex ready")))
-    #expect((files[1].objectValue?["workspace_relative_path"]) == (.string("notes/todo.md")))
+    #expect((files[1].objectValue?["project_relative_path"]) == (.string("notes/todo.md")))
     #expect((files[1].objectValue?["content"]) == (.string("follow-up")))
   }
 
@@ -104,7 +104,7 @@ final class FilesToolProviderTests {
       environment: ToolEnvironment(
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["file.read_files"]),
-          workspaceDirectory: directory
+          projectDirectory: directory
         ), builtinExecutables: builtinExecutables))
 
     let result = try provider.callTool(
@@ -145,7 +145,7 @@ final class FilesToolProviderTests {
       environment: ToolEnvironment(
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["file.write"]),
-          workspaceDirectory: directory
+          projectDirectory: directory
         ), builtinExecutables: builtinExecutables))
 
     let result = try provider.callTool(
@@ -176,12 +176,12 @@ final class FilesToolProviderTests {
   func testFileWriteRejectsNonexistentTargetThroughEscapingSymlink() throws {
     let container = try temporaryDirectory()
     defer { try? FileManager.default.removeItem(at: container) }
-    let workspace = container.appendingPathComponent("workspace", isDirectory: true)
+    let project = container.appendingPathComponent("project", isDirectory: true)
     let outside = container.appendingPathComponent("outside", isDirectory: true)
-    try FileManager.default.createDirectory(at: workspace, withIntermediateDirectories: true)
+    try FileManager.default.createDirectory(at: project, withIntermediateDirectories: true)
     try FileManager.default.createDirectory(at: outside, withIntermediateDirectories: true)
     try FileManager.default.createSymbolicLink(
-      at: workspace.appendingPathComponent("escape"),
+      at: project.appendingPathComponent("escape"),
       withDestinationURL: outside
     )
     let outsideTarget = outside.appendingPathComponent("written.txt")
@@ -189,7 +189,7 @@ final class FilesToolProviderTests {
       environment: ToolEnvironment(
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["file.write"]),
-          workspaceDirectory: workspace
+          projectDirectory: project
         ), builtinExecutables: builtinExecutables))
 
     expectThrows(
@@ -202,7 +202,7 @@ final class FilesToolProviderTests {
           ]), context: .empty
         ))
     ) { error in
-      #expect(error.localizedDescription.contains("policy.workspace_denied"))
+      #expect(error.localizedDescription.contains("policy.project_denied"))
     }
     #expect(!FileManager.default.fileExists(atPath: outsideTarget.path))
   }
@@ -211,20 +211,20 @@ final class FilesToolProviderTests {
   func testFileSymlinkRejectsDestinationThroughEscapingSymlink() throws {
     let container = try temporaryDirectory()
     defer { try? FileManager.default.removeItem(at: container) }
-    let workspace = container.appendingPathComponent("workspace", isDirectory: true)
+    let project = container.appendingPathComponent("project", isDirectory: true)
     let outside = container.appendingPathComponent("outside", isDirectory: true)
-    try FileManager.default.createDirectory(at: workspace, withIntermediateDirectories: true)
+    try FileManager.default.createDirectory(at: project, withIntermediateDirectories: true)
     try FileManager.default.createDirectory(at: outside, withIntermediateDirectories: true)
     try FileManager.default.createSymbolicLink(
-      at: workspace.appendingPathComponent("escape"),
+      at: project.appendingPathComponent("escape"),
       withDestinationURL: outside
     )
-    let link = workspace.appendingPathComponent("new-link")
+    let link = project.appendingPathComponent("new-link")
     let provider = FilesToolProvider(
       environment: ToolEnvironment(
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["file.symlink"]),
-          workspaceDirectory: workspace
+          projectDirectory: project
         ), builtinExecutables: builtinExecutables))
 
     expectThrows(
@@ -237,7 +237,7 @@ final class FilesToolProviderTests {
           ]), context: .empty
         ))
     ) { error in
-      #expect(error.localizedDescription.contains("policy.workspace_denied"))
+      #expect(error.localizedDescription.contains("policy.project_denied"))
     }
     #expect(!FileManager.default.fileExists(atPath: link.path))
   }
@@ -251,7 +251,7 @@ final class FilesToolProviderTests {
       environment: ToolEnvironment(
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["file.write_files"]),
-          workspaceDirectory: directory
+          projectDirectory: directory
         ), builtinExecutables: builtinExecutables))
 
     let dryRunResult = try provider.callTool(
@@ -272,7 +272,7 @@ final class FilesToolProviderTests {
     #expect((dryRunPayload.objectValue?["dry_run"]) == (.bool(true)))
     #expect((dryRunPayload.objectValue?["total_bytes_to_write"]) == (.number(11)))
     #expect((dryRunPayload.objectValue?["total_bytes_written"]) == (.number(0)))
-    #expect((dryRunFiles[0].objectValue?["workspace_relative_path"]) == (.string("notes/one.txt")))
+    #expect((dryRunFiles[0].objectValue?["project_relative_path"]) == (.string("notes/one.txt")))
     #expect((dryRunFiles[0].objectValue?["would_create"]) == (.bool(true)))
     #expect((dryRunFiles[0].objectValue?["would_create_parent_directories"]) == (.bool(true)))
     #expect((dryRunFiles[0].objectValue?["preview"]?.objectValue?["content"]) == (.string("hello")))
@@ -353,7 +353,7 @@ final class FilesToolProviderTests {
       environment: ToolEnvironment(
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["file.exists"]),
-          workspaceDirectory: directory
+          projectDirectory: directory
         ), builtinExecutables: builtinExecutables))
 
     let fileResult = try provider.callTool(
@@ -383,16 +383,16 @@ final class FilesToolProviderTests {
     let missingPayload = try decodeTextPayload(missingResult)
     #expect((missingPayload.objectValue?["exists"]) == (.bool(false)))
     #expect((missingPayload.objectValue?["is_file"]) == (.null))
-    #expect((missingPayload.objectValue?["workspace_relative_path"]) == (.string("missing.txt")))
+    #expect((missingPayload.objectValue?["project_relative_path"]) == (.string("missing.txt")))
   }
 
   @Test
-  func testFileExistsRejectsWorkspaceEscape() throws {
+  func testFileExistsRejectsProjectEscape() throws {
     let provider = FilesToolProvider(
       environment: ToolEnvironment(
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["file.exists"]),
-          workspaceDirectory: try temporaryDirectory()
+          projectDirectory: try temporaryDirectory()
         ), builtinExecutables: builtinExecutables))
 
     expectThrows(
@@ -402,7 +402,7 @@ final class FilesToolProviderTests {
           arguments: .object(["path": .string("../outside")]), context: .empty
         ))
     ) { error in
-      #expect(error.localizedDescription.contains("escapes workspace"))
+      #expect(error.localizedDescription.contains("escapes project"))
     }
   }
 
@@ -415,7 +415,7 @@ final class FilesToolProviderTests {
       environment: ToolEnvironment(
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["file.append"]),
-          workspaceDirectory: directory
+          projectDirectory: directory
         ), builtinExecutables: builtinExecutables))
 
     let result = try provider.callTool(
@@ -444,7 +444,7 @@ final class FilesToolProviderTests {
       environment: ToolEnvironment(
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["file.append"]),
-          workspaceDirectory: directory
+          projectDirectory: directory
         ), builtinExecutables: builtinExecutables))
 
     let result = try provider.callTool(
@@ -474,7 +474,7 @@ final class FilesToolProviderTests {
       environment: ToolEnvironment(
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["file.append"]),
-          workspaceDirectory: directory
+          projectDirectory: directory
         ), builtinExecutables: builtinExecutables))
 
     let result = try provider.callTool(
@@ -516,7 +516,7 @@ final class FilesToolProviderTests {
         configuration: GatewayConfiguration(
           policy: PolicyConfig(maxOutputBytes: 3),
           builtin: BuiltinConfig(enabled: ["file.append"]),
-          workspaceDirectory: directory
+          projectDirectory: directory
         ), builtinExecutables: builtinExecutables))
 
     expectThrows(
@@ -537,7 +537,7 @@ final class FilesToolProviderTests {
           context: .empty
         ))
     ) { error in
-      #expect(error.localizedDescription.contains("escapes workspace"))
+      #expect(error.localizedDescription.contains("escapes project"))
     }
 
     expectThrows(
@@ -561,7 +561,7 @@ final class FilesToolProviderTests {
       environment: ToolEnvironment(
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["file.replace_text"]),
-          workspaceDirectory: directory
+          projectDirectory: directory
         ), builtinExecutables: builtinExecutables))
 
     let result = try provider.callTool(
@@ -591,7 +591,7 @@ final class FilesToolProviderTests {
       environment: ToolEnvironment(
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["file.replace_text"]),
-          workspaceDirectory: directory
+          projectDirectory: directory
         ), builtinExecutables: builtinExecutables))
 
     let result = try provider.callTool(
@@ -623,7 +623,7 @@ final class FilesToolProviderTests {
       environment: ToolEnvironment(
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["file.replace_text"]),
-          workspaceDirectory: directory
+          projectDirectory: directory
         ), builtinExecutables: builtinExecutables))
 
     let result = try provider.callTool(
@@ -663,7 +663,7 @@ final class FilesToolProviderTests {
       environment: ToolEnvironment(
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["file.replace_text"]),
-          workspaceDirectory: directory
+          projectDirectory: directory
         ), builtinExecutables: builtinExecutables))
 
     let result = try provider.callTool(
@@ -700,7 +700,7 @@ final class FilesToolProviderTests {
       environment: ToolEnvironment(
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["file.replace_text"]),
-          workspaceDirectory: directory
+          projectDirectory: directory
         ), builtinExecutables: builtinExecutables))
 
     expectThrows(
@@ -731,7 +731,7 @@ final class FilesToolProviderTests {
       environment: ToolEnvironment(
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["file.replace_text"]),
-          workspaceDirectory: directory
+          projectDirectory: directory
         ), builtinExecutables: builtinExecutables))
 
     expectThrows(
@@ -745,7 +745,7 @@ final class FilesToolProviderTests {
           ]), context: .empty
         ))
     ) { error in
-      #expect(error.localizedDescription.contains("escapes workspace"))
+      #expect(error.localizedDescription.contains("escapes project"))
     }
 
     expectThrows(
@@ -773,7 +773,7 @@ final class FilesToolProviderTests {
       environment: ToolEnvironment(
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["file.insert_text"]),
-          workspaceDirectory: directory
+          projectDirectory: directory
         ), builtinExecutables: builtinExecutables))
 
     let result = try provider.callTool(
@@ -805,7 +805,7 @@ final class FilesToolProviderTests {
       environment: ToolEnvironment(
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["file.insert_text"]),
-          workspaceDirectory: directory
+          projectDirectory: directory
         ), builtinExecutables: builtinExecutables))
 
     let result = try provider.callTool(
@@ -835,7 +835,7 @@ final class FilesToolProviderTests {
       environment: ToolEnvironment(
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["file.insert_text"]),
-          workspaceDirectory: directory
+          projectDirectory: directory
         ), builtinExecutables: builtinExecutables))
 
     _ = try provider.callTool(
@@ -863,7 +863,7 @@ final class FilesToolProviderTests {
       environment: ToolEnvironment(
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["file.insert_text"]),
-          workspaceDirectory: directory
+          projectDirectory: directory
         ), builtinExecutables: builtinExecutables))
 
     let result = try provider.callTool(
@@ -900,7 +900,7 @@ final class FilesToolProviderTests {
       environment: ToolEnvironment(
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["file.insert_text"]),
-          workspaceDirectory: directory
+          projectDirectory: directory
         ), builtinExecutables: builtinExecutables))
 
     let result = try provider.callTool(
@@ -938,7 +938,7 @@ final class FilesToolProviderTests {
       environment: ToolEnvironment(
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["file.insert_text"]),
-          workspaceDirectory: directory
+          projectDirectory: directory
         ), builtinExecutables: builtinExecutables))
 
     expectThrows(
@@ -968,7 +968,7 @@ final class FilesToolProviderTests {
       environment: ToolEnvironment(
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["file.insert_text"]),
-          workspaceDirectory: directory
+          projectDirectory: directory
         ), builtinExecutables: builtinExecutables))
 
     expectThrows(
@@ -1011,7 +1011,7 @@ final class FilesToolProviderTests {
           ]), context: .empty
         ))
     ) { error in
-      #expect(error.localizedDescription.contains("escapes workspace"))
+      #expect(error.localizedDescription.contains("escapes project"))
     }
 
     expectThrows(
@@ -1039,7 +1039,7 @@ final class FilesToolProviderTests {
       environment: ToolEnvironment(
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["file.replace_lines"]),
-          workspaceDirectory: directory
+          projectDirectory: directory
         ), builtinExecutables: builtinExecutables))
 
     let result = try provider.callTool(
@@ -1074,7 +1074,7 @@ final class FilesToolProviderTests {
       environment: ToolEnvironment(
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["file.replace_lines"]),
-          workspaceDirectory: directory
+          projectDirectory: directory
         ), builtinExecutables: builtinExecutables))
 
     let result = try provider.callTool(
@@ -1106,7 +1106,7 @@ final class FilesToolProviderTests {
       environment: ToolEnvironment(
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["file.replace_lines"]),
-          workspaceDirectory: directory
+          projectDirectory: directory
         ), builtinExecutables: builtinExecutables))
 
     let result = try provider.callTool(
@@ -1143,7 +1143,7 @@ final class FilesToolProviderTests {
       environment: ToolEnvironment(
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["file.replace_lines"]),
-          workspaceDirectory: directory
+          projectDirectory: directory
         ), builtinExecutables: builtinExecutables))
 
     let result = try provider.callTool(
@@ -1182,7 +1182,7 @@ final class FilesToolProviderTests {
       environment: ToolEnvironment(
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["file.replace_lines"]),
-          workspaceDirectory: directory
+          projectDirectory: directory
         ), builtinExecutables: builtinExecutables))
 
     expectThrows(
@@ -1230,7 +1230,7 @@ final class FilesToolProviderTests {
           ]), context: .empty
         ))
     ) { error in
-      #expect(error.localizedDescription.contains("escapes workspace"))
+      #expect(error.localizedDescription.contains("escapes project"))
     }
 
     expectThrows(
@@ -1259,7 +1259,7 @@ final class FilesToolProviderTests {
       environment: ToolEnvironment(
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["file.read_lines"]),
-          workspaceDirectory: directory
+          projectDirectory: directory
         ), builtinExecutables: builtinExecutables))
 
     let result = try provider.callTool(
@@ -1274,7 +1274,7 @@ final class FilesToolProviderTests {
     let payload = try decodeTextPayload(result)
     let lines = try #require(payload.objectValue?["lines"]?.arrayValue)
 
-    #expect((payload.objectValue?["workspace_relative_path"]) == (.string("notes.txt")))
+    #expect((payload.objectValue?["project_relative_path"]) == (.string("notes.txt")))
     #expect((payload.objectValue?["line_count"]) == (.number(2)))
     #expect((lines[0].objectValue?["line"]) == (.number(2)))
     #expect((lines[0].objectValue?["text"]) == (.string("two")))
@@ -1291,7 +1291,7 @@ final class FilesToolProviderTests {
       environment: ToolEnvironment(
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["file.read_context"]),
-          workspaceDirectory: directory
+          projectDirectory: directory
         ), builtinExecutables: builtinExecutables))
 
     let result = try provider.callTool(
@@ -1308,7 +1308,7 @@ final class FilesToolProviderTests {
     let lines = try #require(payload.objectValue?["lines"]?.arrayValue)
 
     #expect((payload.objectValue?["operation"]) == (.string("file.read_context")))
-    #expect((payload.objectValue?["workspace_relative_path"]) == (.string("notes.txt")))
+    #expect((payload.objectValue?["project_relative_path"]) == (.string("notes.txt")))
     #expect((payload.objectValue?["start_line"]) == (.number(2)))
     #expect((payload.objectValue?["end_line"]) == (.number(4)))
     #expect((payload.objectValue?["start_clamped"]) == (.bool(false)))
@@ -1349,7 +1349,7 @@ final class FilesToolProviderTests {
       environment: ToolEnvironment(
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["file.read_context"]),
-          workspaceDirectory: directory
+          projectDirectory: directory
         ), builtinExecutables: builtinExecutables))
 
     let truncatedResult = try provider.callTool(
@@ -1419,7 +1419,7 @@ final class FilesToolProviderTests {
       environment: ToolEnvironment(
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["file.read_window"]),
-          workspaceDirectory: directory
+          projectDirectory: directory
         ), builtinExecutables: builtinExecutables))
 
     let result = try provider.callTool(
@@ -1434,7 +1434,7 @@ final class FilesToolProviderTests {
     let payload = try decodeTextPayload(result)
 
     #expect((payload.objectValue?["operation"]) == (.string("file.read_window")))
-    #expect((payload.objectValue?["workspace_relative_path"]) == (.string("notes.txt")))
+    #expect((payload.objectValue?["project_relative_path"]) == (.string("notes.txt")))
     #expect((payload.objectValue?["offset_bytes"]) == (.number(5)))
     #expect((payload.objectValue?["max_bytes"]) == (.number(3)))
     #expect((payload.objectValue?["bytes_read"]) == (.number(3)))
@@ -1478,7 +1478,7 @@ final class FilesToolProviderTests {
       environment: ToolEnvironment(
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["file.read_window"]),
-          workspaceDirectory: directory
+          projectDirectory: directory
         ), builtinExecutables: builtinExecutables))
 
     let result = try provider.callTool(
@@ -1505,7 +1505,7 @@ final class FilesToolProviderTests {
       environment: ToolEnvironment(
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["file.read_lines"]),
-          workspaceDirectory: directory
+          projectDirectory: directory
         ), builtinExecutables: builtinExecutables))
 
     let result = try provider.callTool(
@@ -1531,7 +1531,7 @@ final class FilesToolProviderTests {
       environment: ToolEnvironment(
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["file.head"]),
-          workspaceDirectory: directory
+          projectDirectory: directory
         ), builtinExecutables: builtinExecutables))
 
     let result = try provider.callTool(
@@ -1545,7 +1545,7 @@ final class FilesToolProviderTests {
     let payload = try decodeTextPayload(result)
     let lines = try #require(payload.objectValue?["lines"]?.arrayValue)
 
-    #expect((payload.objectValue?["workspace_relative_path"]) == (.string("notes.txt")))
+    #expect((payload.objectValue?["project_relative_path"]) == (.string("notes.txt")))
     #expect((payload.objectValue?["line_count"]) == (.number(2)))
     #expect((payload.objectValue?["result_truncated"]) == (.bool(true)))
     #expect((payload.objectValue?["file_truncated"]) == (.bool(false)))
@@ -1567,7 +1567,7 @@ final class FilesToolProviderTests {
       environment: ToolEnvironment(
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["file.head"]),
-          workspaceDirectory: directory
+          projectDirectory: directory
         ), builtinExecutables: builtinExecutables))
 
     let result = try provider.callTool(
@@ -1628,7 +1628,7 @@ final class FilesToolProviderTests {
       environment: ToolEnvironment(
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["file.outline"]),
-          workspaceDirectory: directory
+          projectDirectory: directory
         ), builtinExecutables: builtinExecutables))
 
     let markdownResult = try provider.callTool(
@@ -1643,7 +1643,7 @@ final class FilesToolProviderTests {
     let markdownItems = try #require(markdownPayload.objectValue?["items"]?.arrayValue)
 
     #expect((markdownPayload.objectValue?["operation"]) == (.string("file.outline")))
-    #expect((markdownPayload.objectValue?["workspace_relative_path"]) == (.string("README.md")))
+    #expect((markdownPayload.objectValue?["project_relative_path"]) == (.string("README.md")))
     #expect((markdownPayload.objectValue?["language"]) == (.string("markdown")))
     #expect((markdownPayload.objectValue?["outline_count"]) == (.number(3)))
     #expect((markdownPayload.objectValue?["returned_count"]) == (.number(2)))
@@ -1700,7 +1700,7 @@ final class FilesToolProviderTests {
       environment: ToolEnvironment(
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["file.tail"]),
-          workspaceDirectory: directory
+          projectDirectory: directory
         ), builtinExecutables: builtinExecutables))
 
     let result = try provider.callTool(
@@ -1714,7 +1714,7 @@ final class FilesToolProviderTests {
     let payload = try decodeTextPayload(result)
     let lines = try #require(payload.objectValue?["lines"]?.arrayValue)
 
-    #expect((payload.objectValue?["workspace_relative_path"]) == (.string("notes.txt")))
+    #expect((payload.objectValue?["project_relative_path"]) == (.string("notes.txt")))
     #expect((payload.objectValue?["line_numbers_known"]) == (.bool(true)))
     #expect((payload.objectValue?["file_truncated"]) == (.bool(false)))
     #expect((payload.objectValue?["line_count"]) == (.number(2)))
@@ -1734,7 +1734,7 @@ final class FilesToolProviderTests {
       environment: ToolEnvironment(
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["file.tail"]),
-          workspaceDirectory: directory
+          projectDirectory: directory
         ), builtinExecutables: builtinExecutables))
 
     let result = try provider.callTool(
@@ -1771,7 +1771,7 @@ final class FilesToolProviderTests {
       environment: ToolEnvironment(
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["file.hexdump"]),
-          workspaceDirectory: directory
+          projectDirectory: directory
         ), builtinExecutables: builtinExecutables))
 
     let result = try provider.callTool(
@@ -1786,7 +1786,7 @@ final class FilesToolProviderTests {
     let payload = try decodeTextPayload(result)
     let lines = try #require(payload.objectValue?["lines"]?.arrayValue)
 
-    #expect((payload.objectValue?["workspace_relative_path"]) == (.string("blob.bin")))
+    #expect((payload.objectValue?["project_relative_path"]) == (.string("blob.bin")))
     #expect((payload.objectValue?["offset_bytes"]) == (.number(1)))
     #expect((payload.objectValue?["max_bytes"]) == (.number(18)))
     #expect((payload.objectValue?["file_size_bytes"]) == (.number(20)))
@@ -1813,7 +1813,7 @@ final class FilesToolProviderTests {
       environment: ToolEnvironment(
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["file.hexdump"]),
-          workspaceDirectory: directory
+          projectDirectory: directory
         ), builtinExecutables: builtinExecutables))
 
     let result = try provider.callTool(
@@ -1834,7 +1834,7 @@ final class FilesToolProviderTests {
   }
 
   @Test
-  func testFileHexdumpRejectsWorkspaceEscapeNonFileAndBadBounds() throws {
+  func testFileHexdumpRejectsProjectEscapeNonFileAndBadBounds() throws {
     let directory = try temporaryDirectory()
     try FileManager.default.createDirectory(
       at: directory.appendingPathComponent("folder"),
@@ -1844,7 +1844,7 @@ final class FilesToolProviderTests {
       environment: ToolEnvironment(
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["file.hexdump"]),
-          workspaceDirectory: directory
+          projectDirectory: directory
         ), builtinExecutables: builtinExecutables))
 
     expectThrows(
@@ -1854,7 +1854,7 @@ final class FilesToolProviderTests {
           arguments: .object(["path": .string("../outside")]), context: .empty
         ))
     ) { error in
-      #expect(error.localizedDescription.contains("escapes workspace"))
+      #expect(error.localizedDescription.contains("escapes project"))
     }
 
     expectThrows(
@@ -1910,7 +1910,7 @@ final class FilesToolProviderTests {
       environment: ToolEnvironment(
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["file.metadata"]),
-          workspaceDirectory: directory
+          projectDirectory: directory
         ),
         commandRunner: runner, builtinExecutables: builtinExecutables))
 
@@ -1932,7 +1932,7 @@ final class FilesToolProviderTests {
     #expect((runner.calls.first?.executable) == ("mdls"))
     #expect((runner.calls.first?.arguments) == (["-plist", "-", file.path]))
     #expect((payload.objectValue?["operation"]) == (.string("file.metadata")))
-    #expect((payload.objectValue?["workspace_relative_path"]) == (.string("document.txt")))
+    #expect((payload.objectValue?["project_relative_path"]) == (.string("document.txt")))
     #expect(
       (payload.objectValue?["requested_attributes"])
         == (.array([.string("kMDItemDisplayName"), .string("kMDItemFSSize")])))
@@ -1961,7 +1961,7 @@ final class FilesToolProviderTests {
       environment: ToolEnvironment(
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["file.metadata"]),
-          workspaceDirectory: directory
+          projectDirectory: directory
         ),
         commandRunner: runner, builtinExecutables: builtinExecutables))
 
@@ -1981,7 +1981,7 @@ final class FilesToolProviderTests {
           arguments: .object(["path": .string("../outside")]), context: .empty
         ))
     ) { error in
-      #expect(error.localizedDescription.contains("escapes workspace"))
+      #expect(error.localizedDescription.contains("escapes project"))
     }
 
     expectThrows(
@@ -2027,7 +2027,7 @@ final class FilesToolProviderTests {
       environment: ToolEnvironment(
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["file.readlink"]),
-          workspaceDirectory: directory
+          projectDirectory: directory
         ), builtinExecutables: builtinExecutables))
 
     let result = try provider.callTool(
@@ -2039,14 +2039,14 @@ final class FilesToolProviderTests {
 
     #expect((payload.objectValue?["operation"]) == (.string("file.readlink")))
     #expect((payload.objectValue?["path"]) == (.string(link.path)))
-    #expect((payload.objectValue?["workspace_relative_path"]) == (.string("target-link")))
+    #expect((payload.objectValue?["project_relative_path"]) == (.string("target-link")))
     #expect((payload.objectValue?["destination"]) == (.string("target.txt")))
     #expect((payload.objectValue?["destination_is_absolute"]) == (.bool(false)))
-    #expect((payload.objectValue?["destination_workspace_contained"]) == (.bool(true)))
+    #expect((payload.objectValue?["destination_project_contained"]) == (.bool(true)))
     #expect((payload.objectValue?["destination_exists"]) == (.bool(true)))
     #expect((payload.objectValue?["resolved_destination_path"]) == (.string(target.path)))
     #expect(
-      (payload.objectValue?["destination_workspace_relative_path"]) == (.string("target.txt")))
+      (payload.objectValue?["destination_project_relative_path"]) == (.string("target.txt")))
 
     let outside = try provider.callTool(
       .init(
@@ -2055,8 +2055,8 @@ final class FilesToolProviderTests {
       ))
     let outsidePayload = try decodeTextPayload(outside)
     #expect((outsidePayload.objectValue?["destination_is_absolute"]) == (.bool(true)))
-    #expect((outsidePayload.objectValue?["destination_workspace_contained"]) == (.bool(false)))
-    #expect((outsidePayload.objectValue?["destination_workspace_relative_path"]) == (.null))
+    #expect((outsidePayload.objectValue?["destination_project_contained"]) == (.bool(false)))
+    #expect((outsidePayload.objectValue?["destination_project_relative_path"]) == (.null))
   }
 
   @Test
@@ -2077,7 +2077,7 @@ final class FilesToolProviderTests {
       environment: ToolEnvironment(
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["file.readlink"]),
-          workspaceDirectory: directory
+          projectDirectory: directory
         ), builtinExecutables: builtinExecutables))
 
     expectThrows(
@@ -2097,7 +2097,7 @@ final class FilesToolProviderTests {
           arguments: .object(["path": .string("../outside")]), context: .empty
         ))
     ) { error in
-      #expect(error.localizedDescription.contains("escapes workspace"))
+      #expect(error.localizedDescription.contains("escapes project"))
     }
 
     expectThrows(
@@ -2112,7 +2112,7 @@ final class FilesToolProviderTests {
   }
 
   @Test
-  func testFileResolveReportsLexicalAndResolvedWorkspacePaths() throws {
+  func testFileResolveReportsLexicalAndResolvedProjectPaths() throws {
     let directory = try temporaryDirectory()
     let target = directory.appendingPathComponent("target.txt")
     let link = directory.appendingPathComponent("target-link")
@@ -2122,7 +2122,7 @@ final class FilesToolProviderTests {
       environment: ToolEnvironment(
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["file.resolve"]),
-          workspaceDirectory: directory
+          projectDirectory: directory
         ), builtinExecutables: builtinExecutables))
 
     let fileResult = try provider.callTool(
@@ -2134,13 +2134,13 @@ final class FilesToolProviderTests {
     #expect((filePayload.objectValue?["operation"]) == (.string("file.resolve")))
     #expect((filePayload.objectValue?["input_path"]) == (.string("./target.txt")))
     #expect((filePayload.objectValue?["path"]) == (.string(target.path)))
-    #expect((filePayload.objectValue?["workspace_relative_path"]) == (.string("target.txt")))
+    #expect((filePayload.objectValue?["project_relative_path"]) == (.string("target.txt")))
     #expect((filePayload.objectValue?["exists"]) == (.bool(true)))
     #expect((filePayload.objectValue?["is_symlink"]) == (.bool(false)))
     #expect((filePayload.objectValue?["resolved_path"]) == (.string(target.path)))
-    #expect((filePayload.objectValue?["resolved_workspace_contained"]) == (.bool(true)))
+    #expect((filePayload.objectValue?["resolved_project_contained"]) == (.bool(true)))
     #expect(
-      (filePayload.objectValue?["resolved_workspace_relative_path"]) == (.string("target.txt")))
+      (filePayload.objectValue?["resolved_project_relative_path"]) == (.string("target.txt")))
 
     let linkResult = try provider.callTool(
       .init(
@@ -2149,13 +2149,13 @@ final class FilesToolProviderTests {
       ))
     let linkPayload = try decodeTextPayload(linkResult)
     #expect((linkPayload.objectValue?["path"]) == (.string(link.path)))
-    #expect((linkPayload.objectValue?["workspace_relative_path"]) == (.string("target-link")))
+    #expect((linkPayload.objectValue?["project_relative_path"]) == (.string("target-link")))
     #expect((linkPayload.objectValue?["exists"]) == (.bool(true)))
     #expect((linkPayload.objectValue?["is_symlink"]) == (.bool(true)))
     #expect((linkPayload.objectValue?["symlink_destination"]) == (.string("target.txt")))
     #expect((linkPayload.objectValue?["resolved_path"]) == (.string(target.path)))
     #expect(
-      (linkPayload.objectValue?["resolved_workspace_relative_path"]) == (.string("target.txt")))
+      (linkPayload.objectValue?["resolved_project_relative_path"]) == (.string("target.txt")))
 
     let missingResult = try provider.callTool(
       .init(
@@ -2165,12 +2165,12 @@ final class FilesToolProviderTests {
     let missingPayload = try decodeTextPayload(missingResult)
     #expect((missingPayload.objectValue?["exists"]) == (.bool(false)))
     #expect(
-      (missingPayload.objectValue?["workspace_relative_path"]) == (.string("missing/new.txt")))
-    #expect((missingPayload.objectValue?["resolved_workspace_contained"]) == (.bool(true)))
+      (missingPayload.objectValue?["project_relative_path"]) == (.string("missing/new.txt")))
+    #expect((missingPayload.objectValue?["resolved_project_contained"]) == (.bool(true)))
   }
 
   @Test
-  func testFileResolveRejectsWorkspaceEscapeThroughParentSymlink() throws {
+  func testFileResolveRejectsProjectEscapeThroughParentSymlink() throws {
     let directory = try temporaryDirectory()
     let outsideDirectory = try temporaryDirectory()
     let parentLink = directory.appendingPathComponent("outside-parent")
@@ -2182,7 +2182,7 @@ final class FilesToolProviderTests {
       environment: ToolEnvironment(
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["file.resolve"]),
-          workspaceDirectory: directory
+          projectDirectory: directory
         ), builtinExecutables: builtinExecutables))
 
     expectThrows(
@@ -2192,7 +2192,7 @@ final class FilesToolProviderTests {
           arguments: .object(["path": .string("../outside")]), context: .empty
         ))
     ) { error in
-      #expect(error.localizedDescription.contains("escapes workspace"))
+      #expect(error.localizedDescription.contains("escapes project"))
     }
 
     expectThrows(
@@ -2215,7 +2215,7 @@ final class FilesToolProviderTests {
       environment: ToolEnvironment(
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["file.hash"]),
-          workspaceDirectory: directory
+          projectDirectory: directory
         ), builtinExecutables: builtinExecutables))
 
     let result = try provider.callTool(
@@ -2241,7 +2241,7 @@ final class FilesToolProviderTests {
       environment: ToolEnvironment(
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["file.hash"]),
-          workspaceDirectory: directory
+          projectDirectory: directory
         ), builtinExecutables: builtinExecutables))
 
     expectThrows(
@@ -2259,7 +2259,7 @@ final class FilesToolProviderTests {
   }
 
   @Test
-  func testFileTypeUsesFileMimeWithWorkspaceFile() throws {
+  func testFileTypeUsesFileMimeWithProjectFile() throws {
     let directory = try temporaryDirectory()
     let file = directory.appendingPathComponent("notes.txt")
     try "hello".write(to: file, atomically: true, encoding: .utf8)
@@ -2269,7 +2269,7 @@ final class FilesToolProviderTests {
       environment: ToolEnvironment(
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["file.type"]),
-          workspaceDirectory: directory
+          projectDirectory: directory
         ),
         commandRunner: runner, builtinExecutables: builtinExecutables))
 
@@ -2286,14 +2286,14 @@ final class FilesToolProviderTests {
     #expect((runner.calls.first?.executable) == ("file"))
     #expect((runner.calls.first?.arguments) == (["-b", "--mime", file.path]))
     #expect((payload.objectValue?["operation"]) == (.string("file.type")))
-    #expect((payload.objectValue?["workspace_relative_path"]) == (.string("notes.txt")))
+    #expect((payload.objectValue?["project_relative_path"]) == (.string("notes.txt")))
     #expect((payload.objectValue?["mime_type"]) == (.string("text/plain")))
     #expect((payload.objectValue?["charset"]) == (.string("us-ascii")))
     #expect((payload.objectValue?["raw"]) == (.string("text/plain; charset=us-ascii")))
   }
 
   @Test
-  func testFileCountUsesWCWithWorkspaceFile() throws {
+  func testFileCountUsesWCWithProjectFile() throws {
     let directory = try temporaryDirectory()
     let file = directory.appendingPathComponent("notes.txt")
     try "one two\nthree\n".write(to: file, atomically: true, encoding: .utf8)
@@ -2303,7 +2303,7 @@ final class FilesToolProviderTests {
       environment: ToolEnvironment(
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["file.count"]),
-          workspaceDirectory: directory
+          projectDirectory: directory
         ),
         commandRunner: runner, builtinExecutables: builtinExecutables))
 
@@ -2317,14 +2317,14 @@ final class FilesToolProviderTests {
     #expect((runner.calls.first?.executable) == ("wc"))
     #expect((runner.calls.first?.arguments) == (["-l", "-w", "-c", file.path]))
     #expect((payload.objectValue?["operation"]) == (.string("file.count")))
-    #expect((payload.objectValue?["workspace_relative_path"]) == (.string("notes.txt")))
+    #expect((payload.objectValue?["project_relative_path"]) == (.string("notes.txt")))
     #expect((payload.objectValue?["line_count"]) == (.number(2)))
     #expect((payload.objectValue?["word_count"]) == (.number(3)))
     #expect((payload.objectValue?["byte_count"]) == (.number(14)))
   }
 
   @Test
-  func testFileDiskUsageUsesDUForWorkspacePath() throws {
+  func testFileDiskUsageUsesDUForProjectPath() throws {
     let directory = try temporaryDirectory()
     let nested = directory.appendingPathComponent("nested", isDirectory: true)
     try FileManager.default.createDirectory(at: nested, withIntermediateDirectories: true)
@@ -2336,7 +2336,7 @@ final class FilesToolProviderTests {
       environment: ToolEnvironment(
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["file.disk_usage"]),
-          workspaceDirectory: directory
+          projectDirectory: directory
         ),
         commandRunner: runner, builtinExecutables: builtinExecutables))
 
@@ -2350,7 +2350,7 @@ final class FilesToolProviderTests {
     #expect((runner.calls.first?.executable) == ("du"))
     #expect((runner.calls.first?.arguments) == (["-sk", nested.path]))
     #expect((payload.objectValue?["operation"]) == (.string("file.disk_usage")))
-    #expect((payload.objectValue?["workspace_relative_path"]) == (.string("nested")))
+    #expect((payload.objectValue?["project_relative_path"]) == (.string("nested")))
     #expect((payload.objectValue?["type"]) == (.string("directory")))
     #expect((payload.objectValue?["disk_usage_kib"]) == (.number(8)))
     #expect((payload.objectValue?["disk_usage_bytes"]) == (.number(8192)))
@@ -2367,7 +2367,7 @@ final class FilesToolProviderTests {
       environment: ToolEnvironment(
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["file.volume_info"]),
-          workspaceDirectory: directory
+          projectDirectory: directory
         ),
         commandRunner: runner, builtinExecutables: builtinExecutables))
 
@@ -2381,7 +2381,7 @@ final class FilesToolProviderTests {
 
     #expect(runner.calls.isEmpty)
     #expect((payload.objectValue?["operation"]) == (.string("file.volume_info")))
-    #expect((payload.objectValue?["workspace_relative_path"]) == (.string("notes.txt")))
+    #expect((payload.objectValue?["project_relative_path"]) == (.string("notes.txt")))
     #expect((payload.objectValue?["type"]) == (.string("file")))
     #expect((volume["path"]?.stringValue) != nil)
     #expect((volume["name"]?.stringValue) != nil)
@@ -2391,13 +2391,13 @@ final class FilesToolProviderTests {
   }
 
   @Test
-  func testFileVolumeInfoRejectsWorkspaceEscapeAndMissingPath() throws {
+  func testFileVolumeInfoRejectsProjectEscapeAndMissingPath() throws {
     let directory = try temporaryDirectory()
     let provider = FilesToolProvider(
       environment: ToolEnvironment(
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["file.volume_info"]),
-          workspaceDirectory: directory
+          projectDirectory: directory
         ), builtinExecutables: builtinExecutables))
 
     expectThrows(
@@ -2407,7 +2407,7 @@ final class FilesToolProviderTests {
           arguments: .object(["path": .string("../outside")]), context: .empty
         ))
     ) { error in
-      #expect(error.localizedDescription.contains("escapes workspace"))
+      #expect(error.localizedDescription.contains("escapes project"))
     }
 
     expectThrows(
@@ -2420,7 +2420,7 @@ final class FilesToolProviderTests {
   }
 
   @Test
-  func testFileTypeAndCountRejectWorkspaceEscapeNonFileAndBadBounds() throws {
+  func testFileTypeAndCountRejectProjectEscapeNonFileAndBadBounds() throws {
     let directory = try temporaryDirectory()
     try FileManager.default.createDirectory(
       at: directory.appendingPathComponent("folder"),
@@ -2430,7 +2430,7 @@ final class FilesToolProviderTests {
       environment: ToolEnvironment(
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["file.type", "file.count"]),
-          workspaceDirectory: directory
+          projectDirectory: directory
         ), builtinExecutables: builtinExecutables))
 
     expectThrows(
@@ -2440,7 +2440,7 @@ final class FilesToolProviderTests {
           arguments: .object(["path": .string("../outside")]), context: .empty
         ))
     ) { error in
-      #expect(error.localizedDescription.contains("escapes workspace"))
+      #expect(error.localizedDescription.contains("escapes project"))
     }
 
     expectThrows(
@@ -2468,13 +2468,13 @@ final class FilesToolProviderTests {
   }
 
   @Test
-  func testFileDiskUsageRejectsWorkspaceEscapeMissingPathAndBadBounds() throws {
+  func testFileDiskUsageRejectsProjectEscapeMissingPathAndBadBounds() throws {
     let directory = try temporaryDirectory()
     let provider = FilesToolProvider(
       environment: ToolEnvironment(
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["file.disk_usage"]),
-          workspaceDirectory: directory
+          projectDirectory: directory
         ), builtinExecutables: builtinExecutables))
 
     expectThrows(
@@ -2484,7 +2484,7 @@ final class FilesToolProviderTests {
           arguments: .object(["path": .string("../outside")]), context: .empty
         ))
     ) { error in
-      #expect(error.localizedDescription.contains("escapes workspace"))
+      #expect(error.localizedDescription.contains("escapes project"))
     }
 
     expectThrows(
@@ -2510,7 +2510,7 @@ final class FilesToolProviderTests {
   }
 
   @Test
-  func testFileDiffUsesDiffWithWorkspaceFiles() throws {
+  func testFileDiffUsesDiffWithProjectFiles() throws {
     let directory = try temporaryDirectory()
     try "one\ntwo\n".write(
       to: directory.appendingPathComponent("before.txt"), atomically: true, encoding: .utf8)
@@ -2521,7 +2521,7 @@ final class FilesToolProviderTests {
       environment: ToolEnvironment(
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["file.diff"]),
-          workspaceDirectory: directory
+          projectDirectory: directory
         ),
         commandRunner: runner, builtinExecutables: builtinExecutables))
 
@@ -2546,17 +2546,17 @@ final class FilesToolProviderTests {
         ]))
     #expect((payload.objectValue?["operation"]) == (.string("file.diff")))
     #expect(
-      (payload.objectValue?["source"]?.objectValue?["workspace_relative_path"])
+      (payload.objectValue?["source"]?.objectValue?["project_relative_path"])
         == (.string("before.txt")))
     #expect(
-      (payload.objectValue?["target"]?.objectValue?["workspace_relative_path"])
+      (payload.objectValue?["target"]?.objectValue?["project_relative_path"])
         == (.string("after.txt")))
     #expect((payload.objectValue?["context_lines"]) == (.number(1)))
     #expect((payload.objectValue?["max_output_bytes"]) == (.number(4096)))
   }
 
   @Test
-  func testFileDiffRejectsWorkspaceEscapeNonFileAndBadBounds() throws {
+  func testFileDiffRejectsProjectEscapeNonFileAndBadBounds() throws {
     let directory = try temporaryDirectory()
     try "one".write(
       to: directory.appendingPathComponent("one.txt"), atomically: true, encoding: .utf8)
@@ -2568,7 +2568,7 @@ final class FilesToolProviderTests {
       environment: ToolEnvironment(
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["file.diff"]),
-          workspaceDirectory: directory
+          projectDirectory: directory
         ), builtinExecutables: builtinExecutables))
 
     expectThrows(
@@ -2581,7 +2581,7 @@ final class FilesToolProviderTests {
           ]), context: .empty
         ))
     ) { error in
-      #expect(error.localizedDescription.contains("escapes workspace"))
+      #expect(error.localizedDescription.contains("escapes project"))
     }
 
     expectThrows(
@@ -2650,7 +2650,7 @@ final class FilesToolProviderTests {
       environment: ToolEnvironment(
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["file.compare_trees"]),
-          workspaceDirectory: directory
+          projectDirectory: directory
         ),
         commandRunner: runner, builtinExecutables: builtinExecutables))
 
@@ -2670,9 +2670,9 @@ final class FilesToolProviderTests {
     #expect(runner.calls.isEmpty)
     #expect((payload.objectValue?["operation"]) == (.string("file.compare_trees")))
     #expect(
-      (payload.objectValue?["left"]?.objectValue?["workspace_relative_path"]) == (.string("left")))
+      (payload.objectValue?["left"]?.objectValue?["project_relative_path"]) == (.string("left")))
     #expect(
-      (payload.objectValue?["right"]?.objectValue?["workspace_relative_path"]) == (.string("right"))
+      (payload.objectValue?["right"]?.objectValue?["project_relative_path"]) == (.string("right"))
     )
     #expect((payload.objectValue?["include_hidden"]) == (.bool(false)))
     #expect((payload.objectValue?["difference_count"]) == (.number(5)))
@@ -2706,7 +2706,7 @@ final class FilesToolProviderTests {
       environment: ToolEnvironment(
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["file.compare_trees"]),
-          workspaceDirectory: directory
+          projectDirectory: directory
         ), builtinExecutables: builtinExecutables))
 
     let result = try provider.callTool(
@@ -2732,7 +2732,7 @@ final class FilesToolProviderTests {
   }
 
   @Test
-  func testFileCompareTreesRejectsWorkspaceEscapeNonDirectoryAndBadBounds() throws {
+  func testFileCompareTreesRejectsProjectEscapeNonDirectoryAndBadBounds() throws {
     let directory = try temporaryDirectory()
     try FileManager.default.createDirectory(
       at: directory.appendingPathComponent("left"),
@@ -2744,7 +2744,7 @@ final class FilesToolProviderTests {
       environment: ToolEnvironment(
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["file.compare_trees"]),
-          workspaceDirectory: directory
+          projectDirectory: directory
         ), builtinExecutables: builtinExecutables))
 
     expectThrows(
@@ -2757,7 +2757,7 @@ final class FilesToolProviderTests {
           ]), context: .empty
         ))
     ) { error in
-      #expect(error.localizedDescription.contains("escapes workspace"))
+      #expect(error.localizedDescription.contains("escapes project"))
     }
 
     expectThrows(
@@ -2816,7 +2816,7 @@ final class FilesToolProviderTests {
       environment: ToolEnvironment(
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["file.duplicates"]),
-          workspaceDirectory: directory
+          projectDirectory: directory
         ),
         commandRunner: runner, builtinExecutables: builtinExecutables))
 
@@ -2835,12 +2835,12 @@ final class FilesToolProviderTests {
     let firstGroup = try #require(groups.first?.objectValue)
     let files = try #require(firstGroup["files"]?.arrayValue)
     let returnedPaths = files.compactMap {
-      $0.objectValue?["workspace_relative_path"]?.stringValue
+      $0.objectValue?["project_relative_path"]?.stringValue
     }
 
     #expect(runner.calls.isEmpty)
     #expect((payload.objectValue?["operation"]) == (.string("file.duplicates")))
-    #expect((payload.objectValue?["workspace_relative_path"]) == (.string(".")))
+    #expect((payload.objectValue?["project_relative_path"]) == (.string(".")))
     #expect((payload.objectValue?["include_hidden"]) == (.bool(false)))
     #expect((payload.objectValue?["candidate_file_count"]) == (.number(4)))
     #expect((payload.objectValue?["candidate_size_bucket_count"]) == (.number(1)))
@@ -2869,7 +2869,7 @@ final class FilesToolProviderTests {
       environment: ToolEnvironment(
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["file.duplicates"]),
-          workspaceDirectory: directory
+          projectDirectory: directory
         ), builtinExecutables: builtinExecutables))
 
     let result = try provider.callTool(
@@ -2889,7 +2889,7 @@ final class FilesToolProviderTests {
   }
 
   @Test
-  func testFileDuplicatesRejectsWorkspaceEscapeNonDirectoryAndBadBounds() throws {
+  func testFileDuplicatesRejectsProjectEscapeNonDirectoryAndBadBounds() throws {
     let directory = try temporaryDirectory()
     try "file".write(
       to: directory.appendingPathComponent("file.txt"), atomically: true, encoding: .utf8)
@@ -2897,7 +2897,7 @@ final class FilesToolProviderTests {
       environment: ToolEnvironment(
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["file.duplicates"]),
-          workspaceDirectory: directory
+          projectDirectory: directory
         ), builtinExecutables: builtinExecutables))
 
     expectThrows(
@@ -2909,7 +2909,7 @@ final class FilesToolProviderTests {
           ]), context: .empty
         ))
     ) { error in
-      #expect(error.localizedDescription.contains("escapes workspace"))
+      #expect(error.localizedDescription.contains("escapes project"))
     }
 
     expectThrows(
@@ -2948,7 +2948,7 @@ final class FilesToolProviderTests {
       environment: ToolEnvironment(
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["archive.list"]),
-          workspaceDirectory: directory
+          projectDirectory: directory
         ),
         commandRunner: runner, builtinExecutables: builtinExecutables))
 
@@ -2969,7 +2969,7 @@ final class FilesToolProviderTests {
     #expect((payload.objectValue?["operation"]) == (.string("archive.list")))
     #expect((payload.objectValue?["archive"]?.objectValue?["format"]) == (.string("zip")))
     #expect(
-      (payload.objectValue?["archive"]?.objectValue?["workspace_relative_path"])
+      (payload.objectValue?["archive"]?.objectValue?["project_relative_path"])
         == (.string("bundle.zip")))
     #expect((payload.objectValue?["entry_count"]) == (.number(2)))
     #expect((payload.objectValue?["truncated"]) == (.bool(true)))
@@ -2992,7 +2992,7 @@ final class FilesToolProviderTests {
       environment: ToolEnvironment(
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["archive.list"]),
-          workspaceDirectory: directory
+          projectDirectory: directory
         ),
         commandRunner: runner, builtinExecutables: builtinExecutables))
 
@@ -3024,7 +3024,7 @@ final class FilesToolProviderTests {
           arguments: .object(["path": .string("../outside.zip")]), context: .empty
         ))
     ) { error in
-      #expect(error.localizedDescription.contains("escapes workspace"))
+      #expect(error.localizedDescription.contains("escapes project"))
     }
 
     expectThrows(
@@ -3054,7 +3054,7 @@ final class FilesToolProviderTests {
       environment: ToolEnvironment(
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["archive.read_file"]),
-          workspaceDirectory: directory
+          projectDirectory: directory
         ),
         commandRunner: runner, builtinExecutables: builtinExecutables))
 
@@ -3077,7 +3077,7 @@ final class FilesToolProviderTests {
     #expect((payload.objectValue?["operation"]) == (.string("archive.read_file")))
     #expect((payload.objectValue?["archive"]?.objectValue?["format"]) == (.string("zip")))
     #expect(
-      (payload.objectValue?["archive"]?.objectValue?["workspace_relative_path"])
+      (payload.objectValue?["archive"]?.objectValue?["project_relative_path"])
         == (.string("bundle.zip")))
     #expect(
       (payload.objectValue?["entry"]?.objectValue?["requested_path"]) == (.string("dir/file.txt")))
@@ -3104,7 +3104,7 @@ final class FilesToolProviderTests {
       environment: ToolEnvironment(
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["archive.read_file"]),
-          workspaceDirectory: directory
+          projectDirectory: directory
         ),
         commandRunner: runner, builtinExecutables: builtinExecutables))
 
@@ -3154,7 +3154,7 @@ final class FilesToolProviderTests {
       environment: ToolEnvironment(
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["archive.read_file"]),
-          workspaceDirectory: directory
+          projectDirectory: directory
         ),
         commandRunner: runner, builtinExecutables: builtinExecutables))
 
@@ -3184,7 +3184,7 @@ final class FilesToolProviderTests {
       environment: ToolEnvironment(
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["archive.read_file"]),
-          workspaceDirectory: directory
+          projectDirectory: directory
         ),
         commandRunner: runner, builtinExecutables: builtinExecutables))
 
@@ -3219,7 +3219,7 @@ final class FilesToolProviderTests {
       environment: ToolEnvironment(
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["archive.read_file"]),
-          workspaceDirectory: directory
+          projectDirectory: directory
         ),
         commandRunner: runner, builtinExecutables: builtinExecutables))
 
@@ -3270,7 +3270,7 @@ final class FilesToolProviderTests {
       environment: ToolEnvironment(
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["archive.read_file"]),
-          workspaceDirectory: directory
+          projectDirectory: directory
         ),
         commandRunner: failureRunner, builtinExecutables: builtinExecutables))
     expectThrows(
@@ -3311,7 +3311,7 @@ final class FilesToolProviderTests {
       environment: ToolEnvironment(
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["archive.extract"]),
-          workspaceDirectory: directory
+          projectDirectory: directory
         ),
         commandRunner: runner, builtinExecutables: builtinExecutables))
 
@@ -3338,7 +3338,7 @@ final class FilesToolProviderTests {
     #expect((payload.objectValue?["entry_count"]) == (.number(3)))
     #expect((payload.objectValue?["entries_truncated"]) == (.bool(true)))
     #expect(
-      (payload.objectValue?["destination"]?.objectValue?["workspace_relative_path"])
+      (payload.objectValue?["destination"]?.objectValue?["project_relative_path"])
         == (.string("out")))
     #expect((payload.objectValue?["destination"]?.objectValue?["would_create"]) == (.bool(true)))
     #expect((entries[0].objectValue?["path"]) == (.string("dir/")))
@@ -3379,7 +3379,7 @@ final class FilesToolProviderTests {
       environment: ToolEnvironment(
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["archive.extract"]),
-          workspaceDirectory: directory
+          projectDirectory: directory
         ),
         commandRunner: runner, builtinExecutables: builtinExecutables))
 
@@ -3419,7 +3419,7 @@ final class FilesToolProviderTests {
       environment: ToolEnvironment(
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["archive.extract"]),
-          workspaceDirectory: directory
+          projectDirectory: directory
         ),
         commandRunner: missingConfirmRunner, builtinExecutables: builtinExecutables))
     expectThrows(
@@ -3447,7 +3447,7 @@ final class FilesToolProviderTests {
       environment: ToolEnvironment(
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["archive.extract"]),
-          workspaceDirectory: directory
+          projectDirectory: directory
         ),
         commandRunner: traversalRunner, builtinExecutables: builtinExecutables))
     expectThrows(
@@ -3472,7 +3472,7 @@ final class FilesToolProviderTests {
       environment: ToolEnvironment(
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["archive.extract"]),
-          workspaceDirectory: directory
+          projectDirectory: directory
         ),
         commandRunner: linkRunner, builtinExecutables: builtinExecutables))
     expectThrows(
@@ -3497,7 +3497,7 @@ final class FilesToolProviderTests {
       environment: ToolEnvironment(
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["archive.extract"]),
-          workspaceDirectory: directory
+          projectDirectory: directory
         ),
         commandRunner: overwriteRunner, builtinExecutables: builtinExecutables))
     expectThrows(
@@ -3535,7 +3535,7 @@ final class FilesToolProviderTests {
       environment: ToolEnvironment(
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["archive.create"]),
-          workspaceDirectory: directory
+          projectDirectory: directory
         ),
         commandRunner: runner, builtinExecutables: builtinExecutables))
 
@@ -3560,7 +3560,7 @@ final class FilesToolProviderTests {
     #expect((payload.objectValue?["entry_count"]) == (.number(3)))
     #expect((payload.objectValue?["entries_truncated"]) == (.bool(true)))
     #expect(
-      (payload.objectValue?["archive"]?.objectValue?["workspace_relative_path"])
+      (payload.objectValue?["archive"]?.objectValue?["project_relative_path"])
         == (.string("dist/bundle.zip")))
     #expect(
       (payload.objectValue?["archive"]?.objectValue?["would_create_parent_directories"])
@@ -3573,9 +3573,9 @@ final class FilesToolProviderTests {
           .string("src"),
           .string("README.md"),
         ])))
-    #expect((entries[0].objectValue?["workspace_relative_path"]) == (.string("src")))
+    #expect((entries[0].objectValue?["project_relative_path"]) == (.string("src")))
     #expect((entries[0].objectValue?["type"]) == (.string("directory")))
-    #expect((entries[1].objectValue?["workspace_relative_path"]) == (.string("src/main.swift")))
+    #expect((entries[1].objectValue?["project_relative_path"]) == (.string("src/main.swift")))
     #expect((payload.objectValue?["result"]) == (.null))
   }
 
@@ -3596,7 +3596,7 @@ final class FilesToolProviderTests {
       environment: ToolEnvironment(
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["archive.create"]),
-          workspaceDirectory: directory
+          projectDirectory: directory
         ),
         commandRunner: runner, builtinExecutables: builtinExecutables))
 
@@ -3635,7 +3635,7 @@ final class FilesToolProviderTests {
       environment: ToolEnvironment(
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["archive.create"]),
-          workspaceDirectory: directory
+          projectDirectory: directory
         ),
         commandRunner: missingConfirmRunner, builtinExecutables: builtinExecutables))
     expectThrows(
@@ -3659,7 +3659,7 @@ final class FilesToolProviderTests {
       environment: ToolEnvironment(
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["archive.create"]),
-          workspaceDirectory: directory
+          projectDirectory: directory
         ), builtinExecutables: builtinExecutables))
     expectThrows(
       try existingRegistry.callTool(
@@ -3678,7 +3678,7 @@ final class FilesToolProviderTests {
       environment: ToolEnvironment(
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["archive.create"]),
-          workspaceDirectory: directory
+          projectDirectory: directory
         ), builtinExecutables: builtinExecutables))
     expectThrows(
       try insideSourceRegistry.callTool(
@@ -3699,7 +3699,7 @@ final class FilesToolProviderTests {
       environment: ToolEnvironment(
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["archive.create"]),
-          workspaceDirectory: directory
+          projectDirectory: directory
         ), builtinExecutables: builtinExecutables))
     expectThrows(
       try symlinkRegistry.callTool(
@@ -3729,7 +3729,7 @@ final class FilesToolProviderTests {
   }
 
   @Test
-  func testFileOrganizationBuiltinsCreateCopyAndMoveWorkspacePaths() throws {
+  func testFileOrganizationBuiltinsCreateCopyAndMoveProjectPaths() throws {
     let directory = try temporaryDirectory()
     try "source".write(
       to: directory.appendingPathComponent("source.txt"), atomically: true, encoding: .utf8)
@@ -3737,7 +3737,7 @@ final class FilesToolProviderTests {
       environment: ToolEnvironment(
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["file.mkdir", "file.copy", "file.move"]),
-          workspaceDirectory: directory
+          projectDirectory: directory
         ), builtinExecutables: builtinExecutables))
 
     let mkdirResult = try provider.callTool(
@@ -3746,7 +3746,7 @@ final class FilesToolProviderTests {
         arguments: .object(["path": .string("notes/nested")]), context: .empty
       ))
     let mkdirPayload = try decodeTextPayload(mkdirResult)
-    #expect((mkdirPayload.objectValue?["workspace_relative_path"]) == (.string("notes/nested")))
+    #expect((mkdirPayload.objectValue?["project_relative_path"]) == (.string("notes/nested")))
     #expect((mkdirPayload.objectValue?["created"]) == (.bool(true)))
 
     let existingResult = try provider.callTool(
@@ -3800,7 +3800,7 @@ final class FilesToolProviderTests {
       environment: ToolEnvironment(
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["file.copy"]),
-          workspaceDirectory: directory
+          projectDirectory: directory
         ), builtinExecutables: builtinExecutables))
 
     expectThrows(
@@ -3830,12 +3830,12 @@ final class FilesToolProviderTests {
   }
 
   @Test
-  func testFileOrganizationRejectsWorkspaceEscape() throws {
+  func testFileOrganizationRejectsProjectEscape() throws {
     let provider = FilesToolProvider(
       environment: ToolEnvironment(
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["file.mkdir", "file.copy", "file.move"]),
-          workspaceDirectory: try temporaryDirectory()
+          projectDirectory: try temporaryDirectory()
         ), builtinExecutables: builtinExecutables))
 
     expectThrows(
@@ -3845,7 +3845,7 @@ final class FilesToolProviderTests {
           arguments: .object(["path": .string("../outside")]), context: .empty
         ))
     ) { error in
-      #expect(error.localizedDescription.contains("escapes workspace"))
+      #expect(error.localizedDescription.contains("escapes project"))
     }
 
     expectThrows(
@@ -3858,12 +3858,12 @@ final class FilesToolProviderTests {
           ]), context: .empty
         ))
     ) { error in
-      #expect(error.localizedDescription.contains("escapes workspace"))
+      #expect(error.localizedDescription.contains("escapes project"))
     }
   }
 
   @Test
-  func testFileOrganizationDryRunsDoNotMutateWorkspace() throws {
+  func testFileOrganizationDryRunsDoNotMutateProject() throws {
     let directory = try temporaryDirectory()
     let source = directory.appendingPathComponent("source.txt")
     let target = directory.appendingPathComponent("target.txt")
@@ -3879,7 +3879,7 @@ final class FilesToolProviderTests {
               "file.touch", "file.mkdir", "file.copy", "file.move", "file.symlink",
               "file.trash",
             ]),
-          workspaceDirectory: directory
+          projectDirectory: directory
         ), builtinExecutables: builtinExecutables))
 
     let mkdirResult = try provider.callTool(
@@ -3984,13 +3984,13 @@ final class FilesToolProviderTests {
   }
 
   @Test
-  func testFileTouchCreatesAndUpdatesWorkspaceFile() throws {
+  func testFileTouchCreatesAndUpdatesProjectFile() throws {
     let directory = try temporaryDirectory()
     let provider = FilesToolProvider(
       environment: ToolEnvironment(
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["file.touch"]),
-          workspaceDirectory: directory
+          projectDirectory: directory
         ), builtinExecutables: builtinExecutables))
 
     let result = try provider.callTool(
@@ -4005,7 +4005,7 @@ final class FilesToolProviderTests {
     let file = directory.appendingPathComponent("notes/touched.txt")
 
     #expect((payload.objectValue?["operation"]) == (.string("file.touch")))
-    #expect((payload.objectValue?["workspace_relative_path"]) == (.string("notes/touched.txt")))
+    #expect((payload.objectValue?["project_relative_path"]) == (.string("notes/touched.txt")))
     #expect((payload.objectValue?["created"]) == (.bool(true)))
     #expect((payload.objectValue?["modified"]) == (.bool(true)))
     #expect((payload.objectValue?["result"]?.objectValue?["type"]) == (.string("file")))
@@ -4042,7 +4042,7 @@ final class FilesToolProviderTests {
       environment: ToolEnvironment(
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["file.touch"]),
-          workspaceDirectory: directory
+          projectDirectory: directory
         ), builtinExecutables: builtinExecutables))
 
     expectThrows(
@@ -4085,12 +4085,12 @@ final class FilesToolProviderTests {
           arguments: .object(["path": .string("../outside.txt")]), context: .empty
         ))
     ) { error in
-      #expect(error.localizedDescription.contains("escapes workspace"))
+      #expect(error.localizedDescription.contains("escapes project"))
     }
   }
 
   @Test
-  func testFileSymlinkCreatesWorkspaceLinkWithContainedDestinationByDefault() throws {
+  func testFileSymlinkCreatesProjectLinkWithContainedDestinationByDefault() throws {
     let directory = try temporaryDirectory()
     let target = directory.appendingPathComponent("target.txt")
     try "target".write(to: target, atomically: true, encoding: .utf8)
@@ -4098,7 +4098,7 @@ final class FilesToolProviderTests {
       environment: ToolEnvironment(
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["file.symlink"]),
-          workspaceDirectory: directory
+          projectDirectory: directory
         ), builtinExecutables: builtinExecutables))
 
     let result = try provider.callTool(
@@ -4114,12 +4114,12 @@ final class FilesToolProviderTests {
     let link = directory.appendingPathComponent("links/current")
 
     #expect((payload.objectValue?["operation"]) == (.string("file.symlink")))
-    #expect((payload.objectValue?["workspace_relative_path"]) == (.string("links/current")))
+    #expect((payload.objectValue?["project_relative_path"]) == (.string("links/current")))
     #expect((payload.objectValue?["destination"]) == (.string("../target.txt")))
-    #expect((payload.objectValue?["destination_workspace_contained"]) == (.bool(true)))
+    #expect((payload.objectValue?["destination_project_contained"]) == (.bool(true)))
     #expect((payload.objectValue?["destination_exists"]) == (.bool(true)))
     #expect(
-      (payload.objectValue?["destination_workspace_relative_path"]) == (.string("target.txt")))
+      (payload.objectValue?["destination_project_relative_path"]) == (.string("target.txt")))
     #expect(
       (try FileManager.default.destinationOfSymbolicLink(atPath: link.path)) == ("../target.txt"))
   }
@@ -4133,7 +4133,7 @@ final class FilesToolProviderTests {
       environment: ToolEnvironment(
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["file.symlink"]),
-          workspaceDirectory: directory
+          projectDirectory: directory
         ), builtinExecutables: builtinExecutables))
 
     expectThrows(
@@ -4146,7 +4146,7 @@ final class FilesToolProviderTests {
           ]), context: .empty
         ))
     ) { error in
-      #expect(error.localizedDescription.contains("outside workspace"))
+      #expect(error.localizedDescription.contains("outside project"))
     }
 
     let result = try provider.callTool(
@@ -4161,7 +4161,7 @@ final class FilesToolProviderTests {
       ))
     let payload = try decodeTextPayload(result)
 
-    #expect((payload.objectValue?["destination_workspace_contained"]) == (.bool(false)))
+    #expect((payload.objectValue?["destination_project_contained"]) == (.bool(false)))
     #expect((payload.objectValue?["allow_external_destination"]) == (.bool(true)))
     #expect((payload.objectValue?["overwritten"]) == (.bool(true)))
     #expect(
@@ -4181,7 +4181,7 @@ final class FilesToolProviderTests {
       environment: ToolEnvironment(
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["file.symlink"]),
-          workspaceDirectory: directory
+          projectDirectory: directory
         ), builtinExecutables: builtinExecutables))
 
     expectThrows(
@@ -4194,7 +4194,7 @@ final class FilesToolProviderTests {
           ]), context: .empty
         ))
     ) { error in
-      #expect(error.localizedDescription.contains("escapes workspace"))
+      #expect(error.localizedDescription.contains("escapes project"))
     }
 
     expectThrows(
@@ -4225,12 +4225,12 @@ final class FilesToolProviderTests {
   }
 
   @Test
-  func testFileTrashRejectsWorkspaceEscape() throws {
+  func testFileTrashRejectsProjectEscape() throws {
     let provider = FilesToolProvider(
       environment: ToolEnvironment(
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["file.trash"]),
-          workspaceDirectory: try temporaryDirectory()
+          projectDirectory: try temporaryDirectory()
         ), builtinExecutables: builtinExecutables))
 
     expectThrows(
@@ -4240,7 +4240,7 @@ final class FilesToolProviderTests {
           arguments: .object(["path": .string("../outside")]), context: .empty
         ))
     ) { error in
-      #expect(error.localizedDescription.contains("escapes workspace"))
+      #expect(error.localizedDescription.contains("escapes project"))
     }
   }
 
@@ -4254,7 +4254,7 @@ final class FilesToolProviderTests {
       environment: ToolEnvironment(
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["file.download"]),
-          workspaceDirectory: directory
+          projectDirectory: directory
         ),
         commandRunner: runner, builtinExecutables: builtinExecutables))
 
@@ -4282,13 +4282,13 @@ final class FilesToolProviderTests {
     #expect((payload.objectValue?["confirm_download"]) == (.bool(false)))
     #expect((payload.objectValue?["downloaded"]) == (.bool(false)))
     #expect(
-      (payload.objectValue?["destination"]?.objectValue?["workspace_relative_path"])
+      (payload.objectValue?["destination"]?.objectValue?["project_relative_path"])
         == (.string("downloads/report.txt")))
     #expect(
       (payload.objectValue?["destination"]?.objectValue?["would_create_parent_directories"])
         == (.bool(true)))
     #expect(
-      (payload.objectValue?["temporary_workspace_relative_path"])
+      (payload.objectValue?["temporary_project_relative_path"])
         == (.string("downloads/.report.txt.computer-mcp-download.tmp")))
     #expect(
       (payload.objectValue?["argv"])
@@ -4346,7 +4346,7 @@ final class FilesToolProviderTests {
       environment: ToolEnvironment(
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["file.download"]),
-          workspaceDirectory: directory
+          projectDirectory: directory
         ),
         commandRunner: runner, builtinExecutables: builtinExecutables))
 
@@ -4380,7 +4380,7 @@ final class FilesToolProviderTests {
     #expect((payload.objectValue?["content_type"]) == (.string("text/plain")))
     #expect((payload.objectValue?["downloaded_size_bytes"]) == (.number(6)))
     #expect(
-      (payload.objectValue?["downloaded_file"]?.objectValue?["workspace_relative_path"])
+      (payload.objectValue?["downloaded_file"]?.objectValue?["project_relative_path"])
         == (.string("downloads/report.txt")))
   }
 
@@ -4401,7 +4401,7 @@ final class FilesToolProviderTests {
       environment: ToolEnvironment(
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["file.download"]),
-          workspaceDirectory: directory
+          projectDirectory: directory
         ),
         commandRunner: missingConfirmRunner, builtinExecutables: builtinExecutables))
 
@@ -4491,7 +4491,7 @@ final class FilesToolProviderTests {
       environment: ToolEnvironment(
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["file.list"]),
-          workspaceDirectory: directory
+          projectDirectory: directory
         ), builtinExecutables: builtinExecutables))
 
     let result = try provider.callTool(
@@ -4502,10 +4502,10 @@ final class FilesToolProviderTests {
     let payload = try decodeTextPayload(result)
     let entries = try #require(payload.objectValue?["entries"]?.arrayValue)
 
-    #expect((payload.objectValue?["workspace_relative_path"]) == (.string(".")))
+    #expect((payload.objectValue?["project_relative_path"]) == (.string(".")))
     #expect((payload.objectValue?["truncated"]) == (.bool(false)))
     #expect(
-      (entries.map { $0.objectValue?["workspace_relative_path"] })
+      (entries.map { $0.objectValue?["project_relative_path"] })
         == ([.string("alpha.txt"), .string("notes")]))
 
     let emptyPathResult = try provider.callTool(
@@ -4514,7 +4514,7 @@ final class FilesToolProviderTests {
         arguments: .object(["path": .string("")]), context: .empty
       ))
     let emptyPathPayload = try decodeTextPayload(emptyPathResult)
-    #expect((emptyPathPayload.objectValue?["workspace_relative_path"]) == (.string(".")))
+    #expect((emptyPathPayload.objectValue?["project_relative_path"]) == (.string(".")))
     #expect((emptyPathPayload.objectValue?["entries"]) == (payload.objectValue?["entries"]))
 
     let recursiveResult = try provider.callTool(
@@ -4560,7 +4560,7 @@ final class FilesToolProviderTests {
       environment: ToolEnvironment(
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["file.tree"]),
-          workspaceDirectory: directory
+          projectDirectory: directory
         ), builtinExecutables: builtinExecutables))
 
     let result = try provider.callTool(
@@ -4576,15 +4576,15 @@ final class FilesToolProviderTests {
     let tree = try #require(payload.objectValue?["tree"]?.objectValue)
     let children = try #require(tree["children"]?.arrayValue)
 
-    #expect((payload.objectValue?["workspace_relative_path"]) == (.string(".")))
+    #expect((payload.objectValue?["project_relative_path"]) == (.string(".")))
     #expect((payload.objectValue?["entry_count"]) == (.number(4)))
     #expect((payload.objectValue?["truncated"]) == (.bool(false)))
     #expect(
-      (children.map { $0.objectValue?["workspace_relative_path"] })
+      (children.map { $0.objectValue?["project_relative_path"] })
         == ([.string("README.md"), .string("Sources")]))
 
     let sources = try #require(children[1].objectValue?["children"]?.arrayValue)
-    #expect((sources.first?.objectValue?["workspace_relative_path"]) == (.string("Sources/App")))
+    #expect((sources.first?.objectValue?["project_relative_path"]) == (.string("Sources/App")))
   }
 
   @Test
@@ -4605,7 +4605,7 @@ final class FilesToolProviderTests {
       environment: ToolEnvironment(
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["file.tree"]),
-          workspaceDirectory: directory
+          projectDirectory: directory
         ), builtinExecutables: builtinExecutables))
 
     let result = try provider.callTool(
@@ -4629,7 +4629,7 @@ final class FilesToolProviderTests {
   }
 
   @Test
-  func testFileTreeRejectsWorkspaceEscapeAndNonDirectory() throws {
+  func testFileTreeRejectsProjectEscapeAndNonDirectory() throws {
     let directory = try temporaryDirectory()
     try "file".write(
       to: directory.appendingPathComponent("file.txt"), atomically: true, encoding: .utf8)
@@ -4637,7 +4637,7 @@ final class FilesToolProviderTests {
       environment: ToolEnvironment(
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["file.tree"]),
-          workspaceDirectory: directory
+          projectDirectory: directory
         ), builtinExecutables: builtinExecutables))
 
     expectThrows(
@@ -4647,7 +4647,7 @@ final class FilesToolProviderTests {
           arguments: .object(["path": .string("../outside")]), context: .empty
         ))
     ) { error in
-      #expect(error.localizedDescription.contains("escapes workspace"))
+      #expect(error.localizedDescription.contains("escapes project"))
     }
 
     expectThrows(
@@ -4671,7 +4671,7 @@ final class FilesToolProviderTests {
       environment: ToolEnvironment(
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["file.stat"]),
-          workspaceDirectory: directory
+          projectDirectory: directory
         ), builtinExecutables: builtinExecutables))
 
     let result = try provider.callTool(
@@ -4681,7 +4681,7 @@ final class FilesToolProviderTests {
       ))
     let payload = try decodeTextPayload(result)
 
-    #expect((payload.objectValue?["workspace_relative_path"]) == (.string("Package.swift")))
+    #expect((payload.objectValue?["project_relative_path"]) == (.string("Package.swift")))
     #expect((payload.objectValue?["type"]) == (.string("file")))
     #expect((payload.objectValue?["size_bytes"]) == (.number(5)))
     #expect((payload.objectValue?["is_readable"]) == (.bool(true)))
@@ -4701,7 +4701,7 @@ final class FilesToolProviderTests {
       environment: ToolEnvironment(
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["file.permissions"]),
-          workspaceDirectory: directory
+          projectDirectory: directory
         ), builtinExecutables: builtinExecutables))
 
     let result = try provider.callTool(
@@ -4717,7 +4717,7 @@ final class FilesToolProviderTests {
     let access = try #require(payload.objectValue?["current_process_access"]?.objectValue)
     let flags = try #require(payload.objectValue?["flags"]?.objectValue)
 
-    #expect((payload.objectValue?["workspace_relative_path"]) == (.string("script.sh")))
+    #expect((payload.objectValue?["project_relative_path"]) == (.string("script.sh")))
     #expect((payload.objectValue?["type"]) == (.string("file")))
     #expect((payload.objectValue?["mode"]) == (.number(Double(0o754))))
     #expect((payload.objectValue?["mode_octal"]) == (.string("0754")))
@@ -4743,13 +4743,13 @@ final class FilesToolProviderTests {
   }
 
   @Test
-  func testFilePermissionsRejectsWorkspaceEscapeAndMissingPath() throws {
+  func testFilePermissionsRejectsProjectEscapeAndMissingPath() throws {
     let directory = try temporaryDirectory()
     let provider = FilesToolProvider(
       environment: ToolEnvironment(
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["file.permissions"]),
-          workspaceDirectory: directory
+          projectDirectory: directory
         ), builtinExecutables: builtinExecutables))
 
     expectThrows(
@@ -4759,7 +4759,7 @@ final class FilesToolProviderTests {
           arguments: .object(["path": .string("../outside")]), context: .empty
         ))
     ) { error in
-      #expect(error.localizedDescription.contains("escapes workspace"))
+      #expect(error.localizedDescription.contains("escapes project"))
     }
 
     expectThrows(
@@ -4786,7 +4786,7 @@ final class FilesToolProviderTests {
       environment: ToolEnvironment(
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["file.chmod"]),
-          workspaceDirectory: directory
+          projectDirectory: directory
         ), builtinExecutables: builtinExecutables))
 
     let result = try provider.callTool(
@@ -4803,7 +4803,7 @@ final class FilesToolProviderTests {
     let mode = try #require(attributes[.posixPermissions] as? NSNumber).intValue & 0o7777
 
     #expect((payload.objectValue?["operation"]) == (.string("file.chmod")))
-    #expect((payload.objectValue?["workspace_relative_path"]) == (.string("script.sh")))
+    #expect((payload.objectValue?["project_relative_path"]) == (.string("script.sh")))
     #expect((payload.objectValue?["mode_before_octal"]) == (.string("0644")))
     #expect((payload.objectValue?["mode_after_octal"]) == (.string("0755")))
     #expect((payload.objectValue?["result"]?.objectValue?["type"]) == (.string("file")))
@@ -4837,7 +4837,7 @@ final class FilesToolProviderTests {
       environment: ToolEnvironment(
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["file.chmod"]),
-          workspaceDirectory: directory
+          projectDirectory: directory
         ), builtinExecutables: builtinExecutables))
 
     let result = try provider.callTool(
@@ -4874,7 +4874,7 @@ final class FilesToolProviderTests {
       environment: ToolEnvironment(
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["file.chmod"]),
-          workspaceDirectory: directory
+          projectDirectory: directory
         ), builtinExecutables: builtinExecutables))
 
     expectThrows(
@@ -4913,7 +4913,7 @@ final class FilesToolProviderTests {
           ]), context: .empty
         ))
     ) { error in
-      #expect(error.localizedDescription.contains("escapes workspace"))
+      #expect(error.localizedDescription.contains("escapes project"))
     }
   }
 
@@ -4943,7 +4943,7 @@ final class FilesToolProviderTests {
       environment: ToolEnvironment(
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["file.find"]),
-          workspaceDirectory: directory
+          projectDirectory: directory
         ), builtinExecutables: builtinExecutables))
 
     let result = try provider.callTool(
@@ -4959,7 +4959,7 @@ final class FilesToolProviderTests {
 
     #expect((payload.objectValue?["result_count"]) == (.number(1)))
     #expect(
-      (results.map { $0.objectValue?["workspace_relative_path"] })
+      (results.map { $0.objectValue?["project_relative_path"] })
         == ([.string("Sources/App.swift")]))
 
     let hiddenResult = try provider.callTool(
@@ -4976,7 +4976,7 @@ final class FilesToolProviderTests {
     #expect((hiddenPayload.objectValue?["result_count"]) == (.number(1)))
     #expect(
       (hiddenPayload.objectValue?["results"]?.arrayValue?.first?.objectValue?[
-        "workspace_relative_path"]) == (.string(".hidden/Hidden.swift")))
+        "project_relative_path"]) == (.string(".hidden/Hidden.swift")))
   }
 
   @Test
@@ -4990,7 +4990,7 @@ final class FilesToolProviderTests {
       environment: ToolEnvironment(
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["file.find"]),
-          workspaceDirectory: directory
+          projectDirectory: directory
         ), builtinExecutables: builtinExecutables))
 
     let result = try provider.callTool(
@@ -5027,7 +5027,7 @@ final class FilesToolProviderTests {
       environment: ToolEnvironment(
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["file.search"]),
-          workspaceDirectory: directory
+          projectDirectory: directory
         ), builtinExecutables: builtinExecutables))
 
     let result = try provider.callTool(
@@ -5043,7 +5043,7 @@ final class FilesToolProviderTests {
 
     #expect((payload.objectValue?["match_count"]) == (.number(1)))
     #expect((payload.objectValue?["truncated"]) == (.bool(true)))
-    #expect((match["workspace_relative_path"]) == (.string("Sources/App.swift")))
+    #expect((match["project_relative_path"]) == (.string("Sources/App.swift")))
     #expect((match["line"]) == (.number(1)))
     #expect((match["column"]) == (.number(1)))
     #expect((match["preview"]) == (.string("Hello Gateway")))
@@ -5059,7 +5059,7 @@ final class FilesToolProviderTests {
       environment: ToolEnvironment(
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["file.search"]),
-          workspaceDirectory: directory
+          projectDirectory: directory
         ), builtinExecutables: builtinExecutables))
 
     let hiddenDisabled = try provider.callTool(
@@ -5105,7 +5105,7 @@ final class FilesToolProviderTests {
       environment: ToolEnvironment(
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["file.timeline"]),
-          workspaceDirectory: directory
+          projectDirectory: directory
         ), builtinExecutables: builtinExecutables))
 
     let result = try provider.callTool(
@@ -5121,12 +5121,12 @@ final class FilesToolProviderTests {
     let first = try #require(files.first?.objectValue)
 
     #expect((payload.objectValue?["operation"]) == (.string("file.timeline")))
-    #expect((payload.objectValue?["workspace_relative_path"]) == (.string(".")))
+    #expect((payload.objectValue?["project_relative_path"]) == (.string(".")))
     #expect((payload.objectValue?["include_hidden"]) == (.bool(false)))
     #expect((payload.objectValue?["sort"]) == (.string("modified_desc")))
     #expect((payload.objectValue?["matched_file_count"]) == (.number(1)))
     #expect((payload.objectValue?["returned_count"]) == (.number(1)))
-    #expect((first["workspace_relative_path"]) == (.string("nested/new.txt")))
+    #expect((first["project_relative_path"]) == (.string("nested/new.txt")))
     #expect((first["read_context"]?.objectValue) != nil)
     #expect((first["stat_context"]?.objectValue) != nil)
 
@@ -5141,7 +5141,7 @@ final class FilesToolProviderTests {
       ))
     let sortedPayload = try decodeTextPayload(sortedResult)
     let sortedFiles = try #require(sortedPayload.objectValue?["files"]?.arrayValue)
-    let paths = sortedFiles.compactMap { $0.objectValue?["workspace_relative_path"]?.stringValue }
+    let paths = sortedFiles.compactMap { $0.objectValue?["project_relative_path"]?.stringValue }
 
     #expect((sortedPayload.objectValue?["matched_file_count"]) == (.number(3)))
     #expect((sortedPayload.objectValue?["returned_count"]) == (.number(2)))
@@ -5158,7 +5158,7 @@ final class FilesToolProviderTests {
       environment: ToolEnvironment(
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["file.timeline"]),
-          workspaceDirectory: directory
+          projectDirectory: directory
         ), builtinExecutables: builtinExecutables))
 
     expectThrows(
@@ -5170,7 +5170,7 @@ final class FilesToolProviderTests {
           ]), context: .empty
         ))
     ) { error in
-      #expect(error.localizedDescription.contains("escapes workspace"))
+      #expect(error.localizedDescription.contains("escapes project"))
     }
 
     expectThrows(
@@ -5224,12 +5224,12 @@ final class FilesToolProviderTests {
   }
 
   @Test
-  func testFileBuiltinRejectsWorkspaceEscape() throws {
+  func testFileBuiltinRejectsProjectEscape() throws {
     let provider = FilesToolProvider(
       environment: ToolEnvironment(
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["file.read"]),
-          workspaceDirectory: try temporaryDirectory()
+          projectDirectory: try temporaryDirectory()
         ), builtinExecutables: builtinExecutables))
 
     expectThrows(
@@ -5239,17 +5239,17 @@ final class FilesToolProviderTests {
           arguments: .object(["path": .string("../outside.txt")]), context: .empty
         ))
     ) { error in
-      #expect(error.localizedDescription.contains("escapes workspace"))
+      #expect(error.localizedDescription.contains("escapes project"))
     }
   }
 
   @Test
-  func testSearchBuiltinsRejectWorkspaceEscape() throws {
+  func testSearchBuiltinsRejectProjectEscape() throws {
     let provider = FilesToolProvider(
       environment: ToolEnvironment(
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["file.find", "file.search"]),
-          workspaceDirectory: try temporaryDirectory()
+          projectDirectory: try temporaryDirectory()
         ), builtinExecutables: builtinExecutables))
 
     expectThrows(
@@ -5262,7 +5262,7 @@ final class FilesToolProviderTests {
           ]), context: .empty
         ))
     ) { error in
-      #expect(error.localizedDescription.contains("escapes workspace"))
+      #expect(error.localizedDescription.contains("escapes project"))
     }
 
     expectThrows(
@@ -5275,7 +5275,7 @@ final class FilesToolProviderTests {
           ]), context: .empty
         ))
     ) { error in
-      #expect(error.localizedDescription.contains("escapes workspace"))
+      #expect(error.localizedDescription.contains("escapes project"))
     }
   }
 

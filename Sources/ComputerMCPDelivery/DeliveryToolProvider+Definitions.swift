@@ -7,14 +7,14 @@ extension DeliveryToolProvider {
         tool: MCPTool(
           name: "delivery.scopes.list",
           description:
-            "List the host-declared delivery scopes for the current workspace, including repository, path globs, default branch, worktree root, sparse checkout and delivery mode.",
+            "List the host-declared delivery scopes for the current project, including repository, path globs, default branch, worktree root, sparse checkout and delivery mode.",
           inputSchema: objectSchema(properties: [:]),
           annotations: MCPToolAnnotations(
             readOnlyHint: true, destructiveHint: false, openWorldHint: false),
           meta: toolMeta),
         capability: CapabilityDescriptor(
           id: "delivery.scopes.list", risk: .readOnly,
-          workspaceRequirement: .required, localOnly: false, usesNetwork: false)),
+          projectRequirement: .required, localOnly: false, usesNetwork: false)),
       ToolDefinition(
         tool: MCPTool(
           name: "delivery.apply",
@@ -77,8 +77,8 @@ extension DeliveryToolProvider {
             readOnlyHint: false, destructiveHint: false, openWorldHint: false),
           meta: toolMeta),
         capability: CapabilityDescriptor(
-          id: "delivery.apply", risk: .workspaceWrite,
-          workspaceRequirement: .required, localOnly: false, usesNetwork: false)),
+          id: "delivery.apply", risk: .projectWrite,
+          projectRequirement: .required, localOnly: false, usesNetwork: false)),
     ]
   }
   private static func objectSchema(properties: [String: JSONValue], required: [String] = [])

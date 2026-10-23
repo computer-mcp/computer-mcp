@@ -319,17 +319,17 @@ extension ShellManaging {
 package final class GatewayTerminalSessions: @unchecked Sendable {
   package enum Scope: Hashable, Sendable {
     case isolated(UUID)
-    case workspace(
+    case project(
       principal: String, profile: GatewayProfileID, caller: GatewayCallerKind,
-      workspace: String, registeredAt: Date?, root: WorkspaceRootIdentity)
+      project: String, registeredAt: Date?, root: ProjectRootIdentity)
 
-    package static func workspace(
-      context: ExecutionContext, workspace: RegisteredWorkspace, root: WorkspaceRootIdentity,
+    package static func project(
+      context: ExecutionContext, project: RegisteredProject, root: ProjectRootIdentity,
       registered: Bool = true
     ) -> Scope {
-      return .workspace(
+      return .project(
         principal: context.principalID, profile: context.profileID, caller: context.caller,
-        workspace: workspace.id, registeredAt: registered ? workspace.createdAt : nil,
+        project: project.id, registeredAt: registered ? project.createdAt : nil,
         root: root)
     }
   }
@@ -443,16 +443,16 @@ package final class SubprocessShellRuntime: ShellManaging, Sendable {
   private let sessions: GatewayTerminalSessions
   private let scope: GatewayTerminalSessions.Scope
   private let ownedWork: (any OwnedWorkTracking)?
-  private let workspaceID: String?
+  private let projectID: String?
 
   package init(
-    ownedWork: (any OwnedWorkTracking)? = nil, workspaceID: String? = nil,
+    ownedWork: (any OwnedWorkTracking)? = nil, projectID: String? = nil,
     sessions: GatewayTerminalSessions = GatewayTerminalSessions(),
     scope: GatewayTerminalSessions.Scope = .isolated(UUID())
   ) {
     installBrokenPipeHandler()
     self.ownedWork = ownedWork
-    self.workspaceID = workspaceID
+    self.projectID = projectID
     self.sessions = sessions
     self.scope = scope
   }
@@ -566,7 +566,7 @@ package final class SubprocessShellRuntime: ShellManaging, Sendable {
       guard state.shutdown == nil else { throw ShellRuntimeError.stopped }
       try sessions.insert(
         session, scope: scope, maxSessions: maxSessions, isRegisteredProcess: isRegisteredProcess)
-      let ownership = ownedWork?.retainShell(workspaceID: workspaceID, sessionID: session.id)
+      let ownership = ownedWork?.retainShell(projectID: projectID, sessionID: session.id)
       let task = Task.detached(priority: .userInitiated) { [sessions, weak self] in
         defer {
           ownership?.finish()

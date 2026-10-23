@@ -20,8 +20,8 @@ Codex 是可选集成。
   读取执行结果。
 - **在对话里调用 Codex 写代码。** 使用独立 Codex 插件启动任务、跟进进度、查看结果。
 - **用 MCP 和 Skills 扩展工作方式。** 直接接入 MCP 服务与可复用说明，或通过插件组合。
-- **跨多台电脑工作。** 连接各台宿主，选择对应工作区，在那台电脑的环境里使用工具。
-- **开放什么，由你决定。** 配置工具、工作区与确认策略，在本机批准需要确认的宿主操作。
+- **跨多台电脑工作。** 连接各台宿主，选择对应项目，在那台电脑的环境里使用工具。
+- **开放什么，由你决定。** 配置工具、项目与确认策略，在本机批准需要确认的宿主操作。
 
 Computer MCP 支持 macOS 14 或更新系统，可供 ChatGPT 和其他兼容 MCP 的客户端使用。
 工具需按各插件的说明安装并配置。
@@ -36,7 +36,7 @@ ChatGPT · Codex · 其他 MCP 客户端
                  ▼
           Computer MCP.app
                  │
- 调用方 → Profile → 已注册工作区 → 策略 → 必要时审批
+ 调用方 → Profile → 已注册项目 → 策略 → 必要时审批
                  │
                  ▼
  Builtin · Skills · CLI · MCP · AX 兜底 · Git · Shell
@@ -45,17 +45,17 @@ ChatGPT · Codex · 其他 MCP 客户端
         本地执行 → 有界结果 → 脱敏审计凭据
 ```
 
-每次调用都绑定到调用方、Profile、能力和相关的已注册工作区。未知工具、未授权
-工作区、不安全路径和无法验证的所有权声明都会 fail closed。
+每次调用都绑定到调用方、Profile、能力和相关的已注册项目。未知工具、未授权
+项目、不安全路径和无法验证的所有权声明都会 fail closed。
 
-每台宿主独立保有凭据、注册、审批和审计。工作区 ID 只属于对应宿主；连接多台
+每台宿主独立保有凭据、注册、审批和审计。项目 ID 只属于对应宿主；连接多台
 电脑不会共享文件或迁移运行中的进程。完整模型见
 [产品定位](Documentation/Architecture/ProductIdentity.md)。
 
 ## 插件与直接集成
 
 Plugin 是可以组合 MCP、CLI 和 Skills 的分发包。原生 MCP、本地 CLI 与 Skill
-也支持直接注册；两种来源共用宿主策略、工作区范围和审计。
+也支持直接注册；两种来源共用宿主策略、项目范围和审计。
 
 可以使用 App 的插件管理页面，或本机管理 CLI：
 
@@ -94,12 +94,12 @@ macOS 隐私权限即可保证可用；原生 AX 工具继续作为兜底路径�
 
 Computer MCP 始终把两个决定分开：
 
-1. **策略授权**：这个调用方是否可以在这个已注册工作区使用该能力？
+1. **策略授权**：这个调用方是否可以在这个已注册项目使用该能力？
 2. **操作同意**：如果该能力已获准但本次操作风险较高，用户或被授权调用方现在是否
    同意？
 
 在 App 的**客户端权限**页面查看已连接的客户端，并明确授予完全访问权限，默认
-**仅此会话**。完全访问允许以您的 macOS 用户身份执行任意命令；工作区提供项目
+**仅此会话**。完全访问允许以您的 macOS 用户身份执行任意命令；项目提供项目
 上下文，不是沙箱。**始终允许此客户端**是独立的选择。您可以降级或结束某个连接
 的访问，也可以单独撤销已保存的客户端授权。权限变更立即适用于新请求，不会取消
 已开始的工作。本地 `computer-mcp clients` 命令提供相同的权限控制，明确授权和
@@ -109,11 +109,11 @@ Computer MCP 始终把两个决定分开：
 这些默认权限适用于共享该配置的客户端，每个会话仍可限制为更低的访问级别。
 保存新的选择会使该配置之前的完全访问授权失效。
 
-在 App 管理的连接中，已批准的完全访问还可使用类型明确的工具管理工作区，以及
+在 App 管理的连接中，已批准的完全访问还可使用类型明确的工具管理项目，以及
 安装、配置和更新经过验证的官方插件。配置变化会保留已有任务，具体参数见
 [远程管理](Documentation/Reference/ControlPlaneCapabilities.md#remote-management)。
 
-单次操作审批不会扩大客户端的当前权限。受限访问只能使用所选工具和工作区，
+单次操作审批不会扩大客户端的当前权限。受限访问只能使用所选工具和项目，
 禁止任意执行。凭据保存在签名 App 的 macOS Data Protection Keychain；示例、
 诊断、日志和审计只保留占位符或脱敏摘要。
 
@@ -124,17 +124,17 @@ Computer MCP 始终把两个决定分开：
 
 | 状态 | 能力 | 说明 |
 | --- | --- | --- |
-| 稳定 | App-owned 本地网关、工作区注册、Profile、策略、Operation Ticket 和脱敏审计 | macOS 14+ 默认产品控制平面 |
+| 稳定 | App-owned 本地网关、项目注册、Profile、策略、Operation Ticket 和脱敏审计 | macOS 14+ 默认产品控制平面 |
 | 稳定 | 本地 MCP、经 OpenAI Secure MCP Tunnel 连接 ChatGPT、Cloudflare Named Tunnel | 每条远程路径都有独立 Caller 与 Profile 边界 |
-| 稳定 | Builtin、Skill、已注册 CLI、下游 MCP、Shell 与原生 AX 兜底 | 是否可用仍取决于 Profile、工作区、依赖和 macOS 权限 |
-| 稳定 | 受治理的工作区与 Git 操作 | 写入需要策略授权；破坏性原子操作使用经审查的一次性 Ticket；不会隐式 Push |
+| 稳定 | Builtin、Skill、已注册 CLI、下游 MCP、Shell 与原生 AX 兜底 | 是否可用仍取决于 Profile、项目、依赖和 macOS 权限 |
+| 稳定 | 受治理的项目与 Git 操作 | 写入需要策略授权；破坏性原子操作使用经审查的一次性 Ticket；不会隐式 Push |
 | 稳定 | 插件包生命周期、直接／插件 MCP 注册、经过验证的 CLI Tree 与 Skills | 宿主授权独立，不自动安装外部依赖 |
 | 规划中 | 更广的平台支持和更完整的高级编排 UI | 暂无承诺日期；当前签名 App 仅支持 macOS |
 
 ## ChatGPT 编排，Codex 执行
 
-ChatGPT 可以查看已注册工作区，并通过独立的 [Codex 插件](https://github.com/computer-mcp/plugin-codex)
-执行编程任务。宿主管理工具授权、工作区、审批与审计；插件负责执行与运行时生命周期。
+ChatGPT 可以查看已注册项目，并通过独立的 [Codex 插件](https://github.com/computer-mcp/plugin-codex)
+执行编程任务。宿主管理工具授权、项目、审批与审计；插件负责执行与运行时生命周期。
 
 ## Computer MCP、Dots 与 Codex Remote
 
@@ -170,7 +170,7 @@ Computer MCP 要求 macOS 14 或更高版本。
 5. 发起第一个只读工具调用：
 
    ```text
-   workspace.list
+   project.list
    ```
 
 6. 刷新 Home。只有观察到匹配且成功的审计事件，连接才会进入 Verified。
@@ -193,7 +193,7 @@ computer-mcp doctor --journey local --json
 
 ## 架构
 
-App 统一拥有 Gateway、私有 Control Socket、工作区 Bookmark、Profile、Provider
+App 统一拥有 Gateway、私有 Control Socket、项目 Bookmark、Profile、Provider
 与 Tunnel 生命周期、Keychain 凭据和审计数据库。本地客户端使用当前用户独占的
 Unix-domain Socket；ChatGPT 使用 OpenAI Secure MCP Tunnel；经审查的公网 MCP
 消费者可使用 Cloudflare Remotely Managed Named Tunnel 背后的 loopback-only、
@@ -208,7 +208,7 @@ Cloudflare 连接支持可选的 OAuth，可供 claude.ai 等使用 CIMD 的公�
 Verified 只接受当前访问令牌或仍有效 OAuth 授权的成功工具请求；替换或吊销凭据后，
 对应证据失效，新凭据需要重新验证。
 
-Gateway 解析精确工具名，绑定 Caller/Profile/Workspace，检查策略和 Operation
+Gateway 解析精确工具名，绑定 Caller/Profile/Project，检查策略和 Operation
 Ticket，在需要时获得操作同意，分发一个有界 Adapter，并记录脱敏结果。Standalone
 TOML 模式只用于开发和诊断，不共享 App 的 Bookmark 或 Keychain 状态。
 
@@ -224,7 +224,7 @@ TOML 模式只用于开发和诊断，不共享 App 的 Bookmark 或 Keychain �
   和可用性条件。
 - 需要 Accessibility 或 Screen Recording 的能力必须把权限授予已安装的签名 App；
   其他能力不受影响。
-- 多个合格工作区存在时不会静默选择一个；不会隐式 Push Git Commit。
+- 多个合格项目存在时不会静默选择一个；不会隐式 Push Git Commit。
 - 开发构建或 ad-hoc 签名 App 不是正式版本，也不会继承已安装正式版的 macOS 隐私
   与 Keychain 身份。
 

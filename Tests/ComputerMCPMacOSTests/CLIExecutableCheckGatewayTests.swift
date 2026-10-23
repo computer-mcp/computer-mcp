@@ -31,7 +31,7 @@ struct CLIExecutableCheckGatewayTests {
       .write(to: fixture.file("tree.json"))
     var configuration = GatewayConfiguration(
       runtime: .init(caller: .localCLI, profileID: .localAdmin))
-    configuration.workspaceDirectory = fixture.root
+    configuration.projectDirectory = fixture.root
     configuration.cli.commands = [
       .init(
         id: "checked", executable: fixture.file("tool").path,
@@ -53,7 +53,7 @@ struct CLIExecutableCheckGatewayTests {
       let observe = try GatewayRuntime(
         configuration: configuration,
         context: .init(caller: .secureTunnel, profileID: .chatGPTObserve),
-        registeredWorkspaces: [
+        registeredProjects: [
           .init(id: "fixture", displayName: "Fixture", rootPath: fixture.root.path)
         ], platform: MacOSPlatform.services)
       #expect(try !observe.listTools(context: .empty).contains { $0.name == tool.name })
@@ -107,7 +107,7 @@ private struct GatewayExecutableCheckFixture: Sendable {
       "cli-check-\(UUID().uuidString)"
     )
     try FileManager.default.createDirectory(at: candidate, withIntermediateDirectories: false)
-    root = try WorkspacePathResolver.canonicalWorkspace(candidate)
+    root = try ProjectPathResolver.canonicalProject(candidate)
   }
   func file(_ name: String) -> URL { root.appendingPathComponent(name) }
   func exists(_ name: String) -> Bool { FileManager.default.fileExists(atPath: file(name).path) }

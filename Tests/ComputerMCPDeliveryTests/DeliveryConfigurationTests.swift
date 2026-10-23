@@ -15,12 +15,12 @@ struct DeliveryConfigurationTests {
       let temporary = try ScopedTemporaryDirectory()
       let manifest = """
         schema_version = 1
-        [[workspaces]]
+        [[projects]]
         id = "project"
         \(app ? "" : "path = \".\"")
         [[delivery.scopes]]
         id = "journal"
-        workspace = "project"
+        project = "project"
         paths = ["notes/**/*.md", "exports/*.csv"]
         default_branch = "main"
         """
@@ -45,19 +45,19 @@ struct DeliveryConfigurationTests {
     "repository = \"../outside\"", "repository = \"/absolute\"", "worktree_root = \"../outside\"",
     "worktree_root = \".git/worktrees\"", "paths = [\"../*.md\"]", "paths = [\"/notes/**\"]",
     "paths = [\"notes/***\"]", "paths = []", "paths = [\"notes/[\"]", "mode = \"unknown\"",
-    "workspace = \"missing\"", "default_branch = \"bad..branch\"",
+    "project = \"missing\"", "default_branch = \"bad..branch\"",
   ])
   func invalidScopeFields(override: String) async throws {
     try await deliveryTest {
 
       let defaults = [
-        "id = \"journal\"", "workspace = \"project\"", "paths = [\"notes/**\"]",
+        "id = \"journal\"", "project = \"project\"", "paths = [\"notes/**\"]",
         "default_branch = \"main\"",
       ]
       let key = override.split(separator: "=").first!.trimmingCharacters(in: .whitespaces)
       let fields = defaults.filter { !$0.hasPrefix(key + " =") } + [override]
       let manifest =
-        "schema_version = 1\n[[workspaces]]\nid = \"project\"\n[[delivery.scopes]]\n"
+        "schema_version = 1\n[[projects]]\nid = \"project\"\n[[delivery.scopes]]\n"
         + fields.joined(separator: "\n")
       #expect(throws: (any Error).self) { try GatewayConfiguration.load(text: manifest) }
     }
@@ -68,10 +68,10 @@ struct DeliveryConfigurationTests {
     try await deliveryTest {
 
       var configuration = GatewayConfiguration(
-        workspaces: [.init(id: "project")],
+        projects: [.init(id: "project")],
         delivery: .init(scopes: [
-          .init(id: "same", workspace: "project", paths: ["**"], defaultBranch: "main"),
-          .init(id: "same", workspace: "project", paths: ["notes/**"], defaultBranch: "main"),
+          .init(id: "same", project: "project", paths: ["**"], defaultBranch: "main"),
+          .init(id: "same", project: "project", paths: ["notes/**"], defaultBranch: "main"),
         ]))
       #expect(throws: ConfigurationError.self) { try configuration.validate() }
       configuration.delivery.scopes.removeLast()
@@ -87,7 +87,7 @@ struct DeliveryConfigurationTests {
     try await deliveryTest {
 
       let scope = DeliveryScope(
-        id: "notes", workspace: "project", paths: ["notes/*.txt", "logs/**/*.md"],
+        id: "notes", project: "project", paths: ["notes/*.txt", "logs/**/*.md"],
         defaultBranch: "main")
       #expect(scope.contains(path: "notes/day.txt"))
       #expect(!scope.contains(path: "notes/nested/day.txt"))

@@ -50,7 +50,7 @@ func waitFor(_ identifier: String) -> AXUIElement? {
 }
 
 let pages = [
-  "home", "chatgpt", "workspaces", "profiles", "providers", "plugins", "tunnels",
+  "home", "chatgpt", "projects", "profiles", "providers", "plugins", "tunnels",
   "permissions", "audit", "diagnostics", "home",
 ]
 for page in pages {

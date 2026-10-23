@@ -61,7 +61,7 @@ extension CLIToolProvider {
         )
       }
       let tree = try source.load(
-        command: command, workspace: environment.configuration.workspaceDirectory,
+        command: command, project: environment.configuration.projectDirectory,
         execution: environment.registeredCommands.execution)
       guard let node = tree.commands.first(where: { $0.path == path }) else {
         throw GatewayToolError.invalidArguments("The path is not in the declared CLI tree.")
@@ -148,7 +148,7 @@ extension CLIToolProvider {
       "resolved_path": resolved.path.map(JSONValue.string) ?? .null,
       "resolution_source": .string(resolved.source),
       "resolution": executableResolutionJSON(resolved),
-      "cwd": command.resolvedWorkingDirectory(base: environment.configuration.workspaceDirectory)
+      "cwd": command.resolvedWorkingDirectory(base: environment.configuration.projectDirectory)
         .map { .string($0.standardizedFileURL.path) } ?? .null,
       "risk": .string(command.risk ?? "unspecified"),
       "has_interface": .bool(command.interface != nil),

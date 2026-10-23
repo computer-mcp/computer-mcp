@@ -13,7 +13,7 @@ struct MCPRiskFloorTests {
   func hostActionsEnforceTheirOwnRiskFloorAndRejectUnknownDeclarations() throws {
     for (action, risk) in [
       ("diagnostics.snapshot", CapabilityRisk.readOnly),
-      ("workspaces.provision", .workspaceWrite), ("workspaces.remove", .destructive),
+      ("workspaces.provision", .projectWrite), ("workspaces.remove", .destructive),
     ] {
       let tool = MCPTool(
         name: "fixture", description: "Fixture", inputSchema: .object([:]),
@@ -23,7 +23,7 @@ struct MCPRiskFloorTests {
         ]))
       #expect(try tool.declaredRiskFloor == risk)
     }
-    for value in [JSONValue.null, .bool(true), .object([:]), .string("workspace.admin")] {
+    for value in [JSONValue.null, .bool(true), .object([:]), .string("project.admin")] {
       let tool = MCPTool(
         name: "fixture", description: "Fixture", inputSchema: .object([:]),
         meta: .object(["io.github.computer-mcp/host-action": value]))
@@ -134,7 +134,7 @@ struct MCPRiskFloorTests {
         grant: .init(
           id: .chatGPTOperate,
           capabilityIDs: tools ? ["mcp.requests.read", "mcp.tools.call"] : ["mcp.requests.read"],
-          allowedCallers: [.secureTunnel], mode: .workspaceOperations),
+          allowedCallers: [.secureTunnel], mode: .projectOperations),
         derivesObserveGrant: false)
     }
     let current = NIOLockedValueBox(policy(tools: true))
@@ -294,17 +294,17 @@ struct MCPRiskFloorTests {
   }
 
   @Test
-  func policyProbeUsesTheSelectedWorkspaceCatalog() async throws {
+  func policyProbeUsesTheSelectedProjectCatalog() async throws {
     let fixture = try RiskFixture(
-      fullAccess: true, risk: .string("read-only"), secondWorkspace: true)
+      fullAccess: true, risk: .string("read-only"), secondProject: true)
     defer { fixture.remove() }
     do {
       for tool in ["mcp.tools.call", "vendor.inspect", "review.inspect"] {
-        for (workspace, risk) in [("fixture", "read-only"), ("second", "full-shell")] {
+        for (project, risk) in [("fixture", "read-only"), ("second", "full-shell")] {
           let response = try await fixture.runtime.callToolAsync(
             name: "policy.probe",
             arguments: .object([
-              "workspace_id": .string(workspace), "capability_id": .string(tool),
+              "project_id": .string(project), "capability_id": .string(tool),
               "arguments": arguments(for: tool),
             ]), context: .empty)
           #expect(
@@ -366,25 +366,25 @@ private struct RiskFixture {
   let client: RiskCatalogClient
   let runtime: GatewayRuntime
 
-  init(fullAccess: Bool, risk: JSONValue, secondWorkspace: Bool = false) throws {
+  init(fullAccess: Bool, risk: JSONValue, secondProject: Bool = false) throws {
     root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
     try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
     database = try GatewayDatabase(inMemory: ())
     let second = root.appendingPathComponent("second")
-    var workspaces: [RegisteredWorkspace] = [
+    var projects: [RegisteredProject] = [
       .init(id: "fixture", displayName: "Fixture", rootPath: root.path)
     ]
-    if secondWorkspace {
+    if secondProject {
       try FileManager.default.createDirectory(at: second, withIntermediateDirectories: true)
-      workspaces.append(.init(id: "second", displayName: "Second", rootPath: second.path))
+      projects.append(.init(id: "second", displayName: "Second", rootPath: second.path))
     }
-    client = RiskCatalogClient(risk: risk, scopedHighRisk: secondWorkspace ? second.path : nil)
+    client = RiskCatalogClient(risk: risk, scopedHighRisk: secondProject ? second.path : nil)
     runtime = try GatewayRuntime(
       configuration: .init(
         runtime: .init(caller: .secureTunnel, profileID: .chatGPTOperate),
         profiles: [
           .init(
-            id: .chatGPTOperate, capabilities: ["*"], workspaces: workspaces.map(\.id),
+            id: .chatGPTOperate, capabilities: ["*"], projects: projects.map(\.id),
             allowedCallers: [.secureTunnel], fullShellEnabled: fullAccess,
             mode: fullAccess ? .localFullAccess : .readOnly, confirmationPolicy: .riskBased)
         ],
@@ -395,7 +395,7 @@ private struct RiskFixture {
         ]),
         tools: [.init(name: "review.inspect", adapter: .mcp, source: "vendor", tool: "inspect")]),
       database: database,
-      registeredWorkspaces: workspaces,
+      registeredProjects: projects,
       platform: MacOSPlatform.services, mcpClient: client)
   }
 

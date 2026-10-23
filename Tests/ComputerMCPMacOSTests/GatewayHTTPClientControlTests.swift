@@ -270,14 +270,14 @@ private struct HTTPClientControlFixture: Sendable {
     token = authenticated ? "isolated-http-owner-test" : nil
     let profile = ProfileGrantConfig(
       id: .chatGPTOperate, capabilities: ["system.time", "file.read"],
-      workspaces: ["fixture"], allowedCallers: [.secureTunnel], mode: .workspaceOperations)
+      projects: ["fixture"], allowedCallers: [.secureTunnel], mode: .projectOperations)
     var configuration = GatewayConfiguration(
       runtime: .init(caller: .secureTunnel, profileID: .chatGPTOperate), profiles: [profile],
       builtin: .init(enabled: ["system.time", "file.read"]))
     configuration.policy.shellEnabled = true
     let gateway = try GatewayRuntime(
       configuration: configuration, database: database,
-      registeredWorkspaces: [.init(id: "fixture", displayName: "Fixture", rootPath: root.path)],
+      registeredProjects: [.init(id: "fixture", displayName: "Fixture", rootPath: root.path)],
       platform: MacOSPlatform.services)
     runtime = GatewayHTTPRuntime(
       configuration: configuration, registry: gateway,
@@ -305,7 +305,7 @@ private struct HTTPClientControlFixture: Sendable {
 
   var shell: JSONValue {
     .object([
-      "workspace_id": .string("fixture"), "mode": .string("argv"),
+      "project_id": .string("fixture"), "mode": .string("argv"),
       "executable": .string("/bin/sh"),
       "argv": .array([.string("-c"), .string("printf approved >> consent.txt")]),
       "cwd": .string(root.path),

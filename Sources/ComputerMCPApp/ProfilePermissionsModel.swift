@@ -34,8 +34,8 @@ struct ProfilePermissionsDraft {
     var grant = options.grant
     let wildcard = grant.capabilityIDs.contains("*")
     let allIntegrations = wildcard || grant.capabilityIDs.contains("mcp.tools.call")
-    replacesBroadGrants = wildcard || allIntegrations || grant.workspaceIDs.contains("*")
-    grant.mode = grant.mode == .readOnly ? .readOnly : .workspaceOperations
+    replacesBroadGrants = wildcard || allIntegrations || grant.projectIDs.contains("*")
+    grant.mode = grant.mode == .readOnly ? .readOnly : .projectOperations
     grant.fullShellEnabled = false
     if wildcard {
       grant.capabilityIDs = Set(
@@ -47,8 +47,8 @@ struct ProfilePermissionsDraft {
     grant.capabilityIDs.subtract(ProfileGrant.mcpSurfaceCapabilities)
     grant.capabilityIDs.subtract(ProfilePermissionSelection.supportCapabilities)
     if allIntegrations { grant.mcpServerIDs.formUnion(options.integrations.map(\.id)) }
-    if grant.workspaceIDs.remove("*") != nil {
-      grant.workspaceIDs.formUnion(options.workspaces.map(\.id))
+    if grant.projectIDs.remove("*") != nil {
+      grant.projectIDs.formUnion(options.projects.map(\.id))
     }
     self.grant = grant
   }
@@ -56,7 +56,7 @@ struct ProfilePermissionsDraft {
   var savedGrant: ProfileGrant {
     var result = grant
     result.fullShellEnabled = false
-    result.mode = grant.mode == .readOnly ? .readOnly : .workspaceOperations
+    result.mode = grant.mode == .readOnly ? .readOnly : .projectOperations
     result.capabilityIDs.remove("*")
     result.capabilityIDs.subtract(ProfileGrant.fullShellCapabilities)
     result.capabilityIDs.subtract(ProfileGrant.mcpSurfaceCapabilities)

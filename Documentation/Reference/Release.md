@@ -246,7 +246,7 @@ Optional candidate-bound native diagnostics remain available:
 python3 Scripts/release.py run --run RELEASE_RUN_ID --profile acceptance
 ```
 
-They check native permissions, navigation, workspace operations and installed
+They check native permissions, navigation, project operations and installed
 plugin package identity, compatibility, dependencies and files on that Mac.
 Package checks preserve host settings and do not claim vendor runtime or
 end-to-end acceptance; those belong to each plugin. Cloud release reports do

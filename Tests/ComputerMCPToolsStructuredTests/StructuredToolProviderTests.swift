@@ -34,7 +34,7 @@ final class StructuredToolProviderTests {
           builtin: BuiltinConfig(enabled: [
             "json.read", "toml.read", "yaml.read", "plist.read", "plist.write",
           ]),
-          workspaceDirectory: directory), sqliteCommand: .init(id: "sqlite3", executable: "sqlite3")
+          projectDirectory: directory), sqliteCommand: .init(id: "sqlite3", executable: "sqlite3")
       ))
     _ = try provider.callTool(
       .init(
@@ -82,7 +82,7 @@ final class StructuredToolProviderTests {
       environment: ToolEnvironment(
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["markdown.links"]),
-          workspaceDirectory: directory
+          projectDirectory: directory
         ), sqliteCommand: .init(id: "sqlite3", executable: "sqlite3")))
 
     let result = try provider.callTool(
@@ -100,7 +100,7 @@ final class StructuredToolProviderTests {
       })
 
     #expect((payload.objectValue?["operation"]) == (.string("markdown.links")))
-    #expect((payload.objectValue?["workspace_relative_path"]) == (.string("docs/README.md")))
+    #expect((payload.objectValue?["project_relative_path"]) == (.string("docs/README.md")))
     #expect((payload.objectValue?["link_count"]) == (.number(5)))
     #expect((payload.objectValue?["returned_count"]) == (.number(5)))
     #expect((payload.objectValue?["truncated"]) == (.bool(false)))
@@ -108,18 +108,18 @@ final class StructuredToolProviderTests {
     #expect((byKind["inline_link"]?["destination"]) == (.string("install.md#setup")))
     #expect((byKind["inline_link"]?["title"]) == (.string("Install docs")))
     #expect(
-      (byKind["inline_link"]?["target"]?.objectValue?["target_workspace_relative_path"])
+      (byKind["inline_link"]?["target"]?.objectValue?["target_project_relative_path"])
         == (.string("docs/install.md")))
     #expect((byKind["inline_link"]?["target"]?.objectValue?["fragment"]) == (.string("setup")))
     #expect((byKind["inline_image"]?["is_image"]) == (.bool(true)))
     #expect(
-      (byKind["inline_image"]?["target"]?.objectValue?["target_workspace_relative_path"])
+      (byKind["inline_image"]?["target"]?.objectValue?["target_project_relative_path"])
         == (.string("docs/images/logo.png")))
     #expect((byKind["reference_link"]?["reference_label"]) == (.string("api-ref")))
     #expect((byKind["reference_link"]?["destination"]) == (.null))
     #expect((byKind["reference_definition"]?["destination"]) == (.string("../API.md")))
     #expect(
-      (byKind["reference_definition"]?["target"]?.objectValue?["target_workspace_relative_path"])
+      (byKind["reference_definition"]?["target"]?.objectValue?["target_project_relative_path"])
         == (.string("API.md")))
     #expect((byKind["autolink"]?["target"]?.objectValue?["kind"]) == (.string("url")))
     #expect((byKind["autolink"]?["target"]?.objectValue?["scheme"]) == (.string("https")))
@@ -141,7 +141,7 @@ final class StructuredToolProviderTests {
       environment: ToolEnvironment(
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["markdown.links"]),
-          workspaceDirectory: directory
+          projectDirectory: directory
         ), sqliteCommand: .init(id: "sqlite3", executable: "sqlite3")))
 
     let result = try provider.callTool(
@@ -204,7 +204,7 @@ final class StructuredToolProviderTests {
       environment: ToolEnvironment(
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["markdown.tables"]),
-          workspaceDirectory: directory
+          projectDirectory: directory
         ), sqliteCommand: .init(id: "sqlite3", executable: "sqlite3")))
 
     let result = try provider.callTool(
@@ -223,7 +223,7 @@ final class StructuredToolProviderTests {
     let second = try #require(tables.last?.objectValue)
 
     #expect((payload.objectValue?["operation"]) == (.string("markdown.tables")))
-    #expect((payload.objectValue?["workspace_relative_path"]) == (.string("README.md")))
+    #expect((payload.objectValue?["project_relative_path"]) == (.string("README.md")))
     #expect((payload.objectValue?["include_code_blocks"]) == (.bool(false)))
     #expect((payload.objectValue?["table_count"]) == (.number(2)))
     #expect((payload.objectValue?["returned_count"]) == (.number(2)))
@@ -288,7 +288,7 @@ final class StructuredToolProviderTests {
       environment: ToolEnvironment(
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["markdown.tables"]),
-          workspaceDirectory: directory
+          projectDirectory: directory
         ), sqliteCommand: .init(id: "sqlite3", executable: "sqlite3")))
 
     expectThrows(
@@ -298,7 +298,7 @@ final class StructuredToolProviderTests {
           arguments: .object(["path": .string("../outside.md")]), context: .empty
         ))
     ) { error in
-      #expect(error.localizedDescription.contains("escapes workspace"))
+      #expect(error.localizedDescription.contains("escapes project"))
     }
 
     expectThrows(
@@ -361,7 +361,7 @@ final class StructuredToolProviderTests {
       environment: ToolEnvironment(
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["markdown.section"]),
-          workspaceDirectory: directory
+          projectDirectory: directory
         ), sqliteCommand: .init(id: "sqlite3", executable: "sqlite3")))
 
     let result = try provider.callTool(
@@ -379,7 +379,7 @@ final class StructuredToolProviderTests {
     let content = try #require(section["content"]?.stringValue)
 
     #expect((payload.objectValue?["operation"]) == (.string("markdown.section")))
-    #expect((payload.objectValue?["workspace_relative_path"]) == (.string("README.md")))
+    #expect((payload.objectValue?["project_relative_path"]) == (.string("README.md")))
     #expect((payload.objectValue?["matched"]) == (.bool(true)))
     #expect((payload.objectValue?["match_count"]) == (.number(2)))
     #expect((payload.objectValue?["matched_heading"]?.objectValue?["line"]) == (.number(5)))
@@ -455,7 +455,7 @@ final class StructuredToolProviderTests {
       environment: ToolEnvironment(
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["markdown.section"]),
-          workspaceDirectory: directory
+          projectDirectory: directory
         ), sqliteCommand: .init(id: "sqlite3", executable: "sqlite3")))
 
     expectThrows(
@@ -468,7 +468,7 @@ final class StructuredToolProviderTests {
           ]), context: .empty
         ))
     ) { error in
-      #expect(error.localizedDescription.contains("escapes workspace"))
+      #expect(error.localizedDescription.contains("escapes project"))
     }
 
     expectThrows(
@@ -550,7 +550,7 @@ final class StructuredToolProviderTests {
       environment: ToolEnvironment(
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["markdown.frontmatter"]),
-          workspaceDirectory: directory
+          projectDirectory: directory
         ), sqliteCommand: .init(id: "sqlite3", executable: "sqlite3")))
 
     let yamlResult = try provider.callTool(
@@ -562,7 +562,7 @@ final class StructuredToolProviderTests {
     let yamlValue = try #require(yamlPayload.objectValue?["value"]?.objectValue)
 
     #expect((yamlPayload.objectValue?["operation"]) == (.string("markdown.frontmatter")))
-    #expect((yamlPayload.objectValue?["workspace_relative_path"]) == (.string("README.md")))
+    #expect((yamlPayload.objectValue?["project_relative_path"]) == (.string("README.md")))
     #expect((yamlPayload.objectValue?["found"]) == (.bool(true)))
     #expect((yamlPayload.objectValue?["format"]) == (.string("yaml")))
     #expect((yamlPayload.objectValue?["has_opening_delimiter"]) == (.bool(true)))
@@ -619,7 +619,7 @@ final class StructuredToolProviderTests {
       environment: ToolEnvironment(
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["markdown.frontmatter"]),
-          workspaceDirectory: directory
+          projectDirectory: directory
         ), sqliteCommand: .init(id: "sqlite3", executable: "sqlite3")))
 
     let plainResult = try provider.callTool(
@@ -671,7 +671,7 @@ final class StructuredToolProviderTests {
       environment: ToolEnvironment(
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["markdown.frontmatter"]),
-          workspaceDirectory: directory
+          projectDirectory: directory
         ), sqliteCommand: .init(id: "sqlite3", executable: "sqlite3")))
 
     expectThrows(
@@ -681,7 +681,7 @@ final class StructuredToolProviderTests {
           arguments: .object(["path": .string("../outside.md")]), context: .empty
         ))
     ) { error in
-      #expect(error.localizedDescription.contains("escapes workspace"))
+      #expect(error.localizedDescription.contains("escapes project"))
     }
 
     expectThrows(
@@ -730,7 +730,7 @@ final class StructuredToolProviderTests {
       environment: ToolEnvironment(
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["markdown.links"]),
-          workspaceDirectory: directory
+          projectDirectory: directory
         ), sqliteCommand: .init(id: "sqlite3", executable: "sqlite3")))
 
     expectThrows(
@@ -740,7 +740,7 @@ final class StructuredToolProviderTests {
           arguments: .object(["path": .string("../outside.md")]), context: .empty
         ))
     ) { error in
-      #expect(error.localizedDescription.contains("escapes workspace"))
+      #expect(error.localizedDescription.contains("escapes project"))
     }
 
     expectThrows(
@@ -816,7 +816,7 @@ final class StructuredToolProviderTests {
       environment: ToolEnvironment(
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["markdown.link_check"]),
-          workspaceDirectory: directory
+          projectDirectory: directory
         ), sqliteCommand: .init(id: "sqlite3", executable: "sqlite3")))
 
     let result = try provider.callTool(
@@ -840,7 +840,7 @@ final class StructuredToolProviderTests {
       })
 
     #expect((payload.objectValue?["operation"]) == (.string("markdown.link_check")))
-    #expect((payload.objectValue?["workspace_relative_path"]) == (.string("docs/README.md")))
+    #expect((payload.objectValue?["project_relative_path"]) == (.string("docs/README.md")))
     #expect((payload.objectValue?["check_count"]) == (.number(12)))
     #expect((payload.objectValue?["ok_count"]) == (.number(6)))
     #expect((payload.objectValue?["broken_count"]) == (.number(4)))
@@ -888,7 +888,7 @@ final class StructuredToolProviderTests {
       environment: ToolEnvironment(
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["markdown.link_check"]),
-          workspaceDirectory: directory
+          projectDirectory: directory
         ), sqliteCommand: .init(id: "sqlite3", executable: "sqlite3")))
 
     expectThrows(
@@ -898,7 +898,7 @@ final class StructuredToolProviderTests {
           arguments: .object(["path": .string("../outside.md")]), context: .empty
         ))
     ) { error in
-      #expect(error.localizedDescription.contains("escapes workspace"))
+      #expect(error.localizedDescription.contains("escapes project"))
     }
 
     expectThrows(
@@ -926,7 +926,7 @@ final class StructuredToolProviderTests {
   }
 
   @Test
-  func testJSONReadParsesWorkspaceJSONIntoValue() throws {
+  func testJSONReadParsesProjectJSONIntoValue() throws {
     let directory = try temporaryDirectory()
     let file = directory.appendingPathComponent("config.json")
     try """
@@ -944,7 +944,7 @@ final class StructuredToolProviderTests {
       environment: ToolEnvironment(
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["json.read"]),
-          workspaceDirectory: directory
+          projectDirectory: directory
         ), sqliteCommand: .init(id: "sqlite3", executable: "sqlite3")))
 
     let result = try provider.callTool(
@@ -956,7 +956,7 @@ final class StructuredToolProviderTests {
     let value = try #require(payload.objectValue?["value"]?.objectValue)
 
     #expect((payload.objectValue?["operation"]) == (.string("json.read")))
-    #expect((payload.objectValue?["workspace_relative_path"]) == (.string("config.json")))
+    #expect((payload.objectValue?["project_relative_path"]) == (.string("config.json")))
     #expect((try #require(payload.objectValue?["bytes_read"]?.numberValue)) > (0))
     #expect((value["name"]) == (.string("computer-mcp")))
     #expect((value["enabled"]) == (.bool(true)))
@@ -988,7 +988,7 @@ final class StructuredToolProviderTests {
       environment: ToolEnvironment(
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["json.read"]),
-          workspaceDirectory: directory
+          projectDirectory: directory
         ), sqliteCommand: .init(id: "sqlite3", executable: "sqlite3")))
 
     expectThrows(
@@ -998,7 +998,7 @@ final class StructuredToolProviderTests {
           arguments: .object(["path": .string("../outside.json")]), context: .empty
         ))
     ) { error in
-      #expect(error.localizedDescription.contains("escapes workspace"))
+      #expect(error.localizedDescription.contains("escapes project"))
     }
 
     expectThrows(
@@ -1053,7 +1053,7 @@ final class StructuredToolProviderTests {
       environment: ToolEnvironment(
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["jsonl.read"]),
-          workspaceDirectory: directory
+          projectDirectory: directory
         ), sqliteCommand: .init(id: "sqlite3", executable: "sqlite3")))
 
     let result = try provider.callTool(
@@ -1070,7 +1070,7 @@ final class StructuredToolProviderTests {
     let errors = try #require(payload.objectValue?["errors"]?.arrayValue)
 
     #expect((payload.objectValue?["operation"]) == (.string("jsonl.read")))
-    #expect((payload.objectValue?["workspace_relative_path"]) == (.string("events.jsonl")))
+    #expect((payload.objectValue?["project_relative_path"]) == (.string("events.jsonl")))
     #expect((payload.objectValue?["record_count"]) == (.number(3)))
     #expect((payload.objectValue?["returned_record_count"]) == (.number(2)))
     #expect((payload.objectValue?["record_count_truncated"]) == (.bool(true)))
@@ -1103,7 +1103,7 @@ final class StructuredToolProviderTests {
       environment: ToolEnvironment(
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["jsonl.read"]),
-          workspaceDirectory: directory
+          projectDirectory: directory
         ), sqliteCommand: .init(id: "sqlite3", executable: "sqlite3")))
 
     let result = try provider.callTool(
@@ -1152,7 +1152,7 @@ final class StructuredToolProviderTests {
       environment: ToolEnvironment(
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["jsonl.read"]),
-          workspaceDirectory: directory
+          projectDirectory: directory
         ), sqliteCommand: .init(id: "sqlite3", executable: "sqlite3")))
 
     expectThrows(
@@ -1162,7 +1162,7 @@ final class StructuredToolProviderTests {
           arguments: .object(["path": .string("../outside.jsonl")]), context: .empty
         ))
     ) { error in
-      #expect(error.localizedDescription.contains("escapes workspace"))
+      #expect(error.localizedDescription.contains("escapes project"))
     }
 
     expectThrows(
@@ -1206,7 +1206,7 @@ final class StructuredToolProviderTests {
       environment: ToolEnvironment(
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["json.write", "json.read"]),
-          workspaceDirectory: directory
+          projectDirectory: directory
         ), sqliteCommand: .init(id: "sqlite3", executable: "sqlite3")))
 
     let dryRunResult = try provider.callTool(
@@ -1302,7 +1302,7 @@ final class StructuredToolProviderTests {
       environment: ToolEnvironment(
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["json.write"]),
-          workspaceDirectory: directory
+          projectDirectory: directory
         ), sqliteCommand: .init(id: "sqlite3", executable: "sqlite3")))
 
     expectThrows(
@@ -1315,7 +1315,7 @@ final class StructuredToolProviderTests {
           ]), context: .empty
         ))
     ) { error in
-      #expect(error.localizedDescription.contains("escapes workspace"))
+      #expect(error.localizedDescription.contains("escapes project"))
     }
 
     expectThrows(
@@ -1373,7 +1373,7 @@ final class StructuredToolProviderTests {
   }
 
   @Test
-  func testTOMLReadParsesWorkspaceTOMLIntoValue() throws {
+  func testTOMLReadParsesProjectTOMLIntoValue() throws {
     let directory = try temporaryDirectory()
     let file = directory.appendingPathComponent("config.toml")
     try """
@@ -1392,7 +1392,7 @@ final class StructuredToolProviderTests {
       environment: ToolEnvironment(
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["toml.read"]),
-          workspaceDirectory: directory
+          projectDirectory: directory
         ), sqliteCommand: .init(id: "sqlite3", executable: "sqlite3")))
 
     let result = try provider.callTool(
@@ -1404,7 +1404,7 @@ final class StructuredToolProviderTests {
     let value = try #require(payload.objectValue?["value"]?.objectValue)
 
     #expect((payload.objectValue?["operation"]) == (.string("toml.read")))
-    #expect((payload.objectValue?["workspace_relative_path"]) == (.string("config.toml")))
+    #expect((payload.objectValue?["project_relative_path"]) == (.string("config.toml")))
     #expect((try #require(payload.objectValue?["bytes_read"]?.numberValue)) > (0))
     #expect((value["name"]) == (.string("computer-mcp")))
     #expect((value["enabled"]) == (.bool(true)))
@@ -1441,7 +1441,7 @@ final class StructuredToolProviderTests {
       environment: ToolEnvironment(
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["toml.read"]),
-          workspaceDirectory: directory
+          projectDirectory: directory
         ), sqliteCommand: .init(id: "sqlite3", executable: "sqlite3")))
 
     expectThrows(
@@ -1451,7 +1451,7 @@ final class StructuredToolProviderTests {
           arguments: .object(["path": .string("../outside.toml")]), context: .empty
         ))
     ) { error in
-      #expect(error.localizedDescription.contains("escapes workspace"))
+      #expect(error.localizedDescription.contains("escapes project"))
     }
 
     expectThrows(
@@ -1489,7 +1489,7 @@ final class StructuredToolProviderTests {
   }
 
   @Test
-  func testYAMLReadParsesWorkspaceYAMLIntoDocuments() throws {
+  func testYAMLReadParsesProjectYAMLIntoDocuments() throws {
     let directory = try temporaryDirectory()
     let file = directory.appendingPathComponent("config.yaml")
     try """
@@ -1513,7 +1513,7 @@ final class StructuredToolProviderTests {
       environment: ToolEnvironment(
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["yaml.read"]),
-          workspaceDirectory: directory
+          projectDirectory: directory
         ), sqliteCommand: .init(id: "sqlite3", executable: "sqlite3")))
 
     let result = try provider.callTool(
@@ -1531,7 +1531,7 @@ final class StructuredToolProviderTests {
     let topLevel = try #require(payload.objectValue?["value"]?.arrayValue)
 
     #expect((payload.objectValue?["operation"]) == (.string("yaml.read")))
-    #expect((payload.objectValue?["workspace_relative_path"]) == (.string("config.yaml")))
+    #expect((payload.objectValue?["project_relative_path"]) == (.string("config.yaml")))
     #expect((try #require(payload.objectValue?["bytes_read"]?.numberValue)) > (0))
     #expect((payload.objectValue?["document_count"]) == (.number(2)))
     #expect((payload.objectValue?["returned_document_count"]) == (.number(2)))
@@ -1579,7 +1579,7 @@ final class StructuredToolProviderTests {
       environment: ToolEnvironment(
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["yaml.read"]),
-          workspaceDirectory: directory
+          projectDirectory: directory
         ), sqliteCommand: .init(id: "sqlite3", executable: "sqlite3")))
 
     let truncatedResult = try provider.callTool(
@@ -1602,7 +1602,7 @@ final class StructuredToolProviderTests {
           arguments: .object(["path": .string("../outside.yaml")]), context: .empty
         ))
     ) { error in
-      #expect(error.localizedDescription.contains("escapes workspace"))
+      #expect(error.localizedDescription.contains("escapes project"))
     }
 
     expectThrows(
@@ -1640,7 +1640,7 @@ final class StructuredToolProviderTests {
   }
 
   @Test
-  func testXMLReadParsesWorkspaceXMLIntoElementTree() throws {
+  func testXMLReadParsesProjectXMLIntoElementTree() throws {
     let directory = try temporaryDirectory()
     let file = directory.appendingPathComponent("config.xml")
     try """
@@ -1654,7 +1654,7 @@ final class StructuredToolProviderTests {
       environment: ToolEnvironment(
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["xml.read"]),
-          workspaceDirectory: directory
+          projectDirectory: directory
         ), sqliteCommand: .init(id: "sqlite3", executable: "sqlite3")))
 
     let result = try provider.callTool(
@@ -1670,7 +1670,7 @@ final class StructuredToolProviderTests {
     let nameNode = try #require(secondItem["children"]?.arrayValue?.first?.objectValue)
 
     #expect((payload.objectValue?["operation"]) == (.string("xml.read")))
-    #expect((payload.objectValue?["workspace_relative_path"]) == (.string("config.xml")))
+    #expect((payload.objectValue?["project_relative_path"]) == (.string("config.xml")))
     #expect((try #require(payload.objectValue?["bytes_read"]?.numberValue)) > (0))
     #expect((payload.objectValue?["element_count"]) == (.number(4)))
     #expect((payload.objectValue?["returned_element_count"]) == (.number(4)))
@@ -1708,7 +1708,7 @@ final class StructuredToolProviderTests {
       environment: ToolEnvironment(
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["xml.read"]),
-          workspaceDirectory: directory
+          projectDirectory: directory
         ), sqliteCommand: .init(id: "sqlite3", executable: "sqlite3")))
 
     let truncatedResult = try provider.callTool(
@@ -1749,7 +1749,7 @@ final class StructuredToolProviderTests {
           arguments: .object(["path": .string("../outside.xml")]), context: .empty
         ))
     ) { error in
-      #expect(error.localizedDescription.contains("escapes workspace"))
+      #expect(error.localizedDescription.contains("escapes project"))
     }
 
     expectThrows(
@@ -1787,7 +1787,7 @@ final class StructuredToolProviderTests {
   }
 
   @Test
-  func testPlistReadParsesWorkspacePropertyListIntoJSON() throws {
+  func testPlistReadParsesProjectPropertyListIntoJSON() throws {
     let directory = try temporaryDirectory()
     let file = directory.appendingPathComponent("Info.plist")
     let plist: [String: Any] = [
@@ -1808,7 +1808,7 @@ final class StructuredToolProviderTests {
       environment: ToolEnvironment(
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["plist.read"]),
-          workspaceDirectory: directory
+          projectDirectory: directory
         ), sqliteCommand: .init(id: "sqlite3", executable: "sqlite3")))
 
     let result = try provider.callTool(
@@ -1820,7 +1820,7 @@ final class StructuredToolProviderTests {
     let value = try #require(payload.objectValue?["value"]?.objectValue)
 
     #expect((payload.objectValue?["operation"]) == (.string("plist.read")))
-    #expect((payload.objectValue?["workspace_relative_path"]) == (.string("Info.plist")))
+    #expect((payload.objectValue?["project_relative_path"]) == (.string("Info.plist")))
     #expect((payload.objectValue?["format"]) == (.string("xml")))
     #expect((try #require(payload.objectValue?["bytes_read"]?.numberValue)) > (0))
     #expect((value["CFBundleIdentifier"]) == (.string("com.example.tool")))
@@ -1856,7 +1856,7 @@ final class StructuredToolProviderTests {
       environment: ToolEnvironment(
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["plist.read"]),
-          workspaceDirectory: directory
+          projectDirectory: directory
         ), sqliteCommand: .init(id: "sqlite3", executable: "sqlite3")))
 
     expectThrows(
@@ -1866,7 +1866,7 @@ final class StructuredToolProviderTests {
           arguments: .object(["path": .string("../outside.plist")]), context: .empty
         ))
     ) { error in
-      #expect(error.localizedDescription.contains("escapes workspace"))
+      #expect(error.localizedDescription.contains("escapes project"))
     }
 
     expectThrows(
@@ -1969,7 +1969,7 @@ final class StructuredToolProviderTests {
       environment: ToolEnvironment(
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["structured.get"]),
-          workspaceDirectory: directory
+          projectDirectory: directory
         ), sqliteCommand: .init(id: "sqlite3", executable: "sqlite3")))
 
     let jsonResult = try provider.callTool(
@@ -2084,7 +2084,7 @@ final class StructuredToolProviderTests {
       environment: ToolEnvironment(
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["structured.get"]),
-          workspaceDirectory: directory
+          projectDirectory: directory
         ), sqliteCommand: .init(id: "sqlite3", executable: "sqlite3")))
 
     expectThrows(
@@ -2097,7 +2097,7 @@ final class StructuredToolProviderTests {
           ]), context: .empty
         ))
     ) { error in
-      #expect(error.localizedDescription.contains("escapes workspace"))
+      #expect(error.localizedDescription.contains("escapes project"))
     }
 
     expectThrows(
@@ -2175,7 +2175,7 @@ final class StructuredToolProviderTests {
       environment: ToolEnvironment(
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["plist.write", "plist.read"]),
-          workspaceDirectory: directory
+          projectDirectory: directory
         ), sqliteCommand: .init(id: "sqlite3", executable: "sqlite3")))
 
     let value: JSONValue = .object([
@@ -2283,7 +2283,7 @@ final class StructuredToolProviderTests {
       environment: ToolEnvironment(
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["plist.write"]),
-          workspaceDirectory: directory
+          projectDirectory: directory
         ), sqliteCommand: .init(id: "sqlite3", executable: "sqlite3")))
 
     expectThrows(
@@ -2296,7 +2296,7 @@ final class StructuredToolProviderTests {
           ]), context: .empty
         ))
     ) { error in
-      #expect(error.localizedDescription.contains("escapes workspace"))
+      #expect(error.localizedDescription.contains("escapes project"))
     }
 
     expectThrows(
@@ -2413,7 +2413,7 @@ final class StructuredToolProviderTests {
       environment: ToolEnvironment(
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["csv.read"]),
-          workspaceDirectory: directory
+          projectDirectory: directory
         ), sqliteCommand: .init(id: "sqlite3", executable: "sqlite3")))
 
     let result = try provider.callTool(
@@ -2432,7 +2432,7 @@ final class StructuredToolProviderTests {
     let secondCells = try #require(rows.last?.objectValue?["cells"]?.arrayValue)
 
     #expect((payload.objectValue?["operation"]) == (.string("csv.read")))
-    #expect((payload.objectValue?["workspace_relative_path"]) == (.string("data.csv")))
+    #expect((payload.objectValue?["project_relative_path"]) == (.string("data.csv")))
     #expect((payload.objectValue?["delimiter"]) == (.string("comma")))
     #expect((payload.objectValue?["delimiter_source"]) == (.string("auto")))
     #expect((payload.objectValue?["has_header"]) == (.bool(true)))
@@ -2460,7 +2460,7 @@ final class StructuredToolProviderTests {
       environment: ToolEnvironment(
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["csv.read"]),
-          workspaceDirectory: directory
+          projectDirectory: directory
         ), sqliteCommand: .init(id: "sqlite3", executable: "sqlite3")))
 
     let result = try provider.callTool(
@@ -2501,7 +2501,7 @@ final class StructuredToolProviderTests {
       environment: ToolEnvironment(
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["csv.read"]),
-          workspaceDirectory: directory
+          projectDirectory: directory
         ), sqliteCommand: .init(id: "sqlite3", executable: "sqlite3")))
 
     expectThrows(
@@ -2511,7 +2511,7 @@ final class StructuredToolProviderTests {
           arguments: .object(["path": .string("../outside.csv")]), context: .empty
         ))
     ) { error in
-      #expect(error.localizedDescription.contains("escapes workspace"))
+      #expect(error.localizedDescription.contains("escapes project"))
     }
 
     expectThrows(
@@ -2623,7 +2623,7 @@ final class StructuredToolProviderTests {
       environment: ToolEnvironment(
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["sqlite.schema"]),
-          workspaceDirectory: directory
+          projectDirectory: directory
         ),
         commandRunner: runner, sqliteCommand: .init(id: "sqlite3", executable: "sqlite3")))
 
@@ -2652,7 +2652,7 @@ final class StructuredToolProviderTests {
     #expect(firstSQL.contains("LIMIT 11"))
     #expect((payload.objectValue?["operation"]) == (.string("sqlite.schema")))
     #expect(
-      (payload.objectValue?["database"]?.objectValue?["workspace_relative_path"])
+      (payload.objectValue?["database"]?.objectValue?["project_relative_path"])
         == (.string("app.db")))
     #expect((payload.objectValue?["include_views"]) == (.bool(true)))
     #expect((payload.objectValue?["include_indexes"]) == (.bool(true)))
@@ -2709,7 +2709,7 @@ final class StructuredToolProviderTests {
       environment: ToolEnvironment(
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["sqlite.schema"]),
-          workspaceDirectory: directory
+          projectDirectory: directory
         ), sqliteCommand: .init(id: "sqlite3", executable: "sqlite3")))
 
     expectThrows(
@@ -2719,7 +2719,7 @@ final class StructuredToolProviderTests {
           arguments: .object(["path": .string("../outside.db")]), context: .empty
         ))
     ) { error in
-      #expect(error.localizedDescription.contains("escapes workspace"))
+      #expect(error.localizedDescription.contains("escapes project"))
     }
 
     expectThrows(
@@ -2752,7 +2752,7 @@ final class StructuredToolProviderTests {
       environment: ToolEnvironment(
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["sqlite.schema"]),
-          workspaceDirectory: directory
+          projectDirectory: directory
         ),
         commandRunner: failingRunner, sqliteCommand: .init(id: "sqlite3", executable: "sqlite3")))
     expectThrows(
@@ -2773,7 +2773,7 @@ final class StructuredToolProviderTests {
       environment: ToolEnvironment(
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["sqlite.schema"]),
-          workspaceDirectory: directory
+          projectDirectory: directory
         ),
         commandRunner: truncatedRunner, sqliteCommand: .init(id: "sqlite3", executable: "sqlite3")))
     expectThrows(
@@ -2792,7 +2792,7 @@ final class StructuredToolProviderTests {
       environment: ToolEnvironment(
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["sqlite.schema"]),
-          workspaceDirectory: directory
+          projectDirectory: directory
         ),
         commandRunner: badJSONRunner, sqliteCommand: .init(id: "sqlite3", executable: "sqlite3")))
     expectThrows(
@@ -2827,7 +2827,7 @@ final class StructuredToolProviderTests {
       environment: ToolEnvironment(
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["sqlite.query"]),
-          workspaceDirectory: directory
+          projectDirectory: directory
         ),
         commandRunner: runner, sqliteCommand: .init(id: "sqlite3", executable: "sqlite3")))
 
@@ -2892,7 +2892,7 @@ final class StructuredToolProviderTests {
       environment: ToolEnvironment(
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["sqlite.query"]),
-          workspaceDirectory: directory
+          projectDirectory: directory
         ), sqliteCommand: .init(id: "sqlite3", executable: "sqlite3")))
 
     expectThrows(
@@ -2905,7 +2905,7 @@ final class StructuredToolProviderTests {
           ]), context: .empty
         ))
     ) { error in
-      #expect(error.localizedDescription.contains("escapes workspace"))
+      #expect(error.localizedDescription.contains("escapes project"))
     }
 
     expectThrows(
@@ -2966,7 +2966,7 @@ final class StructuredToolProviderTests {
       environment: ToolEnvironment(
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["sqlite.query"]),
-          workspaceDirectory: directory
+          projectDirectory: directory
         ),
         commandRunner: literalRunner, sqliteCommand: .init(id: "sqlite3", executable: "sqlite3")))
     _ = try literalProvider.callTool(
@@ -2985,7 +2985,7 @@ final class StructuredToolProviderTests {
       environment: ToolEnvironment(
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["sqlite.query"]),
-          workspaceDirectory: directory
+          projectDirectory: directory
         ),
         commandRunner: failingRunner, sqliteCommand: .init(id: "sqlite3", executable: "sqlite3")))
     expectThrows(
@@ -3009,7 +3009,7 @@ final class StructuredToolProviderTests {
       environment: ToolEnvironment(
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["sqlite.query"]),
-          workspaceDirectory: directory
+          projectDirectory: directory
         ),
         commandRunner: truncatedRunner, sqliteCommand: .init(id: "sqlite3", executable: "sqlite3")))
     expectThrows(
@@ -3031,7 +3031,7 @@ final class StructuredToolProviderTests {
       environment: ToolEnvironment(
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["sqlite.query"]),
-          workspaceDirectory: directory
+          projectDirectory: directory
         ),
         commandRunner: badJSONRunner, sqliteCommand: .init(id: "sqlite3", executable: "sqlite3")))
     expectThrows(

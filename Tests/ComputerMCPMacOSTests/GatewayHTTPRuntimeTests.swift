@@ -21,15 +21,15 @@ struct GatewayHTTPRuntimeTests {
         ProfileGrantConfig(
           id: .chatGPTOperate,
           capabilities: ["operations.prepare", "operations.commit", "file.write"],
-          workspaces: ["fixture"], allowedCallers: [.secureTunnel], mode: .workspaceOperations)
+          projects: ["fixture"], allowedCallers: [.secureTunnel], mode: .projectOperations)
       ], builtin: BuiltinConfig(enabled: ["file.write"]))
     func runtime(token: String) throws -> GatewayHTTPRuntime {
       GatewayHTTPRuntime(
         configuration: configuration,
         registry: try GatewayRuntime(
           configuration: configuration, database: database,
-          registeredWorkspaces: [
-            RegisteredWorkspace(id: "fixture", displayName: "Fixture", rootPath: root.path)
+          registeredProjects: [
+            RegisteredProject(id: "fixture", displayName: "Fixture", rootPath: root.path)
           ], platform: MacOSPlatform.services), host: "127.0.0.1", port: 0, publicBaseURL: nil,
         accessToken: token)
     }
@@ -50,7 +50,7 @@ struct GatewayHTTPRuntimeTests {
       let prepared = try await firstSession.call(
         toolName: "operations.prepare",
         arguments: .object([
-          "workspace_id": .string("fixture"), "tool": .string("file.write"), "arguments": target,
+          "project_id": .string("fixture"), "tool": .string("file.write"), "arguments": target,
         ]))
       let ticketID = try #require(
         prepared.result.objectValue?["structuredContent"]?.objectValue?["result"]?
@@ -65,7 +65,7 @@ struct GatewayHTTPRuntimeTests {
         endpoint: try #require(URL(string: "http://127.0.0.1:\(otherPort)/mcp")),
         accessToken: "other-fixture-credential")
       let commit: JSONValue = .object([
-        "workspace_id": .string("fixture"), "ticket_id": .string(ticketID),
+        "project_id": .string("fixture"), "ticket_id": .string(ticketID),
         "tool": .string("file.write"), "arguments": target,
       ])
       let denied = try await otherSession.call(toolName: "operations.commit", arguments: commit)
@@ -87,7 +87,7 @@ struct GatewayHTTPRuntimeTests {
       let fresh = try await reconnected.call(
         toolName: "operations.prepare",
         arguments: .object([
-          "workspace_id": .string("fixture"), "tool": .string("file.write"), "arguments": target,
+          "project_id": .string("fixture"), "tool": .string("file.write"), "arguments": target,
         ]))
       let freshID = try #require(
         fresh.result.objectValue?["structuredContent"]?.objectValue?["result"]?
@@ -96,7 +96,7 @@ struct GatewayHTTPRuntimeTests {
       let completed = try await reconnected.call(
         toolName: "operations.commit",
         arguments: .object([
-          "workspace_id": .string("fixture"), "ticket_id": .string(freshID),
+          "project_id": .string("fixture"), "ticket_id": .string(freshID),
           "tool": .string("file.write"), "arguments": target,
         ]))
       #expect(completed.result.objectValue?["isError"] != .bool(true))
@@ -122,15 +122,15 @@ struct GatewayHTTPRuntimeTests {
     try Data("original".utf8).write(to: value)
     let database = try GatewayDatabase(inMemory: ())
     let profile = ProfileGrantConfig(
-      id: .chatGPTOperate, capabilities: ["file.read", "file.write"], workspaces: ["fixture"],
-      allowedCallers: [.secureTunnel], mode: .workspaceOperations, confirmationPolicy: .never)
+      id: .chatGPTOperate, capabilities: ["file.read", "file.write"], projects: ["fixture"],
+      allowedCallers: [.secureTunnel], mode: .projectOperations, confirmationPolicy: .never)
     try database.saveProfile(profile.grant)
     let configuration = GatewayConfiguration(
       runtime: .init(caller: .secureTunnel, profileID: .chatGPTOperate), profiles: [profile],
       builtin: .init(enabled: ["file.read", "file.write"]))
     let gateway = try GatewayRuntime(
       configuration: configuration, database: database,
-      registeredWorkspaces: [.init(id: "fixture", displayName: "Fixture", rootPath: root.path)],
+      registeredProjects: [.init(id: "fixture", displayName: "Fixture", rootPath: root.path)],
       platform: MacOSPlatform.services)
     let runtime = GatewayHTTPRuntime(
       configuration: configuration, registry: gateway, host: "127.0.0.1", port: 0,
@@ -158,7 +158,7 @@ struct GatewayHTTPRuntimeTests {
       #expect(try await !first.listToolNames().contains("file.write"))
       #expect(try await second.listToolNames().contains("file.write"))
       let write: JSONValue = .object([
-        "workspace_id": .string("fixture"), "path": .string("value.txt"),
+        "project_id": .string("fixture"), "path": .string("value.txt"),
         "content": .string("authorized"), "confirm": .bool(true),
       ])
       let denied = try await first.call(toolName: "file.write", arguments: write)
@@ -170,7 +170,7 @@ struct GatewayHTTPRuntimeTests {
       try await runtime.endControlSession(id: firstScope.id, expectedRevision: restricted.revision)
       #expect(try await first.listToolNames().isEmpty)
       let read: JSONValue = .object([
-        "workspace_id": .string("fixture"), "path": .string("value.txt"),
+        "project_id": .string("fixture"), "path": .string("value.txt"),
       ])
       #expect(
         try await first.call(toolName: "file.read", arguments: read).result.objectValue?["isError"]
@@ -178,7 +178,7 @@ struct GatewayHTTPRuntimeTests {
       #expect(
         try await second.call(toolName: "file.read", arguments: read).result.objectValue?["isError"]
           == .bool(false))
-      #expect(try database.profiles().first?.mode == .workspaceOperations)
+      #expect(try database.profiles().first?.mode == .projectOperations)
       await first.disconnect()
       #expect(await runtime.controlSessions().map(\.id) == [secondScope.id])
       await second.disconnect()
@@ -221,7 +221,7 @@ struct GatewayHTTPRuntimeTests {
         endpoint: try #require(URL(string: "http://127.0.0.1:\(port)/mcp"))
       )
       let tools = try await session.listToolNames()
-      #expect(tools.contains("workspace.list"))
+      #expect(tools.contains("project.list"))
       await session.disconnect()
       await runtime.stop()
     } catch {

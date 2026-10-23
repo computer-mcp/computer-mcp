@@ -9,14 +9,14 @@ provider-declared schemas and result shape when the Swift SDK exposes them.
 ## `delivery.scopes.list` and `delivery.apply`
 
 The `delivery` provider lists host-declared scopes (read-only) and applies ordered
-UTF-8 edits in an isolated Git worktree (workspace write). Both require a workspace
+UTF-8 edits in an isolated Git worktree (project write). Both require a project
 and declare no network use. Apply commits and fast-forwards onto the default branch
 or retains its branch, with durable recovery and bounded file snippets. See
 [Isolated delivery](Delivery.md) for schemas, reason codes and recovery.
 
 ## Execution owners
 
-`runtime.owners.list` lists retained work in one granted `workspace_id`. It
+`runtime.owners.list` lists retained work in one granted `project_id`. It
 requires its own capability grant. An optional `server` filters MCP registration
 IDs. `limit` defaults to 50 and accepts 1–100; pass the returned `next_cursor` as
 `after` to continue. Pages contain at most 128 KiB of encoded rows, so a byte
@@ -26,7 +26,7 @@ owners may appear or expire between pages. Listing does not start providers.
 Each row contains an `owner` locator, work `kind`, `uncertain` and `current`
 flags, and optional registration, connection and resource identifiers. Resource
 descriptions larger than 4 KiB are omitted. The locator identifies the originating
-runtime, workspace and one host-owned lifetime. It conveys no permission and
+runtime, project and one host-owned lifetime. It conveys no permission and
 expires when that lifetime ends. Confirmed completed Shell/process output remains
 available through ordinary result reads for its retention period, independently
 of execution ownership.
@@ -34,14 +34,14 @@ of execution ownership.
 `runtime.owners.call` selects an exact owner when duplicate native handles are
 ambiguous or a call needs a retained provider instance. It requires its own
 capability and the target's current permissions. Supply the `owner` unchanged,
-the same `workspace_id`, the gateway `tool` name and its original `arguments`:
+the same `project_id`, the gateway `tool` name and its original `arguments`:
 
 ```json
 {
-  "workspace_id": "project",
+  "project_id": "project",
   "owner": {
     "runtime_id": "D26F63CA-B15C-423D-AB83-C1A7CABD1721",
-    "workspace_id": "project",
+    "project_id": "project",
     "ownership_id": "EA1521A4-3195-4E5B-9CE1-84682609E97A"
   },
   "tool": "provider.session.inspect",
@@ -50,7 +50,7 @@ the same `workspace_id`, the gateway `tool` name and its original `arguments`:
 ```
 
 The selected owner must belong to the caller's authenticated principal, profile
-and workspace. MCP calls use its original connection and registration; resource
+and project. MCP calls use its original connection and registration; resource
 continuations also require the matching native resource acquisition. Shell and
 registered-process calls require the exact owned session or process ID. Selecting
 a stale, foreign or disconnected owner fails without launching a replacement.
@@ -59,7 +59,7 @@ receive the locator.
 
 For writes requiring approval, select the same owner around both
 `operations.prepare` and `operations.commit`. The review and ticket bind that
-exact owner along with the tool, arguments, workspace and provider identity.
+exact owner along with the tool, arguments, project and provider identity.
 Changing the owner does not transfer approval. `target_execution` in a successful
 wrapped result identifies the selected invocation; ordinary `gateway_execution`
 identifies the routing call. Permission checks still run immediately before the
@@ -272,7 +272,7 @@ The call then returns as soon as the downstream request is running. Use
 result, and `mcp.requests.cancel` to request cancellation.
 
 A supplied `request_id` deduplicates both waiting and start-only calls for the
-same verified principal/profile/workspace and server. It must be nonempty and
+same verified principal/profile/project and server. It must be nonempty and
 at most 256 UTF-8 bytes. The same id with identical target, input and provider
 configuration refers to the original dispatch; a different input is rejected.
 A waiting retry returns an available complete result or directs the caller to
@@ -521,19 +521,19 @@ uses the separate `mcp.requests.cancel` and receipt-query surfaces.
 ## `policy.probe`
 
 Evaluate one exact Gateway capability against the active caller, profile, and
-workspace without executing the target. An allowed target returns its risk and
-bound workspace. A denied target returns the same stable `policy.*` error that
+project without executing the target. An allowed target returns its risk and
+bound project. A denied target returns the same stable `policy.*` error that
 execution would produce, and the probe is written to the Gateway audit log.
 
-## Workspace And Operation Tools
+## Project And Operation Tools
 
-`workspace.list` returns stable workspaces granted to the caller.
-`workspace.describe` returns one workspace after grant and bookmark
-resolution. Every scoped tool accepts `workspace_id`; omission is rejected when
-more than one workspace is available.
+`project.list` returns stable projects granted to the caller.
+`project.describe` returns one project after grant and bookmark
+resolution. Every scoped tool accepts `project_id`; omission is rejected when
+more than one project is available.
 
-Remote workspace tools never register an authorization root. Add or remove a
-workspace through the local App or `computer-mcp workspace …` CLI. Do not use
+Remote project tools never register an authorization root. Add or remove a
+project through the local App or `computer-mcp project …` CLI. Do not use
 Computer Use to operate Computer MCP's own UI as an administration fallback.
 
 `operations.prepare` creates a short-lived, single-use ticket for an authorized
@@ -545,10 +545,10 @@ or deny the request; a remote `confirm` argument cannot do so.
 
 `operations.commit` executes the exact canonical tool name and arguments bound
 into a prepared or locally approved ticket. It checks principal, profile,
-workspace, arguments, target state, expiry and grant revision, then consumes
+project, arguments, target state, expiry and grant revision, then consumes
 the ticket once. Parameter/target changes, rejection, expiry, revocation or
 reuse fail before execution. Tickets do not grant capabilities or expand a
-workspace. A preview that cannot safely fit the review budget is rejected
+project. A preview that cannot safely fit the review budget is rejected
 instead of presenting an incomplete approval.
 
 ## Plugin tools
@@ -1012,10 +1012,10 @@ Returned rows include `path`, file metadata, `matched_fields`,
 `content_matches` when `search_content=true`, and `read_context` /
 `list_context` for follow-up `skills.read_file` or `skills.files` calls.
 
-## `workspace.info`
+## `project.info`
 
-Available only when `[builtin].enabled` includes `workspace.info`. Returns a
-non-secret summary of the configured gateway: workspace root, policy values,
+Available only when `[builtin].enabled` includes `project.info`. Returns a
+non-secret summary of the configured gateway: project root, policy values,
 enabled builtins, CLI ids, MCP server ids, configured top-level tools, and
 tool auth metadata.
 
@@ -1025,10 +1025,10 @@ Arguments:
 {}
 ```
 
-## `workspace.status`
+## `project.status`
 
-Available only when `[builtin].enabled` includes `workspace.status`. Returns a
-read-only state summary of the configured workspace root: existence,
+Available only when `[builtin].enabled` includes `project.status`. Returns a
+read-only state summary of the configured project root: existence,
 read/write capability, bounded top-level file/directory/symlink counts, and
 whether a `.git` metadata marker exists at the root. It does not read file
 contents, return top-level names, run Git, or traverse recursively.
@@ -1042,11 +1042,11 @@ Arguments:
 }
 ```
 
-## `workspace.manifests`
+## `project.manifests`
 
-Available only when `[builtin].enabled` includes `workspace.manifests`.
+Available only when `[builtin].enabled` includes `project.manifests`.
 Returns existence and type metadata for a fixed catalog of common project
-manifest and config markers at the configured workspace root, such as
+manifest and config markers at the configured project root, such as
 `Package.swift`, `package.json`, `pyproject.toml`, `.github/workflows`, and
 `README.md`. It does not read file contents, recurse, run package managers, or
 infer the project stack.
@@ -1060,12 +1060,12 @@ Arguments:
 }
 ```
 
-## `workspace.recent_files`
+## `project.recent_files`
 
-Available only when `[builtin].enabled` includes `workspace.recent_files`.
+Available only when `[builtin].enabled` includes `project.recent_files`.
 Returns a bounded list of recently modified regular files under the configured
-workspace using filesystem metadata only. It sorts by modification time
-descending and then by workspace-relative path for ties. It does not read file
+project using filesystem metadata only. It sorts by modification time
+descending and then by project-relative path for ties. It does not read file
 contents, run Git, or infer project semantics.
 
 Arguments:
@@ -1078,12 +1078,12 @@ Arguments:
 }
 ```
 
-## `workspace.directory_stats`
+## `project.directory_stats`
 
-Available only when `[builtin].enabled` includes `workspace.directory_stats`.
+Available only when `[builtin].enabled` includes `project.directory_stats`.
 Returns bounded directory-level shape statistics grouped by the first child
-under a workspace-contained path. It counts files, directories, symlinks, total
-file bytes, and common workspace file categories using metadata only. It does
+under a project-contained path. It counts files, directories, symlinks, total
+file bytes, and common project file categories using metadata only. It does
 not read file contents, infer architecture, or run tools. Heavy dependency and
 build artifact directories such as `node_modules`, `.build`, `vendor`, and
 virtual environments are counted as skipped subtrees by default rather than
@@ -1101,16 +1101,16 @@ Arguments:
 }
 ```
 
-Returned group rows include `workspace_relative_path`, `name`, `file_count`,
+Returned group rows include `project_relative_path`, `name`, `file_count`,
 `directory_count`, `symlink_count`, `total_size_bytes`, category counts such as
 `source_file_count` and `dependency_file_count`, and `skipped_subtree_count`.
 
-## `workspace.artifact_directories`
+## `project.artifact_directories`
 
 Available only when `[builtin].enabled` includes
-`workspace.artifact_directories`. Returns a bounded metadata-only list of common
+`project.artifact_directories`. Returns a bounded metadata-only list of common
 generated, build output, cache, dependency install, coverage, and temporary
-directories under a workspace-contained path. It does not read directory
+directories under a project-contained path. It does not read directory
 contents, run cleanup commands, run Git, or delete anything.
 
 Arguments:
@@ -1125,17 +1125,17 @@ Arguments:
 }
 ```
 
-Returned directory rows include `workspace_relative_path`, `name`, `category`,
+Returned directory rows include `project_relative_path`, `name`, `category`,
 `kind`, `cleanup_risk`, filesystem metadata, and follow-up contexts for
-`file.stat`, `file.disk_usage`, `file.tree`, and `workspace.directory_stats`.
+`file.stat`, `file.disk_usage`, `file.tree`, and `project.directory_stats`.
 Matched directories are returned as single rows and their descendants are not
 recursed into.
 
-## `workspace.empty_directories`
+## `project.empty_directories`
 
-Available only when `[builtin].enabled` includes `workspace.empty_directories`.
+Available only when `[builtin].enabled` includes `project.empty_directories`.
 Returns a bounded list of actually empty directories under a
-workspace-contained path using filesystem metadata only. A directory containing
+project-contained path using filesystem metadata only. A directory containing
 hidden entries is not treated as empty. `include_hidden` controls whether hidden
 directories are traversed and returned. This tool does not delete directories,
 run cleanup commands, or follow symlinks as directories.
@@ -1152,15 +1152,15 @@ Arguments:
 }
 ```
 
-Returned directory rows include `workspace_relative_path`, `name`, `depth`,
+Returned directory rows include `project_relative_path`, `name`, `depth`,
 `is_root`, `child_count`, `modified_at`, and follow-up context for an explicit
-`workspace.reveal` call.
+`project.reveal` call.
 
-## `workspace.git_changes`
+## `project.git_changes`
 
-Available only when `[builtin].enabled` includes `workspace.git_changes` and a
+Available only when `[builtin].enabled` includes `project.git_changes` and a
 CLI provider with `id = "git"` is registered. Returns structured
-workspace-relative Git working tree change entries from fixed
+project-relative Git working tree change entries from fixed
 `git status --porcelain=v1 -z --untracked-files=all` output. It does not read
 file contents, run `git diff`, or infer tasks.
 
@@ -1175,15 +1175,15 @@ Arguments:
 ```
 
 Returned change rows include `status`, `index_status`, `worktree_status`,
-`workspace_relative_path`, and `original_path` for rename/copy entries. The
+`project_relative_path`, and `original_path` for rename/copy entries. The
 payload also includes the exact `argv`, `status_counts`, a `status_legend`,
 truncation flags, and command exit/stderr metadata.
 
-## `workspace.file_types`
+## `project.file_types`
 
-Available only when `[builtin].enabled` includes `workspace.file_types`.
+Available only when `[builtin].enabled` includes `project.file_types`.
 Returns a bounded extension histogram for regular files under the configured
-workspace using filesystem metadata only. It reports extension labels, file
+project using filesystem metadata only. It reports extension labels, file
 counts, and summed byte sizes. It does not read file contents, run Git, or infer
 project semantics.
 
@@ -1197,12 +1197,12 @@ Arguments:
 }
 ```
 
-## `workspace.large_files`
+## `project.large_files`
 
-Available only when `[builtin].enabled` includes `workspace.large_files`.
+Available only when `[builtin].enabled` includes `project.large_files`.
 Returns a bounded list of the largest regular files under the configured
-workspace using filesystem metadata only. It sorts by byte size descending and
-then by workspace-relative path for ties. It does not read file contents, delete
+project using filesystem metadata only. It sorts by byte size descending and
+then by project-relative path for ties. It does not read file contents, delete
 files, or run cleanup commands.
 
 Arguments:
@@ -1215,12 +1215,12 @@ Arguments:
 }
 ```
 
-## `workspace.symlinks`
+## `project.symlinks`
 
-Available only when `[builtin].enabled` includes `workspace.symlinks`.
-Returns a bounded list of symbolic links under the configured workspace. It
+Available only when `[builtin].enabled` includes `project.symlinks`.
+Returns a bounded list of symbolic links under the configured project. It
 reports each link path, raw destination, resolved target path, whether the
-target exists, and whether the target remains workspace-contained. It does not
+target exists, and whether the target remains project-contained. It does not
 read target contents or follow links for execution.
 
 Arguments:
@@ -1233,12 +1233,12 @@ Arguments:
 }
 ```
 
-## `workspace.executable_files`
+## `project.executable_files`
 
-Available only when `[builtin].enabled` includes `workspace.executable_files`.
-Returns a bounded list of regular files under the configured workspace with the
+Available only when `[builtin].enabled` includes `project.executable_files`.
+Returns a bounded list of regular files under the configured project with the
 executable bit set, using filesystem metadata only. It sorts by
-workspace-relative path. It does not read file contents, infer script language,
+project-relative path. It does not read file contents, infer script language,
 or execute files.
 
 Arguments:
@@ -1251,10 +1251,10 @@ Arguments:
 }
 ```
 
-## `workspace.todos`
+## `project.todos`
 
-Available only when `[builtin].enabled` includes `workspace.todos`. Searches
-UTF-8 files under a workspace-contained file or directory for common TODO-style
+Available only when `[builtin].enabled` includes `project.todos`. Searches
+UTF-8 files under a project-contained file or directory for common TODO-style
 markers. Defaults to `TODO`, `FIXME`, `HACK`, and `XXX`, with case-insensitive
 token matching. Marker tokens are bounded by non-word characters so ordinary
 words like `todos` are not returned as `TODO`. It returns mechanical line
@@ -1275,10 +1275,10 @@ Arguments:
 }
 ```
 
-## `workspace.env_files`
+## `project.env_files`
 
-Available only when `[builtin].enabled` includes `workspace.env_files`. Finds
-workspace env files such as `.env`, `.env.local`, and `example.env`, then returns
+Available only when `[builtin].enabled` includes `project.env_files`. Finds
+project env files such as `.env`, `.env.local`, and `example.env`, then returns
 only variable key metadata. Values are always redacted and never returned. By
 default the scan includes env files in visible directories and skips hidden
 directories such as `.git`.
@@ -1297,11 +1297,11 @@ Arguments:
 }
 ```
 
-## `workspace.dependency_files`
+## `project.dependency_files`
 
-Available only when `[builtin].enabled` includes `workspace.dependency_files`.
+Available only when `[builtin].enabled` includes `project.dependency_files`.
 Finds common package manifest, requirements, lock, and checksum files under a
-workspace-contained path. It uses filename metadata only and does not read file
+project-contained path. It uses filename metadata only and does not read file
 contents, parse dependency names, infer install plans, or run package managers.
 
 Arguments:
@@ -1316,14 +1316,14 @@ Arguments:
 }
 ```
 
-Returned file rows include `workspace_relative_path`, `name`, `ecosystem`,
+Returned file rows include `project_relative_path`, `name`, `ecosystem`,
 `role`, `type`, `size_bytes`, `modified_at`, `is_symlink`, `xml_readable`, and
 `xml_context`. XML dependency manifests such as `pom.xml` return
 `xml_context.tool = "xml.read"`.
 
-## `workspace.project_roots`
+## `project.project_roots`
 
-Available only when `[builtin].enabled` includes `workspace.project_roots`.
+Available only when `[builtin].enabled` includes `project.project_roots`.
 Groups common dependency manifest, lock, requirements, and checksum files by
 containing directory to find candidate project roots using filename metadata
 only. It does not read manifests, infer build graphs, choose a primary project,
@@ -1341,15 +1341,15 @@ Arguments:
 }
 ```
 
-Returned candidate rows include `workspace_relative_path`, `ecosystems`,
+Returned candidate rows include `project_relative_path`, `ecosystems`,
 `manifest_files`, `lock_files`, `checksum_files`, `dependency_file_count`,
-`dependency_files`, and `is_workspace_root`.
+`dependency_files`, and `is_project_root`.
 
-## `workspace.documentation_files`
+## `project.documentation_files`
 
-Available only when `[builtin].enabled` includes `workspace.documentation_files`.
+Available only when `[builtin].enabled` includes `project.documentation_files`.
 Finds README, AGENTS, CONTRIBUTING, SECURITY, SUPPORT, changelog, license, and
-docs-directory documentation files under a workspace-contained path. It uses
+docs-directory documentation files under a project-contained path. It uses
 filename and path metadata only and does not read contents, summarize documents,
 or infer policy.
 
@@ -1365,16 +1365,16 @@ Arguments:
 }
 ```
 
-Returned file rows include `workspace_relative_path`, `name`, `category`,
+Returned file rows include `project_relative_path`, `name`, `category`,
 `source`, `type`, `size_bytes`, `modified_at`, and `is_symlink`. Markdown rows
 also include `markdown_links_context` and `markdown_link_check_context` for
 explicit follow-up inspection through `markdown.links` and
 `markdown.link_check`.
 
-## `workspace.agent_files`
+## `project.agent_files`
 
-Available only when `[builtin].enabled` includes `workspace.agent_files`.
-Finds workspace agent instruction and skill entrypoint files such as
+Available only when `[builtin].enabled` includes `project.agent_files`.
+Finds project agent instruction and skill entrypoint files such as
 `AGENTS.md`, `CLAUDE.md`, `GEMINI.md`,
 `.github/copilot-instructions.md`, Cursor/Windsurf rules, and
 `skills/*/SKILL.md` using path metadata only. It does not read instruction
@@ -1392,18 +1392,18 @@ Arguments:
 }
 ```
 
-Returned file rows include `workspace_relative_path`, `name`, `kind`, `source`,
-`scope_workspace_relative_path`, `type`, `size_bytes`, `modified_at`,
+Returned file rows include `project_relative_path`, `name`, `kind`, `source`,
+`scope_project_relative_path`, `type`, `size_bytes`, `modified_at`,
 `is_symlink`, and `read_context`. Use `read_context.tool = "file.read"` and the
 returned path to read selected files through the gateway.
 
-## `workspace.instructions`
+## `project.instructions`
 
-Available only when `[builtin].enabled` includes `workspace.instructions`.
+Available only when `[builtin].enabled` includes `project.instructions`.
 Returns the bounded agent instruction files that apply to one target
-workspace-contained path. It walks from the workspace root to the target path's
+project-contained path. It walks from the project root to the target path's
 scope directory and checks fixed instruction filenames plus Cursor/Windsurf rule
-directories at each level. It does not recursively scan the full workspace,
+directories at each level. It does not recursively scan the full project,
 summarize instructions, merge rules, or infer policy.
 
 Arguments:
@@ -1422,16 +1422,16 @@ Arguments:
 yet. When `path_is_directory` is omitted, existing paths use filesystem metadata;
 nonexistent paths are treated as files unless the path ends in `/`.
 
-Returned file rows include `workspace_relative_path`, `kind`, `source`,
-`scope_workspace_relative_path`, `apply_order`, file metadata,
+Returned file rows include `project_relative_path`, `kind`, `source`,
+`scope_project_relative_path`, `apply_order`, file metadata,
 `content_included`, bounded `content`, `content_bytes_read`,
 `content_truncated`, `valid_utf8`, and `read_context`. `apply_order` is root to
 leaf; closer directory instructions have larger values.
 
-## `workspace.test_files`
+## `project.test_files`
 
-Available only when `[builtin].enabled` includes `workspace.test_files`. Finds
-likely test/spec files under a workspace-contained path using path and filename
+Available only when `[builtin].enabled` includes `project.test_files`. Finds
+likely test/spec files under a project-contained path using path and filename
 metadata only. It does not read file contents, infer test frameworks, or run
 tests.
 
@@ -1447,14 +1447,14 @@ Arguments:
 }
 ```
 
-Returned file rows include `workspace_relative_path`, `name`, `language`,
+Returned file rows include `project_relative_path`, `name`, `language`,
 `match_source`, `style`, `type`, `size_bytes`, `modified_at`, and `is_symlink`.
 
-## `workspace.ci_files`
+## `project.ci_files`
 
-Available only when `[builtin].enabled` includes `workspace.ci_files`. Finds
+Available only when `[builtin].enabled` includes `project.ci_files`. Finds
 common CI/CD and hosted build pipeline configuration files under a
-workspace-contained path using path and filename metadata only. It does not
+project-contained path using path and filename metadata only. It does not
 read YAML or JSON contents, infer pipeline semantics, or run automation.
 
 Arguments:
@@ -1469,18 +1469,18 @@ Arguments:
 }
 ```
 
-Returned file rows include `workspace_relative_path`, `name`, `provider`,
+Returned file rows include `project_relative_path`, `name`, `provider`,
 `category`, `match_source`, `type`, `size_bytes`, `modified_at`, and
 `is_symlink`.
 
-## `workspace.infra_files`
+## `project.infra_files`
 
-Available only when `[builtin].enabled` includes `workspace.infra_files`. Finds
+Available only when `[builtin].enabled` includes `project.infra_files`. Finds
 likely infrastructure, deployment, container, orchestration, and platform
 configuration files such as Dockerfile, docker-compose, devcontainer,
 Kubernetes manifests, Helm charts, Terraform, Packer, Nomad, Pulumi,
 Serverless, Cloudflare Wrangler, Vercel, Netlify, Fly, Render, Railway, and
-Procfile under a workspace-contained path using filename, extension, and
+Procfile under a project-contained path using filename, extension, and
 infra-directory metadata only. It does not read config contents, parse IaC,
 infer topology, validate manifests, or run deployment tools.
 
@@ -1499,7 +1499,7 @@ Arguments:
 `include_hidden` defaults to false, but `.devcontainer` is scanned because it is
 a common project infrastructure directory.
 
-Returned file rows include `workspace_relative_path`, `name`, `extension`,
+Returned file rows include `project_relative_path`, `name`, `extension`,
 `category`, `provider`, `kind`, `format`, `match_source`, `json_readable`,
 `toml_readable`, `yaml_readable`, `xml_readable`, `type`, `size_bytes`, `modified_at`,
 `is_symlink`, `read_lines_context`, `stat_context`, `metadata_context`,
@@ -1508,11 +1508,11 @@ explicit follow-up inspection through `file.read_lines`, `json.read`,
 `toml.read`, `yaml.read`, `xml.read`, `file.stat`, or
 `file.metadata`.
 
-## `workspace.config_files`
+## `project.config_files`
 
-Available only when `[builtin].enabled` includes `workspace.config_files`.
+Available only when `[builtin].enabled` includes `project.config_files`.
 Finds common editor, formatter, linter, toolchain, and build-tool configuration
-files under a workspace-contained path using path and filename metadata only.
+files under a project-contained path using path and filename metadata only.
 It does not read config contents, infer rules, or run tools.
 
 Arguments:
@@ -1527,16 +1527,16 @@ Arguments:
 }
 ```
 
-Returned file rows include `workspace_relative_path`, `name`, `tool`,
+Returned file rows include `project_relative_path`, `name`, `tool`,
 `category`, `match_source`, `type`, `size_bytes`, `modified_at`, and
 `is_symlink`.
 
-## `workspace.ignore_files`
+## `project.ignore_files`
 
-Available only when `[builtin].enabled` includes `workspace.ignore_files`.
+Available only when `[builtin].enabled` includes `project.ignore_files`.
 Finds common ignore-rule files such as `.gitignore`, `.dockerignore`,
 `.rgignore`, `.prettierignore`, deployment ignore files, and agent context
-ignore files under a workspace-contained path using path metadata only. It does
+ignore files under a project-contained path using path metadata only. It does
 not parse ignore rules, decide whether a path is ignored, or read file
 contents. Use `git.ignored` when you need Git to check explicit paths against
 Git ignore rules.
@@ -1553,16 +1553,16 @@ Arguments:
 }
 ```
 
-Returned file rows include `workspace_relative_path`, `name`, `provider`,
+Returned file rows include `project_relative_path`, `name`, `provider`,
 `category`, `match_source`, `type`, `size_bytes`, `modified_at`, `is_symlink`,
 and `read_context`. Use `read_context.tool = "file.read"` and the returned path
 to read selected ignore files through the gateway.
 
-## `workspace.asset_files`
+## `project.asset_files`
 
-Available only when `[builtin].enabled` includes `workspace.asset_files`.
+Available only when `[builtin].enabled` includes `project.asset_files`.
 Finds common project asset files such as images, icons, fonts, audio, video,
-PDFs, presentations, and design-source files under a workspace-contained path
+PDFs, presentations, and design-source files under a project-contained path
 using extension and path metadata only. It does not read asset contents,
 generate previews, inspect dimensions, extract metadata, or infer where assets
 are used. Image rows include a follow-up `image.info` context for explicit
@@ -1582,18 +1582,18 @@ Arguments:
 }
 ```
 
-Returned file rows include `workspace_relative_path`, `name`, `extension`,
+Returned file rows include `project_relative_path`, `name`, `extension`,
 `category`, `subtype`, `type`, `size_bytes`, `modified_at`, `is_symlink`,
 `stat_context`, `metadata_context`, and, for selected formats,
 `image_info_context`, `pdf_info_context`, or `media_info_context`. Use the
 context objects to inspect a selected asset through `file.stat`,
 `file.metadata`, `image.info`, `pdf.info`, or `media.info`.
 
-## `workspace.archive_files`
+## `project.archive_files`
 
-Available only when `[builtin].enabled` includes `workspace.archive_files`.
+Available only when `[builtin].enabled` includes `project.archive_files`.
 Finds common archive, compressed stream, installer, disk image, and application
-package files under a workspace-contained path using extension and path metadata
+package files under a project-contained path using extension and path metadata
 only. It does not list archive entries, extract files, inspect package manifests,
 or read contents.
 
@@ -1609,7 +1609,7 @@ Arguments:
 }
 ```
 
-Returned file rows include `workspace_relative_path`, `name`, `extension`,
+Returned file rows include `project_relative_path`, `name`, `extension`,
 `category`, `format`, `list_supported`, `type`, `size_bytes`, `modified_at`,
 `is_symlink`, `stat_context`, `metadata_context`, `list_context`, and
 `read_file_context`. `list_context` and `read_file_context` are present only
@@ -1617,11 +1617,11 @@ for formats supported by `archive.list` and `archive.read_file`, such as zip,
 jar, war, ear, and tar-family archives. `read_file_context.entry` is `null`
 until the MCP consumer selects a concrete member from `archive.list`.
 
-## `workspace.log_files`
+## `project.log_files`
 
-Available only when `[builtin].enabled` includes `workspace.log_files`. Finds
+Available only when `[builtin].enabled` includes `project.log_files`. Finds
 likely log, process output, trace, and crash-report files under a
-workspace-contained path using filename, extension, rotated suffix, and
+project-contained path using filename, extension, rotated suffix, and
 `logs`-directory metadata only. It does not read log contents, infer severity,
 summarize events, or follow live streams.
 
@@ -1637,18 +1637,18 @@ Arguments:
 }
 ```
 
-Returned file rows include `workspace_relative_path`, `name`, `extension`,
+Returned file rows include `project_relative_path`, `name`, `extension`,
 `category`, `kind`, `match_source`, `type`, `size_bytes`, `modified_at`,
 `is_symlink`, `tail_context`, `search_context`, and `stat_context`. Use
 `tail_context.tool = "file.tail"` for explicit bounded tail reads, or
 `search_context.tool = "file.search"` with a query for explicit content search.
 
-## `workspace.data_files`
+## `project.data_files`
 
-Available only when `[builtin].enabled` includes `workspace.data_files`. Finds
+Available only when `[builtin].enabled` includes `project.data_files`. Finds
 common data artifacts such as CSV, TSV, JSONL, SQLite, DuckDB, Parquet, Arrow,
 Avro, ORC, Excel, and structured files in data-like directories under a
-workspace-contained path using extension and path metadata only. It does not
+project-contained path using extension and path metadata only. It does not
 read data contents, infer schemas, count rows, sample values, or inspect
 databases.
 
@@ -1664,7 +1664,7 @@ Arguments:
 }
 ```
 
-Returned file rows include `workspace_relative_path`, `name`, `extension`,
+Returned file rows include `project_relative_path`, `name`, `extension`,
 `category`, `format`, `match_source`, `text_readable`, `json_readable`,
 `jsonl_readable`, `yaml_readable`, `xml_readable`, `type`, `size_bytes`, `modified_at`, `is_symlink`,
 `stat_context`, `metadata_context`, `read_lines_context`, `tail_context`,
@@ -1676,13 +1676,13 @@ when they are found inside a data-like directory. JSONL/NDJSON files return
 `yaml_context.tool = "yaml.read"`. XML files return
 `xml_context.tool = "xml.read"`.
 
-## `workspace.schema_files`
+## `project.schema_files`
 
-Available only when `[builtin].enabled` includes `workspace.schema_files`.
+Available only when `[builtin].enabled` includes `project.schema_files`.
 Finds likely API, interface, data, and database schema/contract files such as
 OpenAPI, Swagger, AsyncAPI, GraphQL, Protocol Buffers, JSON Schema, Avro schema,
 Prisma, WSDL, XSD, Thrift, FlatBuffers, and SQL migrations under a
-workspace-contained path using filename, extension, and schema-directory
+project-contained path using filename, extension, and schema-directory
 metadata only. It does not read schema contents, validate contracts, infer
 models, generate clients, or inspect databases.
 
@@ -1698,7 +1698,7 @@ Arguments:
 }
 ```
 
-Returned file rows include `workspace_relative_path`, `name`, `extension`,
+Returned file rows include `project_relative_path`, `name`, `extension`,
 `category`, `schema_kind`, `format`, `match_source`, `json_readable`,
 `yaml_readable`, `xml_readable`, `type`, `size_bytes`, `modified_at`, `is_symlink`,
 `read_lines_context`, `stat_context`, `metadata_context`, `json_context`,
@@ -1708,13 +1708,13 @@ through `file.read_lines`; JSON-readable schema files also return
 `yaml_context.tool = "yaml.read"`. XML schema files such as XSD and WSDL return
 `xml_context.tool = "xml.read"`.
 
-## `workspace.source_files`
+## `project.source_files`
 
-Available only when `[builtin].enabled` includes `workspace.source_files`.
+Available only when `[builtin].enabled` includes `project.source_files`.
 Finds likely source, script, component, markup, style, header, and query files
-under a workspace-contained path using file extension and path metadata only.
+under a project-contained path using file extension and path metadata only.
 It does not read source contents, infer architecture, or run tools. Files that
-also match `workspace.test_files` are excluded by default.
+also match `project.test_files` are excluded by default.
 
 Arguments:
 
@@ -1729,13 +1729,13 @@ Arguments:
 }
 ```
 
-Returned file rows include `workspace_relative_path`, `name`, `language`,
+Returned file rows include `project_relative_path`, `name`, `language`,
 `kind`, `match_source`, `type`, `size_bytes`, `modified_at`, and `is_symlink`.
 
-## `workspace.outline`
+## `project.outline`
 
-Available only when `[builtin].enabled` includes `workspace.outline`. Returns a
-bounded mechanical outline across outline-capable workspace files by extracting
+Available only when `[builtin].enabled` includes `project.outline`. Returns a
+bounded mechanical outline across outline-capable project files by extracting
 Markdown headings and common source declarations. It reads bounded UTF-8
 windows from candidate files and does not summarize, infer architecture, build
 a semantic graph, or run tools.
@@ -1756,14 +1756,14 @@ Arguments:
 }
 ```
 
-Returned outline rows include `workspace_relative_path`, `language`, `line`,
+Returned outline rows include `project_relative_path`, `language`, `line`,
 `kind`, `level`, `name`, raw outline `text`, and follow-up contexts for
 `file.read_context` and `file.outline`. Build/cache/vendor directories are
 skipped by default through the same source-file traversal boundary.
 
-## `workspace.commands`
+## `project.commands`
 
-Available only when `[builtin].enabled` includes `workspace.commands`.
+Available only when `[builtin].enabled` includes `project.commands`.
 Finds deterministic project command entrypoints from common manifests such as
 `package.json` scripts, `Makefile` targets, `Justfile` recipes, and standard
 SwiftPM, Cargo, and Go project commands. It reads only bounded manifest bytes,
@@ -1783,12 +1783,12 @@ Arguments:
 }
 ```
 
-Returned command rows include `source_workspace_relative_path`,
-`cwd_workspace_relative_path`, `ecosystem`, `kind`, `name`, `definition`,
+Returned command rows include `source_project_relative_path`,
+`cwd_project_relative_path`, `ecosystem`, `kind`, `name`, `definition`,
 `definition_source`, `executor_tool`, `suggested_cli_id`,
 `registered_cli_provider`, `required_executable`, `argv`, and
 `file_truncated`. For nested manifests, callers must respect
-`cwd_workspace_relative_path`; `cli.exec` itself still uses the registered
+`cwd_project_relative_path`; `cli.exec` itself still uses the registered
 provider working directory.
 
 ## `system.info`
@@ -2422,7 +2422,7 @@ Returned rows include `id`, `category`, `description`, `path`, `exists`,
 Available only when `[builtin].enabled` includes
 `macos.default_application`. Returns the default macOS application, and
 optionally candidate applications, that LaunchServices would use for either an
-existing workspace-contained file path or an `http`, `https`, or `mailto` URL.
+existing project-contained file path or an `http`, `https`, or `mailto` URL.
 It is read-only: it does not open files, launch applications, make network
 requests, or inspect UI content.
 
@@ -2438,7 +2438,7 @@ Provide exactly one target:
 ```
 
 For `path`, the file or directory must exist and remain inside the configured
-workspace. For `url`, only `http`, `https`, and `mailto` schemes are accepted.
+project. For `url`, only `http`, `https`, and `mailto` schemes are accepted.
 The result includes `target`, `default_application_available`,
 `default_application`, `candidate_count`, `candidate_applications`, and
 `truncated`.
@@ -2476,8 +2476,8 @@ Arguments:
 ## `macos.spotlight_search`
 
 Available only when `[builtin].enabled` includes `macos.spotlight_search`.
-Runs `/usr/bin/mdfind -onlyin` against a workspace-contained directory and
-returns bounded, workspace-contained results. The `query` is the raw Spotlight
+Runs `/usr/bin/mdfind -onlyin` against a project-contained directory and
+returns bounded, project-contained results. The `query` is the raw Spotlight
 query string passed to `mdfind`; the gateway does not parse or optimize the
 query language.
 
@@ -2540,7 +2540,7 @@ Arguments:
 ## `file.exists`
 
 Available only when `[builtin].enabled` includes `file.exists`. Checks whether
-a workspace-contained path exists without treating absence as an error. Use
+a project-contained path exists without treating absence as an error. Use
 `file.stat` when metadata is needed.
 
 Arguments:
@@ -2554,7 +2554,7 @@ Arguments:
 ## `file.list`
 
 Available only when `[builtin].enabled` includes `file.list`. Lists entries
-under a workspace-contained directory with deterministic sorting and bounded
+under a project-contained directory with deterministic sorting and bounded
 output. Dotfiles are hidden unless `include_hidden` is true.
 
 Arguments:
@@ -2571,7 +2571,7 @@ Arguments:
 ## `file.tree`
 
 Available only when `[builtin].enabled` includes `file.tree`. Returns a bounded
-hierarchical JSON tree for a workspace-contained directory. It follows the same
+hierarchical JSON tree for a project-contained directory. It follows the same
 containment, hidden-file, sorting, and symlink non-recursion rules as
 `file.list`, but preserves parent/child structure for browsing.
 
@@ -2605,7 +2605,7 @@ Arguments:
 Available only when `[builtin].enabled` includes `file.permissions`. Returns
 POSIX mode, owner/group ids and names when available, current-process
 read/write/execute access, and common macOS file flags for a
-workspace-contained path. It is read-only and does not change permissions.
+project-contained path. It is read-only and does not change permissions.
 
 Arguments:
 
@@ -2618,7 +2618,7 @@ Arguments:
 ## `file.chmod`
 
 Available only when `[builtin].enabled` includes `file.chmod`. Sets the POSIX
-mode for a workspace-contained path without invoking `/bin/chmod`. This is a
+mode for a project-contained path without invoking `/bin/chmod`. This is a
 non-recursive write operation. Use `expected_current_mode` when the caller wants
 to assert the old mode before changing it. Set `dry_run` to validate the mode
 change and return `would_mode_after_octal` without changing permissions.
@@ -2637,7 +2637,7 @@ Arguments:
 ## `file.type`
 
 Available only when `[builtin].enabled` includes `file.type`. Returns MIME type
-and charset for a workspace-contained file using fixed `/usr/bin/file -b --mime`
+and charset for a project-contained file using fixed `/usr/bin/file -b --mime`
 argv. It is read-only and does not return file content.
 
 Arguments:
@@ -2653,7 +2653,7 @@ Arguments:
 ## `file.count`
 
 Available only when `[builtin].enabled` includes `file.count`. Returns line,
-word, and byte counts for a workspace-contained file using fixed
+word, and byte counts for a project-contained file using fixed
 `/usr/bin/wc -l -w -c` argv. It is read-only and does not return file content.
 
 Arguments:
@@ -2669,7 +2669,7 @@ Arguments:
 ## `file.disk_usage`
 
 Available only when `[builtin].enabled` includes `file.disk_usage`. Returns
-disk usage for a workspace-contained file or directory using fixed
+disk usage for a project-contained file or directory using fixed
 `/usr/bin/du -sk` argv. It is read-only and returns allocated disk usage, not a
 semantic project-size estimate.
 
@@ -2686,7 +2686,7 @@ Arguments:
 ## `file.volume_info`
 
 Available only when `[builtin].enabled` includes `file.volume_info`. Returns
-the mounted volume and filesystem capability metadata for a workspace-contained
+the mounted volume and filesystem capability metadata for a project-contained
 path using Foundation URL resource values. It is read-only, does not run shell
 commands, and complements `file.disk_usage`: use it to check the volume, free
 capacity, read-only state, and supported filesystem features for a path.
@@ -2702,7 +2702,7 @@ Arguments:
 ## `file.find`
 
 Available only when `[builtin].enabled` includes `file.find`. Finds files or
-directories by name under a workspace-contained directory. Matching is
+directories by name under a project-contained directory. Matching is
 deterministic string matching; no semantic search or command catalog inference
 is performed.
 
@@ -2726,7 +2726,7 @@ Arguments:
 ## `file.search`
 
 Available only when `[builtin].enabled` includes `file.search`. Searches UTF-8
-text content under a workspace-contained file or directory. Output is bounded by
+text content under a project-contained file or directory. Output is bounded by
 file count, match count, and bytes per file.
 
 Arguments:
@@ -2747,7 +2747,7 @@ Arguments:
 ## `file.timeline`
 
 Available only when `[builtin].enabled` includes `file.timeline`. Lists regular
-non-symlink files under a workspace-contained directory using filesystem
+non-symlink files under a project-contained directory using filesystem
 modification timestamps. It does not read file contents, run Git, infer
 "recent" semantics, or parse natural-language dates.
 
@@ -2774,7 +2774,7 @@ result truncation flags.
 ## `file.read`
 
 Available only when `[builtin].enabled` includes `file.read`. Reads a
-workspace-contained file as UTF-8 text.
+project-contained file as UTF-8 text.
 
 Arguments:
 
@@ -2788,15 +2788,15 @@ Arguments:
 ## `file.read_files`
 
 Available only when `[builtin].enabled` includes `file.read_files`. Reads
-multiple explicitly named workspace-contained files in one call. This is a
+multiple explicitly named project-contained files in one call. This is a
 batch form for known paths; it does not search, infer related files, follow
 references, or walk directories. Use `file.find`, `file.search`, or
-workspace inventory tools first when the paths are not known.
+project inventory tools first when the paths are not known.
 
 All files in one call use the same `encoding`, either `utf8` or `base64`.
 Each file is capped independently by `max_bytes_per_file`; the response reports
 per-file truncation plus aggregate byte and truncation counts. The call fails
-deterministically if any path is missing, escapes the workspace, or is not a
+deterministically if any path is missing, escapes the project, or is not a
 regular file.
 
 Arguments:
@@ -2812,7 +2812,7 @@ Arguments:
 ## `file.read_window`
 
 Available only when `[builtin].enabled` includes `file.read_window`. Reads a
-bounded UTF-8 text byte window from a workspace-contained file. Use it when a
+bounded UTF-8 text byte window from a project-contained file. Use it when a
 consumer already has a byte offset, for example after a previous
 `file.read_window`, `file.hexdump`, or external offset-bearing diagnostic. This
 tool does not search, infer structure, or treat the file as binary; use
@@ -2836,7 +2836,7 @@ sequence or contains non-text bytes.
 ## `file.read_lines`
 
 Available only when `[builtin].enabled` includes `file.read_lines`. Reads a
-bounded one-based line range from a workspace-contained UTF-8 file. The tool
+bounded one-based line range from a project-contained UTF-8 file. The tool
 scans at most `max_bytes` from the start of the file and reports whether that
 scan was truncated.
 
@@ -2855,7 +2855,7 @@ Arguments:
 
 Available only when `[builtin].enabled` includes `file.read_context`. Reads a
 bounded UTF-8 line window around a one-based target line from a
-workspace-contained file. Use it after `file.search`, `git.grep`, compiler
+project-contained file. Use it after `file.search`, `git.grep`, compiler
 diagnostics, or any result that already provides a line number. It does not
 search for text, parse diagnostics, or infer semantics.
 
@@ -2879,7 +2879,7 @@ reached the requested line range.
 ## `file.head`
 
 Available only when `[builtin].enabled` includes `file.head`. Reads the first
-lines from a workspace-contained UTF-8 file using a bounded byte window. This
+lines from a project-contained UTF-8 file using a bounded byte window. This
 is the direct counterpart to `file.tail` for quick file orientation. When the
 byte window ends in the middle of a line, the final returned line is flagged as
 truncated.
@@ -2900,7 +2900,7 @@ Returned line rows include `line`, `head_index`, `text`, and
 ## `file.outline`
 
 Available only when `[builtin].enabled` includes `file.outline`. Returns a
-bounded mechanical outline for a workspace-contained UTF-8 file by extracting
+bounded mechanical outline for a project-contained UTF-8 file by extracting
 Markdown headings and common source declaration lines. It does not summarize,
 infer architecture, or build a semantic graph.
 
@@ -2923,7 +2923,7 @@ lines, and Makefile targets.
 ## `markdown.links`
 
 Available only when `[builtin].enabled` includes `markdown.links`. Extracts a
-bounded mechanical link inventory from a workspace-contained UTF-8 Markdown
+bounded mechanical link inventory from a project-contained UTF-8 Markdown
 file. It reports inline links, image links, reference-style links, reference
 definitions, autolinks, local target path context, and truncation flags. It
 does not follow links, fetch URLs, summarize documents, or infer document
@@ -2946,13 +2946,13 @@ Arguments:
 Returned links include `line`, `kind`, `label`, `reference_label`,
 `destination`, `title`, raw source text, `is_image`, and a `target` object.
 For relative or absolute local paths, `target` reports whether the destination
-is workspace-contained and, when it is, the normalized
-`target_workspace_relative_path` for follow-up `file.*` calls.
+is project-contained and, when it is, the normalized
+`target_project_relative_path` for follow-up `file.*` calls.
 
 ## `markdown.tables`
 
 Available only when `[builtin].enabled` includes `markdown.tables`. Extracts
-bounded GitHub-flavored pipe tables from a workspace-contained UTF-8 Markdown
+bounded GitHub-flavored pipe tables from a project-contained UTF-8 Markdown
 file. A table is recognized mechanically as a header row followed immediately
 by a delimiter row such as `| --- | ---: |`. Fenced code blocks are ignored by
 default. The tool does not infer table semantics, summarize content, or execute
@@ -2979,7 +2979,7 @@ Escaped pipe characters such as `\\|` are treated as cell content.
 ## `markdown.section`
 
 Available only when `[builtin].enabled` includes `markdown.section`. Extracts
-one raw Markdown section by exact ATX heading text from a workspace-contained
+one raw Markdown section by exact ATX heading text from a project-contained
 UTF-8 Markdown file. Use `file.outline` first when the caller needs to discover
 available heading text and line numbers. This tool does not search
 semantically, summarize content, follow links, or parse arbitrary Markdown
@@ -3008,7 +3008,7 @@ headings return `matched = false` with `failure.reason = "missing_heading"`.
 ## `markdown.frontmatter`
 
 Available only when `[builtin].enabled` includes `markdown.frontmatter`. Reads
-leading YAML or TOML frontmatter from a workspace-contained UTF-8 Markdown file.
+leading YAML or TOML frontmatter from a project-contained UTF-8 Markdown file.
 The opening delimiter must be the first line: exactly `---` for YAML or `+++`
 for TOML. YAML closes with `---` or `...`; TOML closes with `+++`. The tool
 does not infer skill semantics, summarize Markdown body content, or scan for
@@ -3036,8 +3036,8 @@ frontmatter returns `found = true`, `parsed = false`, `parse_error`, and
 ## `markdown.link_check`
 
 Available only when `[builtin].enabled` includes `markdown.link_check`. Checks
-local Markdown links from one workspace-contained UTF-8 Markdown file. It
-resolves reference definitions, checks whether workspace-contained local targets
+local Markdown links from one project-contained UTF-8 Markdown file. It
+resolves reference definitions, checks whether project-contained local targets
 exist, and optionally checks Markdown heading/id fragments. External URLs and
 email links are reported as unchecked; the tool does not fetch URLs, crawl
 documents, summarize content, or infer documentation semantics.
@@ -3062,13 +3062,13 @@ Returned checks include source line, link kind, raw destination, resolved
 destination for reference links, status, category, issue text when applicable,
 and target existence/fragment metadata. Status values are mechanical:
 `ok`, `missing_target`, `missing_fragment`, `missing_reference_definition`,
-`outside_workspace`, `empty_destination`, `external_unchecked`, and
+`outside_project`, `empty_destination`, `external_unchecked`, and
 `fragment_unchecked`.
 
 ## `file.tail`
 
 Available only when `[builtin].enabled` includes `file.tail`. Reads the last
-lines from a workspace-contained UTF-8 file using a bounded tail window. When
+lines from a project-contained UTF-8 file using a bounded tail window. When
 the file is larger than `max_bytes`, returned line numbers are reported as
 unknown instead of guessed, and a partial first line cut by the window is
 dropped and flagged.
@@ -3086,7 +3086,7 @@ Arguments:
 ## `file.hexdump`
 
 Available only when `[builtin].enabled` includes `file.hexdump`. Reads a
-bounded byte window from a workspace-contained file and returns deterministic
+bounded byte window from a project-contained file and returns deterministic
 hex/ascii rows. It is read-only and useful for inspecting binary headers,
 encoding clues, and small non-UTF-8 snippets without reading the whole file.
 
@@ -3103,7 +3103,7 @@ Arguments:
 ## `file.xattrs`
 
 Available only when `[builtin].enabled` includes `file.xattrs`. Lists extended
-attributes for a workspace-contained file or directory. By default it returns
+attributes for a project-contained file or directory. By default it returns
 only names and sizes; set `include_values` to return bounded base64 and UTF-8
 value previews. Values larger than `max_value_bytes` are reported as truncated
 without being read. It is read-only and useful for macOS metadata such as
@@ -3122,7 +3122,7 @@ Arguments:
 ## `file.remove_xattr`
 
 Available only when `[builtin].enabled` includes `file.remove_xattr`. Removes
-one extended attribute from a workspace-contained file or directory using the
+one extended attribute from a project-contained file or directory using the
 macOS xattr API. This is a non-recursive write operation. It is useful for
 explicit metadata cleanup such as removing `com.apple.quarantine` after the
 caller has inspected attributes with `file.xattrs`. Set `dry_run` to validate
@@ -3142,7 +3142,7 @@ Arguments:
 ## `file.metadata`
 
 Available only when `[builtin].enabled` includes `file.metadata`. Reads
-Spotlight metadata for a workspace-contained file or directory using fixed
+Spotlight metadata for a project-contained file or directory using fixed
 `/usr/bin/mdls -plist -` argv. This is read-only and macOS-specific. Optional
 `attributes` filter returned keys after plist parsing; the runtime validates
 attribute names but does not interpret metadata semantics.
@@ -3161,10 +3161,10 @@ Arguments:
 ## `file.readlink`
 
 Available only when `[builtin].enabled` includes `file.readlink`. Reads the raw
-destination of a workspace-contained symbolic link without following the final
-link. The link path itself must be inside the workspace, and symlinked parent
-directories may not escape the workspace. The destination may point outside the
-workspace; the response reports whether it is workspace-contained.
+destination of a project-contained symbolic link without following the final
+link. The link path itself must be inside the project, and symlinked parent
+directories may not escape the project. The destination may point outside the
+project; the response reports whether it is project-contained.
 
 Arguments:
 
@@ -3177,10 +3177,10 @@ Arguments:
 ## `file.resolve`
 
 Available only when `[builtin].enabled` includes `file.resolve`. Resolves a
-workspace-contained path mechanically without reading file contents or creating
-missing paths. The response includes the lexical workspace path, existence,
+project-contained path mechanically without reading file contents or creating
+missing paths. The response includes the lexical project path, existence,
 final symlink destination when present, resolved path, and whether the resolved
-destination remains inside the workspace.
+destination remains inside the project.
 
 Arguments:
 
@@ -3193,7 +3193,7 @@ Arguments:
 ## `image.info`
 
 Available only when `[builtin].enabled` includes `image.info`. Reads mechanical
-metadata for a workspace-contained image file using ImageIO. It reports format,
+metadata for a project-contained image file using ImageIO. It reports format,
 MIME, dimensions, frame count, color metadata, orientation, DPI, and optional
 bounded raw ImageIO property dictionaries. It does not decode pixels, OCR,
 classify image contents, generate thumbnails, or infer visual semantics.
@@ -3218,7 +3218,7 @@ The result includes `type_identifier`, `mime_type`, `frame_count`,
 ## `pdf.info`
 
 Available only when `[builtin].enabled` includes `pdf.info`. Reads mechanical
-metadata for a workspace-contained PDF file using PDFKit. It reports page
+metadata for a project-contained PDF file using PDFKit. It reports page
 count, encryption and permission flags, optional document attributes, and
 bounded page box metadata. It does not extract text, OCR, render pages, inspect
 embedded images, or summarize document contents.
@@ -3243,7 +3243,7 @@ for media, crop, bleed, trim, and art boxes.
 ## `pdf.text`
 
 Available only when `[builtin].enabled` includes `pdf.text`. Extracts bounded
-searchable text from a workspace-contained PDF file using PDFKit
+searchable text from a project-contained PDF file using PDFKit
 `PDFPage.string`. It is read-only, respects PDF locking and copying flags, and
 does not OCR, render pages, inspect embedded images, or summarize document
 contents.
@@ -3268,7 +3268,7 @@ per-page `text_truncated`.
 ## `media.info`
 
 Available only when `[builtin].enabled` includes `media.info`. Reads mechanical
-metadata for a workspace-contained audio or video file using AVFoundation. It
+metadata for a project-contained audio or video file using AVFoundation. It
 reports duration, playability, protected-content state, available metadata
 formats, track types, codecs, dimensions, frame rate, and data rate. It does not
 decode samples, transcode, extract frames, play media, inspect visual/audio
@@ -3294,7 +3294,7 @@ Track rows include `media_type`, optional `duration_seconds`, `natural_size`,
 ## `json.read`
 
 Available only when `[builtin].enabled` includes `json.read`. Reads and parses
-a workspace-contained JSON file into a JSON value using the gateway JSON
+a project-contained JSON file into a JSON value using the gateway JSON
 decoder. This is read-only and does not execute a subprocess.
 
 Arguments:
@@ -3309,7 +3309,7 @@ Arguments:
 ## `jsonl.read`
 
 Available only when `[builtin].enabled` includes `jsonl.read`. Reads a bounded
-preview of a workspace-contained JSON Lines / NDJSON UTF-8 file by parsing each
+preview of a project-contained JSON Lines / NDJSON UTF-8 file by parsing each
 nonblank line as an independent JSON value. It reports parse errors separately;
 it does not infer schemas, summarize records, execute subprocesses, or read past
 the configured byte budget.
@@ -3336,7 +3336,7 @@ through the final line.
 ## `json.write`
 
 Available only when `[builtin].enabled` includes `json.write`. Serializes a
-provided JSON value and writes it to a workspace-contained path. It defaults to
+provided JSON value and writes it to a project-contained path. It defaults to
 `dry_run = true`, pretty printed output, sorted keys, trailing newline, no
 overwrite, and no parent directory creation. Real writes require
 `dry_run = false` and `confirm_write = true`.
@@ -3364,7 +3364,7 @@ requested.
 ## `toml.read`
 
 Available only when `[builtin].enabled` includes `toml.read`. Reads and parses
-a workspace-contained TOML file into a JSON value using the existing
+a project-contained TOML file into a JSON value using the existing
 `swift-toml` decoder. This is read-only and does not execute a subprocess.
 TOML local date/time values are returned as typed JSON objects.
 
@@ -3380,7 +3380,7 @@ Arguments:
 ## `yaml.read`
 
 Available only when `[builtin].enabled` includes `yaml.read`. Reads and parses
-a workspace-contained YAML file into JSON-compatible values using Yams. This is
+a project-contained YAML file into JSON-compatible values using Yams. This is
 read-only, supports multiple YAML documents, does not execute subprocesses, and
 does not infer business semantics. YAML timestamps are returned as typed date
 objects; non-finite numeric values are returned as typed objects instead of JSON
@@ -3408,7 +3408,7 @@ non-finite numbers.
 ## `xml.read`
 
 Available only when `[builtin].enabled` includes `xml.read`. Reads and parses a
-workspace-contained XML file into a bounded element tree using Foundation
+project-contained XML file into a bounded element tree using Foundation
 `XMLParser`. This is read-only, disables external entity resolution, does not
 execute subprocesses, and does not validate schemas or infer business
 semantics.
@@ -3434,7 +3434,7 @@ direct `text`, `child_count`, `returned_child_count`, and returned `children`.
 ## `plist.read`
 
 Available only when `[builtin].enabled` includes `plist.read`. Reads and parses
-a workspace-contained macOS property list file into JSON using Foundation
+a project-contained macOS property list file into JSON using Foundation
 `PropertyListSerialization`. This is read-only and does not execute a
 subprocess. Property-list `date` and `data` values are returned as typed JSON
 objects.
@@ -3451,7 +3451,7 @@ Arguments:
 ## `structured.get`
 
 Available only when `[builtin].enabled` includes `structured.get`. Reads one
-value at an explicit path from a workspace-contained JSON, YAML, TOML, or plist
+value at an explicit path from a project-contained JSON, YAML, TOML, or plist
 file. This is read-only and deterministic: `query_path` is an array where
 strings select object keys and non-negative integers select array indexes. It
 does not implement JSONPath, JQ, filters, wildcards, schema inference, or field
@@ -3480,7 +3480,7 @@ failing segment.
 ## `plist.write`
 
 Available only when `[builtin].enabled` includes `plist.write`. Serializes a
-provided JSON value as a workspace-contained macOS property list using
+provided JSON value as a project-contained macOS property list using
 Foundation `PropertyListSerialization`. It defaults to XML output,
 `dry_run = true`, no overwrite, and no parent directory creation. Real writes
 require `dry_run = false` and `confirm_write = true`.
@@ -3513,7 +3513,7 @@ not support `null`; calls containing null values fail deterministically.
 ## `csv.read`
 
 Available only when `[builtin].enabled` includes `csv.read`. Reads a bounded
-preview of a workspace-contained CSV/TSV-style UTF-8 text file. It parses
+preview of a project-contained CSV/TSV-style UTF-8 text file. It parses
 delimiter characters, quoted fields, rows, and cells mechanically; it does not
 infer column meaning, summarize data, execute subprocesses, or read outside the
 configured byte budget.
@@ -3540,7 +3540,7 @@ non-newline character. The result includes `headers`, row objects with
 ## `sqlite.schema`
 
 Available only when `[builtin].enabled` includes `sqlite.schema`. Inspects a
-workspace-contained SQLite database schema using fixed
+project-contained SQLite database schema using fixed
 `/usr/bin/sqlite3 -batch -readonly -json` argv. It returns rows from
 `sqlite_schema`; it does not execute user-provided SQL and does not read table
 data.
@@ -3568,7 +3568,7 @@ reported by the SQLite CLI. Output is bounded with `max_entries` and
 ## `sqlite.query`
 
 Available only when `[builtin].enabled` includes `sqlite.query`. Runs one
-read-only SQLite statement against a workspace-contained database using fixed
+read-only SQLite statement against a project-contained database using fixed
 `/usr/bin/sqlite3 -batch -readonly -json` argv. Accepted statements are
 `SELECT`, `WITH`, and non-assigning `PRAGMA`; mutating SQL, DDL, attach/detach,
 vacuum/reindex/analyze, and multiple statements are rejected before execution.
@@ -3595,7 +3595,7 @@ interpolation.
 ## `file.hash`
 
 Available only when `[builtin].enabled` includes `file.hash`. Computes a
-SHA-256 digest for a workspace-contained file without returning file content.
+SHA-256 digest for a project-contained file without returning file content.
 
 Arguments:
 
@@ -3609,7 +3609,7 @@ Arguments:
 ## `file.diff`
 
 Available only when `[builtin].enabled` includes `file.diff`. Returns a bounded
-unified diff between two workspace-contained files using fixed `/usr/bin/diff`
+unified diff between two project-contained files using fixed `/usr/bin/diff`
 argv. This is read-only. Exit code `0` means no differences, exit code `1`
 means files differ, and other nonzero values should be treated as command
 errors in the returned `result`.
@@ -3629,7 +3629,7 @@ Arguments:
 ## `file.compare_trees`
 
 Available only when `[builtin].enabled` includes `file.compare_trees`. Compares
-two workspace-contained directories by relative path using bounded
+two project-contained directories by relative path using bounded
 deterministic traversal. By default it compares only metadata: entry presence,
 type, symlink destination, and file size. Set `compare_hashes=true` to SHA-256
 compare same-size files within `max_hash_files` and `max_hash_file_bytes`.
@@ -3657,7 +3657,7 @@ Arguments:
 ## `file.duplicates`
 
 Available only when `[builtin].enabled` includes `file.duplicates`. Finds
-duplicate regular files under one workspace-contained directory by first
+duplicate regular files under one project-contained directory by first
 grouping eligible files by size and then confirming duplicates with bounded
 SHA-256 hashing. The tool is read-only, skips symlinks, does not delete files,
 and does not decide which file should be kept.
@@ -3687,7 +3687,7 @@ Arguments:
 ## `archive.list`
 
 Available only when `[builtin].enabled` includes `archive.list`. Lists entries
-in a workspace-contained zip or tar archive using fixed read-only argv. Zip-like
+in a project-contained zip or tar archive using fixed read-only argv. Zip-like
 archives use `/usr/bin/zipinfo -1`; tar-like archives use `/usr/bin/tar -tf`.
 The tool does not extract files and does not run shell interpolation.
 
@@ -3709,7 +3709,7 @@ Arguments:
 ## `archive.read_file`
 
 Available only when `[builtin].enabled` includes `archive.read_file`. Reads one
-file member from a workspace-contained zip or tar archive using fixed read-only
+file member from a project-contained zip or tar archive using fixed read-only
 argv. Zip-like archives use `/usr/bin/unzip -p`; tar-like archives use
 `/usr/bin/tar -xOf`. The tool streams only the selected member to stdout, does
 not extract files, does not write to disk, and does not run shell interpolation.
@@ -3735,7 +3735,7 @@ Arguments:
 ## `archive.extract`
 
 Available only when `[builtin].enabled` includes `archive.extract`. Extracts a
-workspace-contained zip or tar archive into a workspace-contained destination
+project-contained zip or tar archive into a project-contained destination
 directory using fixed argv. The tool defaults to `dry_run=true`, validates all
 entry paths before extraction, refuses link entries, and requires
 `confirm_extract=true` when `dry_run=false`.
@@ -3764,7 +3764,7 @@ Arguments:
 ## `archive.create`
 
 Available only when `[builtin].enabled` includes `archive.create`. Creates a zip
-or tar archive from explicit workspace-contained source files/directories using
+or tar archive from explicit project-contained source files/directories using
 fixed argv. The tool defaults to `dry_run=true`, refuses symlink sources and
 symlink entries, rejects unsupported source file types, prevents writing the
 archive inside any source directory, and requires `confirm_create=true` when
@@ -3796,7 +3796,7 @@ Arguments:
 ## `file.download`
 
 Available only when `[builtin].enabled` includes `file.download`. Downloads an
-absolute HTTP or HTTPS URL to a workspace-contained file using fixed
+absolute HTTP or HTTPS URL to a project-contained file using fixed
 `/usr/bin/curl` argv. The tool defaults to `dry_run=true`, rejects URLs with
 userinfo credentials, sends no custom headers, cookies, or request body, writes
 through a deterministic temp file in the destination directory, and requires
@@ -3829,7 +3829,7 @@ Arguments:
 ## `file.write`
 
 Available only when `[builtin].enabled` includes `file.write`. Writes UTF-8 text
-under the configured workspace. Set `dry_run` to true to validate parent
+under the configured project. Set `dry_run` to true to validate parent
 directory and overwrite behavior without creating directories or writing
 content.
 
@@ -3850,7 +3850,7 @@ Arguments:
 ## `file.write_files`
 
 Available only when `[builtin].enabled` includes `file.write_files`. Writes
-multiple explicitly named UTF-8 files under the workspace. This is a batch form
+multiple explicitly named UTF-8 files under the project. This is a batch form
 for known output paths; it does not discover files, patch existing content, or
 merge partial edits. Use `file.replace_text`, `file.replace_lines`, or
 `file.insert_text` for targeted edits to existing files.
@@ -3859,7 +3859,7 @@ Unlike `file.write`, this tool defaults to `dry_run = true`. Real writes require
 both `dry_run = false` and `confirm_write = true`. `overwrite` defaults to
 false, and missing parent directories are created only when
 `create_directories = true`. The call preflights every entry first and fails
-deterministically for duplicate paths, workspace escapes, directories, missing
+deterministically for duplicate paths, project escapes, directories, missing
 parents, existing files when overwrite is false, or content above the configured
 policy limit.
 
@@ -3880,7 +3880,7 @@ Arguments:
 ## `file.append`
 
 Available only when `[builtin].enabled` includes `file.append`. Appends UTF-8
-text to a workspace-contained file without rewriting existing content. The file
+text to a project-contained file without rewriting existing content. The file
 is created by default when missing; parent directories are created only when
 `create_directories` is true. Set `dry_run` to true to validate the append
 without creating files/directories or writing content.
@@ -3903,7 +3903,7 @@ Arguments:
 ## `file.replace_text`
 
 Available only when `[builtin].enabled` includes `file.replace_text`. Performs
-exact UTF-8 string replacement in a workspace-contained file. It does not parse
+exact UTF-8 string replacement in a project-contained file. It does not parse
 or semantically edit code. By default it replaces the first non-overlapping
 match; set `replace_all` to replace all matches. Use `expected_replacements` to
 turn the operation into an exact assertion. Set `dry_run` to true to validate
@@ -3929,7 +3929,7 @@ Arguments:
 
 Available only when `[builtin].enabled` includes `file.insert_text`. Inserts
 exact UTF-8 text before or after an existing one-based line in a
-workspace-contained file. It does not parse or semantically edit content. Use
+project-contained file. It does not parse or semantically edit content. Use
 `expected_line` to assert the target line text before inserting. Set `dry_run`
 to true to validate the target line and return bounded target/insert previews
 without writing.
@@ -3954,7 +3954,7 @@ Arguments:
 ## `file.replace_lines`
 
 Available only when `[builtin].enabled` includes `file.replace_lines`. Replaces
-or deletes an exact one-based line range in a workspace-contained UTF-8 file. It
+or deletes an exact one-based line range in a project-contained UTF-8 file. It
 does not parse or semantically edit content. Use `expected_content` to assert
 the selected line range before writing. Set `content` to an empty string to
 delete the selected lines. Set `dry_run` to true to validate the selected range
@@ -3980,7 +3980,7 @@ Arguments:
 ## `file.mkdir`
 
 Available only when `[builtin].enabled` includes `file.mkdir`. Creates a
-workspace-contained directory. Missing parents are created by default. Set
+project-contained directory. Missing parents are created by default. Set
 `dry_run` to validate the create intent without creating directories.
 
 Arguments:
@@ -3996,7 +3996,7 @@ Arguments:
 ## `file.touch`
 
 Available only when `[builtin].enabled` includes `file.touch`. Creates an empty
-workspace-contained file if it is missing, or updates an existing file's
+project-contained file if it is missing, or updates an existing file's
 modification time. It does not write content, and it rejects directories. Set
 `dry_run` to validate create/update intent without creating parent directories,
 creating the file, or changing timestamps.
@@ -4015,7 +4015,7 @@ Arguments:
 ## `file.copy`
 
 Available only when `[builtin].enabled` includes `file.copy`. Copies a file or
-directory between workspace-contained paths. Existing destinations are rejected
+directory between project-contained paths. Existing destinations are rejected
 unless `overwrite` is true. Set `dry_run` to validate source, destination,
 overwrite policy, and parent-directory creation intent without copying or
 overwriting.
@@ -4035,7 +4035,7 @@ Arguments:
 ## `file.move`
 
 Available only when `[builtin].enabled` includes `file.move`. Moves or renames a
-file or directory between workspace-contained paths. Existing destinations are
+file or directory between project-contained paths. Existing destinations are
 rejected unless `overwrite` is true. Set `dry_run` to validate source,
 destination, overwrite policy, and parent-directory creation intent without
 moving the source or overwriting the destination.
@@ -4055,8 +4055,8 @@ Arguments:
 ## `file.symlink`
 
 Available only when `[builtin].enabled` includes `file.symlink`. Creates a
-symbolic link at a workspace-contained path. By default the raw destination must
-resolve inside the workspace; set `allow_external_destination` only when an
+symbolic link at a project-contained path. By default the raw destination must
+resolve inside the project; set `allow_external_destination` only when an
 external target is intentional. Existing link paths are rejected unless
 `overwrite` is true, including broken symlinks. Set `dry_run` to validate link
 path, destination containment, overwrite policy, and parent-directory creation
@@ -4078,7 +4078,7 @@ Arguments:
 ## `file.trash`
 
 Available only when `[builtin].enabled` includes `file.trash`. Moves a
-workspace-contained file or directory to the macOS Trash. This is a write
+project-contained file or directory to the macOS Trash. This is a write
 operation, but it is preferred over permanent delete for gateway-level file
 organization. Set `dry_run` to validate the path without moving it to Trash.
 
@@ -4091,15 +4091,15 @@ Arguments:
 }
 ```
 
-## `workspace.open`
+## `project.open`
 
-Available only when `[builtin].enabled` includes `workspace.open`. Opens the
-workspace root or an in-workspace path with macOS `open`.
+Available only when `[builtin].enabled` includes `project.open`. Opens the
+project root or an in-project path with macOS `open`.
 
-## `workspace.reveal`
+## `project.reveal`
 
-Available only when `[builtin].enabled` includes `workspace.reveal`. Reveals a
-workspace-contained path in Finder using macOS `open -R`.
+Available only when `[builtin].enabled` includes `project.reveal`. Reveals a
+project-contained path in Finder using macOS `open -R`.
 
 Arguments:
 
@@ -4113,7 +4113,7 @@ Arguments:
 
 Available only when listed in `[builtin].enabled`. These tools require a
 registered CLI provider with `id = "git"` and execute that provider through argv,
-not a shell. Path arguments are literal workspace-relative paths passed after
+not a shell. Path arguments are literal project-relative paths passed after
 `--`; absolute paths, `..`, and Git pathspec magic are rejected. Use `cli.exec`
 with the `git` provider when raw Git behavior is required.
 
@@ -4196,7 +4196,7 @@ Arguments:
 
 Runs fixed read-only `git stash show` for one local stash through the registered
 `git` CLI provider. The `stash` argument is constrained to `stash@{N}` syntax,
-defaults to `stash@{0}`, and optional paths are literal workspace-relative
+defaults to `stash@{0}`, and optional paths are literal project-relative
 pathspecs passed after `--`. When paths are supplied, the gateway uses fixed
 read-only `git diff <stash>^1 <stash> -- <paths...>` argv because local Git
 does not accept pathspecs in `git stash show` consistently.
@@ -4307,7 +4307,7 @@ Arguments:
 ### `git.ignored`
 
 Runs fixed read-only `git check-ignore --verbose -- <paths...>` through the
-registered `git` CLI provider. It requires explicit workspace-relative paths.
+registered `git` CLI provider. It requires explicit project-relative paths.
 Git uses its exit code to distinguish ignored from non-ignored paths.
 
 Arguments:
@@ -4336,7 +4336,7 @@ Arguments:
 ### `git.files`
 
 Runs fixed read-only `git ls-files --stage --eol` through the registered `git`
-CLI provider. Optional paths are literal workspace-relative paths passed after
+CLI provider. Optional paths are literal project-relative paths passed after
 `--`. Output is Git's raw tracked-file index metadata.
 
 Arguments:
@@ -4352,7 +4352,7 @@ Arguments:
 
 Runs bounded read-only fixed-string `git grep --line-number -I --null` through
 the registered `git` CLI provider. Optional paths are literal
-workspace-relative paths passed after `--`. It searches Git-tracked content and
+project-relative paths passed after `--`. It searches Git-tracked content and
 does not run shell commands or interpret the query as a regular expression.
 
 Arguments:
@@ -4367,14 +4367,14 @@ Arguments:
 }
 ```
 
-Returned match rows include `workspace_relative_path`, `line`, `text`,
+Returned match rows include `project_relative_path`, `line`, `text`,
 `raw_record`, and `read_context` for a follow-up `file.read_lines` call through
 the gateway.
 
 ### `git.blame`
 
 Runs bounded read-only `git blame --line-porcelain -L <start>,+<count>` through
-the registered `git` CLI provider. The path is a literal workspace-relative file
+the registered `git` CLI provider. The path is a literal project-relative file
 path passed after `--`. Output is Git's raw line porcelain blame data.
 
 Arguments:
@@ -4390,7 +4390,7 @@ Arguments:
 
 ### `git.file_history`
 
-Runs bounded read-only `git log` for one workspace-relative file through the
+Runs bounded read-only `git log` for one project-relative file through the
 registered `git` CLI provider. It defaults to `--follow` so history can continue
 across renames. It does not change refs, the index, or the working tree.
 
@@ -4414,7 +4414,7 @@ Returned entries include `commit`, `abbreviated_commit`, `committed_at`,
 ### `git.file_at_revision`
 
 Runs fixed read-only `git show <revision>:<path>` through the registered `git`
-CLI provider and returns bounded UTF-8 content for one workspace-relative file
+CLI provider and returns bounded UTF-8 content for one project-relative file
 at a constrained revision. It does not change refs, the index, or the working
 tree.
 
@@ -4436,7 +4436,7 @@ metadata.
 ### `git.staged_file`
 
 Runs fixed read-only `git show :<path>` through the registered `git` CLI
-provider and returns bounded UTF-8 content for one workspace-relative file from
+provider and returns bounded UTF-8 content for one project-relative file from
 the Git index. It does not change refs, the index, or the working tree.
 
 Arguments:
@@ -4456,7 +4456,7 @@ Returned data includes `content`, `bytes_returned`, `line_count`,
 ### `git.conflicts`
 
 Runs fixed read-only `git ls-files --unmerged` through the registered `git` CLI
-provider. Optional paths are literal workspace-relative paths passed after `--`.
+provider. Optional paths are literal project-relative paths passed after `--`.
 Output is Git's raw unmerged index entries for conflict inspection.
 
 Arguments:
@@ -4519,7 +4519,7 @@ Arguments:
 }
 ```
 
-Returned items include `action`, `workspace_relative_path`, `directory`, and
+Returned items include `action`, `project_relative_path`, `directory`, and
 `raw_line`. The payload also includes bounded `raw_lines` and command metadata.
 
 ### `git.reflog`
@@ -4683,7 +4683,7 @@ Arguments:
 ```
 
 Returned rows include per-file `additions`, `deletions`, `binary`,
-`workspace_relative_path`, optional `old_path` for renames/copies, and summary
+`project_relative_path`, optional `old_path` for renames/copies, and summary
 events such as create, delete, rename, copy, and mode changes.
 
 ### `git.diff_check`
@@ -4704,7 +4704,7 @@ Arguments:
 }
 ```
 
-Returned issue rows include `workspace_relative_path`, `line`, `message`, and
+Returned issue rows include `project_relative_path`, `line`, `message`, and
 `raw_line`. The payload also includes `passed`, the command `exit_code`, and
 bounded `raw_lines` for the exact Git output context.
 
@@ -4779,7 +4779,7 @@ Arguments:
 Available only when listed in `[builtin].enabled`. These tools require a
 registered CLI provider with `id = "git"` and execute that provider through argv,
 not a shell. `git.add`, `git.unstage`, and `git.restore_worktree` accept only
-explicit workspace-relative paths; they will not stage, unstage, or discard the
+explicit project-relative paths; they will not stage, unstage, or discard the
 entire repository implicitly. `git.clean` requires explicit `paths` or
 `all_paths=true` before deleting untracked files/directories.
 `git.restore_worktree`, `git.clean`, and local branch write atomics default to
@@ -4799,7 +4799,7 @@ working tree content, or deleting untracked files.
 
 ### `git.add`
 
-Stages explicit workspace-relative paths with `git add -- <paths...>`. Set
+Stages explicit project-relative paths with `git add -- <paths...>`. Set
 `dry_run` to run `git add --dry-run` instead.
 
 Arguments:
@@ -4815,7 +4815,7 @@ Arguments:
 
 ### `git.unstage`
 
-Unstages explicit workspace-relative paths with
+Unstages explicit project-relative paths with
 `git restore --staged -- <paths...>`. This changes the Git index but does not
 discard working tree file contents. Set `dry_run` to run
 `git diff --cached --name-only -- <paths...>` and preview staged matches without
@@ -4833,7 +4833,7 @@ Arguments:
 
 ### `git.restore_worktree`
 
-Discards unstaged working-tree changes for explicit workspace-relative paths
+Discards unstaged working-tree changes for explicit project-relative paths
 with `git restore --worktree -- <paths...>`. This can destroy local file
 content that is not staged, so `dry_run` defaults to true. Set
 `confirm_discard` to true and `dry_run` to false to perform the restore.
@@ -5016,7 +5016,7 @@ Creates a stash with fixed `git stash push -m <message>` argv through the
 registered `git` CLI provider. This changes the working tree and possibly the
 index, so it is available only when explicitly enabled. The caller must pass
 explicit `paths` or set `all_paths` to true; the tool will not silently stash
-the whole workspace. Set `dry_run` to preview matching changes with read-only
+the whole project. Set `dry_run` to preview matching changes with read-only
 `git status --porcelain=v1 -z` instead of creating a stash.
 
 Arguments:
@@ -5082,14 +5082,14 @@ manifest Shell policy. Profile names and connection channels do not select
 the permission mode.
 
 The plane supports explicit argv or shell-script mode, selected environment,
-workspace/cwd binding, stdin, separate stdout/stderr cursors, timeout,
+project/cwd binding, stdin, separate stdout/stderr cursors, timeout,
 cancellation, exit status, signals, truncation metadata, and process-group
 cleanup.
 
 The App gateway listener and owner control service retain Shell and
 registered-process sessions across runtime
 configuration changes within the same authenticated principal, profile, caller,
-workspace registration, and resolved folder identity. Reads, writes, cancellation,
+project registration, and resolved folder identity. Reads, writes, cancellation,
 and listing still require current permission. A task continues using its original
 launch settings and output limit; the executing runtime owns it until the process
 and its output streams finish.

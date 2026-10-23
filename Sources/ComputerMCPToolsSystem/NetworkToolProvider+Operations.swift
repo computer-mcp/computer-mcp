@@ -28,7 +28,7 @@ extension NetworkToolProvider {
     let result = try commandRunner.run(
       executable: registeredCommands.builtinExecutable("ifconfig"),
       arguments: arguments,
-      workingDirectory: configuration.workspaceDirectory,
+      workingDirectory: configuration.projectDirectory,
       environment: [:],
       timeoutMilliseconds: timeout,
       maxOutputBytes: configuration.policy.maxOutputBytes
@@ -48,7 +48,7 @@ extension NetworkToolProvider {
     let result = try commandRunner.run(
       executable: registeredCommands.builtinExecutable("scutil"),
       arguments: ["--dns"],
-      workingDirectory: configuration.workspaceDirectory,
+      workingDirectory: configuration.projectDirectory,
       environment: [:],
       timeoutMilliseconds: timeout,
       maxOutputBytes: configuration.policy.maxOutputBytes
@@ -135,7 +135,7 @@ extension NetworkToolProvider {
     let result = try commandRunner.run(
       executable: registeredCommands.builtinExecutable("scutil"),
       arguments: ["--proxy"],
-      workingDirectory: configuration.workspaceDirectory,
+      workingDirectory: configuration.projectDirectory,
       environment: [:],
       timeoutMilliseconds: timeout,
       maxOutputBytes: configuration.policy.maxOutputBytes
@@ -159,7 +159,7 @@ extension NetworkToolProvider {
     let result = try commandRunner.run(
       executable: registeredCommands.builtinExecutable("networksetup"),
       arguments: arguments,
-      workingDirectory: configuration.workspaceDirectory,
+      workingDirectory: configuration.projectDirectory,
       environment: [:],
       timeoutMilliseconds: timeout,
       maxOutputBytes: maxOutputBytes
@@ -185,7 +185,7 @@ extension NetworkToolProvider {
     let result = try commandRunner.run(
       executable: registeredCommands.builtinExecutable("networksetup"),
       arguments: arguments,
-      workingDirectory: configuration.workspaceDirectory,
+      workingDirectory: configuration.projectDirectory,
       environment: [:],
       timeoutMilliseconds: timeout,
       maxOutputBytes: maxOutputBytes
@@ -215,7 +215,7 @@ extension NetworkToolProvider {
     let discovery = try commandRunner.run(
       executable: registeredCommands.builtinExecutable("networksetup"),
       arguments: discoveryArguments,
-      workingDirectory: configuration.workspaceDirectory,
+      workingDirectory: configuration.projectDirectory,
       environment: [:],
       timeoutMilliseconds: timeout,
       maxOutputBytes: maxOutputBytes
@@ -254,7 +254,7 @@ extension NetworkToolProvider {
     let power = try commandRunner.run(
       executable: registeredCommands.builtinExecutable("networksetup"),
       arguments: powerArguments,
-      workingDirectory: configuration.workspaceDirectory,
+      workingDirectory: configuration.projectDirectory,
       environment: [:],
       timeoutMilliseconds: timeout,
       maxOutputBytes: maxOutputBytes
@@ -264,7 +264,7 @@ extension NetworkToolProvider {
     let network = try commandRunner.run(
       executable: registeredCommands.builtinExecutable("networksetup"),
       arguments: networkArguments,
-      workingDirectory: configuration.workspaceDirectory,
+      workingDirectory: configuration.projectDirectory,
       environment: [:],
       timeoutMilliseconds: timeout,
       maxOutputBytes: maxOutputBytes
@@ -381,7 +381,7 @@ extension NetworkToolProvider {
     let result = try commandRunner.run(
       executable: registeredCommands.builtinExecutable("scutil"),
       arguments: arguments,
-      workingDirectory: configuration.workspaceDirectory,
+      workingDirectory: configuration.projectDirectory,
       environment: [:],
       timeoutMilliseconds: timeout,
       maxOutputBytes: maxOutputBytes
@@ -515,7 +515,7 @@ extension NetworkToolProvider {
     let current = try commandRunner.run(
       executable: registeredCommands.builtinExecutable("networksetup"),
       arguments: currentArguments,
-      workingDirectory: configuration.workspaceDirectory,
+      workingDirectory: configuration.projectDirectory,
       environment: [:],
       timeoutMilliseconds: timeout,
       maxOutputBytes: maxOutputBytes
@@ -523,7 +523,7 @@ extension NetworkToolProvider {
     let locations = try commandRunner.run(
       executable: registeredCommands.builtinExecutable("networksetup"),
       arguments: listArguments,
-      workingDirectory: configuration.workspaceDirectory,
+      workingDirectory: configuration.projectDirectory,
       environment: [:],
       timeoutMilliseconds: timeout,
       maxOutputBytes: maxOutputBytes
@@ -561,7 +561,7 @@ extension NetworkToolProvider {
     let result = try commandRunner.run(
       executable: registeredCommands.builtinExecutable("netstat"),
       arguments: arguments,
-      workingDirectory: configuration.workspaceDirectory,
+      workingDirectory: configuration.projectDirectory,
       environment: [:],
       timeoutMilliseconds: timeout,
       maxOutputBytes: maxOutputBytes
@@ -596,7 +596,7 @@ extension NetworkToolProvider {
     let result = try commandRunner.run(
       executable: registeredCommands.builtinExecutable("netstat"),
       arguments: arguments,
-      workingDirectory: configuration.workspaceDirectory,
+      workingDirectory: configuration.projectDirectory,
       environment: [:],
       timeoutMilliseconds: timeout,
       maxOutputBytes: maxOutputBytes
@@ -623,7 +623,7 @@ extension NetworkToolProvider {
     let result = try commandRunner.run(
       executable: registeredCommands.builtinExecutable("arp"),
       arguments: arguments,
-      workingDirectory: configuration.workspaceDirectory,
+      workingDirectory: configuration.projectDirectory,
       environment: [:],
       timeoutMilliseconds: timeout,
       maxOutputBytes: maxOutputBytes
@@ -653,7 +653,7 @@ extension NetworkToolProvider {
     let result = try commandRunner.run(
       executable: registeredCommands.builtinExecutable("ping"),
       arguments: arguments,
-      workingDirectory: configuration.workspaceDirectory,
+      workingDirectory: configuration.projectDirectory,
       environment: [:],
       timeoutMilliseconds: timeout,
       maxOutputBytes: maxOutputBytes
@@ -690,7 +690,7 @@ extension NetworkToolProvider {
     let result = try commandRunner.run(
       executable: registeredCommands.builtinExecutable("nc"),
       arguments: arguments,
-      workingDirectory: configuration.workspaceDirectory,
+      workingDirectory: configuration.projectDirectory,
       environment: [:],
       timeoutMilliseconds: timeout,
       maxOutputBytes: maxOutputBytes
@@ -761,7 +761,7 @@ extension NetworkToolProvider {
     let result = try commandRunner.run(
       executable: registeredCommands.builtinExecutable("curl"),
       arguments: arguments,
-      workingDirectory: configuration.workspaceDirectory,
+      workingDirectory: configuration.projectDirectory,
       environment: [:],
       timeoutMilliseconds: timeout,
       maxOutputBytes: maxOutputBytes
@@ -814,7 +814,7 @@ extension NetworkToolProvider {
     let result = try commandRunner.run(
       executable: registeredCommands.builtinExecutable("lsof"),
       arguments: arguments,
-      workingDirectory: configuration.workspaceDirectory,
+      workingDirectory: configuration.projectDirectory,
       environment: [:],
       timeoutMilliseconds: timeout,
       maxOutputBytes: maxOutputBytes

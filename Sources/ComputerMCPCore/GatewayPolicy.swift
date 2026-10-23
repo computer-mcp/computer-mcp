@@ -86,7 +86,7 @@ package struct GatewayTransportTrace: Codable, Equatable, Sendable {
 
 package enum CapabilityRisk: String, Codable, Equatable, Sendable {
   case readOnly = "read-only"
-  case workspaceWrite = "workspace-write"
+  case projectWrite = "project-write"
   case externalWrite = "external-write"
   case destructive
   case fullShell = "full-shell"
@@ -94,7 +94,7 @@ package enum CapabilityRisk: String, Codable, Equatable, Sendable {
 
 package enum GatewayPermissionMode: String, Codable, CaseIterable, Sendable {
   case readOnly = "read-only"
-  case workspaceOperations = "workspace-operations"
+  case projectOperations = "project-operations"
   case localFullAccess = "local-full-access"
 
   /// The source configuration granted risk ceilings by built-in profile identity.
@@ -103,7 +103,7 @@ package enum GatewayPermissionMode: String, Codable, CaseIterable, Sendable {
     if fullShellEnabled && (profileID == .chatGPTOperate || profileID == .localAdmin) {
       return .localFullAccess
     }
-    return .workspaceOperations
+    return .projectOperations
   }
 }
 
@@ -124,7 +124,7 @@ package enum GatewayConfirmationPolicy: String, Codable, CaseIterable, Sendable 
   }
 }
 
-package enum WorkspaceRequirement: String, Codable, Sendable {
+package enum ProjectRequirement: String, Codable, Sendable {
   case none
   case optional
   case required
@@ -133,7 +133,7 @@ package enum WorkspaceRequirement: String, Codable, Sendable {
 package struct CapabilityDescriptor: Codable, Equatable, Sendable {
   package var id: String
   package var risk: CapabilityRisk
-  package var workspaceRequirement: WorkspaceRequirement
+  package var projectRequirement: ProjectRequirement
   package var localOnly: Bool
   package var usesNetwork: Bool
   package var tccServices: [String]
@@ -144,7 +144,7 @@ package struct CapabilityDescriptor: Codable, Equatable, Sendable {
   package init(
     id: String,
     risk: CapabilityRisk,
-    workspaceRequirement: WorkspaceRequirement = .none,
+    projectRequirement: ProjectRequirement = .none,
     localOnly: Bool = false,
     usesNetwork: Bool = false,
     tccServices: [String] = [],
@@ -154,7 +154,7 @@ package struct CapabilityDescriptor: Codable, Equatable, Sendable {
   ) {
     self.id = id
     self.risk = risk
-    self.workspaceRequirement = workspaceRequirement
+    self.projectRequirement = projectRequirement
     self.localOnly = localOnly
     self.usesNetwork = usesNetwork
     self.tccServices = tccServices
@@ -168,7 +168,7 @@ package struct ExecutionContext: Codable, Sendable {
   package var requestID: String
   package var caller: GatewayCallerKind
   package var profileID: GatewayProfileID
-  package var workspaceID: String?
+  package var projectID: String?
   package var transportTrace: GatewayTransportTrace?
   /// Established by the host's authenticated admission path, never by tool arguments.
   package var trustedPrincipalID: String?
@@ -177,7 +177,7 @@ package struct ExecutionContext: Codable, Sendable {
   package var controlSession: (any GatewaySessionAuthority)? = nil
 
   private enum CodingKeys: String, CodingKey {
-    case requestID, caller, profileID, workspaceID, transportTrace, trustedPrincipalID
+    case requestID, caller, profileID, projectID, transportTrace, trustedPrincipalID
   }
 
   package var principalID: String {
@@ -189,14 +189,14 @@ package struct ExecutionContext: Codable, Sendable {
     requestID: String = UUID().uuidString,
     caller: GatewayCallerKind,
     profileID: GatewayProfileID,
-    workspaceID: String? = nil,
+    projectID: String? = nil,
     transportTrace: GatewayTransportTrace? = nil,
     trustedPrincipalID: String? = nil
   ) {
     self.requestID = requestID
     self.caller = caller
     self.profileID = profileID
-    self.workspaceID = workspaceID
+    self.projectID = projectID
     self.transportTrace = transportTrace
     self.trustedPrincipalID = trustedPrincipalID
   }
@@ -205,7 +205,7 @@ package struct ExecutionContext: Codable, Sendable {
 extension ExecutionContext: Equatable {
   package static func == (lhs: Self, rhs: Self) -> Bool {
     lhs.requestID == rhs.requestID && lhs.caller == rhs.caller
-      && lhs.profileID == rhs.profileID && lhs.workspaceID == rhs.workspaceID
+      && lhs.profileID == rhs.profileID && lhs.projectID == rhs.projectID
       && lhs.transportTrace == rhs.transportTrace
       && lhs.trustedPrincipalID == rhs.trustedPrincipalID
       && lhs.controlSession === rhs.controlSession
@@ -215,7 +215,7 @@ extension ExecutionContext: Equatable {
 package struct ProfileGrant: Codable, Equatable, Sendable {
   package var id: GatewayProfileID
   package var capabilityIDs: Set<String>
-  package var workspaceIDs: Set<String>
+  package var projectIDs: Set<String>
   package var allowedCallers: Set<GatewayCallerKind>
   package var fullShellEnabled: Bool
   package var mcpServerIDs: Set<String>
@@ -228,7 +228,7 @@ package struct ProfileGrant: Codable, Equatable, Sendable {
   package init(
     id: GatewayProfileID,
     capabilityIDs: Set<String>,
-    workspaceIDs: Set<String> = [],
+    projectIDs: Set<String> = [],
     allowedCallers: Set<GatewayCallerKind>,
     fullShellEnabled: Bool = false,
     mcpServerIDs: Set<String> = [],
@@ -238,7 +238,7 @@ package struct ProfileGrant: Codable, Equatable, Sendable {
   ) {
     self.id = id
     self.capabilityIDs = capabilityIDs
-    self.workspaceIDs = workspaceIDs
+    self.projectIDs = projectIDs
     self.allowedCallers = allowedCallers
     self.fullShellEnabled = fullShellEnabled
     self.mcpServerIDs = mcpServerIDs
@@ -248,7 +248,7 @@ package struct ProfileGrant: Codable, Equatable, Sendable {
   }
 
   private enum CodingKeys: String, CodingKey {
-    case id, capabilityIDs, workspaceIDs, allowedCallers, fullShellEnabled, mcpServerIDs
+    case id, capabilityIDs, projectIDs, allowedCallers, fullShellEnabled, mcpServerIDs
     case mode, confirmationPolicy, authorizationRevision
   }
 
@@ -256,7 +256,7 @@ package struct ProfileGrant: Codable, Equatable, Sendable {
     let container = try decoder.container(keyedBy: CodingKeys.self)
     id = try container.decode(GatewayProfileID.self, forKey: .id)
     capabilityIDs = try container.decode(Set<String>.self, forKey: .capabilityIDs)
-    workspaceIDs = try container.decode(Set<String>.self, forKey: .workspaceIDs)
+    projectIDs = try container.decode(Set<String>.self, forKey: .projectIDs)
     allowedCallers = try container.decode(Set<GatewayCallerKind>.self, forKey: .allowedCallers)
     fullShellEnabled = try container.decode(Bool.self, forKey: .fullShellEnabled)
     mcpServerIDs = try container.decodeIfPresent(Set<String>.self, forKey: .mcpServerIDs) ?? []
@@ -280,7 +280,7 @@ package struct ProfileGrant: Codable, Equatable, Sendable {
     id: .chatGPTOperate,
     capabilityIDs: [],
     allowedCallers: [.secureTunnel],
-    mode: .workspaceOperations
+    mode: .projectOperations
   )
 
   package static let cloudflareObserve = ProfileGrant(
@@ -293,13 +293,13 @@ package struct ProfileGrant: Codable, Equatable, Sendable {
     id: .cloudflareOperate,
     capabilityIDs: [],
     allowedCallers: [.cloudflareTunnel],
-    mode: .workspaceOperations
+    mode: .projectOperations
   )
 
   package static let localAdmin = ProfileGrant(
     id: .localAdmin,
     capabilityIDs: ["*"],
-    workspaceIDs: ["*"],
+    projectIDs: ["*"],
     allowedCallers: [.localApp, .localCLI, .localMCP],
     fullShellEnabled: true,
     mode: .localFullAccess
@@ -329,7 +329,7 @@ package struct ProfileGrant: Codable, Equatable, Sendable {
     return ProfileGrant(
       id: id,
       capabilityIDs: effectiveCapabilities,
-      workspaceIDs: persisted.workspaceIDs,
+      projectIDs: persisted.projectIDs,
       allowedCallers: allowedCallers,
       fullShellEnabled: effectiveFullShellEnabled,
       mcpServerIDs: mcpServerIDs,
@@ -351,7 +351,7 @@ package struct ProfileGrant: Codable, Equatable, Sendable {
   package func permitsRisk(_ risk: CapabilityRisk) -> Bool {
     switch mode {
     case .readOnly: risk == .readOnly
-    case .workspaceOperations: risk != .fullShell
+    case .projectOperations: risk != .fullShell
     case .localFullAccess: true
     }
   }
@@ -400,8 +400,8 @@ package enum PolicyDenialCode: String, Codable, Sendable {
   case localAdminRemote = "policy.local_admin_remote"
   case localOnly = "policy.local_only"
   case capabilityDenied = "policy.capability_denied"
-  case workspaceRequired = "policy.workspace_required"
-  case workspaceDenied = "policy.workspace_denied"
+  case projectRequired = "policy.project_required"
+  case projectDenied = "policy.project_denied"
   case fullShellDisabled = "policy.full_shell_disabled"
   case readOnlyProfile = "policy.read_only_profile"
 }
@@ -422,7 +422,7 @@ package struct GatewayPolicyEvaluator: Sendable {
     capability: CapabilityDescriptor,
     context: ExecutionContext,
     grant: ProfileGrant,
-    registeredWorkspaceIDs: Set<String>
+    registeredProjectIDs: Set<String>
   ) -> PolicyDecision {
     guard context.profileID == grant.id else {
       return .deny(
@@ -473,28 +473,28 @@ package struct GatewayPolicyEvaluator: Sendable {
         message: "Read-only mode requires a host-classified read-only capability.")
     }
 
-    if capability.workspaceRequirement == .required {
-      guard let workspaceID = context.workspaceID else {
+    if capability.projectRequirement == .required {
+      guard let projectID = context.projectID else {
         return .deny(
-          code: .workspaceRequired,
-          message: "An explicit workspace_id is required."
+          code: .projectRequired,
+          message: "An explicit project_id is required."
         )
       }
-      guard registeredWorkspaceIDs.contains(workspaceID),
-        grant.workspaceIDs.contains(workspaceID) || grant.workspaceIDs.contains("*")
+      guard registeredProjectIDs.contains(projectID),
+        grant.projectIDs.contains(projectID) || grant.projectIDs.contains("*")
       else {
         return .deny(
-          code: .workspaceDenied,
-          message: "The requested workspace is not registered and granted to this profile."
+          code: .projectDenied,
+          message: "The requested project is not registered and granted to this profile."
         )
       }
-    } else if let workspaceID = context.workspaceID {
-      guard registeredWorkspaceIDs.contains(workspaceID),
-        grant.workspaceIDs.contains(workspaceID) || grant.workspaceIDs.contains("*")
+    } else if let projectID = context.projectID {
+      guard registeredProjectIDs.contains(projectID),
+        grant.projectIDs.contains(projectID) || grant.projectIDs.contains("*")
       else {
         return .deny(
-          code: .workspaceDenied,
-          message: "The requested workspace is not registered and granted to this profile."
+          code: .projectDenied,
+          message: "The requested project is not registered and granted to this profile."
         )
       }
     }

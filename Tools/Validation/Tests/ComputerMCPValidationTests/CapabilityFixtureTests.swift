@@ -45,7 +45,7 @@ final class CapabilityFixtureTests {
     #expect(decodedReport == report)
 
     let configURL = try writeManifest(
-      workspace: root,
+      project: root,
       builtins: [
         "archive.list",
         "image.info",
@@ -117,7 +117,7 @@ final class CapabilityFixtureTests {
     _ = try CapabilityFixtureGenerator().generate(at: root)
 
     let configURL = try writeManifest(
-      workspace: root.appendingPathComponent("Repository"),
+      project: root.appendingPathComponent("Repository"),
       builtins: [
         "git.branch",
         "git.remotes",
@@ -193,7 +193,7 @@ final class CapabilityFixtureTests {
   }
 
   private func writeManifest(
-    workspace: URL,
+    project: URL,
     builtins: [String],
     includeGit: Bool = false
   ) throws -> URL {
@@ -207,9 +207,9 @@ final class CapabilityFixtureTests {
       [[cli.commands]]
       id = "git"
       executable = "/usr/bin/git"
-      cwd = "workspace"
+      cwd = "project"
       allow_any_args = true
-      risk = "workspace-write-capable"
+      risk = "project-write-capable"
       discovery = ["help"]
       """
       : ""
@@ -223,15 +223,15 @@ final class CapabilityFixtureTests {
       [policy]
       shell_enabled = false
 
-      [[workspaces]]
+      [[projects]]
       id = "default"
       display_name = "Validation Fixture"
-      path = \(tomlString(workspace.standardizedFileURL.path))
+      path = \(tomlString(project.standardizedFileURL.path))
 
       [[profiles]]
       id = "local-admin"
       capabilities = ["*"]
-      workspaces = ["default"]
+      projects = ["default"]
       allowed_callers = ["local-mcp"]
       full_shell_enabled = false
       \(git)
@@ -260,7 +260,7 @@ final class CapabilityFixtureTests {
       "--config", configURL.path,
       "--caller", "local-mcp",
       "--profile", "local-admin",
-      "--workspace-id", "default",
+      "--project-id", "default",
     ])
     return try ValidationCanonicalJSONCoding.decoder().decode(JSONValue.self, from: data)
   }

@@ -1,9 +1,10 @@
+import ComputerMCPConfiguration
 import ComputerMCPCore
 import ComputerMCPGateway
 import ComputerMCPPersistence
 import ComputerMCPPlatform
 import ComputerMCPPlugins
-import ComputerMCPToolsWorkspace
+import ComputerMCPToolsProject
 import ComputerMCPTunnels
 import Foundation
 
@@ -199,58 +200,58 @@ package struct AppControlPlaneOperations: Sendable {
     return AppControlPlaneRestartResult(restarted: true, profileID: profile)
   }
 
-  package func registerWorkspace(
+  package func registerProject(
     at url: URL,
     displayName: String? = nil
-  ) async throws -> RegisteredWorkspace {
+  ) async throws -> RegisteredProject {
     guard
-      case .registered(let workspace, _) =
-        try await gatewayService.changeWorkspaces(.register(url, displayName: displayName))
+      case .registered(let project, _) =
+        try await gatewayService.changeProjects(.register(url, displayName: displayName))
     else {
-      throw GatewayDatabaseError.invalidStoredValue("Workspace registration result is unavailable.")
+      throw GatewayDatabaseError.invalidStoredValue("Project registration result is unavailable.")
     }
-    return workspace
+    return project
   }
 
-  package func repairWorkspace(
+  package func repairProject(
     id: String, at url: URL, displayName: String? = nil
-  ) async throws -> RegisteredWorkspace {
+  ) async throws -> RegisteredProject {
     guard
-      case .repaired(let workspace) = try await gatewayService.changeWorkspaces(
+      case .repaired(let project) = try await gatewayService.changeProjects(
         .repair(id: id, root: url, displayName: displayName))
     else {
-      throw GatewayDatabaseError.invalidStoredValue("Workspace repair result is unavailable.")
+      throw GatewayDatabaseError.invalidStoredValue("Project repair result is unavailable.")
     }
-    return workspace
+    return project
   }
 
-  package func removeWorkspace(id: String) async throws {
-    _ = try await gatewayService.changeWorkspaces(.remove(id))
+  package func removeProject(id: String) async throws {
+    _ = try await gatewayService.changeProjects(.remove(id))
   }
 
-  package func applyWorkspaceDeduplication(
+  package func applyProjectDeduplication(
     expectedPlanDigest: String,
     allowMetadataConflicts: Bool
-  ) async throws -> WorkspaceDeduplicationResult {
+  ) async throws -> ProjectDeduplicationResult {
     guard
-      case .deduplicated(let result) = try await gatewayService.changeWorkspaces(
+      case .deduplicated(let result) = try await gatewayService.changeProjects(
         .deduplicate(
           expectedPlanDigest: expectedPlanDigest, allowMetadataConflicts: allowMetadataConflicts))
     else {
       throw GatewayDatabaseError.invalidStoredValue(
-        "Workspace deduplication result is unavailable.")
+        "Project deduplication result is unavailable.")
     }
     return result
   }
 
-  package func setWorkspaceEnabled(
+  package func setProjectEnabled(
     _ enabled: Bool,
-    workspaceID: String,
+    projectID: String,
     profileID: GatewayProfileID
   ) async throws -> ProfileGrant {
-    let grant = try await controlPlane.setWorkspaceEnabled(
+    let grant = try await controlPlane.setProjectEnabled(
       enabled,
-      workspaceID: workspaceID,
+      projectID: projectID,
       profileID: profileID
     )
     return grant
@@ -320,7 +321,7 @@ package struct AppControlPlaneOperations: Sendable {
   package func updateProfilePermissions(
     profileID: GatewayProfileID, mode: GatewayPermissionMode? = nil,
     confirmationPolicy: GatewayConfirmationPolicy? = nil, fullShellEnabled: Bool? = nil,
-    capabilityIDs: Set<String>? = nil, workspaceIDs: Set<String>? = nil,
+    capabilityIDs: Set<String>? = nil, projectIDs: Set<String>? = nil,
     mcpServerIDs: Set<String>? = nil, allowedCallers: Set<GatewayCallerKind>? = nil,
     expectedRevision: Int64? = nil,
     reviewedOptions: ProfilePermissionOptions? = nil
@@ -328,7 +329,7 @@ package struct AppControlPlaneOperations: Sendable {
     try await controlPlane.updateProfilePermissions(
       profileID: profileID, mode: mode, confirmationPolicy: confirmationPolicy,
       fullShellEnabled: fullShellEnabled, capabilityIDs: capabilityIDs,
-      workspaceIDs: workspaceIDs, mcpServerIDs: mcpServerIDs,
+      projectIDs: projectIDs, mcpServerIDs: mcpServerIDs,
       allowedCallers: allowedCallers, expectedRevision: expectedRevision,
       reviewedOptions: reviewedOptions)
   }
@@ -345,8 +346,9 @@ package struct AppControlPlaneOperations: Sendable {
     guard let revision = try controlPlane.database.configurationRevision(id: revisionID) else {
       throw AtomicManifestStoreError.unknownRevision(revisionID)
     }
+    let manifest = try ProjectManifestUpgrade.upgraded(revision.manifest) ?? revision.manifest
     return try await gatewayService.changeManifest(
-      revision.manifest, reason: .rolledBack, expectedDigest: digest)
+      manifest, reason: .rolledBack, expectedDigest: digest)
   }
 
   package func refreshProvider(id: String? = nil) async throws -> [ProviderState] {

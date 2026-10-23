@@ -23,7 +23,7 @@ struct MCPExecutionRecordTests {
 
   @Test func stableIdentityBindsInputAndSurvivesAHostInstanceChange() throws {
     let database = try GatewayDatabase(inMemory: ())
-    let first = MCPExecutionJournal(database: database, scope: "credential-a/workspace")
+    let first = MCPExecutionJournal(database: database, scope: "credential-a/project")
     let input = JSONValue.object(["body": .string("hello")])
     let reservation = try first.reserve(
       server: server, tool: "write", arguments: input, requestID: "one")
@@ -34,7 +34,7 @@ struct MCPExecutionRecordTests {
     #expect(throws: (any Error).self) {
       try first.reserve(server: server, tool: "write", arguments: .object([:]), requestID: "one")
     }
-    let next = MCPExecutionJournal(database: database, scope: "credential-a/workspace")
+    let next = MCPExecutionJournal(database: database, scope: "credential-a/project")
     let recovered = try next.reserve(
       server: server, tool: "write", arguments: input, requestID: "one")
     #expect(!recovered.inserted)
@@ -44,7 +44,7 @@ struct MCPExecutionRecordTests {
     #expect(throws: (any Error).self) {
       try next.update(serverID: server.id, requestID: "one") { $0.state = .running }
     }
-    let stranger = MCPExecutionJournal(database: database, scope: "credential-b/workspace")
+    let stranger = MCPExecutionJournal(database: database, scope: "credential-b/project")
     #expect(throws: (any Error).self) { try stranger.read(serverID: server.id, requestID: "one") }
   }
 

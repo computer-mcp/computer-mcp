@@ -41,13 +41,13 @@ struct StandaloneToolCommandTests {
     ).write(to: script)
     let config = GatewayConfiguration(
       runtime: .init(caller: .localCLI, profileID: .localAdmin),
-      workspaces: [.init(id: "fixture", path: root.path)],
+      projects: [.init(id: "fixture", path: root.path)],
       mcp: .init(servers: [
         .init(
           id: "owned", transport: .stdio, command: "/usr/bin/python3",
           args: [script.path, pidFile.path, closed.path], exposure: .reexport, prefix: "owned",
           allowedTools: ["inspect"], requestTimeoutMs: 2000, toolRisks: ["inspect": .readOnly])
-      ]), workspaceDirectory: root)
+      ]), projectDirectory: root)
     let manifest = root.appendingPathComponent("config.toml")
     try Data(config.exportedTOML().utf8).write(to: manifest)
     var arguments = ["tools"]

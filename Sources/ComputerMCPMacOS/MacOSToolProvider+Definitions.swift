@@ -26,7 +26,7 @@ extension MacOSToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "macos.user_directories", risk: .readOnly,
-          workspaceRequirement: .none,
+          projectRequirement: .none,
           localOnly: false, usesNetwork: false
         )
       ),
@@ -34,11 +34,11 @@ extension MacOSToolProvider {
         tool: MCPTool(
           name: "macos.default_application",
           description:
-            "Return the default macOS application, and optionally candidate applications, that LaunchServices would use for a workspace-contained file path or an http, https, or mailto URL. This is read-only and does not open the file, launch an application, make network requests, or inspect UI content.",
+            "Return the default macOS application, and optionally candidate applications, that LaunchServices would use for a project-contained file path or an http, https, or mailto URL. This is read-only and does not open the file, launch an application, make network requests, or inspect UI content.",
           inputSchema: objectSchema(
             properties: [
               "path": stringSchema(
-                "Existing workspace-relative or workspace-contained absolute file/directory path to query."
+                "Existing project-relative or project-contained absolute file/directory path to query."
               ),
               "url": stringSchema(
                 "Absolute http, https, or mailto URL to query without opening."),
@@ -55,7 +55,7 @@ extension MacOSToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "macos.default_application", risk: .readOnly,
-          workspaceRequirement: .none,
+          projectRequirement: .none,
           localOnly: false, usesNetwork: false
         )
       ),
@@ -82,7 +82,7 @@ extension MacOSToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "macos.applications", risk: .readOnly,
-          workspaceRequirement: .none,
+          projectRequirement: .none,
           localOnly: false, usesNetwork: false
         )
       ),
@@ -98,7 +98,7 @@ extension MacOSToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "macos.screens", risk: .readOnly,
-          workspaceRequirement: .none,
+          projectRequirement: .none,
           localOnly: false, usesNetwork: false
         )
       ),
@@ -106,11 +106,11 @@ extension MacOSToolProvider {
         tool: MCPTool(
           name: "macos.spotlight_search",
           description:
-            "Search the macOS Spotlight index under a workspace-contained directory using fixed /usr/bin/mdfind -onlyin argv. This is read-only.",
+            "Search the macOS Spotlight index under a project-contained directory using fixed /usr/bin/mdfind -onlyin argv. This is read-only.",
           inputSchema: objectSchema(
             properties: [
               "path": stringSchema(
-                "Optional workspace-relative directory path to constrain mdfind. Defaults to workspace root."
+                "Optional project-relative directory path to constrain mdfind. Defaults to project root."
               ),
               "query": stringSchema("Raw Spotlight query string passed to mdfind."),
               "max_results": integerSchema(
@@ -128,7 +128,7 @@ extension MacOSToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "macos.spotlight_search", risk: .readOnly,
-          workspaceRequirement: .none,
+          projectRequirement: .none,
           localOnly: false, usesNetwork: false
         )
       ),
@@ -156,7 +156,7 @@ extension MacOSToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "macos.running_applications", risk: .readOnly,
-          workspaceRequirement: .none,
+          projectRequirement: .none,
           localOnly: false, usesNetwork: false
         )
       ),
@@ -172,7 +172,7 @@ extension MacOSToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "macos.frontmost_application", risk: .readOnly,
-          workspaceRequirement: .none,
+          projectRequirement: .none,
           localOnly: false, usesNetwork: false
         )
       ),

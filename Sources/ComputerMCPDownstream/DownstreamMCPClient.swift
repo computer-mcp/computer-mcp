@@ -3,7 +3,7 @@ import ComputerMCPCore
 import Foundation
 
 package protocol DownstreamMCPClient: Sendable {
-  /// Creates a client whose connections and shutdown belong to one workspace owner.
+  /// Creates a client whose connections and shutdown belong to one project owner.
   /// Launch context is host-owned and must not be inferred from a plugin manifest's identity.
   func makeScopedClient(
     workingDirectory: URL, environment: [String: String], hostContext: (any MCPHostEnvironment)?

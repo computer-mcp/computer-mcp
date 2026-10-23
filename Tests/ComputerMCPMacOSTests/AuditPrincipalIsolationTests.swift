@@ -13,10 +13,10 @@ struct AuditPrincipalIsolationTests {
     let unbound = AuditEvent(
       id: "unbound", occurredAt: Date(timeIntervalSince1970: 1000), requestID: "unbound",
       caller: .secureTunnel, transport: "http", profileID: .chatGPTOperate,
-      workspaceID: "fixture", capabilityID: "file.read", decision: .allowed)
+      projectID: "fixture", capabilityID: "file.read", decision: .allowed)
     try database.recordAudit(unbound)
     let remote = ExecutionContext(
-      caller: .secureTunnel, profileID: .chatGPTOperate, workspaceID: "fixture",
+      caller: .secureTunnel, profileID: .chatGPTOperate, projectID: "fixture",
       transportTrace: .init(transport: "http"), trustedPrincipalID: "credential:first")
     #expect(try database.hostDiagnosticAudits(context: remote, limit: 100).isEmpty)
     var bound = unbound
@@ -54,9 +54,9 @@ struct AuditPrincipalIsolationTests {
       #expect(try database.hostDiagnosticAudits(context: unverified, limit: 100).isEmpty)
       unverified.trustedPrincipalID = " "
       #expect(try database.hostDiagnosticAudits(context: unverified, limit: 100).isEmpty)
-      var wrongWorkspace = firstContext
-      wrongWorkspace.workspaceID = "different-workspace"
-      #expect(try database.hostDiagnosticAudits(context: wrongWorkspace, limit: 100).isEmpty)
+      var wrongProject = firstContext
+      wrongProject.projectID = "different-project"
+      #expect(try database.hostDiagnosticAudits(context: wrongProject, limit: 100).isEmpty)
       var wrongProfile = firstContext
       wrongProfile.profileID = .chatGPTObserve
       #expect(try database.hostDiagnosticAudits(context: wrongProfile, limit: 100).isEmpty)
@@ -112,13 +112,13 @@ private struct AuditPrincipalFixture {
     database = try GatewayDatabase(path: root.appendingPathComponent("audits.sqlite").path)
     try database.saveProfile(
       .init(
-        id: .chatGPTOperate, capabilityIDs: ["workspace.describe"], workspaceIDs: ["fixture"],
+        id: .chatGPTOperate, capabilityIDs: ["project.describe"], projectIDs: ["fixture"],
         allowedCallers: [.secureTunnel], mode: .readOnly))
   }
 
   func context(principal: String, connection: String?) -> ExecutionContext {
     .init(
-      caller: .secureTunnel, profileID: .chatGPTOperate, workspaceID: "fixture",
+      caller: .secureTunnel, profileID: .chatGPTOperate, projectID: "fixture",
       transportTrace: .init(
         transport: connection == nil ? "http" : "gateway_socket", socketConnectionID: connection),
       trustedPrincipalID: principal)
@@ -127,7 +127,7 @@ private struct AuditPrincipalFixture {
   func runtime(context: ExecutionContext) throws -> GatewayRuntime {
     try GatewayRuntime(
       configuration: .init(), context: context, database: database,
-      registeredWorkspaces: [.init(id: "fixture", displayName: "Fixture", rootPath: root.path)],
+      registeredProjects: [.init(id: "fixture", displayName: "Fixture", rootPath: root.path)],
       platform: MacOSPlatform.services, plugins: [])
   }
 
@@ -135,7 +135,7 @@ private struct AuditPrincipalFixture {
     var request = context
     request.requestID = requestID
     _ = try runtime.callTool(
-      name: "workspace.describe", arguments: .object(["workspace_id": .string("fixture")]),
+      name: "project.describe", arguments: .object(["project_id": .string("fixture")]),
       context: request, invocationContext: .empty)
   }
 

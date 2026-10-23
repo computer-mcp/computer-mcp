@@ -20,8 +20,8 @@ struct ProfilePermissionsTests {
     let draft = ProfilePermissionsDraft(options: options)
     let saved = draft.savedGrant
     #expect(draft.replacesBroadGrants)
-    #expect(saved.mode == .workspaceOperations && !saved.fullShellEnabled)
-    #expect(saved.workspaceIDs == ["project"])
+    #expect(saved.mode == .projectOperations && !saved.fullShellEnabled)
+    #expect(saved.projectIDs == ["project"])
     #expect(saved.mcpServerIDs == ["notes"])
     #expect(
       saved.capabilityIDs
@@ -34,7 +34,7 @@ struct ProfilePermissionsTests {
   func deselectingIntegrationAlsoRevokesItsIndividualVisibleTools() {
     let grant = ProfileGrant(
       id: .chatGPTOperate, capabilityIDs: ["notes.search", "custom.unavailable"],
-      allowedCallers: [.secureTunnel], mcpServerIDs: ["notes"], mode: .workspaceOperations)
+      allowedCallers: [.secureTunnel], mcpServerIDs: ["notes"], mode: .projectOperations)
     var draft = ProfilePermissionsDraft(options: permissionOptions(grant: grant))
     draft.selectIntegration("notes", selected: false)
     #expect(draft.savedGrant.mcpServerIDs.isEmpty)
@@ -52,7 +52,7 @@ struct ProfilePermissionsTests {
     let saved = draft.savedGrant
     #expect(saved.mode == .readOnly && !saved.fullShellEnabled)
     #expect(saved.capabilityIDs.isDisjoint(with: ["*", "shell.run", "mcp.tools.call"]))
-    #expect(!saved.permitsRisk(.workspaceWrite) && !saved.permitsRisk(.fullShell))
+    #expect(!saved.permitsRisk(.projectWrite) && !saved.permitsRisk(.fullShell))
   }
 
   @Test
@@ -116,7 +116,7 @@ struct ProfilePermissionsTests {
 }
 
 private func permissionOptions(grant: ProfileGrant = .operate) -> ProfilePermissionOptions {
-  let workspace = RegisteredWorkspace(
+  let project = RegisteredProject(
     id: "project", displayName: "My Project", rootPath: "/tmp/project")
   return .init(
     grant: grant,
@@ -126,7 +126,7 @@ private func permissionOptions(grant: ProfileGrant = .operate) -> ProfilePermiss
         descriptor: .init(id: "system.time", risk: .readOnly)),
       .init(
         id: "file.write", title: "Write File", summary: "Write a file in a selected project.",
-        descriptor: .init(id: "file.write", risk: .workspaceWrite)),
+        descriptor: .init(id: "file.write", risk: .projectWrite)),
       .init(
         id: "notes.search", title: "Search Notes", summary: "Find notes in the connected account.",
         descriptor: .init(
@@ -134,11 +134,11 @@ private func permissionOptions(grant: ProfileGrant = .operate) -> ProfilePermiss
           mcpReference: .init(serverID: "notes", toolName: "search"))),
     ],
     integrations: [.init(id: "notes", title: "Notes", isEnabled: true)],
-    workspaces: [workspace],
+    projects: [project],
     inputs: .init(
-      configuration: GatewayConfiguration(workspaceDirectory: URL(fileURLWithPath: "/tmp")),
+      configuration: GatewayConfiguration(projectDirectory: URL(fileURLWithPath: "/tmp")),
       persisted: .init(
-        workspaces: [workspace], workspaceAliases: [:], profiles: [], plugins: .init())))
+        projects: [project], projectAliases: [:], profiles: [], plugins: .init())))
 }
 
 @MainActor

@@ -126,10 +126,10 @@ struct HTTPAndEnvironmentTests {
         == ["a/./b", "space name"])
     for (path, message) in [
       ("", "paths must not contain empty strings."),
-      ("/root/file", "paths must be workspace-relative: /root/file"),
+      ("/root/file", "paths must be project-relative: /root/file"),
       (":(glob)*", "git pathspec magic is not supported: :(glob)*"),
       (":/query", "git pathspec magic is not supported: :/query"),
-      ("a/../b", "paths must not escape workspace: a/../b"),
+      ("a/../b", "paths must not escape project: a/../b"),
     ] {
       #expect(throws: GatewayToolError.invalidArguments(message)) {
         try optionalGitPaths(in: ["paths": .array([.string(path)])])

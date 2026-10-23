@@ -35,7 +35,7 @@ package struct GatewayRemoteManagement: GatewayManagementProvider {
             readOnlyHint: input.readOnly, destructiveHint: destructive,
             idempotentHint: input.readOnly, openWorldHint: network)),
         capability: CapabilityDescriptor(
-          id: input.name, risk: risk, workspaceRequirement: .none,
+          id: input.name, risk: risk, projectRequirement: .none,
           localOnly: false, usesNetwork: network))
     }
   }
@@ -51,38 +51,38 @@ package struct GatewayRemoteManagement: GatewayManagementProvider {
         required: ["mode", "expected_revision"], readOnly: false),
       summary:
         "Reduce only this session to observe or restricted using its reviewed revision. Full Access and persistent trust require local consent.",
-      risk: .workspaceWrite),
+      risk: .projectWrite),
     .init(
       input: .init(
-        "workspace.add", arguments: ["path": .string, "display_name": .string],
+        "project.add", arguments: ["path": .string, "display_name": .string],
         required: ["path"], readOnly: false),
       summary:
-        "Register an absolute local workspace path in an approved Full Access session. Connected clients see the new configuration; running work keeps its owner.",
+        "Register an absolute local project path in an approved Full Access session. Connected clients see the new configuration; running work keeps its owner.",
       risk: .fullShell),
     .init(
       input: .init(
-        "workspace.repair",
+        "project.repair",
         arguments: [
           "id": .string, "path": .string, "expected_root_path": .string, "display_name": .string,
         ],
         required: ["id", "path", "expected_root_path"], readOnly: false),
       summary:
-        "Repair a registered workspace after comparing its reviewed root path. Requires approved Full Access; the selected folder must remain valid through publication.",
+        "Repair a registered project after comparing its reviewed root path. Requires approved Full Access; the selected folder must remain valid through publication.",
       risk: .fullShell),
     .init(
       input: .init(
-        "workspace.remove", arguments: ["id": .string, "expected_root_path": .string],
+        "project.remove", arguments: ["id": .string, "expected_root_path": .string],
         required: ["id", "expected_root_path"], readOnly: false),
       summary:
-        "Remove a workspace registration matching the reviewed root path. Files and retained work are preserved. Requires approved Full Access.",
+        "Remove a project registration matching the reviewed root path. Files and retained work are preserved. Requires approved Full Access.",
       risk: .fullShell, destructive: true),
     .init(
       input: .init(
-        "workspace.grant",
+        "project.grant",
         arguments: ["id": .string, "enabled": .boolean, "expected_profile_revision": .integer],
         required: ["id", "enabled", "expected_profile_revision"], readOnly: false),
       summary:
-        "Change one workspace grant for this connection's profile using its exact revision. Requires approved Full Access. Changing profile authority invalidates prior Full consent.",
+        "Change one project grant for this connection's profile using its exact revision. Requires approved Full Access. Changing profile authority invalidates prior Full consent.",
       risk: .fullShell),
     .init(
       input: .init(
@@ -174,12 +174,12 @@ package struct GatewayRemoteManagement: GatewayManagementProvider {
 
   static func path(_ value: String) throws -> URL {
     guard value.hasPrefix("/"), !value.contains("\0") else {
-      throw GatewayToolError.invalidArguments("Workspace paths must be absolute and NUL-free.")
+      throw GatewayToolError.invalidArguments("Project paths must be absolute and NUL-free.")
     }
     return URL(fileURLWithPath: value, isDirectory: true).standardizedFileURL
   }
 
-  static func workspace(_ value: RegisteredWorkspace) -> JSONValue {
+  static func project(_ value: RegisteredProject) -> JSONValue {
     .object([
       "id": .string(value.id), "display_name": .string(value.displayName),
       "root_path": .string(value.rootPath), "bookmark_stale": .bool(value.bookmarkIsStale),

@@ -9,7 +9,7 @@ extension CapabilityRisk {
   private var order: Int {
     switch self {
     case .readOnly: 0
-    case .workspaceWrite: 1
+    case .projectWrite: 1
     case .externalWrite: 2
     case .destructive: 3
     case .fullShell: 4
@@ -28,7 +28,11 @@ extension MCPTool {
           "[mcp.invalid_risk_metadata] Tool metadata must be an object.")
       }
       guard let value = object["io.github.computer-mcp/risk"] else { return actionFloor }
-      guard let raw = value.stringValue, let risk = CapabilityRisk(rawValue: raw) else {
+      // Independently installed publishers retain the version-1 risk spelling on the wire.
+      guard let raw = value.stringValue,
+        let risk = raw == "workspace-write"
+          ? CapabilityRisk.projectWrite : CapabilityRisk(rawValue: raw)
+      else {
         throw GatewayToolError.invalidArguments(
           "[mcp.invalid_risk_metadata] The tool declares an unsupported risk classification.")
       }

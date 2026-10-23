@@ -227,7 +227,7 @@ internal struct OpenAITunnelClientResolver: OpenAITunnelClientResolving {
   ) throws -> String {
     if let requestedPath {
       let inspection = ExecutableInspection.inspect(
-        requestedPath, workingDirectory: configuration.workspaceDirectory, environment: environment)
+        requestedPath, workingDirectory: configuration.projectDirectory, environment: environment)
       guard !inspection.hasKnownFailure, let path = inspection.path else {
         throw OpenAITunnelSupervisorError.tunnelClientUnavailable
       }

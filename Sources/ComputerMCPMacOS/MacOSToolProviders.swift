@@ -12,11 +12,11 @@ import ComputerMCPToolsCLI
 import ComputerMCPToolsFiles
 import ComputerMCPToolsGit
 import ComputerMCPToolsMCP
+import ComputerMCPToolsProject
 import ComputerMCPToolsShell
 import ComputerMCPToolsSkills
 import ComputerMCPToolsStructured
 import ComputerMCPToolsSystem
-import ComputerMCPToolsWorkspace
 
 package struct MacOSToolProviders: GatewayToolProviderFactory {
   package init() {}
@@ -46,7 +46,7 @@ package struct MacOSToolProviders: GatewayToolProviderFactory {
         "nc": "/usr/bin/nc", "lsof": "/usr/sbin/lsof",
       ],
       extendedAttributes: DarwinExtendedAttributes(), fileTrasher: DarwinFileTrasher(),
-      workspaceOpener: DarwinWorkspaceOpener(commandRunner: commandRunner),
+      projectOpener: DarwinProjectOpener(commandRunner: commandRunner),
       systemProbe: DarwinSystemProbe())
     return makeProviders(
       toolEnvironment: environment, mcpClient: mcpClient, hostContext: hostContext)
@@ -59,7 +59,7 @@ package struct MacOSToolProviders: GatewayToolProviderFactory {
   ) -> GatewayToolRegistry {
     let configuration = environment.configuration
     let client = mcpClient.makeScopedClient(
-      workingDirectory: configuration.workspaceDirectory, environment: environment.environment,
+      workingDirectory: configuration.projectDirectory, environment: environment.environment,
       hostContext: hostContext)
     let mcp = MCPToolProvider(environment: environment, mcpClient: client)
     let cli = CLIToolProvider(environment: environment)
@@ -69,7 +69,7 @@ package struct MacOSToolProviders: GatewayToolProviderFactory {
       cli, ProcessToolProvider(environment: environment),
       ShellToolProvider(environment: environment),
       mcp, SkillsToolProvider(environment: environment),
-      WorkspaceToolProvider(environment: environment),
+      ProjectToolProvider(environment: environment),
       FilesToolProvider(environment: environment), StructuredToolProvider(environment: environment),
       GitToolProvider(environment: environment), SystemToolProvider(environment: environment),
       NetworkToolProvider(environment: environment), MacOSToolProvider(environment: environment),

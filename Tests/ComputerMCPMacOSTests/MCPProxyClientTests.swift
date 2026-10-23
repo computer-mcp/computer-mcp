@@ -371,7 +371,7 @@ final class MCPProxyClientTests {
     let ownedWork = GatewayOwnedWork()
     var hostContext = MCPHostContext(
       runtimeID: UUID(), context: .init(caller: .localCLI, profileID: .localAdmin),
-      workspaceID: "fixture", rootURL: root, readOnly: false)
+      projectID: "fixture", rootURL: root, readOnly: false)
     hostContext.ownedWork = ownedWork
     let client = MCPProxyClient(hostContext: hostContext)
     let server = MCPServerConfig(
@@ -384,7 +384,7 @@ final class MCPProxyClientTests {
           context: .empty)
         let record = try #require(ownedWork.snapshot.first { $0.kind == .mcpRequest })
         #expect(record.kind == .mcpRequest)
-        #expect(record.workspaceID == "fixture")
+        #expect(record.projectID == "fixture")
         #expect(record.registrationID == "owned")
         #expect(record.resourceID == "owned-call")
         _ = try client.cancelRequest(
@@ -447,7 +447,7 @@ final class MCPProxyClientTests {
     let server = MCPServerConfig(
       id: "retained", transport: .stdio, command: fixture.script.path,
       args: [fixture.startMarker.path, fixture.cancelMarker.path], requestTimeoutMs: 5_000)
-    let client = MCPProxyClient(executionDatabase: database, executionScope: "owner/workspace")
+    let client = MCPProxyClient(executionDatabase: database, executionScope: "owner/project")
     do {
       try await runBlockingTest {
         let result = try client.callTool(
@@ -477,7 +477,7 @@ final class MCPProxyClientTests {
     }
     await client.shutdown()
     let restored = MCPProxyClient(
-      executionDatabase: try GatewayDatabase(path: databasePath), executionScope: "owner/workspace")
+      executionDatabase: try GatewayDatabase(path: databasePath), executionScope: "owner/project")
     do {
       try await runBlockingTest {
         let read = try restored.readRequest(
@@ -519,7 +519,7 @@ final class MCPProxyClientTests {
       var context = MCPHostContext(
         runtimeID: UUID(),
         context: .init(caller: .localCLI, profileID: .localAdmin),
-        workspaceID: "fixture", rootURL: root, readOnly: false)
+        projectID: "fixture", rootURL: root, readOnly: false)
       context.ownedWork = work
       let client = MCPProxyClient(hostContext: context)
       let server = MCPServerConfig(
@@ -529,7 +529,7 @@ final class MCPProxyClientTests {
         server: server, name: "http-sample", arguments: .object([:]), context: .empty)
       let record = try #require(work.snapshot.first { $0.kind == .mcpUnreportedWork })
       let target = MCPContinuationTarget(
-        workspaceID: "fixture",
+        projectID: "fixture",
         reference: .init(serverID: "http", toolName: "mcp.connections.close"),
         connectionID: try #require(record.connectionID), instanceID: nil, resources: [:],
         selectedOwnershipID: record.id)
@@ -877,7 +877,7 @@ final class MCPProxyClientTests {
       let ownedWork = GatewayOwnedWork()
       var hostContext = MCPHostContext(
         runtimeID: UUID(), context: .init(caller: .localCLI, profileID: .localAdmin),
-        workspaceID: "fixture", rootURL: directory, readOnly: false)
+        projectID: "fixture", rootURL: directory, readOnly: false)
       hostContext.ownedWork = ownedWork
       let client = MCPProxyClient(
         hostContext: hostContext, executionDatabase: database, executionScope: "cancel-failure")

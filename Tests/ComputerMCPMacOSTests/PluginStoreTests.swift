@@ -43,22 +43,22 @@ struct PluginStoreTests {
     #expect(report.version == refusal.version)
   }
 
-  @Test(arguments: ["workspace", "profile"])
+  @Test(arguments: ["project", "profile"])
   func configurationChangesDuringPreflightRejectPluginCommit(change: String) async throws {
     let fixture = try PluginStoreFixture()
     defer { fixture.cleanup() }
     let database = try GatewayDatabase(path: fixture.databaseURL.path)
     let concurrent = try GatewayDatabase(path: fixture.databaseURL.path)
-    let workspace = RegisteredWorkspace(
+    let project = RegisteredProject(
       id: "fixture", displayName: "Fixture", rootPath: fixture.root.path)
-    try database.saveWorkspace(workspace)
+    try database.saveProject(project)
     let store = PluginStore(database: database, platform: MacOSPlatform.services) { _ in
-      if change == "workspace" {
-        try concurrent.deleteWorkspace(id: workspace.id)
+      if change == "project" {
+        try concurrent.deleteProject(id: project.id)
       } else {
         try concurrent.saveProfile(
           ProfileGrant(
-            id: .localAdmin, capabilityIDs: ["workspace.list"], workspaceIDs: [workspace.id],
+            id: .localAdmin, capabilityIDs: ["project.list"], projectIDs: [project.id],
             allowedCallers: [.localCLI]))
       }
     }
@@ -71,8 +71,8 @@ struct PluginStoreTests {
     }
     #expect(rejected)
     #expect(try database.pluginStoreSnapshot() == PluginStoreSnapshot())
-    if change == "workspace" {
-      #expect(try database.workspace(id: workspace.id) == nil)
+    if change == "project" {
+      #expect(try database.project(id: project.id) == nil)
     } else {
       #expect(try database.profiles().count == 1)
     }
@@ -86,13 +86,13 @@ struct PluginStoreTests {
     let expected = try database.configurationState()
     let store = PluginStore(
       database: database, platform: MacOSPlatform.services, expectedConfiguration: expected)
-    try GatewayDatabase(path: fixture.databaseURL.path).saveWorkspace(
-      RegisteredWorkspace(id: "added", displayName: "Added", rootPath: fixture.root.path))
+    try GatewayDatabase(path: fixture.databaseURL.path).saveProject(
+      RegisteredProject(id: "added", displayName: "Added", rootPath: fixture.root.path))
     await #expect(throws: GatewayDatabaseError.configurationChanged) {
       try await store.setEnabled(true, for: "candidate", expectedRevision: 0)
     }
     #expect(try database.pluginStoreSnapshot() == expected.plugins)
-    #expect(try database.workspaces().map(\.id) == ["added"])
+    #expect(try database.projects().map(\.id) == ["added"])
   }
 
   @Test
@@ -127,7 +127,7 @@ struct PluginStoreTests {
   }
 
   @Test
-  func reopeningTheDatabasePreservesSourceSelectionOverridesAndUnrelatedWorkspace() async throws {
+  func reopeningTheDatabasePreservesSourceSelectionOverridesAndUnrelatedProject() async throws {
     let fixture = try PluginStoreFixture()
     defer { fixture.cleanup() }
     var settings = fixture.settings
@@ -135,7 +135,7 @@ struct PluginStoreTests {
     let expected: PluginStoreSnapshot
     do {
       let database = try GatewayDatabase(path: fixture.databaseURL.path)
-      try database.saveWorkspace(
+      try database.saveProject(
         .init(id: "personal", displayName: "Personal", rootPath: fixture.root.path))
       let store = PluginStore(database: database, platform: MacOSPlatform.services)
       _ = try await store.registerDevelopment(at: fixture.packageRoot, expectedRevision: 0)
@@ -145,7 +145,7 @@ struct PluginStoreTests {
     let reopened = try GatewayDatabase(path: fixture.databaseURL.path)
     let store = PluginStore(database: reopened, platform: MacOSPlatform.services)
     #expect(try await store.snapshot() == expected)
-    #expect(try reopened.workspace(id: "personal")?.displayName == "Personal")
+    #expect(try reopened.project(id: "personal")?.displayName == "Personal")
     let plugin = try #require(try await fixture.resolve(store).plugins.first)
     #expect(plugin.mcpServers[0].id == "chosen-mcp")
     #expect(plugin.mcpServers[0].allowedTools == ["inspect"])

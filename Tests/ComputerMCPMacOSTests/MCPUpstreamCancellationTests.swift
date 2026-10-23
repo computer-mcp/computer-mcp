@@ -25,8 +25,8 @@ struct MCPUpstreamCancellationTests {
       runtime: .init(caller: .localMCP, profileID: .localAdmin),
       profiles: [
         .init(
-          id: .localAdmin, capabilities: ["*"], workspaces: ["fixture"],
-          allowedCallers: [.localMCP], mode: .workspaceOperations, confirmationPolicy: .never)
+          id: .localAdmin, capabilities: ["*"], projects: ["fixture"],
+          allowedCallers: [.localMCP], mode: .projectOperations, confirmationPolicy: .never)
       ],
       mcp: .init(servers: [
         .init(
@@ -34,12 +34,12 @@ struct MCPUpstreamCancellationTests {
           args: [script.path, root.path], exposure: .reexport, prefix: "native",
           allowAnyTool: true)
       ]), tools: [.init(name: "wait_alias", adapter: .mcp, source: "native", tool: "wait")],
-      workspaceDirectory: root)
-    let workspaces = [
-      RegisteredWorkspace(id: "fixture", displayName: "Fixture", rootPath: root.path)
+      projectDirectory: root)
+    let projects = [
+      RegisteredProject(id: "fixture", displayName: "Fixture", rootPath: root.path)
     ]
     let native = try await GatewayRuntime.make(
-      configuration: configuration, registeredWorkspaces: workspaces,
+      configuration: configuration, registeredProjects: projects,
       platform: MacOSPlatform.services)
     let origin =
       overHTTP
@@ -62,7 +62,7 @@ struct MCPUpstreamCancellationTests {
           .init(name: "wait_alias", adapter: .mcp, source: "native", tool: downstreamWait)
         ]
         runtime = try await GatewayRuntime.make(
-          configuration: configuration, registeredWorkspaces: workspaces,
+          configuration: configuration, registeredProjects: projects,
           platform: MacOSPlatform.services)
       } else {
         downstreamWait = "wait"

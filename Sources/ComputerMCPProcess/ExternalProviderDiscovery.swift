@@ -190,7 +190,7 @@ package struct ExternalProviderDiscovery: @unchecked Sendable {
       ),
       commandRunner: commandRunner,
       environment: environment,
-      configurationBaseDirectory: configuration.workspaceDirectory,
+      configurationBaseDirectory: configuration.projectDirectory,
       commonSearchDirectories: commonSearchDirectories,
       systemSearchDirectories: systemSearchDirectories,
       timeoutMilliseconds: timeoutMilliseconds,
@@ -588,7 +588,7 @@ package struct ExternalProviderDiscovery: @unchecked Sendable {
             executable: command,
             arguments: server.args,
             workingDirectory: server.resolvedWorkingDirectory(
-              base: configuration.workspaceDirectory),
+              base: configuration.projectDirectory),
             environment: server.env
           ))
       }
@@ -603,7 +603,7 @@ package struct ExternalProviderDiscovery: @unchecked Sendable {
           ExternalProviderLaunchConfig(
             executable: command.executable,
             workingDirectory: command.resolvedWorkingDirectory(
-              base: configuration.workspaceDirectory),
+              base: configuration.projectDirectory),
             environment: command.env))
       }
       if !launches.isEmpty {

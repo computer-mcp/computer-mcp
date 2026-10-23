@@ -44,7 +44,7 @@ package enum PluginDependencyResolver {
         guard let application = applicationURL(locator.bundleIdentifier), application.isFileURL,
           let bundle = Bundle(url: application),
           bundle.bundleIdentifier == locator.bundleIdentifier,
-          (try? WorkspacePathResolver.resolve(
+          (try? ProjectPathResolver.resolve(
             locator.executable, relativeTo: application)) != nil
         else { continue }
         bindings[dependency.id] = Binding(

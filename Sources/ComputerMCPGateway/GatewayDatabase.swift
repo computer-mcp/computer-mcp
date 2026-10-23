@@ -5,7 +5,7 @@ import ComputerMCPDownstream
 import ComputerMCPPersistence
 import ComputerMCPPlatform
 import ComputerMCPPlugins
-import ComputerMCPToolsWorkspace
+import ComputerMCPToolsProject
 import Crypto
 import Foundation
 import GRDB
@@ -52,19 +52,19 @@ package final class GatewayDatabase: OAuthStore, @unchecked Sendable {
   }
 
   /// Persisted inputs read under one SQLite snapshot. Alias bindings participate in
-  /// comparison even though only canonical workspaces appear in the public directory.
+  /// comparison even though only canonical projects appear in the public directory.
   package struct ConfigurationState: Equatable, Sendable {
-    package let workspaces: [RegisteredWorkspace]
-    package let workspaceAliases: [String: String]
+    package let projects: [RegisteredProject]
+    package let projectAliases: [String: String]
     package let profiles: [ProfileGrant]
     package let plugins: PluginStoreSnapshot
 
     package init(
-      workspaces: [RegisteredWorkspace], workspaceAliases: [String: String],
+      projects: [RegisteredProject], projectAliases: [String: String],
       profiles: [ProfileGrant], plugins: PluginStoreSnapshot
     ) {
-      self.workspaces = workspaces
-      self.workspaceAliases = workspaceAliases
+      self.projects = projects
+      self.projectAliases = projectAliases
       self.profiles = profiles
       self.plugins = plugins
     }
@@ -74,22 +74,22 @@ package final class GatewayDatabase: OAuthStore, @unchecked Sendable {
     try writer.read { try Self.configurationState(in: $0) }
   }
 
-  package func prepareWorkspaceChange(
-    _ mutation: WorkspaceConfigurationMutation, expected: ConfigurationState,
+  package func prepareProjectChange(
+    _ mutation: ProjectConfigurationMutation, expected: ConfigurationState,
     resolvedProfiles: [ProfileGrant] = []
-  ) throws -> PreparedWorkspaceChange<ConfigurationState> {
+  ) throws -> PreparedProjectChange<ConfigurationState> {
     let timestamp = Date()
     let receiptID = UUID().uuidString
     return try writer.write { database in
       guard try Self.configurationState(in: database) == expected else {
         throw GatewayDatabaseError.configurationChanged
       }
-      var prepared: PreparedWorkspaceChange<ConfigurationState>?
+      var prepared: PreparedProjectChange<ConfigurationState>?
       try database.inSavepoint {
-        let result = try Self.applyWorkspaceChange(
+        let result = try Self.applyProjectChange(
           mutation, expected: expected, resolvedProfiles: resolvedProfiles,
           timestamp: timestamp, receiptID: receiptID, in: database)
-        prepared = PreparedWorkspaceChange(
+        prepared = PreparedProjectChange(
           mutation: mutation, expected: expected,
           proposed: try Self.configurationState(in: database),
           resolvedProfiles: resolvedProfiles, result: result, timestamp: timestamp,
@@ -101,8 +101,8 @@ package final class GatewayDatabase: OAuthStore, @unchecked Sendable {
     }
   }
 
-  package func saveWorkspaceChange(
-    _ prepared: PreparedWorkspaceChange<ConfigurationState>,
+  package func saveProjectChange(
+    _ prepared: PreparedProjectChange<ConfigurationState>,
     resolution: GatewayConfigurationResolution,
     authorization: GatewayManagementAuthorization? = nil
   ) throws -> ConfigurationState {
@@ -111,7 +111,7 @@ package final class GatewayDatabase: OAuthStore, @unchecked Sendable {
       guard try Self.configurationState(in: database) == prepared.expected else {
         throw GatewayDatabaseError.configurationChanged
       }
-      let result = try Self.applyWorkspaceChange(
+      let result = try Self.applyProjectChange(
         prepared.mutation, expected: prepared.expected, resolvedProfiles: prepared.resolvedProfiles,
         timestamp: prepared.timestamp, receiptID: prepared.receiptID, in: database)
       guard result == prepared.result,
@@ -126,32 +126,31 @@ package final class GatewayDatabase: OAuthStore, @unchecked Sendable {
     return committed
   }
 
-  private static func applyWorkspaceChange(
-    _ mutation: WorkspaceConfigurationMutation, expected: ConfigurationState,
+  private static func applyProjectChange(
+    _ mutation: ProjectConfigurationMutation, expected: ConfigurationState,
     resolvedProfiles: [ProfileGrant], timestamp: Date, receiptID: String, in database: Database
-  ) throws -> WorkspaceChangeResult {
+  ) throws -> ProjectChangeResult {
     switch mutation {
-    case .register(let workspace):
-      let result = try registerWorkspaceIdempotently(workspace, in: database)
-      return .registered(result.workspace, created: result.created)
-    case .repair(let workspace, _):
-      guard let original = expected.workspaces.first(where: { $0.id == workspace.id }),
-        original.createdAt == workspace.createdAt,
-        expected.workspaceAliases[workspace.id] == nil
+    case .register(let project):
+      let result = try registerProjectIdempotently(project, in: database)
+      return .registered(result.project, created: result.created)
+    case .repair(let project, _):
+      guard let original = expected.projects.first(where: { $0.id == project.id }),
+        original.createdAt == project.createdAt,
+        expected.projectAliases[project.id] == nil
       else { throw GatewayDatabaseError.configurationChanged }
-      if let existing = try registeredWorkspace(
-        canonicalRoot: canonicalWorkspaceRoot(workspace.rootPath), in: database),
-        existing.id != workspace.id
+      if let existing = try registeredProject(
+        canonicalRoot: canonicalProjectRoot(project.rootPath), in: database),
+        existing.id != project.id
       {
-        throw WorkspaceRepairError.rootAlreadyRegistered(workspaceID: existing.id)
+        throw ProjectRepairError.rootAlreadyRegistered(projectID: existing.id)
       }
-      try saveWorkspace(workspace, in: database)
+      try saveProject(project, in: database)
       let affectedIDs = Set(
-        expected.workspaceAliases.filter { $0.value == workspace.id }.map(\.key) + [workspace.id])
+        expected.projectAliases.filter { $0.value == project.id }.map(\.key) + [project.id])
       for stored in expected.profiles
-      where stored.workspaceIDs.contains("*") || !stored.workspaceIDs.isDisjoint(with: affectedIDs)
-      {
-        let profile = try resolvedWorkspaceProfile(stored, resolvedProfiles: resolvedProfiles)
+      where stored.projectIDs.contains("*") || !stored.projectIDs.isDisjoint(with: affectedIDs) {
+        let profile = try resolvedProjectProfile(stored, resolvedProfiles: resolvedProfiles)
         try profile.validate()
         try saveProfile(
           profile, updatedAt: timestamp, expectedRevision: stored.authorizationRevision,
@@ -162,23 +161,23 @@ package final class GatewayDatabase: OAuthStore, @unchecked Sendable {
         try database.execute(
           sql: """
             UPDATE operationTickets SET state = ?, completedAt = ?, failureCode = ?
-            WHERE workspaceID = ? AND state IN (?, ?, ?)
+            WHERE projectID = ? AND state IN (?, ?, ?)
             """,
           arguments: [
-            OperationTicketState.denied.rawValue, timestamp, "operations.workspace_changed", id,
+            OperationTicketState.denied.rawValue, timestamp, "operations.project_changed", id,
             OperationTicketState.prepared.rawValue, OperationTicketState.pendingApproval.rawValue,
             OperationTicketState.approved.rawValue,
           ])
       }
-      return .repaired(workspace)
+      return .repaired(project)
     case .remove(let id):
-      _ = try removeWorkspace(
+      _ = try removeProject(
         id: id, expectedConfiguration: expected, resolvedProfiles: resolvedProfiles,
         now: timestamp, in: database)
       return .removed
     case .deduplicate(let digest, let allowMetadataConflicts):
       return .deduplicated(
-        try applyWorkspaceDeduplication(
+        try applyProjectDeduplication(
           expectedPlanDigest: digest, allowMetadataConflicts: allowMetadataConflicts,
           now: timestamp, expectedConfiguration: expected, resolvedProfiles: resolvedProfiles,
           receiptID: receiptID, in: database))
@@ -187,10 +186,10 @@ package final class GatewayDatabase: OAuthStore, @unchecked Sendable {
 
   private static func configurationState(in database: Database) throws -> ConfigurationState {
     try ConfigurationState(
-      workspaces: workspaces(in: database),
-      workspaceAliases: Dictionary(
-        uniqueKeysWithValues: WorkspaceAliasRecord.fetchAll(database).map {
-          ($0.aliasWorkspaceID, $0.canonicalWorkspaceID)
+      projects: projects(in: database),
+      projectAliases: Dictionary(
+        uniqueKeysWithValues: ProjectAliasRecord.fetchAll(database).map {
+          ($0.aliasProjectID, $0.canonicalProjectID)
         }),
       profiles: profiles(in: database), plugins: pluginStoreSnapshot(in: database))
   }
@@ -224,7 +223,7 @@ package final class GatewayDatabase: OAuthStore, @unchecked Sendable {
   ) throws -> ConfigurationState {
     try state.validate()
     guard
-      expectedConfiguration != nil || (resolution.workspaces.isEmpty && resolution.profiles.isEmpty)
+      expectedConfiguration != nil || (resolution.projects.isEmpty && resolution.profiles.isEmpty)
     else { throw PluginStoreError.invalidState }
     guard expectedRevision >= 0, expectedRevision < Int64.max,
       state.revision == expectedRevision + 1
@@ -264,11 +263,11 @@ package final class GatewayDatabase: OAuthStore, @unchecked Sendable {
   private static func applyRuntimeResolution(
     _ resolution: GatewayConfigurationResolution, in database: Database
   ) throws {
-    for change in resolution.workspaces {
+    for change in resolution.projects {
       guard change.original.id == change.resolved.id,
-        try WorkspaceRecord.fetchOne(database, key: change.original.id)?.value == change.original
+        try ProjectRecord.fetchOne(database, key: change.original.id)?.value == change.original
       else { throw GatewayDatabaseError.configurationChanged }
-      try saveWorkspace(change.resolved, in: database)
+      try saveProject(change.resolved, in: database)
     }
     for profile in resolution.profiles {
       guard profile.authorizationRevision == 0,
@@ -285,38 +284,37 @@ package final class GatewayDatabase: OAuthStore, @unchecked Sendable {
     }
   }
 
-  package func saveWorkspace(_ workspace: RegisteredWorkspace) throws {
+  package func saveProject(_ project: RegisteredProject) throws {
     try writer.write { database in
-      try Self.saveWorkspace(workspace, in: database)
+      try Self.saveProject(project, in: database)
     }
   }
 
   /// Bookmark resolution must not overwrite a concurrent edit or recreate a removed registration.
   @discardableResult
-  func saveWorkspace(_ workspace: RegisteredWorkspace, replacing expected: RegisteredWorkspace)
+  func saveProject(_ project: RegisteredProject, replacing expected: RegisteredProject)
     throws -> Bool
   {
     try writer.write { database in
-      guard workspace.id == expected.id,
-        try WorkspaceRecord.fetchOne(database, key: expected.id)?.value == expected
+      guard project.id == expected.id,
+        try ProjectRecord.fetchOne(database, key: expected.id)?.value == expected
       else { return false }
-      try Self.saveWorkspace(workspace, in: database)
+      try Self.saveProject(project, in: database)
       return true
     }
   }
 
-  private static func saveWorkspace(_ workspace: RegisteredWorkspace, in database: Database) throws
-  {
-    try WorkspaceRecord(workspace).save(database)
-    let canonicalRoot = Self.canonicalWorkspaceRoot(workspace.rootPath)
-    try WorkspaceCanonicalRootRecord
-      .filter(Column("workspaceID") == workspace.id)
+  private static func saveProject(_ project: RegisteredProject, in database: Database) throws {
+    try ProjectRecord(project).save(database)
+    let canonicalRoot = Self.canonicalProjectRoot(project.rootPath)
+    try ProjectCanonicalRootRecord
+      .filter(Column("projectID") == project.id)
       .filter(Column("canonicalRootPath") != canonicalRoot)
       .deleteAll(database)
-    try WorkspaceCanonicalRootRecord(
+    try ProjectCanonicalRootRecord(
       canonicalRootPath: canonicalRoot,
-      workspaceID: workspace.id,
-      createdAt: workspace.createdAt
+      projectID: project.id,
+      createdAt: project.createdAt
     ).insert(database, onConflict: .ignore)
   }
 
@@ -394,58 +392,58 @@ package final class GatewayDatabase: OAuthStore, @unchecked Sendable {
     return updated
   }
 
-  package func registerWorkspaceIdempotently(
-    _ proposed: RegisteredWorkspace
-  ) throws -> (workspace: RegisteredWorkspace, created: Bool) {
-    try writer.write { try Self.registerWorkspaceIdempotently(proposed, in: $0) }
+  package func registerProjectIdempotently(
+    _ proposed: RegisteredProject
+  ) throws -> (project: RegisteredProject, created: Bool) {
+    try writer.write { try Self.registerProjectIdempotently(proposed, in: $0) }
   }
 
-  private static func registerWorkspaceIdempotently(
-    _ proposed: RegisteredWorkspace, in database: Database
-  ) throws -> (workspace: RegisteredWorkspace, created: Bool) {
-    let canonicalRoot = canonicalWorkspaceRoot(proposed.rootPath)
-    if let existing = try registeredWorkspace(canonicalRoot: canonicalRoot, in: database) {
+  private static func registerProjectIdempotently(
+    _ proposed: RegisteredProject, in database: Database
+  ) throws -> (project: RegisteredProject, created: Bool) {
+    let canonicalRoot = canonicalProjectRoot(proposed.rootPath)
+    if let existing = try registeredProject(canonicalRoot: canonicalRoot, in: database) {
       return (existing, false)
     }
-    try WorkspaceRecord(proposed).insert(database)
-    try WorkspaceCanonicalRootRecord(
+    try ProjectRecord(proposed).insert(database)
+    try ProjectCanonicalRootRecord(
       canonicalRootPath: canonicalRoot,
-      workspaceID: proposed.id,
+      projectID: proposed.id,
       createdAt: proposed.createdAt
     ).insert(database)
     return (proposed, true)
   }
 
-  private static func registeredWorkspace(canonicalRoot: String, in database: Database) throws
-    -> RegisteredWorkspace?
+  private static func registeredProject(canonicalRoot: String, in database: Database) throws
+    -> RegisteredProject?
   {
-    if let binding = try WorkspaceCanonicalRootRecord.fetchOne(
+    if let binding = try ProjectCanonicalRootRecord.fetchOne(
       database,
       key: canonicalRoot
     ) {
       let canonicalID =
-        try WorkspaceAliasRecord.fetchOne(database, key: binding.workspaceID)?
-        .canonicalWorkspaceID
-        ?? binding.workspaceID
-      if let existing = try WorkspaceRecord.fetchOne(database, key: canonicalID),
-        Self.canonicalWorkspaceRoot(existing.rootPath) == canonicalRoot
+        try ProjectAliasRecord.fetchOne(database, key: binding.projectID)?
+        .canonicalProjectID
+        ?? binding.projectID
+      if let existing = try ProjectRecord.fetchOne(database, key: canonicalID),
+        Self.canonicalProjectRoot(existing.rootPath) == canonicalRoot
       {
-        if binding.workspaceID != canonicalID {
-          try WorkspaceCanonicalRootRecord(
-            canonicalRootPath: canonicalRoot, workspaceID: canonicalID,
+        if binding.projectID != canonicalID {
+          try ProjectCanonicalRootRecord(
+            canonicalRootPath: canonicalRoot, projectID: canonicalID,
             createdAt: existing.createdAt
           ).save(database)
         }
         return existing.value
       }
-      _ = try WorkspaceCanonicalRootRecord.deleteOne(database, key: canonicalRoot)
+      _ = try ProjectCanonicalRootRecord.deleteOne(database, key: canonicalRoot)
     }
-    if let existing = try Self.workspaces(in: database).first(where: {
-      Self.canonicalWorkspaceRoot($0.rootPath) == canonicalRoot
+    if let existing = try Self.projects(in: database).first(where: {
+      Self.canonicalProjectRoot($0.rootPath) == canonicalRoot
     }) {
-      try WorkspaceCanonicalRootRecord(
+      try ProjectCanonicalRootRecord(
         canonicalRootPath: canonicalRoot,
-        workspaceID: existing.id,
+        projectID: existing.id,
         createdAt: existing.createdAt
       ).insert(database, onConflict: .ignore)
       return existing
@@ -453,121 +451,121 @@ package final class GatewayDatabase: OAuthStore, @unchecked Sendable {
     return nil
   }
 
-  package func workspaces() throws -> [RegisteredWorkspace] {
-    try writer.read { try Self.workspaces(in: $0) }
+  package func projects() throws -> [RegisteredProject] {
+    try writer.read { try Self.projects(in: $0) }
   }
 
-  private static func workspaces(in database: Database) throws -> [RegisteredWorkspace] {
-    let aliasIDs = Set(try WorkspaceAliasRecord.fetchAll(database).map(\.aliasWorkspaceID))
+  private static func projects(in database: Database) throws -> [RegisteredProject] {
+    let aliasIDs = Set(try ProjectAliasRecord.fetchAll(database).map(\.aliasProjectID))
     return
-      try WorkspaceRecord
+      try ProjectRecord
       .order(Column("displayName").collating(.nocase), Column("id"))
       .fetchAll(database)
       .filter { !aliasIDs.contains($0.id) }
       .map(\.value)
   }
 
-  package func workspace(id: String) throws -> RegisteredWorkspace? {
+  package func project(id: String) throws -> RegisteredProject? {
     try writer.read { database in
       let resolvedID =
-        try WorkspaceAliasRecord.fetchOne(database, key: id)?.canonicalWorkspaceID ?? id
-      return try WorkspaceRecord.fetchOne(database, key: resolvedID)?.value
+        try ProjectAliasRecord.fetchOne(database, key: id)?.canonicalProjectID ?? id
+      return try ProjectRecord.fetchOne(database, key: resolvedID)?.value
     }
   }
 
-  package func deleteWorkspace(id: String) throws {
+  package func deleteProject(id: String) throws {
     try writer.write { database in
-      try Self.deleteWorkspace(id: id, in: database)
+      try Self.deleteProject(id: id, in: database)
     }
   }
 
-  private static func deleteWorkspace(id: String, in database: Database) throws {
+  private static func deleteProject(id: String, in database: Database) throws {
     let canonicalID =
-      try WorkspaceAliasRecord.fetchOne(database, key: id)?.canonicalWorkspaceID ?? id
+      try ProjectAliasRecord.fetchOne(database, key: id)?.canonicalProjectID ?? id
     let aliasIDs =
-      try WorkspaceAliasRecord
-      .filter(Column("canonicalWorkspaceID") == canonicalID)
+      try ProjectAliasRecord
+      .filter(Column("canonicalProjectID") == canonicalID)
       .fetchAll(database)
-      .map(\.aliasWorkspaceID)
-    try WorkspaceAliasRecord
-      .filter(Column("canonicalWorkspaceID") == canonicalID)
+      .map(\.aliasProjectID)
+    try ProjectAliasRecord
+      .filter(Column("canonicalProjectID") == canonicalID)
       .deleteAll(database)
     for removedID in aliasIDs + [canonicalID] {
-      try WorkspaceCanonicalRootRecord.filter(Column("workspaceID") == removedID).deleteAll(
+      try ProjectCanonicalRootRecord.filter(Column("projectID") == removedID).deleteAll(
         database)
-      _ = try WorkspaceRecord.deleteOne(database, key: removedID)
+      _ = try ProjectRecord.deleteOne(database, key: removedID)
     }
   }
 
   /// Registration, aliases, affected grants and unused approvals share one commit.
   /// Legacy profiles must be resolved against the admitted manifest before entering SQLite.
-  package func removeWorkspace(
+  package func removeProject(
     id: String, expectedConfiguration: ConfigurationState,
     resolvedProfiles: [ProfileGrant] = [], now: Date = Date()
   ) throws {
     let changed = try writer.write { database in
-      try Self.removeWorkspace(
+      try Self.removeProject(
         id: id, expectedConfiguration: expectedConfiguration, resolvedProfiles: resolvedProfiles,
         now: now, in: database)
     }
     for id in changed { profileChangeLock.withLock { profileChangeBroadcasters[id] }?.send() }
   }
 
-  private static func removeWorkspace(
+  private static func removeProject(
     id: String, expectedConfiguration: ConfigurationState,
     resolvedProfiles: [ProfileGrant], now: Date, in database: Database
   ) throws -> [GatewayProfileID] {
     guard try Self.configurationState(in: database) == expectedConfiguration else {
       throw GatewayDatabaseError.configurationChanged
     }
-    let canonicalID = expectedConfiguration.workspaceAliases[id] ?? id
-    guard expectedConfiguration.workspaces.contains(where: { $0.id == canonicalID }) else {
-      throw GatewayDatabaseError.invalidStoredValue("Unknown workspace '\(id)'.")
+    let canonicalID = expectedConfiguration.projectAliases[id] ?? id
+    guard expectedConfiguration.projects.contains(where: { $0.id == canonicalID }) else {
+      throw GatewayDatabaseError.invalidStoredValue("Unknown project '\(id)'.")
     }
     let removedIDs = Set(
-      expectedConfiguration.workspaceAliases.filter { $0.value == canonicalID }.map(\.key)
+      expectedConfiguration.projectAliases.filter { $0.value == canonicalID }.map(\.key)
         + [canonicalID])
     var changed: [GatewayProfileID] = []
     for stored in expectedConfiguration.profiles {
-      guard !stored.workspaceIDs.isDisjoint(with: removedIDs) else { continue }
-      var profile = try Self.resolvedWorkspaceProfile(stored, resolvedProfiles: resolvedProfiles)
-      profile.workspaceIDs.subtract(removedIDs)
+      guard !stored.projectIDs.isDisjoint(with: removedIDs) else { continue }
+      var profile = try Self.resolvedProjectProfile(stored, resolvedProfiles: resolvedProfiles)
+      profile.projectIDs.subtract(removedIDs)
       try profile.validate()
       try Self.saveProfile(
         profile, updatedAt: now, expectedRevision: stored.authorizationRevision, in: database)
       changed.append(profile.id)
     }
-    try Self.deleteWorkspace(id: canonicalID, in: database)
+    try Self.deleteProject(id: canonicalID, in: database)
     return changed
   }
 
-  private static func resolvedWorkspaceProfile(
+  private static func resolvedProjectProfile(
     _ stored: ProfileGrant, resolvedProfiles: [ProfileGrant]
   ) throws -> ProfileGrant {
     guard stored.authorizationRevision == 0 else { return stored }
     let matches = resolvedProfiles.filter { $0.id == stored.id && $0.authorizationRevision == 0 }
     guard matches.count == 1, let profile = matches.first else {
       throw GatewayDatabaseError.invalidStoredValue(
-        "Resolve legacy profile '\(stored.id.rawValue)' before changing its workspace grants.")
+        "Resolve legacy profile '\(stored.id.rawValue)' before changing its project grants.")
     }
     return profile
   }
 
-  package func workspaceDeduplicationPlan() throws -> WorkspaceDeduplicationPlan {
+  package func projectDeduplicationPlan() throws -> ProjectDeduplicationPlan {
     try writer.read { database in
-      try Self.workspaceDeduplicationPlan(database)
+      try Self.projectDeduplicationPlan(database)
     }
   }
 
-  package func applyWorkspaceDeduplication(
+  package func applyProjectDeduplication(
     expectedPlanDigest: String,
     allowMetadataConflicts: Bool,
     now: Date = Date(),
     expectedConfiguration: ConfigurationState? = nil,
     resolvedProfiles: [ProfileGrant] = []
-  ) throws -> WorkspaceDeduplicationResult {
+  ) throws -> ProjectDeduplicationResult {
     let result = try writer.write { database in
-      try Self.applyWorkspaceDeduplication(
+      try Self.applyProjectDeduplication(
         expectedPlanDigest: expectedPlanDigest, allowMetadataConflicts: allowMetadataConflicts,
         now: now, expectedConfiguration: expectedConfiguration, resolvedProfiles: resolvedProfiles,
         receiptID: UUID().uuidString, in: database)
@@ -580,70 +578,70 @@ package final class GatewayDatabase: OAuthStore, @unchecked Sendable {
     return result
   }
 
-  private static func applyWorkspaceDeduplication(
+  private static func applyProjectDeduplication(
     expectedPlanDigest: String, allowMetadataConflicts: Bool, now: Date,
     expectedConfiguration: ConfigurationState?, resolvedProfiles: [ProfileGrant],
     receiptID: String, in database: Database
-  ) throws -> WorkspaceDeduplicationResult {
+  ) throws -> ProjectDeduplicationResult {
     if let expectedConfiguration,
       try Self.configurationState(in: database) != expectedConfiguration
     {
       throw GatewayDatabaseError.configurationChanged
     }
-    let plan = try Self.workspaceDeduplicationPlan(database)
+    let plan = try Self.projectDeduplicationPlan(database)
     guard plan.planDigest == expectedPlanDigest else {
-      throw WorkspaceDeduplicationError.planChanged(
+      throw ProjectDeduplicationError.planChanged(
         expected: expectedPlanDigest,
         actual: plan.planDigest
       )
     }
     let conflictIDs = plan.groups.filter(\.hasMetadataConflict)
-      .flatMap(\.duplicateWorkspaceIDs)
+      .flatMap(\.duplicateProjectIDs)
       .sorted()
     if !allowMetadataConflicts, !conflictIDs.isEmpty {
-      throw WorkspaceDeduplicationError.metadataConflict(workspaceIDs: conflictIDs)
+      throw ProjectDeduplicationError.metadataConflict(projectIDs: conflictIDs)
     }
 
     var replacements: [String: String] = [:]
     for group in plan.groups {
       guard
-        let canonical = try WorkspaceRecord.fetchOne(database, key: group.canonicalWorkspaceID)
+        let canonical = try ProjectRecord.fetchOne(database, key: group.canonicalProjectID)
       else { throw GatewayDatabaseError.configurationChanged }
-      try WorkspaceCanonicalRootRecord(
-        canonicalRootPath: group.canonicalRootPath, workspaceID: canonical.id,
+      try ProjectCanonicalRootRecord(
+        canonicalRootPath: group.canonicalRootPath, projectID: canonical.id,
         createdAt: canonical.createdAt
       ).save(database)
-      for duplicateID in group.duplicateWorkspaceIDs {
-        try WorkspaceAliasRecord(
-          aliasWorkspaceID: duplicateID,
-          canonicalWorkspaceID: group.canonicalWorkspaceID,
+      for duplicateID in group.duplicateProjectIDs {
+        try ProjectAliasRecord(
+          aliasProjectID: duplicateID,
+          canonicalProjectID: group.canonicalProjectID,
           canonicalRootPath: group.canonicalRootPath,
           migratedAt: now
         ).save(database)
-        replacements[duplicateID] = group.canonicalWorkspaceID
+        replacements[duplicateID] = group.canonicalProjectID
       }
     }
     var updatedProfileIDs: [String] = []
     for stored in try Self.profiles(in: database) {
-      guard stored.workspaceIDs.contains(where: { replacements[$0] != nil }) else { continue }
-      var profile = try Self.resolvedWorkspaceProfile(stored, resolvedProfiles: resolvedProfiles)
-      profile.workspaceIDs = Set(profile.workspaceIDs.map { replacements[$0] ?? $0 })
+      guard stored.projectIDs.contains(where: { replacements[$0] != nil }) else { continue }
+      var profile = try Self.resolvedProjectProfile(stored, resolvedProfiles: resolvedProfiles)
+      profile.projectIDs = Set(profile.projectIDs.map { replacements[$0] ?? $0 })
       try profile.validate()
       try Self.saveProfile(
         profile, updatedAt: now, expectedRevision: stored.authorizationRevision, in: database)
       updatedProfileIDs.append(profile.id.rawValue)
     }
 
-    let result = WorkspaceDeduplicationResult(
+    let result = ProjectDeduplicationResult(
       receiptID: receiptID,
       planDigest: plan.planDigest,
-      canonicalWorkspaceIDs: plan.groups.map(\.canonicalWorkspaceID).sorted(),
-      aliasedWorkspaceIDs: plan.groups.flatMap(\.duplicateWorkspaceIDs).sorted(),
+      canonicalProjectIDs: plan.groups.map(\.canonicalProjectID).sorted(),
+      aliasedProjectIDs: plan.groups.flatMap(\.duplicateProjectIDs).sorted(),
       updatedProfileIDs: updatedProfileIDs.sorted(),
       appliedAt: now
     )
     let encoder = CanonicalJSONCoding.encoder(outputFormatting: [.sortedKeys])
-    try WorkspaceDeduplicationReceiptRecord(
+    try ProjectDeduplicationReceiptRecord(
       id: result.receiptID,
       planDigest: result.planDigest,
       appliedAt: now,
@@ -1327,63 +1325,63 @@ package final class GatewayDatabase: OAuthStore, @unchecked Sendable {
     }
   }
 
-  private static func workspaceDeduplicationPlan(
+  private static func projectDeduplicationPlan(
     _ database: Database
-  ) throws -> WorkspaceDeduplicationPlan {
-    let aliasIDs = Set(try WorkspaceAliasRecord.fetchAll(database).map(\.aliasWorkspaceID))
-    let workspaces = try WorkspaceRecord.fetchAll(database)
+  ) throws -> ProjectDeduplicationPlan {
+    let aliasIDs = Set(try ProjectAliasRecord.fetchAll(database).map(\.aliasProjectID))
+    let projects = try ProjectRecord.fetchAll(database)
       .filter { !aliasIDs.contains($0.id) }
       .sorted {
         if $0.createdAt != $1.createdAt { return $0.createdAt < $1.createdAt }
         return $0.id < $1.id
       }
     let profiles = try ProfileRecord.fetchAll(database).map { try $0.value() }
-    let grouped = Dictionary(grouping: workspaces) {
-      canonicalWorkspaceRoot($0.rootPath)
+    let grouped = Dictionary(grouping: projects) {
+      canonicalProjectRoot($0.rootPath)
     }
     let groups = grouped.keys.sorted().compactMap {
       canonicalRoot
-        -> WorkspaceDeduplicationGroup? in
+        -> ProjectDeduplicationGroup? in
       guard let records = grouped[canonicalRoot], records.count > 1,
         let canonical = records.first
       else { return nil }
       let members = records.map { record in
-        WorkspaceDeduplicationMember(
-          workspaceID: record.id,
+        ProjectDeduplicationMember(
+          projectID: record.id,
           displayName: record.displayName,
           rootPath: record.rootPath,
           createdAt: record.createdAt,
           referencedProfileIDs:
             profiles
-            .filter { $0.workspaceIDs.contains(record.id) }
+            .filter { $0.projectIDs.contains(record.id) }
             .map { $0.id.rawValue }
             .sorted()
         )
       }
-      return WorkspaceDeduplicationGroup(
+      return ProjectDeduplicationGroup(
         canonicalRootPath: canonicalRoot,
-        canonicalWorkspaceID: canonical.id,
-        duplicateWorkspaceIDs: Array(records.dropFirst().map(\.id)).sorted(),
+        canonicalProjectID: canonical.id,
+        duplicateProjectIDs: Array(records.dropFirst().map(\.id)).sorted(),
         members: members,
         hasMetadataConflict: Set(records.map(\.displayName)).count > 1
       )
     }
-    let digestInput = WorkspaceDeduplicationDigestInput(groups: groups)
+    let digestInput = ProjectDeduplicationDigestInput(groups: groups)
     let encoder = CanonicalJSONCoding.encoder(outputFormatting: [.sortedKeys])
     let digest = SHA256.hash(data: try encoder.encode(digestInput))
       .map { String(format: "%02x", $0) }
       .joined()
-    return WorkspaceDeduplicationPlan(
+    return ProjectDeduplicationPlan(
       planDigest: digest,
       groups: groups,
-      duplicateCount: groups.reduce(0) { $0 + $1.duplicateWorkspaceIDs.count },
+      duplicateCount: groups.reduce(0) { $0 + $1.duplicateProjectIDs.count },
       affectedProfileIDs: Set(
         groups.flatMap(\.members).flatMap(\.referencedProfileIDs)
       ).sorted()
     )
   }
 
-  private static func canonicalWorkspaceRoot(_ path: String) -> String {
+  private static func canonicalProjectRoot(_ path: String) -> String {
     URL(fileURLWithPath: path, isDirectory: true)
       .standardizedFileURL.resolvingSymlinksInPath().path
   }
@@ -1395,7 +1393,7 @@ extension GatewayDatabase {
       return []
     }
     return try writer.read { database in
-      let request = AuditEventRecord.filter(Column("workspaceID") == context.workspaceID)
+      let request = AuditEventRecord.filter(Column("projectID") == context.projectID)
         .filter(Column("profileID") == context.profileID.rawValue)
         .filter(Column("principalDigest") == principal)
       return try request.order(Column("occurredAt").desc, Column("id").desc)
@@ -1403,13 +1401,13 @@ extension GatewayDatabase {
     }
   }
 
-  func derivedWorkspaceRegistration(id: String) throws -> MCPDerivedWorkspaceRegistration? {
+  func derivedProjectRegistration(id: String) throws -> MCPDerivedProjectRegistration? {
     try writer.read { try Self.derivedRegistration(id: id, database: $0) }
   }
 
   /// Registration and the single host-added grant are committed together.
-  func registerDerivedWorkspace(
-    _ registration: MCPDerivedWorkspaceRegistration, verifiedPrincipalID: String,
+  func registerDerivedProject(
+    _ registration: MCPDerivedProjectRegistration, verifiedPrincipalID: String,
     caller: GatewayCallerKind
   ) throws {
     try Self.requireDerivedPrincipal(registration, verifiedPrincipalID: verifiedPrincipalID)
@@ -1419,56 +1417,56 @@ extension GatewayDatabase {
     }
     let changed = try writer.write { database in
       guard
-        let source = try WorkspaceRecord.fetchOne(database, key: registration.sourceWorkspaceID),
-        Self.canonicalWorkspaceRoot(source.rootPath) == registration.sourceRoot,
+        let source = try ProjectRecord.fetchOne(database, key: registration.sourceProjectID),
+        Self.canonicalProjectRoot(source.rootPath) == registration.sourceRoot,
         let profileRow = try ProfileRecord.fetchOne(database, key: registration.profileID.rawValue)
       else {
         throw MCPHostServiceError.denied("Source registration or profile is unavailable.")
       }
       var profile = try profileRow.value()
       try Self.requireDerivedSourceGrant(profile, registration: registration, caller: caller)
-      if let old = try Self.derivedRegistration(id: registration.workspace.id, database: database) {
+      if let old = try Self.derivedRegistration(id: registration.project.id, database: database) {
         try Self.requireDerivedPrincipal(old, verifiedPrincipalID: verifiedPrincipalID)
         guard old.origin == registration.origin, old.receiptDigest == registration.receiptDigest,
           old.receiptID == registration.receiptID, old.profileID == registration.profileID,
-          old.sourceWorkspaceID == registration.sourceWorkspaceID,
+          old.sourceProjectID == registration.sourceProjectID,
           old.sourceRoot == registration.sourceRoot,
-          Self.sameDerivedWorkspace(old.workspace, registration.workspace),
-          let workspace = try WorkspaceRecord.fetchOne(database, key: old.workspace.id),
-          Self.sameDerivedWorkspace(workspace.value, old.workspace)
+          Self.sameDerivedProject(old.project, registration.project),
+          let project = try ProjectRecord.fetchOne(database, key: old.project.id),
+          Self.sameDerivedProject(project.value, old.project)
         else { throw MCPHostServiceError.denied("Existing derived registration changed.") }
         return false
       }
-      guard try WorkspaceRecord.fetchOne(database, key: registration.workspace.id) == nil,
-        try WorkspaceAliasRecord.fetchOne(database, key: registration.workspace.id) == nil
+      guard try ProjectRecord.fetchOne(database, key: registration.project.id) == nil,
+        try ProjectAliasRecord.fetchOne(database, key: registration.project.id) == nil
       else {
         throw MCPHostServiceError.denied("Derived identity or source registration is unavailable.")
       }
       guard
         try !ProfileRecord.fetchAll(database).contains(where: {
-          try $0.value().workspaceIDs.contains(registration.workspace.id)
+          try $0.value().projectIDs.contains(registration.project.id)
         })
       else {
         throw MCPHostServiceError.denied(
           "The derived identity already has an independently owned grant.")
       }
-      let root = Self.canonicalWorkspaceRoot(registration.workspace.rootPath)
-      guard try WorkspaceCanonicalRootRecord.fetchOne(database, key: root) == nil else {
+      let root = Self.canonicalProjectRoot(registration.project.rootPath)
+      guard try ProjectCanonicalRootRecord.fetchOne(database, key: root) == nil else {
         throw MCPHostServiceError.denied(
           "The directory already belongs to an independent registration.")
       }
-      try WorkspaceRecord(registration.workspace).insert(database)
-      try WorkspaceCanonicalRootRecord(
-        canonicalRootPath: root, workspaceID: registration.workspace.id,
-        createdAt: registration.workspace.createdAt
+      try ProjectRecord(registration.project).insert(database)
+      try ProjectCanonicalRootRecord(
+        canonicalRootPath: root, projectID: registration.project.id,
+        createdAt: registration.project.createdAt
       ).insert(database)
-      profile.workspaceIDs.insert(registration.workspace.id)
+      profile.projectIDs.insert(registration.project.id)
       try Self.saveDerivedProfileChange(profile, database: database)
       try database.execute(
         sql:
-          "INSERT INTO pluginDerivedWorkspaces (workspaceID, origin, sourceWorkspaceID, receiptID, payloadJSON) VALUES (?, ?, ?, ?, ?)",
+          "INSERT INTO pluginDerivedProjects (projectID, origin, sourceProjectID, receiptID, payloadJSON) VALUES (?, ?, ?, ?, ?)",
         arguments: [
-          registration.workspace.id, registration.origin, registration.sourceWorkspaceID,
+          registration.project.id, registration.origin, registration.sourceProjectID,
           registration.receiptID, String(decoding: payload, as: UTF8.self),
         ])
       return true
@@ -1479,26 +1477,26 @@ extension GatewayDatabase {
   }
 
   /// Does not remove independently edited registrations, aliases, or grants.
-  func unregisterDerivedWorkspace(
-    _ registration: MCPDerivedWorkspaceRegistration, verifiedPrincipalID: String,
+  func unregisterDerivedProject(
+    _ registration: MCPDerivedProjectRegistration, verifiedPrincipalID: String,
     caller: GatewayCallerKind, allowRevokedSourceForRollback: Bool = false
   ) throws {
     try Self.requireDerivedPrincipal(registration, verifiedPrincipalID: verifiedPrincipalID)
     let changedProfile = try writer.write { database -> Bool in
       guard
-        let old = try Self.derivedRegistration(id: registration.workspace.id, database: database)
+        let old = try Self.derivedRegistration(id: registration.project.id, database: database)
       else { return false }
       try Self.requireDerivedPrincipal(old, verifiedPrincipalID: verifiedPrincipalID)
       guard old == registration,
-        let workspace = try WorkspaceRecord.fetchOne(database, key: old.workspace.id),
-        Self.sameDerivedWorkspace(workspace.value, old.workspace),
-        try WorkspaceAliasRecord.filter(Column("canonicalWorkspaceID") == old.workspace.id)
+        let project = try ProjectRecord.fetchOne(database, key: old.project.id),
+        Self.sameDerivedProject(project.value, old.project),
+        try ProjectAliasRecord.filter(Column("canonicalProjectID") == old.project.id)
           .fetchCount(database) == 0
       else { throw MCPHostServiceError.denied("The derived registration has independent changes.") }
       let profiles = try ProfileRecord.fetchAll(database)
       if !allowRevokedSourceForRollback {
-        guard let source = try WorkspaceRecord.fetchOne(database, key: old.sourceWorkspaceID),
-          Self.canonicalWorkspaceRoot(source.rootPath) == old.sourceRoot,
+        guard let source = try ProjectRecord.fetchOne(database, key: old.sourceProjectID),
+          Self.canonicalProjectRoot(source.rootPath) == old.sourceRoot,
           let profile = try profiles.first(where: { $0.id == old.profileID.rawValue })?.value()
         else {
           throw MCPHostServiceError.denied("The source profile is unavailable.")
@@ -1508,21 +1506,21 @@ extension GatewayDatabase {
       var changed = false
       for row in profiles {
         var profile = try row.value()
-        guard profile.workspaceIDs.contains(old.workspace.id) else { continue }
+        guard profile.projectIDs.contains(old.project.id) else { continue }
         guard profile.id == old.profileID else {
           throw MCPHostServiceError.denied(
-            "Another profile now holds an independent workspace grant.")
+            "Another profile now holds an independent project grant.")
         }
-        profile.workspaceIDs.remove(old.workspace.id)
+        profile.projectIDs.remove(old.project.id)
         try Self.saveDerivedProfileChange(profile, database: database)
         changed = true
       }
-      try WorkspaceCanonicalRootRecord.filter(Column("workspaceID") == old.workspace.id).deleteAll(
+      try ProjectCanonicalRootRecord.filter(Column("projectID") == old.project.id).deleteAll(
         database)
-      _ = try WorkspaceRecord.deleteOne(database, key: old.workspace.id)
+      _ = try ProjectRecord.deleteOne(database, key: old.project.id)
       try database.execute(
-        sql: "DELETE FROM pluginDerivedWorkspaces WHERE workspaceID = ?",
-        arguments: [old.workspace.id])
+        sql: "DELETE FROM pluginDerivedProjects WHERE projectID = ?",
+        arguments: [old.project.id])
       return changed
     }
     if changedProfile {
@@ -1531,7 +1529,7 @@ extension GatewayDatabase {
   }
 
   private static func requireDerivedPrincipal(
-    _ registration: MCPDerivedWorkspaceRegistration, verifiedPrincipalID: String
+    _ registration: MCPDerivedProjectRegistration, verifiedPrincipalID: String
   ) throws {
     guard let principal = registration.principalID, !principal.isEmpty else {
       throw MCPHostServiceError.denied(
@@ -1546,13 +1544,13 @@ extension GatewayDatabase {
   }
 
   private static func requireDerivedSourceGrant(
-    _ profile: ProfileGrant, registration: MCPDerivedWorkspaceRegistration,
+    _ profile: ProfileGrant, registration: MCPDerivedProjectRegistration,
     caller: GatewayCallerKind
   ) throws {
     guard
-      profile.workspaceIDs.contains(registration.sourceWorkspaceID)
-        || profile.workspaceIDs.contains("*"),
-      profile.allowedCallers.contains(caller), profile.permitsRisk(.workspaceWrite)
+      profile.projectIDs.contains(registration.sourceProjectID)
+        || profile.projectIDs.contains("*"),
+      profile.allowedCallers.contains(caller), profile.permitsRisk(.projectWrite)
     else {
       throw MCPHostServiceError.denied(
         "The persisted source grant no longer permits derived registration changes.")
@@ -1580,8 +1578,8 @@ extension GatewayDatabase {
       ])
   }
 
-  private static func sameDerivedWorkspace(
-    _ current: RegisteredWorkspace, _ expected: RegisteredWorkspace
+  private static func sameDerivedProject(
+    _ current: RegisteredProject, _ expected: RegisteredProject
   ) -> Bool {
     // Compare timestamps at the database's exact serialization precision, not a time tolerance.
     current.id == expected.id && current.displayName == expected.displayName
@@ -1592,11 +1590,11 @@ extension GatewayDatabase {
   }
 
   private static func derivedRegistration(id: String, database: Database) throws
-    -> MCPDerivedWorkspaceRegistration?
+    -> MCPDerivedProjectRegistration?
   {
     guard
       let row = try Row.fetchOne(
-        database, sql: "SELECT * FROM pluginDerivedWorkspaces WHERE workspaceID = ?",
+        database, sql: "SELECT * FROM pluginDerivedProjects WHERE projectID = ?",
         arguments: [id])
     else { return nil }
     let payload: String = row["payloadJSON"]
@@ -1604,9 +1602,9 @@ extension GatewayDatabase {
       throw MCPHostServiceError.denied("Invalid stored derived registration.")
     }
     let record = try JSONDecoder().decode(
-      MCPDerivedWorkspaceRegistration.self, from: Data(payload.utf8))
-    guard record.workspace.id == id, record.origin == row["origin"],
-      record.sourceWorkspaceID == row["sourceWorkspaceID"], record.receiptID == row["receiptID"]
+      MCPDerivedProjectRegistration.self, from: Data(payload.utf8))
+    guard record.project.id == id, record.origin == row["origin"],
+      record.sourceProjectID == row["sourceProjectID"], record.receiptID == row["receiptID"]
     else {
       throw MCPHostServiceError.denied("Stored registration identity differs from its record.")
     }

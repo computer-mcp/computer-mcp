@@ -11,7 +11,7 @@ struct PermissionsView: View {
 
   var body: some View {
     VStack(spacing: 0) {
-      WorkspaceHeader(
+      ProjectHeader(
         "Permissions",
         subtitle: "Host operation approvals and macOS privacy access"
       ) {
@@ -33,13 +33,13 @@ struct PermissionsView: View {
       } else {
         switch model.permissions {
         case .idle, .loading:
-          LoadingWorkspaceView(title: "Checking permissions")
+          LoadingProjectView(title: "Checking permissions")
         case .failed(let message):
-          FailedWorkspaceView(message: message) {
+          FailedProjectView(message: message) {
             model.refresh(.permissions)
           }
         case .loaded(let permissions) where permissions.isEmpty:
-          EmptyWorkspaceView(
+          EmptyProjectView(
             title: "No permission checks available",
             detail: "Enabled providers have not reported any macOS permission requirements.",
             systemImage: "hand.raised"
@@ -66,11 +66,11 @@ private struct OperationApprovalsView: View {
   var body: some View {
     switch model.operationApprovals {
     case .idle, .loading:
-      LoadingWorkspaceView(title: "Loading operation approvals")
+      LoadingProjectView(title: "Loading operation approvals")
     case .failed(let message):
-      FailedWorkspaceView(message: message) { model.refresh(.permissions) }
+      FailedProjectView(message: message) { model.refresh(.permissions) }
     case .loaded(let tickets) where tickets.isEmpty:
-      EmptyWorkspaceView(
+      EmptyProjectView(
         title: "No operation approvals",
         detail:
           "Requests that need your approval appear here.",
@@ -88,7 +88,7 @@ private struct OperationApprovalsView: View {
                   .foregroundStyle(.secondary)
               }
               LabeledContent("Profile", value: AppLocalization.string(ticket.profileID.displayName))
-              LabeledContent("Workspace", value: ticket.workspaceID ?? "—")
+              LabeledContent("Project", value: ticket.projectID ?? "—")
               LabeledContent(
                 "Caller", value: AppLocalization.string(ticket.caller.clientAccessLabel))
               LabeledContent("Client", value: clientAccessIdentity(ticket.principalID))
@@ -245,7 +245,7 @@ struct AuditView: View {
 
   var body: some View {
     VStack(spacing: 0) {
-      WorkspaceHeader(
+      ProjectHeader(
         "Audit",
         subtitle: "Redacted capability decisions and execution outcomes"
       ) {
@@ -258,13 +258,13 @@ struct AuditView: View {
 
       switch model.audit {
       case .idle, .loading:
-        LoadingWorkspaceView(title: "Loading audit log")
+        LoadingProjectView(title: "Loading audit log")
       case .failed(let message):
-        FailedWorkspaceView(message: message) {
+        FailedProjectView(message: message) {
           model.refresh(.audit)
         }
       case .loaded(let entries) where entries.isEmpty:
-        EmptyWorkspaceView(
+        EmptyProjectView(
           title: "No audit entries",
           detail: "Capability decisions will appear here after the gateway processes calls.",
           systemImage: "list.bullet.rectangle"
@@ -285,12 +285,12 @@ struct AuditView: View {
         || entry.capability.localizedCaseInsensitiveContains(model.auditQuery)
         || entry.requestID.localizedCaseInsensitiveContains(model.auditQuery)
         || entry.summary.localizedCaseInsensitiveContains(model.auditQuery)
-        || (entry.workspaceName?.localizedCaseInsensitiveContains(model.auditQuery) ?? false)
+        || (entry.projectName?.localizedCaseInsensitiveContains(model.auditQuery) ?? false)
     }
 
     return Group {
       if filtered.isEmpty {
-        EmptyWorkspaceView(
+        EmptyProjectView(
           title: "No matching audit entries",
           detail: "Change the filter to see other decisions.",
           systemImage: "line.3.horizontal.decrease.circle"
@@ -335,8 +335,8 @@ private struct AuditRow: View {
             )
           )
           .textSelection(.enabled)
-          if let workspaceName = entry.workspaceName {
-            Label(workspaceName, systemImage: "folder")
+          if let projectName = entry.projectName {
+            Label(projectName, systemImage: "folder")
           }
           if let outputByteCount = entry.outputByteCount {
             AppLocalization.verbatimText(AppLocalization.formatted("%@ B", String(outputByteCount)))
@@ -368,7 +368,7 @@ struct DiagnosticsView: View {
 
   var body: some View {
     VStack(spacing: 0) {
-      WorkspaceHeader(
+      ProjectHeader(
         "Diagnostics",
         subtitle: "Runtime checks and redacted support bundle"
       ) {
@@ -388,9 +388,9 @@ struct DiagnosticsView: View {
 
       switch model.diagnostics {
       case .idle, .loading:
-        LoadingWorkspaceView(title: "Running diagnostics")
+        LoadingProjectView(title: "Running diagnostics")
       case .failed(let message):
-        FailedWorkspaceView(message: message) {
+        FailedProjectView(message: message) {
           model.refresh(.diagnostics)
         }
       case .loaded(let snapshot):

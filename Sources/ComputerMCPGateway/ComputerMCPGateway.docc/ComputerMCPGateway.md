@@ -11,7 +11,7 @@ services. Together they provide:
 
 - MCP Swift SDK server and client integration;
 - a private current-user Unix socket and stdio bridge;
-- registered workspaces and static capability profiles;
+- registered projects and static capability profiles;
 - policy, single-use operation tickets, and redacted audit persistence;
 - bounded Builtin, Skill, CLI, Shell, process, downstream MCP, and Computer Use
   execution planes;
@@ -27,7 +27,7 @@ semantics.
 
 `Computer MCP.app` owns the service lifecycle and hosts the gateway behind its
 private socket. `computer-mcp bridge` is a transport adapter; it does not start
-a second gateway. Workspace bookmarks and secrets are App-managed state and do
+a second gateway. Project bookmarks and secrets are App-managed state and do
 not belong in TOML.
 
 Tunnel profiles expose explicit capabilities only. Generic CLI execution,

@@ -22,7 +22,7 @@ struct MCPRegistrationDraftTests {
   func draftRetainsExactLaunchAndPolicySettings() throws {
     let server = MCPServerConfig(
       id: "manual", transport: .stdio, command: "/tmp/My MCP/执行",
-      args: ["", "含 空格", "a\nb", "--", "-1"], env: ["FIXTURE": "a\nb"], cwd: "workspace",
+      args: ["", "含 空格", "a\nb", "--", "-1"], env: ["FIXTURE": "a\nb"], cwd: "project",
       exposure: .reexport, prefix: "", capabilities: ["tools", "resources"],
       allowedTools: ["inspect", "工具"], startupTimeoutMs: 987, requestTimeoutMs: 456,
       toolRisks: ["inspect": .readOnly], hostServices: true, enabled: false)
@@ -43,13 +43,13 @@ struct MCPRegistrationModelTests {
     let host = MCPRegistrationControlFake()
     host.failRecovery = fails
     let model = MCPRegistrationModel(controlPlane: host)
-    await model.checkConnection(id: "manual", workspaceID: "fixture")
+    await model.checkConnection(id: "manual", projectID: "fixture")
     let receipt = try #require(model.doctorReport?.processReceipts?.first)
-    await model.recoverProcess(id: "other", workspaceID: "fixture", receipt: receipt)
-    await model.recoverProcess(id: "manual", workspaceID: "other", receipt: receipt)
+    await model.recoverProcess(id: "other", projectID: "fixture", receipt: receipt)
+    await model.recoverProcess(id: "manual", projectID: "other", receipt: receipt)
     #expect(host.recoveryRequests.isEmpty)
-    await model.recoverProcess(id: "manual", workspaceID: "fixture", receipt: receipt)
-    await model.recoverProcess(id: "manual", workspaceID: "fixture", receipt: receipt)
+    await model.recoverProcess(id: "manual", projectID: "fixture", receipt: receipt)
+    await model.recoverProcess(id: "manual", projectID: "fixture", receipt: receipt)
     #expect(
       host.recoveryRequests == [["manual", "fixture", "receipt", "receipt-digest", "digest"]])
     #expect(host.doctorRequests == ["manual:fixture"])
@@ -62,10 +62,10 @@ struct MCPRegistrationModelTests {
   func connectionFailureClearsOldSuccessAndDoesNotApplyChanges() async {
     let host = MCPRegistrationControlFake()
     let model = MCPRegistrationModel(controlPlane: host)
-    await model.checkConnection(id: "manual", workspaceID: "first")
-    #expect(model.doctorReport?.workspaceID == "first")
+    await model.checkConnection(id: "manual", projectID: "first")
+    #expect(model.doctorReport?.projectID == "first")
     host.failDoctor = true
-    await model.checkConnection(id: "manual", workspaceID: "second")
+    await model.checkConnection(id: "manual", projectID: "second")
     #expect(model.doctorReport == nil && model.errorMessage != nil && !model.isBusy)
     #expect(host.doctorRequests == ["manual:first", "manual:second"])
     #expect(host.appliedDigests.isEmpty)
@@ -92,7 +92,7 @@ struct MCPRegistrationModelTests {
     let host = MCPRegistrationControlFake()
     let model = MCPRegistrationModel(controlPlane: host)
     #expect(await model.review(.add(host.server)))
-    await model.checkConnection(id: "manual", workspaceID: "fixture")
+    await model.checkConnection(id: "manual", projectID: "fixture")
     #expect(host.doctorRequests.isEmpty && model.preview != nil)
   }
 
@@ -149,11 +149,11 @@ private final class MCPRegistrationControlFake: MCPRegistrationManaging {
   var recoveryRequests: [[String]] = []
 
   func recoverMCPProcessReceipt(
-    id: String, workspaceID: String, receiptID: String, expectedReceiptDigest: String,
+    id: String, projectID: String, receiptID: String, expectedReceiptDigest: String,
     expectedCurrentDigest: String
   ) async throws {
     recoveryRequests.append([
-      id, workspaceID, receiptID, expectedReceiptDigest, expectedCurrentDigest,
+      id, projectID, receiptID, expectedReceiptDigest, expectedCurrentDigest,
     ])
     if failRecovery { throw AtomicManifestStoreError.staleDigest }
   }
@@ -171,13 +171,13 @@ private final class MCPRegistrationControlFake: MCPRegistrationManaging {
     credentialPresent = token != nil
   }
 
-  func doctorMCPRegistration(id: String, workspaceID: String) async throws
+  func doctorMCPRegistration(id: String, projectID: String) async throws
     -> MCPRegistrationDoctorReport
   {
-    doctorRequests.append("\(id):\(workspaceID)")
+    doctorRequests.append("\(id):\(projectID)")
     if failDoctor { throw GatewayToolError.unknownMCPServer(id) }
     return .init(
-      registrationID: id, workspaceID: workspaceID, currentDigest: "digest",
+      registrationID: id, projectID: projectID, currentDigest: "digest",
       checkedAt: Date(), status: .passed, stage: "connection_and_catalog",
       processReceipts: [
         .init(

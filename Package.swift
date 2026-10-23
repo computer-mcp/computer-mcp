@@ -33,6 +33,9 @@ let mcpDependency: Package.Dependency =
 // Platform-neutral targets; they build on macOS and on Linux.
 let neutralTargets: [Target] =
   [
+    .target(name: "ComputerMCPPermissions"),
+    .testTarget(
+      name: "ComputerMCPPermissionsTests", dependencies: ["ComputerMCPPermissions"]),
     .target(
       name: "ComputerMCPCore",
       dependencies: [.product(name: "Crypto", package: "swift-crypto")]

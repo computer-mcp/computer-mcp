@@ -19,7 +19,7 @@ every target keeps `package` access; no declaration is `public`.
 | Capabilities | `ComputerMCPToolKit`; tool domains `ComputerMCPToolsMCP`, `ComputerMCPToolsCLI`, `ComputerMCPToolsFiles`, `ComputerMCPToolsProject`, `ComputerMCPToolsStructured`, `ComputerMCPToolsGit`, `ComputerMCPToolsShell`, `ComputerMCPToolsSkills`, `ComputerMCPToolsSystem`; `ComputerMCPPlugins`, `ComputerMCPDelivery`, `ComputerMCPAuthorization`; `ComputerMCPComputerUse` | neutral; ComputerUse macOS |
 | Services | `ComputerMCPConfiguration`, `ComputerMCPPersistence`, `ComputerMCPProcess`, `ComputerMCPTransport`, `ComputerMCPDownstream`, `ComputerMCPTunnels` | neutral |
 | Platform | `ComputerMCPPlatform` (protocols and values), `ComputerMCPPlatformPOSIX`, `ComputerMCPPlatformDarwin`, `CSystemArchive` | neutral; POSIX; macOS |
-| Base | `ComputerMCPCore` | neutral |
+| Base | `ComputerMCPCore`; lower `ComputerMCPPermissions` (Foundation only) | neutral |
 
 Dependencies inside a layer are limited to these:
 

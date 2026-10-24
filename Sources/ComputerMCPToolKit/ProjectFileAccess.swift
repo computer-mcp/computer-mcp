@@ -271,6 +271,11 @@ package final class ProjectFileAccess {
       return URL(
         fileURLWithPath: String(
           decoding: path.prefix { $0 != 0 }.map { UInt8(bitPattern: $0) }, as: UTF8.self))
+    #elseif canImport(Glibc)
+      var path = [UInt8](repeating: 0, count: Int(PATH_MAX) + 1)
+      let count = readlink("/proc/self/fd/\(fd)", &path, path.count)
+      guard count >= 0, count < path.count else { return nil }
+      return URL(fileURLWithPath: String(decoding: path.prefix(count), as: UTF8.self))
     #else
       return nil
     #endif
@@ -637,7 +642,7 @@ package final class ProjectFileAccess {
             createDirectories: false)
         }
         try withDescriptor(destination, operation: "fcopyfile") { output in
-          try copyMetadata(fd, to: output)
+          try copyMetadata(fd, to: output, original: sourceStatus)
           try verifyParent(parent, of: source)
           try check(try status(fd))
           guard same(sourceStatus, try statusAt(parent, name)) else {
@@ -857,8 +862,12 @@ package final class ProjectFileAccess {
   {
     #if canImport(Darwin)
       renameatx_np(source, name, target, leaf, UInt32(RENAME_EXCL | RENAME_NOFOLLOW_ANY))
+    #elseif canImport(Glibc)
+      // Both names are single components in pinned directories; rename never follows the leaf.
+      LinuxSystemCalls.renameExclusive(source, name, target, leaf)
     #else
-      renameat2(source, name, target, leaf, UInt32(RENAME_NOREPLACE))
+      errno = ENOTSUP
+      return -1
     #endif
   }
 
@@ -976,10 +985,12 @@ package final class ProjectFileAccess {
       guard fcopyfile(input, output, nil, copyfile_flags_t(COPYFILE_ALL)) == 0 else {
         throw failure()
       }
-    #else
-      guard lseek(input, 0, SEEK_SET) >= 0 else { throw failure() }
+    #elseif canImport(Glibc)
+      let original = try status(input)
       try stream(input, to: output)
-      try copyMetadata(input, to: output)
+      try copyMetadata(input, to: output, original: original)
+    #else
+      throw denied("Metadata-preserving copy is unavailable on this platform.")
     #endif
   }
 
@@ -996,6 +1007,8 @@ package final class ProjectFileAccess {
         guard read >= 0 else { throw failure() }
         value.count = read
         values[name] = value
+      #elseif canImport(Glibc)
+        values[name] = try LinuxFileMetadata.value(name, descriptor: fd)
       #else
         throw denied("Descriptor extended attributes are unavailable on this platform.")
       #endif
@@ -1010,19 +1023,23 @@ package final class ProjectFileAccess {
           fsetxattr(fd, name, $0.baseAddress, $0.count, 0, 0)
         }
         guard result == 0 else { throw failure() }
+      #elseif canImport(Glibc)
+        try LinuxFileMetadata.set(name, value: value, descriptor: fd)
       #else
         throw denied("Descriptor extended attributes are unavailable on this platform.")
       #endif
     }
   }
 
-  private func copyMetadata(_ input: Int32, to output: Int32) throws {
+  private func copyMetadata(_ input: Int32, to output: Int32, original: stat? = nil) throws {
     #if canImport(Darwin)
       guard fcopyfile(input, output, nil, copyfile_flags_t(COPYFILE_METADATA)) == 0 else {
         throw failure()
       }
+    #elseif canImport(Glibc)
+      try LinuxFileMetadata.copy(input, to: output, original: original ?? status(input))
     #else
-      guard fchmod(output, try status(input).st_mode & 0o777) == 0 else { throw failure() }
+      throw denied("Metadata-preserving copy is unavailable on this platform.")
     #endif
   }
 

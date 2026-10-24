@@ -398,6 +398,30 @@ xattrs, resource forks, ACLs, mode and times; source checks precede publication,
 and failed copies clean staging with identity checks. Moves preserve metadata
 through exclusive, no-follow rename on the same volume. Cross-volume moves fail
 before changing either entry; callers must copy and then delete the source.
+
+The neutral and POSIX targets also build on glibc Linux. Tool guards use these
+platform equivalents; macOS-only platform services remain in `PlatformDarwin`.
+
+| Operation | macOS | glibc Linux |
+| --- | --- | --- |
+| Component traversal and entry checks | `openat(O_NOFOLLOW)`, `fstatat(AT_SYMLINK_NOFOLLOW)`, `unlinkat(AT_REMOVEDIR)` | Same POSIX APIs and flags, walking one component at a time; `O_NOFOLLOW_ANY` is not needed |
+| Exclusive publication and rollback | `renameatx_np(RENAME_EXCL \| RENAME_NOFOLLOW_ANY)` | `renameat2(RENAME_NOREPLACE)` through `CSystemPOSIX`; both names are single components of pinned directories and the leaf is not followed. Unsupported kernels or filesystems fail without a replacement fallback |
+| Cleanup directory handles | `O_EVTONLY` when reopening a restricted directory | `O_RDONLY`; host-created restricted directories retain an open handle before their final mode is applied |
+| Retained staging path in errors | `fcntl(F_GETPATH)` | `readlink(/proc/self/fd/<fd>)`, used only for diagnostics; the original path is reported if procfs is unavailable |
+| File data and metadata copy | `fcopyfile(COPYFILE_ALL / COPYFILE_METADATA)` | Descriptor reads/writes plus `flistxattr`, `fgetxattr`, `fsetxattr`, `fremovexattr`, `fchmod` and `futimens`; xattr signatures are bridged through C |
+| Metadata rollback and file identity timestamps | Darwin descriptor xattr signatures and `stat.st_atimespec/st_mtimespec/st_ctimespec` | Linux descriptor xattr signatures and `stat.st_atim/st_mtim/st_ctim`, preserving nanosecond precision |
+| Child working directory | `posix_spawn_file_actions_addfchdir_np`, `POSIX_SPAWN_CLOEXEC_DEFAULT` | The same fchdir action, available in glibc 2.29+, through C; host descriptors use `O_CLOEXEC` |
+| Archive metadata and extraction options | BSD tar's `--format=mtree` conversion supplies exact times; extraction disables BSD flags with `--no-fflags` | GNU tar's `--numeric-owner --full-time -tvf` supplies times; extraction uses the shared no-owner, no-permissions, no-ACL and no-xattr options |
+
+Linux copies preserve data, mode, access/modification times and visible xattrs,
+including POSIX access/default ACLs. Destination-only inherited xattrs are removed;
+listed attributes that cannot be read, written or removed fail the copy before
+publication. A source filesystem without xattr support has no xattrs to copy.
+Ownership stays with the created destination. Linux has no native macOS resource
+fork, creation-time setter or BSD `st_flags` copy in this path. `getattrlist`/`fgetattrlist` and
+Darwin resource-fork APIs belong to macOS-only services and are not called by the
+Linux tool guards. The application-level concurrency limits above still apply.
+
 SQLite uses a private empty home and `-init /dev/null -safe`, and CLI help returns
 registered metadata without executing commands. Host Git operations isolate
 system/global configuration, refuse repository configuration includes and disable

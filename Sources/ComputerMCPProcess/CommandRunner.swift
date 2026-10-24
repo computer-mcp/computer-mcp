@@ -118,7 +118,11 @@ package final class ProcessCommandRunner: CommandRunning, @unchecked Sendable {
     try checked(posix_spawnattr_init(&attributes))
     defer { posix_spawnattr_destroy(&attributes) }
     // fchdir precedes the stdio dup actions, which may reuse its descriptor number.
-    try checked(posix_spawn_file_actions_addfchdir_np(&actions, directoryDescriptor))
+    #if canImport(Darwin)
+      try checked(posix_spawn_file_actions_addfchdir_np(&actions, directoryDescriptor))
+    #elseif canImport(Glibc)
+      try checked(LinuxSystemCalls.addWorkingDirectory(directoryDescriptor, to: &actions))
+    #endif
     // A pipe makes producers emit sparse holes as bytes instead of seeking within
     // the destination descriptor, so consecutive member streams remain contiguous.
     let stdout = OutputCollector(limit: 1, outputDescriptor: outputDescriptor)

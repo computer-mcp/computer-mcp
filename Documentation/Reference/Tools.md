@@ -3896,9 +3896,19 @@ changes. Rollback failures are reported; this is not atomic isolation.
 Copy uses descriptor-based `fcopyfile(COPYFILE_ALL)` on macOS, preserving data,
 xattrs, resource forks, ACLs, mode and times. It checks the source again before
 publishing the staged copy and cleans its staging entries with identity checks.
+On glibc Linux, descriptor reads/writes preserve data; `fchmod`, `futimens` and
+descriptor xattr calls preserve mode, nanosecond access/modification times and
+visible xattrs, including POSIX ACLs. Destination-only inherited xattrs are
+removed. Failure to copy a listed attribute fails publication. A source filesystem
+without xattrs contributes none. New copies retain the destination's ownership;
+macOS resource forks, creation times and BSD file flags have no Linux copy path.
+Exclusive rename uses `renameat2(RENAME_NOREPLACE)` with pinned directories and
+single-component names; unsupported kernels or filesystems fail without replacing
+an existing entry. The descriptor working-directory spawn action requires glibc
+2.29 or newer.
 The identity record is populated at creation, not by scanning staging afterward.
 A replaced copy temporary is unlinked only if it still names the inode written
-by `fcopyfile`; foreign entries and directories remain in staging, named in the
+by the copy operation; foreign entries and directories remain in staging, named in the
 failure returned to the caller.
 Archive extraction uses the staging and validation procedure above.
 

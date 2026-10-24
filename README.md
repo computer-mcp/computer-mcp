@@ -169,6 +169,9 @@ project writes for a root `.git` symlink or an in-project Git directory or commo
 directory outside a `.git` path. Host Git refuses local configuration includes
 before every call.
 In-process file moves stay on one volume; copy and then delete when crossing volumes.
+On glibc Linux, file copies preserve data, mode, access/modification times and
+visible xattrs including POSIX ACLs; copies keep destination ownership. macOS
+resource forks, creation times and BSD file flags have no Linux copy path.
 Host Git operations disable repository programs; `git.commit` commits only its
 explicit `paths`, preserving other staged changes.
 

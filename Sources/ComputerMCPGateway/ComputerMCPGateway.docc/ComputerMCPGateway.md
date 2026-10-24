@@ -105,12 +105,20 @@ writes while `.git` remains protected. Git configuration paths are protected.
 
 Generated files are staged before publication. macOS copies use anchored
 `fcopyfile(COPYFILE_ALL)` to preserve data, xattrs, resource forks, ACLs, mode and
-times, check the source again and clean staging with identity checks. Moves use
+times, check the source again and clean staging with identity checks. glibc Linux
+copies use descriptor reads/writes, `fchmod`, `futimens` and descriptor xattr calls
+to preserve data, mode, nanosecond access/modification times and visible xattrs,
+including POSIX ACLs; destination-only inherited xattrs are removed. Attribute
+copy failures stop publication. Ownership remains with the created destination;
+macOS resource forks, creation times and BSD flags have no Linux copy path.
+Moves use
 exclusive no-follow rename on one volume; cross-volume moves fail and callers must
-copy and then delete the source. Archive extraction validates one listing for
+copy and then delete the source. Linux uses `renameat2(RENAME_NOREPLACE)` through
+the POSIX C bridge and fails if atomic exclusive rename is unsupported. Directory
+components use `O_NOFOLLOW` individually. Archive extraction validates one listing for
 paths and types, refusing absolute paths, `..`, Git metadata, links and special
 files. Tar starts through `posix_spawn_file_actions_addfchdir_np` on the staging
-directory descriptor, reads the archive on standard input and streams contents to
+directory descriptor (glibc 2.29+ on Linux), reads the archive on standard input and streams contents to
 a host-opened descriptor. The host creates relative entries, records device and
 inode at creation, compares the tree with the listing (including implicit
 parents), checks sizes, identities and links, and publishes files with anchored

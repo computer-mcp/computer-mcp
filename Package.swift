@@ -41,7 +41,9 @@ let neutralTargets: [Target] =
       dependencies: [.product(name: "Crypto", package: "swift-crypto")]
     ),
     .target(name: "ComputerMCPPlatform", dependencies: ["ComputerMCPCore"]),
-    .target(name: "ComputerMCPPlatformPOSIX", dependencies: ["ComputerMCPPlatform"]),
+    .target(name: "CSystemPOSIX"),
+    .target(
+      name: "ComputerMCPPlatformPOSIX", dependencies: ["ComputerMCPPlatform", "CSystemPOSIX"]),
     .target(
       name: "ComputerMCPConfiguration",
       dependencies: [
@@ -83,7 +85,8 @@ let neutralTargets: [Target] =
       name: "ComputerMCPToolsFilesTests",
       dependencies: [
         "ComputerMCPToolsFiles", "ComputerMCPToolKit", "ComputerMCPCore",
-        "ComputerMCPConfiguration", "ComputerMCPPlatform", "ComputerMCPTestSupport",
+        "ComputerMCPConfiguration", "ComputerMCPPlatform", "ComputerMCPPlatformPOSIX",
+        "ComputerMCPTestSupport",
       ]),
     .target(
       name: "ComputerMCPToolsProject",

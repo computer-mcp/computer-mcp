@@ -4,6 +4,7 @@
     {
       "name": "base",
       "targets": [
+        "ComputerMCPPermissions",
         "ComputerMCPCore"
       ]
     },
@@ -11,6 +12,7 @@
       "name": "platform",
       "targets": [
         "ComputerMCPPlatform",
+        "CSystemPOSIX",
         "ComputerMCPPlatformPOSIX",
         "CSystemArchive",
         "ComputerMCPPlatformDarwin"
@@ -68,7 +70,9 @@
     }
   ],
   "allow": [
+    "ComputerMCPCore->ComputerMCPPermissions",
     "ComputerMCPPlatformPOSIX->ComputerMCPPlatform",
+    "ComputerMCPPlatformPOSIX->CSystemPOSIX",
     "ComputerMCPPlatformDarwin->ComputerMCPPlatform",
     "ComputerMCPPlatformDarwin->ComputerMCPPlatformPOSIX",
     "ComputerMCPPlatformDarwin->CSystemArchive",

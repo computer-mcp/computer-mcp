@@ -98,18 +98,10 @@ package struct DarwinExtendedAttributes: ExtendedAttributes {
     return data
   }
 
-  package func remove(_ name: String, at url: URL) throws {
-    let result = url.withUnsafeFileSystemRepresentation { pathPointer -> Int32 in
-      guard let pathPointer else {
-        errno = EINVAL
-        return -1
-      }
-      return name.withCString { namePointer in
-        removexattr(pathPointer, namePointer, 0)
-      }
-    }
-    guard result == 0 else {
-      throw extendedAttributeError("removexattr", url: url, errno: errno)
+  package func remove(_ name: String, descriptor: Int32) throws {
+    guard fremovexattr(descriptor, name, 0) == 0 else {
+      throw GatewayToolError.executionFailed(
+        "fremovexattr failed: \(String(cString: strerror(errno)))")
     }
   }
 

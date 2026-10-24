@@ -361,3 +361,117 @@ Minimize enabled capabilities, use read-only mode first, keep Full Shell off
 unless the target ChatGPT workspace is trusted for terminal-equivalent access,
 review Tunnel tool snapshots after metadata changes, and remove sensitive data
 from diagnostics before sharing it.
+
+## Host tool operations
+
+File and structured-data writes walk path components through directory descriptors
+with `O_NOFOLLOW`, checking protected names and refusing observed symlinks and
+existing regular files with multiple hard links. Directory entry creation,
+publication, rename and unlink check parent identity and containment before and
+after successful syscalls, with an ancestor walk to the pinned project root.
+Failed post-checks attempt rollback;
+entry removal and rename during rollback compare device and inode immediately
+before the syscall. An observed mismatch leaves the entry in place; rollback
+failures are reported.
+Metadata changes (`chmod`, `touch`, xattr removal) record mode, access/modification
+times and affected xattr values on the opened inode. They recheck the parent chain,
+path identity and link count afterward, restoring those values through the same
+descriptor on failure. Checks do not lock out concurrent writers or detect changes
+reversed between observations or made after the last check. Rollback is not an
+atomic isolation guarantee: replacement can race the final identity comparison
+and syscall, and restoring recorded metadata can overwrite intervening changes.
+
+The hard-link rule protects existing files from writes through pre-existing aliases
+to files outside the project. A file created by the operation can acquire a
+concurrent hard link while it is being written. Creating that link outside the
+project requires a process that can already create files there; a sandboxed
+principal cannot do so, and a process with that access could read the archive
+directly. After a created file is complete, `fstat` checks its descriptor's link
+count. If multiple links persist, the operation fails and cleanup removes only
+entries matching their recorded device and inode. This final check cannot retract
+bytes already exposed through a concurrent link or detect a link removed before
+the check.
+
+Generated files are staged in the target directory before publication. macOS
+copies use `fcopyfile(COPYFILE_ALL)` between anchored descriptors to preserve data,
+xattrs, resource forks, ACLs, mode and times; source checks precede publication,
+and failed copies clean staging with identity checks. Moves preserve metadata
+through exclusive, no-follow rename on the same volume. Cross-volume moves fail
+before changing either entry; callers must copy and then delete the source.
+
+The neutral and POSIX targets also build on glibc Linux. Tool guards use these
+platform equivalents; macOS-only platform services remain in `PlatformDarwin`.
+
+| Operation | macOS | glibc Linux |
+| --- | --- | --- |
+| Component traversal and entry checks | `openat(O_NOFOLLOW)`, `fstatat(AT_SYMLINK_NOFOLLOW)`, `unlinkat(AT_REMOVEDIR)` | Same POSIX APIs and flags, walking one component at a time; `O_NOFOLLOW_ANY` is not needed |
+| Exclusive publication and rollback | `renameatx_np(RENAME_EXCL \| RENAME_NOFOLLOW_ANY)` | `renameat2(RENAME_NOREPLACE)` through `CSystemPOSIX`; both names are single components of pinned directories and the leaf is not followed. Unsupported kernels or filesystems fail without a replacement fallback |
+| Cleanup directory handles | `O_EVTONLY` when reopening a restricted directory | `O_RDONLY`; host-created restricted directories retain an open handle before their final mode is applied |
+| Retained staging path in errors | `fcntl(F_GETPATH)` | `readlink(/proc/self/fd/<fd>)`, used only for diagnostics; the original path is reported if procfs is unavailable |
+| File data and metadata copy | `fcopyfile(COPYFILE_ALL / COPYFILE_METADATA)` | Descriptor reads/writes plus `flistxattr`, `fgetxattr`, `fsetxattr`, `fremovexattr`, `fchmod` and `futimens`; xattr signatures are bridged through C |
+| Metadata rollback and file identity timestamps | Darwin descriptor xattr signatures and `stat.st_atimespec/st_mtimespec/st_ctimespec` | Linux descriptor xattr signatures and `stat.st_atim/st_mtim/st_ctim`, preserving nanosecond precision |
+| Child working directory | `posix_spawn_file_actions_addfchdir_np`, `POSIX_SPAWN_CLOEXEC_DEFAULT` | The same fchdir action, available in glibc 2.29+, through C; host descriptors use `O_CLOEXEC` |
+| Archive metadata and extraction options | BSD tar's `--format=mtree` conversion supplies exact times; extraction disables BSD flags with `--no-fflags` | GNU tar's `--numeric-owner --full-time -tvf` supplies times; extraction uses the shared no-owner, no-permissions, no-ACL and no-xattr options |
+
+Linux copies preserve data, mode, access/modification times and visible xattrs,
+including POSIX access/default ACLs. Destination-only inherited xattrs are removed;
+listed attributes that cannot be read, written or removed fail the copy before
+publication. A source filesystem without xattr support has no xattrs to copy.
+Ownership stays with the created destination. Linux has no native macOS resource
+fork, creation-time setter or BSD `st_flags` copy in this path. `getattrlist`/`fgetattrlist` and
+Darwin resource-fork APIs belong to macOS-only services and are not called by the
+Linux tool guards. The application-level concurrency limits above still apply.
+
+SQLite uses a private empty home and `-init /dev/null -safe`, and CLI help returns
+registered metadata without executing commands. Host Git operations isolate
+system/global configuration, refuse repository configuration includes and disable
+repository programs; `git.commit` commits only its
+explicit `paths`, preserving other staged changes.
+
+Path checks use `openat`/`fstatat`, `O_NOFOLLOW`, and directory descriptors.
+Every `.git` path component is protected after Unicode normalization and
+case-insensitive comparison. Writes, creation, moves, renames, deletion and archive
+extraction refuse a target with such a component; moves and renames also refuse
+such a source. This covers `.git` directories, gitfiles and paths beneath them.
+When project file access is created, the host checks the Git layout once through
+its isolated Git invocation: `rev-parse --git-dir --git-common-dir`, with
+`core.worktree` resolved relative to the Git directory if set. All in-process
+writes in the project fail with a layout error if the root's `.git` entry is a
+symbolic link, or if the resolved Git directory or common directory is inside the
+project at a path without a `.git` component. The error identifies the layout and
+requires a standard Git layout for these tools. Git directories outside the
+project cannot be reached by project writes; worktrees whose gitfile points
+outside the project support ordinary writes while the `.git` name stays protected.
+If the host cannot verify the Git layout, in-process writes fail.
+Git configuration paths are also protected. Each host Git operation inspects local
+configuration and refuses `include` or `includeIf` entries before running,
+including entries added by the owner since the preceding call.
+Recursive operations validate each member. Archive extraction lists once and
+rejects absolute paths, `..`, Git metadata, links and special files before one
+extraction in a fresh staging directory inside the destination. Tar starts with
+`posix_spawn_file_actions_addfchdir_np` on its no-follow directory descriptor,
+reads the archive on standard input, and streams contents to a host-opened
+descriptor. The host creates entries from the validated relative names, checking
+sizes and recording device and inode at creation. The extracted tree must match
+the listing's paths and types, including implicit parents, and pass identity and
+link checks before files are published with anchored exclusive renames.
+A separate read-only metadata pass supplies each member's modification time,
+including nanoseconds. File times are restored through checked descriptors.
+Staging and destination directories are created with owner read, write and search
+permission so children can be written. Explicit directory members receive their
+archive modes and modification times through checked descriptors after publication
+and staging cleanup, deepest first. An existing destination keeps its own mode,
+access time and modification time; a `.` member supplies destination metadata only
+when extraction creates that directory.
+Cleanup removes only recorded inodes; unknown entries are preserved without
+descending into foreign directories. The staging directory is retained and named
+in the error if cleanup cannot remove it. Earlier published entries remain if a
+later publication fails. `file.trash` refuses the project root, recursively checks
+members for protected paths and unsafe types, and allows multiply linked regular
+files because moving entries does not write file content. The platform Trash call
+uses a path, with no descriptor-based post-check or rollback.
+Git revisions are resolved to object IDs before use in fixed argument shapes;
+`--literal-pathspecs` applies to pathspec commands; `check-ignore` receives literal
+paths after `--`, without that option;
+merge checks reject assigned filter attributes in the working tree or either
+commit. These boundaries do not change tool grants or approval policy.

@@ -2,14 +2,23 @@ import ComputerMCPConfiguration
 import ComputerMCPCore
 import ComputerMCPPlatform
 import ComputerMCPToolKit
+import Foundation
 
 package struct FilesToolProvider: GatewayToolProvider {
   package let id = "file"
   package let namespaces = ["file", "archive"]
   let environment: ToolEnvironment
+  let fileMutationObserver:
+    (@Sendable (String, URL, ProjectFileAccess.MutationPhase) throws -> Void)?
 
-  package init(environment: ToolEnvironment) {
+  package init(
+    environment: ToolEnvironment,
+    fileMutationObserver: (
+      @Sendable (String, URL, ProjectFileAccess.MutationPhase) throws -> Void
+    )? = nil
+  ) {
     self.environment = environment
+    self.fileMutationObserver = fileMutationObserver
   }
 
   var configuration: GatewayConfiguration { environment.configuration }

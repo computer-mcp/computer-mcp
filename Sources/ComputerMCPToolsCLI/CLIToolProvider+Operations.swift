@@ -75,30 +75,14 @@ extension CLIToolProvider {
         "executed": .bool(false), "coverage": .string(tree.coverage.rawValue),
       ])
     }
-    var helpArgv = path
-    if helpArgv.last != "--help" && helpArgv.last != "-h" {
-      helpArgv.append("--help")
+    guard path.isEmpty else {
+      throw GatewayToolError.invalidArguments("The path is not in a registered CLI tree.")
     }
-
-    let result = try environment.registeredCommands.runRegisteredCLI(
-      command: command,
-      args: helpArgv,
-      timeout: optionalInt("timeout_ms", in: object),
-      requireArbitraryArgs: false
-    )
     return .object([
-      "id": .string(command.id),
-      "path": .array(path.map { .string($0) }),
-      "help_argv": .array(helpArgv.map { .string($0) }),
-      "exec_context": .object([
-        "tool": .string("cli.exec"),
-        "id": .string(command.id),
-        "argv_prefix": .array(path.map { .string($0) }),
-      ]),
+      "id": .string(command.id), "path": .array([]),
+      "description": .string(command.description ?? ""),
       "interface": command.interface?.json ?? .null,
-      "stdout": .string(result.stdout),
-      "stderr": .string(result.stderr),
-      "exit_code": result.exitCode.map { .integer(Int64($0)) } ?? .null,
+      "executed": .bool(false),
     ])
   }
 

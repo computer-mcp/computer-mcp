@@ -339,7 +339,7 @@ struct DeliveryToolProviderTests {
         for argument do
           if test "$argument" = merge; then exit 0; fi
         done
-        exec \(quote(fixture.executable)) "$@"
+        exec \(quote(fixture.interceptedExecutable)) "$@"
         """
       try Data(script.utf8).write(to: wrapper)
       try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: wrapper.path)
@@ -379,12 +379,13 @@ struct DeliveryToolProviderTests {
   }
 
   @Test(arguments: [DeliveryScope.Mode.land, .commitOnly])
-  func hookStagedPathsRetainCommitWithoutLanding(mode: DeliveryScope.Mode) async throws {
+  func concurrentlyStagedPathsRetainCommitWithoutLanding(mode: DeliveryScope.Mode) async throws {
     try await deliveryTest {
       let fixture = try DeliveryFixture()
       let head = try fixture.git(["rev-parse", "HEAD"])
-      try fixture.hook(
-        "pre-commit", body: "printf 'hook change\\n' > outside.txt\ngit add -- outside.txt")
+      try fixture.interceptGit(
+        "before-commit", body: "printf 'concurrent change\\n' > outside.txt\ngit add -- outside.txt"
+      )
       var scope = fixture.scope
       scope.mode = mode
       let result = try fixture.apply(provider: fixture.provider(scope: scope))
@@ -393,7 +394,7 @@ struct DeliveryToolProviderTests {
       #expect(result["branch"] == .string("docs/entry"))
       #expect(try fixture.git(["rev-parse", "HEAD"]) == head)
       #expect(try fixture.git(["rev-parse", "docs/entry"]) == result["commit"]?.stringValue)
-      #expect(try fixture.git(["show", "docs/entry:outside.txt"]) == "hook change")
+      #expect(try fixture.git(["show", "docs/entry:outside.txt"]) == "concurrent change")
       #expect(try fixture.read("outside.txt") == "untouched\n")
       #expect(try fixture.journals().first?.reason == .scopeChanged)
       try fixture.assertClean(retained: true)
@@ -407,12 +408,12 @@ struct DeliveryToolProviderTests {
       let main = quote(fixture.root.path)
       let clean =
         "env -i PATH=\(quote(systemUtilityPath)) HOME=\(quote(fixture.temporary.url.path)) \(quote(fixture.executable)) -C \(main) -c core.hooksPath=/dev/null"
-      try fixture.hook(
-        "post-commit",
+      try fixture.interceptGit(
+        "after-commit",
         body: """
           printf 'beta\\nstable\\n' > \(main)/notes/log.md
           \(clean) commit -am 'test: independently apply the same patch'
-          rm \(main)/.git/hooks/post-commit
+          rm "$0"
           """)
       let result = try fixture.apply()
       #expect(result["state"] == .string("committed"))
@@ -459,15 +460,15 @@ struct DeliveryToolProviderTests {
     }
   }
 
-  @Test(arguments: [false, true], ["hook_failure", "command_failure", "timeout"])
+  @Test(arguments: [false, true], ["concurrent_advancement", "command_failure", "timeout"])
   func postMergeDescendantRetainsBranch(rebased: Bool, outcome: String) async throws {
     try await deliveryTest {
       let fixture = try DeliveryFixture()
       if rebased { try fixture.advanceDuringCommit() }
       let clean =
         "env -i PATH=\(quote(systemUtilityPath)) HOME=\(quote(fixture.temporary.url.path)) \(quote(fixture.executable)) -C \(quote(fixture.root.path)) -c core.hooksPath=/dev/null"
-      try fixture.hook(
-        "post-merge",
+      try fixture.interceptGit(
+        "after-merge",
         body: """
           \(clean) commit --allow-empty -m 'test: post-merge descendant'
           \(outcome == "timeout" ? "sleep 5" : "exit 7")
@@ -476,7 +477,7 @@ struct DeliveryToolProviderTests {
         wrappingGit: outcome == "command_failure"
           ? """
           case " $* " in *" merge "*)
-            \(quote(fixture.executable)) "$@" || exit $?
+            \(quote(fixture.interceptedExecutable)) "$@" || exit $?
             exit 79
           esac
           """ : "", timeout: outcome == "timeout" ? 1500 : nil)
@@ -484,7 +485,8 @@ struct DeliveryToolProviderTests {
       #expect(result["state"] == .string("committed"), "\(result)")
       #expect(result["branch"] == .string("docs/entry"))
       #expect(
-        result["reason"] == .string(outcome == "hook_failure" ? "not_fast_forward" : "git_failed"))
+        result["reason"]
+          == .string(outcome == "concurrent_advancement" ? "not_fast_forward" : "git_failed"))
       #expect(try fixture.git(["rev-parse", "HEAD"]) != result["commit"]?.stringValue)
       #expect(try fixture.git(["rev-parse", "HEAD^"]) == result["commit"]?.stringValue)
       #expect(try fixture.git(["rev-parse", "docs/entry"]) == result["commit"]?.stringValue)
@@ -502,7 +504,7 @@ struct DeliveryToolProviderTests {
       let provider = try fixture.provider(
         wrappingGit: """
           case " $* " in *" merge "*)
-            \(quote(fixture.executable)) "$@" || exit $?
+            \(quote(fixture.interceptedExecutable)) "$@" || exit $?
             \(ending)
           esac
           """, timeout: outcome == "timeout" ? 1500 : nil)
@@ -536,13 +538,13 @@ struct DeliveryToolProviderTests {
       let main = quote(fixture.root.path)
       let clean =
         "env -i PATH=\(quote(systemUtilityPath)) HOME=\(quote(fixture.temporary.url.path)) \(quote(fixture.executable)) -C \(main) -c core.hooksPath=/dev/null"
-      try fixture.hook(
-        "post-commit",
+      try fixture.interceptGit(
+        "after-commit",
         body: """
           mkdir -p \(main)/\(quote(String(path.split(separator: "/")[0])))
           \(clean) mv notes/log.md \(quote(path))
           \(clean) commit -m 'test: rename target on default branch'
-          rm \(main)/.git/hooks/post-commit
+          rm "$0"
           """)
       let result = try fixture.apply()
       #expect(result["state"] == .string("committed"))
@@ -580,8 +582,8 @@ struct DeliveryToolProviderTests {
     try await deliveryTest {
 
       let fixture = try DeliveryFixture()
-      try fixture.hook(
-        "pre-commit", body: "test \"$GIT_TERMINAL_PROMPT\" = 0\n! test -v GIT_CONFIG_COUNT")
+      try fixture.interceptGit(
+        "before-commit", body: "test \"$GIT_TERMINAL_PROMPT\" = 0\ntest \"$GIT_CONFIG_COUNT\" = 0")
       let environment = fixture.tools(
         extraEnvironment: [
           "GIT_DIR": "/missing", "GIT_CONFIG_COUNT": "1", "GIT_CONFIG_KEY_0": "user.name",
@@ -596,16 +598,16 @@ struct DeliveryToolProviderTests {
   }
 
   @Test
-  func hookFailureReturnsBoundedGitError() async throws {
+  func commandFailureReturnsBoundedGitError() async throws {
     try await deliveryTest {
 
       let fixture = try DeliveryFixture()
-      try fixture.hook("pre-commit", body: "printf 'hook rejected' >&2\nexit 7")
+      try fixture.interceptGit("before-commit", body: "printf 'command rejected' >&2\nexit 7")
       let result = try fixture.apply()
       #expect(result["state"] == .string("aborted"))
       #expect(result["reason"] == .string("git_failed"))
       #expect(result["exit_code"] != nil)
-      #expect(result["stderr"]?.stringValue?.contains("hook rejected") == true)
+      #expect(result["stderr"]?.stringValue?.contains("command rejected") == true)
       try fixture.assertClean()
     }
   }
@@ -613,8 +615,8 @@ struct DeliveryToolProviderTests {
   func perCommandTimeoutStopsGitAndPreservesTheMainCheckout() async throws {
     try await deliveryTest {
       let fixture = try DeliveryFixture()
-      try fixture.hook(
-        "pre-commit",
+      try fixture.interceptGit(
+        "before-commit",
         body:
           "touch \(quote(fixture.root.appendingPathComponent(".git/timeout-entered").path))\nsleep 5"
       )

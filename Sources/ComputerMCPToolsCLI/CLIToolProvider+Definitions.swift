@@ -59,12 +59,12 @@ extension CLIToolProvider {
         tool: MCPTool(
           name: "cli.help",
           description:
-            "Return declared metadata for a file-backed CLI Tree path without executing it. For a CLI without a tree, return raw help and follow-up cli.exec context. Executable tree exporters are not run by this read-only tool.",
+            "Return registered command metadata for a file-backed CLI Tree path, or registration metadata for a CLI without a tree. No command or executable tree exporter is run.",
           inputSchema: objectSchema(
             properties: [
               "id": stringSchema("Registered CLI id."),
-              "path": stringArraySchema("Command path before --help."),
-              "timeout_ms": integerSchema("Optional timeout in milliseconds."),
+              "path": stringArraySchema(
+                "Registered command tree path. Omit for registration metadata."),
             ],
             required: ["id"]
           ),

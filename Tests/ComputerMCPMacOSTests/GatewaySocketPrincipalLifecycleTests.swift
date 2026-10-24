@@ -11,6 +11,10 @@ import Testing
 @testable import ComputerMCPGateway
 @testable import ComputerMCPPlatformDarwin
 
+#if os(macOS)
+  import ComputerMCPDarwinTestSupport
+#endif
+
 @Suite(.nativeIntegration, .serialized)
 struct GatewaySocketPrincipalLifecycleTests {
   @Test
@@ -26,19 +30,23 @@ struct GatewaySocketPrincipalLifecycleTests {
     let manifest = try AtomicManifestStore(
       manifestURL: directories.manifest, database: database,
       loader: GatewayManifestConfigurationLoader(
-        database: database, applications: MacOSPlatform.services.applications))
+        database: database,
+        applications: MacOSPlatform.services(launcher: testExecutionLauncher()).applications))
     let secrets = try KeychainSecretStore(adapter: MemoryKeychainAdapter())
     let control = AppControlPlaneService(
       directories: directories, database: database, manifestStore: manifest,
       defaultManifest: DefaultGatewayConfiguration.manifest, secretStore: secrets,
       openAITunnelSupervisor: OpenAITunnelSupervisor(
+        launcher: testExecutionLauncher(),
         secretStore: secrets,
-        executableSearchDirectories: MacOSPlatform.services.executableSearchDirectories,
+        executableSearchDirectories: MacOSPlatform.services(launcher: testExecutionLauncher())
+          .executableSearchDirectories,
         proxyResolver: FixedOpenAITunnelHTTPProxyResolver()
       ),
       launchAtLoginController: SMAppServiceLaunchAtLoginController(),
       computerUsePermissionReader: FixedComputerUsePermissionReader(),
-      platform: MacOSPlatform.services, bundledPlugins: .init(packages: [], issues: []))
+      platform: MacOSPlatform.services(launcher: testExecutionLauncher()),
+      bundledPlugins: .init(packages: [], issues: []))
     let script = root.appendingPathComponent("fixture.py")
     try Data(Self.server.utf8).write(to: script)
     let configuration = GatewayConfiguration(

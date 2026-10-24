@@ -9,6 +9,10 @@ import Testing
 
 @testable import ComputerMCPToolsGit
 
+#if os(macOS)
+  import ComputerMCPDarwinTestSupport
+#endif
+
 @Suite(.nativeIntegration, .serialized)
 final class GitToolProviderTests {
   @Test
@@ -16,6 +20,7 @@ final class GitToolProviderTests {
     let runner = RecordingCommandRunner()
     let provider = GitToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: .fixture(
           cli: .init(commands: [.init(id: "git", executable: "/fixture/bin/git")]),
           builtin: .init(enabled: ["git.commit"])),
@@ -34,11 +39,13 @@ final class GitToolProviderTests {
 
   @Test
   func testGitBuiltinsAreExposedOnlyWhenEnabled() throws {
-    let disabled = GitToolProvider(environment: ToolEnvironment(configuration: .fixture()))
+    let disabled = GitToolProvider(
+      environment: ToolEnvironment(launcher: testExecutionLauncher(), configuration: .fixture()))
     #expect(!(try disabled.definitions().map(\.tool).map(\.name).contains("git.status")))
 
     let enabled = GitToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration.fixture(
           builtin: BuiltinConfig(enabled: [
             "git.root", "git.config", "git.remotes", "git.worktrees", "git.stashes",
@@ -202,6 +209,7 @@ final class GitToolProviderTests {
     let runner = RecordingCommandRunner()
     let provider = GitToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration.fixture(
           cli: CLISectionConfig(commands: [CLICommandConfig(id: "git", executable: "/bin/echo")]),
           builtin: BuiltinConfig(enabled: ["git.root"])
@@ -250,6 +258,7 @@ final class GitToolProviderTests {
       + "local\0file:.git/config\0http.extraheader\nAUTHORIZATION: bearer abc123\0"
     let provider = GitToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration.fixture(
           cli: CLISectionConfig(commands: [CLICommandConfig(id: "git", executable: "/bin/echo")]),
           builtin: BuiltinConfig(enabled: ["git.config"])
@@ -310,6 +319,7 @@ final class GitToolProviderTests {
       + "global\0file:/Users/example/.gitconfig\0user.name\nExample\0"
     let provider = GitToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration.fixture(
           cli: CLISectionConfig(commands: [CLICommandConfig(id: "git", executable: "/bin/echo")]),
           builtin: BuiltinConfig(enabled: ["git.config"])
@@ -361,6 +371,7 @@ final class GitToolProviderTests {
     let runner = RecordingCommandRunner()
     let provider = GitToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration.fixture(
           cli: CLISectionConfig(commands: [CLICommandConfig(id: "git", executable: "/bin/echo")]),
           builtin: BuiltinConfig(enabled: ["git.remotes"])
@@ -384,6 +395,7 @@ final class GitToolProviderTests {
     let runner = RecordingCommandRunner()
     let provider = GitToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration.fixture(
           cli: CLISectionConfig(commands: [CLICommandConfig(id: "git", executable: "/bin/echo")]),
           builtin: BuiltinConfig(enabled: ["git.worktrees"])
@@ -409,6 +421,7 @@ final class GitToolProviderTests {
     let runner = RecordingCommandRunner()
     let provider = GitToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration.fixture(
           cli: CLISectionConfig(commands: [CLICommandConfig(id: "git", executable: "/bin/echo")]),
           builtin: BuiltinConfig(enabled: ["git.stashes"])
@@ -434,6 +447,7 @@ final class GitToolProviderTests {
     let runner = RecordingCommandRunner()
     let provider = GitToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration.fixture(
           cli: CLISectionConfig(commands: [CLICommandConfig(id: "git", executable: "/bin/echo")]),
           builtin: BuiltinConfig(enabled: ["git.stash_show"])
@@ -476,6 +490,7 @@ final class GitToolProviderTests {
     let runner = RecordingCommandRunner()
     let provider = GitToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration.fixture(
           cli: CLISectionConfig(commands: [CLICommandConfig(id: "git", executable: "/bin/echo")]),
           builtin: BuiltinConfig(enabled: ["git.stash_show"])
@@ -508,6 +523,7 @@ final class GitToolProviderTests {
     ]
     let provider = GitToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration.fixture(
           cli: CLISectionConfig(commands: [CLICommandConfig(id: "git", executable: "/bin/echo")]),
           builtin: BuiltinConfig(enabled: ["git.stash_push"])
@@ -566,6 +582,7 @@ final class GitToolProviderTests {
     ]
     let provider = GitToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration.fixture(
           cli: CLISectionConfig(commands: [CLICommandConfig(id: "git", executable: "/bin/echo")]),
           builtin: BuiltinConfig(enabled: ["git.stash_push"])
@@ -602,6 +619,7 @@ final class GitToolProviderTests {
     let runner = RecordingCommandRunner()
     let provider = GitToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration.fixture(
           cli: CLISectionConfig(commands: [CLICommandConfig(id: "git", executable: "/bin/echo")]),
           builtin: BuiltinConfig(enabled: ["git.stash_push"])
@@ -634,6 +652,7 @@ final class GitToolProviderTests {
     let runner = RecordingCommandRunner()
     let provider = GitToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration.fixture(
           cli: CLISectionConfig(commands: [CLICommandConfig(id: "git", executable: "/bin/echo")]),
           builtin: BuiltinConfig(enabled: ["git.tags"])
@@ -666,6 +685,7 @@ final class GitToolProviderTests {
     ]
     let provider = GitToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration.fixture(
           cli: CLISectionConfig(commands: [CLICommandConfig(id: "git", executable: "/bin/echo")]),
           builtin: BuiltinConfig(enabled: ["git.tag_show"])
@@ -715,6 +735,7 @@ final class GitToolProviderTests {
     ]
     let provider = GitToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration.fixture(
           cli: CLISectionConfig(commands: [CLICommandConfig(id: "git", executable: "/bin/echo")]),
           builtin: BuiltinConfig(enabled: ["git.tag_show"])
@@ -746,6 +767,7 @@ final class GitToolProviderTests {
     let unsafeRunner = RecordingCommandRunner()
     let unsafeRegistry = GitToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration.fixture(
           cli: CLISectionConfig(commands: [CLICommandConfig(id: "git", executable: "/bin/echo")]),
           builtin: BuiltinConfig(enabled: ["git.tag_show"])
@@ -768,6 +790,7 @@ final class GitToolProviderTests {
     missingTagRunner.outputs = [RecordingCommandRunner.Output(stdout: "", exitCode: 1)]
     let missingTagRegistry = GitToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration.fixture(
           cli: CLISectionConfig(commands: [CLICommandConfig(id: "git", executable: "/bin/echo")]),
           builtin: BuiltinConfig(enabled: ["git.tag_show"])
@@ -797,6 +820,7 @@ final class GitToolProviderTests {
     ]
     let provider = GitToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration.fixture(
           cli: CLISectionConfig(commands: [CLICommandConfig(id: "git", executable: "/bin/echo")]),
           builtin: BuiltinConfig(enabled: ["git.tag_create"])
@@ -845,6 +869,7 @@ final class GitToolProviderTests {
     ]
     let provider = GitToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration.fixture(
           cli: CLISectionConfig(commands: [CLICommandConfig(id: "git", executable: "/bin/echo")]),
           builtin: BuiltinConfig(enabled: ["git.tag_create"])
@@ -885,6 +910,7 @@ final class GitToolProviderTests {
     let missingConfirmRunner = RecordingCommandRunner()
     let missingConfirmRegistry = GitToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration.fixture(
           cli: CLISectionConfig(commands: [CLICommandConfig(id: "git", executable: "/bin/echo")]),
           builtin: BuiltinConfig(enabled: ["git.tag_create"])
@@ -925,6 +951,7 @@ final class GitToolProviderTests {
     ]
     let existingTagRegistry = GitToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration.fixture(
           cli: CLISectionConfig(commands: [CLICommandConfig(id: "git", executable: "/bin/echo")]),
           builtin: BuiltinConfig(enabled: ["git.tag_create"])
@@ -950,6 +977,7 @@ final class GitToolProviderTests {
     ]
     let badTargetRegistry = GitToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration.fixture(
           cli: CLISectionConfig(commands: [CLICommandConfig(id: "git", executable: "/bin/echo")]),
           builtin: BuiltinConfig(enabled: ["git.tag_create"])
@@ -981,6 +1009,7 @@ final class GitToolProviderTests {
     ]
     let provider = GitToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration.fixture(
           cli: CLISectionConfig(commands: [CLICommandConfig(id: "git", executable: "/bin/echo")]),
           builtin: BuiltinConfig(enabled: ["git.tag_delete"])
@@ -1026,6 +1055,7 @@ final class GitToolProviderTests {
     ]
     let provider = GitToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration.fixture(
           cli: CLISectionConfig(commands: [CLICommandConfig(id: "git", executable: "/bin/echo")]),
           builtin: BuiltinConfig(enabled: ["git.tag_delete"])
@@ -1064,6 +1094,7 @@ final class GitToolProviderTests {
     let missingConfirmRunner = RecordingCommandRunner()
     let missingConfirmRegistry = GitToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration.fixture(
           cli: CLISectionConfig(commands: [CLICommandConfig(id: "git", executable: "/bin/echo")]),
           builtin: BuiltinConfig(enabled: ["git.tag_delete"])
@@ -1100,6 +1131,7 @@ final class GitToolProviderTests {
     missingTagRunner.outputs = [RecordingCommandRunner.Output(stdout: "", exitCode: 1)]
     let missingTagRegistry = GitToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration.fixture(
           cli: CLISectionConfig(commands: [CLICommandConfig(id: "git", executable: "/bin/echo")]),
           builtin: BuiltinConfig(enabled: ["git.tag_delete"])
@@ -1125,6 +1157,7 @@ final class GitToolProviderTests {
     ]
     let unresolvedTagRegistry = GitToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration.fixture(
           cli: CLISectionConfig(commands: [CLICommandConfig(id: "git", executable: "/bin/echo")]),
           builtin: BuiltinConfig(enabled: ["git.tag_delete"])
@@ -1149,6 +1182,7 @@ final class GitToolProviderTests {
     let runner = RecordingCommandRunner()
     let provider = GitToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration.fixture(
           cli: CLISectionConfig(commands: [CLICommandConfig(id: "git", executable: "/bin/echo")]),
           builtin: BuiltinConfig(enabled: ["git.ignored"])
@@ -1182,6 +1216,7 @@ final class GitToolProviderTests {
     let runner = RecordingCommandRunner()
     let provider = GitToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration.fixture(
           cli: CLISectionConfig(commands: [CLICommandConfig(id: "git", executable: "/bin/echo")]),
           builtin: BuiltinConfig(enabled: ["git.submodules"])
@@ -1207,6 +1242,7 @@ final class GitToolProviderTests {
     let runner = RecordingCommandRunner()
     let provider = GitToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration.fixture(
           cli: CLISectionConfig(commands: [CLICommandConfig(id: "git", executable: "/bin/echo")]),
           builtin: BuiltinConfig(enabled: ["git.files"])
@@ -1246,6 +1282,7 @@ final class GitToolProviderTests {
     ]
     let provider = GitToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration.fixture(
           cli: CLISectionConfig(commands: [CLICommandConfig(id: "git", executable: "/bin/echo")]),
           builtin: BuiltinConfig(enabled: ["git.grep"])
@@ -1292,6 +1329,7 @@ final class GitToolProviderTests {
     let runner = RecordingCommandRunner()
     let provider = GitToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration.fixture(
           cli: CLISectionConfig(commands: [CLICommandConfig(id: "git", executable: "/bin/echo")]),
           builtin: BuiltinConfig(enabled: ["git.blame"])
@@ -1330,6 +1368,7 @@ final class GitToolProviderTests {
       "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\taaaaaaa\t2026-07-08T17:16:39+08:00\tAda\tupdate file\nbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\tbbbbbbb\t2026-07-08T17:15:00+08:00\tBen\tcreate file\n"
     let provider = GitToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration.fixture(
           cli: CLISectionConfig(commands: [CLICommandConfig(id: "git", executable: "/bin/echo")]),
           builtin: BuiltinConfig(enabled: ["git.file_history"])
@@ -1384,6 +1423,7 @@ final class GitToolProviderTests {
     runner.stdout = "line one\nline two\n"
     let provider = GitToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration.fixture(
           cli: CLISectionConfig(commands: [CLICommandConfig(id: "git", executable: "/bin/echo")]),
           policy: PolicyConfig(maxOutputBytes: 64),
@@ -1420,6 +1460,7 @@ final class GitToolProviderTests {
     runner.stdout = "staged one\nstaged two\n"
     let provider = GitToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration.fixture(
           cli: CLISectionConfig(commands: [CLICommandConfig(id: "git", executable: "/bin/echo")]),
           policy: PolicyConfig(maxOutputBytes: 64),
@@ -1455,6 +1496,7 @@ final class GitToolProviderTests {
     let runner = RecordingCommandRunner()
     let provider = GitToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration.fixture(
           cli: CLISectionConfig(commands: [CLICommandConfig(id: "git", executable: "/bin/echo")]),
           builtin: BuiltinConfig(enabled: ["git.conflicts"])
@@ -1488,6 +1530,7 @@ final class GitToolProviderTests {
     let runner = RecordingCommandRunner()
     let provider = GitToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration.fixture(
           cli: CLISectionConfig(commands: [CLICommandConfig(id: "git", executable: "/bin/echo")]),
           builtin: BuiltinConfig(enabled: ["git.status"])
@@ -1527,6 +1570,7 @@ final class GitToolProviderTests {
     ]
     let provider = GitToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration.fixture(
           cli: CLISectionConfig(commands: [CLICommandConfig(id: "git", executable: "/bin/echo")]),
           builtin: BuiltinConfig(enabled: ["git.tracking_status"])
@@ -1584,6 +1628,7 @@ final class GitToolProviderTests {
       """
     let provider = GitToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration.fixture(
           cli: CLISectionConfig(commands: [CLICommandConfig(id: "git", executable: "/bin/echo")]),
           builtin: BuiltinConfig(enabled: ["git.clean_preview"])
@@ -1622,6 +1667,7 @@ final class GitToolProviderTests {
     let runner = RecordingCommandRunner()
     let provider = GitToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration.fixture(
           cli: CLISectionConfig(commands: [CLICommandConfig(id: "git", executable: "/bin/echo")]),
           builtin: BuiltinConfig(enabled: ["git.clean"])
@@ -1673,6 +1719,7 @@ final class GitToolProviderTests {
       "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\taaaaaaa\tHEAD@{2026-07-08T17:16:39+08:00}\tcommit: second\t2026-07-08T17:16:39+08:00\nbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\tbbbbbbb\tHEAD@{2026-07-08T17:15:00+08:00}\tcheckout: moving from main to topic\t2026-07-08T17:15:00+08:00\n"
     let provider = GitToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration.fixture(
           cli: CLISectionConfig(commands: [CLICommandConfig(id: "git", executable: "/bin/echo")]),
           builtin: BuiltinConfig(enabled: ["git.reflog"])
@@ -1717,6 +1764,7 @@ final class GitToolProviderTests {
       "refs/heads/main\tmain\taaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\taaaaaaa\tcommit\t2026-07-08T17:16:39+08:00\tInitial commit\nrefs/remotes/origin/topic\torigin/topic\tbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\tbbbbbbb\tcommit\t2026-07-08T17:15:00+08:00\tTopic work\nrefs/tags/v1.0\tv1.0\tcccccccccccccccccccccccccccccccccccccccc\tccccccc\ttag\t2026-07-08T17:14:00+08:00\tRelease v1.0\n"
     let provider = GitToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration.fixture(
           cli: CLISectionConfig(commands: [CLICommandConfig(id: "git", executable: "/bin/echo")]),
           builtin: BuiltinConfig(enabled: ["git.refs"])
@@ -1780,6 +1828,7 @@ final class GitToolProviderTests {
     ]
     let provider = GitToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration.fixture(
           cli: CLISectionConfig(commands: [CLICommandConfig(id: "git", executable: "/bin/echo")]),
           builtin: BuiltinConfig(enabled: ["git.compare_refs"])
@@ -1847,6 +1896,7 @@ final class GitToolProviderTests {
     ]
     let provider = GitToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration.fixture(
           cli: CLISectionConfig(commands: [CLICommandConfig(id: "git", executable: "/bin/echo")]),
           builtin: BuiltinConfig(enabled: ["git.resolve_ref"])
@@ -1889,6 +1939,7 @@ final class GitToolProviderTests {
     let invalidRunner = RecordingCommandRunner()
     let invalidRegistry = GitToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration.fixture(
           cli: CLISectionConfig(commands: [CLICommandConfig(id: "git", executable: "/bin/echo")]),
           builtin: BuiltinConfig(enabled: ["git.resolve_ref"])
@@ -1913,6 +1964,7 @@ final class GitToolProviderTests {
     ]
     let revParseFailureRegistry = GitToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration.fixture(
           cli: CLISectionConfig(commands: [CLICommandConfig(id: "git", executable: "/bin/echo")]),
           builtin: BuiltinConfig(enabled: ["git.resolve_ref"])
@@ -1938,6 +1990,7 @@ final class GitToolProviderTests {
     ]
     let typeFailureRegistry = GitToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration.fixture(
           cli: CLISectionConfig(commands: [CLICommandConfig(id: "git", executable: "/bin/echo")]),
           builtin: BuiltinConfig(enabled: ["git.resolve_ref"])
@@ -1968,6 +2021,7 @@ final class GitToolProviderTests {
     ]
     let provider = GitToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration.fixture(
           cli: CLISectionConfig(commands: [CLICommandConfig(id: "git", executable: "/bin/echo")]),
           builtin: BuiltinConfig(enabled: ["git.merge_base"])
@@ -2023,6 +2077,7 @@ final class GitToolProviderTests {
     let invalidRunner = RecordingCommandRunner()
     let invalidRegistry = GitToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration.fixture(
           cli: CLISectionConfig(commands: [CLICommandConfig(id: "git", executable: "/bin/echo")]),
           builtin: BuiltinConfig(enabled: ["git.merge_base"])
@@ -2058,6 +2113,7 @@ final class GitToolProviderTests {
     ]
     let failureRegistry = GitToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration.fixture(
           cli: CLISectionConfig(commands: [CLICommandConfig(id: "git", executable: "/bin/echo")]),
           builtin: BuiltinConfig(enabled: ["git.merge_base"])
@@ -2087,6 +2143,7 @@ final class GitToolProviderTests {
     ]
     let provider = GitToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration.fixture(
           cli: CLISectionConfig(commands: [CLICommandConfig(id: "git", executable: "/bin/echo")]),
           builtin: BuiltinConfig(enabled: ["git.is_ancestor"])
@@ -2140,6 +2197,7 @@ final class GitToolProviderTests {
     let invalidRunner = RecordingCommandRunner()
     let invalidRegistry = GitToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration.fixture(
           cli: CLISectionConfig(commands: [CLICommandConfig(id: "git", executable: "/bin/echo")]),
           builtin: BuiltinConfig(enabled: ["git.is_ancestor"])
@@ -2167,6 +2225,7 @@ final class GitToolProviderTests {
     ]
     let failureRegistry = GitToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration.fixture(
           cli: CLISectionConfig(commands: [CLICommandConfig(id: "git", executable: "/bin/echo")]),
           builtin: BuiltinConfig(enabled: ["git.is_ancestor"])
@@ -2194,6 +2253,7 @@ final class GitToolProviderTests {
     let runner = RecordingCommandRunner()
     let provider = GitToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration.fixture(
           cli: CLISectionConfig(commands: [CLICommandConfig(id: "git", executable: "/bin/echo")]),
           builtin: BuiltinConfig(enabled: ["git.diff"])
@@ -2234,6 +2294,7 @@ final class GitToolProviderTests {
     ]
     let provider = GitToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration.fixture(
           cli: CLISectionConfig(commands: [CLICommandConfig(id: "git", executable: "/bin/echo")]),
           builtin: BuiltinConfig(enabled: ["git.diff_summary"])
@@ -2294,6 +2355,7 @@ final class GitToolProviderTests {
     runner.exitCode = 2
     let provider = GitToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration.fixture(
           cli: CLISectionConfig(commands: [CLICommandConfig(id: "git", executable: "/bin/echo")]),
           builtin: BuiltinConfig(enabled: ["git.diff_check"])
@@ -2341,6 +2403,7 @@ final class GitToolProviderTests {
     ]
     let provider = GitToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration.fixture(
           cli: CLISectionConfig(commands: [CLICommandConfig(id: "git", executable: "/bin/echo")]),
           builtin: BuiltinConfig(enabled: ["git.commit_files"])
@@ -2392,6 +2455,7 @@ final class GitToolProviderTests {
     let runner = RecordingCommandRunner()
     let provider = GitToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration.fixture(
           cli: CLISectionConfig(commands: [CLICommandConfig(id: "git", executable: "/bin/echo")]),
           builtin: BuiltinConfig(enabled: ["git.branch", "git.log", "git.show"])
@@ -2465,6 +2529,7 @@ final class GitToolProviderTests {
     ]
     let provider = GitToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration.fixture(
           cli: CLISectionConfig(commands: [CLICommandConfig(id: "git", executable: "/bin/echo")]),
           builtin: BuiltinConfig(enabled: ["git.branch_create"])
@@ -2516,6 +2581,7 @@ final class GitToolProviderTests {
     ]
     let provider = GitToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration.fixture(
           cli: CLISectionConfig(commands: [CLICommandConfig(id: "git", executable: "/bin/echo")]),
           builtin: BuiltinConfig(enabled: ["git.branch_create"])
@@ -2561,6 +2627,7 @@ final class GitToolProviderTests {
     ]
     let provider = GitToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration.fixture(
           cli: CLISectionConfig(commands: [CLICommandConfig(id: "git", executable: "/bin/echo")]),
           builtin: BuiltinConfig(enabled: ["git.branch_delete"])
@@ -2610,6 +2677,7 @@ final class GitToolProviderTests {
     ]
     let provider = GitToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration.fixture(
           cli: CLISectionConfig(commands: [CLICommandConfig(id: "git", executable: "/bin/echo")]),
           builtin: BuiltinConfig(enabled: ["git.branch_delete"])
@@ -2651,6 +2719,7 @@ final class GitToolProviderTests {
     let missingConfirmRunner = RecordingCommandRunner()
     let missingConfirmRegistry = GitToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration.fixture(
           cli: CLISectionConfig(commands: [CLICommandConfig(id: "git", executable: "/bin/echo")]),
           builtin: BuiltinConfig(enabled: ["git.branch_delete"])
@@ -2690,6 +2759,7 @@ final class GitToolProviderTests {
     ]
     let missingBranchRegistry = GitToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration.fixture(
           cli: CLISectionConfig(commands: [CLICommandConfig(id: "git", executable: "/bin/echo")]),
           builtin: BuiltinConfig(enabled: ["git.branch_delete"])
@@ -2716,6 +2786,7 @@ final class GitToolProviderTests {
     ]
     let currentBranchRegistry = GitToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration.fixture(
           cli: CLISectionConfig(commands: [CLICommandConfig(id: "git", executable: "/bin/echo")]),
           builtin: BuiltinConfig(enabled: ["git.branch_delete"])
@@ -2747,6 +2818,7 @@ final class GitToolProviderTests {
     ]
     let provider = GitToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration.fixture(
           cli: CLISectionConfig(commands: [CLICommandConfig(id: "git", executable: "/bin/echo")]),
           builtin: BuiltinConfig(enabled: ["git.branch_rename"])
@@ -2806,6 +2878,7 @@ final class GitToolProviderTests {
     ]
     let provider = GitToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration.fixture(
           cli: CLISectionConfig(commands: [CLICommandConfig(id: "git", executable: "/bin/echo")]),
           builtin: BuiltinConfig(enabled: ["git.branch_rename"])
@@ -2854,6 +2927,7 @@ final class GitToolProviderTests {
     let missingConfirmRunner = RecordingCommandRunner()
     let missingConfirmRegistry = GitToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration.fixture(
           cli: CLISectionConfig(commands: [CLICommandConfig(id: "git", executable: "/bin/echo")]),
           builtin: BuiltinConfig(enabled: ["git.branch_rename"])
@@ -2912,6 +2986,7 @@ final class GitToolProviderTests {
     ]
     let missingBranchRegistry = GitToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration.fixture(
           cli: CLISectionConfig(commands: [CLICommandConfig(id: "git", executable: "/bin/echo")]),
           builtin: BuiltinConfig(enabled: ["git.branch_rename"])
@@ -2942,6 +3017,7 @@ final class GitToolProviderTests {
     ]
     let existingTargetRegistry = GitToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration.fixture(
           cli: CLISectionConfig(commands: [CLICommandConfig(id: "git", executable: "/bin/echo")]),
           builtin: BuiltinConfig(enabled: ["git.branch_rename"])
@@ -2975,6 +3051,7 @@ final class GitToolProviderTests {
     ]
     let provider = GitToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration.fixture(
           cli: CLISectionConfig(commands: [CLICommandConfig(id: "git", executable: "/bin/echo")]),
           builtin: BuiltinConfig(enabled: ["git.branch_switch"])
@@ -3029,6 +3106,7 @@ final class GitToolProviderTests {
     ]
     let provider = GitToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration.fixture(
           cli: CLISectionConfig(commands: [CLICommandConfig(id: "git", executable: "/bin/echo")]),
           builtin: BuiltinConfig(enabled: ["git.branch_switch"])
@@ -3070,6 +3148,7 @@ final class GitToolProviderTests {
     let missingConfirmRunner = RecordingCommandRunner()
     let missingConfirmRegistry = GitToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration.fixture(
           cli: CLISectionConfig(commands: [CLICommandConfig(id: "git", executable: "/bin/echo")]),
           builtin: BuiltinConfig(enabled: ["git.branch_switch"])
@@ -3109,6 +3188,7 @@ final class GitToolProviderTests {
     ]
     let missingBranchRegistry = GitToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration.fixture(
           cli: CLISectionConfig(commands: [CLICommandConfig(id: "git", executable: "/bin/echo")]),
           builtin: BuiltinConfig(enabled: ["git.branch_switch"])
@@ -3136,6 +3216,7 @@ final class GitToolProviderTests {
     ]
     let dirtyRegistry = GitToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration.fixture(
           cli: CLISectionConfig(commands: [CLICommandConfig(id: "git", executable: "/bin/echo")]),
           builtin: BuiltinConfig(enabled: ["git.branch_switch"])
@@ -3171,6 +3252,7 @@ final class GitToolProviderTests {
     ]
     let dirtyRegistry = GitToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration.fixture(
           cli: CLISectionConfig(commands: [CLICommandConfig(id: "git", executable: "/bin/echo")]),
           builtin: BuiltinConfig(enabled: ["git.branch_switch"])
@@ -3205,6 +3287,7 @@ final class GitToolProviderTests {
     ]
     let currentRegistry = GitToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration.fixture(
           cli: CLISectionConfig(commands: [CLICommandConfig(id: "git", executable: "/bin/echo")]),
           builtin: BuiltinConfig(enabled: ["git.branch_switch"])
@@ -3234,6 +3317,7 @@ final class GitToolProviderTests {
     let missingConfirmRunner = RecordingCommandRunner()
     let missingConfirmRegistry = GitToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration.fixture(
           cli: CLISectionConfig(commands: [CLICommandConfig(id: "git", executable: "/bin/echo")]),
           builtin: BuiltinConfig(enabled: ["git.branch_create"])
@@ -3298,6 +3382,7 @@ final class GitToolProviderTests {
     ]
     let existingRegistry = GitToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration.fixture(
           cli: CLISectionConfig(commands: [CLICommandConfig(id: "git", executable: "/bin/echo")]),
           builtin: BuiltinConfig(enabled: ["git.branch_create"])
@@ -3324,6 +3409,7 @@ final class GitToolProviderTests {
     ]
     let failedExistsRegistry = GitToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration.fixture(
           cli: CLISectionConfig(commands: [CLICommandConfig(id: "git", executable: "/bin/echo")]),
           builtin: BuiltinConfig(enabled: ["git.branch_create"])
@@ -3348,6 +3434,7 @@ final class GitToolProviderTests {
     let runner = RecordingCommandRunner()
     let provider = GitToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration.fixture(
           cli: CLISectionConfig(commands: [CLICommandConfig(id: "git", executable: "/bin/echo")]),
           builtin: BuiltinConfig(enabled: [
@@ -3422,6 +3509,7 @@ final class GitToolProviderTests {
     let runner = RecordingCommandRunner()
     let provider = GitToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration.fixture(
           cli: CLISectionConfig(commands: [CLICommandConfig(id: "git", executable: "/bin/echo")]),
           builtin: BuiltinConfig(enabled: [
@@ -3498,6 +3586,7 @@ final class GitToolProviderTests {
   func testGitBuiltinsRequireGitProvider() {
     let provider = GitToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration.fixture(
           cli: CLISectionConfig(commands: [CLICommandConfig(id: "echo", executable: "/bin/echo")]),
           builtin: BuiltinConfig(enabled: [
@@ -3854,6 +3943,7 @@ final class GitToolProviderTests {
   func testGitBuiltinsValidateBounds() {
     let provider = GitToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration.fixture(
           cli: CLISectionConfig(commands: [CLICommandConfig(id: "git", executable: "/bin/echo")]),
           builtin: BuiltinConfig(enabled: [
@@ -4278,7 +4368,7 @@ final class GitToolProviderTests {
           arguments: .object([
             "revision": .string("HEAD"),
             "path": .string("Sources/main.swift"),
-            "max_bytes": .number(1_048_577),
+            "max_bytes": .number(8_388_609),
           ]), context: .empty
         ))
     ) { error in
@@ -4313,7 +4403,7 @@ final class GitToolProviderTests {
           name: "git.staged_file",
           arguments: .object([
             "path": .string("Sources/main.swift"),
-            "max_bytes": .number(1_048_577),
+            "max_bytes": .number(8_388_609),
           ]), context: .empty
         ))
     ) { error in
@@ -4382,6 +4472,7 @@ final class GitToolProviderTests {
   func testGitBuiltinsRejectEscapingPaths() {
     let provider = GitToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration.fixture(
           cli: CLISectionConfig(commands: [CLICommandConfig(id: "git", executable: "/bin/echo")]),
           builtin: BuiltinConfig(enabled: [

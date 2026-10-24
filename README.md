@@ -161,6 +161,12 @@ vulnerability.
 | Stable | Plugin package lifecycle, direct/plugin MCP registration, verified CLI trees and Skills | Host grants remain separate; external dependencies are not installed automatically |
 | Planned | Broader platform support and more first-class UI for advanced orchestration | No committed release date; the current signed App is macOS-only |
 
+Shell and registered process executions expose stable IDs, output cursors, stdin
+writes and cancellation. Waiting calls default to two minutes (maximum ten);
+background work has no default deadline and retains the latest 8 MiB of output.
+See [execution tools](Documentation/Reference/Tools.md#shell-executions) for limits,
+reconnects and restart recovery. Full Shell authorization remains required.
+
 ## ChatGPT orchestrates, Codex executes
 
 ChatGPT can inspect a registered project and delegate coding work through the

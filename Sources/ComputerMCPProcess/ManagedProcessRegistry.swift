@@ -2,6 +2,7 @@ import ComputerMCPCore
 import Foundation
 
 package struct ManagedProcessSnapshot: Codable, Equatable, Sendable {
+  package var execution: ShellSessionSnapshot? = nil
   internal var processID: String
   internal var isRunning: Bool
   internal var exitCode: Int32?
@@ -11,6 +12,7 @@ package struct ManagedProcessSnapshot: Codable, Equatable, Sendable {
   internal var stderrTruncated: Bool
 
   private enum CodingKeys: String, CodingKey {
+    case execution
     case processID = "process_id"
     case isRunning = "is_running"
     case exitCode = "exit_code"
@@ -50,8 +52,18 @@ package protocol ProcessManaging: Sendable {
     maxOutputBytes: Int
   ) throws -> String
   func list() throws -> [ManagedProcessSnapshot]
-  func read(processID: String) throws -> ManagedProcessSnapshot
+  func read(processID: String, stdoutCursor: Int64, stderrCursor: Int64, maxReadBytes: Int) throws
+    -> ManagedProcessSnapshot
+  func write(processID: String, data: Data, close: Bool) throws -> ShellWriteResult
   func cancel(processID: String) throws -> ManagedProcessCancelResult
+}
+
+extension ProcessManaging {
+  package func read(processID: String) throws -> ManagedProcessSnapshot {
+    try read(
+      processID: processID, stdoutCursor: 0, stderrCursor: 0,
+      maxReadBytes: ExecutionLimits.defaultOutputBytes)
+  }
 }
 
 package enum ProcessRegistryError: Error, LocalizedError, Equatable {
@@ -68,87 +80,17 @@ package enum ProcessRegistryError: Error, LocalizedError, Equatable {
   }
 }
 
-package final class ManagedProcessRegistry: ProcessManaging, @unchecked Sendable {
-  private let lock = NSLock()
-  private var processes: [String: ManagedProcess] = [:]
-
-  package init() {}
-
-  package func spawn(
-    executable: String,
-    arguments: [String],
-    workingDirectory: URL?,
-    environment: [String: String],
-    maxOutputBytes: Int
-  ) throws -> String {
-    let id = UUID().uuidString
-    let process = Process()
-    configure(process: process, executable: executable, arguments: arguments)
-    process.currentDirectoryURL = workingDirectory
-    process.environment = ProcessInfo.processInfo.environment.merging(environment) { _, new in new }
-
-    let stdout = OutputCollector(limit: maxOutputBytes)
-    let stderr = OutputCollector(limit: maxOutputBytes)
-    process.standardOutput = stdout.pipe
-    process.standardError = stderr.pipe
-
-    let managed = ManagedProcess(id: id, process: process, stdout: stdout, stderr: stderr)
-    process.terminationHandler = { [weak managed] _ in
-      managed?.markTerminated()
-    }
-
-    do {
-      try process.run()
-    } catch {
-      throw ProcessRegistryError.launchFailed(error.localizedDescription)
-    }
-
-    lock.lock()
-    processes[id] = managed
-    lock.unlock()
-    return id
-  }
-
-  package func read(processID: String) throws -> ManagedProcessSnapshot {
-    let process = try managed(processID)
-    return process.snapshot()
-  }
-
-  package func list() throws -> [ManagedProcessSnapshot] {
-    lock.lock()
-    let processes = self.processes.values.sorted { $0.id < $1.id }
-    lock.unlock()
-    return processes.map { $0.snapshot() }
-  }
-
-  package func cancel(processID: String) throws -> ManagedProcessCancelResult {
-    let process = try managed(processID)
-    return process.cancel()
-  }
-
-  private func managed(_ id: String) throws -> ManagedProcess {
-    lock.lock()
-    defer { lock.unlock() }
-    guard let process = processes[id] else {
-      throw ProcessRegistryError.unknownProcess(id)
-    }
-    return process
-  }
-}
-
-package final class SubprocessProcessRegistry: ProcessManaging, Sendable {
-  private let shellManager: SubprocessShellRuntime
+package final class ManagedProcessRegistry: ProcessManaging, Sendable {
+  private let shellManager: ShellSessionRuntime
   private let maxSessions: Int
-  private let terminationGraceMilliseconds: Int
 
   package init(
-    shellManager: SubprocessShellRuntime = SubprocessShellRuntime(),
-    maxSessions: Int = 32,
-    terminationGraceMilliseconds: Int = 1_000
+    launcher: ExecutionLauncher = ExecutionLauncher(),
+    shellManager: ShellSessionRuntime? = nil,
+    maxSessions: Int = 32
   ) {
-    self.shellManager = shellManager
+    self.shellManager = shellManager ?? ShellSessionRuntime(launcher: launcher)
     self.maxSessions = maxSessions
-    self.terminationGraceMilliseconds = terminationGraceMilliseconds
   }
 
   package func spawn(
@@ -166,79 +108,27 @@ package final class SubprocessProcessRegistry: ProcessManaging, Sendable {
         mode: .argv, executable: executable, argv: arguments,
         workingDirectory: defaultDirectory.path, environment: environment),
       defaultWorkingDirectory: defaultDirectory, maxOutputBytes: maxOutputBytes,
-      maxSessions: maxSessions, terminationGraceMilliseconds: terminationGraceMilliseconds)
+      maxSessions: maxSessions)
   }
 
   package func list() throws -> [ManagedProcessSnapshot] {
     shellManager.processSnapshots()
   }
 
-  package func read(processID: String) throws -> ManagedProcessSnapshot {
-    try shellManager.processSnapshot(processID)
+  package func read(processID: String, stdoutCursor: Int64, stderrCursor: Int64, maxReadBytes: Int)
+    throws -> ManagedProcessSnapshot
+  {
+    try shellManager.processSnapshot(
+      processID, stdoutCursor: stdoutCursor,
+      stderrCursor: stderrCursor, maxReadBytes: maxReadBytes)
+  }
+
+  package func write(processID: String, data: Data, close: Bool) throws -> ShellWriteResult {
+    _ = try shellManager.processSnapshot(processID)
+    return try shellManager.write(sessionID: processID, data: data, close: close)
   }
 
   package func cancel(processID: String) throws -> ManagedProcessCancelResult {
     try shellManager.cancelProcess(processID)
-  }
-}
-
-private final class ManagedProcess: @unchecked Sendable {
-  let id: String
-  let process: Process
-  let stdout: OutputCollector
-  let stderr: OutputCollector
-  private let lock = NSLock()
-  private var terminated = false
-
-  init(id: String, process: Process, stdout: OutputCollector, stderr: OutputCollector) {
-    self.id = id
-    self.process = process
-    self.stdout = stdout
-    self.stderr = stderr
-  }
-
-  func markTerminated() {
-    lock.lock()
-    terminated = true
-    lock.unlock()
-    stdout.stop(processHasExited: true)
-    stderr.stop(processHasExited: true)
-  }
-
-  func snapshot() -> ManagedProcessSnapshot {
-    lock.lock()
-    let isTerminated = terminated || !process.isRunning
-    lock.unlock()
-
-    if isTerminated {
-      stdout.stop(processHasExited: true)
-      stderr.stop(processHasExited: true)
-    }
-
-    return ManagedProcessSnapshot(
-      processID: id,
-      isRunning: !isTerminated,
-      exitCode: isTerminated ? process.terminationStatus : nil,
-      stdout: stdout.stringValue,
-      stderr: stderr.stringValue,
-      stdoutTruncated: stdout.truncated,
-      stderrTruncated: stderr.truncated
-    )
-  }
-
-  func cancel() -> ManagedProcessCancelResult {
-    if process.isRunning {
-      process.terminate()
-      Thread.sleep(forTimeInterval: 0.05)
-      if process.isRunning {
-        process.interrupt()
-      }
-    }
-    markTerminated()
-    return ManagedProcessCancelResult(
-      processID: id,
-      cancelled: true,
-      exitCode: process.terminationStatus
-    )
   }
 }

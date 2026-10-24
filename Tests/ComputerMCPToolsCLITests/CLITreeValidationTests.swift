@@ -1,9 +1,14 @@
+import ComputerMCPTestSupport
 import Crypto
 import Foundation
 import Testing
 
 @testable import ComputerMCPCore
 @testable import ComputerMCPToolsCLI
+
+#if os(macOS)
+  import ComputerMCPDarwinTestSupport
+#endif
 
 @Suite(.timeLimit(.minutes(1)))
 struct CLITreeValidationTests {
@@ -99,12 +104,13 @@ struct CLITreeValidationTests {
     let validation = CLITreeValidation.validate(data: data)
     #expect(validation.valid && validation.diagnostics.first?.severity == "warning")
     let checked = await CLITreeValidation.check(
+      launcher: testExecutionLauncher(),
       data: data, executable: "/nonexistent", workingDirectory: URL(fileURLWithPath: "/tmp"))
     #expect(!checked.valid && !checked.checkedExecutable)
     #expect(checked.diagnostics.last?.code == "clitree.check.missing")
   }
 
-  @Test
+  @Test(.enabled(if: nativeSandboxAvailable))
   func exactOutputAndHashChecksDoNotExecuteCommandNodes() async throws {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
     try FileManager.default.createDirectory(at: root, withIntermediateDirectories: false)
@@ -119,14 +125,16 @@ struct CLITreeValidationTests {
     try Data("#!/bin/sh\nprintf 'checked\\n' >> calls\nprintf '%s' \"$1\"\n".utf8)
       .write(to: executable)
     try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: executable.path)
+    let observations = ExecutionObservations()
     let report = await CLITreeValidation.check(
+      launcher: testExecutionLauncher(observations: observations),
       data: data, executable: executable.path, workingDirectory: root,
       environment: ["PATH": "/usr/bin:/bin"])
     #expect(report.valid && report.checkedExecutable && report.executableCheckCount == 2)
-    #expect(
-      try String(contentsOf: root.appendingPathComponent("calls"), encoding: .utf8)
-        == "checked\nchecked\n")
+    #expect(observations.members.count == 2)
+    #expect(!FileManager.default.fileExists(atPath: root.appendingPathComponent("calls").path))
     let drift = await CLITreeValidation.check(
+      launcher: testExecutionLauncher(),
       data: try fixture(checks: [.init(args: ["actual"], stdout: "different")]),
       executable: "printf", workingDirectory: root)
     #expect(!drift.valid && !drift.checkedExecutable && drift.executableCheckCount == 0)
@@ -138,6 +146,7 @@ struct CLITreeValidationTests {
   @Test
   func versionMismatchStopsBeforeLaunchingTheExecutable() async throws {
     let report = await CLITreeValidation.check(
+      launcher: testExecutionLauncher(),
       data: try fixture(), executable: "/nonexistent",
       workingDirectory: URL(fileURLWithPath: "/tmp"),
       expectedVersion: "different")

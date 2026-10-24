@@ -13,7 +13,7 @@ internal struct DeliveryGit: Sendable {
   let prefix: [String]
   let environment: [String: String]
   let timeout: Int
-  private let runner = ManagedCommandRunner()
+  private let runner: ManagedCommandRunner
   private var worktree: (root: URL, directory: URL)?
 
   /// Pins repository discovery even if the worktree's gitfile disappears.
@@ -24,6 +24,7 @@ internal struct DeliveryGit: Sendable {
   }
 
   init(environment tools: ToolEnvironment) throws {
+    runner = ManagedCommandRunner(launcher: tools.launcher, policy: .fullAccess)
     let command = try tools.registeredCommands.gitCLICommand()
     let invocation = try tools.registeredCommands.resolveCLIInvocation(command)
     executable = invocation.executable

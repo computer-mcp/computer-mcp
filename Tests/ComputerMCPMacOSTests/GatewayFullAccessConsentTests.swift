@@ -1,4 +1,5 @@
 import ComputerMCPMacOS
+import ComputerMCPTestSupport
 import Foundation
 import GRDB
 import Testing
@@ -6,8 +7,53 @@ import Testing
 @testable import ComputerMCPConfiguration
 @testable import ComputerMCPCore
 @testable import ComputerMCPGateway
+@testable import ComputerMCPProcess
+
+#if os(macOS)
+  import ComputerMCPDarwinTestSupport
+#endif
 
 struct GatewayFullAccessConsentTests {
+  @Test(arguments: [GatewayFullAccessLifetime.thisSession, .alwaysAllowClient])
+  func executionJournalUsesInvocationConsent(lifetime: GatewayFullAccessLifetime) async throws {
+    let store = GatewayTerminalSessions()
+    let journal = try ScopedTemporaryDirectory()
+    try store.enablePersistence(at: journal.url, launcher: testExecutionLauncher())
+    let fixture = try ConsentFixture(terminalSessions: store)
+    defer { fixture.remove() }
+    let session = fixture.session()
+    let approved = try session.approveFullAccess(lifetime: lifetime, expectedRevision: 0)
+    do {
+      let result = try await fixture.gateway.callToolAsync(
+        name: "shell.run",
+        arguments: .object([
+          "project_id": .string("fixture"), "mode": .string("argv"),
+          "executable": .string("/bin/echo"), "argv": .array([.string("retained")]),
+        ]), context: .init(session: session))
+      #expect(result.objectValue?["isError"] != .bool(true))
+      await fixture.gateway.shutdown()
+      let files = try FileManager.default.contentsOfDirectory(
+        at: journal.url, includingPropertiesForKeys: nil
+      )
+      .filter { $0.pathExtension == "json" }
+      let file = try #require(files.first)
+      let record = try #require(
+        JSONSerialization.jsonObject(with: Data(contentsOf: file)) as? [String: Any])
+      if lifetime == .thisSession {
+        #expect(record["recoveryKey"] == nil)
+      } else {
+        let consent = try #require(approved.fullAccessConsent)
+        #expect(
+          record["recoveryKey"] as? String == "trust:" + (try #require(consent.trustID)) + ":"
+            + String(try #require(consent.trustRevision)))
+      }
+    } catch {
+      await fixture.gateway.shutdown()
+      throw error
+    }
+    try store.discardResults()
+  }
+
   @Test(arguments: [false, true])
   func changedRestrictedProfileRejectsAnOpenFullAccessConfirmation(persisted: Bool) throws {
     let database = try GatewayDatabase(inMemory: ())
@@ -278,7 +324,9 @@ private struct ConsentFixture {
   let gateway: GatewayRuntime
   var output: URL { root.appendingPathComponent("outside-project.txt") }
 
-  init(shellEnabled: Bool = true) throws {
+  init(
+    shellEnabled: Bool = true, terminalSessions: GatewayTerminalSessions = GatewayTerminalSessions()
+  ) throws {
     root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
     let project = root.appendingPathComponent("project")
     try FileManager.default.createDirectory(at: project, withIntermediateDirectories: true)
@@ -300,7 +348,8 @@ private struct ConsentFixture {
       registeredProjects: [
         .init(id: "fixture", displayName: "Fixture", rootPath: project.path)
       ],
-      platform: MacOSPlatform.services, requiresControlSession: true)
+      platform: MacOSPlatform.services(launcher: testExecutionLauncher()),
+      terminalSessions: terminalSessions, requiresControlSession: true)
   }
 
   func session(principal: String = "verified-client", database: GatewayDatabase? = nil)

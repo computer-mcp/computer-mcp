@@ -4,9 +4,13 @@ import Foundation
 /// Finite argv commands using the shared CLI lifecycle and a complete child environment.
 /// Synchronous callers must use their blocking executor, not a UI or cooperative executor.
 package struct ManagedCommandRunner: CommandRunning {
-  private let execution = CLIProcessExecution(inheritsEnvironment: false)
+  private let execution: CLIProcessExecution
 
-  package init() {}
+  package init(
+    launcher: ExecutionLauncher = ExecutionLauncher(), policy: HostExecutionPolicy = .fullAccess
+  ) {
+    execution = CLIProcessExecution(launcher: launcher, policy: policy, inheritsEnvironment: false)
+  }
 
   package func run(
     executable: String, arguments: [String], workingDirectory: URL?, environment: [String: String],
@@ -45,8 +49,7 @@ package struct ManagedCommandRunner: CommandRunning {
       environment: environment, timeoutMilliseconds: timeoutMilliseconds,
       maxOutputBytes: maxOutputBytes)
     guard !value.isRunning else {
-      throw CommandRunnerError.launchFailed(
-        "Command cleanup could not be confirmed within its deadline.")
+      throw ShellRuntimeError.timeoutWaitingForTermination(value.sessionID)
     }
     guard value.launchError == nil, value.streamErrors.isEmpty,
       let stdout = value.stdout.base64.flatMap({ Data(base64Encoded: $0) }),

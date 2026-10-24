@@ -8,6 +8,10 @@ import Testing
 @testable import ComputerMCPPlatform
 @testable import ComputerMCPProcess
 
+#if os(macOS)
+  import ComputerMCPDarwinTestSupport
+#endif
+
 @Suite(.nativeIntegration, .serialized)
 final class ArtifactProvenanceTests {
   @Test
@@ -147,7 +151,7 @@ private struct ArtifactProvenanceFixture {
   let writer: URL
   let verifier: URL
   let buildIdentity: URL
-  let runner = ProcessCommandRunner()
+  let runner = ProcessCommandRunner(launcher: testExecutionLauncher())
 
   init() throws {
     directory = FileManager.default.temporaryDirectory.appendingPathComponent(

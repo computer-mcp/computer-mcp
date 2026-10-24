@@ -1,5 +1,6 @@
 import ComputerMCPDownstream
 import ComputerMCPMacOS
+import ComputerMCPTestSupport
 import Foundation
 import NIOConcurrencyHelpers
 import Testing
@@ -8,6 +9,10 @@ import Testing
 @testable import ComputerMCPCore
 @testable import ComputerMCPGateway
 @testable import ComputerMCPPlugins
+
+#if os(macOS)
+  import ComputerMCPDarwinTestSupport
+#endif
 
 struct OperationProviderBindingTests {
   @Test(arguments: ProviderBindingChange.allCases)
@@ -144,7 +149,8 @@ private struct ProviderBindingFixture {
         caller: .secureTunnel, profileID: .chatGPTOperate, trustedPrincipalID: "verified-owner"),
       database: database,
       registeredProjects: [.init(id: "fixture", displayName: "Fixture", rootPath: root.path)],
-      platform: MacOSPlatform.services, mcpClient: client, plugins: [plugin])
+      platform: MacOSPlatform.services(launcher: testExecutionLauncher()), mcpClient: client,
+      plugins: [plugin])
   }
 
   func prepare(in runtime: GatewayRuntime, generic: Bool = false) throws -> String {

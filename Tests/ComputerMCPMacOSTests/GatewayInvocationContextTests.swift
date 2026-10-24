@@ -12,6 +12,10 @@ import Testing
 @testable import ComputerMCPGateway
 @testable import ComputerMCPPlugins
 
+#if os(macOS)
+  import ComputerMCPDarwinTestSupport
+#endif
+
 struct GatewayInvocationContextTests {
   @Test(arguments: [false, true], [false, true])
   func downstreamRefusalPayloadIsNotPersistedAsHostAuditDetails(
@@ -153,7 +157,8 @@ struct GatewayInvocationContextTests {
           derivesObserveGrant: false)
       })
     let provider = ConfiguredMCPToolProvider(
-      environment: ToolEnvironment(configuration: configuration), mcpClient: client)
+      environment: ToolEnvironment(launcher: testExecutionLauncher(), configuration: configuration),
+      mcpClient: client)
     let route = InvocationRouteProbe()
     let admission = try #require(
       InvocationAdmission(
@@ -252,7 +257,8 @@ struct GatewayInvocationContextTests {
     other.prefix = "other"
     configuration.mcp.servers.insert(other, at: 0)
     let provider = ConfiguredMCPToolProvider(
-      environment: ToolEnvironment(configuration: configuration), mcpClient: fixture.client)
+      environment: ToolEnvironment(launcher: testExecutionLauncher(), configuration: configuration),
+      mcpClient: fixture.client)
     let selected = MCPContinuationTarget(
       projectID: "fixture", reference: .init(serverID: fixture.server.id, toolName: "inspect"),
       connectionID: UUID(), instanceID: UUID(), resources: [:])
@@ -536,7 +542,8 @@ private struct InvocationFixture {
       registeredProjects: [
         .init(id: "fixture", displayName: "Fixture", rootPath: project.url.path)
       ],
-      platform: MacOSPlatform.services, mcpClient: client, plugins: [],
+      platform: MacOSPlatform.services(launcher: testExecutionLauncher()), mcpClient: client,
+      plugins: [],
       bundledPlugins: .init(packages: [], issues: []),
       requiresControlSession: requiresControlSession)
   }

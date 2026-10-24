@@ -298,7 +298,7 @@ struct ClientRegistrationTests {
       path.split(separator: ":").contains {
         FileManager.default.isExecutableFile(atPath: "\($0)/cc")
       } ? "cc" : "clang"
-    let compiled = try RegistrationProcessRunner().run(
+    let compiled = try RegistrationProcessRunner(launcher: testExecutionLauncher()).run(
       executable: "/usr/bin/env",
       arguments: [compiler, source.path, "-o", fixture.clientExecutable.path],
       environment: ["PATH": path],
@@ -1170,17 +1170,25 @@ private final class EnvironmentRegistrationRunner: RegistrationProcessRunning, @
     executable: String, arguments: [String], environment: [String: String],
     timeoutMilliseconds: Int, maxOutputBytes: Int
   ) throws -> CommandResult {
-    let result = try RegistrationProcessRunner().run(
+    guard arguments == ["--version"] else {
+      return .init(
+        executable: executable, arguments: arguments, exitCode: 1, timedOut: false,
+        stdout: "", stderr: "No MCP server named computer-mcp",
+        stdoutTruncated: false, stderrTruncated: false)
+    }
+    let result = try RegistrationProcessRunner(launcher: testExecutionLauncher()).run(
       executable: executable, arguments: arguments, environment: environment,
       timeoutMilliseconds: timeoutMilliseconds, maxOutputBytes: maxOutputBytes)
-    if arguments == ["--version"] {
-      let values = Dictionary(
-        uniqueKeysWithValues: result.stdout.split(separator: "\n").map { line in
-          let parts = line.split(separator: "=", maxSplits: 1, omittingEmptySubsequences: false)
-          return (String(parts[0]), String(parts[1]))
-        })
-      lock.withLock { captured = values }
-    }
+    let values = Dictionary(
+      uniqueKeysWithValues: result.stdout.split(separator: "\n").map { line in
+        let parts = line.split(separator: "=", maxSplits: 1, omittingEmptySubsequences: false)
+        return (String(parts[0]), String(parts[1]))
+      })
+    lock.withLock { captured = values }
     return result
   }
 }
+
+#if os(macOS)
+  import ComputerMCPDarwinTestSupport
+#endif

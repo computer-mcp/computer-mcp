@@ -8,6 +8,10 @@ import Testing
 
 @testable import ComputerMCPToolsFiles
 
+#if os(macOS)
+  import ComputerMCPDarwinTestSupport
+#endif
+
 @Suite(.nativeIntegration, .serialized)
 final class FilesToolProviderTests {
   private let builtinExecutables = Dictionary(
@@ -19,6 +23,7 @@ final class FilesToolProviderTests {
   func testDisabledBuiltinRejectsDirectToolCall() {
     let provider = FilesToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: .fixture(), builtinExecutables: builtinExecutables))
 
     expectThrows(
@@ -40,6 +45,7 @@ final class FilesToolProviderTests {
     let directory = try temporaryDirectory()
     let provider = FilesToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["file.read", "file.read_files", "file.write"]),
           projectDirectory: directory
@@ -102,6 +108,7 @@ final class FilesToolProviderTests {
     try Data([0xff, 0xfe, 0xfd, 0xfc]).write(to: binaryURL)
     let provider = FilesToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["file.read_files"]),
           projectDirectory: directory
@@ -143,6 +150,7 @@ final class FilesToolProviderTests {
     let target = directory.appendingPathComponent("notes/debug.txt")
     let provider = FilesToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["file.write"]),
           projectDirectory: directory
@@ -187,6 +195,7 @@ final class FilesToolProviderTests {
     let outsideTarget = outside.appendingPathComponent("written.txt")
     let provider = FilesToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["file.write"]),
           projectDirectory: project
@@ -222,6 +231,7 @@ final class FilesToolProviderTests {
     let link = project.appendingPathComponent("new-link")
     let provider = FilesToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["file.symlink"]),
           projectDirectory: project
@@ -249,6 +259,7 @@ final class FilesToolProviderTests {
     let second = directory.appendingPathComponent("notes/two.txt")
     let provider = FilesToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["file.write_files"]),
           projectDirectory: directory
@@ -351,6 +362,7 @@ final class FilesToolProviderTests {
     )
     let provider = FilesToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["file.exists"]),
           projectDirectory: directory
@@ -390,6 +402,7 @@ final class FilesToolProviderTests {
   func testFileExistsRejectsProjectEscape() throws {
     let provider = FilesToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["file.exists"]),
           projectDirectory: try temporaryDirectory()
@@ -413,6 +426,7 @@ final class FilesToolProviderTests {
     try "first".write(to: file, atomically: true, encoding: .utf8)
     let provider = FilesToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["file.append"]),
           projectDirectory: directory
@@ -442,6 +456,7 @@ final class FilesToolProviderTests {
     let file = directory.appendingPathComponent("logs/session.txt")
     let provider = FilesToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["file.append"]),
           projectDirectory: directory
@@ -472,6 +487,7 @@ final class FilesToolProviderTests {
     let file = directory.appendingPathComponent("logs/session.txt")
     let provider = FilesToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["file.append"]),
           projectDirectory: directory
@@ -513,6 +529,7 @@ final class FilesToolProviderTests {
     )
     let provider = FilesToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration(
           policy: PolicyConfig(maxOutputBytes: 3),
           builtin: BuiltinConfig(enabled: ["file.append"]),
@@ -559,6 +576,7 @@ final class FilesToolProviderTests {
     try "alpha beta beta".write(to: file, atomically: true, encoding: .utf8)
     let provider = FilesToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["file.replace_text"]),
           projectDirectory: directory
@@ -589,6 +607,7 @@ final class FilesToolProviderTests {
     try "one two two two".write(to: file, atomically: true, encoding: .utf8)
     let provider = FilesToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["file.replace_text"]),
           projectDirectory: directory
@@ -621,6 +640,7 @@ final class FilesToolProviderTests {
     try "one two two".write(to: file, atomically: true, encoding: .utf8)
     let provider = FilesToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["file.replace_text"]),
           projectDirectory: directory
@@ -661,6 +681,7 @@ final class FilesToolProviderTests {
     try "abcdef abcdef".write(to: file, atomically: true, encoding: .utf8)
     let provider = FilesToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["file.replace_text"]),
           projectDirectory: directory
@@ -698,6 +719,7 @@ final class FilesToolProviderTests {
     try "one two two".write(to: file, atomically: true, encoding: .utf8)
     let provider = FilesToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["file.replace_text"]),
           projectDirectory: directory
@@ -729,6 +751,7 @@ final class FilesToolProviderTests {
       to: directory.appendingPathComponent("notes.txt"), atomically: true, encoding: .utf8)
     let provider = FilesToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["file.replace_text"]),
           projectDirectory: directory
@@ -771,6 +794,7 @@ final class FilesToolProviderTests {
     try "one\ntwo\nthree\n".write(to: file, atomically: true, encoding: .utf8)
     let provider = FilesToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["file.insert_text"]),
           projectDirectory: directory
@@ -803,6 +827,7 @@ final class FilesToolProviderTests {
     try "one\ntwo".write(to: file, atomically: true, encoding: .utf8)
     let provider = FilesToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["file.insert_text"]),
           projectDirectory: directory
@@ -833,6 +858,7 @@ final class FilesToolProviderTests {
     try "one\ntwo\n".write(to: file, atomically: true, encoding: .utf8)
     let provider = FilesToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["file.insert_text"]),
           projectDirectory: directory
@@ -861,6 +887,7 @@ final class FilesToolProviderTests {
     try "one\ntwo\nthree\n".write(to: file, atomically: true, encoding: .utf8)
     let provider = FilesToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["file.insert_text"]),
           projectDirectory: directory
@@ -898,6 +925,7 @@ final class FilesToolProviderTests {
     try "abcdef\n".write(to: file, atomically: true, encoding: .utf8)
     let provider = FilesToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["file.insert_text"]),
           projectDirectory: directory
@@ -936,6 +964,7 @@ final class FilesToolProviderTests {
     try "one\ntwo\n".write(to: file, atomically: true, encoding: .utf8)
     let provider = FilesToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["file.insert_text"]),
           projectDirectory: directory
@@ -966,6 +995,7 @@ final class FilesToolProviderTests {
       to: directory.appendingPathComponent("notes.txt"), atomically: true, encoding: .utf8)
     let provider = FilesToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["file.insert_text"]),
           projectDirectory: directory
@@ -1037,6 +1067,7 @@ final class FilesToolProviderTests {
     try "one\ntwo\nthree\nfour\n".write(to: file, atomically: true, encoding: .utf8)
     let provider = FilesToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["file.replace_lines"]),
           projectDirectory: directory
@@ -1072,6 +1103,7 @@ final class FilesToolProviderTests {
     try "one\ntwo\nthree".write(to: file, atomically: true, encoding: .utf8)
     let provider = FilesToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["file.replace_lines"]),
           projectDirectory: directory
@@ -1104,6 +1136,7 @@ final class FilesToolProviderTests {
     try "one\ntwo\nthree\n".write(to: file, atomically: true, encoding: .utf8)
     let provider = FilesToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["file.replace_lines"]),
           projectDirectory: directory
@@ -1141,6 +1174,7 @@ final class FilesToolProviderTests {
     try "abcdef\n".write(to: file, atomically: true, encoding: .utf8)
     let provider = FilesToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["file.replace_lines"]),
           projectDirectory: directory
@@ -1180,6 +1214,7 @@ final class FilesToolProviderTests {
     try "one\ntwo\nthree\n".write(to: file, atomically: true, encoding: .utf8)
     let provider = FilesToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["file.replace_lines"]),
           projectDirectory: directory
@@ -1257,6 +1292,7 @@ final class FilesToolProviderTests {
     try "one\ntwo\nthree\nfour\n".write(to: file, atomically: true, encoding: .utf8)
     let provider = FilesToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["file.read_lines"]),
           projectDirectory: directory
@@ -1289,6 +1325,7 @@ final class FilesToolProviderTests {
     try "one\ntwo\nthree\nfour\nfive\n".write(to: file, atomically: true, encoding: .utf8)
     let provider = FilesToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["file.read_context"]),
           projectDirectory: directory
@@ -1347,6 +1384,7 @@ final class FilesToolProviderTests {
     try "one\ntwo\nthree\n".write(to: file, atomically: true, encoding: .utf8)
     let provider = FilesToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["file.read_context"]),
           projectDirectory: directory
@@ -1417,6 +1455,7 @@ final class FilesToolProviderTests {
     try "zero\none\ntwo\n".write(to: file, atomically: true, encoding: .utf8)
     let provider = FilesToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["file.read_window"]),
           projectDirectory: directory
@@ -1476,6 +1515,7 @@ final class FilesToolProviderTests {
     try Data("aé\n".utf8).write(to: file)
     let provider = FilesToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["file.read_window"]),
           projectDirectory: directory
@@ -1503,6 +1543,7 @@ final class FilesToolProviderTests {
     try "1234567890\nnext\n".write(to: file, atomically: true, encoding: .utf8)
     let provider = FilesToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["file.read_lines"]),
           projectDirectory: directory
@@ -1529,6 +1570,7 @@ final class FilesToolProviderTests {
     try "one\ntwo\nthree\nfour\n".write(to: file, atomically: true, encoding: .utf8)
     let provider = FilesToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["file.head"]),
           projectDirectory: directory
@@ -1565,6 +1607,7 @@ final class FilesToolProviderTests {
     try "1234567890\nnext\n".write(to: file, atomically: true, encoding: .utf8)
     let provider = FilesToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["file.head"]),
           projectDirectory: directory
@@ -1626,6 +1669,7 @@ final class FilesToolProviderTests {
 
     let provider = FilesToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["file.outline"]),
           projectDirectory: directory
@@ -1698,6 +1742,7 @@ final class FilesToolProviderTests {
     try "one\ntwo\nthree\nfour\n".write(to: file, atomically: true, encoding: .utf8)
     let provider = FilesToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["file.tail"]),
           projectDirectory: directory
@@ -1732,6 +1777,7 @@ final class FilesToolProviderTests {
     try "one\ntwo\nthree\nfour\n".write(to: file, atomically: true, encoding: .utf8)
     let provider = FilesToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["file.tail"]),
           projectDirectory: directory
@@ -1769,6 +1815,7 @@ final class FilesToolProviderTests {
     try bytes.write(to: file)
     let provider = FilesToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["file.hexdump"]),
           projectDirectory: directory
@@ -1811,6 +1858,7 @@ final class FilesToolProviderTests {
     try Data([0x01, 0x02]).write(to: directory.appendingPathComponent("blob.bin"))
     let provider = FilesToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["file.hexdump"]),
           projectDirectory: directory
@@ -1842,6 +1890,7 @@ final class FilesToolProviderTests {
     )
     let provider = FilesToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["file.hexdump"]),
           projectDirectory: directory
@@ -1908,6 +1957,7 @@ final class FilesToolProviderTests {
       """
     let provider = FilesToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["file.metadata"]),
           projectDirectory: directory
@@ -1959,6 +2009,7 @@ final class FilesToolProviderTests {
     runner.stdoutTruncated = true
     let provider = FilesToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["file.metadata"]),
           projectDirectory: directory
@@ -2025,6 +2076,7 @@ final class FilesToolProviderTests {
     )
     let provider = FilesToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["file.readlink"]),
           projectDirectory: directory
@@ -2075,6 +2127,7 @@ final class FilesToolProviderTests {
     )
     let provider = FilesToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["file.readlink"]),
           projectDirectory: directory
@@ -2120,6 +2173,7 @@ final class FilesToolProviderTests {
     try FileManager.default.createSymbolicLink(atPath: link.path, withDestinationPath: "target.txt")
     let provider = FilesToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["file.resolve"]),
           projectDirectory: directory
@@ -2180,6 +2234,7 @@ final class FilesToolProviderTests {
     )
     let provider = FilesToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["file.resolve"]),
           projectDirectory: directory
@@ -2213,6 +2268,7 @@ final class FilesToolProviderTests {
     try "abc".write(to: file, atomically: true, encoding: .utf8)
     let provider = FilesToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["file.hash"]),
           projectDirectory: directory
@@ -2239,6 +2295,7 @@ final class FilesToolProviderTests {
       to: directory.appendingPathComponent("notes.txt"), atomically: true, encoding: .utf8)
     let provider = FilesToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["file.hash"]),
           projectDirectory: directory
@@ -2267,6 +2324,7 @@ final class FilesToolProviderTests {
     runner.stdout = "text/plain; charset=us-ascii\n"
     let provider = FilesToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["file.type"]),
           projectDirectory: directory
@@ -2301,6 +2359,7 @@ final class FilesToolProviderTests {
     runner.stdout = "       2       3      14 \(file.path)\n"
     let provider = FilesToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["file.count"]),
           projectDirectory: directory
@@ -2334,6 +2393,7 @@ final class FilesToolProviderTests {
     runner.stdout = "8\t\(nested.path)\n"
     let provider = FilesToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["file.disk_usage"]),
           projectDirectory: directory
@@ -2365,6 +2425,7 @@ final class FilesToolProviderTests {
     let runner = RecordingCommandRunner()
     let provider = FilesToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["file.volume_info"]),
           projectDirectory: directory
@@ -2395,6 +2456,7 @@ final class FilesToolProviderTests {
     let directory = try temporaryDirectory()
     let provider = FilesToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["file.volume_info"]),
           projectDirectory: directory
@@ -2428,6 +2490,7 @@ final class FilesToolProviderTests {
     )
     let provider = FilesToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["file.type", "file.count"]),
           projectDirectory: directory
@@ -2472,6 +2535,7 @@ final class FilesToolProviderTests {
     let directory = try temporaryDirectory()
     let provider = FilesToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["file.disk_usage"]),
           projectDirectory: directory
@@ -2519,6 +2583,7 @@ final class FilesToolProviderTests {
     let runner = RecordingCommandRunner()
     let provider = FilesToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["file.diff"]),
           projectDirectory: directory
@@ -2566,6 +2631,7 @@ final class FilesToolProviderTests {
     )
     let provider = FilesToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["file.diff"]),
           projectDirectory: directory
@@ -2648,6 +2714,7 @@ final class FilesToolProviderTests {
     let runner = RecordingCommandRunner()
     let provider = FilesToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["file.compare_trees"]),
           projectDirectory: directory
@@ -2704,6 +2771,7 @@ final class FilesToolProviderTests {
       to: right.appendingPathComponent("same-size.txt"), atomically: true, encoding: .utf8)
     let provider = FilesToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["file.compare_trees"]),
           projectDirectory: directory
@@ -2742,6 +2810,7 @@ final class FilesToolProviderTests {
       to: directory.appendingPathComponent("file.txt"), atomically: true, encoding: .utf8)
     let provider = FilesToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["file.compare_trees"]),
           projectDirectory: directory
@@ -2814,6 +2883,7 @@ final class FilesToolProviderTests {
     let runner = RecordingCommandRunner()
     let provider = FilesToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["file.duplicates"]),
           projectDirectory: directory
@@ -2867,6 +2937,7 @@ final class FilesToolProviderTests {
       to: directory.appendingPathComponent("b.txt"), atomically: true, encoding: .utf8)
     let provider = FilesToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["file.duplicates"]),
           projectDirectory: directory
@@ -2895,6 +2966,7 @@ final class FilesToolProviderTests {
       to: directory.appendingPathComponent("file.txt"), atomically: true, encoding: .utf8)
     let provider = FilesToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["file.duplicates"]),
           projectDirectory: directory
@@ -2946,6 +3018,7 @@ final class FilesToolProviderTests {
     runner.stdout = "dir/\ndir/file.txt\nimage.png\n"
     let provider = FilesToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["archive.list"]),
           projectDirectory: directory
@@ -2990,6 +3063,7 @@ final class FilesToolProviderTests {
     runner.stdout = "src/\nsrc/main.swift\n"
     let provider = FilesToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["archive.list"]),
           projectDirectory: directory
@@ -3052,6 +3126,7 @@ final class FilesToolProviderTests {
     ]
     let provider = FilesToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["archive.read_file"]),
           projectDirectory: directory
@@ -3102,6 +3177,7 @@ final class FilesToolProviderTests {
     ]
     let provider = FilesToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["archive.read_file"]),
           projectDirectory: directory
@@ -3152,6 +3228,7 @@ final class FilesToolProviderTests {
     ]
     let provider = FilesToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["archive.read_file"]),
           projectDirectory: directory
@@ -3182,6 +3259,7 @@ final class FilesToolProviderTests {
     runner.stdout = "main\n"
     let provider = FilesToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["archive.read_file"]),
           projectDirectory: directory
@@ -3217,6 +3295,7 @@ final class FilesToolProviderTests {
     let runner = RecordingCommandRunner()
     let provider = FilesToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["archive.read_file"]),
           projectDirectory: directory
@@ -3268,6 +3347,7 @@ final class FilesToolProviderTests {
     failureRunner.exitCode = 11
     let failureRegistry = FilesToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["archive.read_file"]),
           projectDirectory: directory
@@ -3309,6 +3389,7 @@ final class FilesToolProviderTests {
     ]
     let provider = FilesToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["archive.extract"]),
           projectDirectory: directory
@@ -3377,6 +3458,7 @@ final class FilesToolProviderTests {
     ]
     let provider = FilesToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["archive.extract"]),
           projectDirectory: directory
@@ -3417,6 +3499,7 @@ final class FilesToolProviderTests {
     let missingConfirmRunner = RecordingCommandRunner()
     let missingConfirmRegistry = FilesToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["archive.extract"]),
           projectDirectory: directory
@@ -3445,6 +3528,7 @@ final class FilesToolProviderTests {
     ]
     let traversalRegistry = FilesToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["archive.extract"]),
           projectDirectory: directory
@@ -3470,6 +3554,7 @@ final class FilesToolProviderTests {
     ]
     let linkRegistry = FilesToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["archive.extract"]),
           projectDirectory: directory
@@ -3495,6 +3580,7 @@ final class FilesToolProviderTests {
     ]
     let overwriteRegistry = FilesToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["archive.extract"]),
           projectDirectory: directory
@@ -3533,6 +3619,7 @@ final class FilesToolProviderTests {
     let runner = RecordingCommandRunner()
     let provider = FilesToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["archive.create"]),
           projectDirectory: directory
@@ -3594,6 +3681,7 @@ final class FilesToolProviderTests {
     runner.stdout = "created\n"
     let provider = FilesToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["archive.create"]),
           projectDirectory: directory
@@ -3633,6 +3721,7 @@ final class FilesToolProviderTests {
     let missingConfirmRunner = RecordingCommandRunner()
     let missingConfirmRegistry = FilesToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["archive.create"]),
           projectDirectory: directory
@@ -3657,6 +3746,7 @@ final class FilesToolProviderTests {
     try Data("old".utf8).write(to: existingArchive)
     let existingRegistry = FilesToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["archive.create"]),
           projectDirectory: directory
@@ -3676,6 +3766,7 @@ final class FilesToolProviderTests {
 
     let insideSourceRegistry = FilesToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["archive.create"]),
           projectDirectory: directory
@@ -3697,6 +3788,7 @@ final class FilesToolProviderTests {
     try FileManager.default.createSymbolicLink(at: symlink, withDestinationURL: sourceFile)
     let symlinkRegistry = FilesToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["archive.create"]),
           projectDirectory: directory
@@ -3735,6 +3827,7 @@ final class FilesToolProviderTests {
       to: directory.appendingPathComponent("source.txt"), atomically: true, encoding: .utf8)
     let provider = FilesToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["file.mkdir", "file.copy", "file.move"]),
           projectDirectory: directory
@@ -3798,6 +3891,7 @@ final class FilesToolProviderTests {
       to: directory.appendingPathComponent("target.txt"), atomically: true, encoding: .utf8)
     let provider = FilesToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["file.copy"]),
           projectDirectory: directory
@@ -3833,6 +3927,7 @@ final class FilesToolProviderTests {
   func testFileOrganizationRejectsProjectEscape() throws {
     let provider = FilesToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["file.mkdir", "file.copy", "file.move"]),
           projectDirectory: try temporaryDirectory()
@@ -3873,6 +3968,7 @@ final class FilesToolProviderTests {
     try "obsolete".write(to: obsolete, atomically: true, encoding: .utf8)
     let provider = FilesToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(
             enabled: [
@@ -3988,6 +4084,7 @@ final class FilesToolProviderTests {
     let directory = try temporaryDirectory()
     let provider = FilesToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["file.touch"]),
           projectDirectory: directory
@@ -4040,6 +4137,7 @@ final class FilesToolProviderTests {
     )
     let provider = FilesToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["file.touch"]),
           projectDirectory: directory
@@ -4096,6 +4194,7 @@ final class FilesToolProviderTests {
     try "target".write(to: target, atomically: true, encoding: .utf8)
     let provider = FilesToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["file.symlink"]),
           projectDirectory: directory
@@ -4131,6 +4230,7 @@ final class FilesToolProviderTests {
     try FileManager.default.createSymbolicLink(atPath: link.path, withDestinationPath: "missing")
     let provider = FilesToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["file.symlink"]),
           projectDirectory: directory
@@ -4179,6 +4279,7 @@ final class FilesToolProviderTests {
     )
     let provider = FilesToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["file.symlink"]),
           projectDirectory: directory
@@ -4228,6 +4329,7 @@ final class FilesToolProviderTests {
   func testFileTrashRejectsProjectEscape() throws {
     let provider = FilesToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["file.trash"]),
           projectDirectory: try temporaryDirectory()
@@ -4252,6 +4354,7 @@ final class FilesToolProviderTests {
     let runner = RecordingCommandRunner()
     let provider = FilesToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["file.download"]),
           projectDirectory: directory
@@ -4344,6 +4447,7 @@ final class FilesToolProviderTests {
     }
     let provider = FilesToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["file.download"]),
           projectDirectory: directory
@@ -4399,6 +4503,7 @@ final class FilesToolProviderTests {
     let missingConfirmRunner = RecordingCommandRunner()
     let provider = FilesToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["file.download"]),
           projectDirectory: directory
@@ -4489,6 +4594,7 @@ final class FilesToolProviderTests {
 
     let provider = FilesToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["file.list"]),
           projectDirectory: directory
@@ -4558,6 +4664,7 @@ final class FilesToolProviderTests {
 
     let provider = FilesToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["file.tree"]),
           projectDirectory: directory
@@ -4603,6 +4710,7 @@ final class FilesToolProviderTests {
 
     let provider = FilesToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["file.tree"]),
           projectDirectory: directory
@@ -4635,6 +4743,7 @@ final class FilesToolProviderTests {
       to: directory.appendingPathComponent("file.txt"), atomically: true, encoding: .utf8)
     let provider = FilesToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["file.tree"]),
           projectDirectory: directory
@@ -4669,6 +4778,7 @@ final class FilesToolProviderTests {
 
     let provider = FilesToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["file.stat"]),
           projectDirectory: directory
@@ -4699,6 +4809,7 @@ final class FilesToolProviderTests {
     )
     let provider = FilesToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["file.permissions"]),
           projectDirectory: directory
@@ -4747,6 +4858,7 @@ final class FilesToolProviderTests {
     let directory = try temporaryDirectory()
     let provider = FilesToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["file.permissions"]),
           projectDirectory: directory
@@ -4784,6 +4896,7 @@ final class FilesToolProviderTests {
     )
     let provider = FilesToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["file.chmod"]),
           projectDirectory: directory
@@ -4835,6 +4948,7 @@ final class FilesToolProviderTests {
     )
     let provider = FilesToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["file.chmod"]),
           projectDirectory: directory
@@ -4872,6 +4986,7 @@ final class FilesToolProviderTests {
     try "#!/bin/sh\n".write(to: file, atomically: true, encoding: .utf8)
     let provider = FilesToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["file.chmod"]),
           projectDirectory: directory
@@ -4941,6 +5056,7 @@ final class FilesToolProviderTests {
 
     let provider = FilesToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["file.find"]),
           projectDirectory: directory
@@ -4988,6 +5104,7 @@ final class FilesToolProviderTests {
     }
     let provider = FilesToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["file.find"]),
           projectDirectory: directory
@@ -5025,6 +5142,7 @@ final class FilesToolProviderTests {
 
     let provider = FilesToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["file.search"]),
           projectDirectory: directory
@@ -5057,6 +5175,7 @@ final class FilesToolProviderTests {
 
     let provider = FilesToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["file.search"]),
           projectDirectory: directory
@@ -5103,6 +5222,7 @@ final class FilesToolProviderTests {
 
     let provider = FilesToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["file.timeline"]),
           projectDirectory: directory
@@ -5156,6 +5276,7 @@ final class FilesToolProviderTests {
       to: directory.appendingPathComponent("file.txt"), atomically: true, encoding: .utf8)
     let provider = FilesToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["file.timeline"]),
           projectDirectory: directory
@@ -5227,6 +5348,7 @@ final class FilesToolProviderTests {
   func testFileBuiltinRejectsProjectEscape() throws {
     let provider = FilesToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["file.read"]),
           projectDirectory: try temporaryDirectory()
@@ -5247,6 +5369,7 @@ final class FilesToolProviderTests {
   func testSearchBuiltinsRejectProjectEscape() throws {
     let provider = FilesToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["file.find", "file.search"]),
           projectDirectory: try temporaryDirectory()

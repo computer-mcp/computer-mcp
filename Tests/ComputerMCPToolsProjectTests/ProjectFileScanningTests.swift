@@ -8,6 +8,10 @@ import Testing
 
 @testable import ComputerMCPToolsProject
 
+#if os(macOS)
+  import ComputerMCPDarwinTestSupport
+#endif
+
 @Suite(.nativeIntegration)
 struct ProjectFileScanningTests {
   @Test
@@ -46,6 +50,7 @@ struct ProjectFileScanningTests {
     )
 
     let environment = ToolEnvironment(
+      launcher: testExecutionLauncher(),
       configuration: GatewayConfiguration(
         builtin: BuiltinConfig(enabled: [
           "file.find", "file.list", "file.search", "file.tree", "project.env_files",

@@ -12,6 +12,10 @@ import Testing
 @testable import ComputerMCPPlatformDarwin
 @testable import ComputerMCPProcess
 
+#if os(macOS)
+  import ComputerMCPDarwinTestSupport
+#endif
+
 @Suite(
   .nativeIntegration,
   .enabled(
@@ -320,7 +324,8 @@ private struct PermissionCLIFixture: Sendable {
     let manifest = try AtomicManifestStore(
       manifestURL: directories.manifest, database: database,
       loader: GatewayManifestConfigurationLoader(
-        database: database, applications: MacOSPlatform.services.applications))
+        database: database,
+        applications: MacOSPlatform.services(launcher: testExecutionLauncher()).applications))
     _ = try manifest.activate(
       manifest: GatewayConfiguration(
         runtime: .init(caller: .localMCP, profileID: .chatGPTOperate), profiles: [profile],
@@ -334,13 +339,16 @@ private struct PermissionCLIFixture: Sendable {
       directories: directories, database: database, manifestStore: manifest,
       defaultManifest: DefaultGatewayConfiguration.manifest, secretStore: secrets,
       openAITunnelSupervisor: OpenAITunnelSupervisor(
+        launcher: testExecutionLauncher(),
         secretStore: secrets,
-        executableSearchDirectories: MacOSPlatform.services.executableSearchDirectories,
+        executableSearchDirectories: MacOSPlatform.services(launcher: testExecutionLauncher())
+          .executableSearchDirectories,
         proxyResolver: FixedOpenAITunnelHTTPProxyResolver()
       ),
       launchAtLoginController: PermissionCLILaunchAtLoginFake(),
       computerUsePermissionReader: FixedComputerUsePermissionReader(),
-      platform: MacOSPlatform.services, bundledPlugins: .init(packages: [], issues: []))
+      platform: MacOSPlatform.services(launcher: testExecutionLauncher()),
+      bundledPlugins: .init(packages: [], issues: []))
     gatewaySocket = root.appendingPathComponent("gateway.sock")
     controlSocketURL = root.appendingPathComponent("control.sock")
     gatewayService = AppGatewayService(
@@ -355,7 +363,9 @@ private struct PermissionCLIFixture: Sendable {
     let root = root
     let arguments = arguments + ["--control-socket", controlSocketURL.path]
     let result = try await commands.perform {
-      try ProcessCommandRunner(environment: ["PATH": "/usr/bin:/bin"]).run(
+      try ProcessCommandRunner(
+        launcher: testExecutionLauncher(), environment: ["PATH": "/usr/bin:/bin"]
+      ).run(
         executable: executable, arguments: arguments, workingDirectory: root, environment: [:],
         timeoutMilliseconds: 10_000, maxOutputBytes: 1_048_576)
     }

@@ -8,6 +8,10 @@ import Testing
 
 @testable import ComputerMCPToolsMCP
 
+#if os(macOS)
+  import ComputerMCPDarwinTestSupport
+#endif
+
 @Suite(.nativeIntegration, .serialized)
 final class MCPToolProviderTests {
   @Test
@@ -25,7 +29,8 @@ final class MCPToolProviderTests {
           env: ["PATH": directory.path, "TOKEN": "never-emit-this"], cwd: directory.path)
       ]))
     let provider = MCPToolProvider(
-      environment: ToolEnvironment(configuration: config, environment: ["PATH": "/bin"]),
+      environment: ToolEnvironment(
+        launcher: testExecutionLauncher(), configuration: config, environment: ["PATH": "/bin"]),
       mcpClient: FakeDownstreamMCPClient())
     let mcp = try decodeTextPayload(
       provider.callTool(.init(name: "mcp.servers.status", arguments: .object([:]), context: .empty))
@@ -60,7 +65,8 @@ final class MCPToolProviderTests {
       ]
     )
     let provider = ConfiguredMCPToolProvider(
-      environment: ToolEnvironment(configuration: config), mcpClient: mcp)
+      environment: ToolEnvironment(launcher: testExecutionLauncher(), configuration: config),
+      mcpClient: mcp)
 
     let names = try provider.definitions().map(\.tool).map(\.name)
     #expect(names.contains("fake.sample_typed"))
@@ -82,7 +88,8 @@ final class MCPToolProviderTests {
   @Test
   func testUnregisteredMCPServerRejectsDirectToolCalls() {
     let provider = MCPToolProvider(
-      environment: ToolEnvironment(configuration: .fixture()), mcpClient: FakeDownstreamMCPClient())
+      environment: ToolEnvironment(launcher: testExecutionLauncher(), configuration: .fixture()),
+      mcpClient: FakeDownstreamMCPClient())
 
     expectThrows(
       try provider.callTool(
@@ -171,7 +178,8 @@ final class MCPToolProviderTests {
   @Test
   func testUnexposedTopLevelToolNameRejectsDirectToolCall() {
     let provider = ConfiguredMCPToolProvider(
-      environment: ToolEnvironment(configuration: .fixture()), mcpClient: FakeDownstreamMCPClient())
+      environment: ToolEnvironment(launcher: testExecutionLauncher(), configuration: .fixture()),
+      mcpClient: FakeDownstreamMCPClient())
 
     expectThrows(
       try provider.callTool(
@@ -200,7 +208,8 @@ final class MCPToolProviderTests {
       ])
     )
     let provider = ConfiguredMCPToolProvider(
-      environment: ToolEnvironment(configuration: configuration), mcpClient: mcp)
+      environment: ToolEnvironment(launcher: testExecutionLauncher(), configuration: configuration),
+      mcpClient: mcp)
 
     _ = try provider.callTool(
       .init(
@@ -216,7 +225,8 @@ final class MCPToolProviderTests {
   func testMCPToolsListAndCallUseDownstreamClient() throws {
     let mcp = FakeDownstreamMCPClient()
     let provider = MCPToolProvider(
-      environment: ToolEnvironment(configuration: .fixture()), mcpClient: mcp)
+      environment: ToolEnvironment(launcher: testExecutionLauncher(), configuration: .fixture()),
+      mcpClient: mcp)
 
     let listResult = try provider.callTool(
       .init(
@@ -250,7 +260,8 @@ final class MCPToolProviderTests {
   func testMCPToolCallCanStartWithoutWaitingForResult() throws {
     let mcp = FakeDownstreamMCPClient()
     let provider = MCPToolProvider(
-      environment: ToolEnvironment(configuration: .fixture()), mcpClient: mcp)
+      environment: ToolEnvironment(launcher: testExecutionLauncher(), configuration: .fixture()),
+      mcpClient: mcp)
 
     let result = try provider.callTool(
       .init(
@@ -273,6 +284,7 @@ final class MCPToolProviderTests {
   func testMCPToolCallRequiresRequestIDWhenStartingWithoutWaiting() {
     let provider = MCPToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: .fixture()), mcpClient: FakeDownstreamMCPClient())
 
     expectThrows(
@@ -316,7 +328,8 @@ final class MCPToolProviderTests {
       ])
     )
     let provider = MCPToolProvider(
-      environment: ToolEnvironment(configuration: configuration), mcpClient: mcp)
+      environment: ToolEnvironment(launcher: testExecutionLauncher(), configuration: configuration),
+      mcpClient: mcp)
 
     let listed = try decodeTextPayload(
       provider.callTool(
@@ -364,7 +377,8 @@ final class MCPToolProviderTests {
       ]),
     ])
     let provider = MCPToolProvider(
-      environment: ToolEnvironment(configuration: .fixture()), mcpClient: mcp)
+      environment: ToolEnvironment(launcher: testExecutionLauncher(), configuration: .fixture()),
+      mcpClient: mcp)
 
     let eventsResult = try provider.callTool(
       .init(
@@ -418,7 +432,8 @@ final class MCPToolProviderTests {
       ),
     ]
     let provider = MCPToolProvider(
-      environment: ToolEnvironment(configuration: .fixture()), mcpClient: mcp)
+      environment: ToolEnvironment(launcher: testExecutionLauncher(), configuration: .fixture()),
+      mcpClient: mcp)
 
     let result = try provider.callTool(
       .init(
@@ -451,6 +466,7 @@ final class MCPToolProviderTests {
   func testMCPToolsDescribeRejectsUnknownDownstreamTool() {
     let provider = MCPToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: .fixture()), mcpClient: FakeDownstreamMCPClient())
 
     expectThrows(
@@ -494,7 +510,8 @@ final class MCPToolProviderTests {
       ]
     ]
     let provider = MCPToolProvider(
-      environment: ToolEnvironment(configuration: .fixture()), mcpClient: mcp)
+      environment: ToolEnvironment(launcher: testExecutionLauncher(), configuration: .fixture()),
+      mcpClient: mcp)
 
     let listResult = try provider.callTool(
       .init(
@@ -578,7 +595,8 @@ final class MCPToolProviderTests {
       ])
     ]
     let provider = MCPToolProvider(
-      environment: ToolEnvironment(configuration: .fixture()), mcpClient: mcp)
+      environment: ToolEnvironment(launcher: testExecutionLauncher(), configuration: .fixture()),
+      mcpClient: mcp)
 
     let listResult = try provider.callTool(
       .init(
@@ -633,6 +651,7 @@ final class MCPToolProviderTests {
   func testMCPPromptsGetRejectsNonStringArguments() {
     let provider = MCPToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: .fixture()), mcpClient: FakeDownstreamMCPClient())
 
     expectThrows(
@@ -671,7 +690,8 @@ final class MCPToolProviderTests {
       ),
     ]
     let provider = MCPToolProvider(
-      environment: ToolEnvironment(configuration: .fixture()), mcpClient: mcp)
+      environment: ToolEnvironment(launcher: testExecutionLauncher(), configuration: .fixture()),
+      mcpClient: mcp)
 
     let result = try provider.callTool(
       .init(
@@ -702,7 +722,8 @@ final class MCPToolProviderTests {
       MCPTool(name: "two", description: "Export subtitles.", inputSchema: .object([:])),
     ]
     let provider = MCPToolProvider(
-      environment: ToolEnvironment(configuration: .fixture()), mcpClient: mcp)
+      environment: ToolEnvironment(launcher: testExecutionLauncher(), configuration: .fixture()),
+      mcpClient: mcp)
 
     let result = try provider.callTool(
       .init(
@@ -724,6 +745,7 @@ final class MCPToolProviderTests {
   func testMCPToolsFindRejectsBadModes() {
     let provider = MCPToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: .fixture()), mcpClient: FakeDownstreamMCPClient())
 
     expectThrows(
@@ -783,7 +805,8 @@ final class MCPToolProviderTests {
       ])
     )
     let provider = MCPToolProvider(
-      environment: ToolEnvironment(configuration: config), mcpClient: FakeDownstreamMCPClient())
+      environment: ToolEnvironment(launcher: testExecutionLauncher(), configuration: config),
+      mcpClient: FakeDownstreamMCPClient())
 
     let result = try provider.callTool(
       .init(
@@ -824,7 +847,8 @@ final class MCPToolProviderTests {
       ])
     )
     let provider = MCPToolProvider(
-      environment: ToolEnvironment(configuration: config), mcpClient: FakeDownstreamMCPClient())
+      environment: ToolEnvironment(launcher: testExecutionLauncher(), configuration: config),
+      mcpClient: FakeDownstreamMCPClient())
 
     let result = try provider.callTool(
       .init(
@@ -865,7 +889,8 @@ final class MCPToolProviderTests {
       ])
     )
     let provider = ConfiguredMCPToolProvider(
-      environment: ToolEnvironment(configuration: config), mcpClient: mcp)
+      environment: ToolEnvironment(launcher: testExecutionLauncher(), configuration: config),
+      mcpClient: mcp)
 
     let names = try provider.definitions().map(\.tool).map(\.name)
     #expect(names.contains("fake.sample"))

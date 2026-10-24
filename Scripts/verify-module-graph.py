@@ -186,7 +186,7 @@ def package(graph, package_json):
             reference = dependency.get("byName") or dependency.get("target")
             if reference and reference[0] in support and target["name"] not in support:
                 problems.append(f"test support outside tests: {target['name']} -> {reference[0]}")
-            if reference and target["name"] in support and reference[0] in rules.macos_only:
+            if reference and target["name"] in support and target["name"] not in rules.macos_only and reference[0] in rules.macos_only:
                 problems.append(f"neutral test support to macOS: {target['name']} -> {reference[0]}")
         if target["name"] in support:
             continue

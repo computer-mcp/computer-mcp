@@ -1,6 +1,7 @@
 import ArgumentParser
 import ComputerMCPControlPlane
 import ComputerMCPCore
+import ComputerMCPMacOS
 import ComputerMCPToolsCLI
 import Foundation
 
@@ -47,6 +48,7 @@ struct CLITreeCheck: AsyncParsableCommand {
 
   func run() async throws {
     let report = await CLITreeValidation.check(
+      launcher: MacOSPlatform.services.launcher,
       file: URL(fileURLWithPath: options.file), executable: executable,
       workingDirectory: URL(
         fileURLWithPath: workingDirectory ?? FileManager.default.currentDirectoryPath),

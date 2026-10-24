@@ -2,6 +2,7 @@ import AppKit
 import ComputerMCPControlPlane
 import ComputerMCPGateway
 import ComputerMCPPlatform
+import ComputerMCPProcess
 import Foundation
 
 extension MacOSPlatform {
@@ -21,6 +22,7 @@ extension MacOSPlatform {
         ),
       executableSearchDirectories: services.executableSearchDirectories,
       environment: environment,
+      processRunner: RegistrationProcessRunner(launcher: services.launcher),
       desktop: ClaudeDesktopRegistration(
         configurationFile: homeDirectory.appendingPathComponent(
           "Library/Application Support/Claude/claude_desktop_config.json"),

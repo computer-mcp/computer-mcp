@@ -33,12 +33,32 @@ let mcpDependency: Package.Dependency =
 // Platform-neutral targets; they build on macOS and on Linux.
 let neutralTargets: [Target] =
   [
+    .executableTarget(
+      name: "computer-mcp-execution-bootstrap", path: "Sources/ComputerMCPExecutionBootstrap"),
+    .target(name: "ComputerMCPSandbox"),
+    .target(
+      name: "ComputerMCPEgress",
+      dependencies: [
+        "ComputerMCPSandbox",
+        .product(name: "NIOCore", package: "swift-nio"),
+        .product(name: "NIOPosix", package: "swift-nio"),
+        .product(name: "NIOConcurrencyHelpers", package: "swift-nio"),
+      ]),
+    .testTarget(
+      name: "ComputerMCPEgressTests",
+      dependencies: [
+        "ComputerMCPEgress", "ComputerMCPSandbox",
+        .product(name: "NIOCore", package: "swift-nio"),
+        .product(name: "NIOPosix", package: "swift-nio"),
+      ]),
+    .testTarget(name: "ComputerMCPSandboxTests", dependencies: ["ComputerMCPSandbox"]),
     .target(
       name: "ComputerMCPCore",
       dependencies: [.product(name: "Crypto", package: "swift-crypto")]
     ),
     .target(name: "ComputerMCPPlatform", dependencies: ["ComputerMCPCore"]),
-    .target(name: "ComputerMCPPlatformPOSIX", dependencies: ["ComputerMCPPlatform"]),
+    .target(
+      name: "ComputerMCPPlatformPOSIX", dependencies: ["ComputerMCPPlatform", "ComputerMCPSandbox"]),
     .target(
       name: "ComputerMCPConfiguration",
       dependencies: [
@@ -56,7 +76,7 @@ let neutralTargets: [Target] =
       name: "ComputerMCPProcess",
       dependencies: [
         "ComputerMCPConfiguration", "ComputerMCPCore", "ComputerMCPPlatform",
-        "ComputerMCPPlatformPOSIX",
+        "ComputerMCPPlatformPOSIX", "ComputerMCPSandbox",
         .product(name: "NIOConcurrencyHelpers", package: "swift-nio"),
         .product(name: "Subprocess", package: "swift-subprocess"),
         .product(
@@ -351,7 +371,8 @@ let neutralTargets: [Target] =
     .target(
       name: "ComputerMCPTestSupport",
       dependencies: [
-        "ComputerMCPCore", "ComputerMCPPlatform", "ComputerMCPProcess",
+        "ComputerMCPCore", "ComputerMCPPlatform", "ComputerMCPProcess", "ComputerMCPSandbox",
+        "ComputerMCPPlatformPOSIX",
         "ComputerMCPConfiguration", "ComputerMCPTunnels", "ComputerMCPPlugins",
         .product(name: "Crypto", package: "swift-crypto"),
       ],
@@ -436,11 +457,26 @@ let neutralTargets: [Target] =
       mcpDependency,
     ],
     targets: neutralTargets + [
+      .target(
+        name: "ComputerMCPDarwinTestSupport",
+        dependencies: [
+          "ComputerMCPProcess", "ComputerMCPPlatformDarwin", "ComputerMCPTestSupport",
+        ],
+        path: "Tests/ComputerMCPDarwinTestSupport"),
       .systemLibrary(name: "CSystemArchive"),
+      .target(name: "CDarwinExecution"),
+      .executableTarget(
+        name: "ComputerMCPExecutionProbe",
+        dependencies: [
+          "ComputerMCPSandbox", "ComputerMCPProcess", "ComputerMCPPlatformDarwin",
+          .product(name: "Subprocess", package: "swift-subprocess"),
+        ], path: "Tests/ComputerMCPExecutionProbe"),
       .target(
         name: "ComputerMCPPlatformDarwin",
         dependencies: [
-          "CSystemArchive", "ComputerMCPCore", "ComputerMCPPlatform", "ComputerMCPPlatformPOSIX",
+          "CDarwinExecution", "CSystemArchive", "ComputerMCPCore", "ComputerMCPPlatform",
+          "ComputerMCPPlatformPOSIX",
+          "ComputerMCPSandbox", .product(name: "Subprocess", package: "swift-subprocess"),
         ]
       ),
       .target(
@@ -573,9 +609,11 @@ let neutralTargets: [Target] =
       .testTarget(
         name: "ComputerMCPPlatformDarwinTests",
         dependencies: [
+          .product(name: "NIOCore", package: "swift-nio"),
           "ComputerMCPCore", "ComputerMCPPlatform", "ComputerMCPPlatformDarwin",
-          "ComputerMCPTestSupport",
-        ]
+          "ComputerMCPSandbox", "ComputerMCPEgress", "ComputerMCPProcess",
+          "ComputerMCPExecutionProbe", "computer-mcp-execution-bootstrap", "ComputerMCPTestSupport",
+        ], resources: [.copy("Fixtures")]
       ),
       .testTarget(
         name: "ComputerMCPToolsFilesDarwinTests",
@@ -630,7 +668,13 @@ let neutralTargets: [Target] =
       ),
     ]
   )
+  for target in package.targets where target.type == .test {
+    target.dependencies.append("ComputerMCPDarwinTestSupport")
+  }
 #elseif os(Linux)
+  for target in neutralTargets where target.name == "ComputerMCPTestSupport" {
+    target.dependencies.append("computer-mcp-execution-bootstrap")
+  }
   let package = Package(
     name: "computer-mcp",
     dependencies: [
@@ -639,6 +683,7 @@ let neutralTargets: [Target] =
     ],
     targets: neutralTargets
   )
+
 #else
   #error("Computer MCP supports package manifests on macOS and Linux.")
 #endif

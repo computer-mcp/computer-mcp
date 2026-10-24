@@ -12,6 +12,10 @@ import Testing
 @testable import ComputerMCPPlatform
 @testable import ComputerMCPPlatformDarwin
 
+#if os(macOS)
+  import ComputerMCPDarwinTestSupport
+#endif
+
 @Suite(.nativeIntegration, .serialized)
 final class CloudflareTunnelTests {
   @Test func configurationSavesPreserveOmittedOAuthSettingsAndPublishExplicitChanges() async throws
@@ -799,15 +803,18 @@ private final class CloudflareControlPlaneFixture {
       manifestURL: directories.manifest,
       database: database,
       loader: GatewayManifestConfigurationLoader(
-        database: database, applications: MacOSPlatform.services.applications))
+        database: database,
+        applications: MacOSPlatform.services(launcher: testExecutionLauncher()).applications))
     _ = try manifestStore.activate(manifest: DefaultGatewayConfiguration.manifest)
     let secretStore = try KeychainSecretStore(
       service: "com.showxu.computer-mcp.cloudflare-tests",
       adapter: MemoryCloudflareKeychainAdapter()
     )
     let openAITunnelSupervisor = OpenAITunnelSupervisor(
+      launcher: testExecutionLauncher(),
       secretStore: secretStore,
-      executableSearchDirectories: MacOSPlatform.services.executableSearchDirectories,
+      executableSearchDirectories: MacOSPlatform.services(launcher: testExecutionLauncher())
+        .executableSearchDirectories,
       resolver: FixedOpenAITunnelClientResolver(),
       planBuilder: FixedOpenAITunnelPlanBuilder(),
       proxyResolver: FixedOpenAITunnelHTTPProxyResolver(),
@@ -823,7 +830,7 @@ private final class CloudflareControlPlaneFixture {
       openAITunnelSupervisor: openAITunnelSupervisor,
       launchAtLoginController: SMAppServiceLaunchAtLoginController(),
       computerUsePermissionReader: FixedComputerUsePermissionReader(),
-      platform: MacOSPlatform.services
+      platform: MacOSPlatform.services(launcher: testExecutionLauncher())
     )
     gatewayService = AppGatewayService(
       controlPlane: controlPlane,

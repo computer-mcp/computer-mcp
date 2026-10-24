@@ -12,6 +12,10 @@ import Testing
 @testable import ComputerMCPPlatform
 @testable import ComputerMCPProcess
 
+#if os(macOS)
+  import ComputerMCPDarwinTestSupport
+#endif
+
 @Suite(.nativeIntegration, .serialized, .timeLimit(.minutes(1)))
 struct MCPBoundHostServicesTests {
   @Test
@@ -597,7 +601,8 @@ private final class HostAuthorityFixture: @unchecked Sendable {
         caller: .secureTunnel, profileID: .chatGPTOperate,
         transportTrace: .init(transport: "gateway_socket", socketConnectionID: "connection"),
         trustedPrincipalID: "fixture-principal"),
-      database: database, registeredProjects: projects, platform: MacOSPlatform.services,
+      database: database, registeredProjects: projects,
+      platform: MacOSPlatform.services(launcher: testExecutionLauncher()),
       mcpClient: peer,
       requiresControlSession: requiresControlSession)
     let captured = try #require(peer.context)
@@ -618,7 +623,7 @@ private final class HostAuthorityFixture: @unchecked Sendable {
         database: database, directory: try #require(captured.tools), context: scoped,
         origin: "probe", gitExecutable: nativeGit ? "/usr/bin/git" : "fixture-git",
         commandRunner: nativeGit
-          ? ProcessCommandRunner()
+          ? ProcessCommandRunner(launcher: testExecutionLauncher())
           : HostWorktreeGitStub(source: captured.launchMetadata.project.rootPath))
     } else {
       service = try #require(try runtime.makeHostServices(context: captured, origin: "probe"))
@@ -663,7 +668,7 @@ private final class HostAuthorityFixture: @unchecked Sendable {
     }
   }
   private func git(_ arguments: [String]) throws {
-    let result = try ProcessCommandRunner().run(
+    let result = try ProcessCommandRunner(launcher: testExecutionLauncher()).run(
       executable: "/usr/bin/git", arguments: arguments, workingDirectory: root,
       environment: ["GIT_TERMINAL_PROMPT": "0", "LC_ALL": "C"], timeoutMilliseconds: 5_000,
       maxOutputBytes: 16_384)

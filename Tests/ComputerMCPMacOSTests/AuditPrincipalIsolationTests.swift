@@ -1,10 +1,15 @@
 import ComputerMCPMacOS
+import ComputerMCPTestSupport
 import Foundation
 import GRDB
 import Testing
 
 @testable import ComputerMCPCore
 @testable import ComputerMCPGateway
+
+#if os(macOS)
+  import ComputerMCPDarwinTestSupport
+#endif
 
 struct AuditPrincipalIsolationTests {
   @Test
@@ -128,7 +133,7 @@ private struct AuditPrincipalFixture {
     try GatewayRuntime(
       configuration: .init(), context: context, database: database,
       registeredProjects: [.init(id: "fixture", displayName: "Fixture", rootPath: root.path)],
-      platform: MacOSPlatform.services, plugins: [])
+      platform: MacOSPlatform.services(launcher: testExecutionLauncher()), plugins: [])
   }
 
   func inspect(_ runtime: GatewayRuntime, context: ExecutionContext, requestID: String) throws {

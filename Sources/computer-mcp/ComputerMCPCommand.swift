@@ -5,6 +5,7 @@ import ComputerMCPCore
 import ComputerMCPGateway
 import ComputerMCPMacOS
 import ComputerMCPPlatform
+import ComputerMCPProcess
 import ComputerMCPTransport
 import Foundation
 
@@ -95,11 +96,19 @@ struct ServeStdio: AsyncParsableCommand {
       transportTrace: GatewayTransportTrace(
         transport: "stdio", socketConnectionID: UUID().uuidString)
     )
+    let sessions = GatewayTerminalSessions()
+    if let path = database.fileURL?.deletingLastPathComponent() {
+      try sessions.enablePersistence(
+        in: path.appendingPathComponent("Executions"),
+        ownerID: (database.fileURL?.standardizedFileURL.path ?? "") + ":stdio:"
+          + URL(fileURLWithPath: runtime.config).standardizedFileURL.path,
+        launcher: MacOSPlatform.services.launcher)
+    }
     let registry = try await GatewayRuntime.make(
       configuration: gateway,
       context: context,
       database: database,
-      platform: MacOSPlatform.services
+      platform: MacOSPlatform.services, terminalSessions: sessions
     )
     try await MCPRuntimeAdapter.runStdioGateway(configuration: gateway, registry: registry)
   }
@@ -129,6 +138,15 @@ struct ServeHTTP: AsyncParsableCommand {
     let gateway = try GatewayConfiguration.load(
       path: runtime.config,
       knownPluginMCPServerIDs: database.pluginStoreSnapshot().knownMCPRegistrationIDs)
+    let sessions = GatewayTerminalSessions()
+    if let path = database.fileURL?.deletingLastPathComponent() {
+      try sessions.enablePersistence(
+        in: path.appendingPathComponent("Executions"),
+        ownerID: (database.fileURL?.standardizedFileURL.path ?? "") + ":http:"
+          + URL(fileURLWithPath: runtime.config).standardizedFileURL.path + ":"
+          + String(port ?? gateway.server.http.port),
+        launcher: MacOSPlatform.services.launcher)
+    }
     let registry = try await GatewayRuntime.make(
       configuration: gateway,
       context: gateway.executionContext(
@@ -138,7 +156,7 @@ struct ServeHTTP: AsyncParsableCommand {
         transportTrace: GatewayTransportTrace(transport: "streamable_http")
       ),
       database: database,
-      platform: MacOSPlatform.services
+      platform: MacOSPlatform.services, terminalSessions: sessions
     )
     try await MCPRuntimeAdapter.runHTTPGateway(
       configuration: gateway,

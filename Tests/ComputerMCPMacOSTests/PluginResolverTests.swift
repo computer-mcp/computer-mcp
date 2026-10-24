@@ -12,6 +12,10 @@ import Testing
 @testable import ComputerMCPPlugins
 @testable import ComputerMCPProcess
 
+#if os(macOS)
+  import ComputerMCPDarwinTestSupport
+#endif
+
 struct PluginResolverTests {
   @Test(
     .nativeIntegration, arguments: ["#!/usr/bin/env python3\n", "#!/usr/bin/env -S python3 -e\n"])
@@ -30,7 +34,7 @@ struct PluginResolverTests {
     let resolution = try PluginStore.resolve(
       snapshot: state, bundled: [fixture.package], hostVersion: PluginVersion("1.0.29"),
       architecture: "arm64", environment: environment,
-      applications: MacOSPlatform.services.applications)
+      applications: MacOSPlatform.services(launcher: testExecutionLauncher()).applications)
     let plugin = try #require(resolution.plugins.first)
     #expect(plugin.diagnostics.isEmpty)
     let server = try #require(plugin.mcpServers.first)
@@ -38,7 +42,9 @@ struct PluginResolverTests {
     let flags = header.contains("-S") ? ["-e"] : []
     #expect(server.command == interpreter.path)
     #expect(server.args == flags + [script, "", "a b", "参数", "--"])
-    let result = try ProcessCommandRunner(environment: environment).run(
+    let result = try ProcessCommandRunner(
+      launcher: testExecutionLauncher(), environment: environment
+    ).run(
       executable: try #require(server.command), arguments: server.args,
       workingDirectory: fixture.root, environment: server.env, timeoutMilliseconds: 2_000,
       maxOutputBytes: 1_024)
@@ -48,7 +54,7 @@ struct PluginResolverTests {
       pluginID: fixture.package.manifest.id, state: state,
       bundled: .init(packages: [fixture.package], issues: []),
       hostVersion: PluginVersion("1.0.29"), architecture: "arm64", environment: environment,
-      applications: MacOSPlatform.services.applications)
+      applications: MacOSPlatform.services(launcher: testExecutionLauncher()).applications)
     #expect(report.status == .passed)
     let inspection = try #require(
       report.checks.first { $0.id == "mcp:native:executable" }?.inspection)
@@ -59,7 +65,8 @@ struct PluginResolverTests {
     #expect(registration.executable == script)
     let commands = RegisteredCommands(
       configuration: .init(cli: .init(commands: [registration]), projectDirectory: fixture.root),
-      commandRunner: ProcessCommandRunner(environment: environment), environment: environment)
+      commandRunner: ProcessCommandRunner(
+        launcher: testExecutionLauncher(), environment: environment), environment: environment)
     do {
       let result = try commands.runRegisteredCLI(
         command: registration, args: ["cli argument", ""], timeout: 2_000,
@@ -287,7 +294,8 @@ struct PluginResolverTests {
     let resolution = try PluginStore.resolve(
       snapshot: state, bundled: [fixture.package], hostVersion: PluginVersion("1.0.29"),
       architecture: "arm64", searchDirectories: [URL(fileURLWithPath: "/usr/bin")],
-      environment: ["PATH": fixture.root.path], applications: MacOSPlatform.services.applications)
+      environment: ["PATH": fixture.root.path],
+      applications: MacOSPlatform.services(launcher: testExecutionLauncher()).applications)
     let plugin = try #require(resolution.plugins.first)
     #expect(plugin.mcpServers.isEmpty && plugin.cliCommands.isEmpty)
     #expect(plugin.skillRoots.count == 1)
@@ -419,7 +427,8 @@ struct PluginResolverTests {
     let composition = try GatewayPluginComposition(
       configuration: GatewayConfiguration(projectDirectory: fixture.root), plugins: [plugin])
     let provider = CLIToolProvider(
-      environment: ToolEnvironment(configuration: composition.runtimeConfiguration))
+      environment: ToolEnvironment(
+        launcher: testExecutionLauncher(), configuration: composition.runtimeConfiguration))
     let output = try provider.callTool(
       .init(
         name: "cli.exec",
@@ -461,7 +470,8 @@ struct PluginResolverTests {
       registeredProjects: [
         .init(id: "fixture", displayName: "Fixture", rootPath: fixture.root.path)
       ],
-      platform: MacOSPlatform.services, mcpClient: CompositionCatalogClient(), plugins: [plugin])
+      platform: MacOSPlatform.services(launcher: testExecutionLauncher()),
+      mcpClient: CompositionCatalogClient(), plugins: [plugin])
     do {
       let tools = try runtime.listTools(context: .empty).map(\.name)
       #expect(tools.contains("package.inspect"))

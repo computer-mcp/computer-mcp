@@ -8,6 +8,10 @@ import Testing
 
 @testable import ComputerMCPToolsStructured
 
+#if os(macOS)
+  import ComputerMCPDarwinTestSupport
+#endif
+
 @Suite(.nativeIntegration, .serialized)
 final class StructuredToolProviderTests {
   @Test
@@ -30,6 +34,7 @@ final class StructuredToolProviderTests {
         to: directory.appendingPathComponent("numbers.yaml"), atomically: true, encoding: .utf8)
     let provider = StructuredToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: [
             "json.read", "toml.read", "yaml.read", "plist.read", "plist.write",
@@ -80,6 +85,7 @@ final class StructuredToolProviderTests {
     """.write(to: readme, atomically: true, encoding: .utf8)
     let provider = StructuredToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["markdown.links"]),
           projectDirectory: directory
@@ -139,6 +145,7 @@ final class StructuredToolProviderTests {
     """.write(to: readme, atomically: true, encoding: .utf8)
     let provider = StructuredToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["markdown.links"]),
           projectDirectory: directory
@@ -202,6 +209,7 @@ final class StructuredToolProviderTests {
     """.write(to: readme, atomically: true, encoding: .utf8)
     let provider = StructuredToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["markdown.tables"]),
           projectDirectory: directory
@@ -286,6 +294,7 @@ final class StructuredToolProviderTests {
     try Data([0xff, 0xfe]).write(to: directory.appendingPathComponent("bad.md"))
     let provider = StructuredToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["markdown.tables"]),
           projectDirectory: directory
@@ -359,6 +368,7 @@ final class StructuredToolProviderTests {
     """.write(to: readme, atomically: true, encoding: .utf8)
     let provider = StructuredToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["markdown.section"]),
           projectDirectory: directory
@@ -453,6 +463,7 @@ final class StructuredToolProviderTests {
     try Data([0xff, 0xfe]).write(to: directory.appendingPathComponent("bad.md"))
     let provider = StructuredToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["markdown.section"]),
           projectDirectory: directory
@@ -548,6 +559,7 @@ final class StructuredToolProviderTests {
     """.write(to: directory.appendingPathComponent("page.md"), atomically: true, encoding: .utf8)
     let provider = StructuredToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["markdown.frontmatter"]),
           projectDirectory: directory
@@ -617,6 +629,7 @@ final class StructuredToolProviderTests {
     """.write(to: directory.appendingPathComponent("bad.md"), atomically: true, encoding: .utf8)
     let provider = StructuredToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["markdown.frontmatter"]),
           projectDirectory: directory
@@ -669,6 +682,7 @@ final class StructuredToolProviderTests {
     try Data([0xff, 0xfe]).write(to: directory.appendingPathComponent("bad.md"))
     let provider = StructuredToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["markdown.frontmatter"]),
           projectDirectory: directory
@@ -728,6 +742,7 @@ final class StructuredToolProviderTests {
     try Data([0xff, 0xfe]).write(to: directory.appendingPathComponent("bad.md"))
     let provider = StructuredToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["markdown.links"]),
           projectDirectory: directory
@@ -814,6 +829,7 @@ final class StructuredToolProviderTests {
 
     let provider = StructuredToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["markdown.link_check"]),
           projectDirectory: directory
@@ -886,6 +902,7 @@ final class StructuredToolProviderTests {
     try Data([0xff, 0xfe]).write(to: directory.appendingPathComponent("bad.md"))
     let provider = StructuredToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["markdown.link_check"]),
           projectDirectory: directory
@@ -942,6 +959,7 @@ final class StructuredToolProviderTests {
     """.write(to: file, atomically: true, encoding: .utf8)
     let provider = StructuredToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["json.read"]),
           projectDirectory: directory
@@ -986,6 +1004,7 @@ final class StructuredToolProviderTests {
     )
     let provider = StructuredToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["json.read"]),
           projectDirectory: directory
@@ -1051,6 +1070,7 @@ final class StructuredToolProviderTests {
     )
     let provider = StructuredToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["jsonl.read"]),
           projectDirectory: directory
@@ -1101,6 +1121,7 @@ final class StructuredToolProviderTests {
     )
     let provider = StructuredToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["jsonl.read"]),
           projectDirectory: directory
@@ -1150,6 +1171,7 @@ final class StructuredToolProviderTests {
     try Data([0xff, 0xfe]).write(to: directory.appendingPathComponent("bad.jsonl"))
     let provider = StructuredToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["jsonl.read"]),
           projectDirectory: directory
@@ -1204,6 +1226,7 @@ final class StructuredToolProviderTests {
     let directory = try temporaryDirectory()
     let provider = StructuredToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["json.write", "json.read"]),
           projectDirectory: directory
@@ -1300,6 +1323,7 @@ final class StructuredToolProviderTests {
     )
     let provider = StructuredToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["json.write"]),
           projectDirectory: directory
@@ -1390,6 +1414,7 @@ final class StructuredToolProviderTests {
     """.write(to: file, atomically: true, encoding: .utf8)
     let provider = StructuredToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["toml.read"]),
           projectDirectory: directory
@@ -1439,6 +1464,7 @@ final class StructuredToolProviderTests {
     )
     let provider = StructuredToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["toml.read"]),
           projectDirectory: directory
@@ -1511,6 +1537,7 @@ final class StructuredToolProviderTests {
     """.write(to: file, atomically: true, encoding: .utf8)
     let provider = StructuredToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["yaml.read"]),
           projectDirectory: directory
@@ -1577,6 +1604,7 @@ final class StructuredToolProviderTests {
     )
     let provider = StructuredToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["yaml.read"]),
           projectDirectory: directory
@@ -1652,6 +1680,7 @@ final class StructuredToolProviderTests {
     """.write(to: file, atomically: true, encoding: .utf8)
     let provider = StructuredToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["xml.read"]),
           projectDirectory: directory
@@ -1706,6 +1735,7 @@ final class StructuredToolProviderTests {
       to: directory.appendingPathComponent("text.xml"), atomically: true, encoding: .utf8)
     let provider = StructuredToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["xml.read"]),
           projectDirectory: directory
@@ -1806,6 +1836,7 @@ final class StructuredToolProviderTests {
     try data.write(to: file)
     let provider = StructuredToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["plist.read"]),
           projectDirectory: directory
@@ -1854,6 +1885,7 @@ final class StructuredToolProviderTests {
     )
     let provider = StructuredToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["plist.read"]),
           projectDirectory: directory
@@ -1967,6 +1999,7 @@ final class StructuredToolProviderTests {
     try plistData.write(to: configDirectory.appendingPathComponent("Info.plist"))
     let provider = StructuredToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["structured.get"]),
           projectDirectory: directory
@@ -2082,6 +2115,7 @@ final class StructuredToolProviderTests {
     )
     let provider = StructuredToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["structured.get"]),
           projectDirectory: directory
@@ -2173,6 +2207,7 @@ final class StructuredToolProviderTests {
     let directory = try temporaryDirectory()
     let provider = StructuredToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["plist.write", "plist.read"]),
           projectDirectory: directory
@@ -2281,6 +2316,7 @@ final class StructuredToolProviderTests {
     )
     let provider = StructuredToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["plist.write"]),
           projectDirectory: directory
@@ -2411,6 +2447,7 @@ final class StructuredToolProviderTests {
     """.write(to: file, atomically: true, encoding: .utf8)
     let provider = StructuredToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["csv.read"]),
           projectDirectory: directory
@@ -2458,6 +2495,7 @@ final class StructuredToolProviderTests {
     )
     let provider = StructuredToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["csv.read"]),
           projectDirectory: directory
@@ -2499,6 +2537,7 @@ final class StructuredToolProviderTests {
     )
     let provider = StructuredToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["csv.read"]),
           projectDirectory: directory
@@ -2621,6 +2660,7 @@ final class StructuredToolProviderTests {
     ]
     let provider = StructuredToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["sqlite.schema"]),
           projectDirectory: directory
@@ -2707,6 +2747,7 @@ final class StructuredToolProviderTests {
       to: directory.appendingPathComponent("app.db"), atomically: true, encoding: .utf8)
     let provider = StructuredToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["sqlite.schema"]),
           projectDirectory: directory
@@ -2750,6 +2791,7 @@ final class StructuredToolProviderTests {
     failingRunner.stderr = "file is not a database"
     let failingProvider = StructuredToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["sqlite.schema"]),
           projectDirectory: directory
@@ -2771,6 +2813,7 @@ final class StructuredToolProviderTests {
     truncatedRunner.stdoutTruncated = true
     let truncatedProvider = StructuredToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["sqlite.schema"]),
           projectDirectory: directory
@@ -2790,6 +2833,7 @@ final class StructuredToolProviderTests {
     badJSONRunner.stdout = "{bad"
     let badJSONProvider = StructuredToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["sqlite.schema"]),
           projectDirectory: directory
@@ -2825,6 +2869,7 @@ final class StructuredToolProviderTests {
     ]
     let provider = StructuredToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["sqlite.query"]),
           projectDirectory: directory
@@ -2890,6 +2935,7 @@ final class StructuredToolProviderTests {
       to: directory.appendingPathComponent("app.db"), atomically: true, encoding: .utf8)
     let provider = StructuredToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["sqlite.query"]),
           projectDirectory: directory
@@ -2964,6 +3010,7 @@ final class StructuredToolProviderTests {
     literalRunner.stdout = #"[{"text":"drop table users"}]"#
     let literalProvider = StructuredToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["sqlite.query"]),
           projectDirectory: directory
@@ -2983,6 +3030,7 @@ final class StructuredToolProviderTests {
     failingRunner.stderr = "file is not a database"
     let failingProvider = StructuredToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["sqlite.query"]),
           projectDirectory: directory
@@ -3007,6 +3055,7 @@ final class StructuredToolProviderTests {
     truncatedRunner.stdoutTruncated = true
     let truncatedProvider = StructuredToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["sqlite.query"]),
           projectDirectory: directory
@@ -3029,6 +3078,7 @@ final class StructuredToolProviderTests {
     badJSONRunner.stdout = "{bad"
     let badJSONProvider = StructuredToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["sqlite.query"]),
           projectDirectory: directory

@@ -1,8 +1,10 @@
 import ComputerMCPPlatform
+import ComputerMCPProcess
 import Foundation
 
 /// Platform implementations selected by the host for gateway and control-plane composition.
 package struct PlatformServices: Sendable {
+  package let launcher: ExecutionLauncher
   package let pluginDirectories: any PluginArchiveDirectoryFactory
   package let applications: any ApplicationBundleLocating
   package let projectGrants: any ProjectBookmarkServicing
@@ -14,6 +16,7 @@ package struct PlatformServices: Sendable {
   package let fileChanges: @Sendable (URL) throws -> any FileChangeMonitor
 
   package init(
+    launcher: ExecutionLauncher = ExecutionLauncher(),
     projectGrants: any ProjectBookmarkServicing,
     pluginDirectories: any PluginArchiveDirectoryFactory,
     applications: any ApplicationBundleLocating,
@@ -23,6 +26,7 @@ package struct PlatformServices: Sendable {
     gitExecutable: String,
     fileChanges: @escaping @Sendable (URL) throws -> any FileChangeMonitor
   ) {
+    self.launcher = launcher
     self.projectGrants = projectGrants
     self.pluginDirectories = pluginDirectories
     self.applications = applications

@@ -9,16 +9,24 @@ import Testing
 @testable import ComputerMCPProcess
 @testable import ComputerMCPToolsCLI
 
+#if os(macOS)
+  import ComputerMCPDarwinTestSupport
+#endif
+
 @Suite(.nativeIntegration, .timeLimit(.minutes(1)))
 struct CLIExecutionContextTests {
-  @Test(arguments: ["probe", "./probe"], [String?.none, "nested"])
-  func rawHelpAndExecUseTheInspectedProjectAndEnvironment(executable: String, cwd: String?)
+  @Test(
+    .enabled(if: nativeSandboxAvailable), arguments: ["probe", "./probe"], [String?.none, "nested"])
+  func readOnlyHelpUsesFixedEnvironmentAndExecutionUsesConfiguredEnvironment(
+    executable: String, cwd: String?
+  )
     async throws
   {
     let fixture = try ContextFixture(cwd: cwd)
     defer { fixture.cleanup() }
     let provider = CLIToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: fixture.configuration(executable: executable, cwd: cwd),
         environment: [
           "PATH": ".:/usr/bin:/bin", "CLI_CONTEXT_VALUE": "host", "CLI_CONTEXT_OVERRIDE": "base",
@@ -39,14 +47,18 @@ struct CLIExecutionContextTests {
           arguments: .object([
             "id": .string("probe"), "argv": .array([.string("hello world"), .string("")]),
           ]), context: .empty)))
-    #expect(help.objectValue?["stdout"] == .string("host|override|--help\n"))
+    #expect(help.objectValue?["stdout"] == .string("||--help\n"))
     #expect(execution.objectValue?["stdout"] == .string("host|override|hello world\n"))
     #expect(execution.objectValue?["executable"] == .string(executable))
     await provider.environment.registeredCommands.execution.shutdown()
   }
 
-  @Test(arguments: [CLITreeSource.Kind.file, .introspection, .helper])
-  func treeDiscoveryAndExecutionUseTheInspectedEnvironment(kind: CLITreeSource.Kind) async throws {
+  @Test(
+    arguments: nativeSandboxAvailable
+      ? [CLITreeSource.Kind.file, .introspection, .helper] : [.file])
+  func treeDiscoveryUsesFixedEnvironmentAndExecutionUsesConfiguredEnvironment(
+    kind: CLITreeSource.Kind
+  ) async throws {
     let fixture = try ContextFixture(cwd: nil)
     defer { fixture.cleanup() }
     let command = CLICommandDescriptor(
@@ -56,13 +68,13 @@ struct CLIExecutionContextTests {
     let treeURL = fixture.root.appendingPathComponent("tree.json")
     try JSONEncoder().encode(tree).write(to: treeURL)
     let exporter = fixture.root.appendingPathComponent("exporter")
-    try "#!/bin/sh\n[ \"$CLI_CONTEXT_VALUE\" = host ] || exit 42\nexec /bin/cat tree.json\n".write(
+    try "#!/bin/sh\n[ -z \"$CLI_CONTEXT_VALUE\" ] || exit 42\nexec /bin/cat tree.json\n".write(
       to: exporter, atomically: true, encoding: .utf8)
     try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: exporter.path)
     var configuration = fixture.configuration(executable: "probe", cwd: nil)
     if kind == .introspection {
       try
-        "#!/bin/sh\nif [ \"$1\" = export ]; then\n [ \"$CLI_CONTEXT_VALUE\" = host ] || exit 42\n exec /bin/cat tree.json\nfi\nprintf '%s|%s|%s\\n' \"$CLI_CONTEXT_VALUE\" \"$CLI_CONTEXT_OVERRIDE\" \"$1\"\n"
+        "#!/bin/sh\nif [ \"$1\" = export ]; then\n [ -z \"$CLI_CONTEXT_VALUE\" ] || exit 42\n exec /bin/cat tree.json\nfi\nprintf '%s|%s|%s\\n' \"$CLI_CONTEXT_VALUE\" \"$CLI_CONTEXT_OVERRIDE\" \"$1\"\n"
         .write(to: fixture.executable, atomically: true, encoding: .utf8)
       try FileManager.default.setAttributes(
         [.posixPermissions: 0o700], ofItemAtPath: fixture.executable.path)
@@ -74,6 +86,7 @@ struct CLIExecutionContextTests {
       args: kind == .introspection ? ["export"] : [])
     let provider = CLIToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: configuration,
         environment: [
           "PATH": ".:/usr/bin:/bin", "CLI_CONTEXT_VALUE": "host", "CLI_CONTEXT_OVERRIDE": "base",
@@ -92,7 +105,9 @@ struct CLIExecutionContextTests {
 
   @Test
   func anExplicitRunnerEnvironmentDoesNotReintroduceAmbientValues() throws {
-    let result = try ProcessCommandRunner(environment: ["PATH": "/usr/bin:/bin"]).run(
+    let result = try ProcessCommandRunner(
+      launcher: testExecutionLauncher(), environment: ["PATH": "/usr/bin:/bin"]
+    ).run(
       executable: "/usr/bin/env",
       arguments: [],
       workingDirectory: FileManager.default.temporaryDirectory,
@@ -115,6 +130,7 @@ struct CLIExecutionContextTests {
       [.posixPermissions: 0o700], ofItemAtPath: fixture.executable.path)
     let provider = CLIToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: fixture.configuration(executable: "./probe", cwd: nil),
         environment: ["PATH": fixture.root.path]))
     let status = try payload(

@@ -1,5 +1,6 @@
 import AppKit
 import ComputerMCPMacOS
+import ComputerMCPTestSupport
 import Foundation
 import SwiftUI
 import Testing
@@ -7,6 +8,10 @@ import Testing
 @testable import ComputerMCPApp
 @testable import ComputerMCPControlPlane
 @testable import ComputerMCPPlugins
+
+#if os(macOS)
+  import ComputerMCPDarwinTestSupport
+#endif
 
 @MainActor
 @Suite(.timeLimit(.minutes(1)))
@@ -147,7 +152,8 @@ private final class PluginCatalogFake: PluginManaging {
   func doctorPlugin(id: String) async throws -> PluginDoctorReport { throw CancellationError() }
   func fetchPlugins() async throws -> PluginHostSnapshot {
     try PluginHostSnapshot(
-      state: PluginStoreSnapshot(), applications: MacOSPlatform.services.applications)
+      state: PluginStoreSnapshot(),
+      applications: MacOSPlatform.services(launcher: testExecutionLauncher()).applications)
   }
   func changePlugins(_ change: PluginHostChange, expectedRevision: Int64) async throws
     -> PluginHostSnapshot

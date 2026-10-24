@@ -15,6 +15,10 @@ import Testing
 @testable import ComputerMCPControlPlane
 @testable import ComputerMCPGateway
 
+#if os(macOS)
+  import ComputerMCPDarwinTestSupport
+#endif
+
 #if canImport(FoundationNetworking)
   import FoundationNetworking
 #endif
@@ -1241,6 +1245,7 @@ private final class ControlFixture: Sendable {
       manifestURL: directories.manifest, database: database, loader: loader)
     let monitor = monitor
     let platform = PlatformServices(
+      launcher: testExecutionLauncher(),
       projectGrants: UnusedPlatform(), pluginDirectories: UnusedPlatform(),
       applications: TestApplicationBundleLocator(), toolProviders: UnusedPlatform(),
       managementToolNames: [],
@@ -1250,6 +1255,7 @@ private final class ControlFixture: Sendable {
       directories: directories, database: database, manifestStore: store,
       defaultManifest: try manifest.exportedTOML(), secretStore: secrets,
       openAITunnelSupervisor: OpenAITunnelSupervisor(
+        launcher: testExecutionLauncher(),
         secretStore: secrets, executableSearchDirectories: [],
         proxyResolver: FixedOpenAITunnelHTTPProxyResolver()),
       launchAtLoginController: UnusedPlatform(),
@@ -1312,6 +1318,7 @@ private final class ControlFixture: Sendable {
       directories: directories, database: database, manifestStore: store,
       defaultManifest: service.defaultManifest, secretStore: secrets,
       openAITunnelSupervisor: OpenAITunnelSupervisor(
+        launcher: testExecutionLauncher(),
         secretStore: secrets, executableSearchDirectories: [],
         proxyResolver: FixedOpenAITunnelHTTPProxyResolver()),
       launchAtLoginController: UnusedPlatform(),

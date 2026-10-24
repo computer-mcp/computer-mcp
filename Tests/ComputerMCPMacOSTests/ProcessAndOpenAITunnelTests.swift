@@ -13,12 +13,16 @@ import Testing
 @testable import ComputerMCPProcess
 @testable import ComputerMCPTunnels
 
+#if os(macOS)
+  import ComputerMCPDarwinTestSupport
+#endif
+
 @Suite(.nativeIntegration, .serialized)
 
 final class ProcessAndOpenAITunnelTests {
   @Test
   func testCommandRunnerCapturesStdout() throws {
-    let result = try ProcessCommandRunner().run(
+    let result = try ProcessCommandRunner(launcher: testExecutionLauncher()).run(
       executable: "/bin/echo",
       arguments: ["hello"],
       workingDirectory: nil,
@@ -38,7 +42,7 @@ final class ProcessAndOpenAITunnelTests {
       for index in 0..<128 {
         group.addTask {
           let expected = "result-\(index)\n"
-          let result = try ProcessCommandRunner().run(
+          let result = try ProcessCommandRunner(launcher: testExecutionLauncher()).run(
             executable: "/bin/echo",
             arguments: ["result-\(index)"],
             workingDirectory: nil,
@@ -56,7 +60,7 @@ final class ProcessAndOpenAITunnelTests {
 
   @Test
   func testManagedProcessCanSpawnReadAndCancel() throws {
-    let registry = ManagedProcessRegistry()
+    let registry = ManagedProcessRegistry(launcher: testExecutionLauncher())
     let id = try registry.spawn(
       executable: "/bin/echo",
       arguments: ["process"],
@@ -74,7 +78,7 @@ final class ProcessAndOpenAITunnelTests {
 
   @Test
   func testManagedProcessListReturnsManagedProcesses() throws {
-    let registry = ManagedProcessRegistry()
+    let registry = ManagedProcessRegistry(launcher: testExecutionLauncher())
     let id = try registry.spawn(
       executable: "/bin/echo",
       arguments: ["listed"],
@@ -92,7 +96,7 @@ final class ProcessAndOpenAITunnelTests {
 
   @Test
   func testManagedProcessCanCancelRunningProcess() throws {
-    let registry = ManagedProcessRegistry()
+    let registry = ManagedProcessRegistry(launcher: testExecutionLauncher())
     let id = try registry.spawn(
       executable: "/bin/sleep",
       arguments: ["5"],
@@ -277,7 +281,9 @@ final class ProcessAndOpenAITunnelTests {
     let audit = try ChatGPTProfileAuditor().audit(
       configuration: configuration,
       registry: GatewayProviderRouter(providers: [
-        SystemToolProvider(environment: ToolEnvironment(configuration: configuration))
+        SystemToolProvider(
+          environment: ToolEnvironment(
+            launcher: testExecutionLauncher(), configuration: configuration))
       ]),
       allowWriteTools: false
     )
@@ -298,7 +304,9 @@ final class ProcessAndOpenAITunnelTests {
       try ChatGPTProfileAuditor().audit(
         configuration: configuration,
         registry: GatewayProviderRouter(providers: [
-          FilesToolProvider(environment: ToolEnvironment(configuration: configuration))
+          FilesToolProvider(
+            environment: ToolEnvironment(
+              launcher: testExecutionLauncher(), configuration: configuration))
         ]),
         allowWriteTools: false
       )
@@ -318,7 +326,9 @@ final class ProcessAndOpenAITunnelTests {
     let audit = try ChatGPTProfileAuditor().audit(
       configuration: configuration,
       registry: GatewayProviderRouter(providers: [
-        FilesToolProvider(environment: ToolEnvironment(configuration: configuration))
+        FilesToolProvider(
+          environment: ToolEnvironment(
+            launcher: testExecutionLauncher(), configuration: configuration))
       ]),
       allowWriteTools: true
     )
@@ -356,7 +366,9 @@ final class ProcessAndOpenAITunnelTests {
     let audit = try ChatGPTProfileAuditor().audit(
       configuration: configuration,
       registry: GatewayProviderRouter(providers: [
-        SystemToolProvider(environment: ToolEnvironment(configuration: configuration))
+        SystemToolProvider(
+          environment: ToolEnvironment(
+            launcher: testExecutionLauncher(), configuration: configuration))
       ]),
       allowWriteTools: false
     )
@@ -378,7 +390,8 @@ final class ProcessAndOpenAITunnelTests {
     }
     #expect(throws: (any Error).self) {
       try OpenAITunnelClientResolver(
-        executableSearchDirectories: MacOSPlatform.services.executableSearchDirectories
+        executableSearchDirectories: MacOSPlatform.services(launcher: testExecutionLauncher())
+          .executableSearchDirectories
       ).resolve(
         requestedPath: executable.path,
         configuration: GatewayConfiguration(projectDirectory: root))

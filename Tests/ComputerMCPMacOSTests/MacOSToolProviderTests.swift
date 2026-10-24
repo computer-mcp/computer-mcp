@@ -8,12 +8,17 @@ import Testing
 
 @testable import ComputerMCPMacOS
 
+#if os(macOS)
+  import ComputerMCPDarwinTestSupport
+#endif
+
 @Suite(.nativeIntegration, .serialized)
 final class MacOSToolProviderTests {
   @Test
   func testMacOSApplicationsReturnsBoundedApplicationSummary() throws {
     let provider = MacOSToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration.fixture(
           builtin: BuiltinConfig(enabled: ["macos.applications"])
         )
@@ -42,6 +47,7 @@ final class MacOSToolProviderTests {
   func testMacOSUserDirectoriesReturnsFixedDirectoryCatalog() throws {
     let provider = MacOSToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration.fixture(
           builtin: BuiltinConfig(enabled: ["macos.user_directories"])
         )
@@ -110,7 +116,8 @@ final class MacOSToolProviderTests {
       builtin: BuiltinConfig(enabled: ["macos.default_application"])
     )
     config.projectDirectory = directory
-    let provider = MacOSToolProvider(environment: ToolEnvironment(configuration: config))
+    let provider = MacOSToolProvider(
+      environment: ToolEnvironment(launcher: testExecutionLauncher(), configuration: config))
 
     let result = try provider.callTool(
       .init(
@@ -171,6 +178,7 @@ final class MacOSToolProviderTests {
   func testMacOSScreensReturnsReadOnlyDisplaySummary() throws {
     let provider = MacOSToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration.fixture(
           builtin: BuiltinConfig(enabled: ["macos.screens"])
         )
@@ -198,6 +206,7 @@ final class MacOSToolProviderTests {
       "\(file.path)\n/tmp/outside.txt\n\(notes.appendingPathComponent("missing.txt").path)\n"
     let provider = MacOSToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["macos.spotlight_search"]),
           projectDirectory: directory
@@ -236,6 +245,7 @@ final class MacOSToolProviderTests {
     let directory = try temporaryDirectory()
     let provider = MacOSToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["macos.spotlight_search"]),
           projectDirectory: directory
@@ -273,6 +283,7 @@ final class MacOSToolProviderTests {
   func testMacOSRunningApplicationsReturnsBoundedSessionSummary() throws {
     let provider = MacOSToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration.fixture(
           builtin: BuiltinConfig(enabled: ["macos.running_applications"])
         )
@@ -300,6 +311,7 @@ final class MacOSToolProviderTests {
   func testMacOSFrontmostApplicationReturnsOptionalApplicationSummary() throws {
     let provider = MacOSToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration.fixture(
           builtin: BuiltinConfig(enabled: ["macos.frontmost_application"])
         )

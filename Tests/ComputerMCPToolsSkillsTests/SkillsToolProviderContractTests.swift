@@ -7,11 +7,16 @@ import Testing
 
 @testable import ComputerMCPToolsSkills
 
+#if os(macOS)
+  import ComputerMCPDarwinTestSupport
+#endif
+
 struct SkillsToolProviderContractTests {
   @Test
   func testSkillsToolCountMatchesTheFullCatalog() throws {
     let skills = try SkillsToolProvider(
-      environment: ToolEnvironment(configuration: .fixture(skills: .init(enabled: true)))
+      environment: ToolEnvironment(
+        launcher: testExecutionLauncher(), configuration: .fixture(skills: .init(enabled: true)))
     )
     .definitions()
     #expect(!skills.isEmpty)
@@ -22,6 +27,7 @@ struct SkillsToolProviderContractTests {
   func rejectsNamesOutsideItsDomain() throws {
     let provider = SkillsToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: .fixture(
           builtin: .init(enabled: ["json.read"]), skills: .init(enabled: true))))
     #expect(provider.id == "skills")
@@ -33,7 +39,8 @@ struct SkillsToolProviderContractTests {
   @Test
   func listsToolsInCatalogOrder() throws {
     let provider = SkillsToolProvider(
-      environment: ToolEnvironment(configuration: .fixture(skills: .init(enabled: true))))
+      environment: ToolEnvironment(
+        launcher: testExecutionLauncher(), configuration: .fixture(skills: .init(enabled: true))))
     #expect(
       try provider.definitions().map(\.tool.name) == [
         "skills.roots", "skills.list", "skills.describe", "skills.validate", "skills.frontmatter",
@@ -59,6 +66,7 @@ struct SkillsToolProviderContractTests {
     """.write(to: skill.appendingPathComponent("SKILL.md"), atomically: true, encoding: .utf8)
     let provider = SkillsToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration(
           skills: .init(enabled: true, roots: [.init(id: "fixture", path: root.url.path)]),
           projectDirectory: project.url)))

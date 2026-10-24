@@ -16,6 +16,7 @@ APP_PATH="$OUTPUT_DIR/$APP_NAME.app"
 CONTENTS="$APP_PATH/Contents"
 MACOS_DIR="$CONTENTS/MacOS"
 RESOURCES_DIR="$CONTENTS/Resources"
+HELPERS_DIR="$CONTENTS/Helpers"
 INFO_PLIST="$ROOT_DIR/Resources/ComputerMCPApp/Info.plist"
 LOCALIZED_INFO_ROOT="$ROOT_DIR/Resources/ComputerMCPApp"
 ENTITLEMENTS="$ROOT_DIR/Resources/ComputerMCPApp/ComputerMCP.entitlements"
@@ -284,8 +285,10 @@ X86_64_BIN_DIR=$("$SWIFT_EXECUTABLE" build \
 for binary in \
   "$ARM64_BIN_DIR/ComputerMCPApp" \
   "$ARM64_BIN_DIR/computer-mcp" \
+  "$ARM64_BIN_DIR/computer-mcp-execution-bootstrap" \
   "$X86_64_BIN_DIR/ComputerMCPApp" \
-  "$X86_64_BIN_DIR/computer-mcp"
+  "$X86_64_BIN_DIR/computer-mcp" \
+  "$X86_64_BIN_DIR/computer-mcp-execution-bootstrap"
 do
   [[ -x "$binary" ]] || fail "Missing architecture slice: $binary"
 done
@@ -293,7 +296,7 @@ done
 if [[ -e "$APP_PATH" ]]; then
   /bin/rm -rf -- "$APP_PATH"
 fi
-/bin/mkdir -p "$MACOS_DIR" "$RESOURCES_DIR" "$METADATA_DIR"
+/bin/mkdir -p "$MACOS_DIR" "$RESOURCES_DIR" "$HELPERS_DIR" "$METADATA_DIR"
 /usr/bin/lipo -create \
   "$ARM64_BIN_DIR/ComputerMCPApp" \
   "$X86_64_BIN_DIR/ComputerMCPApp" \
@@ -302,6 +305,10 @@ fi
   "$ARM64_BIN_DIR/computer-mcp" \
   "$X86_64_BIN_DIR/computer-mcp" \
   -output "$RESOURCES_DIR/computer-mcp"
+/usr/bin/lipo -create \
+  "$ARM64_BIN_DIR/computer-mcp-execution-bootstrap" \
+  "$X86_64_BIN_DIR/computer-mcp-execution-bootstrap" \
+  -output "$HELPERS_DIR/computer-mcp-execution-bootstrap"
 /bin/cp "$INFO_PLIST" "$CONTENTS/Info.plist"
 ICON_PARTIAL_PLIST=$(mktemp "${TMPDIR:-/tmp}/computer-mcp-icon.XXXXXX")
 if ! xcrun actool "$APP_ICON" --compile "$RESOURCES_DIR" --platform macosx \
@@ -318,7 +325,7 @@ fi
 /usr/libexec/PlistBuddy -c "Set :CFBundleName $APP_NAME" "$CONTENTS/Info.plist"
 /usr/libexec/PlistBuddy -c "Add :ComputerMCPEnvironment string $APP_ENVIRONMENT" \
   "$CONTENTS/Info.plist"
-/bin/chmod 755 "$MACOS_DIR/Computer MCP" "$RESOURCES_DIR/computer-mcp"
+/bin/chmod 755 "$MACOS_DIR/Computer MCP" "$RESOURCES_DIR/computer-mcp" "$HELPERS_DIR/computer-mcp-execution-bootstrap"
 
 APP_RESOURCE_BUNDLE=$(/usr/bin/find "$ARM64_BIN_DIR" -maxdepth 1 -type d \
   -name '*ComputerMCPApp*.bundle' -print -quit)
@@ -363,6 +370,7 @@ verify_universal_binary() {
 
 verify_universal_binary "$MACOS_DIR/Computer MCP"
 verify_universal_binary "$RESOURCES_DIR/computer-mcp"
+verify_universal_binary "$HELPERS_DIR/computer-mcp-execution-bootstrap"
 
 if [[ -f "$ARM64_SCRATCH/manifest.pif" ]]; then
   BUILD_GRAPH="$ARM64_SCRATCH/manifest.pif"
@@ -411,6 +419,7 @@ sign_binary() {
   fi
 }
 
+sign_binary "$HELPERS_DIR/computer-mcp-execution-bootstrap"
 sign_binary "$RESOURCES_DIR/computer-mcp"
 "$RESOURCES_DIR/computer-mcp" _bundle-plugins \
   --index "$ROOT_DIR/Resources/PluginArchives/index.json" \

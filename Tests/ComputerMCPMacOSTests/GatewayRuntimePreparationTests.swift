@@ -1,4 +1,5 @@
 import ComputerMCPMacOS
+import ComputerMCPTestSupport
 import ComputerMCPToolsProject
 import Foundation
 import GRDB
@@ -10,6 +11,10 @@ import Testing
 @testable import ComputerMCPPersistence
 @testable import ComputerMCPPlatformDarwin
 @testable import ComputerMCPPlugins
+
+#if os(macOS)
+  import ComputerMCPDarwinTestSupport
+#endif
 
 @Suite(.timeLimit(.minutes(1)))
 struct GatewayRuntimePreparationTests {
@@ -254,15 +259,19 @@ private struct PreparationStateFixture: Sendable {
       context: ExecutionContext(caller: .localCLI, profileID: .localAdmin, projectID: "fixture"),
       database: database, state: state,
       platform: PlatformServices(
+        launcher: testExecutionLauncher(),
         projectGrants: ProjectBookmarkService(
           adapter: adapter, now: { Date(timeIntervalSince1970: 2000) }),
-        pluginDirectories: MacOSPlatform.services.pluginDirectories,
-        applications: MacOSPlatform.services.applications,
-        toolProviders: MacOSPlatform.services.toolProviders,
-        managementToolNames: MacOSPlatform.services.managementToolNames,
-        executableSearchDirectories: MacOSPlatform.services.executableSearchDirectories,
-        gitExecutable: MacOSPlatform.services.gitExecutable,
-        fileChanges: MacOSPlatform.services.fileChanges),
+        pluginDirectories: MacOSPlatform.services(launcher: testExecutionLauncher())
+          .pluginDirectories,
+        applications: MacOSPlatform.services(launcher: testExecutionLauncher()).applications,
+        toolProviders: MacOSPlatform.services(launcher: testExecutionLauncher()).toolProviders,
+        managementToolNames: MacOSPlatform.services(launcher: testExecutionLauncher())
+          .managementToolNames,
+        executableSearchDirectories: MacOSPlatform.services(launcher: testExecutionLauncher())
+          .executableSearchDirectories,
+        gitExecutable: MacOSPlatform.services(launcher: testExecutionLauncher()).gitExecutable,
+        fileChanges: MacOSPlatform.services(launcher: testExecutionLauncher()).fileChanges),
       bundledPlugins: BundledPlugins(packages: [], issues: []))
   }
 

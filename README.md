@@ -155,7 +155,8 @@ Metadata changes recheck the opened inode and restore mode, times and affected x
 failure. Archive extraction validates one listing and runs tar once with a staging
 directory descriptor, streaming contents into host-created files in the
 destination before checked publication. Cleanup removes only inodes recorded at
-creation; foreign entries remain in staging and the error names the retained path.
+creation and held open until the operation ends, preventing inode reuse from
+confusing ownership. Foreign entries remain in staging and the error names the retained path.
 Extraction preserves member modification times; directory modes and times are
 restored deepest first after publication and staging cleanup.
 An existing destination keeps its own mode and times.

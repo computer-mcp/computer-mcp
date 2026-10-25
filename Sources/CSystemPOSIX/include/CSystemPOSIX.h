@@ -7,6 +7,7 @@
 
 int computer_mcp_renameat_noreplace(int source, const char *name, int target, const char *leaf);
 int computer_mcp_spawn_addfchdir(posix_spawn_file_actions_t *actions, int descriptor);
+int computer_mcp_openat_symlink(int parent, const char *name);
 ssize_t computer_mcp_flistxattr(int descriptor, char *names, size_t size);
 ssize_t computer_mcp_fgetxattr(int descriptor, const char *name, void *value, size_t size);
 int computer_mcp_fsetxattr(int descriptor, const char *name, const void *value, size_t size);

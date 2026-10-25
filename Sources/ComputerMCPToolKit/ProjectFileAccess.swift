@@ -28,8 +28,9 @@ package final class ProjectFileAccess {
       inode = value.st_ino
     }
   }
-  private var createdEntries: Set<Identity> = []
-  private var createdDirectoryDescriptors: [Identity: Int32] = [:]
+  // Keep owned inodes alive until the operation ends, even after external unlink.
+  // Otherwise inode reuse could give a foreign entry cleanup authority.
+  private var createdDescriptors: [Identity: Int32] = [:]
   private var configurationFiles: Set<String> = []
   private let mutationObserver: ((String, URL, MutationPhase) throws -> Void)?
 
@@ -60,7 +61,7 @@ package final class ProjectFileAccess {
   }
 
   deinit {
-    for fd in createdDirectoryDescriptors.values { close(fd) }
+    for fd in createdDescriptors.values { close(fd) }
     close(descriptor)
   }
 
@@ -189,7 +190,7 @@ package final class ProjectFileAccess {
         defer { close(child) }
         let entry = try status(child)
         try check(entry)
-        guard createdEntries.contains(Identity(entry)) else {
+        guard createdDescriptors[Identity(entry)] != nil else {
           throw denied("Staging contains an entry this operation did not create: \(childURL.path)")
         }
         guard same(entry, try statusAt(fd, name)) else { throw denied("Entry changed.") }
@@ -217,22 +218,13 @@ package final class ProjectFileAccess {
     for name in try names(fd) {
       guard let entry = try statusAt(fd, name) else { continue }
       let childURL = url.appendingPathComponent(name)
-      guard createdEntries.contains(Identity(entry)) else {
+      guard let owned = createdDescriptors[Identity(entry)] else {
         retained.append(childURL.path)
         continue
       }
       let directory = entry.st_mode & S_IFMT == S_IFDIR
       if directory {
-        let permission: Int32
-        if let pinned = createdDirectoryDescriptors[Identity(entry)] {
-          permission = dup(pinned)
-        } else {
-          #if canImport(Darwin)
-            permission = openat(fd, name, O_EVTONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC)
-          #else
-            permission = openat(fd, name, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC)
-          #endif
-        }
+        let permission = dup(owned)
         guard permission >= 0 else {
           retained.append(childURL.path)
           continue
@@ -620,7 +612,7 @@ package final class ProjectFileAccess {
       try mutate("symlinkat", anchors: [(parent, url)]) {
         guard symlinkat(target, parent, name) == 0 else { throw failure() }
         let created = try statusAt(parent, name)!
-        createdEntries.insert(Identity(created))
+        try pinCreatedSymbolicLink(parent, name, identity: created)
         return created
       } undo: { created in
         try removeCreated(parent, name, identity: created)
@@ -822,17 +814,23 @@ package final class ProjectFileAccess {
         guard errno == EEXIST else { throw failure() }
         return nil
       }
-      let created = try statusAt(parent, name)
-      if let created { createdEntries.insert(Identity(created)) }
-      if pinPermissions, let created {
-        let fd = try openChild(parent, name, directory: true)
-        guard same(created, try status(fd)) else {
-          close(fd)
-          throw denied("Created directory changed.")
+      guard let created = try statusAt(parent, name) else {
+        throw denied("Created directory changed.")
+      }
+      let fd: Int32
+      do { fd = try openChild(parent, name, directory: true) } catch {
+        throw denied("Cannot pin created directory; entry retained at \(url.path): \(error)")
+      }
+      defer { close(fd) }
+      guard same(created, try status(fd)) else { throw denied("Created directory changed.") }
+      do {
+        try pinCreated(fd)
+        if pinPermissions {
+          guard fchmod(fd, created.st_mode & mode & 0o777) == 0 else { throw failure() }
         }
-        createdDirectoryDescriptors[Identity(created)] = fd
-        // Keep a handle before applying modes that would prevent cleanup from reopening it.
-        guard fchmod(fd, created.st_mode & mode & 0o777) == 0 else { throw failure() }
+      } catch {
+        try removeCreated(parent, name, identity: created, directory: true)
+        throw error
       }
       return created
     } undo: { created in
@@ -846,8 +844,9 @@ package final class ProjectFileAccess {
     try mutate("openat", anchors: [(parent, url)]) {
       let fd = openat(parent, name, O_RDWR | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC, mode)
       guard fd >= 0 else { throw failure() }
-      do { createdEntries.insert(Identity(try status(fd))) } catch {
-        close(fd)
+      do { try pinCreated(fd) } catch {
+        defer { close(fd) }
+        try removeCreated(parent, name, identity: status(fd))
         throw error
       }
       return fd
@@ -941,19 +940,19 @@ package final class ProjectFileAccess {
         let output = try openChild(parent, name, directory: true)
         defer { close(output) }
         recovered = try status(output)
-        createdEntries.insert(Identity(recovered))
+        try pinCreated(output)
         try copyMetadata(input, to: output)
       } else if let link {
         guard symlinkat(link, parent, name) == 0 else { throw failure() }
         recovered = try statusAt(parent, name)!
-        createdEntries.insert(Identity(recovered))
+        try pinCreatedSymbolicLink(parent, name, identity: recovered)
       } else {
         let output = openat(
           parent, name, O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC, 0o600)
         guard output >= 0 else { throw failure() }
         defer { close(output) }
         recovered = try status(output)
-        createdEntries.insert(Identity(recovered))
+        try pinCreated(output)
         try copyFile(input, to: output)
       }
       guard same(recovered, try statusAt(parent, name)) else {
@@ -968,6 +967,34 @@ package final class ProjectFileAccess {
     let count = readlinkat(parent, name, &buffer, buffer.count - 1)
     guard count >= 0, count < buffer.count - 1 else { throw failure() }
     return String(decoding: buffer.prefix(count).map { UInt8(bitPattern: $0) }, as: UTF8.self)
+  }
+
+  private func pinCreated(_ fd: Int32) throws {
+    let identity = Identity(try status(fd))
+    guard createdDescriptors[identity] == nil else { return }
+    let pinned = fcntl(fd, F_DUPFD_CLOEXEC, 0)
+    guard pinned >= 0 else { throw failure() }
+    createdDescriptors[identity] = pinned
+  }
+
+  private func pinCreatedSymbolicLink(_ parent: Int32, _ name: String, identity: stat) throws {
+    #if canImport(Darwin)
+      let fd = openat(parent, name, O_SYMLINK | O_CLOEXEC)
+    #elseif canImport(Glibc)
+      let fd = LinuxSystemCalls.openSymbolicLink(parent, name)
+    #else
+      let fd: Int32 = -1
+    #endif
+    guard fd >= 0 else {
+      let path = descriptorURL(parent)?.appendingPathComponent(name).path ?? name
+      throw denied("Cannot pin symbolic link without following it; entry retained at \(path).")
+    }
+    defer { close(fd) }
+    guard same(identity, try status(fd)) else { throw denied("Created symbolic link changed.") }
+    do { try pinCreated(fd) } catch {
+      try removeCreated(parent, name, identity: identity)
+      throw error
+    }
   }
 
   private func removeCreated(

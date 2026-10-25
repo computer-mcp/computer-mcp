@@ -347,7 +347,9 @@ struct ArchiveExtractionGuardTests {
     #expect(info.st_nlink == 1)
   }
 
-  @Test(arguments: ["unlisted", "symlink", "hardlink", "metadata", "missing", "type", "failure"])
+  @Test(arguments: [
+    "unlisted", "symlink", "hardlink", "metadata", "missing", "type", "replacement", "failure",
+  ])
   func extractedTreeMustMatchAndCleanupPreservesUnknownEntries(change: String) throws {
     let fixture = try ArchiveFixture()
     defer { fixture.remove() }
@@ -364,6 +366,7 @@ struct ArchiveExtractionGuardTests {
     let observer: @Sendable (String, URL, ProjectFileAccess.MutationPhase) throws -> Void = {
       operation, staging, phase in
       guard operation == "archive.extract", phase == .didMutate else { return }
+      runner.observeMutation()
       let member = staging.appendingPathComponent("member")
       switch change {
       case "unlisted": try Data("extra".utf8).write(to: staging.appendingPathComponent("extra"))
@@ -377,12 +380,17 @@ struct ArchiveExtractionGuardTests {
       case "type":
         try FileManager.default.removeItem(at: member)
         try FileManager.default.createDirectory(at: member, withIntermediateDirectories: false)
+      case "replacement":
+        try FileManager.default.removeItem(at: member)
+        try Data("foreign".utf8).write(to: member)
       default: throw CocoaError(.fileWriteUnknown)
       }
     }
     let error = #expect(throws: (any Error).self) {
       try extract(fixture.root, runner: runner, observer: observer)
     }
+    #expect(runner.calls == 3)
+    #expect(runner.observedMutation)
     var info = stat()
     try #require(lstat(output.path, &info) == 0)
     #expect(info.st_mode & 0o777 == 0o750)
@@ -396,10 +404,33 @@ struct ArchiveExtractionGuardTests {
     if ["missing", "hardlink", "failure"].contains(change) {
       #expect(remaining.isEmpty)
     } else {
-      let staging = output.appendingPathComponent(try #require(remaining.first))
+      let staging = output.appendingPathComponent(
+        try #require(remaining.first, "\(String(describing: error))"))
       #expect(remaining.count == 1)
       #expect(String(describing: error).contains(staging.path))
       #expect(try !FileManager.default.contentsOfDirectory(atPath: staging.path).isEmpty)
+      switch change {
+      case "unlisted":
+        #expect(try Data(contentsOf: staging.appendingPathComponent("extra")) == Data("extra".utf8))
+      case "metadata":
+        #expect(
+          try Data(contentsOf: staging.appendingPathComponent(".git")) == Data("metadata".utf8))
+      case "replacement":
+        #expect(
+          try Data(contentsOf: staging.appendingPathComponent("member")) == Data("foreign".utf8))
+      case "symlink":
+        #expect(
+          try FileManager.default.destinationOfSymbolicLink(
+            atPath: staging.appendingPathComponent("link").path)
+            == staging.appendingPathComponent("member").path)
+      case "type":
+        var directory = ObjCBool(false)
+        #expect(
+          FileManager.default.fileExists(
+            atPath: staging.appendingPathComponent("member").path, isDirectory: &directory))
+        #expect(directory.boolValue)
+      default: break
+      }
     }
   }
 
@@ -577,9 +608,9 @@ struct ArchiveExtractionGuardTests {
       base: ToolEnvironment(configuration: .init()).commandRunner)
     try extract(fixture.root, runner: runner, archive: name)
     let output = fixture.root.appendingPathComponent("output")
-    var sparse = Data(repeating: 0, count: 1_024)
+    var sparse = Data(repeating: 0, count: 2_048)
     sparse[0] = 120
-    sparse[1_023] = 120
+    sparse[2_047] = 120
     var tail = Data(repeating: 0, count: 1_024)
     tail[0] = 120
     #expect(try Data(contentsOf: output.appendingPathComponent("first")) == Data("before".utf8))
@@ -622,6 +653,10 @@ private final class ArchiveExtractionRunner: CommandRunning, @unchecked Sendable
   let extracting: (@Sendable () throws -> Void)?
   private let lock = NSLock()
   private var count = 0
+  private var mutationObserved = false
+  var observedMutation: Bool { lock.withLock { mutationObserved } }
+
+  func observeMutation() { lock.withLock { mutationObserved = true } }
   var calls: Int { lock.withLock { count } }
 
   init(base: any CommandRunning, extracting: (@Sendable () throws -> Void)? = nil) {

@@ -5,6 +5,7 @@
 #endif
 
 #include "CSystemPOSIX.h"
+#include <fcntl.h>
 #include <stdio.h>
 #include <sys/xattr.h>
 
@@ -14,6 +15,10 @@ int computer_mcp_renameat_noreplace(int source, const char *name, int target, co
 
 int computer_mcp_spawn_addfchdir(posix_spawn_file_actions_t *actions, int descriptor) {
   return posix_spawn_file_actions_addfchdir_np(actions, descriptor);
+}
+
+int computer_mcp_openat_symlink(int parent, const char *name) {
+  return openat(parent, name, O_PATH | O_NOFOLLOW | O_CLOEXEC);
 }
 
 ssize_t computer_mcp_flistxattr(int descriptor, char *names, size_t size) {

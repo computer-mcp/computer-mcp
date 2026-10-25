@@ -134,6 +134,8 @@ archive modes and modification times are restored through checked descriptors,
 deepest first after publication and staging cleanup. An existing destination
 keeps its own mode, access time and modification time. An explicit `.` member
 supplies destination metadata only when extraction creates that directory.
+Created inodes stay pinned by close-on-exec descriptors until the file operation
+ends, preventing inode reuse from assigning cleanup authority to a foreign entry.
 Cleanup removes only recorded inodes, preserves foreign
 entries without recursing into them, and retains staging with an error naming
 its path. Earlier published entries remain after a later failure. `file.trash`

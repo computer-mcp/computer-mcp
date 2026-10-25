@@ -165,7 +165,10 @@ final class Events: @unchecked Sendable {
 /// Blocking test clients run outside the proxy event loop and have a strict socket timeout.
 final class TestSocket {
   private var descriptor: Int32
-  init(port: UInt16, ipv6: Bool = false, receiveBuffer: Int32? = nil) throws {
+  init(
+    port: UInt16, ipv6: Bool = false, receiveBuffer: Int32? = nil,
+    receiveTimeoutSeconds: Int = 3
+  ) throws {
     #if canImport(Darwin)
       descriptor = socket(ipv6 ? AF_INET6 : AF_INET, SOCK_STREAM, 0)
     #else
@@ -176,8 +179,10 @@ final class TestSocket {
       setsockopt(
         descriptor, SOL_SOCKET, SO_RCVBUF, &receiveBuffer, socklen_t(MemoryLayout<Int32>.size))
     }
+    var receiveTimeout = timeval(tv_sec: receiveTimeoutSeconds, tv_usec: 0)
+    setsockopt(
+      descriptor, SOL_SOCKET, SO_RCVTIMEO, &receiveTimeout, socklen_t(MemoryLayout<timeval>.size))
     var timeout = timeval(tv_sec: 3, tv_usec: 0)
-    setsockopt(descriptor, SOL_SOCKET, SO_RCVTIMEO, &timeout, socklen_t(MemoryLayout<timeval>.size))
     setsockopt(descriptor, SOL_SOCKET, SO_SNDTIMEO, &timeout, socklen_t(MemoryLayout<timeval>.size))
     let address = try SocketAddress(ipAddress: ipv6 ? "::1" : "127.0.0.1", port: Int(port))
     let status = address.withSockAddr { connect(descriptor, $0, socklen_t($1)) }

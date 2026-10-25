@@ -207,7 +207,9 @@ import Testing
         routing: MutableRoutes(), resolver: HostResolver(), limits: .init(bufferBytes: 32_768),
         dial: { _, route, loop in try EgressSocket.connect(to: destination, route: route, on: loop)
         })
-      let client = try TestSocket(port: try await proxy.sandboxPorts().http)
+      // The origin stays silent until every delayed read and the input half-close complete.
+      let client = try TestSocket(
+        port: try await proxy.sandboxPorts().http, receiveTimeoutSeconds: 15)
       defer { client.close() }
       try establish(client)
       try client.write(Array(repeating: 37, count: size))

@@ -3768,6 +3768,11 @@ It compares the tree's paths and types, including implicit parent directories,
 with the listing and rejects foreign inodes, symlinks and multiply linked files.
 It then creates destination directories and publishes files with anchored
 exclusive renames. Cleanup removes only recorded inodes, on success or failure.
+The host retains a close-on-exec descriptor for every created inode until the file
+operation ends. An external unlink therefore cannot recycle an owned identity
+into a foreign entry. Descriptor use grows with the number of created inodes;
+exhausting the process descriptor limit fails the operation rather than recording
+an unpinned identity.
 It preserves unknown entries without descending into foreign directories, retains
 their staging directory, and fails with the retained paths in the error.
 Entries already published before a later failure remain in place;

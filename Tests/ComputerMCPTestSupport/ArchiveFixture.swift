@@ -118,15 +118,16 @@ package struct ArchiveFixture: Sendable {
             info.size = len(content)
             archive.addfile(info, io.BytesIO(content))
           elif e['kind'] == 'sparse':
-            info.size = 2
-            info.pax_headers.update({'GNU.sparse.size': '1024', 'GNU.sparse.numblocks': '2',
-              'GNU.sparse.name': e['name'], 'GNU.sparse.map': '0,1,1023,1'})
-            archive.addfile(info, io.BytesIO(b'xx'))
+            # GNU sparse extents occupy whole tar blocks, except the final extent.
+            info.size = 1024
+            info.pax_headers.update({'GNU.sparse.size': '2048', 'GNU.sparse.numblocks': '2',
+              'GNU.sparse.name': e['name'], 'GNU.sparse.map': '0,512,1536,512'})
+            archive.addfile(info, io.BytesIO(b'x' + bytes(1022) + b'x'))
           elif e['kind'] == 'sparse-tail':
-            info.size = 1
+            info.size = 512
             info.pax_headers.update({'GNU.sparse.size': '1024', 'GNU.sparse.numblocks': '2',
-              'GNU.sparse.name': e['name'], 'GNU.sparse.map': '0,1,1024,0'})
-            archive.addfile(info, io.BytesIO(b'x'))
+              'GNU.sparse.name': e['name'], 'GNU.sparse.map': '0,512,1024,0'})
+            archive.addfile(info, io.BytesIO(b'x' + bytes(511)))
           else:
             info.type = {'directory': tarfile.DIRTYPE, 'symlink': tarfile.SYMTYPE,
               'hardlink': tarfile.LNKTYPE, 'fifo': tarfile.FIFOTYPE,

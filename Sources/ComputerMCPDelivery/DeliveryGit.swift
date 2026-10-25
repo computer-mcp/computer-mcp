@@ -28,13 +28,12 @@ internal struct DeliveryGit: Sendable {
   init(environment tools: ToolEnvironment) throws {
     runner = ManagedCommandRunner(launcher: tools.launcher, policy: .fullAccess)
     let command = try tools.registeredCommands.gitCLICommand()
-    let invocation = try tools.registeredCommands.resolveCLIInvocation(command)
+    let invocation = try tools.registeredCommands.resolveHostInvocation(command)
     executable = invocation.executable
     prefix = invocation.arguments
     home = try PrivateProcessHome()
     let sourceEnvironment = tools.environment.merging(command.env) { _, value in value }
-    self.environment = HostGitConfiguration.environment(
-      sourceEnvironment, home: home.url)
+    self.environment = HostGitConfiguration.environment(home: home.url)
     identityEnvironment = HostGitConfiguration.identityEnvironment(sourceEnvironment)
     timeout = command.defaultTimeoutMs ?? tools.configuration.policy.defaultTimeoutMs
   }

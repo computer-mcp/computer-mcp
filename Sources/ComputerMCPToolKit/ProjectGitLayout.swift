@@ -28,14 +28,13 @@ enum ProjectGitLayout {
     }
     let home = try PrivateProcessHome()
     defer { withExtendedLifetime(home) {} }
-    var isolated = HostGitConfiguration.environment(environment, home: home.url)
-    isolated["LC_ALL"] = "C"
+    let isolated = HostGitConfiguration.environment(home: home.url)
     let invocation: (executable: String, arguments: [String])
     if let configured = configuredInvocation {
       invocation = configured
     } else {
       let git = ExecutableInspection.inspect(
-        "git", workingDirectory: project, environment: isolated)
+        "git", workingDirectory: project, environment: environment)
       guard !git.hasKnownFailure, let executable = git.path else { throw invalid() }
       invocation = (executable, [])
     }

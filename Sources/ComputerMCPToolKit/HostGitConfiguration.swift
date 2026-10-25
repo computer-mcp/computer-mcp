@@ -21,8 +21,8 @@ package enum HostGitConfiguration {
     "-c", "gc.auto=0", "-c", "maintenance.auto=false", "-c", "submodule.recurse=false",
   ]
 
-  package static func environment(_ source: [String: String], home: URL) -> [String: String] {
-    var result = source.filter { !$0.key.hasPrefix("GIT_") }
+  package static func environment(home: URL) -> [String: String] {
+    var result = ["LC_ALL": "C"]
     result["HOME"] = home.path
     result["XDG_CONFIG_HOME"] = home.path
     result["GIT_CONFIG_NOSYSTEM"] = "1"
@@ -44,9 +44,11 @@ package enum HostGitConfiguration {
 
   /// Owner identity is read as configuration data before isolating program execution.
   package static func identityEnvironment(_ source: [String: String]) -> [String: String] {
-    source.filter {
-      !$0.key.hasPrefix("GIT_") || ["GIT_CONFIG_GLOBAL", "GIT_CONFIG_SYSTEM"].contains($0.key)
+    var result = source.filter {
+      ["HOME", "XDG_CONFIG_HOME", "GIT_CONFIG_GLOBAL", "GIT_CONFIG_SYSTEM"].contains($0.key)
     }
+    result["LC_ALL"] = "C"
+    return result
   }
 
   /// Configuration names are NUL-delimited; subsection names can contain newlines.

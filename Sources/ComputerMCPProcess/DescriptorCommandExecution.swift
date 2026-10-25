@@ -23,7 +23,8 @@ internal enum DescriptorCommandExecution {
       throw CommandRunnerError.launchFailed(inspection.message)
     }
     let setup = try policy.prepare(
-      directory: directory, environment: environment, systemReadPaths: launcher.hostSystemReadPaths)
+      directory: directory, environment: environment, hostVariables: environment,
+      systemReadPaths: launcher.hostSystemReadPaths)
     defer { setup.removeTemporaryDirectory() }
     let launchDirectory: SandboxPath
     if case .sandbox(let configuration) = setup.mode {

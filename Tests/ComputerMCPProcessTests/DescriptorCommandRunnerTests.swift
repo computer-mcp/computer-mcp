@@ -34,6 +34,75 @@ struct DescriptorCommandRunnerTests {
     #expect(result.stdout == "CHILD_ONLY=selected\n")
   }
 
+  #if os(macOS)
+    @Test(arguments: [false, true], [false, true])
+    func explicitEnvironmentsExcludeProcessAndRunnerSecrets(managed: Bool, readOnly: Bool) throws {
+      let key = "PROCESS_SECRET_" + UUID().uuidString.replacingOccurrences(of: "-", with: "")
+      setenv(key, "private", 1)
+      defer { unsetenv(key) }
+      let temporary = try ScopedTemporaryDirectory()
+      let policy: HostExecutionPolicy = readOnly ? .readOnly : .fullAccess
+      let launcher = testExecutionLauncher()
+      let runner: any CommandRunning =
+        managed
+        ? ManagedCommandRunner(
+          launcher: launcher, policy: policy, hostVariables: ["BASE_SECRET": "private"])
+        : ProcessCommandRunner(launcher: launcher, environment: ["BASE_SECRET": "private"])
+      let directory = open(temporary.url.path, O_RDONLY | O_DIRECTORY | O_CLOEXEC)
+      let input = open("/dev/null", O_RDONLY | O_CLOEXEC)
+      let outputURL = temporary.url.appendingPathComponent("output")
+      let output = open(outputURL.path, O_RDWR | O_CREAT | O_EXCL | O_CLOEXEC, 0o600)
+      try #require(directory >= 0 && input >= 0 && output >= 0)
+      defer {
+        close(directory)
+        close(input)
+        close(output)
+      }
+      try HostExecutionPolicy.$current.withValue(policy) {
+        for entry in ["isolated", "file", "directory"] {
+          let result: CommandResult
+          let variables = ["SELECTED": "explicit", "LC_ALL": "C"]
+          if entry == "isolated" {
+            result = try runner.runIsolated(
+              executable: testExecutable("env"), arguments: [], workingDirectory: temporary.url,
+              environment: variables, timeoutMilliseconds: 10_000, maxOutputBytes: 4096)
+          } else if entry == "file" {
+            result = try runner.runToFile(
+              executable: testExecutable("env"), arguments: [], workingDirectory: temporary.url,
+              environment: variables, timeoutMilliseconds: 10_000, maxOutputBytes: 4096,
+              outputDescriptor: output)
+          } else {
+            result = try runner.runInDirectory(
+              executable: testExecutable("env"), arguments: [], directoryDescriptor: directory,
+              inputDescriptor: input, outputDescriptor: output, environment: variables,
+              timeoutMilliseconds: 10_000, maxOutputBytes: 4096)
+          }
+          #expect(result.exitCode == 0, "\(entry): \(result.stderr)")
+          let text =
+            entry == "isolated"
+            ? result.stdout : String(decoding: try Data(contentsOf: outputURL), as: UTF8.self)
+          // Report booleans so a regression cannot print inherited credentials into test logs.
+          let validEncoding = !text.contains("\u{FFFD}")
+          let selectedValuePresent = text.contains("SELECTED=explicit\n")
+          let localePresent = text.contains("LC_ALL=C\n")
+          let processSecretAbsent = !text.contains(key)
+          let runnerSecretAbsent = !text.contains("BASE_SECRET")
+          #expect(validEncoding, "\(entry)")
+          #expect(selectedValuePresent)
+          #expect(localePresent)
+          #expect(processSecretAbsent)
+          #expect(runnerSecretAbsent)
+          if !readOnly {
+            let exact = Set(text.split(separator: "\n")) == ["SELECTED=explicit", "LC_ALL=C"]
+            #expect(exact)
+          }
+          ftruncate(output, 0)
+          lseek(output, 0, SEEK_SET)
+        }
+      }
+    }
+  #endif
+
   @Test(arguments: [false, true])
   func streamsBeyondCaptureLimitAndReportsWriteErrors(managed: Bool) throws {
     let temporary = try ScopedTemporaryDirectory()

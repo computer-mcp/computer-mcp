@@ -65,7 +65,7 @@ package final class ProcessCommandRunner: CommandRunning, Sendable {
   ) throws -> CommandResult {
     try ManagedCommandRunner(launcher: launcher, policy: HostExecutionPolicy.current).runToFile(
       executable: executable, arguments: arguments, workingDirectory: workingDirectory,
-      environment: baseEnvironment.merging(environment) { _, value in value },
+      environment: environment,
       timeoutMilliseconds: timeoutMilliseconds, maxOutputBytes: maxOutputBytes,
       outputDescriptor: outputDescriptor)
   }
@@ -79,7 +79,7 @@ package final class ProcessCommandRunner: CommandRunning, Sendable {
       .runInDirectory(
         executable: executable, arguments: arguments, directoryDescriptor: directoryDescriptor,
         inputDescriptor: inputDescriptor, outputDescriptor: outputDescriptor,
-        environment: baseEnvironment.merging(environment) { _, value in value },
+        environment: environment,
         timeoutMilliseconds: timeoutMilliseconds, maxOutputBytes: maxOutputBytes)
   }
 

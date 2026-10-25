@@ -65,18 +65,17 @@ package struct RegisteredCommands: Sendable {
     try ProjectGitLayout.validate(
       project: project, launcher: launcher,
       environment: environment.merging(command?.env ?? [:]) { _, value in value },
-      invocation: command.map { try resolveCLIInvocation($0) })
+      invocation: command.map { try resolveHostInvocation($0) })
   }
 
   package func runHostGit(
     command: CLICommandConfig, args: [String], timeout: Int?, maxOutputBytes: Int? = nil
   ) throws -> CommandResult {
-    let invocation = try resolveCLIInvocation(command)
+    let invocation = try resolveHostInvocation(command)
     let home = try PrivateProcessHome()
     defer { withExtendedLifetime(home) {} }
     let sourceEnvironment = self.environment.merging(command.env) { _, value in value }
-    let environment = HostGitConfiguration.environment(
-      sourceEnvironment, home: home.url)
+    let environment = HostGitConfiguration.environment(home: home.url)
     let directory = command.resolvedWorkingDirectory(base: configuration.projectDirectory)
     let limit = timeout ?? command.defaultTimeoutMs ?? configuration.policy.defaultTimeoutMs
     let keys = try commandRunner.runIsolated(
@@ -131,11 +130,10 @@ package struct RegisteredCommands: Sendable {
   package func runSQLite(
     command: CLICommandConfig, args: [String], timeout: Int, maxOutputBytes: Int
   ) throws -> CommandResult {
-    let invocation = try resolveCLIInvocation(command)
+    let invocation = try resolveHostInvocation(command)
     let home = try PrivateProcessHome()
     defer { withExtendedLifetime(home) {} }
-    var isolated = environment.merging(command.env) { _, value in value }
-    isolated["HOME"] = home.url.path
+    let isolated = ["HOME": home.url.path]
     return try commandRunner.runIsolated(
       executable: invocation.executable,
       arguments: invocation.arguments + ["-init", "/dev/null", "-safe"] + args,
@@ -155,6 +153,21 @@ package struct RegisteredCommands: Sendable {
       interpreterBindings: command.interpreterBindings)
     guard !invocation.inspection.hasKnownFailure, let executable = invocation.executable else {
       throw GatewayToolError.invalidArguments(invocation.inspection.message)
+    }
+    return (executable, invocation.arguments)
+  }
+
+  package func resolveHostInvocation(_ command: CLICommandConfig) throws
+    -> (executable: String, arguments: [String])
+  {
+    let invocation = try resolveCLIInvocation(command)
+    let inspection = ExecutableInspection.inspect(
+      invocation.executable,
+      workingDirectory: command.resolvedWorkingDirectory(base: configuration.projectDirectory)
+        ?? configuration.projectDirectory,
+      environment: environment.merging(command.env) { _, value in value })
+    guard !inspection.hasKnownFailure, let executable = inspection.path else {
+      throw GatewayToolError.invalidArguments(inspection.message)
     }
     return (executable, invocation.arguments)
   }

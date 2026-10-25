@@ -36,7 +36,9 @@ package struct ExecutionLauncher: Sendable {
     let sandbox: SandboxConfiguration?
     switch mode {
     case .sandbox(let configuration):
-      guard directoryDescriptor == nil, directory == configuration.worktree else {
+      guard directoryDescriptor == nil || configuration.readOnly,
+        directory == configuration.worktree
+      else {
         throw ExecutionEnvironmentError.invalidConfiguration(
           "Sandbox working directory must be its worktree")
       }

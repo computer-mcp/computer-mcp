@@ -100,6 +100,7 @@ package protocol CommandRunning: Sendable {
   ) throws -> CommandResult
 
   /// Writes stdout to an already-open host-owned descriptor without reopening its pathname.
+  /// The environment is an explicit caller-owned set; process and runner defaults are not merged.
   func runToFile(
     executable: String, arguments: [String], workingDirectory: URL?,
     environment: [String: String], timeoutMilliseconds: Int, maxOutputBytes: Int,
@@ -107,6 +108,7 @@ package protocol CommandRunning: Sendable {
   ) throws -> CommandResult
 
   /// The child uses the opened directory and streams through the supplied descriptors.
+  /// The environment is an explicit caller-owned set; process and runner defaults are not merged.
   func runInDirectory(
     executable: String, arguments: [String], directoryDescriptor: Int32,
     inputDescriptor: Int32, outputDescriptor: Int32, environment: [String: String],

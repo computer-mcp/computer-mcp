@@ -1,3 +1,9 @@
+#if canImport(Darwin)
+  import Darwin
+#elseif canImport(Glibc)
+  import Glibc
+#endif
+
 #if os(macOS)
   import ComputerMCPConfiguration
   import ComputerMCPDarwinTestSupport
@@ -9,8 +15,11 @@
 
   @Suite(.nativeIntegration)
   struct IsolatedCommandEnvironmentTests {
-    @Test(arguments: ["git", "sqlite3"])
-    func registeredReadsKeepIsolationInsideReadOnlySandbox(program: String) throws {
+    @Test(arguments: ["git", "sqlite3"], [false, true])
+    func registeredReadsUseExplicitVariables(program: String, readOnly: Bool) throws {
+      let sentinel = "PROCESS_SECRET_" + UUID().uuidString.replacingOccurrences(of: "-", with: "")
+      setenv(sentinel, "private", 1)
+      defer { unsetenv(sentinel) }
       let temporary = try ScopedTemporaryDirectory()
       let root = temporary.url
       let suppliedHome = root.appendingPathComponent("owner")
@@ -26,16 +35,19 @@
         set -eu
         test -z "${HOST_ONLY:-}"
         test -z "${USER:-}"
-        test "$SELECTED" = explicit
-        test "$LC_ALL" = C
+        test -z "${SELECTED:-}"
+        test -z "${\(sentinel):-}"
         test "$HOME" != '\(suppliedHome.path)'
+        if \(readOnly ? "true" : "false"); then
         test "$TMPDIR" = "$HOME/"
         test "$XDG_CACHE_HOME" = "$HOME"
         test -z "${HTTP_PROXY:-}"
         test -z "$NO_PROXY"
         if (printf forbidden > '\(root.path)/forbidden') 2>/dev/null; then exit 91; fi
+        fi
         printf allowed > "$HOME/allowed"
         if test '\(program)' = git; then
+          test "$LC_ALL" = C
           test "$GIT_CONFIG_NOSYSTEM" = 1
           test "$GIT_CONFIG_GLOBAL" = /dev/null
           test "$GIT_NO_LAZY_FETCH" = 1
@@ -53,14 +65,14 @@
         configuration: .init(projectDirectory: root), launcher: launcher,
         commandRunner: ProcessCommandRunner(
           launcher: launcher, environment: ["HOST_ONLY": "private", "USER": "host"]),
-        environment: [
+        environment: ProcessInfo.processInfo.environment.merging([
           "PATH": systemUtilityPath, "HOME": suppliedHome.path, "SELECTED": "explicit",
           "LC_ALL": "C", "TMPDIR": suppliedHome.path,
           "HTTP_PROXY": "http://outside.invalid:8080", "NO_PROXY": "*",
           "GIT_CONFIG_SYSTEM": suppliedHome.appendingPathComponent(".gitconfig").path,
-        ])
+        ]) { _, value in value })
       let command = CLICommandConfig(id: program, executable: wrapper.path)
-      let result = try HostExecutionPolicy.$current.withValue(.readOnly) {
+      let result = try HostExecutionPolicy.$current.withValue(readOnly ? .readOnly : .fullAccess) {
         if program == "git" {
           return try commands.runHostGit(
             command: command, args: ["config", "--list"], timeout: 10_000)

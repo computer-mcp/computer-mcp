@@ -60,9 +60,12 @@ package struct DarwinExecutionPlatform: ExecutionPlatform {
     bindOwnership: @Sendable (any ExecutionOwnership) -> Void
   ) async throws -> any ExecutionOwnership {
     try Task.checkCancellation()
-    guard command.directoryDescriptor == nil || (sandbox == nil && method == .posixSpawn) else {
+    guard
+      command.directoryDescriptor == nil
+        || ((sandbox == nil || sandbox?.readOnly == true) && method == .posixSpawn)
+    else {
       throw ExecutionEnvironmentError.invalidConfiguration(
-        "Descriptor working directories require a Full access POSIX launch")
+        "Descriptor working directories require a Full access or read-only POSIX launch")
     }
     if sandbox == nil { try responsibility.preflight() }
     let bootstrap = try bootstrapExecutable ?? Self.locateBootstrap()
@@ -96,7 +99,8 @@ package struct DarwinExecutionPlatform: ExecutionPlatform {
                   try responsibility.disclaim(&attributes)
                 }
               }
-              let environment = command.environment.map { Array(($0.key + "=" + $0.value).utf8) }
+              // The raw-byte environment API passes NUL-terminated C strings to spawn.
+              let environment = command.environment.map { Array(($0.key + "=" + $0.value + "\0").utf8) }
               let result = try await Subprocess.run(
                 .path(FilePath(bootstrap.path)), arguments: .init(arguments),
                 environment: .custom(environment),

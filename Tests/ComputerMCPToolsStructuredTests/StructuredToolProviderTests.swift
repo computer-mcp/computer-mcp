@@ -2665,7 +2665,8 @@ final class StructuredToolProviderTests {
           builtin: BuiltinConfig(enabled: ["sqlite.schema"]),
           projectDirectory: directory
         ),
-        commandRunner: runner, sqliteCommand: .init(id: "sqlite3", executable: "sqlite3")))
+        commandRunner: runner, environment: ["PATH": systemUtilityPath],
+        sqliteCommand: .init(id: "sqlite3", executable: "sqlite3")))
 
     let result = try provider.callTool(
       .init(
@@ -2681,7 +2682,7 @@ final class StructuredToolProviderTests {
     let firstCall = try #require(runner.calls.first)
     let firstSQL = try #require(firstCall.arguments.last)
 
-    #expect((firstCall.executable) == ("sqlite3"))
+    #expect(firstCall.executable == (try testExecutable("sqlite3")))
     #expect(firstCall.timeoutMilliseconds == 10_000)
     #expect(firstCall.maxOutputBytes == 4096)
     #expect(
@@ -2875,7 +2876,8 @@ final class StructuredToolProviderTests {
           builtin: BuiltinConfig(enabled: ["sqlite.query"]),
           projectDirectory: directory
         ),
-        commandRunner: runner, sqliteCommand: .init(id: "sqlite3", executable: "sqlite3")))
+        commandRunner: runner, environment: ["PATH": systemUtilityPath],
+        sqliteCommand: .init(id: "sqlite3", executable: "sqlite3")))
 
     let result = try provider.callTool(
       .init(
@@ -2892,7 +2894,7 @@ final class StructuredToolProviderTests {
     let firstCall = try #require(runner.calls.first)
     let firstSQL = try #require(firstCall.arguments.last)
 
-    #expect((firstCall.executable) == ("sqlite3"))
+    #expect(firstCall.executable == (try testExecutable("sqlite3")))
     #expect(firstCall.timeoutMilliseconds == 10_000)
     #expect(firstCall.maxOutputBytes == 4096)
     #expect(

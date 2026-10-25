@@ -34,38 +34,42 @@ package final class ProjectFileAccess {
       inode = value.st_ino
     }
   }
-  package struct BirthTime: Equatable {
-    package let seconds: Int64
-    package let nanoseconds: Int64
-
-    package init(seconds: Int64, nanoseconds: Int64) {
-      self.seconds = seconds
-      self.nanoseconds = nanoseconds
-    }
+  /// What distinguishes a created inode from a later inode with the same number.
+  package enum Generation: Equatable {
+    /// The volume never reuses inode numbers (APFS).
+    case stableInode
+    /// A kernel file handle, which encodes the inode generation (Linux `name_to_handle_at`).
+    case handle([UInt8])
+    /// The filesystem offers neither; only a held descriptor keeps the inode allocated.
+    case unavailable
   }
 
   package struct CreatedIdentity {
     package var device: dev_t
     package var inode: ino_t
-    package var birthTime: BirthTime?
+    package var generation: Generation
 
-    package init(_ value: stat, birthTime: BirthTime?) {
+    package init(_ value: stat, generation: Generation) {
       device = value.st_dev
       inode = value.st_ino
-      self.birthTime = birthTime
+      self.generation = generation
     }
   }
 
   private struct CreatedEntry {
-    let birthTime: BirthTime?
+    let generation: Generation
+    /// Held only for `.unavailable`, until the operation ends.
     let descriptor: Int32?
   }
 
   package static let fallbackDescriptorLimit = 64
-  private static let cleanupDescriptorReserve = 32
+  // Cleanup walks one descriptor per directory level; held fallback descriptors grow the
+  // reserve by one per created directory so rollback can always descend.
+  private static let cleanupDescriptorReserve = 16
   private var createdEntries: [Identity: CreatedEntry] = [:]
   private var cleanupReserve: [Int32] = []
   private var fallbackCount = 0
+  private var fallbackDirectoryCount = 0
   private let identityReader: (Int32) throws -> CreatedIdentity
   private var configurationFiles: Set<String> = []
   private let mutationObserver: ((String, URL, MutationPhase) throws -> Void)?
@@ -203,9 +207,7 @@ package final class ProjectFileAccess {
             #else
               let times = [value.st_atim, value.st_mtim]
             #endif
-            try preservingBirthTime(parent) {
-              guard futimens(parent, times) == 0 else { throw failure() }
-            }
+            guard futimens(parent, times) == 0 else { throw failure() }
           }
           let published = try status(parent)
           try mutate("futimens", anchors: [(parent, url)]) {
@@ -266,20 +268,31 @@ package final class ProjectFileAccess {
         retained.append(childURL.path)
         continue
       }
+      let directory = entry.st_mode & S_IFMT == S_IFDIR
+      // Close the identity handle before descending: the walk holds one descriptor per level.
       let permission = try openIdentity(fd, name)
-      defer { close(permission) }
-      guard same(entry, try status(permission)), try owns(permission) else {
+      let owned: Bool
+      do {
+        owned = try same(entry, try status(permission)) && owns(permission)
+        if owned, directory {
+          #if canImport(Glibc)
+            let changed = LinuxSystemCalls.chmodIdentity(
+              permission, (entry.st_mode & 0o7777) | 0o700)
+          #else
+            let changed = fchmod(permission, (entry.st_mode & 0o7777) | 0o700)
+          #endif
+          guard changed == 0 else { throw failure() }
+        }
+      } catch {
+        close(permission)
+        throw error
+      }
+      close(permission)
+      guard owned else {
         retained.append(childURL.path)
         continue
       }
-      let directory = entry.st_mode & S_IFMT == S_IFDIR
       if directory {
-        #if canImport(Glibc)
-          let changed = LinuxSystemCalls.chmodIdentity(permission, (entry.st_mode & 0o7777) | 0o700)
-        #else
-          let changed = fchmod(permission, (entry.st_mode & 0o7777) | 0o700)
-        #endif
-        guard changed == 0 else { throw failure() }
         let child = try openChild(fd, name, directory: true)
         defer { close(child) }
         guard same(entry, try status(child)) else {
@@ -346,7 +359,7 @@ package final class ProjectFileAccess {
         }
         close(fd)
       }
-      result = try preservingBirthTime(fd) { try produce(fd) }
+      result = try produce(fd)
       let produced = try status(fd)
       try check(produced, regular: true)
       if let maximumBytes, produced.st_size > maximumBytes {
@@ -534,14 +547,12 @@ package final class ProjectFileAccess {
         #else
           let times = [opened.st_atim, opened.st_mtim]
         #endif
-        try preservingBirthTime(fd) {
-          guard futimens(fd, times) == 0 else { throw failure() }
-        }
+        guard futimens(fd, times) == 0 else { throw failure() }
       }
       return try mutate(operation, anchors: [(parent, url)]) {
         try check(try status(fd))
         guard same(opened, try statusAt(parent, name)) else { throw denied("Path changed.") }
-        do { return try preservingBirthTime(fd) { try body(fd) } } catch {
+        do { return try body(fd) } catch {
           try restore()
           throw error
         }
@@ -992,7 +1003,7 @@ package final class ProjectFileAccess {
         defer { close(output) }
         recovered = try status(output)
         try recordCreated(output)
-        try preservingBirthTime(output) { try copyMetadata(input, to: output) }
+        try copyMetadata(input, to: output)
       } else if let link {
         guard symlinkat(link, parent, name) == 0 else { throw failure() }
         recovered = try statusAt(parent, name)!
@@ -1004,7 +1015,7 @@ package final class ProjectFileAccess {
         defer { close(output) }
         recovered = try status(output)
         try recordCreated(output)
-        try preservingBirthTime(output) { try copyFile(input, to: output) }
+        try copyFile(input, to: output)
       }
       guard same(recovered, try statusAt(parent, name)) else {
         throw denied("Entry changed concurrently; rollback left it in place.")
@@ -1023,19 +1034,20 @@ package final class ProjectFileAccess {
   package static func createdIdentity(_ fd: Int32) throws -> CreatedIdentity {
     var value = stat()
     guard fstat(fd, &value) == 0 else { throw POSIXError(.init(rawValue: errno) ?? .EIO) }
-    return CreatedIdentity(value, birthTime: try birthTime(fd))
+    return CreatedIdentity(value, generation: try generation(fd))
   }
 
-  private static func birthTime(_ fd: Int32) throws -> BirthTime? {
+  private static func generation(_ fd: Int32) throws -> Generation {
     #if canImport(Darwin)
-      var value = stat()
-      guard fstat(fd, &value) == 0 else { throw POSIXError(.init(rawValue: errno) ?? .EIO) }
-      return BirthTime(
-        seconds: Int64(value.st_birthtimespec.tv_sec),
-        nanoseconds: Int64(value.st_birthtimespec.tv_nsec))
+      var volume = statfs()
+      guard fstatfs(fd, &volume) == 0 else { throw POSIXError(.init(rawValue: errno) ?? .EIO) }
+      let type = withUnsafeBytes(of: volume.f_fstypename) {
+        String(decoding: $0.prefix { $0 != 0 }, as: UTF8.self)
+      }
+      // APFS assigns inode numbers from a per-volume counter that only increases.
+      return type == "apfs" ? .stableInode : .unavailable
     #elseif canImport(Glibc)
-      let time = try LinuxSystemCalls.birthTime(fd)
-      return time.map { BirthTime(seconds: $0.seconds, nanoseconds: $0.nanoseconds) }
+      return try LinuxSystemCalls.fileHandle(fd).map(Generation.handle) ?? .unavailable
     #else
       throw POSIXError(.ENOTSUP)
     #endif
@@ -1050,7 +1062,7 @@ package final class ProjectFileAccess {
     guard fallbackCount < Self.fallbackDescriptorLimit else {
       releaseCleanupReserve()
       throw denied(
-        "Created-entry descriptor limit (\(Self.fallbackDescriptorLimit)) exceeded on a filesystem without birth time."
+        "Created-entry descriptor limit (\(Self.fallbackDescriptorLimit)) exceeded on a filesystem without inode generations."
       )
     }
   }
@@ -1058,25 +1070,25 @@ package final class ProjectFileAccess {
   private func recordCreated(_ fd: Int32) throws {
     let read = try identityReader(fd)
     let identity = Identity(read)
-    let birthTime = read.birthTime
-    if let birthTime {
-      createdEntries[identity] = CreatedEntry(birthTime: birthTime, descriptor: nil)
+    guard read.generation == .unavailable else {
+      createdEntries[identity] = CreatedEntry(generation: read.generation, descriptor: nil)
       return
     }
     try checkCreationBudget()
+    let directory = try status(fd).st_mode & S_IFMT == S_IFDIR
     // Reserve actual slots before retaining any fallback descriptor. Release them for rollback.
     do {
-      if cleanupReserve.isEmpty {
-        for _ in 0..<Self.cleanupDescriptorReserve {
-          let reserved = fcntl(descriptor, F_DUPFD_CLOEXEC, 0)
-          guard reserved >= 0 else { throw failure() }
-          cleanupReserve.append(reserved)
-        }
+      let reserve = Self.cleanupDescriptorReserve + fallbackDirectoryCount + (directory ? 1 : 0)
+      while cleanupReserve.count < reserve {
+        let reserved = fcntl(descriptor, F_DUPFD_CLOEXEC, 0)
+        guard reserved >= 0 else { throw failure() }
+        cleanupReserve.append(reserved)
       }
       let pinned = fcntl(fd, F_DUPFD_CLOEXEC, 0)
       guard pinned >= 0 else { throw failure() }
-      createdEntries[identity] = CreatedEntry(birthTime: nil, descriptor: pinned)
+      createdEntries[identity] = CreatedEntry(generation: .unavailable, descriptor: pinned)
       fallbackCount += 1
+      if directory { fallbackDirectoryCount += 1 }
     } catch {
       releaseCleanupReserve()
       throw error
@@ -1086,8 +1098,10 @@ package final class ProjectFileAccess {
   private func owns(_ fd: Int32) throws -> Bool {
     let read = try identityReader(fd)
     guard let entry = createdEntries[Identity(read)] else { return false }
-    if let birthTime = entry.birthTime { return read.birthTime == birthTime }
-    return entry.descriptor != nil
+    switch entry.generation {
+    case .stableInode, .handle: return read.generation == entry.generation
+    case .unavailable: return entry.descriptor != nil
+    }
   }
 
   private func openIdentity(_ parent: Int32, _ name: String) throws -> Int32 {
@@ -1100,31 +1114,6 @@ package final class ProjectFileAccess {
     #endif
     guard fd >= 0 else { throw failure() }
     return fd
-  }
-
-  // Darwin metadata copies and backdated mtime writes can change birth time. Keep the
-  // creation identity on the still-open inode before releasing its writing descriptor.
-  private func preservingBirthTime<T>(_ fd: Int32, _ body: () throws -> T) throws -> T {
-    #if canImport(Darwin)
-      let original = try status(fd)
-      guard createdEntries[Identity(original)] != nil else { return try body() }
-      let result = Result { try body() }
-      let current = try status(fd)
-      if current.st_birthtimespec.tv_sec != original.st_birthtimespec.tv_sec
-        || current.st_birthtimespec.tv_nsec != original.st_birthtimespec.tv_nsec
-      {
-        var attributes = attrlist()
-        attributes.bitmapcount = UInt16(ATTR_BIT_MAP_COUNT)
-        attributes.commonattr = attrgroup_t(ATTR_CMN_CRTIME)
-        var birth = original.st_birthtimespec
-        guard fsetattrlist(fd, &attributes, &birth, MemoryLayout<timespec>.size, 0) == 0 else {
-          throw failure()
-        }
-      }
-      return try result.get()
-    #else
-      return try body()
-    #endif
   }
 
   private func recordCreatedSymbolicLink(_ parent: Int32, _ name: String, identity: stat) throws {

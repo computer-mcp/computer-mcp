@@ -8,14 +8,13 @@
       computer_mcp_openat_identity(parent, name)
     }
 
-    package static func birthTime(_ descriptor: Int32) throws -> (
-      seconds: Int64, nanoseconds: Int64
-    )? {
-      var seconds: Int64 = 0
-      var nanoseconds: Int64 = 0
-      let result = computer_mcp_birthtime(descriptor, &seconds, &nanoseconds)
+    /// The descriptor's file handle, or nil when its filesystem cannot export handles.
+    package static func fileHandle(_ descriptor: Int32) throws -> [UInt8]? {
+      var bytes = [UInt8](repeating: 0, count: Int(COMPUTER_MCP_FILE_HANDLE_CAPACITY))
+      var count = 0
+      let result = computer_mcp_file_handle(descriptor, &bytes, bytes.count, &count)
       guard result >= 0 else { throw POSIXError(.init(rawValue: errno) ?? .EIO) }
-      return result == 0 ? nil : (seconds, nanoseconds)
+      return result == 0 ? nil : Array(bytes.prefix(count))
     }
 
     package static func chmodIdentity(_ descriptor: Int32, _ mode: mode_t) -> Int32 {

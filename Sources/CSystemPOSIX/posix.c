@@ -8,6 +8,8 @@
 #include <fcntl.h>
 #include <stdio.h>
 #include <sys/xattr.h>
+#include <errno.h>
+#include <string.h>
 #include <sys/stat.h>
 
 int computer_mcp_renameat_noreplace(int source, const char *name, int target, const char *leaf) {
@@ -22,13 +24,28 @@ int computer_mcp_openat_identity(int parent, const char *name) {
   return openat(parent, name, O_PATH | O_NOFOLLOW | O_CLOEXEC);
 }
 
-// A successful statx without STATX_BTIME is the only unsupported-birth-time fallback.
-int computer_mcp_birthtime(int descriptor, int64_t *seconds, int64_t *nanoseconds) {
-  struct statx value;
-  if (statx(descriptor, "", AT_EMPTY_PATH | AT_SYMLINK_NOFOLLOW, STATX_BTIME, &value) != 0) return -1;
-  if (!(value.stx_mask & STATX_BTIME)) return 0;
-  *seconds = value.stx_btime.tv_sec;
-  *nanoseconds = value.stx_btime.tv_nsec;
+// Writes the handle type followed by the handle bytes. With a MAX_HANDLE_SZ buffer,
+// EOPNOTSUPP (no export operations) and EOVERFLOW (the filesystem cannot encode this
+// inode) mean there is no generation, as do ENOSYS and EPERM from kernels or seccomp
+// policies without the call; every other error is reported.
+int computer_mcp_file_handle(int descriptor, unsigned char *bytes, size_t capacity, size_t *count) {
+  union {
+    struct file_handle handle;
+    unsigned char storage[sizeof(struct file_handle) + MAX_HANDLE_SZ];
+  } value;
+  int mount;
+  value.handle.handle_bytes = MAX_HANDLE_SZ;
+  if (name_to_handle_at(descriptor, "", &value.handle, &mount, AT_EMPTY_PATH) != 0) {
+    return errno == EOPNOTSUPP || errno == EOVERFLOW || errno == ENOSYS || errno == EPERM ? 0 : -1;
+  }
+  size_t total = sizeof(value.handle.handle_type) + value.handle.handle_bytes;
+  if (total > capacity) {
+    errno = EOVERFLOW;
+    return -1;
+  }
+  memcpy(bytes, &value.handle.handle_type, sizeof(value.handle.handle_type));
+  memcpy(bytes + sizeof(value.handle.handle_type), value.handle.f_handle, value.handle.handle_bytes);
+  *count = total;
   return 1;
 }
 

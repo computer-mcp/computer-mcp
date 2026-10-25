@@ -154,9 +154,10 @@ expose bytes before that check; see the [tool reference](Documentation/Reference
 Metadata changes recheck the opened inode and restore mode, times and affected xattrs on
 failure. Archive extraction validates one listing and runs tar once with a staging
 directory descriptor, streaming contents into host-created files in the
-destination before checked publication. Cleanup matches device, inode and
-nanosecond birth time recorded at creation. Filesystems without birth time use
-retained descriptors with a 64-entry limit and a cleanup reserve. Foreign entries remain in staging and the error names the retained path.
+destination before checked publication. Cleanup removes only entries it can prove
+it created: by inode on APFS, by kernel file handle on Linux, and otherwise through
+retained descriptors with a 64-entry limit and a cleanup reserve. Foreign entries
+remain in staging and the error names the retained path.
 Extraction preserves member modification times; directory modes and times are
 restored deepest first after publication and staging cleanup.
 An existing destination keeps its own mode and times.

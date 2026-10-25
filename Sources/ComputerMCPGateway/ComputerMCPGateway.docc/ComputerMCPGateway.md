@@ -107,8 +107,7 @@ project requires a process that can already create files there; a sandboxed
 principal cannot do so, and a process with that access could read the archive
 directly. After a created file is complete, `fstat` checks its descriptor's link
 count. Persistent multiple links fail the operation; cleanup removes only entries
-matching their recorded device, inode and nanosecond birth time. The final check cannot retract bytes
-already exposed through a concurrent link or detect a link removed before the
+the operation created. The final check cannot retract bytes already exposed through a concurrent link or detect a link removed before the
 check.
 
 Mutation targets and move sources refuse `.git` components after Unicode
@@ -134,9 +133,9 @@ components use `O_NOFOLLOW` individually. Archive extraction validates one listi
 paths and types, refusing absolute paths, `..`, Git metadata, links and special
 files. Tar starts through `posix_spawn_file_actions_addfchdir_np` on the staging
 directory descriptor (glibc 2.29+ on Linux), reads the archive on standard input and streams contents to
-a host-opened descriptor. The host creates relative entries, records device and
-inode and nanosecond birth time from the anchored descriptor at creation, compares the tree with the listing (including implicit
-parents), checks sizes, identities and links, and publishes files with anchored
+a host-opened descriptor. The host creates relative entries, records each one's
+identity from the anchored descriptor at creation, compares the tree with the
+listing (including implicit parents), checks sizes, identities and links, and publishes files with anchored
 exclusive renames. A separate read-only metadata pass supplies exact member
 modification times, restored through checked descriptors. Listing, metadata and
 contents use the same selected archive reader.
@@ -149,15 +148,19 @@ archive modes and modification times are restored through checked descriptors,
 deepest first after publication and staging cleanup. An existing destination
 keeps its own mode, access time and modification time. An explicit `.` member
 supplies destination metadata only when extraction creates that directory.
-Cleanup matches device, inode and nanosecond birth time (`st_birthtimespec` on
-macOS; `statx(STATX_BTIME)` on Linux), rejecting reused inodes with different birth
-times. Descriptors close after active use; macOS metadata writes preserve the
-created entry's birth time through its writing descriptor. Only Linux filesystems
-whose successful `statx` result lacks `STATX_BTIME` retain close-on-exec descriptors,
-with a fixed limit of 64 per file operation and 32 additional reserved slots
-released for cleanup. Exceeding the limit stops creation, cleans staging and fails
-with an error naming the limit. Identity-read and reserve allocation errors fail
-the operation. Cleanup preserves foreign
+Cleanup matches device and inode against the creation record and proves the
+inode is the same one: APFS never reuses inode numbers within a volume, and on
+Linux the `name_to_handle_at` file handle, which encodes the inode generation,
+must match. Descriptors close after active use. Other filesystems, and Linux
+filesystems that cannot export handles, retain a close-on-exec descriptor per
+created entry so its inode cannot be reused, with a fixed limit of 64 per file
+operation and 16 reserved slots plus one per retained directory, released for
+cleanup, which holds one descriptor per directory level. Exceeding the limit stops
+creation, cleans staging and fails with an error naming the limit. Identity-read
+and reserve allocation errors fail the operation. A concurrent writer of the same
+directory can replace a new directory or symbolic link before its first
+descriptor; cleanup then treats the replacement as created, which gives that
+writer nothing it could not do itself. Cleanup preserves foreign
 entries without recursing into them, and retains staging with an error naming
 its path. Earlier published entries remain after a later failure. `file.trash`
 refuses the project root and checks every member first; multiply linked regular

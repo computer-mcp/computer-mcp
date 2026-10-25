@@ -388,8 +388,8 @@ project requires a process that can already create files there; a sandboxed
 principal cannot do so, and a process with that access could read the archive
 directly. After a created file is complete, `fstat` checks its descriptor's link
 count. If multiple links persist, the operation fails and cleanup removes only
-entries matching their recorded device, inode and nanosecond birth time. This final check cannot retract
-bytes already exposed through a concurrent link or detect a link removed before
+entries this operation created. This final check cannot retract bytes already
+exposed through a concurrent link or detect a link removed before
 the check.
 
 Generated files are staged in the target directory before publication. macOS
@@ -406,7 +406,7 @@ platform equivalents; macOS-only platform services remain in `PlatformDarwin`.
 | --- | --- | --- |
 | Component traversal and entry checks | `openat(O_NOFOLLOW)`, `fstatat(AT_SYMLINK_NOFOLLOW)`, `unlinkat(AT_REMOVEDIR)` | Same POSIX APIs and flags, walking one component at a time; `O_NOFOLLOW_ANY` is not needed |
 | Exclusive publication and rollback | `renameatx_np(RENAME_EXCL \| RENAME_NOFOLLOW_ANY)` | `renameat2(RENAME_NOREPLACE)` through `CSystemPOSIX`; both names are single components of pinned directories and the leaf is not followed. Unsupported kernels or filesystems fail without a replacement fallback |
-| Cleanup identity handles | Reopen with `O_EVTONLY` and no-follow flags; verify device, inode and `st_birthtimespec` before changing directory permissions | Reopen with `O_PATH` and no-follow flags; read `statx(STATX_BTIME)` through the handle and verify identity before restoring directory permissions through `/proc/self/fd/<fd>` |
+| Cleanup identity handles | Reopen with `O_EVTONLY` and no-follow flags; verify device and inode (and, off APFS, the retained descriptor) before changing directory permissions | Reopen with `O_PATH` and no-follow flags; compare the `name_to_handle_at` file handle through the handle and verify identity before restoring directory permissions through `/proc/self/fd/<fd>` |
 | Retained staging path in errors | `fcntl(F_GETPATH)` | `readlink(/proc/self/fd/<fd>)`, used only for diagnostics; the original path is reported if procfs is unavailable |
 | File data and metadata copy | `fcopyfile(COPYFILE_ALL / COPYFILE_METADATA)` | Descriptor reads/writes plus `flistxattr`, `fgetxattr`, `fsetxattr`, `fremovexattr`, `fchmod` and `futimens`; xattr signatures are bridged through C |
 | Metadata rollback and file identity timestamps | Darwin descriptor xattr signatures and `stat.st_atimespec/st_mtimespec/st_ctimespec` | Linux descriptor xattr signatures and `stat.st_atim/st_mtim/st_ctim`, preserving nanosecond precision |
@@ -452,8 +452,8 @@ extraction in a fresh staging directory inside the destination. Tar starts with
 `posix_spawn_file_actions_addfchdir_np` on its no-follow directory descriptor,
 reads the archive on standard input, and streams contents to a host-opened
 descriptor. The host creates entries from the validated relative names, checking
-sizes and recording device, inode and nanosecond birth time from each anchored
-descriptor immediately after creation. The extracted tree must match
+sizes and recording each entry's identity from its anchored descriptor
+immediately after creation. The extracted tree must match
 the listing's paths and types, including implicit parents, and pass identity and
 link checks before files are published with anchored exclusive renames.
 A separate read-only metadata pass supplies each member's modification time,
@@ -464,16 +464,22 @@ archive modes and modification times through checked descriptors after publicati
 and staging cleanup, deepest first. An existing destination keeps its own mode,
 access time and modification time; a `.` member supplies destination metadata only
 when extraction creates that directory.
-Cleanup requires the current device, inode and birth time to match the creation
-record, so a reused inode with a different birth time has no cleanup authority.
-Writing descriptors close when the operation finishes using them. On macOS,
-metadata copies and backdated modification times preserve the new entry's birth
-time through its still-open descriptor. Only a successful Linux `statx` result
-without `STATX_BTIME` uses retained close-on-exec descriptors instead. Each file
-operation permits at most 64 such descriptors and reserves 32 additional slots
-before retaining them, releasing the reserve for cleanup. At the limit, creation
-stops, staging is cleaned and the error names the 64-descriptor limit. Failure to
-read identity or allocate the reserve also fails the operation.
+Cleanup removes an entry only when its device and inode match a creation record
+and the inode is provably the same one. APFS never reuses inode numbers within a
+volume, so there the device and inode suffice; on Linux the kernel file handle
+from `name_to_handle_at`, which encodes the inode generation, must match as well.
+Writing descriptors close when the operation finishes using them. On other
+filesystems, and Linux filesystems that cannot export handles, the operation
+instead keeps a close-on-exec descriptor to each created entry, so its inode
+cannot be reused while the operation runs. Each file operation keeps at most 64
+such descriptors and reserves 16 additional slots plus one per retained
+directory, releasing the reserve for cleanup, which holds one descriptor per
+directory level. At the limit, creation stops, staging is cleaned and the error
+names the 64-descriptor limit. Failure to read identity or allocate the reserve
+also fails the operation. A concurrent writer of the same directory can replace
+a new directory or symbolic link between its creation and its first descriptor;
+cleanup then treats the replacement as created by the operation, which gives
+that writer nothing it could not do itself.
 Unknown entries are preserved without
 descending into foreign directories. The staging directory is retained and named
 in the error if cleanup cannot remove it. Earlier published entries remain if a

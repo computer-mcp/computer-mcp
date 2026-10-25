@@ -20,11 +20,11 @@ import Testing
 @Suite(.nativeIntegration)
 struct CreatedEntryIdentityTests {
   @Test
-  func cleanupRejectsReusedInodeWithDifferentBirthNanoseconds() throws {
+  func cleanupRejectsReusedInodeWithDifferentGeneration() throws {
     let temporary = try ScopedTemporaryDirectory()
     var replaced = false
-    // Model allocator reuse deterministically: only the regular file's inode is
-    // reused, while its birth time differs by one nanosecond in the same second.
+    // Model allocator reuse deterministically: only the regular file's inode number is
+    // reused, under a new generation, as ext4 reuses inodes within one clock tick.
     let files = try ProjectFileAccess(
       project: temporary.url, launcher: testExecutionLauncher(),
       identityReader: { fd in
@@ -33,7 +33,7 @@ struct CreatedEntryIdentityTests {
         try #require(fstat(fd, &value) == 0)
         if value.st_mode & S_IFMT == S_IFREG {
           identity.inode = 42
-          identity.birthTime = .init(seconds: 123, nanoseconds: replaced ? 2 : 1)
+          identity.generation = .handle([1, 0, 0, 0, 42, replaced ? 2 : 1])
         }
         return identity
       })
@@ -65,7 +65,7 @@ struct CreatedEntryIdentityTests {
         project: temporary.url, launcher: testExecutionLauncher(),
         identityReader: { fd in
           var identity = try ProjectFileAccess.createdIdentity(fd)
-          identity.birthTime = nil
+          identity.generation = .unavailable
           return identity
         })
       var completed = 0
@@ -85,7 +85,7 @@ struct CreatedEntryIdentityTests {
   }
 
   @Test(arguments: [false, true])
-  func failedMetadataRollbackPreservesBirthTime(postCheck: Bool) throws {
+  func failedMetadataRollbackKeepsCreatedOwnership(postCheck: Bool) throws {
     let temporary = try ScopedTemporaryDirectory()
     let files = try ProjectFileAccess(
       project: temporary.url, launcher: testExecutionLauncher(),
@@ -104,6 +104,58 @@ struct CreatedEntryIdentityTests {
       #expect(try files.tree(staging) == ["member": false])
     }
     #expect(try FileManager.default.contentsOfDirectory(atPath: temporary.url.path).isEmpty)
+  }
+
+  @Test
+  func fallbackRollbackRemovesDeepTreeAtDescriptorLimit() async {
+    await #expect(processExitsWith: .success) {
+      let temporary = try ScopedTemporaryDirectory()
+      let files = try ProjectFileAccess(
+        project: temporary.url, launcher: testExecutionLauncher(),
+        identityReader: { fd in
+          var identity = try ProjectFileAccess.createdIdentity(fd)
+          identity.generation = .unavailable
+          return identity
+        })
+      // Leave fewer descriptors than two per level, so rollback must rely on its reserve.
+      try Self.limitDescriptors(to: rlim_t(Self.openDescriptorCount() + 150))
+      let depth = ProjectFileAccess.fallbackDescriptorLimit - 4
+      #expect(throws: (any Error).self) {
+        try files.withStagingDirectory(in: temporary.url) { staging, _ in
+          var directory = staging
+          for level in 0..<depth {
+            directory.appendPathComponent("level-\(level)")
+            _ = try files.mkdir(directory, recursive: false)
+          }
+          try Self.exhaustDescriptors()
+          throw POSIXError(.EIO)
+        }
+      }
+      Self.releaseExhaustedDescriptors()
+      try #require(FileManager.default.contentsOfDirectory(atPath: temporary.url.path).isEmpty)
+    }
+  }
+
+  @Test
+  func createdIdentityRecordsAGeneration() throws {
+    let temporary = try ScopedTemporaryDirectory()
+    let fd = open(temporary.url.path, O_RDONLY | O_DIRECTORY | O_CLOEXEC)
+    try #require(fd >= 0)
+    defer { close(fd) }
+    let identity = try ProjectFileAccess.createdIdentity(fd)
+    #if canImport(Darwin)
+      var volume = statfs()
+      try #require(fstatfs(fd, &volume) == 0)
+      let type = withUnsafeBytes(of: volume.f_fstypename) {
+        String(decoding: $0.prefix { $0 != 0 }, as: UTF8.self)
+      }
+      #expect(identity.generation == (type == "apfs" ? .stableInode : .unavailable))
+    #else
+      if case .handle(let bytes) = identity.generation {
+        #expect(bytes.count > 4)
+        #expect(try ProjectFileAccess.createdIdentity(fd).generation == identity.generation)
+      }
+    #endif
   }
 
   @Test
@@ -206,6 +258,28 @@ struct CreatedEntryIdentityTests {
           "source", "output",
         ])
     }
+  }
+
+  nonisolated(unsafe) private static var exhausted: [Int32] = []
+
+  private static func openDescriptorCount() -> Int {
+    (0..<Int32(4_096)).filter { fcntl($0, F_GETFD) >= 0 }.count
+  }
+
+  private static func exhaustDescriptors() throws {
+    while true {
+      let fd = dup(STDERR_FILENO)
+      guard fd >= 0 else {
+        try #require(errno == EMFILE)
+        return
+      }
+      exhausted.append(fd)
+    }
+  }
+
+  private static func releaseExhaustedDescriptors() {
+    for fd in exhausted { close(fd) }
+    exhausted.removeAll()
   }
 
   private static func limitDescriptors(to count: rlim_t) throws {

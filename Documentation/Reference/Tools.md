@@ -3807,7 +3807,7 @@ for ZIPs, including those with a reordered central directory. The pipe preserves
 sparse holes as logical zero bytes. `--no-same-owner` and
 `--no-same-permissions` are set; extraction does not use `-P`.
 The host creates entries through anchored descriptors from the validated relative
-names, checks byte counts, and records each created device, inode and nanosecond birth time immediately
+names, checks byte counts, and records each created entry's identity immediately
 from its anchored descriptor.
 Listing escapes are decoded before path checks; member names must be valid UTF-8.
 An additional read-only tar pass obtains exact modification times: BSD tar exports
@@ -3830,17 +3830,21 @@ Implicit parent directories have no archive mode or timestamp to restore.
 It compares the tree's paths and types, including implicit parent directories,
 with the listing and rejects foreign inodes, symlinks and multiply linked files.
 It then creates destination directories and publishes files with anchored
-exclusive renames. Cleanup requires matching device, inode and nanosecond birth
-time, on success or failure. Birth time comes from `st_birthtimespec` on macOS or
-`statx(STATX_BTIME)` on Linux; inode reuse with a different birth time is refused.
-Descriptors close when their active use ends. macOS metadata writes preserve each
-created entry's birth time through the writing descriptor.
-Only a successful Linux `statx` result without `STATX_BTIME` retains a close-on-exec
-descriptor instead, up to 64 per file operation. The host reserves 32 additional
-descriptor slots before retaining fallback handles and releases them for cleanup.
-When the 64-descriptor limit would be exceeded, creation stops, staging is cleaned,
-and the operation fails with an error naming the limit. Identity-read or reserve
-allocation errors also fail the operation.
+exclusive renames. Cleanup, on success or failure, requires a matching device and
+inode and proof that the inode is the one created: APFS never reuses inode numbers
+within a volume, and on Linux the `name_to_handle_at` file handle, which encodes the
+inode generation, must match. Descriptors close when their active use ends.
+On other filesystems, and Linux filesystems that cannot export handles, the host
+retains a close-on-exec descriptor per created entry instead, so its inode cannot
+be reused, up to 64 per file operation. Before retaining one it reserves 16
+additional descriptor slots plus one per retained directory, and releases them
+for cleanup, which holds one descriptor per directory level. When the
+64-descriptor limit would be exceeded, creation stops, staging is cleaned, and the
+operation fails with an error naming the limit. Identity-read or reserve
+allocation errors also fail the operation. A concurrent writer of the same
+directory can replace a new directory or symbolic link before its first
+descriptor; cleanup then treats the replacement as created, which gives that
+writer nothing it could not do itself.
 It preserves unknown entries without descending into foreign directories, retains
 their staging directory, and fails with the retained paths in the error.
 Entries already published before a later failure remain in place;
@@ -3943,7 +3947,7 @@ written. Creating that link outside the project requires a process that can
 already create files there; a sandboxed principal cannot do so, and a process with
 that access could read the archive directly. After a created file is complete,
 `fstat` checks its descriptor's link count. Persistent multiple links fail the
-operation; cleanup removes only entries matching their recorded device, inode and nanosecond birth time.
+operation; cleanup removes only entries the operation created.
 The final check cannot retract bytes already exposed through a concurrent link or
 detect a link removed before the check.
 

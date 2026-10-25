@@ -11,12 +11,14 @@ package struct InvocationRequirements: Hashable, Sendable, Codable {
   package let networks: [NetworkRequirement]
   package let mode: ExecutionMode
   package let sandboxProjectID: String?
+  package let execution: ExecutionLimitRequest
   let registration: ProjectRegistrationRequest?
 
   package init(
     actions: [PermissionAction] = [], paths: [PathRequirement] = [],
     networks: [NetworkRequirement] = [],
-    mode: ExecutionMode = .sandbox, sandboxProjectID: String? = nil
+    mode: ExecutionMode = .sandbox, sandboxProjectID: String? = nil,
+    execution: ExecutionLimitRequest? = nil
   ) {
     self.actions = Self.canonical(
       actions.map {
@@ -36,7 +38,8 @@ package struct InvocationRequirements: Hashable, Sendable, Codable {
       by: {
         [$0.projectID, $0.host, String($0.isLocalNetwork)] + Self.optionalKey($0.pluginPurpose)
       })
-    self.mode = mode
+    self.mode = mode.semanticMode
+    self.execution = execution ?? .foreground
     self.sandboxProjectID = sandboxProjectID
     self.registration = nil
   }
@@ -46,12 +49,13 @@ package struct InvocationRequirements: Hashable, Sendable, Codable {
     self.paths = []
     self.networks = []
     self.mode = .sandbox
+    self.execution = .foreground
     self.sandboxProjectID = registration.projectID
     self.registration = registration
   }
 
   private enum CodingKeys: String, CodingKey {
-    case actions, paths, networks, mode, sandboxProjectID, registration
+    case actions, paths, networks, mode, sandboxProjectID, registration, execution
   }
 
   package init(from decoder: any Decoder) throws {
@@ -66,7 +70,8 @@ package struct InvocationRequirements: Hashable, Sendable, Codable {
         paths: try container.decode([PathRequirement].self, forKey: .paths),
         networks: try container.decode([NetworkRequirement].self, forKey: .networks),
         mode: try container.decode(ExecutionMode.self, forKey: .mode),
-        sandboxProjectID: try container.decodeIfPresent(String.self, forKey: .sandboxProjectID))
+        sandboxProjectID: try container.decodeIfPresent(String.self, forKey: .sandboxProjectID),
+        execution: try container.decodeIfPresent(ExecutionLimitRequest.self, forKey: .execution))
     }
   }
 
@@ -156,6 +161,9 @@ enum InvocationEvaluation {
     pathResolver: (CanonicalPath?) -> (any PathPermissionResolving)?,
     oneTimeRequests: [PermissionRequest] = [], recordedBasis: Set<AuthorizationBasis> = []
   ) -> InvocationResolution {
+    guard requirements.networks.allSatisfy({ (try? NetworkHost.normalize($0.host)) != nil }) else {
+      return InvocationResolution(denial: .invalidNetworkRequirement)
+    }
     let hostNames = Set(trustedHosts.map(\.host))
     let mode = requirements.mode
     if let denial = limits.modeDenial(mode) { return InvocationResolution(denial: denial) }
@@ -366,10 +374,12 @@ enum InvocationEvaluation {
     let source: NetworkAccessBasis.Source
     switch access.configuration {
     case .full: source = .full
-    case .custom(let hosts, _) where Set(hosts.map(NetworkHost.canonical)).contains(content.host):
+    case .custom(let hosts, _)
+    where hosts.contains(where: { NetworkHost.contains($0, rule: content.host) }):
       source = .custom
     case .trusted, .custom(_, true):
-      guard trustedHosts.contains(where: { $0.host == content.host }) else { return nil }
+      guard trustedHosts.contains(where: { NetworkHost.contains($0.host, rule: content.host) })
+      else { return nil }
       source = .trusted
     default: return nil
     }
@@ -377,7 +387,9 @@ enum InvocationEvaluation {
       host: content.host, projectID: content.projectID, source: source, policySource: policySource,
       ruleIdentity: access.identity(for: source, host: content.host)!,
       trustedHostIdentity: source == .trusted
-        ? trustedHosts.first { $0.host == content.host }?.identity : nil)
+        ? trustedHosts.sorted { NetworkHost.precedes($0.host, $1.host) }.first {
+          NetworkHost.contains($0.host, rule: content.host)
+        }?.identity : nil)
   }
 }
 

@@ -80,6 +80,7 @@ package enum PermissionModelError: Error, Equatable {
   case unknownRequest, expiredRequest, alreadyAnswered, retryMismatch, requestConsumed
   case unknownAuthorization, invalidAuthorization, unknownExecution
   case invalidRegistrationAnswer
+  case invalidExecutionLimits, unenforceableMemoryLimit
 }
 
 package struct PermissionRequirement: Hashable, Sendable, Codable {
@@ -173,6 +174,13 @@ package enum ExecutionMode: Hashable, Sendable, Codable {
   case fullAccess(FullAccessScope)
 
   var isSandbox: Bool { self == .sandbox }
+  var semanticMode: Self {
+    switch self {
+    case .sandbox: .sandbox
+    case .fullAccess(.notGranted): .fullAccess(.notGranted)
+    case .fullAccess: .fullAccess(.standing)
+    }
+  }
 }
 
 package struct InvocationIdentity: Hashable, Sendable, Codable {
@@ -230,6 +238,7 @@ package enum DenialReason: Equatable, Sendable {
   case fullAccessRequired
   case pathResolutionRequired
   case invalidPathRequirement
+  case invalidNetworkRequirement
   case authorizationRevoked
   case executionOwner
   case resultExpired

@@ -197,7 +197,11 @@ package struct NetworkAccess: Hashable, Sendable, Codable {
     switch source {
     case .full: fullRule
     case .trusted: trustedRule
-    case .custom: customRules.first { $0.host == NetworkHost.canonical(host) }?.identity
+    case .custom:
+      customRules.sorted { NetworkHost.precedes($0.host, $1.host) }.first {
+        NetworkHost.contains($0.host, rule: host)
+      }?
+      .identity
     }
   }
 
@@ -206,7 +210,9 @@ package struct NetworkAccess: Hashable, Sendable, Codable {
   }
 
   package func allows(_ host: String, trustedHosts: Set<String>) -> Bool {
-    hosts(trustedHosts: trustedHosts)?.contains(NetworkHost.canonical(host)) ?? true
+    guard (try? NetworkHost.normalize(host)) != nil else { return false }
+    return hosts(trustedHosts: trustedHosts)?.contains { NetworkHost.matches(host, rule: $0) }
+      ?? true
   }
 
   func hosts(trustedHosts: Set<String>) -> Set<String>? {
@@ -289,15 +295,6 @@ package struct ProjectSandboxSettings: Sendable, Codable {
   }
 }
 
-/// Host adapters supply DNS/IDNA and address resolution; lexical DNS identity is
-/// shared by requirements, custom rules and trusted-host snapshots.
-enum NetworkHost {
-  static func canonical(_ value: String) -> String {
-    let lower = value.lowercased()
-    return lower.hasSuffix(".") ? String(lower.dropLast()) : lower
-  }
-}
-
 extension NetworkAccess.Configuration {
   func hosts(trustedHosts: Set<String>) -> Set<String>? {
     let trustedHosts = Set(trustedHosts.map(NetworkHost.canonical))
@@ -314,7 +311,7 @@ extension NetworkAccess.Configuration {
   {
     guard let current = hosts(trustedHosts: trustedHosts) else { return false }
     guard let previous = previous.hosts(trustedHosts: trustedHosts) else { return true }
-    return !previous.isSubset(of: current)
+    return !previous.allSatisfy { old in current.contains { NetworkHost.contains($0, rule: old) } }
   }
 
 }

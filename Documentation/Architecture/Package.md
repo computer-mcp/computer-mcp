@@ -449,3 +449,38 @@ still uses the profile, risk and confirmation evaluator.
 `ResolvedToolInvocation` represents host-resolved invocation conditions and typed
 plugin origins. `InvocationContext` has an optional field for this value; live
 call paths currently leave it empty. It does not itself grant authority.
+
+### Permission admission and execution evidence
+
+`ComputerMCPPermissions` is a Foundation-only value model. `PermissionConnection`
+selects host-issued consent and a connection ceiling alongside the stable
+`Principal`. Full access consent never supplies a missing permission. Requests
+keep stable permission and path evidence; each retry checks its calling
+connection, while an admitted execution retains its exact consent and ceiling.
+Closing a connection retires its connection-scoped Full access authority;
+standing and sandbox work retain their independent lifetimes.
+
+`NetworkHost` canonicalizes DNS names and numeric addresses and matches exact
+hosts or explicit subdomain suffixes. Independent owner, machine-file and
+managed-preference policies resolve per-object entries separately. Network
+intersections retain only destinations admitted by every source and pin the
+identities of the admitting rules. Execution evidence includes the connection's
+network and denied-location ceiling, including implicit sandbox access.
+
+`ExecutionLimitRequest` participates in complete invocation equality.
+`EffectiveExecutionLimits` reports the strictest numeric ceilings and their
+sources. Starting an execution refuses an unenforceable memory limit. Limit
+reconciliation updates output and retention ceilings, records time or memory
+termination reasons, and queues termination until the host acknowledges it.
+The library performs no process, buffer, storage or operating-system operations.
+
+`recordDiscoveredNeeds` accepts host-attributed path and host requirements for a
+running execution. Discoveries accumulate per authorization in a durable retry
+chain bound to the original principal, tool, project, arguments and requirements.
+The chain carries prior Only this time answers from valid execution authority;
+new requests expire after one day. Answers authorize a matching retry and its
+new execution. The original execution's requirements remain fixed.
+
+The production gateway still uses its existing evaluator and execution adapters.
+These library APIs are integration contracts; connection selection, runtime
+violation attribution and limit enforcement are not wired into live dispatch.

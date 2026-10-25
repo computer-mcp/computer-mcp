@@ -195,8 +195,7 @@ struct ComputerMCPPermissionsInvocationRequirementsTests {
         Issue.record("These fresh requirements should be requestable or already allowed")
       }
       #expect(
-        ledger.requests[pending.id]?.status
-          == (requirements.mode == .sandbox ? .onlyThisTime : .revoked))
+        ledger.requests[pending.id]?.status == .onlyThisTime)
     }
 
     var ledger = PermissionLedger()

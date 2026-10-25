@@ -35,6 +35,7 @@ extension PermissionLedger {
 protocol PermissionRecord: Equatable {
   var identity: BasisIdentity { get set }
   mutating func commitContents(against current: Self?, in ledger: inout PermissionLedger) throws
+  mutating func commit(against current: Self?, in ledger: inout PermissionLedger) throws
 }
 
 extension PermissionRecord {
@@ -112,6 +113,17 @@ extension SandboxSettings {
 }
 
 extension ManagedPolicy: PermissionRecord {
+  // Resource ceilings change execution limits directly; they do not replace
+  // permission/path/network grant provenance or revoke retained output access.
+  mutating func commit(against current: Self?, in ledger: inout PermissionLedger) throws {
+    var comparable = self
+    comparable.executionLimits = current?.executionLimits ?? .none
+    let identity = try ledger.commitIdentity(
+      identity, replacing: current?.identity, changed: comparable != current)
+    try commitContents(against: current, in: &ledger)
+    self.identity = identity
+  }
+
   mutating func commitContents(against current: Self?, in ledger: inout PermissionLedger) throws {
     try permissionCeilings.commit(against: current?.permissionCeilings, in: &ledger)
     try network.commit(against: current?.network, in: &ledger)
@@ -149,6 +161,21 @@ extension PermissionEnvironment {
         limits.sources[source] = .available(policy)
       }
       self.limits[principal] = limits
+    }
+    endedConnections.formUnion(current.endedConnections)
+    for (id, connection) in current.connections where connections[id] == nil {
+      connections[id] = connection
+      endedConnections.insert(id)
+    }
+    for (id, var connection) in connections {
+      if let old = current.connections[id], old.principal != connection.principal {
+        throw PermissionModelError.invalidAuthorization
+      }
+      if current.connections[id] == nil && current.endedConnections.contains(id) {
+        throw PermissionModelError.invalidAuthorization
+      }
+      try connection.attenuation.commit(against: current.connections[id]?.attenuation, in: &ledger)
+      connections[id] = connection
     }
     try trustedHosts.commit(against: current.trustedHosts, in: &ledger)
     try paths?.commit(against: current.paths, in: &ledger)

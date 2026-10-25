@@ -58,6 +58,10 @@ package enum AuthorizationBasis: Hashable, Sendable, Codable {
   case mode(ExecutionMode)
   case managed(source: PolicySource, identity: BasisIdentity)
   case consent(BasisIdentity)
+  /// Explicit revocation of an originating invocation reaches its retry lineage.
+  /// Consent lifetime is re-established independently on each retry.
+  case retryOrigin(BasisIdentity)
+  case connection(id: String, ceiling: BasisIdentity)
   case managedPermission(source: PolicySource, grant: PermissionGrant)
   case permission(PermissionGrant)
   case path(PathAccessBasis)
@@ -75,7 +79,9 @@ package enum AuthorizationBasis: Hashable, Sendable, Codable {
     case .permission(let grant):
       return grant.source.requestID
     case .request(let identity), .permit(let identity, _): return identity.id
-    case .mode, .consent, .managed, .managedPermission, .path, .traversal, .network, .sandbox:
+    case .mode, .consent, .retryOrigin, .connection, .managed, .managedPermission, .path,
+      .traversal, .network,
+      .sandbox:
       return nil
     }
   }
@@ -100,9 +106,16 @@ package struct NetworkAccessBasis: Hashable, Sendable, Codable {
   package let trustedHostIdentity: BasisIdentity?
 
   func isValid(access: NetworkAccess, trustedHosts: Set<HostRule>) -> Bool {
+    if source == .custom {
+      return access.customRules.contains {
+        $0.identity == ruleIdentity && NetworkHost.contains($0.host, rule: host)
+      }
+    }
     guard access.identity(for: source, host: host) == ruleIdentity else { return false }
     if source == .trusted {
-      return trustedHosts.contains { $0.host == host && $0.identity == trustedHostIdentity }
+      return trustedHosts.contains {
+        NetworkHost.contains($0.host, rule: host) && $0.identity == trustedHostIdentity
+      }
     }
     return true
   }
@@ -147,6 +160,20 @@ extension Set where Element == AuthorizationBasis {
     }.flatMap {
       if case .permission(let grant) = $0 { return grant }
       return nil
+    }
+  }
+}
+
+extension Set where Element == AuthorizationBasis {
+  /// Requests travel with stable principals. Each retry obtains its own consent
+  /// and connection ceiling before consuming these permission dependencies.
+  var requestEvidence: Self {
+    filter {
+      switch $0 {
+      case .consent, .connection: false
+      case .network(let rule): rule.policySource != .connection
+      default: true
+      }
     }
   }
 }

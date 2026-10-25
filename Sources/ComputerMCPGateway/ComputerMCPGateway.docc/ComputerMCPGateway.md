@@ -189,3 +189,17 @@ with the exact provider, and dispatch rejects changed descriptors. The live
 gateway continues to use its profile and confirmation evaluator. The optional
 `ResolvedToolInvocation` field in `InvocationContext` represents resolved
 conditions and typed plugin origins; live call paths currently leave it empty.
+
+## Permission library integration
+
+The neutral permission ledger models stable principals, host-authenticated
+connection ceilings and independently issued Full access consent. Requests can
+move between a principal's connections; every retry checks the destination
+connection before consuming a one-time answer. Executions retain their original
+authority, including the lifetime of connection-scoped consent.
+
+Execution records expose effective resource limits and termination reasons.
+Host-attributed path and network discoveries produce requests bound to the
+original call, carrying earlier one-time answers through subsequent retries.
+These library contracts are not yet used by the production gateway evaluator or
+process adapters.

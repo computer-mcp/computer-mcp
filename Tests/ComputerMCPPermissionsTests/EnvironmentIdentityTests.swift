@@ -348,27 +348,40 @@ struct ComputerMCPPermissionsEnvironmentIdentityTests {
   @Test(arguments: [false, true], [FullAccessScope.standing, .connection("connection")])
   func sameScopeConsentIsANewBasis(restored: Bool, scope: FullAccessScope) throws {
     var ledger = PermissionLedger()
-    var environment = PermissionEnvironment()
+    let connectionID: String?
+    if case .connection(let id) = scope { connectionID = id } else { connectionID = nil }
+    func environment(_ ledger: PermissionLedger, consent: ModeConsent) -> PermissionEnvironment {
+      var result = ledger.environment
+      if let connectionID {
+        result.connections[connectionID] = PermissionConnection(principal: client, consent: consent)
+      } else {
+        result.modes[client] = consent
+      }
+      return result
+    }
     let consent = ledger.consent(for: client, mode: .fullAccess(scope))
-    environment.modes[client] = consent
-    try ledger.reconcile(environment: environment, expectedRevision: ledger.revision)
-    environment = ledger.environment
+    try ledger.reconcile(
+      environment: environment(ledger, consent: consent), expectedRevision: ledger.revision)
     let allowed = try authorization(
-      from: ledger.authorize(invocation: invocation(), actions: [action(.skills)], now: instant))
+      from: ledger.authorize(
+        invocation: invocation(), actions: [action(.skills)],
+        connectionID: connectionID, now: instant))
     let execution = try ledger.startExecution(owner: client, authorizationIDs: [allowed.id])
     ledger = try restore(ledger, when: restored)
-    environment.modes[client] = ledger.consent(for: client, mode: .fullAccess(scope))
-    #expect(environment.modes[client]?.identity != consent.identity)
+    let renewed = ledger.consent(for: client, mode: .fullAccess(scope))
+    #expect(renewed.identity != consent.identity)
     #expect(
-      try ledger.reconcile(environment: environment, expectedRevision: ledger.revision)
-        .executionsToTerminate == [execution.id])
-    environment.modes[client] = consent
-    try ledger.reconcile(environment: environment, expectedRevision: ledger.revision)
-    environment = ledger.environment
+      try ledger.reconcile(
+        environment: environment(ledger, consent: renewed), expectedRevision: ledger.revision
+      )
+      .executionsToTerminate == [execution.id])
+    try ledger.reconcile(
+      environment: environment(ledger, consent: consent), expectedRevision: ledger.revision)
     ledger = try restore(ledger, when: restored)
     #expect(
-      try ledger.authorize(invocation: invocation(), actions: [action(.skills)], now: instant)
-        == .denied(.authorizationRevoked))
+      try ledger.authorize(
+        invocation: invocation(), actions: [action(.skills)],
+        connectionID: connectionID, now: instant) == .denied(.authorizationRevoked))
   }
 
   @Test(arguments: [false, true], ["host", "path", "project", "grant"])

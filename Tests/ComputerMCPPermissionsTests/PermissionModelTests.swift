@@ -139,9 +139,7 @@ struct ComputerMCPPermissionsModelTests {
 
   @Test(arguments: PolicySource.allCases)
   func unreadableSourceFailsClosed(source: PolicySource) throws {
-    let limits = ManagedLimits(
-      owner: source == .owner ? .unreadable : .absent,
-      machine: source == .machine ? .unreadable : .absent)
+    let limits = ManagedLimits(sources: [source: .unreadable])
     #expect(limits.restrictingSources(for: requirement(.skills, .access)) == [source])
     #expect(limits.denying(path("/anywhere")) == [source])
     #expect(limits.restrictingNetwork(host: "host", trustedHosts: ["host"]) == [source])
@@ -160,7 +158,10 @@ struct ComputerMCPPermissionsModelTests {
     let tightened = await ManagedLimits.read(for: client, from: store)
     #expect(tightened.restrictingSources(for: requirement(.skills, .access)) == [.machine])
     let failed = await ManagedLimits.read(for: client, from: FailingPolicyStore())
-    #expect(failed.restrictingSources(for: requirement(.skills, .access)) == [.owner, .machine])
+    #expect(
+      failed.restrictingSources(for: requirement(.skills, .access)) == [
+        .owner, .machine, .managedPreferences,
+      ])
   }
 }
 

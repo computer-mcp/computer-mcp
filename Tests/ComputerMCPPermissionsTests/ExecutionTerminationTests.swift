@@ -94,32 +94,36 @@ struct ComputerMCPPermissionsExecutionTerminationTests {
       let mode: ExecutionMode =
         source == .endConnection || source == .managedMode
         ? .fullAccess(.connection("connection")) : .sandbox
-      do {
-        var updatedEnvironment = ledger.environment
-        try ledger.reconcile(environment: updatedEnvironment, expectedRevision: ledger.revision)
-        updatedEnvironment = ledger.environment
-        if updatedEnvironment.modes[(invocation()).principal]?.mode != mode {
-          updatedEnvironment.modes[(invocation()).principal] = ledger.consent(
-            for: (invocation()).principal, mode: mode)
-          try ledger.reconcile(environment: updatedEnvironment, expectedRevision: ledger.revision)
-
-        }
+      let connectionID: String?
+      if case .fullAccess(.connection(let id)) = mode {
+        connectionID = id
+      } else {
+        connectionID = nil
       }
+      var environment = ledger.environment
+      let consent = ledger.consent(for: client, mode: mode)
+      if let connectionID {
+        environment.connections[connectionID] = PermissionConnection(
+          principal: client, consent: consent)
+      } else {
+        environment.modes[client] = consent
+      }
+      try ledger.reconcile(environment: environment, expectedRevision: ledger.revision)
       let allowed = try authorization(
         from: ledger.authorize(
           invocation: invocation(),
           actions: [action(.project("project"), .write)],
-          now: instant))
+          connectionID: connectionID, now: instant))
       let first = try ledger.startExecution(owner: client, authorizationIDs: [allowed.id])
       let secondGrant = try authorization(
         from: ledger.authorize(
           invocation: invocation(digest: "second"), actions: [action(.project("project"), .write)],
-          now: instant))
+          connectionID: connectionID, now: instant))
       let second = try ledger.startExecution(owner: client, authorizationIDs: [secondGrant.id])
       let finishedGrant = try authorization(
         from: ledger.authorize(
           invocation: invocation(digest: "finished"),
-          actions: [action(.project("project"), .write)], now: instant))
+          actions: [action(.project("project"), .write)], connectionID: connectionID, now: instant))
       let finished = try ledger.startExecution(owner: client, authorizationIDs: [finishedGrant.id])
       try ledger.finishExecution(finished.id, retainUntil: instant.addingTimeInterval(100))
       let independent = try authorization(

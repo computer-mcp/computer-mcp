@@ -107,9 +107,7 @@ struct ComputerMCPPermissionsProjectRegistrationTests {
     ledger = PermissionLedger()
     for source in PolicySource.allCases {
       let policy = PolicyAvailability.available(ManagedPolicy(permissionCeilings: ceilings))
-      let limits = ManagedLimits(
-        owner: source == .owner ? policy : .absent,
-        machine: source == .machine ? policy : .absent)
+      let limits = ManagedLimits(sources: [source: policy])
       do {
         var updatedEnvironment = ledger.environment
         updatedEnvironment.limits[(invocation()).principal] = limits

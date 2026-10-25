@@ -236,130 +236,37 @@ struct ComputerMCPPermissionsRequestInvalidationTests {
     }
   }
 
-  @Test(arguments: [false, true])
-  func networkAndConnectionRequestsCannotRevive(restored: Bool) throws {
-    for change in ["settings", "policy", "connection"] {
-      var ledger = PermissionLedger()
-      let mode: ExecutionMode =
-        change == "connection" ? .fullAccess(.connection("connection")) : .sandbox
-      let key = SandboxSettingsKey(principal: client, projectID: "project")
-      do {
-        var updatedEnvironment = ledger.environment
-        updatedEnvironment.trustedHosts = hostRules(
-          ["registry"], preserving: ledger.environment.trustedHosts)
-        try ledger.reconcile(environment: updatedEnvironment, expectedRevision: ledger.revision)
-
-      }
+  @Test(arguments: [false, true], [false, true])
+  func networkRequestsRetainPolicyAndSettingsRevocations(restored: Bool, managed: Bool) throws {
+    var ledger = PermissionLedger()
+    let key = SandboxSettingsKey(principal: client, projectID: "project")
+    var environment = ledger.environment
+    environment.trustedHosts = [HostRule("registry")]
+    try ledger.reconcile(environment: environment, expectedRevision: ledger.revision)
+    _ = try ledger.setSandboxSettings(
+      SandboxSettings(network: .trusted), for: key,
+      expectedRevision: ledger.revision)
+    let pending = try request(
+      from: ledger.authorizeNetwork(
+        invocation: invocation(), host: "example",
+        sourceProjectID: "project", isLocalNetwork: false, now: instant))
+    try ledger.answer(pending.id, with: .onlyThisTime, now: instant)
+    if restored { ledger = try roundTrip(ledger) }
+    if managed {
+      environment = ledger.environment
+      environment.limits[client] = ManagedLimits(owner: .available(ManagedPolicy(network: .none)))
+      try ledger.reconcile(environment: environment, expectedRevision: ledger.revision)
+    } else {
       _ = try ledger.setSandboxSettings(
-        SandboxSettings(network: .trusted),
-        for: key, expectedRevision: ledger.revision)
-      let pending: PermissionRequest
-      if change == "connection" {
-        do {
-          var updatedEnvironment = ledger.environment
-          try ledger.reconcile(environment: updatedEnvironment, expectedRevision: ledger.revision)
-          updatedEnvironment = ledger.environment
-          if updatedEnvironment.modes[(invocation()).principal]?.mode != mode {
-            updatedEnvironment.modes[(invocation()).principal] = ledger.consent(
-              for: (invocation()).principal, mode: mode)
-            try ledger.reconcile(environment: updatedEnvironment, expectedRevision: ledger.revision)
-
-          }
-        }
-        pending = try request(
-          from: ledger.authorize(
-            invocation: invocation(),
-            actions: [action()],
-            now: instant))
-      } else {
-        do {
-          var updatedEnvironment = ledger.environment
-          updatedEnvironment.trustedHosts = hostRules(
-            ["registry"], preserving: ledger.environment.trustedHosts)
-          try ledger.reconcile(environment: updatedEnvironment, expectedRevision: ledger.revision)
-
-        }
-        pending = try request(
-          from: ledger.authorizeNetwork(
-            invocation: invocation(),
-            host: "example",
-            sourceProjectID: "project",
-            isLocalNetwork: false,
-            now: instant))
-      }
-      try ledger.answer(pending.id, with: .onlyThisTime, now: instant)
-      if restored { ledger = try roundTrip(ledger) }
-      switch change {
-      case "settings":
-        do {
-          var updatedEnvironment = ledger.environment
-          updatedEnvironment.trustedHosts = hostRules(
-            ["registry"], preserving: ledger.environment.trustedHosts)
-          try ledger.reconcile(environment: updatedEnvironment, expectedRevision: ledger.revision)
-
-        }
-        _ = try ledger.setSandboxSettings(
-          SandboxSettings(),
-          for: key, expectedRevision: ledger.revision)
-      case "policy":
-        _ = try { () throws -> RevocationResult in
-          var updatedEnvironment = ledger.environment
-          updatedEnvironment.limits = [
-            client: ManagedLimits(owner: .available(ManagedPolicy(network: .none)))
-          ]
-          return try ledger.reconcile(
-            environment: updatedEnvironment, expectedRevision: ledger.revision)
-        }()
-      default:
-        _ = try { () throws -> RevocationResult in
-          var updatedEnvironment = ledger.environment
-          updatedEnvironment.endedConnections.insert("connection")
-          return try ledger.reconcile(
-            environment: updatedEnvironment, expectedRevision: ledger.revision)
-        }()
-      }
-      #expect(ledger.requests[pending.id]?.status == .revoked)
-      if restored { ledger = try roundTrip(ledger) }
-      _ = try ledger.reconcile(
-        environment: PermissionEnvironment(), expectedRevision: ledger.revision)
-      if change == "connection" {
-        #expect(throws: PermissionModelError.invalidAuthorization) {
-          do {
-            var updatedEnvironment = ledger.environment
-            try ledger.reconcile(environment: updatedEnvironment, expectedRevision: ledger.revision)
-            updatedEnvironment = ledger.environment
-            if updatedEnvironment.modes[(invocation()).principal]?.mode != mode {
-              updatedEnvironment.modes[(invocation()).principal] = ledger.consent(
-                for: (invocation()).principal, mode: mode)
-              try ledger.reconcile(
-                environment: updatedEnvironment, expectedRevision: ledger.revision)
-
-            }
-          }
-          _ = try ledger.authorize(
-            invocation: invocation(),
-            actions: [action()],
-            retryIDs: [pending.id],
-            now: instant)
-        }
-      } else {
-        #expect(throws: PermissionModelError.invalidAuthorization) {
-          do {
-            var updatedEnvironment = ledger.environment
-            updatedEnvironment.trustedHosts = hostRules(
-              [], preserving: ledger.environment.trustedHosts)
-            try ledger.reconcile(environment: updatedEnvironment, expectedRevision: ledger.revision)
-
-          }
-          _ = try ledger.authorizeNetwork(
-            invocation: invocation(),
-            host: "example",
-            sourceProjectID: "project",
-            isLocalNetwork: false,
-            retryIDs: [pending.id],
-            now: instant)
-        }
-      }
+        SandboxSettings(), for: key, expectedRevision: ledger.revision)
+    }
+    #expect(ledger.requests[pending.id]?.status == .revoked)
+    if restored { ledger = try roundTrip(ledger) }
+    try ledger.reconcile(environment: PermissionEnvironment(), expectedRevision: ledger.revision)
+    #expect(throws: PermissionModelError.invalidAuthorization) {
+      try ledger.authorizeNetwork(
+        invocation: invocation(), host: "example",
+        sourceProjectID: "project", isLocalNetwork: false, retryIDs: [pending.id], now: instant)
     }
   }
 
@@ -787,93 +694,47 @@ struct ComputerMCPPermissionsRequestInvalidationTests {
     }
   }
 
-  @Test(arguments: [false, true])
-  func networkRequestsConsumeTheirDependenciesTogether(restored: Bool) throws {
-    for consumeTogether in [false, true] {
-      var ledger = PermissionLedger()
-      do {
-        var updatedEnvironment = ledger.environment
-        updatedEnvironment.trustedHosts = hostRules(
-          [], preserving: ledger.environment.trustedHosts)
-        try ledger.reconcile(environment: updatedEnvironment, expectedRevision: ledger.revision)
-
-      }
-      let first = try request(
-        from: ledger.authorizeNetwork(
-          invocation: invocation(),
-          host: "local",
-          sourceProjectID: "project",
-          isLocalNetwork: true,
-          now: instant))
-      try ledger.answer(first.id, with: .onlyThisTime, now: instant)
-      do {
-        var updatedEnvironment = ledger.environment
-        updatedEnvironment.trustedHosts = hostRules(
-          [], preserving: ledger.environment.trustedHosts)
-        try ledger.reconcile(environment: updatedEnvironment, expectedRevision: ledger.revision)
-
-      }
-      let second = try request(
-        from: ledger.authorizeNetwork(
-          invocation: invocation(),
-          host: "local",
-          sourceProjectID: "project",
-          isLocalNetwork: true,
-          retryIDs: [first.id],
-          now: instant))
-      try ledger.answer(second.id, with: .onlyThisTime, now: instant)
-      if restored { ledger = try roundTrip(ledger) }
-      if consumeTogether {
-        do {
-          var updatedEnvironment = ledger.environment
-          updatedEnvironment.trustedHosts = hostRules(
-            [], preserving: ledger.environment.trustedHosts)
-          try ledger.reconcile(environment: updatedEnvironment, expectedRevision: ledger.revision)
-
-        }
-        let allowed = try authorization(
-          from: ledger.authorizeNetwork(
-            invocation: invocation(),
-            host: "local",
-            sourceProjectID: "project",
-            isLocalNetwork: true,
-            retryIDs: [first.id, second.id],
-            now: instant))
-        #expect(ledger.requests[first.id]?.status == .consumed(allowed.id))
-        #expect(ledger.requests[second.id]?.status == .consumed(allowed.id))
-        let running = try ledger.startExecution(owner: client, authorizationIDs: [allowed.id])
-        #expect(
-          ledger.executionAccess(
-            running.id, principal: client, operation: .readResult, now: instant) == .allowed)
-      } else {
-        let unrelated = try request(
-          from: ledger.authorize(
-            invocation: invocation(),
-            actions: [action(.localNetwork, .access, scope: .host("local", project: "project"))],
-            retryIDs: [first.id], now: instant))
-        #expect(unrelated.id != first.id)
-        #expect(ledger.requests[first.id]?.status == .onlyThisTime)
-        #expect(ledger.requests[second.id]?.status == .onlyThisTime)
-        try ledger.setPermission(
-          .granted(.access), for: .localNetwork, principal: client,
-          expectedRevision: ledger.revision)
-        #expect(throws: PermissionModelError.invalidAuthorization) {
-          do {
-            var updatedEnvironment = ledger.environment
-            updatedEnvironment.trustedHosts = hostRules(
-              [], preserving: ledger.environment.trustedHosts)
-            try ledger.reconcile(environment: updatedEnvironment, expectedRevision: ledger.revision)
-
-          }
-          _ = try ledger.authorizeNetwork(
-            invocation: invocation(),
-            host: "local",
-            sourceProjectID: "project",
-            isLocalNetwork: true,
-            retryIDs: [second.id],
-            now: instant)
-        }
-      }
+  @Test(arguments: [false, true], [false, true])
+  func networkRequestsConsumeTheirDependenciesTogether(restored: Bool, includeEarlierID: Bool)
+    throws
+  {
+    var ledger = PermissionLedger()
+    let first = try request(
+      from: ledger.authorizeNetwork(
+        invocation: invocation(), host: "local",
+        sourceProjectID: "project", isLocalNetwork: true, now: instant))
+    try ledger.answer(first.id, with: .onlyThisTime, now: instant)
+    let second = try request(
+      from: ledger.authorizeNetwork(
+        invocation: invocation(), host: "local",
+        sourceProjectID: "project", isLocalNetwork: true, retryIDs: [first.id], now: instant))
+    try ledger.answer(second.id, with: .onlyThisTime, now: instant)
+    if restored { ledger = try roundTrip(ledger) }
+    let unrelated = try request(
+      from: ledger.authorize(
+        invocation: invocation(),
+        actions: [action(.localNetwork, .access, scope: .host("local", project: "project"))],
+        retryIDs: [first.id], now: instant))
+    #expect(unrelated.id != first.id)
+    try ledger.setPermission(
+      .granted(.access), for: .localNetwork, principal: client,
+      expectedRevision: ledger.revision)
+    let allowed = try authorization(
+      from: ledger.authorizeNetwork(
+        invocation: invocation(), host: "local",
+        sourceProjectID: "project", isLocalNetwork: true,
+        retryIDs: includeEarlierID ? [first.id, second.id] : [second.id], now: instant))
+    #expect(ledger.requests[first.id]?.status == .consumed(allowed.id))
+    #expect(ledger.requests[second.id]?.status == .consumed(allowed.id))
+    #expect(ledger.requests[unrelated.id]?.status == .pending)
+    let running = try ledger.startExecution(owner: client, authorizationIDs: [allowed.id])
+    #expect(
+      ledger.executionAccess(running.id, principal: client, operation: .readResult, now: instant)
+        == .allowed)
+    #expect(throws: PermissionModelError.requestConsumed) {
+      try ledger.authorizeNetwork(
+        invocation: invocation(), host: "local", sourceProjectID: "project",
+        isLocalNetwork: true, retryIDs: [second.id], now: instant)
     }
   }
 

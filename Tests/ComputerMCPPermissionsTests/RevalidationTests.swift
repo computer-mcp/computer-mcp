@@ -521,49 +521,25 @@ struct ComputerMCPPermissionsRevalidationTests {
 
   @Test func endedConnectionCannotAdmitFreshCalls() throws {
     var ledger = PermissionLedger()
-    _ = try { () throws -> RevocationResult in
-      var updatedEnvironment = ledger.environment
-      updatedEnvironment.endedConnections.insert("ended")
-      return try ledger.reconcile(
-        environment: updatedEnvironment, expectedRevision: ledger.revision)
-    }()
+    var environment = ledger.environment
+    environment.connections["ended"] = PermissionConnection(
+      principal: client,
+      consent: ledger.consent(for: client, mode: .fullAccess(.connection("ended"))))
+    try ledger.reconcile(environment: environment, expectedRevision: ledger.revision)
+    environment = ledger.environment
+    environment.endedConnections.insert("ended")
+    try ledger.reconcile(environment: environment, expectedRevision: ledger.revision)
     ledger = try roundTrip(ledger)
-    let mode = ExecutionMode.fullAccess(.connection("ended"))
-    do {
-      var updatedEnvironment = ledger.environment
-      try ledger.reconcile(environment: updatedEnvironment, expectedRevision: ledger.revision)
-      updatedEnvironment = ledger.environment
-      if updatedEnvironment.modes[(invocation()).principal]?.mode != mode {
-        updatedEnvironment.modes[(invocation()).principal] = ledger.consent(
-          for: (invocation()).principal, mode: mode)
-        try ledger.reconcile(environment: updatedEnvironment, expectedRevision: ledger.revision)
-
-      }
-    }
     #expect(
       try ledger.authorize(
-        invocation: invocation(),
-        actions: [action(.skills)],
-        now: instant) == .denied(.authorizationRevoked))
-    do {
-      var updatedEnvironment = ledger.environment
-      updatedEnvironment.trustedHosts = hostRules([], preserving: ledger.environment.trustedHosts)
-      try ledger.reconcile(environment: updatedEnvironment, expectedRevision: ledger.revision)
-      updatedEnvironment = ledger.environment
-      if updatedEnvironment.modes[(invocation()).principal]?.mode != mode {
-        updatedEnvironment.modes[(invocation()).principal] = ledger.consent(
-          for: (invocation()).principal, mode: mode)
-        try ledger.reconcile(environment: updatedEnvironment, expectedRevision: ledger.revision)
-
-      }
-    }
+        invocation: invocation(), actions: [action(.skills)],
+        connectionID: "ended", now: instant) == .denied(.authorizationRevoked))
+    try ledger.reconcile(environment: PermissionEnvironment(), expectedRevision: ledger.revision)
     #expect(
       try ledger.authorizeNetwork(
-        invocation: invocation(),
-        host: "example",
-        sourceProjectID: "project",
-        isLocalNetwork: false,
-        now: instant) == .denied(.authorizationRevoked))
+        invocation: invocation(), host: "example", sourceProjectID: "project",
+        isLocalNetwork: false, connectionID: "ended", now: instant)
+        == .denied(.authorizationRevoked))
     #expect(ledger.authorizations.isEmpty)
   }
 

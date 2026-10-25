@@ -567,23 +567,16 @@ struct ComputerMCPPermissionsAdmissionEvidenceTests {
   @Test(arguments: [false, true])
   func modeRevocationPersistsTerminationAndCannotUseNewConsent(restored: Bool) throws {
     var ledger = PermissionLedger()
-    do {
-      var updatedEnvironment = ledger.environment
-      try ledger.reconcile(environment: updatedEnvironment, expectedRevision: ledger.revision)
-      updatedEnvironment = ledger.environment
-      if updatedEnvironment.modes[(invocation()).principal]?.mode
-        != .fullAccess(.connection("original"))
-      {
-        updatedEnvironment.modes[(invocation()).principal] = ledger.consent(
-          for: (invocation()).principal, mode: .fullAccess(.connection("original")))
-        try ledger.reconcile(environment: updatedEnvironment, expectedRevision: ledger.revision)
+    var originalEnvironment = ledger.environment
+    originalEnvironment.connections["original"] = PermissionConnection(
+      principal: client,
+      consent: ledger.consent(for: client, mode: .fullAccess(.connection("original"))))
+    try ledger.reconcile(environment: originalEnvironment, expectedRevision: ledger.revision)
 
-      }
-    }
     let allowed = try authorization(
       from: ledger.authorize(
         invocation: invocation(),
-        actions: [action(.skills)],
+        actions: [action(.skills)], connectionID: "original",
         now: instant))
     let running = try ledger.startExecution(owner: client, authorizationIDs: [allowed.id])
     if restored { ledger = try roundTrip(ledger) }
@@ -594,23 +587,16 @@ struct ComputerMCPPermissionsAdmissionEvidenceTests {
         return try ledger.reconcile(
           environment: updatedEnvironment, expectedRevision: ledger.revision)
       }().executionsToTerminate == [running.id])
-    do {
-      var updatedEnvironment = ledger.environment
-      try ledger.reconcile(environment: updatedEnvironment, expectedRevision: ledger.revision)
-      updatedEnvironment = ledger.environment
-      if updatedEnvironment.modes[(invocation()).principal]?.mode
-        != .fullAccess(.connection("replacement"))
-      {
-        updatedEnvironment.modes[(invocation()).principal] = ledger.consent(
-          for: (invocation()).principal, mode: .fullAccess(.connection("replacement")))
-        try ledger.reconcile(environment: updatedEnvironment, expectedRevision: ledger.revision)
+    var replacementEnvironment = ledger.environment
+    replacementEnvironment.connections["replacement"] = PermissionConnection(
+      principal: client,
+      consent: ledger.consent(for: client, mode: .fullAccess(.connection("replacement"))))
+    try ledger.reconcile(environment: replacementEnvironment, expectedRevision: ledger.revision)
 
-      }
-    }
     let fresh = try authorization(
       from: ledger.authorize(
         invocation: invocation(),
-        actions: [action(.skills)],
+        actions: [action(.skills)], connectionID: "replacement",
         now: instant))
     _ = try ledger.startExecution(owner: client, authorizationIDs: [fresh.id])
     if restored { ledger = try roundTrip(ledger) }

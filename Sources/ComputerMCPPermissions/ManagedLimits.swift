@@ -1,7 +1,7 @@
 import Foundation
 
 package enum PolicySource: String, CaseIterable, Hashable, Sendable, Codable {
-  case owner, machine
+  case owner, machine, managedPreferences, connection
 }
 
 package struct ManagedPolicy: Equatable, Sendable, Codable {
@@ -17,6 +17,7 @@ package struct ManagedPolicy: Equatable, Sendable, Codable {
   package var network: NetworkAccess {
     didSet { if network != oldValue { identity = identity.edited() } }
   }
+  package var executionLimits: ExecutionLimitCeilings
   package internal(set) var deniedReadRules: Set<PathRule>
   package var deniedReadLocations: Set<CanonicalPath> {
     get { Set(deniedReadRules.map(\.root)) }
@@ -29,8 +30,10 @@ package struct ManagedPolicy: Equatable, Sendable, Codable {
 
   package init(
     permissionCeilings: Permissions = .init(), allowsFullAccess: Bool = true,
-    network: NetworkAccess = .full, deniedReadLocations: Set<CanonicalPath> = []
+    network: NetworkAccess = .full, deniedReadLocations: Set<CanonicalPath> = [],
+    executionLimits: ExecutionLimitCeilings = .none
   ) {
+    self.executionLimits = executionLimits
     self.permissionCeilings = permissionCeilings
     self.allowsFullAccess = allowsFullAccess
     self.network = network
@@ -53,6 +56,8 @@ package struct ManagedLimits: Equatable, Sendable, Codable {
   package init(owner: PolicyAvailability = .absent, machine: PolicyAvailability = .absent) {
     sources = [.owner: owner, .machine: machine]
   }
+
+  package init(sources: [PolicySource: PolicyAvailability]) { self.sources = sources }
 
   package func restrictingSources(for requirement: PermissionRequirement) -> Set<PolicySource> {
     restrictingSources {
@@ -85,7 +90,7 @@ package struct ManagedLimits: Equatable, Sendable, Codable {
       })
     {
       guard let hosts = level.hosts(trustedHosts: trustedHosts) else { continue }
-      candidates = candidates.map { $0.intersection(hosts) } ?? hosts
+      candidates = candidates.map { NetworkHost.intersection($0, hosts) } ?? hosts
     }
     guard let candidates else { return .full }
     return candidates.isEmpty ? .none : .custom(hosts: candidates, includesTrusted: false)
@@ -144,14 +149,12 @@ extension ManagedLimits {
   package static func read(
     for principal: Principal, from store: some ManagedPolicyStore
   ) async -> ManagedLimits {
-    let owner: PolicyAvailability
-    let machine: PolicyAvailability
-    do { owner = try await store.read(source: .owner, principal: principal) } catch {
-      owner = .unreadable
+    var sources: [PolicySource: PolicyAvailability] = [:]
+    for source in [PolicySource.owner, .machine, .managedPreferences] {
+      do { sources[source] = try await store.read(source: source, principal: principal) } catch {
+        sources[source] = .unreadable
+      }
     }
-    do { machine = try await store.read(source: .machine, principal: principal) } catch {
-      machine = .unreadable
-    }
-    return ManagedLimits(owner: owner, machine: machine)
+    return ManagedLimits(sources: sources)
   }
 }

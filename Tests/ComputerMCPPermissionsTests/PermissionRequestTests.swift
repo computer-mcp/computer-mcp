@@ -301,23 +301,15 @@ struct ComputerMCPPermissionsRequestTests {
 
   @Test func connectionConsentEndsExecutionAndResultAccess() throws {
     var ledger = PermissionLedger()
-    do {
-      var updatedEnvironment = ledger.environment
-      try ledger.reconcile(environment: updatedEnvironment, expectedRevision: ledger.revision)
-      updatedEnvironment = ledger.environment
-      if updatedEnvironment.modes[(invocation()).principal]?.mode
-        != .fullAccess(.connection("connection"))
-      {
-        updatedEnvironment.modes[(invocation()).principal] = ledger.consent(
-          for: (invocation()).principal, mode: .fullAccess(.connection("connection")))
-        try ledger.reconcile(environment: updatedEnvironment, expectedRevision: ledger.revision)
-
-      }
-    }
+    var environment = ledger.environment
+    environment.connections["connection"] = PermissionConnection(
+      principal: client,
+      consent: ledger.consent(for: client, mode: .fullAccess(.connection("connection"))))
+    try ledger.reconcile(environment: environment, expectedRevision: ledger.revision)
     let allowed = try authorization(
       from: ledger.authorize(
         invocation: invocation(),
-        actions: [action(.skills)],
+        actions: [action(.skills)], connectionID: "connection",
         now: instant))
     let execution = try ledger.startExecution(owner: client, authorizationIDs: [allowed.id])
     #expect(

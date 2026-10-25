@@ -66,13 +66,15 @@ package struct PermissionEnvironment: Sendable, Codable {
   package var trustedHosts: Set<HostRule> = []
   package var paths: PathEnvironmentSnapshot?
   package var endedConnections: Set<String> = []
+  package var connections: [String: PermissionConnection] = [:]
   package var modes: [Principal: ModeConsent] = [:]
 
   package init() {}
 }
 
-/// Local consent pins the complete principal profile. Reusing a scope name does
-/// not renew consent. The host creates another record after obtaining new consent.
+/// Saved consent pins the complete principal profile; connection consent pins
+/// the connection lifetime. The host issues a new identity after local consent;
+/// reusing a scope name does not renew an earlier record.
 package struct ModeConsent: Hashable, Sendable, Codable {
   package let identity: BasisIdentity
   package let mode: ExecutionMode
@@ -89,5 +91,22 @@ extension PathRule {
       roots.subtracting(retained.map(\.root)).map {
         PathRule(root: $0, kind: .denied)
       })
+  }
+}
+
+/// Host-authenticated admission context. A closed record remains available to
+/// validate restrictions on standing work; only its connection-scoped consent ends.
+package struct PermissionConnection: Sendable, Codable {
+  package let principal: Principal
+  package var consent: ModeConsent?
+  package var attenuation: ManagedPolicy
+
+  package init(
+    principal: Principal, consent: ModeConsent? = nil,
+    attenuation: ManagedPolicy = .init()
+  ) {
+    self.principal = principal
+    self.consent = consent
+    self.attenuation = attenuation
   }
 }

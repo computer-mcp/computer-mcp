@@ -97,6 +97,9 @@ discarded and automatically retried when configuration changes.
 Cloudflare startup has one owned task per profile. Stop cancels and joins a
 pending start before closing any published origin and process; concurrent stops
 join the same task, and replacement starts are refused during either transition.
+The process starts through `ExecutionLauncher` in Full access with disclaimed
+privacy responsibility. Stop joins confirmed execution cleanup before releasing
+the origin, token file and log descriptors.
 Startup rechecks the host configuration, project, grant and plugin inputs
 around origin creation and process publication. Its downstream MCP client uses
 the host's credential provider. Version probes use the bounded command runner on
@@ -228,13 +231,15 @@ establishes their signing identity, publisher provenance or runtime compatibilit
   Listings and static diagnostics do not execute file-backed compatibility checks.
   Publisher hints do not change the host Full Shell boundary. See
   [CLI Trees](../Reference/CLITrees.md) for the contract and refresh behavior.
-- Shell/process: `swift-subprocess` sessions with stdin, cursor output,
+- Shell/process: launcher-owned sessions with stdin, cursor output,
   timeouts, cancellation, process-group cleanup, and byte limits. A shared
   nonblocking pipe reader delivers available bytes without waiting for a full
   buffer and applies consumer backpressure between bounded reads. Session
   completion joins both output readers, including inherited pipe writers.
 - Downstream MCP: persistent MCP SDK clients over stdio or Streamable
-  HTTP, including tools, resources, prompts, list-changed events, and
+  HTTP. Stdio supervisors launch through `ExecutionLauncher` in Full access,
+  preserving their configured environment and explicit host-service descriptors.
+  Clients support tools, resources, prompts, list-changed events, and
   cancellation. Each project registry owns an independently scoped client,
   connection pool, and tool-change stream. Authorization wrappers preserve the
   host policy when creating that scope. Stopping one registry closes its own

@@ -5,8 +5,9 @@ The caller authorizes the operation, provides canonical resolved paths and an
 execution ID, and retains ownership through the complete process lifetime.
 `ExecutionLauncher` in
 `ComputerMCPProcess` constructs the child environment and calls an injected
-`ExecutionPlatform`. Shell sessions, registered processes, CLI execution and host
-command runners use this entry point. The macOS composition root supplies the
+`ExecutionPlatform`. Every host subprocess uses this entry point, including shell
+sessions, registered processes, CLI and host commands, downstream MCP supervisors,
+plugin archive workers and Cloudflare tunnels. The macOS composition root supplies the
 Darwin backend; neutral modules never construct it. Full Shell authorization
 continues to gate arbitrary shell, process and CLI execution.
 
@@ -19,21 +20,35 @@ share this lifecycle. Their synchronous adapters use the same input and output
 ownership as background sessions.
 
 Host Git inspection and file operations also use the injected launcher.
-`runIsolated` uses the current `HostExecutionPolicy` and an environment constructed
-by the host, never inherited from the host process. Full access receives exactly
-the supplied variables. Sandbox variants combine the constructed environment with
-explicit host variables through `HostExecutionPolicy.prepare` and
-`ExecutionEnvironment`. The sandbox's home, temporary, configuration and cache
-locations and proxy settings take precedence over supplied values because its
-profile opens only those locations and endpoints. Host Git inspection retains its
-system/global configuration suppression and private home; registered SQLite reads
-retain `-safe`, disabled initialization files and a private home.
+`runIsolated`, `runToFile` and `runInDirectory` receive a complete, explicit set of
+caller-owned variables. They never merge process variables, runner base variables
+or a managed runner's default host variables. Full access uses exactly that set.
+Read-only execution combines it with the fixed sandbox environment. Sandbox home,
+temporary, configuration and cache locations and proxy settings take precedence
+because the profile opens only those locations and endpoints.
+
+Callers select these sets at their operation boundary:
+
+| Caller | Selected variables |
+| --- | --- |
+| Host Git operations, project Git layout checks and delivery Git | Private `HOME` and `XDG_CONFIG_HOME`, `LC_ALL=C`; `GIT_CONFIG_NOSYSTEM=1`, `GIT_CONFIG_GLOBAL=/dev/null`, `GIT_TERMINAL_PROMPT=0`, `GIT_NO_LAZY_FETCH=1`, `GIT_ALLOW_PROTOCOL=`, `GIT_CONFIG_COUNT=0`, `GIT_CONFIG_PARAMETERS=`, `GIT_EXTERNAL_DIFF=/dev/null`, `GIT_ATTR_NOSYSTEM=1`, `GIT_PAGER=`, and `/dev/null` for `GIT_EDITOR`, `GIT_SEQUENCE_EDITOR`, `GIT_ASKPASS`, `GIT_SSH_COMMAND` |
+| Git author identity lookup | Only selected configuration locations `HOME`, `XDG_CONFIG_HOME`, `GIT_CONFIG_GLOBAL`, `GIT_CONFIG_SYSTEM`, plus `LC_ALL=C`; author values are subsequently passed as explicit Git options |
+| Registered SQLite inspection | Private `HOME`; arguments retain `-init /dev/null -safe` |
+| File archive extraction | `LC_ALL=C` |
+| File archive creation and download | Empty set |
+
+Executable and interpreter resolution happens on the host before isolated Git or
+SQLite execution. Host `PATH` can locate an executable, but only the resolved
+absolute path and invocation arguments cross this boundary. Host variables are
+never selected by copying an entire process or runner environment.
 
 `runToFile` and `runInDirectory` stream stdout through a pipe into the host-owned
 output descriptor, report write errors and bound stderr independently.
 The pipe prevents sparse producers from seeking over holes in the output stream.
 Descriptor working directories select the POSIX launch backend, which applies
 `fchdir` before stdio remapping; Linux uses `LinuxSystemCalls` for that action.
+Descriptor working directories are available for Full access and read-only
+configurations; Linux continues to refuse sandbox execution.
 The caller retains all borrowed descriptors until the synchronous operation
 finishes. Timeouts cancel the owned process group and wait for confirmation before
 joining output consumption.
@@ -70,6 +85,40 @@ same standing client trust ID and revision, or the same configured grant identit
 Connection-only consent permits crash cleanup but does not retain readable output
 for another connection. Completed results remain subject to
 the session store's retention limits. Explicit owner shutdown discards its results.
+
+## Host infrastructure launches
+
+These services use Full access through the injected launcher and disclaim macOS
+privacy responsibility. They do not inherit the host App's privacy responsibility.
+Downstream MCP servers remain host infrastructure with their configured launch
+environment; their launches are not placed in a tool execution sandbox.
+
+- `ManagedLineProcess` starts its supervisor through the launcher, retaining the
+  child job-control group, owner-death watchdog and termination grace periods.
+  Nonblocking descriptor input preserves FIFO admission and complete protocol
+  frames; bounded stdout framing and stderr draining run independently. The host
+  service descriptor and supervisor ownership lock are explicitly mapped into the
+  child. EOF, cancellation and failure join input and output before retiring the
+  execution's resources.
+- `PluginArchivePreparation` uses launcher capture with a read-only archive input
+  descriptor, an explicit inherited installation lock, private working directory,
+  and only fixed `PATH`, `LANG` and job-owned `TMPDIR`. Capture limits are inclusive;
+  overflow cancels the worker immediately. Timeout and cancellation wait for
+  confirmed termination before releasing descriptors or discarding the job root.
+- Cloudflare uses `ManagedServiceProcess` with the host infrastructure environment,
+  null stdin and the existing stdout/stderr log files. The launcher owns startup,
+  exit observation and termination. Stop confirms cleanup before the origin,
+  token file and log handles are released, and unexpected exit still updates the
+  control-plane lifecycle and audit.
+
+Explicit inherited descriptors select the POSIX backend. It copies all sources
+above the destination range before applying mappings, closes parent copies after
+spawn, and exposes only the requested child descriptors. Sandbox launches refuse
+extra inherited descriptors. The source gate in `Scripts/verify-execution-launches.py`,
+run by the package boundary CI stage, rejects direct `Process`, `posix_spawn`,
+`posix_spawnp` and `Subprocess.run` usage outside the launcher's OS backend,
+sentinel and ownership implementation files. Those internal helpers establish
+ownership before user commands can execute.
 
 ## Configuration and Seatbelt
 
@@ -111,9 +160,10 @@ system and private caches, preserving TMPDIR in link tasks.
 `UnsupportedExecutionPlatform` refuses execution when no backend is injected.
 The Linux `POSIXExecutionPlatform` preserves Full access process-group execution;
 its bootstrap stops before exec, and cancellation uses the unreaped process group
-and identity-checked pidfds for observed descendants. After mapping stdin, stdout
-and stderr, its glibc spawn close-from action closes all higher descriptors in the
-child. Host pipe writers and unrelated open files cannot leak across exec, so
+and identity-checked pidfds for observed descendants. It maps stdio and explicitly
+inherited descriptors, closes unmapped descriptors below that range, and uses the
+glibc spawn close-from action for all descriptors above it.
+Host pipe writers and unrelated open files cannot leak across exec, so
 closing the host's stdin writer delivers EOF to the command. Read-only, sandbox and durable
 recovery calls fail closed until corresponding Linux backends are available.
 

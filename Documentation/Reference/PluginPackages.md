@@ -333,8 +333,9 @@ Neither the digest nor the worker receipt proves publisher identity or grants
 permissions. The original archive is never removed or changed.
 
 The CLI worker lowers only its own CPU limit to 30 seconds, per-file limit to
-512 MiB and core-dump limit to zero. The host cancels and reaps it after at most
-60 seconds; a child alarm provides an independent 60-second deadline. Resident
+512 MiB and core-dump limit to zero. The host requests cancellation at its
+60-second deadline and confirms termination before cleanup; a child alarm
+provides an independent 60-second deadline. Resident
 memory is sampled every 20 milliseconds and the worker exits above 512 MiB or
 if sampling fails. This is a sampled safeguard, **not a hard allocation cap**:
 an allocation can overshoot before the next sample. Small macOS `RLIMIT_AS` and
@@ -432,7 +433,10 @@ the socket server waits for those owners to finish before reporting completion.
 The host chooses its embedded archive worker and stores installations under
 its Application Support `Plugins` directory; neither path is a plugin or
 control-socket argument. An unavailable embedded worker fails without a PATH
-fallback. App and CLI archive installation accepts a local file. The host's
+fallback. Worker startup uses the host execution launcher in Full access with
+disclaimed privacy responsibility. Its explicit archive and lock descriptors
+remain owned until termination is confirmed, including output overflow, timeout
+and cancellation. App and CLI archive installation accepts a local file. The host's
 GitHub release installer adds public provenance verification to this same
 transaction; it does not grant additional runtime permissions.
 

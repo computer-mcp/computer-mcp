@@ -40,8 +40,7 @@ owns dependency verification and the combinations exercised by release checks.
 | swift-toml | `from: "2.0.0"` | TOML config |
 | Yams | `from: "6.2.2"` | Skill YAML frontmatter |
 | SwiftNIO | `.upToNextMinor(from: "2.101.2")` | HTTP and Unix-socket transport adapters; shared lock primitives through `NIOConcurrencyHelpers` |
-| swift-subprocess | `.upToNextMinor(from: "1.0.2")` | Process, Shell, and streaming lifecycle |
-| swift-system | `from: "1.7.2"` | `FilePath` for process launches where the System framework is unavailable |
+| swift-subprocess | `.upToNextMinor(from: "1.0.2")` | Darwin execution launcher backend |
 | GRDB | `from: "7.11.1"` | Transactional App metadata and redacted audit; system SQLite on Linux |
 | swift-log | `from: "1.14.0"` | Runtime logging integration |
 | swift-crypto | `.upToNextMinor(from: "4.5.2")` | SHA-256 in the platform-neutral `ComputerMCPCore`, `ComputerMCPToolsCLI`, `ComputerMCPPlugins`, `ComputerMCPGateway` and `ComputerMCPControlPlane` targets on macOS and Linux |
@@ -312,9 +311,9 @@ document; see [Product Identity](ProductIdentity.md) for brand ownership.
   primitive handles bounded newline-delimited stdio, supervisor/group lifetime
   and byte flow for downstream MCP without a domain dependency.
   Its supervisor uses `/bin/sh` on macOS and `/bin/bash` on Linux for job control
-  without a terminal. Descriptor inheritance, including MCP ownership locks,
-  uses Darwin spawn file actions; Linux rejects configurations that require
-  inherited descriptors.
+  without a terminal. The launcher maps explicit inherited descriptors, including
+  MCP ownership locks, through its Darwin and Linux POSIX backends. Parent-side
+  copies close after spawn so they cannot delay pipe EOF.
   Child-input owners install a process-wide no-op SIGPIPE handler once when the
   disposition is default, preserving an embedder's existing handler or SIG_IGN.
   The host reports broken child-input pipes as write errors. A caught handler
@@ -364,7 +363,9 @@ document; see [Product Identity](ProductIdentity.md) for brand ownership.
   signature or an authorization grant.
 - Keep untrusted archive decoding in the host CLI's short-lived internal
   worker. The host owns its read-only input descriptor, private job directory,
-  deadline and process cancellation/reaping. The worker performs bounded
+  deadline and launcher-owned process cancellation/reaping. It uses Full access
+  with disclaimed privacy responsibility and explicit input, lock and output
+  descriptors. The worker performs bounded
   private copying and SHA-256 verification before using the system parser;
   host-side package compatibility checks precede the installation transaction.
   CPU/file/time limits and sampled resident-memory termination are resource
@@ -382,11 +383,10 @@ graph; bundled plugin archives retain their separate dependency notices.
 
 ## Child input lifecycle
 
-Managed transport `StandardInputWriter` and execution `DescriptorInputWriter`
-adapters use `ChildProcessInput` to own
-admission, writes and descriptor close:
+Managed transport and execution use `DescriptorInputWriter` behind
+`ChildProcessInput` to own admission, writes and descriptor close:
 
-1. Writes enter one FIFO queue per child. Only one library write is outstanding
+1. Writes enter one FIFO queue per child. Only one descriptor write is outstanding
    at a time. Explicit EOF, including a shell write with `close: true` and an
    empty close-only call, takes its turn after earlier operations.
 2. Cancelling a caller before admission promptly removes its waiter and throws
@@ -399,12 +399,11 @@ admission, writes and descriptor close:
    no longer running. If some bytes were written, the owner retires input before
    handing off the turn; queued and later data or EOF operations fail closed.
    A zero-byte result fails that operation but leaves input available for the
-   next waiter. Library errors propagate unchanged.
+   next waiter. Descriptor I/O errors propagate unchanged.
 5. Close, cancellation and shutdown stop admission and fail queued waiters, while
    process termination proceeds independently of the input queue. Teardown joins
-   the admitted operation before calling `finish()`. Every `run` body also joins
-   input before returning, since swift-subprocess automatically closes it then.
-   Thus a resumed write cannot use a descriptor that teardown has already closed.
+   the admitted operation before calling `finish()`, so a resumed write cannot use
+   a descriptor that teardown has already closed.
 
 Managed close delivers EOF first when input is idle. With an admitted operation
 it signals the owned process group immediately after startup has published its
@@ -415,20 +414,18 @@ bound. Idle close can use one additional termination grace for EOF delivery.
 Shell cancellation delegates to `ExecutionOwnership`, whose termination and
 confirmation do not wait for input to drain. The descriptor adapter uses
 nonblocking writes, stops them on execution cancellation or exit, joins admitted
-input, then closes the descriptor. Managed transport I/O remains owned by
-swift-subprocess. `pendingWrites` counts queued plus outstanding operations,
+input, then closes the descriptor. Managed transports retain their supervisor and
+watchdog while the launcher tracks execution ownership. `pendingWrites` counts queued plus outstanding operations,
 including explicit EOF.
 
 Shell callers running in tasks use `writeAsync`, including the shell tool
 provider, so their cancellation reaches admission. The synchronous `write`
 bridge serves blocking callers and is unavailable from async code.
 
-With swift-subprocess 1.0.2, each write registers its descriptor again, and a
-second registration ends the first write's wait. Calling-task or process I/O
-cancellation can return a short count. `finish()` immediately unregisters and
-closes the descriptor, while a resumed write may still hold its descriptor
-number. The FIFO queue, independent admitted task, short-write check and teardown
-join together protect that descriptor's lifetime and the child's frame boundaries.
+The descriptor writer serializes close and each nonblocking write under its lock.
+An outstanding poll cannot write to a reused descriptor. The FIFO queue,
+independent admitted task, short-write check and teardown join protect descriptor
+lifetime and the child's frame boundaries.
 
 ## Execution ownership
 

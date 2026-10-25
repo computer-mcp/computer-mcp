@@ -49,22 +49,40 @@ int main(int argc, char **argv) {
   int enabled = 1;
   if (setsockopt(STDIN_FILENO, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout)) != 0 ||
       setsockopt(STDIN_FILENO, SOL_SOCKET, SO_SNDTIMEO, &timeout, sizeof(timeout)) != 0 ||
-      setsockopt(STDIN_FILENO, SOL_SOCKET, SO_NOSIGPIPE, &enabled, sizeof(enabled)) != 0) return 126;
+      setsockopt(STDIN_FILENO, SOL_SOCKET, SO_NOSIGPIPE, &enabled, sizeof(enabled)) != 0) {
+    perror("Execution identity channel setup failed");
+    return 126;
+  }
 
   /* Foundation may create a process group in the host's session. Leave it before setsid. */
   if (getsid(0) != getpid()) {
-    if (getpgrp() == getpid() && setpgid(0, getpgid(getppid())) != 0) return 126;
-    if (setsid() < 0) return 126;
+    if (getpgrp() == getpid() && setpgid(0, getpgid(getppid())) != 0) {
+      perror("Execution process group setup failed");
+      return 126;
+    }
+    if (setsid() < 0) {
+      perror("Execution session setup failed");
+      return 126;
+    }
   }
   struct process_identity_info info = {0};
-  if (proc_pidinfo(getpid(), 17, 0, &info, sizeof(info)) != sizeof(info) || info.unique_id == 0) return 126;
+  int identity_size = proc_pidinfo(getpid(), 17, 0, &info, sizeof(info));
+  if (identity_size != sizeof(info) || info.unique_id == 0) {
+    int status = identity_size <= 0 ? errno : 0;
+    fprintf(stderr, "Execution identity query failed: size %d, identity %llu, errno %d\n",
+            identity_size, (unsigned long long)info.unique_id, status);
+    return 126;
+  }
   struct bootstrap_identity identity = {info.unique_id, (uint32_t)getpid(), (uint32_t)info.version};
   const uint8_t *cursor = (const uint8_t *)&identity;
   size_t remaining = sizeof(identity);
   while (remaining != 0) {
     ssize_t count = write(STDIN_FILENO, cursor, remaining);
     if (count < 0 && errno == EINTR) continue;
-    if (count <= 0) return 126;
+    if (count <= 0) {
+      perror("Execution identity write failed");
+      return 126;
+    }
     cursor += count;
     remaining -= (size_t)count;
   }

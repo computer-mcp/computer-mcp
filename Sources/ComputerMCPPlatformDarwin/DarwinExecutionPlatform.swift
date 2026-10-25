@@ -378,7 +378,10 @@ struct DarwinProcessIdentity: Hashable, Sendable {
       }
       if received < 0, errno == EINTR { continue }
       guard received > 0 else {
-        throw ExecutionEnvironmentError.launchFailed("Launch identity handshake failed")
+        let status = received < 0 ? errno : 0
+        throw ExecutionEnvironmentError.launchFailed(
+          "Launch identity handshake failed: received \(received), offset \(offset), errno \(status)"
+        )
       }
       offset += received
     }

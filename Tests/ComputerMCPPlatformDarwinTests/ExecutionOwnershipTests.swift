@@ -76,14 +76,10 @@ import Testing
     }
     let a = try await first.start(
       method: method, variant: sandboxed ? "orphan" : "observed", sandboxed: sandboxed)
+    defer { Task { _ = try? await a.cancel() } }
     let b = try await second.start(
       method: method, variant: sandboxed ? "orphan" : "observed", sandboxed: sandboxed)
-    defer {
-      Task {
-        _ = try? await a.cancel()
-        _ = try? await b.cancel()
-      }
-    }
+    defer { Task { _ = try? await b.cancel() } }
     if !sandboxed {
       try await first.observeThenDetach(a)
       try await second.observeThenDetach(b)

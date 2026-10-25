@@ -18,6 +18,26 @@ store. `ProcessCommandRunner`, `ManagedCommandRunner` and `CLIProcessExecution`
 share this lifecycle. Their synchronous adapters use the same input and output
 ownership as background sessions.
 
+Host Git inspection and file operations also use the injected launcher.
+`runIsolated` uses the current `HostExecutionPolicy` and an environment constructed
+by the host, never inherited from the host process. Full access receives exactly
+the supplied variables. Sandbox variants combine the constructed environment with
+explicit host variables through `HostExecutionPolicy.prepare` and
+`ExecutionEnvironment`. The sandbox's home, temporary, configuration and cache
+locations and proxy settings take precedence over supplied values because its
+profile opens only those locations and endpoints. Host Git inspection retains its
+system/global configuration suppression and private home; registered SQLite reads
+retain `-safe`, disabled initialization files and a private home.
+
+`runToFile` and `runInDirectory` stream stdout through a pipe into the host-owned
+output descriptor, report write errors and bound stderr independently.
+The pipe prevents sparse producers from seeking over holes in the output stream.
+Descriptor working directories select the POSIX launch backend, which applies
+`fchdir` before stdio remapping; Linux uses `LinuxSystemCalls` for that action.
+The caller retains all borrowed descriptors until the synchronous operation
+finishes. Timeouts cancel the owned process group and wait for confirmation before
+joining output consumption.
+
 Executions have stable UUIDs. Independent absolute stdout and stderr byte cursors
 support incremental reads across transport reconnects. A shared ring budget keeps
 the newest 8 MiB across both streams by default; reads report the discarded byte
@@ -31,8 +51,8 @@ described below still apply.
 The host selects `HostExecutionPolicy` after authorization. Read-only and
 project-independent command calls, CLI compatibility checks and catalog exporters
 use the read-only sandbox variant: only a private temporary directory is writable,
-and HOME and caches reside within it. The environment is rebuilt from the fixed
-sandbox allowlist. Host network diagnostics use system read roots, a temporary
+and HOME and caches reside within it. The environment is rebuilt from fixed sandbox values and any explicitly selected
+host variables. Host network diagnostics use system read roots, a temporary
 working directory and network access; they receive no project read root. Arbitrary
 Full Shell execution retains its explicit caller environment and working directory.
 

@@ -71,12 +71,17 @@
       defer { posix_spawn_file_actions_destroy(&actions) }
       try check(posix_spawnattr_init(&attributes))
       defer { posix_spawnattr_destroy(&attributes) }
+      // Change directories before dup2 can overwrite the directory descriptor.
+      if let directory = command.directoryDescriptor {
+        try check(LinuxSystemCalls.addWorkingDirectory(directory, to: &actions))
+      } else {
+        try command.directory.value.withCString { try check(addWorkingDirectory(&actions, $0)) }
+      }
       for (source, destination) in [(input, 0), (output, 1), (error, 2)] {
         try check(posix_spawn_file_actions_adddup2(&actions, source, Int32(destination)))
       }
       // Inherited pipe writers prevent stdin EOF even after the host closes its writer.
       try check(closeDescriptors(&actions, 3))
-      try command.directory.value.withCString { try check(addWorkingDirectory(&actions, $0)) }
       try check(posix_spawnattr_setpgroup(&attributes, 0))
       var mask = sigset_t()
       sigemptyset(&mask)

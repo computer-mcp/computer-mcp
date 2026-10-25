@@ -48,6 +48,41 @@ package final class ProcessCommandRunner: CommandRunning, Sendable {
     )
   }
 
+  package func runIsolated(
+    executable: String, arguments: [String], workingDirectory: URL?,
+    environment: [String: String], timeoutMilliseconds: Int, maxOutputBytes: Int
+  ) throws -> CommandResult {
+    try ManagedCommandRunner(launcher: launcher, policy: HostExecutionPolicy.current).runIsolated(
+      executable: executable, arguments: arguments, workingDirectory: workingDirectory,
+      environment: environment, timeoutMilliseconds: timeoutMilliseconds,
+      maxOutputBytes: maxOutputBytes)
+  }
+
+  package func runToFile(
+    executable: String, arguments: [String], workingDirectory: URL?,
+    environment: [String: String], timeoutMilliseconds: Int, maxOutputBytes: Int,
+    outputDescriptor: Int32
+  ) throws -> CommandResult {
+    try ManagedCommandRunner(launcher: launcher, policy: HostExecutionPolicy.current).runToFile(
+      executable: executable, arguments: arguments, workingDirectory: workingDirectory,
+      environment: baseEnvironment.merging(environment) { _, value in value },
+      timeoutMilliseconds: timeoutMilliseconds, maxOutputBytes: maxOutputBytes,
+      outputDescriptor: outputDescriptor)
+  }
+
+  package func runInDirectory(
+    executable: String, arguments: [String], directoryDescriptor: Int32,
+    inputDescriptor: Int32, outputDescriptor: Int32, environment: [String: String],
+    timeoutMilliseconds: Int, maxOutputBytes: Int
+  ) throws -> CommandResult {
+    try ManagedCommandRunner(launcher: launcher, policy: HostExecutionPolicy.current)
+      .runInDirectory(
+        executable: executable, arguments: arguments, directoryDescriptor: directoryDescriptor,
+        inputDescriptor: inputDescriptor, outputDescriptor: outputDescriptor,
+        environment: baseEnvironment.merging(environment) { _, value in value },
+        timeoutMilliseconds: timeoutMilliseconds, maxOutputBytes: maxOutputBytes)
+  }
+
   package func runData(
     executable: String,
     arguments: [String],

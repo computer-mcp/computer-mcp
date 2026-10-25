@@ -3,6 +3,10 @@ import ComputerMCPToolKit
 import Foundation
 import Testing
 
+#if os(macOS)
+  import ComputerMCPDarwinTestSupport
+#endif
+
 @Suite(.nativeIntegration)
 struct ProjectFileMutationTests {
   @Test
@@ -13,7 +17,8 @@ struct ProjectFileMutationTests {
     let target = root.appendingPathComponent("existing")
     let link = temporary.url.appendingPathComponent("linked")
     try Data("original".utf8).write(to: target)
-    let files = try ProjectFileAccess(project: root) { operation, _, phase in
+    let files = try ProjectFileAccess(project: root, launcher: testExecutionLauncher()) {
+      operation, _, phase in
       if operation == "unlinkat", phase == .willMutate {
         let name = try #require(
           FileManager.default.contentsOfDirectory(atPath: root.path).first { $0.hasSuffix(".tmp") })
@@ -40,7 +45,8 @@ struct ProjectFileMutationTests {
     let target = parent.appendingPathComponent("existing")
     try Data("original".utf8).write(to: target)
     let mover = FileGuardDirectoryMover(from: parent, to: outside)
-    let files = try ProjectFileAccess(project: root) { name, url, step in
+    let files = try ProjectFileAccess(project: root, launcher: testExecutionLauncher()) {
+      name, url, step in
       let expected = operation == "mkdirat" ? "leaf" : "existing"
       if name == operation, step == phase, url.lastPathComponent == expected { try mover.move() }
     }
@@ -69,7 +75,8 @@ struct ProjectFileMutationTests {
     try Data("original".utf8).write(to: input.appendingPathComponent("source"))
     let outside = temporary.url.appendingPathComponent("outside")
     let mover = FileGuardDirectoryMover(from: destinationMoves ? output : input, to: outside)
-    let files = try ProjectFileAccess(project: root) { operation, _, phase in
+    let files = try ProjectFileAccess(project: root, launcher: testExecutionLauncher()) {
+      operation, _, phase in
       if operation == "renameatx_np", phase == .didMutate { try mover.move() }
     }
     #expect(throws: (any Error).self) {
@@ -91,7 +98,7 @@ struct ProjectFileMutationTests {
     let parent = root.appendingPathComponent("parent")
     let outside = temporary.url.appendingPathComponent("outside")
     try FileManager.default.createDirectory(at: parent, withIntermediateDirectories: true)
-    let files = try ProjectFileAccess(project: root)
+    let files = try ProjectFileAccess(project: root, launcher: testExecutionLauncher())
     var replacement: String?
     #expect(throws: (any Error).self) {
       try files.writeGenerated(

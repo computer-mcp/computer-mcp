@@ -375,6 +375,7 @@ final class SystemToolProviderTests {
   func testSystemProcessesRejectsBadBounds(name: String, value: Int) throws {
     let provider = SystemToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration.fixture(
           builtin: BuiltinConfig(enabled: ["system.processes"]))))
     expectThrows(

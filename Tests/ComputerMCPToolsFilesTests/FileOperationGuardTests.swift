@@ -8,6 +8,10 @@ import Testing
 
 @testable import ComputerMCPToolsFiles
 
+#if os(macOS)
+  import ComputerMCPDarwinTestSupport
+#endif
+
 #if canImport(Darwin)
   import Darwin
 #elseif canImport(Glibc)
@@ -29,6 +33,7 @@ struct FileOperationGuardTests {
     if let executable = try? testExecutable("zip") { executables["zip"] = executable }
     return FilesToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: [
             "file.write", "file.append", "file.touch", "file.chmod", "file.copy", "file.move",
@@ -46,7 +51,8 @@ struct FileOperationGuardTests {
 
   @discardableResult
   private func git(_ root: URL, _ arguments: [String]) throws -> String {
-    let environment = ToolEnvironment(configuration: .init(projectDirectory: root))
+    let environment = ToolEnvironment(
+      launcher: testExecutionLauncher(), configuration: .init(projectDirectory: root))
     let result = try environment.commandRunner.runIsolated(
       executable: testExecutable("git"),
       arguments: HostGitConfiguration.arguments + arguments, workingDirectory: root,

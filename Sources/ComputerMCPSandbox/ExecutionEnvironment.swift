@@ -2,6 +2,7 @@ import Foundation
 
 /// Values are selected by the host; the parent process environment is never merged into these.
 package struct ExecutionEnvironment: Sendable, Equatable {
+  private let hostVariables: [String: String]
   private let codexHome: SandboxPath?
   private let fullAccessVariables: [String: String]?
   package let searchPath: [SandboxPath]
@@ -15,11 +16,14 @@ package struct ExecutionEnvironment: Sendable, Equatable {
   package init(
     searchPath: [SandboxPath], home: SandboxPath, temporary: SandboxPath,
     cache: SandboxPath, locale: String = "en_US.UTF-8", terminal: String = "dumb",
-    developerDirectory: SandboxPath? = nil, codexHome: SandboxPath? = nil
+    developerDirectory: SandboxPath? = nil, codexHome: SandboxPath? = nil,
+    hostVariables: [String: String] = [:]
   ) throws {
     guard !searchPath.isEmpty, searchPath.allSatisfy({ !$0.value.contains(":") }),
       [locale, terminal].allSatisfy({ !$0.isEmpty && $0.utf8.allSatisfy { $0 >= 32 && $0 < 127 } })
     else { throw ExecutionEnvironmentError.invalidConfiguration("Invalid execution environment") }
+    try Self.validate(hostVariables)
+    self.hostVariables = hostVariables
     self.codexHome = codexHome
     self.fullAccessVariables = nil
     self.searchPath = searchPath
@@ -33,11 +37,8 @@ package struct ExecutionEnvironment: Sendable, Equatable {
 
   /// A complete, explicitly selected environment for an authorized Full access execution.
   package init(fullAccessVariables: [String: String]) throws {
-    guard
-      fullAccessVariables.allSatisfy({ key, value in
-        !key.isEmpty && !key.contains("=") && !key.contains("\0") && !value.contains("\0")
-      })
-    else { throw ExecutionEnvironmentError.invalidConfiguration("Invalid child environment") }
+    try Self.validate(fullAccessVariables)
+    self.hostVariables = [:]
     self.codexHome = nil
     self.fullAccessVariables = fullAccessVariables
     searchPath = []
@@ -76,6 +77,14 @@ package struct ExecutionEnvironment: Sendable, Equatable {
     ]
     if let codexHome { result["CODEX_HOME"] = codexHome.value }
     if let developerDirectory { result["DEVELOPER_DIR"] = developerDirectory.value }
+    // Location and network values must agree with the paths and endpoints opened by the profile.
+    let protected = Set([
+      "HOME", "TMPDIR", "TMP", "TEMP", "XDG_CACHE_HOME", "XDG_CONFIG_HOME",
+      "CLANG_MODULE_CACHE_PATH", "SWIFT_MODULECACHE_PATH",
+      "http_proxy", "HTTP_PROXY", "https_proxy", "HTTPS_PROXY", "all_proxy", "ALL_PROXY",
+      "NO_PROXY", "no_proxy",
+    ])
+    result.merge(hostVariables.filter { !protected.contains($0.key) }) { _, value in value }
     if let proxy = sandbox?.proxy {
       for key in ["http_proxy", "HTTP_PROXY", "https_proxy", "HTTPS_PROXY"] {
         result[key] = "http://127.0.0.1:\(proxy.http)"
@@ -94,6 +103,14 @@ package struct ExecutionEnvironment: Sendable, Equatable {
         .replacingOccurrences(of: "\"", with: "\\\"") + "\""
     }
     return result
+  }
+
+  private static func validate(_ variables: [String: String]) throws {
+    guard
+      variables.allSatisfy({ key, value in
+        !key.isEmpty && !key.contains("=") && !key.contains("\0") && !value.contains("\0")
+      })
+    else { throw ExecutionEnvironmentError.invalidConfiguration("Invalid child environment") }
   }
 
   /// SwiftBuild loses TMPDIR in link tasks. Keep the outer sandbox and use private native build state.

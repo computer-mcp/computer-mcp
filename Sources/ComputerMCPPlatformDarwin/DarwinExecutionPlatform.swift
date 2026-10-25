@@ -60,6 +60,10 @@ package struct DarwinExecutionPlatform: ExecutionPlatform {
     bindOwnership: @Sendable (any ExecutionOwnership) -> Void
   ) async throws -> any ExecutionOwnership {
     try Task.checkCancellation()
+    guard command.directoryDescriptor == nil || (sandbox == nil && method == .posixSpawn) else {
+      throw ExecutionEnvironmentError.invalidConfiguration(
+        "Descriptor working directories require a Full access POSIX launch")
+    }
     if sandbox == nil { try responsibility.preflight() }
     let bootstrap = try bootstrapExecutable ?? Self.locateBootstrap()
     let marker = try sandbox.map { _ in try ExecutionSandboxMarker() }
@@ -228,7 +232,12 @@ package struct DarwinExecutionPlatform: ExecutionPlatform {
     sigfillset(&signalDefaults)
     try check(posix_spawnattr_setsigmask(&attributes, &signalMask))
     try check(posix_spawnattr_setsigdefault(&attributes, &signalDefaults))
-    try check(posix_spawn_file_actions_addchdir_np(&actions, command.directory.value))
+    // The directory descriptor can overlap a stdio destination.
+    if let directory = command.directoryDescriptor {
+      try check(posix_spawn_file_actions_addfchdir_np(&actions, directory))
+    } else {
+      try check(posix_spawn_file_actions_addchdir_np(&actions, command.directory.value))
+    }
     for (source, destination) in [
       (channel.child, STDIN_FILENO), (output, STDOUT_FILENO), (error, STDERR_FILENO),
     ] {

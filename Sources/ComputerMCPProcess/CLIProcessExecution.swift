@@ -53,14 +53,17 @@ package final class CLIProcessExecution: Sendable {
   private let state = NIOLockedValueBox(State())
   private let blocking = BlockingOperationExecutor(label: "computer-mcp.cli", serial: false)
   private let maxConcurrentCalls: Int
+  private let hostVariables: [String: String]
   private let policy: HostExecutionPolicy
   private let launcher: ExecutionLauncher
   private let inheritsEnvironment: Bool
 
   package init(
     launcher: ExecutionLauncher = ExecutionLauncher(), policy: HostExecutionPolicy = .fullAccess,
-    maxConcurrentCalls: Int = 32, inheritsEnvironment: Bool = true
+    hostVariables: [String: String] = [:], maxConcurrentCalls: Int = 32,
+    inheritsEnvironment: Bool = true
   ) {
+    self.hostVariables = hostVariables
     self.policy = policy
     self.launcher = launcher
     self.maxConcurrentCalls = max(1, maxConcurrentCalls)
@@ -124,7 +127,8 @@ package final class CLIProcessExecution: Sendable {
         throw ProcessLaunchError.invalid("CLI invocation limit reached.")
       }
       let id = UUID()
-      let call = BoundedProcessCall(launcher: launcher, policy: policy)
+      let call = BoundedProcessCall(
+        launcher: launcher, policy: policy, hostVariables: hostVariables)
       state.calls[id] = call
       return (id, call)
     }
@@ -140,12 +144,15 @@ package final class BoundedProcessCall: Sendable {
   }
   private let state = NIOLockedValueBox(State())
   private let launcher: ExecutionLauncher
+  private let hostVariables: [String: String]
   private let policy: HostExecutionPolicy
 
   package init(
-    launcher: ExecutionLauncher = ExecutionLauncher(), policy: HostExecutionPolicy = .readOnly
+    launcher: ExecutionLauncher = ExecutionLauncher(), policy: HostExecutionPolicy = .readOnly,
+    hostVariables: [String: String] = [:]
   ) {
     self.launcher = launcher
+    self.hostVariables = hostVariables
     self.policy = policy
   }
 
@@ -202,7 +209,8 @@ package final class BoundedProcessCall: Sendable {
     environment: [String: String], timeoutMilliseconds: Int, maxOutputBytes: Int,
     policy: HostExecutionPolicy = .readOnly
   ) throws -> ShellSessionSnapshot {
-    let runtime = ShellSessionRuntime(launcher: launcher, policy: policy)
+    let runtime = ShellSessionRuntime(
+      launcher: launcher, policy: policy, hostVariables: hostVariables)
     let id = try runtime.spawn(
       request: .init(
         mode: .argv, executable: executable, argv: arguments,

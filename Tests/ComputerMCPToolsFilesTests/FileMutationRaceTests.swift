@@ -7,6 +7,10 @@ import Testing
 
 @testable import ComputerMCPToolsFiles
 
+#if os(macOS)
+  import ComputerMCPDarwinTestSupport
+#endif
+
 @Suite(.nativeIntegration)
 struct FileMutationRaceTests {
   private func provider(
@@ -15,6 +19,7 @@ struct FileMutationRaceTests {
   ) -> FilesToolProvider {
     FilesToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: .init(
           builtin: .init(enabled: [
             "file.move", "file.copy", "file.write", "file.mkdir", "file.write_files",

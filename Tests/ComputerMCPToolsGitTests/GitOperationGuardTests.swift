@@ -8,6 +8,10 @@ import Testing
 
 @testable import ComputerMCPToolsGit
 
+#if os(macOS)
+  import ComputerMCPDarwinTestSupport
+#endif
+
 @Suite(.nativeIntegration)
 struct GitOperationGuardTests {
   @Test
@@ -15,7 +19,9 @@ struct GitOperationGuardTests {
     let temporary = try ScopedTemporaryDirectory()
     let root = temporary.url
     let git = try testExecutable("git")
-    let runner = ProcessCommandRunner(environment: ["PATH": systemUtilityPath, "HOME": root.path])
+    let runner = ProcessCommandRunner(
+      launcher: testExecutionLauncher(),
+      environment: ["PATH": systemUtilityPath, "HOME": root.path])
     let initialized = try runner.run(
       executable: git, arguments: ["init", "--template="], workingDirectory: root,
       environment: [:], timeoutMilliseconds: 10_000, maxOutputBytes: 4096)
@@ -26,6 +32,7 @@ struct GitOperationGuardTests {
     }
     let provider = GitToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: .init(
           cli: .init(commands: [.init(id: "git", executable: git)]),
           builtin: .init(enabled: ["git.ignored", "git.add"]), projectDirectory: root),
@@ -60,7 +67,7 @@ struct GitOperationGuardTests {
     try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
     let git = try testExecutable("git")
     let environment = ["PATH": systemUtilityPath, "HOME": temporary.url.path]
-    let runner = ProcessCommandRunner(environment: environment)
+    let runner = ProcessCommandRunner(launcher: testExecutionLauncher(), environment: environment)
     func run(_ args: [String]) throws -> String {
       let result = try runner.run(
         executable: git, arguments: ["-c", "core.hooksPath=/dev/null"] + args,
@@ -112,6 +119,7 @@ struct GitOperationGuardTests {
     _ = try run(["config", "pull.twohead", "guard ours"])
     _ = try run(["config", "pull.octopus", "guard ours"])
     let tools = ToolEnvironment(
+      launcher: testExecutionLauncher(),
       configuration: .init(projectDirectory: root),
       environment: environment.merging([
         "PATH": temporary.url.path + ":" + systemUtilityPath,
@@ -152,14 +160,19 @@ struct GitOperationGuardTests {
     let temporary = try ScopedTemporaryDirectory()
     let root = temporary.url
     let git = try testExecutable("git")
-    let runner = ProcessCommandRunner(environment: ["PATH": systemUtilityPath, "HOME": root.path])
+    let runner = ProcessCommandRunner(
+      launcher: testExecutionLauncher(),
+      environment: ["PATH": systemUtilityPath, "HOME": root.path])
     let initialized = try runner.run(
       executable: git, arguments: ["init", "-b", "main"], workingDirectory: root, environment: [:],
       timeoutMilliseconds: 10_000, maxOutputBytes: 4096)
     try #require(initialized.exitCode == 0)
-    let tools = ToolEnvironment(configuration: .init(projectDirectory: root), commandRunner: runner)
+    let tools = ToolEnvironment(
+      launcher: testExecutionLauncher(), configuration: .init(projectDirectory: root),
+      commandRunner: runner)
     let provider = GitToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: .init(
           cli: .init(commands: [.init(id: "git", executable: git)]),
           builtin: .init(enabled: ["git.status"]), projectDirectory: root),
@@ -198,7 +211,9 @@ struct GitOperationGuardTests {
     let temporary = try ScopedTemporaryDirectory()
     let root = temporary.url
     let git = try testExecutable("git")
-    let runner = ProcessCommandRunner(environment: ["PATH": systemUtilityPath, "HOME": root.path])
+    let runner = ProcessCommandRunner(
+      launcher: testExecutionLauncher(),
+      environment: ["PATH": systemUtilityPath, "HOME": root.path])
     func run(_ args: [String]) throws -> String {
       let result = try runner.run(
         executable: git, arguments: args, workingDirectory: root,
@@ -220,6 +235,7 @@ struct GitOperationGuardTests {
     ]
     let provider = GitToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration(
           cli: .init(commands: [.init(id: "git", executable: git)]),
           builtin: .init(enabled: enabled), projectDirectory: root), commandRunner: runner))

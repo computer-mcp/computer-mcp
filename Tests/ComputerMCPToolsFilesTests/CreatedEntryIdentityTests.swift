@@ -7,6 +7,10 @@ import Testing
 
 @testable import ComputerMCPToolsFiles
 
+#if os(macOS)
+  import ComputerMCPDarwinTestSupport
+#endif
+
 #if canImport(Darwin)
   import Darwin
 #elseif canImport(Glibc)
@@ -22,7 +26,7 @@ struct CreatedEntryIdentityTests {
     // Model allocator reuse deterministically: only the regular file's inode is
     // reused, while its birth time differs by one nanosecond in the same second.
     let files = try ProjectFileAccess(
-      project: temporary.url,
+      project: temporary.url, launcher: testExecutionLauncher(),
       identityReader: { fd in
         var identity = try ProjectFileAccess.createdIdentity(fd)
         var value = stat()
@@ -58,7 +62,7 @@ struct CreatedEntryIdentityTests {
       try Self.limitDescriptors(to: 192)
       let temporary = try ScopedTemporaryDirectory()
       let files = try ProjectFileAccess(
-        project: temporary.url,
+        project: temporary.url, launcher: testExecutionLauncher(),
         identityReader: { fd in
           var identity = try ProjectFileAccess.createdIdentity(fd)
           identity.birthTime = nil
@@ -84,7 +88,7 @@ struct CreatedEntryIdentityTests {
   func failedMetadataRollbackPreservesBirthTime(postCheck: Bool) throws {
     let temporary = try ScopedTemporaryDirectory()
     let files = try ProjectFileAccess(
-      project: temporary.url,
+      project: temporary.url, launcher: testExecutionLauncher(),
       mutationObserver: { operation, _, phase in
         if postCheck, operation == "metadata", phase == .didMutate { throw POSIXError(.EIO) }
       })
@@ -109,7 +113,7 @@ struct CreatedEntryIdentityTests {
       alarm(10)
       defer { alarm(0) }
       let temporary = try ScopedTemporaryDirectory()
-      let files = try ProjectFileAccess(project: temporary.url)
+      let files = try ProjectFileAccess(project: temporary.url, launcher: testExecutionLauncher())
       var foreign: URL?
       let error = #expect(throws: (any Error).self) {
         try files.withStagingDirectory(in: temporary.url) { staging, _ in
@@ -134,7 +138,7 @@ struct CreatedEntryIdentityTests {
       let temporary = try ScopedTemporaryDirectory()
       var replacement: URL?
       let files = try ProjectFileAccess(
-        project: temporary.url,
+        project: temporary.url, launcher: testExecutionLauncher(),
         mutationObserver: { operation, _, phase in
           guard operation == "openat", phase == .didMutate else { return }
           let name = try #require(
@@ -159,7 +163,7 @@ struct CreatedEntryIdentityTests {
   func identityReadFailureCleansTheAnchoredCreation() throws {
     let temporary = try ScopedTemporaryDirectory()
     let files = try ProjectFileAccess(
-      project: temporary.url,
+      project: temporary.url, launcher: testExecutionLauncher(),
       identityReader: { _ in
         throw POSIXError(.EIO)
       })
@@ -181,6 +185,7 @@ struct CreatedEntryIdentityTests {
       }
       let tools = FilesToolProvider(
         environment: ToolEnvironment(
+          launcher: testExecutionLauncher(),
           configuration: .init(
             builtin: .init(enabled: ["file.copy"]), projectDirectory: temporary.url)))
       _ = try tools.callTool(

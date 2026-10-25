@@ -15,15 +15,18 @@ package struct ExecutionCommand: Sendable {
   package let executable: SandboxPath
   package let arguments: [String]
   package let directory: SandboxPath
+  /// Borrowed until start returns; used before any stdio descriptor remapping.
+  package let directoryDescriptor: Int32?
   package let environment: [String: String]
 
   package init(
     executable: SandboxPath, arguments: [String], directory: SandboxPath,
-    environment: [String: String]
+    environment: [String: String], directoryDescriptor: Int32? = nil
   ) {
     self.executable = executable
     self.arguments = arguments
     self.directory = directory
+    self.directoryDescriptor = directoryDescriptor
     self.environment = environment
   }
 }

@@ -1,6 +1,7 @@
 import ComputerMCPCore
 import ComputerMCPPlatform
 import ComputerMCPPlatformPOSIX
+import ComputerMCPProcess
 import Foundation
 
 #if canImport(Darwin)
@@ -70,7 +71,8 @@ package final class ProjectFileAccess {
   private let mutationObserver: ((String, URL, MutationPhase) throws -> Void)?
 
   package init(
-    project: URL, environment: [String: String] = ProcessInfo.processInfo.environment,
+    project: URL, launcher: ExecutionLauncher = ExecutionLauncher(),
+    environment: [String: String] = ProcessInfo.processInfo.environment,
     commands: RegisteredCommands? = nil,
     mutationObserver: ((String, URL, MutationPhase) throws -> Void)? = nil,
     identityReader: ((Int32) throws -> CreatedIdentity)? = nil
@@ -84,7 +86,7 @@ package final class ProjectFileAccess {
     if let commands {
       try commands.validateProjectGitLayout(at: root)
     } else {
-      try ProjectGitLayout.validate(project: root, environment: environment)
+      try ProjectGitLayout.validate(project: root, launcher: launcher, environment: environment)
     }
     descriptor = try Self.openDirectory(root.path)
     let home = environment["HOME"] ?? NSHomeDirectory()

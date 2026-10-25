@@ -8,6 +8,10 @@ import Testing
 
 @testable import ComputerMCPToolsFiles
 
+#if os(macOS)
+  import ComputerMCPDarwinTestSupport
+#endif
+
 #if canImport(Darwin)
   import Darwin
 #elseif canImport(Glibc)
@@ -26,6 +30,7 @@ struct ArchiveExtractionGuardTests {
   {
     let tools = FilesToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: .init(builtin: .init(enabled: ["archive.extract"]), projectDirectory: root),
         commandRunner: runner,
         builtinExecutables: ArchiveFixture.extractionExecutables),
@@ -102,7 +107,8 @@ struct ArchiveExtractionGuardTests {
       try Data("previous".utf8).write(to: output.appendingPathComponent("parent/nested/file"))
     }
     let runner = ArchiveExtractionRunner(
-      base: ToolEnvironment(configuration: .init()).commandRunner)
+      base: ToolEnvironment(launcher: testExecutionLauncher(), configuration: .init()).commandRunner
+    )
     guard
       try extract(
         fixture.root, runner: runner, archive: name,
@@ -169,7 +175,8 @@ struct ArchiveExtractionGuardTests {
     var original = stat()
     try #require(fstat(fd, &original) == 0)
     let runner = ArchiveExtractionRunner(
-      base: ToolEnvironment(configuration: .init()).commandRunner)
+      base: ToolEnvironment(launcher: testExecutionLauncher(), configuration: .init()).commandRunner
+    )
     guard try extract(fixture.root, runner: runner, archive: name, destination: destination) else {
       return
     }
@@ -217,7 +224,8 @@ struct ArchiveExtractionGuardTests {
     try FileManager.default.moveItem(
       at: archive, to: fixture.root.appendingPathComponent("input.tar"))
     let runner = ArchiveExtractionRunner(
-      base: ToolEnvironment(configuration: .init()).commandRunner)
+      base: ToolEnvironment(launcher: testExecutionLauncher(), configuration: .init()).commandRunner
+    )
     try extract(fixture.root, runner: runner) { operation, url, phase in
       if operation == "mkdirat", phase == .willMutate, url.lastPathComponent == "output",
         !FileManager.default.fileExists(atPath: url.path)
@@ -264,7 +272,8 @@ struct ArchiveExtractionGuardTests {
     try FileManager.default.moveItem(
       at: archive, to: fixture.root.appendingPathComponent("input.tar"))
     let runner = ArchiveExtractionRunner(
-      base: ToolEnvironment(configuration: .init()).commandRunner)
+      base: ToolEnvironment(launcher: testExecutionLauncher(), configuration: .init()).commandRunner
+    )
     #expect(throws: (any Error).self) {
       try extract(fixture.root, runner: runner) { operation, url, phase in
         let replacing =
@@ -329,7 +338,8 @@ struct ArchiveExtractionGuardTests {
       try FileManager.default.linkItem(at: contents, to: link)
     }
     let runner = ArchiveExtractionRunner(
-      base: ToolEnvironment(configuration: .init()).commandRunner,
+      base: ToolEnvironment(launcher: testExecutionLauncher(), configuration: .init())
+        .commandRunner,
       extracting: duringExtraction ? linkContents : nil)
     let error = #expect(throws: (any Error).self) {
       try extract(fixture.root, runner: runner) { operation, _, phase in
@@ -362,7 +372,8 @@ struct ArchiveExtractionGuardTests {
     try FileManager.default.moveItem(
       at: archive, to: fixture.root.appendingPathComponent("input.tar"))
     let runner = ArchiveExtractionRunner(
-      base: ToolEnvironment(configuration: .init()).commandRunner)
+      base: ToolEnvironment(launcher: testExecutionLauncher(), configuration: .init()).commandRunner
+    )
     let observer: @Sendable (String, URL, ProjectFileAccess.MutationPhase) throws -> Void = {
       operation, staging, phase in
       guard operation == "archive.extract", phase == .didMutate else { return }
@@ -458,7 +469,8 @@ struct ArchiveExtractionGuardTests {
       try FileManager.default.createSymbolicLink(at: staging, withDestinationURL: outsideURL)
     }
     let runner = ArchiveExtractionRunner(
-      base: ToolEnvironment(configuration: .init()).commandRunner,
+      base: ToolEnvironment(launcher: testExecutionLauncher(), configuration: .init())
+        .commandRunner,
       extracting: duringExtraction ? replace : nil)
     let error = #expect(throws: (any Error).self) {
       try extract(fixture.root, runner: runner) { operation, _, phase in
@@ -496,6 +508,7 @@ struct ArchiveExtractionGuardTests {
       from: fixture.root.appendingPathComponent("output"), to: moved)
     let tools = FilesToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: .init(
           builtin: .init(enabled: ["archive.extract"]), projectDirectory: fixture.root),
         builtinExecutables: ["tar": "tar"]),
@@ -532,7 +545,8 @@ struct ArchiveExtractionGuardTests {
     try FileManager.default.moveItem(
       at: archive, to: fixture.root.appendingPathComponent("input.tar"))
     let runner = ArchiveExtractionRunner(
-      base: ToolEnvironment(configuration: .init()).commandRunner)
+      base: ToolEnvironment(launcher: testExecutionLauncher(), configuration: .init()).commandRunner
+    )
     try extract(fixture.root, runner: runner)
     var info = stat()
     try #require(lstat(directory.path, &info) == 0)
@@ -555,7 +569,8 @@ struct ArchiveExtractionGuardTests {
       let name = "input-\(count).tar"
       try FileManager.default.moveItem(at: archive, to: fixture.root.appendingPathComponent(name))
       let runner = ArchiveExtractionRunner(
-        base: ToolEnvironment(configuration: .init()).commandRunner)
+        base: ToolEnvironment(launcher: testExecutionLauncher(), configuration: .init())
+          .commandRunner)
       let started = ContinuousClock.now
       try extract(fixture.root, runner: runner, archive: name)
       let duration = started.duration(to: .now).components
@@ -584,7 +599,8 @@ struct ArchiveExtractionGuardTests {
     try FileManager.default.moveItem(
       at: archive, to: fixture.root.appendingPathComponent("input.zip"))
     let runner = ArchiveExtractionRunner(
-      base: ToolEnvironment(configuration: .init()).commandRunner)
+      base: ToolEnvironment(launcher: testExecutionLauncher(), configuration: .init()).commandRunner
+    )
     guard try extract(fixture.root, runner: runner, archive: "input.zip") else { return }
     let output = fixture.root.appendingPathComponent("output")
     #expect(try Data(contentsOf: output.appendingPathComponent("first")) == Data("aa".utf8))
@@ -605,7 +621,8 @@ struct ArchiveExtractionGuardTests {
     let name = "input." + format
     try FileManager.default.moveItem(at: archive, to: fixture.root.appendingPathComponent(name))
     let runner = ArchiveExtractionRunner(
-      base: ToolEnvironment(configuration: .init()).commandRunner)
+      base: ToolEnvironment(launcher: testExecutionLauncher(), configuration: .init()).commandRunner
+    )
     try extract(fixture.root, runner: runner, archive: name)
     let output = fixture.root.appendingPathComponent("output")
     var sparse = Data(repeating: 0, count: 2_048)
@@ -637,7 +654,8 @@ struct ArchiveExtractionGuardTests {
     let name = "input." + format
     try FileManager.default.moveItem(at: archive, to: fixture.root.appendingPathComponent(name))
     let runner = ArchiveExtractionRunner(
-      base: ToolEnvironment(configuration: .init()).commandRunner)
+      base: ToolEnvironment(launcher: testExecutionLauncher(), configuration: .init()).commandRunner
+    )
     guard try extract(fixture.root, runner: runner, archive: name) else { return }
     let output = fixture.root.appendingPathComponent("output")
     #expect(Set(try FileManager.default.contentsOfDirectory(atPath: output.path)) == Set(names))

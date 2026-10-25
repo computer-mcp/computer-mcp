@@ -7,6 +7,10 @@ import Testing
 
 @testable import ComputerMCPToolsStructured
 
+#if os(macOS)
+  import ComputerMCPDarwinTestSupport
+#endif
+
 @Suite(.nativeIntegration)
 struct StructuredOperationGuardTests {
   @Test(arguments: ["sqlite.query", "sqlite.schema"])
@@ -17,6 +21,7 @@ struct StructuredOperationGuardTests {
     let runner = RecordingCommandRunner()
     let provider = StructuredToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: .init(builtin: .init(enabled: [tool]), projectDirectory: temporary.url),
         commandRunner: runner))
     #expect(
@@ -51,6 +56,7 @@ struct StructuredOperationGuardTests {
     }
     if let command {
       let initializer = ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: .init(projectDirectory: root), environment: environment)
       let initialized = try initializer.commandRunner.run(
         executable: command.executable,
@@ -63,6 +69,7 @@ struct StructuredOperationGuardTests {
     }
     let provider = StructuredToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration(
           builtin: .init(enabled: [tool]), projectDirectory: root),
         environment: environment,
@@ -103,6 +110,7 @@ struct StructuredOperationGuardTests {
     }
     let provider = StructuredToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: [tool]), projectDirectory: root)))
     #expect(throws: (any Error).self) {
@@ -128,6 +136,7 @@ struct StructuredOperationGuardTests {
     }
     let provider = StructuredToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["sqlite.query"]), projectDirectory: root),
         sqliteCommand: command))

@@ -571,6 +571,7 @@ package final class ShellSessionRuntime: ShellManaging, Sendable {
     var shutdown: Task<Void, Never>?
   }
 
+  private let hostVariables: [String: String]
   private let policy: HostExecutionPolicy
   private let launcher: ExecutionLauncher
   private let executionState = NIOLockedValueBox(ExecutionState())
@@ -582,12 +583,13 @@ package final class ShellSessionRuntime: ShellManaging, Sendable {
 
   package init(
     launcher: ExecutionLauncher = ExecutionLauncher(),
-    policy: HostExecutionPolicy = .fullAccess,
+    policy: HostExecutionPolicy = .fullAccess, hostVariables: [String: String] = [:],
     ownedWork: (any OwnedWorkTracking)? = nil, projectID: String? = nil,
     sessions: GatewayTerminalSessions = GatewayTerminalSessions(),
     scope: GatewayTerminalSessions.Scope = .isolated(UUID()),
     recoveryKey: @escaping @Sendable () -> String? = { "isolated" }
   ) {
+    self.hostVariables = hostVariables
     self.policy = policy
     self.launcher = launcher
     installBrokenPipeHandler()
@@ -714,6 +716,7 @@ package final class ShellSessionRuntime: ShellManaging, Sendable {
       let ownership = ownedWork?.retainShell(projectID: projectID, sessionID: session.id)
       let launcher = self.launcher
       let policy = self.policy
+      let hostVariables = self.hostVariables
       let task = ExecutionTasks.start(priority: .userInitiated) { [sessions, weak self] in
         defer {
           ownership?.finish()
@@ -734,7 +737,10 @@ package final class ShellSessionRuntime: ShellManaging, Sendable {
             }
           }
         }
-        await Self.launch(resolved, session: session, launcher: launcher, policy: policy) {
+        await Self.launch(
+          resolved, session: session, launcher: launcher, policy: policy,
+          hostVariables: hostVariables
+        ) {
           try sessions.checkpoint(session)
         }
         checkpoint.cancel()
@@ -908,7 +914,8 @@ package final class ShellSessionRuntime: ShellManaging, Sendable {
 
   private static func launch(
     _ launch: ResolvedShellLaunch, session: ShellSession, launcher: ExecutionLauncher,
-    policy: HostExecutionPolicy, checkpoint: @escaping @Sendable () throws -> Void
+    policy: HostExecutionPolicy, hostVariables: [String: String],
+    checkpoint: @escaping @Sendable () throws -> Void
   ) async {
     let inputPipe = Pipe()
     let stdoutPipe = Pipe()
@@ -940,7 +947,7 @@ package final class ShellSessionRuntime: ShellManaging, Sendable {
         throw ShellRuntimeError.launchFailed(inspection.message)
       }
       let prepared = try policy.prepare(
-        directory: launch.workingDirectory, environment: environment,
+        directory: launch.workingDirectory, environment: environment, hostVariables: hostVariables,
         systemReadPaths: launcher.hostSystemReadPaths)
       setup = prepared
       let directory: SandboxPath
@@ -1453,7 +1460,7 @@ private final class AsyncResultBox<Value: Sendable>: @unchecked Sendable {
   }
 }
 
-private func blockingAsync<Value: Sendable>(
+internal func blockingAsync<Value: Sendable>(
   _ operation: @escaping @Sendable () async throws -> Value
 ) throws -> Value {
   let semaphore = DispatchSemaphore(value: 0)

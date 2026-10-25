@@ -5,11 +5,17 @@ import Foundation
 /// Synchronous callers must use their blocking executor, not a UI or cooperative executor.
 package struct ManagedCommandRunner: CommandRunning {
   private let execution: CLIProcessExecution
+  private let policy: HostExecutionPolicy
+  private let launcher: ExecutionLauncher
 
   package init(
-    launcher: ExecutionLauncher = ExecutionLauncher(), policy: HostExecutionPolicy = .fullAccess
+    launcher: ExecutionLauncher = ExecutionLauncher(), policy: HostExecutionPolicy = .fullAccess,
+    hostVariables: [String: String] = [:]
   ) {
-    execution = CLIProcessExecution(launcher: launcher, policy: policy, inheritsEnvironment: false)
+    self.launcher = launcher
+    self.policy = policy
+    execution = CLIProcessExecution(
+      launcher: launcher, policy: policy, hostVariables: hostVariables, inheritsEnvironment: false)
   }
 
   package func run(
@@ -25,6 +31,44 @@ package struct ManagedCommandRunner: CommandRunning {
       timedOut: value.timedOut,
       stdout: value.stdoutString, stderr: value.stderrString,
       stdoutTruncated: value.stdoutTruncated, stderrTruncated: value.stderrTruncated)
+  }
+
+  package func runIsolated(
+    executable: String, arguments: [String], workingDirectory: URL?,
+    environment: [String: String], timeoutMilliseconds: Int, maxOutputBytes: Int
+  ) throws -> CommandResult {
+    try ManagedCommandRunner(launcher: launcher, policy: policy, hostVariables: environment).run(
+      executable: executable, arguments: arguments, workingDirectory: workingDirectory,
+      environment: environment, timeoutMilliseconds: timeoutMilliseconds,
+      maxOutputBytes: maxOutputBytes)
+  }
+
+  package func runToFile(
+    executable: String, arguments: [String], workingDirectory: URL?,
+    environment: [String: String], timeoutMilliseconds: Int, maxOutputBytes: Int,
+    outputDescriptor: Int32
+  ) throws -> CommandResult {
+    let input = try FileHandle(forReadingFrom: URL(fileURLWithPath: "/dev/null"))
+    defer { try? input.close() }
+    return try DescriptorCommandExecution.run(
+      launcher: launcher, policy: policy, executable: executable, arguments: arguments,
+      workingDirectory: workingDirectory, directoryDescriptor: nil,
+      inputDescriptor: input.fileDescriptor, outputDescriptor: outputDescriptor,
+      environment: environment, timeoutMilliseconds: timeoutMilliseconds,
+      maxOutputBytes: maxOutputBytes)
+  }
+
+  package func runInDirectory(
+    executable: String, arguments: [String], directoryDescriptor: Int32,
+    inputDescriptor: Int32, outputDescriptor: Int32, environment: [String: String],
+    timeoutMilliseconds: Int, maxOutputBytes: Int
+  ) throws -> CommandResult {
+    try DescriptorCommandExecution.run(
+      launcher: launcher, policy: policy, executable: executable, arguments: arguments,
+      workingDirectory: nil, directoryDescriptor: directoryDescriptor,
+      inputDescriptor: inputDescriptor, outputDescriptor: outputDescriptor,
+      environment: environment, timeoutMilliseconds: timeoutMilliseconds,
+      maxOutputBytes: maxOutputBytes)
   }
 
   package func runData(

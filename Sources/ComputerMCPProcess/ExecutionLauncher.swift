@@ -23,11 +23,12 @@ package struct ExecutionLauncher: Sendable {
     environment: ExecutionEnvironment, mode: ExecutionMode,
     method: ExecutionLaunchMethod = .subprocess,
     input: Int32 = 0, output: Int32 = 1, error: Int32 = 2,
+    directoryDescriptor: Int32? = nil,
     bindOwnership: @Sendable (any ExecutionOwnership) -> Void = { _ in }
   ) async throws -> any ExecutionOwnership {
     try Task.checkCancellation()
     guard arguments.allSatisfy({ !$0.contains("\0") }),
-      [input, output, error].allSatisfy({ $0 >= 0 })
+      ([input, output, error] + [directoryDescriptor].compactMap { $0 }).allSatisfy({ $0 >= 0 })
     else {
       throw ExecutionEnvironmentError.invalidConfiguration(
         "Invalid arguments or stream descriptors")
@@ -35,7 +36,7 @@ package struct ExecutionLauncher: Sendable {
     let sandbox: SandboxConfiguration?
     switch mode {
     case .sandbox(let configuration):
-      guard directory == configuration.worktree else {
+      guard directoryDescriptor == nil, directory == configuration.worktree else {
         throw ExecutionEnvironmentError.invalidConfiguration(
           "Sandbox working directory must be its worktree")
       }
@@ -45,9 +46,10 @@ package struct ExecutionLauncher: Sendable {
     }
     let command = try ExecutionCommand(
       executable: executable, arguments: arguments, directory: directory,
-      environment: environment.variables(sandbox: sandbox))
+      environment: environment.variables(sandbox: sandbox), directoryDescriptor: directoryDescriptor
+    )
     return try await platform.start(
-      command, sandbox: sandbox, method: method,
+      command, sandbox: sandbox, method: directoryDescriptor == nil ? method : .posixSpawn,
       input: input, output: output, error: error, bindOwnership: bindOwnership)
   }
 
@@ -56,13 +58,15 @@ package struct ExecutionLauncher: Sendable {
     environment: ExecutionEnvironment, mode: ExecutionMode,
     method: ExecutionLaunchMethod = .subprocess,
     input: Int32 = 0, output: Int32 = 1, error: Int32 = 2,
+    directoryDescriptor: Int32? = nil,
     deadline: ContinuousClock.Instant = .now.advanced(by: .seconds(120)),
     bindOwnership: @Sendable (any ExecutionOwnership) -> Void = { _ in }
   ) async throws -> ExecutionExit {
     let ownership = try await start(
       executable: executable, arguments: arguments, directory: directory,
       environment: environment, mode: mode, method: method,
-      input: input, output: output, error: error, bindOwnership: bindOwnership)
+      input: input, output: output, error: error, directoryDescriptor: directoryDescriptor,
+      bindOwnership: bindOwnership)
     return try await ownership.wait(until: deadline)
   }
 

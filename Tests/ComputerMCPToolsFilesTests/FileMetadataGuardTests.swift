@@ -8,6 +8,10 @@ import Testing
 
 @testable import ComputerMCPToolsFiles
 
+#if os(macOS)
+  import ComputerMCPDarwinTestSupport
+#endif
+
 #if canImport(Darwin)
   import Darwin
 #elseif canImport(Glibc)
@@ -51,6 +55,7 @@ import Testing
         tool == "file.chmod" ? "fchmod" : (tool == "file.touch" ? "futimens" : "fremovexattr")
       let provider = FilesToolProvider(
         environment: ToolEnvironment(
+          launcher: testExecutionLauncher(),
           configuration: .init(builtin: .init(enabled: [tool]), projectDirectory: root),
           extendedAttributes: GuardTestAttributes()),
         fileMutationObserver: { name, _, phase in

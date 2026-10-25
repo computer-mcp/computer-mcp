@@ -12,11 +12,14 @@ package enum HostExecutionPolicy: Sendable {
   @TaskLocal package static var current: Self = .fullAccess
 
   internal func prepare(
-    directory: URL, environment: [String: String], systemReadPaths: [SandboxPath]
+    directory: URL, environment: [String: String], hostVariables: [String: String] = [:],
+    systemReadPaths: [SandboxPath]
   ) throws -> HostExecutionSetup {
     if self == .fullAccess {
       return HostExecutionSetup(
-        mode: .fullAccess, environment: try ExecutionEnvironment(fullAccessVariables: environment),
+        mode: .fullAccess,
+        environment: try ExecutionEnvironment(
+          fullAccessVariables: environment.merging(hostVariables) { _, value in value }),
         temporary: nil)
     }
     let temporary = FileManager.default.temporaryDirectory
@@ -48,7 +51,7 @@ package enum HostExecutionPolicy: Sendable {
           home: root, temporary: root, cache: root,
           codexHome: try environment["CODEX_HOME"].map {
             try SandboxPath(URL(fileURLWithPath: $0).standardized.path)
-          }), temporary: temporary)
+          }, hostVariables: hostVariables), temporary: temporary)
     } catch {
       try? FileManager.default.removeItem(at: temporary)
       throw error

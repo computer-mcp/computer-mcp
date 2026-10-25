@@ -3375,6 +3375,7 @@ final class FilesToolProviderTests {
     let runner = RecordingCommandRunner()
     let provider = FilesToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: .init(
           builtin: .init(enabled: ["archive.extract"]), projectDirectory: directory),
         commandRunner: runner))

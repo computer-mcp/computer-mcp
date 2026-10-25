@@ -178,7 +178,8 @@ final class CLIToolProviderTests {
     try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: script.path)
     let provider = CLIToolProvider(
       environment: ToolEnvironment(
-        launcher: testExecutionLauncher(), configuration: .fixture(
+        launcher: testExecutionLauncher(),
+        configuration: .fixture(
           cli: .init(commands: [
             .init(id: "fixture", executable: script.path, description: "Registered help")
           ]))))

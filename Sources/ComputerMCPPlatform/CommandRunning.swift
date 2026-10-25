@@ -92,7 +92,8 @@ package protocol CommandRunning: Sendable {
     maxOutputBytes: Int
   ) throws -> CommandResult
 
-  /// Runs with exactly the supplied environment, excluding inherited process variables.
+  /// Runs with a host-constructed environment, never inheriting process variables.
+  /// Full access uses exactly the supplied values; sandbox locations and network settings take precedence.
   func runIsolated(
     executable: String, arguments: [String], workingDirectory: URL?,
     environment: [String: String], timeoutMilliseconds: Int, maxOutputBytes: Int

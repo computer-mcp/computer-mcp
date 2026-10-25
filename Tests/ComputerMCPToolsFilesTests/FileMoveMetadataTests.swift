@@ -7,6 +7,10 @@ import Testing
 
 @testable import ComputerMCPToolsFiles
 
+#if os(macOS)
+  import ComputerMCPDarwinTestSupport
+#endif
+
 #if canImport(Darwin)
   import Darwin
 #elseif canImport(Glibc)
@@ -23,6 +27,7 @@ struct FileMoveMetadataTests {
       let destination = root.appendingPathComponent("destination")
       try FileManager.default.createDirectory(at: destination, withIntermediateDirectories: true)
       let tools = ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: .init(builtin: .init(enabled: [tool]), projectDirectory: root))
       let source = root.appendingPathComponent("source")
       let target = destination.appendingPathComponent("target")
@@ -90,6 +95,7 @@ struct FileMoveMetadataTests {
       let destination = root.appendingPathComponent("destination")
       try FileManager.default.createDirectory(at: destination, withIntermediateDirectories: true)
       let tools = ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: .init(
           builtin: .init(enabled: ["file.move", "file.copy"]), projectDirectory: root))
       let utility = try testExecutable("hdiutil")

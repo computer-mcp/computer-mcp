@@ -30,6 +30,34 @@ import Testing
     #expect(environment.swiftBuildArguments().prefix(3) == ["build", "--build-system", "native"])
   }
 
+  @Test(arguments: [false, true])
+  func explicitHostVariablesPreserveSandboxLocationsAndNetwork(proxyEnabled: Bool) throws {
+    let root = try SandboxPath("/test")
+    let environment = try ExecutionEnvironment(
+      searchPath: [root], home: root, temporary: root, cache: root,
+      hostVariables: [
+        "HOME": "/owner", "TMPDIR": "/owner/tmp", "TMP": "/owner", "TEMP": "/owner",
+        "XDG_CONFIG_HOME": "/owner", "XDG_CACHE_HOME": "/owner",
+        "CLANG_MODULE_CACHE_PATH": "/owner", "SWIFT_MODULECACHE_PATH": "/owner",
+        "http_proxy": "http://outside", "HTTP_PROXY": "http://outside",
+        "https_proxy": "http://outside", "HTTPS_PROXY": "http://outside",
+        "all_proxy": "socks5://outside", "ALL_PROXY": "socks5://outside",
+        "NO_PROXY": "*", "no_proxy": "*", "LC_ALL": "C", "GIT_NO_LAZY_FETCH": "1",
+      ])
+    let sandbox = try SandboxConfiguration(
+      worktree: root, temporaryDirectory: root, homeDirectory: root, cacheDirectory: root,
+      readableRoots: [], proxy: proxyEnabled ? .init(http: 12400, socks: 12401) : nil)
+    let values = try environment.variables(sandbox: sandbox)
+    #expect(!values.values.contains { $0.contains("/owner") || $0.contains("outside") })
+    #expect(values["HOME"] == root.value)
+    #expect(values["TMPDIR"] == root.value + "/")
+    #expect(values["NO_PROXY"] == "" && values["no_proxy"] == "")
+    #expect(values["HTTP_PROXY"] == (proxyEnabled ? "http://127.0.0.1:12400" : nil))
+    #expect(values["ALL_PROXY"] == (proxyEnabled ? "socks5h://127.0.0.1:12401" : nil))
+    #expect(values["LC_ALL"] == "C")
+    #expect(values["GIT_NO_LAZY_FETCH"] == "1")
+  }
+
   @Test func pathBoundaries() throws {
     let root = try SandboxPath("/project")
     #expect(root.contains(try SandboxPath("/project/a")))

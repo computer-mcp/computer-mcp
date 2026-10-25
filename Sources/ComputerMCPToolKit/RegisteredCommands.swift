@@ -8,6 +8,7 @@ import Foundation
 /// Shares configured command resolution and execution across tool domains.
 package struct RegisteredCommands: Sendable {
   private let configuration: GatewayConfiguration
+  private let launcher: ExecutionLauncher
   private let commandRunner: any CommandRunning
   private let environment: [String: String]
   private let builtinExecutables: [String: String]
@@ -21,6 +22,7 @@ package struct RegisteredCommands: Sendable {
     environment: [String: String], sqliteCommand: CLICommandConfig? = nil,
     builtinExecutables: [String: String] = [:]
   ) {
+    self.launcher = launcher
     self.configuration = configuration
     self.commandRunner = commandRunner
     self.environment = environment
@@ -61,7 +63,7 @@ package struct RegisteredCommands: Sendable {
   package func validateProjectGitLayout(at project: URL) throws {
     let command = configuration.cli.commands.first { $0.id == "git" }
     try ProjectGitLayout.validate(
-      project: project,
+      project: project, launcher: launcher,
       environment: environment.merging(command?.env ?? [:]) { _, value in value },
       invocation: command.map { try resolveCLIInvocation($0) })
   }

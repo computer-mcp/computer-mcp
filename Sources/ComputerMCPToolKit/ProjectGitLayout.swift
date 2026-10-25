@@ -15,7 +15,7 @@ import Foundation
 /// Checks once at file-access creation that in-project Git administration uses `.git` paths.
 enum ProjectGitLayout {
   static func validate(
-    project: URL, environment: [String: String],
+    project: URL, launcher: ExecutionLauncher, environment: [String: String],
     invocation configuredInvocation: (executable: String, arguments: [String])? = nil
   ) throws {
     var marker = stat()
@@ -39,7 +39,7 @@ enum ProjectGitLayout {
       guard !git.hasKnownFailure, let executable = git.path else { throw invalid() }
       invocation = (executable, [])
     }
-    let runner = ProcessCommandRunner(environment: [:])
+    let runner = ProcessCommandRunner(launcher: launcher, environment: [:])
     func run(
       _ arguments: [String], allowNonRepository: Bool = false, allowMissing: Bool = false
     ) throws -> String? {

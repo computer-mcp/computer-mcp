@@ -25,7 +25,7 @@
       }
       try FileManager.default.moveItem(at: directory, to: moved)
       try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: false)
-      let result = try ProcessCommandRunner().runInDirectory(
+      let result = try ProcessCommandRunner(launcher: testExecutionLauncher()).runInDirectory(
         executable: testExecutable("pwd"), arguments: ["-P"], directoryDescriptor: pinned,
         inputDescriptor: input, outputDescriptor: output, environment: [:],
         timeoutMilliseconds: 10_000, maxOutputBytes: 4096)

@@ -43,6 +43,7 @@
       try #require(fstat(input, &original) == 0)
       let provider = FilesToolProvider(
         environment: ToolEnvironment(
+          launcher: testExecutionLauncher(),
           configuration: .init(builtin: .init(enabled: [tool]), projectDirectory: temporary.url)))
       _ = try provider.callTool(
         .init(
@@ -101,6 +102,7 @@
       try #require(fstat(input, &original) == 0)
       let provider = FilesToolProvider(
         environment: ToolEnvironment(
+          launcher: testExecutionLauncher(),
           configuration: .init(builtin: .init(enabled: [tool]), projectDirectory: root),
           extendedAttributes: LinuxGuardAttributes()),
         fileMutationObserver: { _, _, phase in

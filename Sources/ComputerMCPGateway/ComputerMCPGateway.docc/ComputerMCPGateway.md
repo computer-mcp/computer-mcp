@@ -92,7 +92,7 @@ project requires a process that can already create files there; a sandboxed
 principal cannot do so, and a process with that access could read the archive
 directly. After a created file is complete, `fstat` checks its descriptor's link
 count. Persistent multiple links fail the operation; cleanup removes only entries
-matching their recorded device and inode. The final check cannot retract bytes
+matching their recorded device, inode and nanosecond birth time. The final check cannot retract bytes
 already exposed through a concurrent link or detect a link removed before the
 check.
 
@@ -120,7 +120,7 @@ paths and types, refusing absolute paths, `..`, Git metadata, links and special
 files. Tar starts through `posix_spawn_file_actions_addfchdir_np` on the staging
 directory descriptor (glibc 2.29+ on Linux), reads the archive on standard input and streams contents to
 a host-opened descriptor. The host creates relative entries, records device and
-inode at creation, compares the tree with the listing (including implicit
+inode and nanosecond birth time from the anchored descriptor at creation, compares the tree with the listing (including implicit
 parents), checks sizes, identities and links, and publishes files with anchored
 exclusive renames. A separate read-only metadata pass supplies exact member
 modification times, restored through checked descriptors. Listing, metadata and
@@ -134,9 +134,15 @@ archive modes and modification times are restored through checked descriptors,
 deepest first after publication and staging cleanup. An existing destination
 keeps its own mode, access time and modification time. An explicit `.` member
 supplies destination metadata only when extraction creates that directory.
-Created inodes stay pinned by close-on-exec descriptors until the file operation
-ends, preventing inode reuse from assigning cleanup authority to a foreign entry.
-Cleanup removes only recorded inodes, preserves foreign
+Cleanup matches device, inode and nanosecond birth time (`st_birthtimespec` on
+macOS; `statx(STATX_BTIME)` on Linux), rejecting reused inodes with different birth
+times. Descriptors close after active use; macOS metadata writes preserve the
+created entry's birth time through its writing descriptor. Only Linux filesystems
+whose successful `statx` result lacks `STATX_BTIME` retain close-on-exec descriptors,
+with a fixed limit of 64 per file operation and 32 additional reserved slots
+released for cleanup. Exceeding the limit stops creation, cleans staging and fails
+with an error naming the limit. Identity-read and reserve allocation errors fail
+the operation. Cleanup preserves foreign
 entries without recursing into them, and retains staging with an error naming
 its path. Earlier published entries remain after a later failure. `file.trash`
 refuses the project root and checks every member first; multiply linked regular

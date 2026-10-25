@@ -3745,7 +3745,8 @@ for ZIPs, including those with a reordered central directory. The pipe preserves
 sparse holes as logical zero bytes. `--no-same-owner` and
 `--no-same-permissions` are set; extraction does not use `-P`.
 The host creates entries through anchored descriptors from the validated relative
-names, checks byte counts, and records each created device and inode immediately.
+names, checks byte counts, and records each created device, inode and nanosecond birth time immediately
+from its anchored descriptor.
 Listing escapes are decoded before path checks; member names must be valid UTF-8.
 An additional read-only tar pass obtains exact modification times: BSD tar exports
 `mtree` time metadata with `-P` to preserve original names during this read-only
@@ -3767,12 +3768,17 @@ Implicit parent directories have no archive mode or timestamp to restore.
 It compares the tree's paths and types, including implicit parent directories,
 with the listing and rejects foreign inodes, symlinks and multiply linked files.
 It then creates destination directories and publishes files with anchored
-exclusive renames. Cleanup removes only recorded inodes, on success or failure.
-The host retains a close-on-exec descriptor for every created inode until the file
-operation ends. An external unlink therefore cannot recycle an owned identity
-into a foreign entry. Descriptor use grows with the number of created inodes;
-exhausting the process descriptor limit fails the operation rather than recording
-an unpinned identity.
+exclusive renames. Cleanup requires matching device, inode and nanosecond birth
+time, on success or failure. Birth time comes from `st_birthtimespec` on macOS or
+`statx(STATX_BTIME)` on Linux; inode reuse with a different birth time is refused.
+Descriptors close when their active use ends. macOS metadata writes preserve each
+created entry's birth time through the writing descriptor.
+Only a successful Linux `statx` result without `STATX_BTIME` retains a close-on-exec
+descriptor instead, up to 64 per file operation. The host reserves 32 additional
+descriptor slots before retaining fallback handles and releases them for cleanup.
+When the 64-descriptor limit would be exceeded, creation stops, staging is cleaned,
+and the operation fails with an error naming the limit. Identity-read or reserve
+allocation errors also fail the operation.
 It preserves unknown entries without descending into foreign directories, retains
 their staging directory, and fails with the retained paths in the error.
 Entries already published before a later failure remain in place;
@@ -3875,7 +3881,7 @@ written. Creating that link outside the project requires a process that can
 already create files there; a sandboxed principal cannot do so, and a process with
 that access could read the archive directly. After a created file is complete,
 `fstat` checks its descriptor's link count. Persistent multiple links fail the
-operation; cleanup removes only entries matching their recorded device and inode.
+operation; cleanup removes only entries matching their recorded device, inode and nanosecond birth time.
 The final check cannot retract bytes already exposed through a concurrent link or
 detect a link removed before the check.
 
@@ -3918,14 +3924,15 @@ check. An entry can also be replaced after the identity comparison but before it
 syscall. Metadata restoration can overwrite another writer's intervening metadata
 changes. Rollback failures are reported; this is not atomic isolation.
 Copy uses descriptor-based `fcopyfile(COPYFILE_ALL)` on macOS, preserving data,
-xattrs, resource forks, ACLs, mode and times. It checks the source again before
+xattrs, resource forks, ACLs, mode and access/modification times. It checks the source again before
 publishing the staged copy and cleans its staging entries with identity checks.
 On glibc Linux, descriptor reads/writes preserve data; `fchmod`, `futimens` and
 descriptor xattr calls preserve mode, nanosecond access/modification times and
 visible xattrs, including POSIX ACLs. Destination-only inherited xattrs are
 removed. Failure to copy a listed attribute fails publication. A source filesystem
 without xattrs contributes none. New copies retain the destination's ownership;
-macOS resource forks, creation times and BSD file flags have no Linux copy path.
+Created entries keep their own birth time. macOS resource forks and BSD file flags
+have no Linux copy path.
 Exclusive rename uses `renameat2(RENAME_NOREPLACE)` with pinned directories and
 single-component names; unsupported kernels or filesystems fail without replacing
 an existing entry. The descriptor working-directory spawn action requires glibc

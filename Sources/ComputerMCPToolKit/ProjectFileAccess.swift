@@ -23,24 +23,61 @@ package final class ProjectFileAccess {
     let device: dev_t
     let inode: ino_t
 
+    init(_ value: CreatedIdentity) {
+      device = value.device
+      inode = value.inode
+    }
+
     init(_ value: stat) {
       device = value.st_dev
       inode = value.st_ino
     }
   }
-  // Keep owned inodes alive until the operation ends, even after external unlink.
-  // Otherwise inode reuse could give a foreign entry cleanup authority.
-  private var createdDescriptors: [Identity: Int32] = [:]
+  package struct BirthTime: Equatable {
+    package let seconds: Int64
+    package let nanoseconds: Int64
+
+    package init(seconds: Int64, nanoseconds: Int64) {
+      self.seconds = seconds
+      self.nanoseconds = nanoseconds
+    }
+  }
+
+  package struct CreatedIdentity {
+    package var device: dev_t
+    package var inode: ino_t
+    package var birthTime: BirthTime?
+
+    package init(_ value: stat, birthTime: BirthTime?) {
+      device = value.st_dev
+      inode = value.st_ino
+      self.birthTime = birthTime
+    }
+  }
+
+  private struct CreatedEntry {
+    let birthTime: BirthTime?
+    let descriptor: Int32?
+  }
+
+  package static let fallbackDescriptorLimit = 64
+  private static let cleanupDescriptorReserve = 32
+  private var createdEntries: [Identity: CreatedEntry] = [:]
+  private var cleanupReserve: [Int32] = []
+  private var fallbackCount = 0
+  private let identityReader: (Int32) throws -> CreatedIdentity
   private var configurationFiles: Set<String> = []
   private let mutationObserver: ((String, URL, MutationPhase) throws -> Void)?
 
   package init(
     project: URL, environment: [String: String] = ProcessInfo.processInfo.environment,
     commands: RegisteredCommands? = nil,
-    mutationObserver: ((String, URL, MutationPhase) throws -> Void)? = nil
+    mutationObserver: ((String, URL, MutationPhase) throws -> Void)? = nil,
+    identityReader: ((Int32) throws -> CreatedIdentity)? = nil
   )
     throws
   {
+    self.identityReader = identityReader ?? Self.createdIdentity
     self.mutationObserver = mutationObserver
     lexicalRoot = ProjectPathResolver.lexicallyNormalized(project)
     root = try ProjectPathResolver.canonicalProject(project)
@@ -61,7 +98,8 @@ package final class ProjectFileAccess {
   }
 
   deinit {
-    for fd in createdDescriptors.values { close(fd) }
+    for entry in createdEntries.values { if let fd = entry.descriptor { close(fd) } }
+    releaseCleanupReserve()
     close(descriptor)
   }
 
@@ -163,7 +201,9 @@ package final class ProjectFileAccess {
             #else
               let times = [value.st_atim, value.st_mtim]
             #endif
-            guard futimens(parent, times) == 0 else { throw failure() }
+            try preservingBirthTime(parent) {
+              guard futimens(parent, times) == 0 else { throw failure() }
+            }
           }
           let published = try status(parent)
           try mutate("futimens", anchors: [(parent, url)]) {
@@ -190,7 +230,7 @@ package final class ProjectFileAccess {
         defer { close(child) }
         let entry = try status(child)
         try check(entry)
-        guard createdDescriptors[Identity(entry)] != nil else {
+        guard try owns(child) else {
           throw denied("Staging contains an entry this operation did not create: \(childURL.path)")
         }
         guard same(entry, try statusAt(fd, name)) else { throw denied("Entry changed.") }
@@ -214,27 +254,25 @@ package final class ProjectFileAccess {
   }
 
   private func discardContents(_ fd: Int32, at url: URL) throws -> [String] {
+    releaseCleanupReserve()
     var retained: [String] = []
     for name in try names(fd) {
       guard let entry = try statusAt(fd, name) else { continue }
       let childURL = url.appendingPathComponent(name)
-      guard let owned = createdDescriptors[Identity(entry)] else {
+      let permission = try openIdentity(fd, name)
+      defer { close(permission) }
+      guard same(entry, try status(permission)), try owns(permission) else {
         retained.append(childURL.path)
         continue
       }
       let directory = entry.st_mode & S_IFMT == S_IFDIR
       if directory {
-        let permission = dup(owned)
-        guard permission >= 0 else {
-          retained.append(childURL.path)
-          continue
-        }
-        defer { close(permission) }
-        guard same(entry, try status(permission)) else {
-          retained.append(childURL.path)
-          continue
-        }
-        guard fchmod(permission, (entry.st_mode & 0o7777) | 0o700) == 0 else { throw failure() }
+        #if canImport(Glibc)
+          let changed = LinuxSystemCalls.chmodIdentity(permission, (entry.st_mode & 0o7777) | 0o700)
+        #else
+          let changed = fchmod(permission, (entry.st_mode & 0o7777) | 0o700)
+        #endif
+        guard changed == 0 else { throw failure() }
         let child = try openChild(fd, name, directory: true)
         defer { close(child) }
         guard same(entry, try status(child)) else {
@@ -301,7 +339,7 @@ package final class ProjectFileAccess {
         }
         close(fd)
       }
-      result = try produce(fd)
+      result = try preservingBirthTime(fd) { try produce(fd) }
       let produced = try status(fd)
       try check(produced, regular: true)
       if let maximumBytes, produced.st_size > maximumBytes {
@@ -489,12 +527,14 @@ package final class ProjectFileAccess {
         #else
           let times = [opened.st_atim, opened.st_mtim]
         #endif
-        guard futimens(fd, times) == 0 else { throw failure() }
+        try preservingBirthTime(fd) {
+          guard futimens(fd, times) == 0 else { throw failure() }
+        }
       }
       return try mutate(operation, anchors: [(parent, url)]) {
         try check(try status(fd))
         guard same(opened, try statusAt(parent, name)) else { throw denied("Path changed.") }
-        do { return try body(fd) } catch {
+        do { return try preservingBirthTime(fd) { try body(fd) } } catch {
           try restore()
           throw error
         }
@@ -610,9 +650,10 @@ package final class ProjectFileAccess {
       guard same(existing, try statusAt(parent, name)) else { throw denied("Path changed.") }
       if existing != nil { try unlinkChecked(parent, name, at: url) }
       try mutate("symlinkat", anchors: [(parent, url)]) {
+        try checkCreationBudget()
         guard symlinkat(target, parent, name) == 0 else { throw failure() }
         let created = try statusAt(parent, name)!
-        try pinCreatedSymbolicLink(parent, name, identity: created)
+        try recordCreatedSymbolicLink(parent, name, identity: created)
         return created
       } undo: { created in
         try removeCreated(parent, name, identity: created)
@@ -810,6 +851,7 @@ package final class ProjectFileAccess {
   ) throws -> stat? {
     try mutate("mkdirat", anchors: [(parent, url)]) {
       let pinPermissions = mode & 0o500 != 0o500
+      if try statusAt(parent, name) == nil { try checkCreationBudget() }
       if mkdirat(parent, name, pinPermissions ? mode | 0o700 : mode) != 0 {
         guard errno == EEXIST else { throw failure() }
         return nil
@@ -824,12 +866,12 @@ package final class ProjectFileAccess {
       defer { close(fd) }
       guard same(created, try status(fd)) else { throw denied("Created directory changed.") }
       do {
-        try pinCreated(fd)
+        try recordCreated(fd)
         if pinPermissions {
           guard fchmod(fd, created.st_mode & mode & 0o777) == 0 else { throw failure() }
         }
       } catch {
-        try removeCreated(parent, name, identity: created, directory: true)
+        try removeAnchored(parent, name, descriptor: fd, directory: true)
         throw error
       }
       return created
@@ -842,11 +884,12 @@ package final class ProjectFileAccess {
     throws -> Int32
   {
     try mutate("openat", anchors: [(parent, url)]) {
+      try checkCreationBudget()
       let fd = openat(parent, name, O_RDWR | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC, mode)
       guard fd >= 0 else { throw failure() }
-      do { try pinCreated(fd) } catch {
+      do { try recordCreated(fd) } catch {
         defer { close(fd) }
-        try removeCreated(parent, name, identity: status(fd))
+        try removeAnchored(parent, name, descriptor: fd)
         throw error
       }
       return fd
@@ -934,26 +977,27 @@ package final class ProjectFileAccess {
       guard try statusAt(parent, name) == nil else {
         throw denied("Entry changed concurrently; rollback left it in place.")
       }
+      try checkCreationBudget()
       let recovered: stat
       if directory {
         guard mkdirat(parent, name, original.st_mode & 0o777) == 0 else { throw failure() }
         let output = try openChild(parent, name, directory: true)
         defer { close(output) }
         recovered = try status(output)
-        try pinCreated(output)
-        try copyMetadata(input, to: output)
+        try recordCreated(output)
+        try preservingBirthTime(output) { try copyMetadata(input, to: output) }
       } else if let link {
         guard symlinkat(link, parent, name) == 0 else { throw failure() }
         recovered = try statusAt(parent, name)!
-        try pinCreatedSymbolicLink(parent, name, identity: recovered)
+        try recordCreatedSymbolicLink(parent, name, identity: recovered)
       } else {
         let output = openat(
           parent, name, O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC, 0o600)
         guard output >= 0 else { throw failure() }
         defer { close(output) }
         recovered = try status(output)
-        try pinCreated(output)
-        try copyFile(input, to: output)
+        try recordCreated(output)
+        try preservingBirthTime(output) { try copyFile(input, to: output) }
       }
       guard same(recovered, try statusAt(parent, name)) else {
         throw denied("Entry changed concurrently; rollback left it in place.")
@@ -969,19 +1013,118 @@ package final class ProjectFileAccess {
     return String(decoding: buffer.prefix(count).map { UInt8(bitPattern: $0) }, as: UTF8.self)
   }
 
-  private func pinCreated(_ fd: Int32) throws {
-    let identity = Identity(try status(fd))
-    guard createdDescriptors[identity] == nil else { return }
-    let pinned = fcntl(fd, F_DUPFD_CLOEXEC, 0)
-    guard pinned >= 0 else { throw failure() }
-    createdDescriptors[identity] = pinned
+  package static func createdIdentity(_ fd: Int32) throws -> CreatedIdentity {
+    var value = stat()
+    guard fstat(fd, &value) == 0 else { throw POSIXError(.init(rawValue: errno) ?? .EIO) }
+    return CreatedIdentity(value, birthTime: try birthTime(fd))
   }
 
-  private func pinCreatedSymbolicLink(_ parent: Int32, _ name: String, identity: stat) throws {
+  private static func birthTime(_ fd: Int32) throws -> BirthTime? {
+    #if canImport(Darwin)
+      var value = stat()
+      guard fstat(fd, &value) == 0 else { throw POSIXError(.init(rawValue: errno) ?? .EIO) }
+      return BirthTime(
+        seconds: Int64(value.st_birthtimespec.tv_sec),
+        nanoseconds: Int64(value.st_birthtimespec.tv_nsec))
+    #elseif canImport(Glibc)
+      let time = try LinuxSystemCalls.birthTime(fd)
+      return time.map { BirthTime(seconds: $0.seconds, nanoseconds: $0.nanoseconds) }
+    #else
+      throw POSIXError(.ENOTSUP)
+    #endif
+  }
+
+  private func releaseCleanupReserve() {
+    for fd in cleanupReserve { close(fd) }
+    cleanupReserve.removeAll()
+  }
+
+  private func checkCreationBudget() throws {
+    guard fallbackCount < Self.fallbackDescriptorLimit else {
+      releaseCleanupReserve()
+      throw denied(
+        "Created-entry descriptor limit (\(Self.fallbackDescriptorLimit)) exceeded on a filesystem without birth time."
+      )
+    }
+  }
+
+  private func recordCreated(_ fd: Int32) throws {
+    let read = try identityReader(fd)
+    let identity = Identity(read)
+    let birthTime = read.birthTime
+    if let birthTime {
+      createdEntries[identity] = CreatedEntry(birthTime: birthTime, descriptor: nil)
+      return
+    }
+    try checkCreationBudget()
+    // Reserve actual slots before retaining any fallback descriptor. Release them for rollback.
+    do {
+      if cleanupReserve.isEmpty {
+        for _ in 0..<Self.cleanupDescriptorReserve {
+          let reserved = fcntl(descriptor, F_DUPFD_CLOEXEC, 0)
+          guard reserved >= 0 else { throw failure() }
+          cleanupReserve.append(reserved)
+        }
+      }
+      let pinned = fcntl(fd, F_DUPFD_CLOEXEC, 0)
+      guard pinned >= 0 else { throw failure() }
+      createdEntries[identity] = CreatedEntry(birthTime: nil, descriptor: pinned)
+      fallbackCount += 1
+    } catch {
+      releaseCleanupReserve()
+      throw error
+    }
+  }
+
+  private func owns(_ fd: Int32) throws -> Bool {
+    let read = try identityReader(fd)
+    guard let entry = createdEntries[Identity(read)] else { return false }
+    if let birthTime = entry.birthTime { return read.birthTime == birthTime }
+    return entry.descriptor != nil
+  }
+
+  private func openIdentity(_ parent: Int32, _ name: String) throws -> Int32 {
+    #if canImport(Darwin)
+      let fd = openat(parent, name, O_EVTONLY | O_SYMLINK | O_NOFOLLOW | O_CLOEXEC)
+    #elseif canImport(Glibc)
+      let fd = LinuxSystemCalls.openIdentity(parent, name)
+    #else
+      let fd: Int32 = -1
+    #endif
+    guard fd >= 0 else { throw failure() }
+    return fd
+  }
+
+  // Darwin metadata copies and backdated mtime writes can change birth time. Keep the
+  // creation identity on the still-open inode before releasing its writing descriptor.
+  private func preservingBirthTime<T>(_ fd: Int32, _ body: () throws -> T) throws -> T {
+    #if canImport(Darwin)
+      let original = try status(fd)
+      guard createdEntries[Identity(original)] != nil else { return try body() }
+      let result = Result { try body() }
+      let current = try status(fd)
+      if current.st_birthtimespec.tv_sec != original.st_birthtimespec.tv_sec
+        || current.st_birthtimespec.tv_nsec != original.st_birthtimespec.tv_nsec
+      {
+        var attributes = attrlist()
+        attributes.bitmapcount = UInt16(ATTR_BIT_MAP_COUNT)
+        attributes.commonattr = attrgroup_t(ATTR_CMN_CRTIME)
+        var birth = original.st_birthtimespec
+        guard fsetattrlist(fd, &attributes, &birth, MemoryLayout<timespec>.size, 0) == 0 else {
+          throw failure()
+        }
+      }
+      return try result.get()
+    #else
+      return try body()
+    #endif
+  }
+
+  private func recordCreatedSymbolicLink(_ parent: Int32, _ name: String, identity: stat) throws {
     #if canImport(Darwin)
       let fd = openat(parent, name, O_SYMLINK | O_CLOEXEC)
     #elseif canImport(Glibc)
-      let fd = LinuxSystemCalls.openSymbolicLink(parent, name)
+      let fd = LinuxSystemCalls.openIdentity(parent, name)
     #else
       let fd: Int32 = -1
     #endif
@@ -991,8 +1134,8 @@ package final class ProjectFileAccess {
     }
     defer { close(fd) }
     guard same(identity, try status(fd)) else { throw denied("Created symbolic link changed.") }
-    do { try pinCreated(fd) } catch {
-      try removeCreated(parent, name, identity: identity)
+    do { try recordCreated(fd) } catch {
+      try removeAnchored(parent, name, descriptor: fd)
       throw error
     }
   }
@@ -1000,7 +1143,20 @@ package final class ProjectFileAccess {
   private func removeCreated(
     _ parent: Int32, _ name: String, identity: stat, directory: Bool = false
   ) throws {
-    guard same(identity, try statusAt(parent, name)) else {
+    releaseCleanupReserve()
+    let fd = try openIdentity(parent, name)
+    defer { close(fd) }
+    guard same(identity, try status(fd)), try owns(fd) else {
+      throw denied("Entry changed concurrently; rollback left it in place.")
+    }
+    try removeAnchored(parent, name, descriptor: fd, directory: directory)
+  }
+
+  /// The live descriptor prevents reuse when recording identity itself failed.
+  private func removeAnchored(
+    _ parent: Int32, _ name: String, descriptor fd: Int32, directory: Bool = false
+  ) throws {
+    guard same(try status(fd), try statusAt(parent, name)) else {
       throw denied("Entry changed concurrently; rollback left it in place.")
     }
     guard unlinkat(parent, name, directory ? AT_REMOVEDIR : 0) == 0 else { throw failure() }

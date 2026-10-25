@@ -259,6 +259,11 @@ package final class ProjectFileAccess {
     for name in try names(fd) {
       guard let entry = try statusAt(fd, name) else { continue }
       let childURL = url.appendingPathComponent(name)
+      let kind = entry.st_mode & S_IFMT
+      guard kind == S_IFREG || kind == S_IFDIR || kind == S_IFLNK else {
+        retained.append(childURL.path)
+        continue
+      }
       let permission = try openIdentity(fd, name)
       defer { close(permission) }
       guard same(entry, try status(permission)), try owns(permission) else {
@@ -1085,7 +1090,7 @@ package final class ProjectFileAccess {
 
   private func openIdentity(_ parent: Int32, _ name: String) throws -> Int32 {
     #if canImport(Darwin)
-      let fd = openat(parent, name, O_EVTONLY | O_SYMLINK | O_NOFOLLOW | O_CLOEXEC)
+      let fd = openat(parent, name, O_EVTONLY | O_SYMLINK | O_NOFOLLOW | O_NONBLOCK | O_CLOEXEC)
     #elseif canImport(Glibc)
       let fd = LinuxSystemCalls.openIdentity(parent, name)
     #else

@@ -103,6 +103,59 @@ struct CreatedEntryIdentityTests {
   }
 
   @Test
+  func cleanupPreservesForeignFIFOWithoutBlocking() async {
+    await #expect(processExitsWith: .success) {
+      // Bound a blocking-open regression in the child without affecting other tests.
+      alarm(10)
+      defer { alarm(0) }
+      let temporary = try ScopedTemporaryDirectory()
+      let files = try ProjectFileAccess(project: temporary.url)
+      var foreign: URL?
+      let error = #expect(throws: (any Error).self) {
+        try files.withStagingDirectory(in: temporary.url) { staging, _ in
+          let fifo = staging.appendingPathComponent("foreign")
+          try #require(mkfifo(fifo.path, 0o600) == 0)
+          foreign = fifo
+        }
+      }
+      let fifo = try #require(foreign)
+      try #require(String(describing: error).contains(fifo.path))
+      var value = stat()
+      try #require(lstat(fifo.path, &value) == 0)
+      try #require(value.st_mode & S_IFMT == S_IFIFO)
+    }
+  }
+
+  @Test
+  func creationRollbackDoesNotBlockOnFIFOReplacement() async {
+    await #expect(processExitsWith: .success) {
+      alarm(10)
+      defer { alarm(0) }
+      let temporary = try ScopedTemporaryDirectory()
+      var replacement: URL?
+      let files = try ProjectFileAccess(
+        project: temporary.url,
+        mutationObserver: { operation, _, phase in
+          guard operation == "openat", phase == .didMutate else { return }
+          let name = try #require(
+            FileManager.default.contentsOfDirectory(atPath: temporary.url.path).first)
+          let fifo = temporary.url.appendingPathComponent(name)
+          try FileManager.default.removeItem(at: fifo)
+          try #require(mkfifo(fifo.path, 0o600) == 0)
+          replacement = fifo
+          throw POSIXError(.EIO)
+        })
+      #expect(throws: (any Error).self) {
+        try files.write(Data("owned".utf8), to: temporary.url.appendingPathComponent("output"))
+      }
+      let fifo = try #require(replacement)
+      var value = stat()
+      try #require(lstat(fifo.path, &value) == 0)
+      try #require(value.st_mode & S_IFMT == S_IFIFO)
+    }
+  }
+
+  @Test
   func identityReadFailureCleansTheAnchoredCreation() throws {
     let temporary = try ScopedTemporaryDirectory()
     let files = try ProjectFileAccess(

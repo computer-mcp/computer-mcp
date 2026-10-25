@@ -3841,10 +3841,11 @@ additional descriptor slots plus one per retained directory, and releases them
 for cleanup, which holds one descriptor per directory level. When the
 64-descriptor limit would be exceeded, creation stops, staging is cleaned, and the
 operation fails with an error naming the limit. Identity-read or reserve
-allocation errors also fail the operation. A concurrent writer of the same
-directory can replace a new directory or symbolic link before its first
-descriptor; cleanup then treats the replacement as created, which gives that
-writer nothing it could not do itself.
+allocation errors also fail the operation. Processes that can write the
+directories an operation works in are trusted not to race it: such a process can
+replace a new directory or symbolic link before its first descriptor, and cleanup
+then treats the replacement as created, restoring owner access to it and removing
+it when empty.
 It preserves unknown entries without descending into foreign directories, retains
 their staging directory, and fails with the retained paths in the error.
 Entries already published before a later failure remain in place;
@@ -3997,8 +3998,7 @@ descriptor xattr calls preserve mode, nanosecond access/modification times and
 visible xattrs, including POSIX ACLs. Destination-only inherited xattrs are
 removed. Failure to copy a listed attribute fails publication. A source filesystem
 without xattrs contributes none. New copies retain the destination's ownership;
-Created entries keep their own birth time. macOS resource forks and BSD file flags
-have no Linux copy path.
+macOS resource forks, creation times and BSD file flags have no Linux copy path.
 Exclusive rename uses `renameat2(RENAME_NOREPLACE)` with pinned directories and
 single-component names; unsupported kernels or filesystems fail without replacing
 an existing entry. The descriptor working-directory spawn action requires glibc

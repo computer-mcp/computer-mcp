@@ -120,20 +120,61 @@ struct CreatedEntryIdentityTests {
       // Leave fewer descriptors than two per level, so rollback must rely on its reserve.
       try Self.limitDescriptors(to: rlim_t(Self.openDescriptorCount() + 150))
       let depth = ProjectFileAccess.fallbackDescriptorLimit - 4
+      var created = 0
+      var exhausted = false
       #expect(throws: (any Error).self) {
         try files.withStagingDirectory(in: temporary.url) { staging, _ in
           var directory = staging
           for level in 0..<depth {
             directory.appendPathComponent("level-\(level)")
             _ = try files.mkdir(directory, recursive: false)
+            created += 1
           }
           try Self.exhaustDescriptors()
+          exhausted = !Self.exhausted.isEmpty && dup(STDERR_FILENO) < 0
           throw POSIXError(.EIO)
         }
       }
       Self.releaseExhaustedDescriptors()
+      try #require(created == depth)
+      try #require(exhausted)
       try #require(FileManager.default.contentsOfDirectory(atPath: temporary.url.path).isEmpty)
     }
+  }
+
+  @Test
+  func cleanupRetainsDirectoryReplacedBeforeDescending() throws {
+    let temporary = try ScopedTemporaryDirectory()
+    var replaced: URL?
+    let files = try ProjectFileAccess(
+      project: temporary.url, launcher: testExecutionLauncher(),
+      mutationObserver: { operation, url, _ in
+        guard operation == "descend", replaced == nil, url.lastPathComponent == "member" else {
+          return
+        }
+        // Replace the owned directory after its identity handle closes, before the walk opens it.
+        try FileManager.default.removeItem(at: url)
+        try FileManager.default.createDirectory(at: url, withIntermediateDirectories: false)
+        try Data("foreign".utf8).write(to: url.appendingPathComponent("foreign"))
+        try #require(chmod(url.path, 0o555) == 0)
+        replaced = url
+      })
+    let error = #expect(throws: (any Error).self) {
+      try files.withStagingDirectory(in: temporary.url) { staging, _ in
+        let member = staging.appendingPathComponent("member")
+        _ = try files.mkdir(member, recursive: false)
+        try files.write(Data("owned".utf8), to: member.appendingPathComponent("owned"))
+        throw POSIXError(.EIO)
+      }
+    }
+    let directory = try #require(replaced)
+    defer { _ = chmod(directory.path, 0o755) }
+    #expect(String(describing: error).contains(directory.path))
+    var value = stat()
+    try #require(lstat(directory.path, &value) == 0)
+    #expect(value.st_mode & 0o777 == 0o555)
+    #expect(
+      try Data(contentsOf: directory.appendingPathComponent("foreign")) == Data("foreign".utf8))
   }
 
   @Test
@@ -151,10 +192,23 @@ struct CreatedEntryIdentityTests {
       }
       #expect(identity.generation == (type == "apfs" ? .stableInode : .unavailable))
     #else
-      if case .handle(let bytes) = identity.generation {
-        #expect(bytes.count > 4)
-        #expect(try ProjectFileAccess.createdIdentity(fd).generation == identity.generation)
+      var volume = statfs()
+      try #require(fstatfs(fd, &volume) == 0)
+      // ext4, XFS, Btrfs and tmpfs export handles that encode the inode generation.
+      let exporting: Set<Int> = [0xEF53, 0x5846_5342, 0x9123_683E, 0x0102_1994]
+      guard exporting.contains(Int(volume.f_type)) else { return }
+      guard case .handle(let bytes) = identity.generation else {
+        Issue.record("Expected a file handle on filesystem type \(volume.f_type)")
+        return
       }
+      #expect(bytes.count > 4)
+      #expect(try ProjectFileAccess.createdIdentity(fd).generation == identity.generation)
+      let other = temporary.url.appendingPathComponent("other")
+      try #require(mkdir(other.path, 0o700) == 0)
+      let otherFD = open(other.path, O_RDONLY | O_DIRECTORY | O_CLOEXEC)
+      try #require(otherFD >= 0)
+      defer { close(otherFD) }
+      #expect(try ProjectFileAccess.createdIdentity(otherFD).generation != identity.generation)
     #endif
   }
 

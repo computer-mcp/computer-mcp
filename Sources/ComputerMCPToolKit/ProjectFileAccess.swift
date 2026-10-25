@@ -293,9 +293,11 @@ package final class ProjectFileAccess {
         continue
       }
       if directory {
+        try mutationObserver?("descend", childURL, .willCheck)
         let child = try openChild(fd, name, directory: true)
         defer { close(child) }
-        guard same(entry, try status(child)) else {
+        // The entry can be replaced between closing the identity handle and this open.
+        guard same(entry, try status(child)), try owns(child) else {
           retained.append(childURL.path)
           continue
         }

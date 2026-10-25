@@ -157,10 +157,11 @@ created entry so its inode cannot be reused, with a fixed limit of 64 per file
 operation and 16 reserved slots plus one per retained directory, released for
 cleanup, which holds one descriptor per directory level. Exceeding the limit stops
 creation, cleans staging and fails with an error naming the limit. Identity-read
-and reserve allocation errors fail the operation. A concurrent writer of the same
-directory can replace a new directory or symbolic link before its first
-descriptor; cleanup then treats the replacement as created, which gives that
-writer nothing it could not do itself. Cleanup preserves foreign
+and reserve allocation errors fail the operation. Processes that can write the
+directories an operation works in are trusted not to race it: such a process can
+replace a new directory or symbolic link before its first descriptor, and cleanup
+then treats the replacement as created, restoring owner access to it and removing
+it when empty. Cleanup preserves foreign
 entries without recursing into them, and retains staging with an error naming
 its path. Earlier published entries remain after a later failure. `file.trash`
 refuses the project root and checks every member first; multiply linked regular

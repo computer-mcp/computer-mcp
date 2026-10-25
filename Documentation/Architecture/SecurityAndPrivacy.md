@@ -476,10 +476,11 @@ such descriptors and reserves 16 additional slots plus one per retained
 directory, releasing the reserve for cleanup, which holds one descriptor per
 directory level. At the limit, creation stops, staging is cleaned and the error
 names the 64-descriptor limit. Failure to read identity or allocate the reserve
-also fails the operation. A concurrent writer of the same directory can replace
-a new directory or symbolic link between its creation and its first descriptor;
-cleanup then treats the replacement as created by the operation, which gives
-that writer nothing it could not do itself.
+also fails the operation. Processes that can write the directories an operation
+works in are trusted not to race it: such a process can replace a new directory
+or symbolic link between its creation and its first descriptor, and cleanup then
+treats the replacement as created by the operation, restoring owner access to it
+and removing it when empty.
 Unknown entries are preserved without
 descending into foreign directories. The staging directory is retained and named
 in the error if cleanup cannot remove it. Earlier published entries remain if a

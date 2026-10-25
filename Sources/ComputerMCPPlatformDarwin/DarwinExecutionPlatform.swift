@@ -401,6 +401,7 @@ struct DarwinProcessIdentity: Hashable, Sendable {
   static func receive(from socket: Int32, pid: pid_t) throws -> Self {
     var bytes = [UInt8](repeating: 0, count: 16)
     var offset = 0
+    let started = ContinuousClock.now
     while offset < bytes.count {
       let received = bytes.withUnsafeMutableBytes { buffer in
         recv(socket, buffer.baseAddress!.advanced(by: offset), buffer.count - offset, 0)
@@ -408,8 +409,10 @@ struct DarwinProcessIdentity: Hashable, Sendable {
       if received < 0, errno == EINTR { continue }
       guard received > 0 else {
         let status = received < 0 ? errno : 0
+        let elapsed = (ContinuousClock.now - started).components
+        let milliseconds = elapsed.seconds * 1_000 + elapsed.attoseconds / 1_000_000_000_000_000
         throw ExecutionEnvironmentError.launchFailed(
-          "Launch identity handshake failed: received \(received), offset \(offset), errno \(status)"
+          "Launch identity handshake failed: received \(received), offset \(offset), errno \(status), after \(milliseconds) ms"
         )
       }
       offset += received

@@ -125,6 +125,8 @@ import Testing
     #expect(fixture.markerExists)
     // Restore the injected boundary solely to drain the fixture's retained monitor.
     fixture.clear()
+    // A scan already in flight can still publish the missing sentinel before fresh evidence.
+    #expect(try await fixture.owner.members().isEmpty)
     #expect(try await fixture.owner.wait().status == 23)
   }
 
@@ -147,6 +149,8 @@ import Testing
     #expect(revoked.isReleased)
     #expect(fixture.markerExists)
     fixture.clear()
+    // A scan already in flight can still publish the missing sentinel before fresh evidence.
+    #expect(try await fixture.owner.members().isEmpty)
     #expect(try await fixture.owner.wait().status == 23)
   }
 

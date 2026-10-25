@@ -83,7 +83,10 @@ system and private caches, preserving TMPDIR in link tasks.
 `UnsupportedExecutionPlatform` refuses execution when no backend is injected.
 The Linux `POSIXExecutionPlatform` preserves Full access process-group execution;
 its bootstrap stops before exec, and cancellation uses the unreaped process group
-and identity-checked pidfds for observed descendants. Read-only, sandbox and durable
+and identity-checked pidfds for observed descendants. After mapping stdin, stdout
+and stderr, its glibc spawn close-from action closes all higher descriptors in the
+child. Host pipe writers and unrelated open files cannot leak across exec, so
+closing the host's stdin writer delivers EOF to the command. Read-only, sandbox and durable
 recovery calls fail closed until corresponding Linux backends are available.
 
 ## Launch and Cancellation
@@ -98,6 +101,10 @@ method. `members` lists known identities whose exit is unconfirmed, including un
 members. Running sandboxes return their known identities without starting classification;
 after root exit or cancellation, the list reflects classification rounds. Launch does
 not wait for a round: the bootstrap's identity is recorded before acknowledgement.
+The bootstrap confirms receipt of the transferred stdin descriptor before the host
+closes either endpoint of the launch channel and returns the handle. The caller's
+input stays alive through that confirmation. A failed handshake rejects the launch;
+an exited bootstrap can leave the host waiting for the five-second receive timeout.
 `wait` returns the command's exit status after the execution's completion check;
 `run` combines start and wait. Cancelling a waiter requests cancellation. `cancel`
 sends SIGTERM and performs identity-checked KILL rounds after a 500 millisecond

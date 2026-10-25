@@ -231,6 +231,58 @@ import Testing
         atPath: fixture.root.appendingPathComponent("should-not-exist").path))
   }
 
+  @Test(.timeLimit(.minutes(1)))
+  func bootstrapConfirmsInputBeforeHostReleasesIt() throws {
+    var sockets: [Int32] = [-1, -1]
+    try #require(socketpair(AF_UNIX, SOCK_STREAM, 0, &sockets) == 0)
+    defer { for descriptor in sockets where descriptor >= 0 { close(descriptor) } }
+    var timeout = timeval(tv_sec: 5, tv_usec: 0)
+    try #require(
+      setsockopt(
+        sockets[0], SOL_SOCKET, SO_RCVTIMEO, &timeout, socklen_t(MemoryLayout<timeval>.size))
+        == 0)
+    let input = Pipe()
+    let output = Pipe()
+    try input.fileHandleForWriting.write(contentsOf: Data("transferred input\n".utf8))
+    try input.fileHandleForWriting.close()
+    let process = Process()
+    process.executableURL = try SeatbeltFixture.executionBootstrap
+    process.arguments = ["/bin/cat"]
+    process.standardInput = FileHandle(fileDescriptor: sockets[1], closeOnDealloc: false)
+    process.standardOutput = output
+    try process.run()
+    _ = try DarwinProcessIdentity.receive(from: sockets[0], pid: process.processIdentifier)
+    var control: [UInt32] = [
+      16, UInt32(SOL_SOCKET), UInt32(SCM_RIGHTS),
+      UInt32(bitPattern: input.fileHandleForReading.fileDescriptor),
+    ]
+    var acknowledgement: UInt8 = 1
+    let sent = withUnsafeMutablePointer(to: &acknowledgement) { byte in
+      var payload = iovec(iov_base: byte, iov_len: 1)
+      return withUnsafeMutablePointer(to: &payload) { payloadPointer in
+        control.withUnsafeMutableBytes { bytes in
+          var message = msghdr()
+          message.msg_iov = payloadPointer
+          message.msg_iovlen = 1
+          message.msg_control = bytes.baseAddress
+          message.msg_controllen = socklen_t(bytes.count)
+          return sendmsg(sockets[0], &message, 0)
+        }
+      }
+    }
+    #expect(sent == 1)
+    var confirmation: UInt8 = 0
+    #expect(recv(sockets[0], &confirmation, 1, 0) == 1)
+    #expect(confirmation == 2)
+    close(sockets[1])
+    sockets[1] = -1
+    shutdown(sockets[0], SHUT_RDWR)
+    try input.fileHandleForReading.close()
+    process.waitUntilExit()
+    #expect(process.terminationStatus == 0)
+    #expect(output.fileHandleForReading.readDataToEndOfFile() == Data("transferred input\n".utf8))
+  }
+
   private func platform() throws -> DarwinExecutionPlatform {
     DarwinExecutionPlatform(bootstrapExecutable: try SeatbeltFixture.executionBootstrap)
   }

@@ -99,7 +99,7 @@ final class DarwinExecutionOwnership: ExecutionOwnership, @unchecked Sendable {
     timer.resume()
   }
 
-  /// Publish after the kernel has accepted the caller's stdin descriptor on the launch channel.
+  /// Publish after the bootstrap confirms receipt of the caller's stdin descriptor.
   func ready() {
     lock.withLock {
       startup?.resume(returning: self)

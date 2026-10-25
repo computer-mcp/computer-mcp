@@ -77,6 +77,36 @@ struct ManagedCommandRunnerTests {
   }
 
   @Test
+  func doesNotInheritUnrelatedDescriptors() async throws {
+    let pipe = Pipe()
+    let descriptor = fcntl(pipe.fileHandleForReading.fileDescriptor, F_DUPFD, 64)
+    try #require(descriptor >= 64)
+    defer { _ = close(descriptor) }
+    #expect(fcntl(descriptor, F_GETFD) & FD_CLOEXEC == 0)
+    let result = try await BlockingOperationExecutor(label: "test.managed-command").perform {
+      try ManagedCommandRunner(launcher: testExecutionLauncher()).run(
+        executable: try testExecutable("python3"),
+        arguments: [
+          "-c",
+          """
+          import errno, os, sys
+          try:
+              os.fstat(int(sys.argv[1]))
+          except OSError as error:
+              assert error.errno == errno.EBADF
+          else:
+              sys.exit("inherited unrelated descriptor")
+          """,
+          String(descriptor),
+        ],
+        workingDirectory: FileManager.default.temporaryDirectory,
+        environment: ["PATH": systemUtilityPath],
+        timeoutMilliseconds: 2000, maxOutputBytes: 1024)
+    }
+    #expect(result.exitCode == 0 && !result.timedOut, "\(result.stderr)")
+  }
+
+  @Test
   func timeoutReclaimsANonCooperativeProcessGroup() async throws {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
     try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)

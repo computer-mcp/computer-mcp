@@ -38,6 +38,11 @@
     _ actions: UnsafeMutablePointer<posix_spawn_file_actions_t>, _ path: UnsafePointer<CChar>
   ) -> Int32
 
+  @_silgen_name("posix_spawn_file_actions_addclosefrom_np")
+  private func closeDescriptors(
+    _ actions: UnsafeMutablePointer<posix_spawn_file_actions_t>, _ first: Int32
+  ) -> Int32
+
   private final class POSIXExecutionOwnership: ExecutionOwnership, @unchecked Sendable {
     private let lock = NSLock()
     private var pid: pid_t?
@@ -69,6 +74,8 @@
       for (source, destination) in [(input, 0), (output, 1), (error, 2)] {
         try check(posix_spawn_file_actions_adddup2(&actions, source, Int32(destination)))
       }
+      // Inherited pipe writers prevent stdin EOF even after the host closes its writer.
+      try check(closeDescriptors(&actions, 3))
       try command.directory.value.withCString { try check(addWorkingDirectory(&actions, $0)) }
       try check(posix_spawnattr_setpgroup(&attributes, 0))
       var mask = sigset_t()

@@ -204,10 +204,10 @@ private struct RegistrationCLIFixture {
       .resolvingSymlinksInPath()
     _ = try #require(FileManager.default.isExecutableFile(atPath: executable.path))
     try Data().write(to: root.appendingPathComponent(".registration-fixture"))
-    try FileManager.default.copyItem(
-      at: repository.appendingPathComponent(
-        "Tests/ComputerMCPMacOSTests/Fixtures/registration-client.py"), to: client)
-    try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: client.path)
+    let script = try String(
+      contentsOf: repository.appendingPathComponent(
+        "Tests/ComputerMCPMacOSTests/Fixtures/registration-client.py"), encoding: .utf8)
+    try writePythonTestExecutable(script, to: client)
   }
 
   func configurationFile(_ client: String) -> URL {

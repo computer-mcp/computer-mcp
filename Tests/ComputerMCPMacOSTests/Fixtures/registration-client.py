@@ -1,4 +1,3 @@
-#!/usr/bin/python3
 """Isolated MCP client fixture; refuses to operate outside a marked temporary home."""
 
 import json

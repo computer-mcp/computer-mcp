@@ -99,20 +99,15 @@ package enum SeatbeltProfile {
     }
     if configuration.services.screenCapture {
       rules.append(
-        "(allow mach-lookup (global-name \"com.apple.windowserver.active\") (global-name \"com.apple.replayd\"))"
+        "(allow mach-lookup (global-name \"com.apple.windowserver.active\") (global-name \"com.apple.replayd\") (global-name \"com.apple.tccd.system\"))"
+      )
+      rules.append(
+        "(allow iokit-open-user-client (iokit-user-client-class \"IOSurfaceRootUserClient\"))"
       )
     }
     if configuration.services.accessibility {
-      rules.append(
-        "(allow mach-lookup (global-name \"com.apple.axserver\") (global-name \"com.apple.axregistrar\") (global-name \"com.apple.windowserver.active\"))"
-      )
-    }
-    if configuration.services.appleEvents {
-      // This switch represents the principal's Desktop control grant. That grant
-      // covers the whole desktop, including other apps; Apple events are not confined to
-      // the execution's filesystem sandbox. Without it, deny-default blocks Apple events.
-      rules.append("(allow appleevent-send)")
-      rules.append("(allow mach-lookup (global-name \"com.apple.coreservices.appleevents\"))")
+      // AX endpoints are per-process. Opening WindowServer here would also expose capture.
+      rules.append("(allow mach-lookup (local-name \"com.apple.axserver\"))")
     }
     if let marker {
       rules.append(

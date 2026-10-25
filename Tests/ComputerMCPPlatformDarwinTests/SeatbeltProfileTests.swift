@@ -55,25 +55,34 @@ import Testing
     let profile = SeatbeltProfile.generate(
       try configuration(
         proxy: .init(http: 41001, socks: 41002),
-        services: .init(screenCapture: true, accessibility: true, appleEvents: true)))
+        services: .init(screenCapture: true, accessibility: true)))
     #expect(profile.contains("(remote tcp \"localhost:41001\")"))
     #expect(profile.contains("(remote tcp \"localhost:41002\")"))
     #expect(!profile.contains("network-bind"))
     #expect(!profile.contains("network-inbound"))
     #expect(profile.contains("com.apple.replayd"))
     #expect(profile.contains("com.apple.axserver"))
-    #expect(profile.contains("(allow appleevent-send)"))
   }
 
-  @Test(arguments: 0..<8)
-  func appleEventsRequireTheirServiceSwitch(mask: Int) throws {
-    let enabled = mask & 4 != 0
+  @Test(arguments: 0..<4)
+  func systemServicesAreIndependent(mask: Int) throws {
     let profile = SeatbeltProfile.generate(
       try configuration(
-        services: .init(
-          screenCapture: mask & 1 != 0, accessibility: mask & 2 != 0, appleEvents: enabled)))
-    #expect(profile.contains("appleevent-send") == enabled)
-    #expect(profile.contains("com.apple.coreservices.appleevents") == enabled)
+        services: .init(screenCapture: mask & 1 != 0, accessibility: mask & 2 != 0)))
+    for service in ["com.apple.windowserver.active", "com.apple.replayd", "com.apple.tccd.system"] {
+      #expect(profile.contains("(global-name \"\(service)\")") == (mask & 1 != 0))
+    }
+    #expect(
+      profile.contains(
+        "(allow iokit-open-user-client (iokit-user-client-class \"IOSurfaceRootUserClient\"))")
+        == (mask & 1 != 0))
+    #expect(
+      profile.contains("(allow mach-lookup (local-name \"com.apple.axserver\"))")
+        == (mask & 2 != 0))
+    #expect(!profile.contains("(global-name \"com.apple.axserver\")"))
+    #expect(!profile.contains("com.apple.axregistrar"))
+    #expect(!profile.contains("appleevent-send"))
+    #expect(!profile.contains("com.apple.coreservices.appleevents"))
   }
 
   private func configuration(

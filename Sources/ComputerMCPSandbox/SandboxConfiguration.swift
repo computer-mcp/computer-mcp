@@ -80,13 +80,10 @@ package struct SandboxGitConfiguration: Sendable, Equatable {
 package struct SandboxSystemServices: Sendable, Equatable {
   package var screenCapture: Bool
   package var accessibility: Bool
-  package var appleEvents: Bool
 
-  package init(screenCapture: Bool = false, accessibility: Bool = false, appleEvents: Bool = false)
-  {
+  package init(screenCapture: Bool = false, accessibility: Bool = false) {
     self.screenCapture = screenCapture
     self.accessibility = accessibility
-    self.appleEvents = appleEvents
   }
 }
 

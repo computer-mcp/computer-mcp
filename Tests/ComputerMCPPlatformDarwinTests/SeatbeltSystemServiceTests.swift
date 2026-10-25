@@ -15,7 +15,7 @@ import Testing
       .deletingLastPathComponent().deletingLastPathComponent()
     let root = repository.appendingPathComponent(".agent/execution-environment/service-fixture")
       .resolvingSymlinksInPath()
-    let app = root.appendingPathComponent("ServiceTarget.app")
+    let app = root.appendingPathComponent("ComputerMCPTestHost.app")
     let executable = app.appendingPathComponent("Contents/MacOS/ServiceProbe")
     for directory in [
       executable.deletingLastPathComponent(), root.appendingPathComponent("home"),
@@ -34,7 +34,7 @@ import Testing
       ancestor.deleteLastPathComponent()
     }
     ancestors.append(try SandboxPath("/"))
-    for mask in 0..<8 {
+    for mask in 0..<4 {
       let configuration = try SandboxConfiguration(
         worktree: .init(root.path),
         temporaryDirectory: .init(root.appendingPathComponent("tmp").path),
@@ -45,7 +45,7 @@ import Testing
         ].map(SandboxPath.init),
         listableAncestors: ancestors,
         services: .init(
-          screenCapture: mask & 1 != 0, accessibility: mask & 2 != 0, appleEvents: mask & 4 != 0))
+          screenCapture: mask & 1 != 0, accessibility: mask & 2 != 0))
       try SeatbeltProfile.generate(configuration).write(
         to: root.appendingPathComponent("\(mask).sb"), atomically: true, encoding: .utf8)
     }
@@ -61,7 +61,7 @@ import Testing
       results["hostPID"] == results["responsiblePID"],
       "The open-launched fixture must own its privacy responsibility")
     for (service, bit) in [
-      ("screen", 1), ("screen-cg", 1), ("screen-cli", 1), ("accessibility", 2), ("apple-events", 4),
+      ("screen", 1), ("screen-cg", 1), ("screen-cli", 1), ("accessibility", 2), ("apple-events", 0),
     ] {
       let preflight = try #require(results["\(service)/preflight"])
       #expect(
@@ -76,7 +76,7 @@ import Testing
         control == 0,
         "\(service) unsandboxed fixture operation must succeed before isolation can be evaluated")
       guard control == 0 else { continue }
-      for mask in 0..<8 {
+      for mask in 0..<4 {
         let status = try #require(results["\(service)/\(mask)"])
         #expect(
           status == (mask & bit != 0 ? 0 : 1), "\(service), service mask \(mask), status \(status)")
@@ -98,9 +98,11 @@ import Testing
       "-fobjc-arc", "-framework", "AppKit", "-framework", "ApplicationServices",
       "-framework", "ScreenCaptureKit",
     ]
-    let signArguments = ["--force", "--sign", "-", "--options", "runtime"]
+    let identity = ProcessInfo.processInfo.environment["COMPUTER_MCP_TEST_SIGNING_IDENTITY"] ?? "-"
+    let signArguments = ["--force", "--sign", identity, "--options", "runtime"]
     let plist: [String: Any] = [
-      "CFBundleIdentifier": "local.computer-mcp.seatbelt-service-fixture",
+      "CFBundleIdentifier": "local.computer-mcp.test-host",
+      "CFBundleName": "Computer MCP Test Host", "CFBundleDisplayName": "Computer MCP Test Host",
       "CFBundleExecutable": "ServiceProbe", "CFBundlePackageType": "APPL", "LSUIElement": true,
       "NSAppleEventsUsageDescription":
         "Test service isolation using only this fixture's own window and custom Apple event.",

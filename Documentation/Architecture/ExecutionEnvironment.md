@@ -68,9 +68,17 @@ form; the host's path resolver owns filesystem identity and symlink resolution.
   worktree owner. The environment selects the private and alternate object stores.
 - Network access is limited to the execution's leased IPv4/IPv6 loopback proxy
   ports. Direct connections, UDP and child-side DNS are excluded.
-- Screen capture, Accessibility and Apple Events have independent switches.
-  Their actual interaction with inherited TCC grants requires the explicit local
-  acceptance fixture described below.
+- Screen capture and Accessibility have two independent switches. Screen capture
+  allows global Mach lookups for `com.apple.windowserver.active`, `com.apple.replayd`
+  and `com.apple.tccd.system`, plus the `IOSurfaceRootUserClient` IOKit user client.
+  Accessibility allows only the local/per-process `com.apple.axserver` lookup;
+  opening WindowServer would also expose capture. Their interaction with inherited
+  TCC grants requires the explicit local acceptance fixture described below.
+- Apple events are always blocked in the sandbox. Deny-default blocks
+  `appleevent-send` and the `com.apple.coreservices.appleevents` lookup. macOS
+  rejects a sandboxed sender without a target-scoped Apple-event entitlement
+  (`errAEPrivilegeError`, -10004), regardless of profile allowances. Arbitrary
+  sandboxed programs cannot carry that entitlement.
 
 The sandbox environment is an explicit fixed set: selected search paths, private
 HOME/TMPDIR/cache paths, locale, terminal, optional developer directory, Git
@@ -373,7 +381,7 @@ allocator for several minutes. It verifies stale TERM and KILL tokens return ESR
 while the replacement exits normally.
 The responsibility suite launches an ad-hoc signed hardened App with `open`.
 The service suite requires a graphical login and existing TCC grants for its
-controlled fixture, tests all eight switch combinations, and fails if its
+controlled fixture, tests all four switch combinations, and fails if its
 unsandboxed positive controls are unavailable. Its
 [fixture instructions](../../Tests/ComputerMCPPlatformDarwinTests/Fixtures/README.md)
 include the user-operated authorization command. Default Mach policy checks do

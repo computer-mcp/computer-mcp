@@ -23,12 +23,14 @@ int main(int argc, char **argv) {
         if (result != 0) return errno == EPERM || errno == EACCES ? 0 : 3;
         return 1;
     }
-    if (!strcmp(argv[1], "service")) {
+    if (!strcmp(argv[1], "service") || !strcmp(argv[1], "local-service")) {
         if (argc != 4) return 2;
         int (*check)(pid_t, const char *, int, ...) = dlsym(RTLD_DEFAULT, "sandbox_check");
         if (!check) return 3;
         const int *no_report = dlsym(RTLD_DEFAULT, "SANDBOX_CHECK_NO_REPORT");
-        return check(getpid(), argv[2], 2 | (no_report ? *no_report : 0), argv[3]) == 0 ? 0 : 1;
+        // sandbox_check filters: global Mach name = 2, local/per-pid Mach name = 3.
+        int filter = !strcmp(argv[1], "local-service") ? 3 : 2;
+        return check(getpid(), argv[2], filter | (no_report ? *no_report : 0), argv[3]) == 0 ? 0 : 1;
     }
     if (!strcmp(argv[1], "dns")) {
         struct addrinfo *answer = NULL;

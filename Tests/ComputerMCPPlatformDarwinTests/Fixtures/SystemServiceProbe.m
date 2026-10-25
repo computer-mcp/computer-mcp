@@ -39,7 +39,7 @@ static int runProbe(NSString *executable, NSArray<NSString *> *arguments, NSStri
     [log closeFile];
     int status = task.terminationStatus;
     if ([arguments.firstObject isEqual:@"screen-cli"]) {
-        NSString *output = [root stringByAppendingPathComponent:@"tmp/fixture-window.png"];
+        NSString *output = [task.environment[@"TMPDIR"] stringByAppendingPathComponent:@"fixture-window.png"];
         NSImageRep *image = [NSBitmapImageRep imageRepWithContentsOfFile:output];
         if (status == 0 && !(image.pixelsWide > 0 && image.pixelsHigh > 0)) status = 1;
         [NSFileManager.defaultManager removeItemAtPath:output error:nil];
@@ -67,7 +67,7 @@ static void runMatrix(NSString *root, NSString *token, CGWindowID windowID) {
         status = runProbe(executable, arguments, nil, root);
         results[[service stringByAppendingString:@"/control"]] = @(status);
         if (status != 0) continue;
-        for (int mask = 0; mask < 8; ++mask) {
+        for (int mask = 0; mask < 4; ++mask) {
             NSString *profile = [root stringByAppendingPathComponent:[NSString stringWithFormat:@"%d.sb", mask]];
             results[[NSString stringWithFormat:@"%@/%d", service, mask]] = @(runProbe(executable, arguments, profile, root));
         }
@@ -114,6 +114,8 @@ static int target(NSString *root, NSString *token, BOOL requestsPermissions) {
 }
 
 static int screen(pid_t pid, CGWindowID windowID) {
+    // Initialize CoreGraphics before SCK constructs the desktop-independent filter.
+    if (CGMainDisplayID() == 0) return 1;
     dispatch_semaphore_t done = dispatch_semaphore_create(0);
     __block int result = 1;
     [SCShareableContent getShareableContentExcludingDesktopWindows:YES onScreenWindowsOnly:YES
@@ -160,7 +162,10 @@ static int screenCG(CGWindowID windowID) {
 }
 
 static int screenCLI(CGWindowID windowID) {
-    NSString *output = [NSTemporaryDirectory() stringByAppendingPathComponent:@"fixture-window.png"];
+    // NSTemporaryDirectory can ignore the explicit child TMPDIR.
+    const char *temporary = getenv("TMPDIR");
+    if (!temporary || temporary[0] != '/') return 2;
+    NSString *output = [@(temporary) stringByAppendingPathComponent:@"fixture-window.png"];
     [NSFileManager.defaultManager removeItemAtPath:output error:nil];
     NSString *identifier = [NSString stringWithFormat:@"%u", windowID];
     // exec preserves the probe's alarm and inherited responsibility.
@@ -200,8 +205,9 @@ static int appleEvents(pid_t pid, NSString *token, BOOL preflight, BOOL requestP
     NSError *error = nil;
     NSAppleEventDescriptor *reply = [event sendEventWithOptions:NSAppleEventSendWaitForReply | NSAppleEventSendNeverInteract
         timeout:3 error:&error];
-    fprintf(stderr, "apple events: %ld\n", (long)error.code);
-    return !error && [[[reply paramDescriptorForKeyword:keyDirectObject] stringValue] isEqual:token] ? 0 : 1;
+    OSStatus replyError = [[reply paramDescriptorForKeyword:keyErrorNumber] int32Value];
+    fprintf(stderr, "apple events: %ld, reply: %d\n", (long)error.code, (int)replyError);
+    return !error && replyError == noErr && [[[reply paramDescriptorForKeyword:keyDirectObject] stringValue] isEqual:token] ? 0 : 1;
 }
 
 int main(int argc, char **argv) {

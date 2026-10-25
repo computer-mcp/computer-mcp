@@ -64,7 +64,7 @@ import Testing
         configuration: fixture.configuration()) == 0)
   }
 
-  @Test(arguments: 0..<8)
+  @Test(arguments: 0..<4)
   func serviceRulesAreEnforcedIndependently(mask: Int) throws {
     let fixture = try SeatbeltFixture()
     defer { fixture.remove() }
@@ -76,18 +76,21 @@ import Testing
       readableRoots: base.readableRoots,
       listableAncestors: base.listableAncestors,
       services: .init(
-        screenCapture: mask & 1 != 0, accessibility: mask & 2 != 0, appleEvents: mask & 4 != 0))
+        screenCapture: mask & 1 != 0, accessibility: mask & 2 != 0))
     for (name, enabled) in [
-      ("com.apple.windowserver.active", mask & 3 != 0),
-      ("com.apple.replayd", mask & 1 != 0), ("com.apple.axserver", mask & 2 != 0),
-      ("com.apple.axregistrar", mask & 2 != 0),
-      ("com.apple.coreservices.appleevents", mask & 4 != 0),
+      ("com.apple.windowserver.active", mask & 1 != 0),
+      ("com.apple.replayd", mask & 1 != 0), ("com.apple.tccd.system", mask & 1 != 0),
+      ("com.apple.coreservices.appleevents", false),
     ] {
       #expect(
         try run(probe, ["service", "mach-lookup", name], configuration: configuration)
           == (enabled ? 0 : 1),
         "\(name), service mask \(mask)")
     }
+    #expect(
+      try run(
+        probe, ["local-service", "mach-lookup", "com.apple.axserver"], configuration: configuration)
+        == (mask & 2 != 0 ? 0 : 1), "AX lookup, service mask \(mask)")
   }
 
   @Test func systemRouteQuery() throws {

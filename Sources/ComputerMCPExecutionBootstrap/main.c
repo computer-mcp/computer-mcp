@@ -17,6 +17,7 @@ int main(int argc, char **argv) {
 #include <errno.h>
 #include <libproc.h>
 #include <stdint.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <sys/socket.h>
 #include <sys/time.h>
@@ -82,14 +83,34 @@ int main(int argc, char **argv) {
   message.msg_controllen = sizeof(control.bytes);
   ssize_t received;
   do { received = recvmsg(STDIN_FILENO, &message, 0); } while (received < 0 && errno == EINTR);
+  if (received < 0) {
+    perror("Execution input handoff failed");
+    return 126;
+  }
   struct cmsghdr *header = CMSG_FIRSTHDR(&message);
   if (received != 1 || acknowledgement != 1 || (message.msg_flags & MSG_CTRUNC) ||
       header == NULL || header->cmsg_level != SOL_SOCKET || header->cmsg_type != SCM_RIGHTS ||
-      header->cmsg_len != CMSG_LEN(sizeof(int))) return 126;
+      header->cmsg_len != CMSG_LEN(sizeof(int))) {
+    fputs("Execution input handoff invalid\n", stderr);
+    return 126;
+  }
   int original_input = *(int *)CMSG_DATA(header);
-  if (dup2(original_input, STDIN_FILENO) < 0) return 126;
+  /* Keep the sender's pipe alive until the received descriptor owns its reference. */
+  acknowledgement = 2;
+  ssize_t confirmed;
+  do { confirmed = write(STDIN_FILENO, &acknowledgement, 1); } while (confirmed < 0 && errno == EINTR);
+  if (confirmed != 1) {
+    perror("Execution input confirmation failed");
+    return 126;
+  }
+  if (dup2(original_input, STDIN_FILENO) < 0) {
+    perror("Execution input descriptor failed");
+    return 126;
+  }
   close(original_input);
   execv(argv[1], argv + 1);
-  return errno == ENOENT ? 127 : 126;
+  int status = errno == ENOENT ? 127 : 126;
+  perror("Execution target exec failed");
+  return status;
 }
 #endif

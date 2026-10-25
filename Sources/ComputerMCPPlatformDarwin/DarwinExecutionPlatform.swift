@@ -313,8 +313,7 @@ private final class ExecutionBootstrapChannel: @unchecked Sendable {
   }
 
   func accept(pid: pid_t, input: Int32, ownership: DarwinExecutionOwnership) throws {
-    close(child)
-    child = -1
+    // Keep both socket endpoints alive throughout the child's descriptor receipt.
     let identity = try DarwinProcessIdentity.receive(from: parent, pid: pid)
     try ownership.launched(identity)
     // Darwin CMSG_LEN/CMSG_SPACE align the header and payload to four bytes.
@@ -335,6 +334,16 @@ private final class ExecutionBootstrapChannel: @unchecked Sendable {
     }
     guard sent == 1 else {
       throw ExecutionEnvironmentError.launchFailed("Cannot acknowledge launch identity: \(errno)")
+    }
+    // Keep the caller's input alive until the child owns the transferred descriptor.
+    var confirmation: UInt8 = 0
+    var received: Int
+    repeat { received = recv(parent, &confirmation, 1, 0) } while received < 0 && errno == EINTR
+    guard received == 1, confirmation == 2 else {
+      let status = received < 0 ? errno : 0
+      throw ExecutionEnvironmentError.launchFailed(
+        "Cannot confirm execution input handoff: received \(received), value \(confirmation), errno \(status)"
+      )
     }
     disconnect()
     ownership.ready()

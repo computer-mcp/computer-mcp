@@ -446,27 +446,23 @@ extension AppControlPlaneService {
       try stdout.seekToEnd()
       try stderr.seekToEnd()
 
-      let process = Process()
-      process.executableURL = URL(fileURLWithPath: cloudflared)
-      process.arguments = [
-        "tunnel", "--no-autoupdate", "--metrics", "127.0.0.1:\(profile.metricsPort)",
-        "run", "--token-file", tokenFile.path,
-      ]
-      process.standardOutput = stdout
-      process.standardError = stderr
-      process.terminationHandler = { [weak self] terminatedProcess in
+      let process = try await ManagedServiceProcess.start(
+        launcher: platform.launcher, executable: cloudflared,
+        arguments: [
+          "tunnel", "--no-autoupdate", "--metrics", "127.0.0.1:\(profile.metricsPort)",
+          "run", "--token-file", tokenFile.path,
+        ], directory: URL(fileURLWithPath: FileManager.default.currentDirectoryPath),
+        environment: ProcessInfo.processInfo.environment,
+        output: stdout.fileDescriptor, error: stderr.fileDescriptor
+      ) { [weak self] terminatedProcess in
         let processID = terminatedProcess.processIdentifier
         let terminationStatus = terminatedProcess.terminationStatus
         Task {
           await self?.handleCloudflareProcessExit(
-            profileID: profileID,
-            processID: processID,
-            terminationStatus: terminationStatus
-          )
+            profileID: profileID, processID: processID, terminationStatus: terminationStatus)
         }
       }
       runtime.process = process
-      try process.run()
       try await Task.sleep(for: .milliseconds(250))
       try requireCurrentGatewayInputs(inputs)
       guard process.isRunning else {
@@ -713,13 +709,7 @@ extension AppControlPlaneService {
     terminateProcess: Bool
   ) async {
     runtime.process?.terminationHandler = nil
-    if terminateProcess, let process = runtime.process, process.isRunning {
-      process.terminate()
-      for _ in 0..<20 where process.isRunning {
-        try? await Task.sleep(for: .milliseconds(100))
-      }
-      if process.isRunning { _ = kill(process.processIdentifier, SIGKILL) }
-    }
+    if terminateProcess { await runtime.process?.stop() }
     await runtime.origin?.stop()
     try? runtime.stdoutHandle?.close()
     try? runtime.stderrHandle?.close()

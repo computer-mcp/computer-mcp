@@ -1,13 +1,10 @@
 import Foundation
 import NIOConcurrencyHelpers
-import Subprocess
 
 internal protocol ChildProcessInputWriting: Sendable {
   func write(_ bytes: [UInt8]) async throws -> Int
   func finish() async throws
 }
-
-extension StandardInputWriter: ChildProcessInputWriting {}
 
 /// The actor owns FIFO admission and the admitted task. The box also lets synchronous
 /// process cancellation stop admission without waiting for an actor hop or pipe I/O.
@@ -78,7 +75,7 @@ internal actor ChildProcessInput {
     handOffTurn()
   }
 
-  /// Does not cancel the admitted task. Process termination cancels the library's I/O.
+  /// Does not cancel the admitted task. Its descriptor owner retires I/O during teardown.
   nonisolated func stop(throwing error: (any Error)? = nil) {
     shared.withLockedValue { $0.error = error ?? closedError }
     ExecutionTasks.start { await self.rejectWaiters() }
@@ -113,7 +110,7 @@ internal actor ChildProcessInput {
     }
   }
 
-  /// Must complete inside the run body, before its automatic StandardInputWriter.finish().
+  /// Joins the admitted write before closing the descriptor.
   func finish() async {
     stop()
     if turnHeld {

@@ -5,6 +5,10 @@ import Testing
 
 @testable import ComputerMCPGateway
 
+#if os(macOS)
+  import ComputerMCPDarwinTestSupport
+#endif
+
 @Suite(.nativeIntegration, .timeLimit(.minutes(1)))
 struct MCPCallCancellationTests {
   @Test
@@ -72,7 +76,7 @@ struct MCPCallCancellationTests {
 
   @Test
   func alreadyCancelledCallCannotStartADownstreamProcess() async throws {
-    let client = MCPProxyClient()
+    let client = MCPProxyClient(launcher: testExecutionLauncher())
     let gate = CancellationWriterGate()
     let task = Task {
       await gate.wait()

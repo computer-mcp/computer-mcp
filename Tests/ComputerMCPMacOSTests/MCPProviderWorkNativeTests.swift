@@ -456,7 +456,8 @@ struct MCPProviderWorkNativeTests {
       runtimeID: UUID(), context: .init(caller: .localCLI, profileID: .localAdmin),
       projectID: "fixture", rootURL: root, readOnly: false)
     context.ownedWork = work
-    let client = MCPProxyClient(workingDirectory: root, hostContext: context)
+    let client = MCPProxyClient(
+      launcher: testExecutionLauncher(), workingDirectory: root, hostContext: context)
     let server = MCPServerConfig(
       id: "work-provider", transport: .stdio, command: "/usr/bin/python3", args: [script.path],
       startupTimeoutMs: 5_000, requestTimeoutMs: 5_000, hostServices: false)

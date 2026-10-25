@@ -18,6 +18,7 @@ struct BundledPluginDistributionTests {
   @Test
   func newerPluginAPIFailsBundledPreparationWithTheOriginalRefusal() async throws {
     let fixture = try await PreparationFixture.make(
+      launcher: testExecutionLauncher(),
       directoryFactory: DarwinPluginArchiveDirectoryFactory(),
       manifest: PreparationFixture.manifest.replacingOccurrences(
         of: "plugin_api = 1", with: "plugin_api = 2\nfuture = true"))
@@ -54,6 +55,7 @@ struct BundledPluginDistributionTests {
     defer { files.remove() }
     let output = files.root.appendingPathComponent("Plugins")
     let artifacts = try await BundledPluginDistribution.prepare(
+      launcher: testExecutionLauncher(),
       index: Self.repository.appendingPathComponent("Resources/PluginArchives/index.json"),
       destination: output, workerExecutable: Self.worker,
       hostVersion: PluginVersion(ComputerMCPCLI.version), architectures: ["arm64", "x86_64"],
@@ -96,6 +98,7 @@ struct BundledPluginDistributionTests {
   @Test
   func combinedPackagePreservesExecutableBitsWithoutRunningHelpers() async throws {
     let fixture = try await PreparationFixture.make(
+      launcher: testExecutionLauncher(),
       directoryFactory: DarwinPluginArchiveDirectoryFactory(), )
     defer { fixture.files.remove() }
     let index = try Self.index(fixture)
@@ -117,6 +120,7 @@ struct BundledPluginDistributionTests {
   ])
   func invalidInputNeverLeavesAPartialDistribution(failure: String) async throws {
     let fixture = try await PreparationFixture.make(
+      launcher: testExecutionLauncher(),
       directoryFactory: DarwinPluginArchiveDirectoryFactory(), )
     defer { fixture.files.remove() }
     let output = fixture.files.root.appendingPathComponent("Plugins")
@@ -156,6 +160,7 @@ struct BundledPluginDistributionTests {
   @Test(arguments: [false, true])
   func existingOutputAndLinksAreNeverOverwritten(link: Bool) async throws {
     let fixture = try await PreparationFixture.make(
+      launcher: testExecutionLauncher(),
       directoryFactory: DarwinPluginArchiveDirectoryFactory(), )
     defer { fixture.files.remove() }
     let index = try Self.index(fixture)
@@ -176,6 +181,7 @@ struct BundledPluginDistributionTests {
   @Test
   func laterFailureReclaimsEarlierPackagesWithoutTouchingSourceArchives() async throws {
     let fixture = try await PreparationFixture.make(
+      launcher: testExecutionLauncher(),
       directoryFactory: DarwinPluginArchiveDirectoryFactory(), )
     defer { fixture.files.remove() }
     let index = try Self.index(fixture)
@@ -207,6 +213,7 @@ struct BundledPluginDistributionTests {
     -> [BundledPluginArtifact]
   {
     try await BundledPluginDistribution.prepare(
+      launcher: testExecutionLauncher(),
       index: index, destination: output, workerExecutable: worker,
       hostVersion: PluginVersion("1.0.0"), architectures: architectures,
       directoryFactory: DarwinPluginArchiveDirectoryFactory())

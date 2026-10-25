@@ -824,7 +824,8 @@ package actor AppControlPlaneService {
     return try await GatewayRuntime.prepare(
       configuration: inputs.configuration, context: context, database: database,
       state: inputs.persisted,
-      platform: platform, mcpClient: MCPProxyClient(secretStore: secretStore),
+      platform: platform,
+      mcpClient: MCPProxyClient(launcher: platform.launcher, secretStore: secretStore),
       bundledPlugins: bundledPlugins, terminalSessions: terminalSessions,
       artifactStorage: artifactStorage, requiresControlSession: requiresControlSession,
       remoteManagement: remoteManagement)
@@ -878,7 +879,8 @@ package actor AppControlPlaneService {
       configuration: inputs.configuration,
       context: context,
       database: database, registeredProjects: inputs.projects,
-      platform: platform, mcpClient: MCPProxyClient(secretStore: secretStore),
+      platform: platform,
+      mcpClient: MCPProxyClient(launcher: platform.launcher, secretStore: secretStore),
       plugins: plugins, pluginState: inputs.plugins, bundledPlugins: bundledPlugins,
       terminalSessions: terminalSessions, requiresControlSession: requiresControlSession,
       remoteManagement: remoteManagement)

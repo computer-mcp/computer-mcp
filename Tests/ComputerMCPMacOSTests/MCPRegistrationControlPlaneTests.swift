@@ -119,6 +119,7 @@ struct MCPRegistrationControlPlaneTests {
       """#.utf8
     ).write(to: script)
     let process = try ManagedLineProcess(
+      launcher: testExecutionLauncher(),
       configuration: .init(
         executable: "/usr/bin/python3", arguments: [script.path, ready.path, methods.path, mode],
         workingDirectory: fixture.root, terminationGraceMilliseconds: 100))

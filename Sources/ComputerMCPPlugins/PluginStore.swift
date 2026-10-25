@@ -1,5 +1,6 @@
 import ComputerMCPConfiguration
 import ComputerMCPPlatform
+import ComputerMCPProcess
 import Crypto
 import Foundation
 
@@ -161,17 +162,19 @@ package struct PluginStoreResolution: Sendable {
 /// Host-owned state changes are synchronous database transactions inside this actor.
 /// Revision comparison in the database also protects against other store instances/processes.
 package actor PluginStore {
+  let launcher: ExecutionLauncher
   let stateStore: any PluginStateStore
   let directoryFactory: any PluginArchiveDirectoryFactory
   let applications: any ApplicationBundleLocating
   private let validateSnapshot: @Sendable (PluginStoreSnapshot) throws -> Void
 
   package init(
-    stateStore: any PluginStateStore,
+    launcher: ExecutionLauncher = ExecutionLauncher(), stateStore: any PluginStateStore,
     directoryFactory: any PluginArchiveDirectoryFactory,
     applications: any ApplicationBundleLocating,
     validateSnapshot: @escaping @Sendable (PluginStoreSnapshot) throws -> Void = { _ in }
   ) {
+    self.launcher = launcher
     self.stateStore = stateStore
     self.directoryFactory = directoryFactory
     self.applications = applications

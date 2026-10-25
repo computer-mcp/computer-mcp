@@ -200,9 +200,11 @@ struct GatewayPermissionLifecycleTests {
     try journal.update(serverID: server.id, requestID: "owned") {
       try $0.finish(result: .object(["content": .array([])]), failed: false)
     }
-    let first = MCPProxyClient(hostContext: owner)
-    let second = MCPProxyClient(hostContext: context(principal: "verified-second"))
-    let reconnected = MCPProxyClient(hostContext: context(principal: "verified-first"))
+    let first = MCPProxyClient(launcher: testExecutionLauncher(), hostContext: owner)
+    let second = MCPProxyClient(
+      launcher: testExecutionLauncher(), hostContext: context(principal: "verified-second"))
+    let reconnected = MCPProxyClient(
+      launcher: testExecutionLauncher(), hostContext: context(principal: "verified-first"))
     do {
       let result = try first.readRequest(
         server: server, requestID: "owned", offset: 0, maxBytes: 4096, context: .empty)

@@ -19,6 +19,7 @@ struct GatewayRemoteManagementTests {
   @Test
   func pluginRefusalSurvivesGatewayResponsesAndAuditStorage() async throws {
     let archive = try await PreparationFixture.make(
+      launcher: testExecutionLauncher(),
       directoryFactory: MacOSPlatform.services(launcher: testExecutionLauncher()).pluginDirectories)
     defer { archive.files.remove() }
     let http = ReleaseHTTPFake()
@@ -219,6 +220,7 @@ struct GatewayRemoteManagementTests {
     let manifest = PreparationFixture.manifest.replacingOccurrences(
       of: "architectures = ['arm64']", with: "architectures = ['arm64', 'x86_64']")
     let archive = try await PreparationFixture.make(
+      launcher: testExecutionLauncher(),
       directoryFactory: MacOSPlatform.services(launcher: testExecutionLauncher()).pluginDirectories,
       manifest: manifest, format: "zip")
     defer { archive.files.remove() }
@@ -356,6 +358,7 @@ struct GatewayRemoteManagementTests {
     let manifest = PreparationFixture.manifest.replacingOccurrences(
       of: "architectures = ['arm64']", with: "architectures = ['arm64', 'x86_64']")
     let archive = try await PreparationFixture.make(
+      launcher: testExecutionLauncher(),
       directoryFactory: MacOSPlatform.services(launcher: testExecutionLauncher()).pluginDirectories,
       manifest: manifest, format: "zip")
     defer { archive.files.remove() }
@@ -412,10 +415,12 @@ struct GatewayRemoteManagementTests {
     let nextManifest = manifest.replacingOccurrences(
       of: "version = '1.2.3'", with: "version = '1.2.4'")
     let first = try await PreparationFixture.make(
+      launcher: testExecutionLauncher(),
       directoryFactory: MacOSPlatform.services(launcher: testExecutionLauncher()).pluginDirectories,
       manifest: manifest, format: "zip")
     defer { first.files.remove() }
     let next = try await PreparationFixture.make(
+      launcher: testExecutionLauncher(),
       directoryFactory: MacOSPlatform.services(launcher: testExecutionLauncher()).pluginDirectories,
       manifest: nextManifest,
       format: "zip")

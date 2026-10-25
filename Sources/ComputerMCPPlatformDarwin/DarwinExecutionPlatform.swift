@@ -100,7 +100,9 @@ package struct DarwinExecutionPlatform: ExecutionPlatform {
                 }
               }
               // The raw-byte environment API passes NUL-terminated C strings to spawn.
-              let environment = command.environment.map { Array(($0.key + "=" + $0.value + "\0").utf8) }
+              let environment = command.environment.map {
+                Array(($0.key + "=" + $0.value + "\0").utf8)
+              }
               let result = try await Subprocess.run(
                 .path(FilePath(bootstrap.path)), arguments: .init(arguments),
                 environment: .custom(environment),
@@ -242,10 +244,22 @@ package struct DarwinExecutionPlatform: ExecutionPlatform {
     } else {
       try check(posix_spawn_file_actions_addchdir_np(&actions, command.directory.value))
     }
-    for (source, destination) in [
-      (channel.child, STDIN_FILENO), (output, STDOUT_FILENO), (error, STDERR_FILENO),
-    ] {
-      try check(posix_spawn_file_actions_adddup2(&actions, source, destination))
+    // Copy every source above all destinations before remapping, including overlapping mappings.
+    let mappings =
+      [(STDIN_FILENO, channel.child), (STDOUT_FILENO, output), (STDERR_FILENO, error)]
+      + command.inheritedDescriptors.sorted { $0.key < $1.key }.map { ($0.key, $0.value) }
+    let minimum = (mappings.map { $0.0 }.max() ?? 2) + 1
+    var copies: [FileHandle] = []
+    defer { for handle in copies { try? handle.close() } }
+    for (destination, source) in mappings {
+      let copy = fcntl(source, F_DUPFD_CLOEXEC, minimum)
+      guard copy >= 0 else {
+        throw ExecutionEnvironmentError.launchFailed("Cannot copy launch descriptor")
+      }
+      copies.append(FileHandle(fileDescriptor: copy, closeOnDealloc: true))
+    }
+    for (mapping, copy) in zip(mappings, copies) {
+      try check(posix_spawn_file_actions_adddup2(&actions, copy.fileDescriptor, mapping.0))
     }
     if disclaim { try responsibility.disclaim(&attributes) }
     let argv = ([executable] + arguments).map { strdup($0) } + [nil]
@@ -272,6 +286,8 @@ package struct DarwinExecutionPlatform: ExecutionPlatform {
         }
       }
     }
+    for handle in copies { try? handle.close() }
+    copies.removeAll()
     var failure: Error?
     do { try channel.accept(pid: pid, input: input, ownership: ownership) } catch {
       channel.disconnect()

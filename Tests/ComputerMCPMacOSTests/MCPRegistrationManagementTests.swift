@@ -59,7 +59,7 @@ struct MCPRegistrationManagementTests {
     let server = MCPServerConfig(
       id: "manual", transport: .stdio, command: "/nonexistent/mcp-registration-fixture",
       exposure: .reexport, prefix: "manual", allowAnyTool: true, enabled: false)
-    let client = MCPProxyClient()
+    let client = MCPProxyClient(launcher: testExecutionLauncher())
     #expect(
       try client.connectionStatus(server: server, context: .empty).objectValue?["state"]
         == .string("disabled"))
@@ -72,7 +72,7 @@ struct MCPRegistrationManagementTests {
     #expect(try !router.listTools(context: .empty).contains { $0.name.hasPrefix("manual.") })
     await client.shutdown()
     let validation = try await ComputerMCPProductContracts.validateMCPConnections(
-      configuration: .init(mcp: .init(servers: [server])))
+      configuration: .init(mcp: .init(servers: [server])), platform: MacOSPlatform.services)
     #expect(
       validation
         == .array([

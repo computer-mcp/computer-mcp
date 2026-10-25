@@ -117,7 +117,8 @@ extension AppControlPlaneService {
     let runtime = try await GatewayRuntime.make(
       configuration: configuration, registeredProjects: [project],
       platform: platform,
-      mcpClient: MCPProxyClient(secretStore: secretStore, processOwnershipRoot: ownershipRoot),
+      mcpClient: MCPProxyClient(
+        launcher: platform.launcher, secretStore: secretStore, processOwnershipRoot: ownershipRoot),
       plugins: [], bundledPlugins: .load(directory: nil))
     let arguments: JSONValue = .object([
       "server": .string(id), "project_id": .string(projectID),

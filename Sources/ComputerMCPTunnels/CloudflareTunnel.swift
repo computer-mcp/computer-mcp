@@ -1,6 +1,7 @@
 import ComputerMCPConfiguration
 import ComputerMCPCore
 import ComputerMCPPlatform
+import ComputerMCPProcess
 import Foundation
 
 package struct CloudflareTunnelConfiguration: Codable, Equatable, Sendable, Identifiable {
@@ -267,7 +268,7 @@ package struct CloudflareCredentialState: Codable, Equatable, Sendable {
 package struct CloudflareRuntimeState {
   package var profile: CloudflareTunnelConfiguration
   package var state: CloudflareTunnelLifecycleState
-  package var process: Process?
+  package var process: ManagedServiceProcess?
   package var origin: (any HTTPOriginLifecycle)?
   package var tokenFile: URL?
   package var stdoutHandle: FileHandle?
@@ -278,7 +279,7 @@ package struct CloudflareRuntimeState {
   package init(
     profile: CloudflareTunnelConfiguration,
     state: CloudflareTunnelLifecycleState,
-    process: Process?,
+    process: ManagedServiceProcess?,
     origin: (any HTTPOriginLifecycle)?,
     tokenFile: URL?,
     stdoutHandle: FileHandle?,

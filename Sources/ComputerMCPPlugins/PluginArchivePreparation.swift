@@ -1,6 +1,7 @@
 import ComputerMCPPlatform
+import ComputerMCPProcess
+import ComputerMCPSandbox
 import Foundation
-import Subprocess
 
 #if canImport(Darwin)
   import Darwin
@@ -9,15 +10,10 @@ import Subprocess
 #elseif canImport(Musl)
   import Musl
 #endif
-#if canImport(System)
-  import System
-#else
-  import SystemPackage
-#endif
-
 /// Prepares an artifact without activating it or changing configuration.
 /// `workerExecutable` must be the host's own CLI, never a package contribution.
 package struct PluginArchivePreparation: Sendable {
+  private let launcher: ExecutionLauncher
   package let workerExecutable: URL
   package let stagingParent: URL
   let directoryFactory: any PluginArchiveDirectoryFactory
@@ -26,10 +22,11 @@ package struct PluginArchivePreparation: Sendable {
   package var inheritedLockDescriptor: Int32?
 
   package init(
-    workerExecutable: URL, stagingParent: URL,
+    launcher: ExecutionLauncher, workerExecutable: URL, stagingParent: URL,
     timeout: Duration = .seconds(60), inheritedLockDescriptor: Int32? = nil,
     directoryFactory: any PluginArchiveDirectoryFactory
   ) {
+    self.launcher = launcher
     self.workerExecutable = workerExecutable
     self.stagingParent = stagingParent
     self.directoryFactory = directoryFactory
@@ -107,39 +104,25 @@ package struct PluginArchivePreparation: Sendable {
       defer { group.cancelAll() }
       group.addTask {
         do {
-          // No inherited credentials, HOME, dynamic-loader overrides or host config.
-          let environment: [Environment.Key: String] = [
+          let environment = try ExecutionEnvironment(fullAccessVariables: [
             "PATH": "/usr/bin:/bin:/usr/sbin:/sbin", "LANG": "en_US.UTF-8",
             "TMPDIR": directory.path,
-          ]
-          var options = PlatformOptions()
-          if let inheritedLockDescriptor {
-            guard inheritedLockDescriptor > STDERR_FILENO else {
-              throw PluginArchiveError.invalidInput
-            }
-            #if canImport(Darwin)
-              options.preSpawnProcessConfigurator = { _, actions in
-                guard posix_spawn_file_actions_addinherit_np(&actions, inheritedLockDescriptor) == 0
-                else { throw PluginArchiveError.workerFailed }
-              }
-            #elseif canImport(Glibc) || canImport(Musl)
-              throw PluginArchiveError.workerFailed
-            #endif
+          ])
+          if let inheritedLockDescriptor, inheritedLockDescriptor <= STDERR_FILENO {
+            throw PluginArchiveError.invalidInput
           }
-          let execution = try await Subprocess.run(
-            .path(FilePath(workerExecutable.path)),
+          let execution = try await launcher.capture(
+            executable: SandboxPath(workerExecutable.path),
             arguments: ["_plugin-archive", "--sha256", sha256],
-            environment: .custom(environment), workingDirectory: FilePath(directory.path),
-            platformOptions: options,
-            input: .fileDescriptor(
-              FileDescriptor(rawValue: input), closeAfterSpawningProcess: false),
-            output: .bytes(limit: 16_384), error: .bytes(limit: 4_096))
+            directory: SandboxPath(directory.path), environment: environment, mode: .fullAccess,
+            input: input,
+            inheritedDescriptors: inheritedLockDescriptor.map { [$0: $0] } ?? [:],
+            maxOutputBytes: 16_384, maxErrorBytes: 4_096)
           try Task.checkCancellation()
-          let output = Data(execution.standardOutput)
-          if execution.terminationStatus != .exited(0) {
-            if execution.terminationStatus == .exited(1),
-              let failure = try? JSONDecoder().decode(
-                PluginArchiveError.self, from: output)
+          let output = execution.stdout
+          if execution.exit != ExecutionExit(status: 0) {
+            if execution.exit == ExecutionExit(status: 1),
+              let failure = try? JSONDecoder().decode(PluginArchiveError.self, from: output)
             {
               throw failure
             }
@@ -168,7 +151,7 @@ package struct PluginArchivePreparation: Sendable {
         throw PluginArchiveError.timedOut
       }
       guard let receipt = try await group.next() else { throw CancellationError() }
-      // Group scope waits for Subprocess cancellation/kill/reap before callers
+      // Group scope waits for execution ownership to confirm termination before callers
       // can remove files the worker might still be writing.
       return receipt
     }

@@ -23,7 +23,7 @@ import Testing
 struct MCPHTTPAuthenticationTests {
   @Test(arguments: [false, true])
   func gatewayClientSessionTerminatesThroughItsTransportOnce(streaming: Bool) async throws {
-    try await HTTPStreamProcessFixture.withFixture { fixture in
+    try await HTTPStreamProcessFixture.withFixture(launcher: testExecutionLauncher()) { fixture in
       let session = try await GatewayClientSession.connectHTTP(
         endpoint: fixture.endpoint, accessToken: "fixture-token", streaming: streaming)
       do {
@@ -150,14 +150,15 @@ struct MCPHTTPAuthenticationTests {
 
   @Test(arguments: ["unavailable", "missing", "invalid"])
   func credentialsFailBeforeAnyNetworkRequest(state: String) async throws {
-    try await HTTPStreamProcessFixture.withFixture { fixture in
+    try await HTTPStreamProcessFixture.withFixture(launcher: testExecutionLauncher()) { fixture in
       let store = try KeychainSecretStore(adapter: MemoryKeychainAdapter())
       let binding = MCPHTTPAuthentication(
         endpoint: fixture.endpoint.absoluteString, keychainAccount: "mcp.fixture")
       if state == "invalid" {
         try store.set("invalid\nheader", for: SecretReference(account: binding.keychainAccount))
       }
-      let client = MCPProxyClient(secretStore: state == "unavailable" ? nil : store)
+      let client = MCPProxyClient(
+        launcher: testExecutionLauncher(), secretStore: state == "unavailable" ? nil : store)
       let server = MCPServerConfig(
         id: "remote", transport: .http, url: binding.endpoint, authentication: binding)
       await #expect(throws: (any Error).self) {
@@ -173,7 +174,7 @@ struct MCPHTTPAuthenticationTests {
   @Test(arguments: [false, true])
   func ownerCredentialWorkflowReachesDoctorAndLiveDirectOrPluginRequests(plugin: Bool) async throws
   {
-    try await HTTPStreamProcessFixture.withFixture { http in
+    try await HTTPStreamProcessFixture.withFixture(launcher: testExecutionLauncher()) { http in
       let fixture = try MCPRegistrationControlFixture()
       defer { fixture.remove() }
       let binding = MCPHTTPAuthentication(

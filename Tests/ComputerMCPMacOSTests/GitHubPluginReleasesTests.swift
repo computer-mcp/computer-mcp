@@ -70,6 +70,7 @@ struct GitHubPluginReleasesTests {
   @Test
   func cancellationDuringDownloadReclaimsOnlyItsReceiptedStaging() async throws {
     let fixture = try await PreparationFixture.make(
+      launcher: testExecutionLauncher(),
       directoryFactory: MacOSPlatform.services(launcher: testExecutionLauncher()).pluginDirectories,
       format: "zip")
     defer { fixture.files.remove() }
@@ -120,6 +121,7 @@ struct GitHubPluginReleasesTests {
   @Test
   func downloadedCompositionUsesTheOwnedInstallationTransaction() async throws {
     let fixture = try await PreparationFixture.make(
+      launcher: testExecutionLauncher(),
       directoryFactory: MacOSPlatform.services(launcher: testExecutionLauncher()).pluginDirectories,
       format: "zip")
     defer { fixture.files.remove() }
@@ -172,6 +174,7 @@ struct GitHubPluginReleasesTests {
   @Test(arguments: ["manifest", "download", "release", "revision"])
   func failedDownloadInstallationPreservesTheSelectedPackage(_ fault: String) async throws {
     let fixture = try await PreparationFixture.make(
+      launcher: testExecutionLauncher(),
       directoryFactory: MacOSPlatform.services(launcher: testExecutionLauncher()).pluginDirectories,
       format: "zip")
     defer { fixture.files.remove() }

@@ -23,11 +23,12 @@ package struct ExecutionLauncher: Sendable {
     environment: ExecutionEnvironment, mode: ExecutionMode,
     method: ExecutionLaunchMethod = .subprocess,
     input: Int32 = 0, output: Int32 = 1, error: Int32 = 2,
-    directoryDescriptor: Int32? = nil,
+    directoryDescriptor: Int32? = nil, inheritedDescriptors: [Int32: Int32] = [:],
     bindOwnership: @Sendable (any ExecutionOwnership) -> Void = { _ in }
   ) async throws -> any ExecutionOwnership {
     try Task.checkCancellation()
-    guard arguments.allSatisfy({ !$0.contains("\0") }),
+    guard inheritedDescriptors.allSatisfy({ $0.key > 2 && $0.key < Int32.max && $0.value >= 0 }),
+      arguments.allSatisfy({ !$0.contains("\0") }),
       ([input, output, error] + [directoryDescriptor].compactMap { $0 }).allSatisfy({ $0 >= 0 })
     else {
       throw ExecutionEnvironmentError.invalidConfiguration(
@@ -48,10 +49,13 @@ package struct ExecutionLauncher: Sendable {
     }
     let command = try ExecutionCommand(
       executable: executable, arguments: arguments, directory: directory,
-      environment: environment.variables(sandbox: sandbox), directoryDescriptor: directoryDescriptor
+      environment: environment.variables(sandbox: sandbox),
+      directoryDescriptor: directoryDescriptor,
+      inheritedDescriptors: inheritedDescriptors
     )
     return try await platform.start(
-      command, sandbox: sandbox, method: directoryDescriptor == nil ? method : .posixSpawn,
+      command, sandbox: sandbox,
+      method: directoryDescriptor == nil && inheritedDescriptors.isEmpty ? method : .posixSpawn,
       input: input, output: output, error: error, bindOwnership: bindOwnership)
   }
 
@@ -60,7 +64,7 @@ package struct ExecutionLauncher: Sendable {
     environment: ExecutionEnvironment, mode: ExecutionMode,
     method: ExecutionLaunchMethod = .subprocess,
     input: Int32 = 0, output: Int32 = 1, error: Int32 = 2,
-    directoryDescriptor: Int32? = nil,
+    directoryDescriptor: Int32? = nil, inheritedDescriptors: [Int32: Int32] = [:],
     deadline: ContinuousClock.Instant = .now.advanced(by: .seconds(120)),
     bindOwnership: @Sendable (any ExecutionOwnership) -> Void = { _ in }
   ) async throws -> ExecutionExit {
@@ -68,6 +72,7 @@ package struct ExecutionLauncher: Sendable {
       executable: executable, arguments: arguments, directory: directory,
       environment: environment, mode: mode, method: method,
       input: input, output: output, error: error, directoryDescriptor: directoryDescriptor,
+      inheritedDescriptors: inheritedDescriptors,
       bindOwnership: bindOwnership)
     return try await ownership.wait(until: deadline)
   }

@@ -2,12 +2,14 @@ import ComputerMCPConfiguration
 import ComputerMCPCore
 import ComputerMCPDownstream
 import ComputerMCPPlatform
+import ComputerMCPProcess
 import ComputerMCPTransport
 import Foundation
 import MCP
 
 /// Proxies configured downstream servers through persistent MCP SDK sessions.
 package final class MCPProxyClient: DownstreamMCPClient, @unchecked Sendable {
+  private let launcher: ExecutionLauncher
   private let pool: MCPConnectionPool
   private let changes: GatewayToolChangeBroadcaster
   private let secretStore: (any SecretStore)?
@@ -16,6 +18,7 @@ package final class MCPProxyClient: DownstreamMCPClient, @unchecked Sendable {
   private let calls = BlockingOperationExecutor(label: "computer-mcp.mcp-calls", serial: false)
 
   package init(
+    launcher: ExecutionLauncher,
     workingDirectory: URL = URL(fileURLWithPath: FileManager.default.currentDirectoryPath),
     environment: [String: String] = ProcessInfo.processInfo.environment,
     hostContext: (any MCPHostEnvironment)? = nil,
@@ -25,6 +28,7 @@ package final class MCPProxyClient: DownstreamMCPClient, @unchecked Sendable {
   ) {
     // Gateway connections need journal, retained-work and host-tool authority.
     // The nonthrowing factory defers unsupported host environments to connection admission.
+    self.launcher = launcher
     let gatewayContext = hostContext as? MCPHostContext
     let hostContextError: GatewayToolError? =
       hostContext != nil && gatewayContext == nil
@@ -49,7 +53,8 @@ package final class MCPProxyClient: DownstreamMCPClient, @unchecked Sendable {
       hostContext?.processOwnershipRoot = processOwnershipRoot
     }
     self.pool = MCPConnectionPool(
-      workingDirectory: workingDirectory.standardizedFileURL, environment: environment,
+      launcher: launcher, workingDirectory: workingDirectory.standardizedFileURL,
+      environment: environment,
       hostContext: hostContext, hostContextError: hostContextError,
       secretStore: secretStore, journal: journal,
       toolsChanged: { changes.send() })
@@ -61,7 +66,8 @@ package final class MCPProxyClient: DownstreamMCPClient, @unchecked Sendable {
     -> any DownstreamMCPClient
   {
     MCPProxyClient(
-      workingDirectory: workingDirectory, environment: environment, hostContext: hostContext,
+      launcher: launcher, workingDirectory: workingDirectory, environment: environment,
+      hostContext: hostContext,
       secretStore: secretStore, processOwnershipRoot: processOwnershipRoot)
   }
 
@@ -502,6 +508,7 @@ private final class MCPConnectionPool: @unchecked Sendable {
   }
   private var retirements: [String: Retirement] = [:]
   private var shutdownTask: Task<Void, Never>?
+  private let launcher: ExecutionLauncher
   private let workingDirectory: URL
   private let environment: [String: String]
   private let hostContext: MCPHostContext?
@@ -511,11 +518,12 @@ private final class MCPConnectionPool: @unchecked Sendable {
   private let toolsChanged: @Sendable () -> Void
 
   init(
-    workingDirectory: URL, environment: [String: String],
+    launcher: ExecutionLauncher, workingDirectory: URL, environment: [String: String],
     hostContext: MCPHostContext?, hostContextError: GatewayToolError?,
     secretStore: (any SecretStore)?, journal: MCPExecutionJournal,
     toolsChanged: @escaping @Sendable () -> Void
   ) {
+    self.launcher = launcher
     self.workingDirectory = workingDirectory
     self.environment = environment
     self.hostContext = hostContext
@@ -552,7 +560,8 @@ private final class MCPConnectionPool: @unchecked Sendable {
       retireLocked(serverID: server.id, connection: replaced.connection)
     }
     let connection = try MCPProxyConnection(
-      server: server, workingDirectory: workingDirectory, environment: environment,
+      launcher: launcher, server: server, workingDirectory: workingDirectory,
+      environment: environment,
       hostContext: hostContext, secretStore: secretStore, journal: journal,
       predecessor: retirements[server.id]?.task,
       onTermination: { [weak self] connection in
@@ -725,7 +734,8 @@ private actor MCPProxyConnection {
   private let toolsChanged: @Sendable () -> Void
 
   init(
-    server: MCPServerConfig, workingDirectory: URL, environment: [String: String],
+    launcher: ExecutionLauncher, server: MCPServerConfig, workingDirectory: URL,
+    environment: [String: String],
     hostContext: MCPHostContext?,
     secretStore: (any SecretStore)?, journal: MCPExecutionJournal,
     predecessor: Task<Bool, Never>? = nil,
@@ -745,7 +755,8 @@ private actor MCPProxyConnection {
       version: ComputerMCPCLI.version
     )
     transport = try Self.makeTransport(
-      server: server, workingDirectory: workingDirectory, environment: environment,
+      launcher: launcher, server: server, workingDirectory: workingDirectory,
+      environment: environment,
       hostContext: hostContext, secretStore: secretStore)
   }
 
@@ -1539,14 +1550,16 @@ private actor MCPProxyConnection {
   }
 
   private static func makeTransport(
-    server: MCPServerConfig, workingDirectory: URL, environment: [String: String],
+    launcher: ExecutionLauncher, server: MCPServerConfig, workingDirectory: URL,
+    environment: [String: String],
     hostContext: MCPHostContext?, secretStore: (any SecretStore)?
   ) throws -> any MCP.Transport {
     try server.authentication?.validate(endpoint: server.url, transport: server.transport)
     switch server.transport {
     case .stdio:
       return try MCPChildProcessTransport(
-        server: server, workingDirectory: workingDirectory, environment: environment,
+        launcher: launcher, server: server, workingDirectory: workingDirectory,
+        environment: environment,
         hostContext: hostContext)
 
     case .streamableHTTP, .sse, .http:

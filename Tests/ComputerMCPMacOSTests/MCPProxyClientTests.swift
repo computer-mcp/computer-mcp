@@ -23,7 +23,7 @@ final class MCPProxyClientTests {
     let server = MCPServerConfig(
       id: "retiring-call", transport: .stdio, command: fixture.script.path,
       args: [fixture.startMarker.path, fixture.cancelMarker.path], requestTimeoutMs: 5_000)
-    let client = MCPProxyClient()
+    let client = MCPProxyClient(launcher: testExecutionLauncher())
     let inspection = BlockingOperationExecutor(label: "retiring-call-test")
     _ = try await inspection.perform { try client.listTools(server: server, context: .empty) }
     let call = Task {
@@ -54,7 +54,7 @@ final class MCPProxyClientTests {
         id: "paged", transport: .stdio, command: script.path,
         exposure: .reexport, prefix: "paged", allowedTools: ["sample"],
         requestTimeoutMs: 5_000)
-      let client = MCPProxyClient()
+      let client = MCPProxyClient(launcher: testExecutionLauncher())
       let discovered = try client.listTools(server: server, context: .empty)
       #expect(discovered.map(\.name) == ["hidden", "sample"])
       #expect(discovered.last?.title == "Sample Tool")
@@ -93,7 +93,7 @@ final class MCPProxyClientTests {
         command: script.path,
         requestTimeoutMs: 5_000
       )
-      let client = MCPProxyClient()
+      let client = MCPProxyClient(launcher: testExecutionLauncher())
 
       let tools = try client.listTools(server: server, context: .empty)
       #expect((tools.map(\.name)) == (["sample"]))
@@ -132,7 +132,7 @@ final class MCPProxyClientTests {
         args: [fixture.startMarker.path, fixture.cancelMarker.path],
         requestTimeoutMs: 5_000
       )
-      let client = MCPProxyClient()
+      let client = MCPProxyClient(launcher: testExecutionLauncher())
 
       #expect(
         (try client.listTools(server: server, context: .empty).map(\.name)) == (["sample", "hang"]))
@@ -202,7 +202,7 @@ final class MCPProxyClientTests {
         startupTimeoutMs: 5_000,
         requestTimeoutMs: 150
       )
-      let client = MCPProxyClient()
+      let client = MCPProxyClient(launcher: testExecutionLauncher())
 
       #expect(throws: GatewayToolError.executionFailed("MCP server 'cancel' request timed out.")) {
         try client.callTool(
@@ -238,7 +238,7 @@ final class MCPProxyClientTests {
         args: [fixture.startMarker.path, fixture.cancelMarker.path],
         requestTimeoutMs: 5_000
       )
-      let client = MCPProxyClient()
+      let client = MCPProxyClient(launcher: testExecutionLauncher())
 
       let started = try client.startToolCall(
         server: server,
@@ -301,7 +301,7 @@ final class MCPProxyClientTests {
     let server = MCPServerConfig(
       id: "late-completion", transport: .stdio, command: fixture.script.path,
       args: [fixture.startMarker.path, fixture.cancelMarker.path], requestTimeoutMs: 5_000)
-    let client = MCPProxyClient()
+    let client = MCPProxyClient(launcher: testExecutionLauncher())
     do {
       try await runBlockingTest {
         _ = try client.startToolCall(
@@ -378,7 +378,7 @@ final class MCPProxyClientTests {
       runtimeID: UUID(), context: .init(caller: .localCLI, profileID: .localAdmin),
       projectID: "fixture", rootURL: root, readOnly: false)
     hostContext.ownedWork = ownedWork
-    let client = MCPProxyClient(hostContext: hostContext)
+    let client = MCPProxyClient(launcher: testExecutionLauncher(), hostContext: hostContext)
     let server = MCPServerConfig(
       id: "owned", transport: .stdio, command: fixture.script.path,
       args: [fixture.startMarker.path, fixture.cancelMarker.path], requestTimeoutMs: 5_000)
@@ -430,7 +430,7 @@ final class MCPProxyClientTests {
         id: "slow-startup", transport: .stdio, command: fixture.script.path,
         args: [fixture.startMarker.path, fixture.cancelMarker.path],
         startupTimeoutMs: 100, requestTimeoutMs: 5_000)
-      let client = MCPProxyClient()
+      let client = MCPProxyClient(launcher: testExecutionLauncher())
       #expect(
         throws: GatewayToolError.executionFailed("MCP server 'slow-startup' startup timed out.")
       ) {
@@ -452,7 +452,9 @@ final class MCPProxyClientTests {
     let server = MCPServerConfig(
       id: "retained", transport: .stdio, command: fixture.script.path,
       args: [fixture.startMarker.path, fixture.cancelMarker.path], requestTimeoutMs: 5_000)
-    let client = MCPProxyClient(executionDatabase: database, executionScope: "owner/project")
+    let client = MCPProxyClient(
+      launcher: testExecutionLauncher(), executionDatabase: database,
+      executionScope: "owner/project")
     do {
       try await runBlockingTest {
         let result = try client.callTool(
@@ -482,6 +484,7 @@ final class MCPProxyClientTests {
     }
     await client.shutdown()
     let restored = MCPProxyClient(
+      launcher: testExecutionLauncher(),
       executionDatabase: try GatewayDatabase(path: databasePath), executionScope: "owner/project")
     do {
       try await runBlockingTest {
@@ -526,7 +529,7 @@ final class MCPProxyClientTests {
         context: .init(caller: .localCLI, profileID: .localAdmin),
         projectID: "fixture", rootURL: root, readOnly: false)
       context.ownedWork = work
-      let client = MCPProxyClient(hostContext: context)
+      let client = MCPProxyClient(launcher: testExecutionLauncher(), hostContext: context)
       let server = MCPServerConfig(
         id: "http", transport: .http,
         url: "http://127.0.0.1:\(fixture.port)/mcp", requestTimeoutMs: 5_000)
@@ -570,7 +573,7 @@ final class MCPProxyClientTests {
         url: "http://127.0.0.1:\(fixture.port)/mcp",
         requestTimeoutMs: 5_000
       )
-      let client = MCPProxyClient()
+      let client = MCPProxyClient(launcher: testExecutionLauncher())
 
       #expect(
         (try client.listTools(server: server, context: .empty).map(\.name)) == (["http-sample"]))
@@ -596,7 +599,7 @@ final class MCPProxyClientTests {
   func testExitedStdioProviderCannotTerminateGatewayAndNextCallReconnects() async throws {
     let fixture = try fakeExitingMCPServer()
     defer { try? FileManager.default.removeItem(at: fixture.script.deletingLastPathComponent()) }
-    let client = MCPProxyClient()
+    let client = MCPProxyClient(launcher: testExecutionLauncher())
     do {
       let server = MCPServerConfig(
         id: "exiting",
@@ -885,6 +888,7 @@ final class MCPProxyClientTests {
         projectID: "fixture", rootURL: directory, readOnly: false)
       hostContext.ownedWork = ownedWork
       let client = MCPProxyClient(
+        launcher: testExecutionLauncher(),
         hostContext: hostContext, executionDatabase: database, executionScope: "cancel-failure")
       let server = MCPServerConfig(
         id: "cancel-failure", transport: .http,

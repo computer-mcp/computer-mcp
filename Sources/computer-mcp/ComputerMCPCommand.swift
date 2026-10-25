@@ -423,7 +423,7 @@ struct Validate: AsyncParsableCommand {
     var object: [String: JSONValue] = ["ok": .bool(true)]
     if connect {
       object["mcp"] = try await ComputerMCPProductContracts.validateMCPConnections(
-        configuration: gateway)
+        configuration: gateway, platform: MacOSPlatform.services)
     }
     printJSON(.object(object))
   }

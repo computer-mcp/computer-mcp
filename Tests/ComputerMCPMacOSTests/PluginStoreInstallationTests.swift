@@ -21,6 +21,7 @@ struct PluginStoreInstallationTests {
   @Test
   func newerPluginAPIIsRefusedBeforeAnInstallationCommits() async throws {
     let fixture = try await PreparationFixture.make(
+      launcher: testExecutionLauncher(),
       directoryFactory: MacOSPlatform.services(launcher: testExecutionLauncher()).pluginDirectories,
       manifest: PreparationFixture.manifest.replacingOccurrences(
         of: "plugin_api = 1", with: "plugin_api = 2\nfuture = true"))
@@ -39,6 +40,7 @@ struct PluginStoreInstallationTests {
   @Test
   func recoveryRefreshesDurableRollbackMetadataWithoutChangingHostChoices() async throws {
     let fixture = try await PreparationFixture.make(
+      launcher: testExecutionLauncher(),
       directoryFactory: MacOSPlatform.services(launcher: testExecutionLauncher()).pluginDirectories,
     )
     defer { fixture.files.remove() }
@@ -63,6 +65,7 @@ struct PluginStoreInstallationTests {
     changedDevice: Bool
   ) async throws {
     let fixture = try await PreparationFixture.make(
+      launcher: testExecutionLauncher(),
       directoryFactory: MacOSPlatform.services(launcher: testExecutionLauncher()).pluginDirectories,
     )
     defer { fixture.files.remove() }
@@ -105,6 +108,7 @@ struct PluginStoreInstallationTests {
   @Test
   func installedArchiveRetainsTargetForReopenedActivation() async throws {
     let fixture = try await PreparationFixture.make(
+      launcher: testExecutionLauncher(),
       directoryFactory: MacOSPlatform.services(launcher: testExecutionLauncher()).pluginDirectories,
       manifest: PreparationFixture.platformManifest, format: "zip")
     defer { fixture.files.remove() }
@@ -150,6 +154,7 @@ struct PluginStoreInstallationTests {
   @Test
   func candidatesAcquireIndependentArtifactLeasesInsideTheInstallationTransaction() async throws {
     let fixture = try await PreparationFixture.make(
+      launcher: testExecutionLauncher(),
       directoryFactory: MacOSPlatform.services(launcher: testExecutionLauncher()).pluginDirectories,
       manifest: Self.skillsManifest)
     defer { fixture.files.remove() }
@@ -209,6 +214,7 @@ struct PluginStoreInstallationTests {
     async throws
   {
     let fixture = try await PreparationFixture.make(
+      launcher: testExecutionLauncher(),
       directoryFactory: MacOSPlatform.services(launcher: testExecutionLauncher()).pluginDirectories,
       manifest: Self.skillsManifest)
     defer { fixture.files.remove() }
@@ -259,6 +265,7 @@ struct PluginStoreInstallationTests {
   @Test
   func failedUnpublishedRuntimeJoinsArtifactLeaseCleanup() async throws {
     let fixture = try await PreparationFixture.make(
+      launcher: testExecutionLauncher(),
       directoryFactory: MacOSPlatform.services(launcher: testExecutionLauncher()).pluginDirectories,
       manifest: Self.skillsManifest)
     defer { fixture.files.remove() }
@@ -302,6 +309,7 @@ struct PluginStoreInstallationTests {
   @Test(arguments: [false, true])
   func processReceiptRetainsArtifactAfterRuntimeReleasesIt(uncertain: Bool) async throws {
     let fixture = try await PreparationFixture.make(
+      launcher: testExecutionLauncher(),
       directoryFactory: MacOSPlatform.services(launcher: testExecutionLauncher()).pluginDirectories,
     )
     defer { fixture.files.remove() }
@@ -347,6 +355,7 @@ struct PluginStoreInstallationTests {
   @Test
   func uninstallRetainsFilesUntilEveryRuntimeOwnerReleasesThem() async throws {
     let fixture = try await PreparationFixture.make(
+      launcher: testExecutionLauncher(),
       directoryFactory: MacOSPlatform.services(launcher: testExecutionLauncher()).pluginDirectories,
     )
     defer { fixture.files.remove() }
@@ -386,6 +395,7 @@ struct PluginStoreInstallationTests {
   @Test
   func finishedRuntimeLeaseDoesNotRemainHeldByIncidentalDescriptorCopies() async throws {
     let fixture = try await PreparationFixture.make(
+      launcher: testExecutionLauncher(),
       directoryFactory: MacOSPlatform.services(launcher: testExecutionLauncher()).pluginDirectories,
     )
     defer { fixture.files.remove() }
@@ -427,6 +437,7 @@ struct PluginStoreInstallationTests {
   @Test
   func artifactLeaseRejectsASymlinkWithoutTouchingItsTarget() async throws {
     let fixture = try await PreparationFixture.make(
+      launcher: testExecutionLauncher(),
       directoryFactory: MacOSPlatform.services(launcher: testExecutionLauncher()).pluginDirectories,
     )
     defer { fixture.files.remove() }
@@ -458,10 +469,12 @@ struct PluginStoreInstallationTests {
   @Test
   func installUpdateRollbackAndUninstallPreserveHostChoicesAndExternalFiles() async throws {
     let fixture = try await PreparationFixture.make(
+      launcher: testExecutionLauncher(),
       directoryFactory: MacOSPlatform.services(launcher: testExecutionLauncher()).pluginDirectories,
     )
     defer { fixture.files.remove() }
     let update = try await PreparationFixture.make(
+      launcher: testExecutionLauncher(),
       directoryFactory: MacOSPlatform.services(launcher: testExecutionLauncher()).pluginDirectories,
       manifest: PreparationFixture.manifest.replacingOccurrences(of: "1.2.3", with: "1.2.4"))
     defer { update.files.remove() }
@@ -531,6 +544,7 @@ struct PluginStoreInstallationTests {
   @Test(arguments: ["hash", "manifest", "composition"])
   func failedInstallationDoesNotChangeTheSelectedVersion(failure: String) async throws {
     let fixture = try await PreparationFixture.make(
+      launcher: testExecutionLauncher(),
       directoryFactory: MacOSPlatform.services(launcher: testExecutionLauncher()).pluginDirectories,
     )
     defer { fixture.files.remove() }
@@ -545,6 +559,7 @@ struct PluginStoreInstallationTests {
     }
     if failure == "manifest" {
       let bad = try await PreparationFixture.make(
+        launcher: testExecutionLauncher(),
         directoryFactory: MacOSPlatform.services(launcher: testExecutionLauncher())
           .pluginDirectories, manifest: "invalid")
       defer { bad.files.remove() }
@@ -571,6 +586,7 @@ struct PluginStoreInstallationTests {
     async throws
   {
     let fixture = try await PreparationFixture.make(
+      launcher: testExecutionLauncher(),
       directoryFactory: MacOSPlatform.services(launcher: testExecutionLauncher()).pluginDirectories,
     )
     defer { fixture.files.remove() }
@@ -638,6 +654,7 @@ struct PluginStoreInstallationTests {
   @Test
   func cancellationReapsWorkerBeforeRemovingOwnedFiles() async throws {
     let fixture = try await PreparationFixture.make(
+      launcher: testExecutionLauncher(),
       directoryFactory: MacOSPlatform.services(launcher: testExecutionLauncher()).pluginDirectories,
     )
     defer { fixture.files.remove() }
@@ -675,6 +692,7 @@ struct PluginStoreInstallationTests {
   @Test
   func workerKeepsLockAfterParentReferenceCloses() async throws {
     let fixture = try await PreparationFixture.make(
+      launcher: testExecutionLauncher(),
       directoryFactory: MacOSPlatform.services(launcher: testExecutionLauncher()).pluginDirectories,
     )
     defer { fixture.files.remove() }
@@ -692,6 +710,7 @@ struct PluginStoreInstallationTests {
       time.sleep(30)
       """)
     let lockedPreparation = PluginArchivePreparation(
+      launcher: testExecutionLauncher(),
       workerExecutable: worker, stagingParent: preparation.stagingParent,
       inheritedLockDescriptor: preparation.inheritedLockDescriptor,
       directoryFactory: MacOSPlatform.services(launcher: testExecutionLauncher()).pluginDirectories)
@@ -737,6 +756,7 @@ struct PluginStoreInstallationTests {
   @Test
   func recoveryRemovesOnlyReceiptedUncommittedDirectories() async throws {
     let fixture = try await PreparationFixture.make(
+      launcher: testExecutionLauncher(),
       directoryFactory: MacOSPlatform.services(launcher: testExecutionLauncher()).pluginDirectories,
     )
     defer { fixture.files.remove() }
@@ -771,6 +791,7 @@ struct PluginStoreInstallationTests {
   @Test(arguments: [false, true])
   func recoveryPreservesReplacedAndOutOfRootDirectories(outside: Bool) async throws {
     let fixture = try await PreparationFixture.make(
+      launcher: testExecutionLauncher(),
       directoryFactory: MacOSPlatform.services(launcher: testExecutionLauncher()).pluginDirectories,
     )
     defer { fixture.files.remove() }
@@ -807,6 +828,7 @@ struct PluginStoreInstallationTests {
   @Test
   func restoringOriginalDirectoryPreservesItsReceiptAndSelectedInstallation() async throws {
     let fixture = try await PreparationFixture.make(
+      launcher: testExecutionLauncher(),
       directoryFactory: MacOSPlatform.services(launcher: testExecutionLauncher()).pluginDirectories,
     )
     defer { fixture.files.remove() }
@@ -836,6 +858,7 @@ struct PluginStoreInstallationTests {
   @Test
   func postCommitCleanupFailureKeepsInstalledPayloadAndRecoversOnReopen() async throws {
     let fixture = try await PreparationFixture.make(
+      launcher: testExecutionLauncher(),
       directoryFactory: MacOSPlatform.services(launcher: testExecutionLauncher()).pluginDirectories,
     )
     defer { fixture.files.remove() }
@@ -869,6 +892,7 @@ struct PluginStoreInstallationTests {
   @Test
   func uninstallCommitsRevocationButNeverDeletesAReplacementDirectory() async throws {
     let fixture = try await PreparationFixture.make(
+      launcher: testExecutionLauncher(),
       directoryFactory: MacOSPlatform.services(launcher: testExecutionLauncher()).pluginDirectories,
     )
     defer { fixture.files.remove() }
@@ -900,6 +924,7 @@ struct PluginInstallationStorageTests {
   @Test
   func liveProcessOwnershipKeepsPluginCleanupErrorAndFiles() async throws {
     let fixture = try await PreparationFixture.make(
+      launcher: testExecutionLauncher(),
       directoryFactory: MacOSPlatform.services(launcher: testExecutionLauncher()).pluginDirectories,
     )
     defer { fixture.files.remove() }
@@ -926,6 +951,7 @@ struct PluginInstallationStorageTests {
   @Test
   func completedTransactionReleasesLockEvenWhileAnUnrelatedDuplicateSurvives() async throws {
     let fixture = try await PreparationFixture.make(
+      launcher: testExecutionLauncher(),
       directoryFactory: MacOSPlatform.services(launcher: testExecutionLauncher()).pluginDirectories,
     )
     defer { fixture.files.remove() }
@@ -953,6 +979,7 @@ struct PluginInstallationStorageTests {
   @Test(arguments: ["missing", "symlink", "file", "public"])
   func recoveryReportsInvalidCommittedPayloadWithoutRevokingItsRecord(kind: String) async throws {
     let fixture = try await PreparationFixture.make(
+      launcher: testExecutionLauncher(),
       directoryFactory: MacOSPlatform.services(launcher: testExecutionLauncher()).pluginDirectories,
     )
     defer { fixture.files.remove() }
@@ -983,6 +1010,7 @@ struct PluginInstallationStorageTests {
   @Test
   func anotherRegistrationInsideThePackagePreventsUninstall() async throws {
     let fixture = try await PreparationFixture.make(
+      launcher: testExecutionLauncher(),
       directoryFactory: MacOSPlatform.services(launcher: testExecutionLauncher()).pluginDirectories,
     )
     defer { fixture.files.remove() }
@@ -1004,6 +1032,7 @@ struct PluginInstallationStorageTests {
   @Test
   func recoveryForgetsAlreadyMissingUncommittedDirectoryWithoutChangingSettings() async throws {
     let fixture = try await PreparationFixture.make(
+      launcher: testExecutionLauncher(),
       directoryFactory: MacOSPlatform.services(launcher: testExecutionLauncher()).pluginDirectories,
     )
     defer { fixture.files.remove() }
@@ -1032,6 +1061,7 @@ struct PluginInstallationStorageTests {
   ])
   func rejectsUnsafeStorageWithoutChangingExternalFiles(kind: String) async throws {
     let fixture = try await PreparationFixture.make(
+      launcher: testExecutionLauncher(),
       directoryFactory: MacOSPlatform.services(launcher: testExecutionLauncher()).pluginDirectories,
     )
     defer { fixture.files.remove() }

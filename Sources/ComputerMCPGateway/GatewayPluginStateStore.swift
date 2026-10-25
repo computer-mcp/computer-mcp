@@ -71,7 +71,7 @@ extension PluginStore {
     validateSnapshot: @escaping @Sendable (PluginStoreSnapshot) throws -> Void = { _ in }
   ) {
     self.init(
-      stateStore: GatewayPluginStateStore(database: database),
+      launcher: platform.launcher, stateStore: GatewayPluginStateStore(database: database),
       directoryFactory: platform.pluginDirectories, applications: platform.applications,
       validateSnapshot: validateSnapshot)
   }
@@ -83,6 +83,7 @@ extension PluginStore {
     validateSnapshot: @escaping @Sendable (PluginStoreSnapshot) throws -> Void = { _ in }
   ) {
     self.init(
+      launcher: platform.launcher,
       stateStore: GatewayPluginStateStore(
         database: database, expectedConfiguration: expectedConfiguration,
         publishSnapshot: publishSnapshot),

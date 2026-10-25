@@ -8,13 +8,17 @@ import Testing
 @testable import ComputerMCPGateway
 @testable import ComputerMCPPlatform
 
+#if os(macOS)
+  import ComputerMCPDarwinTestSupport
+#endif
+
 @Suite(.nativeIntegration)
 struct MCPEventCursorTests {
   @Test
   func initialReadsAndUnavailableContinuationsDoNotStartAProvider() async throws {
     let fixture = try EventFixture()
     defer { fixture.remove() }
-    let client = MCPProxyClient(workingDirectory: fixture.root)
+    let client = MCPProxyClient(launcher: testExecutionLauncher(), workingDirectory: fixture.root)
     do {
       let initial = try client.readEvents(
         server: fixture.server, afterCursor: 0, maxResults: 10, context: .empty)
@@ -45,7 +49,7 @@ struct MCPEventCursorTests {
     func longEventStreamReportsEvictionAndPaginatesWithinOneVerifiedSession() async throws {
       let fixture = try EventFixture()
       defer { fixture.remove() }
-      let client = MCPProxyClient(workingDirectory: fixture.root)
+      let client = MCPProxyClient(launcher: testExecutionLauncher(), workingDirectory: fixture.root)
       let calls = BlockingOperationExecutor(label: "event-cursor-test")
       do {
         // Responses drain each burst below the transport queue bound before sending more events.
@@ -113,8 +117,9 @@ struct MCPEventCursorTests {
     func sameNumericCursorFromAnotherInstanceIsRejectedThroughAuthorizationWrapper() async throws {
       let fixture = try EventFixture()
       defer { fixture.remove() }
-      let first = MCPProxyClient(workingDirectory: fixture.root)
-      let replacement = MCPProxyClient(workingDirectory: fixture.root)
+      let first = MCPProxyClient(launcher: testExecutionLauncher(), workingDirectory: fixture.root)
+      let replacement = MCPProxyClient(
+        launcher: testExecutionLauncher(), workingDirectory: fixture.root)
       do {
         _ = try first.listTools(server: fixture.server, context: .empty)
         let original = try first.readEvents(

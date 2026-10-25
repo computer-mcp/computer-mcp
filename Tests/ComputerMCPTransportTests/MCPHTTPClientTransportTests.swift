@@ -6,6 +6,10 @@ import Testing
 @testable import ComputerMCPCore
 @testable import ComputerMCPTransport
 
+#if os(macOS)
+  import ComputerMCPDarwinTestSupport
+#endif
+
 #if canImport(FoundationNetworking)
   import FoundationNetworking
 #endif
@@ -14,7 +18,7 @@ import Testing
 struct MCPHTTPClientTransportTests {
   @Test
   func sseMessagesArriveBeforeTheServerCompletesTheResponse() async throws {
-    try await HTTPStreamProcessFixture.withFixture { fixture in
+    try await HTTPStreamProcessFixture.withFixture(launcher: testExecutionLauncher()) { fixture in
       let transport = fixture.transport(streaming: false)
       try await transport.connect()
       let incoming = await transport.receive()
@@ -50,7 +54,7 @@ struct MCPHTTPClientTransportTests {
 
   @Test
   func cancellationAfterAnSSEMessageClosesTheDataTask() async throws {
-    try await HTTPStreamProcessFixture.withFixture { fixture in
+    try await HTTPStreamProcessFixture.withFixture(launcher: testExecutionLauncher()) { fixture in
       let transport = fixture.transport(streaming: false)
       try await transport.connect()
       let incoming = await transport.receive()
@@ -82,7 +86,7 @@ struct MCPHTTPClientTransportTests {
 
   @Test
   func httpErrorStatusIsReportedBeforeAnOpenBodyCompletes() async throws {
-    try await HTTPStreamProcessFixture.withFixture { fixture in
+    try await HTTPStreamProcessFixture.withFixture(launcher: testExecutionLauncher()) { fixture in
       let transport = fixture.transport(streaming: false)
       try await transport.connect()
       do {
@@ -103,7 +107,7 @@ struct MCPHTTPClientTransportTests {
 
   @Test(arguments: ["server-close", "truncated"])
   func serverClosureEndsTheResponseWithoutReposting(method: String) async throws {
-    try await HTTPStreamProcessFixture.withFixture { fixture in
+    try await HTTPStreamProcessFixture.withFixture(launcher: testExecutionLauncher()) { fixture in
       let transport = fixture.transport(streaming: false)
       try await transport.connect()
       do {
@@ -130,7 +134,7 @@ struct MCPHTTPClientTransportTests {
 
   @Test
   func redirectsDoNotReplayRequestsOrForwardCredentials() async throws {
-    try await HTTPStreamProcessFixture.withFixture { fixture in
+    try await HTTPStreamProcessFixture.withFixture(launcher: testExecutionLauncher()) { fixture in
       let transport = MCPHTTPClientTransport(
         endpoint: fixture.endpoint.deletingLastPathComponent().appendingPathComponent("redirect"),
         streaming: false, bearerToken: { "fixture-token" })
@@ -174,7 +178,7 @@ struct MCPHTTPClientTransportTests {
 
   @Test
   func protocolCancellationClosesItsResponseStreamWithoutEndingTheSession() async throws {
-    try await HTTPStreamProcessFixture.withFixture { fixture in
+    try await HTTPStreamProcessFixture.withFixture(launcher: testExecutionLauncher()) { fixture in
       let transport = fixture.transport(streaming: false)
       try await transport.connect()
       try await transport.send(Self.request("initialize", id: "init"))
@@ -225,7 +229,7 @@ struct MCPHTTPClientTransportTests {
 
   @Test
   func concurrentDisconnectSendsOneAuthenticatedSessionTermination() async throws {
-    try await HTTPStreamProcessFixture.withFixture { fixture in
+    try await HTTPStreamProcessFixture.withFixture(launcher: testExecutionLauncher()) { fixture in
       let transport = fixture.transport(streaming: false)
       try await transport.connect()
       try await transport.send(Self.request("json", id: "session"))
@@ -243,7 +247,7 @@ struct MCPHTTPClientTransportTests {
 
   @Test
   func concurrentPOSTRecoveryAndEventReconnectKeepIndependentCursors() async throws {
-    try await HTTPStreamProcessFixture.withFixture { fixture in
+    try await HTTPStreamProcessFixture.withFixture(launcher: testExecutionLauncher()) { fixture in
       let transport = fixture.transport()
       try await transport.connect()
       let incoming = await transport.receive()
@@ -298,7 +302,7 @@ struct MCPHTTPClientTransportTests {
 
   @Test
   func cancellationClosesOnlyTheInFlightExchangeWithoutReposting() async throws {
-    try await HTTPStreamProcessFixture.withFixture { fixture in
+    try await HTTPStreamProcessFixture.withFixture(launcher: testExecutionLauncher()) { fixture in
       let transport = fixture.transport(streaming: false)
       try await transport.connect()
       try await transport.send(Self.request("initialize", id: "init"))
@@ -325,7 +329,7 @@ struct MCPHTTPClientTransportTests {
 
   @Test
   func rejectedAuthenticationIsReportedWithoutAnAutomaticRetry() async throws {
-    try await HTTPStreamProcessFixture.withFixture { fixture in
+    try await HTTPStreamProcessFixture.withFixture(launcher: testExecutionLauncher()) { fixture in
       let transport = MCPHTTPClientTransport(endpoint: fixture.endpoint, streaming: false)
       try await transport.connect()
       await #expect(throws: MCPHTTPTransportError.httpStatus(401)) {
@@ -338,7 +342,7 @@ struct MCPHTTPClientTransportTests {
 
   @Test
   func incompleteWriteResponseWithoutCursorIsNotExecutedAgain() async throws {
-    try await HTTPStreamProcessFixture.withFixture { fixture in
+    try await HTTPStreamProcessFixture.withFixture(launcher: testExecutionLauncher()) { fixture in
       let transport = fixture.transport(streaming: false)
       try await transport.connect()
       try await transport.send(Self.request("initialize", id: "init"))
@@ -352,7 +356,7 @@ struct MCPHTTPClientTransportTests {
 
   @Test
   func eventListenerDoesNotKeepAnAbandonedTransportAlive() async throws {
-    try await HTTPStreamProcessFixture.withFixture { fixture in
+    try await HTTPStreamProcessFixture.withFixture(launcher: testExecutionLauncher()) { fixture in
       var transport: MCPHTTPClientTransport? = fixture.transport()
       weak var weakTransport: MCPHTTPClientTransport?
       weakTransport = transport

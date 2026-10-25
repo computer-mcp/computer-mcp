@@ -20,10 +20,6 @@ let grdbDependency: Package.Dependency =
 let nioDependency: Package.Dependency =
   .package(url: "https://github.com/apple/swift-nio.git", .upToNextMinor(from: "2.101.2"))
 
-// FilePath comes from the System framework on Apple platforms and from swift-system elsewhere.
-let systemDependency: Package.Dependency =
-  .package(url: "https://github.com/apple/swift-system.git", from: "1.7.2")
-
 let loggingDependency: Package.Dependency =
   .package(url: "https://github.com/apple/swift-log.git", from: "1.14.0")
 
@@ -83,9 +79,6 @@ let neutralTargets: [Target] =
         "ComputerMCPConfiguration", "ComputerMCPCore", "ComputerMCPPlatform",
         "ComputerMCPPlatformPOSIX", "ComputerMCPSandbox",
         .product(name: "NIOConcurrencyHelpers", package: "swift-nio"),
-        .product(name: "Subprocess", package: "swift-subprocess"),
-        .product(
-          name: "SystemPackage", package: "swift-system", condition: .when(platforms: [.linux])),
       ]
     ),
     .target(
@@ -242,13 +235,11 @@ let neutralTargets: [Target] =
       name: "ComputerMCPPlugins",
       dependencies: [
         "ComputerMCPCore", "ComputerMCPConfiguration", "ComputerMCPPlatform",
-        "ComputerMCPPlatformPOSIX", "ComputerMCPDownstream",
+        "ComputerMCPPlatformPOSIX", "ComputerMCPDownstream", "ComputerMCPProcess",
+        "ComputerMCPSandbox",
         .product(name: "Crypto", package: "swift-crypto"),
         .product(name: "TOML", package: "swift-toml"),
         .product(name: "NIOConcurrencyHelpers", package: "swift-nio"),
-        .product(name: "Subprocess", package: "swift-subprocess"),
-        .product(
-          name: "SystemPackage", package: "swift-system", condition: .when(platforms: [.linux])),
       ]
     ),
     .testTarget(
@@ -421,7 +412,6 @@ let neutralTargets: [Target] =
       dependencies: [
         "ComputerMCPConfiguration", "ComputerMCPCore", "ComputerMCPPlatform",
         "ComputerMCPPlatformPOSIX", "ComputerMCPProcess", "ComputerMCPTestSupport",
-        .product(name: "Subprocess", package: "swift-subprocess"),
       ]
     ),
     .testTarget(
@@ -459,7 +449,6 @@ let neutralTargets: [Target] =
       grdbDependency,
       yamsDependency,
       tomlDependency,
-      systemDependency,
       mcpDependency,
     ],
     targets: neutralTargets + [
@@ -684,7 +673,7 @@ let neutralTargets: [Target] =
   let package = Package(
     name: "computer-mcp",
     dependencies: [
-      cryptoDependency, grdbDependency, nioDependency, subprocessDependency, systemDependency,
+      cryptoDependency, grdbDependency, nioDependency, subprocessDependency,
       tomlDependency, yamsDependency, loggingDependency, mcpDependency,
     ],
     targets: neutralTargets

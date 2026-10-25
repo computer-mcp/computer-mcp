@@ -33,13 +33,16 @@ struct MCPProjectTests {
           id: "missing", transport: .stdio,
           command: fixture.root.appendingPathComponent("not-installed").path))
       await expectThrowsAsync(
-        try await ComputerMCPProductContracts.validateMCPConnections(configuration: configuration)
+        try await ComputerMCPProductContracts.validateMCPConnections(
+          configuration: configuration,
+          platform: MacOSPlatform.services(launcher: testExecutionLauncher()))
       ) { error in
         #expect(error.localizedDescription.contains("missing"))
       }
     } else {
       let report = try await ComputerMCPProductContracts.validateMCPConnections(
-        configuration: configuration)
+        configuration: configuration,
+        platform: MacOSPlatform.services(launcher: testExecutionLauncher()))
       let row = try #require(report.arrayValue?.first?.objectValue)
       #expect(row["id"] == .string("shared"))
       #expect(row["ok"] == .bool(true))
@@ -60,7 +63,7 @@ struct MCPProjectTests {
     let fixture = try MCPProjectFixture()
     defer { fixture.remove() }
     let configuration = fixture.configuration()
-    let parent = MCPProxyClient()
+    let parent = MCPProxyClient(launcher: testExecutionLauncher())
     let client: any DownstreamMCPClient =
       authorized
       ? AuthorizedMCPClient(
@@ -122,7 +125,7 @@ struct MCPProjectTests {
         .init(id: "first", displayName: "First", rootPath: fixture.first.path),
         .init(id: "second", displayName: "Second", rootPath: fixture.second.path),
       ], platform: MacOSPlatform.services(launcher: testExecutionLauncher()),
-      mcpClient: MCPProxyClient(), plugins: [])
+      mcpClient: MCPProxyClient(launcher: testExecutionLauncher()), plugins: [])
     do {
       async let first = gateway.callToolAsync(
         name: "fixture.context",
@@ -222,7 +225,7 @@ struct MCPProjectTests {
           environment: [
             "PATH": "/unrelated", "SCOPE_VALUE": "parent", "EMPTY": "parent",
             MCPHostLaunchMetadata.environmentKey: "forged ancestor",
-          ]), mcpClient: MCPProxyClient()))
+          ]), mcpClient: MCPProxyClient(launcher: testExecutionLauncher())))
     do {
       let value = try await BlockingOperationExecutor(label: "test.mcp-launch").perform {
         try fixture.read(registry)

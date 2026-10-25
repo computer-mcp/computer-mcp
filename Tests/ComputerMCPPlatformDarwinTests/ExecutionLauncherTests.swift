@@ -7,6 +7,28 @@ import Testing
 @testable import ComputerMCPPlatformDarwin
 
 @Suite struct ExecutionLauncherTests {
+  @Test(.timeLimit(.minutes(1)))
+  func inheritedDescriptorMappingsPreserveOverlappingSources() async throws {
+    let fixture = try SeatbeltFixture()
+    defer { fixture.remove() }
+    let first = Pipe()
+    let second = Pipe()
+    let firstFD = first.fileHandleForWriting.fileDescriptor
+    let secondFD = second.fileHandleForWriting.fileDescriptor
+    let owner = try await ExecutionLauncher(platform: platform()).start(
+      executable: .init("/bin/bash"),
+      arguments: ["-c", "printf first >&\(secondFD); printf second >&\(firstFD)"],
+      directory: fixture.configuration().worktree,
+      environment: ExecutionEnvironment(fullAccessVariables: [:]), mode: .fullAccess,
+      inheritedDescriptors: [firstFD: secondFD, secondFD: firstFD])
+    try first.fileHandleForWriting.close()
+    try second.fileHandleForWriting.close()
+    let exit = try await owner.wait()
+    #expect(exit.status == 0)
+    #expect(try first.fileHandleForReading.readToEnd() == Data("first".utf8))
+    #expect(try second.fileHandleForReading.readToEnd() == Data("second".utf8))
+  }
+
   @Test(arguments: ExecutionLaunchMethod.allCases)
   func fullAccessRunsWithExplicitEnvironment(method: ExecutionLaunchMethod) async throws {
     let fixture = try SeatbeltFixture()

@@ -9,6 +9,10 @@ import Testing
 
 @testable import ComputerMCPDownstream
 
+#if os(macOS)
+  import ComputerMCPDarwinTestSupport
+#endif
+
 @Suite(.nativeIntegration, .timeLimit(.minutes(1)))
 struct MCPChildProcessTransportTests {
   @Test
@@ -20,6 +24,7 @@ struct MCPChildProcessTransportTests {
         "The stdio registration requires scoped host services.")
     ) {
       try MCPChildProcessTransport(
+        launcher: testExecutionLauncher(),
         server: server, workingDirectory: URL(fileURLWithPath: "/tmp"), environment: [:])
     }
   }
@@ -33,6 +38,7 @@ struct MCPChildProcessTransportTests {
     let session = SessionProbe(confirmed: confirmed)
     let environment = HostEnvironmentProbe(root: root, session: session)
     let transport = try MCPChildProcessTransport(
+      launcher: testExecutionLauncher(),
       server: .init(
         id: "hosted", transport: .stdio, command: "/bin/sh",
         args: ["-c", #"printf '%s\n' "$COMPUTER_MCP_HOST_FD""#],

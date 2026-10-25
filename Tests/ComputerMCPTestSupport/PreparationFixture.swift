@@ -1,5 +1,6 @@
 import ComputerMCPPlatform
 import ComputerMCPPlugins
+import ComputerMCPProcess
 import Crypto
 import Foundation
 import Testing
@@ -9,6 +10,7 @@ package struct PreparationFixture: Sendable {
   package let archive: URL
   package let digest: String
   package let staging: URL
+  private let launcher: ExecutionLauncher
   private let directoryFactory: any PluginArchiveDirectoryFactory
 
   package static let manifest = """
@@ -49,17 +51,20 @@ package struct PreparationFixture: Sendable {
         """)
 
   package static func make(
-    directoryFactory: any PluginArchiveDirectoryFactory,
+    launcher: ExecutionLauncher, directoryFactory: any PluginArchiveDirectoryFactory,
     manifest: String = Self.manifest, format: String = "tar"
   ) async throws -> Self {
     try await blockingFixtureIO {
-      try Self(directoryFactory: directoryFactory, manifest: manifest, format: format)
+      try Self(
+        launcher: launcher, directoryFactory: directoryFactory, manifest: manifest, format: format)
     }
   }
 
   private init(
-    directoryFactory: any PluginArchiveDirectoryFactory, manifest: String, format: String
+    launcher: ExecutionLauncher, directoryFactory: any PluginArchiveDirectoryFactory,
+    manifest: String, format: String
   ) throws {
+    self.launcher = launcher
     self.directoryFactory = directoryFactory
     files = try ArchiveFixture()
     archive = try files.archive(
@@ -80,6 +85,7 @@ package struct PreparationFixture: Sendable {
     let repository = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
       .deletingLastPathComponent().deletingLastPathComponent()
     return PluginArchivePreparation(
+      launcher: launcher,
       workerExecutable: repository.appendingPathComponent(".build/debug/computer-mcp"),
       stagingParent: staging, directoryFactory: directoryFactory)
   }
@@ -91,7 +97,8 @@ package struct PreparationFixture: Sendable {
     var preparation = preparation
     if let worker {
       preparation = PluginArchivePreparation(
-        workerExecutable: worker, stagingParent: staging, directoryFactory: directoryFactory)
+        launcher: launcher, workerExecutable: worker, stagingParent: staging,
+        directoryFactory: directoryFactory)
     }
     preparation.timeout = timeout
     return try await preparation.withPreparedPackage(

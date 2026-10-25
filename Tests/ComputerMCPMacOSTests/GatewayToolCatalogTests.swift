@@ -388,6 +388,7 @@ struct GatewayToolCatalogTests {
       .deletingLastPathComponent().deletingLastPathComponent()
       .appendingPathComponent(".build/debug/computer-mcp")
     let transport = try MCPChildProcessTransport(
+      launcher: testExecutionLauncher(),
       server: .init(
         id: "gateway", transport: .stdio, command: executable.path,
         args: ["serve", "stdio", "--config", manifest.path]),

@@ -9,6 +9,10 @@ import Testing
 @testable import ComputerMCPGateway
 @testable import ComputerMCPProcess
 
+#if os(macOS)
+  import ComputerMCPDarwinTestSupport
+#endif
+
 #if canImport(Darwin)
   import Darwin
 #elseif canImport(Glibc)
@@ -27,7 +31,8 @@ struct MCPConnectionLifecycleTests {
       defer { fixture.remove() }
       weak var releasedClient: MCPProxyClient?
       do {
-        let client = MCPProxyClient(workingDirectory: fixture.directory)
+        let client = MCPProxyClient(
+          launcher: testExecutionLauncher(), workingDirectory: fixture.directory)
         releasedClient = client
         let server = fixture.server(version: "first")
         do {
@@ -67,6 +72,7 @@ struct MCPConnectionLifecycleTests {
   @Test
   func responsiveDescendantIsReapedWithoutSpendingTheTerminationGrace() async throws {
     let transport = try ManagedLineProcess(
+      launcher: testExecutionLauncher(),
       configuration: .init(
         executable: "/bin/sh", arguments: ["-c", "/bin/sleep 30 & printf '%s\\n' \"$!\""],
         workingDirectory: FileManager.default.temporaryDirectory,
@@ -93,6 +99,7 @@ struct MCPConnectionLifecycleTests {
   @Test
   func cleanEOFReapsTheSupervisorWithoutSpendingTheTerminationGrace() async throws {
     let transport = try ManagedLineProcess(
+      launcher: testExecutionLauncher(),
       configuration: .init(
         executable: "/bin/sh",
         arguments: ["-c", "printf '%s\\n' \"$$\"; while read line; do :; done"],
@@ -139,6 +146,7 @@ struct MCPConnectionLifecycleTests {
     try owner.run()
     defer { if owner.isRunning { owner.terminate() } }
     let transport = try ManagedLineProcess(
+      launcher: testExecutionLauncher(),
       configuration: .init(
         executable: try testExecutable("python3"),
         arguments: [
@@ -179,7 +187,8 @@ struct MCPConnectionLifecycleTests {
     func rejectedRequestPreservesUnrelatedWork(failure: String) async throws {
       let fixture = try LifecycleFixture()
       defer { fixture.remove() }
-      let client = MCPProxyClient(workingDirectory: fixture.directory)
+      let client = MCPProxyClient(
+        launcher: testExecutionLauncher(), workingDirectory: fixture.directory)
       let server = fixture.server(version: "first")
       do {
         _ = try await blocking {
@@ -228,7 +237,8 @@ struct MCPConnectionLifecycleTests {
     func cancellingAWaitedRequestPreservesItsSiblingAndConnection() async throws {
       let fixture = try LifecycleFixture()
       defer { fixture.remove() }
-      let client = MCPProxyClient(workingDirectory: fixture.directory)
+      let client = MCPProxyClient(
+        launcher: testExecutionLauncher(), workingDirectory: fixture.directory)
       let server = fixture.server(version: "first")
       do {
         _ = try await blocking {
@@ -293,7 +303,8 @@ struct MCPConnectionLifecycleTests {
     func remoteRequestErrorsPreserveCodeAndUnrelatedWork(code: Int) async throws {
       let fixture = try LifecycleFixture()
       defer { fixture.remove() }
-      let client = MCPProxyClient(workingDirectory: fixture.directory)
+      let client = MCPProxyClient(
+        launcher: testExecutionLauncher(), workingDirectory: fixture.directory)
       let server = fixture.server(version: "first")
       do {
         _ = try await blocking {
@@ -346,7 +357,8 @@ struct MCPConnectionLifecycleTests {
     func toolErrorResultPreservesContentAndUnrelatedWork() async throws {
       let fixture = try LifecycleFixture()
       defer { fixture.remove() }
-      let client = MCPProxyClient(workingDirectory: fixture.directory)
+      let client = MCPProxyClient(
+        launcher: testExecutionLauncher(), workingDirectory: fixture.directory)
       let server = fixture.server(version: "first")
       do {
         _ = try await blocking {
@@ -384,7 +396,8 @@ struct MCPConnectionLifecycleTests {
     func concurrentDuplicateIDsDispatchExactlyOneRequest() async throws {
       let fixture = try LifecycleFixture()
       defer { fixture.remove() }
-      let client = MCPProxyClient(workingDirectory: fixture.directory)
+      let client = MCPProxyClient(
+        launcher: testExecutionLauncher(), workingDirectory: fixture.directory)
       let server = fixture.server(version: "first")
       do {
         _ = try await blocking { try client.listTools(server: server, context: .empty) }
@@ -428,7 +441,8 @@ struct MCPConnectionLifecycleTests {
     func replacementJoinsTheOldGenerationBeforeStartingAndDoesNotReplayWork() async throws {
       let fixture = try LifecycleFixture()
       defer { fixture.remove() }
-      let client = MCPProxyClient(workingDirectory: fixture.directory)
+      let client = MCPProxyClient(
+        launcher: testExecutionLauncher(), workingDirectory: fixture.directory)
       let original = fixture.server(version: "first")
       do {
         let tools = try await blocking { try client.listTools(server: original, context: .empty) }
@@ -459,7 +473,8 @@ struct MCPConnectionLifecycleTests {
     func timeoutRetirementIsJoinedByConcurrentShutdown(startup: Bool) async throws {
       let fixture = try LifecycleFixture()
       defer { fixture.remove() }
-      let client = MCPProxyClient(workingDirectory: fixture.directory)
+      let client = MCPProxyClient(
+        launcher: testExecutionLauncher(), workingDirectory: fixture.directory)
       let server = fixture.server(version: "first", holdInitialize: startup, shortDeadline: true)
       let call = Task {
         try await blocking {
@@ -496,7 +511,8 @@ struct MCPConnectionLifecycleTests {
     func timeoutReconnectRefreshesTheCatalogAfterConfirmedRetirement() async throws {
       let fixture = try LifecycleFixture()
       defer { fixture.remove() }
-      let client = MCPProxyClient(workingDirectory: fixture.directory)
+      let client = MCPProxyClient(
+        launcher: testExecutionLauncher(), workingDirectory: fixture.directory)
       let server = fixture.server(version: "first", shortDeadline: true)
       do {
         await #expect(throws: (any Error).self) {
@@ -524,7 +540,8 @@ struct MCPConnectionLifecycleTests {
     func shutdownDuringInitializeCannotActivateALateConnection() async throws {
       let fixture = try LifecycleFixture()
       defer { fixture.remove() }
-      let client = MCPProxyClient(workingDirectory: fixture.directory)
+      let client = MCPProxyClient(
+        launcher: testExecutionLauncher(), workingDirectory: fixture.directory)
       let server = fixture.server(version: "first", holdInitialize: true)
       let starting = Task {
         try await blocking { try client.listTools(server: server, context: .empty) }
@@ -551,6 +568,7 @@ struct MCPConnectionLifecycleTests {
     let fixture = try LifecycleFixture()
     defer { fixture.remove() }
     let transport = try MCPChildProcessTransport(
+      launcher: testExecutionLauncher(),
       server: fixture.server(version: "first"), workingDirectory: fixture.directory,
       environment: ProcessInfo.processInfo.environment)
     await transport.disconnect()
@@ -566,6 +584,7 @@ struct MCPConnectionLifecycleTests {
       let fixture = try LifecycleFixture()
       defer { fixture.remove() }
       let transport = try MCPChildProcessTransport(
+        launcher: testExecutionLauncher(),
         server: fixture.server(version: "first"), workingDirectory: fixture.directory,
         environment: ProcessInfo.processInfo.environment)
       try await transport.connect()

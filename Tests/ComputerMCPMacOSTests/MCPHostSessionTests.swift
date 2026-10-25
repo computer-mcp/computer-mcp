@@ -298,6 +298,7 @@ struct MCPHostSessionTests {
     let source =
       "import os,socket; s=socket.socket(fileno=3); s.sendall(b'owned-child\\n'); s.close(); print('completed',flush=True)"
     let process = try ManagedLineProcess(
+      launcher: testExecutionLauncher(),
       configuration: .init(
         executable: "/usr/bin/python3", arguments: ["-c", source], environment: [:],
         workingDirectory: FileManager.default.temporaryDirectory, inheritedDescriptors: [3: pair.1])

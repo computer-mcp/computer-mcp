@@ -17,16 +17,20 @@ package struct ExecutionCommand: Sendable {
   package let directory: SandboxPath
   /// Borrowed until start returns; used before any stdio descriptor remapping.
   package let directoryDescriptor: Int32?
+  /// Destination-to-source mappings, borrowed until start returns.
+  package let inheritedDescriptors: [Int32: Int32]
   package let environment: [String: String]
 
   package init(
     executable: SandboxPath, arguments: [String], directory: SandboxPath,
-    environment: [String: String], directoryDescriptor: Int32? = nil
+    environment: [String: String], directoryDescriptor: Int32? = nil,
+    inheritedDescriptors: [Int32: Int32] = [:]
   ) {
     self.executable = executable
     self.arguments = arguments
     self.directory = directory
     self.directoryDescriptor = directoryDescriptor
+    self.inheritedDescriptors = inheritedDescriptors
     self.environment = environment
   }
 }

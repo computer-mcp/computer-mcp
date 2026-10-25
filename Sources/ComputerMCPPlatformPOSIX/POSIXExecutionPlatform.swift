@@ -77,11 +77,27 @@
       } else {
         try command.directory.value.withCString { try check(addWorkingDirectory(&actions, $0)) }
       }
-      for (source, destination) in [(input, 0), (output, 1), (error, 2)] {
-        try check(posix_spawn_file_actions_adddup2(&actions, source, Int32(destination)))
+      let mappings =
+        [(Int32(0), input), (Int32(1), output), (Int32(2), error)]
+        + command.inheritedDescriptors.sorted { $0.key < $1.key }.map { ($0.key, $0.value) }
+      let minimum = (mappings.map { $0.0 }.max() ?? 2) + 1
+      var copies: [Int32] = []
+      defer { for descriptor in copies { close(descriptor) } }
+      for (_, source) in mappings {
+        let copy = fcntl(source, F_DUPFD_CLOEXEC, minimum)
+        guard copy >= 0 else {
+          throw ExecutionEnvironmentError.launchFailed("Cannot copy launch descriptor")
+        }
+        copies.append(copy)
       }
-      // Inherited pipe writers prevent stdin EOF even after the host closes its writer.
-      try check(closeDescriptors(&actions, 3))
+      for (mapping, copy) in zip(mappings, copies) {
+        try check(posix_spawn_file_actions_adddup2(&actions, copy, mapping.0))
+      }
+      let destinations = Set(mappings.map { $0.0 })
+      for descriptor in 3..<minimum where !destinations.contains(descriptor) {
+        try check(posix_spawn_file_actions_addclose(&actions, descriptor))
+      }
+      try check(closeDescriptors(&actions, minimum))
       try check(posix_spawnattr_setpgroup(&attributes, 0))
       var mask = sigset_t()
       sigemptyset(&mask)
@@ -113,6 +129,8 @@
               env.baseAddress!)
           }
         })
+      for descriptor in copies { close(descriptor) }
+      copies.removeAll()
       // The bootstrap stops before exec. Keeping it unreaped pins its PID throughout admission.
       lock.withLock { pid = child }
       var status: Int32 = 0

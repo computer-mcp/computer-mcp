@@ -290,6 +290,7 @@ struct PluginControlPlaneTests {
     let manifest = PreparationFixture.manifest.replacingOccurrences(
       of: "architectures = ['arm64']", with: "architectures = ['arm64', 'x86_64']")
     let archive = try await PreparationFixture.make(
+      launcher: testExecutionLauncher(),
       directoryFactory: MacOSPlatform.services(launcher: testExecutionLauncher()).pluginDirectories,
       manifest: manifest, format: "zip")
     defer { archive.files.remove() }
@@ -332,6 +333,7 @@ struct PluginControlPlaneTests {
     let manifest = PreparationFixture.manifest.replacingOccurrences(
       of: "architectures = ['arm64']", with: "architectures = ['arm64', 'x86_64']")
     let archive = try await PreparationFixture.make(
+      launcher: testExecutionLauncher(),
       directoryFactory: MacOSPlatform.services(launcher: testExecutionLauncher()).pluginDirectories,
       manifest: manifest, format: "zip")
     defer { archive.files.remove() }
@@ -465,6 +467,7 @@ struct PluginControlPlaneTests {
   @Test
   func archiveLifecycleThroughRealCLIAndOwnerSocket() async throws {
     let archive = try await PreparationFixture.make(
+      launcher: testExecutionLauncher(),
       directoryFactory: MacOSPlatform.services(launcher: testExecutionLauncher()).pluginDirectories,
       manifest: PreparationFixture.manifest.replacingOccurrences(
         of: "architectures = ['arm64']", with: "architectures = ['arm64', 'x86_64']"))
@@ -499,6 +502,7 @@ struct PluginControlPlaneTests {
       #expect(try fixture.database.pluginStoreSnapshot() == snapshot.state)
 
       let update = try await PreparationFixture.make(
+        launcher: testExecutionLauncher(),
         directoryFactory: MacOSPlatform.services(launcher: testExecutionLauncher())
           .pluginDirectories,
         manifest: PreparationFixture.manifest
@@ -574,6 +578,7 @@ struct PluginControlPlaneTests {
   @Test
   func committedUninstallWarningsSurviveListAndShow() async throws {
     let archive = try await PreparationFixture.make(
+      launcher: testExecutionLauncher(),
       directoryFactory: MacOSPlatform.services(launcher: testExecutionLauncher()).pluginDirectories,
       manifest: PreparationFixture.manifest.replacingOccurrences(
         of: "architectures = ['arm64']", with: "architectures = ['arm64', 'x86_64']"))

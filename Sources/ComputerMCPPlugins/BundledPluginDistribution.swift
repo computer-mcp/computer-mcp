@@ -1,5 +1,6 @@
 import ComputerMCPPlatform
 import ComputerMCPPlatformPOSIX
+import ComputerMCPProcess
 import Foundation
 
 #if canImport(Darwin)
@@ -22,7 +23,7 @@ package enum BundledPluginDistribution {
   /// Creates a new unsigned resource directory. Existing output is never modified.
   /// Only verified package bytes are moved; no contribution or install script is executed.
   package static func prepare(
-    index: URL, destination: URL, workerExecutable: URL,
+    launcher: ExecutionLauncher, index: URL, destination: URL, workerExecutable: URL,
     hostVersion: PluginVersion, architectures: [String],
     directoryFactory: any PluginArchiveDirectoryFactory
   ) async throws -> [BundledPluginArtifact] {
@@ -43,7 +44,7 @@ package enum BundledPluginDistribution {
     do {
       for artifact in artifacts {
         let preparation = PluginArchivePreparation(
-          workerExecutable: workerExecutable, stagingParent: output.url,
+          launcher: launcher, workerExecutable: workerExecutable, stagingParent: output.url,
           directoryFactory: directoryFactory)
         try output.finish()
         try await preparation.withPreparedPackage(

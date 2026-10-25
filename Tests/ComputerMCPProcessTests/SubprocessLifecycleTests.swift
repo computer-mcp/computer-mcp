@@ -2,7 +2,6 @@ import ComputerMCPCore
 import ComputerMCPPlatformPOSIX
 import ComputerMCPTestSupport
 import Foundation
-import Subprocess
 import Testing
 
 @testable import ComputerMCPProcess
@@ -22,6 +21,7 @@ struct SubprocessLifecycleTests {
   @Test
   func managedWriterRemainsOpenAcrossRequestsAndDeliversEOF() async throws {
     let process = try ManagedLineProcess(
+      launcher: testExecutionLauncher(),
       configuration: .init(
         executable: "/bin/sh",
         arguments: [
@@ -51,6 +51,7 @@ struct SubprocessLifecycleTests {
   func managedOverlappingWritesDeliverCompleteFramesInOrder() async throws {
     let child = try GatedInputChild()
     let process = try ManagedLineProcess(
+      launcher: testExecutionLauncher(),
       configuration: .init(
         executable: "/bin/sh", arguments: ["-c", GatedInputChild.command],
         workingDirectory: child.directory.url,
@@ -92,6 +93,7 @@ struct SubprocessLifecycleTests {
     let settlement = InputSettlement()
     defer { settlement.release() }
     let process = try ManagedLineProcess(
+      launcher: testExecutionLauncher(),
       configuration: .init(
         executable: "/bin/sh",
         arguments: [
@@ -134,8 +136,9 @@ struct SubprocessLifecycleTests {
       switch await writing.result {
       case .failure(ManagedLineProcessError.closed):
         break
-      case .failure(let error as SubprocessError):
-        #expect(error.code == .failedToWriteToSubprocess)
+      case .failure(let error as POSIXError):
+        #expect(error.code == .EPIPE)
+      case .failure(_ as CancellationError): break
       case let result:
         Issue.record("Expected a blocked input write failure, got \(result).")
       }
@@ -163,6 +166,7 @@ struct SubprocessLifecycleTests {
   @Test(arguments: [false, true])
   func managedOutputRejectsOversizedFrames(newline: Bool) async throws {
     let process = try ManagedLineProcess(
+      launcher: testExecutionLauncher(),
       configuration: .init(
         executable: "/bin/sh",
         arguments: ["-c", newline ? "printf '%065d\\n' 0" : "printf '%065d' 0"],
@@ -347,8 +351,9 @@ struct SubprocessLifecycleTests {
       switch await writing.result {
       case .failure(let error as ShellRuntimeError):
         #expect(error == .sessionNotRunning(id))
-      case .failure(let error as SubprocessError):
-        #expect(error.code == .failedToWriteToSubprocess)
+      case .failure(let error as POSIXError):
+        #expect(error.code == .EPIPE)
+      case .failure(_ as CancellationError): break
       case let result:
         Issue.record("Expected a blocked input write failure, got \(result).")
       }
@@ -554,6 +559,7 @@ struct SubprocessLifecycleTests {
     func inheritedDescriptorIsCopiedBeforeCallerClosesAndReusesIt() async throws {
       let inherited = Pipe()
       let process = try ManagedLineProcess(
+        launcher: testExecutionLauncher(),
         configuration: .init(
           executable: "/bin/sh",
           arguments: ["-c", "printf inherited >&3; exec 3>&-; while read line; do :; done"],
@@ -696,6 +702,7 @@ private struct InputClient: Sendable {
     switch owner {
     case .managed:
       let process = try ManagedLineProcess(
+        launcher: testExecutionLauncher(),
         configuration: .init(
           executable: executable, arguments: ["-c", command], workingDirectory: directory,
           terminationGraceMilliseconds: 100, maximumMessageBytes: 2_097_152))

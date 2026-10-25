@@ -101,7 +101,7 @@ extension PluginStore {
       throw error
     }
     let preparation = PluginArchivePreparation(
-      workerExecutable: workerExecutable,
+      launcher: launcher, workerExecutable: workerExecutable,
       stagingParent: identity.url.appendingPathComponent("staging"),
       inheritedLockDescriptor: storage.lockDescriptor,
       directoryFactory: directoryFactory)

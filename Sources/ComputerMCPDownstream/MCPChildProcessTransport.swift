@@ -14,6 +14,7 @@ package actor MCPChildProcessTransport: MCP.Transport {
   package nonisolated let termination: AsyncStream<Void>
   private let terminated: AsyncStream<Void>.Continuation
 
+  private let launcher: ExecutionLauncher
   private let server: MCPServerConfig
   private let command: String
   private let workingDirectory: URL
@@ -30,7 +31,8 @@ package actor MCPChildProcessTransport: MCP.Transport {
   private let continuation: AsyncThrowingStream<Data, Swift.Error>.Continuation
 
   package init(
-    server: MCPServerConfig, workingDirectory: URL, environment: [String: String],
+    launcher: ExecutionLauncher, server: MCPServerConfig, workingDirectory: URL,
+    environment: [String: String],
     hostContext: (any MCPHostEnvironment)? = nil, logger: Logger? = nil
   ) throws {
     guard let command = server.command, !command.isEmpty else {
@@ -40,6 +42,7 @@ package actor MCPChildProcessTransport: MCP.Transport {
       throw GatewayToolError.executionFailed(
         "The stdio registration requires scoped host services.")
     }
+    self.launcher = launcher
     self.server = server
     self.hostContext = hostContext
     self.command = command
@@ -80,6 +83,7 @@ package actor MCPChildProcessTransport: MCP.Transport {
     let process: ManagedLineProcess
     do {
       process = try ManagedLineProcess(
+        launcher: launcher,
         configuration: .init(
           executable: executable, arguments: server.args, environment: environment,
           workingDirectory: workingDirectory,

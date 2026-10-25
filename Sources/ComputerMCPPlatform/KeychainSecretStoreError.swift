@@ -1,6 +1,7 @@
 import Foundation
 
 package enum KeychainSecretStoreError: Error, LocalizedError, Equatable {
+  case noninteractiveOperationUnavailable
   case invalidService
   case invalidAccessGroup
   case invalidReference
@@ -10,6 +11,8 @@ package enum KeychainSecretStoreError: Error, LocalizedError, Equatable {
 
   package var errorDescription: String? {
     switch self {
+    case .noninteractiveOperationUnavailable:
+      return "This Keychain adapter does not support noninteractive operations."
     case .invalidService:
       return "The Keychain service identifier is invalid."
     case .invalidAccessGroup:

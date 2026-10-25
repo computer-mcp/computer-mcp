@@ -92,7 +92,7 @@ package product and does not install or bundle vendor binaries.
 | `Sources/ComputerMCPToolKit/` | Platform-neutral argument and result helpers, project path scope and file metadata, shared filesystem/outline/HTTP helpers, configured command resolution and execution, and project-owned tool environments |
 | `Sources/ComputerMCPPlugins/` | Platform-neutral plugin manifests, bundled inventory and distribution, catalogs, installation/recovery, contribution resolution, archive preparation and the injected plugin state store contract |
 | `Sources/ComputerMCPComputerUse/` | macOS Computer Use provider, observation and action service, native Accessibility and screen capture adapter, and permission readings |
-| `Sources/ComputerMCPPersistence/` | Platform-neutral database connection with initial schema, migration-ledger check, stored records and transactions |
+| `Sources/ComputerMCPPersistence/` | Platform-neutral database connection, schema migrations, stored records, serialized permission ledger and authority-epoch recovery |
 | `Sources/ComputerMCPPlatformDarwin/` | macOS implementations: Keychain, security-scoped bookmarks, `SMAppService`, Launch Services lookup, directory-event file change monitoring, archive extraction, private staging, directory identities and exclusive rename, system network proxy lookup, ImageIO/PDFKit/AVFoundation media inspection, extended attributes, Trash, project opening and native system readings |
 | `Sources/ComputerMCPGateway/` | Platform-neutral runtime, provider routing, admission, approvals, receipts, continuations, host services, HTTP adapter, domain stores, owned work and audit; injected management and client-control contracts |
 | `Sources/ComputerMCPControlPlane/` | Platform-neutral App and CLI administration, client control, remote management, manifest transactions, plugin and tunnel administration, product readiness and client registration |
@@ -484,3 +484,41 @@ new execution. The original execution's requirements remain fixed.
 The production gateway still uses its existing evaluator and execution adapters.
 These library APIs are integration contracts; connection selection, runtime
 violation attribution and limit enforcement are not wired into live dispatch.
+
+### Durable permission state
+
+`ComputerMCPPersistence.SQLitePermissionStore` stores the complete permission ledger in
+the additive `permission-ledger` schema migration. Every operation acquires SQLite's
+immediate write lock and then the platform counter's namespace lock before loading state.
+A mutation stages the complete candidate and advances the external counter before
+committing the ledger; the counter lock remains held through SQLite COMMIT. SQLite uses
+full synchronous writes and requests full filesystem synchronization where supported.
+SQLite contention times out after five seconds; counter-lock acquisition uses the same
+default. Lock, counter and database failures propagate without an older snapshot or
+in-memory fallback. Transaction callbacks perform ledger and SQL work only; runtime
+dispatch and other external effects follow a successful commit.
+
+A missing counter or ledger, changed database identity, or unequal counter starts an
+authorization epoch. The ledger discards transient authority and execution records,
+suspends standing permissions, sandbox settings and owner policy, and preserves an
+epoch-wide runtime termination handoff. Admission remains suspended until the owner
+confirms the displayed snapshot and the runtime acknowledges that all work from other
+epochs has stopped, including processes absent from a restored database. Confirmation
+checks the epoch and ledger revision and allocates fresh grant identities. The owner can
+apply reviewed restrictions in that same store transaction before any restored authority
+becomes visible. Confirmation ends any connections opened while suspended. Cached
+machine policies require fresh adapter reconciliation; Full access consent, request
+answers and old execution access do not return.
+
+The platform-neutral `AuthorizationEpochCounter` protocol owns the external watermark
+contract. Darwin's `KeychainAuthorizationEpochCounter` uses a host-owned explicit
+Keychain service/account and a stable namespace lock directory independent of the
+database path. It disallows authentication UI while holding transaction locks.
+`UnavailableAuthorizationEpochCounter` explicitly refuses durable permission storage on
+a platform without that facility. The host must select the same namespace and lock
+directory for every writer, including database replacement.
+
+`GatewayDatabase.permissionStore(counter:)` shares its connection with the ledger store,
+and `transactionWithDatabase` permits atomic project/profile SQL changes. The store and
+epoch handoff are library facilities; the live gateway still uses its existing
+authorization and storage path.

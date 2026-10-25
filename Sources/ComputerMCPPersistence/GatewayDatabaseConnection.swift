@@ -16,6 +16,10 @@ package final class GatewayDatabaseConnection: @unchecked Sendable {
     var configuration = Configuration()
     // Independent management connections must acquire the write lock before checking revisions.
     configuration.busyMode = .timeout(5)
+    configuration.prepareDatabase { database in
+      try database.execute(sql: "PRAGMA synchronous = FULL")
+      try database.execute(sql: "PRAGMA fullfsync = ON")
+    }
     writer = try DatabaseQueue(path: path, configuration: configuration)
     try Self.open(writer)
   }
@@ -38,6 +42,19 @@ package final class GatewayDatabaseConnection: @unchecked Sendable {
       try database.alter(table: "auditEvents") { $0.add(column: "errorDetailsJSON", .text) }
     }
     migrator.registerMigration("project-terminology", migrate: ProjectSchemaMigration.migrate)
+    migrator.registerMigration("permission-ledger") { database in
+      try database.execute(
+        sql: """
+          CREATE TABLE permissionLedger (
+            id INTEGER PRIMARY KEY CHECK (id = 1),
+            codecVersion INTEGER NOT NULL,
+            databaseID TEXT NOT NULL,
+            epoch TEXT NOT NULL,
+            counter INTEGER NOT NULL CHECK (counter > 0),
+            payload BLOB NOT NULL
+          )
+          """)
+    }
     return migrator
   }()
 

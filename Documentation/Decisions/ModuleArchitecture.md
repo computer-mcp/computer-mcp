@@ -50,8 +50,8 @@ Dependencies inside a layer are limited to these:
 - `Platform`: the platform service protocols listed below and their value types.
 - `Configuration`: manifest model and defaults, including MCP HTTP
   authentication values.
-- `Persistence`: the database connection, schema and transaction API. Each domain
-  owns its own store on top of it.
+- `Persistence`: the database connection, schema, transaction API and durable
+  permission store. Other domain stores compose its shared connection.
 - `Process`: bounded process execution, managed processes, shell sessions and
   executable discovery. An injected `ExecutionLauncher` owns launches; session
   storage and its optional recovery journal own output and cursor retention.

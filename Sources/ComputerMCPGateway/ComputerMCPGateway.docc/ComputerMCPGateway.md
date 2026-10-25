@@ -203,3 +203,19 @@ Host-attributed path and network discoveries produce requests bound to the
 original call, carrying earlier one-time answers through subsequent retries.
 These library contracts are not yet used by the production gateway evaluator or
 process adapters.
+
+### Durable permission ledger
+
+The persistence library provides `SQLitePermissionStore` for serialized permission
+transactions across processes. It reads the latest ledger under SQLite's immediate
+write lock, advances a platform-provided external counter, and commits the complete
+ledger together with related project/profile SQL changes. Failed retry validation
+that retires authority must be caught and returned as a value within the callback
+so that retirement commits. Dispatch occurs only after a successful commit.
+
+Counter mismatch or missing state starts a new authorization epoch. Transient
+permissions, consent and execution access are discarded; standing authority awaits
+owner confirmation against the displayed epoch and revision. A durable recovery
+handoff requires the runtime to stop work from every other epoch before admission
+resumes. Darwin supplies the counter through Keychain; unsupported platforms fail
+explicitly. These APIs do not change the live gateway's authorization path.

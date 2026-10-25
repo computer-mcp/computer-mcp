@@ -165,6 +165,9 @@ package struct RevocationResult: Equatable, Sendable {
 /// - Codable restores trusted durable state, including counters, transaction tokens
 ///   and consumption. It is not an import format for caller-supplied authority.
 package struct PermissionLedger: Sendable, Codable {
+  package private(set) var authorizationEpochID: UUID?
+  package private(set) var suspendedAuthority: SuspendedPermissionAuthority?
+  package private(set) var pendingEpochRecovery: AuthorizationEpochRecovery?
   private var runtimeChains: [UUID: RuntimeRetryChain] = [:]
   private var runtimeSuccessors: [UUID: Set<UUID>] = [:]
   private var retryOrigins: [UUID: InvocationRequirements] = [:]
@@ -191,6 +194,185 @@ package struct PermissionLedger: Sendable, Codable {
 
   package init() {}
 
+  /// Persistence calls this only after detecting a missing or mismatched external
+  /// watermark. It rotates the snapshot token and retires all transient authority.
+  package mutating func beginAuthorizationEpoch(_ epochID: UUID) {
+    authorizationEpochID = epochID
+    pendingEpochRecovery = AuthorizationEpochRecovery(
+      epochID: epochID,
+      executionsToTerminate: Set(executions.values.filter(\.isRunning).map(\.id))
+        .union(pendingExecutionTerminations)
+        .union(pendingEpochRecovery?.executionsToTerminate ?? []))
+    let principals = Set(rules.keys).union(environment.limits.keys)
+      .union(sandboxSettings.entries.keys.map(\.principal))
+    if suspendedAuthority == nil {
+      suspendedAuthority = SuspendedPermissionAuthority(
+        permissions: rules,
+        ownerPolicies: Dictionary(
+          uniqueKeysWithValues: principals.map {
+            ($0, environment.limits[$0]?.sources[.owner] ?? .absent)
+          }), sandboxSettings: sandboxSettings)
+    }
+    rules = Dictionary(uniqueKeysWithValues: principals.map { ($0, Permissions()) })
+    for principal in principals {
+      var limits = environment.limits[principal] ?? .init()
+      limits.sources[.owner] = .unreadable
+      for (source, availability) in limits.sources where source != .owner {
+        if case .available = availability { limits.sources[source] = .unreadable }
+      }
+      environment.limits[principal] = limits
+    }
+    sandboxSettings = .init()
+    requests = [:]
+    authorizations = [:]
+    executions = [:]
+    runtimeChains = [:]
+    runtimeSuccessors = [:]
+    retryOrigins = [:]
+    pendingExecutionTerminations = []
+    issuedConsents = [:]
+    retiredConsents = []
+    environment.modes = [:]
+    environment.connections = [:]
+    environment.endedConnections = []
+    environment.trustedHosts = []
+    transactionIdentity = allocateIdentity().id
+  }
+
+  /// Local owner confirmation restores saved standing authority with fresh grant
+  /// identities. It cannot restore old requests, consent or execution access.
+  /// Machine policy adapters must separately refresh any suspended source.
+  package mutating func confirmSuspendedAuthority(epochID: UUID, expectedRevision: UInt64) throws {
+    guard authorizationEpochID == epochID else { throw PermissionModelError.revisionConflict }
+    try commit(expectedRevision: expectedRevision) { ledger in
+      guard let suspended = ledger.suspendedAuthority else { return }
+      for (principal, saved) in suspended.permissions {
+        var fresh = Permissions()
+        for (permission, state) in saved.entries { try fresh.set(state, for: permission) }
+        try fresh.commit(against: ledger.rules[principal], in: &ledger)
+        ledger.rules[principal] = fresh
+      }
+      for (key, saved) in suspended.sandboxSettings.entries {
+        var fresh = SandboxSettings(
+          network: saved.network.freshDraft(),
+          deniedReadLocations: saved.deniedReadLocations)
+        try fresh.commit(against: nil, in: &ledger)
+        ledger.sandboxSettings.entries[key] = fresh
+      }
+      var environment = ledger.environment
+      for principal in environment.limits.keys where suspended.ownerPolicies[principal] == nil {
+        environment.limits[principal]!.sources[.owner] = .absent
+      }
+      for (principal, saved) in suspended.ownerPolicies {
+        switch saved {
+        case .available(let policy):
+          var ceilings = Permissions()
+          for (permission, state) in policy.permissionCeilings.entries {
+            try ceilings.set(state, for: permission)
+          }
+          environment.limits[principal, default: .init()].sources[.owner] = .available(
+            ManagedPolicy(
+              permissionCeilings: ceilings, allowsFullAccess: policy.allowsFullAccess,
+              network: policy.network.freshDraft(), deniedReadLocations: policy.deniedReadLocations,
+              executionLimits: policy.executionLimits))
+        case .absent, .unreadable:
+          environment.limits[principal, default: .init()].sources[.owner] = saved
+        }
+      }
+      try environment.commit(against: ledger.environment, in: &ledger)
+      ledger.environment = environment
+      ledger.issuedConsents = [:]
+      ledger.retiredConsents = []
+      ledger.environment.modes = [:]
+      ledger.environment.endedConnections.formUnion(ledger.environment.connections.keys)
+      ledger.environment.connections = [:]
+      ledger.suspendedAuthority = nil
+    }
+  }
+
+  /// Acknowledge only after stopping all runtime work from other epochs. A stale
+  /// runtime cannot acknowledge a newer recovery, even if it knew the same IDs.
+  package mutating func acknowledgeEpochRecovery(_ epochID: UUID) throws {
+    guard pendingEpochRecovery?.epochID == epochID else {
+      throw PermissionModelError.revisionConflict
+    }
+    pendingEpochRecovery = nil
+    _ = allocateIdentity()
+  }
+
+  private var authorityIsSuspended: Bool {
+    suspendedAuthority != nil || pendingEpochRecovery != nil
+  }
+
+  /// Validates codec shape and durable cross-references before any authority is
+  /// evaluated. Revoked records may retain obsolete grant provenance, but never
+  /// dangling request, permit, authorization or execution references.
+  package func validatePersistedState() throws {
+    func valid(_ identity: BasisIdentity) -> Bool {
+      identity.generation > 0 && identity.generation <= revision && !identity.isEdited
+    }
+    func validBasis(_ basis: Set<AuthorizationBasis>) -> Bool {
+      basis.allSatisfy { element in
+        switch element {
+        case .request(let identity): return requests[identity.id]?.identity == identity
+        case .permit(let request, let permit):
+          return requests[request.id]?.identity == request
+            && requests[request.id]?.permitIdentity == permit
+        case .permission(let grant), .managedPermission(_, let grant):
+          if case .onlyThisTime(let request, let permit) = grant.source {
+            return requests[request.id]?.identity == request
+              && requests[request.id]?.permitIdentity == permit
+              && requests[request.id]?.content.principal == grant.principal
+          }
+          return true
+        case .retryOrigin(let identity): return authorizations[identity.id]?.identity == identity
+        default: return true
+        }
+      }
+    }
+    guard revision < UInt64(Int64.max),
+      pendingEpochRecovery.map({ $0.epochID == authorizationEpochID }) ?? true,
+      requests.allSatisfy({ id, request in
+        guard id == request.id, valid(request.identity),
+          request.invocation.principal == request.content.principal,
+          request.permitIdentity.map(valid) ?? true, validBasis(request.basis)
+        else { return false }
+        switch request.status {
+        case .onlyThisTime, .always: return request.permitIdentity != nil
+        case .consumed(let id):
+          return request.permitIdentity != nil
+            && authorizations[id]?.requestIDs.contains(request.id) == true
+            && authorizations[id]?.invocation == request.invocation
+        default: return true
+        }
+      }),
+      authorizations.allSatisfy({ id, proof in
+        guard id == proof.id, valid(proof.identity), validBasis(proof.basis) else { return false }
+        return proof.executionID.map { executions[$0]?.authorizationIDs.contains(id) == true }
+          ?? true
+      }),
+      executions.allSatisfy({ id, execution in
+        id == execution.id && !execution.authorizationIDs.isEmpty
+          && execution.authorizationIDs.allSatisfy { authorizations[$0]?.executionID == id }
+          && execution.authorizationIDs.contains {
+            authorizations[$0]?.invocation.principal == execution.owner
+          }
+      }),
+      pendingExecutionTerminations.isSubset(of: Set(executions.keys)),
+      runtimeChains.allSatisfy({ id, chain in
+        requests[id]?.invocation == chain.invocation
+          && requests[id]?.requirements == chain.requirements
+          && chain.carriedIDs.allSatisfy { requests[$0]?.invocation == chain.invocation }
+      }),
+      runtimeSuccessors.allSatisfy({ id, requests in
+        authorizations[id] != nil && requests.allSatisfy { runtimeChains[$0] != nil }
+      }),
+      retryOrigins.keys.allSatisfy({ authorizations[$0] != nil })
+    else {
+      throw PermissionModelError.invalidAuthorization
+    }
+  }
+
   /// Stores call this against their current durable ledger before committing a
   /// transaction. The persisted token rejects replacement with a stale or foreign
   /// whole-ledger snapshot, including snapshots with unused authorization copies.
@@ -208,11 +390,11 @@ package struct PermissionLedger: Sendable, Codable {
   }
 
   package func permissions(for principal: Principal) -> Permissions {
-    rules[principal] ?? .newPrincipal
+    rules[principal] ?? (authorityIsSuspended ? Permissions() : .newPrincipal)
   }
 
   package mutating func register(_ principal: Principal) {
-    guard rules[principal] == nil else { return }
+    guard !authorityIsSuspended, rules[principal] == nil else { return }
     var permissions = Permissions.newPrincipal
     try! permissions.commit(against: nil, in: &self)
     rules[principal] = permissions
@@ -238,7 +420,8 @@ package struct PermissionLedger: Sendable, Codable {
   package mutating func setPermissions(
     _ permissions: Permissions, for principal: Principal, expectedRevision: UInt64
   ) throws -> RevocationResult {
-    try commit(expectedRevision: expectedRevision) { ledger in
+    guard suspendedAuthority == nil else { throw PermissionModelError.authoritySuspended }
+    return try commit(expectedRevision: expectedRevision) { ledger in
       var permissions = permissions
       try permissions.commit(against: ledger.rules[principal], in: &ledger)
       ledger.rules[principal] = permissions
@@ -274,6 +457,7 @@ package struct PermissionLedger: Sendable, Codable {
     invocation: InvocationIdentity, requirements: InvocationRequirements,
     retryIDs: Set<UUID> = [], connectionID: String? = nil, now: Date
   ) throws -> AuthorizationDecision {
+    guard !authorityIsSuspended else { return .denied(.authoritySuspended) }
     let originalRequirements = requirements
     let expanded = try runtimeRetry(
       invocation: invocation, requirements: requirements, ids: retryIDs)
@@ -392,7 +576,8 @@ package struct PermissionLedger: Sendable, Codable {
   package mutating func setSandboxSettings(
     _ settings: SandboxSettings, for key: SandboxSettingsKey, expectedRevision: UInt64
   ) throws -> RevocationResult {
-    try commit(expectedRevision: expectedRevision) { ledger in
+    guard suspendedAuthority == nil else { throw PermissionModelError.authoritySuspended }
+    return try commit(expectedRevision: expectedRevision) { ledger in
       var settings = settings
       try settings.commit(against: ledger.sandboxSettings.entries[key], in: &ledger)
       ledger.sandboxSettings.entries[key] = settings
@@ -432,6 +617,7 @@ package struct PermissionLedger: Sendable, Codable {
   package mutating func answer(
     _ id: UUID, with answer: PermissionAnswer, now: Date
   ) throws -> RevocationResult {
+    guard !authorityIsSuspended else { throw PermissionModelError.authoritySuspended }
     var request = try pendingRequest(id, now: now)
     let limits = currentLimits[request.content.principal] ?? .init()
     defer { propagateRevocations() }
@@ -523,6 +709,7 @@ package struct PermissionLedger: Sendable, Codable {
     _ content: ProjectRegistrationRequest, invocation: InvocationIdentity,
     now: Date
   ) throws -> ProjectRegistrationDecision {
+    guard !authorityIsSuspended else { return .denied(.authoritySuspended) }
     propagateRevocations(now: now)
     guard let paths = environment.paths else { return .denied(.pathResolutionRequired) }
     guard content.principal == invocation.principal else {
@@ -558,6 +745,7 @@ package struct PermissionLedger: Sendable, Codable {
   package mutating func answerProjectRegistration(
     _ id: UUID, registeredProject: RegisteredProject?, now: Date
   ) throws -> RevocationResult {
+    guard !authorityIsSuspended else { throw PermissionModelError.authoritySuspended }
     var request = try pendingRequest(id, now: now)
     defer { propagateRevocations() }
     guard case .projectRegistration(let content) = request.content else {
@@ -608,6 +796,7 @@ package struct PermissionLedger: Sendable, Codable {
     owner: Principal, delegatedTo: PluginIdentity? = nil, authorizationIDs: Set<UUID>,
     capabilities: ExecutionLimitCapabilities = .init(), now: Date = Date()
   ) throws -> AuthorizedExecution {
+    guard !authorityIsSuspended else { throw PermissionModelError.authoritySuspended }
     propagateRevocations()
     guard !authorizationIDs.isEmpty else { throw PermissionModelError.invalidAuthorization }
     let authorizations = try authorizationIDs.map { id in
@@ -692,6 +881,7 @@ package struct PermissionLedger: Sendable, Codable {
     _ id: UUID, principal: Principal, operation: ExecutionOperation, connectionID: String? = nil,
     now: Date
   ) -> PermissionDecision {
+    guard !authorityIsSuspended else { return .denied(.authoritySuspended) }
     propagateRevocations()
     guard let execution = executions[id], execution.owner == principal else {
       return .denied(.executionOwner)
@@ -758,6 +948,11 @@ package struct PermissionLedger: Sendable, Codable {
   ) throws -> RevocationResult {
     try commit(expectedRevision: expectedRevision) { ledger in
       var environment = environment
+      if ledger.suspendedAuthority != nil {
+        for principal in environment.limits.keys {
+          environment.limits[principal]!.sources[.owner] = .unreadable
+        }
+      }
       for (principal, consent) in environment.modes {
         if case .fullAccess(.connection) = consent.mode {
           throw PermissionModelError.invalidAuthorization
@@ -1607,7 +1802,7 @@ package struct PermissionLedger: Sendable, Codable {
 package protocol PermissionStore: Sendable {
   func read() async throws -> PermissionLedger
   func transaction<Result: Sendable>(
-    _ body: @Sendable (inout PermissionLedger) throws -> Result
+    _ body: @escaping @Sendable (inout PermissionLedger) throws -> Result
   ) async throws -> Result
 }
 
@@ -1619,7 +1814,7 @@ package actor InMemoryPermissionStore: PermissionStore {
   package func read() -> PermissionLedger { ledger }
 
   package func transaction<Result: Sendable>(
-    _ body: @Sendable (inout PermissionLedger) throws -> Result
+    _ body: @escaping @Sendable (inout PermissionLedger) throws -> Result
   ) throws -> Result {
     var candidate = ledger
     let result = try body(&candidate)

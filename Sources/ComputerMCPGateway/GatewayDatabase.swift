@@ -39,6 +39,12 @@ package final class GatewayDatabase: OAuthStore, @unchecked Sendable {
     self.connection = connection
   }
 
+  /// Uses this database's writer so permission and project/profile mutations can
+  /// share one durable transaction. Runtime dispatch follows a successful commit.
+  package func permissionStore(counter: any AuthorizationEpochCounter) -> SQLitePermissionStore {
+    SQLitePermissionStore(connection: connection, counter: counter)
+  }
+
   package func oauthTransaction<Result>(
     _ body: (any OAuthStoreTransaction) throws -> Result
   ) throws -> Result {

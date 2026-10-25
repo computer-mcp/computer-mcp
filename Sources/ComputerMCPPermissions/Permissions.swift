@@ -71,6 +71,7 @@ package enum PermissionState: Equatable, Sendable, Codable {
 }
 
 package enum PermissionModelError: Error, Equatable {
+  case authoritySuspended
   case revisionConflict
   case invalidPermissionValue
   case invalidObject
@@ -227,6 +228,7 @@ package struct PermissionRequestContent: Equatable, Sendable, Codable {
 }
 
 package enum DenialReason: Equatable, Sendable {
+  case authoritySuspended
   case permissionDenied(Permission)
   case managedLimit(Set<PolicySource>)
   case hostData

@@ -181,3 +181,15 @@ extension PermissionEnvironment {
     try paths?.commit(against: current.paths, in: &ledger)
   }
 }
+
+extension NetworkAccess {
+  func freshDraft() -> Self {
+    switch configuration {
+    case .none: .none
+    case .trusted: .trusted
+    case .full: .full
+    case .custom(let hosts, let includesTrusted):
+      .custom(hosts: hosts, includesTrusted: includesTrusted)
+    }
+  }
+}

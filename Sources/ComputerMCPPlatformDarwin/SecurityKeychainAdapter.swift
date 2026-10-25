@@ -11,7 +11,15 @@ package final class SecurityKeychainAdapter: KeychainAdapter, Sendable {
   }
 
   package func set(service: String, account: String, data: Data) throws {
-    let query = baseQuery(service: service, account: account)
+    try set(service: service, account: account, data: data, authenticationUI: .allow)
+  }
+
+  package func set(
+    service: String, account: String, data: Data,
+    authenticationUI: KeychainAuthenticationUI
+  ) throws {
+    var query = baseQuery(service: service, account: account)
+    apply(authenticationUI, to: &query)
     let update = [kSecValueData: data] as CFDictionary
     let updateStatus = SecItemUpdate(query as CFDictionary, update)
     if updateStatus == errSecSuccess {

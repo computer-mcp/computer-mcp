@@ -100,10 +100,32 @@ struct FileMoveMetadataTests {
           builtin: .init(enabled: ["file.move", "file.copy"]), projectDirectory: root))
       let utility = try testExecutable("hdiutil")
       func disk(_ args: [String]) throws {
-        let result = try tools.commandRunner.run(
-          executable: utility, arguments: args, workingDirectory: root,
-          environment: [:], timeoutMilliseconds: 30_000, maxOutputBytes: 65_536)
-        try #require(result.exitCode == 0, "\(result.stderr)")
+        // The test owns the mount's lifetime, including the persistent disk-image helper.
+        let log = temporary.url.appendingPathComponent("disk.log")
+        try Data().write(to: log)
+        let output = try FileHandle(forWritingTo: log)
+        defer { try? output.close() }
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: utility)
+        process.arguments = args
+        process.currentDirectoryURL = root
+        process.standardInput = FileHandle.nullDevice
+        process.standardOutput = output
+        process.standardError = output
+        let terminated = DispatchSemaphore(value: 0)
+        process.terminationHandler = { _ in terminated.signal() }
+        try process.run()
+        let completed = terminated.wait(timeout: .now() + 30) == .success
+        if !completed {
+          process.terminate()
+          if terminated.wait(timeout: .now() + 2) == .timedOut {
+            _ = kill(process.processIdentifier, SIGKILL)
+          }
+        }
+        process.waitUntilExit()
+        let diagnostics = try String(contentsOf: log, encoding: .utf8)
+        try #require(completed, "hdiutil timed out: \(diagnostics)")
+        try #require(process.terminationStatus == 0, "\(diagnostics)")
       }
       let image = temporary.url.appendingPathComponent("volume.sparseimage")
       try disk([
@@ -112,6 +134,11 @@ struct FileMoveMetadataTests {
       ])
       try disk(["attach", "-nobrowse", "-mountpoint", destination.path, image.path])
       defer { try? disk(["detach", destination.path]) }
+      var sourceVolume = stat()
+      var destinationVolume = stat()
+      try #require(stat(root.path, &sourceVolume) == 0)
+      try #require(stat(destination.path, &destinationVolume) == 0)
+      try #require(sourceVolume.st_dev != destinationVolume.st_dev)
       let provider = FilesToolProvider(environment: tools)
       for directory in [false, true] {
         for reverse in [false, true] {

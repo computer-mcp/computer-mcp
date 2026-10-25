@@ -271,7 +271,11 @@ REGISTRATION_HOME="$OUTSIDE_DIR/registration-home"
 mkdir -p "$REGISTRATION_HOME"
 touch "$REGISTRATION_HOME/.registration-fixture"
 FAKE_CLIENT="$REGISTRATION_HOME/client"
-cp "$ROOT_DIR/Tests/ComputerMCPMacOSTests/Fixtures/registration-client.py" "$FAKE_CLIENT"
+REGISTRATION_PYTHON=$(xcrun --find python3)
+{
+  printf '#!%s\n' "$REGISTRATION_PYTHON"
+  cat "$ROOT_DIR/Tests/ComputerMCPMacOSTests/Fixtures/registration-client.py"
+} > "$FAKE_CLIENT"
 chmod 700 "$FAKE_CLIENT"
 trap 'rm -rf "$REGISTRATION_HOME"; rm -f "$FIXTURE_MANIFEST" "$FIXTURE_MARKER" "$DOCTOR_JSON" "$CAPABILITIES_JSON" "$CODEX_APP_PLAN"; rmdir "$OUTSIDE_DIR" 2>/dev/null || true' EXIT
 (

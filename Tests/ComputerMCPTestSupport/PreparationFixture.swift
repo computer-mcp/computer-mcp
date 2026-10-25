@@ -119,28 +119,8 @@ package struct PreparationFixture: Sendable {
   }
 
   private func writeStub(_ script: String) throws -> URL {
-    // Bypass Apple's /usr/bin Python launcher, which injects Xcode toolchain
-    // environment variables before executing the actual interpreter.
-    let lookup = Process()
-    let output = Pipe()
-    lookup.executableURL = URL(fileURLWithPath: "/usr/bin/env")
-    #if os(macOS)
-      lookup.arguments = ["xcrun", "--find", "python3"]
-    #else
-      lookup.arguments = ["python3", "-c", "import sys; print(sys.executable)"]
-    #endif
-    lookup.standardOutput = output
-    lookup.standardError = FileHandle.nullDevice
-    try lookup.run()
-    let data = output.fileHandleForReading.readDataToEndOfFile()
-    lookup.waitUntilExit()
-    try #require(lookup.terminationStatus == 0)
-    let interpreter = String(decoding: data, as: UTF8.self).trimmingCharacters(
-      in: .whitespacesAndNewlines)
-    try #require(interpreter.hasPrefix("/") && !interpreter.contains("\n"))
     let executable = files.root.appendingPathComponent("worker")
-    try Data(("#!\(interpreter)\n" + script + "\n").utf8).write(to: executable)
-    try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: executable.path)
+    try writePythonTestExecutable(script, to: executable)
     return executable
   }
 }

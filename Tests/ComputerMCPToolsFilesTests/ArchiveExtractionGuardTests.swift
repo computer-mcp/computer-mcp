@@ -16,29 +16,43 @@ import Testing
 
 @Suite(.nativeIntegration)
 struct ArchiveExtractionGuardTests {
+  @discardableResult
   private func extract(
-    _ root: URL, runner: any CommandRunning, archive: String = "input.tar",
+    _ root: URL, runner: ArchiveExtractionRunner, archive: String = "input.tar",
     destination: String = "output", overwrite: Bool = false,
     observer: (@Sendable (String, URL, ProjectFileAccess.MutationPhase) throws -> Void)? = nil
   )
-    throws
+    throws -> Bool
   {
     let tools = FilesToolProvider(
       environment: ToolEnvironment(
         configuration: .init(builtin: .init(enabled: ["archive.extract"]), projectDirectory: root),
         commandRunner: runner,
-        builtinExecutables: ["tar": "tar", "zipinfo": "zipinfo", "unzip": "unzip"]),
+        builtinExecutables: ArchiveFixture.extractionExecutables),
       fileMutationObserver: observer)
-    _ = try tools.callTool(
-      .init(
-        name: "archive.extract",
-        arguments: .object([
-          "path": .string(archive), "destination": .string(destination),
-          "overwrite": .bool(overwrite),
-          "create_directories": .bool(true), "dry_run": .bool(false),
-          "confirm_extract": .bool(true),
-          "max_output_bytes": .integer(1_048_576),
-        ]), context: .empty))
+    let invocation = ToolInvocation(
+      name: "archive.extract",
+      arguments: .object([
+        "path": .string(archive), "destination": .string(destination),
+        "overwrite": .bool(overwrite),
+        "create_directories": .bool(true), "dry_run": .bool(false),
+        "confirm_extract": .bool(true),
+        "max_output_bytes": .integer(1_048_576),
+      ]), context: .empty)
+    if archive.hasSuffix(".zip"), !ArchiveFixture.zipExtractionAvailable {
+      let before = try FileManager.default.contentsOfDirectory(atPath: root.path)
+      #expect(
+        throws: GatewayToolError.disabled(
+          "Builtin command 'bsdtar' is unavailable on this platform.")
+      ) {
+        _ = try tools.callTool(invocation)
+      }
+      #expect(runner.calls == 0)
+      #expect(try FileManager.default.contentsOfDirectory(atPath: root.path) == before)
+      return false
+    }
+    _ = try tools.callTool(invocation)
+    return true
   }
 
   @Test(
@@ -89,9 +103,12 @@ struct ArchiveExtractionGuardTests {
     }
     let runner = ArchiveExtractionRunner(
       base: ToolEnvironment(configuration: .init()).commandRunner)
-    try extract(
-      fixture.root, runner: runner, archive: name,
-      destination: destination == "project" ? "." : "output", overwrite: destination == "existing")
+    guard
+      try extract(
+        fixture.root, runner: runner, archive: name,
+        destination: destination == "project" ? "." : "output", overwrite: destination == "existing"
+      )
+    else { return }
     #expect(
       try Data(contentsOf: output.appendingPathComponent("parent/nested/file"))
         == Data("archived".utf8))
@@ -153,7 +170,9 @@ struct ArchiveExtractionGuardTests {
     try #require(fstat(fd, &original) == 0)
     let runner = ArchiveExtractionRunner(
       base: ToolEnvironment(configuration: .init()).commandRunner)
-    try extract(fixture.root, runner: runner, archive: name, destination: destination)
+    guard try extract(fixture.root, runner: runner, archive: name, destination: destination) else {
+      return
+    }
     var published = stat()
     try #require(lstat(output.path, &published) == 0)
     #expect(published.st_dev == original.st_dev && published.st_ino == original.st_ino)
@@ -535,7 +554,7 @@ struct ArchiveExtractionGuardTests {
       at: archive, to: fixture.root.appendingPathComponent("input.zip"))
     let runner = ArchiveExtractionRunner(
       base: ToolEnvironment(configuration: .init()).commandRunner)
-    try extract(fixture.root, runner: runner, archive: "input.zip")
+    guard try extract(fixture.root, runner: runner, archive: "input.zip") else { return }
     let output = fixture.root.appendingPathComponent("output")
     #expect(try Data(contentsOf: output.appendingPathComponent("first")) == Data("aa".utf8))
     #expect(try Data(contentsOf: output.appendingPathComponent("second")) == Data("bb".utf8))
@@ -578,13 +597,17 @@ struct ArchiveExtractionGuardTests {
       ["café.txt", "中文.txt", "tab\tname", "line\nname", " leading", "trailing "]
       + (format == "zip" ? [] : ["back\\slash", "\\056git"])
     let archive = try fixture.archive(
-      names.enumerated().map { .init(name: $0.element, content: String($0.offset)) }, format: format
+      names.enumerated().map {
+        .init(
+          name: $0.element, content: String($0.offset), modificationSeconds: 1_009_843_203,
+          modificationNanoseconds: format != "zip" && $0.offset == 0 ? 123_456_789 : 0)
+      }, format: format
     )
     let name = "input." + format
     try FileManager.default.moveItem(at: archive, to: fixture.root.appendingPathComponent(name))
     let runner = ArchiveExtractionRunner(
       base: ToolEnvironment(configuration: .init()).commandRunner)
-    try extract(fixture.root, runner: runner, archive: name)
+    guard try extract(fixture.root, runner: runner, archive: name) else { return }
     let output = fixture.root.appendingPathComponent("output")
     #expect(Set(try FileManager.default.contentsOfDirectory(atPath: output.path)) == Set(names))
     for (index, name) in names.enumerated() {

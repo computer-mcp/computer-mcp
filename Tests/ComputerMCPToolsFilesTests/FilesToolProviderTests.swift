@@ -12,7 +12,7 @@ import Testing
 final class FilesToolProviderTests {
   private let builtinExecutables = Dictionary(
     uniqueKeysWithValues: [
-      "file", "wc", "du", "mdls", "diff", "curl", "zipinfo", "tar", "unzip", "zip",
+      "file", "wc", "du", "mdls", "diff", "curl", "zipinfo", "tar", "bsdtar", "unzip", "zip",
     ].map { ($0, $0) })
 
   @Test
@@ -3288,6 +3288,39 @@ final class FilesToolProviderTests {
     }
   }
 
+  @Test(arguments: ["zip", "jar", "war", "ear", "tar"], [true, false])
+  func testArchiveExtractRequiresARegisteredReader(suffix: String, dryRun: Bool) throws {
+    let directory = try temporaryDirectory()
+    try Data("archive".utf8).write(to: directory.appendingPathComponent("input." + suffix))
+    let runner = RecordingCommandRunner()
+    let provider = FilesToolProvider(
+      environment: ToolEnvironment(
+        configuration: .init(
+          builtin: .init(enabled: ["archive.extract"]), projectDirectory: directory),
+        commandRunner: runner))
+    #if canImport(Darwin)
+      let reader = "tar"
+    #else
+      let reader = suffix == "tar" ? "tar" : "bsdtar"
+    #endif
+    #expect(
+      throws: GatewayToolError.disabled(
+        "Builtin command '\(reader)' is unavailable on this platform.")
+    ) {
+      _ = try provider.callTool(
+        .init(
+          name: "archive.extract",
+          arguments: .object([
+            "path": .string("input." + suffix), "destination": .string("output"),
+            "create_directories": .bool(true), "dry_run": .bool(dryRun),
+            "confirm_extract": .bool(true),
+          ]), context: .empty))
+    }
+    #expect(runner.calls.isEmpty)
+    #expect(
+      !FileManager.default.fileExists(atPath: directory.appendingPathComponent("output").path))
+  }
+
   @Test
   func testArchiveExtractDryRunValidatesZipEntriesWithoutWriting() throws {
     let directory = try temporaryDirectory()
@@ -3325,7 +3358,11 @@ final class FilesToolProviderTests {
     let payload = try decodeTextPayload(result)
     let entries = try #require(payload.objectValue?["entries"]?.arrayValue)
 
-    #expect((runner.calls.map(\.executable)) == (["tar"]))
+    #if canImport(Darwin)
+      #expect((runner.calls.map(\.executable)) == (["tar"]))
+    #else
+      #expect((runner.calls.map(\.executable)) == (["bsdtar"]))
+    #endif
     #expect((runner.calls[0].arguments) == (["--numeric-owner", "-tvf", archive.path]))
     #expect(!(FileManager.default.fileExists(atPath: destination.path)))
     #expect((payload.objectValue?["operation"]) == (.string("archive.extract")))

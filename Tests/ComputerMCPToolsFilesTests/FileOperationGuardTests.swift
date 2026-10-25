@@ -23,7 +23,11 @@ struct FileOperationGuardTests {
     environment: [String: String] = ProcessInfo.processInfo.environment,
     trasher: (any FileTrashing)? = nil
   ) -> FilesToolProvider {
-    FilesToolProvider(
+    var executables = ArchiveFixture.extractionExecutables.merging([
+      "zipinfo": "zipinfo", "unzip": "unzip", "curl": "curl",
+    ]) { _, value in value }
+    if let executable = try? testExecutable("zip") { executables["zip"] = executable }
+    return FilesToolProvider(
       environment: ToolEnvironment(
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: [
@@ -31,9 +35,7 @@ struct FileOperationGuardTests {
             "file.mkdir", "file.trash", "file.write_files", "archive.extract", "archive.create",
             "file.download", "file.symlink",
           ]), projectDirectory: root), commandRunner: runner, environment: environment,
-        builtinExecutables: [
-          "tar": "tar", "zipinfo": "zipinfo", "unzip": "unzip", "zip": "zip", "curl": "curl",
-        ], fileTrasher: trasher))
+        builtinExecutables: executables, fileTrasher: trasher))
   }
 
   private func call(_ provider: FilesToolProvider, _ name: String, _ arguments: [String: JSONValue])
@@ -378,18 +380,41 @@ struct FileOperationGuardTests {
     let root = temporary.url
     try Data("round trip".utf8).write(to: root.appendingPathComponent("input"))
     let tools = provider(root)
+    if format == "zip", (try? testExecutable("zip")) == nil {
+      #expect(
+        throws: GatewayToolError.disabled("Builtin command 'zip' is unavailable on this platform.")
+      ) {
+        try call(
+          tools, "archive.create",
+          [
+            "path": .string("bundle.zip"), "sources": .array([.string("input")]),
+            "dry_run": .bool(false), "confirm_create": .bool(true),
+          ])
+      }
+      #expect(try FileManager.default.contentsOfDirectory(atPath: root.path) == ["input"])
+      return
+    }
     try call(
       tools, "archive.create",
       [
         "path": .string("bundle." + format), "sources": .array([.string("input")]),
         "dry_run": .bool(false), "confirm_create": .bool(true),
       ])
-    try call(
-      tools, "archive.extract",
-      [
-        "path": .string("bundle." + format), "destination": .string("output"),
-        "create_directories": .bool(true), "dry_run": .bool(false), "confirm_extract": .bool(true),
-      ])
+    let extractArguments: [String: JSONValue] = [
+      "path": .string("bundle." + format), "destination": .string("output"),
+      "create_directories": .bool(true), "dry_run": .bool(false), "confirm_extract": .bool(true),
+    ]
+    if format == "zip", !ArchiveFixture.zipExtractionAvailable {
+      #expect(
+        throws: GatewayToolError.disabled(
+          "Builtin command 'bsdtar' is unavailable on this platform.")
+      ) {
+        try call(tools, "archive.extract", extractArguments)
+      }
+      #expect(!FileManager.default.fileExists(atPath: root.appendingPathComponent("output").path))
+      return
+    }
+    try call(tools, "archive.extract", extractArguments)
     #expect(
       try Data(contentsOf: root.appendingPathComponent("output/input")) == Data("round trip".utf8))
   }
@@ -486,7 +511,11 @@ struct FileOperationGuardTests {
     let archive = try fixture.archive([.init(name: entry)], format: format)
     try FileManager.default.moveItem(
       at: archive, to: fixture.root.appendingPathComponent("input." + format))
-    #expect(throws: metadataError) {
+    let expectedError =
+      format == "zip" && !ArchiveFixture.zipExtractionAvailable
+      ? GatewayToolError.disabled("Builtin command 'bsdtar' is unavailable on this platform.")
+      : metadataError
+    #expect(throws: expectedError) {
       try call(
         provider(fixture.root), "archive.extract",
         [

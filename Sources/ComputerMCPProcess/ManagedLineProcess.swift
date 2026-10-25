@@ -211,7 +211,8 @@ package final class ManagedLineProcess: @unchecked Sendable {
 
     // The child has a separate job-control group. Do not kill its supervisor before
     // it publishes that group's identity, or a concurrently spawned child could escape.
-    let startupDeadline = ContinuousClock.now + .seconds(5)
+    // Covers bootstrap admission (30 seconds) and the supervisor's PID publication (5 seconds).
+    let startupDeadline = ContinuousClock.now + .seconds(35)
     while !(await state.canSignalOwnedProcess()) {
       if ContinuousClock.now >= startupDeadline {
         await state.failTerminationTimeout()
@@ -485,7 +486,8 @@ package final class ManagedLineProcess: @unchecked Sendable {
   }
 
   private static func waitForProcessID(at file: URL) async -> Int32? {
-    for _ in 0..<500 {
+    let deadline = ContinuousClock.now + .seconds(5)
+    while ContinuousClock.now < deadline {
       if Task.isCancelled { return nil }
       if let text = try? String(contentsOf: file, encoding: .utf8),
         let processID = Int32(text.trimmingCharacters(in: .whitespacesAndNewlines))
@@ -710,6 +712,10 @@ private actor ManagedLineProcessState {
   }
 
   private static func safeMessage(_ error: Error) -> String {
+    // Only the bootstrap diagnostic envelope bypasses generic I/O redaction.
+    if let launch = error as? ExecutionEnvironmentError, case .bootstrapFailed = launch {
+      return launch.description
+    }
     // Generic I/O errors can contain argv, environment values or protocol payloads.
     guard let error = error as? ManagedLineProcessError else {
       return "Managed process I/O failed."

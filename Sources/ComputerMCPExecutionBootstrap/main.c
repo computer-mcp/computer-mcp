@@ -16,6 +16,7 @@ int main(int argc, char **argv) {
 #else
 #include <errno.h>
 #include <libproc.h>
+#include <fcntl.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -45,7 +46,8 @@ _Static_assert(sizeof(struct bootstrap_identity) == 16, "Bootstrap wire identity
 
 int main(int argc, char **argv) {
   if (argc < 2 || argv[1][0] != '/') return 126;
-  struct timeval timeout = {.tv_sec = 5};
+  /* Allow scheduling and host ownership admission under heavy machine load. */
+  struct timeval timeout = {.tv_sec = 30};
   int enabled = 1;
   if (setsockopt(STDIN_FILENO, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout)) != 0 ||
       setsockopt(STDIN_FILENO, SOL_SOCKET, SO_SNDTIMEO, &timeout, sizeof(timeout)) != 0 ||
@@ -92,7 +94,7 @@ int main(int argc, char **argv) {
   struct iovec payload = {&acknowledgement, sizeof(acknowledgement)};
   union {
     struct cmsghdr alignment;
-    uint8_t bytes[CMSG_SPACE(sizeof(int))];
+    uint8_t bytes[CMSG_SPACE(2 * sizeof(int))];
   } control = {0};
   struct msghdr message = {0};
   message.msg_iov = &payload;
@@ -102,30 +104,39 @@ int main(int argc, char **argv) {
   ssize_t received;
   do { received = recvmsg(STDIN_FILENO, &message, 0); } while (received < 0 && errno == EINTR);
   if (received < 0) {
-    perror("Execution input handoff failed");
+    perror("Execution descriptor handoff failed");
     return 126;
   }
   struct cmsghdr *header = CMSG_FIRSTHDR(&message);
   if (received != 1 || acknowledgement != 1 || (message.msg_flags & MSG_CTRUNC) ||
       header == NULL || header->cmsg_level != SOL_SOCKET || header->cmsg_type != SCM_RIGHTS ||
-      header->cmsg_len != CMSG_LEN(sizeof(int))) {
-    fputs("Execution input handoff invalid\n", stderr);
+      header->cmsg_len != CMSG_LEN(2 * sizeof(int))) {
+    fputs("Execution descriptor handoff invalid\n", stderr);
     return 126;
   }
-  int original_input = *(int *)CMSG_DATA(header);
-  /* Keep the sender's pipe alive until the received descriptor owns its reference. */
-  acknowledgement = 2;
-  ssize_t confirmed;
-  do { confirmed = write(STDIN_FILENO, &acknowledgement, 1); } while (confirmed < 0 && errno == EINTR);
-  if (confirmed != 1) {
-    perror("Execution input confirmation failed");
-    return 126;
-  }
-  if (dup2(original_input, STDIN_FILENO) < 0) {
-    perror("Execution input descriptor failed");
+  int *descriptors = (int *)CMSG_DATA(header);
+  int original_input = descriptors[0];
+  int original_error = descriptors[1];
+  /* Keep the channel and diagnostics open while installing both target descriptors. */
+  int channel = fcntl(STDIN_FILENO, F_DUPFD_CLOEXEC, 3);
+  int diagnostics = fcntl(STDERR_FILENO, F_DUPFD_CLOEXEC, 3);
+  if (channel < 0 || diagnostics < 0 || dup2(original_input, STDIN_FILENO) < 0 ||
+      dup2(original_error, STDERR_FILENO) < 0) {
+    perror("Execution descriptor installation failed");
     return 126;
   }
   close(original_input);
+  close(original_error);
+  /* The host may release its descriptors only after both have been installed. */
+  acknowledgement = 2;
+  ssize_t confirmed;
+  do { confirmed = write(channel, &acknowledgement, 1); } while (confirmed < 0 && errno == EINTR);
+  if (confirmed != 1) {
+    dprintf(diagnostics, "Execution descriptor confirmation failed: errno %d\n", errno);
+    return 126;
+  }
+  close(channel);
+  close(diagnostics);
   execv(argv[1], argv + 1);
   int status = errno == ENOENT ? 127 : 126;
   perror("Execution target exec failed");

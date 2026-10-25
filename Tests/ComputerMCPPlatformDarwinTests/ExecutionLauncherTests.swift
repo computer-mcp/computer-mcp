@@ -198,25 +198,195 @@ import Testing
     #expect(result.status == 0)
   }
 
-  @Test func foundationRejectsBootstrapEOF() async throws {
+  @Test(.timeLimit(.minutes(1)), arguments: ExecutionLaunchMethod.allCases)
+  func bootstrapExitReportsStatusAndBoundedDiagnosticsImmediately(method: ExecutionLaunchMethod)
+    async throws
+  {
     let fixture = try SeatbeltFixture()
     defer { fixture.remove() }
-    let configuration = try fixture.configuration()
-    let environment = try ExecutionEnvironment(
-      searchPath: [.init("/bin")], home: configuration.homeDirectory,
-      temporary: configuration.temporaryDirectory, cache: configuration.cacheDirectory)
-    await #expect(throws: ExecutionEnvironmentError.self) {
-      try await ExecutionLauncher(
-        platform: DarwinExecutionPlatform(
-          bootstrapExecutable: URL(fileURLWithPath: "/usr/bin/true"))
-      )
-      .run(
+    let bootstrap = fixture.root.appendingPathComponent("failed-bootstrap")
+    try """
+    #!/bin/sh
+    printf 'bootstrap fixture failed\\n' >&2
+    /usr/bin/yes diagnostic | /usr/bin/head -c 65536 >&2
+    exit 73
+    """.write(to: bootstrap, atomically: true, encoding: .utf8)
+    try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: bootstrap.path)
+    let callerError = Pipe()
+    let start = ContinuousClock.now
+    do {
+      _ = try await ExecutionLauncher(
+        platform: DarwinExecutionPlatform(bootstrapExecutable: bootstrap)
+      ).run(
         executable: .init("/bin/sh"), arguments: ["-c", "touch should-not-exist"],
-        directory: configuration.worktree, environment: environment, mode: .fullAccess,
-        method: .foundation)
+        directory: fixture.configuration().worktree,
+        environment: ExecutionEnvironment(fullAccessVariables: [:]), mode: .fullAccess,
+        method: method, error: callerError.fileHandleForWriting.fileDescriptor)
+      Issue.record("An exited bootstrap must fail launch")
+    } catch {
+      let message = String(describing: error)
+      #expect(message.contains("status 73"))
+      #expect(message.contains("bootstrap fixture failed"))
+      #expect(message.contains("[truncated]"))
+      #expect(message.utf8.count < 5000)
+      #expect(!message.contains("errno 35"))
     }
+    try callerError.fileHandleForWriting.close()
+    #expect(try callerError.fileHandleForReading.readToEnd()?.isEmpty != false)
+    #expect(start.duration(to: .now) < .seconds(5))
     #expect(
-      !FileManager.default.fileExists(atPath: configuration.worktree.value + "/should-not-exist"))
+      try !FileManager.default.fileExists(
+        atPath: fixture.configuration().worktree.value + "/should-not-exist"))
+  }
+
+  @Test(.timeLimit(.minutes(1)), arguments: ExecutionLaunchMethod.allCases, [false, true])
+  func handshakeToleratesDelayedPeer(method: ExecutionLaunchMethod, delayHost: Bool) async throws {
+    let fixture = try SeatbeltFixture()
+    defer { fixture.remove() }
+    let realBootstrap = try SeatbeltFixture.executionBootstrap
+    let bootstrap = fixture.root.appendingPathComponent("slow-bootstrap")
+    try """
+    #!/bin/sh
+    /bin/sleep 6
+    exec \"\(realBootstrap.path)\" \"$@\"
+    """.write(to: bootstrap, atomically: true, encoding: .utf8)
+    try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: bootstrap.path)
+    let output = Pipe()
+    let start = ContinuousClock.now
+    let exit = try await ExecutionLauncher(
+      platform: DarwinExecutionPlatform(bootstrapExecutable: delayHost ? realBootstrap : bootstrap)
+    ).run(
+      executable: .init("/bin/sh"), arguments: ["-c", "printf target-stderr >&2"],
+      directory: fixture.configuration().worktree,
+      environment: ExecutionEnvironment(fullAccessVariables: [:]), mode: .fullAccess,
+      method: method, error: output.fileHandleForWriting.fileDescriptor,
+      bindOwnership: { owner in
+        if delayHost { owner.beforeStart { _ in Thread.sleep(forTimeInterval: 6) } }
+      })
+    try output.fileHandleForWriting.close()
+    #expect(exit.status == 0)
+    #expect(try output.fileHandleForReading.readToEnd() == Data("target-stderr".utf8))
+    #expect(start.duration(to: .now) >= .seconds(6))
+  }
+
+  @Test(.timeLimit(.minutes(1)))
+  func managedLineProcessPreservesBootstrapFailure() async throws {
+    let fixture = try SeatbeltFixture()
+    defer { fixture.remove() }
+    let bootstrap = fixture.root.appendingPathComponent("failed-bootstrap")
+    try "#!/bin/sh\nprintf 'bootstrap line fixture failed' >&2\nexit 74\n"
+      .write(to: bootstrap, atomically: true, encoding: .utf8)
+    try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: bootstrap.path)
+    let process = try ManagedLineProcess(
+      launcher: ExecutionLauncher(
+        platform: DarwinExecutionPlatform(bootstrapExecutable: bootstrap)),
+      configuration: .init(executable: "/bin/cat", workingDirectory: fixture.root))
+    do {
+      for try await _ in process.inboundLines {}
+      Issue.record("Bootstrap failure must fail the line stream")
+    } catch {
+      #expect(String(describing: error).contains("status 74"))
+      #expect(String(describing: error).contains("bootstrap line fixture failed"))
+    }
+    await process.close()
+  }
+
+  @Test(.timeLimit(.minutes(1)), arguments: ExecutionLaunchMethod.allCases)
+  func ownershipAdmissionFailureRetainsItsType(method: ExecutionLaunchMethod) async throws {
+    let fixture = try SeatbeltFixture()
+    defer { fixture.remove() }
+    await #expect(throws: AdmissionFailure.refused) {
+      _ = try await ExecutionLauncher(platform: platform()).start(
+        executable: .init("/bin/sh"), arguments: ["-c", "touch should-not-exist"],
+        directory: .init(fixture.root.path),
+        environment: ExecutionEnvironment(fullAccessVariables: [:]), mode: .fullAccess,
+        method: method,
+        bindOwnership: { owner in
+          owner.beforeStart { _ in throw AdmissionFailure.refused }
+        })
+    }
+    #expect(!FileManager.default.fileExists(atPath: fixture.root.path + "/should-not-exist"))
+  }
+
+  @Test(.timeLimit(.minutes(1)))
+  func managedCloseWaitsForDelayedAdmission() async throws {
+    let fixture = try SeatbeltFixture()
+    defer { fixture.remove() }
+    let entered = AsyncStream<Void>.makeStream()
+    let process = try ManagedLineProcess(
+      launcher: ExecutionLauncher(
+        platform: AdmissionPlatform(
+          base: platform(),
+          beforeStart: {
+            entered.continuation.finish()
+            Thread.sleep(forTimeInterval: 6)
+          })),
+      configuration: .init(executable: "/bin/cat", workingDirectory: fixture.root))
+    for await _ in entered.stream {}
+    await process.close()
+    #expect(await process.snapshot().hasExited)
+    for try await _ in process.inboundLines {}
+  }
+
+  @Test(.timeLimit(.minutes(1)))
+  func managedAdmissionErrorsRemainRedacted() async throws {
+    let fixture = try SeatbeltFixture()
+    defer { fixture.remove() }
+    let process = try ManagedLineProcess(
+      launcher: ExecutionLauncher(
+        platform: AdmissionPlatform(
+          base: platform(),
+          beforeStart: {
+            throw ExecutionEnvironmentError.launchFailed("private-admission-payload")
+          })),
+      configuration: .init(executable: "/bin/cat", workingDirectory: fixture.root))
+    do {
+      for try await _ in process.inboundLines {}
+      Issue.record("Admission failure must fail the stream")
+    } catch {
+      #expect(!String(describing: error).contains("private-admission-payload"))
+      #expect(String(describing: error).contains("Managed process I/O failed"))
+    }
+    await process.close()
+  }
+
+  private enum AdmissionFailure: Error { case refused }
+
+  @Test(.timeLimit(.minutes(1)))
+  func partialIdentityReadUsesTheOriginalDeadline() throws {
+    var sockets: [Int32] = [-1, -1]
+    try #require(socketpair(AF_UNIX, SOCK_STREAM, 0, &sockets) == 0)
+    defer { for descriptor in sockets { close(descriptor) } }
+    var prefix: UInt64 = 1
+    try #require(write(sockets[1], &prefix, MemoryLayout<UInt64>.size) == 8)
+    let start = ContinuousClock.now
+    do {
+      _ = try DarwinProcessIdentity.receive(
+        from: sockets[0], pid: getpid(), deadline: start.advanced(by: .milliseconds(100)))
+      Issue.record("A partial identity cannot extend its deadline")
+    } catch let error as ExecutionBootstrapHandshakeFailure {
+      #expect(error.reason == "Launch handshake deadline exceeded")
+    }
+    #expect(start.duration(to: .now) < .seconds(5))
+  }
+
+  private struct AdmissionPlatform: ExecutionPlatform {
+    let base: DarwinExecutionPlatform
+    let beforeStart: @Sendable () throws -> Void
+
+    func start(
+      _ command: ExecutionCommand, sandbox: SandboxConfiguration?, method: ExecutionLaunchMethod,
+      input: Int32, output: Int32, error: Int32,
+      bindOwnership: @Sendable (any ExecutionOwnership) -> Void
+    ) async throws -> any ExecutionOwnership {
+      try await base.start(
+        command, sandbox: sandbox, method: method, input: input, output: output,
+        error: error,
+        bindOwnership: { owner in
+          bindOwnership(owner)
+          owner.beforeStart { _ in try beforeStart() }
+        })
+    }
   }
 
   @Test(.timeLimit(.minutes(1)), arguments: [false, true])
@@ -239,7 +409,7 @@ import Testing
     let start = ContinuousClock.now
     process.waitUntilExit()
     #expect(process.terminationStatus == 126)
-    #expect(start.duration(to: .now) < .seconds(8))
+    #expect(start.duration(to: .now) < .seconds(45))
     #expect(
       !FileManager.default.fileExists(
         atPath: fixture.root.appendingPathComponent("should-not-exist").path))
@@ -273,7 +443,7 @@ import Testing
   }
 
   @Test(.timeLimit(.minutes(1)))
-  func bootstrapConfirmsInputBeforeHostReleasesIt() throws {
+  func bootstrapConfirmsDescriptorsBeforeHostReleasesThem() throws {
     var sockets: [Int32] = [-1, -1]
     try #require(socketpair(AF_UNIX, SOCK_STREAM, 0, &sockets) == 0)
     defer { for descriptor in sockets where descriptor >= 0 { close(descriptor) } }
@@ -294,8 +464,8 @@ import Testing
     try process.run()
     _ = try DarwinProcessIdentity.receive(from: sockets[0], pid: process.processIdentifier)
     var control: [UInt32] = [
-      16, UInt32(SOL_SOCKET), UInt32(SCM_RIGHTS),
-      UInt32(bitPattern: input.fileHandleForReading.fileDescriptor),
+      20, UInt32(SOL_SOCKET), UInt32(SCM_RIGHTS),
+      UInt32(bitPattern: input.fileHandleForReading.fileDescriptor), UInt32(STDERR_FILENO),
     ]
     var acknowledgement: UInt8 = 1
     let sent = withUnsafeMutablePointer(to: &acknowledgement) { byte in

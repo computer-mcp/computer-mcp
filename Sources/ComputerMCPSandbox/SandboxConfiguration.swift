@@ -4,11 +4,16 @@ package enum ExecutionEnvironmentError: Error, Equatable, CustomStringConvertibl
   case invalidConfiguration(String)
   case unavailable(String)
   case launchFailed(String)
+  case bootstrapFailed(status: Int32, signal: Int32?, reason: String, standardError: String)
 
   package var description: String {
     switch self {
     case .invalidConfiguration(let reason), .unavailable(let reason), .launchFailed(let reason):
       return reason
+    case .bootstrapFailed(let status, let signal, let reason, let standardError):
+      return
+        "Bootstrap exited with status \(status)\(signal.map { " (signal \($0))" } ?? ""): \(reason)"
+        + (standardError.isEmpty ? "" : "; bootstrap stderr: \(standardError)")
     }
   }
 }

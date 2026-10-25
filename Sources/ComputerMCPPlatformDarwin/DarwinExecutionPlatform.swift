@@ -78,6 +78,7 @@ package struct DarwinExecutionPlatform: ExecutionPlatform {
         ] + command.arguments
       } ?? [command.executable.value] + command.arguments
     let channel = try ExecutionBootstrapChannel()
+    let diagnostics = try ExecutionBootstrapDiagnostics()
     let sentinel: DarwinExecutionSentinel?
     if marker != nil {
       sentinel = try await makeSentinel()
@@ -111,24 +112,32 @@ package struct DarwinExecutionPlatform: ExecutionPlatform {
                 input: .fileDescriptor(
                   .init(rawValue: channel.child), closeAfterSpawningProcess: false),
                 output: .fileDescriptor(.init(rawValue: output), closeAfterSpawningProcess: false),
-                error: .fileDescriptor(.init(rawValue: error), closeAfterSpawningProcess: false)
+                error: .fileDescriptor(
+                  .init(rawValue: diagnostics.writer), closeAfterSpawningProcess: false)
               ) { execution in
-                try await withCheckedThrowingContinuation { continuation in
+                channel.didSpawn()
+                diagnostics.didSpawn()
+                return await withCheckedContinuation { continuation in
                   DispatchQueue(label: "execution.launch", qos: .userInitiated).async {
-                    continuation.resume(
-                      with: Result {
-                        try channel.accept(
-                          pid: execution.processIdentifier.value, input: input,
-                          ownership: ownership)
-                      })
+                    let result = Result {
+                      try channel.accept(
+                        pid: execution.processIdentifier.value, input: input, error: error,
+                        ownership: ownership)
+                    }
+                    if case .failure = result { channel.disconnect() }
+                    continuation.resume(returning: result)
                   }
                 }
               }
+              let exit: ExecutionExit
               switch result.terminationStatus {
-              case .exited(let status): ownership.exited(.success(ExecutionExit(status: status)))
-              case .signaled(let signal):
-                ownership.exited(.success(ExecutionExit(status: 128 + signal, signal: signal)))
+              case .exited(let status): exit = ExecutionExit(status: status)
+              case .signaled(let signal): exit = ExecutionExit(status: 128 + signal, signal: signal)
               }
+              if case .failure(let failure) = result.closureResult {
+                throw diagnostics.failure(failure, exit: exit)
+              }
+              ownership.exited(.success(exit))
             } catch {
               channel.disconnect()
               ownership.exited(.failure(error))
@@ -141,12 +150,14 @@ package struct DarwinExecutionPlatform: ExecutionPlatform {
               if method == .foundation {
                 result = try foundation(
                   bootstrap, arguments: arguments, command: command, disclaim: sandbox == nil,
-                  input: input, output: output, error: error, channel: channel, ownership: ownership
+                  input: input, output: output, error: error, channel: channel,
+                  diagnostics: diagnostics, ownership: ownership
                 )
               } else {
                 result = try spawn(
                   bootstrap.path, arguments: arguments, command: command, disclaim: sandbox == nil,
-                  input: input, output: output, error: error, channel: channel, ownership: ownership
+                  input: input, output: output, error: error, channel: channel,
+                  diagnostics: diagnostics, ownership: ownership
                 )
               }
               ownership.exited(.success(result))
@@ -170,7 +181,8 @@ package struct DarwinExecutionPlatform: ExecutionPlatform {
   private func foundation(
     _ executable: URL, arguments: [String], command: ExecutionCommand,
     disclaim: Bool, input: Int32, output: Int32, error: Int32,
-    channel: ExecutionBootstrapChannel, ownership: DarwinExecutionOwnership
+    channel: ExecutionBootstrapChannel, diagnostics: ExecutionBootstrapDiagnostics,
+    ownership: DarwinExecutionOwnership
   ) throws -> ExecutionExit {
     let process = Process()
     process.executableURL = executable
@@ -179,21 +191,26 @@ package struct DarwinExecutionPlatform: ExecutionPlatform {
     process.currentDirectoryURL = URL(fileURLWithPath: command.directory.value)
     process.standardInput = FileHandle(fileDescriptor: channel.child, closeOnDealloc: false)
     process.standardOutput = FileHandle(fileDescriptor: output, closeOnDealloc: false)
-    process.standardError = FileHandle(fileDescriptor: error, closeOnDealloc: false)
+    process.standardError = FileHandle(fileDescriptor: diagnostics.writer, closeOnDealloc: false)
     if disclaim { try responsibility.disclaim(process) }
     try process.run()
+    channel.didSpawn()
+    diagnostics.didSpawn()
+    var failure: Error?
     do {
-      try channel.accept(pid: process.processIdentifier, input: input, ownership: ownership)
+      try channel.accept(
+        pid: process.processIdentifier, input: input, error: error, ownership: ownership)
     } catch {
       channel.disconnect()
-      process.waitUntilExit()
-      throw error
+      failure = error
     }
     process.waitUntilExit()
-    return ExecutionExit(
+    let exit = ExecutionExit(
       status: process.terminationReason == .exit
         ? process.terminationStatus : 128 + process.terminationStatus,
       signal: process.terminationReason == .exit ? nil : process.terminationStatus)
+    if let failure { throw diagnostics.failure(failure, exit: exit) }
+    return exit
   }
 
   private static func locateBootstrap() throws -> URL {
@@ -219,7 +236,8 @@ package struct DarwinExecutionPlatform: ExecutionPlatform {
   private func spawn(
     _ executable: String, arguments: [String], command: ExecutionCommand,
     disclaim: Bool, input: Int32, output: Int32, error: Int32,
-    channel: ExecutionBootstrapChannel, ownership: DarwinExecutionOwnership
+    channel: ExecutionBootstrapChannel, diagnostics: ExecutionBootstrapDiagnostics,
+    ownership: DarwinExecutionOwnership
   ) throws -> ExecutionExit {
     var attributes: posix_spawnattr_t?
     var actions: posix_spawn_file_actions_t?
@@ -246,7 +264,7 @@ package struct DarwinExecutionPlatform: ExecutionPlatform {
     }
     // Copy every source above all destinations before remapping, including overlapping mappings.
     let mappings =
-      [(STDIN_FILENO, channel.child), (STDOUT_FILENO, output), (STDERR_FILENO, error)]
+      [(STDIN_FILENO, channel.child), (STDOUT_FILENO, output), (STDERR_FILENO, diagnostics.writer)]
       + command.inheritedDescriptors.sorted { $0.key < $1.key }.map { ($0.key, $0.value) }
     let minimum = (mappings.map { $0.0 }.max() ?? 2) + 1
     var copies: [FileHandle] = []
@@ -288,8 +306,10 @@ package struct DarwinExecutionPlatform: ExecutionPlatform {
     }
     for handle in copies { try? handle.close() }
     copies.removeAll()
+    channel.didSpawn()
+    diagnostics.didSpawn()
     var failure: Error?
-    do { try channel.accept(pid: pid, input: input, ownership: ownership) } catch {
+    do { try channel.accept(pid: pid, input: input, error: error, ownership: ownership) } catch {
       channel.disconnect()
       failure = error
     }
@@ -297,10 +317,11 @@ package struct DarwinExecutionPlatform: ExecutionPlatform {
     while waitpid(pid, &status, 0) != pid {
       if errno != EINTR { throw ExecutionEnvironmentError.launchFailed("waitpid failed: \(errno)") }
     }
-    if let failure { throw failure }
     let signal = status & 0x7f
-    return ExecutionExit(
+    let exit = ExecutionExit(
       status: signal == 0 ? (status >> 8) & 0xff : 128 + signal, signal: signal == 0 ? nil : signal)
+    if let failure { throw diagnostics.failure(failure, exit: exit) }
+    return exit
   }
 
   private func check(_ status: Int32) throws {
@@ -314,6 +335,7 @@ package struct DarwinExecutionPlatform: ExecutionPlatform {
 private final class ExecutionBootstrapChannel: @unchecked Sendable {
   private var parent: Int32
   private(set) var child: Int32
+  private var deadline: ContinuousClock.Instant?
 
   init() throws {
     var sockets: [Int32] = [-1, -1]
@@ -325,7 +347,7 @@ private final class ExecutionBootstrapChannel: @unchecked Sendable {
     child = sockets[1]
     for descriptor in sockets {
       _ = fcntl(descriptor, F_SETFD, FD_CLOEXEC)
-      var timeout = timeval(tv_sec: 5, tv_usec: 0)
+      var timeout = timeval(tv_sec: 30, tv_usec: 0)
       var enabled: Int32 = 1
       guard
         setsockopt(
@@ -341,12 +363,25 @@ private final class ExecutionBootstrapChannel: @unchecked Sendable {
     }
   }
 
-  func accept(pid: pid_t, input: Int32, ownership: DarwinExecutionOwnership) throws {
-    // Keep both socket endpoints alive throughout the child's descriptor receipt.
-    let identity = try DarwinProcessIdentity.receive(from: parent, pid: pid)
+  func didSpawn() {
+    deadline = .now.advanced(by: .seconds(30))
+    // The host must not keep the peer alive: an early bootstrap exit must produce EOF.
+    if child >= 0 {
+      close(child)
+      child = -1
+    }
+  }
+
+  func accept(pid: pid_t, input: Int32, error: Int32, ownership: DarwinExecutionOwnership) throws {
+    guard let deadline else { preconditionFailure("Handshake requires a spawned child") }
+    let identity = try DarwinProcessIdentity.receive(from: parent, pid: pid, deadline: deadline)
     try ownership.launched(identity)
+    try ExecutionBootstrapDeadline.check(deadline)
     // Darwin CMSG_LEN/CMSG_SPACE align the header and payload to four bytes.
-    var control: [UInt32] = [16, UInt32(SOL_SOCKET), UInt32(SCM_RIGHTS), UInt32(bitPattern: input)]
+    var control: [UInt32] = [
+      20, UInt32(SOL_SOCKET), UInt32(SCM_RIGHTS), UInt32(bitPattern: input),
+      UInt32(bitPattern: error),
+    ]
     var acknowledgement: UInt8 = 1
     let sent = withUnsafeMutablePointer(to: &acknowledgement) { byte in
       var payload = iovec(iov_base: byte, iov_len: 1)
@@ -362,16 +397,19 @@ private final class ExecutionBootstrapChannel: @unchecked Sendable {
       }
     }
     guard sent == 1 else {
-      throw ExecutionEnvironmentError.launchFailed("Cannot acknowledge launch identity: \(errno)")
+      throw ExecutionBootstrapHandshakeFailure("Cannot acknowledge launch identity: \(errno)")
     }
-    // Keep the caller's input alive until the child owns the transferred descriptor.
+    // Keep the caller's descriptors alive until the child installs both transferred descriptors.
     var confirmation: UInt8 = 0
     var received: Int
-    repeat { received = recv(parent, &confirmation, 1, 0) } while received < 0 && errno == EINTR
+    repeat {
+      try ExecutionBootstrapDeadline.waitForReadable(parent, until: deadline)
+      received = recv(parent, &confirmation, 1, 0)
+    } while received < 0 && errno == EINTR
     guard received == 1, confirmation == 2 else {
       let status = received < 0 ? errno : 0
-      throw ExecutionEnvironmentError.launchFailed(
-        "Cannot confirm execution input handoff: received \(received), value \(confirmation), errno \(status)"
+      throw ExecutionBootstrapHandshakeFailure(
+        "Cannot confirm execution descriptor handoff: received \(received), value \(confirmation), errno \(status)"
       )
     }
     disconnect()
@@ -392,17 +430,47 @@ private final class ExecutionBootstrapChannel: @unchecked Sendable {
 
   deinit { disconnect() }
 }
+/// One monotonic budget covers scheduling, partial reads, ownership admission and confirmation.
+private enum ExecutionBootstrapDeadline {
+  static func check(_ deadline: ContinuousClock.Instant) throws {
+    guard ContinuousClock.now < deadline else {
+      throw ExecutionBootstrapHandshakeFailure("Launch handshake deadline exceeded")
+    }
+  }
+
+  static func waitForReadable(_ socket: Int32, until deadline: ContinuousClock.Instant) throws {
+    while true {
+      try check(deadline)
+      let remaining = ContinuousClock.now.duration(to: deadline).components
+      let milliseconds = max(
+        1, remaining.seconds * 1000 + remaining.attoseconds / 1_000_000_000_000_000)
+      var descriptor = pollfd(fd: socket, events: Int16(POLLIN), revents: 0)
+      let result = poll(&descriptor, 1, Int32(min(milliseconds, Int64(Int32.max))))
+      if result < 0, errno == EINTR { continue }
+      if result == 0 { continue }
+      guard result > 0 else {
+        throw ExecutionBootstrapHandshakeFailure("Launch handshake polling failed: \(errno)")
+      }
+      return
+    }
+  }
+}
+
 /// The bootstrap reports its kernel identity on the private launch channel before target exec.
 /// The spawn PID binds that report; ownership checks subsequent liveness and signal identities.
 struct DarwinProcessIdentity: Hashable, Sendable {
   let pid: pid_t
   let uniqueID: UInt64
 
-  static func receive(from socket: Int32, pid: pid_t) throws -> Self {
+  static func receive(
+    from socket: Int32, pid: pid_t,
+    deadline: ContinuousClock.Instant = .now.advanced(by: .seconds(30))
+  ) throws -> Self {
     var bytes = [UInt8](repeating: 0, count: 16)
     var offset = 0
     let started = ContinuousClock.now
     while offset < bytes.count {
+      try ExecutionBootstrapDeadline.waitForReadable(socket, until: deadline)
       let received = bytes.withUnsafeMutableBytes { buffer in
         recv(socket, buffer.baseAddress!.advanced(by: offset), buffer.count - offset, 0)
       }
@@ -411,7 +479,7 @@ struct DarwinProcessIdentity: Hashable, Sendable {
         let status = received < 0 ? errno : 0
         let elapsed = (ContinuousClock.now - started).components
         let milliseconds = elapsed.seconds * 1_000 + elapsed.attoseconds / 1_000_000_000_000_000
-        throw ExecutionEnvironmentError.launchFailed(
+        throw ExecutionBootstrapHandshakeFailure(
           "Launch identity handshake failed: received \(received), offset \(offset), errno \(status), after \(milliseconds) ms"
         )
       }
@@ -423,7 +491,7 @@ struct DarwinProcessIdentity: Hashable, Sendable {
         uniqueID: buffer.loadUnaligned(as: UInt64.self))
     }
     guard identity.pid == pid, identity.uniqueID != 0 else {
-      throw ExecutionEnvironmentError.launchFailed("Bootstrap reported an invalid launch identity")
+      throw ExecutionBootstrapHandshakeFailure("Bootstrap reported an invalid launch identity")
     }
     return identity
   }

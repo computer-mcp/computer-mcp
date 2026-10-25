@@ -409,8 +409,9 @@ Managed close delivers EOF first when input is idle. With an admitted operation
 it signals the owned process group immediately after startup has published its
 identity. SIGTERM escalates to SIGKILL after `terminationGraceMilliseconds`;
 managed close then allows `killGraceMilliseconds` for exit and reports a
-termination timeout if necessary. Startup identity has a separate five-second
-bound. Idle close can use one additional termination grace for EOF delivery.
+termination timeout if necessary. Startup identity has a separate 35-second
+allowance, covering the 30-second bootstrap handshake deadline and five-second
+supervisor PID wait. Idle close can use one additional termination grace for EOF delivery.
 Shell cancellation delegates to `ExecutionOwnership`, whose termination and
 confirmation do not wait for input to drain. The descriptor adapter uses
 nonblocking writes, stops them on execution cancellation or exit, joins admitted

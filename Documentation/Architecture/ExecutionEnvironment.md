@@ -179,10 +179,14 @@ method. `members` lists known identities whose exit is unconfirmed, including un
 members. Running sandboxes return their known identities without starting classification;
 after root exit or cancellation, the list reflects classification rounds. Launch does
 not wait for a round: the bootstrap's identity is recorded before acknowledgement.
-The bootstrap confirms receipt of the transferred stdin descriptor before the host
-closes either endpoint of the launch channel and returns the handle. The caller's
-input stays alive through that confirmation. A failed handshake rejects the launch;
-an exited bootstrap can leave the host waiting for the five-second receive timeout.
+The host closes its copy of the child socket immediately after spawning, so an
+early bootstrap exit produces EOF. The bootstrap confirms installation of the transferred
+stdin and stderr descriptors before the host closes its endpoint and returns the
+handle. The caller's descriptors stay alive through that confirmation. The host
+uses one monotonic 30-second deadline from spawn through identity receipt,
+ownership admission and confirmation. The bootstrap bounds its I/O waits at
+30 seconds as well. A failed handshake rejects the launch with the bootstrap exit status and
+at most 4 KiB of its stderr; target stderr goes directly to the caller.
 `wait` returns the command's exit status after the execution's completion check;
 `run` combines start and wait. Cancelling a waiter requests cancellation. `cancel`
 sends SIGTERM and performs identity-checked KILL rounds after a 500 millisecond
@@ -305,9 +309,13 @@ confirmation keeps both loopback port leases reserved.
 All execution launch methods use the private `computer-mcp-execution-bootstrap` executable. It
 establishes an isolated session, sends its kernel process identity through a
 socketpair, and waits for the host acknowledgement before executing the command.
-SCM_RIGHTS transfers the original input descriptor; output and error retain their
-original descriptors. EOF or an acknowledgement deadline ends bootstrap without
-executing the command. Missing bootstrap files refuse launches. The App packages
+SCM_RIGHTS transfers the original input and error descriptors; output retains its
+original descriptor. A separate drained pipe captures only bootstrap diagnostics
+until the error descriptor is installed before target exec. Both descriptors are
+installed before confirmation. EOF or an acknowledgement deadline ends bootstrap
+without executing the command. Host ownership-admission errors retain their
+original type and do not enter the bootstrap diagnostic envelope. Missing bootstrap
+files refuse launches. The App packages
 and signs it in `Contents/Helpers`; the embedded CLI finds that location, and
 standalone CLI builds use a sibling executable.
 

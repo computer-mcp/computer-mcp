@@ -53,7 +53,7 @@ let neutralTargets: [Target] =
     .testTarget(name: "ComputerMCPSandboxTests", dependencies: ["ComputerMCPSandbox"]),
     .target(
       name: "ComputerMCPCore",
-      dependencies: [.product(name: "Crypto", package: "swift-crypto")]
+      dependencies: ["ComputerMCPPermissions", .product(name: "Crypto", package: "swift-crypto")]
     ),
     .target(name: "ComputerMCPPlatform", dependencies: ["ComputerMCPCore"]),
     .target(name: "CSystemPOSIX"),
@@ -383,7 +383,8 @@ let neutralTargets: [Target] =
       ]
     ),
     .testTarget(
-      name: "ComputerMCPCoreTests", dependencies: ["ComputerMCPCore", "ComputerMCPTestSupport"]),
+      name: "ComputerMCPCoreTests",
+      dependencies: ["ComputerMCPCore", "ComputerMCPPermissions", "ComputerMCPTestSupport"]),
     .testTarget(
       name: "ComputerMCPPlatformTests",
       dependencies: ["ComputerMCPPlatform", "ComputerMCPTestSupport"]

@@ -181,6 +181,8 @@ struct BuiltinToolCatalogSnapshotTests {
           }
           fields["capability"] = .object([
             "risk": .string(descriptor.risk.rawValue),
+            "requirement": try .encoded(descriptor.requirement),
+            "hostServiceAction": descriptor.hostServiceAction.map { .string($0.rawValue) } ?? .null,
             "projectRequirement": .string(descriptor.projectRequirement.rawValue),
             "localOnly": .bool(descriptor.localOnly), "usesNetwork": .bool(descriptor.usesNetwork),
           ])

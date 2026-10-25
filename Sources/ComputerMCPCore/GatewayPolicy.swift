@@ -133,6 +133,7 @@ package enum ProjectRequirement: String, Codable, Sendable {
 package struct CapabilityDescriptor: Codable, Equatable, Sendable {
   package var id: String
   package var risk: CapabilityRisk
+  package var requirement: ToolRequirement
   package var projectRequirement: ProjectRequirement
   package var localOnly: Bool
   package var usesNetwork: Bool
@@ -144,6 +145,7 @@ package struct CapabilityDescriptor: Codable, Equatable, Sendable {
   package init(
     id: String,
     risk: CapabilityRisk,
+    requirement: ToolRequirement,
     projectRequirement: ProjectRequirement = .none,
     localOnly: Bool = false,
     usesNetwork: Bool = false,
@@ -154,6 +156,7 @@ package struct CapabilityDescriptor: Codable, Equatable, Sendable {
   ) {
     self.id = id
     self.risk = risk
+    self.requirement = requirement
     self.projectRequirement = projectRequirement
     self.localOnly = localOnly
     self.usesNetwork = usesNetwork
@@ -360,16 +363,21 @@ package struct ProfileGrant: Codable, Equatable, Sendable {
   package func grants(_ capability: CapabilityDescriptor) -> Bool {
     if capabilityIDs.contains("*") { return true }
     if let reference = capability.mcpReference {
-      // The generic call capability explicitly grants the host-selected tools across registrations.
-      if mcpServerIDs.contains(reference.serverID) || capabilityIDs.contains("mcp.tools.call") {
-        return true
-      }
-      let names = Set([capability.id] + (capability.equivalentCapabilityIDs ?? []))
-        .subtracting(Self.mcpSurfaceCapabilities)
-      return !capabilityIDs.isDisjoint(with: names)
+      return grantsMCP(
+        reference, capabilityIDs: [capability.id] + (capability.equivalentCapabilityIDs ?? []))
     }
     if capabilityIDs.contains(capability.id) { return true }
     return !mcpServerIDs.isEmpty && Self.mcpSurfaceCapabilities.contains(capability.id)
+  }
+
+  /// Registration grant matching does not need a dispatch descriptor or discovery.
+  package func grantsMCP(_ reference: MCPToolReference, capabilityIDs names: [String]) -> Bool {
+    if capabilityIDs.contains("*") || mcpServerIDs.contains(reference.serverID)
+      || capabilityIDs.contains("mcp.tools.call")
+    {
+      return true
+    }
+    return !capabilityIDs.isDisjoint(with: Set(names).subtracting(Self.mcpSurfaceCapabilities))
   }
 
   package static let mcpSurfaceCapabilities: Set<String> = [

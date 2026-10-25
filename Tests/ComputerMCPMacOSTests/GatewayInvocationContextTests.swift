@@ -163,7 +163,7 @@ struct GatewayInvocationContextTests {
     let admission = try #require(
       InvocationAdmission(
         descriptor: .init(
-          id: "fixture.inspect", risk: .readOnly,
+          id: "fixture.inspect", risk: .readOnly, requirement: .none,
           mcpReference: .init(serverID: "fixture", toolName: "inspect")),
         hostInvocationID: UUID()))
     let context = InvocationContext(
@@ -310,7 +310,7 @@ struct GatewayInvocationContextTests {
       principalID: "context-client", profileID: .localAdmin, caller: .localMCP)
     let route = InvocationRouteProbe()
     let descriptor = CapabilityDescriptor(
-      id: "fixture.inspect", risk: .readOnly,
+      id: "fixture.inspect", risk: .readOnly, requirement: .none,
       mcpReference: .init(serverID: server.id, toolName: "inspect"))
     let admission = try #require(
       InvocationAdmission(descriptor: descriptor, hostInvocationID: UUID()))
@@ -341,7 +341,7 @@ struct GatewayInvocationContextTests {
     let admission = try #require(
       InvocationAdmission(
         descriptor: .init(
-          id: "fixture.inspect", risk: .readOnly,
+          id: "fixture.inspect", risk: .readOnly, requirement: .none,
           mcpReference: .init(serverID: "fixture", toolName: "inspect"))))
     let context = InvocationContext(
       admission: admission, session: fixture.session, continuation: route)

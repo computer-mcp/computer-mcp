@@ -20,6 +20,7 @@ package struct InvocationAdmission: Sendable {
 package protocol ContinuationRoute: Sendable {}
 
 package struct InvocationContext: Sendable {
+  package let resolvedInvocation: ResolvedToolInvocation?
   package let admission: InvocationAdmission?
   /// The live authority is retained so checks observe restriction and revocation.
   package let session: (any GatewaySessionAuthority)?
@@ -31,11 +32,13 @@ package struct InvocationContext: Sendable {
   package static let empty = InvocationContext()
 
   package init(
+    resolvedInvocation: ResolvedToolInvocation? = nil,
     admission: InvocationAdmission? = nil,
     session: (any GatewaySessionAuthority)? = nil,
     continuation: (any ContinuationRoute)? = nil,
     executionRecoveryKey: String? = nil
   ) {
+    self.resolvedInvocation = resolvedInvocation
     self.admission = admission
     self.session = session
     self.continuation = continuation

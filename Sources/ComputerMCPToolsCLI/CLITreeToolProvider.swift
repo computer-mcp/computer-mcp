@@ -38,7 +38,11 @@ struct CLITreeToolProvider: GatewayToolProvider {
             ])
           ])),
         capability: CapabilityDescriptor(
-          id: name, risk: .fullShell, projectRequirement: .required))
+          id: name, risk: .fullShell,
+          requirement: .init(
+            access: .projectWrite, execution: .start,
+            contribution: .cli(registration: .registered(id: registration.id))),
+          projectRequirement: .required))
     }
   }
 

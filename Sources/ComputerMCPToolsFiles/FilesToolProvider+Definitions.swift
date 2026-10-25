@@ -20,6 +20,7 @@ extension FilesToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "file.exists", risk: .readOnly,
+          requirement: .init(access: .read, paths: [.init("path", .read)]),
           projectRequirement: .required,
           localOnly: false, usesNetwork: false
         )
@@ -46,6 +47,8 @@ extension FilesToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "file.list", risk: .readOnly,
+          requirement: .init(
+            access: .read, paths: [.init("path", .listDirectory, defaultToProject: true)]),
           projectRequirement: .required,
           localOnly: false, usesNetwork: false
         )
@@ -74,6 +77,8 @@ extension FilesToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "file.tree", risk: .readOnly,
+          requirement: .init(
+            access: .read, paths: [.init("path", .listDirectory, defaultToProject: true)]),
           projectRequirement: .required,
           localOnly: false, usesNetwork: false
         )
@@ -95,6 +100,7 @@ extension FilesToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "file.stat", risk: .readOnly,
+          requirement: .init(access: .read, paths: [.init("path", .read)]),
           projectRequirement: .required,
           localOnly: false, usesNetwork: false
         )
@@ -116,6 +122,7 @@ extension FilesToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "file.permissions", risk: .readOnly,
+          requirement: .init(access: .read, paths: [.init("path", .read)]),
           projectRequirement: .required,
           localOnly: false, usesNetwork: false
         )
@@ -144,6 +151,7 @@ extension FilesToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "file.chmod", risk: .destructive,
+          requirement: .init(access: .projectWrite, paths: [.init("path", .write)]),
           projectRequirement: .required,
           localOnly: false, usesNetwork: false
         )
@@ -168,6 +176,7 @@ extension FilesToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "file.type", risk: .readOnly,
+          requirement: .init(access: .read, paths: [.init("path", .read)]),
           projectRequirement: .required,
           localOnly: false, usesNetwork: false
         )
@@ -192,6 +201,7 @@ extension FilesToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "file.count", risk: .readOnly,
+          requirement: .init(access: .read, paths: [.init("path", .read)]),
           projectRequirement: .required,
           localOnly: false, usesNetwork: false
         )
@@ -216,6 +226,7 @@ extension FilesToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "file.disk_usage", risk: .readOnly,
+          requirement: .init(access: .read, paths: [.init("path", .read)]),
           projectRequirement: .required,
           localOnly: false, usesNetwork: false
         )
@@ -238,6 +249,7 @@ extension FilesToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "file.volume_info", risk: .readOnly,
+          requirement: .init(access: .read, paths: [.init("path", .read, defaultToProject: true)]),
           projectRequirement: .required,
           localOnly: false, usesNetwork: false
         )
@@ -267,6 +279,7 @@ extension FilesToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "file.find", risk: .readOnly,
+          requirement: .init(access: .read, paths: [.init("path", .read, defaultToProject: true)]),
           projectRequirement: .required,
           localOnly: false, usesNetwork: false
         )
@@ -298,6 +311,7 @@ extension FilesToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "file.search", risk: .readOnly,
+          requirement: .init(access: .read, paths: [.init("path", .read, defaultToProject: true)]),
           projectRequirement: .required,
           localOnly: false, usesNetwork: false
         )
@@ -332,6 +346,7 @@ extension FilesToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "file.timeline", risk: .readOnly,
+          requirement: .init(access: .read, paths: [.init("path", .read, defaultToProject: true)]),
           projectRequirement: .required,
           localOnly: false, usesNetwork: false
         )
@@ -353,6 +368,7 @@ extension FilesToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "file.read", risk: .readOnly,
+          requirement: .init(access: .read, paths: [.init("path", .read)]),
           projectRequirement: .required,
           localOnly: false, usesNetwork: false
         )
@@ -379,6 +395,7 @@ extension FilesToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "file.read_files", risk: .readOnly,
+          requirement: .init(access: .read, paths: [.init("paths[]", .read)]),
           projectRequirement: .required,
           localOnly: false, usesNetwork: false
         )
@@ -404,6 +421,7 @@ extension FilesToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "file.read_window", risk: .readOnly,
+          requirement: .init(access: .read, paths: [.init("path", .read)]),
           projectRequirement: .required,
           localOnly: false, usesNetwork: false
         )
@@ -429,6 +447,7 @@ extension FilesToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "file.read_lines", risk: .readOnly,
+          requirement: .init(access: .read, paths: [.init("path", .read)]),
           projectRequirement: .required,
           localOnly: false, usesNetwork: false
         )
@@ -456,6 +475,7 @@ extension FilesToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "file.read_context", risk: .readOnly,
+          requirement: .init(access: .read, paths: [.init("path", .read)]),
           projectRequirement: .required,
           localOnly: false, usesNetwork: false
         )
@@ -481,6 +501,7 @@ extension FilesToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "file.head", risk: .readOnly,
+          requirement: .init(access: .read, paths: [.init("path", .read)]),
           projectRequirement: .required,
           localOnly: false, usesNetwork: false
         )
@@ -509,6 +530,7 @@ extension FilesToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "file.outline", risk: .readOnly,
+          requirement: .init(access: .read, paths: [.init("path", .read)]),
           projectRequirement: .required,
           localOnly: false, usesNetwork: false
         )
@@ -533,6 +555,7 @@ extension FilesToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "file.tail", risk: .readOnly,
+          requirement: .init(access: .read, paths: [.init("path", .read)]),
           projectRequirement: .required,
           localOnly: false, usesNetwork: false
         )
@@ -556,6 +579,7 @@ extension FilesToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "file.hexdump", risk: .readOnly,
+          requirement: .init(access: .read, paths: [.init("path", .read)]),
           projectRequirement: .required,
           localOnly: false, usesNetwork: false
         )
@@ -582,6 +606,7 @@ extension FilesToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "file.xattrs", risk: .readOnly,
+          requirement: .init(access: .read, paths: [.init("path", .read)]),
           projectRequirement: .required,
           localOnly: false, usesNetwork: false
         )
@@ -607,6 +632,7 @@ extension FilesToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "file.remove_xattr", risk: .destructive,
+          requirement: .init(access: .projectWrite, paths: [.init("path", .write)]),
           projectRequirement: .required,
           localOnly: false, usesNetwork: false
         )
@@ -633,6 +659,7 @@ extension FilesToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "file.metadata", risk: .readOnly,
+          requirement: .init(access: .read, paths: [.init("path", .read)]),
           projectRequirement: .required,
           localOnly: false, usesNetwork: false
         )
@@ -654,6 +681,7 @@ extension FilesToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "file.readlink", risk: .readOnly,
+          requirement: .init(access: .read, paths: [.init("path", .read)]),
           projectRequirement: .required,
           localOnly: false, usesNetwork: false
         )
@@ -675,6 +703,7 @@ extension FilesToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "file.resolve", risk: .readOnly,
+          requirement: .init(access: .read, paths: [.init("path", .read)]),
           projectRequirement: .required,
           localOnly: false, usesNetwork: false
         )
@@ -697,6 +726,7 @@ extension FilesToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "file.hash", risk: .readOnly,
+          requirement: .init(access: .read, paths: [.init("path", .read)]),
           projectRequirement: .required,
           localOnly: false, usesNetwork: false
         )
@@ -725,6 +755,8 @@ extension FilesToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "file.diff", risk: .readOnly,
+          requirement: .init(
+            access: .read, paths: [.init("source", .read), .init("target", .read)]),
           projectRequirement: .required,
           localOnly: false, usesNetwork: false
         )
@@ -762,6 +794,7 @@ extension FilesToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "file.compare_trees", risk: .readOnly,
+          requirement: .init(access: .read, paths: [.init("left", .read), .init("right", .read)]),
           projectRequirement: .required,
           localOnly: false, usesNetwork: false
         )
@@ -798,6 +831,7 @@ extension FilesToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "file.duplicates", risk: .readOnly,
+          requirement: .init(access: .read, paths: [.init("path", .read, defaultToProject: true)]),
           projectRequirement: .required,
           localOnly: false, usesNetwork: false
         )
@@ -823,6 +857,7 @@ extension FilesToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "archive.list", risk: .readOnly,
+          requirement: .init(access: .read, paths: [.init("path", .read)]),
           projectRequirement: .optional,
           localOnly: false, usesNetwork: false
         )
@@ -851,6 +886,7 @@ extension FilesToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "archive.read_file", risk: .readOnly,
+          requirement: .init(access: .read, paths: [.init("path", .read)]),
           projectRequirement: .optional,
           localOnly: false, usesNetwork: false
         )
@@ -892,6 +928,8 @@ extension FilesToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "archive.extract", risk: .destructive,
+          requirement: .init(
+            access: .projectWrite, paths: [.init("path", .read), .init("destination", .write)]),
           projectRequirement: .optional,
           localOnly: false, usesNetwork: false
         )
@@ -937,6 +975,8 @@ extension FilesToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "archive.create", risk: .destructive,
+          requirement: .init(
+            access: .projectWrite, paths: [.init("path", .write), .init("sources[]", .read)]),
           projectRequirement: .optional,
           localOnly: false, usesNetwork: false
         )
@@ -983,6 +1023,8 @@ extension FilesToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "file.download", risk: .destructive,
+          requirement: .init(
+            access: .projectWrite, paths: [.init("path", .write)], networkURL: "url"),
           projectRequirement: .required,
           localOnly: false, usesNetwork: true
         )
@@ -1016,6 +1058,7 @@ extension FilesToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "file.write", risk: .destructive,
+          requirement: .init(access: .projectWrite, paths: [.init("path", .write)]),
           projectRequirement: .required,
           localOnly: false, usesNetwork: false
         )
@@ -1064,6 +1107,8 @@ extension FilesToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "file.write_files", risk: .destructive,
+          requirement: .init(
+            access: .projectWrite, paths: [.init("files[].path", .write)]),
           projectRequirement: .required,
           localOnly: false, usesNetwork: false
         )
@@ -1100,6 +1145,7 @@ extension FilesToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "file.append", risk: .projectWrite,
+          requirement: .init(access: .projectWrite, paths: [.init("path", .write)]),
           projectRequirement: .required,
           localOnly: false, usesNetwork: false
         )
@@ -1137,6 +1183,7 @@ extension FilesToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "file.replace_text", risk: .destructive,
+          requirement: .init(access: .projectWrite, paths: [.init("path", .write)]),
           projectRequirement: .required,
           localOnly: false, usesNetwork: false
         )
@@ -1175,6 +1222,7 @@ extension FilesToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "file.insert_text", risk: .destructive,
+          requirement: .init(access: .projectWrite, paths: [.init("path", .write)]),
           projectRequirement: .required,
           localOnly: false, usesNetwork: false
         )
@@ -1214,6 +1262,7 @@ extension FilesToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "file.replace_lines", risk: .destructive,
+          requirement: .init(access: .projectWrite, paths: [.init("path", .write)]),
           projectRequirement: .required,
           localOnly: false, usesNetwork: false
         )
@@ -1242,6 +1291,7 @@ extension FilesToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "file.touch", risk: .destructive,
+          requirement: .init(access: .projectWrite, paths: [.init("path", .write)]),
           projectRequirement: .required,
           localOnly: false, usesNetwork: false
         )
@@ -1269,6 +1319,7 @@ extension FilesToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "file.mkdir", risk: .projectWrite,
+          requirement: .init(access: .projectWrite, paths: [.init("path", .write)]),
           projectRequirement: .required,
           localOnly: false, usesNetwork: false
         )
@@ -1300,6 +1351,8 @@ extension FilesToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "file.copy", risk: .destructive,
+          requirement: .init(
+            access: .projectWrite, paths: [.init("source", .read), .init("destination", .write)]),
           projectRequirement: .required,
           localOnly: false, usesNetwork: false
         )
@@ -1331,6 +1384,8 @@ extension FilesToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "file.move", risk: .destructive,
+          requirement: .init(
+            access: .projectWrite, paths: [.init("source", .write), .init("destination", .write)]),
           projectRequirement: .required,
           localOnly: false, usesNetwork: false
         )
@@ -1368,6 +1423,12 @@ extension FilesToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "file.symlink", risk: .projectWrite,
+          requirement: .init(
+            access: .projectWrite,
+            paths: [
+              .init("path", .write),
+              .init("destination", .read, relativeBase: .linkParent(argument: "path")),
+            ]),
           projectRequirement: .required,
           localOnly: false, usesNetwork: false
         )
@@ -1393,6 +1454,7 @@ extension FilesToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "file.trash", risk: .destructive,
+          requirement: .init(access: .projectWrite, paths: [.init("path", .write)]),
           projectRequirement: .required,
           localOnly: false, usesNetwork: false
         )

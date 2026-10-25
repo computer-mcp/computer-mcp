@@ -14,6 +14,7 @@ extension DeliveryToolProvider {
           meta: toolMeta),
         capability: CapabilityDescriptor(
           id: "delivery.scopes.list", risk: .readOnly,
+          requirement: .init(access: .read, paths: [.project(.read)]),
           projectRequirement: .required, localOnly: false, usesNetwork: false)),
       ToolDefinition(
         tool: MCPTool(
@@ -78,6 +79,9 @@ extension DeliveryToolProvider {
           meta: toolMeta),
         capability: CapabilityDescriptor(
           id: "delivery.apply", risk: .projectWrite,
+          requirement: .init(
+            access: .projectWrite,
+            paths: [.init("edits[].path", .write, relativeBase: .deliveryScope(argument: "scope"))]),
           projectRequirement: .required, localOnly: false, usesNetwork: false)),
     ]
   }

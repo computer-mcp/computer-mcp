@@ -78,6 +78,7 @@ package enum GatewayOwnerRouting {
           readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false)),
       capability: CapabilityDescriptor(
         id: "runtime.owners.list", risk: .readOnly,
+        requirement: .init(access: .read, paths: [.project(.read)]),
         projectRequirement: .required,
         localOnly: false, usesNetwork: false
       )
@@ -115,6 +116,8 @@ package enum GatewayOwnerRouting {
           readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: true)),
       capability: CapabilityDescriptor(
         id: "runtime.owners.call", risk: .readOnly,
+        requirement: .init(
+          access: .none, target: .forwarded(tool: "tool", arguments: "arguments", server: nil)),
         projectRequirement: .required,
         localOnly: false, usesNetwork: false
       )

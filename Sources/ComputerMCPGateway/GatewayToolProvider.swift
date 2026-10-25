@@ -102,6 +102,12 @@ internal final class GatewayProviderRouter: GatewayToolServing, Sendable {
     try route(named: name, context: context).capability
   }
 
+  internal func requirement(named name: String, context: InvocationContext) throws
+    -> ToolRequirement
+  {
+    try route(named: name, context: context).capability.requirement
+  }
+
   /// A private locator survives catalog hiding while native work still owns its binding.
   internal func continuationReference(named name: String) -> MCPToolReference? {
     state.withLockedValue { state in

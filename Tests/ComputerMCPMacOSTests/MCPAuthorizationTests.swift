@@ -207,7 +207,7 @@ struct MCPAuthorizationTests {
     let grant = ProfileGrant(
       id: profileID, capabilityIDs: ["*"], allowedCallers: [caller], mode: .readOnly)
     let decision = GatewayPolicyEvaluator().evaluate(
-      capability: .init(id: "remote.inspect", risk: .externalWrite),
+      capability: .init(id: "remote.inspect", risk: .externalWrite, requirement: .none),
       context: .init(caller: caller, profileID: profileID), grant: grant,
       registeredProjectIDs: [])
     #expect(

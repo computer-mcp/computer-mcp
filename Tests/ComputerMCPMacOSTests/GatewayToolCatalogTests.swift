@@ -642,7 +642,7 @@ private struct CatalogSingleToolFixture: GatewayToolProvider {
   let id = "fixture"
   let tool: MCPTool
   func definitions() throws -> [ToolDefinition] {
-    [.init(tool: tool, capability: .init(id: tool.name, risk: .externalWrite))]
+    [.init(tool: tool, capability: .init(id: tool.name, risk: .externalWrite, requirement: .none))]
   }
   func callTool(_ invocation: ToolInvocation) throws -> JSONValue { .null }
 }
@@ -676,7 +676,7 @@ private struct CatalogProviderFixture: GatewayToolProvider {
               "revision": .object(["type": .string("integer"), "const": .number(Double(revision))])
             ]),
           ])),
-        capability: .init(id: $0, risk: risk))
+        capability: .init(id: $0, risk: risk, requirement: .none))
     }
   }
   func callTool(_ invocation: ToolInvocation) throws -> JSONValue {

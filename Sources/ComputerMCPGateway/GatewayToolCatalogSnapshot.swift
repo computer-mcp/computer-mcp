@@ -5,6 +5,7 @@ import Foundation
 struct GatewayToolCatalogSnapshot: Sendable {
   struct Route: Sendable {
     let tool: MCPTool
+    var requirement: ToolRequirement { capability.requirement }
     let capability: CapabilityDescriptor
     let provider: any GatewayToolProvider
   }

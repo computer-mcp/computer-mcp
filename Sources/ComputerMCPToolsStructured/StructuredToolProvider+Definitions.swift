@@ -33,6 +33,7 @@ extension StructuredToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "markdown.links", risk: .readOnly,
+          requirement: .init(access: .read, paths: [.init("path", .read)]),
           projectRequirement: .optional,
           localOnly: false, usesNetwork: false
         )
@@ -63,6 +64,7 @@ extension StructuredToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "markdown.tables", risk: .readOnly,
+          requirement: .init(access: .read, paths: [.init("path", .read)]),
           projectRequirement: .optional,
           localOnly: false, usesNetwork: false
         )
@@ -99,6 +101,7 @@ extension StructuredToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "markdown.section", risk: .readOnly,
+          requirement: .init(access: .read, paths: [.init("path", .read)]),
           projectRequirement: .optional,
           localOnly: false, usesNetwork: false
         )
@@ -129,6 +132,7 @@ extension StructuredToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "markdown.frontmatter", risk: .readOnly,
+          requirement: .init(access: .read, paths: [.init("path", .read)]),
           projectRequirement: .optional,
           localOnly: false, usesNetwork: false
         )
@@ -169,6 +173,7 @@ extension StructuredToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "markdown.link_check", risk: .readOnly,
+          requirement: .init(access: .read, paths: [.init("path", .read)]),
           projectRequirement: .optional,
           localOnly: false, usesNetwork: false
         )
@@ -197,6 +202,7 @@ extension StructuredToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "image.info", risk: .readOnly,
+          requirement: .init(access: .read, paths: [.init("path", .read)]),
           projectRequirement: .optional,
           localOnly: false, usesNetwork: false
         )
@@ -227,6 +233,7 @@ extension StructuredToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "pdf.info", risk: .readOnly,
+          requirement: .init(access: .read, paths: [.init("path", .read)]),
           projectRequirement: .optional,
           localOnly: false, usesNetwork: false
         )
@@ -254,6 +261,7 @@ extension StructuredToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "pdf.text", risk: .readOnly,
+          requirement: .init(access: .read, paths: [.init("path", .read)]),
           projectRequirement: .optional,
           localOnly: false, usesNetwork: false
         )
@@ -281,6 +289,7 @@ extension StructuredToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "media.info", risk: .readOnly,
+          requirement: .init(access: .read, paths: [.init("path", .read)]),
           projectRequirement: .optional,
           localOnly: false, usesNetwork: false
         )
@@ -305,6 +314,7 @@ extension StructuredToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "json.read", risk: .readOnly,
+          requirement: .init(access: .read, paths: [.init("path", .read)]),
           projectRequirement: .optional,
           localOnly: false, usesNetwork: false
         )
@@ -338,6 +348,7 @@ extension StructuredToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "jsonl.read", risk: .readOnly,
+          requirement: .init(access: .read, paths: [.init("path", .read)]),
           projectRequirement: .optional,
           localOnly: false, usesNetwork: false
         )
@@ -382,6 +393,7 @@ extension StructuredToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "json.write", risk: .destructive,
+          requirement: .init(access: .projectWrite, paths: [.init("path", .write)]),
           projectRequirement: .optional,
           localOnly: false, usesNetwork: false
         )
@@ -406,6 +418,7 @@ extension StructuredToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "toml.read", risk: .readOnly,
+          requirement: .init(access: .read, paths: [.init("path", .read)]),
           projectRequirement: .optional,
           localOnly: false, usesNetwork: false
         )
@@ -434,6 +447,7 @@ extension StructuredToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "yaml.read", risk: .readOnly,
+          requirement: .init(access: .read, paths: [.init("path", .read)]),
           projectRequirement: .optional,
           localOnly: false, usesNetwork: false
         )
@@ -467,6 +481,7 @@ extension StructuredToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "xml.read", risk: .readOnly,
+          requirement: .init(access: .read, paths: [.init("path", .read)]),
           projectRequirement: .optional,
           localOnly: false, usesNetwork: false
         )
@@ -491,6 +506,7 @@ extension StructuredToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "plist.read", risk: .readOnly,
+          requirement: .init(access: .read, paths: [.init("path", .read)]),
           projectRequirement: .optional,
           localOnly: false, usesNetwork: false
         )
@@ -536,6 +552,7 @@ extension StructuredToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "structured.get", risk: .readOnly,
+          requirement: .init(access: .read, paths: [.init("path", .read)]),
           projectRequirement: .optional,
           localOnly: false, usesNetwork: false
         )
@@ -579,6 +596,7 @@ extension StructuredToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "plist.write", risk: .destructive,
+          requirement: .init(access: .projectWrite, paths: [.init("path", .write)]),
           projectRequirement: .optional,
           localOnly: false, usesNetwork: false
         )
@@ -611,6 +629,7 @@ extension StructuredToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "csv.read", risk: .readOnly,
+          requirement: .init(access: .read, paths: [.init("path", .read)]),
           projectRequirement: .optional,
           localOnly: false, usesNetwork: false
         )
@@ -646,6 +665,7 @@ extension StructuredToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "sqlite.schema", risk: .readOnly,
+          requirement: .init(access: .read, paths: [.init("path", .read)]),
           projectRequirement: .optional,
           localOnly: false, usesNetwork: false
         )
@@ -678,6 +698,7 @@ extension StructuredToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "sqlite.query", risk: .readOnly,
+          requirement: .init(access: .read, paths: [.init("path", .read)]),
           projectRequirement: .optional,
           localOnly: false, usesNetwork: false
         )

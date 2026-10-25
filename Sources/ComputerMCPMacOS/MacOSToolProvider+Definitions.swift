@@ -26,6 +26,7 @@ extension MacOSToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "macos.user_directories", risk: .readOnly,
+          requirement: .privacy(.machineInformation),
           projectRequirement: .none,
           localOnly: false, usesNetwork: false
         )
@@ -55,6 +56,9 @@ extension MacOSToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "macos.default_application", risk: .readOnly,
+          requirement: .init(
+            access: .none, permissions: [try! .init(.machineInformation, .access)],
+            paths: [.init("path", .read)]),
           projectRequirement: .none,
           localOnly: false, usesNetwork: false
         )
@@ -82,6 +86,7 @@ extension MacOSToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "macos.applications", risk: .readOnly,
+          requirement: .privacy(.machineInformation),
           projectRequirement: .none,
           localOnly: false, usesNetwork: false
         )
@@ -98,6 +103,7 @@ extension MacOSToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "macos.screens", risk: .readOnly,
+          requirement: .privacy(.machineInformation),
           projectRequirement: .none,
           localOnly: false, usesNetwork: false
         )
@@ -128,6 +134,9 @@ extension MacOSToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "macos.spotlight_search", risk: .readOnly,
+          requirement: .init(
+            access: .none, permissions: [try! .init(.machineInformation, .access)],
+            paths: [.init("path", .read, defaultToProject: true)]),
           projectRequirement: .none,
           localOnly: false, usesNetwork: false
         )
@@ -156,6 +165,7 @@ extension MacOSToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "macos.running_applications", risk: .readOnly,
+          requirement: .privacy(.machineInformation),
           projectRequirement: .none,
           localOnly: false, usesNetwork: false
         )
@@ -172,6 +182,7 @@ extension MacOSToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "macos.frontmost_application", risk: .readOnly,
+          requirement: .privacy(.machineInformation),
           projectRequirement: .none,
           localOnly: false, usesNetwork: false
         )

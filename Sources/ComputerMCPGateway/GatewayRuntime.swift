@@ -2141,6 +2141,11 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
       context: .init(session: context.controlSession, continuation: invocationContext.continuation))
     descriptor.risk = admission.risk
     descriptor.hostServiceAction = admission.hostServiceAction
+    guard let server = configuration.mcp.servers.first(where: { $0.id == reference.serverID })
+    else {
+      throw GatewayToolError.unknownMCPServer(reference.serverID)
+    }
+    descriptor.requirement = server.requirement(for: admission)
     return descriptor
   }
 
@@ -2343,7 +2348,7 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
           )
         ),
         capability: CapabilityDescriptor(
-          id: "project.list", risk: .readOnly,
+          id: "project.list", risk: .readOnly, requirement: .none,
           projectRequirement: .none,
           localOnly: false, usesNetwork: false
         )
@@ -2371,7 +2376,7 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
           )
         ),
         capability: CapabilityDescriptor(
-          id: "project.describe", risk: .readOnly,
+          id: "project.describe", risk: .readOnly, requirement: .none,
           projectRequirement: .none,
           localOnly: false, usesNetwork: false
         )
@@ -2411,7 +2416,7 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
           )
         ),
         capability: CapabilityDescriptor(
-          id: "policy.probe", risk: .readOnly,
+          id: "policy.probe", risk: .readOnly, requirement: .none,
           projectRequirement: .optional,
           localOnly: false, usesNetwork: false
         )
@@ -2435,6 +2440,8 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
           ),
           capability: CapabilityDescriptor(
             id: "operations.prepare", risk: .externalWrite,
+            requirement: .init(
+              access: .none, target: .forwarded(tool: "tool", arguments: "arguments", server: nil)),
             projectRequirement: .optional,
             localOnly: false, usesNetwork: false
           )
@@ -2456,6 +2463,8 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
           ),
           capability: CapabilityDescriptor(
             id: "operations.commit", risk: .externalWrite,
+            requirement: .init(
+              access: .none, target: .forwarded(tool: "tool", arguments: "arguments", server: nil)),
             projectRequirement: .optional,
             localOnly: false, usesNetwork: false
           )

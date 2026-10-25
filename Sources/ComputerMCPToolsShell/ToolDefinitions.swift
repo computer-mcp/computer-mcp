@@ -21,6 +21,9 @@ extension ProcessToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "process.spawn", risk: .fullShell,
+          requirement: .init(
+            access: .projectWrite, execution: .start,
+            contribution: .cli(registration: .argument(name: "id"))),
           projectRequirement: .required,
           localOnly: false, usesNetwork: false
         )
@@ -36,7 +39,7 @@ extension ProcessToolProvider {
           meta: toolMeta
         ),
         capability: CapabilityDescriptor(
-          id: "process.list", risk: .readOnly,
+          id: "process.list", risk: .readOnly, requirement: .init(access: .read, execution: .list),
           projectRequirement: .required,
           localOnly: false, usesNetwork: false
         )
@@ -62,6 +65,7 @@ extension ProcessToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "process.read", risk: .readOnly,
+          requirement: .init(access: .read, execution: .read(argument: "process_id")),
           projectRequirement: .required,
           localOnly: false, usesNetwork: false
         )
@@ -83,6 +87,7 @@ extension ProcessToolProvider {
             idempotentHint: false, openWorldHint: true), meta: toolMeta),
         capability: CapabilityDescriptor(
           id: "process.write", risk: .fullShell,
+          requirement: .init(access: .projectWrite, execution: .input(argument: "process_id")),
           projectRequirement: .required, localOnly: false, usesNetwork: false)),
       ToolDefinition(
         tool: MCPTool(
@@ -99,6 +104,7 @@ extension ProcessToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "process.cancel", risk: .destructive,
+          requirement: .init(access: .projectWrite, execution: .cancel(argument: "process_id")),
           projectRequirement: .required,
           localOnly: false, usesNetwork: false
         )
@@ -122,6 +128,9 @@ extension ShellToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "shell.run", risk: .fullShell,
+          requirement: .init(
+            access: .projectWrite, paths: [.init("cwd", .write, defaultToProject: true)],
+            execution: .start),
           projectRequirement: .required,
           localOnly: false, usesNetwork: false
         )
@@ -138,6 +147,9 @@ extension ShellToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "shell.spawn", risk: .fullShell,
+          requirement: .init(
+            access: .projectWrite, paths: [.init("cwd", .write, defaultToProject: true)],
+            execution: .start),
           projectRequirement: .required,
           localOnly: false, usesNetwork: false
         )
@@ -161,7 +173,7 @@ extension ShellToolProvider {
         ),
         // Shell output can contain secrets, so reading sessions needs shell authority.
         capability: CapabilityDescriptor(
-          id: "shell.list", risk: .fullShell,
+          id: "shell.list", risk: .fullShell, requirement: .init(access: .read, execution: .list),
           projectRequirement: .required,
           localOnly: false, usesNetwork: false
         )
@@ -190,6 +202,7 @@ extension ShellToolProvider {
         // Shell output can contain secrets, so reading sessions needs shell authority.
         capability: CapabilityDescriptor(
           id: "shell.read", risk: .fullShell,
+          requirement: .init(access: .read, execution: .read(argument: "session_id")),
           projectRequirement: .required,
           localOnly: false, usesNetwork: false
         )
@@ -214,6 +227,7 @@ extension ShellToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "shell.write", risk: .fullShell,
+          requirement: .init(access: .projectWrite, execution: .input(argument: "session_id")),
           projectRequirement: .required,
           localOnly: false, usesNetwork: false
         )
@@ -235,6 +249,7 @@ extension ShellToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "shell.cancel", risk: .fullShell,
+          requirement: .init(access: .projectWrite, execution: .cancel(argument: "session_id")),
           projectRequirement: .required,
           localOnly: false, usesNetwork: false
         )

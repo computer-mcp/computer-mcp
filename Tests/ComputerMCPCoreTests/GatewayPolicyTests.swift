@@ -84,7 +84,7 @@ final class GatewayPolicyTests {
 
   @Test
   func testLocalAdminCannotBeUsedByTunnelCaller() {
-    let capability = CapabilityDescriptor(id: "file.read", risk: .readOnly)
+    let capability = CapabilityDescriptor(id: "file.read", risk: .readOnly, requirement: .none)
     let context = ExecutionContext(caller: .secureTunnel, profileID: .localAdmin)
 
     #expect(
@@ -104,7 +104,7 @@ final class GatewayPolicyTests {
   func testRequiredProjectMustBeExplicitAndGranted() {
     let capability = CapabilityDescriptor(
       id: "file.write",
-      risk: .projectWrite,
+      risk: .projectWrite, requirement: .none,
       projectRequirement: .required
     )
     let grant = ProfileGrant(
@@ -140,7 +140,7 @@ final class GatewayPolicyTests {
 
   @Test
   func testFullShellRequiresProfileEnablement() {
-    let capability = CapabilityDescriptor(id: "shell.run", risk: .fullShell)
+    let capability = CapabilityDescriptor(id: "shell.run", risk: .fullShell, requirement: .none)
     let context = ExecutionContext(caller: .localMCP, profileID: .localAdmin)
     let disabled = ProfileGrant(
       id: .localAdmin,
@@ -198,8 +198,8 @@ final class GatewayPolicyTests {
       try grant.validate()
       let context = ExecutionContext(caller: caller, profileID: profileID)
       for capability in [
-        CapabilityDescriptor(id: "file.write", risk: .projectWrite),
-        CapabilityDescriptor(id: "shell.run", risk: .fullShell),
+        CapabilityDescriptor(id: "file.write", risk: .projectWrite, requirement: .none),
+        CapabilityDescriptor(id: "shell.run", risk: .fullShell, requirement: .none),
       ] {
         #expect(
           evaluator.evaluate(
@@ -220,7 +220,7 @@ final class GatewayPolicyTests {
     }
     #expect(
       !evaluator.evaluate(
-        capability: .init(id: "shell.run", risk: .fullShell),
+        capability: .init(id: "shell.run", risk: .fullShell, requirement: .none),
         context: .init(caller: .localMCP, profileID: profileID), grant: grant,
         registeredProjectIDs: []
       ).isAllowed)
@@ -233,7 +233,7 @@ final class GatewayPolicyTests {
       mode: .readOnly)
     #expect(
       !evaluator.evaluate(
-        capability: .init(id: "file.write", risk: .projectWrite),
+        capability: .init(id: "file.write", risk: .projectWrite, requirement: .none),
         context: .init(caller: .secureTunnel, profileID: .chatGPTOperate), grant: grant,
         registeredProjectIDs: []
       ).isAllowed)
@@ -259,7 +259,7 @@ final class GatewayPolicyTests {
       mode: .localFullAccess, confirmationPolicy: .never)
     #expect(
       !evaluator.evaluate(
-        capability: .init(id: "file.write", risk: .projectWrite),
+        capability: .init(id: "file.write", risk: .projectWrite, requirement: .none),
         context: .init(caller: .localMCP, profileID: profileID), grant: grant,
         registeredProjectIDs: []
       ).isAllowed)
@@ -271,7 +271,7 @@ final class GatewayPolicyTests {
     var grant = ProfileGrant(
       id: id, capabilityIDs: ["*"], allowedCallers: [.localMCP], mode: .projectOperations)
     let capability = CapabilityDescriptor(
-      id: "file.write", risk: .projectWrite, projectRequirement: .required)
+      id: "file.write", risk: .projectWrite, requirement: .none, projectRequirement: .required)
     let context = ExecutionContext(caller: .localMCP, profileID: id, projectID: "one")
     #expect(
       !evaluator.evaluate(

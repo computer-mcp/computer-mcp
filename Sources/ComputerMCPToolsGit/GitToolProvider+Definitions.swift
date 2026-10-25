@@ -19,6 +19,7 @@ extension GitToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "git.root", risk: .readOnly,
+          requirement: .init(access: .read, paths: [.project(.read)]),
           projectRequirement: .required,
           localOnly: false, usesNetwork: false
         )
@@ -46,6 +47,7 @@ extension GitToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "git.config", risk: .readOnly,
+          requirement: .init(access: .read, paths: [.project(.read)]),
           projectRequirement: .required,
           localOnly: false, usesNetwork: false
         )
@@ -66,6 +68,7 @@ extension GitToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "git.remotes", risk: .readOnly,
+          requirement: .init(access: .read, paths: [.project(.read)]),
           projectRequirement: .required,
           localOnly: false, usesNetwork: false
         )
@@ -86,6 +89,7 @@ extension GitToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "git.worktrees", risk: .readOnly,
+          requirement: .init(access: .read, paths: [.project(.read)]),
           projectRequirement: .required,
           localOnly: false, usesNetwork: false
         )
@@ -106,6 +110,7 @@ extension GitToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "git.stashes", risk: .readOnly,
+          requirement: .init(access: .read, paths: [.project(.read)]),
           projectRequirement: .required,
           localOnly: false, usesNetwork: false
         )
@@ -134,6 +139,8 @@ extension GitToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "git.stash_show", risk: .readOnly,
+          requirement: .init(
+            access: .read, paths: [.init("paths[]", .read, defaultToProject: true)]),
           projectRequirement: .required,
           localOnly: false, usesNetwork: false
         )
@@ -171,6 +178,9 @@ extension GitToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "git.stash_push", risk: .destructive,
+          requirement: .init(
+            access: .projectWrite, requiresFullAccess: true,
+            paths: [.init("paths[]", .write, defaultToProject: true)]),
           projectRequirement: .required,
           localOnly: false, usesNetwork: false
         )
@@ -191,6 +201,7 @@ extension GitToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "git.tags", risk: .readOnly,
+          requirement: .init(access: .read, paths: [.project(.read)]),
           projectRequirement: .required,
           localOnly: false, usesNetwork: false
         )
@@ -216,6 +227,7 @@ extension GitToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "git.tag_show", risk: .readOnly,
+          requirement: .init(access: .read, paths: [.project(.read)]),
           projectRequirement: .required,
           localOnly: false, usesNetwork: false
         )
@@ -246,6 +258,9 @@ extension GitToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "git.tag_create", risk: .projectWrite,
+          requirement: .init(
+            access: .projectWrite, requiresFullAccess: true,
+            paths: [.project(.read)]),
           projectRequirement: .required,
           localOnly: false, usesNetwork: false
         )
@@ -273,6 +288,9 @@ extension GitToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "git.tag_delete", risk: .destructive,
+          requirement: .init(
+            access: .projectWrite, requiresFullAccess: true,
+            paths: [.project(.read)]),
           projectRequirement: .required,
           localOnly: false, usesNetwork: false
         )
@@ -296,6 +314,7 @@ extension GitToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "git.ignored", risk: .readOnly,
+          requirement: .init(access: .read, paths: [.init("paths[]", .read)]),
           projectRequirement: .required,
           localOnly: false, usesNetwork: false
         )
@@ -316,6 +335,7 @@ extension GitToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "git.submodules", risk: .readOnly,
+          requirement: .init(access: .read, paths: [.project(.read)]),
           projectRequirement: .required,
           localOnly: false, usesNetwork: false
         )
@@ -338,6 +358,8 @@ extension GitToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "git.files", risk: .readOnly,
+          requirement: .init(
+            access: .read, paths: [.init("paths[]", .read, defaultToProject: true)]),
           projectRequirement: .required,
           localOnly: false, usesNetwork: false
         )
@@ -366,6 +388,8 @@ extension GitToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "git.grep", risk: .readOnly,
+          requirement: .init(
+            access: .read, paths: [.init("paths[]", .read, defaultToProject: true)]),
           projectRequirement: .required,
           localOnly: false, usesNetwork: false
         )
@@ -392,6 +416,7 @@ extension GitToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "git.blame", risk: .readOnly,
+          requirement: .init(access: .read, paths: [.init("path", .read)]),
           projectRequirement: .required,
           localOnly: false, usesNetwork: false
         )
@@ -425,6 +450,7 @@ extension GitToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "git.file_history", risk: .readOnly,
+          requirement: .init(access: .read, paths: [.init("path", .read)]),
           projectRequirement: .required,
           localOnly: false, usesNetwork: false
         )
@@ -454,6 +480,7 @@ extension GitToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "git.file_at_revision", risk: .readOnly,
+          requirement: .init(access: .read, paths: [.init("path", .read)]),
           projectRequirement: .required,
           localOnly: false, usesNetwork: false
         )
@@ -481,6 +508,7 @@ extension GitToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "git.staged_file", risk: .readOnly,
+          requirement: .init(access: .read, paths: [.init("path", .read)]),
           projectRequirement: .required,
           localOnly: false, usesNetwork: false
         )
@@ -503,6 +531,8 @@ extension GitToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "git.conflicts", risk: .readOnly,
+          requirement: .init(
+            access: .read, paths: [.init("paths[]", .read, defaultToProject: true)]),
           projectRequirement: .required,
           localOnly: false, usesNetwork: false
         )
@@ -525,6 +555,8 @@ extension GitToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "git.status", risk: .readOnly,
+          requirement: .init(
+            access: .read, paths: [.init("paths[]", .read, defaultToProject: true)]),
           projectRequirement: .required,
           localOnly: false, usesNetwork: false
         )
@@ -545,6 +577,7 @@ extension GitToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "git.tracking_status", risk: .readOnly,
+          requirement: .init(access: .read, paths: [.project(.read)]),
           projectRequirement: .required,
           localOnly: false, usesNetwork: false
         )
@@ -575,6 +608,8 @@ extension GitToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "git.clean_preview", risk: .readOnly,
+          requirement: .init(
+            access: .read, paths: [.init("paths[]", .read, defaultToProject: true)]),
           projectRequirement: .required,
           localOnly: false, usesNetwork: false
         )
@@ -612,6 +647,8 @@ extension GitToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "git.clean", risk: .destructive,
+          requirement: .init(
+            access: .projectWrite, paths: [.init("paths[]", .write, defaultToProject: true)]),
           projectRequirement: .required,
           localOnly: false, usesNetwork: false
         )
@@ -637,6 +674,7 @@ extension GitToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "git.reflog", risk: .readOnly,
+          requirement: .init(access: .read, paths: [.project(.read)]),
           projectRequirement: .required,
           localOnly: false, usesNetwork: false
         )
@@ -667,6 +705,7 @@ extension GitToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "git.refs", risk: .readOnly,
+          requirement: .init(access: .read, paths: [.project(.read)]),
           projectRequirement: .required,
           localOnly: false, usesNetwork: false
         )
@@ -703,6 +742,7 @@ extension GitToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "git.compare_refs", risk: .readOnly,
+          requirement: .init(access: .read, paths: [.project(.read)]),
           projectRequirement: .required,
           localOnly: false, usesNetwork: false
         )
@@ -727,6 +767,7 @@ extension GitToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "git.resolve_ref", risk: .readOnly,
+          requirement: .init(access: .read, paths: [.project(.read)]),
           projectRequirement: .required,
           localOnly: false, usesNetwork: false
         )
@@ -752,6 +793,7 @@ extension GitToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "git.merge_base", risk: .readOnly,
+          requirement: .init(access: .read, paths: [.project(.read)]),
           projectRequirement: .required,
           localOnly: false, usesNetwork: false
         )
@@ -779,6 +821,7 @@ extension GitToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "git.is_ancestor", risk: .readOnly,
+          requirement: .init(access: .read, paths: [.project(.read)]),
           projectRequirement: .required,
           localOnly: false, usesNetwork: false
         )
@@ -805,6 +848,8 @@ extension GitToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "git.diff", risk: .readOnly,
+          requirement: .init(
+            access: .read, paths: [.init("paths[]", .read, defaultToProject: true)]),
           projectRequirement: .required,
           localOnly: false, usesNetwork: false
         )
@@ -830,6 +875,8 @@ extension GitToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "git.diff_summary", risk: .readOnly,
+          requirement: .init(
+            access: .read, paths: [.init("paths[]", .read, defaultToProject: true)]),
           projectRequirement: .required,
           localOnly: false, usesNetwork: false
         )
@@ -856,6 +903,8 @@ extension GitToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "git.diff_check", risk: .readOnly,
+          requirement: .init(
+            access: .read, paths: [.init("paths[]", .read, defaultToProject: true)]),
           projectRequirement: .required,
           localOnly: false, usesNetwork: false
         )
@@ -878,6 +927,7 @@ extension GitToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "git.branch", risk: .readOnly,
+          requirement: .init(access: .read, paths: [.project(.read)]),
           projectRequirement: .required,
           localOnly: false, usesNetwork: false
         )
@@ -908,6 +958,9 @@ extension GitToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "git.branch_create", risk: .projectWrite,
+          requirement: .init(
+            access: .projectWrite, requiresFullAccess: true,
+            paths: [.project(.read)]),
           projectRequirement: .required,
           localOnly: false, usesNetwork: false
         )
@@ -937,6 +990,8 @@ extension GitToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "git.branch_delete", risk: .destructive,
+          requirement: .init(
+            access: .sourceProjectWrite, paths: [.project(.read)]),
           projectRequirement: .required,
           localOnly: false, usesNetwork: false
         )
@@ -968,6 +1023,9 @@ extension GitToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "git.branch_rename", risk: .destructive,
+          requirement: .init(
+            access: .projectWrite, requiresFullAccess: true,
+            paths: [.project(.read)]),
           projectRequirement: .required,
           localOnly: false, usesNetwork: false
         )
@@ -998,6 +1056,9 @@ extension GitToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "git.branch_switch", risk: .destructive,
+          requirement: .init(
+            access: .projectWrite, requiresFullAccess: true,
+            paths: [.project(.read)]),
           projectRequirement: .required,
           localOnly: false, usesNetwork: false
         )
@@ -1021,6 +1082,8 @@ extension GitToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "git.log", risk: .readOnly,
+          requirement: .init(
+            access: .read, paths: [.init("paths[]", .read, defaultToProject: true)]),
           projectRequirement: .required,
           localOnly: false, usesNetwork: false
         )
@@ -1048,6 +1111,7 @@ extension GitToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "git.commit_files", risk: .readOnly,
+          requirement: .init(access: .read, paths: [.project(.read)]),
           projectRequirement: .required,
           localOnly: false, usesNetwork: false
         )
@@ -1075,6 +1139,8 @@ extension GitToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "git.show", risk: .readOnly,
+          requirement: .init(
+            access: .read, paths: [.init("paths[]", .read, defaultToProject: true)]),
           projectRequirement: .required,
           localOnly: false, usesNetwork: false
         )
@@ -1101,6 +1167,7 @@ extension GitToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "git.add", risk: .destructive,
+          requirement: .init(access: .projectWrite, paths: [.init("paths[]", .write)]),
           projectRequirement: .required,
           localOnly: false, usesNetwork: false
         )
@@ -1127,6 +1194,7 @@ extension GitToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "git.unstage", risk: .destructive,
+          requirement: .init(access: .projectWrite, paths: [.init("paths[]", .write)]),
           projectRequirement: .required,
           localOnly: false, usesNetwork: false
         )
@@ -1156,6 +1224,7 @@ extension GitToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "git.restore_worktree", risk: .destructive,
+          requirement: .init(access: .projectWrite, paths: [.init("paths[]", .write)]),
           projectRequirement: .required,
           localOnly: false, usesNetwork: false
         )
@@ -1183,6 +1252,7 @@ extension GitToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "git.commit", risk: .projectWrite,
+          requirement: .init(access: .projectWrite, paths: [.init("paths[]", .write)]),
           projectRequirement: .required,
           localOnly: false, usesNetwork: false
         )

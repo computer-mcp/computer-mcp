@@ -23,10 +23,7 @@ package struct MCPToolAccessPolicy: Sendable {
     guard grant.permitsRisk(risk) else { return false }
     guard risk != .fullShell || grant.fullShellEnabled else { return false }
     if derivesObserveGrant && risk == .readOnly { return true }
-    return grant.grants(
-      CapabilityDescriptor(
-        id: "mcp.tools.call", risk: risk, mcpReference: reference,
-        equivalentCapabilityIDs: configuration.mcpCapabilityIDs(for: reference)))
+    return grant.grantsMCP(reference, capabilityIDs: configuration.mcpCapabilityIDs(for: reference))
   }
 
   package func canDiscoverTools(on server: MCPServerConfig) -> Bool {

@@ -91,7 +91,11 @@ struct ConfiguredMCPToolProviderTests {
         launcher: testExecutionLauncher(),
         configuration: .fixture(mcp: .init(servers: [server]))), mcpClient: client)
     let exposed = prefix.isEmpty ? name : "\(prefix).\(name)"
-    let tool = try #require(provider.definitions().map(\.tool).first { $0.name == exposed })
+    let definition = try #require(provider.definitions().first { $0.tool.name == exposed })
+    let tool = definition.tool
+    #expect(
+      definition.requirement.contribution
+        == .mcp(server: .registered(id: try #require(tool.mcpReference).serverID)))
     let original = try #require(client.listTools(server: server, context: .empty).first)
     #expect(tool.inputSchema == original.inputSchema && tool.outputSchema == original.outputSchema)
     #expect(tool.title == original.title && tool.annotations == original.annotations)

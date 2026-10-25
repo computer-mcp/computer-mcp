@@ -49,7 +49,7 @@ final class GatewayToolProviderTests {
       result: .null,
       descriptor: CapabilityDescriptor(
         id: "local.admin",
-        risk: .externalWrite,
+        risk: .externalWrite, requirement: .none,
         projectRequirement: .required,
         localOnly: true
       )
@@ -72,7 +72,7 @@ final class GatewayToolProviderTests {
       tool: MCPTool(name: "fixture.inspect", description: "", inputSchema: .object([:])),
       result: .string("original owner"),
       descriptor: CapabilityDescriptor(
-        id: "fixture.inspect", risk: .readOnly, projectRequirement: .required,
+        id: "fixture.inspect", risk: .readOnly, requirement: .none, projectRequirement: .required,
         mcpReference: reference))
     let router = try GatewayProviderRouter(
       source: { visibility.withLockedValue { $0.visible } ? [provider] : [] },
@@ -105,6 +105,27 @@ final class GatewayToolProviderTests {
     #expect(throws: GatewayToolError.self) {
       try router.callTool(
         name: "fixture.inspect", arguments: nil, context: .init(continuation: target(reference)))
+    }
+    await router.shutdown()
+  }
+
+  @Test
+  func changedRequirementRejectsPreviouslyAdmittedCatalog() async throws {
+    let original = CapabilityDescriptor(id: "same", risk: .readOnly, requirement: .none)
+    let current = NIOLockedValueBox(original)
+    let router = try GatewayProviderRouter(source: {
+      [
+        TestGatewayToolProvider(
+          id: "provider", tool: MCPTool(name: "same", description: "", inputSchema: .object([:])),
+          result: .null, descriptor: current.withLockedValue { $0 })
+      ]
+    })
+    current.withLockedValue { $0.requirement = .privacy(.screen) }
+    try await router.refreshTools(context: .empty)
+    #expect(try router.requirement(named: "same", context: .empty) == .privacy(.screen))
+    #expect(throws: GatewayProviderRouterError.capabilityChanged("same")) {
+      try router.callTool(
+        name: "same", arguments: nil, expectedCapability: original, context: .empty)
     }
     await router.shutdown()
   }
@@ -152,7 +173,8 @@ private struct TestGatewayToolProvider: GatewayToolProvider {
     [
       ToolDefinition(
         tool: tool,
-        capability: descriptor ?? CapabilityDescriptor(id: tool.name, risk: .externalWrite))
+        capability: descriptor
+          ?? CapabilityDescriptor(id: tool.name, risk: .externalWrite, requirement: .none))
     ]
   }
 

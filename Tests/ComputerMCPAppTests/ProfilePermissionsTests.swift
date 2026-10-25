@@ -123,14 +123,14 @@ private func permissionOptions(grant: ProfileGrant = .operate) -> ProfilePermiss
     capabilities: [
       .init(
         id: "system.time", title: "Current Time", summary: "Read the system clock.",
-        descriptor: .init(id: "system.time", risk: .readOnly)),
+        descriptor: .init(id: "system.time", risk: .readOnly, requirement: .none)),
       .init(
         id: "file.write", title: "Write File", summary: "Write a file in a selected project.",
-        descriptor: .init(id: "file.write", risk: .projectWrite)),
+        descriptor: .init(id: "file.write", risk: .projectWrite, requirement: .none)),
       .init(
         id: "notes.search", title: "Search Notes", summary: "Find notes in the connected account.",
         descriptor: .init(
-          id: "notes.search", risk: .readOnly,
+          id: "notes.search", risk: .readOnly, requirement: .none,
           mcpReference: .init(serverID: "notes", toolName: "search"))),
     ],
     integrations: [.init(id: "notes", title: "Notes", isEnabled: true)],

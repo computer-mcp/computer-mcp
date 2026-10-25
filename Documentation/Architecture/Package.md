@@ -435,3 +435,17 @@ marker files and holds them until the execution has no live members. Its
 Seatbelt profile denies the marker directory except for the execution's own
 read marker. A process belongs to that sandbox when its own marker is readable
 and the shared unsandboxed marker is denied.
+
+### Tool requirement declarations
+
+Every capability descriptor carries an explicit `ToolRequirement` in permission
+library terms. Declarations distinguish canonical path operations, project writes,
+execution continuations, forwarding targets, plugin registration provenance and
+Full access. Inline structured data has no path requirement when no path is supplied.
+The router publishes requirements with their provider and rejects a changed
+descriptor at dispatch. These declarations are catalog metadata; live admission
+still uses the profile, risk and confirmation evaluator.
+
+`ResolvedToolInvocation` represents host-resolved invocation conditions and typed
+plugin origins. `InvocationContext` has an optional field for this value; live
+call paths currently leave it empty. It does not itself grant authority.

@@ -182,16 +182,24 @@ package final class ConfiguredMCPToolProvider: GatewayToolProvider, @unchecked S
       throw GatewayToolError.invalidArguments(
         "Downstream tool '\(tool.name)' requires a registered MCP reference.")
     }
+    guard let server = mcp.configuration.mcp.servers.first(where: { $0.id == reference.serverID })
+    else {
+      throw GatewayToolError.unknownMCPServer(reference.serverID)
+    }
+    let policy = MCPToolAdmissionPolicy(
+      risk: try mcp.configuration.mcpRisk(for: reference, declaredBy: tool),
+      hostServiceAction: try tool.hostServiceAction)
     return ToolDefinition(
       tool: tool,
       capability: CapabilityDescriptor(
         id: tool.name,
-        risk: try mcp.configuration.mcpRisk(for: reference, declaredBy: tool),
+        risk: policy.risk,
+        requirement: server.requirement(for: policy),
         projectRequirement: .optional,
         usesNetwork: true,
         mcpReference: reference,
         equivalentCapabilityIDs: mcp.configuration.mcpCapabilityIDs(for: reference),
-        hostServiceAction: try tool.hostServiceAction
+        hostServiceAction: policy.hostServiceAction
       )
     )
   }

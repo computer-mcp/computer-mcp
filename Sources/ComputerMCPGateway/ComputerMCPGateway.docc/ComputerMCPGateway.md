@@ -180,3 +180,12 @@ Downloads stream into host-opened descriptors and recheck the destination before
 publication. Recursive operations apply the same path
 checks to each member. Delivery refuses merges when attributes assign filters.
 These operation checks apply within each tool's existing authorization policy.
+
+## Tool requirements
+
+Capability descriptors declare path, project, privacy, execution and forwarding
+requirements using `ToolRequirement`. Catalog snapshots retain the declaration
+with the exact provider, and dispatch rejects changed descriptors. The live
+gateway continues to use its profile and confirmation evaluator. The optional
+`ResolvedToolInvocation` field in `InvocationContext` represents resolved
+conditions and typed plugin origins; live call paths currently leave it empty.

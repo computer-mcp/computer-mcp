@@ -29,6 +29,25 @@ import Testing
     #expect(try second.fileHandleForReading.readToEnd() == Data("second".utf8))
   }
 
+  @Test
+  func sandboxLaunchesRefuseInheritedDescriptors() async throws {
+    let fixture = try SeatbeltFixture()
+    defer { fixture.remove() }
+    let configuration = try fixture.configuration()
+    let environment = try ExecutionEnvironment(
+      searchPath: [.init("/bin")], home: configuration.homeDirectory,
+      temporary: configuration.temporaryDirectory, cache: configuration.cacheDirectory)
+    let pipe = Pipe()
+    defer { try? pipe.fileHandleForWriting.close() }
+    await #expect(throws: ExecutionEnvironmentError.self) {
+      _ = try await ExecutionLauncher(platform: platform()).start(
+        executable: .init("/bin/sh"), arguments: ["-c", "true"],
+        directory: configuration.worktree, environment: environment,
+        mode: .sandbox(configuration),
+        inheritedDescriptors: [3: pipe.fileHandleForWriting.fileDescriptor])
+    }
+  }
+
   @Test(arguments: ExecutionLaunchMethod.allCases)
   func fullAccessRunsWithExplicitEnvironment(method: ExecutionLaunchMethod) async throws {
     let fixture = try SeatbeltFixture()

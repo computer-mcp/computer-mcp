@@ -43,6 +43,10 @@ package struct ExecutionLauncher: Sendable {
         throw ExecutionEnvironmentError.invalidConfiguration(
           "Sandbox working directory must be its worktree")
       }
+      guard inheritedDescriptors.isEmpty else {
+        throw ExecutionEnvironmentError.invalidConfiguration(
+          "Sandbox launches cannot inherit extra descriptors")
+      }
       sandbox = configuration
     case .fullAccess:
       sandbox = nil

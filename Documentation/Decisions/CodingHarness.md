@@ -154,7 +154,7 @@ keep their name as the stored permissions of a client.
 | Screen Recording | Screen |
 | Accessibility | Desktop control |
 | Local Network | Local network |
-| Automation (one app controlling another) | Plugin and MCP server permissions |
+| Automation (one app controlling another) | Automation, per app; driving a plugin or an MCP server needs the Plugin or MCP server permission |
 | Allow Once, Always | Only this time, Always |
 | Sandboxed or unsandboxed app | Execution mode: Sandbox or Full access; like an unsandboxed app, Full access still meets privacy permissions and does not include Full Disk Access |
 | Sandbox entitlements (network, file access exceptions) | Sandbox settings |
@@ -184,7 +184,7 @@ system's own permissions:
 | Layer | Apple counterpart | Granularity | Set by | Enforced by |
 | --- | --- | --- | --- | --- |
 | Identity: which client or plugin | Code signature, bundle ID | per principal | connection verification, plugin ID | the host |
-| Permissions: what it may access | Privacy permissions (TCC) | per principal and permission; projects, plugins and servers per object, Files and Folders per category | the owner, a permission request the owner answers, within managed limits | the host on every call, and the sandbox profile generated from them |
+| Permissions: what it may access | Privacy permissions (TCC) | per principal and permission; projects, plugins and servers per object, Files and Folders per category, Automation per app | the owner, a permission request the owner answers, within managed limits | the host on every call, and the sandbox profile generated from them |
 | Execution mode: Sandbox or Full access | Sandboxed or unsandboxed app | per principal | the owner; Full access needs local consent | the host, when it launches programs |
 | Sandbox settings: what the sandbox allows | Sandbox entitlements | per principal and project, inherited by worktrees | the owner for network access and extra denied reads, a plugin's declarations; the rest is fixed | the operating-system sandbox, which also keeps programs from reaching the network except through the host's egress proxy, and the proxy, which applies network access |
 
@@ -220,6 +220,7 @@ mode.
 | MCP server | per server registered directly by the owner | `read` (listing, resources, prompts, read-only tools), `all` or `deny` |
 | Screen | per principal | screenshots, windows, displays, accessibility queries, pointer position, permission status |
 | Desktop control | per principal | keyboard, pointer actions, scrolling, accessibility actions, opening and revealing files in apps |
+| Automation | per app, by bundle identifier | `allow` or `deny`: Apple events the host sends to that app for the principal's sandboxed programs |
 | Local network | per principal | connections from the sandbox to devices on the local network: directly connected subnets, link-local addresses (including cloud metadata addresses) and multicast |
 | Machine information | per principal | system, macOS, network diagnostics, environment, service status, the CLI and plugin catalogs |
 | Unified logs | per principal | querying the macOS unified log |
@@ -227,13 +228,23 @@ mode.
 
 A permission is not granted, granted at a value, or denied. A call that needs a
 permission that is not granted produces a permission request; a denied one
-produces none. For projects, plugins and MCP servers, `*` covers every entry
-without an explicit one, and an explicit entry, including `deny`, takes
-precedence. The host's own data and credentials are never readable and are
+produces none. For projects, plugins, MCP servers and Automation, `*` covers
+every entry without an explicit one, and an explicit entry, including `deny`,
+takes precedence. The host's own data and credentials are never readable and are
 never offered in a request. Screen and desktop control act on the whole
 desktop, outside any sandbox; granting them is the owner's judgment of that
-principal. New principals have Machine information and Skills; every other
-permission starts not granted.
+principal. Automation of an app is the same kind of judgment: the app carries
+out the events with its own access, so the principal reaches whatever the
+app's scripting reaches, including files the app opens or saves, outside the
+path resolver. For apps whose scripting runs programs or controls other apps
+(terminals, script editors, System Events and the others on a list the host
+maintains), that is unconfined execution: their Automation is part of Full
+access and is never granted to a sandboxed principal, `*` included. The
+guarantees of the path resolver and the sandbox, such as the host's data being
+unreadable and main checkouts read-only to a sandboxed principal, bind host
+tools and sandboxed programs; what an app does under Screen, Desktop control
+or Automation is bounded by those permissions instead. New principals have
+Machine information and Skills; every other permission starts not granted.
 
 #### Execution mode
 
@@ -262,7 +273,7 @@ inherited by the project's worktrees.
 | Filesystem read | the operating system and applications; in user data areas (home directories and external and network volumes) only the principal's readable projects and their worktrees, the Files and Folders categories it may read, and the developer locations the host maintains, with the directories above them readable as directories only; never the host's data or credentials; minus locations the owner denies |
 | Git | recording commits on the worktree's own branch through a private object store; never the repository's configuration, hooks, other branches or existing objects |
 | Network access | `none` (default), `trusted` (a host-maintained list of package registries, GitHub and toolchain downloads), `full` (any host) or `custom` (the owner's host list, optionally with the trusted list) |
-| System services | screen capture, accessibility and Apple Events are blocked unless the principal has Screen or Desktop control, so sandboxed programs never use the App's own privacy permissions beyond the principal's |
+| System services | screen capture is blocked unless the principal has Screen, and accessibility unless it has Desktop control, because macOS gives a program that reaches accessibility both reading and acting; sandboxed programs thus never use the App's own privacy permissions beyond the principal's; Apple events are always blocked, and the host sends them for the principal under its Automation permission |
 
 The mechanism follows Anthropic's sandbox-runtime, which Claude Code uses:
 reads are open except denied regions, which can be reopened, and writes are
@@ -305,10 +316,11 @@ credentials, which programs in the sandbox do not have.
   changing it needs `write`, reading Downloads needs Files and Folders,
   taking a screenshot needs Screen. For sandboxed programs, the host turns
   the same permissions into the sandbox profile: readable paths, local network
-  addresses, and the system services for screen capture, accessibility and
-  Apple Events. Sandboxed programs are the App's child processes and keep the
-  App's macOS privacy permissions, such as access to protected folders, only
-  as far as the principal's permissions allow.
+  addresses and the system services for screen capture and accessibility;
+  Apple events from sandboxed programs go through the host, which checks
+  Automation for each one. Sandboxed programs are the App's child processes
+  and keep the App's macOS privacy permissions, such as access to protected
+  folders, only as far as the principal's permissions allow.
 - **A sandboxed principal** needs the permission and must stay within its
   sandbox settings: with `write` on a project it adds worktrees, works in them
   and merges them back; the main checkout stays read-only to it.
@@ -373,6 +385,9 @@ downloads = "read"
 
 [profiles.mcp_servers]
 "*" = "all"
+
+[profiles.automation]
+"com.apple.Notes" = "allow"
 ```
 
 When a call needs a permission the principal has not been granted, the host
@@ -431,6 +446,16 @@ purpose = "Runs Codex in a worktree of the project you choose."
 [sandbox]
 network = { level = "custom", hosts = ["api.openai.com", "chatgpt.com"] }
 purpose = "Codex contacts its model provider."
+```
+
+Automation is declared per app, as an app declares the targets of its Apple
+events and why:
+
+```toml
+[[permissions]]
+id = "automation"
+apps = ["com.apple.Notes", "com.apple.reminders"]
+purpose = "Reads and updates your notes and reminders."
 ```
 
 `[sandbox]` declares network access in the same levels, read exceptions inside
@@ -583,6 +608,61 @@ options, and Git revisions are resolved to object IDs first. `cli.help`
 returns the registered command tree's metadata; running a command's own help is
 execution.
 
+#### Apple events
+
+macOS refuses an Apple event from a sandboxed sender unless the sender's own
+signature carries an entitlement naming the target, whatever the sandbox
+profile allows, so programs in the sandbox cannot send them. The host sends
+them instead, as the App, and decides each one:
+
+- **Channel.** Each execution has its own socket for Apple events in its
+  private directory, which only its sandbox can reach. The host accepts a
+  connection only from a process whose kernel identity makes it a member of
+  that execution, keeps the endpoint until the execution ends, and attributes
+  every event on it to that execution and its principal.
+- **Senders.** The host's `osascript`, first in the sandbox's `PATH`, accepts
+  the system command's arguments and runs AppleScript and JavaScript for
+  Automation scripts inside the sandbox. The events a script sends through its
+  scripting component go to the host through the component's send function
+  (`OSASetSendProc`); events a script sends another way, such as through the
+  Objective-C bridge, fail. Programs that build events themselves send them
+  flattened through the same socket with a small client library and receive
+  the reply the same way. An event sent any other way fails, as it does for
+  every sandboxed sender.
+- **Target.** Events address an app by bundle identifier. As macOS does for
+  its Automation permission, the host records the app's code requirement when
+  Automation is granted and sends only to a running process of that app whose
+  signature satisfies it, launching the app first when it is not running. It
+  never sends to a process named by ID, to another machine or to the host
+  itself.
+- **Content.** The host rebuilds each event from its class, ID and parameters
+  and sets the address, transaction and send attributes itself. It refuses
+  parameters that designate another process or app, and scripting-addition
+  commands addressed to another app, which the target can run in its own
+  process (`do shell script` among them). A reply reaches the program only as
+  data: the sandbox profile honors no sandbox extensions, so a reply cannot
+  open files to it.
+- **Decision.** Checking Automation and sending are serialized with
+  revocation, so a revocation refuses every event not yet sent; an event
+  already delivered is not undone. Events are sent without user interaction,
+  with `kAEDoNotPromptForUserConsent` and a deadline.
+- **Requests.** For a client, an event to an app without Automation fails with
+  an error naming the app and produces a permission request for it under the
+  general rules: a denied app, or one managed limits exclude, produces none,
+  and Only this time covers the retried call and the execution it starts. A
+  plugin or local MCP server automates only the apps the owner granted it;
+  its other events fail without a request.
+- **macOS permission.** The macOS Automation permission involved is the App's
+  for that target. When macOS has not decided it, the event fails and the App
+  offers to ask macOS locally; remote calls never cause a macOS prompt; when
+  macOS denies it, the event fails and says so.
+- **Audit.** The audit log records each event's principal, target, event class
+  and ID, and the decision.
+
+The programs of a principal with Full access send their own events and meet
+macOS's Automation permission under their own identity. Linux has no Apple
+events.
+
 #### Executions
 
 Every program a call starts is an execution with a stable ID, bound to the
@@ -666,7 +746,9 @@ module graph, and move to a separate package when a second consumer exists.
   a principal's permissions at a path.
 - The sandbox: a neutral profile model, with Seatbelt in
   `ComputerMCPPlatformDarwin` and bubblewrap in a Linux platform
-  implementation, the egress proxy, and one launcher in `ComputerMCPProcess`
+  implementation, the egress proxy, the Apple-event broker in
+  `ComputerMCPPlatformDarwin` with the sandbox's `osascript` and client
+  library, and one launcher in `ComputerMCPProcess`
   through which every host subprocess starts, either in the sandbox or with
   Full access without inherited privacy responsibility, with execution IDs,
   output cursors and limits.
@@ -711,10 +793,10 @@ module graph, and move to a separate package when a second consumer exists.
 ### Configuration and migration
 
 Profiles store `permissions`, `projects` (access and network access per
-project), `files_and_folders`, `plugins`, `mcp_servers`, `full_access`,
-`allowed_callers` and the authorization revision. Old fields (`capabilities`,
-`workspaces`, `mode`, `full_shell_enabled`, `confirmation_policy`) fail
-validation with an error naming the replacements.
+project), `files_and_folders`, `plugins`, `mcp_servers`, `automation`,
+`full_access`, `allowed_callers` and the authorization revision. Old fields
+(`capabilities`, `workspaces`, `mode`, `full_shell_enabled`,
+`confirmation_policy`) fail validation with an error naming the replacements.
 
 A database migration converts stored profiles from their effective
 authorization (wildcards expanded against registered tools, projects and
@@ -735,13 +817,14 @@ servers):
 | Plugins | Plugin `*` at `use` for profiles that held any plugin contribution, else not granted |
 | `confirmation_policy` | removed |
 
-Files and Folders, Local network and managed limits are new and start not
-granted or empty. Widened: profiles that held some tools of a permission
-receive the whole permission, and calls a confirmation policy held now
-execute. Narrowed: sandboxed principals write only in worktrees, so projects
-whose root is not a Git repository's top level become read-only to them; their
-programs run in the sandbox; `git.branch_create`, `rename`, `switch`,
-`git.tag_*` and `git.stash_push` need Full access.
+Files and Folders, Local network, Automation and managed limits are new and
+start not granted or empty. Widened: profiles that held some tools of a
+permission receive the whole permission, and calls a confirmation policy held
+now execute. Narrowed: sandboxed principals write only in worktrees, so
+projects whose root is not a Git repository's top level become read-only to
+them; their programs run in the sandbox and send Apple events only through the
+host; `git.branch_create`, `rename`, `switch`, `git.tag_*` and
+`git.stash_push` need Full access.
 
 The migration advances every authorization revision, which invalidates saved
 Full access trust bound to the old snapshot, removes pending approval tickets,
@@ -791,6 +874,16 @@ with attribution, and its own address rules. These remain:
   then a Linux build of the host refuses sandboxed execution and says why. Its
   layout for the private object store and the network relay is validated on
   Linux then.
+- **Apple events through the host.** A prototype shows, for AppleScript and
+  JavaScript for Automation each, that the sandbox's `osascript` passes the
+  events their scripting components send to the host, including those of
+  scripts they load or run, and that events sent around the component fail;
+  that
+  events the host sends with `kAEDoNotPromptForUserConsent` are evaluated
+  against the App's Automation permission for their target, with the App's
+  Apple-event entitlement and usage description, in the Developer ID signed
+  App; and that scripting-addition commands are identified from the system's
+  own scripting definitions rather than a fixed list.
 - **Release signing.** The Full access launch paths and the sandbox are checked
   again in the Developer ID signed App.
 
@@ -814,13 +907,26 @@ with attribution, and its own address rules. These remain:
   owner allows it, only this time or always, the retried operation succeeds;
   hooks and filters planted in the worktree run only inside the sandbox; the
   sandbox environment contains none of the host's credentials; a sandboxed
-  program cannot capture the screen, use accessibility or send Apple Events
-  without the principal's Screen or Desktop control permission, even when the
-  App has the matching macOS permission.
-- A sandboxed principal cannot write a main checkout; a principal with Full
-  access and `write` can; a Full access program does not inherit the App's
-  screen recording or accessibility permission; host tools still refuse a
-  principal with Full access a permission it lacks.
+  program cannot capture the screen without the principal's Screen permission
+  or use accessibility without its Desktop control permission, even when the
+  App has the matching macOS permission, and cannot send an Apple event itself
+  in any configuration.
+- Through the host's `osascript` and client library, a sandboxed program's
+  event to an app its principal has Automation for returns that app's reply;
+  an event to another app fails with `permission.required` and a pending
+  request, and after the owner allows it only this time the retried execution
+  succeeds; scripting-addition commands addressed to another app, events
+  addressed by process ID, to another machine or to the host, and parameters
+  that designate another app are refused; an app with a granted app's bundle
+  identifier but a different signature receives nothing; a process outside the
+  execution cannot use its socket; Automation of an app on the host's list is
+  never granted to a sandboxed principal; revoking Automation refuses the next
+  event of a running execution; a remote call never causes a macOS prompt.
+- A sandboxed principal cannot write a main checkout with host tools or its
+  programs; a principal with Full access and `write` can; a Full access
+  program does not inherit the App's screen recording or accessibility
+  permission; host tools still refuse a principal with Full access a
+  permission it lacks.
 - A permission that is not granted produces `permission.required` and a
   pending request, a denied one produces none, and managed limits cap what the
   App can grant; an unreadable policy source limits everything it could limit;
@@ -883,6 +989,19 @@ with attribution, and its own address rules. These remain:
 - **Worktrees bound to a session or thread, as in Claude Code and Codex.** A
   principal here continues across connections and clients, so worktrees end by
   their own state.
+- **Apple events sent from the sandbox under the App's permission.** On
+  macOS 27 the receiving side refuses a sandboxed sender without an Apple-event
+  entitlement naming the target (`errAEPrivilegeError`), even when the profile
+  allows everything, and programs in the sandbox cannot carry one. A sender
+  helper signed with such an entitlement would fix its targets at signing
+  instead of following each principal's Automation.
+- **Scripts run by the host.** A script runs scripting-addition commands such
+  as `do shell script` in its own process, which would then be the host's.
+- **Automation confined to the scripting access groups apps declare.** Apps
+  enforce access groups only for sandboxed senders that hold them as
+  entitlements, so the host would have to interpret every event's object
+  specifiers against each app's scripting definition, and most apps declare
+  no groups.
 - **Escape hatches by command pattern or unsandboxed retry, as in Claude
   Code.** They bypass the boundaries the sandbox establishes; a missing
   permission is requested, and unconfined work uses Full access.

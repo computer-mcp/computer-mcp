@@ -226,24 +226,28 @@ mode.
 | Unified logs | per principal | querying the macOS unified log |
 | Skills | per principal | reading the skill library |
 
-A permission is not granted, granted at a value, or denied. A call that needs a
-permission that is not granted produces a permission request; a denied one
-produces none. For projects, plugins, MCP servers and Automation, `*` covers
-every entry without an explicit one, and an explicit entry, including `deny`,
-takes precedence. The host's own data and credentials are never readable and are
-never offered in a request. Screen and desktop control act on the whole
-desktop, outside any sandbox; granting them is the owner's judgment of that
-principal. Automation of an app is the same kind of judgment: the app carries
-out the events with its own access, so the principal reaches whatever the
-app's scripting reaches, including files the app opens or saves, outside the
-path resolver. For apps whose scripting runs programs or controls other apps
-(terminals, script editors, System Events and the others on a list the host
-maintains), that is unconfined execution: their Automation is part of Full
-access and is never granted to a sandboxed principal, `*` included. The
-guarantees of the path resolver and the sandbox, such as the host's data being
-unreadable and main checkouts read-only to a sandboxed principal, bind host
-tools and sandboxed programs; what an app does under Screen, Desktop control
-or Automation is bounded by those permissions instead. New principals have
+A permission is not granted, granted at a value, or denied. A call that needs
+a permission that is not granted produces a permission request; a denied one
+produces none. For projects, plugins and MCP servers, `*` covers every entry
+without an explicit one, and an explicit entry, including `deny`, takes
+precedence; Automation, as on macOS, is granted only per app. The host's own
+data and credentials are never readable and are never offered in a request.
+Screen and desktop control act on the whole desktop, outside any sandbox;
+granting them is the owner's judgment of that principal. Automation of an app
+is the same kind of judgment: the app carries out the events with its own
+access, so the principal reaches whatever the app's scripting reaches,
+including files the app opens or saves, outside the path resolver. For apps
+whose scripting runs programs or controls other apps (terminals, script
+editors, System Events and the others on a list the host maintains), that is
+unconfined execution: their Automation is part of Full access and is never
+granted to a sandboxed principal. The host checks that classification against
+the app's verified identity at every event, so an app that joins the list, for
+example after an update that adds such scripting, stops receiving events for
+sandboxed principals, and the App reports the suspended grant. The guarantees
+of the path resolver and the sandbox, such as the host's data being unreadable
+and main checkouts read-only to a sandboxed principal, bind host tools and
+sandboxed programs; what an app does under Screen, Desktop control or
+Automation is bounded by those permissions instead. New principals have
 Machine information and Skills; every other permission starts not granted.
 
 #### Execution mode
@@ -371,11 +375,18 @@ them by permission (which principals have desktop control) and by principal
 [[profiles]]
 id = "chatgpt-operate"
 allowed_callers = ["secure-tunnel"]
-permissions = ["screen", "desktop-control", "machine", "skills"]
 full_access = false
+
+[profiles.permissions]
+screen = "allow"
+desktop-control = "allow"
+machine = "allow"
+skills = "allow"
+unified-logs = "deny"
 
 [profiles.projects]
 "19591BE9-51BC-4709-B888-32B01D216E1F" = { access = "write", network = "none" }
+"6F1C2A77-0B3E-4D59-9C8A-2E4F1B7D5A10" = { access = "read", network = { level = "custom", hosts = ["registry.npmjs.org"], include_trusted = true } }
 
 [profiles.files_and_folders]
 downloads = "read"
@@ -390,19 +401,45 @@ downloads = "read"
 "com.apple.Notes" = "allow"
 ```
 
+A permission absent from a profile is not granted; `deny` denies it. The host
+maintains each profile's authorization revision; manifests do not set it.
+
 When a call needs a permission the principal has not been granted, the host
 refuses it with `permission.required`, naming the principal, the permission,
 the object, the scope and, for a plugin, its declared purpose, and records a
 pending request. The App shows it the way the system shows a privacy prompt.
 The owner answers **Only this time** or **Always**, and the caller retries with
-the request's ID. **Always** grants the permission until revoked. **Only this
-time** is consumed by the first retry from the same principal whose tool,
-project and arguments match the request; it covers that call and the execution
-it starts for the execution's lifetime (reading its output, writing its input,
-cancelling it), and no other call. Requests expire after a day. Revoking a
-permission ends its use by running executions and proxy connections as well as
-by later calls; revoking a client's Plugin or MCP server permission ends the
-executions that client delegated to that plugin or server and no others.
+the request's ID. **Always** grants the permission to the principal until
+revoked; for a client that is its profile, shared by every connection bound to
+it. **Only this time** is consumed by the first retry from the same principal
+whose tool, project and arguments match the request; it covers that call and
+the execution it starts for the execution's lifetime (reading its output,
+writing its input, cancelling it), and no other call. Requests expire after a
+day. Revoking a permission ends its use by running executions and proxy
+connections as well as by later calls; revoking a client's Plugin or MCP
+server permission ends the executions that client delegated to that plugin or
+server and no others.
+
+A need that appears while a program runs (a host it connects to, a folder it
+opens, the target of an Apple event) fails that operation and produces a
+request that records the original call; the answer applies to the caller's
+retry and the execution it starts, never to the running one. A request created
+during a retry carries the Only this time answers that retry received, so the
+next retry has all of them. Folder needs are
+taken from the system's sandbox violation reports attributed to the
+execution's processes, as sandbox-runtime does; host tools report theirs
+directly.
+
+The permission store and the App's Keychain item each keep a revision
+counter. Every writer raises the Keychain counter before committing a change
+to the store, so a store whose counter is behind the Keychain's, or a missing
+Keychain counter, means the store may be older than the authority already
+used: restored from a backup, or a write interrupted by a crash. Either starts
+a new authorization epoch. Only this time grants, pending requests, Full access
+trust and consent, execution records and access to earlier executions' input
+and output are discarded; standing permissions and the owner policy are
+suspended until the owner confirms them in the App, so a revocation made after
+the backup cannot return unnoticed.
 
 A principal can ask for a folder that is not a project yet, as Claude Code
 adds a directory to a session: `project.request` names a directory and the
@@ -417,9 +454,15 @@ Registering and removing projects directly stays a control-plane change.
 
 Managed limits bound everything above, as configuration profiles do on Apple's
 platforms, Claude Code's managed settings and Codex's requirements. They come
-from a machine policy that an administrator installs (a system-wide policy
-file or a configuration profile) and an owner policy kept by the App, and each
-setting takes the stricter of the two. They set the most a principal may be
+from a machine policy that an administrator installs (the root-owned file
+`/Library/Application Support/Computer MCP/policy.toml`, or a configuration
+profile's managed preferences in the `com.showxu.computer-mcp` domain, which
+every build of the App reads) and an owner policy kept by the App. Each source
+is resolved on its own, including its per-object entries, and the results
+combine strictest first: a capability is allowed only if every source allows
+it, numeric limits take the smallest value, denied locations are the union, and
+a network destination is admitted only if every source admits that actual
+destination. They set the most a principal may be
 granted (for example no Full access for remote clients, no network access
 beyond `trusted`, denied read locations) and the execution limits. The App
 and manifests cannot grant beyond them, and the App shows the source of every
@@ -490,7 +533,7 @@ capability descriptor, and the built-in catalog snapshot records it.
 | Reading `file`, `git` and `project` tools, structured formats, `archive.list`, `archive.read_file`, `process.list`, `process.read`, `shell.list`, `shell.read`, `runtime.owners.list`, `git.worktree_list`, `project.instructions` | Read access to each path, as the path resolver decides |
 | Writing `file` tools, `git.add`, `git.unstage`, `git.commit`, `git.restore_worktree`, `git.clean`, `json.write`, `plist.write`, `archive.create`, `archive.extract`, `process.cancel`, `git.worktree_remove` | Project `write`; in a worktree unless Full access |
 | `git.branch_create`, `git.branch_rename`, `git.branch_switch`, `git.tag_create`, `git.tag_delete`, `git.stash_push` | Project `write` and Full access, because they change references shared by every checkout |
-| `shell.run`, `shell.spawn`, `shell.write`, `shell.cancel`, `process.spawn`, `cli.exec`, CLI command-tree tools | Project `write`; in a worktree inside the sandbox unless Full access |
+| `shell.run`, `shell.spawn`, `shell.write`, `shell.cancel`, `process.spawn`, `process.write`, `cli.exec`, CLI command-tree tools | Project `write`; in a worktree inside the sandbox unless Full access |
 | `file.download` | Project `write`; in a worktree whose network access admits the URL's host unless Full access |
 | `git.worktree_add`, `git.merge`, `git.branch_delete` | Project `write`, called in the source project |
 | `computer.*` reads; `computer.*` actions, `project.open`, `project.reveal` | Screen; Desktop control |
@@ -502,6 +545,10 @@ capability descriptor, and the built-in catalog snapshot records it.
 | `plugin.install`, `update`, `configure`, `enable`, `disable`, `uninstall`, `project.add`, `grant`, `remove`, `repair` | Full access |
 | `project.list`, `project.describe`, `project.request`, `profile.show`, `profile.limit`, `policy.probe` | Nothing |
 
+Tool listings include every tool a principal can be granted within managed
+limits, with its requirements, so a client can call it and receive a
+permission request. Without a Project permission, `project.list` and
+`project.describe` give only a project's ID, name and the principal's access.
 Forwarding tools (`runtime.owners.call`, `mcp.tools.call`) check their target
 as if it were called directly. `profile.limit` lowers the calling connection's
 permissions and never raises them. `git.commit` accepts `paths` and commits
@@ -631,8 +678,10 @@ them instead, as the App, and decides each one:
   every sandboxed sender.
 - **Target.** Events address an app by bundle identifier. As macOS does for
   its Automation permission, the host records the app's code requirement when
-  Automation is granted and sends only to a running process of that app whose
-  signature satisfies it, launching the app first when it is not running. It
+  Automation for it is granted and sends only to a running process of that app
+  whose signature satisfies it, launching the app first when it is not
+  running; an app whose signature no longer satisfies it produces a permission
+  request. It
   never sends to a process named by ID, to another machine or to the host
   itself.
 - **Content.** The host rebuilds each event from its class, ID and parameters
@@ -689,7 +738,12 @@ others: a call that waits for its program has a time limit of 2 minutes by
 default and 10 minutes at most; a background execution has no time limit; the
 host keeps the most recent 8 MiB of each execution's output and reports how
 much it dropped, without stopping the program; memory is limited only where a
-managed limit sets it and the sandbox backend can enforce it. The result states
+managed limit sets it, and an execution whose memory limit the backend cannot
+enforce is refused. Output stays available for 24 hours after its execution
+ends, within 1 GiB for all executions, oldest first, unless managed limits set
+less. A tightened limit applies to running executions: one past a shorter time
+limit ends, one whose tightened memory limit cannot be applied while it runs
+ends, and output beyond a smaller cap is dropped. The result states
 which limits applied and which one ended the execution. The existing
 `shell.spawn` and `process.spawn` executions take these semantics.
 
@@ -730,7 +784,12 @@ The audit log records, for every call and execution, the client and the
 principal that acted, the project, the policy and permission revisions, the
 decision with any denial reason or permission request, and the outcome.
 Arguments are kept as digests and output is not stored, so the log carries no
-file content or secrets; entries are kept for a bounded period.
+file content or secrets. Each call is recorded before it is dispatched, and a
+call whose record cannot be written is not dispatched; its outcome is recorded
+after, and an outcome that could not be recorded, after a crash or a write
+failure, is reported as unknown and is never retried automatically. Entries
+are kept for 90 days and at most one million, unless managed limits shorten
+that.
 
 ### Implementation surface
 
@@ -884,6 +943,9 @@ with attribution, and its own address rules. These remain:
   Apple-event entitlement and usage description, in the Developer ID signed
   App; and that scripting-addition commands are identified from the system's
   own scripting definitions rather than a fixed list.
+- **Sandbox violation attribution.** A prototype shows that the system's
+  sandbox violation reports name the denied path and process promptly enough
+  to attribute each denial to its execution.
 - **Release signing.** The Full access launch paths and the sandbox are checked
   again in the Developer ID signed App.
 

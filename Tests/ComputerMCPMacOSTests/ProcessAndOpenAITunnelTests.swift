@@ -38,20 +38,27 @@ final class ProcessAndOpenAITunnelTests {
 
   @Test
   func testCommandRunnerDrainsShortOutputUnderConcurrency() async throws {
+    let executor = BlockingOperationExecutor(
+      label: "computer-mcp.concurrent-command-test", serial: false)
     try await withThrowingTaskGroup(of: Void.self) { group in
-      for index in 0..<128 {
+      // Bound simultaneous blocking calls while exercising 128 independent output drains.
+      for lane in 0..<8 {
         group.addTask {
-          let expected = "result-\(index)\n"
-          let result = try ProcessCommandRunner(launcher: testExecutionLauncher()).run(
-            executable: "/bin/echo",
-            arguments: ["result-\(index)"],
-            workingDirectory: nil,
-            environment: [:],
-            timeoutMilliseconds: 5_000,
-            maxOutputBytes: 1_024
-          )
-          #expect(result.exitCode == 0)
-          #expect(result.stdout == expected)
+          for index in stride(from: lane, to: 128, by: 8) {
+            let expected = "result-\(index)\n"
+            let result = try await executor.perform {
+              try ProcessCommandRunner(launcher: testExecutionLauncher()).run(
+                executable: "/bin/echo",
+                arguments: ["result-\(index)"],
+                workingDirectory: nil,
+                environment: [:],
+                timeoutMilliseconds: 5_000,
+                maxOutputBytes: 1_024
+              )
+            }
+            #expect(result.exitCode == 0)
+            #expect(result.stdout == expected)
+          }
         }
       }
       try await group.waitForAll()

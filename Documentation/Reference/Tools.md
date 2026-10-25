@@ -3518,6 +3518,11 @@ project-contained SQLite database schema using fixed
 `sqlite_schema`; it does not execute user-provided SQL and does not read table
 data.
 
+The host must supply a SQLite CLI binding; the SQLite library alone does not
+provide one. Without that binding, `sqlite.schema` and `sqlite.query` return
+`GatewayToolError.disabled` without launching a command. Registered SQLite
+commands run with `-init /dev/null -safe` and a private `HOME`.
+
 Arguments:
 
 ```json
@@ -3718,6 +3723,16 @@ entry paths before extraction, refuses link entries, checks each destination
 through directory handles, and requires
 `confirm_extract=true` when `dry_run=false`.
 
+On macOS the registered `tar` executable is BSD tar. On Linux, tar formats use
+the registered GNU `tar`; ZIP formats (`.zip`, `.jar`, `.war`, `.ear`) require
+a separate registered `bsdtar` executable, including for dry runs. GNU tar does
+not read ZIP archives. If the required binding is absent, extraction returns
+`GatewayToolError.disabled` before listing or creating the destination. Listing,
+metadata and content passes all use the selected reader. ZIP extraction does
+not require `zipinfo` or `unzip`; the list and read tools use those independently.
+`archive.create` requires a registered `zip` for ZIP formats and a registered
+`tar` for tar formats; a missing binding also fails before writing.
+
 One `tar -tvf` listing validates paths, types, sizes and modes, refusing absolute
 paths, `..`, Git metadata, links and special files. The host creates a private
 staging directory with `mkdirat` inside the destination (on the same volume), opens
@@ -3734,10 +3749,14 @@ names, checks byte counts, and records each created device and inode immediately
 Listing escapes are decoded before path checks; member names must be valid UTF-8.
 An additional read-only tar pass obtains exact modification times: BSD tar exports
 `mtree` time metadata with `-P` to preserve original names during this read-only
-conversion, while GNU tar uses `--full-time` in UTC. Metadata must match
+conversion, while GNU tar uses `--full-time` in UTC. GNU timestamp padding is
+removed separately from leading spaces in member names. Metadata must match
 the validated member names and types; it does not determine content order or add
 write targets. Modification times, including stored nanoseconds, are restored
 through checked descriptors. Files receive their times before publication.
+When reading GNU tar's standard input, the host selects `--gzip`, `--bzip2` or
+`--xz` from the supported archive suffix; the corresponding decompressor must
+be installed. BSD tar detects compression itself.
 Directories in staging and at the destination are created with owner read, write
 and search permission. After all contents are published and staging is cleaned,
 explicit directory members receive their archive modes and modification times

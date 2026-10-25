@@ -172,6 +172,10 @@ In-process file moves stay on one volume; copy and then delete when crossing vol
 On glibc Linux, file copies preserve data, mode, access/modification times and
 visible xattrs including POSIX ACLs; copies keep destination ownership. macOS
 resource forks, creation times and BSD file flags have no Linux copy path.
+Linux archive extraction uses GNU tar for tar formats and requires a registered
+`bsdtar` executable for ZIP formats. Missing archive executable or SQLite CLI
+bindings produce an unavailable-tool error before creating destinations or
+running the corresponding command.
 Host Git operations disable repository programs; `git.commit` commits only its
 explicit `paths`, preserving other staged changes.
 

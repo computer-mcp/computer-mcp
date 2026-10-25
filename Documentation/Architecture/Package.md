@@ -5,6 +5,13 @@ Computer MCP is a SwiftPM package that builds layered internal targets, the
 CLI are package products. On Linux the manifest declares the platform-neutral
 targets, and CI builds and tests them there.
 
+Neutral tool providers receive executable bindings from their host. Linux uses
+GNU tar for tar extraction and an optional BSD tar binding named `bsdtar` for ZIP
+extraction. ZIP creation uses `zip`; listing and member reads use `zipinfo` and
+`unzip`. SQLite inspection requires a SQLite CLI binding independently of the
+system SQLite library. Absent bindings return an unavailable-tool error before
+executing that utility or creating destinations; neutral providers do not install utilities.
+
 ## Constraints
 
 - Swift tools 6.2 and macOS 14 or newer.

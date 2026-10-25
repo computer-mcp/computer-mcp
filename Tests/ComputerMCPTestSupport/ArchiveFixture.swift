@@ -2,6 +2,22 @@ import Foundation
 import Testing
 
 package struct ArchiveFixture: Sendable {
+  package static var extractionExecutables: [String: String] {
+    var executables = ["tar": "tar"]
+    #if !canImport(Darwin)
+      if let executable = try? testExecutable("bsdtar") { executables["bsdtar"] = executable }
+    #endif
+    return executables
+  }
+
+  package static var zipExtractionAvailable: Bool {
+    #if canImport(Darwin)
+      true
+    #else
+      extractionExecutables["bsdtar"] != nil
+    #endif
+  }
+
   package struct Entry: Encodable {
     package var name: String
     package var content = "payload"
@@ -103,13 +119,13 @@ package struct ArchiveFixture: Sendable {
             archive.addfile(info, io.BytesIO(content))
           elif e['kind'] == 'sparse':
             info.size = 2
-            info.pax_headers.update({'GNU.sparse.map': '0,1,1023,1', 'GNU.sparse.size': '1024',
-              'GNU.sparse.numblocks': '2', 'GNU.sparse.name': e['name']})
+            info.pax_headers.update({'GNU.sparse.size': '1024', 'GNU.sparse.numblocks': '2',
+              'GNU.sparse.name': e['name'], 'GNU.sparse.map': '0,1,1023,1'})
             archive.addfile(info, io.BytesIO(b'xx'))
           elif e['kind'] == 'sparse-tail':
             info.size = 1
-            info.pax_headers.update({'GNU.sparse.map': '0,1,1024,0', 'GNU.sparse.size': '1024',
-              'GNU.sparse.numblocks': '2', 'GNU.sparse.name': e['name']})
+            info.pax_headers.update({'GNU.sparse.size': '1024', 'GNU.sparse.numblocks': '2',
+              'GNU.sparse.name': e['name'], 'GNU.sparse.map': '0,1,1024,0'})
             archive.addfile(info, io.BytesIO(b'x'))
           else:
             info.type = {'directory': tarfile.DIRTYPE, 'symlink': tarfile.SYMTYPE,

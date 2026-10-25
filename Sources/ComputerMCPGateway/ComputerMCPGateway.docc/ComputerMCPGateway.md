@@ -123,7 +123,12 @@ a host-opened descriptor. The host creates relative entries, records device and
 inode at creation, compares the tree with the listing (including implicit
 parents), checks sizes, identities and links, and publishes files with anchored
 exclusive renames. A separate read-only metadata pass supplies exact member
-modification times, restored through checked descriptors. Staging and destination
+modification times, restored through checked descriptors. Listing, metadata and
+contents use the same selected archive reader.
+On Linux tar formats use GNU tar with explicit compression options for standard
+input; ZIP formats require a registered `bsdtar`. Missing archive or SQLite CLI
+bindings fail as unavailable before executing those utilities or creating destinations.
+Staging and destination
 directories are created with owner read, write and search permission. Directory
 archive modes and modification times are restored through checked descriptors,
 deepest first after publication and staging cleanup. An existing destination

@@ -208,8 +208,9 @@ extension FilesToolProvider {
         "Destination directory does not exist; set create_directories=true to create it.")
     }
 
-    let archive = try archiveListCommand(for: archiveURL)
-    let listing = try archiveVerboseListCommand(archiveURL: archiveURL)
+    let format = try archiveFormat(for: archiveURL)
+    let reader = try archiveReader(for: format)
+    let listing = archiveVerboseListCommand(archiveURL: archiveURL, reader: reader)
     let listResult = try commandRunner.run(
       executable: listing.executable, arguments: listing.arguments,
       workingDirectory: configuration.projectDirectory, environment: ["LC_ALL": "C"],
@@ -227,13 +228,14 @@ extension FilesToolProvider {
     var extractionResult: JSONValue = .null
     if !dryRun {
       let modificationTimes = try archiveModificationTimes(
-        archiveURL, entries: entries, timeout: timeout, maxOutputBytes: maxOutputBytes)
+        archiveURL, reader: reader, entries: entries, timeout: timeout,
+        maxOutputBytes: maxOutputBytes)
       let createdDestination = try files.mkdir(destinationURL, recursive: createDirectories)
       extractionResult = try files.withStagingDirectory(
         in: destinationURL, destinationIdentity: createdDestination,
         preservingDestinationTimes: createdDestination == nil
       ) { staging, directory in
-        let command = try archiveExtractCommand()
+        let command = archiveExtractCommand(archiveURL: archiveURL, reader: reader)
         let result = try files.withTemporaryFile(in: staging) { contents in
           try fileMutationObserver?("archive.extract", staging, .willMutate)
           let result = try files.withReadDescriptor(archiveURL) { input in
@@ -327,7 +329,7 @@ extension FilesToolProvider {
       "archive": .object([
         "path": .string(archiveURL.path),
         "project_relative_path": .string(archiveInfo.projectRelativePath),
-        "format": .string(archive.format),
+        "format": .string(format),
       ]),
       "destination": .object([
         "path": .string(destinationURL.path),
@@ -342,7 +344,7 @@ extension FilesToolProvider {
       "entry_count": .integer(Int64(entries.count)),
       "entries": .array(Array(previewEntries)),
       "entries_truncated": .bool(entries.count > previewEntries.count),
-      "format": .string(archive.format),
+      "format": .string(format),
       "link_entry_count": .integer(0),
       "max_entries": .integer(Int64(maxEntries)),
       "max_preview_entries": .integer(Int64(maxPreviewEntries)),
@@ -480,26 +482,26 @@ extension FilesToolProvider {
   }
 
   private func archiveListCommand(for url: URL) throws -> ArchiveListCommand {
+    let format = try archiveFormat(for: url)
+    return ArchiveListCommand(
+      format: format,
+      executable: try registeredCommands.builtinExecutable(format == "zip" ? "zipinfo" : "tar"),
+      arguments: [format == "zip" ? "-1" : "-tf", url.path])
+  }
+
+  private func archiveFormat(for url: URL) throws -> String {
     let name = url.lastPathComponent.lowercased()
     if name.hasSuffix(".zip") || name.hasSuffix(".jar") || name.hasSuffix(".war")
       || name.hasSuffix(".ear")
     {
-      return ArchiveListCommand(
-        format: "zip",
-        executable: try registeredCommands.builtinExecutable("zipinfo"),
-        arguments: ["-1", url.path]
-      )
+      return "zip"
     }
 
     let tarSuffixes = [
       ".tar", ".tar.gz", ".tgz", ".tar.bz2", ".tbz", ".tbz2", ".tar.xz", ".txz",
     ]
     if tarSuffixes.contains(where: { name.hasSuffix($0) }) {
-      return ArchiveListCommand(
-        format: "tar",
-        executable: try registeredCommands.builtinExecutable("tar"),
-        arguments: ["-tf", url.path]
-      )
+      return "tar"
     }
 
     throw GatewayToolError.invalidArguments(
@@ -507,10 +509,23 @@ extension FilesToolProvider {
     )
   }
 
-  private func archiveVerboseListCommand(archiveURL: URL) throws -> ArchiveListCommand {
+  private func archiveReader(for format: String) throws -> ArchiveReader {
+    #if canImport(Darwin)
+      return ArchiveReader(
+        executable: try registeredCommands.builtinExecutable("tar"), implementation: .bsd)
+    #else
+      return ArchiveReader(
+        executable: try registeredCommands.builtinExecutable(format == "zip" ? "bsdtar" : "tar"),
+        implementation: format == "zip" ? .bsd : .gnu)
+    #endif
+  }
+
+  private func archiveVerboseListCommand(archiveURL: URL, reader: ArchiveReader)
+    -> ArchiveListCommand
+  {
     // ZIP central directory order may differ from local headers; both passes use tar's reader.
     ArchiveListCommand(
-      format: "tar", executable: try registeredCommands.builtinExecutable("tar"),
+      format: "tar", executable: reader.executable,
       arguments: ["--numeric-owner", "-tvf", archiveURL.path])
   }
 
@@ -744,40 +759,53 @@ extension FilesToolProvider {
     }
   }
 
-  private func archiveExtractCommand() throws -> ArchiveListCommand {
+  private func archiveExtractCommand(archiveURL: URL, reader: ArchiveReader) -> ArchiveListCommand {
     var options = ["--no-same-owner", "--no-same-permissions", "--no-acls", "--no-xattrs"]
-    #if canImport(Darwin)
+    if reader.implementation == .bsd {
       options.append("--no-fflags")
-    #endif
+    } else {
+      // GNU tar cannot autodetect compressed archives on standard input.
+      let name = archiveURL.lastPathComponent.lowercased()
+      if name.hasSuffix(".tar.gz") || name.hasSuffix(".tgz") {
+        options.append("--gzip")
+      } else if [".tar.bz2", ".tbz", ".tbz2"].contains(where: name.hasSuffix) {
+        options.append("--bzip2")
+      } else if name.hasSuffix(".tar.xz") || name.hasSuffix(".txz") {
+        options.append("--xz")
+      }
+    }
     return ArchiveListCommand(
-      format: "tar", executable: try registeredCommands.builtinExecutable("tar"),
+      format: "tar", executable: reader.executable,
       arguments: ["-xOf", "-"] + options)
   }
 
   private func archiveModificationTimes(
-    _ archive: URL, entries: [ArchiveValidatedEntry], timeout: Int, maxOutputBytes: Int
+    _ archive: URL, reader: ArchiveReader, entries: [ArchiveValidatedEntry], timeout: Int,
+    maxOutputBytes: Int
   ) throws -> [String: ArchiveModificationTime] {
-    #if canImport(Darwin)
+    let arguments: [String]
+    let metadataEnvironment: [String: String]
+    if reader.implementation == .bsd {
       // BSD tar's verbose listing omits seconds and nanoseconds. Mtree carries
       // both, but sorts names, so it supplies metadata rather than content order.
       // -P preserves leading backslashes during this read-only format conversion.
-      let arguments = [
+      arguments = [
         "-cf", "-", "--format=mtree", "--options=!all,type,time", "-P", "--", "@" + archive.path,
       ]
       // ZIP DOS timestamps use local time, as they do during ordinary extraction.
-      let metadataEnvironment = ["LC_ALL": "C"]
-    #else
-      let arguments = ["--numeric-owner", "--full-time", "-tvf", archive.path]
-      let metadataEnvironment = ["LC_ALL": "C", "TZ": "UTC"]
-    #endif
+      metadataEnvironment = ["LC_ALL": "C"]
+    } else {
+      arguments = ["--numeric-owner", "--full-time", "-tvf", archive.path]
+      metadataEnvironment = ["LC_ALL": "C", "TZ": "UTC"]
+    }
     let result = try commandRunner.run(
-      executable: registeredCommands.builtinExecutable("tar"), arguments: arguments,
+      executable: reader.executable, arguments: arguments,
       workingDirectory: configuration.projectDirectory, environment: metadataEnvironment,
       timeoutMilliseconds: timeout, maxOutputBytes: maxOutputBytes)
     try requireSuccessfulArchivePreflight(result, operation: "archive timestamp metadata")
     var times: [String: ArchiveModificationTime] = [:]
     var directories: [String: Bool] = [:]
-    #if canImport(Darwin)
+    if reader.implementation == .bsd {
       for line in result.stdout.split(separator: "\n") where !line.hasPrefix("#") {
         let columns = line.split(whereSeparator: { $0 == " " || $0 == "\t" })
         guard columns.count == 3,
@@ -797,7 +825,7 @@ extension FilesToolProvider {
         times[path] = .init(seconds: seconds, nanoseconds: nanoseconds)
         directories[path] = type == "type=dir"
       }
-    #else
+    } else {
       for entry in try parseArchiveListing(result.stdout, includingTimes: true) {
         let path = try normalizedArchiveEntryPath(entry.path)
         guard let time = entry.modificationTime, times[path] == nil else {
@@ -807,7 +835,7 @@ extension FilesToolProvider {
         times[path] = time
         directories[path] = entry.isDirectory
       }
-    #endif
+    }
     guard times.count == entries.count,
       entries.allSatisfy({
         times[$0.normalizedPath] != nil && directories[$0.normalizedPath] == $0.isDirectory
@@ -823,6 +851,7 @@ extension FilesToolProvider {
     -> [ArchiveListedEntry]
   {
     var entries: [ArchiveListedEntry] = []
+    var gnuDateWidth = 16
     for line in output.split(separator: "\n", omittingEmptySubsequences: true) {
       guard let kind = line.first else { continue }
       guard kind == "-" || kind == "d" else {
@@ -846,12 +875,20 @@ extension FilesToolProvider {
         }
         columns.append(line[start..<cursor])
       }
-      guard cursor < line.endIndex, line[cursor] == " " else {
+      // GNU tar pads dates to the widest timestamp seen so far. That padding
+      // is distinct from leading spaces in the member name.
+      var separatorCount = 1
+      if fields == 5 {
+        let dateWidth = columns[3].count + 1 + columns[4].count
+        gnuDateWidth = max(gnuDateWidth, dateWidth)
+        separatorCount += gnuDateWidth - dateWidth
+      }
+      guard let nameStart = line.index(cursor, offsetBy: separatorCount, limitedBy: line.endIndex),
+        line[cursor..<nameStart].allSatisfy({ $0 == " " }), nameStart < line.endIndex
+      else {
         throw GatewayToolError.invalidArguments("Cannot parse archive entry listing.")
       }
-      // Exactly one separator follows the final metadata column; leading spaces
-      // after it belong to the member name.
-      let path = try decodedArchiveListingPath(line[line.index(after: cursor)...])
+      let path = try decodedArchiveListingPath(line[nameStart...])
       let sizeIndex = fields == 5 ? 2 : 4
       guard let byteCount = Int64(columns[sizeIndex]), byteCount >= 0,
         columns[0].count >= 10
@@ -1054,6 +1091,15 @@ private struct ArchiveListCommand {
   var format: String
   var executable: String
   var arguments: [String]
+}
+
+private struct ArchiveReader {
+  enum Implementation {
+    case bsd, gnu
+  }
+
+  var executable: String
+  var implementation: Implementation
 }
 
 private struct ArchiveValidatedEntry {

@@ -33,6 +33,10 @@ private final class ExecutionTaskExecutor: TaskExecutor {
   func enqueue(_ job: consuming ExecutorJob) {
     let job = UnownedJob(job)
     let executor = asUnownedTaskExecutor()
-    queue.async { job.runSynchronously(on: executor) }
+    // Actor processing can enqueue more work after its last task releases its executor.
+    // Keep the executor alive through the runtime's entire job invocation.
+    queue.async { [self] in
+      withExtendedLifetime(self) { job.runSynchronously(on: executor) }
+    }
   }
 }

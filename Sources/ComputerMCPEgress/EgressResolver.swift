@@ -24,7 +24,7 @@ package struct SystemEgressResolver: EgressResolving {
     #else
       hints.ai_socktype = Int32(SOCK_STREAM.rawValue)
     #endif
-    hints.ai_protocol = IPPROTO_TCP
+    hints.ai_protocol = Int32(IPPROTO_TCP)
     var result: UnsafeMutablePointer<addrinfo>?
     let status = getaddrinfo(host, String(port), &hints, &result)
     guard status == 0, let first = result else { throw EgressConnectionError.resolutionFailed }

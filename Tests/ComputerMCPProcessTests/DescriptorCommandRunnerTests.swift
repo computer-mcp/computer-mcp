@@ -1,4 +1,5 @@
 import ComputerMCPPlatform
+import ComputerMCPPlatformPOSIX
 import ComputerMCPProcess
 import ComputerMCPTestSupport
 import Foundation
@@ -87,7 +88,9 @@ struct DescriptorCommandRunnerTests {
       directoryDescriptor: pinned, inputDescriptor: input, outputDescriptor: output,
       environment: ["PATH": systemUtilityPath], timeoutMilliseconds: 10_000, maxOutputBytes: 4096)
     #expect(result.exitCode == 0)
-    #expect(try String(contentsOf: outputURL, encoding: .utf8) == moved.path + "\ninput bytes")
+    let captured = try String(contentsOf: outputURL, encoding: .utf8)
+    let physicalDirectory = try ProjectPathResolver.canonicalProject(moved).path
+    #expect(captured == physicalDirectory + "\ninput bytes")
   }
 
   @Test(arguments: [false, true])
@@ -114,7 +117,7 @@ struct DescriptorCommandRunnerTests {
     #expect(pids.count == 2)
     for text in pids {
       let pid = try #require(Int32(text))
-      #expect(kill(pid, 0) == -1 && errno == ESRCH)
+      #expect(ProcessTable.hasExited(pid))
     }
   }
 }

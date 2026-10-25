@@ -26,16 +26,16 @@ import Testing
         temporaryDirectory: root, homeDirectory: root, cacheDirectory: root,
         readableRoots: [.init("/")],
         deniedReadRegions: [
-          .init(path: .init("/Users"), exceptions: [.init("/Users/person/project")])
+          .init(path: .init("/Users"), exceptions: [.init("/Users/example/project")])
         ],
-        forbiddenReads: [.init("/Users/person/project/secret")],
-        listableAncestors: [.init("/Users/person")]))
+        forbiddenReads: [.init("/Users/example/project/secret")],
+        listableAncestors: [.init("/Users/example")]))
     #expect(profile.contains("quote\\\"back\\\\[x]"))
     #expect(
       profile.contains(
-        "(require-not (require-all (subpath \"/Users\") (require-not (subpath \"/Users/person/project\"))))"
+        "(require-not (require-all (subpath \"/Users\") (require-not (subpath \"/Users/example/project\"))))"
       ))
-    #expect(profile.contains("(require-not (subpath \"/Users/person/project/secret\"))"))
+    #expect(profile.contains("(require-not (subpath \"/Users/example/project/secret\"))"))
     #expect(profile.contains("(vnode-type DIRECTORY)"))
   }
 

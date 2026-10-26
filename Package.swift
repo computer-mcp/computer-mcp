@@ -93,6 +93,7 @@ let neutralTargets: [Target] =
     .target(
       name: "ComputerMCPToolsFiles",
       dependencies: [
+        "ComputerMCPPlatformPOSIX",
         "ComputerMCPToolKit", "ComputerMCPCore", "ComputerMCPConfiguration", "ComputerMCPPlatform",
         .product(name: "Crypto", package: "swift-crypto"),
       ]),
@@ -106,6 +107,7 @@ let neutralTargets: [Target] =
     .target(
       name: "ComputerMCPToolsProject",
       dependencies: [
+        "ComputerMCPPlatformPOSIX",
         "ComputerMCPToolsFiles", "ComputerMCPToolKit", "ComputerMCPCore",
         "ComputerMCPConfiguration",
         .product(name: "TOML", package: "swift-toml"),
@@ -143,6 +145,7 @@ let neutralTargets: [Target] =
     .target(
       name: "ComputerMCPToolsStructured",
       dependencies: [
+        "ComputerMCPPlatformPOSIX",
         "ComputerMCPToolKit", "ComputerMCPCore", "ComputerMCPConfiguration", "ComputerMCPPlatform",
         .product(name: "TOML", package: "swift-toml"),
         .product(name: "Yams", package: "Yams"),
@@ -157,6 +160,7 @@ let neutralTargets: [Target] =
     .target(
       name: "ComputerMCPToolsSkills",
       dependencies: [
+        "ComputerMCPPlatformPOSIX",
         "ComputerMCPToolKit", "ComputerMCPToolsStructured", "ComputerMCPCore",
         "ComputerMCPConfiguration",
       ]),

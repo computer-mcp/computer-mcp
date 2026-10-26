@@ -1,5 +1,6 @@
 import ComputerMCPCore
 import ComputerMCPPlatform
+import ComputerMCPPlatformPOSIX
 import ComputerMCPToolKit
 import Crypto
 import Foundation

@@ -1,5 +1,6 @@
 import ComputerMCPConfiguration
 import ComputerMCPCore
+import ComputerMCPPlatformPOSIX
 import ComputerMCPToolKit
 import ComputerMCPToolsStructured
 import Foundation

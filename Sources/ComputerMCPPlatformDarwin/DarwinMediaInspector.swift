@@ -1,9 +1,11 @@
 @preconcurrency import AVFoundation
 import ComputerMCPCore
 import ComputerMCPPlatform
+import ComputerMCPPlatformPOSIX
 import Foundation
 import ImageIO
 import PDFKit
+import UniformTypeIdentifiers
 
 package struct DarwinMediaInspector: MediaInspector {
   package init() {}
@@ -11,64 +13,75 @@ package struct DarwinMediaInspector: MediaInspector {
   package func imageInfo(at url: URL, includeProperties: Bool, maxPropertyDepth: Int) throws
     -> [String: JSONValue]?
   {
-    guard let source = CGImageSourceCreateWithURL(url as CFURL, nil) else {
-      return nil
+    return try withAuthorizedFile(at: url) { reader in
+      guard let source = CGImageSourceCreateWithData(try reader.readToEnd() as CFData, nil) else {
+        return nil
+      }
+
+      let imageCount = CGImageSourceGetCount(source)
+      guard imageCount > 0 else {
+        return nil
+      }
+
+      let typeIdentifier = CGImageSourceGetType(source).map { String($0) }
+      let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any]
+      let globalProperties = CGImageSourceCopyProperties(source, nil) as? [CFString: Any]
+
+      let pixelWidth = intImageProperty(properties, kCGImagePropertyPixelWidth)
+      let pixelHeight = intImageProperty(properties, kCGImagePropertyPixelHeight)
+      let depth = intImageProperty(properties, kCGImagePropertyDepth)
+      let orientation = intImageProperty(properties, kCGImagePropertyOrientation)
+      let dpiWidth = doubleImageProperty(properties, kCGImagePropertyDPIWidth)
+      let dpiHeight = doubleImageProperty(properties, kCGImagePropertyDPIHeight)
+      let hasAlpha = boolImageProperty(properties, kCGImagePropertyHasAlpha)
+      let isFloat = boolImageProperty(properties, kCGImagePropertyIsFloat)
+      let colorModel = stringImageProperty(properties, kCGImagePropertyColorModel)
+      let profileName = stringImageProperty(properties, kCGImagePropertyProfileName)
+      var propertiesTruncated = false
+
+      var result: [String: JSONValue] = [
+        "type_identifier": typeIdentifier.map(JSONValue.string) ?? .null,
+        "mime_type": typeIdentifier.flatMap(imageMIMEType(for:)).map(JSONValue.string) ?? .null,
+        "frame_count": .integer(Int64(imageCount)),
+        "pixel_width": pixelWidth.map { .integer(Int64($0)) } ?? .null,
+        "pixel_height": pixelHeight.map { .integer(Int64($0)) } ?? .null,
+        "depth": depth.map { .integer(Int64($0)) } ?? .null,
+        "orientation": orientation.map { .integer(Int64($0)) } ?? .null,
+        "dpi_width": dpiWidth.map(JSONValue.number) ?? .null,
+        "dpi_height": dpiHeight.map(JSONValue.number) ?? .null,
+        "has_alpha": hasAlpha.map(JSONValue.bool) ?? .null,
+        "is_float": isFloat.map(JSONValue.bool) ?? .null,
+        "color_model": colorModel.map(JSONValue.string) ?? .null,
+        "profile_name": profileName.map(JSONValue.string) ?? .null,
+        "properties_included": .bool(includeProperties),
+      ]
+
+      if includeProperties {
+        result["properties"] = try imagePropertiesJSON(
+          properties,
+          maxDepth: maxPropertyDepth,
+          truncated: &propertiesTruncated
+        )
+        result["global_properties"] = try imagePropertiesJSON(
+          globalProperties,
+          maxDepth: maxPropertyDepth,
+          truncated: &propertiesTruncated
+        )
+      }
+      result["properties_truncated"] = .bool(propertiesTruncated)
+      result["truncated"] = .bool(propertiesTruncated)
+
+      return result
     }
+  }
 
-    let imageCount = CGImageSourceGetCount(source)
-    guard imageCount > 0 else {
-      return nil
-    }
-
-    let typeIdentifier = CGImageSourceGetType(source).map { String($0) }
-    let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any]
-    let globalProperties = CGImageSourceCopyProperties(source, nil) as? [CFString: Any]
-
-    let pixelWidth = intImageProperty(properties, kCGImagePropertyPixelWidth)
-    let pixelHeight = intImageProperty(properties, kCGImagePropertyPixelHeight)
-    let depth = intImageProperty(properties, kCGImagePropertyDepth)
-    let orientation = intImageProperty(properties, kCGImagePropertyOrientation)
-    let dpiWidth = doubleImageProperty(properties, kCGImagePropertyDPIWidth)
-    let dpiHeight = doubleImageProperty(properties, kCGImagePropertyDPIHeight)
-    let hasAlpha = boolImageProperty(properties, kCGImagePropertyHasAlpha)
-    let isFloat = boolImageProperty(properties, kCGImagePropertyIsFloat)
-    let colorModel = stringImageProperty(properties, kCGImagePropertyColorModel)
-    let profileName = stringImageProperty(properties, kCGImagePropertyProfileName)
-    var propertiesTruncated = false
-
-    var result: [String: JSONValue] = [
-      "type_identifier": typeIdentifier.map(JSONValue.string) ?? .null,
-      "mime_type": typeIdentifier.flatMap(imageMIMEType(for:)).map(JSONValue.string) ?? .null,
-      "frame_count": .integer(Int64(imageCount)),
-      "pixel_width": pixelWidth.map { .integer(Int64($0)) } ?? .null,
-      "pixel_height": pixelHeight.map { .integer(Int64($0)) } ?? .null,
-      "depth": depth.map { .integer(Int64($0)) } ?? .null,
-      "orientation": orientation.map { .integer(Int64($0)) } ?? .null,
-      "dpi_width": dpiWidth.map(JSONValue.number) ?? .null,
-      "dpi_height": dpiHeight.map(JSONValue.number) ?? .null,
-      "has_alpha": hasAlpha.map(JSONValue.bool) ?? .null,
-      "is_float": isFloat.map(JSONValue.bool) ?? .null,
-      "color_model": colorModel.map(JSONValue.string) ?? .null,
-      "profile_name": profileName.map(JSONValue.string) ?? .null,
-      "properties_included": .bool(includeProperties),
-    ]
-
-    if includeProperties {
-      result["properties"] = try imagePropertiesJSON(
-        properties,
-        maxDepth: maxPropertyDepth,
-        truncated: &propertiesTruncated
-      )
-      result["global_properties"] = try imagePropertiesJSON(
-        globalProperties,
-        maxDepth: maxPropertyDepth,
-        truncated: &propertiesTruncated
-      )
-    }
-    result["properties_truncated"] = .bool(propertiesTruncated)
-    result["truncated"] = .bool(propertiesTruncated)
-
-    return result
+  private func withAuthorizedFile<Value>(
+    at url: URL, _ operation: (AuthorizedFileReader) throws -> Value
+  ) throws -> Value {
+    let reader = try AuthorizedFileReader(url: url)
+    let value = try operation(reader)
+    try reader.check()
+    return value
   }
 
   private func intImageProperty(_ properties: [CFString: Any]?, _ key: CFString) -> Int? {
@@ -292,153 +305,157 @@ package struct DarwinMediaInspector: MediaInspector {
   package func pdfInfo(at url: URL, maxPages: Int, includePageBoxes: Bool, includeAttributes: Bool)
     throws -> [String: JSONValue]?
   {
-    guard let document = PDFDocument(url: url) else {
-      return nil
-    }
-
-    let pageCount = document.pageCount
-    let returnedPageCount = min(maxPages, pageCount)
-    var pages: [JSONValue] = []
-    for index in 0..<returnedPageCount {
-      guard let page = document.page(at: index) else {
-        continue
+    return try withAuthorizedFile(at: url) { reader in
+      guard let document = PDFDocument(data: try reader.readToEnd()) else {
+        return nil
       }
-      var pageObject: [String: JSONValue] = [
-        "index": .integer(Int64(index)),
-        "number": .integer(Int64(index + 1)),
-        "label": page.label.map(JSONValue.string) ?? .null,
-        "rotation": .integer(Int64(page.rotation)),
+
+      let pageCount = document.pageCount
+      let returnedPageCount = min(maxPages, pageCount)
+      var pages: [JSONValue] = []
+      for index in 0..<returnedPageCount {
+        guard let page = document.page(at: index) else {
+          continue
+        }
+        var pageObject: [String: JSONValue] = [
+          "index": .integer(Int64(index)),
+          "number": .integer(Int64(index + 1)),
+          "label": page.label.map(JSONValue.string) ?? .null,
+          "rotation": .integer(Int64(page.rotation)),
+        ]
+        if includePageBoxes {
+          pageObject["boxes"] = .object([
+            "media": pdfRectJSON(page.bounds(for: .mediaBox)),
+            "crop": pdfRectJSON(page.bounds(for: .cropBox)),
+            "bleed": pdfRectJSON(page.bounds(for: .bleedBox)),
+            "trim": pdfRectJSON(page.bounds(for: .trimBox)),
+            "art": pdfRectJSON(page.bounds(for: .artBox)),
+          ])
+        }
+        pages.append(.object(pageObject))
+      }
+
+      var attributesTruncated = false
+      var result: [String: JSONValue] = [
+        "page_count": .integer(Int64(pageCount)),
+        "returned_page_count": .integer(Int64(pages.count)),
+        "pages_truncated": .bool(pageCount > returnedPageCount),
+        "include_page_boxes": .bool(includePageBoxes),
+        "attributes_included": .bool(includeAttributes),
+        "is_encrypted": .bool(document.isEncrypted),
+        "is_locked": .bool(document.isLocked),
+        "allows_copying": .bool(document.allowsCopying),
+        "allows_printing": .bool(document.allowsPrinting),
+        "pages": .array(pages),
       ]
-      if includePageBoxes {
-        pageObject["boxes"] = .object([
-          "media": pdfRectJSON(page.bounds(for: .mediaBox)),
-          "crop": pdfRectJSON(page.bounds(for: .cropBox)),
-          "bleed": pdfRectJSON(page.bounds(for: .bleedBox)),
-          "trim": pdfRectJSON(page.bounds(for: .trimBox)),
-          "art": pdfRectJSON(page.bounds(for: .artBox)),
-        ])
+
+      if includeAttributes {
+        result["attributes"] = try pdfAttributesJSON(
+          document.documentAttributes ?? [:],
+          truncated: &attributesTruncated
+        )
       }
-      pages.append(.object(pageObject))
+      result["attributes_truncated"] = .bool(attributesTruncated)
+      result["truncated"] = .bool(pageCount > returnedPageCount || attributesTruncated)
+
+      return result
     }
-
-    var attributesTruncated = false
-    var result: [String: JSONValue] = [
-      "page_count": .integer(Int64(pageCount)),
-      "returned_page_count": .integer(Int64(pages.count)),
-      "pages_truncated": .bool(pageCount > returnedPageCount),
-      "include_page_boxes": .bool(includePageBoxes),
-      "attributes_included": .bool(includeAttributes),
-      "is_encrypted": .bool(document.isEncrypted),
-      "is_locked": .bool(document.isLocked),
-      "allows_copying": .bool(document.allowsCopying),
-      "allows_printing": .bool(document.allowsPrinting),
-      "pages": .array(pages),
-    ]
-
-    if includeAttributes {
-      result["attributes"] = try pdfAttributesJSON(
-        document.documentAttributes ?? [:],
-        truncated: &attributesTruncated
-      )
-    }
-    result["attributes_truncated"] = .bool(attributesTruncated)
-    result["truncated"] = .bool(pageCount > returnedPageCount || attributesTruncated)
-
-    return result
   }
 
   package func pdfText(at url: URL, startPage: Int, maxPages: Int, maxCharacters: Int) throws
     -> [String: JSONValue]?
   {
-    guard let document = PDFDocument(url: url) else {
-      return nil
-    }
-    guard !document.isLocked else {
-      throw GatewayToolError.invalidArguments("Unable to read PDF text: document is locked.")
-    }
-    guard document.allowsCopying else {
-      throw GatewayToolError.invalidArguments("Unable to read PDF text: copying is not allowed.")
-    }
+    return try withAuthorizedFile(at: url) { reader in
+      guard let document = PDFDocument(data: try reader.readToEnd()) else {
+        return nil
+      }
+      guard !document.isLocked else {
+        throw GatewayToolError.invalidArguments("Unable to read PDF text: document is locked.")
+      }
+      guard document.allowsCopying else {
+        throw GatewayToolError.invalidArguments("Unable to read PDF text: copying is not allowed.")
+      }
 
-    let pageCount = document.pageCount
-    if pageCount == 0 {
+      let pageCount = document.pageCount
+      if pageCount == 0 {
+        return [
+          "page_count": .number(0),
+          "start_page": .integer(Int64(startPage)),
+          "max_pages": .integer(Int64(maxPages)),
+          "max_characters": .integer(Int64(maxCharacters)),
+          "returned_page_count": .number(0),
+          "total_extracted_character_count": .number(0),
+          "page_range_truncated": .bool(false),
+          "text_truncated": .bool(false),
+          "truncated": .bool(false),
+          "pages": .array([]),
+        ]
+      }
+      guard startPage <= pageCount else {
+        throw GatewayToolError.invalidArguments(
+          "start_page exceeds PDF page_count (\(pageCount)): \(startPage)")
+      }
+
+      let startIndex = startPage - 1
+      let exclusiveEndIndex = min(pageCount, startIndex + maxPages)
+      var pages: [JSONValue] = []
+      var remainingCharacters = maxCharacters
+      var totalExtractedCharacters = 0
+      var textTruncated = false
+
+      for index in startIndex..<exclusiveEndIndex {
+        guard let page = document.page(at: index) else {
+          continue
+        }
+        guard remainingCharacters > 0 else {
+          textTruncated = true
+          break
+        }
+
+        let rawText = page.string ?? ""
+        let pageCharacterCount = rawText.count
+        let pageText: String
+        let pageTextTruncated: Bool
+        if pageCharacterCount > remainingCharacters {
+          pageText = String(rawText.prefix(remainingCharacters))
+          pageTextTruncated = true
+          textTruncated = true
+          remainingCharacters = 0
+        } else {
+          pageText = rawText
+          pageTextTruncated = false
+          remainingCharacters -= pageCharacterCount
+        }
+        totalExtractedCharacters += pageText.count
+        pages.append(
+          .object([
+            "index": .integer(Int64(index)),
+            "number": .integer(Int64(index + 1)),
+            "label": page.label.map(JSONValue.string) ?? .null,
+            "text": .string(pageText),
+            "character_count": .integer(Int64(pageCharacterCount)),
+            "extracted_character_count": .integer(Int64(pageText.count)),
+            "text_truncated": .bool(pageTextTruncated),
+          ]))
+        if pageTextTruncated {
+          break
+        }
+      }
+
+      let pageRangeTruncated = exclusiveEndIndex < pageCount
       return [
-        "page_count": .number(0),
+        "page_count": .integer(Int64(pageCount)),
         "start_page": .integer(Int64(startPage)),
         "max_pages": .integer(Int64(maxPages)),
         "max_characters": .integer(Int64(maxCharacters)),
-        "returned_page_count": .number(0),
-        "total_extracted_character_count": .number(0),
-        "page_range_truncated": .bool(false),
-        "text_truncated": .bool(false),
-        "truncated": .bool(false),
-        "pages": .array([]),
+        "returned_page_count": .integer(Int64(pages.count)),
+        "total_extracted_character_count": .integer(Int64(totalExtractedCharacters)),
+        "page_range_truncated": .bool(pageRangeTruncated),
+        "text_truncated": .bool(textTruncated),
+        "truncated": .bool(pageRangeTruncated || textTruncated),
+        "pages": .array(pages),
       ]
     }
-    guard startPage <= pageCount else {
-      throw GatewayToolError.invalidArguments(
-        "start_page exceeds PDF page_count (\(pageCount)): \(startPage)")
-    }
-
-    let startIndex = startPage - 1
-    let exclusiveEndIndex = min(pageCount, startIndex + maxPages)
-    var pages: [JSONValue] = []
-    var remainingCharacters = maxCharacters
-    var totalExtractedCharacters = 0
-    var textTruncated = false
-
-    for index in startIndex..<exclusiveEndIndex {
-      guard let page = document.page(at: index) else {
-        continue
-      }
-      guard remainingCharacters > 0 else {
-        textTruncated = true
-        break
-      }
-
-      let rawText = page.string ?? ""
-      let pageCharacterCount = rawText.count
-      let pageText: String
-      let pageTextTruncated: Bool
-      if pageCharacterCount > remainingCharacters {
-        pageText = String(rawText.prefix(remainingCharacters))
-        pageTextTruncated = true
-        textTruncated = true
-        remainingCharacters = 0
-      } else {
-        pageText = rawText
-        pageTextTruncated = false
-        remainingCharacters -= pageCharacterCount
-      }
-      totalExtractedCharacters += pageText.count
-      pages.append(
-        .object([
-          "index": .integer(Int64(index)),
-          "number": .integer(Int64(index + 1)),
-          "label": page.label.map(JSONValue.string) ?? .null,
-          "text": .string(pageText),
-          "character_count": .integer(Int64(pageCharacterCount)),
-          "extracted_character_count": .integer(Int64(pageText.count)),
-          "text_truncated": .bool(pageTextTruncated),
-        ]))
-      if pageTextTruncated {
-        break
-      }
-    }
-
-    let pageRangeTruncated = exclusiveEndIndex < pageCount
-    return [
-      "page_count": .integer(Int64(pageCount)),
-      "start_page": .integer(Int64(startPage)),
-      "max_pages": .integer(Int64(maxPages)),
-      "max_characters": .integer(Int64(maxCharacters)),
-      "returned_page_count": .integer(Int64(pages.count)),
-      "total_extracted_character_count": .integer(Int64(totalExtractedCharacters)),
-      "page_range_truncated": .bool(pageRangeTruncated),
-      "text_truncated": .bool(textTruncated),
-      "truncated": .bool(pageRangeTruncated || textTruncated),
-      "pages": .array(pages),
-    ]
   }
 
   private func pdfRectJSON(_ rect: CGRect) -> JSONValue {
@@ -552,67 +569,81 @@ package struct DarwinMediaInspector: MediaInspector {
   package func mediaInfo(at url: URL, maxTracks: Int, loadTimeoutMS: Int) throws -> [String:
     JSONValue]
   {
-    let duration: CMTime
-    let tracks: [AVAssetTrack]
-    let isPlayable: Bool
-    let hasProtectedContent: Bool
-    let providesPreciseDurationAndTiming: Bool
-    let availableMetadataFormats: [AVMetadataFormat]
-    do {
-      duration = try loadMediaProperty(timeoutMilliseconds: loadTimeoutMS) {
-        try await AVURLAsset(url: url).load(.duration)
+    return try withAuthorizedFile(at: url) { reader in
+      let source = AuthorizedMediaResource(reader: reader, fileExtension: url.pathExtension)
+      let asset = AVURLAsset(
+        url: source.url,
+        options: [
+          AVURLAssetReferenceRestrictionsKey: AVAssetReferenceRestrictions.forbidAll.rawValue
+        ])
+      asset.resourceLoader.setDelegate(source, queue: source.queue)
+      defer {
+        asset.cancelLoading()
+        withExtendedLifetime(source) {}
       }
-      tracks = try loadMediaProperty(timeoutMilliseconds: loadTimeoutMS) {
-        try await AVURLAsset(url: url).load(.tracks)
+      let duration: CMTime
+      let tracks: [AVAssetTrack]
+      let isPlayable: Bool
+      let hasProtectedContent: Bool
+      let providesPreciseDurationAndTiming: Bool
+      let availableMetadataFormats: [AVMetadataFormat]
+      do {
+        duration = try loadMediaProperty(timeoutMilliseconds: loadTimeoutMS) {
+          try await asset.load(.duration)
+        }
+        tracks = try loadMediaProperty(timeoutMilliseconds: loadTimeoutMS) {
+          try await asset.load(.tracks)
+        }
+        isPlayable = try loadMediaProperty(timeoutMilliseconds: loadTimeoutMS) {
+          try await asset.load(.isPlayable)
+        }
+        hasProtectedContent = try loadMediaProperty(timeoutMilliseconds: loadTimeoutMS) {
+          try await asset.load(.hasProtectedContent)
+        }
+        providesPreciseDurationAndTiming = try loadMediaProperty(timeoutMilliseconds: loadTimeoutMS)
+        {
+          try await asset.load(.providesPreciseDurationAndTiming)
+        }
+        availableMetadataFormats = try loadMediaProperty(timeoutMilliseconds: loadTimeoutMS) {
+          try await asset.load(.availableMetadataFormats)
+        }
+      } catch {
+        throw GatewayToolError.invalidArguments(
+          "Unable to read media metadata: \(error.localizedDescription)")
       }
-      isPlayable = try loadMediaProperty(timeoutMilliseconds: loadTimeoutMS) {
-        try await AVURLAsset(url: url).load(.isPlayable)
-      }
-      hasProtectedContent = try loadMediaProperty(timeoutMilliseconds: loadTimeoutMS) {
-        try await AVURLAsset(url: url).load(.hasProtectedContent)
-      }
-      providesPreciseDurationAndTiming = try loadMediaProperty(timeoutMilliseconds: loadTimeoutMS) {
-        try await AVURLAsset(url: url).load(.providesPreciseDurationAndTiming)
-      }
-      availableMetadataFormats = try loadMediaProperty(timeoutMilliseconds: loadTimeoutMS) {
-        try await AVURLAsset(url: url).load(.availableMetadataFormats)
-      }
-    } catch {
-      throw GatewayToolError.invalidArguments(
-        "Unable to read media metadata: \(error.localizedDescription)")
-    }
 
-    var mediaTypes = Set<String>()
-    var trackRows: [JSONValue] = []
-    for (index, track) in tracks.prefix(maxTracks).enumerated() {
-      let mediaType = mediaTypeName(track.mediaType)
-      mediaTypes.insert(mediaType)
-      trackRows.append(
-        mediaTrackJSON(
-          track,
-          index: index,
-          mediaType: mediaType,
-          timeoutMilliseconds: loadTimeoutMS
-        ))
-    }
+      var mediaTypes = Set<String>()
+      var trackRows: [JSONValue] = []
+      for (index, track) in tracks.prefix(maxTracks).enumerated() {
+        let mediaType = mediaTypeName(track.mediaType)
+        mediaTypes.insert(mediaType)
+        trackRows.append(
+          mediaTrackJSON(
+            track,
+            index: index,
+            mediaType: mediaType,
+            timeoutMilliseconds: loadTimeoutMS
+          ))
+      }
 
-    return [
-      "duration_seconds": finiteMediaSeconds(duration).map(JSONValue.number) ?? .null,
-      "duration_timescale": .integer(Int64(duration.timescale)),
-      "is_playable": .bool(isPlayable),
-      "has_protected_content": .bool(hasProtectedContent),
-      "provides_precise_duration_and_timing": .bool(providesPreciseDurationAndTiming),
-      "track_count": .integer(Int64(tracks.count)),
-      "returned_track_count": .integer(Int64(trackRows.count)),
-      "tracks_truncated": .bool(tracks.count > trackRows.count),
-      "media_types": .array(mediaTypes.sorted().map(JSONValue.string)),
-      "metadata_format_count": .integer(Int64(availableMetadataFormats.count)),
-      "available_metadata_formats": .array(
-        availableMetadataFormats.map { .string($0.rawValue) }),
-      "load_timeout_ms": .integer(Int64(loadTimeoutMS)),
-      "tracks": .array(trackRows),
-      "truncated": .bool(tracks.count > trackRows.count),
-    ]
+      return [
+        "duration_seconds": finiteMediaSeconds(duration).map(JSONValue.number) ?? .null,
+        "duration_timescale": .integer(Int64(duration.timescale)),
+        "is_playable": .bool(isPlayable),
+        "has_protected_content": .bool(hasProtectedContent),
+        "provides_precise_duration_and_timing": .bool(providesPreciseDurationAndTiming),
+        "track_count": .integer(Int64(tracks.count)),
+        "returned_track_count": .integer(Int64(trackRows.count)),
+        "tracks_truncated": .bool(tracks.count > trackRows.count),
+        "media_types": .array(mediaTypes.sorted().map(JSONValue.string)),
+        "metadata_format_count": .integer(Int64(availableMetadataFormats.count)),
+        "available_metadata_formats": .array(
+          availableMetadataFormats.map { .string($0.rawValue) }),
+        "load_timeout_ms": .integer(Int64(loadTimeoutMS)),
+        "tracks": .array(trackRows),
+        "truncated": .bool(tracks.count > trackRows.count),
+      ]
+    }
   }
 
   private func mediaTrackJSON(
@@ -780,5 +811,66 @@ private final class AsyncMediaLoadResultBox<T>: @unchecked Sendable {
     queue.sync {
       result
     }
+  }
+}
+
+/// AVURLAsset requires a URL. This private scheme has no pathname to reopen: all
+/// byte ranges come from the pinned descriptor, with live authority checked on
+/// each read. Requests for any other resource are refused.
+private final class AuthorizedMediaResource: NSObject, AVAssetResourceLoaderDelegate,
+  @unchecked Sendable
+{
+  let queue = DispatchQueue(label: "computer-mcp.authorized-media")
+  let url: URL
+  private let reader: AuthorizedFileReader
+  private let contentType: String?
+
+  init(reader: AuthorizedFileReader, fileExtension: String) {
+    self.reader = reader
+    self.contentType = UTType(filenameExtension: fileExtension)?.identifier
+    self.url = URL(string: "authorized-media://asset/input")!.appendingPathExtension(fileExtension)
+    super.init()
+  }
+
+  func resourceLoader(
+    _ resourceLoader: AVAssetResourceLoader,
+    shouldWaitForLoadingOfRequestedResource request: AVAssetResourceLoadingRequest
+  ) -> Bool {
+    guard request.request.url == url else { return false }
+    do {
+      let size = try reader.seekToEnd()
+      guard size <= UInt64(Int64.max) else { throw CocoaError(.fileReadTooLarge) }
+      if let information = request.contentInformationRequest {
+        information.contentLength = Int64(size)
+        information.contentType = contentType
+        information.isByteRangeAccessSupported = true
+      }
+      if let dataRequest = request.dataRequest {
+        let offset = dataRequest.currentOffset
+        guard offset >= 0, UInt64(offset) <= size, dataRequest.requestedLength >= 0 else {
+          throw CocoaError(.fileReadCorruptFile)
+        }
+        try reader.seek(toOffset: UInt64(offset))
+        let consumed = offset - dataRequest.requestedOffset
+        guard consumed >= 0, consumed <= Int64(dataRequest.requestedLength) else {
+          throw CocoaError(.fileReadCorruptFile)
+        }
+        var remaining =
+          dataRequest.requestsAllDataToEndOfResource
+          ? size - UInt64(offset)
+          : min(size - UInt64(offset), UInt64(dataRequest.requestedLength) - UInt64(consumed))
+        while remaining > 0, !request.isCancelled {
+          let data = try reader.read(upToCount: Int(min(remaining, 65_536))) ?? Data()
+          if data.isEmpty { break }
+          dataRequest.respond(with: data)
+          remaining -= UInt64(data.count)
+        }
+      }
+      try reader.check()
+      request.finishLoading()
+    } catch {
+      request.finishLoading(with: error)
+    }
+    return true
   }
 }

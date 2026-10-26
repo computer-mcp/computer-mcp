@@ -14,6 +14,11 @@ extraction. ZIP creation uses `zip`; listing and member reads use `zipinfo` and
 system SQLite library. Absent bindings return an unavailable-tool error before
 executing that utility or creating destinations; neutral providers do not install utilities.
 
+File and media readers share the descriptor-authorized reader in `ComputerMCPPlatformPOSIX`.
+Tool domains depend on that lower-layer implementation so pathname swaps and live
+permission changes are checked at the same read boundary. Darwin media inspection
+uses in-memory image/PDF input and descriptor-backed AVFoundation resource loading.
+
 The [execution environment](ExecutionEnvironment.md) describes the sandbox,
 launch identity, outbound proxy and their validation entry points.
 

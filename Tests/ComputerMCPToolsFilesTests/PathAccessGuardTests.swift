@@ -98,6 +98,31 @@ import Testing
     }
   }
 
+  @Test(arguments: [1, 2, 4])
+  func injectedCheckerRechecksFileReadAfterPreflight(trigger: Int) throws {
+    let temporary = try ScopedTemporaryDirectory()
+    let root = temporary.url.resolvingSymlinksInPath()
+    let allowed = root.appendingPathComponent("allowed")
+    let denied = root.appendingPathComponent("denied")
+    for directory in [allowed, denied] {
+      try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+      try Data("private payload".utf8).write(to: directory.appendingPathComponent("file"))
+    }
+    let checker = EntryReadChecker(allowed: allowed, denied: denied, trigger: trigger)
+    let provider = FilesToolProvider(
+      environment: .init(
+        launcher: testExecutionLauncher(),
+        configuration: .init(builtin: .init(enabled: ["file.read"]), projectDirectory: root),
+        pathAccess: checker))
+    #expect(throws: (any Error).self) {
+      try provider.callTool(
+        .init(
+          name: "file.read",
+          arguments: .object(["path": .string("allowed/file")]), context: .empty))
+    }
+    #expect(checker.checks > trigger)
+  }
+
   @Test func descriptorReadRechecksAfterAnAccessCheckChangesTheLink() throws {
     let temporary = try ScopedTemporaryDirectory()
     let root = temporary.url.resolvingSymlinksInPath()
@@ -178,5 +203,29 @@ private struct TraversalPathChecker: HostPathAccessChecking {
       return
     }
     throw CocoaError(.fileReadNoPermission)
+  }
+}
+
+private final class EntryReadChecker: HostPathAccessChecking, @unchecked Sendable {
+  let allowed: URL
+  let denied: URL
+  let trigger: Int
+  private(set) var checks = 0
+  init(allowed: URL, denied: URL, trigger: Int) {
+    self.allowed = allowed
+    self.denied = denied
+    self.trigger = trigger
+  }
+  func check(_ path: URL, operation: HostPathOperation) throws {
+    checks += 1
+    if checks > trigger,
+      trigger > 2 || path.resolvingSymlinksInPath().path.hasPrefix(denied.path + "/")
+    {
+      throw CocoaError(.fileReadNoPermission)
+    }
+    if checks == trigger, trigger <= 2 {
+      try FileManager.default.moveItem(at: allowed, to: allowed.appendingPathExtension("retired"))
+      try FileManager.default.createSymbolicLink(at: allowed, withDestinationURL: denied)
+    }
   }
 }

@@ -1,11 +1,7 @@
 {
   "instructions": {
-    "agents": [
-      "claude-code",
-      "codex"
-    ],
-    "sections": [
-      "guide"
-    ]
-  }
+    "agents": ["claude-code", "codex"],
+    "sections": ["guide"]
+  },
+  "sources": {}
 }

@@ -1,33 +1,24 @@
 {
-  "instructions" : {
-    "chatgpt" : {
-
-    },
-    "sections" : [
+  "instructions": {
+    "chatgpt": {},
+    "sections": [
       {
-        "hash" : "sha256:0a10ff1f28bbc4f224c8445a731123efcde80c606407afcef5d2e8bd2d3f8be8",
-        "name" : "guide",
-        "path" : ".agent/instructions/guide.md",
-        "source" : "."
+        "hash": "sha256:0a10ff1f28bbc4f224c8445a731123efcde80c606407afcef5d2e8bd2d3f8be8",
+        "name": "guide",
+        "path": ".agent/instructions/guide.md",
+        "source": "."
       }
     ],
-    "targets" : {
-      "AGENTS.md" : {
-        "agents" : [
-          "claude-code",
-          "codex"
-        ],
-        "blockHash" : "sha256:ba1559dbdb16d0ba9fda3cc1ad283dff6b5454845300ca2ec641c6f763b001d7",
-        "created" : false,
-        "headingOffset" : 0
+    "targets": {
+      "AGENTS.md": {
+        "agents": ["claude-code", "codex"],
+        "blockHash": "sha256:ba1559dbdb16d0ba9fda3cc1ad283dff6b5454845300ca2ec641c6f763b001d7",
+        "created": false,
+        "headingOffset": 0
       }
     }
   },
-  "skills" : {
-
-  },
-  "sources" : {
-
-  },
-  "version" : 1
+  "skills": {},
+  "sources": {},
+  "version": 1
 }

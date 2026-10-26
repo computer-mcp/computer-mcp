@@ -1,0 +1,42 @@
+---
+description: Route Computer MCP changes to their architecture, release and brand owners, and keep execution side effects and secrets behind the gateway.
+---
+# Computer MCP Agent Guide
+
+## Task Route
+
+- Before editing targets or products, follow the layer rules in
+  `Documentation/Decisions/ModuleArchitecture.md`.
+- For documentation work, keep the role boundaries in
+  `Documentation/README.md`.
+- For product positioning, read `Documentation/Architecture/ProductIdentity.md`.
+- For brand work, read the organization `DESIGN.md` in `computer-mcp/.github`
+  and the brand section of `Documentation/Architecture/ProductIdentity.md`;
+  update imported brand files only with the organization's
+  `Brand/brand.py sync`.
+- For version, dependency, packaging or release work, read `VERSIONING.md` and
+  `Documentation/Reference/Release.md`. Use `Scripts/version.py` for version
+  updates and checks and `Scripts/release.py` for shared CI and release stages.
+- Keep DocC source with the target at
+  `Sources/ComputerMCPGateway/ComputerMCPGateway.docc/`; do not check in
+  `.doccarchive` output.
+- Before finishing code changes, run the checks in `CONTRIBUTING.md` and
+  `python3 Scripts/verify-module-graph.py package`. For user-facing CLI
+  behavior, also run the affected `swift run computer-mcp` commands.
+
+## Guardrails
+
+- Add a dependency only when it removes real complexity, and document it in
+  `Documentation/Architecture/Package.md`.
+- Keep execution side effects behind gateway adapters such as CLI, Shell,
+  process, MCP proxy, HTTP transport, Secure MCP Tunnel, Codex, Computer Use and
+  builtin runtimes.
+- The independent Codex adapter owns App Server and Exec lifecycles through
+  `swift-codex`; the host owns generic MCP routing and approval authority.
+- Local tokens, CLI credentials and downstream MCP authentication are
+  user-owned secrets. Do not log, expose or copy them into examples.
+- Keep `shell.run` disabled by default unless the TOML policy explicitly
+  enables it.
+- Apart from the instruction units, declaration and lock, `.agent/` holds
+  ignored local execution state. No build or maintenance step may require
+  pre-existing `.agent/` content.

@@ -19,7 +19,11 @@ RG=(rg -n --hidden \
 
 PUBLIC_PATHS=(.)
 
-private_agent_files=(${(f)$(git ls-files '.agent/**' '.codex/**' '.refs.yaml')})
+tracked_agent_files=(${(f)"$(git ls-files '.agent/**' '.codex/**' '.refs.yaml')"})
+# The agents CLI's instruction units, declaration and lock are tracked guidance;
+# other agent state, including state nested under the units, stays private.
+private_agent_files=(${tracked_agent_files:#(.agent/agents.json|.agent/agents.resolved|.agent/instructions/*)})
+private_agent_files+=(${(M)tracked_agent_files:#.agent/instructions/(*/|).(agent|codex)/*})
 if (( ${#private_agent_files[@]} > 0 )); then
   print -l -- $private_agent_files >&2
   echo "Public repository verification failed: private agent metadata is tracked." >&2

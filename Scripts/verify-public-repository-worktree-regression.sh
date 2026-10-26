@@ -43,6 +43,16 @@ fi
   || fail "tracked private metadata did not produce the expected diagnosis."
 git -C "$WORKTREE" update-index --force-remove .agent/fixture.bin
 
+/bin/mkdir -p "$WORKTREE/.agent/instructions/units/.agent"
+/usr/bin/printf 'state\n' >"$WORKTREE/.agent/instructions/units/.agent/state"
+git -C "$WORKTREE" add -f .agent/instructions/units/.agent/state
+if "$WORKTREE/Scripts/verify-public-repository.sh" \
+  >"$TEMP_DIR/stdout" 2>"$TEMP_DIR/stderr"
+then
+  fail "private state nested under the instruction units was accepted."
+fi
+git -C "$WORKTREE" update-index --force-remove .agent/instructions/units/.agent/state
+
 /usr/sbin/mkfile -n 11m "$WORKTREE/public-fixture.bin"
 if "$WORKTREE/Scripts/verify-public-repository.sh" \
   >"$TEMP_DIR/stdout" 2>"$TEMP_DIR/stderr"

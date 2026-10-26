@@ -17,14 +17,19 @@ RG=(rg -n --hidden \
   --glob '!.local/**' \
   --glob '!Scripts/verify-public-repository.sh')
 
-PUBLIC_PATHS=(.)
-
-private_agent_files=(${(f)$(git ls-files '.agent/**' '.codex/**' '.refs.yaml')})
+tracked_agent_files=(${(f)"$(git ls-files '.agent/**' '.codex/**' '.refs.yaml')"})
+# The agents CLI's instruction units, declaration and lock are tracked guidance;
+# other agent state, including state nested under the units, stays private.
+private_agent_files=(${tracked_agent_files:#(.agent/agents.json|.agent/agents.resolved|.agent/instructions/*)})
+private_agent_files+=(${(M)tracked_agent_files:#.agent/instructions/(*/|).(agent|codex)/*})
 if (( ${#private_agent_files[@]} > 0 )); then
   print -l -- $private_agent_files >&2
   echo "Public repository verification failed: private agent metadata is tracked." >&2
   exit 1
 fi
+# The tracked instruction files are public source, so the scans below include them.
+guidance_files=(${tracked_agent_files:|private_agent_files})
+PUBLIC_PATHS=(. $guidance_files)
 
 fail_if_match() {
   local description=$1
@@ -66,6 +71,8 @@ credential_files=(${(f)$(find . \
     -name '*.p8' -o -name '*.provisionprofile' -o -name '*.mobileprovision' -o \
     -name '*.token' -o -name '*.token-file' -o -name '.env' -o -name '.env.*' \) \
   -print)})
+credential_files+=(${(M)guidance_files:#*.(pem|p12|key|p8|provisionprofile|mobileprovision|token|token-file)})
+credential_files+=(${(M)guidance_files:#(*/|).env(|.*)})
 if (( ${#credential_files[@]} > 0 )); then
   print -l -- $credential_files >&2
   echo "Public repository verification failed: credential-like files are present." >&2
@@ -82,6 +89,9 @@ large_files=(${(f)$(find . \
   -path './.computer-mcp' -prune -o \
   -path './.local' -prune -o \
   -type f -size +10M -print)})
+if (( ${#guidance_files[@]} > 0 )); then
+  large_files+=(${(f)"$(find $guidance_files -size +10M -print)"})
+fi
 if (( ${#large_files[@]} > 0 )); then
   print -l -- $large_files >&2
   echo "Public repository verification failed: source file exceeds 10 MiB." >&2

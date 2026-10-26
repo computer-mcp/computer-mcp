@@ -17,7 +17,6 @@
 /dist/
 
 # Repository-local product/runtime state
-/.agent/
 /.codex/
 /.refs.yaml
 /.computer-mcp/
@@ -49,3 +48,7 @@
 node_modules/
 __pycache__/
 *.pyc
+/.agent/*
+!/.agent/instructions/
+!/.agent/agents.json
+!/.agent/agents.resolved

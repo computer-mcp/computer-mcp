@@ -43,6 +43,37 @@ fi
   || fail "tracked private metadata did not produce the expected diagnosis."
 git -C "$WORKTREE" update-index --force-remove .agent/fixture.bin
 
+/bin/mkdir -p "$WORKTREE/.agent/instructions/units/.agent"
+/usr/bin/printf 'state\n' >"$WORKTREE/.agent/instructions/units/.agent/state"
+git -C "$WORKTREE" add -f .agent/instructions/units/.agent/state
+if "$WORKTREE/Scripts/verify-public-repository.sh" \
+  >"$TEMP_DIR/stdout" 2>"$TEMP_DIR/stderr"
+then
+  fail "private state nested under the instruction units was accepted."
+fi
+git -C "$WORKTREE" update-index --force-remove .agent/instructions/units/.agent/state
+
+expect_rejected_unit() {
+  local name=$1 diagnosis=$2
+  git -C "$WORKTREE" add -f "$name"
+  if "$WORKTREE/Scripts/verify-public-repository.sh" \
+    >"$TEMP_DIR/stdout" 2>"$TEMP_DIR/stderr"
+  then
+    fail "a tracked instruction file escaped the $diagnosis check."
+  fi
+  /usr/bin/grep -Fq "$diagnosis" "$TEMP_DIR/stderr" \
+    || fail "a tracked instruction file did not produce the $diagnosis diagnosis."
+  git -C "$WORKTREE" update-index --force-remove "$name"
+  /bin/rm -- "$WORKTREE/$name"
+}
+/usr/bin/printf 'token: gh%s_%s\n' p "$(/usr/bin/printf 'a%.0s' {1..36})" \
+  >"$WORKTREE/.agent/instructions/leak.md"
+expect_rejected_unit .agent/instructions/leak.md "known secret formats"
+/usr/bin/printf 'key\n' >"$WORKTREE/.agent/instructions/unit.pem"
+expect_rejected_unit .agent/instructions/unit.pem "credential-like files"
+/usr/sbin/mkfile -n 11m "$WORKTREE/.agent/instructions/large.md"
+expect_rejected_unit .agent/instructions/large.md "source file exceeds 10 MiB"
+
 /usr/sbin/mkfile -n 11m "$WORKTREE/public-fixture.bin"
 if "$WORKTREE/Scripts/verify-public-repository.sh" \
   >"$TEMP_DIR/stdout" 2>"$TEMP_DIR/stderr"

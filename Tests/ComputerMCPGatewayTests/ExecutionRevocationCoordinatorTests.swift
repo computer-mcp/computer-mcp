@@ -488,6 +488,77 @@ private struct ExecutionTestObservation: EgressRouteObservation {
 
 #if os(macOS)
   @Suite(.nativeIntegration, .serialized) struct AuthorizedProcessIntegrationTests {
+    @Test(arguments: [ExecutionLaunchMethod.subprocess, .foundation, .posixSpawn], [false, true])
+    func failedNativeLaunchReleasesResourcesAndAllowsNextExecution(
+      method: ExecutionLaunchMethod, beforeSpawn: Bool
+    ) async throws {
+      let f = try ExecutionFixture()
+      let launcher = testExecutionLauncher()
+      try f.paths.store.transactionWithDatabase { _, ledger in
+        _ = try ledger.setSandboxSettings(
+          .init(network: .full), for: .init(principal: f.paths.principal, projectID: "project"),
+          expectedRevision: ledger.revision)
+      }
+      let box = ExecutionProxyBox()
+      let coordinator = try f.coordinator(
+        launcher: launcher,
+        proxyFactory: { id, policy in
+          let proxy = try await EgressProxy.start(
+            executionID: id.uuidString, policy: policy,
+            routing: ExecutionTestRouting(onCancel: { box.markReleased() }), limits: .init())
+          box.set(proxy)
+          return proxy
+        })
+      try await coordinator.recover()
+      let id = try f.paths.authorize(f.paths.project, operation: .read, once: true)
+      let prepared = try await coordinator.prepare(authorizationID: id, context: f.context)
+      let owners = FailedLaunchOwnerships()
+      if beforeSpawn { try FileManager.default.removeItem(at: f.paths.project) }
+      await #expect(throws: (any Error).self) {
+        try await prepared.withValue {
+          try await launcher.start(
+            executable: .init("/usr/bin/true"), arguments: [],
+            directory: .init(f.paths.project.path),
+            environment: prepared.environment, mode: prepared.mode, method: method,
+            bindOwnership: { owner in
+              owners.bind(owner)
+              if !beforeSpawn {
+                owner.beforeStart { _ in
+                  throw ExecutionEnvironmentError.launchFailed("Admission failed")
+                }
+              }
+            })
+        }
+      }
+      let owner = try #require(owners.value)
+      _ = try await owner.waitForExit()
+      _ = try await owner.cancel()
+      try await f.untilFinished(prepared.executionID, coordinator)
+      #expect(box.released)
+      let children = try f.paths.store.readWithDatabase { database, _ in
+        try #require(try ExecutionRuntimeRecord.load(prepared.executionID, database)).children
+      }
+      #expect(children.count == 1)
+      #expect(children.values.allSatisfy { $0.completed && $0.released })
+      await #expect(throws: (any Error).self) {
+        try await coordinator.prepare(authorizationID: id, context: f.context)
+      }
+      if beforeSpawn {
+        try FileManager.default.createDirectory(
+          at: f.paths.project, withIntermediateDirectories: true)
+      }
+      let nextID = try f.paths.authorize(f.paths.project, operation: .read, once: true)
+      let next = try await coordinator.prepare(authorizationID: nextID, context: f.context)
+      let nextOwner = try await next.withValue {
+        try await launcher.start(
+          executable: .init("/usr/bin/true"), arguments: [], directory: .init(f.paths.project.path),
+          environment: next.environment, mode: next.mode, method: method)
+      }
+      try next.finishAdmission()
+      #expect(try await nextOwner.waitForExit().status == 0)
+      try await f.untilFinished(next.executionID, coordinator)
+    }
+
     @Test func cliBlockingBridgeKeepsPreparedModeAndLimits() async throws {
       let f = try ExecutionFixture()
       let launcher = testExecutionLauncher()
@@ -828,4 +899,11 @@ private struct ReorderedRecoveryAuthority: ExecutionRecoveryAuthorizing {
     observer(tightened)
     observer(original)
   }
+}
+
+private final class FailedLaunchOwnerships: @unchecked Sendable {
+  private let lock = NSLock()
+  private var owner: (any ExecutionOwnership)?
+  var value: (any ExecutionOwnership)? { lock.withLock { owner } }
+  func bind(_ owner: any ExecutionOwnership) { lock.withLock { self.owner = owner } }
 }

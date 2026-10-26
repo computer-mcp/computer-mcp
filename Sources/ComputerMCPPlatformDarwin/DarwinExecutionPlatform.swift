@@ -178,14 +178,18 @@ package struct DarwinExecutionPlatform: ExecutionPlatform {
                   exit = ExecutionExit(status: 128 + signal, signal: signal)
                 }
                 if case .failure(let failure) = result.closureResult {
-                  throw diagnostics.failure(failure, exit: exit)
+                  ownership.launchFailed(diagnostics.failure(failure, exit: exit))
                 }
                 channel.finished()
                 ownership.exited(.success(exit))
               } catch {
                 channel.disconnect()
                 channel.finished()
-                ownership.exited(.failure(error))
+                ownership.launchFailed(error)
+                // A failed spawn has no child to reap. Once spawned, collector errors
+                // remain completion failures and must retain ownership.
+                ownership.exited(
+                  channel.hasSpawned ? .failure(error) : .success(.init(status: 127)))
               }
             }
           } else {
@@ -211,7 +215,11 @@ package struct DarwinExecutionPlatform: ExecutionPlatform {
               } catch {
                 channel.disconnect()
                 channel.finished()
-                ownership.exited(.failure(error))
+                ownership.launchFailed(error)
+                // A failed spawn has no child to reap. Once spawned, collector errors
+                // remain completion failures and must retain ownership.
+                ownership.exited(
+                  channel.hasSpawned ? .failure(error) : .success(.init(status: 127)))
               }
             }
           }
@@ -279,7 +287,7 @@ package struct DarwinExecutionPlatform: ExecutionPlatform {
       status: process.terminationReason == .exit
         ? process.terminationStatus : 128 + process.terminationStatus,
       signal: process.terminationReason == .exit ? nil : process.terminationStatus)
-    if let failure { throw diagnostics.failure(failure, exit: exit) }
+    if let failure { ownership.launchFailed(diagnostics.failure(failure, exit: exit)) }
     return exit
   }
 
@@ -390,7 +398,7 @@ package struct DarwinExecutionPlatform: ExecutionPlatform {
     let signal = status & 0x7f
     let exit = ExecutionExit(
       status: signal == 0 ? (status >> 8) & 0xff : 128 + signal, signal: signal == 0 ? nil : signal)
-    if let failure { throw diagnostics.failure(failure, exit: exit) }
+    if let failure { ownership.launchFailed(diagnostics.failure(failure, exit: exit)) }
     return exit
   }
 
@@ -447,6 +455,8 @@ private final class ExecutionBootstrapChannel: @unchecked Sendable {
       }
     }
   }
+
+  var hasSpawned: Bool { lock.withLock { child == -1 } }
 
   func didSpawn(ownership: DarwinExecutionOwnership) {
     lock.withLock {

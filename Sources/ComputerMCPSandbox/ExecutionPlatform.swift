@@ -131,6 +131,8 @@ package protocol ExecutionOwnership: Sendable {
   /// requires a fully classified snapshot.
   /// The independent deadline covers the attempt. Failure retains resources for background cleanup.
   func cancel(until deadline: ContinuousClock.Instant) async throws -> ExecutionExit
+  /// A confirmed failed launch returns its collected exit here; the start operation
+  /// reports the launch error separately. Only unconfirmed completion may throw.
   /// Cancelling a waiter requests bounded cancellation. A timeout throws
   /// ExecutionCompletionFailure; callers must retain execution resources and may retry.
   func wait(until deadline: ContinuousClock.Instant) async throws -> ExecutionExit

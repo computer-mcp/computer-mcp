@@ -63,6 +63,7 @@ let neutralTargets: [Target] =
     .target(
       name: "ComputerMCPConfiguration",
       dependencies: [
+        "ComputerMCPPermissions",
         "ComputerMCPCore", "ComputerMCPPlatform", .product(name: "TOML", package: "swift-toml"),
       ]
     ),
@@ -285,6 +286,7 @@ let neutralTargets: [Target] =
     .target(
       name: "ComputerMCPGateway",
       dependencies: [
+        "ComputerMCPPermissions",
         "ComputerMCPAuthorization",
         "ComputerMCPPlugins", "ComputerMCPToolsProject", "ComputerMCPConfiguration",
         "ComputerMCPCore", "ComputerMCPPersistence", "ComputerMCPPlatform",
@@ -304,6 +306,7 @@ let neutralTargets: [Target] =
     .testTarget(
       name: "ComputerMCPGatewayTests",
       dependencies: [
+        "ComputerMCPPermissions",
         "ComputerMCPAuthorization",
         "ComputerMCPConfiguration",
         "ComputerMCPCore",
@@ -419,6 +422,7 @@ let neutralTargets: [Target] =
     .testTarget(
       name: "ComputerMCPConfigurationTests",
       dependencies: [
+        "ComputerMCPPermissions",
         "ComputerMCPConfiguration", "ComputerMCPCore", "ComputerMCPPlatform",
         "ComputerMCPTestSupport",
       ]

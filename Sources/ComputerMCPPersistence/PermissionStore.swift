@@ -41,6 +41,14 @@ package final class SQLitePermissionStore: PermissionStore, @unchecked Sendable 
     try await operations.perform { try self.access(mutation: false) { _, ledger in ledger } }
   }
 
+  /// A consistent read of ledger and related SQL state, including epoch recovery.
+  /// The callback must not mutate SQL or call another store.
+  package func readWithDatabase<Result>(_ body: (Database, PermissionLedger) throws -> Result)
+    throws -> Result
+  {
+    try access(mutation: false) { database, ledger in try body(database, ledger) }
+  }
+
   package func transaction<Result: Sendable>(
     _ body: @escaping @Sendable (inout PermissionLedger) throws -> Result
   ) async throws -> Result {

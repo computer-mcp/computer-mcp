@@ -523,3 +523,29 @@ directory for every writer, including database replacement.
 and `transactionWithDatabase` permits atomic project/profile SQL changes. The store and
 epoch handoff are library facilities; the live gateway still uses its existing
 authorization and storage path.
+
+`PermissionProfileMigration` converts a versioned host snapshot without constructing
+providers or querying downstream processes. `PermissionMigrationCatalog` freezes the
+built-in classifications at migration version 1; the host supplies available tool IDs,
+validated aliases and contribution origins, and the configuration digest. Revision-zero
+profiles first resolve their manifest defaults. Missing or ineffective grants produce
+bounded diagnostics rather than broader grants.
+
+`PermissionMigrationStore.prepare` reads profiles, projects, aliases, derived receipts
+and configuration identity together. Explicit activation recomputes that conversion
+inside the permission-store transaction, verifies the expected input and catalog,
+advances profile authorization revisions, clears saved consent and operation tickets,
+and records an idempotent receipt. Additive permission-profile and source-parent tables
+preserve derived ownership and receipt provenance. The database opener does not activate
+conversion; the live gateway continues to use `ProfileGrant`.
+
+`PermissionProfileManifest` is the internal codec for the permission-table format in
+`CodingHarness.md`. Missing entries remain requestable, `deny` is explicit, project
+network entries support the custom host form, and revisions belong to the host.
+Access and network settings are independent: a network-only project entry retains
+the access fallback, an access-only entry retains the network fallback, and denying
+access does not erase its saved network setting. Without a fallback, omitted network
+settings mean none.
+An empty custom host list is valid and denies network unless it includes trusted hosts.
+Obsolete profile fields fail with replacement guidance, including empty and false
+values. The public configuration parser retains its current contract until cutover.

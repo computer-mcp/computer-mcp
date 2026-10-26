@@ -55,6 +55,27 @@ package final class GatewayDatabaseConnection: @unchecked Sendable {
           )
           """)
     }
+    migrator.registerMigration("permission-profiles") { database in
+      try database.execute(
+        sql: """
+          CREATE TABLE permissionProfiles (
+            id TEXT PRIMARY KEY,
+            authorizationRevision INTEGER NOT NULL CHECK (authorizationRevision > 0),
+            payload BLOB NOT NULL
+          );
+          CREATE TABLE permissionDerivedProjects (
+            projectID TEXT PRIMARY KEY,
+            sourceProjectID TEXT NOT NULL,
+            payload BLOB NOT NULL
+          );
+          CREATE TABLE permissionMigration (
+            id INTEGER PRIMARY KEY CHECK (id = 1),
+            version INTEGER NOT NULL,
+            inputDigest TEXT NOT NULL,
+            catalogDigest TEXT NOT NULL
+          );
+          """)
+    }
     return migrator
   }()
 

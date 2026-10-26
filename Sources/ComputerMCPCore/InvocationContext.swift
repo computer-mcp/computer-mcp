@@ -25,16 +25,21 @@ package struct InvocationContext: Sendable {
   package let session: (any GatewaySessionAuthority)?
   package let continuation: (any ContinuationRoute)?
 
+  /// Host-selected durable authorization identity; nil permits only live result continuation.
+  package let executionRecoveryKey: String?
+
   package static let empty = InvocationContext()
 
   package init(
     admission: InvocationAdmission? = nil,
     session: (any GatewaySessionAuthority)? = nil,
-    continuation: (any ContinuationRoute)? = nil
+    continuation: (any ContinuationRoute)? = nil,
+    executionRecoveryKey: String? = nil
   ) {
     self.admission = admission
     self.session = session
     self.continuation = continuation
+    self.executionRecoveryKey = executionRecoveryKey
   }
 }
 

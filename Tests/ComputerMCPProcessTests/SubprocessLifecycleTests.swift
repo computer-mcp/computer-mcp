@@ -7,6 +7,10 @@ import Testing
 
 @testable import ComputerMCPProcess
 
+#if os(macOS)
+  import ComputerMCPDarwinTestSupport
+#endif
+
 #if canImport(Darwin)
   import Darwin
 #elseif canImport(Glibc)
@@ -174,15 +178,14 @@ struct SubprocessLifecycleTests {
 
   @Test
   func shellWriterRemainsOpenUntilExplicitEOF() async throws {
-    let runtime = SubprocessShellRuntime()
+    let runtime = ShellSessionRuntime(launcher: testExecutionLauncher())
     let blocking = BlockingOperationExecutor(label: "test.shell-writer-lifetime")
     do {
       let id = try await blocking.perform {
         try runtime.spawn(
           request: .init(mode: .argv, executable: "/bin/cat"),
           defaultShell: "/bin/sh", defaultWorkingDirectory: FileManager.default.temporaryDirectory,
-          timeoutMilliseconds: nil, maxOutputBytes: 8, maxSessions: 1,
-          terminationGraceMilliseconds: 100)
+          timeoutMilliseconds: nil, maxOutputBytes: 8, maxSessions: 1)
       }
       for text in ["first", "second"] {
         let result = try await blocking.perform {
@@ -213,7 +216,7 @@ struct SubprocessLifecycleTests {
   func shellOverlappingWritesDeliverCompletePayloadsBeforeEOF(closeWithData: Bool) async throws {
     let child = try GatedInputChild()
     let directory = child.directory.url
-    let runtime = SubprocessShellRuntime()
+    let runtime = ShellSessionRuntime(launcher: testExecutionLauncher())
     let blocking = BlockingOperationExecutor(label: "test.shell-write-order", serial: false)
     let payloads = ["a", "b", "c"].map {
       Data((String(repeating: $0, count: 1_048_576) + "\n").utf8)
@@ -228,8 +231,7 @@ struct SubprocessLifecycleTests {
           request: .init(
             mode: .argv, executable: "/bin/sh", argv: ["-c", GatedInputChild.command]),
           defaultShell: "/bin/sh", defaultWorkingDirectory: directory,
-          timeoutMilliseconds: nil, maxOutputBytes: outputBytes, maxSessions: 1,
-          terminationGraceMilliseconds: 100)
+          timeoutMilliseconds: nil, maxOutputBytes: outputBytes, maxSessions: 1)
       }
       try await waitUntil {
         try runtime.read(
@@ -294,7 +296,7 @@ struct SubprocessLifecycleTests {
     let events = InputEvents()
     let settlement = InputSettlement()
     defer { settlement.release() }
-    let runtime = SubprocessShellRuntime()
+    let runtime = ShellSessionRuntime(launcher: testExecutionLauncher())
     let blocking = BlockingOperationExecutor(label: "test.shell-blocked-writer", serial: false)
     do {
       let id = try await blocking.perform {
@@ -306,8 +308,7 @@ struct SubprocessLifecycleTests {
               "trap '' TERM; printf 'ready\\n'; /bin/dd bs=1 count=1 of=input-prefix 2>/dev/null; printf seen > input-seen; exec sleep 30",
             ]),
           defaultShell: "/bin/sh", defaultWorkingDirectory: directory,
-          timeoutMilliseconds: nil, maxOutputBytes: 64, maxSessions: 1,
-          terminationGraceMilliseconds: 100)
+          timeoutMilliseconds: nil, maxOutputBytes: 64, maxSessions: 1)
       }
       try await runtime.observeInput(sessionID: id) { events.append($0) }
       try await runtime.beforeInputWriteSettles(sessionID: id) { await settlement.pause() }
@@ -509,15 +510,14 @@ struct SubprocessLifecycleTests {
 
   @Test
   func subprocessChildStartsWithDefaultSIGPIPE() async throws {
-    let runtime = SubprocessShellRuntime()
+    let runtime = ShellSessionRuntime(launcher: testExecutionLauncher())
     do {
       let result = try await BlockingOperationExecutor(label: "test.subprocess-sigpipe").perform {
         try runtime.run(
           request: .init(
             mode: .argv, executable: "/bin/sh", argv: ["-c", "kill -PIPE $$; echo survived"]),
           defaultShell: "/bin/sh", defaultWorkingDirectory: FileManager.default.temporaryDirectory,
-          timeoutMilliseconds: 2_000, maxOutputBytes: 64, maxSessions: 1,
-          terminationGraceMilliseconds: 100)
+          timeoutMilliseconds: 2_000, maxOutputBytes: 64, maxSessions: 1)
       }
       #expect(!result.isRunning && !result.timedOut)
       #expect(result.signal == SIGPIPE)
@@ -535,9 +535,9 @@ struct SubprocessLifecycleTests {
     @Test
     func foundationChildStartsWithDefaultSIGPIPE() async throws {
       // Creating a runtime installs the broken-pipe handler before the child is spawned.
-      let runtime = SubprocessShellRuntime()
+      let runtime = ShellSessionRuntime(launcher: testExecutionLauncher())
       let result = try await BlockingOperationExecutor(label: "test.foundation-sigpipe").perform {
-        try ProcessCommandRunner().run(
+        try ProcessCommandRunner(launcher: testExecutionLauncher()).run(
           executable: "/bin/sh", arguments: ["-c", "kill -PIPE $$; echo survived"],
           workingDirectory: FileManager.default.temporaryDirectory, environment: [:],
           timeoutMilliseconds: 2_000, maxOutputBytes: 64)
@@ -716,13 +716,12 @@ private struct InputClient: Sendable {
         },
         isClosed: { if case ManagedLineProcessError.closed = $0 { true } else { false } })
     case .shell:
-      let runtime = SubprocessShellRuntime()
+      let runtime = ShellSessionRuntime(launcher: testExecutionLauncher())
       let id = try await BlockingOperationExecutor(label: "test.child-input-spawn").perform {
         try runtime.spawn(
           request: .init(mode: .argv, executable: executable, argv: ["-c", command]),
           defaultShell: "/bin/sh", defaultWorkingDirectory: directory,
-          timeoutMilliseconds: nil, maxOutputBytes: 4_194_304, maxSessions: 1,
-          terminationGraceMilliseconds: 100)
+          timeoutMilliseconds: nil, maxOutputBytes: 4_194_304, maxSessions: 1)
       }
       return .init(
         write: { line, close in

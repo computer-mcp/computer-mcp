@@ -8,6 +8,10 @@ import Testing
 
 @testable import ComputerMCPToolsSystem
 
+#if os(macOS)
+  import ComputerMCPDarwinTestSupport
+#endif
+
 #if canImport(Darwin)
   import Darwin
 #elseif canImport(Glibc)
@@ -22,6 +26,7 @@ final class SystemToolProviderTests {
   func testSystemInfoReturnsReadOnlyMacOSSummary() throws {
     let provider = SystemToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration.fixture(
           builtin: BuiltinConfig(enabled: ["system.info"])
         ),
@@ -42,6 +47,7 @@ final class SystemToolProviderTests {
   func testSystemKernelReturnsReadOnlyUnameSummary() throws {
     let provider = SystemToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration.fixture(
           builtin: BuiltinConfig(enabled: ["system.kernel"])
         ),
@@ -79,6 +85,7 @@ final class SystemToolProviderTests {
       """
     let provider = SystemToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration.fixture(
           builtin: BuiltinConfig(enabled: ["system.software"])
         ),
@@ -110,6 +117,7 @@ final class SystemToolProviderTests {
   func testSystemLocaleReturnsReadOnlyLocaleSummary() throws {
     let provider = SystemToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration.fixture(
           builtin: BuiltinConfig(enabled: ["system.locale"])
         ),
@@ -141,6 +149,7 @@ final class SystemToolProviderTests {
   func testSystemLoadReturnsReadOnlyLoadAverage() throws {
     let provider = SystemToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration.fixture(
           builtin: BuiltinConfig(enabled: ["system.load"])
         ),
@@ -170,6 +179,7 @@ final class SystemToolProviderTests {
   func testSystemTimeReturnsLocalTimeSnapshot() throws {
     let provider = SystemToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration.fixture(
           builtin: BuiltinConfig(enabled: ["system.time"])
         ),
@@ -195,6 +205,7 @@ final class SystemToolProviderTests {
   func testSystemUptimeReturnsReadOnlyBootTimeSummary() throws {
     let provider = SystemToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration.fixture(
           builtin: BuiltinConfig(enabled: ["system.uptime"])
         ),
@@ -227,6 +238,7 @@ final class SystemToolProviderTests {
   func testSystemUserReturnsCurrentPOSIXIdentity() throws {
     let provider = SystemToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration.fixture(
           builtin: BuiltinConfig(enabled: ["system.user"])
         ),
@@ -272,6 +284,7 @@ final class SystemToolProviderTests {
   func testSystemGroupsReturnsCurrentSupplementaryGroups() throws {
     let provider = SystemToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration.fixture(
           builtin: BuiltinConfig(enabled: ["system.groups"])
         ),
@@ -313,6 +326,7 @@ final class SystemToolProviderTests {
     let runner = RecordingCommandRunner()
     let provider = SystemToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration.fixture(
           builtin: BuiltinConfig(enabled: ["system.power"])
         ),
@@ -335,6 +349,7 @@ final class SystemToolProviderTests {
   func testSystemVolumesReturnsMountedVolumeSummary() throws {
     let provider = SystemToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration.fixture(
           builtin: BuiltinConfig(enabled: ["system.volumes"])
         ),
@@ -352,89 +367,23 @@ final class SystemToolProviderTests {
     #expect((payload.objectValue?["volumes"]?.arrayValue) != nil)
   }
 
-  @Test
-  func testSystemProcessesUsesPSFixedArgvAndParsesSnapshot() throws {
-    let runner = RecordingCommandRunner()
-    runner.stdout = """
-        123     1 root     Ss     0.0  0.1 01:02:03 /sbin/launchd
-        456   123 exampleuser S      12.5 1.2 00:00:05 /fixture/apps/Terminal
-      broken line
-      """
+  @Test(arguments: [
+    ("max_results", 0), ("max_results", 10_001),
+    ("timeout_ms", 0), ("timeout_ms", 600_001),
+    ("max_output_bytes", 0), ("max_output_bytes", 20_971_521),
+  ])
+  func testSystemProcessesRejectsBadBounds(name: String, value: Int) throws {
     let provider = SystemToolProvider(
       environment: ToolEnvironment(
         configuration: GatewayConfiguration.fixture(
-          builtin: BuiltinConfig(enabled: ["system.processes"])
-        ),
-        commandRunner: runner,
-        builtinExecutables: systemExecutables))
-
-    let result = try provider.callTool(
-      .init(
-        name: "system.processes",
-        arguments: .object([
-          "query": .string("terminal"),
-          "max_results": .number(5),
-          "timeout_ms": .number(1234),
-        ]), context: .empty
-      ))
-    let payload = try decodeTextPayload(result)
-    let processes = try #require(payload.objectValue?["processes"]?.arrayValue)
-    let first = try #require(processes.first?.objectValue)
-
-    #expect((runner.calls.first?.executable) == (systemExecutables["ps"]!))
-    #expect(
-      (runner.calls.first?.arguments)
-        == (["-axo", "pid=,ppid=,user=,stat=,pcpu=,pmem=,etime=,comm="]))
-    #expect((payload.objectValue?["operation"]) == (.string("system.processes")))
-    #expect((payload.objectValue?["query"]) == (.string("terminal")))
-    #expect((payload.objectValue?["process_count"]) == (.number(1)))
-    #expect((first["parsed"]) == (.bool(true)))
-    #expect((first["pid"]) == (.number(456)))
-    #expect((first["parent_pid"]) == (.number(123)))
-    #expect((first["user"]) == (.string("exampleuser")))
-    #expect((first["state"]) == (.string("S")))
-    #expect((first["cpu_percent"]) == (.number(12.5)))
-    #expect((first["memory_percent"]) == (.number(1.2)))
-    #expect((first["elapsed"]) == (.string("00:00:05")))
-    #expect((first["command"]) == (.string("/fixture/apps/Terminal")))
-  }
-
-  @Test
-  func testSystemProcessesReportsTruncationAndRejectsBadBounds() throws {
-    let runner = RecordingCommandRunner()
-    runner.stdout = """
-        123     1 root     Ss     0.0  0.1 01:02:03 /sbin/launchd
-        456   123 exampleuser S      12.5 1.2 00:00:05 /fixture/apps/Terminal
-      """
-    runner.stdoutTruncated = true
-    let provider = SystemToolProvider(
-      environment: ToolEnvironment(
-        configuration: GatewayConfiguration.fixture(
-          builtin: BuiltinConfig(enabled: ["system.processes"])
-        ),
-        commandRunner: runner,
-        builtinExecutables: systemExecutables))
-
-    let result = try provider.callTool(
-      .init(
-        name: "system.processes",
-        arguments: .object(["max_results": .number(1)]), context: .empty
-      ))
-    let payload = try decodeTextPayload(result)
-    let processes = try #require(payload.objectValue?["processes"]?.arrayValue)
-
-    #expect((processes.count) == (1))
-    #expect((payload.objectValue?["truncated"]) == (.bool(true)))
-    #expect((payload.objectValue?["result"]?.objectValue?["stdout_truncated"]) == (.bool(true)))
-
+          builtin: BuiltinConfig(enabled: ["system.processes"]))))
     expectThrows(
       try provider.callTool(
         .init(
-          name: "system.processes",
-          arguments: .object(["max_results": .number(0)]), context: .empty
-        ))
+          name: "system.processes", arguments: .object([name: .integer(Int64(value))]),
+          context: .empty))
     ) { error in
-      #expect(error.localizedDescription.contains("max_results"))
+      #expect(error.localizedDescription.contains(name))
     }
   }
 
@@ -447,6 +396,7 @@ final class SystemToolProviderTests {
 
     let provider = SystemToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration.fixture(
           builtin: BuiltinConfig(enabled: ["system.which"])
         ),
@@ -487,6 +437,7 @@ final class SystemToolProviderTests {
   func testSystemWhichRejectsBadExecutableNames() {
     let provider = SystemToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration.fixture(
           builtin: BuiltinConfig(enabled: ["system.which"])
         ),
@@ -511,6 +462,7 @@ final class SystemToolProviderTests {
     let missing = directory.appendingPathComponent("missing")
     let provider = SystemToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration.fixture(
           builtin: BuiltinConfig(enabled: ["system.path"])
         ),
@@ -562,6 +514,7 @@ final class SystemToolProviderTests {
   func testSystemPathRejectsBadBounds() {
     let provider = SystemToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration.fixture(
           builtin: BuiltinConfig(enabled: ["system.path"])
         ),
@@ -589,6 +542,7 @@ final class SystemToolProviderTests {
       """
     let provider = SystemToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration.fixture(
           builtin: BuiltinConfig(enabled: ["logs.query"])
         ),
@@ -638,6 +592,7 @@ final class SystemToolProviderTests {
   func testLogsQueryRequiresExplicitBoundsAndRejectsBadPredicate() {
     let provider = SystemToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration.fixture(
           builtin: BuiltinConfig(enabled: ["logs.query"])
         ),
@@ -694,6 +649,7 @@ final class SystemToolProviderTests {
       """
     let provider = SystemToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration.fixture(
           builtin: BuiltinConfig(enabled: ["service.status"])
         ),
@@ -735,6 +691,7 @@ final class SystemToolProviderTests {
     runner.stderr = "Could not find service"
     let provider = SystemToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration.fixture(
           builtin: BuiltinConfig(enabled: ["service.status"])
         ),
@@ -786,6 +743,7 @@ final class SystemToolProviderTests {
     let runner = RecordingCommandRunner()
     let provider = NetworkToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration.fixture(
           builtin: BuiltinConfig(enabled: ["network.interfaces"])
         ),
@@ -813,6 +771,7 @@ final class SystemToolProviderTests {
   func testNetworkInterfacesRejectsOptionLikeInterfaceName() {
     let provider = NetworkToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration.fixture(
           builtin: BuiltinConfig(enabled: ["network.interfaces"])
         ),
@@ -834,6 +793,7 @@ final class SystemToolProviderTests {
     let runner = RecordingCommandRunner()
     let provider = NetworkToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration.fixture(
           builtin: BuiltinConfig(enabled: ["network.dns"])
         ),
@@ -854,6 +814,7 @@ final class SystemToolProviderTests {
   func testNetworkResolveUsesSystemResolverWithoutShell() throws {
     let provider = NetworkToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration.fixture(
           builtin: BuiltinConfig(enabled: ["network.resolve"])
         ),
@@ -888,6 +849,7 @@ final class SystemToolProviderTests {
   func testNetworkResolveReportsUnresolvedHostAsResult() throws {
     let provider = NetworkToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration.fixture(
           builtin: BuiltinConfig(enabled: ["network.resolve"])
         ),
@@ -914,6 +876,7 @@ final class SystemToolProviderTests {
   func testNetworkResolveRejectsBadInputs() {
     let provider = NetworkToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration.fixture(
           builtin: BuiltinConfig(enabled: ["network.resolve"])
         ),
@@ -967,6 +930,7 @@ final class SystemToolProviderTests {
       """
     let provider = NetworkToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration.fixture(
           builtin: BuiltinConfig(enabled: ["network.proxy"])
         ),
@@ -991,6 +955,7 @@ final class SystemToolProviderTests {
   func testNetworkProxyRejectsBadTimeout() {
     let provider = NetworkToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration.fixture(
           builtin: BuiltinConfig(enabled: ["network.proxy"])
         ),
@@ -1017,6 +982,7 @@ final class SystemToolProviderTests {
       """
     let provider = NetworkToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration.fixture(
           builtin: BuiltinConfig(enabled: ["network.services"])
         ),
@@ -1047,6 +1013,7 @@ final class SystemToolProviderTests {
   func testNetworkServicesRejectsBadBounds() {
     let provider = NetworkToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration.fixture(
           builtin: BuiltinConfig(enabled: ["network.services"])
         ),
@@ -1083,6 +1050,7 @@ final class SystemToolProviderTests {
       """
     let provider = NetworkToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration.fixture(
           builtin: BuiltinConfig(enabled: ["network.hardware_ports"])
         ),
@@ -1113,6 +1081,7 @@ final class SystemToolProviderTests {
   func testNetworkHardwarePortsRejectsBadBounds() {
     let provider = NetworkToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration.fixture(
           builtin: BuiltinConfig(enabled: ["network.hardware_ports"])
         ),
@@ -1158,6 +1127,7 @@ final class SystemToolProviderTests {
     ]
     let provider = NetworkToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration.fixture(
           builtin: BuiltinConfig(enabled: ["network.wifi"])
         ),
@@ -1203,6 +1173,7 @@ final class SystemToolProviderTests {
       """
     let provider = NetworkToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration.fixture(
           builtin: BuiltinConfig(enabled: ["network.wifi"])
         ),
@@ -1228,6 +1199,7 @@ final class SystemToolProviderTests {
   func testNetworkWiFiRejectsBadInputs() {
     let provider = NetworkToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration.fixture(
           builtin: BuiltinConfig(enabled: ["network.wifi"])
         ),
@@ -1274,6 +1246,7 @@ final class SystemToolProviderTests {
       """
     let provider = NetworkToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration.fixture(
           builtin: BuiltinConfig(enabled: ["network.vpn"])
         ),
@@ -1317,6 +1290,7 @@ final class SystemToolProviderTests {
   func testNetworkVPNRejectsBadBounds() {
     let provider = NetworkToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration.fixture(
           builtin: BuiltinConfig(enabled: ["network.vpn"])
         ),
@@ -1359,6 +1333,7 @@ final class SystemToolProviderTests {
     runner.stdout = "Automatic\n"
     let provider = NetworkToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration.fixture(
           builtin: BuiltinConfig(enabled: ["network.locations"])
         ),
@@ -1396,6 +1371,7 @@ final class SystemToolProviderTests {
   func testNetworkLocationsRejectsBadBounds() {
     let provider = NetworkToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration.fixture(
           builtin: BuiltinConfig(enabled: ["network.locations"])
         ),
@@ -1434,6 +1410,7 @@ final class SystemToolProviderTests {
       """
     let provider = NetworkToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration.fixture(
           builtin: BuiltinConfig(enabled: ["network.routes"])
         ),
@@ -1468,6 +1445,7 @@ final class SystemToolProviderTests {
   func testNetworkRoutesRejectsBadInputs() {
     let provider = NetworkToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration.fixture(
           builtin: BuiltinConfig(enabled: ["network.routes"])
         ),
@@ -1514,6 +1492,7 @@ final class SystemToolProviderTests {
       """
     let provider = NetworkToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration.fixture(
           builtin: BuiltinConfig(enabled: ["network.connections"])
         ),
@@ -1550,6 +1529,7 @@ final class SystemToolProviderTests {
   func testNetworkConnectionsRejectsBadInputs() {
     let provider = NetworkToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration.fixture(
           builtin: BuiltinConfig(enabled: ["network.connections"])
         ),
@@ -1594,6 +1574,7 @@ final class SystemToolProviderTests {
       """
     let provider = NetworkToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration.fixture(
           builtin: BuiltinConfig(enabled: ["network.arp"])
         ),
@@ -1623,6 +1604,7 @@ final class SystemToolProviderTests {
   func testNetworkARPRejectsBadBounds() {
     let provider = NetworkToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration.fixture(
           builtin: BuiltinConfig(enabled: ["network.arp"])
         ),
@@ -1658,6 +1640,7 @@ final class SystemToolProviderTests {
       """
     let provider = NetworkToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration.fixture(
           builtin: BuiltinConfig(enabled: ["network.ping"])
         ),
@@ -1693,6 +1676,7 @@ final class SystemToolProviderTests {
   func testNetworkPingRejectsBadInputs() {
     let provider = NetworkToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration.fixture(
           builtin: BuiltinConfig(enabled: ["network.ping"])
         ),
@@ -1751,6 +1735,7 @@ final class SystemToolProviderTests {
     runner.stderr = "Connection to 127.0.0.1 port 443 [tcp/https] succeeded!\n"
     let provider = NetworkToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration.fixture(
           builtin: BuiltinConfig(enabled: ["network.tcp_check"])
         ),
@@ -1790,6 +1775,7 @@ final class SystemToolProviderTests {
   func testNetworkTCPCheckRejectsBadInputs() {
     let provider = NetworkToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration.fixture(
           builtin: BuiltinConfig(enabled: ["network.tcp_check"])
         ),
@@ -1888,6 +1874,7 @@ final class SystemToolProviderTests {
       """
     let provider = NetworkToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration.fixture(
           builtin: BuiltinConfig(enabled: ["network.http_check"])
         ),
@@ -1953,6 +1940,7 @@ final class SystemToolProviderTests {
       """
     let provider = NetworkToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration.fixture(
           builtin: BuiltinConfig(enabled: ["network.http_check"])
         ),
@@ -2029,6 +2017,7 @@ final class SystemToolProviderTests {
       """
     let provider = NetworkToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration.fixture(
           builtin: BuiltinConfig(enabled: ["network.listeners"])
         ),
@@ -2060,6 +2049,7 @@ final class SystemToolProviderTests {
   func testNetworkListenersRejectsBadBounds() {
     let provider = NetworkToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration.fixture(
           builtin: BuiltinConfig(enabled: ["network.listeners"])
         ),
@@ -2114,6 +2104,7 @@ final class SystemToolProviderTests {
     )
     let provider = SystemToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: config,
         builtinExecutables: systemExecutables))
 
@@ -2157,7 +2148,6 @@ private let systemExecutables = Dictionary(
   uniqueKeysWithValues: [
     "sw_vers",
     "pmset",
-    "ps",
     "log",
     "launchctl",
     "ifconfig",

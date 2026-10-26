@@ -13,9 +13,11 @@ package struct RegisteredCommands: Sendable {
   private let builtinExecutables: [String: String]
   private let sqliteCommand: CLICommandConfig?
   package let execution: CLIProcessExecution
+  package let inspectionExecution: CLIProcessExecution
 
   package init(
-    configuration: GatewayConfiguration, commandRunner: any CommandRunning,
+    configuration: GatewayConfiguration, launcher: ExecutionLauncher = ExecutionLauncher(),
+    commandRunner: any CommandRunning,
     environment: [String: String], sqliteCommand: CLICommandConfig? = nil,
     builtinExecutables: [String: String] = [:]
   ) {
@@ -24,8 +26,12 @@ package struct RegisteredCommands: Sendable {
     self.environment = environment
     self.sqliteCommand = sqliteCommand
     self.builtinExecutables = builtinExecutables
-    self.execution = CLIProcessExecution(
+    self.inspectionExecution = CLIProcessExecution(
+      launcher: launcher, policy: .readOnly,
       maxConcurrentCalls: configuration.policy.maxShellSessions, inheritsEnvironment: false)
+    self.execution = CLIProcessExecution(
+      launcher: launcher, maxConcurrentCalls: configuration.policy.maxShellSessions,
+      inheritsEnvironment: false)
   }
 
   package func runRegisteredCLI(

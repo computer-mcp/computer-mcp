@@ -7,12 +7,16 @@ import Testing
 
 @testable import ComputerMCPToolsSkills
 
+#if os(macOS)
+  import ComputerMCPDarwinTestSupport
+#endif
+
 @Suite(.nativeIntegration, .serialized)
 final class SkillsToolProviderTests {
   @Test
   func testSkillsToolsExposeOnlyWhenEnabled() throws {
     let disabledProvider = SkillsToolProvider(
-      environment: ToolEnvironment(configuration: .fixture()))
+      environment: ToolEnvironment(launcher: testExecutionLauncher(), configuration: .fixture()))
     let disabledNames = try disabledProvider.definitions().map(\.tool).map(\.name)
 
     #expect(!(disabledNames.contains("skills.list")))
@@ -26,6 +30,7 @@ final class SkillsToolProviderTests {
     let root = try temporaryDirectory()
     let enabledProvider = SkillsToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: .fixture(
           skills: SkillsConfig(
             enabled: true,
@@ -136,6 +141,7 @@ final class SkillsToolProviderTests {
 
     let provider = SkillsToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: .fixture(
           skills: SkillsConfig(
             enabled: true,
@@ -298,6 +304,7 @@ final class SkillsToolProviderTests {
 
     let provider = SkillsToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: .fixture(
           skills: SkillsConfig(
             enabled: true,
@@ -725,6 +732,7 @@ final class SkillsToolProviderTests {
       encoding: .utf8)
     let provider = SkillsToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: .fixture(
           skills: SkillsConfig(
             enabled: true,
@@ -833,6 +841,7 @@ final class SkillsToolProviderTests {
     try Data([0xff, 0xfe]).write(to: skillDirectory.appendingPathComponent("bad.md"))
     let provider = SkillsToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: .fixture(
           skills: SkillsConfig(
             enabled: true,
@@ -938,6 +947,7 @@ final class SkillsToolProviderTests {
 
     let provider = SkillsToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: .fixture(
           skills: SkillsConfig(
             enabled: true,
@@ -1046,6 +1056,7 @@ final class SkillsToolProviderTests {
 
     let provider = SkillsToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: .fixture(
           skills: SkillsConfig(
             enabled: true,
@@ -1154,6 +1165,7 @@ final class SkillsToolProviderTests {
 
     let provider = SkillsToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: .fixture(
           skills: SkillsConfig(
             enabled: true,
@@ -1278,6 +1290,7 @@ final class SkillsToolProviderTests {
 
     let provider = SkillsToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: .fixture(
           skills: SkillsConfig(
             enabled: true,
@@ -1416,6 +1429,7 @@ final class SkillsToolProviderTests {
 
     let provider = SkillsToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: .fixture(
           skills: SkillsConfig(
             enabled: true,
@@ -1524,6 +1538,7 @@ final class SkillsToolProviderTests {
 
     let provider = SkillsToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: .fixture(
           skills: SkillsConfig(
             enabled: true,
@@ -1607,6 +1622,7 @@ final class SkillsToolProviderTests {
 
     let provider = SkillsToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: .fixture(
           skills: SkillsConfig(
             enabled: true,
@@ -1703,6 +1719,7 @@ final class SkillsToolProviderTests {
 
     let provider = SkillsToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: .fixture(
           skills: SkillsConfig(
             enabled: true,
@@ -1825,6 +1842,7 @@ final class SkillsToolProviderTests {
 
     let provider = SkillsToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: .fixture(
           skills: SkillsConfig(
             enabled: true,
@@ -1949,6 +1967,7 @@ final class SkillsToolProviderTests {
 
     let provider = SkillsToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: .fixture(
           skills: SkillsConfig(
             enabled: true,
@@ -2038,6 +2057,7 @@ final class SkillsToolProviderTests {
 
     let provider = SkillsToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: .fixture(
           skills: SkillsConfig(
             enabled: true,
@@ -2079,6 +2099,7 @@ final class SkillsToolProviderTests {
 
     let provider = SkillsToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: .fixture(
           skills: SkillsConfig(
             enabled: true,
@@ -2145,6 +2166,7 @@ final class SkillsToolProviderTests {
 
     let provider = SkillsToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: .fixture(
           skills: SkillsConfig(
             enabled: true,

@@ -131,6 +131,10 @@ Computer MCP 始终把两个决定分开：
 | 稳定 | 插件包生命周期、直接／插件 MCP 注册、经过验证的 CLI Tree 与 Skills | 宿主授权独立，不自动安装外部依赖 |
 | 规划中 | 更广的平台支持和更完整的高级编排 UI | 暂无承诺日期；当前签名 App 仅支持 macOS |
 
+Shell 与已注册进程提供稳定 ID、输出游标、标准输入写入和取消。等待调用默认两分钟、
+最多十分钟；后台执行默认无时限，保留最近 8 MiB 输出。断线续读、重启恢复与限额
+见[执行工具](Documentation/Reference/zh-CN/Executions.md)。任意命令仍要求 Full Shell 授权。
+
 ## ChatGPT 编排，Codex 执行
 
 ChatGPT 可以查看已注册项目，并通过独立的 [Codex 插件](https://github.com/computer-mcp/plugin-codex)

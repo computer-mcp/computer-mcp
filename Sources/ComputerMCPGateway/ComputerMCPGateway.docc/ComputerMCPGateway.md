@@ -34,6 +34,21 @@ Tunnel profiles expose explicit capabilities only. Generic CLI execution,
 process spawning, and Full Shell remain off by default; only
 `chatgpt-operate` can receive them through an explicit local opt-in.
 
+### Execution lifecycle
+
+The macOS composition root injects `ExecutionLauncher` into shell, registered
+process, CLI and host command runners. Full Shell authorization remains a gateway
+responsibility. Read-only and project-independent host command calls use a sandbox
+with private temporary storage as their only writable location.
+
+`GatewayTerminalSessions` outlives individual runtime generations and transport
+connections. Execution snapshots expose stable IDs, byte cursors, applied limits,
+dropped output and completion reasons. Waiting calls default to 120 seconds and
+accept at most 600 seconds; background calls have no default deadline. The default
+shared stdout/stderr budget is 8 MiB. Cancellation uses the launcher ownership
+handle. Durable server owners recover unfinished records as `interrupted` after
+cleaning up surviving recorded processes, retaining the last output checkpoint.
+
 ### Gateway Runtime
 
 - ``GatewayToolRegistry``

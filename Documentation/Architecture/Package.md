@@ -2,8 +2,13 @@
 
 Computer MCP is a SwiftPM package that builds layered internal targets, the
 `computer-mcp` CLI/bridge, and the native SwiftUI App on macOS. Only the App and
-CLI are package products. On Linux the manifest declares the platform-neutral
+CLI are the declared package products. A private Darwin execution bootstrap ships
+in the App's `Contents/Helpers`; a standalone CLI uses a sibling bootstrap binary.
+On Linux the manifest declares the platform-neutral
 targets, and CI builds and tests them there.
+
+The [execution environment](ExecutionEnvironment.md) describes the sandbox,
+launch identity, outbound proxy and their validation entry points.
 
 ## Constraints
 
@@ -59,6 +64,9 @@ package product and does not install or bundle vendor binaries.
 | `Sources/ComputerMCPPlatform/` | Platform-neutral protocols and values for distribution identity and environment, secrets, projects, plugin archives, Computer Use permission readings, launch at login, file change monitoring, process inspection, bounded media inspection, extended attributes, Trash, project opening and native system readings |
 | `Sources/ComputerMCPConfiguration/` | Platform-neutral manifest model and defaults, MCP HTTP authentication values and CLI tree source values |
 | `Sources/ComputerMCPPlatformPOSIX/` | POSIX implementations shared by macOS and Linux: executable inspection, project path resolution, process-table queries, child-input signal handling, shared/exclusive advisory file locks, file fingerprints, socket peer credentials and bounded package file reads |
+| `Sources/ComputerMCPSandbox/` | Neutral execution configuration, explicit environments, launch and route-observation contracts |
+| `Sources/ComputerMCPEgress/` | Execution-scoped proxy, destination policy, bounded relay and revocation |
+| `Sources/ComputerMCPExecutionBootstrap/` | Private Darwin identity handshake before Foundation launches execute user commands |
 | `Sources/ComputerMCPProcess/` | Platform-neutral bounded process execution, managed processes, shell sessions and executable discovery |
 | `Sources/ComputerMCPTransport/` | Platform-neutral Unix-socket transport, inherited sockets, stdio bridging, HTTP response streams, SSE decoding and MCP framing and initialization normalization |
 | `Sources/ComputerMCPDownstream/` | Platform-neutral downstream client contracts and authorization, child-process transport, catalog loading, value bridging, host launch metadata and session interfaces, and process ownership receipts |
@@ -366,7 +374,8 @@ graph; bundled plugin archives retain their separate dependency notices.
 
 ## Child input lifecycle
 
-Every owner of a child's `StandardInputWriter` uses `ChildProcessInput` to own
+Managed transport `StandardInputWriter` and execution `DescriptorInputWriter`
+adapters use `ChildProcessInput` to own
 admission, writes and descriptor close:
 
 1. Writes enter one FIFO queue per child. Only one library write is outstanding
@@ -395,12 +404,12 @@ identity. SIGTERM escalates to SIGKILL after `terminationGraceMilliseconds`;
 managed close then allows `killGraceMilliseconds` for exit and reports a
 termination timeout if necessary. Startup identity has a separate five-second
 bound. Idle close can use one additional termination grace for EOF delivery.
-Shell cancellation sends SIGTERM immediately and escalates after its configured
-termination grace. These signal paths never wait for input to drain. When the
-owned process exits, swift-subprocess cancels its I/O and releases the outstanding
-write even if a descendant still holds stdin open; joining input adds no pipe
-drain timeout to termination escalation. `pendingWrites` counts queued plus
-outstanding operations, including explicit EOF.
+Shell cancellation delegates to `ExecutionOwnership`, whose termination and
+confirmation do not wait for input to drain. The descriptor adapter uses
+nonblocking writes, stops them on execution cancellation or exit, joins admitted
+input, then closes the descriptor. Managed transport I/O remains owned by
+swift-subprocess. `pendingWrites` counts queued plus outstanding operations,
+including explicit EOF.
 
 Shell callers running in tasks use `writeAsync`, including the shell tool
 provider, so their cancellation reaches admission. The synchronous `write`
@@ -412,3 +421,12 @@ cancellation can return a short count. `finish()` immediately unregisters and
 closes the descriptor, while a resumed write may still hold its descriptor
 number. The FIFO queue, independent admitted task, short-write check and teardown
 join together protect that descriptor's lifetime and the child's frame boundaries.
+
+## Execution ownership
+
+`CDarwinExecution` bridges the variadic Darwin sandbox query SPI to Swift with
+the platform C calling convention. `PlatformDarwin` creates existing, private
+marker files and holds them until the execution has no live members. Its
+Seatbelt profile denies the marker directory except for the execution's own
+read marker. A process belongs to that sandbox when its own marker is readable
+and the shared unsandboxed marker is denied.

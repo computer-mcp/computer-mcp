@@ -505,7 +505,36 @@ available. For tools, use `mcp.tools.list`, `mcp.tools.describe`,
 `mcp.resources.list`, `mcp.resources.templates.list`, and `mcp.resources.read`.
 For prompts, use `mcp.prompts.list` and `mcp.prompts.get`.
 
-## `process.spawn`, `process.list`, `process.read`, `process.cancel`
+## Shell executions
+
+`shell.run` waits for a command; `shell.spawn` returns a stable `session_id` for
+background work. Use `shell.read` with `stdout_cursor` and `stderr_cursor` from the
+previous response's `next_cursor`, `shell.write` to send text or base64 bytes or
+close stdin, and `shell.cancel` to terminate the owned execution tree. Calls remain
+subject to Full Shell permission and the existing capability and project checks.
+
+Waiting commands default to `timeout_ms: 120000` and accept at most `600000`.
+Background commands have no timeout unless requested. The default output budget is
+8388608 bytes (8 MiB), shared by stdout and stderr; the newest bytes are retained.
+Each snapshot includes `limits`, `dropped_bytes` and, after completion, `end_reason`
+(`exited`, `signalled`, `timeout`, `cancelled`, `interrupted`, `launch_failed` or
+`execution_failed`). A missing `limits.timeout_ms` means no deadline. An old cursor
+returns retained data with `missed_bytes: true`; `start_cursor` identifies its
+starting offset. `truncated` indicates that the stream has discarded output under
+the retention limit; `next_cursor < end_cursor` indicates more retained data is
+available to read.
+
+Disconnecting a client does not change execution IDs or output cursors. Reconnect
+with the same authorized principal, profile and project to continue reading.
+Durable server owners retain periodic output checkpoints. Recovered output requires
+the original standing client trust revision or unchanged configured grant; output
+from connection-only consent is not recovered for a new connection. After a host restart,
+unfinished records become `interrupted` after surviving recorded processes are
+cleaned up; commands are not automatically restarted. Owner shutdown and result
+retention may remove records. Full access tree cancellation is best effort for
+descendants that escape observation or launch through another service.
+
+## `process.spawn`, `process.list`, `process.read`, `process.write`, `process.cancel`
 
 Spawn, list, inspect, and cancel long-running commands by registered CLI id.
 `process.list` reports only sessions created through `process.spawn`; it is not
@@ -517,6 +546,19 @@ equally to local and Tunnel callers; a Profile's name does not grant access.
 Use `policy.probe` to inspect the effective authorization without execution.
 `process.cancel` reports the owned process lifecycle; downstream MCP cancellation
 uses the separate `mcp.requests.cancel` and receipt-query surfaces.
+
+Registered processes use the same execution lifecycle as shell sessions.
+`process.read` accepts `stdout_cursor`, `stderr_cursor` and `max_bytes`; its
+`execution` object contains stream cursors, limits, dropped bytes and end reason.
+The existing top-level status, stdout and stderr fields remain available.
+`process.write` accepts `process_id`, either `text` or `base64`, and optional
+`close: true` to deliver EOF after queued writes. `process.cancel` uses the shared
+execution owner's process-tree cancellation.
+
+`cli.exec` uses the same bounded launcher and retains Full Shell authorization.
+Host read-only command calls and calls without a project use a sandbox in which
+only private temporary files are writable. CLI compatibility checks and catalog
+exporters also run with these read-only restrictions.
 
 ## `policy.probe`
 
@@ -1976,12 +2018,32 @@ Arguments:
 
 ## `system.processes`
 
-Available only when `[builtin].enabled` includes `system.processes`. Runs fixed
-`/bin/ps` argv and returns a bounded read-only process snapshot. It reports
+Available only when `[builtin].enabled` includes `system.processes`. Reads a
+bounded process snapshot in the host through libproc and sysctl. It reports
 process ids, parent ids, user, state, CPU/memory percentages, elapsed time, and
-the executable command field; it does not request full argument strings or
-environment variables. This tool is not enabled in the ChatGPT tunnel sample
-profile by default because process names can reveal local activity.
+`command`. The command contains the argument strings when the kernel permits
+reading them. Otherwise it contains the executable path or name followed by
+` [arguments unavailable]`, including for other users' processes such as
+`launchd`. Environment variables are never returned. This tool is not enabled
+in the ChatGPT tunnel sample profile by default because process information can
+reveal local activity.
+
+`cpu_percent` is lifetime user and system CPU time divided by elapsed wall time,
+as a percentage of one CPU. `memory_percent` is resident bytes as a percentage of
+physical memory. Unreadable task information produces `null` for these fields;
+unreadable start time produces `null` for `elapsed`. State uses BSD state letters
+with available priority, tracing, session and foreground indicators. Processes
+that exit during inspection may be omitted. Results are ordered by PID.
+
+`query` filters readable user, state and command text case-insensitively.
+`max_results` limits matching records. `max_output_bytes` bounds the compact
+JSON records inspected before filtering, counting one newline per record;
+only complete records are returned. `timeout_ms` bounds enumeration. Any limit
+that leaves an incomplete snapshot sets `truncated`. `result.timed_out` and
+`result.stdout_truncated` identify timeout and byte limits respectively.
+The response retains `argv` and `result.arguments` as empty arrays,
+`result.executable` and `result.exit_code` as `null`, and empty `result.stderr`:
+the snapshot is an in-process reading.
 
 Arguments:
 

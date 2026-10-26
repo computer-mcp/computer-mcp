@@ -8,6 +8,10 @@ import Testing
 
 @testable import ComputerMCPDelivery
 
+#if os(macOS)
+  import ComputerMCPDarwinTestSupport
+#endif
+
 // Immutable fixture ownership; repository mutations are serialized by Git and delivery locks.
 final class DeliveryFixture: @unchecked Sendable {
   let temporary: ScopedTemporaryDirectory
@@ -23,7 +27,7 @@ final class DeliveryFixture: @unchecked Sendable {
     try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
     executable = try testExecutable("git")
     environment = ["PATH": systemUtilityPath, "HOME": temporary.url.path, "LC_ALL": "C"]
-    runner = ProcessCommandRunner(environment: environment)
+    runner = ProcessCommandRunner(launcher: testExecutionLauncher(), environment: environment)
     try git(["init", "-b", "main"])
     try git(["config", "user.name", "Delivery Test"])
     try git(["config", "user.email", "delivery@example.invalid"])
@@ -44,6 +48,7 @@ final class DeliveryFixture: @unchecked Sendable {
     commandEnvironment: [String: String] = [:], timeout: Int? = nil
   ) -> ToolEnvironment {
     ToolEnvironment(
+      launcher: testExecutionLauncher(),
       configuration: .init(
         projects: [.init(id: "fixture", path: root.path)],
         cli: .init(commands: [
@@ -72,7 +77,8 @@ final class DeliveryFixture: @unchecked Sendable {
     var configuration = tools(scope: scope, timeout: timeout).configuration
     configuration.cli.commands[0].executable = wrapper.path
     return DeliveryToolProvider(
-      environment: .init(configuration: configuration, environment: environment),
+      environment: .init(
+        launcher: testExecutionLauncher(), configuration: configuration, environment: environment),
       io: io, startsRecovery: false)
   }
 

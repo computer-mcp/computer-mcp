@@ -4,7 +4,8 @@
     {
       "name": "base",
       "targets": [
-        "ComputerMCPCore"
+        "ComputerMCPCore",
+        "ComputerMCPSandbox"
       ]
     },
     {
@@ -13,12 +14,15 @@
         "ComputerMCPPlatform",
         "ComputerMCPPlatformPOSIX",
         "CSystemArchive",
-        "ComputerMCPPlatformDarwin"
+        "CDarwinExecution",
+        "ComputerMCPPlatformDarwin",
+        "computer-mcp-execution-bootstrap"
       ]
     },
     {
       "name": "services",
       "targets": [
+        "ComputerMCPEgress",
         "ComputerMCPConfiguration",
         "ComputerMCPPersistence",
         "ComputerMCPProcess",
@@ -63,6 +67,7 @@
       "name": "front-ends",
       "targets": [
         "ComputerMCPApp",
+        "ComputerMCPExecutionProbe",
         "computer-mcp"
       ]
     }
@@ -72,6 +77,7 @@
     "ComputerMCPPlatformDarwin->ComputerMCPPlatform",
     "ComputerMCPPlatformDarwin->ComputerMCPPlatformPOSIX",
     "ComputerMCPPlatformDarwin->CSystemArchive",
+    "ComputerMCPPlatformDarwin->CDarwinExecution",
     "ComputerMCPProcess->ComputerMCPConfiguration",
     "ComputerMCPTransport->ComputerMCPConfiguration",
     "ComputerMCPDownstream->ComputerMCPConfiguration",
@@ -98,7 +104,10 @@
     "ComputerMCPControlPlane->ComputerMCPGateway"
   ],
   "macos_only": [
+    "ComputerMCPDarwinTestSupport",
+    "ComputerMCPExecutionProbe",
     "CSystemArchive",
+    "CDarwinExecution",
     "ComputerMCPPlatformDarwin",
     "ComputerMCPComputerUse",
     "ComputerMCPComputerUseTests",
@@ -119,6 +128,7 @@
     "AppKit",
     "ApplicationServices",
     "CSystemArchive",
+    "CDarwinExecution",
     "Cocoa",
     "Combine",
     "CoreFoundation",
@@ -154,6 +164,7 @@
     "/usr/bin/env"
   ],
   "test_support": [
+    "ComputerMCPDarwinTestSupport",
     "ComputerMCPTestSupport"
   ]
 }

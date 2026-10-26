@@ -1,17 +1,23 @@
 import ComputerMCPConfiguration
 import ComputerMCPCore
 import ComputerMCPPlatform
+import ComputerMCPTestSupport
 import ComputerMCPToolKit
 import Foundation
 import Testing
 
 @testable import ComputerMCPToolsSystem
 
+#if os(macOS)
+  import ComputerMCPDarwinTestSupport
+#endif
+
 struct SystemProbeTests {
   @Test
   func nativeReadingsUseTheInjectedProbe() throws {
     let provider = SystemToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration(
           builtin: .init(enabled: ["system.memory", "system.cpu", "system.thermal"])),
         systemProbe: Probe()))
@@ -39,6 +45,7 @@ struct SystemProbeTests {
   @Test
   func providersKeepTheirOwnDefinitionsAndDispatch() throws {
     let environment = ToolEnvironment(
+      launcher: testExecutionLauncher(),
       configuration: GatewayConfiguration(builtin: .init(enabled: ["system.time", "network.dns"])))
     let system = SystemToolProvider(environment: environment)
     let network = NetworkToolProvider(environment: environment)
@@ -59,6 +66,13 @@ struct SystemProbeTests {
 }
 
 private struct Probe: SystemProbe {
+  func processes(
+    deadline: ContinuousClock.Instant, visit: (SystemProcess) throws -> Bool
+  ) throws -> Bool {
+    Issue.record("Unexpected process query")
+    return false
+  }
+
   func memoryStatistics() throws -> SystemMemoryStatistics {
     .init(
       physicalMemoryBytes: 9_007_199_254_740_993, pageSizeBytes: 4096,

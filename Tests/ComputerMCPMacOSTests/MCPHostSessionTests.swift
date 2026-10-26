@@ -14,6 +14,10 @@ import Testing
 @testable import ComputerMCPPlugins
 @testable import ComputerMCPProcess
 
+#if os(macOS)
+  import ComputerMCPDarwinTestSupport
+#endif
+
 @Suite(.nativeIntegration, .timeLimit(.minutes(1)))
 struct MCPHostSessionTests {
   @Test(arguments: [false, true])
@@ -145,7 +149,7 @@ struct MCPHostSessionTests {
     let fixture = try HostFixture(git: true)
     defer { fixture.remove() }
     func git(_ arguments: [String]) throws -> String {
-      let result = try ProcessCommandRunner().run(
+      let result = try ProcessCommandRunner(launcher: testExecutionLauncher()).run(
         executable: "/usr/bin/git", arguments: arguments, workingDirectory: fixture.first,
         environment: ["GIT_TERMINAL_PROMPT": "0", "LC_ALL": "C"],
         timeoutMilliseconds: 5_000, maxOutputBytes: 16_384)
@@ -386,7 +390,8 @@ private final class HostFixture: Sendable {
         tools: [.init(name: "alias.callback", adapter: .mcp, source: "plugin", tool: "operation")],
         builtin: .init(enabled: ["file.read", "file.replace_text"] + (git ? ["git.add"] : []))),
       context: context, database: database,
-      registeredProjects: persistProjects ? projects : nil, platform: MacOSPlatform.services,
+      registeredProjects: persistProjects ? projects : nil,
+      platform: MacOSPlatform.services(launcher: testExecutionLauncher()),
       mcpClient: downstream)
   }
 

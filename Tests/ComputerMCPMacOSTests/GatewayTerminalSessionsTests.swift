@@ -1,4 +1,5 @@
 import ComputerMCPMacOS
+import ComputerMCPTestSupport
 import Darwin
 import Foundation
 import Testing
@@ -10,7 +11,11 @@ import Testing
 @testable import ComputerMCPPlugins
 @testable import ComputerMCPProcess
 
-@Suite(.serialized)
+#if os(macOS)
+  import ComputerMCPDarwinTestSupport
+#endif
+
+@Suite(.nativeIntegration, .serialized)
 struct GatewayTerminalSessionsTests {
   private let directory = FileManager.default.temporaryDirectory
 
@@ -19,11 +24,13 @@ struct GatewayTerminalSessionsTests {
     let storage = GatewayTerminalSessions()
     let scope = GatewayTerminalSessions.Scope.isolated(UUID())
     let owners = GatewayOwnedWork()
-    var old: SubprocessShellRuntime? = SubprocessShellRuntime(
+    var old: ShellSessionRuntime? = ShellSessionRuntime(
+      launcher: testExecutionLauncher(),
       ownedWork: owners, projectID: "test", sessions: storage, scope: scope)
     weak let previous = old
     let id = try spawnCat(try #require(old))
-    let current = SubprocessShellRuntime(sessions: storage, scope: scope)
+    let current = ShellSessionRuntime(
+      launcher: testExecutionLauncher(), sessions: storage, scope: scope)
     #expect(owners.snapshot.map(\.resourceID) == [id])
     old = nil
     #expect(previous == nil)
@@ -46,16 +53,19 @@ struct GatewayTerminalSessionsTests {
     let storage = GatewayTerminalSessions()
     let scope = GatewayTerminalSessions.Scope.isolated(UUID())
     let owners = GatewayOwnedWork()
-    var old: SubprocessProcessRegistry? = SubprocessProcessRegistry(
-      shellManager: SubprocessShellRuntime(ownedWork: owners, sessions: storage, scope: scope))
+    var old: ManagedProcessRegistry? = ManagedProcessRegistry(
+      launcher: testExecutionLauncher(),
+      shellManager: ShellSessionRuntime(
+        launcher: testExecutionLauncher(), ownedWork: owners, sessions: storage, scope: scope))
     weak let previous = old
     let id = try #require(old).spawn(
       executable: "/bin/cat", arguments: [], workingDirectory: directory,
       environment: [:], maxOutputBytes: 4)
     old = nil
     #expect(previous == nil)
-    let shell = SubprocessShellRuntime(sessions: storage, scope: scope)
-    let current = SubprocessProcessRegistry(shellManager: shell)
+    let shell = ShellSessionRuntime(
+      launcher: testExecutionLauncher(), sessions: storage, scope: scope)
+    let current = ManagedProcessRegistry(launcher: testExecutionLauncher(), shellManager: shell)
     _ = try await shell.writeAsync(sessionID: id, data: Data("12345678".utf8), close: true)
     _ = try shell.wait(sessionID: id, timeoutMilliseconds: 2_000, maxReadBytes: 16, encoding: .utf8)
     try await drained(owners)
@@ -77,7 +87,7 @@ struct GatewayTerminalSessionsTests {
   func countBudgetEvictsCompletedResultsWithoutEvictingRunningSessions() throws {
     let storage = GatewayTerminalSessions(
       retention: 86_400, maximumCompletedSessions: 2, maximumCompletedOutputBytes: 1_024)
-    let shell = SubprocessShellRuntime(sessions: storage)
+    let shell = ShellSessionRuntime(launcher: testExecutionLauncher(), sessions: storage)
     let active = try spawnCat(shell)
     defer { _ = try? shell.cancel(sessionID: active) }
     let first = try run(shell, "printf first")
@@ -96,7 +106,7 @@ struct GatewayTerminalSessionsTests {
   func outputBudgetIncludesBothStreamsAndRunStillReturnsItsOwnResult() throws {
     let storage = GatewayTerminalSessions(
       retention: 86_400, maximumCompletedSessions: 64, maximumCompletedOutputBytes: 6)
-    let shell = SubprocessShellRuntime(sessions: storage)
+    let shell = ShellSessionRuntime(launcher: testExecutionLauncher(), sessions: storage)
     let oversized = try run(shell, "printf 1234; printf 5678 >&2")
     #expect(oversized.stdout.text == "1234")
     #expect(oversized.stderr.text == "5678")
@@ -123,13 +133,16 @@ struct GatewayTerminalSessionsTests {
       now: { clock.now })
     let scope = GatewayTerminalSessions.Scope.isolated(UUID())
     let owners = GatewayOwnedWork()
-    let shell = SubprocessShellRuntime(ownedWork: owners, sessions: storage, scope: scope)
-    let process = SubprocessProcessRegistry(shellManager: shell, maxSessions: 1)
+    let shell = ShellSessionRuntime(
+      launcher: testExecutionLauncher(), ownedWork: owners, sessions: storage, scope: scope)
+    let process = ManagedProcessRegistry(
+      launcher: testExecutionLauncher(), shellManager: shell, maxSessions: 1)
     let id = try process.spawn(
       executable: "/bin/cat", arguments: [], workingDirectory: directory,
       environment: [:], maxOutputBytes: 1_024)
     defer { _ = try? process.cancel(processID: id) }
-    let next = SubprocessShellRuntime(sessions: storage, scope: scope)
+    let next = ShellSessionRuntime(
+      launcher: testExecutionLauncher(), sessions: storage, scope: scope)
     clock.advance(seconds: 120)
     #expect(try process.read(processID: id).isRunning)
     #expect(owners.snapshot.map(\.resourceID) == [id])
@@ -153,9 +166,11 @@ struct GatewayTerminalSessionsTests {
     let scope = try GatewayTerminalSessions.Scope.project(
       context: context, project: project, root: ProjectRootIdentity(root))
     let storage = GatewayTerminalSessions()
-    let shell = SubprocessShellRuntime(sessions: storage, scope: scope)
+    let shell = ShellSessionRuntime(
+      launcher: testExecutionLauncher(), sessions: storage, scope: scope)
     let result = try run(shell, "printf private-result")
-    let same = SubprocessShellRuntime(
+    let same = ShellSessionRuntime(
+      launcher: testExecutionLauncher(),
       sessions: storage,
       scope: try .project(
         context: context, project: project, root: ProjectRootIdentity(root)))
@@ -179,7 +194,8 @@ struct GatewayTerminalSessionsTests {
       .project(context: context, project: otherID, root: ProjectRootIdentity(root)),
     ]
     for foreign in scopes {
-      let isolated = SubprocessShellRuntime(sessions: storage, scope: foreign)
+      let isolated = ShellSessionRuntime(
+        launcher: testExecutionLauncher(), sessions: storage, scope: foreign)
       #expect(try isolated.list().isEmpty)
       #expect(throws: ShellRuntimeError.unknownSession(result.sessionID)) {
         try read(isolated, result.sessionID)
@@ -189,7 +205,8 @@ struct GatewayTerminalSessionsTests {
     try FileManager.default.moveItem(at: root, to: moved)
     defer { try? FileManager.default.removeItem(at: moved) }
     try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
-    let replaced = SubprocessShellRuntime(
+    let replaced = ShellSessionRuntime(
+      launcher: testExecutionLauncher(),
       sessions: storage,
       scope: try .project(
         context: context, project: project, root: ProjectRootIdentity(root)))
@@ -223,7 +240,8 @@ struct GatewayTerminalSessionsTests {
     try database.saveProfile(configuration.profiles[0].grant)
     let old = try await GatewayRuntime.make(
       configuration: configuration, context: context, database: database,
-      registeredProjects: [project], platform: MacOSPlatform.services,
+      registeredProjects: [project],
+      platform: MacOSPlatform.services(launcher: testExecutionLauncher()),
       bundledPlugins: BundledPlugins(packages: [], issues: []),
       terminalSessions: storage)
     let spawned = try await old.callToolAsync(
@@ -237,7 +255,8 @@ struct GatewayTerminalSessionsTests {
     configuration.policy.maxOutputBytes = 128
     let current = try await GatewayRuntime.make(
       configuration: configuration, context: context, database: database,
-      registeredProjects: [project], platform: MacOSPlatform.services,
+      registeredProjects: [project],
+      platform: MacOSPlatform.services(launcher: testExecutionLauncher()),
       bundledPlugins: BundledPlugins(packages: [], issues: []),
       terminalSessions: storage)
     do {
@@ -286,7 +305,8 @@ struct GatewayTerminalSessionsTests {
           confirmationPolicy: .never)
       ], projectDirectory: root)
     let first = try await GatewayRuntime.make(
-      configuration: configuration, platform: MacOSPlatform.services,
+      configuration: configuration,
+      platform: MacOSPlatform.services(launcher: testExecutionLauncher()),
       bundledPlugins: BundledPlugins(packages: [], issues: []),
       terminalSessions: storage)
     let completed = try await first.callToolAsync(
@@ -297,7 +317,8 @@ struct GatewayTerminalSessionsTests {
         .objectValue?["session_id"]?.stringValue)
     await first.shutdown()
     let next = try await GatewayRuntime.make(
-      configuration: configuration, platform: MacOSPlatform.services,
+      configuration: configuration,
+      platform: MacOSPlatform.services(launcher: testExecutionLauncher()),
       bundledPlugins: BundledPlugins(packages: [], issues: []),
       terminalSessions: storage)
     do {
@@ -329,7 +350,8 @@ struct GatewayTerminalSessionsTests {
       ], projectDirectory: root)
     func make() async throws -> GatewayRuntime {
       try await GatewayRuntime.make(
-        configuration: configuration, platform: MacOSPlatform.services,
+        configuration: configuration,
+        platform: MacOSPlatform.services(launcher: testExecutionLauncher()),
         bundledPlugins: BundledPlugins(packages: [], issues: []),
         terminalSessions: storage)
     }
@@ -382,9 +404,11 @@ struct GatewayTerminalSessionsTests {
     let scope = GatewayTerminalSessions.Scope.isolated(UUID())
     let oldOwners = GatewayOwnedWork()
     let currentOwners = GatewayOwnedWork()
-    let old = SubprocessShellRuntime(ownedWork: oldOwners, sessions: storage, scope: scope)
-    let current = SubprocessShellRuntime(ownedWork: currentOwners, sessions: storage, scope: scope)
-    let process = SubprocessProcessRegistry(shellManager: old)
+    let old = ShellSessionRuntime(
+      launcher: testExecutionLauncher(), ownedWork: oldOwners, sessions: storage, scope: scope)
+    let current = ShellSessionRuntime(
+      launcher: testExecutionLauncher(), ownedWork: currentOwners, sessions: storage, scope: scope)
+    let process = ManagedProcessRegistry(launcher: testExecutionLauncher(), shellManager: old)
     do {
       let registered = try process.spawn(
         executable: "/bin/cat", arguments: [], workingDirectory: directory,
@@ -417,7 +441,7 @@ struct GatewayTerminalSessionsTests {
   @Test
   func shutdownJoinsAnAdmittedLaunchRacingWithItsStartupReply() async throws {
     let owners = GatewayOwnedWork()
-    let shell = SubprocessShellRuntime(ownedWork: owners)
+    let shell = ShellSessionRuntime(launcher: testExecutionLauncher(), ownedWork: owners)
     let starting = Task {
       try await BlockingOperationExecutor(label: "test.shell-start-stop").perform {
         try spawnCat(shell)
@@ -433,23 +457,23 @@ struct GatewayTerminalSessionsTests {
     #expect(result.cancelled && !result.isRunning && result.finishedAt != nil)
   }
 
-  private func spawnCat(_ shell: SubprocessShellRuntime, limit: Int = 4) throws -> String {
+  private func spawnCat(_ shell: ShellSessionRuntime, limit: Int = 4) throws -> String {
     try shell.spawn(
       request: ShellLaunchRequest(mode: .argv, executable: "/bin/cat"),
       defaultShell: "/bin/sh", defaultWorkingDirectory: directory, timeoutMilliseconds: nil,
-      maxOutputBytes: 1_024, maxSessions: limit, terminationGraceMilliseconds: 100)
+      maxOutputBytes: 1_024, maxSessions: limit)
   }
 
-  private func run(_ shell: SubprocessShellRuntime, _ command: String) throws
+  private func run(_ shell: ShellSessionRuntime, _ command: String) throws
     -> ShellSessionSnapshot
   {
     try shell.run(
       request: ShellLaunchRequest(mode: .argv, executable: "/bin/sh", argv: ["-c", command]),
       defaultShell: "/bin/sh", defaultWorkingDirectory: directory, timeoutMilliseconds: 2_000,
-      maxOutputBytes: 1_024, maxSessions: 4, terminationGraceMilliseconds: 100)
+      maxOutputBytes: 1_024, maxSessions: 4)
   }
 
-  private func read(_ shell: SubprocessShellRuntime, _ id: String) throws -> ShellSessionSnapshot {
+  private func read(_ shell: ShellSessionRuntime, _ id: String) throws -> ShellSessionSnapshot {
     try shell.read(
       sessionID: id, stdoutCursor: 0, stderrCursor: 0, maxReadBytes: 1_024, encoding: .utf8)
   }

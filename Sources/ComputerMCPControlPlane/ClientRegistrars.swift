@@ -12,8 +12,9 @@ struct CodexClientRegistrar {
       return .init(state: .unavailable, entry: nil)
     }
     do {
-      let result = try service.run(
-        executable, ["mcp", "get", plan.serverName, "--json"], plan.environment)
+      let result = try HostExecutionPolicy.$current.withValue(.readOnly) {
+        try service.run(executable, ["mcp", "get", plan.serverName, "--json"], plan.environment)
+      }
       guard result.exitCode != nil else {
         return .init(state: .unreadable, entry: nil, uncertainStep: "read")
       }

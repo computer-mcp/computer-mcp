@@ -9,6 +9,10 @@ import Testing
 @testable import ComputerMCPPlatform
 @testable import ComputerMCPProcess
 
+#if os(macOS)
+  import ComputerMCPDarwinTestSupport
+#endif
+
 @Suite(.nativeIntegration, .timeLimit(.minutes(1)))
 struct StandaloneToolCommandTests {
   @Test(arguments: ["list", "inspect", "missing", "call", "error"])
@@ -66,7 +70,7 @@ struct StandaloneToolCommandTests {
       .appendingPathComponent(".build/debug/computer-mcp")
     let invocationArguments = arguments
     let result = try await BlockingOperationExecutor(label: "standalone-tool-test").perform {
-      try ProcessCommandRunner().run(
+      try ProcessCommandRunner(launcher: testExecutionLauncher()).run(
         executable: executable.path, arguments: invocationArguments, workingDirectory: root,
         environment: [:], timeoutMilliseconds: 8000, maxOutputBytes: 1_048_576)
     }

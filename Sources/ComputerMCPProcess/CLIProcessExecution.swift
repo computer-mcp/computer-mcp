@@ -53,9 +53,16 @@ package final class CLIProcessExecution: Sendable {
   private let state = NIOLockedValueBox(State())
   private let blocking = BlockingOperationExecutor(label: "computer-mcp.cli", serial: false)
   private let maxConcurrentCalls: Int
+  private let policy: HostExecutionPolicy
+  private let launcher: ExecutionLauncher
   private let inheritsEnvironment: Bool
 
-  package init(maxConcurrentCalls: Int = 32, inheritsEnvironment: Bool = true) {
+  package init(
+    launcher: ExecutionLauncher = ExecutionLauncher(), policy: HostExecutionPolicy = .fullAccess,
+    maxConcurrentCalls: Int = 32, inheritsEnvironment: Bool = true
+  ) {
+    self.policy = policy
+    self.launcher = launcher
     self.maxConcurrentCalls = max(1, maxConcurrentCalls)
     self.inheritsEnvironment = inheritsEnvironment
   }
@@ -117,7 +124,7 @@ package final class CLIProcessExecution: Sendable {
         throw ProcessLaunchError.invalid("CLI invocation limit reached.")
       }
       let id = UUID()
-      let call = BoundedProcessCall()
+      let call = BoundedProcessCall(launcher: launcher, policy: policy)
       state.calls[id] = call
       return (id, call)
     }
@@ -129,18 +136,27 @@ package final class BoundedProcessCall: Sendable {
   private struct State {
     var cancelled = false
     var sessionID: String?
+    var runtime: ShellSessionRuntime?
   }
   private let state = NIOLockedValueBox(State())
-  private let runtime = SubprocessShellRuntime()
+  private let launcher: ExecutionLauncher
+  private let policy: HostExecutionPolicy
+
+  package init(
+    launcher: ExecutionLauncher = ExecutionLauncher(), policy: HostExecutionPolicy = .readOnly
+  ) {
+    self.launcher = launcher
+    self.policy = policy
+  }
 
   package var isCancelled: Bool { state.withLockedValue { $0.cancelled } }
 
   package func cancel() {
-    let id = state.withLockedValue { state in
+    let current = state.withLockedValue { state in
       state.cancelled = true
-      return state.sessionID
+      return (state.sessionID, state.runtime)
     }
-    if let id { _ = try? runtime.cancel(sessionID: id) }
+    if let id = current.0, let runtime = current.1 { _ = try? runtime.cancel(sessionID: id) }
   }
 
   fileprivate func run(
@@ -148,7 +164,8 @@ package final class BoundedProcessCall: Sendable {
     timeoutMilliseconds: Int, maxOutputBytes: Int, verification: (any LaunchVerification)?,
     interpreterBindings: [String: String], inheritsEnvironment: Bool
   ) throws -> ShellSessionSnapshot {
-    guard (1...3_600_000).contains(timeoutMilliseconds), (1...32_000_000).contains(maxOutputBytes)
+    guard (1...ExecutionLimits.maximumTimeoutMilliseconds).contains(timeoutMilliseconds),
+      (1...32_000_000).contains(maxOutputBytes)
     else {
       throw ProcessLaunchError.invalid("CLI execution limits are out of bounds.")
     }
@@ -175,24 +192,27 @@ package final class BoundedProcessCall: Sendable {
     return try execute(
       executable: resolvedExecutable, arguments: launch.arguments + invocation.arguments,
       standardInput: invocation.standardInput, cwd: cwd, environment: childEnvironment,
-      timeoutMilliseconds: timeoutMilliseconds, maxOutputBytes: maxOutputBytes)
+      timeoutMilliseconds: timeoutMilliseconds, maxOutputBytes: maxOutputBytes, policy: policy)
   }
 
   /// Runs `executable` without a shell, writes `standardInput` and closes it, and waits
   /// for the exit or the timeout.
   package func execute(
     executable: String, arguments: [String], standardInput: Data, cwd: URL,
-    environment: [String: String], timeoutMilliseconds: Int, maxOutputBytes: Int
+    environment: [String: String], timeoutMilliseconds: Int, maxOutputBytes: Int,
+    policy: HostExecutionPolicy = .readOnly
   ) throws -> ShellSessionSnapshot {
+    let runtime = ShellSessionRuntime(launcher: launcher, policy: policy)
     let id = try runtime.spawn(
       request: .init(
         mode: .argv, executable: executable, argv: arguments,
         workingDirectory: cwd.path, environment: environment, inheritsEnvironment: false),
       defaultShell: "/bin/sh", defaultWorkingDirectory: cwd,
       timeoutMilliseconds: timeoutMilliseconds, maxOutputBytes: maxOutputBytes,
-      maxSessions: 1, terminationGraceMilliseconds: 250)
+      maxSessions: 1)
     let cancelled = state.withLockedValue { state in
       state.sessionID = id
+      state.runtime = runtime
       return state.cancelled
     }
     do {
@@ -206,12 +226,12 @@ package final class BoundedProcessCall: Sendable {
         }
       }
       return try runtime.wait(
-        sessionID: id, timeoutMilliseconds: timeoutMilliseconds + 2_250,
+        sessionID: id, timeoutMilliseconds: timeoutMilliseconds + 5_000,
         maxReadBytes: maxOutputBytes, encoding: .base64)
     } catch {
       _ = try? runtime.cancel(sessionID: id)
       _ = try? runtime.wait(
-        sessionID: id, timeoutMilliseconds: 2_250, maxReadBytes: 0, encoding: .base64)
+        sessionID: id, timeoutMilliseconds: 5_000, maxReadBytes: 0, encoding: .base64)
       throw error
     }
   }

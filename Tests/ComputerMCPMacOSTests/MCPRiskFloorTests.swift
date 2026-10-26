@@ -1,5 +1,6 @@
 import ComputerMCPDownstream
 import ComputerMCPMacOS
+import ComputerMCPTestSupport
 import Foundation
 import NIOConcurrencyHelpers
 import Testing
@@ -7,6 +8,10 @@ import Testing
 @testable import ComputerMCPConfiguration
 @testable import ComputerMCPCore
 @testable import ComputerMCPGateway
+
+#if os(macOS)
+  import ComputerMCPDarwinTestSupport
+#endif
 
 struct MCPRiskFloorTests {
   @Test
@@ -396,7 +401,7 @@ private struct RiskFixture {
         tools: [.init(name: "review.inspect", adapter: .mcp, source: "vendor", tool: "inspect")]),
       database: database,
       registeredProjects: projects,
-      platform: MacOSPlatform.services, mcpClient: client)
+      platform: MacOSPlatform.services(launcher: testExecutionLauncher()), mcpClient: client)
   }
 
   func remove() { try? FileManager.default.removeItem(at: root) }

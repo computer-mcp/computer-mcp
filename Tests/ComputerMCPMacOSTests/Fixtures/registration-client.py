@@ -1,4 +1,3 @@
-#!/usr/bin/python3
 """Isolated MCP client fixture; refuses to operate outside a marked temporary home."""
 
 import json
@@ -7,7 +6,8 @@ import pathlib
 import sys
 
 home = pathlib.Path(os.environ["HOME"])
-if not (home / ".registration-fixture").is_file():
+fixture_home = pathlib.Path(__file__).resolve().parent
+if not (fixture_home / ".registration-fixture").is_file():
     sys.exit(70)
 
 args = sys.argv[1:]
@@ -17,14 +17,13 @@ if args == ["--version"]:
 
 is_codex = "CODEX_HOME" in os.environ
 directory = pathlib.Path(os.environ.get("CODEX_HOME", os.environ.get("CLAUDE_CONFIG_DIR", str(home))))
+if directory.resolve().parent != fixture_home:
+    sys.exit(70)
 file = directory / ("fixture-mcp.json" if is_codex else ".claude.json")
 document = json.loads(file.read_text()) if file.exists() else {}
 servers = document.setdefault("mcpServers", {})
 verb = args[1]
 name = args[2] if is_codex else args[4]
-
-with (home / "fixture-calls.jsonl").open("a") as trace:
-    trace.write(json.dumps({"verb": verb, "name": name, "file": str(file)}) + "\n")
 
 if verb == "get":
     if name not in servers:

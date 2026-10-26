@@ -4,12 +4,16 @@ import Testing
 
 @testable import ComputerMCPProcess
 
+#if os(macOS)
+  import ComputerMCPDarwinTestSupport
+#endif
+
 @Suite(.serialized)
 
-final class SubprocessProcessRegistryTests {
+final class ManagedProcessRegistryTests {
   @Test
-  func testSpawnReadAndListUseSubprocessSessionRuntime() async throws {
-    let registry = SubprocessProcessRegistry()
+  func testSpawnReadAndListUseSharedSessionRuntime() async throws {
+    let registry = ManagedProcessRegistry(launcher: testExecutionLauncher())
     let id = try registry.spawn(
       executable: "/bin/sh",
       arguments: ["-c", "printf process-ready"],
@@ -27,7 +31,7 @@ final class SubprocessProcessRegistryTests {
 
   @Test
   func testCancelTerminatesProcessGroupSession() async throws {
-    let registry = SubprocessProcessRegistry()
+    let registry = ManagedProcessRegistry(launcher: testExecutionLauncher())
     let id = try registry.spawn(
       executable: "/bin/sh",
       arguments: ["-c", "sleep 30"],
@@ -45,7 +49,7 @@ final class SubprocessProcessRegistryTests {
 
   @Test
   func testUnknownProcessFailsDeterministically() {
-    let registry = SubprocessProcessRegistry()
+    let registry = ManagedProcessRegistry(launcher: testExecutionLauncher())
 
     expectThrows(try registry.read(processID: "missing")) { error in
       #expect((error as? ProcessRegistryError) == (.unknownProcess("missing")))
@@ -54,7 +58,7 @@ final class SubprocessProcessRegistryTests {
 
   private func waitForSnapshot(
     id: String,
-    registry: SubprocessProcessRegistry,
+    registry: ManagedProcessRegistry,
     matches: (ManagedProcessSnapshot) -> Bool
   ) async throws -> ManagedProcessSnapshot {
     let deadline = ContinuousClock.now + .seconds(5)

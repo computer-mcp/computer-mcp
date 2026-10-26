@@ -1,10 +1,15 @@
 import ComputerMCPMacOS
+import ComputerMCPTestSupport
 import Foundation
 import Testing
 
 @testable import ComputerMCPConfiguration
 @testable import ComputerMCPCore
 @testable import ComputerMCPGateway
+
+#if os(macOS)
+  import ComputerMCPDarwinTestSupport
+#endif
 
 @Suite
 struct GatewayExecutionOwnersTests {
@@ -59,7 +64,8 @@ struct GatewayExecutionOwnersTests {
         runtimes.append(
           try await GatewayRuntime.make(
             configuration: configuration, context: context, database: database,
-            registeredProjects: [project], platform: MacOSPlatform.services,
+            registeredProjects: [project],
+            platform: MacOSPlatform.services(launcher: testExecutionLauncher()),
             bundledPlugins: .init(packages: [], issues: [])))
       }
       let current = try #require(runtimes.first)

@@ -909,7 +909,7 @@ final class LiveAppControlPlane: AppControlPlane {
       if FileManager.default.fileExists(atPath: destination.path) {
         try FileManager.default.removeItem(at: destination)
       }
-      let result = try ProcessCommandRunner().run(
+      let result = try ProcessCommandRunner(launcher: MacOSPlatform.services.launcher).run(
         executable: "/usr/bin/ditto",
         arguments: ["-c", "-k", "--sequesterRsrc", root.path, destination.path],
         workingDirectory: nil,

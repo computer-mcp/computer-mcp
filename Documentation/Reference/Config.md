@@ -26,8 +26,8 @@ caller = "secure-tunnel"
 profile = "chatgpt-observe"
 
 [policy]
-default_timeout_ms = 30000
-max_output_bytes = 1048576
+default_timeout_ms = 120000
+max_output_bytes = 8388608
 shell_enabled = false
 
 [[profiles]]

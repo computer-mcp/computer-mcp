@@ -9,13 +9,18 @@ import Testing
 
 @testable import ComputerMCPToolsCLI
 
+#if os(macOS)
+  import ComputerMCPDarwinTestSupport
+#endif
+
 @Suite(.nativeIntegration, .serialized)
 final class CLIToolProviderTests {
   @Test
   func alreadyCancelledExecDoesNotReachRunner() async {
     let runner = RecordingCommandRunner()
     let provider = CLIToolProvider(
-      environment: ToolEnvironment(configuration: .fixture(), commandRunner: runner))
+      environment: ToolEnvironment(
+        launcher: testExecutionLauncher(), configuration: .fixture(), commandRunner: runner))
     let task = Task {
       withUnsafeCurrentTask { $0?.cancel() }
       return try await provider.callToolAsync(
@@ -31,7 +36,8 @@ final class CLIToolProviderTests {
 
   @Test
   func testNoAuthToolsAdvertiseNoAuthSecurityScheme() throws {
-    let provider = CLIToolProvider(environment: ToolEnvironment(configuration: .fixture()))
+    let provider = CLIToolProvider(
+      environment: ToolEnvironment(launcher: testExecutionLauncher(), configuration: .fixture()))
     let tool = try #require(try provider.definitions().map(\.tool).first { $0.name == "cli.list" })
 
     #expect(
@@ -51,7 +57,8 @@ final class CLIToolProviderTests {
           accessTokenEnv: "COMPUTER_MCP_TOKEN"
         ))
     )
-    let provider = CLIToolProvider(environment: ToolEnvironment(configuration: config))
+    let provider = CLIToolProvider(
+      environment: ToolEnvironment(launcher: testExecutionLauncher(), configuration: config))
     let tool = try #require(try provider.definitions().map(\.tool).first { $0.name == "cli.list" })
 
     #expect((tool.meta) == nil)
@@ -68,7 +75,8 @@ final class CLIToolProviderTests {
         )
       ])
     )
-    let provider = CLIToolProvider(environment: ToolEnvironment(configuration: config))
+    let provider = CLIToolProvider(
+      environment: ToolEnvironment(launcher: testExecutionLauncher(), configuration: config))
 
     let result = try provider.callTool(
       .init(name: "cli.list", arguments: .object([:]), context: .empty))
@@ -92,7 +100,8 @@ final class CLIToolProviderTests {
         )
       ])
     )
-    let provider = CLIToolProvider(environment: ToolEnvironment(configuration: config))
+    let provider = CLIToolProvider(
+      environment: ToolEnvironment(launcher: testExecutionLauncher(), configuration: config))
 
     let result = try provider.callTool(
       .init(
@@ -121,7 +130,8 @@ final class CLIToolProviderTests {
         CLICommandConfig(id: "missing", executable: "definitely-missing-computer-mcp-test"),
       ])
     )
-    let provider = CLIToolProvider(environment: ToolEnvironment(configuration: config))
+    let provider = CLIToolProvider(
+      environment: ToolEnvironment(launcher: testExecutionLauncher(), configuration: config))
 
     let result = try provider.callTool(
       .init(
@@ -145,7 +155,8 @@ final class CLIToolProviderTests {
 
   @Test
   func testCLIStatusRejectsUnknownID() {
-    let provider = CLIToolProvider(environment: ToolEnvironment(configuration: .fixture()))
+    let provider = CLIToolProvider(
+      environment: ToolEnvironment(launcher: testExecutionLauncher(), configuration: .fixture()))
 
     expectThrows(
       try provider.callTool(
@@ -171,7 +182,8 @@ final class CLIToolProviderTests {
       ])
     )
     let provider = CLIToolProvider(
-      environment: ToolEnvironment(configuration: config, commandRunner: runner))
+      environment: ToolEnvironment(
+        launcher: testExecutionLauncher(), configuration: config, commandRunner: runner))
 
     let result = try provider.callTool(
       .init(
@@ -201,7 +213,8 @@ final class CLIToolProviderTests {
   func testCLIExecUsesRegisteredExecutable() throws {
     let runner = RecordingCommandRunner()
     let provider = CLIToolProvider(
-      environment: ToolEnvironment(configuration: .fixture(), commandRunner: runner))
+      environment: ToolEnvironment(
+        launcher: testExecutionLauncher(), configuration: .fixture(), commandRunner: runner))
 
     let result = try provider.callTool(
       .init(
@@ -220,7 +233,8 @@ final class CLIToolProviderTests {
 
   @Test
   func testCLIExecSchemaRequiresArgv() throws {
-    let provider = CLIToolProvider(environment: ToolEnvironment(configuration: .fixture()))
+    let provider = CLIToolProvider(
+      environment: ToolEnvironment(launcher: testExecutionLauncher(), configuration: .fixture()))
     let tools = try provider.definitions().map(\.tool)
 
     let cliExec = try #require(tools.first { $0.name == "cli.exec" })
@@ -231,7 +245,8 @@ final class CLIToolProviderTests {
 
   @Test
   func testCLIExecRejectsMissingArgv() {
-    let provider = CLIToolProvider(environment: ToolEnvironment(configuration: .fixture()))
+    let provider = CLIToolProvider(
+      environment: ToolEnvironment(launcher: testExecutionLauncher(), configuration: .fixture()))
 
     expectThrows(
       try provider.callTool(
@@ -246,7 +261,8 @@ final class CLIToolProviderTests {
 
   @Test
   func testCLIExecRejectsUnknownID() {
-    let provider = CLIToolProvider(environment: ToolEnvironment(configuration: .fixture()))
+    let provider = CLIToolProvider(
+      environment: ToolEnvironment(launcher: testExecutionLauncher(), configuration: .fixture()))
 
     expectThrows(
       try provider.callTool(
@@ -266,6 +282,7 @@ final class CLIToolProviderTests {
   func testCLIExecRejectsCommandThatDisallowsArbitraryArgs() {
     let provider = CLIToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: .fixture(
           cli: CLISectionConfig(commands: [
             CLICommandConfig(id: "echo", executable: "/bin/echo", allowAnyArgs: false)
@@ -306,7 +323,8 @@ final class CLIToolProviderTests {
       ]))
     let cli = try decodeTextPayload(
       CLIToolProvider(
-        environment: ToolEnvironment(configuration: config, environment: ["PATH": "/bin"])
+        environment: ToolEnvironment(
+          launcher: testExecutionLauncher(), configuration: config, environment: ["PATH": "/bin"])
       ).callTool(.init(name: "cli.status", arguments: .object([:]), context: .empty)))
     let commands = try #require(cli.objectValue?["commands"]?.arrayValue)
     #expect(

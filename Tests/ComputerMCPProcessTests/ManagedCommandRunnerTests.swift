@@ -7,6 +7,10 @@ import Testing
 @testable import ComputerMCPPlatform
 @testable import ComputerMCPProcess
 
+#if os(macOS)
+  import ComputerMCPDarwinTestSupport
+#endif
+
 #if canImport(Darwin)
   import Darwin
 #elseif canImport(Glibc)
@@ -19,11 +23,11 @@ struct ManagedCommandRunnerTests {
   func closesInputAndUsesOnlyTheCompleteEnvironment() async throws {
     let result = try await BlockingOperationExecutor(label: "test.managed-command").perform {
       // A shell adds nothing to its environment, unlike interpreter launchers.
-      try ManagedCommandRunner().run(
+      try ManagedCommandRunner(launcher: testExecutionLauncher()).run(
         executable: "/bin/sh",
         arguments: [
           "-c",
-          #"if IFS= read -r line; then exit 3; fi; [ -z "${HOME+x}" ] || exit 4; printf '%s\n' "$PROBE_VALUE""#,
+          #"if IFS= read -r line; then exit 3; fi; [ "$HOME" = "${TMPDIR%/}" ] || exit 4; printf '%s\n' "$PROBE_VALUE""#,
         ],
         workingDirectory: FileManager.default.temporaryDirectory,
         environment: ["PATH": "/usr/bin:/bin", "PROBE_VALUE": "isolated"],
@@ -35,7 +39,7 @@ struct ManagedCommandRunnerTests {
 
   @Test
   func binaryOutputAndTruncationRemainExplicit() async throws {
-    let runner = ManagedCommandRunner()
+    let runner = ManagedCommandRunner(launcher: testExecutionLauncher())
     let bytes = try await BlockingOperationExecutor(label: "test.managed-command").perform {
       try runner.runData(
         executable: "/bin/sh", arguments: ["-c", #"printf '\000\377\200\n'; printf error >&2"#],
@@ -60,7 +64,7 @@ struct ManagedCommandRunnerTests {
   func invocationInputRoundTripsAndCloses() async throws {
     let input = Data([0, 255, 128, 10]) + Data(repeating: 97, count: 131_072)
     let result = try await BlockingOperationExecutor(label: "test.managed-command").perform {
-      try ManagedCommandRunner().runData(
+      try ManagedCommandRunner(launcher: testExecutionLauncher()).runData(
         executable: try testExecutable("cat"),
         invocation: .init(arguments: [], standardInput: input),
         workingDirectory: FileManager.default.temporaryDirectory,
@@ -70,6 +74,36 @@ struct ManagedCommandRunnerTests {
     #expect(result.exitCode == 0 && !result.timedOut, "\(result.stderrString)")
     #expect(result.stdout == input)
     #expect(!result.stdoutTruncated && !result.stderrTruncated)
+  }
+
+  @Test
+  func doesNotInheritUnrelatedDescriptors() async throws {
+    let pipe = Pipe()
+    let descriptor = fcntl(pipe.fileHandleForReading.fileDescriptor, F_DUPFD, 64)
+    try #require(descriptor >= 64)
+    defer { _ = close(descriptor) }
+    #expect(fcntl(descriptor, F_GETFD) & FD_CLOEXEC == 0)
+    let result = try await BlockingOperationExecutor(label: "test.managed-command").perform {
+      try ManagedCommandRunner(launcher: testExecutionLauncher()).run(
+        executable: try testExecutable("python3"),
+        arguments: [
+          "-c",
+          """
+          import errno, os, sys
+          try:
+              os.fstat(int(sys.argv[1]))
+          except OSError as error:
+              assert error.errno == errno.EBADF
+          else:
+              sys.exit("inherited unrelated descriptor")
+          """,
+          String(descriptor),
+        ],
+        workingDirectory: FileManager.default.temporaryDirectory,
+        environment: ["PATH": systemUtilityPath],
+        timeoutMilliseconds: 2000, maxOutputBytes: 1024)
+    }
+    #expect(result.exitCode == 0 && !result.timedOut, "\(result.stderr)")
   }
 
   @Test
@@ -87,7 +121,7 @@ struct ManagedCommandRunnerTests {
       """#
     let started = ContinuousClock.now
     let result = try await BlockingOperationExecutor(label: "managed-probe-test").perform {
-      try ManagedCommandRunner().run(
+      try ManagedCommandRunner(launcher: testExecutionLauncher()).run(
         executable: "/bin/sh", arguments: ["-c", source, receipt.path],
         workingDirectory: root, environment: ["PATH": "/usr/bin:/bin"],
         timeoutMilliseconds: 1000, maxOutputBytes: 1024)
@@ -107,7 +141,7 @@ struct ManagedCommandRunnerTests {
     #expect(pids.allSatisfy(Self.exited))
   }
 
-  @Test
+  @Test(.enabled(if: nativeSandboxAvailable))
   func discoveryUsesTheManagedDefaultWithoutInstallingAnything() async throws {
     let result = try await BlockingOperationExecutor(label: "test.managed-command").perform {
       try ExternalProviderDiscovery(
@@ -118,10 +152,11 @@ struct ManagedCommandRunnerTests {
               executable: "/bin/sh",
               arguments: [
                 "-c",
-                #"[ -z "${HOME+x}" ] || exit 4; if IFS= read -r line || [ -n "$line" ]; then exit 3; fi; echo 'probe 1.2.3'"#,
+                #"[ "$HOME" = "${TMPDIR%/}" ] || exit 4; if IFS= read -r line || [ -n "$line" ]; then exit 3; fi; echo 'probe 1.2.3'"#,
               ])
           ]
         ],
+        commandRunner: ManagedCommandRunner(launcher: testExecutionLauncher(), policy: .readOnly),
         environment: ["PATH": "/usr/bin:/bin"], commonSearchDirectories: []
       ).discover()
     }

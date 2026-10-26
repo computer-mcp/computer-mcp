@@ -16,6 +16,10 @@ import Testing
 @testable import ComputerMCPPlatformDarwin
 @testable import ComputerMCPPlugins
 
+#if os(macOS)
+  import ComputerMCPDarwinTestSupport
+#endif
+
 @Suite(.nativeIntegration, .serialized, .timeLimit(.minutes(1)))
 struct GatewayGenerationDispatchTests {
   @Test(arguments: [false, true])
@@ -51,10 +55,20 @@ struct GatewayGenerationDispatchTests {
       let selected = MCPContinuationTarget(
         projectID: "fixture", reference: .init(serverID: "fixture", toolName: "inspect"),
         connectionID: UUID(), instanceID: UUID(), resources: [:])
-      let result = try await serving.callToolForMCPAsync(
-        name: "fixture.inspect",
-        arguments: .object(["project_id": .string("fixture"), "handle": handle]),
-        context: .init(continuation: selected))
+      let continuationDeadline = ContinuousClock.now + .seconds(5)
+      var result: JSONValue
+      repeat {
+        result = try await serving.callToolForMCPAsync(
+          name: "fixture.inspect",
+          arguments: .object(["project_id": .string("fixture"), "handle": handle]),
+          context: .init(continuation: selected))
+        guard
+          result.objectValue?["structuredContent"]?.objectValue?["error"]?.objectValue?["code"]
+            == .string("mcp.continuation_pending")
+        else { break }
+        try #require(ContinuousClock.now < continuationDeadline, "Work observation did not settle")
+        try await Task.sleep(for: .milliseconds(10))
+      } while true
       #expect(result.objectValue?["isError"] == .bool(true))
       #expect(String(describing: result).contains("mcp.continuation_unavailable"))
       #expect(try fixture.calls() == calls)
@@ -2490,12 +2504,15 @@ private struct GenerationFixture: Sendable {
       manifestStore: try AtomicManifestStore(
         manifestURL: directories.manifest, database: database,
         loader: GatewayManifestConfigurationLoader(
-          database: database, applications: MacOSPlatform.services.applications)),
+          database: database,
+          applications: MacOSPlatform.services(launcher: testExecutionLauncher()).applications)),
       defaultManifest: DefaultGatewayConfiguration.manifest,
       secretStore: secrets,
       openAITunnelSupervisor: OpenAITunnelSupervisor(
+        launcher: testExecutionLauncher(),
         secretStore: secrets,
-        executableSearchDirectories: MacOSPlatform.services.executableSearchDirectories,
+        executableSearchDirectories: MacOSPlatform.services(launcher: testExecutionLauncher())
+          .executableSearchDirectories,
         proxyResolver: FixedOpenAITunnelHTTPProxyResolver()
       ),
       gatewayExecutablePath: URL(fileURLWithPath: #filePath).deletingLastPathComponent()
@@ -2504,14 +2521,18 @@ private struct GenerationFixture: Sendable {
       launchAtLoginController: SMAppServiceLaunchAtLoginController(),
       computerUsePermissionReader: FixedComputerUsePermissionReader(),
       platform: PlatformServices(
+        launcher: testExecutionLauncher(),
         projectGrants: bookmarkService,
-        pluginDirectories: MacOSPlatform.services.pluginDirectories,
-        applications: MacOSPlatform.services.applications,
-        toolProviders: MacOSPlatform.services.toolProviders,
-        managementToolNames: MacOSPlatform.services.managementToolNames,
-        executableSearchDirectories: MacOSPlatform.services.executableSearchDirectories,
-        gitExecutable: MacOSPlatform.services.gitExecutable,
-        fileChanges: MacOSPlatform.services.fileChanges),
+        pluginDirectories: MacOSPlatform.services(launcher: testExecutionLauncher())
+          .pluginDirectories,
+        applications: MacOSPlatform.services(launcher: testExecutionLauncher()).applications,
+        toolProviders: MacOSPlatform.services(launcher: testExecutionLauncher()).toolProviders,
+        managementToolNames: MacOSPlatform.services(launcher: testExecutionLauncher())
+          .managementToolNames,
+        executableSearchDirectories: MacOSPlatform.services(launcher: testExecutionLauncher())
+          .executableSearchDirectories,
+        gitExecutable: MacOSPlatform.services(launcher: testExecutionLauncher()).gitExecutable,
+        fileChanges: MacOSPlatform.services(launcher: testExecutionLauncher()).fileChanges),
       bundledPlugins: .init(packages: [], issues: []))
     service = AppGatewayService(
       controlPlane: control,

@@ -8,6 +8,10 @@ import Testing
 
 @testable import ComputerMCPDelivery
 
+#if os(macOS)
+  import ComputerMCPDarwinTestSupport
+#endif
+
 @Suite(.nativeIntegration)
 struct DeliveryRecoveryTests {
   enum Interruption: String, CaseIterable, Sendable {
@@ -593,7 +597,9 @@ struct DeliveryRecoveryTests {
       try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: wrapper.path)
       var configuration = fixture.tools().configuration
       configuration.cli.commands[0].executable = wrapper.path
-      let tools = ToolEnvironment(configuration: configuration, environment: fixture.environment)
+      let tools = ToolEnvironment(
+        launcher: testExecutionLauncher(), configuration: configuration,
+        environment: fixture.environment)
       let repository = try DeliveryRepository(
         scope: fixture.scope, project: fixture.root, git: DeliveryGit(environment: tools))
       try repository.withLock { try repository.recover() }
@@ -746,7 +752,9 @@ struct DeliveryRecoveryTests {
       configuration.projectDirectory = linked
       configuration.projects[0].path = linked.path
       let provider = DeliveryToolProvider(
-        environment: .init(configuration: configuration, environment: fixture.environment),
+        environment: .init(
+          launcher: testExecutionLauncher(), configuration: configuration,
+          environment: fixture.environment),
         io: .init(beforeCleanup: { _ in throw CocoaError(.fileWriteNoPermission) }),
         startsRecovery: false)
       #expect(try fixture.apply(provider: provider)["state"] == .string("cleanup_pending"))

@@ -16,6 +16,10 @@ import Testing
 @testable import ComputerMCPPlugins
 @testable import ComputerMCPProcess
 
+#if os(macOS)
+  import ComputerMCPDarwinTestSupport
+#endif
+
 @Suite(.nativeIntegration, .timeLimit(.minutes(1)))
 struct PluginControlPlaneTests {
   @Test(arguments: ["", "plugin_api = 0", "plugin_api = '1'"])
@@ -242,7 +246,7 @@ struct PluginControlPlaneTests {
         try await fixture.host.parseManifest(configuration.exportedTOML()).profiles.count == 1)
       let loader = GatewayManifestConfigurationLoader(
         database: fixture.database, bundledPlugins: bundled,
-        applications: MacOSPlatform.services.applications)
+        applications: MacOSPlatform.services(launcher: testExecutionLauncher()).applications)
       let manifest = fixture.root.appendingPathComponent("bundled-profile.toml")
       try configuration.exportedTOML().write(to: manifest, atomically: true, encoding: .utf8)
       #expect(try loader.load(path: manifest.path).profiles.count == 1)
@@ -286,7 +290,8 @@ struct PluginControlPlaneTests {
     let manifest = PreparationFixture.manifest.replacingOccurrences(
       of: "architectures = ['arm64']", with: "architectures = ['arm64', 'x86_64']")
     let archive = try await PreparationFixture.make(
-      directoryFactory: MacOSPlatform.services.pluginDirectories, manifest: manifest, format: "zip")
+      directoryFactory: MacOSPlatform.services(launcher: testExecutionLauncher()).pluginDirectories,
+      manifest: manifest, format: "zip")
     defer { archive.files.remove() }
     let bytes = try Data(contentsOf: archive.archive)
     let server = try await CatalogHTTPFixture.start(script: pluginDownloadHTTPFixture(bytes: bytes))
@@ -327,7 +332,8 @@ struct PluginControlPlaneTests {
     let manifest = PreparationFixture.manifest.replacingOccurrences(
       of: "architectures = ['arm64']", with: "architectures = ['arm64', 'x86_64']")
     let archive = try await PreparationFixture.make(
-      directoryFactory: MacOSPlatform.services.pluginDirectories, manifest: manifest, format: "zip")
+      directoryFactory: MacOSPlatform.services(launcher: testExecutionLauncher()).pluginDirectories,
+      manifest: manifest, format: "zip")
     defer { archive.files.remove() }
     let bytes = try Data(contentsOf: archive.archive)
     let server = try await CatalogHTTPFixture.start(script: pluginDownloadHTTPFixture(bytes: bytes))
@@ -459,7 +465,7 @@ struct PluginControlPlaneTests {
   @Test
   func archiveLifecycleThroughRealCLIAndOwnerSocket() async throws {
     let archive = try await PreparationFixture.make(
-      directoryFactory: MacOSPlatform.services.pluginDirectories,
+      directoryFactory: MacOSPlatform.services(launcher: testExecutionLauncher()).pluginDirectories,
       manifest: PreparationFixture.manifest.replacingOccurrences(
         of: "architectures = ['arm64']", with: "architectures = ['arm64', 'x86_64']"))
     defer { archive.files.remove() }
@@ -493,7 +499,8 @@ struct PluginControlPlaneTests {
       #expect(try fixture.database.pluginStoreSnapshot() == snapshot.state)
 
       let update = try await PreparationFixture.make(
-        directoryFactory: MacOSPlatform.services.pluginDirectories,
+        directoryFactory: MacOSPlatform.services(launcher: testExecutionLauncher())
+          .pluginDirectories,
         manifest: PreparationFixture.manifest
           .replacingOccurrences(
             of: "architectures = ['arm64']", with: "architectures = ['arm64', 'x86_64']"
@@ -567,7 +574,7 @@ struct PluginControlPlaneTests {
   @Test
   func committedUninstallWarningsSurviveListAndShow() async throws {
     let archive = try await PreparationFixture.make(
-      directoryFactory: MacOSPlatform.services.pluginDirectories,
+      directoryFactory: MacOSPlatform.services(launcher: testExecutionLauncher()).pluginDirectories,
       manifest: PreparationFixture.manifest.replacingOccurrences(
         of: "architectures = ['arm64']", with: "architectures = ['arm64', 'x86_64']"))
     defer { archive.files.remove() }
@@ -616,7 +623,9 @@ struct PluginControlPlaneTests {
     let replacement: URL
     do {
       let storage = try PluginInstallationStorage(
-        at: fixture.directories.plugins, directoryFactory: MacOSPlatform.services.pluginDirectories)
+        at: fixture.directories.plugins,
+        directoryFactory: MacOSPlatform.services(launcher: testExecutionLauncher())
+          .pluginDirectories)
       defer { storage.finishTransaction() }
       identity = try storage.createInstallation()
       try fixture.database.recordPluginDirectory(
@@ -658,7 +667,9 @@ struct PluginControlPlaneTests {
     defer { fixture.remove() }
     do {
       let storage = try PluginInstallationStorage(
-        at: fixture.directories.plugins, directoryFactory: MacOSPlatform.services.pluginDirectories)
+        at: fixture.directories.plugins,
+        directoryFactory: MacOSPlatform.services(launcher: testExecutionLauncher())
+          .pluginDirectories)
       defer { storage.finishTransaction() }
       try await fixture.host.recoverPluginsAtStartup()
       #expect(
@@ -729,7 +740,7 @@ struct PluginControlFixture: Sendable {
       manifestURL: directories.manifest, database: database,
       loader: GatewayManifestConfigurationLoader(
         database: database, bundledPlugins: bundled,
-        applications: MacOSPlatform.services.applications))
+        applications: MacOSPlatform.services(launcher: testExecutionLauncher()).applications))
     _ = try manifestStore.activate(
       manifest: GatewayConfiguration(projectDirectory: root).exportedTOML())
     let secrets = try KeychainSecretStore(adapter: MemoryKeychainAdapter())
@@ -738,14 +749,16 @@ struct PluginControlFixture: Sendable {
       defaultManifest: DefaultGatewayConfiguration.manifest,
       secretStore: secrets,
       openAITunnelSupervisor: OpenAITunnelSupervisor(
+        launcher: testExecutionLauncher(),
         secretStore: secrets,
-        executableSearchDirectories: MacOSPlatform.services.executableSearchDirectories,
+        executableSearchDirectories: MacOSPlatform.services(launcher: testExecutionLauncher())
+          .executableSearchDirectories,
         proxyResolver: FixedOpenAITunnelHTTPProxyResolver()
       ),
       gatewayExecutablePath: worker,
       launchAtLoginController: SMAppServiceLaunchAtLoginController(),
       computerUsePermissionReader: FixedComputerUsePermissionReader(),
-      platform: MacOSPlatform.services, pluginReleases: releases,
+      platform: MacOSPlatform.services(launcher: testExecutionLauncher()), pluginReleases: releases,
       pluginDownload: download,
       bundledPlugins: bundled)
     gateway = AppGatewayService.live(controlPlane: host, directories: directories)
@@ -756,7 +769,7 @@ struct PluginControlFixture: Sendable {
   func cli(_ arguments: [String]) async throws -> CommandResult {
     let executable = cliExecutable
     return try await BlockingOperationExecutor(label: "plugin-cli-test").perform {
-      try ProcessCommandRunner().run(
+      try ProcessCommandRunner(launcher: testExecutionLauncher()).run(
         executable: executable.path,
         arguments: ["plugins"] + arguments + ["--control-socket", directories.controlSocket.path],
         workingDirectory: root, environment: [:], timeoutMilliseconds: 30_000,

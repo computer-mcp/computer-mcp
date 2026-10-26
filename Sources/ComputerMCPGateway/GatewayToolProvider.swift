@@ -21,6 +21,7 @@ internal final class GatewayProviderRouter: GatewayToolServing, Sendable {
   private let retainsContinuation: @Sendable (MCPToolReference) -> Bool
   private let refreshCoordinator = GatewayCatalogRefreshCoordinator()
   private let changes = GatewayToolChangeBroadcaster()
+  private let discovery = BlockingOperationExecutor(label: "computer-mcp.catalog-discovery")
 
   internal convenience init(providers: [any GatewayToolProvider]) throws {
     try self.init(source: { providers })
@@ -192,16 +193,8 @@ internal final class GatewayProviderRouter: GatewayToolServing, Sendable {
     try await refreshCoordinator.run { [self] in
       do {
         try Task.checkCancellation()
-        let snapshot: GatewayToolCatalogSnapshot = try await withCheckedThrowingContinuation {
-          continuation in
-          // Existing providers have synchronous discovery; keep it off cooperative executors.
-          DispatchQueue.global(qos: .utility).async { [source, reservedToolNames] in
-            continuation.resume(
-              with: Result {
-                try GatewayToolCatalogSnapshot(
-                  providers: source(), reservedToolNames: reservedToolNames)
-              })
-          }
+        let snapshot = try await discovery.perform { [source, reservedToolNames] in
+          try GatewayToolCatalogSnapshot(providers: source(), reservedToolNames: reservedToolNames)
         }
         try Task.checkCancellation()
         let changed = try state.withLockedValue { state in

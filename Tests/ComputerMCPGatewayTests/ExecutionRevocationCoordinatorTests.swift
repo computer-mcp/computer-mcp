@@ -1,3 +1,4 @@
+import ComputerMCPConfiguration
 import ComputerMCPCore
 import ComputerMCPEgress
 import ComputerMCPPermissions
@@ -557,6 +558,69 @@ private struct ExecutionTestObservation: EgressRouteObservation {
       try next.finishAdmission()
       #expect(try await nextOwner.waitForExit().status == 0)
       try await f.untilFinished(next.executionID, coordinator)
+    }
+
+    @Test func proxyRefusesUnsupportedLaunchAndRevokedAuthority() async throws {
+      let f = try ExecutionFixture()
+      let launcher = testExecutionLauncher()
+      let coordinator = try f.coordinator(launcher: launcher)
+      try await coordinator.recover()
+      let marker = f.paths.project.appendingPathComponent("unconfined-launch")
+      let server = MCPServerConfig(
+        id: "authorized", transport: .stdio, command: "/bin/sh",
+        args: ["-c", "printf unconfined > \"$1\"", "fixture", marker.path],
+        startupTimeoutMs: 1000, requestTimeoutMs: 1000)
+      let client = MCPProxyClient(launcher: launcher, workingDirectory: f.paths.project)
+      let id = try f.paths.authorize(f.paths.project, operation: .read, once: true)
+      let prepared = try await coordinator.prepare(authorizationID: id, context: f.context)
+      let calls = BlockingOperationExecutor(label: "test.authorized-proxy")
+      // Stdio supervision needs a verified server context and inherited host handles.
+      // Until that context is supported, the real proxy must refuse sandbox startup.
+      await #expect(throws: (any Error).self) {
+        try await prepared.withValue {
+          try await calls.perform { try client.listTools(server: server, context: .empty) }
+        }
+      }
+      #expect(!FileManager.default.fileExists(atPath: marker.path))
+      try prepared.finishAdmission()
+      try f.revoke()
+      try await f.untilFinished(prepared.executionID, coordinator)
+      await #expect(throws: (any Error).self) {
+        try await prepared.withValue {
+          try await client.callToolAsync(
+            server: server, name: "inspect", arguments: .object([:]), requestID: nil,
+            context: .empty)
+        }
+      }
+      #expect(!FileManager.default.fileExists(atPath: marker.path))
+      let completed = try f.paths.store.readWithDatabase { database, _ in
+        try #require(try ExecutionRuntimeRecord.load(prepared.executionID, database))
+      }
+      #expect(completed.completed)
+      #expect(completed.children.values.allSatisfy { $0.completed && $0.released })
+      await client.shutdown()
+    }
+
+    @Test func proxyRejectsAuthorityWithoutPreparedLaunchContext() async throws {
+      let f = try ExecutionFixture()
+      let launcher = testExecutionLauncher()
+      let coordinator = try f.coordinator(launcher: launcher)
+      try await coordinator.recover()
+      let id = try f.paths.authorize(f.paths.project, operation: .read, once: false)
+      let scope = try coordinator.continuation(authorizationID: id)
+      let client = MCPProxyClient(launcher: launcher, workingDirectory: f.paths.project)
+      let server = MCPServerConfig(
+        id: "unprepared", transport: .stdio, command: "/bin/cat", startupTimeoutMs: 1000)
+      let calls = BlockingOperationExecutor(label: "test.unprepared-proxy")
+      do {
+        _ = try await InvocationExecution.$current.withValue(scope) {
+          try await calls.perform { try client.listTools(server: server, context: .empty) }
+        }
+        Issue.record("Unprepared authority launched a downstream server")
+      } catch {
+        #expect(String(describing: error).contains("prepared launch context"))
+      }
+      await client.shutdown()
     }
 
     @Test func cliBlockingBridgeKeepsPreparedModeAndLimits() async throws {

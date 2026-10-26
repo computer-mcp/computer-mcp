@@ -20,6 +20,7 @@ final class LiveAppControlPlane: AppControlPlane {
   private let controlSocketService: ControlSocketService?
   private let fileLogger: AppFileLogger
   private let registrationService: ClientRegistrationService
+  private let diagnosticOperations = BlockingOperationExecutor(label: "computer-mcp.diagnostics")
   private let registrationOperations = BlockingOperationExecutor(
     label: "computer-mcp.client-registration")
   private let permissionRequester: any SystemPermissionRequesting
@@ -896,7 +897,7 @@ final class LiveAppControlPlane: AppControlPlane {
     let diagnostics = try await fetchDiagnostics()
     let audit = try await fetchAudit()
     let text = Self.diagnosticText(diagnostics: diagnostics, audit: audit)
-    try await Task.detached {
+    try await diagnosticOperations.perform {
       let root = FileManager.default.temporaryDirectory
         .appendingPathComponent(UUID().uuidString, isDirectory: true)
       defer { try? FileManager.default.removeItem(at: root) }
@@ -922,7 +923,7 @@ final class LiveAppControlPlane: AppControlPlane {
           result.stderr.isEmpty ? "Could not create diagnostics archive." : result.stderr
         )
       }
-    }.value
+    }
   }
 
   private func restartGatewayIfRunning(

@@ -443,11 +443,18 @@ package final class MCPProxyClient: DownstreamMCPClient, @unchecked Sendable {
     let timeout = timeoutMilliseconds ?? server.requestTimeoutMs ?? 30_000
     let box = AsyncOperationBox<T>()
     let selected = context.continuationTarget
+    let execution = InvocationExecution.current
+    let access = HostPathAccess.current ?? execution?.pathAccess
     let task = Task.detached {
       do {
         try Task.checkCancellation()
-        if let selected { try await connection.validateSelectedOwner(selected) }
-        box.complete(.success(try await operation(connection)))
+        let result = try await InvocationExecution.$current.withValue(execution) {
+          try await HostPathAccess.$current.withValue(access) {
+            if let selected { try await connection.validateSelectedOwner(selected) }
+            return try await operation(connection)
+          }
+        }
+        box.complete(.success(result))
       } catch {
         box.complete(.failure(error))
       }

@@ -9,6 +9,24 @@ import Testing
 @Suite
 
 final class GatewayToolProviderTests {
+  @Test func asynchronousServingAndDiscoveryKeepExecutionAuthority() async throws {
+    let access = BridgePathAccess()
+    let authority = BridgeExecutionAuthority(pathAccess: access)
+    try await InvocationExecution.$current.withValue(authority) {
+      try await HostPathAccess.$current.withValue(access) {
+        let serving = BridgeToolServing()
+        _ = try await serving.listToolsAsync(context: .empty)
+        _ = try await serving.callToolAsync(name: "probe", arguments: nil, context: .empty)
+        let router = try GatewayProviderRouter(source: {
+          try BridgeToolServing.checkContext()
+          return []
+        })
+        try await router.refreshTools(context: .empty)
+        await router.shutdown()
+      }
+    }
+  }
+
   @Test
   func testRouterListsAndDispatchesAcrossProviders() throws {
     let first = TestGatewayToolProvider(
@@ -183,5 +201,29 @@ private struct TestGatewayToolProvider: GatewayToolProvider {
       throw GatewayToolError.unknownTool(invocation.name)
     }
     return result
+  }
+}
+
+private struct BridgeExecutionAuthority: InvocationExecutionAuthority {
+  let pathAccess: (any HostPathAccessChecking)?
+}
+
+private struct BridgePathAccess: HostPathAccessChecking {
+  func check(_ path: URL, operation: HostPathOperation) throws {}
+}
+
+private struct BridgeToolServing: GatewayToolServing {
+  static func checkContext() throws {
+    _ = try #require(InvocationExecution.current as? BridgeExecutionAuthority)
+    _ = try #require(HostPathAccess.current as? BridgePathAccess)
+  }
+  func listTools(context: InvocationContext) throws -> [MCPTool] {
+    try Self.checkContext()
+    return []
+  }
+  func callTool(name: String, arguments: JSONValue?, context: InvocationContext) throws -> JSONValue
+  {
+    try Self.checkContext()
+    return .null
   }
 }

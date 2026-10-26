@@ -81,7 +81,7 @@ actor MCPBoundHostServices {
         ["worktree": worktree], ["worktree"]),
       tool(
         "host.workspaces.authorize_removal",
-        "Validate the exact live destructive operation ticket before the adapter changes its worktree.",
+        "Validate the exact live removal call before the adapter changes its worktree.",
         ["worktree": worktree], ["worktree"]),
       tool(
         "host.workspaces.unregister",
@@ -184,6 +184,7 @@ actor MCPBoundHostServices {
     let invocation = try directory.resolve().requireHostInvocation(
       projectID: context.launchMetadata.project.id, origin: origin,
       action: action, matching: matching)
+    try requireCall(invocation)
     auditInvocation = invocation
     return invocation
   }
@@ -240,6 +241,7 @@ actor MCPBoundHostServices {
     let runtime = try directory.resolve()
     let active = try runtime.requireHostInvocation(
       projectID: context.launchMetadata.project.id, origin: origin, id: id)
+    try requireCall(active)
     auditInvocation = active
     let plugin = runtime.pluginOrigins[.init(kind: .mcp, id: origin)]
     return .object([
@@ -260,7 +262,7 @@ actor MCPBoundHostServices {
           ? "workspace-write" : active.admittedCapability.risk.rawValue),
       "host_action": active.admittedCapability.hostServiceAction.map { .string($0.rawValue) }
         ?? .null,
-      "arguments_digest": .string(try Self.digest(.object(active.arguments))),
+      "arguments_digest": .string(try MCPHostInvocation.argumentsDigest(active.arguments)),
       "ticket_id": active.ticketID.map(JSONValue.string) ?? .null,
     ])
   }
@@ -287,10 +289,12 @@ actor MCPBoundHostServices {
           id: record.projectID, displayName: record.branch, rootPath: record.path,
           createdAt: now(), updatedAt: now()))
     }
-    try database.registerDerivedProject(
-      registration, verifiedPrincipalID: context.launchMetadata.principalID,
-      caller: context.launchMetadata.caller)
-    registrations[record.id] = active.id
+    let inserted = try directory.resolve().withHostMutation(active) { authority in
+      try database.registerDerivedProject(
+        registration, verifiedPrincipalID: context.launchMetadata.principalID,
+        caller: context.launchMetadata.caller, authority: authority)
+    }
+    if inserted { registrations[record.id] = active.id }
     return .object(["registered": .bool(true), "workspace_id": .string(record.projectID)])
   }
 
@@ -312,8 +316,11 @@ actor MCPBoundHostServices {
           "No owned registration or metadata-only recovery is available.")
       }
     }
-    try requireTicket(active)
+    try requireCall(active)
     if record.state == "removing" { try verifyRemovedGit(record) } else { try verifyGit(record) }
+    try directory.resolve().withHostMutation(active) { authority in
+      try database.withHostAuthority(authority) {}
+    }
     removalInvocations[record.id] = active.id
     return .object(["authorized": .bool(true)])
   }
@@ -336,10 +343,22 @@ actor MCPBoundHostServices {
     }
     let live = directory.active(projectID: context.launchMetadata.project.id, origin: origin)
     if record.state == "provisioning" {
-      // Exact rollback can remove the registration we just created even after revocation.
-      guard let id = registrations[record.id], live.contains(where: { $0.id == id }) else {
-        throw MCPHostServiceError.denied(
-          "Rollback is not part of the registration's active invocation.")
+      // Only the invocation that inserted the registration owns this rollback.
+      guard let id = registrations[record.id], let active = live.first(where: { $0.id == id }),
+        active.admittedCapability.hostServiceAction == .projectProvision,
+        active.arguments["plan_id"] == .string(record.id),
+        active.arguments["expected_revision"]?.intValue == record.revision - 1,
+        active.arguments["confirm_provision"] == .bool(true)
+      else { throw MCPHostServiceError.denied("Rollback does not match its creating invocation.") }
+      try requireCall(active)
+      auditInvocation = active
+      try directory.withActiveRecord(active) {
+        if let old {
+          try database.unregisterDerivedProject(
+            old,
+            verifiedPrincipalID: context.launchMetadata.principalID,
+            caller: context.launchMetadata.caller, allowRevokedSourceForRollback: true)
+        }
       }
     } else {
       guard record.state == "removing", let id = removalInvocations[record.id],
@@ -348,15 +367,19 @@ actor MCPBoundHostServices {
       else {
         throw MCPHostServiceError.denied("Removal was not authorized by this active invocation.")
       }
-      auditInvocation = active
-      try requireTicket(active)
+      try requireCall(active)
       try verifyRemovedGit(record)
-    }
-    if let old {
-      try database.unregisterDerivedProject(
-        old, verifiedPrincipalID: context.launchMetadata.principalID,
-        caller: context.launchMetadata.caller,
-        allowRevokedSourceForRollback: record.state == "provisioning")
+      auditInvocation = active
+      try directory.resolve().withHostMutation(active) { authority in
+        if let old {
+          try database.unregisterDerivedProject(
+            old,
+            verifiedPrincipalID: context.launchMetadata.principalID,
+            caller: context.launchMetadata.caller, authority: authority)
+        } else {
+          try database.withHostAuthority(authority) {}
+        }
+      }
     }
     return .object(["unregistered": .bool(true), "workspace_id": .string(record.projectID)])
   }
@@ -372,17 +395,17 @@ actor MCPBoundHostServices {
     }
   }
 
-  private func requireTicket(_ invocation: MCPHostInvocation) throws {
-    guard let id = invocation.ticketID, let ticket = try database.operationTicket(id: id),
-      ticket.state == .executing, ticket.invocationID == invocation.ticketInvocationID,
-      ticket.parentRequestID == invocation.parentRequestID,
-      invocation.context.principalID == context.launchMetadata.principalID,
-      ticket.projectID == context.launchMetadata.project.id,
-      ticket.profileID == context.launchMetadata.profileID,
-      ticket.caller == context.launchMetadata.caller, ticket.capabilityID == invocation.upstreamName
-    else {
-      throw MCPHostServiceError.denied("This operation has no matching executing host ticket.")
-    }
+  private func requireCall(_ invocation: MCPHostInvocation) throws {
+    try directory.requireRecord(invocation)
+    guard let admission = invocation.admission,
+      admission.verifiedClientID == context.verifiedPrincipalID,
+      (admission.action != .projectProvision && admission.action != .projectRemoval)
+        || admission.verifiedClientID?.isEmpty == false,
+      admission.projectID == context.launchMetadata.project.id,
+      admission.profileID == context.launchMetadata.profileID,
+      admission.caller == context.launchMetadata.caller,
+      admission.reference.serverID == origin
+    else { throw MCPHostServiceError.denied("The live call does not match this host channel.") }
   }
 
   private func derived(_ args: [String: JSONValue]) throws -> DerivedIdentity {
@@ -588,7 +611,7 @@ actor MCPBoundHostServices {
     try database.recordAudit(
       .init(
         requestID: "host-service:" + UUID().uuidString,
-        invocationID: auditInvocation?.ticketInvocationID,
+        invocationID: auditInvocation?.auditInvocationID,
         parentRequestID: auditInvocation?.context.requestID, ticketID: auditInvocation?.ticketID,
         caller: context.launchMetadata.caller,
         principalDigest: AuditEvent.verifiedPrincipalDigest(context.verifiedPrincipalID),

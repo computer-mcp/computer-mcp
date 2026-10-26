@@ -606,3 +606,40 @@ can limit. Source identity, content revision, read failure and owner profile rem
 available in the control projection; fresh reads with the same meaning preserve
 existing grant evidence. Resource-ceiling-only changes preserve permission evidence
 while tightening running work and retained-output limits.
+
+## Host call records
+
+Callback-enabled, project-bound admissions journal immutable call identity before
+provider dispatch when persistence is available. Declared host actions require
+persistence; workspace mutations also require a verified client. `HostCallRecord`
+binds client and acting plugin or local server, profile/caller, actual/source project,
+route/action, canonical argument digest and admission revisions. It contains no raw
+arguments. Its optional permission authorization ID is populated only by permission
+ledger admission; the current outer operation gate does not fabricate that identity.
+Control-session revision records admission evidence; callbacks consult the live session.
+
+`HostCallRecordStore` uses the host database and retains at most one million records.
+Completed records expire after 90 days and the oldest completed records are evicted at
+capacity. Unfinished crash records remain as uncertain evidence and count toward the
+cap; they cannot reconstruct authority or be presumed safe to replay. A store occupied
+entirely by unfinished records refuses new admissions.
+
+`MCPHostToolDirectory` owns separate request and retained-work lease identities.
+Creation and retention commit before each lease is published; private host actions
+compare the saved admission and exact lease sets with this directory. The directory's
+mutex is scoped to one runtime, and durable lease changes use the host's serial writer
+and bounded database lock wait. Downstream discovery and Git verification run outside
+the commit boundary. Workspace mutations then lock session consent, the active-request
+directory entry and the database, in that order, and compare the checked profile revision
+and any persistent client-trust revision inside the writer. A profile revision conflict
+rechecks current policy and retries once; continuing changes fail closed. Work-only
+retention cannot pass a mutation check. Failed completion writes leave uncertain journal
+evidence while retiring in-process authority. Runtime shutdown retires its directory;
+another runtime cannot adopt its records.
+
+The private protocol retains the same invocation/workspace fields, receipt identity
+digest and confirmation arguments. Removal and unregister validate current authority.
+Exact provisioning rollback requires its creating invocation and revision, even when
+the grant has since been revoked; idempotent registration never transfers rollback
+ownership. The outer operation gate remains authoritative for admission. Its ticket
+ID in the version-1 response is audit linkage, rather than callback proof.

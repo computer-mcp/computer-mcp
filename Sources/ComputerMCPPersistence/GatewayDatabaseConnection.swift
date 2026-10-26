@@ -101,6 +101,13 @@ package final class GatewayDatabaseConnection: @unchecked Sendable {
           );
           """)
     }
+    migrator.registerMigration("host-call-records") { database in
+      try database.execute(
+        sql: """
+          CREATE TABLE hostCallRecords (id TEXT PRIMARY KEY, payload BLOB NOT NULL, completedAt REAL);
+          CREATE INDEX hostCallRecordsCompletion ON hostCallRecords(completedAt);
+          """)
+    }
     return migrator
   }()
 

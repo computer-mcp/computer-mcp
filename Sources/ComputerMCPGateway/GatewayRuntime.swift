@@ -677,13 +677,54 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
     guard let reference = descriptor.mcpReference,
       hostServiceRegistrations.contains(reference.serverID)
     else { return nil }
+    let downstream =
+      name == "mcp.tools.call" ? arguments["arguments"]?.objectValue ?? [:] : arguments
+    let id = UUID()
+    let requestLeaseID = UUID()
+    let recordStore = database?.hostCallRecordStore()
+    if descriptor.hostServiceAction == .projectProvision
+      || descriptor.hostServiceAction == .projectRemoval
+    {
+      guard recordStore != nil, context.trustedPrincipalID?.isEmpty == false else {
+        throw Self.invalid(
+          code: "policy.host_invocation_required",
+          message: "Host actions require persistence and a verified client identity.")
+      }
+    }
+    let admission: HostCallAdmission?
+    if let projectID = context.projectID, recordStore != nil {
+      let plugin = pluginOrigins[.init(kind: .mcp, id: reference.serverID)]
+      admission = HostCallAdmission(
+        id: id, generationID: generationID, verifiedClientID: context.trustedPrincipalID,
+        actingPrincipal: .plugin(
+          plugin.map { .package($0.pluginID) } ?? .localServer(reference.serverID)),
+        profileID: context.profileID, caller: context.caller, projectID: projectID,
+        sourceProjectID: try database?.derivedProjectRegistration(id: projectID)?.sourceProjectID
+          ?? projectID,
+        upstreamName: name, reference: reference, action: descriptor.hostServiceAction,
+        argumentsDigest: try MCPHostInvocation.argumentsDigest(downstream),
+        authorizationID: nil, authorizationRevision: authorizationRevision,
+        controlSessionID: context.controlSession?.id,
+        controlSessionRevision: context.controlSession?.revision,
+        requestID: context.requestID)
+    } else {
+      admission = nil
+    }
+    guard descriptor.hostServiceAction == nil || admission != nil else {
+      throw Self.invalid(
+        code: "policy.host_invocation_required",
+        message: "Host actions require a project-bound call record.")
+    }
     let invocation = MCPHostInvocation(
+      id: id, requestLeaseID: requestLeaseID, admission: admission,
       reference: reference, admittedCapability: descriptor, upstreamName: name,
-      upstreamArguments: arguments,
-      arguments: name == "mcp.tools.call" ? arguments["arguments"]?.objectValue ?? [:] : arguments,
-      context: context, ticketID: linkage?.ticketID, ticketInvocationID: linkage?.invocationID,
-      parentRequestID: linkage?.parentRequestID, authorizationRevision: authorizationRevision)
-    try hostToolDirectory.begin(invocation)
+      arguments: downstream, context: context, ticketID: linkage?.ticketID,
+      auditInvocationID: linkage?.invocationID, authorizationRevision: authorizationRevision)
+    do { try hostToolDirectory.begin(invocation, store: recordStore) } catch let error
+      as HostCallRecordError
+    {
+      throw Self.invalid(code: error.code, message: error.localizedDescription)
+    }
     return invocation
   }
 
@@ -717,6 +758,14 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
         code: "policy.host_invocation_required",
         message: "Host service requires one matching live gateway invocation.")
     }
+    try hostToolDirectory.requireRecord(invocation)
+    guard invocation.admission?.generationID == generationID,
+      invocation.admission?.sourceProjectID
+        == (try database?.derivedProjectRegistration(id: projectID)?.sourceProjectID ?? projectID)
+    else {
+      throw Self.invalid(
+        code: "policy.host_invocation_required", message: "The call belongs to another runtime.")
+    }
     // Rediscovery can deadlock a parent waiting on this callback. The admitted
     // effect stays immutable; every active or retained context rechecks the grant.
     let descriptor = invocation.admittedCapability
@@ -731,6 +780,69 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
         code: "policy.host_grant_revoked", message: "The live invocation is no longer authorized.")
     }
     return invocation
+  }
+
+  /// Git and filesystem verification finish before this final, non-suspending
+  /// authority boundary. Persistence compares the checked revision in its writer.
+  func withHostMutation<Result>(
+    _ invocation: MCPHostInvocation,
+    operation: (HostCallAuthoritySnapshot) throws -> Result
+  ) throws -> Result {
+    func commit(_ current: ProfileGrant, _ consent: GatewayFullAccessConsent?) throws -> Result {
+      try self.hostToolDirectory.withActiveRecord(invocation) {
+        guard let admission = invocation.admission else { throw HostCallRecordError.mismatch }
+        try self.validateHostOrigin(
+          projectID: admission.projectID,
+          origin: invocation.reference.serverID)
+        let origin = self.pluginOrigins[.init(kind: .mcp, id: invocation.reference.serverID)]
+        guard admission.generationID == self.generationID,
+          admission.actingPrincipal
+            == .plugin(
+              origin.map { .package($0.pluginID) }
+                ?? .localServer(invocation.reference.serverID)),
+          admission.sourceProjectID
+            == (try self.database?.derivedProjectRegistration(
+              id: admission.projectID)?.sourceProjectID ?? admission.projectID),
+          self.policyEvaluator.evaluate(
+            capability: invocation.admittedCapability,
+            context: invocation.context, grant: current,
+            registeredProjectIDs: Set(self.projectOrder)
+          ).isAllowed
+        else {
+          throw Self.invalid(
+            code: "policy.host_grant_revoked",
+            message: "The live invocation is no longer authorized.")
+        }
+        return try operation(
+          .init(
+            context: invocation.context,
+            profileRevision: current.authorizationRevision, consent: consent))
+      }
+    }
+    for attempt in 0..<2 {
+      do {
+        let baseline = try currentProfileGrant()
+        if let authority = invocation.context.controlSession {
+          guard let session = authority as? GatewayControlSession else {
+            throw Self.invalid(
+              code: "policy.control_session_required",
+              message: "Host mutations require a host-owned control session.")
+          }
+          return try session.withHostAuthorization(
+            grant: baseline,
+            context: invocation.context, operation: commit)
+        }
+        guard !requiresControlSession else {
+          throw Self.invalid(
+            code: "policy.control_session_required",
+            message: "A live control session is required.")
+        }
+        return try commit(baseline, nil)
+      } catch HostCallAuthorityConflict.profileRevision {
+        if attempt == 1 { break }
+      }
+    }
+    throw MCPHostServiceError.denied("The host profile changed before this callback committed.")
   }
 
   func makeHostServices(context: MCPHostContext, origin: String) throws -> MCPBoundHostServices? {

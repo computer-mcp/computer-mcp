@@ -211,36 +211,51 @@ package final class GatewayControlSession: GatewaySessionAuthority, @unchecked S
   }
 
   package func apply(to grant: ProfileGrant, context: ExecutionContext) throws -> ProfileGrant {
+    try lock.withLock { try appliedGrant(grant, context: context) }
+  }
+
+  /// Orders a short host mutation against consent changes. The closure must not
+  /// suspend, perform subprocess I/O, or reenter this session.
+  func withHostAuthorization<Result>(
+    grant: ProfileGrant, context: ExecutionContext,
+    operation: (ProfileGrant, GatewayFullAccessConsent?) throws -> Result
+  ) throws -> Result {
     try lock.withLock {
-      guard !ended, !principalID.isEmpty,
-        context.trustedPrincipalID == principalID,
-        context.profileID == profileID, context.caller == caller, grant.id == profileID
-      else { throw Self.denied("The control session is no longer authorized for this caller.") }
-      let current = try currentProfile()
-      guard current != nil || profile == nil else {
-        throw Self.denied("The client profile is no longer available.")
-      }
-      refreshConsent(profile: current)
-      var effective = current?.grant ?? grant
-      if fullAccessConsent != nil, accessLimit == .localFullAccess {
-        effective.mode = .localFullAccess
-        effective.fullShellEnabled = true
-        effective.capabilityIDs = ["*"]
-        effective.projectIDs = ["*"]
-        effective.confirmationPolicy = .never
-      }
-      switch accessLimit {
-      case .readOnly:
-        effective.mode = .readOnly
-        effective.fullShellEnabled = false
-      case .projectOperations:
-        if effective.mode == .localFullAccess { effective.mode = .projectOperations }
-        effective.fullShellEnabled = false
-      case .localFullAccess:
-        break
-      }
-      return effective
+      let effective = try appliedGrant(grant, context: context)
+      return try operation(effective, fullAccessConsent)
     }
+  }
+
+  private func appliedGrant(_ grant: ProfileGrant, context: ExecutionContext) throws -> ProfileGrant
+  {
+    guard !ended, !principalID.isEmpty,
+      context.trustedPrincipalID == principalID,
+      context.profileID == profileID, context.caller == caller, grant.id == profileID
+    else { throw Self.denied("The control session is no longer authorized for this caller.") }
+    let current = try currentProfile()
+    guard current != nil || profile == nil else {
+      throw Self.denied("The client profile is no longer available.")
+    }
+    refreshConsent(profile: current)
+    var effective = current?.grant ?? grant
+    if fullAccessConsent != nil, accessLimit == .localFullAccess {
+      effective.mode = .localFullAccess
+      effective.fullShellEnabled = true
+      effective.capabilityIDs = ["*"]
+      effective.projectIDs = ["*"]
+      effective.confirmationPolicy = .never
+    }
+    switch accessLimit {
+    case .readOnly:
+      effective.mode = .readOnly
+      effective.fullShellEnabled = false
+    case .projectOperations:
+      if effective.mode == .localFullAccess { effective.mode = .projectOperations }
+      effective.fullShellEnabled = false
+    case .localFullAccess:
+      break
+    }
+    return effective
   }
 
   package func requireRevision(_ expected: Int64?) throws {

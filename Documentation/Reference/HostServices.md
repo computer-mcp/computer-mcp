@@ -72,7 +72,7 @@ cancellation delivery alone does not.
 | --- | --- | --- |
 | `host.invocations.describe` | `invocation_id` | Inspect an exact invocation retained by a request or validated work on this private channel |
 | `host.workspaces.register` | `worktree` | Register an exact derived worktree and its source profile grant atomically |
-| `host.workspaces.authorize_removal` | `worktree` | Check the live destructive operation ticket before removal |
+| `host.workspaces.authorize_removal` | `worktree` | Check the exact live removal call before removal |
 | `host.workspaces.unregister` | `worktree` | Remove the unchanged owned registration, or confirm an ownership-free no-op |
 | `host.diagnostics.snapshot` | `limit` | Read bounded host receipts for the verified subject/profile/project |
 
@@ -97,7 +97,7 @@ their validated resources reference the creating acquisition, including derived
 work after the initial call returns. The host releases it only after a complete
 observation establishes that no owner remains. Missing or invalid observations
 retain uncertainty. Background contexts have a separate lifetime from active
-request admission and do not extend an operation ticket's mutation window.
+request admission. Mutation callbacks still require their exact active request.
 
 The version-1 result includes `invocation_id`, `generation_id`,
 `registration_id`, `plugin_id`, `contribution_id`, `principal_id`, `profile_id`,
@@ -108,7 +108,10 @@ is the grant revision admitted for that invocation; inspection checks current
 authorization again. Plugin/contribution identities come from host composition
 and are null for a direct registration. The argument digest uses SHA-256 over
 the host-recorded downstream argument object encoded as sorted-key JSON.
-`ticket_id` is null when no operation ticket applies. Identity fields and
+`ticket_id` is audit linkage and is null when no operation ticket applies; callbacks
+validate the live call record. Workspace mutations require a verified client identity;
+inspection records the identity supplied by the host, which can be absent on local
+unauthenticated connections. Identity fields and
 authorization revisions cannot be overridden in the inspection request.
 
 Concurrent invocations have distinct identities even when their tool and
@@ -129,8 +132,12 @@ adopted or removed through a new caller. Project registration, canonical-path ow
 and the added profile grant commit in one transaction. Existing identities,
 pre-existing grants or independent path registrations are not adopted.
 
-Removal requires the exact executing outer operation ticket. The host refuses
-independent edits, aliases or grants held by another profile. It removes only
+Removal requires the exact live call record and an in-process request lease. The
+host records identity, route, action, argument digest, project scope and admission
+revisions before dispatch, and checks current authorization after Git verification
+for both removal authorization and unregister. A saved record or invocation ID
+alone cannot convey authority; completed records and lost leases cannot be reused.
+The host refuses independent edits, aliases or grants held by another profile. It removes only
 its own unchanged registration and grant; filesystem removal remains with the
 plugin. A child lease is released through a child-project connection after
 that registration is available; an existing immutable Gateway runtime does not
@@ -138,7 +145,7 @@ silently acquire a new project router.
 
 If Git removal succeeds but host metadata cleanup fails, the domain receipt
 remains `removing`, not `active`. Review it again with `remove.plan`, then use
-its current revision and a new host operation ticket with `remove.perform`.
+its current revision with a new admitted `remove.perform` call.
 This recovery verifies that the path is absent, its parents/source remain
 valid, and Git no longer registers it. It then cleans metadata without repeating
 Git deletion. A replacement path, including a symbolic link, is never removed.
@@ -175,7 +182,7 @@ The host recognizes these actions and imposes the corresponding minimum risk:
 | --- | --- | --- |
 | `diagnostics.snapshot` | `read-only` | `limit` bounds the callback's requested count; omission means 100 |
 | `workspaces.provision` | `project-write` | `plan_id` equals the receipt ID, `expected_revision` is one below its provisioning revision, `confirm_provision` is true |
-| `workspaces.remove` | `destructive` | `managed_worktree_id` and `expected_revision` match the reviewed receipt, `confirm_remove` is true; an executing host ticket is required |
+| `workspaces.remove` | `destructive` | `managed_worktree_id` and `expected_revision` match the reviewed receipt, `confirm_remove` is true; the exact live call record and current authority are required |
 
 The declaration selects host validation; it grants no project or capability.
 Unknown or malformed declarations fail closed. The host records the recognized

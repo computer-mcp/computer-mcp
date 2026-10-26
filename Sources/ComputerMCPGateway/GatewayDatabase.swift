@@ -45,6 +45,38 @@ package final class GatewayDatabase: OAuthStore, @unchecked Sendable {
     SQLitePermissionStore(connection: connection, counter: counter)
   }
 
+  func hostCallRecordStore() -> HostCallRecordStore { HostCallRecordStore(connection: connection) }
+
+  /// Profile and persistent client trust are checked with the metadata write.
+  func withHostAuthority<Result>(
+    _ authority: HostCallAuthoritySnapshot, operation: () throws -> Result
+  ) throws -> Result {
+    try writer.write { database in
+      try Self.requireHostAuthority(authority, database: database)
+      return try operation()
+    }
+  }
+
+  private static func requireHostAuthority(
+    _ authority: HostCallAuthoritySnapshot, database: Database
+  ) throws {
+    let context = authority.context
+    guard let profile = try ProfileRecord.fetchOne(database, key: context.profileID.rawValue),
+      profile.authorizationRevision == authority.profileRevision
+    else {
+      throw HostCallAuthorityConflict.profileRevision
+    }
+    guard let consent = authority.consent, consent.lifetime == .alwaysAllowClient else { return }
+    guard let id = consent.trustID, let revision = consent.trustRevision,
+      let trust = try GatewayClientTrust.fetchOne(database, key: id),
+      trust.fullAccessAllowed, trust.revision == revision,
+      trust.principalID == context.trustedPrincipalID, trust.profileID == context.profileID,
+      trust.caller == context.caller, trust.profile.hasSameAuthorization(as: consent.profile)
+    else {
+      throw MCPHostServiceError.denied("Client trust changed before this callback committed.")
+    }
+  }
+
   package func oauthTransaction<Result>(
     _ body: (any OAuthStoreTransaction) throws -> Result
   ) throws -> Result {
@@ -1412,16 +1444,27 @@ extension GatewayDatabase {
   }
 
   /// Registration and the single host-added grant are committed together.
+  @discardableResult
   func registerDerivedProject(
     _ registration: MCPDerivedProjectRegistration, verifiedPrincipalID: String,
-    caller: GatewayCallerKind
-  ) throws {
+    caller: GatewayCallerKind, authority: HostCallAuthoritySnapshot? = nil
+  ) throws -> Bool {
     try Self.requireDerivedPrincipal(registration, verifiedPrincipalID: verifiedPrincipalID)
     let payload = try JSONEncoder().encode(registration)
     guard payload.count <= 32_768 else {
       throw MCPHostServiceError.denied("Registration exceeds its bound.")
     }
     let changed = try writer.write { database in
+      if let authority {
+        guard authority.context.profileID == registration.profileID,
+          authority.context.trustedPrincipalID == verifiedPrincipalID,
+          authority.context.caller == caller
+        else {
+          throw MCPHostServiceError.denied(
+            "The call authority differs from the registration owner.")
+        }
+        try Self.requireHostAuthority(authority, database: database)
+      }
       guard
         let source = try ProjectRecord.fetchOne(database, key: registration.sourceProjectID),
         Self.canonicalProjectRoot(source.rootPath) == registration.sourceRoot,
@@ -1480,15 +1523,27 @@ extension GatewayDatabase {
     if changed {
       profileChangeLock.withLock { profileChangeBroadcasters[registration.profileID] }?.send()
     }
+    return changed
   }
 
   /// Does not remove independently edited registrations, aliases, or grants.
   func unregisterDerivedProject(
     _ registration: MCPDerivedProjectRegistration, verifiedPrincipalID: String,
-    caller: GatewayCallerKind, allowRevokedSourceForRollback: Bool = false
+    caller: GatewayCallerKind, allowRevokedSourceForRollback: Bool = false,
+    authority: HostCallAuthoritySnapshot? = nil
   ) throws {
     try Self.requireDerivedPrincipal(registration, verifiedPrincipalID: verifiedPrincipalID)
     let changedProfile = try writer.write { database -> Bool in
+      if let authority {
+        guard authority.context.profileID == registration.profileID,
+          authority.context.trustedPrincipalID == verifiedPrincipalID,
+          authority.context.caller == caller
+        else {
+          throw MCPHostServiceError.denied(
+            "The call authority differs from the registration owner.")
+        }
+        try Self.requireHostAuthority(authority, database: database)
+      }
       guard
         let old = try Self.derivedRegistration(id: registration.project.id, database: database)
       else { return false }

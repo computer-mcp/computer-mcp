@@ -1,6 +1,8 @@
 import ComputerMCPMacOS
+import ComputerMCPPersistence
 import ComputerMCPTestSupport
 import Foundation
+import GRDB
 import Testing
 
 @testable import ComputerMCPCore
@@ -69,7 +71,10 @@ struct MCPHostInvocationTests {
         try runtime.requireHostInvocation(
           projectID: "fixture", origin: "provider", id: retainedID
         ).reference.toolName == "background")
-      // Background context is not an active operation-ticket mutation window.
+      let record = try #require(try database.hostCallRecordStore().record(id: retainedID))
+      #expect(record.lifecycle == .retained)
+      #expect(record.requestLeaseIDs.isEmpty && !record.workLeaseIDs.isEmpty)
+      // Retained work does not extend the active request's mutation window.
       #expect(throws: (any Error).self) {
         try runtime.requireHostInvocation(
           projectID: "fixture", origin: "provider", action: .diagnosticsSnapshot)
@@ -109,6 +114,69 @@ struct MCPHostInvocationTests {
     }
     await runtime.shutdown()
     #expect(runtime.ownedWork.snapshot.isEmpty)
+  }
+
+  @Test(arguments: [false, true])
+  func nativeDispatchLeaseFailureNeverReachesProvider(failWorkLease: Bool) async throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: false)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let script = root.appendingPathComponent("provider.py")
+    let marker = root.appendingPathComponent("dispatched")
+    let source = Self.provider.replacingOccurrences(
+      of: "elif method == \"tools/call\":",
+      with: "elif method == \"tools/call\":\n        open(" + String(reflecting: marker.path)
+        + ", \"w\").write(\"dispatched\")")
+    try source.write(to: script, atomically: true, encoding: .utf8)
+    let connection = try GatewayDatabaseConnection(inMemory: ())
+    let database = GatewayDatabase(connection: connection)
+    let runtime = try await GatewayRuntime.make(
+      configuration: .init(
+        runtime: .init(caller: .localMCP, profileID: .localAdmin),
+        profiles: [
+          .init(
+            id: .localAdmin, capabilities: ["mcp.tools.call"], projects: ["fixture"],
+            allowedCallers: [.localMCP], mode: .readOnly)
+        ],
+        mcp: .init(servers: [
+          .init(
+            id: "provider", transport: .stdio, command: "/usr/bin/python3",
+            args: [script.path, "work"], allowedTools: ["background"], startupTimeoutMs: 5_000,
+            requestTimeoutMs: 5_000, toolRisks: ["background": .readOnly], hostServices: true)
+        ])),
+      database: database,
+      registeredProjects: [.init(id: "fixture", displayName: "Fixture", rootPath: root.path)],
+      platform: MacOSPlatform.services(launcher: testExecutionLauncher()))
+    do {
+      try await connection.writer.write { database in
+        let condition =
+          failWorkLease ? "WHEN json_array_length(NEW.payload, '$.workLeaseIDs') > 0" : ""
+        try database.execute(
+          sql: "CREATE TRIGGER fail_lease BEFORE UPDATE ON hostCallRecords " + condition
+            + " BEGIN SELECT RAISE(ABORT, 'fixture'); END")
+      }
+      await #expect(throws: (any Error).self) {
+        try await runtime.callToolAsync(
+          name: "mcp.tools.call", arguments: Self.arguments(tool: "background"), context: .empty)
+      }
+      #expect(!FileManager.default.fileExists(atPath: marker.path))
+      let records = try await connection.writer.read { database in
+        try Data.fetchAll(database, sql: "SELECT payload FROM hostCallRecords").map {
+          try JSONDecoder().decode(HostCallRecord.self, from: $0)
+        }
+      }
+      let record = try #require(records.first)
+      #expect(records.count == 1)
+      if failWorkLease { #expect(record.lifecycle == .completed) }
+      #expect(throws: (any Error).self) {
+        try runtime.requireHostInvocation(
+          projectID: "fixture", origin: "provider", id: record.admission.id)
+      }
+    } catch {
+      await runtime.shutdown()
+      throw error
+    }
+    await runtime.shutdown()
   }
 
   private static func waitForResourceCount(_ count: Int, runtime: GatewayRuntime) async throws {

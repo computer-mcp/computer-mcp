@@ -390,11 +390,12 @@ Validated provider work retains the creating call's context through its immutabl
 acquisition reference, including derived work after the response. Complete work
 observations release the context only after its final owner disappears; failed
 observations retain it. Background contexts do not consume active-call slots.
-Exact-ID context inspection rechecks the current grant. Services that require
-an executing operation ticket continue to require an active forwarded request;
-background retention does not extend that mutation window.
-Private services match that reference, current grants and, for destructive
-removal, the executing operation ticket. Binding is lazy so plugin catalog
+Exact-ID context inspection rechecks the current grant. Mutation services require
+an active forwarded request; background retention does not extend that mutation window. Private services compare the durable call
+record with its in-process lease, exact action and arguments, then check current
+grants. Removal and unregister both validate this proof after Git verification.
+Only the invocation that inserted a registration may perform exact provisioning
+rollback after revocation. Binding is lazy so plugin catalog
 startup does not depend on a partially constructed Gateway runtime.
 
 Callback-enabled calls require a bound project, including the generic MCP
@@ -408,7 +409,8 @@ row to remain present. Current persisted restrictions are reapplied to callbacks
 and projects bounded diagnostics. Its private namespace permits only
 invocation inspection, project registration, verified removal, and diagnostic reads for matching
 live invocations. Plugins declare their semantic actions in tool metadata;
-host operation tickets and project grants remain in the Gateway Database.
+call records and project grants remain in the Gateway Database. The outer
+operation gate still controls admission; its ticket is not host-callback proof.
 
 See [Scoped host services](../Reference/HostServices.md) for configuration,
 wire surface, scope checks, bounds and recovery behavior.

@@ -334,6 +334,7 @@ let neutralTargets: [Target] =
     .target(
       name: "ComputerMCPControlPlane",
       dependencies: [
+        "ComputerMCPPermissions",
         "ComputerMCPAuthorization",
         "ComputerMCPGateway", "ComputerMCPPlugins", "ComputerMCPToolsProject",
         "ComputerMCPDownstream", "ComputerMCPConfiguration", "ComputerMCPCore",
@@ -346,6 +347,7 @@ let neutralTargets: [Target] =
     .testTarget(
       name: "ComputerMCPControlPlaneTests",
       dependencies: [
+        "ComputerMCPPermissions",
         "ComputerMCPAuthorization", "ComputerMCPConfiguration",
         "ComputerMCPDownstream", "ComputerMCPProcess",
         "ComputerMCPControlPlane", "ComputerMCPGateway", "ComputerMCPCore",
@@ -554,6 +556,7 @@ let neutralTargets: [Target] =
       .testTarget(
         name: "ComputerMCPMacOSTests",
         dependencies: [
+          "ComputerMCPPermissions",
           "computer-mcp",
           "ComputerMCPComputerUse",
           "ComputerMCPControlPlane",

@@ -611,6 +611,39 @@ package struct PermissionLedger: Sendable, Codable {
     return propagateRevocations()
   }
 
+  package mutating func retireRequest(_ id: UUID, expectedRevision: UInt64) throws
+    -> RevocationResult
+  {
+    try commit(expectedRevision: expectedRevision) { ledger in
+      guard ledger.requests[id] != nil else { throw PermissionModelError.unknownRequest }
+      ledger.requests[id]!.status = .revoked
+      return ledger.propagateRevocations()
+    }
+  }
+
+  /// Retiring a host-authenticated subject also retires transient authority that
+  /// has no standing permission or connection record to revoke.
+  package mutating func retirePrincipal(_ principal: Principal, expectedRevision: UInt64) throws
+    -> RevocationResult
+  {
+    try commit(expectedRevision: expectedRevision) { ledger in
+      for (id, request) in ledger.requests
+      where request.invocation.principal == principal || request.content.principal == principal {
+        ledger.requests[id]!.status = .revoked
+      }
+      for (id, authorization) in ledger.authorizations
+      where authorization.invocation.principal == principal {
+        ledger.authorizations[id]!.revoked = true
+        ledger.authorizations[id]!.revokesRetries = true
+      }
+      for consent in ledger.issuedConsents[principal] ?? [] {
+        ledger.retiredConsents.insert(consent.identity)
+      }
+      ledger.issuedConsents[principal] = nil
+      return ledger.propagateRevocations()
+    }
+  }
+
   /// Invalid dependency evidence retires the request. Catch validation errors
   /// inside store transactions so that retirement commits without granting access.
   @discardableResult

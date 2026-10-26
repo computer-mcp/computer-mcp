@@ -76,6 +76,31 @@ package final class GatewayDatabaseConnection: @unchecked Sendable {
           );
           """)
     }
+    migrator.registerMigration("permission-services") { database in
+      try database.alter(table: "permissionProfiles") { $0.add(column: "authorityEpoch", .text) }
+      try database.execute(
+        sql: """
+          CREATE TABLE permissionControlRevision (
+            id INTEGER PRIMARY KEY CHECK (id = 1),
+            revision INTEGER NOT NULL CHECK (revision >= 0)
+          );
+          INSERT INTO permissionControlRevision VALUES (1, 0);
+          CREATE TABLE permissionSubjects (
+            principal BLOB PRIMARY KEY,
+            profileID TEXT NOT NULL,
+            caller TEXT NOT NULL
+          );
+          CREATE TABLE permissionOwnerPolicies (
+            profileID TEXT PRIMARY KEY,
+            payload BLOB,
+            authorityEpoch TEXT NOT NULL
+          );
+          CREATE TABLE permissionPolicySources (
+            source TEXT PRIMARY KEY,
+            payload BLOB NOT NULL
+          );
+          """)
+    }
     return migrator
   }()
 

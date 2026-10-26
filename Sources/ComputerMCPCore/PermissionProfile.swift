@@ -31,7 +31,9 @@ package struct PermissionProfile: Codable, Equatable, Sendable {
 
   package static func == (lhs: Self, rhs: Self) -> Bool {
     lhs.id == rhs.id && lhs.permissions.entries == rhs.permissions.entries
-      && lhs.projectNetworks == rhs.projectNetworks && lhs.automation == rhs.automation
+      && lhs.projectNetworks.mapValues(\.configuration)
+        == rhs.projectNetworks.mapValues(\.configuration)
+      && lhs.automation == rhs.automation
       && lhs.fullAccess == rhs.fullAccess && lhs.allowedCallers == rhs.allowedCallers
       && lhs.authorizationRevision == rhs.authorizationRevision
   }

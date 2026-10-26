@@ -425,7 +425,14 @@ import Testing
     let (plan, state) = try store.prepare(catalog: catalog)
     #expect(plan.derived == [row])
     #expect(plan.profiles[0].permissions.entries[.project(child.id)] == nil)
+    let controlRevision = try connection.writer.read {
+      try Int.fetchOne($0, sql: "SELECT revision FROM permissionControlRevision WHERE id = 1")
+    }
     try store.apply(plan, expectedState: state, currentCatalog: catalog)
+    #expect(
+      try connection.writer.read {
+        try Int.fetchOne($0, sql: "SELECT revision FROM permissionControlRevision WHERE id = 1")
+      } == controlRevision.map { $0 + 1 })
     let saved = try connection.writer.read {
       try Data.fetchOne($0, sql: "SELECT payload FROM permissionDerivedProjects")
     }

@@ -71,6 +71,8 @@ package final class PermissionMigrationStore: @unchecked Sendable {
             "INSERT INTO permissionDerivedProjects (projectID, sourceProjectID, payload) VALUES (?, ?, ?)",
           arguments: [derived.project.id, derived.sourceProjectID, try encoder.encode(derived)])
       }
+      try database.execute(
+        sql: "UPDATE permissionControlRevision SET revision = revision + 1 WHERE id = 1")
       try database.execute(sql: "DELETE FROM operationTickets")
       try database.execute(sql: "DELETE FROM clientControlTrust")
       try database.execute(

@@ -28,15 +28,8 @@ private struct ProfileDocument: Codable {
   let profile: PermissionProfile
   init(_ profile: PermissionProfile) { self.profile = profile }
 
-  private static let privacy: [String: Permission] = [
-    "screen": .screen, "desktop-control": .desktopControl, "local-network": .localNetwork,
-    "machine": .machineInformation, "unified-logs": .unifiedLogs, "skills": .skills,
-  ]
-  private static let folders: [String: FolderCategory] = [
-    "desktop": .desktop, "documents": .documents, "downloads": .downloads,
-    "icloud-drive": .iCloudDrive, "network-volumes": .networkVolumes,
-    "removable-volumes": .removableVolumes,
-  ]
+  private static let privacy = PermissionManifestVocabulary.privacy
+  private static let folders = PermissionManifestVocabulary.folders
 
   private static let bundleIdentifierCharacters = CharacterSet(
     charactersIn: "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-.")
@@ -207,12 +200,7 @@ private struct ProfileDocument: Codable {
   }
 
   private static func validateObject(_ id: String) throws {
-    guard !id.isEmpty, id.utf8.count <= 256,
-      !id.unicodeScalars.contains(where: { $0.value < 32 || $0.value == 127 }),
-      id == "*" || !id.contains("*")
-    else {
-      throw ConfigurationError.invalid("Permission object must be an identifier or *.")
-    }
+    try PermissionManifestVocabulary.validateObject(id)
   }
 }
 
@@ -244,7 +232,7 @@ private struct ProjectDocument: Codable {
   }
 }
 
-private struct NetworkDocument: Codable {
+struct NetworkDocument: Codable {
   let value: NetworkAccess
   init(_ value: NetworkAccess) { self.value = value }
   init(from decoder: any Decoder) throws {

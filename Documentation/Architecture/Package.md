@@ -549,3 +549,60 @@ settings mean none.
 An empty custom host list is valid and denies network unless it includes trusted hosts.
 Obsolete profile fields fail with replacement guidance, including empty and false
 values. The public configuration parser retains its current contract until cutover.
+
+`GatewayPermissionService` provides admission, request answers, shared profile edits,
+revocation, owner ceilings and machine-policy reconciliation on the same
+`SQLitePermissionStore`. `PermissionControlService` accepts an in-process local-owner
+proof for each action; `MacOSPermissionServices` constructs both adapters over one
+connection and external epoch counter. These compositions are prepared APIs, not a
+second active App authority before the gateway cutover.
+
+Verified client identity, profile and caller form a stable subject. Only this time
+answers remain bound to that subject's exact invocation and retry dependency chain.
+Always changes the shared profile, including clients already bound to it and future
+bindings; owner projections disclose that scope. Answers do not dispatch or replay a
+call. Owner proof and a control revision are checked in the durable transaction.
+Owner mutations and newly migrated profiles advance this revision; admissions and
+projections do not make an open owner action stale. Profile edits also check their profile revision. Policy I/O
+and canonical denied-path acquisition happen outside the writer; the transaction
+compares the observed source projection and owner documents before applying the
+snapshot, retrying at most three times on concurrent publication. Fresh limits are
+reconciled before an answer or edit. Profile grants and
+owner policies are also bound to the external authority epoch, so a restored database
+cannot repopulate standing authority before local confirmation. Runtime termination
+is delivered through the ledger's durable pending queue. Removing a caller retires
+its requests and transient authorizations as well as standing rules. The control
+service exposes confirmation with reviewed profile edits in the same transaction;
+unadopted profiles remain visible and cannot admit calls. Subject bindings are capped
+at 16,384 rather than evicting authority or revocation history.
+
+The platform-neutral `ManagedPolicyReading` contract returns a separate status and
+location for each source. Darwin reads the protected, administrator-owned regular
+file `/Library/Application Support/Computer MCP/policy.toml` and the forced `Policy`
+preference in `com.showxu.computer-mcp`. The preference is a UTF-8 TOML string using
+the same syntax as the file; ordinary user preferences cannot supply machine policy.
+The complete parent chain must also be protected against replacement; descriptor-relative
+opening rejects symlinked or unprotected parents, including mutation grants in ACLs.
+Each document is bounded to 1 MiB. Denied paths resolve through their nearest
+accessible prefix; missing or permission-protected suffixes remain denied without
+requiring access to the object itself. Nonblocking opens also cover FIFO locations.
+Missing, unreadable and malformed sources remain
+distinct; failures provide bounded diagnostics without policy contents. Local owner
+diagnostics and revocation remain available when a machine source fails.
+
+Policy documents contain `permissions`, `projects`, `files_and_folders`, `plugins`
+and `mcp_servers` ceiling tables, `full_access`, `remote_full_access`, `network`,
+`denied_read_locations`, and an `execution` table with `time_ms`, `output_bytes`,
+`memory_bytes`, `retention_seconds` and `retained_output_bytes`. Object tables use
+concrete identifiers or `*`; values follow their permission kind and accept `deny`.
+Network uses the manifest's simple or custom form. Execution ceilings are positive
+integers. Unknown fields or malformed values make the source unreadable.
+
+Each source resolves concrete entries before its fallback, then the permission
+library combines the sources: permission levels and numeric ceilings take the
+strictest value, booleans must all allow, denied paths accumulate, and each network
+destination must satisfy every source. Unreadable sources restrict every kind they
+can limit. Source identity, content revision, read failure and owner profile remain
+available in the control projection; fresh reads with the same meaning preserve
+existing grant evidence. Resource-ceiling-only changes preserve permission evidence
+while tightening running work and retained-output limits.

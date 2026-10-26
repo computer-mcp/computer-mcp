@@ -149,6 +149,13 @@ package struct Permissions: Equatable, Sendable, Codable {
     entries[permission] = state
   }
 
+  /// Remove a concrete entry so its fallback can apply again. Setting notGranted
+  /// is different: it creates an explicit requestable override of that fallback.
+  package mutating func removeEntry(for permission: Permission) {
+    entries[permission] = nil
+    grantIDs[permission] = nil
+  }
+
   package func state(for permission: Permission) -> PermissionState {
     entry(for: permission)?.state ?? .notGranted
   }

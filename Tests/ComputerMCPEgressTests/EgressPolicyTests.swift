@@ -82,6 +82,21 @@ import Testing
         == nil)
   }
 
+  @Test func scopedLocalNetworkDoesNotOpenOtherHostsOrLoopback() throws {
+    let policy = try EgressPolicy(access: .full, localNetworkHosts: ["device.test"])
+    let route = FixedRoute(tunnel: false, direct: true)
+    let destination = try SocketAddress(ipAddress: "192.168.1.2", port: 80)
+    #expect(policy.rejection(address: destination, routing: route, host: "device.test") == nil)
+    #expect(
+      policy.rejection(address: destination, routing: route, host: "other.test")
+        == .localNetworkRequired)
+    #expect(policy.rejection(address: destination, routing: route) == .localNetworkRequired)
+    #expect(
+      policy.rejection(
+        address: try SocketAddress(ipAddress: "127.0.0.1", port: 80), routing: route,
+        host: "device.test") == .loopback)
+  }
+
   @Test func handshakes() throws {
     var handshake = EgressHandshake()
     var buffer = ByteBuffer(

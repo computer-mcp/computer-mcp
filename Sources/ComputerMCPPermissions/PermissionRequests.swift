@@ -813,6 +813,174 @@ package struct PermissionLedger: Sendable, Codable {
     return propagateRevocations()
   }
 
+  /// Selects implicit process access without creating requests or consuming another
+  /// retry. Store callers commit this evidence with reservation before launch.
+  package mutating func prepareExecutionPermissions(_ id: UUID) throws
+    -> ExecutionPermissionProjection
+  {
+    guard let proof = authorizations[id], !proof.finished, proof.executionID == nil,
+      validateAuthorization(id), let paths = environment.paths,
+      !paths.userDataLocations.isEmpty, !paths.hostDataLocations.isEmpty
+    else { throw PermissionModelError.invalidAuthorization }
+    let principal = proof.invocation.principal
+    let requests = evidenceRequests(proof.basis, authorizationID: id)
+    let settings =
+      proof.sandboxProjectID.flatMap {
+        sandboxSettings.entries[SandboxSettingsKey(principal: principal, projectID: $0)]
+      } ?? .init()
+    var limits = currentLimits[principal] ?? .init()
+    for element in proof.basis {
+      if case .connection(let connectionID, _) = element,
+        let ceiling = environment.connections[connectionID]?.attenuation
+      {
+        limits.sources[.connection] = .available(ceiling)
+      }
+    }
+    var forbidden = paths.hostDataLocations.union(paths.deniedLocations)
+      .union(limits.deniedReadLocations)
+    if proof.mode.isSandbox { forbidden.formUnion(settings.deniedReadLocations) }
+    let boundaries = Set(paths.pathRules.map(\.root))
+      .union(paths.projects.allLocations.map(\.root)).union(forbidden)
+      .union(proof.requirements.paths.map(\.path))
+      .union([try CanonicalPath("/")])
+    var basis = proof.basis
+    func resolve(_ requirements: InvocationRequirements) -> InvocationResolution {
+      InvocationEvaluation.evaluate(
+        requirements, principal: principal, permissions: permissions(for: principal),
+        limits: limits, trustedHosts: trustedHosts,
+        settings: { _ in settings }, pathResolver: { _ in PathPermissions(environment: paths) },
+        oneTimeRequests: requests, recordedBasis: proof.basis)
+    }
+    func conditions(paths: [PathRequirement] = [], actions: [PermissionAction] = [])
+      -> InvocationRequirements
+    {
+      .init(
+        actions: actions, paths: paths, mode: proof.mode,
+        sandboxProjectID: proof.sandboxProjectID, execution: proof.requirements.execution)
+    }
+    var reads: [PathAccessBasis] = []
+    var directories: [PathAccessBasis] = []
+    for path in boundaries.sorted(by: { $0.string < $1.string }) {
+      let result = resolve(conditions(paths: [.init(path: path, operation: .read)]))
+      guard result.isAllowed else { continue }
+      basis.formUnion(result.basis)
+      reads += result.basis.compactMap {
+        if case .path(let value) = $0, value.path == path, value.operation == .read {
+          return value
+        }
+        return nil
+      }
+    }
+    let ancestors = Set(
+      reads.flatMap { value -> [CanonicalPath] in
+        var current = URL(fileURLWithPath: value.path.string).deletingLastPathComponent()
+        var result: [CanonicalPath] = []
+        while true {
+          result.append(try! CanonicalPath(current.path))
+          if current.path == "/" { return result }
+          current.deleteLastPathComponent()
+        }
+      })
+    for path in ancestors.sorted(by: { $0.string < $1.string }) {
+      let result = resolve(conditions(paths: [.init(path: path, operation: .listDirectory)]))
+      guard result.isAllowed else { continue }
+      basis.formUnion(result.basis)
+      directories += result.basis.compactMap {
+        if case .path(let value) = $0, value.path == path, value.operation == .listDirectory {
+          return value
+        }
+        return nil
+      }
+    }
+    func permits(_ permission: Permission) -> Bool {
+      let result = resolve(
+        conditions(actions: [
+          .init(requirement: try! PermissionRequirement(permission, .access), scope: .principal)
+        ]))
+      guard result.isAllowed else { return false }
+      basis.formUnion(result.basis)
+      return true
+    }
+    let screen = permits(.screen)
+    let desktop = permits(.desktopControl)
+    let local = permits(.localNetwork)
+    let effectiveLimits = try EffectiveExecutionLimits.resolve(
+      proof.requirements.execution, limits: [limits])
+    authorizations[id]!.basis = basis
+    for requestID in proof.requestIDs where self.requests[requestID]?.status == .consumed(id) {
+      self.requests[requestID]!.basis.formUnion(basis.requestEvidence)
+    }
+    var network =
+      proof.mode.isSandbox
+      ? limits.network(applying: settings.network, trustedHosts: Set(trustedHosts.map(\.host)))
+      : NetworkAccess.Configuration.none
+    if proof.mode.isSandbox, let hosts = network.hosts(trustedHosts: Set(trustedHosts.map(\.host)))
+    {
+      let expanded = hosts.union(proof.requirements.networks.map(\.host))
+      network = expanded.isEmpty ? .none : .custom(hosts: expanded, includesTrusted: false)
+    }
+    return ExecutionPermissionProjection(
+      authorization: authorizations[id]!, readablePaths: reads, directoryPaths: directories,
+      forbiddenPaths: forbidden, boundaries: boundaries,
+      network: network,
+      screenCapture: screen, accessibility: desktop, localNetwork: local,
+      localNetworkHosts: Set(proof.requirements.networks.filter(\.isLocalNetwork).map(\.host)),
+      limits: effectiveLimits)
+  }
+
+  /// Rechecks an actual host file use, including recursive descendants. New access
+  /// can only be drawn from this invocation's existing grant evidence.
+  package mutating func authorizePathUse(
+    _ id: UUID, path: CanonicalPath, operation: PathOperation
+  ) throws {
+    guard let proof = authorizations[id], !proof.finished, validateAuthorization(id),
+      pathResolver != nil
+    else { throw PermissionModelError.invalidAuthorization }
+    let requirements = InvocationRequirements(
+      paths: [.init(path: path, operation: operation)], mode: proof.mode,
+      sandboxProjectID: proof.sandboxProjectID, execution: proof.requirements.execution)
+    let requests = evidenceRequests(proof.basis, authorizationID: id)
+    let result = evaluate(
+      requirements, principal: proof.invocation.principal,
+      oneTimeRequests: requests, basis: proof.basis)
+    guard result.isAllowed else { throw PermissionModelError.invalidAuthorization }
+    for element in proof.basis {
+      if case .connection(let connectionID, _) = element,
+        let connection = environment.connections[connectionID],
+        !evaluateCeiling(
+          connection.attenuation, requirements: requirements,
+          principal: proof.invocation.principal, requests: requests
+        ).isAllowed
+      {
+        throw PermissionModelError.invalidAuthorization
+      }
+    }
+    // Traversal may use a readable descendant, but cannot import grants acquired
+    // after admission. Every permission used at this boundary must already belong
+    // to the invocation, with the same principal, purpose and containing scope.
+    for element in result.basis {
+      guard case .permission(let used) = element else { continue }
+      guard
+        proof.basis.contains(where: {
+          guard case .permission(let existing) = $0,
+            existing.principal == used.principal, existing.pluginPurpose == used.pluginPurpose,
+            existing.requirement.permission == used.requirement.permission,
+            PermissionState.granted(existing.requirement.value).allows(used.requirement.value)
+          else { return false }
+          if case .standing = existing.source, existing.source == used.source { return true }
+          if existing.scope == used.scope { return true }
+          switch (existing.scope, used.scope) {
+          case (.principal, _): return true
+          case (.project(let id), .path): return used.requirement.permission == .project(id)
+          case (.path(let root), .path(let child)): return root.contains(child)
+          default: return false
+          }
+        })
+      else { throw PermissionModelError.invalidAuthorization }
+    }
+    authorizations[id]!.basis.formUnion(result.basis)
+  }
+
   /// Ends invocation work; execution consumption is independently durable.
   package mutating func finishInvocation(_ id: UUID) throws {
     guard authorizations[id] != nil else { throw PermissionModelError.unknownAuthorization }
@@ -1130,11 +1298,12 @@ package struct PermissionLedger: Sendable, Codable {
     _ basis: Set<AuthorizationBasis>, requirements: InvocationRequirements, principal: Principal,
     authorizationID: UUID? = nil, now: Date? = nil
   ) -> Bool {
-    let limits = currentLimits[principal] ?? .init()
+    var limits = currentLimits[principal] ?? .init()
     let connectionCeiling = basis.compactMap { element -> ManagedPolicy? in
       if case .connection(let id, _) = element { return environment.connections[id]?.attenuation }
       return nil
     }.first
+    if let connectionCeiling { limits.sources[.connection] = .available(connectionCeiling) }
     let mode = requirements.mode
     let evidenceRequests = evidenceRequests(basis, authorizationID: authorizationID)
     let resolution = evaluate(

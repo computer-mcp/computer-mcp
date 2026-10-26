@@ -286,6 +286,7 @@ let neutralTargets: [Target] =
     .target(
       name: "ComputerMCPGateway",
       dependencies: [
+        "ComputerMCPSandbox", "ComputerMCPEgress",
         "ComputerMCPPermissions",
         "ComputerMCPAuthorization",
         "ComputerMCPPlugins", "ComputerMCPToolsProject", "ComputerMCPConfiguration",
@@ -306,6 +307,7 @@ let neutralTargets: [Target] =
     .testTarget(
       name: "ComputerMCPGatewayTests",
       dependencies: [
+        "ComputerMCPSandbox", "ComputerMCPEgress",
         "ComputerMCPPermissions",
         "ComputerMCPAuthorization",
         "ComputerMCPConfiguration",

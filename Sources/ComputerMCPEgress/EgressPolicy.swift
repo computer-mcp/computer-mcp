@@ -35,6 +35,7 @@ package struct EgressDenial: Error, Sendable, Equatable {
 package struct EgressPolicy: Sendable {
   package let access: EgressAccess
   package let localNetwork: Bool
+  package let localNetworkHosts: Set<String>
 
   /// Exact hosts and explicit suffixes. Wildcards match subdomains, never the suffix's siblings.
   package static let trustedHosts = [
@@ -48,7 +49,13 @@ package struct EgressPolicy: Sendable {
     "swcdn.apple.com", "swdownload.apple.com",
   ]
 
-  package init(access: EgressAccess = .none, localNetwork: Bool = false) throws {
+  package init(
+    access: EgressAccess = .none, localNetwork: Bool = false, localNetworkHosts: Set<String> = []
+  ) throws {
+    guard try localNetworkHosts.allSatisfy({ try Self.normalizeHost($0) == $0 }) else {
+      throw ExecutionEnvironmentError.invalidConfiguration("Local network hosts must be canonical")
+    }
+    self.localNetworkHosts = localNetworkHosts
     if case .custom(let hosts, _) = access {
       for host in hosts {
         let value = host.hasPrefix("*.") ? String(host.dropFirst(2)) : host
@@ -72,17 +79,20 @@ package struct EgressPolicy: Sendable {
     }
   }
 
-  package func rejection(address: SocketAddress, routing: any EgressRouting) -> EgressDenial.Reason?
+  package func rejection(address: SocketAddress, routing: any EgressRouting, host: String? = nil)
+    -> EgressDenial.Reason?
   {
-    switch checkedRoute(address: address, routing: routing) {
+    switch checkedRoute(address: address, routing: routing, host: host) {
     case .success: return nil
     case .failure(let reason): return reason
     }
   }
 
-  func checkedRoute(address: SocketAddress, routing: any EgressRouting) -> Result<
-    EgressRoute, EgressDenial.Reason
-  > {
+  func checkedRoute(address: SocketAddress, routing: any EgressRouting, host: String? = nil)
+    -> Result<
+      EgressRoute, EgressDenial.Reason
+    >
+  {
     guard let ip = address.ipAddress, let bytes = Self.addressBytes(ip) else {
       return .failure(.invalidDestination)
     }
@@ -113,7 +123,8 @@ package struct EgressPolicy: Sendable {
       linkLocal = bytes[0] == 254 && bytes[1] & 0xc0 == 0x80
       multicast = bytes[0] == 255
     }
-    return !localNetwork && (route.isDirect || linkLocal || multicast)
+    let permitted = localNetwork || host.map { localNetworkHosts.contains($0) } == true
+    return !permitted && (route.isDirect || linkLocal || multicast)
       ? .failure(.localNetworkRequired) : .success(route)
   }
 

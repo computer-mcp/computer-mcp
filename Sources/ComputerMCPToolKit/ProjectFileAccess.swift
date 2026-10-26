@@ -17,6 +17,7 @@ import Foundation
 package final class ProjectFileAccess {
   package enum MutationPhase: Sendable { case willCheck, willMutate, didMutate, didCheck }
 
+  private let pathAccess: (any HostPathAccessChecking)?
   private let root: URL
   private let lexicalRoot: URL
   private let descriptor: Int32
@@ -79,10 +80,12 @@ package final class ProjectFileAccess {
     environment: [String: String] = ProcessInfo.processInfo.environment,
     commands: RegisteredCommands? = nil,
     mutationObserver: ((String, URL, MutationPhase) throws -> Void)? = nil,
-    identityReader: ((Int32) throws -> CreatedIdentity)? = nil
+    identityReader: ((Int32) throws -> CreatedIdentity)? = nil,
+    pathAccess: (any HostPathAccessChecking)? = HostPathAccess.current
   )
     throws
   {
+    self.pathAccess = pathAccess
     self.identityReader = identityReader ?? Self.createdIdentity
     self.mutationObserver = mutationObserver
     lexicalRoot = ProjectPathResolver.lexicallyNormalized(project)
@@ -123,8 +126,9 @@ package final class ProjectFileAccess {
 
   package func validate(
     _ url: URL, recursive: Bool = false, allowFinalSymlink: Bool = false,
-    allowHardLinks: Bool = false
+    allowHardLinks: Bool = false, operation: HostPathOperation = .write
   ) throws {
+    try checkAccess(url, operation: operation)
     let parts = try components(url)
     try checkProtected(url)
     if parts.isEmpty { return }
@@ -139,7 +143,8 @@ package final class ProjectFileAccess {
         if recursive {
           for entry in try names(child) {
             try validate(
-              url.appendingPathComponent(entry), recursive: true, allowHardLinks: allowHardLinks)
+              url.appendingPathComponent(entry), recursive: true, allowHardLinks: allowHardLinks,
+              operation: operation)
           }
         }
       }
@@ -451,7 +456,12 @@ package final class ProjectFileAccess {
       let fd = try openChild(parent, name)
       defer { close(fd) }
       try check(try status(fd), regular: true)
-      return try body(fd)
+      try verifyParent(parent, of: url)
+      try checkAccess(url, operation: .read)
+      let result = try body(fd)
+      try verifyParent(parent, of: url)
+      try checkAccess(url, operation: .read)
+      return result
     }
   }
 
@@ -576,7 +586,7 @@ package final class ProjectFileAccess {
     guard !ProjectPathResolver.contains(destination, in: source) else {
       throw denied("Destination must be outside the source tree.")
     }
-    try validate(source, recursive: true)
+    try validate(source, recursive: true, operation: .read)
     try validate(destination, recursive: true)
     try withParent(destination, create: createDirectories) { _, _ in
       try withStagingDirectory(in: destination.deletingLastPathComponent()) { staging, _ in
@@ -685,6 +695,8 @@ package final class ProjectFileAccess {
     try withParent(source) { parent, name in
       let fd = try openChild(parent, name)
       defer { close(fd) }
+      try verifyParent(parent, of: source)
+      try checkAccess(source, operation: .read)
       let sourceStatus = try status(fd)
       try check(sourceStatus)
       if sourceStatus.st_mode & S_IFMT == S_IFDIR {
@@ -707,7 +719,10 @@ package final class ProjectFileAccess {
         { output in
           try mutationObserver?("fcopyfile", source, .willMutate)
           try check(try status(fd), regular: true)
+          try verifyParent(parent, of: source)
+          try checkAccess(source, operation: .read)
           try copyFile(fd, to: output)
+          try checkAccess(source, operation: .read)
           try mutationObserver?("fcopyfile", source, .didMutate)
           try verifyParent(parent, of: source)
           try check(try status(fd), regular: true)
@@ -771,9 +786,11 @@ package final class ProjectFileAccess {
       }
     }
     try checkDirectory(fd)
+    try checkAccess(root, operation: .openDirectory)
     var walked = root
     for part in parts.dropLast() {
       walked.appendPathComponent(part)
+      try checkAccess(walked, operation: .openDirectory)
       if create, let entry = try mkdirChecked(fd, part, at: walked) {
         let pinned = dup(fd)
         guard pinned >= 0 else { throw failure() }
@@ -852,10 +869,17 @@ package final class ProjectFileAccess {
       try verifyParent(fd, of: url)
     }
     try mutationObserver?(operation, anchors[0].1, .willMutate)
+    for (fd, url) in anchors {
+      try verifyParent(fd, of: url)
+      try checkAccess(url, operation: .write)
+    }
     let result = try body()
     do {
       try mutationObserver?(operation, anchors[0].1, .didMutate)
-      for (fd, url) in anchors { try verifyParent(fd, of: url) }
+      for (fd, url) in anchors {
+        try verifyParent(fd, of: url)
+        try checkAccess(url, operation: .write)
+      }
       try validate(result)
       try mutationObserver?(operation, anchors[0].1, .didCheck)
     } catch {
@@ -1343,6 +1367,11 @@ package final class ProjectFileAccess {
       !canonical.hasSuffix("/.config/git/config"),
       !configurationFiles.contains(canonical)
     else { throw denied("File tools cannot write Git metadata or configuration.") }
+  }
+
+  private func checkAccess(_ url: URL, operation: HostPathOperation) throws {
+    let canonical = root.appendingPathComponent(try components(url).joined(separator: "/"))
+    try pathAccess?.check(canonical, operation: operation)
   }
 
   private func denied(_ message: String) -> GatewayToolError {

@@ -238,7 +238,9 @@ package final class EgressProxy: @unchecked Sendable {
     return resolutions.submit(on: eventLoop) {
       let addresses = try self.resolver.resolve(host: target.host, port: target.port)
       for address in addresses {
-        if let reason = self.policy.rejection(address: address, routing: self.routing) {
+        if let reason = self.policy.rejection(
+          address: address, routing: self.routing, host: target.host)
+        {
           throw self.denial(target, reason)
         }
       }
@@ -251,7 +253,7 @@ package final class EgressProxy: @unchecked Sendable {
   ) -> EventLoopFuture<EgressRoute> {
     if revoked { return eventLoop.makeFailedFuture(denial(target, .revoked)) }
     return resolutions.submit(on: eventLoop) {
-      switch self.policy.checkedRoute(address: address, routing: self.routing) {
+      switch self.policy.checkedRoute(address: address, routing: self.routing, host: target.host) {
       case .success(let route): return route
       case .failure(let reason): throw self.denial(target, reason)
       }
@@ -284,20 +286,20 @@ package final class EgressProxy: @unchecked Sendable {
     routeRecheckPending = false
     let revision = routeRevision
     let snapshots = connections.values.compactMap {
-      connection -> (ProxyConnection, SocketAddress, EgressRoute)? in
+      connection -> (ProxyConnection, SocketAddress, EgressRoute, String?)? in
       guard let address = connection.checkedAddress, let route = connection.checkedRoute else {
         return nil
       }
-      return (connection, address, route)
+      return (connection, address, route, connection.target?.host)
     }
     guard !snapshots.isEmpty else { return }
     checkingRoutes = true
     routeChecks.submit(on: group.next()) {
       snapshots.map {
-        connection, address, original -> (
+        connection, address, original, host -> (
           ProxyConnection, SocketAddress, EgressRoute, EgressDenial.Reason?
         ) in
-        switch self.policy.checkedRoute(address: address, routing: self.routing) {
+        switch self.policy.checkedRoute(address: address, routing: self.routing, host: host) {
         case .success(let current):
           return (connection, address, original, current == original ? nil : .routeChanged)
         case .failure(let reason): return (connection, address, original, reason)

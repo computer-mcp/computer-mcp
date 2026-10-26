@@ -33,14 +33,16 @@ package struct ToolEnvironment: Sendable {
     extendedAttributes: (any ExtendedAttributes)? = nil,
     fileTrasher: (any FileTrashing)? = nil,
     projectOpener: (any ProjectOpener)? = nil,
-    systemProbe: (any SystemProbe)? = nil
+    systemProbe: (any SystemProbe)? = nil,
+    pathAccess: (any HostPathAccessChecking)? = nil
   ) {
     self.launcher = launcher
     self.configuration = configuration
     let toolMeta: JSONValue? =
       configuration.server.http.accessTokenEnv == nil
       ? .object(["securitySchemes": .array([.object(["type": .string("noauth")])])]) : nil
-    self.projectScope = ProjectScope(configuration: configuration, toolMeta: toolMeta)
+    self.projectScope = ProjectScope(
+      configuration: configuration, toolMeta: toolMeta, pathAccess: pathAccess)
     let commandRunner =
       commandRunner ?? ProcessCommandRunner(launcher: launcher, environment: environment)
     self.commandRunner = commandRunner

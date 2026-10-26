@@ -241,6 +241,16 @@ struct PathPermissions<Environment: PathEnvironment>: PathPermissionResolving {
       for category in FolderCategory.allCases {
         locations.formUnion(environment.locations(in: category))
       }
+      for element in recordedBasis {
+        if case .permission(let grant) = element, case .path(let root) = grant.scope {
+          locations.insert(root)
+        }
+      }
+      for request in oneTimeRequests {
+        if case .permission(let content) = request.content, case .path(let root) = content.scope {
+          locations.insert(root)
+        }
+      }
       let preferred = recorded?.readableDescendant
       for descendant in locations.sorted(by: {
         if $0 == preferred { return $1 != preferred }

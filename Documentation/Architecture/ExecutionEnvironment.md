@@ -11,6 +11,26 @@ plugin archive workers and Cloudflare tunnels. The macOS composition root suppli
 Darwin backend; neutral modules never construct it. Full Shell authorization
 continues to gate arbitrary shell, process and CLI execution.
 
+## Permission configuration
+
+`GatewaySandboxCompiler` composes the durable permission ledger with neutral
+sandbox and egress values. The ledger selects every read boundary through its
+path resolver and saves the resulting evidence on the invocation. Project
+precedence, projected nested projects, Files and Folders, developer locations,
+directory-only ancestors and host-data exclusions share the host-tool resolver.
+A complete classified path environment is required. The host supplies canonical
+working paths and private scratch storage; missing worktree/private Git or plugin
+execution contexts are refused.
+
+Screen opens capture and Desktop control opens accessibility independently.
+Egress uses the effective project network and managed ceilings; a scoped Local
+network grant opens only its named host. Direct Apple events and sandbox
+extensions remain closed. `GatewayPathAccess` revalidates host file use against
+durable invocation evidence. File mutation keeps its descriptor and inode guards
+and checks permissions before and after effects, including each recursive entry.
+These composition services are available to the permission admission path; the
+current gateway still uses its existing profile admission contract.
+
 ## Tool executions
 
 `ShellSessionRuntime` owns launches, stdin, output and completion through the

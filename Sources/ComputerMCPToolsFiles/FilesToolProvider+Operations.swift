@@ -40,7 +40,7 @@ extension FilesToolProvider {
       throw GatewayToolError.invalidArguments("max_entries must be less than or equal to 10000.")
     }
 
-    let directory = try projectScope.resolvedProjectURL(path)
+    let directory = try projectScope.resolvedProjectURL(path, operation: .listDirectory)
     var isDirectory: ObjCBool = false
     guard FileManager.default.fileExists(atPath: directory.path, isDirectory: &isDirectory) else {
       throw GatewayToolError.invalidArguments("Directory does not exist: \(path)")
@@ -84,7 +84,7 @@ extension FilesToolProvider {
     try validateBoundedNonNegative(maxDepth, name: "max_depth", upperBound: 20)
     try validateBoundedPositive(maxEntries, name: "max_entries", upperBound: 50_000)
 
-    let root = try projectScope.resolvedProjectURL(path)
+    let root = try projectScope.resolvedProjectURL(path, operation: .listDirectory)
     try requireDirectory(root, originalPath: path)
 
     var emitted = 0
@@ -367,7 +367,7 @@ extension FilesToolProvider {
     try validateBoundedPositive(maxResults, name: "max_results", upperBound: 10_000)
     try validateBoundedPositive(maxVisited, name: "max_visited", upperBound: 200_000)
 
-    let directory = try projectScope.resolvedProjectURL(path)
+    let directory = try projectScope.resolvedProjectURL(path, operation: .listDirectory)
     try requireDirectory(directory, originalPath: path)
 
     var results: [FileInfo] = []
@@ -424,7 +424,7 @@ extension FilesToolProvider {
     try validateBoundedPositive(maxMatches, name: "max_matches", upperBound: 10_000)
     try validateBoundedPositive(maxBytesPerFile, name: "max_bytes_per_file", upperBound: 20_971_520)
 
-    let root = try projectScope.resolvedProjectURL(path)
+    let root = try projectScope.resolvedProjectURL(path, operation: .listDirectory)
     var matches: [FileSearchMatch] = []
     var filesScanned = 0
     var filesSkipped = 0
@@ -507,7 +507,7 @@ extension FilesToolProvider {
     try validateBoundedPositive(maxResults, name: "max_results", upperBound: 10_000)
     try validateBoundedPositive(maxScanEntries, name: "max_scan_entries", upperBound: 200_000)
 
-    let directory = try projectScope.resolvedProjectURL(path)
+    let directory = try projectScope.resolvedProjectURL(path, operation: .listDirectory)
     try requireDirectory(directory, originalPath: path)
 
     var scannedEntries = 0
@@ -580,7 +580,7 @@ extension FilesToolProvider {
     }
 
     let url = try projectScope.resolvedProjectURL(path)
-    let handle = try FileHandle(forReadingFrom: url)
+    let handle = try AuthorizedFileReader(url: url)
     defer {
       try? handle.close()
     }
@@ -654,7 +654,7 @@ extension FilesToolProvider {
       throw GatewayToolError.invalidArguments("Path is not a file: \(path)")
     }
 
-    let handle = try FileHandle(forReadingFrom: url)
+    let handle = try AuthorizedFileReader(url: url)
     defer {
       try? handle.close()
     }
@@ -691,7 +691,7 @@ extension FilesToolProvider {
       throw GatewayToolError.invalidArguments("Path is not a file: \(path)")
     }
 
-    let handle = try FileHandle(forReadingFrom: url)
+    let handle = try AuthorizedFileReader(url: url)
     defer {
       try? handle.close()
     }
@@ -739,7 +739,7 @@ extension FilesToolProvider {
     guard info.type == "file" else {
       throw GatewayToolError.invalidArguments("Path is not a file: \(path)")
     }
-    let handle = try FileHandle(forReadingFrom: url)
+    let handle = try AuthorizedFileReader(url: url)
     defer {
       try? handle.close()
     }
@@ -794,7 +794,7 @@ extension FilesToolProvider {
     guard info.type == "file" else {
       throw GatewayToolError.invalidArguments("Path is not a file: \(path)")
     }
-    let handle = try FileHandle(forReadingFrom: url)
+    let handle = try AuthorizedFileReader(url: url)
     defer {
       try? handle.close()
     }
@@ -855,7 +855,7 @@ extension FilesToolProvider {
       throw GatewayToolError.invalidArguments("Path is not a file: \(path)")
     }
 
-    let handle = try FileHandle(forReadingFrom: url)
+    let handle = try AuthorizedFileReader(url: url)
     defer {
       try? handle.close()
     }
@@ -916,7 +916,7 @@ extension FilesToolProvider {
       throw GatewayToolError.invalidArguments("Path is not a file: \(path)")
     }
 
-    let handle = try FileHandle(forReadingFrom: url)
+    let handle = try AuthorizedFileReader(url: url)
     defer {
       try? handle.close()
     }
@@ -969,7 +969,7 @@ extension FilesToolProvider {
       throw GatewayToolError.invalidArguments("Path is not a file: \(path)")
     }
 
-    let handle = try FileHandle(forReadingFrom: url)
+    let handle = try AuthorizedFileReader(url: url)
     defer {
       try? handle.close()
     }
@@ -1033,7 +1033,7 @@ extension FilesToolProvider {
       throw GatewayToolError.invalidArguments("Path is not a file: \(path)")
     }
 
-    let handle = try FileHandle(forReadingFrom: url)
+    let handle = try AuthorizedFileReader(url: url)
     defer {
       try? handle.close()
     }
@@ -1311,7 +1311,7 @@ extension FilesToolProvider {
   }
 
   private func sha256Hex(url: URL) throws -> (hex: String, bytesRead: Int) {
-    let handle = try FileHandle(forReadingFrom: url)
+    let handle = try AuthorizedFileReader(url: url)
     defer {
       try? handle.close()
     }
@@ -1629,7 +1629,7 @@ extension FilesToolProvider {
     try validateBoundedPositive(maxGroups, name: "max_groups", upperBound: 10_000)
     try validateBoundedPositive(maxFilesPerGroup, name: "max_files_per_group", upperBound: 1_000)
 
-    let root = try projectScope.resolvedProjectURL(path)
+    let root = try projectScope.resolvedProjectURL(path, operation: .listDirectory)
     try requireDirectory(root, originalPath: path)
 
     var scannedEntries = 0
@@ -3310,7 +3310,7 @@ extension FilesToolProvider {
       return
     }
 
-    let handle = try FileHandle(forReadingFrom: url)
+    let handle = try AuthorizedFileReader(url: url)
     defer {
       try? handle.close()
     }

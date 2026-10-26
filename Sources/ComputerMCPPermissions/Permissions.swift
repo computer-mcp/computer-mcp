@@ -370,7 +370,7 @@ enum PermissionEvaluation {
       }
       source = recordedGrant.source
     } else if let request = oneTimeRequests.first(where: {
-      $0.status == .onlyThisTime && $0.content == .permission(content)
+      $0.status == .onlyThisTime && $0.content.covers(content)
     }) {
       source = .onlyThisTime(request: request.identity, permit: request.permitIdentity!)
     } else if let entry = permissions.entry(for: requirement.permission),
@@ -394,9 +394,9 @@ enum PermissionEvaluation {
         if let authorizationID { return request.status == .consumed(authorizationID) }
         if recordedGrant != nil, case .permission(let original) = request.content {
           return request.status == .onlyThisTime && original.principal == principal
-            && original.requirement == requirement
+            && RequestContent.permission(original).covers(content)
         }
-        return request.status == .onlyThisTime && request.content == .permission(content)
+        return request.status == .onlyThisTime && request.content.covers(content)
       }
     }
     guard valid else { return PermissionResolution(decision: .denied(.authorizationRevoked)) }
@@ -430,5 +430,25 @@ enum PermissionEvaluation {
       return .permissionDenied(requirement.permission)
     }
     return nil
+  }
+}
+
+extension RequestContent {
+  /// Retry identity still pins the complete invocation. Within that invocation,
+  /// a path grant covers its subtree and write includes read access.
+  fileprivate func covers(_ requested: PermissionRequestContent) -> Bool {
+    guard case .permission(let original) = self,
+      original.principal == requested.principal,
+      original.requirement.permission == requested.requirement.permission,
+      PermissionState.granted(original.requirement.value).allows(requested.requirement.value),
+      original.pluginPurpose == requested.pluginPurpose
+    else { return false }
+    if original.scope == requested.scope { return true }
+    switch (original.scope, requested.scope) {
+    case (.principal, _): return true
+    case (.project(let id), .path): return original.requirement.permission == .project(id)
+    case (.path(let root), .path(let path)): return root.contains(path)
+    default: return false
+    }
   }
 }

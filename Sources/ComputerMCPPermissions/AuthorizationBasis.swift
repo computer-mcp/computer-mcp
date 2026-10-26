@@ -171,6 +171,7 @@ extension Set where Element == AuthorizationBasis {
     filter {
       switch $0 {
       case .consent, .connection: false
+      case .managed(let source, _), .managedPermission(let source, _): source != .connection
       case .network(let rule): rule.policySource != .connection
       default: true
       }

@@ -2645,7 +2645,8 @@ final class StructuredToolProviderTests {
     #expect(firstCall.timeoutMilliseconds == 10_000)
     #expect(firstCall.maxOutputBytes == 4096)
     #expect(
-      (Array(firstCall.arguments.prefix(4))) == (["-batch", "-readonly", "-json", database.path]))
+      (Array(firstCall.arguments.prefix(7)))
+        == (["-init", "/dev/null", "-safe", "-batch", "-readonly", "-json", database.path]))
     #expect(firstSQL.contains("FROM sqlite_schema"))
     #expect(firstSQL.contains("type IN ('table', 'view', 'index', 'trigger')"))
     #expect(firstSQL.contains("name NOT LIKE 'sqlite_%'"))
@@ -2850,7 +2851,8 @@ final class StructuredToolProviderTests {
     #expect(firstCall.timeoutMilliseconds == 10_000)
     #expect(firstCall.maxOutputBytes == 4096)
     #expect(
-      (Array(firstCall.arguments.prefix(4))) == (["-batch", "-readonly", "-json", database.path]))
+      (Array(firstCall.arguments.prefix(7)))
+        == (["-init", "/dev/null", "-safe", "-batch", "-readonly", "-json", database.path]))
     #expect(firstSQL.contains("FROM ("))
     #expect(firstSQL.contains("SELECT id, name FROM items ORDER BY id"))
     #expect(firstSQL.contains("LIMIT 3"))

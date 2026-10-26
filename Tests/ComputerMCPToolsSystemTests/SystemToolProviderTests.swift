@@ -1917,11 +1917,11 @@ final class SystemToolProviderTests {
     #expect(
       (runner.calls.first?.arguments)
         == ([
-          "--silent", "--show-error", "--max-time", "3", "--connect-timeout", "2",
+          "--disable", "--silent", "--show-error", "--max-time", "3", "--connect-timeout", "2",
           "--location", "--max-redirs", "3", "--request", "GET", "--range", "0-127",
           "--output", "-", "--write-out",
           "\n__COMPUTER_MCP_HTTP_CHECK_META__\nhttp_code=%{http_code}\nurl_effective=%{url_effective}\ncontent_type=%{content_type}\nredirect_url=%{redirect_url}\ntime_total=%{time_total}\nsize_download=%{size_download}\n",
-          "https://example.com/health",
+          "--", "https://example.com/health",
         ]))
     #expect((payload.objectValue?["operation"]) == (.string("network.http_check")))
     #expect((payload.objectValue?["method"]) == (.string("GET")))

@@ -732,6 +732,7 @@ extension NetworkToolProvider {
 
     let marker = "__COMPUTER_MCP_HTTP_CHECK_META__"
     var arguments = [
+      "--disable",
       "--silent",
       "--show-error",
       "--max-time",
@@ -755,7 +756,7 @@ extension NetworkToolProvider {
     arguments += [
       "--write-out",
       "\n\(marker)\nhttp_code=%{http_code}\nurl_effective=%{url_effective}\ncontent_type=%{content_type}\nredirect_url=%{redirect_url}\ntime_total=%{time_total}\nsize_download=%{size_download}\n",
-      validatedURL.absoluteString,
+      "--", validatedURL.absoluteString,
     ]
 
     let result = try commandRunner.run(

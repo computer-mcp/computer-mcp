@@ -5,6 +5,13 @@ Computer MCP is a SwiftPM package that builds layered internal targets, the
 CLI are package products. On Linux the manifest declares the platform-neutral
 targets, and CI builds and tests them there.
 
+Neutral tool providers receive executable bindings from their host. Linux uses
+GNU tar for tar extraction and an optional BSD tar binding named `bsdtar` for ZIP
+extraction. ZIP creation uses `zip`; listing and member reads use `zipinfo` and
+`unzip`. SQLite inspection requires a SQLite CLI binding independently of the
+system SQLite library. Absent bindings return an unavailable-tool error before
+executing that utility or creating destinations; neutral providers do not install utilities.
+
 ## Constraints
 
 - Swift tools 6.2 and macOS 14 or newer.
@@ -58,7 +65,8 @@ package product and does not install or bundle vendor binaries.
 | `Sources/ComputerMCPCore/` | Platform-neutral models, policy, JSON values, tool descriptors, audit error classification and the session authority interface |
 | `Sources/ComputerMCPPlatform/` | Platform-neutral protocols and values for distribution identity and environment, secrets, projects, plugin archives, Computer Use permission readings, launch at login, file change monitoring, process inspection, bounded media inspection, extended attributes, Trash, project opening and native system readings |
 | `Sources/ComputerMCPConfiguration/` | Platform-neutral manifest model and defaults, MCP HTTP authentication values and CLI tree source values |
-| `Sources/ComputerMCPPlatformPOSIX/` | POSIX implementations shared by macOS and Linux: executable inspection, project path resolution, process-table queries, child-input signal handling, shared/exclusive advisory file locks, file fingerprints, socket peer credentials and bounded package file reads |
+| `Sources/ComputerMCPPlatformPOSIX/` | POSIX implementations shared by macOS and Linux: executable inspection, project path resolution, process-table queries, child-input signal handling, shared/exclusive advisory file locks, file fingerprints, socket peer credentials and bounded package file reads; Linux descriptor metadata and libc adapters |
+| `Sources/CSystemPOSIX/` | Internal C bridge for Linux GNU spawn and exclusive rename declarations and descriptor xattr signatures; uses the system libc without an external dependency |
 | `Sources/ComputerMCPProcess/` | Platform-neutral bounded process execution, managed processes, shell sessions and executable discovery |
 | `Sources/ComputerMCPTransport/` | Platform-neutral Unix-socket transport, inherited sockets, stdio bridging, HTTP response streams, SSE decoding and MCP framing and initialization normalization |
 | `Sources/ComputerMCPDownstream/` | Platform-neutral downstream client contracts and authorization, child-process transport, catalog loading, value bridging, host launch metadata and session interfaces, and process ownership receipts |

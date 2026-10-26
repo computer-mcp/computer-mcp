@@ -12,6 +12,8 @@ internal struct DeliveryGit: Sendable {
   let executable: String
   let prefix: [String]
   let environment: [String: String]
+  private let identityEnvironment: [String: String]
+  private let home: PrivateProcessHome
   let timeout: Int
   private let runner = ManagedCommandRunner()
   private var worktree: (root: URL, directory: URL)?
@@ -28,19 +30,18 @@ internal struct DeliveryGit: Sendable {
     let invocation = try tools.registeredCommands.resolveCLIInvocation(command)
     executable = invocation.executable
     prefix = invocation.arguments
-    var environment = tools.environment.merging(command.env) { _, value in value }
-      .filter { !$0.key.hasPrefix("GIT_") }
-    environment["GIT_TERMINAL_PROMPT"] = "0"
-    environment["GIT_NO_LAZY_FETCH"] = "1"
-    environment["GIT_ALLOW_PROTOCOL"] = ""
-    self.environment = environment
+    home = try PrivateProcessHome()
+    let sourceEnvironment = tools.environment.merging(command.env) { _, value in value }
+    self.environment = HostGitConfiguration.environment(
+      sourceEnvironment, home: home.url)
+    identityEnvironment = HostGitConfiguration.identityEnvironment(sourceEnvironment)
     timeout = command.defaultTimeoutMs ?? tools.configuration.policy.defaultTimeoutMs
   }
 
   @discardableResult
   func run(
     _ arguments: [String], at directory: URL, accepting: Set<Int32> = [0],
-    input: Data = Data()
+    input: Data = Data(), additionalProgramOptions: [String] = []
   ) throws -> Result {
     do {
       let command = arguments.drop(while: { $0 == "--no-optional-locks" }).first ?? ""
@@ -50,10 +51,31 @@ internal struct DeliveryGit: Sendable {
       let binding =
         worktree.map { ["--git-dir=\($0.directory.path)", "--work-tree=\($0.root.path)"] }
         ?? []
+      var programOptions = try self.programOptions(at: directory) + additionalProgramOptions
+      if ["commit", "merge", "rebase"].contains(command) {
+        for key in ["user.name", "user.email"] {
+          let identity = try runner.runData(
+            executable: executable,
+            invocation: .init(
+              arguments: prefix + binding + HostGitConfiguration.arguments
+                + ["config", "--null", "--get", key], standardInput: Data()),
+            workingDirectory: directory, environment: identityEnvironment,
+            timeoutMilliseconds: timeout, maxOutputBytes: 65_536)
+          guard !identity.timedOut, !identity.stdoutTruncated,
+            identity.exitCode == 0 || identity.exitCode == 1
+          else {
+            throw DeliveryFailure(reason: .gitFailed, detail: "Cannot read Git author identity.")
+          }
+          if identity.exitCode == 0 {
+            programOptions += ["-c", "\(key)=\(String(identity.stdoutString.dropLast()))"]
+          }
+        }
+      }
       let result = try runner.runData(
         executable: executable,
         invocation: .init(
-          arguments: prefix + binding + pathOptions
+          arguments: prefix + binding + pathOptions + HostGitConfiguration.arguments
+            + programOptions
             + [
               "-c", "gc.auto=0", "-c", "maintenance.auto=false", "-c", "submodule.recurse=false",
               "-c", "notes.rewrite.rebase=false", "-c", "rebase.updateRefs=false",
@@ -78,9 +100,29 @@ internal struct DeliveryGit: Sendable {
     }
   }
 
+  func programOptions(at directory: URL) throws -> [String] {
+    let binding =
+      worktree.map { ["--git-dir=\($0.directory.path)", "--work-tree=\($0.root.path)"] } ?? []
+    let keys = try runner.runData(
+      executable: executable,
+      invocation: .init(
+        arguments: prefix + binding + HostGitConfiguration.arguments
+          + ["config", "--null", "--name-only", "--list", "--no-includes"], standardInput: Data()),
+      workingDirectory: directory, environment: environment,
+      timeoutMilliseconds: timeout, maxOutputBytes: 1_048_576)
+    guard keys.exitCode == 0, !keys.timedOut, !keys.stdoutTruncated else {
+      throw DeliveryFailure(
+        reason: .gitFailed, detail: "Cannot inspect Git program configuration.")
+    }
+    return try HostGitConfiguration.overrides(for: keys.stdoutString)
+  }
+
   func revision(_ ref: String, at directory: URL) throws -> String? {
     let result = try run(
-      ["--no-optional-locks", "rev-parse", "--verify", "--quiet", "\(ref)^{commit}"], at: directory,
+      [
+        "--no-optional-locks", "rev-parse", "--verify", "--quiet", "--end-of-options",
+        "\(ref)^{commit}",
+      ], at: directory,
       accepting: [0, 1])
     return result.exitCode == 0
       ? result.stdout.trimmingCharacters(in: .whitespacesAndNewlines) : nil
@@ -92,6 +134,32 @@ internal struct DeliveryGit: Sendable {
       accepting: [0, 1]
     ).exitCode
       == 0
+  }
+
+  func requireNoFilters(merging revision: String, at directory: URL) throws {
+    guard let target = try self.revision(revision, at: directory) else {
+      throw DeliveryFailure(
+        reason: .gitFailed, detail: "Merge target does not resolve to a commit.")
+    }
+    var paths = Set<String>()
+    for source in ["HEAD", target] {
+      let output = try run(["ls-tree", "-rz", "--name-only", source], at: directory).stdout
+      paths.formUnion(output.split(separator: "\0").map(String.init))
+    }
+    let input = Data((paths.sorted().joined(separator: "\0") + "\0").utf8)
+    for source in [nil, "HEAD", target] as [String?] {
+      let arguments =
+        ["check-attr", "-z"] + (source.map { ["--source=\($0)"] } ?? []) + ["--stdin", "filter"]
+      let fields = try run(arguments, at: directory, input: input).stdout.split(
+        separator: "\0", omittingEmptySubsequences: false)
+      for index in stride(from: 2, to: fields.count, by: 3) {
+        guard fields[index] == "unspecified" || fields[index] == "unset" else {
+          throw DeliveryFailure(
+            reason: .gitFailed,
+            detail: "Host merge refuses repositories whose attributes assign a filter.")
+        }
+      }
+    }
   }
 
   func requireRegularOriginalHead(at directory: URL) throws {

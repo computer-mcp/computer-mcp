@@ -83,7 +83,14 @@ App 与独立进程互斥，等待最多 60 秒。Git 使用已注册命令及�
 策略默认值）；移除继承环境和命令环境中的全部 `GIT_*`，设置
 `GIT_TERMINAL_PROMPT=0`、`GIT_NO_LAZY_FETCH=1` 与空的 `GIT_ALLOW_PROTOCOL`，
 禁止提示、隐式取回对象与全部 Git 传输，兼容较旧 Git；缺少本地对象时失败。
-仓库配置与钩子仍然生效。每条 Git 命令都带
+每个执行器使用新的私有空目录作为 `HOME` 与 `XDG_CONFIG_HOME`，禁用系统配置和
+系统属性，并设置 `GIT_CONFIG_GLOBAL=/dev/null`。作者姓名与邮箱预先从所有者配置中
+作为数据读取并显式传入。仓库配置含 `include` 或 `includeIf` 条目时拒绝执行。
+宿主 Git 命令禁用文件式与配置式钩子、fsmonitor、编辑器、分页器、凭据与 SSH 助手、
+签名程序、diff/merge 驱动、过滤器和 `uploadpack.packObjectsHook`，并将
+`rebase.instructionFormat` 重置为 Git 默认值。合并前检查工作目录和两端提交的属性；指定了
+过滤器时拒绝合并并保留交付提交。工作树先以 `--no-checkout` 创建，再在新工作树
+上下文中检查生效配置并检出。每条 Git 命令都带
 `-c gc.auto=0 -c maintenance.auto=false`，阻止自动清理对象、reflog 与 worktree
 登记；另带 `-c submodule.recurse=false`，保留子模块检出状态。diff 核对使用
 `--no-ext-diff --no-textconv`，不运行外部 diff 命令或写入文本转换缓存；另带
@@ -101,7 +108,7 @@ App 与独立进程互斥，等待最多 60 秒。Git 使用已注册命令及�
 文件写入、稀疏检出设置、checkout、暂存、提交与 rebase 前均重新核对 worktree 身份
 及预期 `HEAD`。记录提交号后，先通过
 `diff --no-renames --name-only <基线> <提交>` 核对实际改动路径集合恰好等于本次请求，
-且全部在范围内。提交钩子另外暂存文件时返回 `committed` / `scope_changed`，保留分支，
+且全部在范围内。并发写入者另外暂存文件时返回 `committed` / `scope_changed`，保留分支，
 停止合并。
 
 每次合并前，紧挨着确认主检出的 `HEAD` 仍等于路径核对所用的基线。默认分支推进或
@@ -111,7 +118,7 @@ App 与独立进程互斥，等待最多 60 秒。Git 使用已注册命令及�
 `merge --ff-only --no-squash --no-edit --no-overwrite-ignore --no-autostash <已核对的提交号>`，
 以不可变的提交号合并。目标路径若出现被忽略的外部文件，合并失败并保留该文件。
 实时交付只有主检出的 `HEAD` 恰好等于交付提交时才报告 `merged`，命令失败、超时或
-抛出异常时也按同一规则核对。合并后钩子产生后继提交时，结果为 `committed` 并保留分支。
+抛出异常时也按同一规则核对。合并后并发写入者产生后继提交时，结果为 `committed` 并保留分支。
 
 rebase 使用 `--no-update-refs --no-autostash --no-rebase-merges`，避免仓库配置改写其他分支、
 暂存用户改动或写入及删除 `refs/rewritten/` 下的标签引用。merge 也带 `--no-autostash`。

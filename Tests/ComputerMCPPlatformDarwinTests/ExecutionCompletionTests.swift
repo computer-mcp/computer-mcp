@@ -663,6 +663,36 @@ import Testing
     #expect(fixture.processes.state.listCount == 0)
   }
 
+  @Test func handshakePublicationInvalidatesPreHandshakeInspection() async throws {
+    let gate = InspectionGate()
+    defer { gate.release() }
+    let root = try #require(DarwinProcessIdentity.current(pid: getpid())?.identity)
+    let leaf = SimulatedExecution.leaf
+    let processes = SimulatedProcessTable()
+    processes.mutate {
+      $0.entries = [
+        root.pid: .init(
+          identity: root, parentUniqueID: 0, group: root.pid,
+          session: root.pid, state: .running),
+        leaf.pid: .init(
+          identity: leaf, parentUniqueID: root.uniqueID, group: root.pid,
+          session: root.pid, state: .running),
+      ]
+      $0.beforeRead = { gate.block() }
+    }
+    let owner = DarwinExecutionOwnership(marker: nil, table: processes.table)
+    try owner.spawned(root.pid)
+    try await eventually { gate.entered }
+    try owner.launched(root)
+    gate.release()
+    // The late scan had no group; publishing it would make the child disappear.
+    let members = try await owner.members()
+    #expect(members.contains { $0.processID == leaf.pid })
+    processes.mutate { $0.entries = [:] }
+    owner.exited(.success(.init(status: 0)))
+    #expect(try await owner.wait().status == 0)
+  }
+
   @Test func fullAccessCancellationCompletesDuringGraceOnceMembersExit() async throws {
     let fixture = try SimulatedExecution(sandboxed: false, configure: { $0.exitOnTerm = true })
     _ = try await fixture.owner.members()

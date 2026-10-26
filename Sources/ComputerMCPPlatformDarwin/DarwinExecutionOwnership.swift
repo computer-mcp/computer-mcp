@@ -77,12 +77,36 @@ final class DarwinExecutionOwnership: ExecutionOwnership, @unchecked Sendable {
     lock.withLock { launchHandlers.append(handler) }
   }
 
+  /// Capture ownership even if the bootstrap never sends a handshake. No process group
+  /// is trusted until the real bootstrap has established and reported its isolated session.
+  func spawned(_ pid: pid_t) throws {
+    guard let process = DarwinProcessIdentity.current(pid: pid, includingZombies: true) else {
+      return  // An already reaped bootstrap is reported by the backend's exit collector.
+    }
+    lock.withLock {
+      root = process.identity
+      state.known.insert(process.identity)
+      requestInspection()
+    }
+  }
+
+  /// Startup failure does not mean process completion; retain ownership until reaping.
+  func launchFailed(_ error: Error) {
+    lock.withLock {
+      startup?.resume(throwing: error)
+      startup = nil
+    }
+  }
+
   func launched(_ identity: DarwinProcessIdentity) throws {
     // The bootstrap establishes its own process group and session before the identity handshake.
     lock.withLock {
       root = identity
       state.known.insert(identity)
       state.group = bestEffort ? identity.pid : nil
+      generation &+= 1
+      state.complete = false
+      requestInspection()
       startMonitor()
     }
     let handlers = lock.withLock { launchHandlers }

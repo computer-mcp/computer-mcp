@@ -23,10 +23,12 @@ package struct DarwinExecutionPlatform: ExecutionPlatform {
   }
   private let responsibility: DarwinPrivacyResponsibility
   private let bootstrapExecutable: URL?
+  private let launchTimeout: Duration
   private let table: DarwinExecutionProcessTable
   private let makeSentinel: @Sendable () async throws -> DarwinExecutionSentinel
 
   package init(bootstrapExecutable: URL? = nil) {
+    launchTimeout = .seconds(30)
     responsibility = .init()
     self.bootstrapExecutable = bootstrapExecutable
     table = .system
@@ -35,11 +37,12 @@ package struct DarwinExecutionPlatform: ExecutionPlatform {
 
   init(
     responsibility: DarwinPrivacyResponsibility = .init(), bootstrapExecutable: URL? = nil,
-    table: DarwinExecutionProcessTable = .system,
+    table: DarwinExecutionProcessTable = .system, launchTimeout: Duration = .seconds(30),
     makeSentinel: @escaping @Sendable () async throws -> DarwinExecutionSentinel = {
       try await DarwinExecutionSentinel.create()
     }
   ) {
+    self.launchTimeout = launchTimeout
     self.responsibility = responsibility
     self.bootstrapExecutable = bootstrapExecutable
     self.table = table
@@ -77,7 +80,7 @@ package struct DarwinExecutionPlatform: ExecutionPlatform {
           command.executable.value,
         ] + command.arguments
       } ?? [command.executable.value] + command.arguments
-    let channel = try ExecutionBootstrapChannel()
+    let channel = try ExecutionBootstrapChannel(input: input, error: error, timeout: launchTimeout)
     let diagnostics = try ExecutionBootstrapDiagnostics()
     let sentinel: DarwinExecutionSentinel?
     if marker != nil {
@@ -87,89 +90,109 @@ package struct DarwinExecutionPlatform: ExecutionPlatform {
     }
     try Task.checkCancellation()
     let ownership = DarwinExecutionOwnership(marker: marker, sentinel: sentinel, table: table)
-    let handle = try await withTaskCancellationHandler {
-      bindOwnership(ownership)
-      return try await withCheckedThrowingContinuation { continuation in
-        ownership.starting(continuation)
-        if method == .subprocess {
-          Task.detached {
-            do {
-              var options = PlatformOptions()
-              if sandbox == nil {
-                options.preSpawnProcessConfigurator = { attributes, _ in
-                  try responsibility.disclaim(&attributes)
-                }
-              }
-              // The raw-byte environment API passes NUL-terminated C strings to spawn.
-              let environment = command.environment.map {
-                Array(($0.key + "=" + $0.value + "\0").utf8)
-              }
-              let result = try await Subprocess.run(
-                .path(FilePath(bootstrap.path)), arguments: .init(arguments),
-                environment: .custom(environment),
-                workingDirectory: FilePath(command.directory.value),
-                platformOptions: options,
-                input: .fileDescriptor(
-                  .init(rawValue: channel.child), closeAfterSpawningProcess: false),
-                output: .fileDescriptor(.init(rawValue: output), closeAfterSpawningProcess: false),
-                error: .fileDescriptor(
-                  .init(rawValue: diagnostics.writer), closeAfterSpawningProcess: false)
-              ) { execution in
-                channel.didSpawn()
-                diagnostics.didSpawn()
-                return await withCheckedContinuation { continuation in
-                  DispatchQueue(label: "execution.launch", qos: .userInitiated).async {
-                    let result = Result {
-                      try channel.accept(
-                        pid: execution.processIdentifier.value, input: input, error: error,
-                        ownership: ownership)
-                    }
-                    if case .failure = result { channel.disconnect() }
-                    continuation.resume(returning: result)
+    let handle: any ExecutionOwnership
+    do {
+      handle = try await withTaskCancellationHandler {
+        bindOwnership(ownership)
+        return try await withCheckedThrowingContinuation { continuation in
+          ownership.starting(continuation)
+          if method == .subprocess {
+            Task.detached {
+              do {
+                let policies = DarwinSpawnPolicyStorage()
+                defer { withExtendedLifetime(policies) {} }
+                var options = PlatformOptions()
+                if sandbox == nil {
+                  options.preSpawnProcessConfigurator = { attributes, _ in
+                    try responsibility.disclaim(&attributes)
+                    try policies.retain("Quarantine", in: &attributes)
                   }
                 }
+                // The raw-byte environment API passes NUL-terminated C strings to spawn.
+                let environment = command.environment.map {
+                  Array(($0.key + "=" + $0.value + "\0").utf8)
+                }
+                let result = try await Subprocess.run(
+                  .path(FilePath(bootstrap.path)), arguments: .init(arguments),
+                  environment: .custom(environment),
+                  workingDirectory: FilePath(command.directory.value),
+                  platformOptions: options,
+                  input: .fileDescriptor(
+                    .init(rawValue: channel.child), closeAfterSpawningProcess: false),
+                  output: .fileDescriptor(
+                    .init(rawValue: output), closeAfterSpawningProcess: false),
+                  error: .fileDescriptor(
+                    .init(rawValue: diagnostics.writer), closeAfterSpawningProcess: false)
+                ) { execution in
+                  channel.didSpawn(ownership: ownership)
+                  diagnostics.didSpawn()
+                  return await withCheckedContinuation { continuation in
+                    DispatchQueue(label: "execution.launch", qos: .userInitiated).async {
+                      let result = Result {
+                        try channel.accept(
+                          pid: execution.processIdentifier.value, ownership: ownership)
+                      }
+                      if case .failure = result { channel.disconnect() }
+                      continuation.resume(returning: result)
+                    }
+                  }
+                }
+                let exit: ExecutionExit
+                switch result.terminationStatus {
+                case .exited(let status): exit = ExecutionExit(status: status)
+                case .signaled(let signal):
+                  exit = ExecutionExit(status: 128 + signal, signal: signal)
+                }
+                if case .failure(let failure) = result.closureResult {
+                  throw diagnostics.failure(failure, exit: exit)
+                }
+                channel.finished()
+                ownership.exited(.success(exit))
+              } catch {
+                channel.disconnect()
+                channel.finished()
+                ownership.exited(.failure(error))
               }
-              let exit: ExecutionExit
-              switch result.terminationStatus {
-              case .exited(let status): exit = ExecutionExit(status: status)
-              case .signaled(let signal): exit = ExecutionExit(status: 128 + signal, signal: signal)
-              }
-              if case .failure(let failure) = result.closureResult {
-                throw diagnostics.failure(failure, exit: exit)
-              }
-              ownership.exited(.success(exit))
-            } catch {
-              channel.disconnect()
-              ownership.exited(.failure(error))
             }
-          }
-        } else {
-          DispatchQueue(label: "execution.launch", qos: .userInitiated).async {
-            do {
-              let result: ExecutionExit
-              if method == .foundation {
-                result = try foundation(
-                  bootstrap, arguments: arguments, command: command, disclaim: sandbox == nil,
-                  input: input, output: output, error: error, channel: channel,
-                  diagnostics: diagnostics, ownership: ownership
-                )
-              } else {
-                result = try spawn(
-                  bootstrap.path, arguments: arguments, command: command, disclaim: sandbox == nil,
-                  input: input, output: output, error: error, channel: channel,
-                  diagnostics: diagnostics, ownership: ownership
-                )
+          } else {
+            DispatchQueue(label: "execution.launch", qos: .userInitiated).async {
+              do {
+                let result: ExecutionExit
+                if method == .foundation {
+                  result = try foundation(
+                    bootstrap, arguments: arguments, command: command, disclaim: sandbox == nil,
+                    input: input, output: output, error: error, channel: channel,
+                    diagnostics: diagnostics, ownership: ownership
+                  )
+                } else {
+                  result = try spawn(
+                    bootstrap.path, arguments: arguments, command: command,
+                    disclaim: sandbox == nil,
+                    input: input, output: output, error: error, channel: channel,
+                    diagnostics: diagnostics, ownership: ownership
+                  )
+                }
+                channel.finished()
+                ownership.exited(.success(result))
+              } catch {
+                channel.disconnect()
+                channel.finished()
+                ownership.exited(.failure(error))
               }
-              ownership.exited(.success(result))
-            } catch {
-              channel.disconnect()
-              ownership.exited(.failure(error))
             }
           }
         }
+      } onCancel: {
+        ownership.requestCancellation()
       }
-    } onCancel: {
-      ownership.requestCancellation()
+    } catch {
+      if Task.isCancelled {
+        do { _ = try await ownership.cancel() } catch let failure as ExecutionCompletionFailure {
+          throw failure
+        } catch {}
+        throw CancellationError()
+      }
+      throw error
     }
     if Task.isCancelled {
       _ = try await handle.cancel()
@@ -194,12 +217,11 @@ package struct DarwinExecutionPlatform: ExecutionPlatform {
     process.standardError = FileHandle(fileDescriptor: diagnostics.writer, closeOnDealloc: false)
     if disclaim { try responsibility.disclaim(process) }
     try process.run()
-    channel.didSpawn()
+    channel.didSpawn(ownership: ownership)
     diagnostics.didSpawn()
     var failure: Error?
     do {
-      try channel.accept(
-        pid: process.processIdentifier, input: input, error: error, ownership: ownership)
+      try channel.accept(pid: process.processIdentifier, ownership: ownership)
     } catch {
       channel.disconnect()
       failure = error
@@ -306,10 +328,10 @@ package struct DarwinExecutionPlatform: ExecutionPlatform {
     }
     for handle in copies { try? handle.close() }
     copies.removeAll()
-    channel.didSpawn()
+    channel.didSpawn(ownership: ownership)
     diagnostics.didSpawn()
     var failure: Error?
-    do { try channel.accept(pid: pid, input: input, error: error, ownership: ownership) } catch {
+    do { try channel.accept(pid: pid, ownership: ownership) } catch {
       channel.disconnect()
       failure = error
     }
@@ -331,13 +353,31 @@ package struct DarwinExecutionPlatform: ExecutionPlatform {
   }
 }
 
-/// Used by one launch worker; the child blocks until the host has captured its exact identity.
+/// The timer and admission worker share only short state transitions. A blocked admission
+/// callback cannot retain the caller; descriptor copies and ownership outlive failed startup.
 private final class ExecutionBootstrapChannel: @unchecked Sendable {
-  private var parent: Int32
+  private let lock = NSLock()
+  private let parent: Int32
   private(set) var child: Int32
+  private let input: FileHandle
+  private let error: FileHandle
+  private let timeout: Duration
   private var deadline: ContinuousClock.Instant?
+  private var timer: (any DispatchSourceTimer)?
+  private var result: Result<Void, Error>?
+  private let admitted = DispatchSemaphore(value: 0)
 
-  init() throws {
+  init(input: Int32, error: Int32, timeout: Duration) throws {
+    func copy(_ descriptor: Int32) throws -> FileHandle {
+      let value = fcntl(descriptor, F_DUPFD_CLOEXEC, 3)
+      guard value >= 0 else {
+        throw ExecutionEnvironmentError.launchFailed("Cannot retain launch descriptor")
+      }
+      return FileHandle(fileDescriptor: value, closeOnDealloc: true)
+    }
+    self.input = try copy(input)
+    self.error = try copy(error)
+    self.timeout = timeout
     var sockets: [Int32] = [-1, -1]
     guard socketpair(AF_UNIX, SOCK_STREAM, 0, &sockets) == 0 else {
       throw ExecutionEnvironmentError.launchFailed(
@@ -347,88 +387,127 @@ private final class ExecutionBootstrapChannel: @unchecked Sendable {
     child = sockets[1]
     for descriptor in sockets {
       _ = fcntl(descriptor, F_SETFD, FD_CLOEXEC)
-      var timeout = timeval(tv_sec: 30, tv_usec: 0)
       var enabled: Int32 = 1
       guard
         setsockopt(
-          descriptor, SOL_SOCKET, SO_RCVTIMEO, &timeout, socklen_t(MemoryLayout<timeval>.size))
-          == 0,
-        setsockopt(
-          descriptor, SOL_SOCKET, SO_NOSIGPIPE, &enabled, socklen_t(MemoryLayout<Int32>.size)) == 0
+          descriptor, SOL_SOCKET, SO_NOSIGPIPE, &enabled,
+          socklen_t(MemoryLayout<Int32>.size)) == 0
       else {
-        disconnect()
-        throw ExecutionEnvironmentError.launchFailed(
-          "Cannot configure launch identity channel: \(errno)")
+        close(sockets[0])
+        close(sockets[1])
+        throw ExecutionEnvironmentError.launchFailed("Cannot configure launch identity channel")
       }
     }
   }
 
-  func didSpawn() {
-    deadline = .now.advanced(by: .seconds(30))
-    // The host must not keep the peer alive: an early bootstrap exit must produce EOF.
-    if child >= 0 {
+  func didSpawn(ownership: DarwinExecutionOwnership) {
+    lock.withLock {
+      deadline = .now.advanced(by: timeout)
       close(child)
       child = -1
+      let timer = DispatchSource.makeTimerSource(
+        queue: DispatchQueue(label: "execution.launch-deadline"))
+      let components = timeout.components
+      let seconds = Double(components.seconds) + Double(components.attoseconds) / 1e18
+      timer.schedule(deadline: .now() + seconds)
+      timer.setEventHandler { [self] in
+        let failure = ExecutionBootstrapHandshakeFailure("Launch handshake deadline exceeded")
+        let expired = lock.withLock {
+          guard self.timer != nil else { return false }
+          shutdown(parent, SHUT_RDWR)
+          if result == nil {
+            result = .failure(failure)
+            admitted.signal()
+          }
+          ownership.launchFailed(failure)
+          stopTimer()
+          return true
+        }
+        guard expired else { return }
+        // Cancellation callbacks and kernel inspection cannot delay the launch deadline.
+        DispatchQueue.global().async { ownership.requestCancellation() }
+      }
+      self.timer = timer
+      timer.resume()
     }
   }
 
-  func accept(pid: pid_t, input: Int32, error: Int32, ownership: DarwinExecutionOwnership) throws {
-    guard let deadline else { preconditionFailure("Handshake requires a spawned child") }
-    let identity = try DarwinProcessIdentity.receive(from: parent, pid: pid, deadline: deadline)
-    try ownership.launched(identity)
-    try ExecutionBootstrapDeadline.check(deadline)
-    // Darwin CMSG_LEN/CMSG_SPACE align the header and payload to four bytes.
-    var control: [UInt32] = [
-      20, UInt32(SOL_SOCKET), UInt32(SCM_RIGHTS), UInt32(bitPattern: input),
-      UInt32(bitPattern: error),
-    ]
-    var acknowledgement: UInt8 = 1
-    let sent = withUnsafeMutablePointer(to: &acknowledgement) { byte in
-      var payload = iovec(iov_base: byte, iov_len: 1)
-      return withUnsafeMutablePointer(to: &payload) { payloadPointer in
-        control.withUnsafeMutableBytes { bytes in
-          var message = msghdr()
-          message.msg_iov = payloadPointer
-          message.msg_iovlen = 1
-          message.msg_control = bytes.baseAddress
-          message.msg_controllen = socklen_t(bytes.count)
-          return sendmsg(parent, &message, 0)
+  func accept(pid: pid_t, ownership: DarwinExecutionOwnership) throws {
+    DispatchQueue(label: "execution.launch-admission").async { [self] in
+      var outcome = Result {
+        try ownership.spawned(pid)
+        let deadline = lock.withLock { self.deadline! }
+        let identity = try DarwinProcessIdentity.receive(from: parent, pid: pid, deadline: deadline)
+        try ownership.launched(identity)
+        // Serialize the release with expiry. A late callback can never acknowledge the target.
+        try lock.withLock {
+          guard result == nil else { throw ExecutionBootstrapHandshakeFailure("Launch expired") }
+          try ExecutionBootstrapDeadline.check(deadline)
+          var control: [UInt32] = [
+            20, UInt32(SOL_SOCKET), UInt32(SCM_RIGHTS), UInt32(bitPattern: input.fileDescriptor),
+            UInt32(bitPattern: error.fileDescriptor),
+          ]
+          var acknowledgement: UInt8 = 1
+          let sent = withUnsafeMutablePointer(to: &acknowledgement) { byte in
+            var payload = iovec(iov_base: byte, iov_len: 1)
+            return withUnsafeMutablePointer(to: &payload) { payloadPointer in
+              control.withUnsafeMutableBytes { bytes in
+                var message = msghdr()
+                message.msg_iov = payloadPointer
+                message.msg_iovlen = 1
+                message.msg_control = bytes.baseAddress
+                message.msg_controllen = socklen_t(bytes.count)
+                return sendmsg(parent, &message, MSG_DONTWAIT)
+              }
+            }
+          }
+          guard sent == 1 else {
+            throw ExecutionBootstrapHandshakeFailure("Cannot acknowledge launch identity: \(errno)")
+          }
+        }
+        var confirmation: UInt8 = 0
+        var received: Int
+        repeat {
+          try ExecutionBootstrapDeadline.waitForReadable(parent, until: deadline)
+          received = recv(parent, &confirmation, 1, 0)
+        } while received < 0 && errno == EINTR
+        guard received == 1, confirmation == 2 else {
+          throw ExecutionBootstrapHandshakeFailure("Cannot confirm execution descriptor handoff")
         }
       }
+      lock.withLock {
+        guard result == nil else { return }
+        if case .success = outcome {
+          outcome = Result { try ExecutionBootstrapDeadline.check(deadline!) }
+        }
+        result = outcome
+        shutdown(parent, SHUT_RDWR)
+        if case .success = outcome {
+          stopTimer()
+          ownership.ready()
+        }
+        admitted.signal()
+      }
+      if case .failure = outcome { ownership.requestCancellation() }
     }
-    guard sent == 1 else {
-      throw ExecutionBootstrapHandshakeFailure("Cannot acknowledge launch identity: \(errno)")
-    }
-    // Keep the caller's descriptors alive until the child installs both transferred descriptors.
-    var confirmation: UInt8 = 0
-    var received: Int
-    repeat {
-      try ExecutionBootstrapDeadline.waitForReadable(parent, until: deadline)
-      received = recv(parent, &confirmation, 1, 0)
-    } while received < 0 && errno == EINTR
-    guard received == 1, confirmation == 2 else {
-      let status = received < 0 ? errno : 0
-      throw ExecutionBootstrapHandshakeFailure(
-        "Cannot confirm execution descriptor handoff: received \(received), value \(confirmation), errno \(status)"
-      )
-    }
-    disconnect()
-    ownership.ready()
+    admitted.wait()
+    try lock.withLock { try result!.get() }
   }
 
-  func disconnect() {
-    if parent >= 0 {
-      shutdown(parent, SHUT_RDWR)
-      close(parent)
-      parent = -1
-    }
-    if child >= 0 {
-      close(child)
-      child = -1
-    }
+  func disconnect() { lock.withLock { shutdown(parent, SHUT_RDWR) } }
+
+  func finished() { lock.withLock { stopTimer() } }
+
+  private func stopTimer() {
+    timer?.cancel()
+    timer?.setEventHandler {}
+    timer = nil
   }
 
-  deinit { disconnect() }
+  deinit {
+    close(parent)
+    if child >= 0 { close(child) }
+  }
 }
 /// One monotonic budget covers scheduling, partial reads, ownership admission and confirmation.
 private enum ExecutionBootstrapDeadline {

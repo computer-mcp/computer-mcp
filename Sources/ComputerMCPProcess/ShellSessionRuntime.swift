@@ -1213,7 +1213,8 @@ private final class ShellSession: @unchecked Sendable {
   func failLaunchOrExecution(_ message: String) {
     condition.lock()
     if !started {
-      _launchError = message
+      // Cancellation may terminate the bootstrap before its startup reply arrives.
+      if !cancelled && !timedOut { _launchError = message }
     } else {
       if !streamErrors.contains(message), streamErrors.count < 16 { streamErrors.append(message) }
     }
@@ -1234,7 +1235,7 @@ private final class ShellSession: @unchecked Sendable {
         return false
       }
     }
-    return started || _launchError != nil
+    return started || finished || _launchError != nil
   }
 
   func waitForCompletion(timeoutMilliseconds: Int) -> Bool {

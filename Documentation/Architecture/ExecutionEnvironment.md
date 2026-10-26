@@ -173,6 +173,10 @@ recovery calls fail closed until corresponding Linux backends are available.
 Foundation `Process`. Full access preflights the dynamic responsibility-disclaim
 interfaces before launching; unavailable interfaces fail closed. Sandboxed
 launches inherit responsibility and rely on Seatbelt's service rules.
+The Subprocess adapter copies the opaque Quarantine policy payload immediately
+after setting the disclaimer and retains it through the asynchronous spawn.
+Darwin's [MAC policy attributes borrow their payload pointers](https://github.com/apple-oss-distributions/xnu/blob/main/libsyscall/wrappers/spawn/posix_spawn.c#L2184);
+libquarantine's thread-local scratch cannot supply that asynchronous lifetime.
 
 `ExecutionLauncher.start` returns an `ExecutionOwnership` handle for every launch
 method. `members` lists known identities whose exit is unconfirmed, including unreaped
@@ -184,9 +188,13 @@ early bootstrap exit produces EOF. The bootstrap confirms installation of the tr
 stdin and stderr descriptors before the host closes its endpoint and returns the
 handle. The caller's descriptors stay alive through that confirmation. The host
 uses one monotonic 30-second deadline from spawn through identity receipt,
-ownership admission and confirmation. The bootstrap bounds its I/O waits at
-30 seconds as well. A failed handshake rejects the launch with the bootstrap exit status and
-at most 4 KiB of its stderr; target stderr goes directly to the caller.
+ownership admission and confirmation. An independent timer closes the handshake
+and fails startup even while an admission callback is blocked. A late callback
+cannot release the target. Timeout leaves the process owned for bounded
+termination attempts and background reaping; startup does not wait for that cleanup.
+The bootstrap bounds its I/O waits at 30 seconds as well. Other handshake failures
+include the collected bootstrap exit status and at most 4 KiB of its stderr;
+target stderr goes directly to the caller.
 `wait` returns the command's exit status after the execution's completion check;
 `run` combines start and wait. Cancelling a waiter requests cancellation. `cancel`
 sends SIGTERM and performs identity-checked KILL rounds after a 500 millisecond

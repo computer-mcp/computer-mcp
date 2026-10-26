@@ -350,6 +350,92 @@ import Testing
     await process.close()
   }
 
+  @Test(.timeLimit(.minutes(1)), arguments: ExecutionLaunchMethod.allCases)
+  func launchDeadlineReapsWhileAdmissionRemainsBlocked(method: ExecutionLaunchMethod) async throws {
+    let fixture = try SeatbeltFixture()
+    defer { fixture.remove() }
+    let blocked = DispatchSemaphore(value: 0)
+    let returned = AsyncStream<Void>.makeStream()
+    let capture = LaunchCapture()
+    defer { blocked.signal() }
+    let start = ContinuousClock.now
+    await #expect {
+      _ = try await ExecutionLauncher(
+        platform: DarwinExecutionPlatform(
+          bootstrapExecutable: try SeatbeltFixture.executionBootstrap, launchTimeout: .seconds(1)
+        )
+      ).start(
+        executable: .init("/bin/sh"), arguments: ["-c", "touch should-not-exist"],
+        directory: .init(fixture.root.path), environment: .init(fullAccessVariables: [:]),
+        mode: .fullAccess, method: method,
+        bindOwnership: { owner in
+          capture.setOwner(owner)
+          owner.beforeStart { member in
+            capture.setMember(member)
+            blocked.wait()
+            returned.continuation.finish()
+          }
+        })
+    } throws: { error in
+      String(describing: error).contains("Launch handshake deadline exceeded")
+    }
+    #expect(start.duration(to: .now) < .seconds(4))
+    // Exit collection proceeds while the admission callback is still held.
+    let owner = try #require(capture.owner)
+    _ = try? await owner.wait(until: .now.advanced(by: .seconds(5)))
+    let member = try #require(capture.member)
+    #expect(DarwinProcessIdentity.current(pid: member.processID, includingZombies: true) == nil)
+    blocked.signal()
+    for await _ in returned.stream {}
+    #expect(!FileManager.default.fileExists(atPath: fixture.root.path + "/should-not-exist"))
+  }
+
+  @Test(.timeLimit(.minutes(1)), arguments: ExecutionLaunchMethod.allCases)
+  func launchDeadlineReapsBootstrapWithoutHandshake(method: ExecutionLaunchMethod) async throws {
+    let fixture = try SeatbeltFixture()
+    defer { fixture.remove() }
+    let bootstrap = fixture.root.appendingPathComponent("stopped-bootstrap")
+    // STOP prevents both handshaking and normal termination; cleanup must escalate to KILL.
+    try "#!/bin/sh\necho $$ > bootstrap-pid\nkill -STOP $$\nwhile :; do :; done\n"
+      .write(to: bootstrap, atomically: true, encoding: .utf8)
+    try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: bootstrap.path)
+    let capture = LaunchCapture()
+    let start = ContinuousClock.now
+    await #expect {
+      _ = try await ExecutionLauncher(
+        platform: DarwinExecutionPlatform(
+          bootstrapExecutable: bootstrap, launchTimeout: .seconds(1)
+        )
+      ).start(
+        executable: .init("/bin/true"), arguments: [], directory: .init(fixture.root.path),
+        environment: .init(fullAccessVariables: [:]), mode: .fullAccess, method: method,
+        bindOwnership: { capture.setOwner($0) })
+    } throws: { error in
+      String(describing: error).contains("Launch handshake deadline exceeded")
+    }
+    #expect(start.duration(to: .now) < .seconds(4))
+    let pid = try #require(
+      Int32(
+        String(
+          contentsOf: fixture.root.appendingPathComponent("bootstrap-pid"),
+          encoding: .utf8
+        ).trimmingCharacters(in: .whitespacesAndNewlines)))
+    let owner = try #require(capture.owner)
+    _ = try? await owner.wait(until: .now.advanced(by: .seconds(5)))
+    #expect(DarwinProcessIdentity.current(pid: pid, includingZombies: true) == nil)
+    #expect(try await owner.members().isEmpty)
+  }
+
+  private final class LaunchCapture: @unchecked Sendable {
+    private let lock = NSLock()
+    private var storedOwner: (any ExecutionOwnership)?
+    private var storedMember: ExecutionMember?
+    var owner: (any ExecutionOwnership)? { lock.withLock { storedOwner } }
+    var member: ExecutionMember? { lock.withLock { storedMember } }
+    func setOwner(_ value: any ExecutionOwnership) { lock.withLock { storedOwner = value } }
+    func setMember(_ value: ExecutionMember) { lock.withLock { storedMember = value } }
+  }
+
   private enum AdmissionFailure: Error { case refused }
 
   @Test(.timeLimit(.minutes(1)))

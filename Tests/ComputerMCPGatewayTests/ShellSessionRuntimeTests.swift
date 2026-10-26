@@ -15,16 +15,23 @@ import Testing
 @Suite(.serialized)
 
 final class ShellSessionRuntimeTests {
-  private let project = URL(fileURLWithPath: NSTemporaryDirectory())
+  private let directory: ScopedTemporaryDirectory
+  private var project: URL { directory.url }
+  private var shellEnvironment: [String: String] {
+    ["HOME": project.path, "ZDOTDIR": project.path, "PATH": "/usr/bin:/bin:/usr/sbin:/sbin"]
+  }
+
+  init() throws { directory = try ScopedTemporaryDirectory() }
 
   @Test
   func testRunCapturesStdoutAndStderr() async throws {
     let runtime = ShellSessionRuntime(launcher: testExecutionLauncher())
     let result = try await BlockingOperationExecutor(label: "test.shell-call").perform {
-      [project] in
+      [project, shellEnvironment] in
       try runtime.run(
         request: ShellLaunchRequest(
-          command: #"printf "stdout"; printf "stderr" >&2"#
+          command: #"printf "stdout"; printf "stderr" >&2"#,
+          environment: shellEnvironment, inheritsEnvironment: false
         ),
         defaultShell: "/bin/zsh",
         defaultWorkingDirectory: project,
@@ -272,9 +279,10 @@ final class ShellSessionRuntimeTests {
   func testTimeoutTerminatesProcessGroup() async throws {
     let runtime = ShellSessionRuntime(launcher: testExecutionLauncher())
     let result = try await BlockingOperationExecutor(label: "test.shell-call").perform {
-      [project] in
+      [project, shellEnvironment] in
       try runtime.run(
-        request: ShellLaunchRequest(command: "sleep 5"),
+        request: ShellLaunchRequest(
+          command: "sleep 5", environment: shellEnvironment, inheritsEnvironment: false),
         defaultShell: "/bin/zsh",
         defaultWorkingDirectory: project,
         timeoutMilliseconds: 100,
@@ -292,9 +300,10 @@ final class ShellSessionRuntimeTests {
   func testRingBufferReportsMissedBytesWithAbsoluteCursor() async throws {
     let runtime = ShellSessionRuntime(launcher: testExecutionLauncher())
     let result = try await BlockingOperationExecutor(label: "test.shell-call").perform {
-      [project] in
+      [project, shellEnvironment] in
       try runtime.run(
-        request: ShellLaunchRequest(command: "printf 0123456789"),
+        request: ShellLaunchRequest(
+          command: "printf 0123456789", environment: shellEnvironment, inheritsEnvironment: false),
         defaultShell: "/bin/zsh",
         defaultWorkingDirectory: project,
         timeoutMilliseconds: 2_000,
@@ -316,9 +325,11 @@ final class ShellSessionRuntimeTests {
     let runtime = ShellSessionRuntime(launcher: testExecutionLauncher())
     let command = "/bin/dd if=/dev/zero bs=1048576 count=5 2>/dev/null"
     let result = try await BlockingOperationExecutor(label: "test.shell-bulk").perform {
-      [project] in
+      [project, shellEnvironment] in
       try runtime.run(
-        request: ShellLaunchRequest(command: standardError ? "{ \(command); } >&2" : command),
+        request: ShellLaunchRequest(
+          command: standardError ? "{ \(command); } >&2" : command, environment: shellEnvironment,
+          inheritsEnvironment: false),
         defaultShell: "/bin/sh", defaultWorkingDirectory: project,
         timeoutMilliseconds: 5_000, maxOutputBytes: 4_096, maxSessions: 1)
     }

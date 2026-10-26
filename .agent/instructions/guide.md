@@ -12,8 +12,8 @@ description: Route Computer MCP changes to their architecture, release and brand
 - For product positioning, read `Documentation/Architecture/ProductIdentity.md`.
 - For brand work, read the organization `DESIGN.md` in `computer-mcp/.github`
   and the brand section of `Documentation/Architecture/ProductIdentity.md`;
-  update imported brand files only with the organization's
-  `Brand/brand.py sync`.
+  imported brand files change only through a delivery from the organization
+  repository.
 - For version, dependency, packaging or release work, read `VERSIONING.md` and
   `Documentation/Reference/Release.md`. Use `Scripts/version.py` for version
   updates and checks and `Scripts/release.py` for shared CI and release stages.

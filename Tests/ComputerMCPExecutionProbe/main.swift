@@ -10,6 +10,39 @@ import System
 @main struct ExecutionResponsibilityProbe {
   static func main() async throws {
     let arguments = CommandLine.arguments
+    if arguments.count == 4, arguments[1] == "recovery-host",
+      let method = ExecutionLaunchMethod(rawValue: arguments[3])
+    {
+      let directory = URL(fileURLWithPath: arguments[2])
+      let root = try SandboxPath(directory.path)
+      let sandbox = try SandboxConfiguration(
+        worktree: root, temporaryDirectory: root,
+        homeDirectory: root, cacheDirectory: root, readableRoots: [.init("/")])
+      let environment = try ExecutionEnvironment(
+        searchPath: [.init("/usr/bin"), .init("/bin")], home: root, temporary: root, cache: root)
+      let launcher = ExecutionLauncher(platform: DarwinExecutionPlatform())
+      let owner = try await launcher.start(
+        executable: .init("/usr/bin/ruby"),
+        arguments: [
+          "-e",
+          "fork { Process.setsid; File.write('leaf', Process.pid.to_s); exec('/bin/sleep', '60') }; sleep 60",
+        ],
+        directory: root, environment: environment, mode: .sandbox(sandbox), method: method,
+        bindOwnership: { ownership in
+          ownership.beforeStart { _ in
+            try JSONEncoder().encode(ownership.recoveryState()).write(
+              to: directory.appendingPathComponent("ownership.json"), options: .atomic)
+          }
+        })
+      for _ in 0..<500 {
+        if FileManager.default.fileExists(atPath: directory.appendingPathComponent("leaf").path) {
+          withExtendedLifetime(owner) { _exit(0) }
+        }
+        try await Task.sleep(for: .milliseconds(10))
+      }
+      _ = try await owner.cancel()
+      exit(20)
+    }
     if arguments.count == 4, arguments[1] == "ownership-host",
       let method = ExecutionLaunchMethod(rawValue: arguments[3])
     {

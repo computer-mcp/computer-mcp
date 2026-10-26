@@ -25,6 +25,7 @@ package struct InvocationContext: Sendable {
   /// The live authority is retained so checks observe restriction and revocation.
   package let session: (any GatewaySessionAuthority)?
   package let continuation: (any ContinuationRoute)?
+  package let executionAuthority: (any InvocationExecutionAuthority)?
 
   /// Host-selected durable authorization identity; nil permits only live result continuation.
   package let executionRecoveryKey: String?
@@ -36,13 +37,15 @@ package struct InvocationContext: Sendable {
     admission: InvocationAdmission? = nil,
     session: (any GatewaySessionAuthority)? = nil,
     continuation: (any ContinuationRoute)? = nil,
-    executionRecoveryKey: String? = nil
+    executionRecoveryKey: String? = nil,
+    executionAuthority: (any InvocationExecutionAuthority)? = nil
   ) {
     self.resolvedInvocation = resolvedInvocation
     self.admission = admission
     self.session = session
     self.continuation = continuation
     self.executionRecoveryKey = executionRecoveryKey
+    self.executionAuthority = executionAuthority
   }
 }
 

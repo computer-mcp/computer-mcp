@@ -31,6 +31,55 @@ and checks permissions before and after effects, including each recursive entry.
 These composition services are available to the permission admission path; the
 current gateway still uses its existing profile admission contract.
 
+## Durable execution authority
+
+`ExecutionRevocationCoordinator` reserves a logical execution in the permission
+store before a launch. `PreparedExecutionContext` supplies its compiled mode,
+environment, complete authorization basis and limits through a neutral Process
+protocol. Once installed, provider risk classifications cannot widen that mode.
+Blocking command adapters and detached lifecycle tasks carry the same context;
+stdin, retained-result and cancellation operations revalidate durable authority.
+A continuation context permits access to existing work but cannot start programs.
+The caller closes launch admission after its operation, including failure paths.
+Child programs share the reservation; finishing it never restores a consumed retry.
+
+The bootstrap records kernel ownership before releasing the target. An independent
+ownership journal survives restoring a permission database backup. Keep that
+journal outside the database backup/restore transaction: its active receipts and
+same-boot completion receipts are recovery evidence, not permission state. A single
+lifetime lease excludes simultaneous coordinators. On restart, recovery interrupts
+running work, closes proxies, confirms all owned processes have ended, and only then
+releases marker files and port leases. Cleanup acknowledgements are idempotent.
+Authorization epoch recovery is acknowledged after physical cleanup; suspended
+permissions still require owner confirmation. Missing or unreadable ownership
+proof refuses admission and keeps cleanup pending.
+
+Darwin durable ownership requires the sandbox's inherited marker. After host death,
+recovery scans the entire process table in a quiet identity-probe round, validates
+each identity across classification, and retains ambiguous zombies or incomplete
+snapshots as pending. The root birth identity excludes older processes but never
+cuts off enumeration. Prepared Full access execution is unavailable on Darwin
+because unsandboxed descendants can escape observation; sandboxed read helpers
+remain available to Full access principals. Existing profile execution remains on
+its current admission path until the permission-contract cutover.
+
+Permission edits and periodic reconciliation revoke running descendants and proxy
+streams. Standing work survives client disconnect; connection-scoped work ends
+with its connection. A completed one-time execution retains result access until
+its grant is revoked or retention ends. Time and memory tightening can terminate
+work; output tightening drops oldest bytes across both streams, preserving cursor
+history and arrival order across restoration. Completed authorized results use the
+ledger's retention duration and aggregate byte ceiling, evicting oldest first.
+The snapshot exposes applied limits and a limit termination reason.
+
+Principal execution installs this context at its admitted call boundary. Trusted
+host administration runs outside that boundary with an explicit host policy.
+Registered CLI help, host Git, descriptor-backed file helpers and shell/process
+adapters all reach the same launcher. Plugin/stdio helpers launched within an
+admitted context inherit it; unavailable project/plugin contexts remain refused.
+Housekeeping retains the original ownership handle for cleanup and cannot obtain
+new launch authority by dropping the context.
+
 ## Tool executions
 
 `ShellSessionRuntime` owns launches, stdin, output and completion through the

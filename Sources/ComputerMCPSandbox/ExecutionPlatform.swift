@@ -56,6 +56,22 @@ package struct ExecutionMember: Codable, Hashable, Sendable {
   }
 }
 
+/// Persisted before the bootstrap releases its target. Backend data is ownership
+/// evidence, never permission to launch or to expose an execution's results.
+package struct ExecutionRecoveryState: Codable, Sendable {
+  package let root: ExecutionMember
+  package let sandboxed: Bool
+  package let backend: String
+  package let payload: Data?
+
+  package init(root: ExecutionMember, sandboxed: Bool, backend: String, payload: Data? = nil) {
+    self.root = root
+    self.sandboxed = sandboxed
+    self.backend = backend
+    self.payload = payload
+  }
+}
+
 /// Failed confirmation retains execution resources, whether caused by a deadline or lost ownership evidence.
 package struct ExecutionCompletionFailure: Error, Sendable, CustomStringConvertible {
   package struct Member: Sendable {
@@ -98,6 +114,7 @@ package struct ExecutionCompletionFailure: Error, Sendable, CustomStringConverti
 /// Concurrent callers share confirmation: the earliest deadline fails all current waiters and
 /// retains resources while the ownership handle continues background cleanup and observation.
 package protocol ExecutionOwnership: Sendable {
+  func recoveryState() throws -> ExecutionRecoveryState
   /// Installed during bindOwnership; invoked before the target can execute.
   func beforeStart(_ handler: @escaping @Sendable (ExecutionMember) throws -> Void)
 
@@ -120,6 +137,9 @@ package protocol ExecutionOwnership: Sendable {
 }
 
 extension ExecutionOwnership {
+  package func recoveryState() throws -> ExecutionRecoveryState {
+    throw ExecutionEnvironmentError.unavailable("Durable execution ownership is unavailable")
+  }
   package func cancel() async throws -> ExecutionExit {
     try await cancel(until: .now.advanced(by: .seconds(5)))
   }
@@ -133,9 +153,12 @@ extension ExecutionOwnership {
 /// bindOwnership installs nonblocking lifecycle callbacks before spawning any process.
 package protocol ExecutionPlatform: Sendable {
   var supportsRecovery: Bool { get }
+  func supportsDurableOwnership(sandboxed: Bool) -> Bool
   var bootSessionID: String? { get }
   var hostSystemReadPaths: [SandboxPath] { get }
   func interrupt(_ members: [ExecutionMember]) async throws
+  func releaseRecovery(_ state: ExecutionRecoveryState) throws
+  func recover(_ state: ExecutionRecoveryState) async throws -> any ExecutionOwnership
   func start(
     _ command: ExecutionCommand, sandbox: SandboxConfiguration?, method: ExecutionLaunchMethod,
     input: Int32, output: Int32, error: Int32,
@@ -144,6 +167,11 @@ package protocol ExecutionPlatform: Sendable {
 }
 
 extension ExecutionPlatform {
+  package func releaseRecovery(_ state: ExecutionRecoveryState) throws {}
+  package func recover(_ state: ExecutionRecoveryState) async throws -> any ExecutionOwnership {
+    throw ExecutionEnvironmentError.unavailable("Durable execution recovery is unavailable")
+  }
+  package func supportsDurableOwnership(sandboxed: Bool) -> Bool { false }
   package var supportsRecovery: Bool { false }
   package var bootSessionID: String? { nil }
   package var hostSystemReadPaths: [SandboxPath] { [] }

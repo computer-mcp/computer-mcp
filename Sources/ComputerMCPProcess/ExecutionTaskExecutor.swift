@@ -1,3 +1,4 @@
+import ComputerMCPCore
 import Dispatch
 
 /// Each task has its own executor so synchronous lifecycle I/O does not monopolize
@@ -8,21 +9,41 @@ internal enum ExecutionTasks {
   static func start<Value: Sendable>(
     priority: TaskPriority? = nil, _ operation: @escaping @Sendable () async -> Value
   ) -> Task<Value, Never> {
+    let authority = InvocationExecution.current
+    let access = HostPathAccess.current ?? authority?.pathAccess
+    let recovery = ExecutionRecovery.key
+    let captured: @Sendable () async -> Value = {
+      await InvocationExecution.$current.withValue(authority) {
+        await HostPathAccess.$current.withValue(access) {
+          await ExecutionRecovery.$key.withValue(recovery, operation: operation)
+        }
+      }
+    }
     if #available(macOS 15, *) {
       return Task.detached(
-        executorPreference: ExecutionTaskExecutor(), priority: priority, operation: operation)
+        executorPreference: ExecutionTaskExecutor(), priority: priority, operation: captured)
     }
-    return Task.detached(priority: priority, operation: operation)
+    return Task.detached(priority: priority, operation: captured)
   }
 
   @discardableResult
   static func startThrowing<Value: Sendable>(
     _ operation: @escaping @Sendable () async throws -> Value
   ) -> Task<Value, any Error> {
-    if #available(macOS 15, *) {
-      return Task.detached(executorPreference: ExecutionTaskExecutor(), operation: operation)
+    let authority = InvocationExecution.current
+    let access = HostPathAccess.current ?? authority?.pathAccess
+    let recovery = ExecutionRecovery.key
+    let captured: @Sendable () async throws -> Value = {
+      try await InvocationExecution.$current.withValue(authority) {
+        try await HostPathAccess.$current.withValue(access) {
+          try await ExecutionRecovery.$key.withValue(recovery, operation: operation)
+        }
+      }
     }
-    return Task.detached(operation: operation)
+    if #available(macOS 15, *) {
+      return Task.detached(executorPreference: ExecutionTaskExecutor(), operation: captured)
+    }
+    return Task.detached(operation: captured)
   }
 }
 

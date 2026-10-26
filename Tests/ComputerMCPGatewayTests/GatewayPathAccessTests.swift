@@ -111,12 +111,13 @@ import Testing
   }
 }
 
-private final class DurablePathFixture {
+final class DurablePathFixture {
   let temporary: ScopedTemporaryDirectory
   let root: URL
   let project: URL
   let derived: URL
   let store: SQLitePermissionStore
+  let counter = TestAuthorizationEpochCounter()
   let principal = Principal.client("files")
 
   init() throws {
@@ -128,7 +129,7 @@ private final class DurablePathFixture {
       try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
     }
     store = SQLitePermissionStore(
-      connection: try .init(inMemory: ()), counter: TestAuthorizationEpochCounter())
+      connection: try .init(inMemory: ()), counter: counter)
     try store.transactionWithDatabase { _, ledger in
       let epoch = try #require(ledger.authorizationEpochID)
       try ledger.acknowledgeEpochRecovery(epoch)

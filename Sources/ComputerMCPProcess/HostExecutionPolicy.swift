@@ -1,3 +1,4 @@
+import ComputerMCPCore
 import ComputerMCPPlatform
 import ComputerMCPPlatformPOSIX
 import ComputerMCPSandbox
@@ -15,6 +16,10 @@ package enum HostExecutionPolicy: Sendable {
     directory: URL, environment: [String: String], hostVariables: [String: String] = [:],
     systemReadPaths: [SandboxPath]
   ) throws -> HostExecutionSetup {
+    if let prepared = try PreparedExecutionContext.current() {
+      return HostExecutionSetup(
+        mode: prepared.mode, environment: prepared.environment, temporary: nil)
+    }
     if self == .fullAccess {
       return HostExecutionSetup(
         mode: .fullAccess,

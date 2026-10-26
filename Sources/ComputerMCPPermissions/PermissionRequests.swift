@@ -139,6 +139,7 @@ package struct AuthorizedExecution: Equatable, Sendable, Codable {
   package internal(set) var isRunning = true
   package internal(set) var retainUntil: Date?
   package internal(set) var revoked = false
+  package internal(set) var interruptedAt: Date?
 }
 
 package struct RevocationResult: Equatable, Sendable {
@@ -928,6 +929,13 @@ package struct PermissionLedger: Sendable, Codable {
       limits: effectiveLimits)
   }
 
+  package mutating func invocationAccess(_ id: UUID) throws -> InvocationAuthorization {
+    guard !authorityIsSuspended, validateAuthorization(id), let proof = authorizations[id],
+      !proof.finished
+    else { throw PermissionModelError.invalidAuthorization }
+    return proof
+  }
+
   /// Rechecks an actual host file use, including recursive descendants. New access
   /// can only be drawn from this invocation's existing grant evidence.
   package mutating func authorizePathUse(
@@ -1065,6 +1073,22 @@ package struct PermissionLedger: Sendable, Codable {
     for id in authorizationIDs { self.authorizations[id]!.executionID = execution.id }
     executions[execution.id] = execution
     return execution
+  }
+
+  /// Recovery retires running work without revoking retained-result authority.
+  /// Physical completion remains in the durable termination queue until confirmed.
+  package mutating func interruptExecution(_ id: UUID, now: Date = Date()) throws {
+    guard executions[id] != nil else { throw PermissionModelError.unknownExecution }
+    executions[id]!.interruptedAt = executions[id]!.interruptedAt ?? now
+    try terminateExecution(id, now: now)
+  }
+
+  package mutating func terminateExecution(_ id: UUID, now: Date = Date()) throws {
+    guard let execution = executions[id] else { throw PermissionModelError.unknownExecution }
+    pendingExecutionTerminations.insert(id)
+    try finishExecution(
+      id, retainUntil: now.addingTimeInterval(TimeInterval(execution.limits.retentionSeconds)),
+      now: now)
   }
 
   package mutating func finishExecution(_ id: UUID, retainUntil: Date, now: Date = Date()) throws {

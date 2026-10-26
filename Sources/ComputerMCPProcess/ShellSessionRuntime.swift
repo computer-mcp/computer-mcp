@@ -1,4 +1,5 @@
 import ComputerMCPCore
+import ComputerMCPPermissions
 import ComputerMCPPlatform
 import ComputerMCPPlatformPOSIX
 import ComputerMCPSandbox
@@ -178,6 +179,9 @@ package enum ExecutionEndReason: String, Codable, Sendable {
 }
 
 package struct ShellSessionSnapshot: Codable, Equatable, Sendable {
+  package var executionID: UUID?
+  package var permissionLimits: EffectiveExecutionLimits?
+  package var permissionLimitEndReason: ExecutionLimitEndReason?
   package var members: [ExecutionMember] = []
   package var limits: ExecutionLimits
   package var endReason: ExecutionEndReason?
@@ -197,6 +201,9 @@ package struct ShellSessionSnapshot: Codable, Equatable, Sendable {
   package var stderr: ShellStreamRead
 
   private enum CodingKeys: String, CodingKey {
+    case executionID = "execution_id"
+    case permissionLimits = "permission_limits"
+    case permissionLimitEndReason = "permission_limit_end_reason"
     case limits
     case endReason = "end_reason"
     case droppedBytes = "dropped_bytes"
@@ -235,8 +242,13 @@ package struct ShellSessionSnapshot: Codable, Equatable, Sendable {
     stderr: ShellStreamRead,
     limits: ExecutionLimits = .init(
       timeoutMilliseconds: nil, outputBytes: ExecutionLimits.defaultOutputBytes),
-    endReason: ExecutionEndReason? = nil, droppedBytes: Int64 = 0, members: [ExecutionMember] = []
+    endReason: ExecutionEndReason? = nil, droppedBytes: Int64 = 0, members: [ExecutionMember] = [],
+    executionID: UUID? = nil, permissionLimits: EffectiveExecutionLimits? = nil,
+    permissionLimitEndReason: ExecutionLimitEndReason? = nil
   ) {
+    self.executionID = executionID
+    self.permissionLimits = permissionLimits
+    self.permissionLimitEndReason = permissionLimitEndReason
     self.members = members
     self.limits = limits
     self.endReason = endReason
@@ -351,7 +363,8 @@ package final class GatewayTerminalSessions: @unchecked Sendable {
       project: String, registeredAt: Date?, root: ProjectRootIdentity)
 
     package static func project(
-      context: ExecutionContext, project: RegisteredProject, root: ProjectRootIdentity,
+      context: ExecutionContext, project: ComputerMCPCore.RegisteredProject,
+      root: ProjectRootIdentity,
       registered: Bool = true
     ) -> Scope {
       return .project(
@@ -395,8 +408,10 @@ package final class GatewayTerminalSessions: @unchecked Sendable {
     self.now = now
   }
 
-  package func enablePersistence(in root: URL, ownerID: String, launcher: ExecutionLauncher) throws
-  {
+  package func enablePersistence(
+    in root: URL, ownerID: String, launcher: ExecutionLauncher,
+    authority: (any ExecutionRecoveryAuthorizing)? = nil
+  ) throws {
     let encoded = Data(ownerID.utf8).base64EncodedString()
       .replacingOccurrences(of: "/", with: "_").replacingOccurrences(of: "+", with: "-")
     let characters = Array(encoded)
@@ -405,12 +420,15 @@ package final class GatewayTerminalSessions: @unchecked Sendable {
         String(characters[offset..<min(offset + 120, characters.count)]),
         isDirectory: true)
     }
-    try enablePersistence(at: directory, launcher: launcher)
+    try enablePersistence(at: directory, launcher: launcher, authority: authority)
   }
 
   /// The lifecycle owner opens a stable namespace once, before admitting executions.
   /// A lifetime lease prevents another host from recovering records that are still running.
-  package func enablePersistence(at directory: URL, launcher: ExecutionLauncher) throws {
+  package func enablePersistence(
+    at directory: URL, launcher: ExecutionLauncher,
+    authority: (any ExecutionRecoveryAuthorizing)? = nil
+  ) throws {
     guard launcher.supportsRecovery else {
       throw ShellRuntimeError.invalidRequest("Execution recovery is unavailable on this platform")
     }
@@ -421,7 +439,15 @@ package final class GatewayTerminalSessions: @unchecked Sendable {
         directory: directory, bootSessionID: launcher.bootSessionID)
       var restored: [String: Entry] = [:]
       for record in try journal.load() {
-        if record.snapshot.isRunning, !record.members.isEmpty {
+        var applied: EffectiveExecutionLimits?
+        if let id = record.snapshot.executionID {
+          guard let authority else { throw PermissionModelError.invalidAuthorization }
+          applied = try authority.recoveredExecution(id)
+          if applied == nil {
+            try journal.remove(record.snapshot.sessionID)
+            continue
+          }
+        } else if record.snapshot.isRunning, !record.members.isEmpty {
           guard let recordedBoot = record.bootSessionID, let currentBoot = launcher.bootSessionID
           else {
             throw ShellRuntimeError.invalidRequest(
@@ -431,19 +457,18 @@ package final class GatewayTerminalSessions: @unchecked Sendable {
             try blockingAsync { try await launcher.interrupt(record.members) }
           }
         }
-        guard record.recoveryKey != nil else {
+        guard record.snapshot.executionID != nil || record.recoveryKey != nil else {
           try journal.remove(record.snapshot.sessionID)
           continue
         }
-        let session = ShellSession(restoring: record.snapshot)
-        let snapshot = session.snapshot(
-          stdoutCursor: 0, stderrCursor: 0,
-          maxReadBytes: session.maxOutputBytes, encoding: .base64)
+        let session = try ShellSession(restoring: record.snapshot, outputOrder: record.outputOrder)
+        if let applied { session.applyLimits(applied) }
+        let (snapshot, order) = session.journalSnapshot()
         try journal.save(
           .init(
             recoveryKey: record.recoveryKey, bootSessionID: journal.bootSessionID,
             scope: record.scope, isRegisteredProcess: record.isRegisteredProcess,
-            snapshot: snapshot, members: []))
+            snapshot: snapshot, members: [], outputOrder: order))
         restored[session.id] = Entry(
           recoveryKey: record.recoveryKey, restored: true,
           scope: record.scope, session: session,
@@ -452,6 +477,20 @@ package final class GatewayTerminalSessions: @unchecked Sendable {
       entries = restored
       self.journal = journal
       pruneLocked()
+    }
+    // Register outside the journal lock: observers may synchronously checkpoint.
+    if let authority {
+      let sessions = lock.withLock { entries.values.map(\.session) }
+      for session in sessions {
+        if let id = session.executionID {
+          try authority.observeExecutionLimits(id) { [weak self, weak session] limits in
+            guard let session else { return }
+            session.applyLimits(limits)
+            try? self?.checkpoint(session)
+            self?.prune()
+          }
+        }
+      }
     }
   }
 
@@ -476,14 +515,12 @@ package final class GatewayTerminalSessions: @unchecked Sendable {
 
   private func checkpointLocked(_ entry: Entry) throws {
     guard let journal else { return }
-    let snapshot = entry.session.snapshot(
-      stdoutCursor: 0, stderrCursor: 0,
-      maxReadBytes: entry.session.maxOutputBytes, encoding: .base64)
+    let (snapshot, order) = entry.session.journalSnapshot()
     try journal.save(
       .init(
         recoveryKey: entry.recoveryKey, bootSessionID: journal.bootSessionID, scope: entry.scope,
         isRegisteredProcess: entry.isRegisteredProcess,
-        snapshot: snapshot, members: snapshot.members))
+        snapshot: snapshot, members: snapshot.members, outputOrder: order))
   }
 
   fileprivate func insert(
@@ -512,7 +549,8 @@ package final class GatewayTerminalSessions: @unchecked Sendable {
     try lock.withLock {
       pruneLocked()
       guard let entry = entries[id], entry.scope == scope,
-        !entry.restored || (recoveryKey != nil && recoveryKey == entry.recoveryKey),
+        entry.session.executionID != nil || !entry.restored
+          || (recoveryKey != nil && recoveryKey == entry.recoveryKey),
         !processOnly || entry.isRegisteredProcess
       else {
         if processOnly { throw ProcessRegistryError.unknownProcess(id) }
@@ -529,7 +567,8 @@ package final class GatewayTerminalSessions: @unchecked Sendable {
       pruneLocked()
       return entries.values.filter {
         $0.scope == scope && (!processOnly || $0.isRegisteredProcess)
-          && (!$0.restored || (recoveryKey != nil && recoveryKey == $0.recoveryKey))
+          && ($0.session.executionID != nil || !$0.restored
+            || (recoveryKey != nil && recoveryKey == $0.recoveryKey))
       }.sorted { $0.session.id < $1.session.id }.map(\.session)
     }
   }
@@ -538,23 +577,34 @@ package final class GatewayTerminalSessions: @unchecked Sendable {
 
   /// Only joined sessions have a completion date. Inherited pipes still count as executing work.
   private func pruneLocked() {
-    let cutoff = now().addingTimeInterval(-retention)
-    let completed = entries.values.compactMap { entry -> (String, Date, Int)? in
+    let completed = entries.values.compactMap {
+      entry -> (String, Date, Int, EffectiveExecutionLimits?)? in
       guard let result = entry.session.retainedResult else { return nil }
-      return (entry.session.id, result.finishedAt, result.bytes)
+      return (entry.session.id, result.finishedAt, result.bytes, result.limits)
     }.sorted { $0.1 == $1.1 ? $0.0 < $1.0 : $0.1 < $1.1 }
-    var count = 0
-    var bytes = 0
-    // Retain the newest complete results that fit both budgets; never alter their cursor history.
-    for (id, finishedAt, size) in completed.reversed() {
-      if finishedAt <= cutoff || count >= maximumCompletedSessions
-        || size > maximumCompletedOutputBytes - bytes
-      {
+    var legacyCount = 0
+    var legacyBytes = 0
+    var authorizedBytes: Int64 = 0
+    var authorizedExhausted = false
+    let authorizedCap = completed.compactMap { $0.3?.retainedOutputBytes }.min() ?? 1_073_741_824
+    for (id, finishedAt, size, applied) in completed.reversed() {
+      let expired =
+        finishedAt.addingTimeInterval(
+          applied.map { TimeInterval($0.retentionSeconds) } ?? retention) <= now()
+      let overBudget =
+        applied != nil
+        ? authorizedExhausted || Int64(size) > authorizedCap - authorizedBytes
+        : legacyCount >= maximumCompletedSessions
+          || size > maximumCompletedOutputBytes - legacyBytes
+      if expired || overBudget {
+        if applied != nil, !expired, overBudget { authorizedExhausted = true }
         try? journal?.remove(id)
         entries.removeValue(forKey: id)
+      } else if applied != nil {
+        authorizedBytes += Int64(size)
       } else {
-        count += 1
-        bytes += size
+        legacyCount += 1
+        legacyBytes += size
       }
     }
   }
@@ -645,7 +695,7 @@ package final class ShellSessionRuntime: ShellManaging, Sendable {
       _ = session.cancel()
       throw ShellRuntimeError.timeoutWaitingForTermination(session.id)
     }
-    return session.snapshot(
+    return try session.authorizedSnapshot(
       stdoutCursor: 0,
       stderrCursor: 0,
       maxReadBytes: maxReadBytes,
@@ -702,11 +752,18 @@ package final class ShellSessionRuntime: ShellManaging, Sendable {
       throw ShellRuntimeError.invalidRequest("maxSessions must be greater than zero.")
     }
 
+    let prepared = try PreparedExecutionContext.current()
     let session = ShellSession(
       id: UUID().uuidString,
       maxOutputBytes: maxOutputBytes,
-      timeoutMilliseconds: timeoutMilliseconds
+      timeoutMilliseconds: timeoutMilliseconds, prepared: prepared
     )
+    prepared?.observeLimits { [weak session, weak sessions] limits in
+      guard let session else { return }
+      session.applyLimits(limits)
+      try? sessions?.checkpoint(session)
+      sessions?.prune()
+    }
 
     try executionState.withLockedValue { state in
       guard state.shutdown == nil else { throw ShellRuntimeError.stopped }
@@ -791,8 +848,8 @@ package final class ShellSessionRuntime: ShellManaging, Sendable {
     maxReadBytes: Int = 0,
     encoding: ShellStreamEncoding = .utf8
   ) throws -> [ShellSessionSnapshot] {
-    sessions.sessions(scope: scope, recoveryKey: recoveryKey()).map { session in
-      session.snapshot(
+    sessions.sessions(scope: scope, recoveryKey: recoveryKey()).compactMap { session in
+      try? session.authorizedSnapshot(
         stdoutCursor: session.stdoutEndCursor,
         stderrCursor: session.stderrEndCursor,
         maxReadBytes: max(0, maxReadBytes),
@@ -815,7 +872,7 @@ package final class ShellSessionRuntime: ShellManaging, Sendable {
     }
     let session = try requireSession(sessionID)
     try sessions.checkpoint(session)
-    return session.snapshot(
+    return try session.authorizedSnapshot(
       stdoutCursor: stdoutCursor,
       stderrCursor: stderrCursor,
       maxReadBytes: maxReadBytes,
@@ -857,6 +914,7 @@ package final class ShellSessionRuntime: ShellManaging, Sendable {
 
   package func cancel(sessionID: String) throws -> ShellCancelResult {
     let session = try requireSession(sessionID)
+    try session.checkAccess(.cancel)
     let requested = session.cancel()
     return ShellCancelResult(
       sessionID: sessionID,
@@ -866,8 +924,9 @@ package final class ShellSessionRuntime: ShellManaging, Sendable {
   }
 
   internal func processSnapshots() -> [ManagedProcessSnapshot] {
-    sessions.sessions(scope: scope, recoveryKey: recoveryKey(), processOnly: true).map { session in
-      Self.processSnapshot(session, maxOutputBytes: session.maxOutputBytes)
+    sessions.sessions(scope: scope, recoveryKey: recoveryKey(), processOnly: true).compactMap {
+      session in
+      try? Self.processSnapshot(session, maxOutputBytes: session.maxOutputBytes)
     }
   }
 
@@ -882,23 +941,24 @@ package final class ShellSessionRuntime: ShellManaging, Sendable {
     let session = try sessions.session(
       id, scope: scope, recoveryKey: recoveryKey(), processOnly: true)
     try sessions.checkpoint(session)
-    return Self.processSnapshot(
+    return try Self.processSnapshot(
       session, maxOutputBytes: maxReadBytes, stdoutCursor: stdoutCursor, stderrCursor: stderrCursor)
   }
 
   internal func cancelProcess(_ id: String) throws -> ManagedProcessCancelResult {
     let session = try sessions.session(
       id, scope: scope, recoveryKey: recoveryKey(), processOnly: true)
+    try session.checkAccess(.cancel)
     return ManagedProcessCancelResult(
       processID: id, cancelled: session.cancel(), exitCode: nil)
   }
 
   private static func processSnapshot(
     _ session: ShellSession, maxOutputBytes: Int, stdoutCursor: Int64 = 0, stderrCursor: Int64 = 0
-  )
+  ) throws
     -> ManagedProcessSnapshot
   {
-    let snapshot = session.snapshot(
+    let snapshot = try session.authorizedSnapshot(
       stdoutCursor: stdoutCursor, stderrCursor: stderrCursor, maxReadBytes: maxOutputBytes,
       encoding: .utf8)
     return ManagedProcessSnapshot(
@@ -909,7 +969,9 @@ package final class ShellSessionRuntime: ShellManaging, Sendable {
   }
 
   private func requireSession(_ id: String) throws -> ShellSession {
-    try sessions.session(id, scope: scope, recoveryKey: recoveryKey())
+    let session = try sessions.session(id, scope: scope, recoveryKey: recoveryKey())
+    try session.checkAccess(.readResult)
+    return session
   }
 
   private static func launch(
@@ -1038,11 +1100,16 @@ private struct ResolvedShellLaunch: Sendable {
 private final class ShellSession: @unchecked Sendable {
   let id: String
   private let condition = NSCondition()
-  let maxOutputBytes: Int
+  private var outputLimit: Int
+  var maxOutputBytes: Int { condition.withLock { outputLimit } }
+  let executionID: UUID?
+  private let prepared: PreparedExecutionContext?
+  private var permissionLimits: EffectiveExecutionLimits?
+  private var restoredLimitEndReason: ExecutionLimitEndReason?
   private var execution: (any ExecutionOwnership)?
   let input: ChildProcessInput
-  private let limits: ExecutionLimits
-  private var outputOrder: [(stdout: Bool, count: Int)] = []
+  private var limits: ExecutionLimits
+  private var outputOrder: [ShellOutputSegment] = []
   private var stdout = CursorDataBuffer()
   private var stderr = CursorDataBuffer()
   private var members: [ExecutionMember] = []
@@ -1060,21 +1127,29 @@ private final class ShellSession: @unchecked Sendable {
   private var finishedAt: Date?
 
   init(
-    id: String, maxOutputBytes: Int, timeoutMilliseconds: Int?
+    id: String, maxOutputBytes: Int, timeoutMilliseconds: Int?,
+    prepared: PreparedExecutionContext? = nil
   ) {
+    self.prepared = prepared
+    executionID = prepared?.executionID
+    permissionLimits = prepared?.limits
     self.startedAt = Date()
     self.limits = .init(timeoutMilliseconds: timeoutMilliseconds, outputBytes: maxOutputBytes)
     self.id = id
     self.input = ChildProcessInput(
       closedError: ShellRuntimeError.sessionNotRunning(id),
       inputClosedError: ShellRuntimeError.inputClosed(id))
-    self.maxOutputBytes = maxOutputBytes
+    self.outputLimit = maxOutputBytes
   }
 
-  init(restoring snapshot: ShellSessionSnapshot) {
+  init(restoring snapshot: ShellSessionSnapshot, outputOrder: [ShellOutputSegment]?) throws {
+    prepared = nil
+    executionID = snapshot.executionID
+    permissionLimits = snapshot.permissionLimits
+    restoredLimitEndReason = snapshot.permissionLimitEndReason
     id = snapshot.sessionID
     limits = snapshot.limits
-    maxOutputBytes = snapshot.limits.outputBytes
+    outputLimit = snapshot.limits.outputBytes
     startedAt = snapshot.startedAt
     finishedAt = snapshot.finishedAt ?? Date()
     started = true
@@ -1088,17 +1163,34 @@ private final class ShellSession: @unchecked Sendable {
     streamErrors = snapshot.streamErrors
     stdout = CursorDataBuffer(restoring: snapshot.stdout)
     stderr = CursorDataBuffer(restoring: snapshot.stderr)
+    if let outputOrder {
+      guard outputOrder.allSatisfy({ $0.count > 0 && $0.count <= snapshot.limits.outputBytes }),
+        outputOrder.filter(\.stdout).reduce(Int64(0), { $0 + Int64($1.count) })
+          == Int64(stdout.data.count),
+        outputOrder.filter({ !$0.stdout }).reduce(Int64(0), { $0 + Int64($1.count) })
+          == Int64(stderr.data.count)
+      else { throw ShellRuntimeError.invalidRequest("Invalid output journal") }
+      self.outputOrder = outputOrder
+    } else {
+      guard snapshot.executionID == nil else {
+        throw ShellRuntimeError.invalidRequest("Missing output journal")
+      }
+      self.outputOrder = [
+        .init(stdout: true, count: stdout.data.count),
+        .init(stdout: false, count: stderr.data.count),
+      ].filter { $0.count > 0 }
+    }
     input = ChildProcessInput(
       closedError: ShellRuntimeError.sessionNotRunning(id),
       inputClosedError: ShellRuntimeError.inputClosed(id))
     input.stop()
   }
 
-  var retainedResult: (finishedAt: Date, bytes: Int)? {
+  var retainedResult: (finishedAt: Date, bytes: Int, limits: EffectiveExecutionLimits?)? {
     condition.lock()
     defer { condition.unlock() }
     guard let finishedAt else { return nil }
-    return (finishedAt, stdout.data.count + stderr.data.count)
+    return (finishedAt, stdout.data.count + stderr.data.count, permissionLimits)
   }
 
   var launchError: String? {
@@ -1128,6 +1220,15 @@ private final class ShellSession: @unchecked Sendable {
   }
 
   func bind(_ execution: any ExecutionOwnership) {
+    execution.onCancellation { [weak self] in
+      guard let self else { return }
+      self.input.stop()
+      self.condition.withLock {
+        if self.started && !self.finished && self._launchError == nil && !self.timedOut {
+          self.cancelled = true
+        }
+      }
+    }
     condition.lock()
     self.execution = execution
     let terminationRequested = cancelled || timedOut
@@ -1181,14 +1282,39 @@ private final class ShellSession: @unchecked Sendable {
     if outputOrder.last?.stdout == isStdout {
       outputOrder[outputOrder.count - 1].count += count
     } else {
-      outputOrder.append((isStdout, count))
+      outputOrder.append(.init(stdout: isStdout, count: count))
     }
-    var overflow = stdout.data.count + stderr.data.count - maxOutputBytes
+    trimOutput()
+  }
+
+  private func trimOutput() {
+    var overflow = stdout.data.count + stderr.data.count - outputLimit
     while overflow > 0, let first = outputOrder.first {
       let count = min(overflow, first.count)
       if first.stdout { stdout.discardFirst(count) } else { stderr.discardFirst(count) }
       if count == first.count { outputOrder.removeFirst() } else { outputOrder[0].count -= count }
       overflow -= count
+    }
+  }
+
+  func checkAccess(_ operation: ExecutionOperation) throws {
+    guard let executionID else { return }
+    guard let authority = InvocationExecution.current as? any ExecutionAccessChecking else {
+      throw PermissionModelError.invalidAuthorization
+    }
+    applyLimits(try authority.accessExecution(executionID, operation: operation))
+  }
+
+  func applyLimits(_ applied: EffectiveExecutionLimits) {
+    condition.withLock {
+      let applied = permissionLimits.map { applied.tightening($0) } ?? applied
+      permissionLimits = applied
+      outputLimit = min(outputLimit, Int(clamping: applied.outputBytes))
+      limits.outputBytes = outputLimit
+      if let time = applied.timeMilliseconds {
+        limits.timeoutMilliseconds = min(limits.timeoutMilliseconds ?? Int.max, Int(clamping: time))
+      }
+      trimOutput()
     }
   }
 
@@ -1284,6 +1410,7 @@ private final class ShellSession: @unchecked Sendable {
 
   func writeAsync(data: Data, close: Bool) async throws -> ShellWriteResult {
     try Task.checkCancellation()
+    try checkAccess(.writeInput)
     try validateInput()
     do {
       let bytesWritten = try await input.write(data, close: close)
@@ -1310,7 +1437,40 @@ private final class ShellSession: @unchecked Sendable {
     maxReadBytes: Int,
     encoding: ShellStreamEncoding
   ) -> ShellSessionSnapshot {
-    condition.lock()
+    condition.withLock {
+      snapshotLocked(
+        stdoutCursor: stdoutCursor, stderrCursor: stderrCursor, maxReadBytes: maxReadBytes,
+        encoding: encoding)
+    }
+  }
+
+  func authorizedSnapshot(
+    stdoutCursor: Int64, stderrCursor: Int64, maxReadBytes: Int, encoding: ShellStreamEncoding
+  ) throws -> ShellSessionSnapshot {
+    for _ in 0..<8 {
+      try checkAccess(.readResult)
+      let value = snapshot(
+        stdoutCursor: stdoutCursor, stderrCursor: stderrCursor, maxReadBytes: maxReadBytes,
+        encoding: encoding)
+      try checkAccess(.readResult)
+      if condition.withLock({ value.permissionLimits == permissionLimits }) { return value }
+    }
+    throw PermissionModelError.invalidAuthorization
+  }
+
+  func journalSnapshot() -> (ShellSessionSnapshot, [ShellOutputSegment]) {
+    condition.withLock {
+      (
+        snapshotLocked(
+          stdoutCursor: 0, stderrCursor: 0, maxReadBytes: outputLimit, encoding: .base64),
+        outputOrder
+      )
+    }
+  }
+
+  private func snapshotLocked(
+    stdoutCursor: Int64, stderrCursor: Int64, maxReadBytes: Int, encoding: ShellStreamEncoding
+  ) -> ShellSessionSnapshot {
     let stdoutRead = stdout.read(cursor: stdoutCursor, maxBytes: maxReadBytes)
     let stderrRead = stderr.read(cursor: stderrCursor, maxBytes: maxReadBytes)
     let snapshot = ShellSessionSnapshot(
@@ -1337,9 +1497,10 @@ private final class ShellSession: @unchecked Sendable {
               : _launchError != nil
                 ? .launchFailed
                 : signal != nil ? .signalled : exitCode != nil ? .exited : .executionFailed) : nil),
-      droppedBytes: stdout.startCursor + stderr.startCursor, members: finished ? [] : members
+      droppedBytes: stdout.startCursor + stderr.startCursor, members: finished ? [] : members,
+      executionID: executionID, permissionLimits: permissionLimits,
+      permissionLimitEndReason: prepared?.limitEndReason ?? restoredLimitEndReason
     )
-    condition.unlock()
     return snapshot
   }
 

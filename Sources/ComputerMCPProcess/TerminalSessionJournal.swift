@@ -2,6 +2,11 @@ import ComputerMCPPlatformPOSIX
 import ComputerMCPSandbox
 import Foundation
 
+internal struct ShellOutputSegment: Codable, Sendable {
+  var stdout: Bool
+  var count: Int
+}
+
 /// Serialized by GatewayTerminalSessions. Each lifecycle owner has a distinct directory and lease.
 internal final class TerminalSessionJournal {
   struct Record: Codable {
@@ -11,6 +16,7 @@ internal final class TerminalSessionJournal {
     let isRegisteredProcess: Bool
     let snapshot: ShellSessionSnapshot
     let members: [ExecutionMember]
+    var outputOrder: [ShellOutputSegment]? = nil
   }
 
   let bootSessionID: String?

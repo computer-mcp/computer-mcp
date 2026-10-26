@@ -96,7 +96,10 @@ package final class EgressProxy: @unchecked Sendable {
     do {
       proxy.observation = try routing.observeChanges { [weak proxy] event in
         guard let proxy else { return }
-        proxy.group.next().execute { proxy.routesChanged(event) }
+        proxy.shutdownTask.withLockedValue { task in
+          guard task == nil else { return }
+          proxy.group.next().execute { proxy.routesChanged(event) }
+        }
       }
       try await proxy.bind()
       return proxy
@@ -107,12 +110,18 @@ package final class EgressProxy: @unchecked Sendable {
   }
 
   package func sandboxPorts() async throws -> SandboxProxyPorts {
-    try await group.next().submit {
-      guard !self.revoked, let ports = self.ports else {
-        throw ExecutionEnvironmentError.unavailable("Execution proxy has been revoked")
+    let result = try shutdownTask.withLockedValue { task in
+      guard task == nil else {
+        throw ExecutionEnvironmentError.unavailable("Execution proxy has been released")
       }
-      return ports
-    }.get()
+      return group.next().submit {
+        guard !self.revoked, let ports = self.ports else {
+          throw ExecutionEnvironmentError.unavailable("Execution proxy has been revoked")
+        }
+        return ports
+      }
+    }
+    return try await result.get()
   }
 
   /// Bind through the launcher's bindOwnership callback, before any process starts. The callback
@@ -133,13 +142,20 @@ package final class EgressProxy: @unchecked Sendable {
 
   /// Waits for admitted streams to close while retaining their execution's port leases.
   package func revoke() async throws {
-    let closures = try await group.next().submit {
-      self.revoked = true
-      let connections = Array(self.connections.values)
-      for connection in connections { connection.close() }
-      return connections.map(\.closed)
-    }.get()
-    for closure in closures { try await closure.get() }
+    let work = shutdownTask.withLockedValue {
+      task -> (EventLoopFuture<[EventLoopFuture<Void>]>?, Task<Void, any Error>?) in
+      if let task { return (nil, task) }
+      return (
+        group.next().submit {
+          self.revoked = true
+          let connections = Array(self.connections.values)
+          for connection in connections { connection.close() }
+          return connections.map(\.closed)
+        }, nil
+      )
+    }
+    if let task = work.1 { return try await task.value }
+    if let result = work.0 { for closure in try await result.get() { try await closure.get() } }
   }
 
   /// A failed confirmation leaves listeners and port leases owned by this proxy for retry.

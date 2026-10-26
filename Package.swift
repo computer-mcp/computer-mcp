@@ -77,6 +77,7 @@ let neutralTargets: [Target] =
     .target(
       name: "ComputerMCPProcess",
       dependencies: [
+        "ComputerMCPPermissions",
         "ComputerMCPConfiguration", "ComputerMCPCore", "ComputerMCPPlatform",
         "ComputerMCPPlatformPOSIX", "ComputerMCPSandbox",
         .product(name: "NIOConcurrencyHelpers", package: "swift-nio"),

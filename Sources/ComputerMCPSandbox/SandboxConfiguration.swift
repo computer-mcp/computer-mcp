@@ -122,6 +122,16 @@ package struct SandboxConfiguration: Sendable, Equatable {
   package let proxy: SandboxProxyPorts?
   package let services: SandboxSystemServices
 
+  package func withProxy(_ ports: SandboxProxyPorts) throws -> Self {
+    try Self(
+      readOnly: readOnly, hostNetwork: hostNetwork, worktree: worktree,
+      temporaryDirectory: temporaryDirectory, homeDirectory: homeDirectory,
+      cacheDirectory: cacheDirectory,
+      readableRoots: readableRoots, deniedReadRegions: deniedReadRegions,
+      forbiddenReads: forbiddenReads,
+      listableAncestors: listableAncestors, git: git, proxy: ports, services: services)
+  }
+
   package init(
     readOnly: Bool = false, hostNetwork: Bool = false,
     worktree: SandboxPath, temporaryDirectory: SandboxPath, homeDirectory: SandboxPath,

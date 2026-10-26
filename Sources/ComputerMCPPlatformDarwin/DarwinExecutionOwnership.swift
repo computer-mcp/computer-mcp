@@ -11,6 +11,7 @@ final class DarwinExecutionOwnership: ExecutionOwnership, @unchecked Sendable {
   private let table: DarwinExecutionProcessTable
   private let observationInterval: DispatchTimeInterval
   private let sentinel: DarwinExecutionSentinel?
+  private let recoveryRoot: DarwinProcessIdentity?
   private var marker: ExecutionSandboxMarker?
   private let bestEffort: Bool
   private var launchHandlers: [@Sendable (ExecutionMember) throws -> Void] = []
@@ -35,9 +36,11 @@ final class DarwinExecutionOwnership: ExecutionOwnership, @unchecked Sendable {
   init(
     marker: ExecutionSandboxMarker?, sentinel: DarwinExecutionSentinel? = nil,
     table: DarwinExecutionProcessTable = .system,
-    observationInterval: DispatchTimeInterval = .milliseconds(25)
+    observationInterval: DispatchTimeInterval = .milliseconds(25),
+    recoveryRoot: DarwinProcessIdentity? = nil
   ) {
-    precondition((marker == nil) == (sentinel == nil))
+    precondition(marker == nil ? sentinel == nil : sentinel != nil || recoveryRoot != nil)
+    self.recoveryRoot = recoveryRoot
     self.sentinel = sentinel
     self.marker = marker
     self.table = table
@@ -71,6 +74,16 @@ final class DarwinExecutionOwnership: ExecutionOwnership, @unchecked Sendable {
       startup = continuation
       startMonitor()
     }
+  }
+
+  func recoveryState() throws -> ExecutionRecoveryState {
+    let (root, marker) = lock.withLock { (self.root, self.marker) }
+    guard let root else {
+      throw ExecutionEnvironmentError.unavailable("Execution has no root identity")
+    }
+    return try ExecutionRecoveryState(
+      root: root.member, sandboxed: !bestEffort, backend: "darwin",
+      payload: marker.map { try JSONEncoder().encode($0.recovery()) })
   }
 
   func beforeStart(_ handler: @escaping @Sendable (ExecutionMember) throws -> Void) {
@@ -109,7 +122,11 @@ final class DarwinExecutionOwnership: ExecutionOwnership, @unchecked Sendable {
       requestInspection()
       startMonitor()
     }
-    let handlers = lock.withLock { launchHandlers }
+    let handlers = lock.withLock {
+      let handlers = launchHandlers
+      launchHandlers.removeAll()
+      return handlers
+    }
     for handler in handlers { try handler(identity.member) }
   }
 
@@ -326,6 +343,7 @@ final class DarwinExecutionOwnership: ExecutionOwnership, @unchecked Sendable {
     var scan = initial
     scan.poll(
       table: table, marker: marker, sentinel: sentinel?.identity, started: started,
+      recoveryRoot: recoveryRoot,
       deadline: deadline,
       check: {
         try DarwinExecutionProcessTable.check(deadline)
@@ -371,6 +389,7 @@ final class DarwinExecutionOwnership: ExecutionOwnership, @unchecked Sendable {
     marker = nil
     completion = result
     cancellationHandlers.removeAll()
+    launchHandlers.removeAll()
     timer?.cancel()
     timer?.setEventHandler {}
     timer = nil
@@ -394,6 +413,7 @@ private struct DarwinExecutionScan: Sendable {
   mutating func poll(
     table: DarwinExecutionProcessTable, marker: ExecutionSandboxMarker?,
     sentinel: DarwinProcessIdentity?, started: ContinuousClock.Instant?,
+    recoveryRoot: DarwinProcessIdentity? = nil,
     deadline: ContinuousClock.Instant,
     check: () throws -> Void
   ) {
@@ -412,13 +432,13 @@ private struct DarwinExecutionScan: Sendable {
         } catch { memberReasons[identity] = "Cannot read signal identity: \(error)" }
       }
     }
-    guard let marker, let sentinel else {
+    guard let marker, sentinel != nil || recoveryRoot != nil else {
       pollFullAccess(table: table, started: started, force: force, check: check)
       return
     }
     let scan = snapshot(
-      until: deadline, table: table, marker: marker, sentinel: sentinel, started: started != nil,
-      force: force, check: check)
+      until: deadline, table: table, marker: marker, sentinel: sentinel,
+      recoveryRoot: recoveryRoot, started: started != nil, force: force, check: check)
     scanReasons = scan.reasons
     // Include members discovered by this round. Only reaping or replacement confirms exit;
     // kern_exit.c moves processes to zombproc before all their threads have terminated.
@@ -543,29 +563,42 @@ private struct DarwinExecutionScan: Sendable {
 
   private mutating func snapshot(
     until deadline: ContinuousClock.Instant, table: DarwinExecutionProcessTable,
-    marker: ExecutionSandboxMarker, sentinel: DarwinProcessIdentity,
-    started: Bool, force: Bool, check: () throws -> Void
+    marker: ExecutionSandboxMarker, sentinel: DarwinProcessIdentity?,
+    recoveryRoot: DarwinProcessIdentity?, started: Bool, force: Bool, check: () throws -> Void
   ) -> (members: Set<DarwinProcessIdentity>, reasons: [String]) {
     var processes: [DarwinProcessSnapshot] = []
     var reasons: [String] = []
     let hostSentinels = DarwinExecutionSentinel.identities()
     sentinelFailure = nil
-    do {
-      guard let boundary = try table.read(sentinel.pid), boundary.identity == sentinel,
-        boundary.state == .zombie
-      else {
-        throw ExecutionEnvironmentError.launchFailed("Execution sentinel is missing or replaced")
-      }
-    } catch { sentinelFailure = "Cannot confirm execution sentinel: \(error)" }
+    if let sentinel {
+      do {
+        guard let boundary = try table.read(sentinel.pid), boundary.identity == sentinel,
+          boundary.state == .zombie
+        else {
+          throw ExecutionEnvironmentError.launchFailed("Execution sentinel is missing or replaced")
+        }
+      } catch { sentinelFailure = "Cannot confirm execution sentinel: \(error)" }
+    }
     if let sentinelFailure { reasons.append(sentinelFailure) }
     do {
       try check()
-      let snapshot = try table.list(deadline, sentinel)
+      let snapshot: DarwinExecutionProcessTable.Snapshot
+      if let sentinel {
+        snapshot = try table.list(deadline, sentinel)
+      } else if let wholeList = table.wholeList {
+        snapshot = try wholeList(deadline)
+      } else {
+        throw ExecutionEnvironmentError.unavailable("Complete recovery snapshots are unavailable")
+      }
+      if sentinel == nil, !snapshot.complete { reasons.append("Recovery snapshot is incomplete") }
       if !snapshot.pids.contains(0) {
         reasons.append("Process snapshot did not reach kernproc")
       }
-      let boundary = sentinelFailure == nil ? snapshot.pids.firstIndex(of: sentinel.pid) : nil
-      if boundary == nil { reasons.append("Process snapshot did not reach execution sentinel") }
+      let boundary =
+        sentinelFailure == nil ? sentinel.flatMap { snapshot.pids.firstIndex(of: $0.pid) } : nil
+      if sentinel != nil, boundary == nil {
+        reasons.append("Process snapshot did not reach execution sentinel")
+      }
       if let boundary, let kernel = snapshot.pids.firstIndex(of: 0), boundary <= kernel {
         reasons.append("Execution sentinel is not in zombproc")
       }
@@ -584,12 +617,13 @@ private struct DarwinExecutionScan: Sendable {
           try check()
           let knownMember = known.contains(before.identity)
           let hostSentinel = hostSentinels.contains(before.identity)
+          let preexisting = recoveryRoot.map { before.identity.uniqueID < $0.uniqueID } ?? false
           let zombie = (kernel.map { index > $0 } ?? false) || before.state == .zombie
           let nonmemberParent =
-            try !knownMember && !hostSentinel && zombie
+            try !knownMember && !hostSentinel && !preexisting && zombie
             && hasNonmemberParent(before, table: table, marker: marker, check: check)
           let marked =
-            try !knownMember && !hostSentinel && !nonmemberParent
+            try !knownMember && !hostSentinel && !preexisting && !nonmemberParent
             ? table.contains(pid, marker) : false
           // Use the version read before classification. proc_find_audit_token (kern_proc.c)
           // pins that identity for psignal_by_audit_token (proc_info.c); PID reuse returns ESRCH.
@@ -612,7 +646,7 @@ private struct DarwinExecutionScan: Sendable {
           if !belongs,
             (kernel.map { index > $0 } ?? false) || before.state == .zombie
               || after.state == .zombie,
-            !hostSentinel, !nonmemberParent
+            !hostSentinel, !preexisting, !nonmemberParent
           {
             // sandbox_check may report denial for every path once a proc enters zombproc.
             // Only independent provenance or an untraced zombie's live, identity-checked
@@ -634,15 +668,17 @@ private struct DarwinExecutionScan: Sendable {
 
     let members = Set(processes.map(\.identity))
     known.formUnion(members)
-    do {
-      guard let boundary = try table.read(sentinel.pid), boundary.identity == sentinel,
-        boundary.state == .zombie
-      else {
-        throw ExecutionEnvironmentError.launchFailed("Execution sentinel is missing or replaced")
+    if let sentinel {
+      do {
+        guard let boundary = try table.read(sentinel.pid), boundary.identity == sentinel,
+          boundary.state == .zombie
+        else {
+          throw ExecutionEnvironmentError.launchFailed("Execution sentinel is missing or replaced")
+        }
+      } catch {
+        sentinelFailure = "Cannot confirm execution sentinel: \(error)"
+        reasons.append(sentinelFailure!)
       }
-    } catch {
-      sentinelFailure = "Cannot confirm execution sentinel: \(error)"
-      reasons.append(sentinelFailure!)
     }
     return (members, reasons)
   }
@@ -699,11 +735,13 @@ struct DarwinExecutionProcessTable: Sendable {
     let pids: [pid_t]
     /// Unique ID read from an unreaped probe before enumeration.
     let watermark: UInt64
+    var complete = false
   }
   let list: @Sendable (ContinuousClock.Instant, DarwinProcessIdentity) throws -> Snapshot
   let read: @Sendable (pid_t) throws -> DarwinProcessSnapshot?
   let signal: @Sendable (DarwinProcessSnapshot, Int32) -> Int32
   let contains: @Sendable (pid_t, ExecutionSandboxMarker) throws -> Bool
+  var wholeList: (@Sendable (ContinuousClock.Instant) throws -> Snapshot)? = nil
   var group: @Sendable (pid_t) throws -> [pid_t] = { group in
     var capacity = 32
     while true {
@@ -775,7 +813,7 @@ struct DarwinExecutionProcessTable: Sendable {
   static let system = system(watermark: { try identityWatermark() })
 
   static func system(watermark: @escaping @Sendable () throws -> UInt64) -> Self {
-    Self(
+    var table = Self(
       list: { deadline, sentinel in
         try check(deadline)
         let estimate = proc_listallpids(nil, 0)
@@ -858,6 +896,35 @@ struct DarwinExecutionProcessTable: Sendable {
         }
         return marked
       })
+    table.wholeList = { deadline in
+      try check(deadline)
+      let estimate = proc_listallpids(nil, 0)
+      guard estimate > 0 else {
+        throw ExecutionEnvironmentError.unavailable("Cannot size recovery snapshot")
+      }
+      let capacity = max(1024, Int(estimate) * 4)
+      guard capacity <= Int(Int32.max) / MemoryLayout<pid_t>.size else {
+        throw ExecutionEnvironmentError.unavailable("Recovery snapshot exceeds capacity")
+      }
+      var pids = [pid_t](repeating: -1, count: capacity)
+      let before = try watermark()
+      try check(deadline)
+      let count = proc_listallpids(&pids, Int32(pids.count * MemoryLayout<pid_t>.size))
+      let after = try watermark()
+      try check(deadline)
+      guard count > 0, count <= capacity else {
+        throw ExecutionEnvironmentError.unavailable("Cannot enumerate recovery snapshot")
+      }
+      let (next, overflow) = before.addingReportingOverflow(1)
+      // Only the post-list probe may be born between probes. Delayed fork
+      // publication is already counted; exec preserves identity and does not add
+      // a visible row. A quiet, non-full list does not depend on sizing slack.
+      return Snapshot(
+        pids: Array(pids.prefix(Int(count))), watermark: before,
+        complete: !overflow && after == next && count < capacity && pids.contains(0))
+    }
+    return table
+
   }
 }
 

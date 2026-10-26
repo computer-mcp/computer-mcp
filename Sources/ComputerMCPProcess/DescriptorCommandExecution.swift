@@ -15,6 +15,7 @@ internal enum DescriptorCommandExecution {
     guard timeoutMilliseconds > 0, maxOutputBytes > 0, outputDescriptor >= 0 else {
       throw CommandRunnerError.launchFailed("Invalid descriptor command limits or output.")
     }
+    let prepared = try PreparedExecutionContext.current()
     let directory =
       workingDirectory ?? URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
     let inspection = ExecutableInspection.inspect(
@@ -36,7 +37,16 @@ internal enum DescriptorCommandExecution {
       // Pipes force sparse producers to emit holes as bytes and make host write errors observable.
       let stdout = Pipe()
       let stderr = Pipe()
-      let state = NIOLockedValueBox(Output())
+      let state = NIOLockedValueBox(Output(limit: maxOutputBytes))
+      prepared?.observeLimits { limits in
+        state.withLockedValue {
+          $0.limit = min($0.limit, Int(clamping: limits.outputBytes))
+          if $0.stderr.count > $0.limit {
+            $0.stderr.removeFirst($0.stderr.count - $0.limit)
+            $0.truncated = true
+          }
+        }
+      }
       let destination = FileHandle(fileDescriptor: outputDescriptor, closeOnDealloc: false)
       let output = try ProcessOutputReader(
         handle: stdout.fileHandleForReading,
@@ -46,9 +56,17 @@ internal enum DescriptorCommandExecution {
         handle: stderr.fileHandleForReading,
         consume: { data in
           state.withLockedValue {
-            let remaining = maxOutputBytes - $0.stderr.count
-            $0.stderr.append(data.prefix(remaining))
-            $0.truncated = $0.truncated || data.count > remaining
+            guard prepared != nil else {
+              let remaining = max(0, $0.limit - $0.stderr.count)
+              $0.stderr.append(data.prefix(remaining))
+              $0.truncated = $0.truncated || data.count > remaining
+              return
+            }
+            $0.stderr.append(data)
+            if $0.stderr.count > $0.limit {
+              $0.stderr.removeFirst($0.stderr.count - $0.limit)
+              $0.truncated = true
+            }
           }
         }, onError: { error in state.withLockedValue { $0.error = $0.error ?? error } })
       output.start()
@@ -76,6 +94,16 @@ internal enum DescriptorCommandExecution {
         }
         await output.stop(drainRemainingOutput: true)
         await diagnostics.stop(drainRemainingOutput: true)
+        if let prepared {
+          let limits = try prepared.accessExecution(prepared.executionID, operation: .readResult)
+          state.withLockedValue {
+            $0.limit = min($0.limit, Int(clamping: limits.outputBytes))
+            if $0.stderr.count > $0.limit {
+              $0.stderr.removeFirst($0.stderr.count - $0.limit)
+              $0.truncated = true
+            }
+          }
+        }
         let collected = state.withLockedValue { $0 }
         if let error = collected.error { throw error }
         return CommandResult(
@@ -104,6 +132,7 @@ internal enum DescriptorCommandExecution {
   }
 
   private struct Output: Sendable {
+    var limit: Int
     var stderr = Data()
     var truncated = false
     var error: (any Error)?

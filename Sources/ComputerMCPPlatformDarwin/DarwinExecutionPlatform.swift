@@ -7,6 +7,7 @@ import System
 
 package struct DarwinExecutionPlatform: ExecutionPlatform {
   package var supportsRecovery: Bool { true }
+  package func supportsDurableOwnership(sandboxed: Bool) -> Bool { sandboxed }
   package var bootSessionID: String? {
     var buffer = [CChar](repeating: 0, count: 128)
     var count = buffer.count
@@ -55,6 +56,34 @@ package struct DarwinExecutionPlatform: ExecutionPlatform {
     let ownership = DarwinExecutionOwnership(marker: nil, table: table)
     try ownership.recover(identities)
     _ = try await ownership.cancel()
+  }
+
+  package func recover(_ state: ExecutionRecoveryState) async throws -> any ExecutionOwnership {
+    guard state.sandboxed, state.backend == "darwin", state.root.processID > 0,
+      state.root.identity > 0
+    else {
+      throw ExecutionEnvironmentError.unavailable("Invalid Darwin execution recovery")
+    }
+    let root = DarwinProcessIdentity(pid: state.root.processID, uniqueID: state.root.identity)
+    guard let payload = state.payload, payload.count <= 65_536 else {
+      throw ExecutionEnvironmentError.unavailable("Sandbox recovery evidence is unavailable")
+    }
+    let marker = try ExecutionSandboxMarker(
+      recovery: JSONDecoder().decode(ExecutionSandboxMarker.Recovery.self, from: payload))
+    let ownership = DarwinExecutionOwnership(
+      marker: marker, table: table, recoveryRoot: root)
+    try ownership.recover([root])
+    return ownership
+  }
+
+  package func releaseRecovery(_ state: ExecutionRecoveryState) throws {
+    guard state.backend == "darwin" else {
+      throw ExecutionEnvironmentError.unavailable("Unknown execution recovery backend")
+    }
+    if state.sandboxed, let payload = state.payload {
+      try ExecutionSandboxMarker.release(
+        JSONDecoder().decode(ExecutionSandboxMarker.Recovery.self, from: payload))
+    }
   }
 
   package func start(
@@ -128,11 +157,16 @@ package struct DarwinExecutionPlatform: ExecutionPlatform {
                   diagnostics.didSpawn()
                   return await withCheckedContinuation { continuation in
                     DispatchQueue(label: "execution.launch", qos: .userInitiated).async {
-                      let result = Result {
+                      var result = Result {
                         try channel.accept(
                           pid: execution.processIdentifier.value, ownership: ownership)
                       }
                       if case .failure = result { channel.disconnect() }
+                      do {
+                        try Self.waitForTerminalState(execution.processIdentifier.value)
+                      } catch {
+                        if case .success = result { result = .failure(error) }
+                      }
                       continuation.resume(returning: result)
                     }
                   }
@@ -199,6 +233,20 @@ package struct DarwinExecutionPlatform: ExecutionPlatform {
       throw CancellationError()
     }
     return handle
+  }
+
+  /// Darwin may report a stopped child even for WEXITED. Leave collection to
+  /// Subprocess only after terminal status is observable; its reaper requires it.
+  private static func waitForTerminalState(_ pid: pid_t) throws {
+    while true {
+      var info = siginfo_t()
+      guard waitid(P_PID, id_t(pid), &info, WEXITED | WNOWAIT) == 0 else {
+        if errno == EINTR { continue }
+        throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)
+      }
+      if [CLD_EXITED, CLD_KILLED, CLD_DUMPED].contains(info.si_code) { return }
+      Thread.sleep(forTimeInterval: 0.001)
+    }
   }
 
   private func foundation(

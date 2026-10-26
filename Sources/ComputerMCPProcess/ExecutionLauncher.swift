@@ -8,6 +8,10 @@ package struct ExecutionLauncher: Sendable {
   package var bootSessionID: String? { platform.bootSessionID }
   package var hostSystemReadPaths: [SandboxPath] { platform.hostSystemReadPaths }
 
+  package func supportsDurableOwnership(sandboxed: Bool) -> Bool {
+    platform.supportsDurableOwnership(sandboxed: sandboxed)
+  }
+
   private let platform: any ExecutionPlatform
 
   package init(platform: any ExecutionPlatform = UnsupportedExecutionPlatform()) {
@@ -16,6 +20,14 @@ package struct ExecutionLauncher: Sendable {
 
   package func interrupt(_ members: [ExecutionMember]) async throws {
     try await platform.interrupt(members)
+  }
+
+  package func recover(_ state: ExecutionRecoveryState) async throws -> any ExecutionOwnership {
+    try await platform.recover(state)
+  }
+
+  package func releaseRecovery(_ state: ExecutionRecoveryState) throws {
+    try platform.releaseRecovery(state)
   }
 
   package func start(
@@ -34,6 +46,9 @@ package struct ExecutionLauncher: Sendable {
       throw ExecutionEnvironmentError.invalidConfiguration(
         "Invalid arguments or stream descriptors")
     }
+    let prepared = try PreparedExecutionContext.current()
+    let mode = prepared?.mode ?? mode
+    let environment = prepared?.environment ?? environment
     let sandbox: SandboxConfiguration?
     switch mode {
     case .sandbox(let configuration):
@@ -51,16 +66,31 @@ package struct ExecutionLauncher: Sendable {
     case .fullAccess:
       sandbox = nil
     }
+    if prepared != nil, !platform.supportsDurableOwnership(sandboxed: sandbox != nil) {
+      throw ExecutionEnvironmentError.unavailable(
+        "This backend cannot enforce durable execution ownership in the requested mode")
+    }
     let command = try ExecutionCommand(
       executable: executable, arguments: arguments, directory: directory,
       environment: environment.variables(sandbox: sandbox),
       directoryDescriptor: directoryDescriptor,
       inheritedDescriptors: inheritedDescriptors
     )
-    return try await platform.start(
-      command, sandbox: sandbox,
-      method: directoryDescriptor == nil && inheritedDescriptors.isEmpty ? method : .posixSpawn,
-      input: input, output: output, error: error, bindOwnership: bindOwnership)
+    let childID = UUID()
+    try prepared?.authority.reserveChild(childID)
+    do {
+      return try await platform.start(
+        command, sandbox: sandbox,
+        method: directoryDescriptor == nil && inheritedDescriptors.isEmpty ? method : .posixSpawn,
+        input: input, output: output, error: error,
+        bindOwnership: { ownership in
+          prepared?.authority.bindChild(childID, ownership: ownership)
+          bindOwnership(ownership)
+        })
+    } catch {
+      prepared?.authority.launchFailed(childID)
+      throw error
+    }
   }
 
   package func run(

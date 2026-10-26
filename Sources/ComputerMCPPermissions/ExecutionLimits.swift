@@ -128,7 +128,7 @@ package struct EffectiveExecutionLimits: Equatable, Sendable, Codable {
 
   /// An existing execution keeps the ceilings already applied by its backend.
   /// Reconciliation can tighten them; relaxing policy applies to later executions.
-  func tightening(_ previous: Self) -> Self {
+  package func tightening(_ previous: Self) -> Self {
     var sources = previous.sources
     for (source, current) in self.sources {
       let old = sources[source] ?? .none

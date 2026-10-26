@@ -108,6 +108,11 @@ package final class GatewayDatabaseConnection: @unchecked Sendable {
           CREATE INDEX hostCallRecordsCompletion ON hostCallRecords(completedAt);
           """)
     }
+    migrator.registerMigration("execution-runtime") { database in
+      try database.execute(
+        sql: "CREATE TABLE permissionRuntimeExecutions (id TEXT PRIMARY KEY, payload BLOB NOT NULL)"
+      )
+    }
     return migrator
   }()
 

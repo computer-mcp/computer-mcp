@@ -11,10 +11,15 @@ import GRDB
 package final class GatewayPermissionService: @unchecked Sendable {
   private let store: SQLitePermissionStore
   private let policyReader: any ManagedPolicyReading
+  private let onAuthorityChange: @Sendable () -> Void
 
-  package init(store: SQLitePermissionStore, policyReader: any ManagedPolicyReading) {
+  package init(
+    store: SQLitePermissionStore, policyReader: any ManagedPolicyReading,
+    onAuthorityChange: @escaping @Sendable () -> Void = {}
+  ) {
     self.store = store
     self.policyReader = policyReader
+    self.onAuthorityChange = onAuthorityChange
   }
 
   package func admit(
@@ -295,12 +300,14 @@ package final class GatewayPermissionService: @unchecked Sendable {
       }
       let snapshot = GatewayPermissionPolicySnapshot(reader: policyReader, owners: baseline.1)
       do {
-        return try store.transactionWithDatabase { database, ledger in
+        let result = try store.transactionWithDatabase { database, ledger in
           guard try Self.policyVersion(database) == baseline.0 else {
             throw GatewayPermissionError.invalidPolicySnapshot
           }
           return try body(database, &ledger, snapshot)
         }
+        onAuthorityChange()
+        return result
       } catch GatewayPermissionError.invalidPolicySnapshot { continue }
     }
     throw GatewayPermissionError.invalidPolicySnapshot

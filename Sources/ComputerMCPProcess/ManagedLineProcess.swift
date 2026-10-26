@@ -80,6 +80,8 @@ package enum ManagedLineProcessError: Error, LocalizedError, Sendable {
 /// Owns one supervisor generation. The lock protects closeTask; all process state is actor-owned.
 /// Stream readers and descriptor input own their I/O locks; no host process is adopted.
 package final class ManagedLineProcess: @unchecked Sendable {
+  private let prepared: PreparedExecutionContext?
+
   package struct Configuration: Sendable {
     var executable: String
     var arguments: [String]
@@ -157,6 +159,7 @@ package final class ManagedLineProcess: @unchecked Sendable {
     installBrokenPipeHandler()
     // Copy while the caller still owns its descriptors. Launch and shutdown may race,
     // so asynchronous spawn must never refer to a descriptor the caller can close/reuse.
+    self.prepared = try PreparedExecutionContext.current()
     var configuration = configuration
     var ownedDescriptors: [Int32: FileHandle] = [:]
     for (destination, handle) in configuration.inheritedDescriptors {
@@ -180,12 +183,15 @@ package final class ManagedLineProcess: @unchecked Sendable {
       ownerProcessID: configuration.ownerProcessID
     )
     self.state = state
-    self.launchTask = Task.detached(priority: .userInitiated) {
+    self.launchTask = ExecutionTasks.start(priority: .userInitiated) { [configuration] in
       await Self.launch(launcher: launcher, configuration: configuration, state: state)
     }
   }
 
   package func sendLine(_ line: String) async throws {
+    if let prepared {
+      _ = try prepared.accessExecution(prepared.executionID, operation: .writeInput)
+    }
     try await state.send(line: line)
   }
 

@@ -32,7 +32,9 @@ package struct ProjectToolProvider: GatewayToolProvider {
     let policy: HostExecutionPolicy =
       descriptor == nil || descriptor?.risk == .readOnly
         || descriptor?.projectRequirement == ProjectRequirement.none ? .readOnly : .fullAccess
-    return try HostExecutionPolicy.$current.withValue(policy) { try dispatch(invocation) }
+    return try projectScope.withPathAccess {
+      try HostExecutionPolicy.$current.withValue(policy) { try dispatch(invocation) }
+    }
   }
 
   private func dispatch(_ invocation: ToolInvocation) throws -> JSONValue {

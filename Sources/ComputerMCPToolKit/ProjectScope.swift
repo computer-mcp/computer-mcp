@@ -19,6 +19,12 @@ package struct ProjectScope: Sendable {
     self.toolMeta = toolMeta
   }
 
+  /// Keeps an injected checker active for shared readers and directory helpers.
+  package func withPathAccess<Value>(_ operation: () throws -> Value) rethrows -> Value {
+    try HostPathAccess.$current.withValue(
+      pathAccess ?? HostPathAccess.current, operation: operation)
+  }
+
   package func resolvedProjectURL(_ path: String, operation: HostPathOperation = .read) throws
     -> URL
   {

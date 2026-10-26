@@ -23,7 +23,7 @@ extension StructuredToolProvider {
       throw GatewayToolError.invalidArguments("File exceeds max_bytes: \(path)")
     }
 
-    let handle = try FileHandle(forReadingFrom: url)
+    let handle = try AuthorizedFileReader(url: url)
     defer {
       try? handle.close()
     }
@@ -67,7 +67,7 @@ extension StructuredToolProvider {
       throw GatewayToolError.invalidArguments("Path is not a file: \(path)")
     }
 
-    let handle = try FileHandle(forReadingFrom: url)
+    let handle = try AuthorizedFileReader(url: url)
     defer {
       try? handle.close()
     }
@@ -306,7 +306,7 @@ extension StructuredToolProvider {
       throw GatewayToolError.invalidArguments("File exceeds max_bytes: \(path)")
     }
 
-    let handle = try FileHandle(forReadingFrom: url)
+    let handle = try AuthorizedFileReader(url: url)
     defer {
       try? handle.close()
     }
@@ -358,7 +358,7 @@ extension StructuredToolProvider {
       throw GatewayToolError.invalidArguments("File exceeds max_bytes: \(path)")
     }
 
-    let handle = try FileHandle(forReadingFrom: url)
+    let handle = try AuthorizedFileReader(url: url)
     defer {
       try? handle.close()
     }
@@ -455,7 +455,7 @@ extension StructuredToolProvider {
       throw GatewayToolError.invalidArguments("File exceeds max_bytes: \(path)")
     }
 
-    let handle = try FileHandle(forReadingFrom: url)
+    let handle = try AuthorizedFileReader(url: url)
     defer {
       try? handle.close()
     }
@@ -525,7 +525,7 @@ extension StructuredToolProvider {
       throw GatewayToolError.invalidArguments("File exceeds max_bytes: \(path)")
     }
 
-    let handle = try FileHandle(forReadingFrom: url)
+    let handle = try AuthorizedFileReader(url: url)
     defer {
       try? handle.close()
     }
@@ -733,7 +733,7 @@ extension StructuredToolProvider {
       throw GatewayToolError.invalidArguments("Path is not a file: \(path)")
     }
 
-    let handle = try FileHandle(forReadingFrom: url)
+    let handle = try AuthorizedFileReader(url: url)
     defer {
       try? handle.close()
     }

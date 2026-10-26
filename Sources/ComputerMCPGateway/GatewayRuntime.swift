@@ -6,6 +6,7 @@ import ComputerMCPPlatform
 import ComputerMCPPlatformPOSIX
 import ComputerMCPPlugins
 import ComputerMCPProcess
+import ComputerMCPToolKit
 import ComputerMCPTransport
 import Crypto
 import Foundation
@@ -2838,7 +2839,7 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
   }
 
   private static func operationFileDigest(_ url: URL) throws -> String {
-    let handle = try FileHandle(forReadingFrom: url)
+    let handle = try AuthorizedFileReader(url: url)
     defer { try? handle.close() }
     var hasher = SHA256()
     while let data = try handle.read(upToCount: 1_024 * 1_024), !data.isEmpty {

@@ -1434,7 +1434,7 @@ extension ProjectToolProvider {
       return
     }
 
-    let handle = try FileHandle(forReadingFrom: url)
+    let handle = try AuthorizedFileReader(url: url)
     defer {
       try? handle.close()
     }
@@ -1640,7 +1640,7 @@ extension ProjectToolProvider {
     maxKeysPerFile: Int,
     maxBytesPerFile: Int
   ) throws -> ProjectEnvFileInfo {
-    let handle = try FileHandle(forReadingFrom: url)
+    let handle = try AuthorizedFileReader(url: url)
     defer {
       try? handle.close()
     }
@@ -2331,7 +2331,7 @@ extension ProjectToolProvider {
   private func readProjectInstructionContent(url: URL, maxBytes: Int) throws
     -> ProjectInstructionContent
   {
-    let handle = try FileHandle(forReadingFrom: url)
+    let handle = try AuthorizedFileReader(url: url)
     defer {
       try? handle.close()
     }
@@ -4005,7 +4005,7 @@ extension ProjectToolProvider {
       return
     }
 
-    let handle = try FileHandle(forReadingFrom: url)
+    let handle = try AuthorizedFileReader(url: url)
     defer {
       try? handle.close()
     }
@@ -4195,7 +4195,7 @@ extension ProjectToolProvider {
     url: URL,
     maxBytesPerFile: Int
   ) throws -> ProjectCommandManifestReadResult {
-    let handle = try FileHandle(forReadingFrom: url)
+    let handle = try AuthorizedFileReader(url: url)
     defer {
       try? handle.close()
     }

@@ -812,7 +812,7 @@ extension SkillsToolProvider {
       throw GatewayToolError.invalidArguments("Skill path is a directory: \(relativePath)")
     }
 
-    let handle = try FileHandle(forReadingFrom: file)
+    let handle = try AuthorizedFileReader(url: file)
     defer {
       try? handle.close()
     }
@@ -1342,7 +1342,7 @@ extension SkillsToolProvider {
       throw GatewayToolError.invalidArguments("Skill path is a directory: \(relativePath)")
     }
 
-    let handle = try FileHandle(forReadingFrom: file)
+    let handle = try AuthorizedFileReader(url: file)
     defer {
       try? handle.close()
     }
@@ -2129,7 +2129,7 @@ extension SkillsToolProvider {
   }
 
   private func readSkillContent(_ url: URL, maxBytes: Int) throws -> SkillContent {
-    let handle = try FileHandle(forReadingFrom: url)
+    let handle = try AuthorizedFileReader(url: url)
     defer {
       try? handle.close()
     }
@@ -2148,7 +2148,7 @@ extension SkillsToolProvider {
   private func readSkillFileContent(_ url: URL, maxBytes: Int, encoding: String) throws
     -> SkillFileContent
   {
-    let handle = try FileHandle(forReadingFrom: url)
+    let handle = try AuthorizedFileReader(url: url)
     defer {
       try? handle.close()
     }
@@ -2185,7 +2185,7 @@ extension SkillsToolProvider {
   private func readSkillPackageFileContent(_ url: URL, maxBytes: Int, encoding: String) throws
     -> SkillPackageFileContent
   {
-    let handle = try FileHandle(forReadingFrom: url)
+    let handle = try AuthorizedFileReader(url: url)
     defer {
       try? handle.close()
     }

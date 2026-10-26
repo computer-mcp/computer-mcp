@@ -152,7 +152,9 @@ Foundation values in `ComputerMCPPlatform`. Cloudflare access tokens use
 checks and file metadata, and `RegisteredCommands` resolution and execution with
 its CLI process lifecycle. `ToolEnvironment` shares a project's configuration,
 scope, command execution, environment, process/shell runtimes and injected platform
-services across providers; the host owns shutdown.
+services across providers; the host owns shutdown. The gateway also uses
+ToolKit's `AuthorizedFileReader` for operation-state digests, sharing descriptor
+and live permission checks with tool readers.
 
 `ComputerMCPDelivery` is a neutral capabilities target using Core, Configuration,
 Process, PlatformPOSIX and ToolKit. It owns scoped edit/commit/land execution,

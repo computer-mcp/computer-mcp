@@ -8,6 +8,7 @@ import ComputerMCPProcess
 import ComputerMCPSandbox
 import ComputerMCPTestSupport
 import ComputerMCPToolKit
+import ComputerMCPWorktrees
 import Foundation
 import Testing
 

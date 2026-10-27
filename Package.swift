@@ -68,6 +68,11 @@ let neutralTargets: [Target] =
       ]
     ),
     .target(
+      name: "ComputerMCPWorktrees", dependencies: ["ComputerMCPPlatformPOSIX"]),
+    .testTarget(
+      name: "ComputerMCPWorktreesTests",
+      dependencies: ["ComputerMCPWorktrees", "ComputerMCPPlatformPOSIX", "ComputerMCPTestSupport"]),
+    .target(
       name: "ComputerMCPPersistence",
       dependencies: [
         "ComputerMCPCore", "ComputerMCPPermissions", "ComputerMCPPlatform",
@@ -86,6 +91,7 @@ let neutralTargets: [Target] =
     .target(
       name: "ComputerMCPToolKit",
       dependencies: [
+        "ComputerMCPWorktrees",
         "ComputerMCPCore", "ComputerMCPConfiguration", "ComputerMCPPlatform",
         "ComputerMCPPlatformPOSIX", "ComputerMCPProcess",
       ]
@@ -100,6 +106,7 @@ let neutralTargets: [Target] =
     .testTarget(
       name: "ComputerMCPToolsFilesTests",
       dependencies: [
+        "ComputerMCPWorktrees",
         "ComputerMCPToolsFiles", "ComputerMCPToolKit", "ComputerMCPCore",
         "ComputerMCPConfiguration", "ComputerMCPPlatform", "ComputerMCPPlatformPOSIX",
         "ComputerMCPProcess", "ComputerMCPTestSupport",
@@ -115,6 +122,7 @@ let neutralTargets: [Target] =
     .testTarget(
       name: "ComputerMCPToolsProjectTests",
       dependencies: [
+        "ComputerMCPWorktrees",
         "ComputerMCPToolsProject", "ComputerMCPToolsFiles", "ComputerMCPToolKit",
         "ComputerMCPCore", "ComputerMCPConfiguration", "ComputerMCPPlatform",
         "ComputerMCPTestSupport",
@@ -189,12 +197,14 @@ let neutralTargets: [Target] =
     .target(
       name: "ComputerMCPDelivery",
       dependencies: [
+        "ComputerMCPWorktrees",
         "ComputerMCPCore", "ComputerMCPConfiguration", "ComputerMCPProcess",
         "ComputerMCPPlatformPOSIX", "ComputerMCPToolKit",
       ]),
     .testTarget(
       name: "ComputerMCPDeliveryTests",
       dependencies: [
+        "ComputerMCPWorktrees",
         "ComputerMCPDelivery", "ComputerMCPCore", "ComputerMCPConfiguration",
         "ComputerMCPProcess", "ComputerMCPPlatformPOSIX", "ComputerMCPToolKit",
         "ComputerMCPTestSupport",
@@ -207,6 +217,7 @@ let neutralTargets: [Target] =
     .testTarget(
       name: "ComputerMCPToolsGitTests",
       dependencies: [
+        "ComputerMCPWorktrees",
         "ComputerMCPToolsGit", "ComputerMCPToolKit", "ComputerMCPCore", "ComputerMCPConfiguration",
         "ComputerMCPPlatform", "ComputerMCPPlatformPOSIX", "ComputerMCPProcess",
         "ComputerMCPTestSupport",
@@ -294,6 +305,7 @@ let neutralTargets: [Target] =
     .target(
       name: "ComputerMCPGateway",
       dependencies: [
+        "ComputerMCPWorktrees",
         "ComputerMCPSandbox", "ComputerMCPEgress",
         "ComputerMCPPermissions",
         "ComputerMCPAuthorization",
@@ -571,6 +583,7 @@ let neutralTargets: [Target] =
       .testTarget(
         name: "ComputerMCPMacOSTests",
         dependencies: [
+          "ComputerMCPWorktrees",
           "ComputerMCPSandbox", "ComputerMCPPermissions",
           "computer-mcp",
           "ComputerMCPComputerUse",

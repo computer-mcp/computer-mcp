@@ -5,6 +5,7 @@ import ComputerMCPSandbox
 import ComputerMCPTestSupport
 import ComputerMCPToolKit
 import ComputerMCPTransport
+import ComputerMCPWorktrees
 import CryptoKit
 import Darwin
 import Foundation

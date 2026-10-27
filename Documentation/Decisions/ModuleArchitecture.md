@@ -18,7 +18,7 @@ bundled. Swift targets keep `package` access; no declaration is `public`.
 | Composition root | `ComputerMCPMacOS` | macOS |
 | Composition | `ComputerMCPControlPlane`, `ComputerMCPGateway` | neutral |
 | Capabilities | `ComputerMCPToolKit`; tool domains `ComputerMCPToolsMCP`, `ComputerMCPToolsCLI`, `ComputerMCPToolsFiles`, `ComputerMCPToolsProject`, `ComputerMCPToolsStructured`, `ComputerMCPToolsGit`, `ComputerMCPToolsShell`, `ComputerMCPToolsSkills`, `ComputerMCPToolsSystem`; `ComputerMCPPlugins`, `ComputerMCPDelivery`, `ComputerMCPAuthorization`; `ComputerMCPComputerUse` | neutral; ComputerUse macOS |
-| Services | `ComputerMCPEgress`, `ComputerMCPConfiguration`, `ComputerMCPPersistence`, `ComputerMCPProcess`, `ComputerMCPTransport`, `ComputerMCPDownstream`, `ComputerMCPTunnels` | neutral |
+| Services | `ComputerMCPEgress`, `ComputerMCPConfiguration`, `ComputerMCPPersistence`, `ComputerMCPProcess`, `ComputerMCPTransport`, `ComputerMCPDownstream`, `ComputerMCPTunnels`, `ComputerMCPWorktrees` | neutral |
 | Platform | `ComputerMCPPlatform` (protocols and values), `ComputerMCPPlatformPOSIX`, `CSystemPOSIX`, `ComputerMCPPlatformDarwin`, `CSystemArchive`, `CDarwinExecution`, `computer-mcp-execution-bootstrap` | neutral; POSIX; macOS |
 | Base | `ComputerMCPCore`, `ComputerMCPSandbox`; lower `ComputerMCPPermissions` (Foundation only) | neutral |
 
@@ -52,6 +52,9 @@ Dependencies inside a layer are limited to these:
   authentication values.
 - `Persistence`: the database connection, schema, transaction API and durable
   permission store. Other domain stores compose its shared connection.
+- `Worktrees`: neutral repository coordination, durable journal I/O and host Git
+  configuration safety, with injected command execution. It contains no gateway
+  or tool models.
 - `Process`: bounded process execution, managed processes, shell sessions and
   executable discovery. An injected `ExecutionLauncher` owns launches; session
   storage and its optional recovery journal own output and cursor retention.

@@ -92,6 +92,7 @@ package product and does not install or bundle vendor binaries.
 | `Sources/ComputerMCPToolsSystem/` | Platform-neutral System and Network providers with explicit definitions, bounded command execution, POSIX observation and injected native memory, CPU and thermal readings |
 | `Sources/ComputerMCPToolsMCP/` | Platform-neutral MCP builtin and configured providers, downstream discovery, validated catalogs, host risk descriptors and context-preserving calls |
 | `Sources/ComputerMCPToolsGit/` | Platform-neutral Git provider with explicit definitions, annotations, descriptors and registered-command dispatch |
+| `Sources/ComputerMCPWorktrees/` | Neutral repository lock, durable journal I/O, Git safety policy and injected command contract |
 | `Sources/ComputerMCPDelivery/` | Platform-neutral delivery provider, scoped worktree edits, repository locks, atomic file journals, landing and recovery |
 | `Sources/ComputerMCPAuthorization/` | Platform-neutral OAuth state machine, discovery metadata, injected CIMD identification, rate limits and transactional grant/token store contract; macOS URLSession CIMD transport |
 | `Sources/ComputerMCPToolKit/` | Platform-neutral argument and result helpers, project path scope and file metadata, shared filesystem/outline/HTTP helpers, configured command resolution and execution, and project-owned tool environments |
@@ -629,3 +630,13 @@ Exact provisioning rollback requires its creating invocation and revision, even 
 the grant has since been revoked; idempotent registration never transfers rollback
 ownership. Permission-ledger admission remains authoritative. The version-1 `ticket_id`
 compatibility field is null; callbacks validate the live call record and ledger.
+
+## Repository coordination
+
+Host Git mutations coordinate on the canonical common Git directory's
+`computer-mcp/repository.lock`. The descriptor and stable inode own exclusion;
+owner metadata is diagnostic. Cancellation and timeout never unlink the lock.
+Directory and lock identity are checked before use. External Git processes do
+not honor this advisory lock, so mutation owners also verify their expected Git
+and checkout state. Upgrading from hosts using the earlier delivery lock requires
+stopping those hosts before the new host opens the repository.

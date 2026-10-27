@@ -1,5 +1,6 @@
 import ComputerMCPProcess
 import ComputerMCPToolKit
+import ComputerMCPWorktrees
 import Foundation
 
 /// Uses the registered executable and interpreter binding, with a complete sanitized environment.
@@ -15,6 +16,7 @@ internal struct DeliveryGit: Sendable {
   private let identityEnvironment: [String: String]
   private let home: PrivateProcessHome
   let timeout: Int
+  let bootSessionID: String?
   private let runner: ManagedCommandRunner
   private var worktree: (root: URL, directory: URL)?
 
@@ -26,6 +28,7 @@ internal struct DeliveryGit: Sendable {
   }
 
   init(environment tools: ToolEnvironment) throws {
+    bootSessionID = tools.launcher.bootSessionID
     runner = ManagedCommandRunner(launcher: tools.launcher, policy: .fullAccess)
     let command = try tools.registeredCommands.gitCLICommand()
     let invocation = try tools.registeredCommands.resolveHostInvocation(command)
@@ -54,13 +57,15 @@ internal struct DeliveryGit: Sendable {
       var programOptions = try self.programOptions(at: directory) + additionalProgramOptions
       if ["commit", "merge", "rebase"].contains(command) {
         for key in ["user.name", "user.email"] {
-          let identity = try runner.runData(
-            executable: executable,
-            invocation: .init(
-              arguments: prefix + binding + HostGitConfiguration.arguments
-                + ["config", "--null", "--get", key], standardInput: Data()),
-            workingDirectory: directory, environment: identityEnvironment,
-            timeoutMilliseconds: timeout, maxOutputBytes: 65_536)
+          let identity = try HostCommandEnvironment.$current.withValue(identityEnvironment) {
+            try runner.runData(
+              executable: executable,
+              invocation: .init(
+                arguments: prefix + binding + HostGitConfiguration.arguments
+                  + ["config", "--null", "--get", key], standardInput: Data()),
+              workingDirectory: directory, environment: identityEnvironment,
+              timeoutMilliseconds: timeout, maxOutputBytes: 65_536)
+          }
           guard !identity.timedOut, !identity.stdoutTruncated,
             identity.exitCode == 0 || identity.exitCode == 1
           else {
@@ -71,19 +76,21 @@ internal struct DeliveryGit: Sendable {
           }
         }
       }
-      let result = try runner.runData(
-        executable: executable,
-        invocation: .init(
-          arguments: prefix + binding + pathOptions + HostGitConfiguration.arguments
-            + programOptions
-            + [
-              "-c", "gc.auto=0", "-c", "maintenance.auto=false", "-c", "submodule.recurse=false",
-              "-c", "notes.rewrite.rebase=false", "-c", "rebase.updateRefs=false",
-              "-c", "rebase.autoStash=false", "-c", "rerere.enabled=false",
-            ]
-            + arguments, standardInput: input),
-        workingDirectory: directory, environment: environment,
-        timeoutMilliseconds: timeout, maxOutputBytes: 1_048_576)
+      let result = try HostCommandEnvironment.$current.withValue(environment) {
+        try runner.runData(
+          executable: executable,
+          invocation: .init(
+            arguments: prefix + binding + pathOptions + HostGitConfiguration.arguments
+              + programOptions
+              + [
+                "-c", "gc.auto=0", "-c", "maintenance.auto=false", "-c", "submodule.recurse=false",
+                "-c", "notes.rewrite.rebase=false", "-c", "rebase.updateRefs=false",
+                "-c", "rebase.autoStash=false", "-c", "rerere.enabled=false",
+              ]
+              + arguments, standardInput: input),
+          workingDirectory: directory, environment: environment,
+          timeoutMilliseconds: timeout, maxOutputBytes: 1_048_576)
+      }
       guard !result.timedOut, let code = result.exitCode, accepting.contains(code),
         !result.stdoutTruncated
       else {
@@ -103,13 +110,15 @@ internal struct DeliveryGit: Sendable {
   func programOptions(at directory: URL) throws -> [String] {
     let binding =
       worktree.map { ["--git-dir=\($0.directory.path)", "--work-tree=\($0.root.path)"] } ?? []
-    let keys = try runner.runData(
-      executable: executable,
-      invocation: .init(
-        arguments: prefix + binding + HostGitConfiguration.arguments
-          + ["config", "--null", "--name-only", "--list", "--no-includes"], standardInput: Data()),
-      workingDirectory: directory, environment: environment,
-      timeoutMilliseconds: timeout, maxOutputBytes: 1_048_576)
+    let keys = try HostCommandEnvironment.$current.withValue(environment) {
+      try runner.runData(
+        executable: executable,
+        invocation: .init(
+          arguments: prefix + binding + HostGitConfiguration.arguments
+            + ["config", "--null", "--name-only", "--list", "--no-includes"], standardInput: Data()),
+        workingDirectory: directory, environment: environment,
+        timeoutMilliseconds: timeout, maxOutputBytes: 1_048_576)
+    }
     guard keys.exitCode == 0, !keys.timedOut, !keys.stdoutTruncated else {
       throw DeliveryFailure(
         reason: .gitFailed, detail: "Cannot inspect Git program configuration.")

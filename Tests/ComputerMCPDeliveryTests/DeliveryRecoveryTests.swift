@@ -12,7 +12,7 @@ import Testing
   import ComputerMCPDarwinTestSupport
 #endif
 
-@Suite(.nativeIntegration)
+@Suite(.nativeIntegration, DeliveryAdministration())
 struct DeliveryRecoveryTests {
   enum Interruption: String, CaseIterable, Sendable {
     case beforeWorktree, beforeCommit, afterCommitBeforeJournal, afterCommit, beforeMerge,

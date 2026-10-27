@@ -4,6 +4,7 @@ import ComputerMCPPersistence
 import ComputerMCPPlatform
 import ComputerMCPPlatformPOSIX
 import ComputerMCPToolKit
+import ComputerMCPWorktrees
 import Foundation
 import GRDB
 

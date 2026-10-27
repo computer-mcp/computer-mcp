@@ -30,7 +30,8 @@
         "ComputerMCPProcess",
         "ComputerMCPTransport",
         "ComputerMCPDownstream",
-        "ComputerMCPTunnels"
+        "ComputerMCPTunnels",
+        "ComputerMCPWorktrees"
       ]
     },
     {

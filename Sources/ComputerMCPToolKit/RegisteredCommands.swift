@@ -3,6 +3,7 @@ import ComputerMCPCore
 import ComputerMCPPlatform
 import ComputerMCPPlatformPOSIX
 import ComputerMCPProcess
+import ComputerMCPWorktrees
 import Foundation
 
 /// Shares configured command resolution and execution across tool domains.
@@ -88,7 +89,12 @@ package struct RegisteredCommands: Sendable {
     guard keys.exitCode == 0, !keys.timedOut, !keys.stdoutTruncated else {
       throw GatewayToolError.executionFailed("Cannot inspect Git program configuration.")
     }
-    var options = try HostGitConfiguration.overrides(for: keys.stdout)
+    var options: [String]
+    do {
+      options = try HostGitConfiguration.overrides(for: keys.stdout)
+    } catch {
+      throw GatewayToolError.executionFailed(error.localizedDescription)
+    }
     if let operation = args.first,
       ["commit", "merge", "rebase", "tag", "stash", "cherry-pick", "revert"].contains(operation)
     {

@@ -2,6 +2,7 @@ import ComputerMCPCore
 import ComputerMCPPlatform
 import ComputerMCPPlatformPOSIX
 import ComputerMCPProcess
+import ComputerMCPWorktrees
 import Foundation
 
 #if canImport(Darwin)

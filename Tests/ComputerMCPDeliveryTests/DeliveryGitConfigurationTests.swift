@@ -4,7 +4,7 @@ import Testing
 
 @testable import ComputerMCPDelivery
 
-@Suite(.nativeIntegration)
+@Suite(.nativeIntegration, DeliveryAdministration())
 struct DeliveryGitConfigurationTests {
   @Test(arguments: ["main", "worktree", "retry", "landed"])
   func symbolicOrigHeadPreservesTargetBranch(checkout: String) async throws {

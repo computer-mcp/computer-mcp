@@ -1,6 +1,7 @@
 import ComputerMCPPlatform
 import ComputerMCPTestSupport
 import ComputerMCPToolKit
+import ComputerMCPWorktrees
 import Foundation
 
 /// Supplies the host's configuration inventory separately from subcommand response fixtures.

@@ -5,7 +5,7 @@ import Testing
 
 @testable import ComputerMCPDelivery
 
-@Suite(.nativeIntegration)
+@Suite(.nativeIntegration, DeliveryAdministration())
 struct DeliveryConcurrencyTests {
   @Test
   func ignoredMainFileBeforeLandingIsPreserved() async throws {

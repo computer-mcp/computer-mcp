@@ -1,4 +1,3 @@
-import ComputerMCPCore
 import Foundation
 
 /// Program configuration for Git launched by host-owned operations.
@@ -57,7 +56,7 @@ package enum HostGitConfiguration {
     for key in Set(names.split(separator: "\0").map(String.init)).sorted() {
       let lower = key.lowercased()
       guard !lower.hasPrefix("include."), !lower.hasPrefix("includeif.") else {
-        throw GatewayToolError.executionFailed(
+        throw WorktreeError.unsafeConfiguration(
           "Host Git operations refuse repository configuration includes.")
       }
       let value: String?
@@ -73,7 +72,7 @@ package enum HostGitConfiguration {
         lower.hasSuffix(".command") || lower.hasSuffix(".enabled") || lower.hasSuffix(".event")
       {
         guard !key.contains("=") else {
-          throw GatewayToolError.executionFailed("Invalid Git configuration key.")
+          throw WorktreeError.unsafeConfiguration("Invalid Git configuration key.")
         }
         let subsection = key[..<key.lastIndex(of: ".")!]
         result += [
@@ -108,7 +107,7 @@ package enum HostGitConfiguration {
       }
       if let value {
         guard !key.contains("="), !key.contains("\0") else {
-          throw GatewayToolError.executionFailed("Invalid Git configuration key.")
+          throw WorktreeError.unsafeConfiguration("Invalid Git configuration key.")
         }
         result += ["-c", "\(key)=\(value)"]
       }

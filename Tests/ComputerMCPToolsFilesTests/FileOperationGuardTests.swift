@@ -3,6 +3,7 @@ import ComputerMCPCore
 import ComputerMCPPlatform
 import ComputerMCPTestSupport
 import ComputerMCPToolKit
+import ComputerMCPWorktrees
 import Foundation
 import Testing
 

@@ -1,5 +1,6 @@
 import ComputerMCPConfiguration
 import ComputerMCPPlatformPOSIX
+import ComputerMCPWorktrees
 import Foundation
 
 internal final class DeliveryCancellation: @unchecked Sendable {
@@ -61,24 +62,19 @@ internal struct DeliveryRepository: Sendable {
   }
 
   func withLock<T>(_ action: () throws -> T) throws -> T {
-    let directory = common.appendingPathComponent("computer-mcp", isDirectory: true)
-    try io.prepareDirectory(directory)
-    let deadline = ContinuousClock.now.advanced(by: .seconds(60))
-    while true {
-      try cancellation.check()
-      do {
-        let lock = try FileLock(
-          path: directory.appendingPathComponent("delivery.lock").path, mode: .exclusive)
-        defer { lock.release() }
-        return try action()
-      } catch FileLockError.held {
-        guard ContinuousClock.now < deadline else {
-          throw DeliveryFailure(
-            reason: .busy, detail: "Repository delivery lock timed out after 60 seconds.")
-        }
-        Thread.sleep(forTimeInterval: 0.025)
-      }
+    try io.prepareDirectory(common.appendingPathComponent("computer-mcp", isDirectory: true))
+    let lock: RepositoryLock
+    do {
+      lock = try RepositoryLock(
+        commonDirectory: common, owner: .init(bootSessionID: git.bootSessionID),
+        timeout: .seconds(60),
+        checkCancellation: cancellation.check)
+    } catch WorktreeError.busy {
+      throw DeliveryFailure(reason: .busy, detail: "Repository coordination lock timed out.")
     }
+    defer { lock.release() }
+    try lock.verify()
+    return try action()
   }
 
   func preflight(_ request: DeliveryRequest) throws -> String {

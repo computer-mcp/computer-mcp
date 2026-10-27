@@ -1,5 +1,6 @@
 import ComputerMCPConfiguration
 import ComputerMCPCore
+import ComputerMCPProcess
 import ComputerMCPToolKit
 import Foundation
 
@@ -21,19 +22,22 @@ package final class DeliveryToolProvider: GatewayToolProvider, Sendable {
     self.environment = environment
     self.io = io
     let cancellation = recoveryCancellation
+    let administration = ExecutionAdministration.current
     recoveryTask =
       startsRecovery && !environment.configuration.delivery.scopes.isEmpty
       ? Task {
         try? await Self.execution.perform {
-          for scope in environment.configuration.delivery.scopes {
-            if cancellation.isCancelled { return }
-            do {
-              let repository = try DeliveryRepository(
-                scope: scope,
-                project: environment.configuration.projectDirectory,
-                git: DeliveryGit(environment: environment), io: io, cancellation: cancellation)
-              try repository.withLock { try repository.recover() }
-            } catch { continue }
+          try ExecutionAdministration.$current.withValue(administration) {
+            for scope in environment.configuration.delivery.scopes {
+              if cancellation.isCancelled { return }
+              do {
+                let repository = try DeliveryRepository(
+                  scope: scope,
+                  project: environment.configuration.projectDirectory,
+                  git: DeliveryGit(environment: environment), io: io, cancellation: cancellation)
+                try repository.withLock { try repository.recover() }
+              } catch { continue }
+            }
           }
         }
       } : nil
@@ -58,8 +62,13 @@ package final class DeliveryToolProvider: GatewayToolProvider, Sendable {
   package func callToolAsync(_ invocation: ToolInvocation) async throws -> JSONValue {
     try Task.checkCancellation()
     let cancellation = DeliveryCancellation()
+    let administration = ExecutionAdministration.current
     return try await withTaskCancellationHandler {
-      try await Self.execution.perform { try self.call(invocation, cancellation: cancellation) }
+      try await Self.execution.perform {
+        try ExecutionAdministration.$current.withValue(administration) {
+          try self.call(invocation, cancellation: cancellation)
+        }
+      }
     } onCancel: {
       cancellation.cancel()
     }

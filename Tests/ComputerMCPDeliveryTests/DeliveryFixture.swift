@@ -238,5 +238,26 @@ private let deliveryTestExecution = BlockingOperationExecutor(
   label: "computer-mcp.delivery-tests", serial: false)
 
 func deliveryTest(_ operation: @escaping @Sendable () throws -> Void) async throws {
-  try await deliveryTestExecution.perform(operation)
+  let administration = ExecutionAdministration.current
+  try await deliveryTestExecution.perform {
+    try ExecutionAdministration.$current.withValue(administration, operation: operation)
+  }
+}
+
+/// Isolated native repositories are administered by the test owner, with a private
+/// home. This scope supplies no remotely admitted program authority.
+struct DeliveryAdministration: TestTrait, SuiteTrait, TestScoping {
+  var isRecursive: Bool { true }
+
+  func provideScope(
+    for test: Test, testCase: Test.Case?, performing function: @Sendable () async throws -> Void
+  ) async throws {
+    let temporary = try ScopedTemporaryDirectory()
+    let administration = ExecutionAdministration(
+      mode: .fullAccess,
+      environment: try .init(fullAccessVariables: [
+        "PATH": systemUtilityPath, "HOME": temporary.url.path, "TMPDIR": temporary.url.path + "/",
+      ]))
+    try await ExecutionAdministration.$current.withValue(administration, operation: function)
+  }
 }

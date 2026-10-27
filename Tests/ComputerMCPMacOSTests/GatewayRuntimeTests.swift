@@ -3,6 +3,7 @@ import ComputerMCPPermissions
 import ComputerMCPProcess
 import ComputerMCPTestSupport
 import ComputerMCPToolKit
+import ComputerMCPWorktrees
 import Crypto
 import Foundation
 import Testing

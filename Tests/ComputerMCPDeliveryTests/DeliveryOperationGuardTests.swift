@@ -1,5 +1,6 @@
 import ComputerMCPConfiguration
 import ComputerMCPToolKit
+import ComputerMCPWorktrees
 import Foundation
 import Testing
 

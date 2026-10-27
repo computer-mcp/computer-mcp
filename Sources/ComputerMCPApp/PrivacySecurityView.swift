@@ -336,7 +336,7 @@ struct PrivacyPermissionDetailView: View {
             .padding(.leading, 24)
             .help(Text(verbatim: grant.object?.detail ?? ""))
             if grant.showsNetwork {
-              PrivacyNetworkPicker(model: model, grant: grant).padding(.leading, 24)
+              PrivacyNetworkPicker(model: model, grant: grant).padding(.leading, 52)
             }
           }
         } label: {
@@ -560,7 +560,7 @@ struct PrivacyPrincipalDetailView: View {
                 systemImage: kind.systemImage(for: grant.object),
                 showsNetwork: kind != .projects)
               if grant.showsNetwork {
-                PrivacyNetworkPicker(model: model, grant: grant)
+                PrivacyNetworkPicker(model: model, grant: grant).padding(.leading, 28)
               }
             }
           }

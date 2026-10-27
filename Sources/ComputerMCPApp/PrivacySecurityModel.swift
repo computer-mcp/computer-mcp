@@ -239,20 +239,45 @@ struct PrivacyLimitNotice: Hashable, Sendable {
   let effect: Effect
 }
 
+enum PrivacyGrantChoice: Hashable {
+  case inherited
+  case explicit(PrivacyGrantValue)
+}
+
 struct PrivacyGrant: Identifiable, Hashable, Sendable {
   let principalID: String
   let permission: PrivacyPermissionKind
   /// The project, folder, app, plugin or server; nil for per-principal permissions.
   let object: PrivacyObject?
+  /// The explicit or inherited value resolved by the permission library.
   var value: PrivacyGrantValue
   var network: PrivacyNetworkAccess?
   var source: PrivacyGrantSource = .owner
   var isStored = true
+  var isNetworkStored = false
+  /// The library-resolved value after removing this object's explicit entry.
+  var inheritedValue: PrivacyGrantValue?
   var allowedLevels: [PrivacyGrantValue.Level]? = nil
   var networkLimits: [PrivacyNetworkAccess] = []
   var trustedHosts: Set<String> = []
   var limitNotices: [PrivacyLimitNotice] = []
   var networkLimitNotices: [PrivacyLimitNotice] = []
+
+  var choice: PrivacyGrantChoice {
+    inheritedValue != nil && !isStored ? .inherited : .explicit(value)
+  }
+
+  var showsNetwork: Bool {
+    guard permission == .projects else { return false }
+    if case .granted = value { return true }
+    return isNetworkStored
+  }
+
+  var allowsInheritance: Bool {
+    guard let inheritedValue else { return false }
+    if case .granted(let level) = inheritedValue { return availableLevels.contains(level) }
+    return true
+  }
 
   var availableLevels: [PrivacyGrantValue.Level] { allowedLevels ?? permission.grantedValues }
 
@@ -269,6 +294,7 @@ struct PrivacyObject: Hashable, Sendable {
   let id: String
   let name: String
   let detail: String?
+  var isRegistered = true
 }
 
 struct PrivacyRequest: Identifiable, Hashable, Sendable {
@@ -393,8 +419,22 @@ final class PrivacySecurityModel: ObservableObject {
   func set(_ grant: PrivacyGrant, to value: PrivacyGrantValue, reviewed: PrivacySnapshot? = nil)
     async
   {
+    await set(grant, choice: .explicit(value), reviewed: reviewed)
+  }
+
+  func set(_ grant: PrivacyGrant, choice: PrivacyGrantChoice, reviewed: PrivacySnapshot? = nil)
+    async
+  {
     var changed = grant
-    changed.value = value
+    switch choice {
+    case .inherited:
+      guard let inherited = grant.inheritedValue else { return }
+      changed.value = inherited
+      changed.isStored = false
+    case .explicit(let value):
+      changed.value = value
+      changed.isStored = true
+    }
     let reviewed = reviewed ?? snapshot
     await perform { try await self.service.setGrant(changed, reviewed: reviewed) }
   }
@@ -442,7 +482,7 @@ final class PrivacySecurityModel: ObservableObject {
   }
 
   func grants(for permission: PrivacyPermissionKind) -> [PrivacyGrant] {
-    snapshot.grants.filter { $0.permission == permission && $0.isStored }
+    snapshot.grants.filter { $0.permission == permission && ($0.isStored || $0.isNetworkStored) }
   }
 
   func grants(for principal: PrivacyPrincipal) -> [PrivacyGrant] {

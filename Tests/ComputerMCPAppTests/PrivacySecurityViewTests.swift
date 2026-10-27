@@ -202,6 +202,90 @@ import Testing
     #expect(rows.contains { $0.permission == .mcpServers && $0.object?.id == "server" })
   }
 
+  @Test func inheritedProjectAccessKeepsItsSavedNetworkVisible() async throws {
+    let service = PrivacySecurityFake()
+    service.current = try Self.inheritedNetworkSnapshot()
+    let model = PrivacySecurityModel(service: service)
+    await model.refresh()
+    let row = try #require(model.snapshot.grants.first { $0.object?.id == "p1" })
+    #expect(row.value == .granted(.read))
+    #expect(row.choice == .inherited)
+    #expect(!row.isStored && row.isNetworkStored)
+    #expect(row.network == .full && row.showsNetwork)
+    #expect(row.object?.isRegistered == true)
+    #expect(model.grants(for: .projects).contains(row))
+    #expect(
+      PrivacyGrantRow.inheritedTitle(row, using: PrivacyText(locale: Locale(identifier: "en")))
+        == "Same as All Projects (Read)")
+    let profile = try #require(model.snapshot.reviewedProfiles.first)
+    #expect(profile.permissions.entries[.project("p1")] == nil)
+    #expect(profile.projectNetworks["p1"]?.configuration == .full)
+    #expect(
+      Set(profile.projectNetworks.keys).isSubset(
+        of: Set(model.snapshot.grants.filter(\.isNetworkStored).compactMap { $0.object?.id })))
+  }
+
+  @Test func unregisteredNetworkOnlyProjectRemainsVisibleWithoutAGrant() async throws {
+    var profile = ProfileGrant(id: .chatGPTOperate, allowedCallers: [.secureTunnel])
+    profile.projectNetworks["retired-project"] = .full
+    let service = PrivacySecurityFake()
+    service.current.grants = LivePrivacySecurityService.grants(profile, names: .init())
+    let model = PrivacySecurityModel(service: service)
+    await model.refresh()
+    let row = try #require(model.grants(for: .projects).first)
+    #expect(row.object?.id == "retired-project" && row.object?.name == "retired-project")
+    #expect(row.object?.isRegistered == false)
+    #expect(row.value == .ask && row.choice == .inherited)
+    #expect(row.network == .full && row.showsNetwork)
+    #expect(
+      PrivacyGrantRow.inheritedTitle(row, using: PrivacyText(locale: Locale(identifier: "en")))
+        == "Ask")
+    #expect(model.grants(for: .projects).count == 1)
+  }
+
+  @Test func inheritedChoicesUseLibraryResolutionForEveryObjectKind() throws {
+    var profile = ProfileGrant(id: .chatGPTOperate, allowedCallers: [.secureTunnel])
+    try profile.permissions.set(.granted(.read), for: .project("*"))
+    try profile.permissions.set(.granted(.use), for: .plugin("*"))
+    try profile.permissions.set(.granted(.all), for: .mcpServer("*"))
+    try profile.permissions.set(.notGranted, for: .project("p1"))
+    try profile.permissions.set(.denied, for: .plugin("plugin"))
+    let rows = LivePrivacySecurityService.grants(
+      profile,
+      names: .init(
+        projects: ["p1": "Project"], plugins: ["plugin": "Plugin"], mcpServers: ["server": "Server"]
+      ))
+    let project = try #require(rows.first { $0.object?.id == "p1" })
+    #expect(project.value == .ask && project.choice == .explicit(.ask))
+    #expect(project.inheritedValue == .granted(.read))
+    #expect(!project.showsNetwork)
+    let plugin = try #require(rows.first { $0.object?.id == "plugin" })
+    #expect(plugin.value == .denied && plugin.choice == .explicit(.denied))
+    #expect(plugin.inheritedValue == .granted(.use))
+    let server = try #require(rows.first { $0.object?.id == "server" })
+    #expect(server.value == .granted(.all) && server.choice == .inherited)
+    let l = PrivacyText(locale: Locale(identifier: "en"))
+    #expect(PrivacyGrantRow.inheritedTitle(plugin, using: l) == "Same as All Plugins (Use)")
+    #expect(PrivacyGrantRow.inheritedTitle(server, using: l) == "Same as All MCP Servers (All)")
+  }
+
+  private static func inheritedNetworkSnapshot() throws -> PrivacySnapshot {
+    var profile = ProfileGrant(id: .chatGPTOperate, allowedCallers: [.secureTunnel])
+    try profile.permissions.set(.granted(.read), for: .project("*"))
+    profile.projectNetworks["p1"] = .full
+    profile.projectNetworks["retired-project"] = .trusted
+    return PrivacySnapshot(
+      reviewedProfiles: [profile],
+      principals: [
+        .init(
+          id: profile.id.rawValue, name: "ChatGPT", kind: .client(connection: "Secure Tunnel"),
+          execution: .sandbox, fullAccessLimitSources: ["Owner Policy"])
+      ],
+      grants: LivePrivacySecurityService.grants(
+        profile, names: .init(projects: ["p1": "Project"]),
+        limits: [ManagedLimits(owner: .unreadable)]), suspendedForReview: true)
+  }
+
   @Test func pluginRequestsWithoutProfilesRemainAnswerable() async throws {
     let principal = Principal.plugin(.package("plugin"))
     let content = PermissionRequestContent(
@@ -380,6 +464,37 @@ import Testing
         .styled(locale, dark, resources),
         size: NSSize(width: 720, height: 1800), appearance: appearance,
         name: "privacy-revoked-" + suffix)
+      let inheritedService = PrivacySecurityFake()
+      inheritedService.current = try Self.inheritedNetworkSnapshot()
+      let inheritedModel = PrivacySecurityModel(service: inheritedService)
+      await inheritedModel.refresh()
+      try render(
+        NavigationStack {
+          PrivacyPrincipalDetailView(
+            model: inheritedModel, principalID: GatewayProfileID.chatGPTOperate.rawValue)
+        }
+        .styled(locale, dark, resources),
+        size: NSSize(width: 720, height: 1900), appearance: appearance,
+        name: "privacy-inherited-network-" + suffix)
+      try render(
+        NavigationStack {
+          PrivacyPermissionDetailView(model: inheritedModel, permission: .projects)
+        }
+        .styled(locale, dark, resources),
+        size: NSSize(width: 720, height: 800), appearance: appearance,
+        name: "privacy-inherited-network-permission-" + suffix)
+      var networkOnly = ProfileGrant(id: .chatGPTOperate, allowedCallers: [.secureTunnel])
+      networkOnly.projectNetworks["retired-project"] = .full
+      inheritedService.current.grants = LivePrivacySecurityService.grants(
+        networkOnly, names: .init())
+      await inheritedModel.refresh()
+      try render(
+        NavigationStack {
+          PrivacyPermissionDetailView(model: inheritedModel, permission: .projects)
+        }
+        .styled(locale, dark, resources),
+        size: NSSize(width: 720, height: 420), appearance: appearance,
+        name: "privacy-unregistered-network-" + suffix)
       let connectionsService = PrivacyConnectionsFake()
       connectionsService.sessions = [connectionsService.session(.thisSession)]
       let connections = ClientAccessModel(controlPlane: connectionsService)

@@ -330,10 +330,14 @@ struct PrivacyPermissionDetailView: View {
           ForEach(grants.filter { $0.principalID == principal.id }) { grant in
             PrivacyGrantRow(
               model: model, grant: grant, title: grant.object?.name,
-              systemImage: permission.systemImage(for: grant.object)
+              systemImage: permission.systemImage(for: grant.object),
+              showsNetwork: permission != .projects
             )
             .padding(.leading, 24)
             .help(Text(verbatim: grant.object?.detail ?? ""))
+            if grant.showsNetwork {
+              PrivacyNetworkPicker(model: model, grant: grant).padding(.leading, 24)
+            }
           }
         } label: {
           Label {
@@ -403,12 +407,17 @@ struct PrivacyGrantRow: View {
 
   var body: some View {
     Picker(selection: binding) {
-      Text(verbatim: l("Ask")).tag(PrivacyGrantValue.ask)
+      if let inheritedTitle = Self.inheritedTitle(grant, using: l) {
+        Text(verbatim: inheritedTitle).tag(PrivacyGrantChoice.inherited)
+          .disabled(!grant.allowsInheritance)
+        Divider()
+      }
+      Text(verbatim: l("Ask")).tag(PrivacyGrantChoice.explicit(.ask))
       ForEach(grant.permission.grantedValues, id: \.self) { level in
-        Text(verbatim: l(level.title)).tag(PrivacyGrantValue.granted(level))
+        Text(verbatim: l(level.title)).tag(PrivacyGrantChoice.explicit(.granted(level)))
           .disabled(!grant.availableLevels.contains(level))
       }
-      Text(verbatim: l("Don't Allow")).tag(PrivacyGrantValue.denied)
+      Text(verbatim: l("Don't Allow")).tag(PrivacyGrantChoice.explicit(.denied))
     } label: {
       Label {
         VStack(alignment: .leading, spacing: 2) {
@@ -434,6 +443,7 @@ struct PrivacyGrantRow: View {
 
   private var caption: String? {
     var parts: [String] = []
+    if grant.object?.isRegistered == false { parts.append(l("Not registered")) }
     if showsNetwork, let network = grant.network {
       parts.append(Self.networkTitle(network, using: l))
     }
@@ -449,7 +459,9 @@ struct PrivacyGrantRow: View {
   }
 
   /// The network level alone, as a picker shows its current value.
-  static func networkValue(_ network: PrivacyNetworkAccess, using l: PrivacyText) -> String {
+  nonisolated static func networkValue(_ network: PrivacyNetworkAccess, using l: PrivacyText)
+    -> String
+  {
     switch network {
     case .none: l("None")
     case .trusted: l("Trusted Hosts")
@@ -473,12 +485,25 @@ struct PrivacyGrantRow: View {
     }
   }
 
-  private var binding: Binding<PrivacyGrantValue> {
+  static func inheritedTitle(_ grant: PrivacyGrant, using l: PrivacyText) -> String? {
+    guard let value = grant.inheritedValue else { return nil }
+    if value == .ask { return l("Ask") }
+    let name: String
+    switch grant.permission {
+    case .projects: name = "All Projects"
+    case .plugins: name = "All Plugins"
+    case .mcpServers: name = "All MCP Servers"
+    default: return nil
+    }
+    return l.format("Same as %1$@ (%2$@)", l(name), l(value.title))
+  }
+
+  private var binding: Binding<PrivacyGrantChoice> {
     Binding(
-      get: { grant.value },
-      set: { value in
+      get: { grant.choice },
+      set: { choice in
         let reviewed = model.snapshot
-        Task { await model.set(grant, to: value, reviewed: reviewed) }
+        Task { await model.set(grant, choice: choice, reviewed: reviewed) }
       })
   }
 }
@@ -534,7 +559,7 @@ struct PrivacyPrincipalDetailView: View {
                 model: model, grant: grant, title: grant.object?.name,
                 systemImage: kind.systemImage(for: grant.object),
                 showsNetwork: kind != .projects)
-              if kind == .projects, case .granted = grant.value {
+              if grant.showsNetwork {
                 PrivacyNetworkPicker(model: model, grant: grant)
               }
             }

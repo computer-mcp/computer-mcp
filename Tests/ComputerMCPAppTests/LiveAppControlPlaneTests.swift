@@ -624,6 +624,55 @@ final class LiveAppControlPlaneTests {
     }
   }
 
+  @Test(arguments: [PrivacyPermissionKind.projects, .plugins, .mcpServers])
+  func privacyChoosingInheritanceRemovesOnlyTheExplicitEntry(kind: PrivacyPermissionKind)
+    async throws
+  {
+    try await withAppControlPlaneFixture { fixture in
+      let options = try await fixture.app.fetchProfilePermissionOptions(id: .chatGPTOperate)
+      var profile = options.grant
+      let fallback: Permission
+      let concrete: Permission
+      let value: PermissionValue
+      switch kind {
+      case .projects:
+        (fallback, concrete, value) = (.project("*"), .project("inherit-target"), .read)
+      case .plugins: (fallback, concrete, value) = (.plugin("*"), .plugin("inherit-target"), .use)
+      default: (fallback, concrete, value) = (.mcpServer("*"), .mcpServer("inherit-target"), .all)
+      }
+      try profile.permissions.set(.granted(value), for: fallback)
+      try profile.permissions.set(.denied, for: concrete)
+      profile.projectNetworks["inherit-target"] = .full
+      try await fixture.app.saveProfilePermissions(profile, reviewed: options)
+      let model = PrivacySecurityModel(
+        service: LivePrivacySecurityService(controlPlane: fixture.app))
+      await model.refresh()
+      let row = try #require(
+        model.snapshot.grants.first {
+          $0.principalID == profile.id.rawValue && $0.permission == kind
+            && $0.object?.id == "inherit-target"
+        })
+      #expect(row.choice == .explicit(.denied))
+      await model.set(row, choice: .inherited)
+      #expect(model.failure == nil)
+      let saved = try await fixture.app.fetchProfilePermissionOptions(id: profile.id)
+      var expected = profile.permissions
+      expected.removeEntry(for: concrete)
+      #expect(saved.grant.permissions.entries == expected.entries)
+      #expect(saved.grant.permissions.state(for: concrete) == .granted(value))
+      #expect(saved.grant.projectNetworks == profile.projectNetworks)
+      #expect(saved.grant.allowedCallers == profile.allowedCallers)
+      #expect(saved.grant.fullAccess == profile.fullAccess)
+      await model.set(row, to: .ask)
+      #expect(model.failure == nil)
+      let overridden = try await fixture.app.fetchProfilePermissionOptions(id: profile.id)
+      try expected.set(.notGranted, for: concrete)
+      #expect(overridden.grant.permissions.entries == expected.entries)
+      #expect(overridden.grant.permissions.state(for: concrete) == .notGranted)
+      #expect(overridden.grant.projectNetworks == profile.projectNetworks)
+    }
+  }
+
   @Test
   func profilePermissionsRoundTripWithoutRestartingTheGateway() async throws {
     try await withAppControlPlaneFixture { fixture in

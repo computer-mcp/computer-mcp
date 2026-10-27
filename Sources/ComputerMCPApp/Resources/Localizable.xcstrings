@@ -1,6 +1,8 @@
 {
   "sourceLanguage" : "en",
   "strings" : {
+    "Same as %1$@ (%2$@)" : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Same as %1$@ (%2$@)"}},"zh-Hans":{"stringUnit":{"state":"translated","value":"与%1$@相同（%2$@）"}}}},
+    "Not registered" : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Not registered"}},"zh-Hans":{"stringUnit":{"state":"translated","value":"未注册"}}}},
     "%@ can't be read. Until it can, nothing it limits is allowed; the settings below apply again once it can be read." : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"%@ can't be read. Until it can, nothing it limits is allowed; the settings below apply again once it can be read."}},"zh-Hans":{"stringUnit":{"state":"translated","value":"无法读取%@。在能读取之前，它所限制的一切都不允许；能读取后，下面的设置会重新生效。"}}}},
     "Not allowed while %@ can't be read" : {"localizations" : {"en" : {"stringUnit" : {"state" : "translated", "value" : "Not allowed while %@ can't be read"}}, "zh-Hans" : {"stringUnit" : {"state" : "translated", "value" : "无法读取%@时不允许"}}}},
     "%@ allows at most %@" : {"localizations" : {"en" : {"stringUnit" : {"state" : "translated", "value" : "%@ allows at most %@"}}, "zh-Hans" : {"stringUnit" : {"state" : "translated", "value" : "%@最多允许%@"}}}},

@@ -71,7 +71,11 @@ final class LivePrivacySecurityService: PrivacySecurityService {
   func setGrant(_ grant: PrivacyGrant, reviewed: PrivacySnapshot) async throws {
     guard let permission = Self.permission(grant) else { return }
     try await edit(grant.principalID, reviewed: reviewed) { profile in
-      try profile.permissions.set(Self.state(grant.value), for: permission)
+      if grant.choice == .inherited {
+        profile.permissions.removeEntry(for: permission)
+      } else {
+        try profile.permissions.set(Self.state(grant.value), for: permission)
+      }
     }
   }
 
@@ -168,7 +172,9 @@ final class LivePrivacySecurityService: PrivacySecurityService {
       .screen, .desktopControl, .localNetwork, .machineInformation, .unifiedLogs, .skills,
     ])
     permissions.formUnion(FolderCategory.allCases.map(Permission.filesAndFolders))
-    permissions.formUnion((Array(names.projects.keys) + ["*"]).map(Permission.project))
+    permissions.formUnion(
+      (Array(names.projects.keys) + Array(profile.projectNetworks.keys) + ["*"]).map(
+        Permission.project))
     permissions.formUnion((Array(names.plugins.keys) + ["*"]).map(Permission.plugin))
     permissions.formUnion((Array(names.mcpServers.keys) + ["*"]).map(Permission.mcpServer))
     return permissions.compactMap { permission in
@@ -176,12 +182,18 @@ final class LivePrivacySecurityService: PrivacySecurityService {
       let object = original.map { object in
         PrivacyObject(
           id: object.id, name: object.name,
-          detail: kind == .projects ? paths[object.id] : object.detail)
+          detail: kind == .projects ? paths[object.id] : object.detail,
+          isRegistered: kind != .projects || object.id == "*" || names.projects[object.id] != nil)
       }
       var grant = PrivacyGrant(
         principalID: profile.id.rawValue, permission: kind,
-        object: object, value: value(profile.permissions.entries[permission] ?? .notGranted),
+        object: object, value: value(profile.permissions.state(for: permission)),
         isStored: profile.permissions.entries[permission] != nil)
+      if [.projects, .plugins, .mcpServers].contains(kind), object?.id != "*" {
+        var inherited = profile.permissions
+        inherited.removeEntry(for: permission)
+        grant.inheritedValue = value(inherited.state(for: permission))
+      }
       grant.trustedHosts = trustedHosts
       let canonical = object?.detail.flatMap { try? CanonicalPath($0) }
       @MainActor func allowed(_ level: PrivacyGrantValue.Level, by limits: ManagedLimits) -> Bool {
@@ -231,6 +243,7 @@ final class LivePrivacySecurityService: PrivacySecurityService {
       }
       if case .project(let id) = permission {
         grant.network = Self.network((profile.projectNetworks[id] ?? .none).configuration)
+        grant.isNetworkStored = profile.projectNetworks[id] != nil
       }
       return grant
     }.sorted { order($0) < order($1) }

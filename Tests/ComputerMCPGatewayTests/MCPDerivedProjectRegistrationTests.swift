@@ -1,5 +1,6 @@
 import ComputerMCPDownstream
 import ComputerMCPPermissions
+import ComputerMCPWorktrees
 import Foundation
 import GRDB
 import Testing
@@ -10,6 +11,22 @@ import Testing
 
 @Suite(.timeLimit(.minutes(1)))
 struct MCPDerivedProjectRegistrationTests {
+  @Test func hostProvenanceCannotBeClaimedThroughThePluginContract() throws {
+    let fixture = try DerivedFixture()
+    defer { fixture.remove() }
+    let source = try #require(try fixture.database.project(id: "source"))
+    let record = DerivedProjectRecord(
+      projectID: "host-child",
+      source: .init(id: source.id, root: source.rootPath, registeredAt: source.createdAt),
+      root: fixture.root.appendingPathComponent("host-child").path,
+      provenance: .host(worktreeID: UUID(), storageGeneration: UUID()))
+    try SQLiteDerivedProjectStore(connection: fixture.database.connection).commit(
+      record, expecting: nil)
+    #expect(throws: MCPHostServiceError.self) {
+      try fixture.database.derivedProjectRegistration(id: record.projectID)
+    }
+  }
+
   @Test
   func databaseUpgradePreservesReadablePluginOwnershipAndDigest() throws {
     let fixture = try DerivedFixture()
@@ -56,7 +73,11 @@ struct MCPDerivedProjectRegistrationTests {
     defer { try? reader.close() }
     #expect(
       try reader.read {
-        try String.fetchOne($0, sql: "SELECT payloadJSON FROM pluginDerivedProjects")
+        guard
+          case .plugin(let receipt) = try SQLiteDerivedProjectStore.record(
+            registration.project.id, in: $0)?.provenance
+        else { return nil as String? }
+        return String(decoding: receipt, as: UTF8.self)
       } == payload)
     let profiles = try migrated.profiles()
     let authority = try permissions.readWithDatabase { database, ledger in
@@ -190,9 +211,10 @@ struct MCPDerivedProjectRegistrationTests {
     _ = try #require(removedPrincipal)
     let payload = try JSONSerialization.data(withJSONObject: historical, options: [.sortedKeys])
     try fixture.database.connection.writer.write { database in
+      let record = try DerivedProjectMigration.pluginRecord(payload: payload, in: database)
       try database.execute(
-        sql: "UPDATE permissionDerivedProjects SET payload = ? WHERE projectID = ?",
-        arguments: [payload, "child"])
+        sql: "UPDATE derivedProjects SET payload = ? WHERE projectID = ?",
+        arguments: [try JSONEncoder().encode(record), "child"])
       #expect(database.changesCount == 1)
     }
     let stored = try #require(try fixture.database.derivedProjectRegistration(id: "child"))

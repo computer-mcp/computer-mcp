@@ -75,6 +75,7 @@ let neutralTargets: [Target] =
     .target(
       name: "ComputerMCPPersistence",
       dependencies: [
+        "ComputerMCPWorktrees",
         "ComputerMCPCore", "ComputerMCPPermissions", "ComputerMCPPlatform",
         .product(name: "GRDB", package: "GRDB.swift"),
       ]
@@ -327,6 +328,7 @@ let neutralTargets: [Target] =
     .testTarget(
       name: "ComputerMCPGatewayTests",
       dependencies: [
+        "ComputerMCPWorktrees",
         "ComputerMCPSandbox", "ComputerMCPEgress",
         "ComputerMCPPermissions",
         "ComputerMCPAuthorization",
@@ -433,6 +435,7 @@ let neutralTargets: [Target] =
     .testTarget(
       name: "ComputerMCPPersistenceTests",
       dependencies: [
+        "ComputerMCPWorktrees",
         "ComputerMCPPermissions", "ComputerMCPPlatform", "ComputerMCPCore",
         "ComputerMCPPersistence", "ComputerMCPPlatformPOSIX",
         .product(name: "GRDB", package: "GRDB.swift"),

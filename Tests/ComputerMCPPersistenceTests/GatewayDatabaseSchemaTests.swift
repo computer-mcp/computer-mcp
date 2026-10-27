@@ -36,6 +36,9 @@ final class GatewayDatabaseSchemaTests {
       #expect(try database.tableExists("permissionProfiles"))
       #expect(try database.tableExists("permissionProfilePublication"))
       #expect(try database.tableExists("permissionLedger"))
+      #expect(try database.tableExists("derivedProjects"))
+      #expect(try database.tableExists("protectedWorktreeBranches"))
+      #expect(try !database.tableExists("permissionDerivedProjects"))
       #expect(try !database.tableExists("operationTickets"))
       #expect(try database.columns(in: "permissionProfiles").map(\.name).contains("authorityEpoch"))
     }

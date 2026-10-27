@@ -2,6 +2,7 @@ import ComputerMCPCore
 import ComputerMCPPermissions
 import ComputerMCPPersistence
 import ComputerMCPPlatform
+import ComputerMCPWorktrees
 import Foundation
 import GRDB
 
@@ -131,12 +132,8 @@ extension GatewayPermissionService {
           })
         else { throw GatewayDatabaseError.configurationChanged }
       }
-      let sources = try Row.fetchAll(
-        database, sql: "SELECT projectID, sourceProjectID FROM permissionDerivedProjects")
-      let sourceIDs: [String: String] = Dictionary(
-        uniqueKeysWithValues: sources.map { row in
-          (row["projectID"] as String, row["sourceProjectID"] as String)
-        })
+      let sources = try SQLiteDerivedProjectStore.records(database).filter { $0.state == .active }
+      let sourceIDs = Dictionary(uniqueKeysWithValues: sources.map { ($0.projectID, $0.source.id) })
       guard paths.registeredProjects.allSatisfy({ $0.sourceID == sourceIDs[$0.id] }) else {
         throw GatewayDatabaseError.configurationChanged
       }

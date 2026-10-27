@@ -106,7 +106,8 @@
     "ComputerMCPToolsSkills->ComputerMCPToolsStructured",
     "ComputerMCPToolsSystem->ComputerMCPToolsFiles",
     "ComputerMCPPlugins->ComputerMCPToolsCLI",
-    "ComputerMCPControlPlane->ComputerMCPGateway"
+    "ComputerMCPControlPlane->ComputerMCPGateway",
+    "ComputerMCPPersistence->ComputerMCPWorktrees"
   ],
   "macos_only": [
     "ComputerMCPDarwinTestSupport",

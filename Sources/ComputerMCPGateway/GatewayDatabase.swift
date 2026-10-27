@@ -7,6 +7,7 @@ import ComputerMCPPlatform
 import ComputerMCPPlatformPOSIX
 import ComputerMCPPlugins
 import ComputerMCPToolsProject
+import ComputerMCPWorktrees
 import Crypto
 import Foundation
 import GRDB
@@ -356,13 +357,14 @@ package final class GatewayDatabase: OAuthStore, @unchecked Sendable {
             })
         }
         let prior = Dictionary(uniqueKeysWithValues: paths.registeredProjects.map { ($0.id, $0) })
-        let derived = try Self.derivedRegistrations(database)
+        let derived = try SQLiteDerivedProjectStore.records(database)
         let projects = try Self.projects(in: database).map { project in
           let root = try CanonicalPath(
             ProjectPathResolver.resolve(
               project.rootPath, relativeTo: URL(fileURLWithPath: "/")
             ).path)
-          let source = derived.first { $0.project.id == project.id }?.sourceProjectID
+          let source = derived.first { $0.projectID == project.id && $0.state == .active }?.source
+            .id
           var current =
             prior[project.id]
             ?? ComputerMCPPermissions.RegisteredProject(
@@ -908,7 +910,7 @@ package final class GatewayDatabase: OAuthStore, @unchecked Sendable {
     guard
       try Int.fetchOne(
         database,
-        sql: "SELECT count(*) FROM permissionDerivedProjects WHERE sourceProjectID = ?",
+        sql: "SELECT count(*) FROM derivedProjects WHERE sourceProjectID = ?",
         arguments: [canonicalID]) == 0
     else {
       throw GatewayDatabaseError.invalidStoredValue("Remove derived projects before their source.")
@@ -1786,12 +1788,8 @@ extension GatewayDatabase {
         canonicalRootPath: root, projectID: registration.project.id,
         createdAt: registration.project.createdAt
       ).insert(database)
-      try database.execute(
-        sql:
-          "INSERT INTO permissionDerivedProjects (projectID, sourceProjectID, payload) VALUES (?, ?, ?)",
-        arguments: [
-          registration.project.id, registration.sourceProjectID, payload,
-        ])
+      let record = try DerivedProjectMigration.pluginRecord(payload: payload, in: database)
+      try SQLiteDerivedProjectStore.commit(record, expecting: nil, in: database)
       return true
     }
     if changed {
@@ -1846,9 +1844,10 @@ extension GatewayDatabase {
       try ProjectCanonicalRootRecord.filter(Column("projectID") == old.project.id).deleteAll(
         database)
       _ = try ProjectRecord.deleteOne(database, key: old.project.id)
-      try database.execute(
-        sql: "DELETE FROM permissionDerivedProjects WHERE projectID = ?",
-        arguments: [old.project.id])
+      guard let stored = try SQLiteDerivedProjectStore.record(old.project.id, in: database) else {
+        throw DerivedProjectStoreError.revisionConflict
+      }
+      try SQLiteDerivedProjectStore.remove(old.project.id, expecting: stored.revision, in: database)
       return true
     }
     if changedProfile {
@@ -1895,34 +1894,17 @@ extension GatewayDatabase {
       && current.updatedAt.databaseValue == expected.updatedAt.databaseValue
   }
 
-  private static func derivedRegistrations(_ database: Database) throws
-    -> [MCPDerivedProjectRegistration]
-  {
-    try String.fetchAll(
-      database, sql: "SELECT projectID FROM permissionDerivedProjects ORDER BY projectID"
-    )
-    .map { id in
-      guard let row = try derivedRegistration(id: id, database: database) else {
-        throw PermissionPersistenceError.invalidCurrentState
-      }
-      return row
-    }
-  }
-
   private static func derivedRegistration(id: String, database: Database) throws
     -> MCPDerivedProjectRegistration?
   {
-    guard
-      let row = try Row.fetchOne(
-        database, sql: "SELECT * FROM permissionDerivedProjects WHERE projectID = ?",
-        arguments: [id])
-    else { return nil }
-    let payload: Data = row["payload"]
-    guard payload.count <= 32_768 else {
-      throw MCPHostServiceError.denied("Invalid stored derived registration.")
+    guard let stored = try SQLiteDerivedProjectStore.record(id, in: database) else { return nil }
+    guard case .plugin(let payload) = stored.provenance else {
+      throw MCPHostServiceError.denied("This derived project belongs to the host lifecycle.")
     }
     let record = try JSONDecoder().decode(MCPDerivedProjectRegistration.self, from: payload)
-    guard record.project.id == id, record.sourceProjectID == row["sourceProjectID"] else {
+    guard record.project.id == id, record.sourceProjectID == stored.source.id,
+      record.sourceRoot == stored.source.root, record.project.rootPath == stored.root
+    else {
       throw MCPHostServiceError.denied("Stored registration identity differs from its record.")
     }
     return record

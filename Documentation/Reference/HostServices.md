@@ -124,7 +124,7 @@ request has completed.
 The plugin owns Git and domain lease/plan records. The host independently
 checks the source repository, exact derived path, directory ownership, and Git
 common directory before adding registration authority. Its
-`pluginDerivedProjects` ledger binds the receipt, source, publisher registration,
+`derivedProjects` ledger retains plugin provenance and binds the receipt, source, publisher registration,
 verified principal, profile and project snapshot. Caller records remain
 provenance: the same principal can reconnect through another authorized channel.
 Receipts without a verified principal remain historical records and cannot be

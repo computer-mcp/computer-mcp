@@ -126,6 +126,7 @@ package final class GatewayDatabaseConnection: @unchecked Sendable {
           )
           """)
     }
+    migrator.registerMigration("derived-project-ledger", migrate: DerivedProjectMigration.migrate)
     return migrator
   }()
 

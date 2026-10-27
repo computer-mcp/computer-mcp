@@ -4,6 +4,7 @@ import ComputerMCPDownstream
 import ComputerMCPPermissions
 import ComputerMCPPlatform
 import ComputerMCPTestSupport
+import ComputerMCPWorktrees
 import Foundation
 import GRDB
 import Testing
@@ -592,7 +593,12 @@ import Testing
         try Int.fetchOne($0, sql: "SELECT revision FROM permissionControlRevision WHERE id = 1")
       } == controlRevision.map { $0 + 1 })
     let saved = try connection.writer.read {
-      try Data.fetchOne($0, sql: "SELECT payload FROM permissionDerivedProjects")
+      guard
+        case .plugin(let receipt) = try SQLiteDerivedProjectStore.record(child.id, in: $0)?
+          .provenance
+      else { return nil as Data? }
+      #expect(try !$0.tableExists("pluginDerivedProjects"))
+      return receipt
     }
     #expect(
       try JSONDecoder().decode(MCPDerivedProjectRegistration.self, from: #require(saved)) == row)
@@ -600,8 +606,7 @@ import Testing
       try $0.execute(sql: "UPDATE projects SET displayName = 'Changed' WHERE id = 'derived'")
     }
     #expect(
-      throws: PermissionMigrationError.ownershipConflict(
-        child.id, reason: "Derived registration metadata changed.")
+      throws: PermissionMigrationError.stateChanged
     ) { try store.prepare(catalog: catalog) }
   }
 

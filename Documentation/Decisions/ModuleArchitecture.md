@@ -29,7 +29,7 @@ Dependencies inside a layer are limited to these:
   `PlatformDarwin` may use `PlatformPOSIX`, `CSystemArchive` and `CDarwinExecution`.
 - Services: `Process`, `Transport`, `Downstream` and `Tunnels` may use
   `Configuration`; `Downstream` and `Tunnels` may use `Process`; `Downstream` may use
-  `Transport`.
+  `Transport`; `Persistence` may implement the derived-project store in `Worktrees`.
 - Capabilities: tool domains and `Delivery` may use `ToolKit`; `ToolsProject`,
   `ToolsStructured`, `ToolsSkills` and `ToolsSystem` may use `ToolsFiles`;
   `ToolsSkills` may use `ToolsStructured`; `Plugins` composes contributions and

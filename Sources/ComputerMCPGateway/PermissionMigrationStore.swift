@@ -3,6 +3,7 @@ import ComputerMCPDownstream
 import ComputerMCPPermissions
 import ComputerMCPPersistence
 import ComputerMCPPlatform
+import ComputerMCPWorktrees
 import Crypto
 import Foundation
 import GRDB
@@ -115,10 +116,14 @@ package final class PermissionMigrationStore: @unchecked Sendable {
       }
       try GatewayDatabase.savePublishedProfileDeclarations(verified.profiles, in: database)
       for derived in verified.derived {
-        try database.execute(
-          sql:
-            "INSERT INTO permissionDerivedProjects (projectID, sourceProjectID, payload) VALUES (?, ?, ?)",
-          arguments: [derived.project.id, derived.sourceProjectID, try encoder.encode(derived)])
+        guard
+          let payload = try String.fetchOne(
+            database, sql: "SELECT payloadJSON FROM pluginDerivedProjects WHERE projectID = ?",
+            arguments: [derived.project.id])
+        else { throw PermissionMigrationError.stateChanged }
+        let record = try DerivedProjectMigration.pluginRecord(
+          payload: Data(payload.utf8), in: database)
+        try SQLiteDerivedProjectStore.commit(record, expecting: nil, in: database)
       }
       try database.execute(
         sql: "UPDATE permissionControlRevision SET revision = revision + 1 WHERE id = 1")
@@ -127,6 +132,7 @@ package final class PermissionMigrationStore: @unchecked Sendable {
         sql:
           "INSERT INTO permissionMigration (id, version, inputDigest, catalogDigest, manifestDigest) VALUES (1, 1, ?, ?, ?)",
         arguments: [verified.inputDigest, verified.catalogDigest, sourceManifestDigest])
+      try DerivedProjectMigration.retireLegacyInput(database)
       return true
     }
   }
@@ -167,6 +173,7 @@ package final class PermissionMigrationStore: @unchecked Sendable {
   private static func plan(_ database: Database, catalog: PermissionMigrationCatalog) throws
     -> PermissionMigrationPlan
   {
+    guard try !Self.isActivated(database) else { throw PermissionMigrationError.stateChanged }
     let stored = try LegacyProfileRecord.order(Column("id")).fetchAll(database).map {
       try $0.value()
     }

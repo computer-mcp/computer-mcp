@@ -263,12 +263,9 @@ package final class GatewayPermissionService: @unchecked Sendable {
   package func view(owner: GatewayPermissionOwner, now: Date = Date()) throws
     -> GatewayPermissionView
   {
-    _ = try transactionWithPolicy { database, ledger, policies in
+    try transactionWithPolicy { database, ledger, policies in
       try owner.authorize()
-      return try refresh(database, ledger: &ledger, snapshot: policies, now: now)
-    }
-    return try store.readWithDatabase { database, ledger in
-      try owner.authorize()
+      _ = try refresh(database, ledger: &ledger, snapshot: policies, now: now)
       let bindings = try Self.bindings(database)
       let sources = try Row.fetchAll(
         database, sql: "SELECT payload FROM permissionPolicySources ORDER BY source"
@@ -322,7 +319,20 @@ package final class GatewayPermissionService: @unchecked Sendable {
             arguments: [ledger.authorizationEpochID?.uuidString]
           ).compactMap { row in
             GatewayProfileID(rawValue: row["id"] as String)
-          }))
+          }),
+        profileLimits: Dictionary(
+          uniqueKeysWithValues: profiles.map { profile in
+            (
+              profile.id,
+              profile.allowedCallers.sorted { $0.rawValue < $1.rawValue }.map { caller in
+                policies.limits(
+                  owner: policies.ownerPolicy(
+                    profile.id, caller: caller,
+                    epoch: ledger.authorizationEpochID), caller: caller, previous: nil)
+              }
+            )
+          }),
+        trustedHosts: Set(ledger.environment.trustedHosts.map(\.host)))
     }
   }
 
@@ -598,29 +608,12 @@ package final class GatewayPermissionService: @unchecked Sendable {
           case .unreadable: ceiling = .none
           case .available(let policy): ceiling = policy.network
           }
-          guard networkFits(network, ceiling: ceiling, trustedHosts: trustedHosts) else {
+          guard network.fits(within: ceiling, trustedHosts: trustedHosts) else {
             throw GatewayPermissionError.managedLimit
           }
         }
       }
     }
-  }
-
-  private static func networkFits(
-    _ network: NetworkAccess, ceiling: NetworkAccess, trustedHosts: Set<String>
-  ) -> Bool {
-    func includesTrusted(_ access: NetworkAccess) -> Bool {
-      switch access.configuration {
-      case .trusted, .full: true
-      case .custom(_, let included): included
-      case .none: false
-      }
-    }
-    if network.configuration == .full { return ceiling.configuration == .full }
-    if includesTrusted(network) && !includesTrusted(ceiling) { return false }
-    let limits = ManagedLimits(machine: .available(ManagedPolicy(network: ceiling)))
-    return limits.network(applying: network, trustedHosts: trustedHosts)
-      == ManagedLimits().network(applying: network, trustedHosts: trustedHosts)
   }
 
   private static func checkFallbackEdits(
@@ -630,29 +623,9 @@ package final class GatewayPermissionService: @unchecked Sendable {
       guard case .granted(let proposed) = profile.permissions.entries[permission],
         previous?.permissions.entries[permission] != .granted(proposed)
       else { continue }
-      for source in limits.sources.values {
-        switch source {
-        case .absent: continue
-        case .unreadable: throw GatewayPermissionError.managedLimit
-        case .available(let policy):
-          for (key, ceiling) in policy.permissionCeilings.entries {
-            let sameKind: Bool
-            switch (permission, key) {
-            case (.project, .project), (.plugin, .plugin), (.mcpServer, .mcpServer): sameKind = true
-            default: sameKind = false
-            }
-            guard sameKind else { continue }
-            let intended = profile.permissions.entries[key] ?? .granted(proposed)
-            guard case .granted(let intendedValue) = intended else { continue }
-            switch ceiling {
-            case .granted(let value)
-            where value == intendedValue || value == .write && intendedValue == .read
-              || value == .all && intendedValue == .read:
-              continue
-            default: throw GatewayPermissionError.managedLimit
-            }
-          }
-        }
+      guard limits.restrictingSources(forFallback: permission, in: profile.permissions).isEmpty
+      else {
+        throw GatewayPermissionError.managedLimit
       }
     }
   }

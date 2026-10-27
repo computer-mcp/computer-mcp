@@ -403,8 +403,9 @@ struct PrivacyGrantRow: View {
   var body: some View {
     Picker(selection: binding) {
       Text(verbatim: l("Ask")).tag(PrivacyGrantValue.ask)
-      ForEach(grant.availableLevels, id: \.self) { level in
+      ForEach(grant.permission.grantedValues, id: \.self) { level in
         Text(verbatim: l(level.title)).tag(PrivacyGrantValue.granted(level))
+          .disabled(!grant.availableLevels.contains(level))
       }
       Text(verbatim: l("Don't Allow")).tag(PrivacyGrantValue.denied)
     } label: {
@@ -427,7 +428,7 @@ struct PrivacyGrantRow: View {
   }
 
   private var managed: Bool {
-    if case .managedLimit = grant.source { true } else { false }
+    grant.availableLevels.isEmpty
   }
 
   private var caption: String? {
@@ -438,12 +439,9 @@ struct PrivacyGrantRow: View {
     switch grant.source {
     case .owner: break
     case .pluginDeclaration: parts.append(l("Declared by the plugin"))
-    case .managedLimit(let source):
-      parts.append(
-        l.format(
-          "Set by %@", source.components(separatedBy: " · ").map { l($0) }.joined(separator: " · "))
-      )
     }
+    parts += grant.limitNotices.map { $0.text(using: l) }
+    if showsNetwork { parts += grant.networkLimitNotices.map { $0.text(using: l) } }
     return parts.isEmpty ? nil : parts.joined(separator: " · ")
   }
 
@@ -671,9 +669,9 @@ struct PrivacyNetworkPicker: View {
       Label {
         VStack(alignment: .leading, spacing: 2) {
           Text(verbatim: l("Network"))
-          if !grant.networkLimitSources.isEmpty {
-            let sources = l.list(Array(Set(grant.networkLimitSources)).sorted().map { l($0) })
-            let caption = l.format("Set by %@", sources)
+          if !grant.networkLimitNotices.isEmpty {
+            let caption = grant.networkLimitNotices.map { $0.text(using: l) }.joined(
+              separator: " · ")
             Text(verbatim: caption).font(.caption).foregroundStyle(.secondary)
           }
         }
@@ -1032,6 +1030,23 @@ struct PrivacyConnectionsSection: View {
           }
         }
       }
+    }
+  }
+}
+
+extension PrivacyLimitNotice {
+  func text(using l: PrivacyText) -> String {
+    switch effect {
+    case .unreadable:
+      l.format("Not allowed while %@ can't be read", l(source))
+    case .permission(let level):
+      if let level {
+        l.format("%@ allows at most %@", l(source), l(level.title))
+      } else {
+        l.format("Not allowed by %@", l(source))
+      }
+    case .network(let network):
+      l.format("%@ allows at most %@", l(source), PrivacyGrantRow.networkValue(network, using: l))
     }
   }
 }

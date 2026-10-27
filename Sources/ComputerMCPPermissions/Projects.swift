@@ -223,6 +223,22 @@ package struct NetworkAccess: Hashable, Sendable, Codable {
     configuration.isMoreRestrictive(than: previous.configuration, trustedHosts: trustedHosts)
   }
 
+  /// Whether this setting stays within the ceiling, including future trusted-host changes.
+  package func fits(within ceiling: NetworkAccess, trustedHosts: Set<String>) -> Bool {
+    func includesTrusted(_ access: NetworkAccess) -> Bool {
+      switch access.configuration {
+      case .trusted, .full: true
+      case .custom(_, let included): included
+      case .none: false
+      }
+    }
+    if configuration == .full { return ceiling.configuration == .full }
+    if includesTrusted(self) && !includesTrusted(ceiling) { return false }
+    let limits = ManagedLimits(machine: .available(ManagedPolicy(network: ceiling)))
+    return limits.network(applying: self, trustedHosts: trustedHosts)
+      == ManagedLimits().network(applying: self, trustedHosts: trustedHosts)
+  }
+
   /// Retains existing rule identities; a newly added host gets a new record.
   package func adding(_ host: String) -> Self {
     guard fullRule == nil else { return self }

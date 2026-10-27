@@ -10,6 +10,49 @@ import Testing
 @testable import ComputerMCPGateway
 
 @Suite struct GatewayPermissionServiceTests {
+  @Test func unboundProfilesExposeEveryAllowedCallersManagedLimits() throws {
+    let f = try PermissionServiceFixture()
+    var profile = try #require(f.view().profiles.first)
+    profile.allowedCallers = [.localApp, .secureTunnel]
+    try f.update(profile)
+    _ = try f.service.setOwnerPolicy(
+      Data("[permissions]\nscreen = 'deny'".utf8), profileID: profile.id, owner: f.owner,
+      expectedRevision: f.view().revision, now: f.now)
+    f.reader.set(
+      .machineFile, .available(Data("remote_full_access = false\n[projects]\n'*' = 'read'".utf8)))
+    f.reader.set(.managedPreferences, .available(Data("network = 'trusted'".utf8)))
+    try f.store.transactionWithDatabase { _, ledger in
+      var environment = ledger.environment
+      environment.trustedHosts = [HostRule("github.com")]
+      try ledger.reconcile(environment: environment, expectedRevision: ledger.revision)
+    }
+    let view = try f.view()
+    #expect(view.subjects.isEmpty)
+    #expect(view.trustedHosts == ["github.com"])
+    let limits = try #require(view.profileLimits[profile.id])
+    #expect(limits.count == 2)
+    for limit in limits {
+      #expect(limit.restrictingSources(for: try .init(.screen, .access)) == [.owner])
+      #expect(limit.restrictingSources(for: try .init(.project("p1"), .write)) == [.machine])
+      #expect(
+        limit.restrictingNetwork(host: "unknown.example", trustedHosts: view.trustedHosts) == [
+          .managedPreferences
+        ])
+      #expect(limit.restrictingNetwork(host: "github.com", trustedHosts: view.trustedHosts).isEmpty)
+    }
+    let fullAccess = limits.compactMap { limit -> Bool? in
+      guard case .available(let policy) = limit.sources[.machine] else { return nil }
+      return policy.allowsFullAccess
+    }
+    #expect(fullAccess == [true, false])
+    profile = try #require(view.profiles.first)
+    profile.projectNetworks["p1"] = .custom(hosts: ["github.com"], includesTrusted: true)
+    try f.update(profile)
+    #expect(
+      try f.view().profiles.first?.projectNetworks["p1"]?.configuration
+        == .custom(hosts: ["github.com"], includesTrusted: true))
+  }
+
   @Test func downloadInitialAndRedirectHostAnswersPersistOnlyThoseCustomHosts() throws {
     let f = try PermissionServiceFixture()
     var profile = try #require(f.view().profiles.first)

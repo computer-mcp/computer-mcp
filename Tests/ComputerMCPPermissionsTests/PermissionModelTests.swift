@@ -4,6 +4,26 @@ import Testing
 @testable import ComputerMCPPermissions
 
 struct ComputerMCPPermissionsModelTests {
+  @Test func fallbackCeilingsRespectConcreteStoredOverridesAndSourceAvailability() throws {
+    var ceilings = Permissions()
+    try ceilings.set(.granted(.read), for: .project("*"))
+    try ceilings.set(.denied, for: .project("secret"))
+    let limits = ManagedLimits(machine: .available(ManagedPolicy(permissionCeilings: ceilings)))
+    var proposed = Permissions()
+    try proposed.set(.granted(.read), for: .project("*"))
+    #expect(limits.restrictingSources(forFallback: .project("*"), in: proposed) == [.machine])
+    try proposed.set(.notGranted, for: .project("secret"))
+    #expect(limits.restrictingSources(forFallback: .project("*"), in: proposed).isEmpty)
+    try proposed.set(.granted(.write), for: .project("*"))
+    #expect(limits.restrictingSources(forFallback: .project("*"), in: proposed) == [.machine])
+    #expect(ManagedLimits().restrictingSources(forFallback: .project("*"), in: proposed).isEmpty)
+    #expect(
+      ManagedLimits(owner: .unreadable).restrictingSources(forFallback: .project("*"), in: proposed)
+        == [.owner])
+    try proposed.set(.granted(.use), for: .plugin("*"))
+    #expect(limits.restrictingSources(forFallback: .plugin("*"), in: proposed).isEmpty)
+  }
+
   @Test func stablePrincipalIdentitiesAndDefaults() {
     #expect(Principal.client("same") != .plugin(.package("same")))
     #expect(Principal.plugin(.package("same")) != .plugin(.localServer("same")))

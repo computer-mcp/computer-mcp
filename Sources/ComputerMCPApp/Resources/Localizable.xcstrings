@@ -1,6 +1,9 @@
 {
   "sourceLanguage" : "en",
   "strings" : {
+    "Not allowed while %@ can't be read" : {"localizations" : {"en" : {"stringUnit" : {"state" : "translated", "value" : "Not allowed while %@ can't be read"}}, "zh-Hans" : {"stringUnit" : {"state" : "translated", "value" : "无法读取%@时不允许"}}}},
+    "%@ allows at most %@" : {"localizations" : {"en" : {"stringUnit" : {"state" : "translated", "value" : "%@ allows at most %@"}}, "zh-Hans" : {"stringUnit" : {"state" : "translated", "value" : "%@最多允许%@"}}}},
+    "Not allowed by %@" : {"localizations" : {"en" : {"stringUnit" : {"state" : "translated", "value" : "Not allowed by %@"}}, "zh-Hans" : {"stringUnit" : {"state" : "translated", "value" : "%@不允许"}}}},
     "The permissions changed while you were editing. Review them and try again." : {"localizations": {"en": {"stringUnit": {"state": "translated", "value": "The permissions changed while you were editing. Review them and try again."}}, "zh-Hans": {"stringUnit": {"state": "translated", "value": "权限在你编辑时发生了变化。请检查后重试。"}}}},
     "Full Access Allowed" : {"localizations": {"en": {"stringUnit": {"state": "translated", "value": "Full Access Allowed"}}, "zh-Hans": {"stringUnit": {"state": "translated", "value": "允许完全访问"}}}},
     "Full Access for This Session" : {"localizations": {"en": {"stringUnit": {"state": "translated", "value": "Full Access for This Session"}}, "zh-Hans": {"stringUnit": {"state": "translated", "value": "本次会话完全访问"}}}},

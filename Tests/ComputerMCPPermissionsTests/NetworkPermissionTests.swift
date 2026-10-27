@@ -4,6 +4,29 @@ import Testing
 @testable import ComputerMCPPermissions
 
 struct ComputerMCPPermissionsNetworkTests {
+  @Test func networkContainmentUsesTrustedHostsAndWildcardIntersection() {
+    let trusted: Set<String> = ["github.com", "*.example.org"]
+    for includesTrusted in [false, true] {
+      let subset = NetworkAccess.custom(
+        hosts: ["github.com", "api.example.org"], includesTrusted: includesTrusted)
+      #expect(subset.fits(within: .trusted, trustedHosts: trusted))
+      #expect(
+        subset.fits(
+          within: .custom(hosts: ["extra.example"], includesTrusted: true), trustedHosts: trusted))
+      #expect(
+        !NetworkAccess.custom(hosts: ["unknown.example"], includesTrusted: includesTrusted).fits(
+          within: .trusted, trustedHosts: trusted))
+    }
+    #expect(
+      !NetworkAccess.custom(hosts: ["*.github.com"], includesTrusted: false).fits(
+        within: .trusted, trustedHosts: trusted))
+    #expect(!NetworkAccess.full.fits(within: .trusted, trustedHosts: trusted))
+    #expect(
+      !NetworkAccess.trusted.fits(
+        within: .custom(hosts: trusted, includesTrusted: false), trustedHosts: trusted))
+    #expect(NetworkAccess.none.fits(within: .none, trustedHosts: trusted))
+  }
+
   @Test func networkNoneRequestsEachHostAndAlwaysBuildsCustomList() throws {
     var ledger = PermissionLedger()
     let key = SandboxSettingsKey(principal: client, projectID: "project")

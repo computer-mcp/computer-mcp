@@ -68,6 +68,23 @@ package struct ManagedLimits: Equatable, Sendable, Codable {
     }
   }
 
+  /// A fallback edit must also respect concrete ceilings where no stored override applies.
+  package func restrictingSources(forFallback permission: Permission, in permissions: Permissions)
+    -> Set<PolicySource>
+  {
+    guard permission.fallback == permission,
+      case .granted(let proposed) = permissions.entries[permission]
+    else { return [] }
+    return restrictingSources { policy in
+      policy.permissionCeilings.entries.contains { key, ceiling in
+        guard key.fallback == permission,
+          case .granted(let intended) = permissions.entries[key] ?? .granted(proposed)
+        else { return false }
+        return !ceiling.allows(intended)
+      }
+    }
+  }
+
   package func denying(_ path: CanonicalPath) -> Set<PolicySource> {
     restrictingSources { policy in policy.deniedReadLocations.contains { $0.contains(path) } }
   }

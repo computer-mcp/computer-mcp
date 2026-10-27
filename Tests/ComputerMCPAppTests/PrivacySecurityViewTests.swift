@@ -119,13 +119,18 @@ import Testing
       paths: ["p1": "/Users/owner/Project"], limits: try Self.limits())
     let project = try #require(grants.first { $0.object?.id == "p1" })
     #expect(project.availableLevels == [.read])
-    #expect(project.value == .granted(.read))
+    let wildcard = try #require(grants.first { $0.permission == .projects && $0.object?.id == "*" })
+    #expect(wildcard.availableLevels == [.read])
+    #expect(wildcard.limitNotices == [.init(source: "Machine Policy", effect: .permission(.read))])
+    #expect(project.value == .granted(.readWrite))
+    #expect(project.limitNotices == [.init(source: "Machine Policy", effect: .permission(.read))])
     #expect(project.allowsNetwork(.trusted))
     #expect(!project.allowsNetwork(.full))
     #expect(!project.allowsNetwork(.custom(hosts: ["other.example"], includesTrusted: false)))
     let screen = try #require(grants.first { $0.permission == .screen })
     #expect(screen.availableLevels.isEmpty)
-    #expect(screen.source == .managedLimit("Machine Policy"))
+    #expect(screen.value == .ask)
+    #expect(screen.limitNotices == [.init(source: "Machine Policy", effect: .permission(nil))])
     #expect(LivePrivacySecurityService.fullAccessSources(try Self.limits()) == ["Machine Policy"])
     let denied = LivePrivacySecurityService.grants(
       profile, names: .init(projects: ["p1": "Project"]),
@@ -138,6 +143,44 @@ import Testing
     #expect(denied.first { $0.object?.id == "p1" }?.availableLevels.isEmpty == true)
   }
 
+  @Test func unreadablePolicyKeepsSavedPermissionsAndNetworkForRestoration() throws {
+    var profile = ProfileGrant(id: .chatGPTOperate, allowedCallers: [.secureTunnel])
+    try profile.permissions.set(.granted(.write), for: .project("p1"))
+    try profile.permissions.set(.granted(.access), for: .screen)
+    profile.projectNetworks["p1"] = .full
+    let rows = LivePrivacySecurityService.grants(
+      profile, names: .init(projects: ["p1": "Project"]),
+      limits: [ManagedLimits(owner: .unreadable)])
+    let project = try #require(rows.first { $0.object?.id == "p1" })
+    #expect(project.value == .granted(.readWrite))
+    #expect(project.network == .full)
+    #expect(project.availableLevels.isEmpty)
+    #expect(!project.allowsNetwork(.full))
+    #expect(project.limitNotices == [.init(source: "Owner Policy", effect: .unreadable)])
+    #expect(project.networkLimitNotices == project.limitNotices)
+    #expect(rows.first { $0.permission == .screen }?.value == .granted(.allow))
+    let l = PrivacyText(locale: Locale(identifier: "en"))
+    #expect(
+      project.limitNotices.first?.text(using: l) == "Not allowed while Owner Policy can't be read")
+  }
+
+  @Test func customNetworkUsesTheGatewaysTrustedHosts() throws {
+    let rows = LivePrivacySecurityService.grants(
+      .init(id: .chatGPTOperate, allowedCallers: [.secureTunnel]),
+      names: .init(projects: ["p1": "Project"]), limits: try Self.limits(),
+      trustedHosts: ["github.com", "*.example.org"])
+    let project = try #require(rows.first { $0.object?.id == "p1" })
+    for includesTrusted in [false, true] {
+      #expect(
+        project.allowsNetwork(
+          .custom(hosts: ["github.com", "api.example.org"], includesTrusted: includesTrusted)))
+      #expect(
+        !project.allowsNetwork(
+          .custom(hosts: ["untrusted.example"], includesTrusted: includesTrusted)))
+    }
+    #expect(!project.allowsNetwork(.custom(hosts: ["*.github.com"], includesTrusted: false)))
+  }
+
   @Test func principalCatalogIncludesEveryPermissionAndKnownObject() {
     let rows = LivePrivacySecurityService.grants(
       .init(id: .chatGPTOperate, allowedCallers: [.secureTunnel]),
@@ -145,6 +188,10 @@ import Testing
         projects: ["p1": "Project"],
         plugins: ["plugin": "Plugin"], mcpServers: ["server": "Server"]))
     #expect(rows.allSatisfy { $0.value == .ask && !$0.isStored })
+    #expect(
+      rows.allSatisfy {
+        $0.availableLevels == $0.permission.grantedValues && $0.limitNotices.isEmpty
+      })
     #expect(
       Set(rows.map(\.permission))
         == Set(PrivacyPermissionKind.allCases.filter { $0 != .fullAccess }))
@@ -301,6 +348,22 @@ import Testing
         .styled(locale, dark, resources),
         size: NSSize(width: 720, height: 1600), appearance: appearance,
         name: "privacy-managed-" + suffix)
+      profile.projectNetworks["p1"] = .full
+      var restoredPrincipal = managedPrincipal
+      restoredPrincipal.fullAccessLimitSources = ["Owner Policy"]
+      managedService.current.principals = [restoredPrincipal]
+      managedService.current.grants = LivePrivacySecurityService.grants(
+        profile, names: .init(projects: ["p1": "Project"]),
+        limits: [ManagedLimits(owner: .unreadable)])
+      managedService.current.suspendedForReview = true
+      await managedModel.refresh()
+      try render(
+        NavigationStack {
+          PrivacyPrincipalDetailView(model: managedModel, principalID: managedPrincipal.id)
+        }.styled(locale, dark, resources),
+        size: NSSize(width: 720, height: 1800), appearance: appearance,
+        name: "privacy-restored-policy-" + suffix)
+      managedService.current.suspendedForReview = false
       var revokedPrincipal = managedPrincipal
       revokedPrincipal.fullAccessLimitSources = []
       managedService.current.principals = [revokedPrincipal]
@@ -482,7 +545,8 @@ private final class PrivacySecurityFake: PrivacySecurityService {
         PrivacyGrant(principalID: "chatgpt", permission: .unifiedLogs, object: nil, value: .denied),
         PrivacyGrant(
           principalID: "chatgpt", permission: .localNetwork, object: nil, value: .denied,
-          source: .managedLimit("Machine Policy")),
+          allowedLevels: [],
+          limitNotices: [.init(source: "Machine Policy", effect: .permission(nil))]),
       ],
       managedSources: [
         PrivacyManagedSource(

@@ -10,7 +10,6 @@ import Foundation
 @MainActor
 final class LivePrivacySecurityService: PrivacySecurityService {
   private let controlPlane: any AppControlPlane
-  private var view: GatewayPermissionView?
   private var systemPermissions: [PrivacySystemPermission.Kind: PermissionSummary] = [:]
   var requestPermission: ((PermissionSummary) -> Void)?
 
@@ -26,20 +25,18 @@ final class LivePrivacySecurityService: PrivacySecurityService {
       uniqueKeysWithValues: system.compactMap { summary in
         Self.systemPermission(summary).map { ($0.kind, summary) }
       })
-    self.view = view
     let paths = Dictionary(
       uniqueKeysWithValues:
         try await controlPlane.fetchProjects().map { ($0.id, $0.path) })
     let principals = view.profiles.map { profile in
       var principal = Self.principal(profile)
       principal.fullAccessLimitSources = Self.fullAccessSources(
-        view.subjects.filter { $0.profileID == profile.id }.map(\.limits))
+        view.profileLimits[profile.id] ?? [])
       return principal
     }
     return PrivacySnapshot(
       revision: view.revision,
-      profileRevisions: Dictionary(
-        uniqueKeysWithValues: view.profiles.map { ($0.id.rawValue, $0.authorizationRevision) }),
+      epoch: view.epoch, reviewedProfiles: view.profiles,
       requests: view.requests.compactMap {
         Self.request(
           $0, principals: principals, names: names, paths: paths, subjects: view.subjects)
@@ -48,7 +45,7 @@ final class LivePrivacySecurityService: PrivacySecurityService {
       grants: view.profiles.flatMap { profile in
         Self.grants(
           profile, names: names, paths: paths,
-          limits: view.subjects.filter { $0.profileID == profile.id }.map(\.limits))
+          limits: view.profileLimits[profile.id] ?? [], trustedHosts: view.trustedHosts)
       },
       managedSources: view.sources.map(Self.source),
       systemPermissions: system.compactMap(Self.systemPermission),
@@ -95,11 +92,10 @@ final class LivePrivacySecurityService: PrivacySecurityService {
   }
 
   func confirmRestoredPermissions(reviewed: PrivacySnapshot) async throws {
-    guard let view, view.revision == reviewed.revision else { throw Self.changedPermissions() }
-    guard let epoch = view.epoch else { return }
+    guard let epoch = reviewed.epoch else { throw Self.changedPermissions() }
     do {
       try await controlPlane.confirmPermissionAuthority(
-        epoch: epoch, expectedRevision: view.revision, profiles: view.profiles)
+        epoch: epoch, expectedRevision: reviewed.revision, profiles: reviewed.reviewedProfiles)
     } catch GatewayPermissionError.revisionConflict { throw Self.changedPermissions() }
   }
 
@@ -165,7 +161,7 @@ final class LivePrivacySecurityService: PrivacySecurityService {
 
   static func grants(
     _ profile: ProfileGrant, names: PermissionObjectNames,
-    paths: [String: String] = [:], limits: [ManagedLimits] = []
+    paths: [String: String] = [:], limits: [ManagedLimits] = [], trustedHosts: Set<String> = []
   ) -> [PrivacyGrant] {
     var permissions = Set(profile.permissions.entries.keys)
     permissions.formUnion([
@@ -186,42 +182,55 @@ final class LivePrivacySecurityService: PrivacySecurityService {
         principalID: profile.id.rawValue, permission: kind,
         object: object, value: value(profile.permissions.entries[permission] ?? .notGranted),
         isStored: profile.permissions.entries[permission] != nil)
-      var deniedSources: Set<PolicySource> = []
-      grant.allowedLevels = kind.grantedValues.filter { level in
-        guard case .granted(let value) = state(.granted(level)),
-          let requirement = try? PermissionRequirement(permission, value)
-        else { return false }
-        var sources = limits.reduce(into: Set<PolicySource>()) {
-          $0.formUnion($1.restrictingSources(for: requirement))
+      grant.trustedHosts = trustedHosts
+      let canonical = object?.detail.flatMap { try? CanonicalPath($0) }
+      @MainActor func allowed(_ level: PrivacyGrantValue.Level, by limits: ManagedLimits) -> Bool {
+        guard case .granted(let value) = state(.granted(level)) else { return false }
+        if object?.id == "*" {
+          var proposed = profile.permissions
+          try? proposed.set(.granted(value), for: permission)
+          return limits.restrictingSources(forFallback: permission, in: proposed).isEmpty
         }
-        if let path = object?.detail, let canonical = try? CanonicalPath(path) {
-          for limit in limits { sources.formUnion(limit.denying(canonical)) }
-        }
-        deniedSources.formUnion(sources)
-        return sources.isEmpty
+        guard let requirement = try? PermissionRequirement(permission, value) else { return false }
+        return limits.restrictingSources(for: requirement).isEmpty
+          && (canonical.map { limits.denying($0).isEmpty } ?? true)
       }
-      if grant.availableLevels.isEmpty, !deniedSources.isEmpty {
-        grant.value = .denied
-        grant.source = .managedLimit(sourceNames(deniedSources).joined(separator: " · "))
-      } else if case .granted(let level) = grant.value, !grant.availableLevels.contains(level) {
-        grant.value = grant.availableLevels.last.map(PrivacyGrantValue.granted) ?? .denied
+      grant.allowedLevels = kind.grantedValues.filter { level in
+        limits.allSatisfy { allowed(level, by: $0) }
+      }
+      for limit in limits {
+        for (source, availability) in limit.sources.sorted(by: { $0.key.rawValue < $1.key.rawValue }
+        ) {
+          let name = sourceName(source)
+          let sourceLimits = ManagedLimits(sources: [source: availability])
+          let levels = kind.grantedValues.filter { allowed($0, by: sourceLimits) }
+          if case .unreadable = availability {
+            grant.limitNotices.append(.init(source: name, effect: .unreadable))
+          } else if levels != kind.grantedValues {
+            grant.limitNotices.append(.init(source: name, effect: .permission(levels.last)))
+          }
+          guard case .project = permission else { continue }
+          let cap: PrivacyNetworkAccess
+          switch availability {
+          case .absent: continue
+          case .unreadable:
+            cap = .none
+            grant.networkLimitNotices.append(.init(source: name, effect: .unreadable))
+          case .available(let policy):
+            cap = network(policy.network.configuration)
+            if cap != .full {
+              grant.networkLimitNotices.append(.init(source: name, effect: .network(cap)))
+            }
+          }
+          if cap != .full { grant.networkLimits.append(cap) }
+        }
+      }
+      grant.limitNotices = Array(Set(grant.limitNotices)).sorted { $0.source < $1.source }
+      grant.networkLimitNotices = Array(Set(grant.networkLimitNotices)).sorted {
+        $0.source < $1.source
       }
       if case .project(let id) = permission {
         grant.network = Self.network((profile.projectNetworks[id] ?? .none).configuration)
-        for limit in limits {
-          for (source, availability) in limit.sources {
-            let cap: PrivacyNetworkAccess
-            switch availability {
-            case .absent: continue
-            case .unreadable: cap = .none
-            case .available(let policy): cap = network(policy.network.configuration)
-            }
-            if cap != .full {
-              grant.networkLimits.append(cap)
-              grant.networkLimitSources.append(sourceName(source))
-            }
-          }
-        }
       }
       return grant
     }.sorted { order($0) < order($1) }

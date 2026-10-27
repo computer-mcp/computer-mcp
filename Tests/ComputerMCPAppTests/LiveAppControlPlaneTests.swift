@@ -467,7 +467,9 @@ final class LiveAppControlPlaneTests {
         reviewed.grants.first {
           $0.principalID == GatewayProfileID.chatGPTOperate.rawValue && $0.permission == .screen
         })
-      reviewed.profileRevisions[grant.principalID] = -1
+      let index = try #require(
+        reviewed.reviewedProfiles.firstIndex { $0.id.rawValue == grant.principalID })
+      reviewed.reviewedProfiles[index].authorizationRevision = -1
       do {
         try await service.setGrant(grant, reviewed: reviewed)
         Issue.record("The profile revision must match the reviewed snapshot")
@@ -526,6 +528,59 @@ final class LiveAppControlPlaneTests {
             == LivePrivacySecurityService.changedPermissions().localizedDescription)
       }
       #expect(try await service.privacySnapshot().suspendedForReview)
+    }
+  }
+
+  @Test
+  func privacyRestorationRejectsANewEpochAtTheSameControlRevision() async throws {
+    try await withAppControlPlaneFixture { fixture in
+      let service = LivePrivacySecurityService(controlPlane: fixture.app)
+      fixture.counter.forget()
+      let reviewed = try await service.privacySnapshot()
+      #expect(reviewed.suspendedForReview)
+      fixture.counter.forget()
+      let polled = try await service.privacySnapshot()
+      #expect(polled.epoch != reviewed.epoch)
+      #expect(polled.revision == reviewed.revision)
+      #expect(polled.reviewedProfiles == reviewed.reviewedProfiles)
+      do {
+        try await service.confirmRestoredPermissions(reviewed: reviewed)
+        Issue.record(
+          "The owner must review the new epoch even if the control revision is unchanged")
+      } catch {
+        #expect(
+          error.localizedDescription
+            == LivePrivacySecurityService.changedPermissions().localizedDescription)
+      }
+      #expect(try await service.privacySnapshot().suspendedForReview)
+    }
+  }
+
+  @Test
+  func privacyUnboundProfilesUseGatewayPolicyLimitsAndKeepSavedGrants() async throws {
+    try await withAppControlPlaneFixture { fixture in
+      let options = try await fixture.app.fetchProfilePermissionOptions(id: .chatGPTOperate)
+      var saved = options.grant
+      try saved.permissions.set(.granted(.access), for: .screen)
+      try await fixture.app.saveProfilePermissions(saved, reviewed: options)
+      fixture.policyReader.set(
+        .machineFile,
+        .available(Data("remote_full_access = false\n[permissions]\nscreen = 'deny'".utf8)))
+      let view = try await fixture.app.fetchPermissionRequests()
+      #expect(view.subjects.isEmpty)
+      let snapshot = try await LivePrivacySecurityService(controlPlane: fixture.app)
+        .privacySnapshot()
+      let profile = try #require(view.profiles.first { $0.id == .chatGPTOperate })
+      let row = try #require(
+        snapshot.grants.first { $0.principalID == profile.id.rawValue && $0.permission == .screen })
+      #expect(row.availableLevels.isEmpty)
+      #expect(row.limitNotices == [.init(source: "Machine Policy", effect: .permission(nil))])
+      #expect(row.value == .granted(.allow))
+      #expect(profile.permissions.state(for: .screen) == .granted(.access))
+      #expect(
+        snapshot.principals.first { $0.id == profile.id.rawValue }?.fullAccessLimitSources == [
+          "Machine Policy"
+        ])
     }
   }
 
@@ -867,6 +922,8 @@ private final class AppControlPlaneFixture {
   let gatewayService: AppGatewayService
   let controlSocket: ControlSocketService
   let app: LiveAppControlPlane
+  let counter = TestAuthorizationEpochCounter()
+  let policyReader = TestManagedPolicyReader()
 
   init(
     permissionRequester: any SystemPermissionRequesting = MacOSSystemPermissionRequester(),
@@ -893,13 +950,13 @@ private final class AppControlPlaneFixture {
     )
     try directories.prepare()
     let database = try GatewayDatabase(path: directories.database.path)
-    _ = database.permissionStore(counter: TestAuthorizationEpochCounter())
+    _ = database.permissionStore(counter: counter)
     try database.bootstrapPermissionProfiles(
       GatewayProfileID.builtIns.map { GatewayConfiguration().profileGrant(for: $0) },
       declarations: [])
     let launcher = executionLauncher?(directories) ?? testExecutionLauncher()
     var platform = MacOSPlatform.services(launcher: launcher)
-    platform.permissionPolicyReader = TestManagedPolicyReader()
+    platform.permissionPolicyReader = policyReader
     let permissionGateway = try database.permissionRuntime(platform: platform).service
     let owner = try GatewayPermissionOwner(
       context: .init(

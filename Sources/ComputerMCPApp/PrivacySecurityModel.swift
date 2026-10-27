@@ -1,4 +1,5 @@
 import ComputerMCPControlPlane
+import ComputerMCPCore
 import ComputerMCPPermissions
 import Foundation
 import SwiftUI
@@ -170,17 +171,13 @@ enum PrivacyNetworkAccess: Hashable, Sendable {
   case none, trusted, full
   case custom(hosts: [String], includesTrusted: Bool)
 
-  /// Compare symbolic trusted-host sets without copying the host policy into the UI.
-  func contains(_ other: Self) -> Bool {
-    if other == .none || self == .full { return true }
-    if self == other { return true }
-    switch (self, other) {
-    case (.custom(_, true), .trusted): return true
-    case (.custom(let allowed, let trusted), .custom(let hosts, let includesTrusted)):
-      return (!includesTrusted || trusted)
-        && hosts.allSatisfy { host in allowed.contains { NetworkHost.contains($0, rule: host) } }
-    case (.trusted, .custom(let hosts, _)): return hosts.isEmpty
-    default: return false
+  var permissionAccess: NetworkAccess {
+    switch self {
+    case .none: .none
+    case .trusted: .trusted
+    case .full: .full
+    case .custom(let hosts, let includesTrusted):
+      .custom(hosts: Set(hosts), includesTrusted: includesTrusted)
     }
   }
 
@@ -230,8 +227,16 @@ struct PrivacyNetworkDraft {
 enum PrivacyGrantSource: Hashable, Sendable {
   case owner
   case pluginDeclaration
-  /// The name of the managed source, as a localization key.
-  case managedLimit(String)
+}
+
+struct PrivacyLimitNotice: Hashable, Sendable {
+  enum Effect: Hashable, Sendable {
+    case unreadable
+    case permission(PrivacyGrantValue.Level?)
+    case network(PrivacyNetworkAccess)
+  }
+  let source: String
+  let effect: Effect
 }
 
 struct PrivacyGrant: Identifiable, Hashable, Sendable {
@@ -245,12 +250,16 @@ struct PrivacyGrant: Identifiable, Hashable, Sendable {
   var isStored = true
   var allowedLevels: [PrivacyGrantValue.Level]? = nil
   var networkLimits: [PrivacyNetworkAccess] = []
-  var networkLimitSources: [String] = []
+  var trustedHosts: Set<String> = []
+  var limitNotices: [PrivacyLimitNotice] = []
+  var networkLimitNotices: [PrivacyLimitNotice] = []
 
   var availableLevels: [PrivacyGrantValue.Level] { allowedLevels ?? permission.grantedValues }
 
   func allowsNetwork(_ value: PrivacyNetworkAccess) -> Bool {
-    networkLimits.allSatisfy { $0.contains(value) }
+    networkLimits.allSatisfy {
+      value.permissionAccess.fits(within: $0.permissionAccess, trustedHosts: trustedHosts)
+    }
   }
 
   var id: String { [principalID, permission.rawValue, object?.id ?? ""].joined(separator: "/") }
@@ -313,9 +322,14 @@ struct PrivacySystemPermission: Identifiable, Hashable, Sendable {
   }
 }
 
-struct PrivacySnapshot: Hashable, Sendable {
+struct PrivacySnapshot: Equatable, Sendable {
   var revision: UInt64 = 0
-  var profileRevisions: [String: Int64] = [:]
+  var epoch: UUID?
+  var reviewedProfiles: [ProfileGrant] = []
+  var profileRevisions: [String: Int64] {
+    Dictionary(
+      uniqueKeysWithValues: reviewedProfiles.map { ($0.id.rawValue, $0.authorizationRevision) })
+  }
   var requests: [PrivacyRequest] = []
   var principals: [PrivacyPrincipal] = []
   var grants: [PrivacyGrant] = []

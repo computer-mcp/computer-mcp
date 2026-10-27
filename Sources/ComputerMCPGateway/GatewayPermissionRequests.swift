@@ -82,6 +82,9 @@ package struct GatewayPermissionView: Sendable {
   package let epoch: UUID?
   package let suspended: Bool
   package let unconfirmedProfileIDs: Set<GatewayProfileID>
+  /// Profile editing uses every allowed caller's policies, even before a client connects.
+  package var profileLimits: [GatewayProfileID: [ManagedLimits]] = [:]
+  package var trustedHosts: Set<String> = []
 }
 
 package struct GatewayPermissionSubjectView: Sendable {

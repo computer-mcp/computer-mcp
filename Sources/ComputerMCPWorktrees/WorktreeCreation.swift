@@ -47,7 +47,6 @@ extension WorktreeRepository {
     }
     return try withLock { lock in
       try recoverLocked(lock)
-      try requireSupportedLayout()
       let branchRef = try requireBranch(branch ?? "worktree/" + name)
       guard try revision(branchRef) == nil,
         try command(["symbolic-ref", "--quiet", branchRef], accepting: [0, 1]).exitCode == 1
@@ -163,7 +162,7 @@ extension WorktreeRepository {
     guard journal.phase != .reserved else {
       throw WorktreeError.recoveryRequired("Creation has no durable directory ownership evidence.")
     }
-    try verifyDirectories(journal)
+    try verifyDirectories(journal, repository: identity, source: source)
     try lock.verify()
     guard try revision(journal.base) == journal.baseOID,
       try command(["symbolic-ref", "--quiet", journal.base], accepting: [0, 1]).exitCode == 1
@@ -177,11 +176,12 @@ extension WorktreeRepository {
           "worktree", "add", "--no-checkout", "--detach", "--", root.path, journal.baseOID,
         ])
       }
-      let administrative = try administrativeDirectory(root: root)
+      let administrative = try administrativeDirectory(root: root, repository: identity)
       guard
         try directHead(
           root: root, administrative: administrative.url,
-          objects: URL(fileURLWithPath: journal.objects!.path)) == journal.baseOID
+          objects: URL(fileURLWithPath: journal.objects!.path), repository: identity)
+          == journal.baseOID
       else {
         throw WorktreeError.recoveryRequired("New worktree HEAD differs from the captured base.")
       }
@@ -197,7 +197,7 @@ extension WorktreeRepository {
     }
     if journal.phase == .checkout {
       let root = URL(fileURLWithPath: journal.record.root)
-      let topology = try verifyTopology(journal)
+      let topology = try verifyTopology(journal, repository: identity, source: source)
       let files = try FileManager.default.contentsOfDirectory(atPath: root.path)
       if files == [".git"] {
         try lock.verify()
@@ -208,7 +208,8 @@ extension WorktreeRepository {
       }
       guard try status(topology).isEmpty,
         try directHead(
-          root: root, administrative: topology.gitDirectory.url, objects: topology.objects.url)
+          root: root, administrative: topology.gitDirectory.url, objects: topology.objects.url,
+          repository: identity)
           == journal.baseOID
       else {
         throw WorktreeError.recoveryRequired("Interrupted checkout is not the captured clean tree.")
@@ -227,7 +228,7 @@ extension WorktreeRepository {
       try saveJournal(journal, replacing: previous)
     }
     if journal.phase == .branch {
-      _ = try verifyTopology(journal)
+      _ = try verifyTopology(journal, repository: identity, source: source)
       try verifyCreatedBranch(journal)
       try lock.verify()
       let active = try activeRecord(journal)
@@ -321,8 +322,11 @@ extension WorktreeRepository {
     return Data((journal.id + "\n" + generation.uuidString + "\n").utf8)
   }
 
-  func verifyDirectories(_ journal: WorktreeCreationJournal) throws {
-    guard journal.repository == identity, journal.record.source == source,
+  func verifyDirectories(
+    _ journal: WorktreeCreationJournal, repository: WorktreeRepositoryIdentity,
+    source: DerivedProjectSource
+  ) throws {
+    guard journal.repository == repository, journal.record.source == source,
       let content = journal.contentParent, let root = journal.root,
       let objectParent = journal.objectParent, let objects = journal.objects,
       let runtime = journal.runtime
@@ -339,7 +343,7 @@ extension WorktreeRepository {
     else {
       throw WorktreeError.recoveryRequired("Owned directories differ from configured storage.")
     }
-    try identity.verify()
+    try repository.verify()
     for expected in [content, root, objectParent, objects, runtime] {
       guard try WorktreeDirectory(URL(fileURLWithPath: expected.path)).identity == expected else {
         throw WorktreeError.identityChanged("Worktree directory was moved or replaced.")

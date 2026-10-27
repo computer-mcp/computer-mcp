@@ -6,7 +6,7 @@ import Testing
 
 @testable import ComputerMCPDelivery
 
-@Suite(.nativeIntegration)
+@Suite(.nativeIntegration, DeliveryAdministration())
 struct DeliveryConfigurationTests {
   @Test(arguments: [false, true])
   func standaloneAndAppManifestsRoundTrip(app: Bool) async throws {

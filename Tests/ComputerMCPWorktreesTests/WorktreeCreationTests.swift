@@ -5,6 +5,49 @@ import Testing
 @testable import ComputerMCPWorktrees
 
 struct WorktreeCreationTests {
+  @Test func sharedStorageRecognizesEachRepositorysVerifiedContent() throws {
+    try fixture { directory in
+      let f = try WorktreeFixture(directory)
+      let first = try f.service().create(name: "first")
+      let other = directory.appendingPathComponent("other-repository")
+      try f.raw(["init", "--initial-branch=main", "--object-format=sha256", other.path])
+      try f.raw(
+        [
+          "-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid",
+          "commit", "--allow-empty", "-m", "initial",
+        ], root: other)
+      let otherSource = DerivedProjectSource(
+        id: "other-source", root: other.path,
+        registeredAt: f.source.registeredAt)
+      func otherService(_ roots: [URL]) throws -> WorktreeRepository {
+        try WorktreeRepository(
+          source: otherSource, store: f.store, storage: f.storage,
+          executor: f.executor, registeredProjectRoots: roots,
+          timeoutMilliseconds: 10_000, maxOutputBytes: 1_048_576, lockTimeout: .seconds(1))
+      }
+      let initialRoots = [f.repository, other, first.path]
+      let second = try otherService(initialRoots).create(name: "second")
+      let allRoots = initialRoots + [second.path]
+      let firstService = try f.service(roots: allRoots)
+      let secondService = try otherService(allRoots)
+      #expect(
+        try firstService.topology(projectID: first.projectID).root.url.path == first.path.path)
+      #expect(
+        try secondService.topology(projectID: second.projectID).root.url.path == second.path.path)
+      #expect(throws: WorktreeError.self) { try secondService.topology(projectID: first.projectID) }
+      let listed = try secondService.inventory { _ in true }
+      #expect(listed.compactMap(\.projectID) == [second.projectID])
+      #expect(try f.store.records().count == 2)
+      #expect(throws: WorktreeError.self) {
+        try otherService(allRoots + [f.storage.content.appendingPathComponent("unowned")])
+      }
+      try Data("different owner".utf8).write(
+        to: first.path.deletingLastPathComponent().appendingPathComponent("owner.json"))
+      #expect(throws: WorktreeError.self) { try otherService(allRoots) }
+      #expect(throws: WorktreeError.self) { try secondService.inventory { _ in true } }
+    }
+  }
+
   @Test(arguments: ["sha1", "sha256"])
   func detachedCreationAndPrivateCommitsSurviveReopen(format: String) throws {
     try fixture { directory in
@@ -39,7 +82,7 @@ struct WorktreeCreationTests {
       #expect(
         try restarted.directHead(
           root: topology.root.url, administrative: topology.gitDirectory.url,
-          objects: topology.objects.url) == privateHead)
+          objects: topology.objects.url, repository: restarted.identity) == privateHead)
       #expect(
         try FileManager.default.contentsOfDirectory(atPath: topology.objects.url.path).count > 0)
     }

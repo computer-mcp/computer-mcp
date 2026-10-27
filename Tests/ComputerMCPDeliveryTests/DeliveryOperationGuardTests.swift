@@ -6,7 +6,7 @@ import Testing
 
 @testable import ComputerMCPDelivery
 
-@Suite(.nativeIntegration)
+@Suite(.nativeIntegration, DeliveryAdministration())
 struct DeliveryOperationGuardTests {
   @Test(arguments: [false, true])
   func deliveryRebaseDoesNotExecuteInstructionFormat(global: Bool) async throws {

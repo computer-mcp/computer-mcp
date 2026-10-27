@@ -60,7 +60,7 @@ extension WorktreeRepository {
       else {
         throw WorktreeError.recoveryRequired("No active host topology for this registration.")
       }
-      return try verifyTopology(journal)
+      return try verifyTopology(journal, repository: identity, source: source)
     }
   }
 
@@ -72,10 +72,14 @@ extension WorktreeRepository {
     return record
   }
 
-  func verifyTopology(_ journal: WorktreeCreationJournal) throws -> VerifiedWorktreeTopology {
-    try verifyDirectories(journal)
+  func verifyTopology(
+    _ journal: WorktreeCreationJournal, repository: WorktreeRepositoryIdentity,
+    source: DerivedProjectSource
+  ) throws -> VerifiedWorktreeTopology {
+    try verifyDirectories(journal, repository: repository, source: source)
     let topology = try VerifiedWorktreeTopology(journal)
-    let administrative = try administrativeDirectory(root: topology.root.url)
+    let administrative = try administrativeDirectory(
+      root: topology.root.url, repository: repository)
     guard administrative.identity == topology.gitDirectory.identity else {
       throw WorktreeError.identityChanged("Worktree administration was replaced.")
     }
@@ -87,9 +91,13 @@ extension WorktreeRepository {
       throw WorktreeError.unsafeConfiguration("Private alternate files are unsupported.")
     }
     let head = try directHead(
-      root: topology.root.url, administrative: administrative.url, objects: topology.objects.url)
+      root: topology.root.url, administrative: administrative.url, objects: topology.objects.url,
+      repository: repository)
     let entries = try WorktreeInventoryEntry.parse(
-      command(["worktree", "list", "--porcelain", "-z"]).output)
+      git.run(
+        ["worktree", "list", "--porcelain", "-z"], at: URL(fileURLWithPath: repository.main.path),
+        gitDirectory: URL(fileURLWithPath: repository.common.path)
+      ).output)
     guard let entry = entries.first(where: { $0.path == topology.root.url.path }),
       entry.detached, entry.head == head, !entry.bare, !entry.prunable
     else {
@@ -99,7 +107,9 @@ extension WorktreeRepository {
     return topology
   }
 
-  func administrativeDirectory(root: URL) throws -> WorktreeDirectory {
+  func administrativeDirectory(root: URL, repository: WorktreeRepositoryIdentity) throws
+    -> WorktreeDirectory
+  {
     let directory = try WorktreeDirectory(root)
     guard let data = try io.read(".git", in: directory, limit: 16_384),
       let pointer = String(data: data, encoding: .utf8), pointer.hasPrefix("gitdir: "),
@@ -112,7 +122,7 @@ extension WorktreeRepository {
     else {
       throw WorktreeError.identityChanged("Unsupported worktree Git indirection.")
     }
-    let common = URL(fileURLWithPath: identity.common.path)
+    let common = URL(fileURLWithPath: repository.common.path)
     let administrative = try WorktreeDirectory(URL(fileURLWithPath: path))
     guard
       administrative.url.deletingLastPathComponent().path
@@ -130,18 +140,20 @@ extension WorktreeRepository {
     return administrative
   }
 
-  func directHead(root: URL, administrative: URL, objects: URL) throws -> String {
+  func directHead(
+    root: URL, administrative: URL, objects: URL, repository: WorktreeRepositoryIdentity
+  ) throws -> String {
     let headDirectory = try WorktreeDirectory(administrative)
     guard let head = try io.read("HEAD", in: headDirectory, limit: 1024),
       head
         == Data(
           (String(decoding: head, as: UTF8.self).trimmingCharacters(in: .newlines) + "\n").utf8),
-      identity.format.contains(
+      repository.format.contains(
         String(decoding: head, as: UTF8.self).trimmingCharacters(in: .newlines))
     else {
       throw WorktreeError.identityChanged("Host worktree HEAD must be a direct regular ref file.")
     }
-    let shared = URL(fileURLWithPath: identity.objects.path)
+    let shared = URL(fileURLWithPath: repository.objects.path)
     guard
       try git.run(
         ["symbolic-ref", "--quiet", "HEAD"], at: root, gitDirectory: administrative,
@@ -154,7 +166,7 @@ extension WorktreeRepository {
       ["rev-parse", "--verify", "HEAD^{commit}"], at: root,
       gitDirectory: administrative, objects: objects, sharedObjects: shared)
     let oid = String(decoding: result.output, as: UTF8.self).trimmingCharacters(in: .newlines)
-    guard identity.format.contains(oid) else {
+    guard repository.format.contains(oid) else {
       throw WorktreeError.identityChanged("Invalid private HEAD.")
     }
     return oid

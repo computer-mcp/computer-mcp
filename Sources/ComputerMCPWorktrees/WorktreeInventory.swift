@@ -93,7 +93,7 @@ extension WorktreeRepository {
             guard let journal = try readJournal(record.projectID), journal.phase == .active,
               try activeRecord(journal) == record
             else { throw WorktreeError.recoveryRequired("Active journal is unavailable.") }
-            let topology = try verifyTopology(journal)
+            let topology = try verifyTopology(journal, repository: identity, source: source)
             projectID = record.projectID
             branch = journal.result.branch
             base = journal.result.base
@@ -123,7 +123,7 @@ extension WorktreeRepository {
             if entry.path == identity.main.path {
               administrative = URL(fileURLWithPath: identity.common.path)
             } else {
-              administrative = try administrativeDirectory(root: root).url
+              administrative = try administrativeDirectory(root: root, repository: identity).url
             }
             if let record, case .plugin = record.provenance { projectID = record.projectID }
             dirty = try !git.run(

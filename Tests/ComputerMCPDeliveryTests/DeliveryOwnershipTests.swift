@@ -3,7 +3,7 @@ import Testing
 
 @testable import ComputerMCPDelivery
 
-@Suite(.nativeIntegration)
+@Suite(.nativeIntegration, DeliveryAdministration())
 struct DeliveryOwnershipTests {
   @Test(arguments: ["index", "private-ref", "both"])
   func movedWorktreePreservesAdministrativeStateWithUnchangedHead(state: String) async throws {

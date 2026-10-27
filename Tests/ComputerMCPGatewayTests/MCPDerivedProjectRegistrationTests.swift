@@ -19,9 +19,10 @@ struct MCPDerivedProjectRegistrationTests {
       projectID: "host-child",
       source: .init(id: source.id, root: source.rootPath, registeredAt: source.createdAt),
       root: fixture.root.appendingPathComponent("host-child").path,
-      provenance: .host(worktreeID: UUID(), storageGeneration: UUID()))
-    try SQLiteDerivedProjectStore(connection: fixture.database.connection).commit(
-      record, expecting: nil)
+      provenance: .host(worktreeID: UUID(), storageGeneration: UUID()), state: .creating)
+    let store = SQLiteDerivedProjectStore(connection: fixture.database.connection)
+    try store.commit(record, expecting: nil)
+    #expect(try store.records() == [record])
     #expect(throws: MCPHostServiceError.self) {
       try fixture.database.derivedProjectRegistration(id: record.projectID)
     }

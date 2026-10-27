@@ -17,6 +17,45 @@ package struct WorktreeRepositoryIdentity: Codable, Equatable, Sendable {
   let objects: WorktreeDirectoryIdentity
   let format: WorktreeObjectFormat
 
+  init(source: DerivedProjectSource, git: WorktreeGit) throws {
+    guard !source.root.unicodeScalars.contains(where: { $0.value < 32 }) else {
+      throw WorktreeError.unsupportedRepository("Repository path contains control characters.")
+    }
+    let root = URL(fileURLWithPath: source.root).standardizedFileURL.resolvingSymlinksInPath()
+    guard root.path == source.root,
+      try git.text(["rev-parse", "--is-bare-repository"], at: root) == "false",
+      try URL(fileURLWithPath: git.text(["rev-parse", "--show-toplevel"], at: root))
+        .standardizedFileURL.resolvingSymlinksInPath().path == root.path
+    else {
+      throw WorktreeError.unsupportedRepository("Source must be a non-bare repository top level.")
+    }
+    let commonPath = try git.text(
+      ["rev-parse", "--path-format=absolute", "--git-common-dir"], at: root)
+    guard !commonPath.unicodeScalars.contains(where: { $0.value < 32 }) else {
+      throw WorktreeError.unsupportedRepository("Repository path contains control characters.")
+    }
+    let common = try WorktreeDirectory(URL(fileURLWithPath: commonPath).resolvingSymlinksInPath())
+    let entries = try WorktreeInventoryEntry.parse(
+      git.run(["worktree", "list", "--porcelain", "-z"], at: root).output)
+    guard let mainPath = entries.first?.path, entries.first?.bare == false else {
+      throw WorktreeError.unsupportedRepository("A main checkout is required.")
+    }
+    let main = try WorktreeDirectory(URL(fileURLWithPath: mainPath).resolvingSymlinksInPath())
+    guard
+      try URL(fileURLWithPath: git.text(["rev-parse", "--absolute-git-dir"], at: main.url))
+        .standardizedFileURL.resolvingSymlinksInPath().path == common.url.path,
+      let format = try WorktreeObjectFormat(
+        rawValue: git.text(["rev-parse", "--show-object-format=storage"], at: root))
+    else {
+      throw WorktreeError.unsupportedRepository("Unsupported repository layout or object format.")
+    }
+    self.source = try WorktreeDirectory(root).identity
+    self.main = main.identity
+    self.common = common.identity
+    objects = try common.child("objects").identity
+    self.format = format
+  }
+
   func verify() throws {
     for identity in [source, main, common, objects] {
       guard try WorktreeDirectory(URL(fileURLWithPath: identity.path)).identity == identity else {
@@ -60,53 +99,33 @@ package final class WorktreeRepository {
     git = WorktreeGit(
       executor: executor, home: storage.journals,
       timeoutMilliseconds: timeoutMilliseconds, maxOutputBytes: maxOutputBytes)
-    guard !source.root.unicodeScalars.contains(where: { $0.value < 32 }) else {
-      throw WorktreeError.unsupportedRepository("Repository path contains control characters.")
-    }
-    let root = URL(fileURLWithPath: source.root).standardizedFileURL.resolvingSymlinksInPath()
-    guard root.path == source.root,
-      try git.text(["rev-parse", "--is-bare-repository"], at: root) == "false",
-      try URL(fileURLWithPath: git.text(["rev-parse", "--show-toplevel"], at: root))
-        .standardizedFileURL.resolvingSymlinksInPath().path == root.path
-    else {
-      throw WorktreeError.unsupportedRepository("Source must be a non-bare repository top level.")
-    }
-    let commonPath = try git.text(
-      ["rev-parse", "--path-format=absolute", "--git-common-dir"], at: root)
-    guard !commonPath.unicodeScalars.contains(where: { $0.value < 32 }) else {
-      throw WorktreeError.unsupportedRepository("Repository path contains control characters.")
-    }
-    let common = try WorktreeDirectory(URL(fileURLWithPath: commonPath).resolvingSymlinksInPath())
-    let entries = try WorktreeInventoryEntry.parse(
-      git.run(["worktree", "list", "--porcelain", "-z"], at: root).output)
-    guard let mainPath = entries.first?.path, entries.first?.bare == false else {
-      throw WorktreeError.unsupportedRepository("A main checkout is required.")
-    }
-    let main = try WorktreeDirectory(URL(fileURLWithPath: mainPath).resolvingSymlinksInPath())
-    guard
-      try URL(fileURLWithPath: git.text(["rev-parse", "--absolute-git-dir"], at: main.url))
-        .standardizedFileURL.resolvingSymlinksInPath().path == common.url.path,
-      let format = try WorktreeObjectFormat(
-        rawValue: git.text(["rev-parse", "--show-object-format=storage"], at: root))
-    else {
-      throw WorktreeError.unsupportedRepository("Unsupported repository layout or object format.")
-    }
-    identity = WorktreeRepositoryIdentity(
-      source: try WorktreeDirectory(root).identity, main: main.identity, common: common.identity,
-      objects: try common.child("objects").identity, format: format)
+    identity = try WorktreeRepositoryIdentity(source: source, git: git)
+    try requireSupportedLayout(identity)
     try validateStorage()
-    try requireSupportedLayout()
   }
 
   func validateStorage() throws {
-    // Only identity-verified host content can already occupy the content region.
+    // Storage is shared across repositories; only each record's live, verified
+    // topology can establish an exception for its exact content root.
     var owned: Set<String> = []
     for record in try store.records() {
-      guard case .host = record.provenance, record.source == source,
+      guard case .host = record.provenance,
         record.state == .active, let journal = try readJournal(record.projectID),
-        try activeRecord(journal) == record, (try? verifyTopology(journal)) != nil
+        journal.phase == .active, try activeRecord(journal) == record
       else { continue }
-      owned.insert(record.root)
+      do {
+        let repository =
+          record.source == source
+          ? identity : try WorktreeRepositoryIdentity(source: record.source, git: git)
+        // Foreign validation only reads; acquiring its lock while holding this
+        // repository's lock would invert ordering for concurrent host operations.
+        try requireSupportedLayout(repository)
+        _ = try verifyTopology(journal, repository: repository, source: record.source)
+        owned.insert(record.root)
+      } catch {
+        // Unverified content remains subject to the ordinary overlap denial.
+        continue
+      }
     }
     try storage.validate(
       projectRoots: projectRoots + [URL(fileURLWithPath: source.root)], ownedRoots: owned)
@@ -119,12 +138,21 @@ package final class WorktreeRepository {
     defer { lock.release() }
     try identity.verify()
     try lock.verify()
+    try requireSupportedLayout(identity)
     try validateStorage()
     return try action(lock)
   }
 
-  func requireSupportedLayout() throws {
-    let root = URL(fileURLWithPath: source.root)
+  func requireSupportedLayout(_ repository: WorktreeRepositoryIdentity) throws {
+    try repository.verify()
+    for suffix in ["objects/info/alternates", "info/grafts", "shallow"] {
+      let path = URL(fileURLWithPath: repository.common.path).appendingPathComponent(suffix)
+      if (try? FileManager.default.attributesOfItem(atPath: path.path)) != nil {
+        throw WorktreeError.unsupportedRepository(
+          "Repository alternates, grafts and shallow history are unsupported.")
+      }
+    }
+    let root = URL(fileURLWithPath: repository.source.path)
     let names = try git.configurationNames(at: root).lowercased().split(separator: "\0")
     guard !names.contains(where: { $0 == "extensions.partialclone" || $0.hasSuffix(".promisor") }),
       try git.text(["rev-parse", "--is-shallow-repository"], at: root) == "false",
@@ -136,13 +164,6 @@ package final class WorktreeRepository {
     else {
       throw WorktreeError.unsupportedRepository(
         "Worktrees require a complete repository with ordinary refs and checkout.")
-    }
-    for suffix in ["objects/info/alternates", "info/grafts", "shallow"] {
-      let path = URL(fileURLWithPath: identity.common.path).appendingPathComponent(suffix)
-      if (try? FileManager.default.attributesOfItem(atPath: path.path)) != nil {
-        throw WorktreeError.unsupportedRepository(
-          "Repository alternates, grafts and shallow history are unsupported.")
-      }
     }
   }
 

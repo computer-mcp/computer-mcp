@@ -11,7 +11,7 @@ import Testing
   import ComputerMCPDarwinTestSupport
 #endif
 
-@Suite(.nativeIntegration)
+@Suite(.nativeIntegration, DeliveryAdministration())
 struct DeliveryToolProviderTests {
   @Test
   func definitionsAndScopeListing() async throws {

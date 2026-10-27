@@ -4,7 +4,7 @@ import Testing
 
 @testable import ComputerMCPDelivery
 
-@Suite(.nativeIntegration)
+@Suite(.nativeIntegration, DeliveryAdministration())
 struct DeliveryWriteTests {
   @Test(arguments: [false, true])
   func changedSourceBeforeWriteIsPreserved(duringIndexRead: Bool) async throws {

@@ -4,6 +4,26 @@ import Testing
 @testable import ComputerMCPWorktrees
 
 struct WorktreeInventoryTests {
+  @Test func changedSharedObjectLayoutRefusesExistingServiceReads() throws {
+    try fixture { directory in
+      let f = try WorktreeFixture(directory)
+      let service = try f.service()
+      let created = try service.create(name: "layout")
+      let topology = try service.topology(projectID: created.projectID)
+      let foreignObjects = directory.appendingPathComponent("foreign-objects")
+      try FileManager.default.createDirectory(
+        at: foreignObjects, withIntermediateDirectories: false)
+      let alternate = topology.sharedObjects.url.appendingPathComponent("info/alternates")
+      try Data((foreignObjects.path + "\n").utf8).write(to: alternate)
+      #expect(throws: WorktreeError.self) { try service.topology(projectID: created.projectID) }
+      #expect(throws: WorktreeError.self) { try service.inventory { _ in true } }
+      try FileManager.default.removeItem(at: alternate)
+      #expect(
+        try service.topology(projectID: created.projectID).root.identity == topology.root.identity)
+      #expect(try service.inventory { _ in true }.contains { $0.projectID == created.projectID })
+    }
+  }
+
   @Test func privateHeadCountsDirtyAndForeignCheckout() throws {
     try fixture { directory in
       let f = try WorktreeFixture(directory)

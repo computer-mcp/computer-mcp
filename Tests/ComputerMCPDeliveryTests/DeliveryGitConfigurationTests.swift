@@ -93,7 +93,7 @@ struct DeliveryGitConfigurationTests {
         .write(to: snapshot)
       })
       let result = try fixture.apply(provider: fixture.provider(io: io))
-      #expect(result["state"] == .string("cleanup_pending"))
+      #expect(result["state"] == .string("cleanup_pending"), "Delivery result: \(result)")
       #expect(result["reason"] == .string("rebase_in_progress"))
       #expect(result["branch"] == .string("docs/entry"))
       let journal = try #require(fixture.journals().first)

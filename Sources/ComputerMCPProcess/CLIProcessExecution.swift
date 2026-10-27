@@ -88,13 +88,16 @@ package final class CLIProcessExecution: Sendable {
     let (id, call) = try begin()
     defer { _ = state.withLockedValue { $0.calls.removeValue(forKey: id) } }
     let inheritsEnvironment = inheritsEnvironment
+    let administration = ExecutionAdministration.current
     return try await withTaskCancellationHandler {
       let result = try await blocking.perform {
-        try call.run(
-          executable: executable, invocation: invocation, cwd: cwd, environment: environment,
-          timeoutMilliseconds: timeoutMilliseconds, maxOutputBytes: maxOutputBytes,
-          verification: verification, interpreterBindings: interpreterBindings,
-          inheritsEnvironment: inheritsEnvironment)
+        try ExecutionAdministration.$current.withValue(administration) {
+          try call.run(
+            executable: executable, invocation: invocation, cwd: cwd, environment: environment,
+            timeoutMilliseconds: timeoutMilliseconds, maxOutputBytes: maxOutputBytes,
+            verification: verification, interpreterBindings: interpreterBindings,
+            inheritsEnvironment: inheritsEnvironment)
+        }
       }
       try Task.checkCancellation()
       return result

@@ -63,12 +63,8 @@ struct MCPChildProcessTransportTests {
     await transport.disconnect()
     #expect(await session.closed)
     #expect(await transport.shutdownConfirmed() == confirmed)
-    #if os(Linux)
-      #expect(lines.isEmpty)
-      #expect(streamError is ManagedLineProcessError)
-    #else
-      #expect(lines == ["3"])
-    #endif
+    #expect(lines == ["3"])
+    if let streamError { #expect(streamError as? MCPError == .connectionClosed) }
     let receipts = try MCPProcessOwnership.inspect(
       root: try #require(environment.processOwnershipRoot), project: root, registration: "hosted")
     if confirmed {

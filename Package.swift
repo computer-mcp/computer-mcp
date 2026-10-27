@@ -115,7 +115,7 @@ let neutralTargets: [Target] =
     .testTarget(
       name: "ComputerMCPToolsFilesTests",
       dependencies: [
-        "ComputerMCPWorktrees",
+        "ComputerMCPWorktrees", "CSystemPOSIX",
         "ComputerMCPToolsFiles", "ComputerMCPToolKit", "ComputerMCPCore",
         "ComputerMCPConfiguration", "ComputerMCPPlatform", "ComputerMCPPlatformPOSIX",
         "ComputerMCPProcess", "ComputerMCPTestSupport",

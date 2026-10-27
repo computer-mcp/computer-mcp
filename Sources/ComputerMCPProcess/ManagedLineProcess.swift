@@ -272,9 +272,10 @@ package final class ManagedLineProcess: @unchecked Sendable {
 
     if let execution = await state.runningExecution() {
       await state.recordTerminationEscalation()
-      if !(await state.signalChildGroup(SIGKILL)) {
-        await execution.cancelAndWait()
-      }
+      _ = await state.signalChildGroup(SIGKILL)
+      // A terminated command can leave supervisor resources alive in other groups.
+      // Completion requires the ownership handle to settle all recorded members.
+      await execution.cancelAndWait()
     }
 
     if !(await waitForExit(milliseconds: configuration.killGraceMilliseconds)) {

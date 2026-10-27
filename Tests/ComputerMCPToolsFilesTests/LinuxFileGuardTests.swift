@@ -45,7 +45,7 @@
         environment: ToolEnvironment(
           launcher: testExecutionLauncher(),
           configuration: .init(builtin: .init(enabled: [tool]), projectDirectory: temporary.url)))
-      _ = try provider.callTool(
+      _ = try provider.callToolAsFixtureOwner(
         .init(
           name: tool,
           arguments: .object(["source": .string("source"), "destination": .string("target")]),
@@ -109,7 +109,7 @@
           if phase == .didMutate { try FileManager.default.linkItem(at: source, to: outside) }
         })
       #expect(throws: (any Error).self) {
-        _ = try provider.callTool(
+        _ = try provider.callToolAsFixtureOwner(
           .init(
             name: tool,
             arguments: .object([

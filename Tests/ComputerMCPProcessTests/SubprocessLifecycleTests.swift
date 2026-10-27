@@ -20,6 +20,62 @@ import Testing
 @Suite(.nativeIntegration, .timeLimit(.minutes(1)))
 struct SubprocessLifecycleTests {
   @Test
+  func asynchronousCLIRequiresAndPreservesExplicitAdministration() async throws {
+    let scratch = try ScopedTemporaryDirectory()
+    let execution = CLIProcessExecution(launcher: testExecutionLauncher())
+    let administration = ExecutionAdministration(
+      mode: .fullAccess,
+      environment: try ExecutionEnvironment(fullAccessVariables: ["PATH": "/usr/bin:/bin"]))
+    func launch() async throws -> ShellSessionSnapshot {
+      try await execution.launchAsync(
+        executable: "/bin/sh",
+        invocation: .init(arguments: ["-c", "printf admitted"], standardInput: Data()),
+        cwd: scratch.url, environment: [:], timeoutMilliseconds: 2_000, maxOutputBytes: 1024)
+    }
+    await #expect(throws: (any Error).self) { try await launch() }
+    let result = try await ExecutionAdministration.$current.withValue(administration) {
+      try await launch()
+    }
+    #expect(
+      result.exitCode == 0 && result.stdout.base64 == Data("admitted".utf8).base64EncodedString())
+    await execution.shutdown()
+  }
+
+  #if os(Linux)
+    @Test
+    func closeReclaimsWatchdogAfterSupervisorAndCommandExit() async throws {
+      let scratch = try ScopedTemporaryDirectory()
+      let observations = ExecutionObservations()
+      let process = try withLifecycleAdministration(directory: scratch.url) {
+        try ManagedLineProcess(
+          launcher: testExecutionLauncher(observations: observations),
+          configuration: .init(
+            executable: "/bin/sh", arguments: ["-c", "printf 'ready\\n'; exec sleep 30"],
+            workingDirectory: scratch.url, terminationGraceMilliseconds: 100))
+      }
+      do {
+        var lines = process.inboundLines.makeAsyncIterator()
+        try #require(try await lines.next() == "ready")
+        let owner = try #require(observations.ownerships.first)
+        try await waitUntil { (try? await owner.members().count) ?? 0 >= 3 }
+        let snapshot = await process.snapshot()
+        let supervisor = try #require(snapshot.supervisorProcessID)
+        let child = try #require(snapshot.processID)
+        #expect(kill(supervisor, SIGKILL) == 0)
+        #expect(kill(-child, SIGKILL) == 0)
+        await process.close()
+        #expect(await process.snapshot().hasExited)
+        #expect(try await owner.members().isEmpty)
+        #expect(kill(supervisor, 0) == -1 && errno == ESRCH)
+      } catch {
+        for owner in observations.ownerships { await owner.cancelAndWait() }
+        await process.close()
+        throw error
+      }
+    }
+  #endif
+
+  @Test
   func managedWriterRemainsOpenAcrossRequestsAndDeliversEOF() async throws {
     let scratch = try ScopedTemporaryDirectory()
     let directory = scratch.url

@@ -14,6 +14,7 @@ import Testing
 #if canImport(Darwin)
   import Darwin
 #elseif canImport(Glibc)
+  import CSystemPOSIX
   import Glibc
 #endif
 

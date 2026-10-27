@@ -5,6 +5,7 @@
 #include <spawn.h>
 #include <stdint.h>
 #include <sys/types.h>
+#include <sys/vfs.h>
 
 int computer_mcp_renameat_noreplace(int source, const char *name, int target, const char *leaf);
 int computer_mcp_spawn_addfchdir(posix_spawn_file_actions_t *actions, int descriptor);

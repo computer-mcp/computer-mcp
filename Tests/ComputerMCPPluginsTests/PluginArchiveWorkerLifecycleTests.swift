@@ -135,12 +135,7 @@ struct PluginArchiveWorkerLifecycleTests {
       workerExecutable: worker, stagingParent: fixture.staging,
       directoryFactory: WorkerDirectoryFactory())
     preparation.inheritedLockDescriptor = borrowed
-    #if canImport(Darwin)
-      let expected = PluginArchiveError.invalidArchive
-    #else
-      let expected = PluginArchiveError.workerFailed
-    #endif
-    await #expect(throws: expected) {
+    await #expect(throws: PluginArchiveError.invalidArchive) {
       try await preparation.withPreparedPackage(
         archive: fixture.archive, expectedSHA256: fixture.digest, pluginID: "combined",
         version: PluginVersion("1.2.3"), hostVersion: PluginVersion("1.0.0"), architecture: "arm64"

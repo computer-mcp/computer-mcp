@@ -11,7 +11,9 @@ package struct PreparationFixture: Sendable {
   package let digest: String
   package let staging: URL
   private let launcher: ExecutionLauncher
-  private let workerExecutable: URL
+  #if os(macOS)
+    private let workerExecutable: URL
+  #endif
   private let directoryFactory: any PluginArchiveDirectoryFactory
 
   package static let manifest = """
@@ -67,7 +69,9 @@ package struct PreparationFixture: Sendable {
   ) throws {
     self.launcher = launcher
     self.directoryFactory = directoryFactory
-    workerExecutable = try nativeGatewayTestExecutable()
+    #if os(macOS)
+      workerExecutable = try nativeGatewayTestExecutable()
+    #endif
     files = try ArchiveFixture()
     archive = try files.archive(
       [
@@ -83,22 +87,21 @@ package struct PreparationFixture: Sendable {
       attributes: [.posixPermissions: 0o700])
   }
 
-  package var preparation: PluginArchivePreparation {
-    PluginArchivePreparation(
-      launcher: launcher, workerExecutable: workerExecutable,
-      stagingParent: staging, directoryFactory: directoryFactory)
-  }
+  #if os(macOS)
+    package var preparation: PluginArchivePreparation {
+      PluginArchivePreparation(
+        launcher: launcher, workerExecutable: workerExecutable,
+        stagingParent: staging, directoryFactory: directoryFactory)
+    }
+  #endif
 
   package func prepare<Result: Sendable>(
     worker: URL? = nil, timeout: Duration = .seconds(60),
     operation: @Sendable (PluginPackage, PluginArchiveReceipt) async throws -> Result
   ) async throws -> Result {
-    var preparation = preparation
-    if let worker {
-      preparation = PluginArchivePreparation(
-        launcher: launcher, workerExecutable: worker, stagingParent: staging,
-        directoryFactory: directoryFactory)
-    }
+    var preparation = PluginArchivePreparation(
+      launcher: launcher, workerExecutable: try worker ?? nativeGatewayTestExecutable(),
+      stagingParent: staging, directoryFactory: directoryFactory)
     preparation.timeout = timeout
     return try await preparation.withPreparedPackage(
       archive: archive, expectedSHA256: digest, pluginID: "combined",

@@ -28,15 +28,21 @@ struct CLIParameterMappingTests {
           value: "import json,sys; print(json.dumps(sys.argv[1:], ensure_ascii=False))"),
         .init(kind: .option, parameter: "values", flag: "--value", style: style),
       ], stdout: .json, outputSchema: CLITreeTests.strings)
-    let provider = CLITreeTests.provider(command, executable: "python3")
+    let directory = FileManager.default.temporaryDirectory
+    let provider = CLITreeTests.provider(
+      command, executable: try testExecutable("python3"), project: directory)
     let tool = try #require(provider.definitions().first?.tool.name)
     let values: JSONValue = .array([
       .string(""), .string("你好 world"), .string("a\"b'c"), .string("$(never-execute)\n"),
     ])
-    let result = try await provider.callToolAsync(
-      .init(
-        name: tool, arguments: .object(["values": values]), context: .empty))
-    #expect(result.objectValue?["isError"] == .bool(false))
+    let result = try await withCLIProcessScope(
+      directory: directory, readOnly: true
+    ) {
+      try await provider.callToolAsync(
+        .init(
+          name: tool, arguments: .object(["values": values]), context: .empty))
+    }
+    #expect(result.objectValue?["isError"] == .bool(false), "\(result)")
     #expect(CLITreeTests.output(result)?["data"] == .array(expected.map(JSONValue.string)))
     await provider.execution.shutdown()
   }
@@ -52,13 +58,19 @@ struct CLIParameterMappingTests {
         .init(kind: .literal, value: "import json,sys; print(json.dumps(int(sys.argv[1])))"),
         .init(kind: .positional, parameter: "value"),
       ], stdout: .json, outputSchema: schema)
-    let provider = CLITreeTests.provider(command, executable: "python3")
+    let directory = FileManager.default.temporaryDirectory
+    let provider = CLITreeTests.provider(
+      command, executable: try testExecutable("python3"), project: directory)
     let tool = try #require(provider.definitions().first?.tool.name)
-    let result = try await provider.callToolAsync(
-      .init(
-        name: tool, arguments: .object(["value": .integer(integer)]), context: .empty))
+    let result = try await withCLIProcessScope(
+      directory: directory, readOnly: true
+    ) {
+      try await provider.callToolAsync(
+        .init(
+          name: tool, arguments: .object(["value": .integer(integer)]), context: .empty))
+    }
     await provider.execution.shutdown()
-    #expect(result.objectValue?["isError"] == .bool(false))
+    #expect(result.objectValue?["isError"] == .bool(false), "\(result)")
     #expect(CLITreeTests.output(result)?["data"]?.int64Value == integer)
   }
 

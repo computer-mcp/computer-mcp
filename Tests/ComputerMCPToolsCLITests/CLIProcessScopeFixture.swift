@@ -18,20 +18,37 @@ func withCLIProcessScope<Value>(
   directory: URL, readOnly: Bool = false, variables: [String: String] = [:],
   operation: () async throws -> Value
 ) async throws -> Value {
-  let scope = try CLIProcessScope(directory: directory, readOnly: readOnly, variables: variables)
-  do {
-    let result = try await InvocationExecution.$current.withValue(scope.prepared) {
+  #if os(Linux)
+    // These adapter fixtures exercise arguments, output and owned cancellation.
+    // Linux has no sandbox backend; principal admission is tested separately.
+    let scratch = try ScopedTemporaryDirectory()
+    var environment = [
+      "PATH": "/usr/bin:/bin", "HOME": scratch.url.path, "TMPDIR": scratch.url.path + "/",
+    ]
+    environment.merge(variables) { _, value in value }
+    let administration = ExecutionAdministration(
+      mode: .fullAccess,
+      environment: try .init(fullAccessVariables: environment))
+    return try await ExecutionAdministration.$current.withValue(administration) {
       try await operation()
     }
-    try await Task.detached { try await scope.finish(cancel: false) }.value
-    return result
-  } catch {
-    do { try await Task.detached { try await scope.finish(cancel: true) }.value } catch let cleanup
-    {
-      Issue.record("CLI fixture cleanup did not confirm completion: \(cleanup)")
+  #else
+    let scope = try CLIProcessScope(directory: directory, readOnly: readOnly, variables: variables)
+    do {
+      let result = try await InvocationExecution.$current.withValue(scope.prepared) {
+        try await operation()
+      }
+      try await Task.detached { try await scope.finish(cancel: false) }.value
+      return result
+    } catch {
+      do { try await Task.detached { try await scope.finish(cancel: true) }.value } catch let
+        cleanup
+      {
+        Issue.record("CLI fixture cleanup did not confirm completion: \(cleanup)")
+      }
+      throw error
     }
-    throw error
-  }
+  #endif
 }
 
 private final class CLIProcessScope: @unchecked Sendable {

@@ -2686,7 +2686,7 @@ final class StructuredToolProviderTests {
           projectDirectory: directory
         ),
         commandRunner: runner, environment: ["PATH": systemUtilityPath],
-        sqliteCommand: .init(id: "sqlite3", executable: "sqlite3")))
+        sqliteCommand: .init(id: "sqlite3", executable: try sqliteFixtureExecutable(directory))))
 
     let result = try provider.callTool(
       .init(
@@ -2702,7 +2702,7 @@ final class StructuredToolProviderTests {
     let firstCall = try #require(runner.calls.first)
     let firstSQL = try #require(firstCall.arguments.last)
 
-    #expect(firstCall.executable == (try testExecutable("sqlite3")))
+    #expect(firstCall.executable == directory.appendingPathComponent("sqlite3").path)
     #expect(firstCall.timeoutMilliseconds == 10_000)
     #expect(firstCall.maxOutputBytes == 4096)
     #expect(
@@ -2773,7 +2773,7 @@ final class StructuredToolProviderTests {
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["sqlite.schema"]),
           projectDirectory: directory
-        ), sqliteCommand: .init(id: "sqlite3", executable: "sqlite3")))
+        ), sqliteCommand: .init(id: "sqlite3", executable: try sqliteFixtureExecutable(directory))))
 
     expectThrows(
       try provider.callTool(
@@ -2818,7 +2818,8 @@ final class StructuredToolProviderTests {
           builtin: BuiltinConfig(enabled: ["sqlite.schema"]),
           projectDirectory: directory
         ),
-        commandRunner: failingRunner, sqliteCommand: .init(id: "sqlite3", executable: "sqlite3")))
+        commandRunner: failingRunner,
+        sqliteCommand: .init(id: "sqlite3", executable: try sqliteFixtureExecutable(directory))))
     expectThrows(
       try failingProvider.callTool(
         .init(
@@ -2840,7 +2841,8 @@ final class StructuredToolProviderTests {
           builtin: BuiltinConfig(enabled: ["sqlite.schema"]),
           projectDirectory: directory
         ),
-        commandRunner: truncatedRunner, sqliteCommand: .init(id: "sqlite3", executable: "sqlite3")))
+        commandRunner: truncatedRunner,
+        sqliteCommand: .init(id: "sqlite3", executable: try sqliteFixtureExecutable(directory))))
     expectThrows(
       try truncatedProvider.callTool(
         .init(
@@ -2860,7 +2862,8 @@ final class StructuredToolProviderTests {
           builtin: BuiltinConfig(enabled: ["sqlite.schema"]),
           projectDirectory: directory
         ),
-        commandRunner: badJSONRunner, sqliteCommand: .init(id: "sqlite3", executable: "sqlite3")))
+        commandRunner: badJSONRunner,
+        sqliteCommand: .init(id: "sqlite3", executable: try sqliteFixtureExecutable(directory))))
     expectThrows(
       try badJSONProvider.callTool(
         .init(
@@ -2897,7 +2900,7 @@ final class StructuredToolProviderTests {
           projectDirectory: directory
         ),
         commandRunner: runner, environment: ["PATH": systemUtilityPath],
-        sqliteCommand: .init(id: "sqlite3", executable: "sqlite3")))
+        sqliteCommand: .init(id: "sqlite3", executable: try sqliteFixtureExecutable(directory))))
 
     let result = try provider.callTool(
       .init(
@@ -2914,7 +2917,7 @@ final class StructuredToolProviderTests {
     let firstCall = try #require(runner.calls.first)
     let firstSQL = try #require(firstCall.arguments.last)
 
-    #expect(firstCall.executable == (try testExecutable("sqlite3")))
+    #expect(firstCall.executable == directory.appendingPathComponent("sqlite3").path)
     #expect(firstCall.timeoutMilliseconds == 10_000)
     #expect(firstCall.maxOutputBytes == 4096)
     #expect(
@@ -2963,7 +2966,7 @@ final class StructuredToolProviderTests {
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["sqlite.query"]),
           projectDirectory: directory
-        ), sqliteCommand: .init(id: "sqlite3", executable: "sqlite3")))
+        ), sqliteCommand: .init(id: "sqlite3", executable: try sqliteFixtureExecutable(directory))))
 
     expectThrows(
       try provider.callTool(
@@ -3039,7 +3042,8 @@ final class StructuredToolProviderTests {
           builtin: BuiltinConfig(enabled: ["sqlite.query"]),
           projectDirectory: directory
         ),
-        commandRunner: literalRunner, sqliteCommand: .init(id: "sqlite3", executable: "sqlite3")))
+        commandRunner: literalRunner,
+        sqliteCommand: .init(id: "sqlite3", executable: try sqliteFixtureExecutable(directory))))
     _ = try literalProvider.callTool(
       .init(
         name: "sqlite.query",
@@ -3059,7 +3063,8 @@ final class StructuredToolProviderTests {
           builtin: BuiltinConfig(enabled: ["sqlite.query"]),
           projectDirectory: directory
         ),
-        commandRunner: failingRunner, sqliteCommand: .init(id: "sqlite3", executable: "sqlite3")))
+        commandRunner: failingRunner,
+        sqliteCommand: .init(id: "sqlite3", executable: try sqliteFixtureExecutable(directory))))
     expectThrows(
       try failingProvider.callTool(
         .init(
@@ -3084,7 +3089,8 @@ final class StructuredToolProviderTests {
           builtin: BuiltinConfig(enabled: ["sqlite.query"]),
           projectDirectory: directory
         ),
-        commandRunner: truncatedRunner, sqliteCommand: .init(id: "sqlite3", executable: "sqlite3")))
+        commandRunner: truncatedRunner,
+        sqliteCommand: .init(id: "sqlite3", executable: try sqliteFixtureExecutable(directory))))
     expectThrows(
       try truncatedProvider.callTool(
         .init(
@@ -3107,7 +3113,8 @@ final class StructuredToolProviderTests {
           builtin: BuiltinConfig(enabled: ["sqlite.query"]),
           projectDirectory: directory
         ),
-        commandRunner: badJSONRunner, sqliteCommand: .init(id: "sqlite3", executable: "sqlite3")))
+        commandRunner: badJSONRunner,
+        sqliteCommand: .init(id: "sqlite3", executable: try sqliteFixtureExecutable(directory))))
     expectThrows(
       try badJSONProvider.callTool(
         .init(
@@ -3123,6 +3130,13 @@ final class StructuredToolProviderTests {
   }
 
   private var temporaryDirectories: [ScopedTemporaryDirectory] = []
+
+  private func sqliteFixtureExecutable(_ directory: URL) throws -> String {
+    let executable = directory.appendingPathComponent("sqlite3")
+    try Data("#!/bin/sh\nexit 99\n".utf8).write(to: executable)
+    try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: executable.path)
+    return executable.path
+  }
 
   private func temporaryDirectory() throws -> URL {
     let directory = try ScopedTemporaryDirectory()

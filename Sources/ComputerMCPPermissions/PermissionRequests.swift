@@ -1675,6 +1675,7 @@ package struct PermissionLedger: Equatable, Sendable, Codable {
     let principal = proof.invocation.principal
     let existingIDs = runtimeSuccessors[proof.id] ?? []
     var existingChain = existingIDs.compactMap { runtimeChains[$0] }.first
+    var supersededIDs: Set<UUID> = []
     var paths = existingChain?.requirements.paths ?? proof.requirements.paths
     var networks = existingChain?.requirements.networks ?? proof.requirements.networks
     for need in needs {
@@ -1701,9 +1702,7 @@ package struct PermissionLedger: Equatable, Sendable, Codable {
       if !live || (unanswered && chain.requirements != requirements) {
         // An execution can report new needs after a request batch expires. Rebuild
         // from its consumed proof, never renew an unconsumed one-time answer.
-        for id in ids where requests[id]?.status.isUnconsumed == true {
-          requests[id]!.status = .revoked
-        }
+        supersededIDs = ids
         existingChain = nil
       }
     }
@@ -1816,6 +1815,11 @@ package struct PermissionLedger: Equatable, Sendable, Codable {
       }
     }
     guard !resolution.missing.isEmpty else { return .satisfied }
+    // A non-requestable need must leave the current retry group answerable.
+    // Retire it only after its replacement passes every policy boundary.
+    for id in supersededIDs where requests[id]?.status.isUnconsumed == true {
+      requests[id]!.status = .revoked
+    }
     basis.formUnion(resolution.basis.requestEvidence)
     for request in carried { requests[request.id] = request }
     let pending = resolution.missing.map {

@@ -306,6 +306,68 @@ import Testing
     try await f.untilFinished(prepared.executionID, coordinator)
   }
 
+  @Test func interleavedRuntimeReportsKeepTheRequestableGroupRetryable() async throws {
+    let f = try ExecutionFixture()
+    let id = try f.paths.authorize(f.paths.project, operation: .read, once: true)
+    let hosts = (0..<5).map { "host-\($0).example" }
+    try f.paths.store.transactionWithDatabase { _, ledger in
+      var environment = ledger.environment
+      environment.limits[f.paths.principal] = ManagedLimits(sources: [
+        .managedPreferences: .available(
+          ManagedPolicy(network: .custom(hosts: Set(hosts), includesTrusted: false)))
+      ])
+      _ = try ledger.reconcile(environment: environment, expectedRevision: ledger.revision)
+    }
+    let callbacks = RuntimeDenialCallbacks()
+    let coordinator = try f.coordinator(proxyFactory: { id, policy, onDenial in
+      callbacks.install(id, policy: policy, handler: onDenial)
+      return try await EgressProxy.start(
+        executionID: id.uuidString, policy: policy,
+        routing: ExecutionTestRouting(), limits: .init(), onDenial: onDenial)
+    })
+    try await coordinator.recover()
+    let prepared = try await coordinator.prepare(authorizationID: id, context: f.context)
+    callbacks.emit(prepared.executionID, host: hosts[0])
+    #expect(try prepared.permissionRequests(prepared.executionID).count == 1)
+    await withTaskGroup(of: Void.self) { group in
+      for index in 1..<hosts.count {
+        group.addTask {
+          callbacks.emit(prepared.executionID, host: hosts[index])
+          callbacks.emit(prepared.executionID, host: "excluded-\(index).example")
+          callbacks.emit(prepared.executionID, host: hosts[0])
+        }
+      }
+    }
+    let requests = try prepared.permissionRequests(prepared.executionID)
+    #expect(requests.count == hosts.count)
+    #expect(requests.allSatisfy { $0.status == .pending })
+    #expect(
+      Set(
+        requests.compactMap { request -> String? in
+          if case .network(let content) = request.content { return content.host }
+          return nil
+        }) == Set(hosts))
+    try f.paths.store.transactionWithDatabase { database, ledger in
+      let record = try #require(try ExecutionRuntimeRecord.load(prepared.executionID, database))
+      #expect(record.permissionRequestIDs == Set(requests.map(\.id)))
+      #expect(record.permissionNeeds?.count == 9)
+      let proof = try #require(ledger.authorizations[id])
+      for request in requests { try ledger.answer(request.id, with: .onlyThisTime, now: Date()) }
+      guard
+        case .allowed(let retry) = try ledger.authorize(
+          invocation: proof.invocation, requirements: proof.requirements,
+          retryIDs: Set(requests.map(\.id)), now: Date())
+      else { throw PermissionModelError.invalidAuthorization }
+      #expect(Set(retry.requirements.networks.map(\.host)) == Set(hosts))
+      #expect(retry.requestIDs.count == hosts.count + 1)
+      #expect(ledger.authorizations[id] == proof)
+    }
+    #expect(callbacks.policy(prepared.executionID)?.access == EgressAccess.none)
+    #expect(f.platform.started == 0)
+    try prepared.finishAdmission()
+    try await f.untilFinished(prepared.executionID, coordinator)
+  }
+
   @Test func runtimeRequestStormsAndUnrequestableNetworkFailuresAreBounded() async throws {
     let f = try ExecutionFixture()
     let id = try f.paths.authorize(f.paths.project, operation: .read, once: false)

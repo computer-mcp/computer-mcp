@@ -504,6 +504,78 @@ struct HostIntegrationTests {
         == .denied(.managedLimit([.machine])))
     #expect(ledger.requests.isEmpty)
   }
+  @Test(arguments: ["explicit-denial", "managed-exclusion", "host-data", "connection-ceiling"])
+  func nonRequestableNeedsPreserveLivePendingRequests(denial: String) throws {
+    var ledger = PermissionLedger()
+    var environment = ledger.environment
+    environment.paths = PathEnvironmentSnapshot(TestPathEnvironment())
+    let ceiling = ManagedPolicy(
+      network: .custom(hosts: ["allowed.example"], includesTrusted: false))
+    if denial == "managed-exclusion" {
+      environment.limits[client] = ManagedLimits(machine: .available(ceiling))
+    }
+    environment.connections["A"] = PermissionConnection(
+      principal: client, attenuation: denial == "connection-ceiling" ? ceiling : .init())
+    try ledger.reconcile(environment: environment, expectedRevision: ledger.revision, now: instant)
+    if denial == "explicit-denial" {
+      try ledger.setPermission(
+        .denied, for: .filesAndFolders(.downloads), principal: client,
+        expectedRevision: ledger.revision)
+    }
+    let original = InvocationRequirements(actions: [action()], sandboxProjectID: "project")
+    let screen = try request(
+      from: ledger.authorize(
+        invocation: invocation(), requirements: original, connectionID: "A", now: instant))
+    try ledger.answer(screen.id, with: .onlyThisTime, now: instant)
+    let proof = try authorization(
+      from: ledger.authorize(
+        invocation: invocation(), requirements: original, retryIDs: [screen.id],
+        connectionID: "A", now: instant))
+    let execution = try ledger.startExecution(
+      owner: client, authorizationIDs: [proof.id], now: instant)
+    let host = NetworkRequirement(
+      host: "allowed.example", projectID: "project", isLocalNetwork: false)
+    guard
+      case .requests(let pending) = try ledger.recordDiscoveredNeeds(
+        executionID: execution.id, principal: client, needs: [.network(host)], now: instant)
+    else { throw PermissionModelError.unknownRequest }
+    #expect(pending.count == 1)
+    let snapshot = ledger.requests
+    let runningProof = ledger.authorizations[proof.id]
+    let need: DiscoveredRequirement
+    let reason: DenialReason
+    switch denial {
+    case "explicit-denial":
+      need = .path(.init(path: path("/people/me/Downloads/file"), operation: .read))
+      reason = .permissionDenied(.filesAndFolders(.downloads))
+    case "host-data":
+      need = .path(.init(path: path("/people/me/private/host/secret"), operation: .read))
+      reason = .hostData
+    default:
+      need = .network(.init(host: "excluded.example", projectID: "project", isLocalNetwork: false))
+      reason = .managedLimit([denial == "managed-exclusion" ? .machine : .connection])
+    }
+    #expect(
+      try ledger.recordDiscoveredNeeds(
+        executionID: execution.id, principal: client, needs: [need], now: instant)
+        == .denied(reason))
+    #expect(ledger.requests == snapshot)
+    ledger = try JSONDecoder().decode(PermissionLedger.self, from: JSONEncoder().encode(ledger))
+    #expect(
+      try ledger.recordDiscoveredNeeds(
+        executionID: execution.id, principal: client, needs: [.network(host)], now: instant)
+        == .requests(pending))
+    for request in pending { try ledger.answer(request.id, with: .onlyThisTime, now: instant) }
+    let retry = try authorization(
+      from: ledger.authorize(
+        invocation: invocation(), requirements: original, retryIDs: Set(pending.map(\.id)),
+        connectionID: "A", now: instant))
+    #expect(retry.requirements.networks == [host])
+    #expect(retry.requirements.paths.isEmpty)
+    #expect(retry.requestIDs.count == 2)
+    #expect(ledger.authorizations[proof.id] == runningProof)
+  }
+
   @Test func connectionCeilingRestrictsImplicitSandboxAndLateSatisfiedNeeds() throws {
     var ledger = PermissionLedger()
     let key = SandboxSettingsKey(principal: client, projectID: "project")

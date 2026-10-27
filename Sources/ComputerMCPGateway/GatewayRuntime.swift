@@ -1405,6 +1405,24 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
     let routed = admitted.route
     switch name {
     case "project.list": return try resultEnvelope(projectList(context: routed.context))
+    case "project.request":
+      let path = try Self.requiredString("path", in: routed.arguments)
+      guard
+        let access = routed.arguments["access"]?.stringValue.flatMap(
+          PermissionValue.init(rawValue:)),
+        access == .read || access == .write
+      else {
+        throw GatewayToolError.invalidArguments("access must be read or write.")
+      }
+      let decision = try permissionRuntime.service.requestProject(
+        subject: GatewayPermissionSubject(context: routed.context), path: path, access: access,
+        argumentsDigest: MCPExecutionRecord.digest(.object(routed.arguments)),
+        retryIDs: admitted.retryIDs)
+      switch decision {
+      case .request(let request): throw GatewayPermissionCallError.required([request])
+      case .denied(let reason): throw GatewayPermissionCallError.denied(reason)
+      case .registered(let id): return try resultEnvelope(.object(["project_id": .string(id)]))
+      }
     case "project.describe":
       return try resultEnvelope(
         projectDescribe(arguments: routed.arguments, context: routed.context))
@@ -1498,7 +1516,8 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
     let evaluated = try permissionRuntime.service.evaluate(
       subject: subject, tool: name,
       projectID: routed.context.projectID, argumentsDigest: digest, requirements: requirements,
-      retryIDs: forwarded ? [] : input.requestIDs, connectionID: routed.context.controlSession?.id,
+      retryIDs: forwarded || name == "project.request" ? [] : input.requestIDs,
+      connectionID: routed.context.controlSession?.id,
       skillLibraries: skillLibraries)
     let authorization: InvocationAuthorization
     switch evaluated.decision {
@@ -1536,7 +1555,7 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
     return GatewayAdmittedInvocation(
       route: dispatchRoute, grant: grant, resolved: resolved,
       authorization: authorization, evidence: evaluated.evidence, directory: directory,
-      remoteService: remoteService)
+      remoteService: remoteService, retryIDs: input.requestIDs)
   }
 
   private func permissionPaths() throws -> PathEnvironmentSnapshot {
@@ -1996,8 +2015,9 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
     if let permissionFailure { fields.merge(permissionFailure.auditFields) { _, new in new } }
     if let authorization {
       fields["authorization_id"] = .string(authorization.id.uuidString)
-      fields["permission_request_ids"] = .array(
-        authorization.requestIDs.map { .string($0.uuidString) })
+      let requestIDs = Set(authorization.requestIDs.map(\.uuidString)).union(
+        fields["permission_request_ids"]?.arrayValue?.compactMap(\.stringValue) ?? [])
+      fields["permission_request_ids"] = .array(requestIDs.sorted().map(JSONValue.string))
       fields["admission"] = .string(errorCode == "permission.admitted" ? "allowed" : "completed")
       fields["acting_principal"] = try .encoded(authorization.invocation.principal)
     }
@@ -2143,6 +2163,32 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
           projectRequirement: .none,
           localOnly: false, usesNetwork: false
         )
+      ),
+      ToolDefinition(
+        tool: MCPTool(
+          name: "project.request",
+          description:
+            "Ask the local owner to register a folder and grant read or write access. Allow is persistent; registration has no one-time option.",
+          inputSchema: .object([
+            "type": .string("object"),
+            "properties": .object([
+              "path": .object([
+                "type": .string("string"),
+                "description": .string("Absolute path to an existing folder."),
+              ]),
+              "access": .object([
+                "type": .string("string"), "enum": .array([.string("read"), .string("write")]),
+              ]),
+            ]),
+            "required": .array([.string("path"), .string("access")]),
+            "additionalProperties": .bool(false),
+          ]),
+          annotations: .init(
+            readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false)
+        ),
+        capability: CapabilityDescriptor(
+          id: "project.request", risk: .readOnly, requirement: .none,
+          projectRequirement: .none, localOnly: false, usesNetwork: false)
       ),
       ToolDefinition(
         tool: MCPTool(
@@ -2406,6 +2452,7 @@ private struct GatewayAdmittedInvocation: Sendable {
   let evidence: GatewayPermissionAuditEvidence
   let directory: URL?
   let remoteService: Bool
+  let retryIDs: Set<UUID>
 }
 
 private struct RoutedCall: Sendable {

@@ -70,10 +70,10 @@ package func sortedDirectoryChildren(_ directory: URL, includeHidden: Bool) thro
   return names.sorted { $0.localizedStandardCompare($1) == .orderedAscending }
     .map { actual.appendingPathComponent($0) }
     .filter { child in
-      if (try? access.check(child, operation: .read)) != nil { return true }
+      if access.isAccessible(child, operation: .read) { return true }
       var isDirectory = ObjCBool(false)
       return FileManager.default.fileExists(atPath: child.path, isDirectory: &isDirectory)
-        && isDirectory.boolValue && (try? access.check(child, operation: .openDirectory)) != nil
+        && isDirectory.boolValue && access.isAccessible(child, operation: .openDirectory)
     }
 }
 

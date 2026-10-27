@@ -61,6 +61,8 @@ package struct GatewayPermissionRequestView: Sendable {
   package let request: PermissionRequest
   package let profileID: GatewayProfileID?
   package let alwaysIsShared: Bool
+  package var registrationGrantRoot: CanonicalPath? = nil
+  package var registrationGrantName: String? = nil
 }
 
 package struct GatewayManagedPolicyView: Equatable, Sendable, Codable {

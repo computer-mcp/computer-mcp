@@ -64,7 +64,7 @@ package enum PermissionState: Equatable, Sendable, Codable {
   case granted(PermissionValue)
   case denied
 
-  func allows(_ value: PermissionValue) -> Bool {
+  package func allows(_ value: PermissionValue) -> Bool {
     if case .granted(let granted) = self { return granted.includes(value) }
     return false
   }

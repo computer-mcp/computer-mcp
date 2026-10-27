@@ -24,10 +24,42 @@ independent: a retry still requires an enforceable execution context and can
 return unavailable after permission is granted. Explicit denies and managed
 exclusions produce refusals without pending requests.
 
+A host file tool may discover another required folder while accessing a file or
+instruction chain. That access fails and returns requests bound to the original
+call. `call_dispatched: true` distinguishes this failure from admission requests
+(`false`). Earlier operations may have had effects: review them before explicitly
+retrying. An answer applies to the retry, never to the already admitted call.
+Directory inventories omit inaccessible children without requesting access to them.
+A `permission.denied` response does not state whether the call had already started;
+review the operation's result and effects before retrying.
+
 Cold dynamic downstream tool calls can return `permission.catalog_required`.
 First make an admitted `mcp.tools.list` request to establish the exact catalog;
 then retry the tool call. Discovery that needs a program launch is subject to
 its own execution context and may be unavailable.
+
+## `project.request`
+
+Requests registration of an existing absolute folder with `path` and `access`
+(`read` or `write`). It requires an authenticated principal, but no existing
+Project grant or Full access. The host returns a registration request naming the
+canonical folder and requested access. The local owner chooses **Allow** or
+**Don't Allow**; registration has no **Only this time** option.
+
+Allow verifies the folder and bookmark identity again, then commits registration
+and the profile's standing Project permission together. Don't Allow changes
+neither. Concurrent requests for the same canonical folder share its reserved
+project identity. Requests for an existing project can raise its access; a
+worktree inherits that grant from its source project, covering the source and its
+worktrees. The local prompt shows the requested folder and the source grant root.
+Retry `project.request` with unchanged arguments and its `_permission_request_ids`
+after the owner answers. While pending it returns the same request. After Allow
+it returns `{"project_id": "…"}` for the requested folder, including a worktree's
+own ID; after Don't Allow it returns `permission.denied` without another prompt.
+The retry rechecks current authority. Once registered, the next connected call
+can use the project.
+Registering a folder does not execute its instruction files, skills or project
+configuration. Direct project registration and removal remain owner operations.
 
 ## `delivery.scopes.list` and `delivery.apply`
 
@@ -1438,8 +1470,10 @@ returned path to read selected files through the gateway.
 Available only when `[builtin].enabled` includes `project.instructions`.
 Returns the bounded agent instruction files that apply to one target
 project-contained path. It walks from the project root to the target path's
-scope directory and checks fixed instruction filenames plus Cursor/Windsurf rule
-directories at each level. It does not recursively scan the full project,
+scope directory and checks fixed instruction filenames, Cursor/Windsurf rule
+directories, and immediate skill packages at each level. Skill entrypoints are
+`SKILL.md` files inside `skills/`, `.agents/skills/`, `.claude/skills/`,
+`.codex/skills/`, and `.github/skills/` packages. It does not recursively scan the full project,
 summarize instructions, merge rules, or infer policy.
 
 Arguments:
@@ -1462,7 +1496,16 @@ Returned file rows include `project_relative_path`, `kind`, `source`,
 `scope_project_relative_path`, `apply_order`, file metadata,
 `content_included`, bounded `content`, `content_bytes_read`,
 `content_truncated`, `valid_utf8`, and `read_context`. `apply_order` is root to
-leaf; closer directory instructions have larger values.
+leaf; closer directory instructions have larger values. Skill rows use
+`source: "skills_directory"`; their scope is the directory containing the skill
+library. Contents retain their original UTF-8 bytes (including whitespace and
+line endings). Truncation ends at a complete UTF-8 character within the bound;
+`content_bytes_read` reports the returned prefix length. The reader may inspect
+up to three additional bytes to validate a character crossing that bound.
+Malformed UTF-8 is reported as `content: null`, `valid_utf8: false`.
+Every source and target scope passes the
+path permission checks, including future targets and symlinks. Instruction files
+and skills are data: collecting them executes no project declaration.
 
 ## `project.test_files`
 

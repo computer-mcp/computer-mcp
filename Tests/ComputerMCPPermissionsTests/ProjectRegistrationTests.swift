@@ -27,7 +27,7 @@ struct ComputerMCPPermissionsProjectRegistrationTests {
         ProjectRegistrationRequest(
           principal: client, projectID: "candidate", path: project.root, access: .read),
         invocation: invocation(),
-        now: instant) == .registered("project"))
+        now: instant) == .registered(projectID))
     #expect(ledger.requests.isEmpty)
     #expect(ledger.permissions(for: client).state(for: .project("project")) == .granted(.write))
     #expect(

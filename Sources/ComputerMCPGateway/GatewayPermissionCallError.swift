@@ -3,20 +3,23 @@ import ComputerMCPPermissions
 import Foundation
 
 package enum GatewayPermissionCallError: Error, LocalizedError, AuditErrorClassifying {
-  case required([PermissionRequest], evidence: GatewayPermissionAuditEvidence? = nil)
+  case required(
+    [PermissionRequest], evidence: GatewayPermissionAuditEvidence? = nil,
+    afterDispatch: Bool = false
+  )
   case denied(DenialReason, evidence: GatewayPermissionAuditEvidence? = nil)
 
   package var auditClassification: (decision: AuditDecision, code: String)? { (.denied, code) }
 
   var evidence: GatewayPermissionAuditEvidence? {
     switch self {
-    case .required(_, let evidence), .denied(_, let evidence): return evidence
+    case .required(_, let evidence, _), .denied(_, let evidence): return evidence
     }
   }
 
   var auditFields: [String: JSONValue] {
     switch self {
-    case .required(let requests, _):
+    case .required(let requests, _, _):
       return ["permission_request_ids": .array(requests.map { .string($0.id.uuidString) })]
     case .denied(let reason, _): return ["denial_reason": .string(String(describing: reason))]
     }
@@ -38,8 +41,10 @@ package enum GatewayPermissionCallError: Error, LocalizedError, AuditErrorClassi
 
   package var errorDescription: String? {
     switch self {
-    case .required:
-      return "The local owner must answer the permission requests before this call can run."
+    case .required(_, _, let afterDispatch):
+      return afterDispatch
+        ? "A required operation failed with a permission error. The local owner can allow it for an explicit retry. Earlier operations may have had effects."
+        : "The local owner must answer the permission requests before this call can run."
     case .denied(let reason, _):
       return "The permission service refused this call: \(String(describing: reason))."
     }
@@ -54,10 +59,11 @@ package enum GatewayPermissionCallError: Error, LocalizedError, AuditErrorClassi
           sources.map { .string($0.rawValue) }.sorted { $0.stringValue! < $1.stringValue! })
       }
       return value
-    case .required(let requests, _):
+    case .required(let requests, _, let afterDispatch):
       let ids = requests.map { JSONValue.string($0.id.uuidString) }
       return [
         "request_ids": .array(ids),
+        "call_dispatched": .bool(afterDispatch),
         "request_group_id": .string(
           requests.first.map { MCPExecutionRecord.digest((try? .encoded($0.invocation)) ?? .null) }
             ?? ""),
@@ -65,7 +71,9 @@ package enum GatewayPermissionCallError: Error, LocalizedError, AuditErrorClassi
         "retry": .object([
           "field": .string(GatewayPermissionRetryInput.field),
           "instructions": .string(
-            "After the local owner answers, retry the same tool with unchanged arguments and all request IDs. No call was executed."
+            afterDispatch
+              ? "The operation failed with a permission error. Earlier operations may have had effects. After reviewing them and the owner's answers, explicitly retry the same tool with unchanged arguments and all request IDs."
+              : "After the local owner answers, retry the same tool with unchanged arguments and all request IDs. No call was executed."
           ),
         ]),
       ]

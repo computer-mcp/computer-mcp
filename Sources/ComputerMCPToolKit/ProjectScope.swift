@@ -28,17 +28,18 @@ package struct ProjectScope: Sendable {
   package func resolvedProjectURL(_ path: String, operation: HostPathOperation = .read) throws
     -> URL
   {
+    let resolved: URL
     do {
-      let resolved = try ProjectPathResolver.resolve(
+      resolved = try ProjectPathResolver.resolve(
         path,
         relativeTo: projectDirectory
       )
-      try (pathAccess ?? HostPathAccess.current)?.check(resolved, operation: operation)
-      return resolved
     } catch {
       throw GatewayToolError.invalidArguments(
         "[policy.project_denied] Path escapes project: \(path)")
     }
+    try (pathAccess ?? HostPathAccess.current)?.check(resolved, operation: operation)
+    return resolved
   }
 
   package func lexicalProjectURL(_ path: String) throws -> URL {

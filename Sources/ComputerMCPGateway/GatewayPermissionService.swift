@@ -12,14 +12,23 @@ package final class GatewayPermissionService: @unchecked Sendable {
   let store: SQLitePermissionStore
   let policyReader: any ManagedPolicyReading
   let onAuthorityChange: @Sendable () -> Void
+  let projectBookmarks: (any ProjectBookmarkServicing)?
+  let projectNesting:
+    @Sendable ([ComputerMCPCore.RegisteredProject]) throws -> [TrackedProjectNesting]
 
   package init(
     store: SQLitePermissionStore, policyReader: any ManagedPolicyReading,
-    onAuthorityChange: @escaping @Sendable () -> Void = {}
+    onAuthorityChange: @escaping @Sendable () -> Void = {},
+    projectBookmarks: (any ProjectBookmarkServicing)? = nil,
+    projectNesting:
+      @escaping @Sendable ([ComputerMCPCore.RegisteredProject]) throws -> [TrackedProjectNesting] =
+      { _ in [] }
   ) {
     self.store = store
     self.policyReader = policyReader
     self.onAuthorityChange = onAuthorityChange
+    self.projectBookmarks = projectBookmarks
+    self.projectNesting = projectNesting
   }
 
   package func admit(
@@ -274,6 +283,7 @@ package final class GatewayPermissionService: @unchecked Sendable {
         guard bytes.count <= 4_194_304 else { throw PermissionPersistenceError.invalidCurrentState }
         return try JSONDecoder().decode(ProfileGrant.self, from: bytes)
       }
+      let registeredProjects = try GatewayDatabase.projects(in: database)
       return GatewayPermissionView(
         revision: try Self.controlRevision(database),
         profiles: profiles,
@@ -287,7 +297,21 @@ package final class GatewayPermissionService: @unchecked Sendable {
             ? $0.id.uuidString < $1.id.uuidString : $0.createdAt < $1.createdAt
         }.map { request in
           let profileID = bindings.first { $0.principal == request.invocation.principal }?.profileID
-          return .init(request: request, profileID: profileID, alwaysIsShared: profileID != nil)
+          let grantRoot: CanonicalPath?
+          let grantName: String?
+          if case .projectRegistration(let content) = request.content {
+            grantRoot =
+              ledger.environment.paths?.registeredProjects.first {
+                $0.id == content.projectID
+              }?.root
+            grantName = registeredProjects.first { $0.id == content.projectID }?.displayName
+          } else {
+            grantRoot = nil
+            grantName = nil
+          }
+          return .init(
+            request: request, profileID: profileID, alwaysIsShared: profileID != nil,
+            registrationGrantRoot: grantRoot, registrationGrantName: grantName)
         }, sources: sources, epoch: ledger.authorizationEpochID,
         suspended: ledger.suspendedAuthority != nil || ledger.pendingEpochRecovery != nil,
         unconfirmedProfileIDs: Set(
@@ -447,7 +471,7 @@ package final class GatewayPermissionService: @unchecked Sendable {
     return views
   }
 
-  private static func isManagedLimited(_ request: PermissionRequest, ledger: PermissionLedger)
+  static func isManagedLimited(_ request: PermissionRequest, ledger: PermissionLedger)
     -> Bool
   {
     let limits = ledger.environment.limits[request.invocation.principal] ?? .init()
@@ -482,7 +506,7 @@ package final class GatewayPermissionService: @unchecked Sendable {
     }
   }
 
-  private static func advanceControlRevision(_ database: Database) throws {
+  static func advanceControlRevision(_ database: Database) throws {
     guard try controlRevision(database) < Int64.max else {
       throw PermissionMigrationError.revisionExhausted
     }
@@ -490,7 +514,7 @@ package final class GatewayPermissionService: @unchecked Sendable {
       sql: "UPDATE permissionControlRevision SET revision = revision + 1 WHERE id = 1")
   }
 
-  private static func advance(_ profile: inout ProfileGrant) throws {
+  static func advance(_ profile: inout ProfileGrant) throws {
     guard profile.authorizationRevision < Int64.max else {
       throw PermissionMigrationError.revisionExhausted
     }

@@ -127,12 +127,37 @@ private struct PermissionRequestsView: View {
     -> some View
   {
     let request = item.request
+    let isProjectRegistration: Bool
+    if case .projectRegistration = request.content {
+      isProjectRegistration = true
+    } else {
+      isProjectRegistration = false
+    }
     return VStack(alignment: .leading, spacing: 8) {
       Text(verbatim: request.permissionTitle(names: model.permissionObjectNames)).font(.headline)
       if case .permission(let value) = request.content {
         LabeledContent(
           AppLocalization.string("Access"),
           value: AppLocalization.string(value.requirement.value.permissionTitle))
+      } else if case .projectRegistration(let value) = request.content {
+        LabeledContent(
+          AppLocalization.string("Access"),
+          value: AppLocalization.string(value.access.permissionTitle))
+        if let grantRoot = item.registrationGrantRoot {
+          LabeledContent(
+            AppLocalization.string(grantRoot == value.path ? "Project" : "Source project"),
+            value: item.registrationGrantName ?? value.projectID)
+          Text(verbatim: grantRoot.string).textSelection(.enabled)
+          Text(
+            "Allow grants this access to the project and all its worktrees for every client using this profile until revoked.",
+            bundle: AppLocalization.resourceBundle
+          ).font(.caption).foregroundStyle(.secondary)
+        } else {
+          Text(
+            "Allow registers this folder as a project and grants access to it and its worktrees for every client using this profile until revoked.",
+            bundle: AppLocalization.resourceBundle
+          ).font(.caption).foregroundStyle(.secondary)
+        }
       }
       if let profile = item.profileID {
         LabeledContent(
@@ -150,7 +175,7 @@ private struct PermissionRequestsView: View {
         "After allowing access, ask the client to retry its request. The App does not repeat the operation.",
         bundle: AppLocalization.resourceBundle
       ).font(.caption).foregroundStyle(.secondary)
-      if item.alwaysIsShared {
+      if item.alwaysIsShared && !isProjectRegistration {
         Text(
           "Always applies to every client using this profile.",
           bundle: AppLocalization.resourceBundle
@@ -162,12 +187,16 @@ private struct PermissionRequestsView: View {
       )
       .font(.caption).foregroundStyle(.secondary)
       HStack {
-        Button(AppLocalization.string("Deny"), role: .cancel) {
+        Button(
+          AppLocalization.string(isProjectRegistration ? "Don’t Allow" : "Deny"), role: .cancel
+        ) {
           model.answerPermissionRequest(id: request.id, answer: nil, expectedRevision: revision)
         }.accessibilityIdentifier("permission.request.\(request.id).deny")
         if case .projectRegistration = request.content {
-          Text("Project registration is unavailable.", bundle: AppLocalization.resourceBundle)
-            .font(.caption).foregroundStyle(.secondary)
+          Button(AppLocalization.string("Allow")) {
+            model.answerPermissionRequest(
+              id: request.id, answer: .always, expectedRevision: revision)
+          }.accessibilityIdentifier("permission.request.\(request.id).allow")
         } else {
           Button(AppLocalization.string("Only this time")) {
             model.answerPermissionRequest(

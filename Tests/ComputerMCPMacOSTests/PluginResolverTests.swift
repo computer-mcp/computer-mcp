@@ -543,7 +543,7 @@ struct PluginResolverTests {
         _ = try runtime.callTool(name: "package.inspect", arguments: .object([:]), context: .empty)
         Issue.record("An ungranted Plugin dispatched a downstream call")
       } catch let error as GatewayPermissionCallError {
-        guard case .required(let requests, _) = error else { throw error }
+        guard case .required(let requests, _, _) = error else { throw error }
         #expect(
           requests.contains {
             guard case .permission(let content) = $0.content else { return false }

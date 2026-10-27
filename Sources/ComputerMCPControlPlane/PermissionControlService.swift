@@ -24,15 +24,36 @@ package final class PermissionControlService: Sendable {
   package func answerRequest(
     _ id: UUID, answer: PermissionAnswer, expectedRevision: UInt64, now: Date = Date()
   ) throws -> RevocationResult {
-    try service.answerRequest(
-      id, answer: answer, owner: currentOwner(), expectedRevision: expectedRevision, now: now)
+    let owner = try currentOwner()
+    if let request = try service.view(owner: owner, now: now).requests.first(where: {
+      $0.request.id == id
+    }),
+      case .projectRegistration = request.request.content
+    {
+      guard case .always = answer else { throw PermissionModelError.invalidRegistrationAnswer }
+      _ = try service.answerProjectRequest(
+        id, allow: true, owner: owner, expectedRevision: expectedRevision, now: now)
+      return try service.reconcilePolicy(now: now)
+    }
+    return try service.answerRequest(
+      id, answer: answer, owner: owner, expectedRevision: expectedRevision, now: now)
   }
 
   package func declineRequest(
     _ id: UUID, expectedRevision: UInt64, now: Date = Date()
   ) throws -> RevocationResult {
-    try service.declineRequest(
-      id, owner: currentOwner(), expectedRevision: expectedRevision, now: now)
+    let owner = try currentOwner()
+    if let request = try service.view(owner: owner, now: now).requests.first(where: {
+      $0.request.id == id
+    }),
+      case .projectRegistration = request.request.content
+    {
+      _ = try service.answerProjectRequest(
+        id, allow: false, owner: owner, expectedRevision: expectedRevision, now: now)
+      return try service.reconcilePolicy(now: now)
+    }
+    return try service.declineRequest(
+      id, owner: owner, expectedRevision: expectedRevision, now: now)
   }
 
   package func revokePermission(

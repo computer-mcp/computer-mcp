@@ -3,6 +3,7 @@ import ComputerMCPPermissions
 import ComputerMCPPersistence
 import ComputerMCPPlatform
 import ComputerMCPPlatformPOSIX
+import ComputerMCPProcess
 import ComputerMCPTestSupport
 import ComputerMCPToolKit
 import Foundation
@@ -15,6 +16,87 @@ import Testing
 #endif
 
 @Suite struct GatewayPathAccessTests {
+  @Test(arguments: [PermissionAnswer.onlyThisTime, .always])
+  func discoveredFolderNeedsRequireAnExplicitExactRetry(answer: PermissionAnswer) throws {
+    let f = try DurablePathFixture()
+    let id = try f.authorize(f.project, operation: .read, once: true)
+    let checker = GatewayPathAccess(store: f.store, authorizationID: id)
+    let scope = ProjectScope(
+      configuration: .init(projectDirectory: f.root), toolMeta: nil,
+      pathAccess: checker)
+    let target = f.root.appendingPathComponent("downloads/notes.txt")
+    let proof = try f.store.readWithDatabase { _, ledger in
+      try #require(ledger.authorizations[id])
+    }
+    var requests: [PermissionRequest] = []
+    do {
+      _ = try scope.resolvedProjectURL(target.path)
+      Issue.record("An ungranted folder must fail the original operation")
+    } catch GatewayPermissionCallError.required(let pending, _, let afterDispatch) {
+      requests = pending
+      #expect(afterDispatch)
+      #expect(
+        GatewayPermissionCallError.required(pending, afterDispatch: afterDispatch).fields[
+          "call_dispatched"] == .bool(true))
+      #expect(pending.count == 1)
+      #expect(pending.first?.invocation == proof.invocation)
+    }
+    let retry = try f.store.transactionWithDatabase { _, ledger in
+      for request in requests { _ = try ledger.answer(request.id, with: answer, now: Date()) }
+      #expect(ledger.authorizations[id]?.basis == proof.basis)
+      try ledger.finishInvocation(id)
+      #expect(throws: PermissionModelError.retryMismatch) {
+        _ = try ledger.authorize(
+          invocation: .init(
+            principal: f.principal, tool: "file.read", projectID: "project",
+            argumentsDigest: "different"),
+          requirements: proof.requirements, retryIDs: Set(requests.map(\.id)), now: Date())
+      }
+      let decision = try ledger.authorize(
+        invocation: proof.invocation, requirements: proof.requirements,
+        retryIDs: Set(requests.map(\.id)), now: Date())
+      guard case .allowed(let retried) = decision else {
+        throw PermissionModelError.invalidAuthorization
+      }
+      return retried.id
+    }
+    #expect(throws: (any Error).self) { try checker.check(target, operation: .read) }
+    let retried = GatewayPathAccess(store: f.store, authorizationID: retry)
+    try retried.check(target, operation: .read)
+    try retried.check(f.project.appendingPathComponent("file"), operation: .read)
+    if case .onlyThisTime = answer {
+      #expect(throws: (any Error).self) {
+        try retried.check(f.root.appendingPathComponent("downloads/sibling"), operation: .read)
+      }
+    }
+  }
+
+  @Test func listingFiltersUngrantableAndUngrantedChildrenWithoutRequests() throws {
+    let f = try DurablePathFixture()
+    let id = try f.authorize(f.project, operation: .read, once: false)
+    let downloads = f.project.deletingLastPathComponent()
+    try Data("private".utf8).write(to: downloads.appendingPathComponent("private.txt"))
+    let checker = GatewayPathAccess(store: f.store, authorizationID: id)
+    let children = try HostPathAccess.$current.withValue(checker) {
+      try sortedDirectoryChildren(downloads, includeHidden: true)
+    }
+    #expect(children.map(\.lastPathComponent) == ["repo"])
+    #expect(try f.store.readWithDatabase { _, ledger in ledger.requests.isEmpty })
+  }
+
+  @Test func fixedAndExplicitDenialsNeverCreateFolderRequests() throws {
+    let f = try DurablePathFixture()
+    let id = try f.authorize(f.project, operation: .read, once: false)
+    let checker = GatewayPathAccess(store: f.store, authorizationID: id)
+    let before = try f.store.readWithDatabase { _, ledger in ledger.requests.count }
+    for path in ["host/token", "downloads/repo/inner/secret", "private/data"] {
+      #expect(throws: (any Error).self) {
+        try checker.check(f.root.appendingPathComponent(path), operation: .read)
+      }
+    }
+    #expect(try f.store.readWithDatabase { _, ledger in ledger.requests.count } == before)
+  }
+
   @Test(arguments: [false, true])
   func oneTimePathGrantsCoverDescendantsButNotSiblings(write: Bool) throws {
     let f = try DurablePathFixture()
@@ -47,8 +129,12 @@ import Testing
     let target = f.derived.appendingPathComponent("new-file")
     let id = try f.authorize(target, operation: .write, once: true)
     let checker = GatewayPathAccess(store: f.store, authorizationID: id)
-    let files = try ProjectFileAccess(
-      project: f.derived, launcher: testExecutionLauncher(), pathAccess: checker)
+    let administration = ExecutionAdministration(
+      mode: .fullAccess, environment: try .init(fullAccessVariables: ["PATH": systemUtilityPath]))
+    let files = try ExecutionAdministration.$current.withValue(administration) {
+      try ProjectFileAccess(
+        project: f.derived, launcher: testExecutionLauncher(), pathAccess: checker)
+    }
     try files.write(Data("created".utf8), to: target)
     #expect(try Data(contentsOf: target) == Data("created".utf8))
     #expect(throws: (any Error).self) {

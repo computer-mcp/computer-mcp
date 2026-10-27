@@ -810,13 +810,20 @@ package struct PermissionLedger: Equatable, Sendable, Codable {
     if let denial = resolution.denial {
       return .denied(denial)
     }
-    if let existing { return .registered(existing.projectID) }
-    guard paths.projects.sourceID(for: content.projectID) == nil else {
+    if let existing,
+      permissions(for: content.principal).state(for: .project(existing.projectID)).allows(
+        content.access)
+    {
+      return .registered(
+        paths.registeredProjects.first(where: { $0.root == content.path })?.id ?? existing.projectID
+      )
+    }
+    guard existing != nil || paths.projects.sourceID(for: content.projectID) == nil else {
       throw PermissionModelError.invalidProjectGraph
     }
     let request = record(
-      .projectRegistration(content), invocation: invocation, now: now,
-      requirements: InvocationRequirements(registration: content), basis: resolution.basis)
+      .projectRegistration(evaluated), invocation: invocation, now: now,
+      requirements: InvocationRequirements(registration: evaluated), basis: resolution.basis)
     requests[request.id] = request
     return .request(request)
   }
@@ -838,7 +845,14 @@ package struct PermissionLedger: Equatable, Sendable, Codable {
       requests[id] = request
       return propagateRevocations()
     }
-    guard project.id == content.projectID, project.root == content.path, project.sourceID == nil
+    let catalog = environment.paths?.projects
+    let existingSource = catalog?.projects.first { $0.id == content.projectID }
+    let derivedLocation = catalog?.projects.first {
+      $0.root == content.path && $0.sourceID != nil
+        && catalog?.sourceID(for: $0.id) == content.projectID
+    }
+    guard project.id == content.projectID, project.sourceID == nil,
+      project.root == content.path || (derivedLocation != nil && existingSource == project)
     else {
       throw PermissionModelError.invalidRegistrationAnswer
     }
@@ -1633,6 +1647,28 @@ package struct PermissionLedger: Equatable, Sendable, Codable {
         $0.invocation.principal == principal
       }), isValid(proof)
     else { throw PermissionModelError.invalidAuthorization }
+    return try recordInvocationNeeds(proof: proof, needs: needs, now: now)
+  }
+
+  /// Host file readers report a checked location before accessing it. The
+  /// continuation preserves the call's digest and never widens its live proof.
+  package mutating func recordHostPathNeed(
+    authorizationID: UUID, path: PathRequirement, now: Date
+  ) throws -> DiscoveredRequirementDecision {
+    propagateRevocations(now: now)
+    guard let proof = authorizations[authorizationID], !proof.finished, isValid(proof) else {
+      throw PermissionModelError.invalidAuthorization
+    }
+    var candidate = self
+    let result = try candidate.recordInvocationNeeds(proof: proof, needs: [.path(path)], now: now)
+    self = candidate
+    return result
+  }
+
+  private mutating func recordInvocationNeeds(
+    proof: InvocationAuthorization, needs: [DiscoveredRequirement], now: Date
+  ) throws -> DiscoveredRequirementDecision {
+    let principal = proof.invocation.principal
     let existingIDs = runtimeSuccessors[proof.id] ?? []
     var existingChain = existingIDs.compactMap { runtimeChains[$0] }.first
     var paths = existingChain?.requirements.paths ?? proof.requirements.paths

@@ -147,6 +147,14 @@ extension ProjectToolProvider {
     ".windsurf/rules",
   ]
 
+  private static let scopedSkillDirectories = [
+    "skills",
+    ".agents/skills",
+    ".claude/skills",
+    ".codex/skills",
+    ".github/skills",
+  ]
+
   private static let agentFileScanSkippedDirectoryNames: Set<String> = [
     ".build",
     ".git",
@@ -2272,6 +2280,37 @@ extension ProjectToolProvider {
         }
       }
     }
+
+    for skillDirectoryPath in Self.scopedSkillDirectories {
+      let skillDirectory = directory.appendingPathComponent(skillDirectoryPath)
+      var isDirectory = ObjCBool(false)
+      guard FileManager.default.fileExists(atPath: skillDirectory.path, isDirectory: &isDirectory),
+        isDirectory.boolValue
+      else {
+        continue
+      }
+
+      let resolvedDirectory = try projectScope.resolvedProjectURL(
+        projectScope.projectRelativePathPreservingSymlinks(skillDirectory))
+      for package in try sortedDirectoryChildren(resolvedDirectory, includeHidden: true) {
+        let candidate = skillDirectory.appendingPathComponent(package.lastPathComponent)
+          .appendingPathComponent("SKILL.md")
+        try appendProjectInstructionFile(
+          candidate: candidate,
+          scopeProjectRelativePath: scopeProjectRelativePath,
+          includeContent: includeContent,
+          maxBytesPerFile: maxBytesPerFile,
+          maxResults: maxResults,
+          seenPaths: &seenPaths,
+          files: &files,
+          resultTruncated: &resultTruncated,
+          applyOrder: &applyOrder
+        )
+        guard !resultTruncated else {
+          return
+        }
+      }
+    }
   }
 
   private func appendProjectInstructionFile(
@@ -2336,15 +2375,38 @@ extension ProjectToolProvider {
     defer {
       try? handle.close()
     }
-    let data = try handle.read(upToCount: maxBytes + 1) ?? Data()
+    let data = try handle.read(upToCount: maxBytes + 3) ?? Data()
     let truncated = data.count > maxBytes
-    let limitedData = truncated ? Data(data.prefix(maxBytes)) : data
-    let content = String(data: limitedData, encoding: .utf8)
+    var limitedData = truncated ? Data(data.prefix(maxBytes)) : data
+    var validUTF8 = String(data: limitedData, encoding: .utf8) != nil
+    if truncated, !validUTF8 {
+      for removedBytes in 1...min(3, limitedData.count) {
+        let scalarStart = limitedData.count - removedBytes
+        let scalarLength: Int
+        switch data[scalarStart] {
+        case 0xC2...0xDF: scalarLength = 2
+        case 0xE0...0xEF: scalarLength = 3
+        case 0xF0...0xF4: scalarLength = 4
+        default: continue
+        }
+        // Validate the entire straddling scalar before omitting it; malformed suffixes
+        // must not become valid text merely because they cross the byte limit.
+        guard scalarLength > removedBytes, scalarStart + scalarLength <= data.count,
+          String(data: data[scalarStart..<(scalarStart + scalarLength)], encoding: .utf8) != nil
+        else { continue }
+        let prefix = Data(data.prefix(scalarStart))
+        guard String(data: prefix, encoding: .utf8) != nil else { continue }
+        limitedData = prefix
+        validUTF8 = true
+        break
+      }
+    }
+    let content = validUTF8 ? String(decoding: limitedData, as: UTF8.self) : nil
     return ProjectInstructionContent(
       content: content,
       bytesRead: limitedData.count,
       truncated: truncated,
-      validUTF8: content != nil
+      validUTF8: validUTF8
     )
   }
 

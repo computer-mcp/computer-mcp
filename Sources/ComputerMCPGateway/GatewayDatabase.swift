@@ -821,7 +821,7 @@ package final class GatewayDatabase: OAuthStore, @unchecked Sendable {
     try permissionTransaction { try Self.registerProjectIdempotently(proposed, in: $0) }
   }
 
-  private static func registerProjectIdempotently(
+  static func registerProjectIdempotently(
     _ proposed: ComputerMCPCore.RegisteredProject, in database: Database
   ) throws -> (project: ComputerMCPCore.RegisteredProject, created: Bool) {
     let canonicalRoot = canonicalProjectRoot(proposed.rootPath)

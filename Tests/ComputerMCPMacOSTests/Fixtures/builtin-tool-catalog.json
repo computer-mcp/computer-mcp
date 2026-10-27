@@ -32750,7 +32750,7 @@
       "risk" : "read-only",
       "usesNetwork" : false
     },
-    "description" : "Return the bounded agent instruction files that apply to a target project path by walking from the project root to that path's scope directory. This reads only fixed instruction filenames and rule directories, does not summarize or merge instructions, and returns apply_order for the MCP consumer.",
+    "description" : "Return bounded instruction files and SKILL.md packages from each directory between the project root and the target path's scope. Reads fixed instruction filenames, rule directories, and packages in skills, .agents/skills, .claude/skills, .codex/skills, and .github/skills. Returns unchanged content, source, scope, and apply_order for the client to interpret.",
     "inputSchema" : {
       "additionalProperties" : false,
       "properties" : {
@@ -32764,15 +32764,15 @@
           "type" : "array"
         },
         "include_content" : {
-          "description" : "Whether to include bounded UTF-8 instruction content. Defaults to true.",
+          "description" : "Whether to include bounded UTF-8 instruction and skill content. Defaults to true.",
           "type" : "boolean"
         },
         "max_bytes_per_file" : {
-          "description" : "Maximum instruction bytes to read per file. Defaults to 65536.",
+          "description" : "Maximum instruction or skill bytes to read per file. Defaults to 65536.",
           "type" : "integer"
         },
         "max_results" : {
-          "description" : "Maximum instruction files to return. Defaults to 50.",
+          "description" : "Maximum instruction and skill files to return. Defaults to 50.",
           "type" : "integer"
         },
         "path" : {
@@ -34116,6 +34116,110 @@
       "type" : "object"
     },
     "title" : "Project Repair"
+  },
+  "project.request" : {
+    "_meta" : {
+      "computer_mcp" : {
+        "requirements" : {
+          "access" : "none",
+          "execution" : {
+            "none" : {
+
+            }
+          },
+          "paths" : [
+
+          ],
+          "permissions" : [
+
+          ],
+          "requiresFullAccess" : false,
+          "target" : {
+            "none" : {
+
+            }
+          }
+        }
+      }
+    },
+    "annotations" : {
+      "destructiveHint" : false,
+      "idempotentHint" : true,
+      "openWorldHint" : false,
+      "readOnlyHint" : false
+    },
+    "capability" : {
+      "hostServiceAction" : null,
+      "localOnly" : false,
+      "projectRequirement" : "none",
+      "requirement" : {
+        "access" : "none",
+        "execution" : {
+          "none" : {
+
+          }
+        },
+        "paths" : [
+
+        ],
+        "permissions" : [
+
+        ],
+        "requiresFullAccess" : false,
+        "target" : {
+          "none" : {
+
+          }
+        }
+      },
+      "risk" : "read-only",
+      "usesNetwork" : false
+    },
+    "description" : "Ask the local owner to register a folder and grant read or write access. Allow is persistent; registration has no one-time option.",
+    "inputSchema" : {
+      "additionalProperties" : false,
+      "properties" : {
+        "_permission_request_ids" : {
+          "description" : "Permission request IDs for an exact retry after the local owner answers.",
+          "items" : {
+            "format" : "uuid",
+            "type" : "string"
+          },
+          "maxItems" : 64,
+          "type" : "array"
+        },
+        "access" : {
+          "enum" : [
+            "read",
+            "write"
+          ],
+          "type" : "string"
+        },
+        "path" : {
+          "description" : "Absolute path to an existing folder.",
+          "type" : "string"
+        }
+      },
+      "required" : [
+        "path",
+        "access"
+      ],
+      "type" : "object"
+    },
+    "name" : "project.request",
+    "outputSchema" : {
+      "additionalProperties" : false,
+      "properties" : {
+        "result" : {
+
+        }
+      },
+      "required" : [
+        "result"
+      ],
+      "type" : "object"
+    },
+    "title" : "Project Request"
   },
   "project.reveal" : {
     "_meta" : {

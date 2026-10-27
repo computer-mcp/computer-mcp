@@ -29,7 +29,12 @@ package final class GatewayPermissionRuntime: @unchecked Sendable {
     let notifications = GatewayExecutionNotifications()
     let service = GatewayPermissionService(
       store: store, policyReader: platform.permissionPolicyReader,
-      onAuthorityChange: { notifications.notify() })
+      onAuthorityChange: { notifications.notify() },
+      projectBookmarks: platform.projectGrants,
+      projectNesting: { projects in
+        try GatewayTrackedProjectNesting.inspect(
+          projects, runner: ProcessCommandRunner(launcher: platform.launcher))
+      })
     self.service = service
     let coordinator = try ExecutionRevocationCoordinator(
       store: store, launcher: platform.launcher, directory: directory,
@@ -62,7 +67,7 @@ package final class GatewayPermissionRuntime: @unchecked Sendable {
         pathAccess: GatewayPathAccess(store: store, authorizationID: authorization.id))
     }
     if [
-      "project.list", "project.describe", "policy.probe", "runtime.owners.list",
+      "project.list", "project.describe", "project.request", "policy.probe", "runtime.owners.list",
       "runtime.owners.call", "mcp.servers.list", "mcp.servers.status", "mcp.events.read",
     ].contains(descriptor.id) {
       return GatewayInvocationPathScope(

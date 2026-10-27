@@ -510,7 +510,7 @@ extension ProjectToolProvider {
         tool: MCPTool(
           name: "project.instructions",
           description:
-            "Return the bounded agent instruction files that apply to a target project path by walking from the project root to that path's scope directory. This reads only fixed instruction filenames and rule directories, does not summarize or merge instructions, and returns apply_order for the MCP consumer.",
+            "Return bounded instruction files and SKILL.md packages from each directory between the project root and the target path's scope. Reads fixed instruction filenames, rule directories, and packages in skills, .agents/skills, .claude/skills, .codex/skills, and .github/skills. Returns unchanged content, source, scope, and apply_order for the client to interpret.",
           inputSchema: objectSchema(
             properties: [
               "path": stringSchema(
@@ -520,11 +520,11 @@ extension ProjectToolProvider {
                 "Whether to treat path as a directory. Defaults to filesystem metadata when the path exists, otherwise false unless path ends with '/'."
               ),
               "include_content": boolSchema(
-                "Whether to include bounded UTF-8 instruction content. Defaults to true."),
+                "Whether to include bounded UTF-8 instruction and skill content. Defaults to true."),
               "max_bytes_per_file": integerSchema(
-                "Maximum instruction bytes to read per file. Defaults to 65536."),
+                "Maximum instruction or skill bytes to read per file. Defaults to 65536."),
               "max_results": integerSchema(
-                "Maximum instruction files to return. Defaults to 50."),
+                "Maximum instruction and skill files to return. Defaults to 50."),
             ]
           ),
           annotations: MCPToolAnnotations(

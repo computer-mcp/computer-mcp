@@ -291,6 +291,7 @@ protocol PrivacySecurityService: AnyObject {
 
 @MainActor
 final class PrivacySecurityModel: ObservableObject {
+  @Published var path: [PrivacyRoute] = []
   @Published private(set) var snapshot = PrivacySnapshot()
   @Published private(set) var loading = false
   @Published var failure: String?

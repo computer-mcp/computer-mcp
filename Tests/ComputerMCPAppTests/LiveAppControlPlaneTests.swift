@@ -7,6 +7,7 @@ import ComputerMCPTransport
 import ComputerMCPTunnels
 import Darwin
 import Foundation
+import GRDB
 import Testing
 
 @testable import ComputerMCPApp
@@ -324,18 +325,6 @@ final class LiveAppControlPlaneTests {
   }
 
   @Test
-  func testPermissionStateDistinguishesNotGrantedFromNotDetermined() {
-    let notGranted = PermissionSummary(
-      id: "fixture", displayName: "Fixture", detail: "",
-      state: .notGranted, settingsURL: nil, checkedAt: Date())
-    let notDetermined = PermissionSummary(
-      id: "fixture", displayName: "Fixture", detail: "",
-      state: .notDetermined, settingsURL: nil, checkedAt: Date())
-    #expect(notGranted.state.label == "Not granted")
-    #expect(notDetermined.state.label == "Not determined")
-  }
-
-  @Test
   func testPermissionRequestUsesInjectedLocalRequester() async throws {
     let requester = AppTestPermissionRequester(
       outcome: PermissionRequestOutcome(
@@ -385,6 +374,26 @@ final class LiveAppControlPlaneTests {
   }
 
   @Test
+  func privacyConfirmationIncludesUnadoptedProfilesWithoutGlobalSuspension() async throws {
+    try await withAppControlPlaneFixture { fixture in
+      try await fixture.controlPlane.database.connection.writer.write { database in
+        try database.execute(sql: "UPDATE permissionProfiles SET authorityEpoch = NULL")
+      }
+      let view = try await fixture.app.fetchPermissionRequests()
+      #expect(!view.suspended)
+      #expect(!view.unconfirmedProfileIDs.isEmpty)
+      let model = PrivacySecurityModel(
+        service: LivePrivacySecurityService(controlPlane: fixture.app))
+      await model.refresh()
+      #expect(model.snapshot.suspendedForReview)
+      await model.confirmRestoredPermissions()
+      #expect(model.failure == nil)
+      #expect(!model.snapshot.suspendedForReview)
+      #expect(try await fixture.app.fetchPermissionRequests().unconfirmedProfileIDs.isEmpty)
+    }
+  }
+
+  @Test
   func privacyNetworkEditsPersistAndSystemSettingsUseTheReadSummary() async throws {
     try await withAppControlPlaneFixture { fixture in
       let service = LivePrivacySecurityService(controlPlane: fixture.app)
@@ -424,7 +433,7 @@ final class LiveAppControlPlaneTests {
   }
 
   @Test
-  func profilePermissionEditorRoundTripsWithoutRestartingTheGateway() async throws {
+  func profilePermissionsRoundTripWithoutRestartingTheGateway() async throws {
     try await withAppControlPlaneFixture { fixture in
       try await fixture.app.startApplication()
       let original = await fixture.gatewayService.snapshot()
@@ -476,14 +485,14 @@ final class LiveAppControlPlaneTests {
       do {
         #expect(try await client.listToolNames().isEmpty)
         let first = try await fixture.app.fetchProfilePermissionOptions(id: .chatGPTOperate)
-        var draft = ProfilePermissionsDraft(options: first)
-        try draft.grant.permissions.set(.granted(.read), for: .project("project"))
-        try await fixture.app.saveProfilePermissions(draft.grant, reviewed: first)
+        var grant = first.grant
+        try grant.permissions.set(.granted(.read), for: .project("project"))
+        try await fixture.app.saveProfilePermissions(grant, reviewed: first)
         #expect(try await client.listToolNames().isEmpty)
         let reviewed = try await fixture.app.fetchProfilePermissionOptions(id: .chatGPTOperate)
-        draft = ProfilePermissionsDraft(options: reviewed)
-        draft.grant.allowedCallers.insert(.localMCP)
-        try await fixture.app.saveProfilePermissions(draft.grant, reviewed: reviewed)
+        grant = reviewed.grant
+        grant.allowedCallers.insert(.localMCP)
+        try await fixture.app.saveProfilePermissions(grant, reviewed: reviewed)
         let tools = try await client.listToolNames()
         #expect(tools.contains("system.time") && tools.contains("file.read"))
         #expect(tools.contains("file.write") && !tools.contains("shell.run"))

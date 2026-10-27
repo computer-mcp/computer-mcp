@@ -37,7 +37,7 @@ final class LivePrivacySecurityService: PrivacySecurityService {
       grants: view.profiles.flatMap { Self.grants($0, names: names) },
       managedSources: view.sources.map(Self.source),
       systemPermissions: system.compactMap(Self.systemPermission),
-      suspendedForReview: view.suspended)
+      suspendedForReview: view.suspended || !view.unconfirmedProfileIDs.isEmpty)
   }
 
   func answer(request id: String, with answer: PrivacyRequestAnswer) async throws {

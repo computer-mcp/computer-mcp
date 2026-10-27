@@ -6,7 +6,7 @@ import SwiftUI
 
 struct ClientAccessView: View {
   @ObservedObject var model: ClientAccessModel
-  var editPermissions: ((GatewayProfileID) -> Void)? = nil
+  var showPermissions: ((GatewayProfileID) -> Void)? = nil
 
   var body: some View {
     VStack(alignment: .leading, spacing: 16) {
@@ -134,11 +134,11 @@ struct ClientAccessView: View {
           }.disabled(
             !model.isAvailable || !session.hasAccess || session.profile?.grant.fullAccess != true
               || !session.accessLimit.allowsFullAccess)
-          if let editPermissions, session.profileID != .localAdmin {
+          if let showPermissions, session.profileID != .localAdmin {
             Button {
-              editPermissions(session.profileID)
+              showPermissions(session.profileID)
             } label: {
-              Text("Edit permissions…", bundle: AppLocalization.resourceBundle)
+              Text("Permissions…", bundle: AppLocalization.resourceBundle)
             }.disabled(!model.isAvailable)
           }
           Spacer()

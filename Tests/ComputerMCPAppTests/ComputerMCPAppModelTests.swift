@@ -1,3 +1,4 @@
+import ComputerMCPCore
 import Foundation
 import Testing
 
@@ -6,6 +7,19 @@ import Testing
 @Suite
 
 final class ComputerMCPAppModelTests {
+  @MainActor
+  @Test
+  func clientPermissionsNavigateToTheSelectedPrincipal() {
+    let model = ComputerMCPAppModel(controlPlane: UnavailableControlPlane())
+    for profileID in [GatewayProfileID.chatGPTOperate, .chatGPTObserve] {
+      model.showPrivacySecurity(for: profileID)
+      #expect(model.selectedSection == .permissions)
+      #expect(model.privacySecurity.path == [.principal(profileID.rawValue)])
+    }
+    #expect(AppSection.permissions.title == AppLocalization.string("Privacy & Security"))
+    #expect(AppSection.permissions.systemImage == "hand.raised.fill")
+  }
+
   @Test
   func testEveryServiceStateHasALocalizedLabel() {
     let states: [ServiceState] = [

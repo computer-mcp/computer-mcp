@@ -39,11 +39,10 @@ struct PrivacySecurityView: View {
   @Environment(\.localizationResources) private var resources
   private var l: PrivacyText { PrivacyText(locale: locale, resources: resources) }
   @ObservedObject var model: PrivacySecurityModel
-  @State private var path: [PrivacyRoute] = []
   @State private var prompted: PrivacyRequest?
 
   var body: some View {
-    NavigationStack(path: $path) {
+    NavigationStack(path: $model.path) {
       Form {
         if model.snapshot.suspendedForReview { restoredSection }
         if !model.snapshot.requests.isEmpty { requestsSection }

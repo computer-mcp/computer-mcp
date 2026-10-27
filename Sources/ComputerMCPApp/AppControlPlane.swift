@@ -328,18 +328,6 @@ enum PermissionState: String, Sendable {
   case notGranted
   case notDetermined
   case unavailable
-
-  var label: String {
-    let key =
-      switch self {
-      case .granted: "Granted"
-      case .denied: "Denied"
-      case .notGranted: "Not granted"
-      case .notDetermined: "Not determined"
-      case .unavailable: "Unavailable"
-      }
-    return AppLocalization.string(key)
-  }
 }
 
 struct PermissionSummary: Identifiable, Sendable {
@@ -422,7 +410,7 @@ struct DiagnosticsSnapshot: Sendable {
 
 @MainActor
 protocol AppControlPlane: PluginManaging, MCPRegistrationManaging, ClientAccessManaging,
-  ProfilePermissionManaging, LocalClientRegistering
+  LocalClientRegistering
 {
   func startApplication() async throws
   func maintainApplication() async
@@ -437,6 +425,9 @@ protocol AppControlPlane: PluginManaging, MCPRegistrationManaging, ClientAccessM
   func fetchCloudflareTunnels() async throws -> [CloudflareTunnelSummary]
   func fetchPermissions() async throws -> [PermissionSummary]
   func fetchPermissionRequests() async throws -> GatewayPermissionView
+  func fetchProfilePermissionOptions(id: GatewayProfileID) async throws -> ProfilePermissionOptions
+  func saveProfilePermissions(_ grant: ProfileGrant, reviewed: ProfilePermissionOptions)
+    async throws
   func fetchPermissionObjectNames() async throws -> PermissionObjectNames
   func confirmPermissionAuthority(epoch: UUID, expectedRevision: UInt64, profiles: [ProfileGrant])
     async throws
@@ -555,6 +546,15 @@ final class UnavailableControlPlane: AppControlPlane {
   func fetchCloudflareTunnels() async throws -> [CloudflareTunnelSummary] { throw unavailable() }
   func fetchPermissions() async throws -> [PermissionSummary] { throw unavailable() }
   func fetchPermissionRequests() async throws -> GatewayPermissionView { throw unavailable() }
+  func fetchProfilePermissionOptions(id: GatewayProfileID) async throws -> ProfilePermissionOptions
+  {
+    throw unavailable()
+  }
+  func saveProfilePermissions(_ grant: ProfileGrant, reviewed: ProfilePermissionOptions)
+    async throws
+  {
+    throw unavailable()
+  }
   func confirmPermissionAuthority(epoch: UUID, expectedRevision: UInt64, profiles: [ProfileGrant])
     async throws
   { throw unavailable() }

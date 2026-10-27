@@ -2,8 +2,6 @@ import AppKit
 import Combine
 import ComputerMCPControlPlane
 import ComputerMCPCore
-import ComputerMCPGateway
-import ComputerMCPPermissions
 import Foundation
 
 enum LoadState<Value> {
@@ -60,9 +58,6 @@ final class ComputerMCPAppModel: ObservableObject {
   @Published private(set) var providers: LoadState<[ProviderSummary]> = .idle
   @Published private(set) var openAITunnels: LoadState<[OpenAITunnelSummary]> = .idle
   @Published private(set) var cloudflareTunnels: LoadState<[CloudflareTunnelSummary]> = .idle
-  @Published private(set) var permissions: LoadState<[PermissionSummary]> = .idle
-  @Published private(set) var permissionRequests: LoadState<GatewayPermissionView> = .idle
-  @Published private(set) var permissionObjectNames = PermissionObjectNames()
   @Published private(set) var audit: LoadState<[AuditEntrySummary]> = .idle
   @Published private(set) var diagnostics: LoadState<DiagnosticsSnapshot> = .idle
   @Published private(set) var openAITunnelLogs: [String: LoadState<OpenAITunnelLogSnapshot>] = [:]
@@ -229,8 +224,6 @@ final class ComputerMCPAppModel: ObservableObject {
     case .permissions:
       Task {
         await privacySecurity.refresh()
-        await loadPermissions()
-        await loadPermissionRequests()
       }
     case .audit:
       Task { await loadAudit() }
@@ -328,8 +321,9 @@ final class ComputerMCPAppModel: ObservableObject {
     }
   }
 
-  func profilePermissionsEditor(id: GatewayProfileID) -> ProfilePermissionsModel {
-    ProfilePermissionsModel(profileID: id, controlPlane: controlPlane)
+  func showPrivacySecurity(for profileID: GatewayProfileID) {
+    privacySecurity.path = [.principal(profileID.rawValue)]
+    selectedSection = .permissions
   }
 
   func startProvider(id: String) {
@@ -676,48 +670,6 @@ final class ComputerMCPAppModel: ObservableObject {
       cloudflareTunnels = .loaded(try await controlPlane.fetchCloudflareTunnels())
     } catch {
       cloudflareTunnels.failRefresh(with: AppLocalization.errorDescription(error))
-    }
-  }
-
-  private func loadPermissions() async {
-    permissions.beginRefresh()
-    do {
-      permissions = .loaded(try await controlPlane.fetchPermissions())
-    } catch {
-      permissions.failRefresh(with: AppLocalization.errorDescription(error))
-    }
-  }
-
-  private func loadPermissionRequests() async {
-    permissionRequests.beginRefresh()
-    do {
-      permissionRequests = .loaded(try await controlPlane.fetchPermissionRequests())
-      permissionObjectNames = (try? await controlPlane.fetchPermissionObjectNames()) ?? .init()
-    } catch {
-      permissionRequests.failRefresh(with: AppLocalization.errorDescription(error))
-    }
-  }
-
-  func confirmPermissionAuthority(_ reviewed: GatewayPermissionView) async throws {
-    let key = "permission.confirm-authority"
-    guard let epoch = reviewed.epoch, !runningActions.contains(key) else {
-      throw AppControlPlaneError.unavailable(
-        "Saved authority is unavailable. Refresh and review it again.")
-    }
-    runningActions.insert(key)
-    defer { runningActions.remove(key) }
-    try await controlPlane.confirmPermissionAuthority(
-      epoch: epoch, expectedRevision: reviewed.revision, profiles: reviewed.profiles)
-    for section in [AppSection.permissions, .profiles, .audit] { refresh(section) }
-  }
-
-  func answerPermissionRequest(id: UUID, answer: PermissionAnswer?, expectedRevision: UInt64) {
-    performAction(
-      key: "permission.answer.\(id)", title: "Unable to answer permission request",
-      refresh: [.permissions, .audit]
-    ) {
-      try await self.controlPlane.answerPermissionRequest(
-        id: id, answer: answer, expectedRevision: expectedRevision)
     }
   }
 

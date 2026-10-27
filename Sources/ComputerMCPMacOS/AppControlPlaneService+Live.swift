@@ -18,7 +18,9 @@ extension AppControlPlaneService {
   ) throws -> AppControlPlaneService {
     let resolvedDirectories = try directories ?? .standard(environment: .production)
     try resolvedDirectories.prepare()
-    let database = try GatewayDatabase(path: resolvedDirectories.database.path)
+    let database = try GatewayDatabase(
+      path: resolvedDirectories.database.path,
+      applicationSupportRoot: resolvedDirectories.applicationSupport)
     try resolvedDirectories.secureDatabaseFiles()
     let bundledPlugins = BundledPlugins.current
     var platform = MacOSPlatform.services

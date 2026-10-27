@@ -12,6 +12,8 @@ package struct WorktreeDirectoryIdentity: Codable, Equatable, Sendable {
   package let path: String
   package let device: Int64
   package let inode: UInt64
+  package let birthSeconds: Int64?
+  package let birthNanoseconds: Int64?
 }
 
 package final class WorktreeDirectory {
@@ -35,7 +37,7 @@ package final class WorktreeDirectory {
     }
     self.url = url
     descriptor = fd
-    identity = .init(path: url.path, device: Int64(status.st_dev), inode: UInt64(status.st_ino))
+    identity = Self.identity(url.path, status)
   }
 
   deinit { close(descriptor) }
@@ -44,15 +46,17 @@ package final class WorktreeDirectory {
     var current = stat()
     guard url.resolvingSymlinksInPath().path == url.path,
       lstat(url.path, &current) == 0, current.st_mode & S_IFMT == S_IFDIR,
-      Int64(current.st_dev) == identity.device, UInt64(current.st_ino) == identity.inode
+      Self.identity(url.path, current) == identity
     else { throw WorktreeError.identityChanged("Directory identity changed: \(url.path)") }
   }
 
-  package func child(_ name: String, create: Bool = false) throws -> WorktreeDirectory {
+  package func child(_ name: String, create: Bool = false, exclusive: Bool = false) throws
+    -> WorktreeDirectory
+  {
     try Self.requireName(name)
     try verify()
     if create {
-      guard mkdirat(descriptor, name, 0o700) == 0 || errno == EEXIST else {
+      guard mkdirat(descriptor, name, 0o700) == 0 || (!exclusive && errno == EEXIST) else {
         throw Self.posixError()
       }
       try synchronize()
@@ -71,6 +75,19 @@ package final class WorktreeDirectory {
     guard !name.isEmpty, name != ".", name != "..", !name.contains("/"), !name.contains("\0") else {
       throw WorktreeError.unsafeConfiguration("Expected a single directory entry name.")
     }
+  }
+
+  private static func identity(_ path: String, _ status: stat) -> WorktreeDirectoryIdentity {
+    #if canImport(Darwin)
+      let seconds: Int64? = Int64(status.st_birthtimespec.tv_sec)
+      let nanos: Int64? = Int64(status.st_birthtimespec.tv_nsec)
+    #else
+      let seconds: Int64? = nil
+      let nanos: Int64? = nil
+    #endif
+    return .init(
+      path: path, device: Int64(status.st_dev), inode: UInt64(status.st_ino),
+      birthSeconds: seconds, birthNanoseconds: nanos)
   }
 
   static func posixError() -> POSIXError { POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO) }

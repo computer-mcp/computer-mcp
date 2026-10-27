@@ -71,7 +71,10 @@ let neutralTargets: [Target] =
       name: "ComputerMCPWorktrees", dependencies: ["ComputerMCPPlatformPOSIX"]),
     .testTarget(
       name: "ComputerMCPWorktreesTests",
-      dependencies: ["ComputerMCPWorktrees", "ComputerMCPPlatformPOSIX", "ComputerMCPTestSupport"]),
+      dependencies: [
+        "ComputerMCPWorktrees", "ComputerMCPPersistence", "ComputerMCPPlatformPOSIX",
+        "ComputerMCPTestSupport",
+      ]),
     .target(
       name: "ComputerMCPPersistence",
       dependencies: [

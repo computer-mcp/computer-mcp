@@ -20,6 +20,23 @@ import Testing
 @Suite
 
 final class GatewayDatabaseTests {
+  @Test func worktreeStorageComesOnlyFromDurableComposition() throws {
+    let memory = try GatewayDatabase(inMemory: ())
+    #expect(memory.worktreeStorage == nil)
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+      .resolvingSymlinksInPath()
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: false)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let path = root.appendingPathComponent("host.sqlite").path
+    let standalone = try GatewayDatabase(path: path)
+    #expect(
+      standalone.worktreeStorage?.content.path == root.appendingPathComponent("worktrees").path)
+    let appRoot = root.appendingPathComponent("distribution")
+    let app = try GatewayDatabase(path: path, applicationSupportRoot: appRoot)
+    #expect(app.worktreeStorage?.content.path == appRoot.appendingPathComponent("Worktrees").path)
+    #expect(!FileManager.default.fileExists(atPath: appRoot.path))
+  }
+
   @Test func bootstrapPreservesLiveEditsAndLeavesRecoveryForTheOwner() throws {
     let database = try GatewayDatabase(inMemory: ())
     let counter = TestAuthorizationEpochCounter()

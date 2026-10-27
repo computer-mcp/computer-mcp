@@ -30,6 +30,7 @@ package struct DerivedProjectRecord: Codable, Equatable, Sendable {
   package let provenance: DerivedProjectProvenance
   package var state: State
   package var revision: Int64
+  package var worktree: WorktreeRegistration?
 
   package init(
     projectID: String, source: DerivedProjectSource, root: String,
@@ -50,10 +51,14 @@ package struct DerivedProjectRecord: Codable, Equatable, Sendable {
       [root, source.root].allSatisfy({ $0.hasPrefix("/") && !$0.contains("\0") })
     else { throw DerivedProjectStoreError.invalidRecord }
     if case .plugin(let receipt) = provenance {
-      guard !receipt.isEmpty, receipt.count <= 32_768, state == .active else {
+      guard !receipt.isEmpty, receipt.count <= 32_768, state == .active, worktree == nil else {
         throw DerivedProjectStoreError.invalidRecord
       }
     }
+    if case .host = provenance, state == .active, worktree == nil {
+      throw DerivedProjectStoreError.invalidRecord
+    }
+    try worktree?.validate(record: self)
   }
 }
 

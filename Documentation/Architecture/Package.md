@@ -92,7 +92,7 @@ package product and does not install or bundle vendor binaries.
 | `Sources/ComputerMCPToolsSystem/` | Platform-neutral System and Network providers with explicit definitions, bounded command execution, POSIX observation and injected native memory, CPU and thermal readings |
 | `Sources/ComputerMCPToolsMCP/` | Platform-neutral MCP builtin and configured providers, downstream discovery, validated catalogs, host risk descriptors and context-preserving calls |
 | `Sources/ComputerMCPToolsGit/` | Platform-neutral Git provider with explicit definitions, annotations, descriptors and registered-command dispatch |
-| `Sources/ComputerMCPWorktrees/` | Neutral repository lock, durable journal I/O, Git safety policy, derived-project/provenance records and injected command/store contracts |
+| `Sources/ComputerMCPWorktrees/` | Neutral repository coordination, durable creation recovery, detached worktree topology and inventory, private object storage, Git safety policy, derived-project/provenance records and injected command/store contracts |
 | `Sources/ComputerMCPDelivery/` | Platform-neutral delivery provider, scoped worktree edits, repository locks, atomic file journals, landing and recovery |
 | `Sources/ComputerMCPAuthorization/` | Platform-neutral OAuth state machine, discovery metadata, injected CIMD identification, rate limits and transactional grant/token store contract; macOS URLSession CIMD transport |
 | `Sources/ComputerMCPToolKit/` | Platform-neutral argument and result helpers, project path scope and file metadata, shared filesystem/outline/HTTP helpers, configured command resolution and execution, and project-owned tool environments |
@@ -640,3 +640,22 @@ Directory and lock identity are checked before use. External Git processes do
 not honor this advisory lock, so mutation owners also verify their expected Git
 and checkout state. Upgrading from hosts using the earlier delivery lock requires
 stopping those hosts before the new host opens the repository.
+
+The lifecycle service derives four separate regions from durable composition:
+content, private objects, runtime scratch, and host journals. App composition
+uses `Worktrees`, `WorktreeObjects`, `WorktreeRuntime` and `WorktreeJournals`
+under its distribution's Application Support root; standalone composition uses
+`worktrees`, `worktree-objects`, `worktree-runtime` and `worktree-journals` beside
+the database. Memory-only databases have no lifecycle storage. Ordinary project
+roots cannot overlap these regions. Existing host content is recognized only
+through matching active ledger, journal, storage generation and directory evidence.
+
+Creation reserves a generic derived record, creates owned directories, verifies
+Git's detached checkout and backlinks, creates an absent branch in a reference
+transaction, then atomically activates topology and branch protection. Recovery
+reconciles the recorded phases; changed or unproved state is retained for the
+owner. The active ledger binds the topology and base captured by the journal.
+Inventory reads private HEAD with the host-selected shared alternate and reports
+unknown base or unavailable state explicitly. Foreign checkouts and plugin receipts
+do not mint verified host topology. Topology evidence alone grants no execution
+lease or sandbox authority; lifecycle tools are not registered by this service.

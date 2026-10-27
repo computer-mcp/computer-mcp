@@ -110,6 +110,10 @@ struct DerivedProjectMigrationTests {
       }
       record.revision = 2
       record.state = .active
+      #expect(throws: DerivedProjectStoreError.invalidRecord) {
+        try other.commit(record, expecting: 1)
+      }
+      record.state = .recoveryRequired
       #expect(throws: POSIXError.self) {
         try first.writer.write {
           try SQLiteDerivedProjectStore.commit(record, expecting: 1, in: $0)

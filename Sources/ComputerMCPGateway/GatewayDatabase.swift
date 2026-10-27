@@ -21,6 +21,7 @@ import struct ComputerMCPPermissions.RegisteredProject
 
 package final class GatewayDatabase: OAuthStore, @unchecked Sendable {
   package let connection: GatewayDatabaseConnection
+  package let worktreeStorage: WorktreeStorage?
   private var writer: any DatabaseWriter { connection.writer }
   private let profileChangeLock = NSLock()
   private var profileChangeBroadcasters: [GatewayProfileID: GatewayToolChangeBroadcaster] = [:]
@@ -53,16 +54,20 @@ package final class GatewayDatabase: OAuthStore, @unchecked Sendable {
         "computer-mcp-executions-" + transientOwnershipID.uuidString, isDirectory: true)
   }
 
-  package init(path: String) throws {
+  package init(path: String, applicationSupportRoot: URL? = nil) throws {
     connection = try GatewayDatabaseConnection(path: path)
+    worktreeStorage = WorktreeStorage(
+      databaseURL: connection.fileURL, applicationSupportRoot: applicationSupportRoot)
   }
 
   package init(inMemory: Void) throws {
     connection = try GatewayDatabaseConnection(inMemory: ())
+    worktreeStorage = nil
   }
 
   package init(connection: GatewayDatabaseConnection) {
     self.connection = connection
+    worktreeStorage = WorktreeStorage(databaseURL: connection.fileURL)
   }
 
   /// Uses this database's writer so permission and project/profile mutations can

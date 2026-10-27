@@ -125,8 +125,9 @@ it grants no permission by itself. Apple events are blocked in the sandbox. A
 principal whose programs control other apps needs Full access, where macOS asks
 for consent under each program's own identity. Managed limits can further narrow
 permissions, network access, execution mode and resource limits.
-`policy.shell_enabled` remains false by default. A program launch without an installed authorized context fails;
-sandboxed worktree writes and project-bound plugin/server execution remain
+`policy.shell_enabled` remains false by default. A program launch without an
+installed authorized context fails; sandboxed worktree writes and project-bound
+plugin/server execution remain
 unavailable until their execution contexts are supplied.
 
 MCP `read` permits listing, resources, prompts and host-classified read-only tools;

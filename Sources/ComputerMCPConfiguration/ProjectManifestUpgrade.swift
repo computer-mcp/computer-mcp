@@ -13,6 +13,7 @@ package enum ProjectManifestUpgrade {
 
   package static func validate(_ text: String) throws {
     let original = try TOMLDecoder().decode(JSONValue.self, from: text)
+    // Reject retired fields before terminology checks; App migration uses upgraded() instead.
     if case .object(let root) = original, case .array(let profiles) = root["profiles"],
       profiles.contains(where: {
         if case .object(let fields) = $0 { return fields["mode"] != nil }

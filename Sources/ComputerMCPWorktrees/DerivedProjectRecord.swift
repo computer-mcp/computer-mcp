@@ -69,11 +69,12 @@ package struct ProtectedWorktreeBranch: Codable, Equatable, Sendable {
   package let base: String
   package let baseOID: String
   package let publishedOID: String
+  package let mergedOID: String?
   package let worktreeID: UUID
 
   package init(
     repository: WorktreeDirectoryIdentity, branchID: UUID, branch: String, base: String,
-    baseOID: String, publishedOID: String, worktreeID: UUID
+    baseOID: String, publishedOID: String, worktreeID: UUID, mergedOID: String? = nil
   ) {
     self.repository = repository
     self.branchID = branchID
@@ -81,6 +82,7 @@ package struct ProtectedWorktreeBranch: Codable, Equatable, Sendable {
     self.base = base
     self.baseOID = baseOID
     self.publishedOID = publishedOID
+    self.mergedOID = mergedOID
     self.worktreeID = worktreeID
   }
 

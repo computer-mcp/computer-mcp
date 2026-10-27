@@ -81,7 +81,9 @@ package final class SQLiteDerivedProjectStore: DerivedProjectStore, Sendable {
         guard previous.repository == branch.repository, previous.branch == branch.branch,
           previous.branchID == branch.branchID, previous.base == branch.base,
           previous.baseOID == branch.baseOID, previous.worktreeID == branch.worktreeID,
-          previous.publishedOID == old?.worktree?.lastPublishedOID
+          previous.publishedOID == old?.worktree?.lastPublishedOID,
+          previous.mergedOID == old?.worktree?.lastMergedOID,
+          branch.mergedOID == record.worktree?.lastMergedOID
         else {
           throw DerivedProjectStoreError.invalidRecord
         }

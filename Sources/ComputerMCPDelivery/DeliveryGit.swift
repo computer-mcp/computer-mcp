@@ -150,24 +150,13 @@ internal struct DeliveryGit: Sendable {
       throw DeliveryFailure(
         reason: .gitFailed, detail: "Merge target does not resolve to a commit.")
     }
-    var paths = Set<String>()
-    for source in ["HEAD", target] {
-      let output = try run(["ls-tree", "-rz", "--name-only", source], at: directory).stdout
-      paths.formUnion(output.split(separator: "\0").map(String.init))
-    }
-    let input = Data((paths.sorted().joined(separator: "\0") + "\0").utf8)
-    for source in [nil, "HEAD", target] as [String?] {
-      let arguments =
-        ["check-attr", "-z"] + (source.map { ["--source=\($0)"] } ?? []) + ["--stdin", "filter"]
-      let fields = try run(arguments, at: directory, input: input).stdout.split(
-        separator: "\0", omittingEmptySubsequences: false)
-      for index in stride(from: 2, to: fields.count, by: 3) {
-        guard fields[index] == "unspecified" || fields[index] == "unset" else {
-          throw DeliveryFailure(
-            reason: .gitFailed,
-            detail: "Host merge refuses repositories whose attributes assign a filter.")
-        }
+    do {
+      try HostGitCheckout.requireNoFilters(revisions: ["HEAD", target]) { args, input in
+        Data(try run(args, at: directory, input: input).stdout.utf8)
       }
+    } catch {
+      throw DeliveryFailure(
+        reason: .gitFailed, detail: "Host merge refuses unverified checkout filter attributes.")
     }
   }
 

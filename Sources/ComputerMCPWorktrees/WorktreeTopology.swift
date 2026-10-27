@@ -79,6 +79,7 @@ extension WorktreeRepository {
     guard record.revision >= expected.revision else { return false }
     expected.revision = record.revision
     expected.worktree?.publishedOID = record.worktree?.publishedOID
+    expected.worktree?.mergedOID = record.worktree?.mergedOID
     return expected == record
   }
 

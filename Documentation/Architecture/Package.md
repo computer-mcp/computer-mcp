@@ -668,3 +668,15 @@ validates an exclusive host copy; only its exact reachable closure is promoted.
 Prepared reference transactions retain host recovery roots for replaced commits.
 Explicit replacement acknowledgement releases an obsolete root with expected-value
 checks; ordinary rebase and removal do not expire history by age.
+
+Fast-forward integration prepares an expected-value update through dereferenced
+HEAD, verifies its recorded base target under Git's reference locks, and reserves
+the main index until reference commit. Two-tree checkout uses a host-owned index
+copy; tracked, staged, untracked and ignored collisions are refused, and unrelated
+dirty state is preserved. `HostGitCheckout` shares filter refusal with delivery.
+The adapter revalidates current permission for every destination, including nested
+projects. Durable before/after fingerprints and an operation-specific reflog
+receipt reconcile checkout, refs and the protected-branch ledger. Unknown partial
+checkout and foreign or abandoned Git locks require reconciliation; recovery never
+resets the main checkout. A merged OID is historical evidence, not authority to
+delete a branch without checking its live base and reachability.

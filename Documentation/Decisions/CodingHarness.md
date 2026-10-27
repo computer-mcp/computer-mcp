@@ -589,6 +589,16 @@ unmerged tips retain host-owned recovery references until an explicit replacemen
 acknowledgement or verified integration releases them. Recovery,
 locking and journaling follow the worktree rules below.
 
+Fast-forward integration holds a prepared expected-value update through
+dereferenced `HEAD`, verifies its symbolic target is the recorded base, and keeps
+the main index locked while a two-tree checkout uses an isolated index copy.
+It refuses overwrite hazards, including ignored files, and preserves unrelated
+local changes. The checkout transition is journaled before reference commit.
+Recovery compares the recorded file/index fingerprints and reference outcome;
+unknown or partial checkout state is retained for reconciliation, never reset.
+Each destination is authorized against current project permissions, including
+tracked nested projects.
+
 The host keeps each worktree branch's base after its worktree is removed,
 until the branch reaches the base or is deleted with Full access. Worktree
 operations are journaled under a lock identified by the repository's

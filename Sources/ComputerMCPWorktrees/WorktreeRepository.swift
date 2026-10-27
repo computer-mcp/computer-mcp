@@ -230,12 +230,13 @@ struct WorktreeGit {
 
   func run(
     _ arguments: [String], at root: URL, gitDirectory: URL? = nil,
-    objects: URL? = nil, sharedObjects: URL? = nil, input: Data = Data(),
+    objects: URL? = nil, sharedObjects: URL? = nil, index: URL? = nil, input: Data = Data(),
     accepting: Set<Int32> = [0]
   ) throws -> WorktreeGitResult {
     let names = try configurationNames(at: root, gitDirectory: gitDirectory)
     let overrides = try HostGitConfiguration.overrides(for: names)
     var environment = HostGitConfiguration.environment(home: home)
+    if let index { environment["GIT_INDEX_FILE"] = index.path }
     if let objects, let sharedObjects {
       environment["GIT_OBJECT_DIRECTORY"] = objects.path
       environment["GIT_ALTERNATE_OBJECT_DIRECTORIES"] =

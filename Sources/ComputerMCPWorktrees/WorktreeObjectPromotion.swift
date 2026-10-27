@@ -286,7 +286,8 @@ extension WorktreeRepository {
           protecting: .init(
             repository: identity.common, branchID: registration.branchID,
             branch: registration.branch, base: registration.base, baseOID: registration.baseOID,
-            publishedOID: journal.capturedOID, worktreeID: worktreeID))
+            publishedOID: journal.capturedOID, worktreeID: worktreeID,
+            mergedOID: registration.mergedOID))
       }
       try advancePublication(&journal, to: .ledger)
     }

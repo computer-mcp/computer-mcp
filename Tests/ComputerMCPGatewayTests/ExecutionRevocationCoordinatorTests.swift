@@ -148,7 +148,8 @@ import Testing
       owner.setCancellation { deadline in
         if expire {
           try await Task.sleep(
-            until: min(deadline, .now.advanced(by: .milliseconds(300))), clock: .continuous)
+            until: min(deadline, ContinuousClock.now.advanced(by: .milliseconds(300))),
+            clock: .continuous)
           throw ExecutionWaitExpired(ownership: owner)
         }
       }

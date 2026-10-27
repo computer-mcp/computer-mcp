@@ -9,7 +9,7 @@ package enum HostGitCheckout {
     var paths = Set<Data>()
     for revision in revisions {
       let output = try run(["ls-tree", "-rz", "--name-only", revision], Data())
-      paths.formUnion(output.split(separator: 0).map(Data.init))
+      paths.formUnion(output.split(separator: 0).map { Data($0) })
     }
     guard !paths.isEmpty else { return }
     var input = Data()

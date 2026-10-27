@@ -25,10 +25,12 @@
       }
       try FileManager.default.moveItem(at: directory, to: moved)
       try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: false)
-      let result = try ProcessCommandRunner(launcher: testExecutionLauncher()).runInDirectory(
-        executable: testExecutable("pwd"), arguments: ["-P"], directoryDescriptor: pinned,
-        inputDescriptor: input, outputDescriptor: output, environment: [:],
-        timeoutMilliseconds: 10_000, maxOutputBytes: 4096)
+      let result = try withCommandAdministration {
+        try ProcessCommandRunner(launcher: testExecutionLauncher()).runInDirectory(
+          executable: testExecutable("pwd"), arguments: ["-P"], directoryDescriptor: pinned,
+          inputDescriptor: input, outputDescriptor: output, environment: [:],
+          timeoutMilliseconds: 10_000, maxOutputBytes: 4096)
+      }
       #expect(result.exitCode == 0)
       #expect(!result.timedOut)
       #expect(try String(contentsOf: outputURL, encoding: .utf8) == moved.path + "\n")

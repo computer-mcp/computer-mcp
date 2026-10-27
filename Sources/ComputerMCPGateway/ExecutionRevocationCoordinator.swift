@@ -385,7 +385,8 @@ package final class ExecutionRevocationCoordinator: ExecutionRecoveryAuthorizing
         return
       } catch WorktreeError.busy {
         try await Task.sleep(
-          until: min(deadline, .now.advanced(by: .milliseconds(10))), clock: .continuous)
+          until: min(deadline, ContinuousClock.now.advanced(by: .milliseconds(10))),
+          clock: .continuous)
       }
     }
   }
@@ -1142,7 +1143,8 @@ private actor ExecutionReconciliation {
           throw WorktreeError.busy("Worktree writer termination is incomplete.")
         }
         try await Task.sleep(
-          until: min(deadline, .now.advanced(by: .milliseconds(10))), clock: .continuous)
+          until: min(deadline, ContinuousClock.now.advanced(by: .milliseconds(10))),
+          clock: .continuous)
       }
       try Task.checkCancellation()
     }

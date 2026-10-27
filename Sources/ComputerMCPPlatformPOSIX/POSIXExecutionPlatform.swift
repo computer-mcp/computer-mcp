@@ -43,17 +43,27 @@
     _ actions: UnsafeMutablePointer<posix_spawn_file_actions_t>, _ first: Int32
   ) -> Int32
 
-  private final class POSIXExecutionOwnership: ExecutionOwnership, @unchecked Sendable {
+  final class POSIXExecutionOwnership: ExecutionOwnership, @unchecked Sendable {
     private let lock = NSLock()
+    private let signalGroup: @Sendable (pid_t, Int32) -> Void
     private var pid: pid_t?
     private var identity: UInt64 = 0
     private var known: [pid_t: UInt64] = [:]
-    private var exit: ExecutionExit?
-    private var failure: (any Error)?
-    private var cancellation: ContinuousClock.Instant?
+    private var completion: Result<ExecutionExit, any Error>?
+    private var cancellationStarted: ContinuousClock.Instant?
+    private var cancellationDeadline: ContinuousClock.Instant?
+    private var waiters:
+      [(
+        deadline: ContinuousClock.Instant?,
+        continuation: CheckedContinuation<ExecutionExit, any Error>
+      )] = []
     private var handlers: [@Sendable () -> Void] = []
     private var launchHandlers: [@Sendable (ExecutionMember) throws -> Void] = []
     private var timer: (any DispatchSourceTimer)?
+
+    init(signalGroup: @escaping @Sendable (pid_t, Int32) -> Void = { _ = kill(-$0, $1) }) {
+      self.signalGroup = signalGroup
+    }
 
     func beforeStart(_ handler: @escaping @Sendable (ExecutionMember) throws -> Void) {
       lock.withLock { launchHandlers.append(handler) }
@@ -155,30 +165,34 @@
     func failedLaunch(_ error: any Error) {
       let active = lock.withLock {
         guard pid != nil else {
-          failure = error
+          finish(.failure(error))
           return false
         }
-        cancellation = .now.advanced(by: .milliseconds(-500))
+        cancellationStarted = .now.advanced(by: .milliseconds(-500))
+        let deadline = ContinuousClock.now.advanced(by: .seconds(5))
+        cancellationDeadline = min(cancellationDeadline ?? deadline, deadline)
         return true
       }
       if active { startMonitoring() }
     }
 
     private func startMonitoring() {
-      lock.withLock {
-        guard timer == nil, pid != nil else { return }
-        let timer = DispatchSource.makeTimerSource(queue: DispatchQueue(label: "execution.posix"))
-        timer.schedule(deadline: .now(), repeating: .milliseconds(20))
-        timer.setEventHandler { self.poll() }
-        self.timer = timer
-        timer.resume()
-      }
+      lock.withLock { startMonitor() }
+    }
+
+    private func startMonitor() {
+      guard timer == nil, completion == nil else { return }
+      let timer = DispatchSource.makeTimerSource(queue: DispatchQueue(label: "execution.posix"))
+      timer.schedule(deadline: .now(), repeating: .milliseconds(20))
+      timer.setEventHandler { self.poll() }
+      self.timer = timer
+      timer.resume()
     }
 
     func onCancellation(_ handler: @escaping @Sendable () -> Void) {
       let cancelled = lock.withLock {
         handlers.append(handler)
-        return cancellation != nil
+        return cancellationStarted != nil
       }
       if cancelled { handler() }
     }
@@ -187,35 +201,89 @@
       lock.withLock { known.map { .init(processID: $0.key, identity: $0.value) } }
     }
 
-    func cancel(until deadline: ContinuousClock.Instant) async throws -> ExecutionExit {
-      let callbacks = lock.withLock {
-        if cancellation == nil { cancellation = .now }
+    func requestCancellation(
+      until deadline: ContinuousClock.Instant = .now.advanced(by: .seconds(5))
+    ) {
+      let callbacks: [@Sendable () -> Void]? = lock.withLock {
+        guard completion == nil else { return nil }
+        cancellationDeadline = min(cancellationDeadline ?? deadline, deadline)
+        guard cancellationStarted == nil else { return nil }
+        cancellationStarted = .now
         return handlers
       }
+      guard let callbacks else { return }
       for callback in callbacks { callback() }
+    }
+
+    func cancel(until deadline: ContinuousClock.Instant) async throws -> ExecutionExit {
+      requestCancellation()
       return try await wait(until: deadline)
     }
 
     func wait(until deadline: ContinuousClock.Instant) async throws -> ExecutionExit {
-      while true {
-        if let error = lock.withLock({ failure }) { throw error }
-        if let result = lock.withLock({ exit }) { return result }
-        if ContinuousClock.now >= deadline {
-          throw ExecutionWaitExpired(ownership: self)
-        }
-        if Task.isCancelled {
-          let callbacks = lock.withLock {
-            if cancellation == nil { cancellation = .now }
-            return handlers
+      try await waitForCompletion(until: deadline)
+    }
+
+    func wait() async throws -> ExecutionExit {
+      try await waitForCompletion(until: nil)
+    }
+
+    private func waitForCompletion(until deadline: ContinuousClock.Instant?) async throws
+      -> ExecutionExit
+    {
+      try await withTaskCancellationHandler {
+        try await withCheckedThrowingContinuation { continuation in
+          lock.withLock {
+            if let completion {
+              continuation.resume(with: completion)
+            } else if let deadline, ContinuousClock.now >= deadline {
+              continuation.resume(throwing: ExecutionWaitExpired(ownership: self))
+            } else {
+              waiters.append((deadline, continuation))
+              startMonitor()
+            }
           }
-          for callback in callbacks { callback() }
         }
-        await withCheckedContinuation { continuation in
-          DispatchQueue.global().asyncAfter(deadline: .now() + .milliseconds(20)) {
-            continuation.resume()
-          }
-        }
+      } onCancel: {
+        requestCancellation()
       }
+    }
+
+    /// Termination failure retains the monitor and process group for continued cleanup.
+    private func expire() {
+      let now = ContinuousClock.now
+      if let deadline = cancellationDeadline, now >= deadline {
+        let failure = ExecutionCompletionFailure(
+          ownership: self,
+          members: known.map {
+            .init(
+              process: .init(processID: $0.key, identity: $0.value),
+              reason: "Exit has not been confirmed")
+          }.sorted { $0.process.processID < $1.process.processID },
+          reasons: ["Termination could not be confirmed within its budget"], bestEffort: true)
+        cancellationDeadline = nil
+        let pending = waiters
+        waiters.removeAll()
+        for waiter in pending { waiter.continuation.resume(throwing: failure) }
+      }
+      let expired = waiters.filter { $0.deadline.map { now >= $0 } == true }
+      waiters.removeAll { $0.deadline.map { now >= $0 } == true }
+      for waiter in expired {
+        waiter.continuation.resume(throwing: ExecutionWaitExpired(ownership: self))
+      }
+    }
+
+    private func finish(_ result: Result<ExecutionExit, any Error>) {
+      completion = result
+      cancellationDeadline = nil
+      handlers.removeAll()
+      launchHandlers.removeAll()
+      timer?.cancel()
+      timer?.setEventHandler {}
+      timer = nil
+      let pending = waiters
+      waiters.removeAll()
+      for waiter in pending { waiter.continuation.resume(with: result) }
     }
 
     private struct ProcessRecord {
@@ -257,7 +325,9 @@
 
     private func poll() {
       lock.withLock {
-        guard let pid, exit == nil else { return }
+        guard completion == nil else { return }
+        expire()
+        guard let pid else { return }
         let records = ((try? FileManager.default.contentsOfDirectory(atPath: "/proc")) ?? [])
           .compactMap(pid_t.init).compactMap(Self.read)
         var members = records.filter { $0.group == pid || known[$0.pid] == $0.identity }
@@ -269,11 +339,12 @@
           members += extra
         }
         for member in members { known[member.pid] = member.identity }
-        if let cancellation {
-          let signal = ContinuousClock.now - cancellation >= .milliseconds(500) ? SIGKILL : SIGTERM
+        if let cancellationStarted {
+          let signal =
+            ContinuousClock.now - cancellationStarted >= .milliseconds(500) ? SIGKILL : SIGTERM
           // The unreaped leader keeps this group ID reserved. Escaped children require pidfds.
-          _ = kill(-pid, signal)
-          _ = kill(-pid, SIGCONT)
+          signalGroup(pid, signal)
+          signalGroup(pid, SIGCONT)
           for member in members where !member.zombie && member.group != pid {
             Self.signal(member, signal)
           }
@@ -284,12 +355,11 @@
         var status: Int32 = 0
         guard waitpid(pid, &status, WNOHANG) == pid else { return }
         let signal = status & 0x7f
-        exit = .init(
+        let exit = ExecutionExit(
           status: signal == 0 ? (status >> 8) & 0xff : 128 + signal,
           signal: signal == 0 ? nil : signal)
         known.removeAll()
-        timer?.cancel()
-        timer = nil
+        finish(.success(exit))
       }
     }
   }

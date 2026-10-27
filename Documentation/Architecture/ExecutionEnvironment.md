@@ -350,12 +350,21 @@ the snapshot proves that no member existed at t, the list-lock instant. Membersh
 is inherited through fork, only members can create members, and the launcher has
 stopped creating processes for this execution; therefore none can appear after t.
 
-`cancel(until:)` and `wait(until:)` accept absolute `ContinuousClock` deadlines.
+Both Darwin and Linux POSIX ownership handles accept absolute `ContinuousClock`
+deadlines through `cancel(until:)` and `wait(until:)`.
 Each deadline ends only that caller's wait with `ExecutionWaitExpired`, retaining
 its ownership handle. `cancel()` waits up to 5 seconds; `wait()` has no caller
 deadline. Cancellation starts an independent 5-second termination attempt covering
-grace, kill and confirmation; exhausting that budget is an ownership failure. Signal
-retries and process enumeration also have bounded work. Kernel queries and signals
+grace, kill and confirmation; exhausting that budget reports
+`ExecutionCompletionFailure` to all pending waiters, including those with later or
+no deadlines. A termination failure takes priority over simultaneous caller expiry.
+Caller expiry leaves other waiters and the termination budget unchanged. Both
+platforms retain ownership and continue background cleanup after failure; a later
+wait can confirm completion. POSIX retains its unreaped leader and observed
+descendant identities, and continues process-group and pidfd signalling. Its
+membership diagnostics are best effort.
+
+On Darwin, signal retries and process enumeration also have bounded work. Kernel queries and signals
 run on a serial worker without holding the ownership lock; a separate timer advances
 deadlines even when libproc waits for exec. Other waiters and in-flight inspection
 continue when one caller's wait expires. Ownership failures reach all pending waiters.

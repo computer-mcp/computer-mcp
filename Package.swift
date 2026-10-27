@@ -438,7 +438,7 @@ let neutralTargets: [Target] =
     ),
     .testTarget(
       name: "ComputerMCPPlatformPOSIXTests",
-      dependencies: ["ComputerMCPPlatform", "ComputerMCPPlatformPOSIX"]
+      dependencies: ["ComputerMCPPlatform", "ComputerMCPPlatformPOSIX", "ComputerMCPSandbox"]
     ),
     .testTarget(
       name: "ComputerMCPPersistenceTests",

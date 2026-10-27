@@ -383,8 +383,6 @@ package struct DarwinExecutionPlatform: ExecutionPlatform {
         }
       }
     }
-    for handle in copies { try? handle.close() }
-    copies.removeAll()
     channel.didSpawn(ownership: ownership)
     diagnostics.didSpawn()
     var failure: Error?
@@ -392,6 +390,10 @@ package struct DarwinExecutionPlatform: ExecutionPlatform {
       channel.disconnect()
       failure = error
     }
+    // Closing a shared socket while libproc inspects it can drain the child's
+    // endpoint on Darwin. Keep every launch copy until the handoff has ended.
+    for handle in copies { try? handle.close() }
+    copies.removeAll()
     if ownership.observesSandboxViolations {
       try? Self.waitForTerminalState(pid)
       ownership.observeRootForViolations()
@@ -425,6 +427,7 @@ private final class ExecutionBootstrapChannel: @unchecked Sendable {
   private let timeout: Duration
   private var deadline: ContinuousClock.Instant?
   private var timer: (any DispatchSourceTimer)?
+  private var spawned = false
   private var result: Result<Void, Error>?
   private let admitted = DispatchSemaphore(value: 0)
 
@@ -461,13 +464,12 @@ private final class ExecutionBootstrapChannel: @unchecked Sendable {
     }
   }
 
-  var hasSpawned: Bool { lock.withLock { child == -1 } }
+  var hasSpawned: Bool { lock.withLock { spawned } }
 
   func didSpawn(ownership: DarwinExecutionOwnership) {
     lock.withLock {
       deadline = .now.advanced(by: timeout)
-      close(child)
-      child = -1
+      spawned = true
       let timer = DispatchSource.makeTimerSource(
         queue: DispatchQueue(label: "execution.launch-deadline"))
       let components = timeout.components
@@ -478,6 +480,7 @@ private final class ExecutionBootstrapChannel: @unchecked Sendable {
         let expired = lock.withLock {
           guard self.timer != nil else { return false }
           shutdown(parent, SHUT_RDWR)
+          closeChild()
           if result == nil {
             result = .failure(failure)
             admitted.signal()
@@ -531,7 +534,7 @@ private final class ExecutionBootstrapChannel: @unchecked Sendable {
         var confirmation: UInt8 = 0
         var received: Int
         repeat {
-          try ExecutionBootstrapDeadline.waitForReadable(parent, until: deadline)
+          try ExecutionBootstrapDeadline.waitForReadable(parent, pid: pid, until: deadline)
           received = recv(parent, &confirmation, 1, 0)
         } while received < 0 && errno == EINTR
         guard received == 1, confirmation == 2 else {
@@ -545,6 +548,7 @@ private final class ExecutionBootstrapChannel: @unchecked Sendable {
         }
         result = outcome
         shutdown(parent, SHUT_RDWR)
+        closeChild()
         if case .success = outcome {
           stopTimer()
           ownership.ready()
@@ -557,9 +561,19 @@ private final class ExecutionBootstrapChannel: @unchecked Sendable {
     try lock.withLock { try result!.get() }
   }
 
-  func disconnect() { lock.withLock { shutdown(parent, SHUT_RDWR) } }
+  func disconnect() {
+    lock.withLock {
+      shutdown(parent, SHUT_RDWR)
+      closeChild()
+    }
+  }
 
   func finished() { lock.withLock { stopTimer() } }
+
+  private func closeChild() {
+    if child >= 0 { close(child) }
+    child = -1
+  }
 
   private func stopTimer() {
     timer?.cancel()
@@ -580,16 +594,31 @@ private enum ExecutionBootstrapDeadline {
     }
   }
 
-  static func waitForReadable(_ socket: Int32, until deadline: ContinuousClock.Instant) throws {
+  static func waitForReadable(
+    _ socket: Int32, pid: pid_t, until deadline: ContinuousClock.Instant
+  ) throws {
     while true {
       try check(deadline)
       let remaining = ContinuousClock.now.duration(to: deadline).components
       let milliseconds = max(
         1, remaining.seconds * 1000 + remaining.attoseconds / 1_000_000_000_000_000)
       var descriptor = pollfd(fd: socket, events: Int16(POLLIN), revents: 0)
-      let result = poll(&descriptor, 1, Int32(min(milliseconds, Int64(Int32.max))))
+      let result = poll(&descriptor, 1, Int32(min(milliseconds, 50)))
       if result < 0, errno == EINTR { continue }
-      if result == 0 { continue }
+      if result == 0 {
+        // Retained child-end copies prevent EOF. Observe exit without reaping;
+        // each launch backend still owns collection and the diagnostic status.
+        var state = siginfo_t()
+        let observed = waitid(P_PID, id_t(pid), &state, WEXITED | WNOHANG | WNOWAIT)
+        if observed < 0, errno == EINTR { continue }
+        guard observed == 0,
+          ![CLD_EXITED, CLD_KILLED, CLD_DUMPED].contains(state.si_code)
+        else {
+          throw ExecutionBootstrapHandshakeFailure(
+            "Bootstrap exited before completing the handshake")
+        }
+        continue
+      }
       guard result > 0 else {
         throw ExecutionBootstrapHandshakeFailure("Launch handshake polling failed: \(errno)")
       }
@@ -612,7 +641,7 @@ struct DarwinProcessIdentity: Hashable, Sendable {
     var offset = 0
     let started = ContinuousClock.now
     while offset < bytes.count {
-      try ExecutionBootstrapDeadline.waitForReadable(socket, until: deadline)
+      try ExecutionBootstrapDeadline.waitForReadable(socket, pid: pid, until: deadline)
       let received = bytes.withUnsafeMutableBytes { buffer in
         recv(socket, buffer.baseAddress!.advanced(by: offset), buffer.count - offset, 0)
       }

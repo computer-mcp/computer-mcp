@@ -630,6 +630,14 @@ import Testing
 
   @Test(.timeLimit(.minutes(1)))
   func partialIdentityReadUsesTheOriginalDeadline() throws {
+    let process = Process()
+    process.executableURL = URL(fileURLWithPath: "/bin/sleep")
+    process.arguments = ["30"]
+    try process.run()
+    defer {
+      if process.isRunning { process.terminate() }
+      process.waitUntilExit()
+    }
     var sockets: [Int32] = [-1, -1]
     try #require(socketpair(AF_UNIX, SOCK_STREAM, 0, &sockets) == 0)
     defer { for descriptor in sockets { close(descriptor) } }
@@ -638,7 +646,8 @@ import Testing
     let start = ContinuousClock.now
     do {
       _ = try DarwinProcessIdentity.receive(
-        from: sockets[0], pid: getpid(), deadline: start.advanced(by: .milliseconds(100)))
+        from: sockets[0], pid: process.processIdentifier,
+        deadline: start.advanced(by: .milliseconds(100)))
       Issue.record("A partial identity cannot extend its deadline")
     } catch let error as ExecutionBootstrapHandshakeFailure {
       #expect(error.reason == "Launch handshake deadline exceeded")

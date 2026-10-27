@@ -153,7 +153,7 @@ extension WorktreeRepository {
     }
   }
 
-  private func completeCreation(_ journal: inout WorktreeCreationJournal, lock: RepositoryLock)
+  func completeCreation(_ journal: inout WorktreeCreationJournal, lock: RepositoryLock)
     throws -> CreatedWorktree
   {
     try validateJournal(journal)

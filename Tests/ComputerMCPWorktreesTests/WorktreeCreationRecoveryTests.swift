@@ -5,6 +5,129 @@ import Testing
 @testable import ComputerMCPWorktrees
 
 struct WorktreeCreationRecoveryTests {
+  enum ActivationWindow: CaseIterable, Sendable {
+    case beforeBranchPublication, beforeLedgerCommit, afterLedgerCommit
+    case beforeActivePublication, afterActivePublication
+
+    var ledgerIsActive: Bool {
+      self == .afterLedgerCommit || self == .beforeActivePublication
+        || self == .afterActivePublication
+    }
+  }
+
+  @Test(arguments: ActivationWindow.allCases)
+  func activationWindowsReconcileWithRegisteredRoots(window: ActivationWindow) throws {
+    try fixture { directory in
+      let f = try WorktreeFixture(directory)
+      let storage = f.storage
+      let io = WorktreeJournalIO(
+        beforePublication: {
+          let phase: WorktreeCreationJournal.Phase =
+            window == .beforeBranchPublication ? .branch : .active
+          guard window == .beforeBranchPublication || window == .beforeActivePublication else {
+            return
+          }
+          for name in try FileManager.default.contentsOfDirectory(atPath: storage.journals.path)
+          where name.hasSuffix(".tmp") {
+            let data = try Data(contentsOf: storage.journals.appendingPathComponent(name))
+            if try JSONDecoder().decode(WorktreeCreationJournal.self, from: data).phase == phase {
+              throw WorktreeError.recoveryRequired("Injected journal publication failure.")
+            }
+          }
+        },
+        beforeDirectorySync: {
+          guard window == .afterActivePublication else { return }
+          for name in try FileManager.default.contentsOfDirectory(atPath: storage.journals.path)
+          where name.hasSuffix(".json") {
+            let data = try Data(contentsOf: storage.journals.appendingPathComponent(name))
+            if try JSONDecoder().decode(WorktreeCreationJournal.self, from: data).phase == .active {
+              throw WorktreeError.recoveryRequired("Injected journal directory sync failure.")
+            }
+          }
+        })
+      let store: any DerivedProjectStore =
+        window == .beforeLedgerCommit || window == .afterLedgerCommit
+        ? WorktreeActivationFailure(f.store, afterCommit: window == .afterLedgerCommit) : f.store
+      let service = try WorktreeRepository(
+        source: f.source, store: store, storage: storage, executor: f.executor,
+        registeredProjectRoots: [f.repository], timeoutMilliseconds: 10_000,
+        maxOutputBytes: 1_048_576, lockTimeout: .seconds(1), journalIO: io)
+      #expect(throws: (any Error).self) { try service.create(name: "window") }
+      let record = try #require(f.store.records().first)
+      #expect(record.state == (window.ledgerIsActive ? .active : .creating))
+      let phase = try #require(try service.readJournal(record.projectID)).phase
+      #expect(
+        phase
+          == (window == .beforeBranchPublication
+            ? .checkout : window == .afterActivePublication ? .active : .branch))
+      let roots =
+        [f.repository] + (window.ledgerIsActive ? [URL(fileURLWithPath: record.root)] : [])
+      let reopened = SQLiteDerivedProjectStore(
+        connection: try GatewayDatabaseConnection(path: f.database.path))
+      let restarted = try f.service(store: reopened, roots: roots)
+      if window.ledgerIsActive {
+        #expect(try restarted.readJournal(record.projectID)?.phase == .active)
+        _ = try restarted.topology(projectID: record.projectID)
+      }
+      try restarted.recover()
+      try restarted.recover()
+      let active = try #require(reopened.records().first)
+      #expect(active.state == .active && active.revision == 2)
+      #expect(try restarted.readJournal(active.projectID)?.phase == .active)
+      _ = try restarted.topology(projectID: active.projectID)
+      #expect(try f.raw(["rev-parse", "worktree/window"]) == f.raw(["rev-parse", "main"]))
+      #expect(try String(contentsOfFile: active.root + "/file.txt", encoding: .utf8) == "initial\n")
+    }
+  }
+
+  @Test(arguments: [false, true])
+  func activeLedgerRecoveryRetainsUnverifiedStorage(changedBranch: Bool) throws {
+    try fixture { directory in
+      let f = try WorktreeFixture(directory)
+      #expect(throws: DerivedProjectStoreError.self) {
+        try f.service(store: WorktreeActivationFailure(f.store, afterCommit: true))
+          .create(name: "retain-active")
+      }
+      let record = try #require(f.store.records().first)
+      let journalURL = f.storage.journals.appendingPathComponent(record.projectID + ".json")
+      let before = try Data(contentsOf: journalURL)
+      var roots = [f.repository, URL(fileURLWithPath: record.root)]
+      if changedBranch {
+        try f.raw(["branch", "--delete", "worktree/retain-active"])
+      } else {
+        roots.append(f.storage.content)
+      }
+      #expect(throws: WorktreeError.self) { try f.service(roots: roots) }
+      #expect(try Data(contentsOf: journalURL) == before)
+      #expect(try f.store.records().first == record)
+      #expect(FileManager.default.fileExists(atPath: record.root + "/file.txt"))
+    }
+  }
+
+  @Test func activeLedgerReconciliationRequiresRepositoryLock() throws {
+    try fixture { directory in
+      let f = try WorktreeFixture(directory)
+      #expect(throws: DerivedProjectStoreError.self) {
+        try f.service(store: WorktreeActivationFailure(f.store, afterCommit: true))
+          .create(name: "locked-activation")
+      }
+      let record = try #require(f.store.records().first)
+      let journalURL = f.storage.journals.appendingPathComponent(record.projectID + ".json")
+      let before = try Data(contentsOf: journalURL)
+      let roots = [f.repository, URL(fileURLWithPath: record.root)]
+      let lock = try RepositoryLock(
+        commonDirectory: f.repository.appendingPathComponent(".git"),
+        owner: .init(), timeout: .seconds(1))
+      defer { lock.release() }
+      #expect(throws: WorktreeError.self) { try f.service(roots: roots) }
+      #expect(try Data(contentsOf: journalURL) == before)
+      lock.release()
+      let restarted = try f.service(roots: roots)
+      #expect(try restarted.readJournal(record.projectID)?.phase == .active)
+      #expect(try f.store.records().first == record)
+    }
+  }
+
   @Test func collidingDirectoryIsNeverAdoptedOrRemoved() throws {
     try fixture { directory in
       let f = try WorktreeFixture(directory)

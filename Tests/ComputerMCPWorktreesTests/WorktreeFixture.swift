@@ -130,13 +130,18 @@ struct WorktreeFixture {
 
 final class WorktreeActivationFailure: DerivedProjectStore, @unchecked Sendable {
   let store: SQLiteDerivedProjectStore
-  init(_ store: SQLiteDerivedProjectStore) { self.store = store }
+  let afterCommit: Bool
+  init(_ store: SQLiteDerivedProjectStore, afterCommit: Bool = false) {
+    self.store = store
+    self.afterCommit = afterCommit
+  }
   func records() throws -> [DerivedProjectRecord] { try store.records() }
   func commit(
     _ record: DerivedProjectRecord, expecting revision: Int64?,
     protecting branch: ProtectedWorktreeBranch?
   ) throws {
-    if record.state == .active { throw DerivedProjectStoreError.revisionConflict }
+    if record.state == .active, !afterCommit { throw DerivedProjectStoreError.revisionConflict }
     try store.commit(record, expecting: revision, protecting: branch)
+    if record.state == .active { throw DerivedProjectStoreError.revisionConflict }
   }
 }

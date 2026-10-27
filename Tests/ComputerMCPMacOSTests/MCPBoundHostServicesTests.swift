@@ -23,6 +23,24 @@ import Testing
 
 @Suite(.nativeIntegration, .serialized)
 struct MCPBoundHostServicesTests {
+  @Test(.timeLimit(.minutes(1)))
+  func consumerStartupBudgetPreservesLiveInvocation() async throws {
+    let fixture = try HostAuthorityFixture(callbackTimeout: PluginConsumerTiming.invocationSeconds)
+    defer { fixture.remove() }
+    _ = try await fixture.during("fixture.audit", ["limit": .integer(1)]) { service, invocation in
+      // Package startup can outlast the ordinary in-process fixture's budget.
+      try await Task.sleep(for: .seconds(11))
+      let id = try #require(invocation.admission?.hostInvocationID)
+      let call = try #require(try fixture.database.hostCallRecordStore().record(id: id))
+      #expect(call.lifecycle == .running)
+      let response = try await service.call(
+        name: "host.diagnostics.snapshot", arguments: ["limit": .integer(1)])
+      #expect(response.isError != true)
+      return try .encoded(response)
+    }
+    await fixture.close()
+  }
+
   @Test(.timeLimit(.minutes(1))) func hostMutationCommitRejectsRevokedPersistentClientTrust()
     async throws
   {
@@ -1248,9 +1266,9 @@ private final class HostAuthorityFixture: @unchecked Sendable {
     worktrees: Bool = false, additionalProject: Bool = false,
     requiresControlSession: Bool = false, multiplexed: Bool = false,
     verificationBarrier: HostVerificationBarrier? = nil,
-    worktreeStorage: WorktreeStorage = .project
+    worktreeStorage: WorktreeStorage = .project, callbackTimeout: TimeInterval = 10
   ) throws {
-    peer = HostServiceProbe(multiplexed: multiplexed)
+    peer = HostServiceProbe(multiplexed: multiplexed, callbackTimeout: callbackTimeout)
     storageRoot = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
     root = storageRoot.appendingPathComponent("scope")
     managedProjectRoot =
@@ -1445,13 +1463,17 @@ private final class HostServiceProbe: DownstreamMCPClient, @unchecked Sendable {
     var handler: (@Sendable (InvocationContext) async throws -> JSONValue)?
     var activeCalls = 0
     let multiplexed: Bool
-    init(multiplexed: Bool) { self.multiplexed = multiplexed }
+    let callbackTimeout: TimeInterval
+    init(multiplexed: Bool, callbackTimeout: TimeInterval) {
+      self.multiplexed = multiplexed
+      self.callbackTimeout = callbackTimeout
+    }
   }
   private let state: State
   private let hostContext: MCPHostContext?
 
-  init(multiplexed: Bool = false) {
-    state = State(multiplexed: multiplexed)
+  init(multiplexed: Bool = false, callbackTimeout: TimeInterval = 10) {
+    state = State(multiplexed: multiplexed, callbackTimeout: callbackTimeout)
     hostContext = nil
   }
   private init(state: State, hostContext: MCPHostContext?) {
@@ -1502,7 +1524,7 @@ private final class HostServiceProbe: DownstreamMCPClient, @unchecked Sendable {
       do { box.set(.success(try await handler(context))) } catch { box.set(.failure(error)) }
       ready.signal()
     }
-    guard ready.wait(timeout: .now() + 10) == .success else {
+    guard ready.wait(timeout: .now() + state.callbackTimeout) == .success else {
       task.cancel()
       throw MCPHostServiceError.denied("Fixture callback timed out.")
     }
@@ -1602,14 +1624,14 @@ private final class HostVerificationBarrier: @unchecked Sendable {
 }
 
 @Suite(
-  .nativeIntegration, .serialized, .timeLimit(.minutes(2)),
+  .nativeIntegration, .serialized, .timeLimit(.minutes(5)),
   .enabled(
     if: ProcessInfo.processInfo.environment["COMPUTER_MCP_TEST_PLUGIN_CONSUMER_WORKTREE"] != nil,
     "Build the companion fixture in an isolated plugin checkout to run consumer acceptance."))
 struct PluginWorktreeConsumerTests {
   @Test(arguments: [false, true])
   func unchangedConsumerRemovesRealWorktreeThroughLiveHost(generic: Bool) async throws {
-    let fixture = try HostAuthorityFixture()
+    let fixture = try HostAuthorityFixture(callbackTimeout: PluginConsumerTiming.invocationSeconds)
     defer { fixture.remove() }
     let source = fixture.root.resolvingSymlinksInPath()
     let managed = source.deletingLastPathComponent().appendingPathComponent("managed")
@@ -1726,26 +1748,11 @@ private struct PluginWorktreeConsumerHostBridge: Sendable {
     let consumer = try #require(
       ProcessInfo.processInfo.environment["COMPUTER_MCP_TEST_PLUGIN_CONSUMER_WORKTREE"])
     let socketPath = root.deletingLastPathComponent().appendingPathComponent("c.sock").path
-    let listener = socket(AF_UNIX, SOCK_STREAM, 0)
-    try #require(listener >= 0)
+    let listener = try pluginConsumerListener(at: socketPath)
     defer {
       Darwin.close(listener)
       unlink(socketPath)
     }
-    var address = sockaddr_un()
-    address.sun_family = sa_family_t(AF_UNIX)
-    let path = Array(socketPath.utf8)
-    try #require(path.count < MemoryLayout.size(ofValue: address.sun_path))
-    withUnsafeMutableBytes(of: &address.sun_path) {
-      $0.initializeMemory(as: UInt8.self, repeating: 0)
-      $0.copyBytes(from: path)
-    }
-    let bound = withUnsafePointer(to: &address) {
-      $0.withMemoryRebound(to: sockaddr.self, capacity: 1) {
-        Darwin.bind(listener, $0, socklen_t(MemoryLayout<sockaddr_un>.size))
-      }
-    }
-    try #require(bound == 0 && listen(listener, 1) == 0)
     let input = root.appendingPathComponent("consumer-" + mode + ".json")
     try JSONEncoder().encode(
       JSONValue.object([
@@ -1758,9 +1765,9 @@ private struct PluginWorktreeConsumerHostBridge: Sendable {
     let output = try FileHandle(forWritingTo: log)
     defer { try? output.close() }
     let process = Process()
-    process.executableURL = URL(fileURLWithPath: "/usr/bin/nice")
+    process.executableURL = URL(fileURLWithPath: "/usr/bin/swift")
     process.arguments = [
-      "-n", "10", "/usr/bin/swift", "test", "--build-system", "native", "--skip-build",
+      "test", "--build-system", "native", "--skip-build",
       "--disable-automatic-resolution", "--no-parallel", "--filter",
       "HostWorktreeConsumerBridgeTests/existingTypedClientUsesCurrentHost",
     ]
@@ -1778,14 +1785,7 @@ private struct PluginWorktreeConsumerHostBridge: Sendable {
       }
     }
     let descriptor = try await BlockingOperationExecutor(label: "consumer-host-accept").perform {
-      var item = pollfd(fd: listener, events: Int16(POLLIN), revents: 0)
-      guard poll(&item, 1, 8_000) > 0 else {
-        throw CocoaError(
-          .fileReadUnknown, userInfo: [NSLocalizedDescriptionKey: "Consumer socket timeout"])
-      }
-      let accepted = accept(listener, nil, nil)
-      guard accepted >= 0 else { throw CocoaError(.fileReadUnknown) }
-      return accepted
+      try acceptPluginConsumer(listener: listener, process: process, log: log)
     }
     let transport = try MCPInheritedSocketTransport(
       takingOwnershipOf: FileHandle(fileDescriptor: descriptor, closeOnDealloc: true))
@@ -1806,11 +1806,13 @@ private struct PluginWorktreeConsumerHostBridge: Sendable {
     }
     do {
       try await server.start(transport: transport)
-      let deadline = ContinuousClock.now + .seconds(45)
+      let deadline = ContinuousClock.now + .seconds(PluginConsumerTiming.protocolSeconds)
       while process.isRunning && ContinuousClock.now < deadline {
         try await Task.sleep(for: .milliseconds(20))
       }
-      try #require(!process.isRunning, "Consumer process did not exit within 45 seconds")
+      try #require(
+        !process.isRunning,
+        "Consumer process did not exit within \(PluginConsumerTiming.protocolSeconds) seconds")
       let text = try String(contentsOf: log, encoding: .utf8)
       print("Existing consumer \(mode):\n\(text)")
       try #require(process.terminationStatus == 0, "\(mode): \(text)")

@@ -94,24 +94,25 @@ package final class WorktreeRepository {
     guard timeoutMilliseconds > 0, maxOutputBytes > 0 else {
       throw WorktreeError.unsafeConfiguration("Git command bounds must be positive.")
     }
-    // Inspection does not write storage; Git uses the denied global configuration
-    // and never executes programs, even before a private home can be created.
+    // Git uses the denied global configuration and never executes programs,
+    // even before a private home can be created.
     git = WorktreeGit(
       executor: executor, home: storage.journals,
       timeoutMilliseconds: timeoutMilliseconds, maxOutputBytes: maxOutputBytes)
     identity = try WorktreeRepositoryIdentity(source: source, git: git)
     try requireSupportedLayout(identity)
-    try validateStorage()
+    try withLock { _ in }
   }
 
-  func validateStorage() throws {
+  func validateStorage() throws -> [WorktreeCreationJournal] {
     // Storage is shared across repositories; only each record's live, verified
     // topology can establish an exception for its exact content root.
     var owned: Set<String> = []
+    var activated: [WorktreeCreationJournal] = []
     for record in try store.records() {
       guard case .host = record.provenance,
         record.state == .active, let journal = try readJournal(record.projectID),
-        journal.phase == .active, try activeRecord(journal) == record
+        [.branch, .active].contains(journal.phase), try activeRecord(journal) == record
       else { continue }
       do {
         let repository =
@@ -122,6 +123,7 @@ package final class WorktreeRepository {
         try requireSupportedLayout(repository)
         _ = try verifyTopology(journal, repository: repository, source: record.source)
         owned.insert(record.root)
+        if record.source == source, journal.phase == .branch { activated.append(journal) }
       } catch {
         // Unverified content remains subject to the ordinary overlap denial.
         continue
@@ -129,6 +131,7 @@ package final class WorktreeRepository {
     }
     try storage.validate(
       projectRoots: projectRoots + [URL(fileURLWithPath: source.root)], ownedRoots: owned)
+    return activated
   }
 
   func withLock<T>(_ action: (RepositoryLock) throws -> T) throws -> T {
@@ -139,7 +142,12 @@ package final class WorktreeRepository {
     try identity.verify()
     try lock.verify()
     try requireSupportedLayout(identity)
-    try validateStorage()
+    // Ledger activation and journal publication are separate durable writes.
+    // Verify all storage ownership before reconciling this repository's receipt;
+    // an active ledger row alone must never authorize writes into overlapping roots.
+    for var journal in try validateStorage() {
+      _ = try completeCreation(&journal, lock: lock)
+    }
     return try action(lock)
   }
 

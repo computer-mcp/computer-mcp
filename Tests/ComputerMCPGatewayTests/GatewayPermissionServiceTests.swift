@@ -10,6 +10,59 @@ import Testing
 @testable import ComputerMCPGateway
 
 @Suite struct GatewayPermissionServiceTests {
+  @Test func downloadInitialAndRedirectHostAnswersPersistOnlyThoseCustomHosts() throws {
+    let f = try PermissionServiceFixture()
+    var profile = try #require(f.view().profiles.first)
+    try profile.permissions.set(.granted(.write), for: .project("project"))
+    try f.update(profile)
+    let original = try InvocationRequirements(
+      actions: [.init(requirement: .init(.project("project"), .write))],
+      sandboxProjectID: "project")
+    func admit(_ ids: Set<UUID> = []) throws -> InvocationAuthorization {
+      guard
+        case .allowed(let proof) = try f.service.admit(
+          subject: f.client, tool: "file.download", projectID: "project",
+          argumentsDigest: "download",
+          requirements: original, retryIDs: ids, now: f.now)
+      else { throw PermissionServiceTestError.unexpected }
+      return proof
+    }
+    let proof = try admit()
+    #expect(try f.view().requests.isEmpty)
+    let execution = try f.store.transactionWithDatabase { _, ledger in
+      try ledger.startExecution(owner: f.client.principal, authorizationIDs: [proof.id], now: f.now)
+    }
+    var requests: [PermissionRequest] = []
+    for host in ["download.example.com", "redirect.example.com"] {
+      let decision = try f.store.transactionWithDatabase { _, ledger in
+        try ledger.recordDiscoveredNeeds(
+          executionID: execution.id, principal: f.client.principal,
+          needs: [.network(.init(host: host, projectID: "project", isLocalNetwork: false))],
+          now: f.now)
+      }
+      guard case .requests(let pending) = decision else {
+        throw PermissionServiceTestError.unexpected
+      }
+      requests = pending
+    }
+    #expect(requests.count == 2)
+    #expect(requests.allSatisfy { $0.invocation.tool == "file.download" })
+    for request in requests { try f.answer(request.id, .always) }
+    let retried = try admit(Set(requests.map(\.id)))
+    let saved = try #require(f.view().profiles.first)
+    #expect(
+      saved.projectNetworks["project"]?.configuration
+        == .custom(
+          hosts: ["download.example.com", "redirect.example.com"], includesTrusted: false))
+    #expect(
+      saved.projectNetworks["project"]?.allows("other.example.com", trustedHosts: []) == false)
+    try f.store.readWithDatabase { _, ledger in
+      #expect(ledger.authorizations[proof.id]?.requirements.networks.isEmpty == true)
+      #expect(ledger.executions.count == 1)
+      #expect(ledger.authorizations[retried.id]?.executionID == nil)
+    }
+  }
+
   @Test func ownerAskEntriesPersistAndOverrideFallbackAuthority() throws {
     let f = try PermissionServiceFixture()
     var profile = try #require(f.view().profiles.first)

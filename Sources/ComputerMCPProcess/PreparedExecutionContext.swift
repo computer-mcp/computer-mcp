@@ -15,9 +15,11 @@ package protocol ExecutionAuthorizing: Sendable {
   func finishAdmission() throws
   func retainWork(cancellation: @escaping @Sendable () async -> Void) throws -> ExecutionWorkLease
   func access(_ executionID: UUID, operation: ExecutionOperation) throws -> EffectiveExecutionLimits
+  func permissionRequests(_ executionID: UUID) throws -> [PermissionRequest]
 }
 
 extension ExecutionAuthorizing {
+  package func permissionRequests(_ executionID: UUID) throws -> [PermissionRequest] { [] }
   package func retainWork(cancellation: @escaping @Sendable () async -> Void) throws
     -> ExecutionWorkLease
   {
@@ -41,8 +43,25 @@ package final class ExecutionWorkLease: Sendable {
   }
 }
 
+package struct ExecutionPermissionRequestGroup: Sendable {
+  package let executionID: UUID
+  package let requests: [PermissionRequest]
+
+  package init(executionID: UUID, requests: [PermissionRequest]) {
+    self.executionID = executionID
+    self.requests = requests
+  }
+}
+
 package protocol ExecutionAccessChecking: InvocationExecutionAuthority {
   func accessExecution(_ id: UUID, operation: ExecutionOperation) throws -> EffectiveExecutionLimits
+  func permissionRequests(_ id: UUID) throws -> [PermissionRequest]
+  func currentPermissionRequestGroups() throws -> [ExecutionPermissionRequestGroup]
+}
+
+extension ExecutionAccessChecking {
+  package func permissionRequests(_ id: UUID) throws -> [PermissionRequest] { [] }
+  package func currentPermissionRequestGroups() throws -> [ExecutionPermissionRequestGroup] { [] }
 }
 
 package protocol ExecutionRecoveryAuthorizing: Sendable {
@@ -114,6 +133,15 @@ package final class PreparedExecutionContext: ExecutionAccessChecking, Sendable 
   }
 
   package func finishAdmission() throws { try authority.finishAdmission() }
+
+  package func permissionRequests(_ id: UUID) throws -> [PermissionRequest] {
+    try authority.permissionRequests(id)
+  }
+
+  package func currentPermissionRequestGroups() throws -> [ExecutionPermissionRequestGroup] {
+    let requests = try permissionRequests(executionID)
+    return requests.isEmpty ? [] : [.init(executionID: executionID, requests: requests)]
+  }
 
   package func retainWork(cancellation: @escaping @Sendable () async -> Void) throws
     -> ExecutionWorkLease

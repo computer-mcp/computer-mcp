@@ -180,6 +180,7 @@ package enum ExecutionEndReason: String, Codable, Sendable {
 
 package struct ShellSessionSnapshot: Codable, Equatable, Sendable {
   package var executionID: UUID?
+  package var permissionRequestIDs: [UUID]?
   package var permissionLimits: EffectiveExecutionLimits?
   package var permissionLimitEndReason: ExecutionLimitEndReason?
   package var members: [ExecutionMember] = []
@@ -202,6 +203,7 @@ package struct ShellSessionSnapshot: Codable, Equatable, Sendable {
 
   private enum CodingKeys: String, CodingKey {
     case executionID = "execution_id"
+    case permissionRequestIDs = "permission_request_ids"
     case permissionLimits = "permission_limits"
     case permissionLimitEndReason = "permission_limit_end_reason"
     case limits
@@ -1429,11 +1431,20 @@ private final class ShellSession: @unchecked Sendable {
   ) throws -> ShellSessionSnapshot {
     for _ in 0..<8 {
       try checkAccess(.readResult)
-      let value = snapshot(
+      var value = snapshot(
         stdoutCursor: stdoutCursor, stderrCursor: stderrCursor, maxReadBytes: maxReadBytes,
         encoding: encoding)
       try checkAccess(.readResult)
-      if condition.withLock({ value.permissionLimits == permissionLimits }) { return value }
+      if condition.withLock({ value.permissionLimits == permissionLimits }) {
+        if let executionID,
+          let authority = InvocationExecution.current as? any ExecutionAccessChecking
+        {
+          let requests = (try? authority.permissionRequests(executionID)) ?? []
+          value.permissionRequestIDs = requests.isEmpty ? nil : requests.map(\.id)
+        }
+        try checkAccess(.readResult)
+        if condition.withLock({ value.permissionLimits == permissionLimits }) { return value }
+      }
     }
     throw PermissionModelError.invalidAuthorization
   }

@@ -475,8 +475,7 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
           invocationContext: invocationContext)
       }
     } catch {
-      let result = Self.attachExecutionMetadata(
-        to: Self.errorEnvelope(error), context: bound, capabilityID: name)
+      let result = Self.executionErrorEnvelope(error, context: bound, capabilityID: name)
       if !dispatched {
         try? recordAudit(
           context: bound, capabilityID: name, decision: Self.auditDecision(for: error),
@@ -1243,9 +1242,7 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
   ) -> JSONValue {
     let context =
       context ?? contextForMCP(arguments: arguments, invocationContext: invocationContext)
-    let result = Self.attachExecutionMetadata(
-      to: Self.errorEnvelope(error), context: context, capabilityID: name
-    )
+    let result = Self.executionErrorEnvelope(error, context: context, capabilityID: name)
     if recordFailure {
       try? recordAudit(
         context: context, capabilityID: name, decision: Self.auditDecision(for: error),
@@ -1313,6 +1310,8 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
     var authorization: InvocationAuthorization?
     var auditEvidence: GatewayPermissionAuditEvidence?
     var prepared: PreparedExecutionContext?
+    var executionAccess: (any ExecutionAccessChecking)?
+    var runtimeRequestGroups: [ExecutionPermissionRequestGroup] = []
     var dispatched = false
     do {
       try await permissionRuntime.ready()
@@ -1339,6 +1338,7 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
         hostManagement: remoteManagement?.containsTool(named: name) == true,
         auditContext: auditContext)
       prepared = execution as? PreparedExecutionContext
+      executionAccess = execution as? any ExecutionAccessChecking
       if let prepared, !lifetime.registerExecution(prepared.executionID) {
         try await permissionRuntime.coordinator.stopExecutions([prepared.executionID])
         throw CancellationError()
@@ -1358,44 +1358,68 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
         }
       }
       do {
+        runtimeRequestGroups = try executionAccess?.currentPermissionRequestGroups() ?? []
+      } catch let error as PermissionModelError {
+        throw error
+      } catch let error as GatewayPermissionError {
+        throw error
+      } catch {
+        // The operation's result remains usable if optional request metadata
+        // cannot be read. Its normal authority and final audit checks still apply.
+      }
+      do {
         if let prepared {
           try prepared.finishAdmission()
         } else {
           try permissionRuntime.service.finishInvocation(admitted.authorization.id)
         }
       } catch { throw GatewayAuditCompletionError() }
-      let envelope = Self.attachExecutionMetadata(
-        to: result, context: auditContext, capabilityID: name)
+      let envelope = GatewayExecutionPermissionMetadata.attach(
+        to: Self.attachExecutionMetadata(to: result, context: auditContext, capabilityID: name),
+        groups: runtimeRequestGroups)
       do {
         try recordAudit(
           context: auditContext, capabilityID: name, decision: .allowed, errorCode: nil,
           duration: start.duration(to: .now), inputDigest: digest, output: envelope,
-          authorization: authorization, evidence: auditEvidence, executionID: prepared?.executionID)
+          authorization: authorization, evidence: auditEvidence, executionID: prepared?.executionID,
+          permissionFailure: runtimeRequestGroups.isEmpty
+            ? nil : .required(runtimeRequestGroups.flatMap(\.requests), afterDispatch: true))
       } catch { throw GatewayAuditCompletionError() }
       return envelope
     } catch {
-      if let permission = error as? GatewayPermissionCallError {
-        auditEvidence = permission.evidence
+      if runtimeRequestGroups.isEmpty {
+        runtimeRequestGroups = (try? executionAccess?.currentPermissionRequestGroups()) ?? []
+      }
+      let reportedError: any Error =
+        !runtimeRequestGroups.isEmpty && !(error is GatewayPermissionCallError)
+          && !(error is GatewayAuditCompletionError) && !(error is CancellationError)
+        ? GatewayExecutionPermissionFailure(underlying: error, groups: runtimeRequestGroups) : error
+      if let permission = reportedError as? GatewayPermissionCallError {
+        auditEvidence = permission.evidence ?? auditEvidence
       }
       if let prepared {
         try? prepared.finishAdmission()
       } else if let authorization {
         try? permissionRuntime.service.finishInvocation(authorization.id)
       }
-      let result = Self.attachExecutionMetadata(
-        to: Self.errorEnvelope(error), context: auditContext, capabilityID: name)
+      let result = Self.executionErrorEnvelope(
+        reportedError, context: auditContext, capabilityID: name)
       do {
         try recordAudit(
-          context: auditContext, capabilityID: name, decision: Self.auditDecision(for: error),
-          errorCode: Self.auditErrorCode(for: error), refusal: error as? PluginCompatibilityRefusal,
+          context: auditContext, capabilityID: name,
+          decision: Self.auditDecision(for: reportedError),
+          errorCode: Self.auditErrorCode(for: reportedError),
+          refusal: error as? PluginCompatibilityRefusal,
           duration: start.duration(to: .now), inputDigest: digest, output: result,
           authorization: authorization, evidence: auditEvidence, executionID: prepared?.executionID,
-          permissionFailure: error as? GatewayPermissionCallError)
+          permissionFailure: (reportedError as? GatewayPermissionCallError)
+            ?? (runtimeRequestGroups.isEmpty
+              ? nil : .required(runtimeRequestGroups.flatMap(\.requests), afterDispatch: true)))
       } catch {
         if dispatched { throw GatewayAuditCompletionError() }
         throw error
       }
-      throw error
+      throw reportedError
     }
   }
 
@@ -2062,6 +2086,15 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
     ])
   }
 
+  static func executionErrorEnvelope(
+    _ error: any Error, context: ExecutionContext, capabilityID: String
+  ) -> JSONValue {
+    let failure = error as? GatewayExecutionPermissionFailure
+    let result = attachExecutionMetadata(
+      to: errorEnvelope(failure?.underlying ?? error), context: context, capabilityID: capabilityID)
+    return GatewayExecutionPermissionMetadata.attach(to: result, groups: failure?.groups ?? [])
+  }
+
   private static func errorEnvelope(_ error: Error) -> JSONValue {
     let code = auditErrorCode(for: error) ?? "gateway.execution_failed"
     let message =
@@ -2355,6 +2388,9 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
   }
 
   static func auditDecision(for error: Error) -> AuditDecision {
+    if let failure = error as? GatewayExecutionPermissionFailure {
+      return auditDecision(for: failure.underlying)
+    }
     if case .escapesProject = error as? ProjectPathResolutionError { return .denied }
     if error is GatewayPermissionError || error is PermissionModelError { return .denied }
     if let classification = (error as? any AuditErrorClassifying)?.auditClassification {
@@ -2374,6 +2410,9 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
   }
 
   static func auditErrorCode(for error: Error) -> String? {
+    if let failure = error as? GatewayExecutionPermissionFailure {
+      return auditErrorCode(for: failure.underlying)
+    }
     if case .escapesProject = error as? ProjectPathResolutionError {
       return "permission.invalid_path"
     }

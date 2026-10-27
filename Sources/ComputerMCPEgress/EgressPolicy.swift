@@ -101,13 +101,7 @@ package struct EgressPolicy: Sendable {
       ? bytes
       : (bytes.prefix(12) == [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 255, 255]
         ? Array(bytes.suffix(4)) : nil)
-    if let v4 {
-      if v4[0] == 127 { return .failure(.loopback) }
-      if v4 == [0, 0, 0, 0] || v4 == [255, 255, 255, 255] { return .failure(.invalidDestination) }
-    } else {
-      if bytes == Array(repeating: 0, count: 15) + [1] { return .failure(.loopback) }
-      if bytes.allSatisfy({ $0 == 0 }) { return .failure(.invalidDestination) }
-    }
+    if let reason = Self.fixedRejection(host: ip) { return .failure(reason) }
     let route: EgressRoute
     do {
       route = try routing.route(to: v4.map { $0.map(String.init).joined(separator: ".") } ?? ip)
@@ -126,6 +120,25 @@ package struct EgressPolicy: Sendable {
     let permitted = localNetwork || host.map { localNetworkHosts.contains($0) } == true
     return !permitted && (route.isDirect || linkLocal || multicast)
       ? .failure(.localNetworkRequired) : .success(route)
+  }
+
+  /// Canonical fixed destinations are recognizable without granting a DNS lookup.
+  package static func fixedRejection(host: String) -> EgressDenial.Reason? {
+    if host == "localhost" || host.hasSuffix(".localhost") { return .loopback }
+    guard let bytes = addressBytes(host) else { return nil }
+    let v4 =
+      bytes.count == 4
+      ? bytes
+      : (bytes.prefix(12) == [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 255, 255]
+        ? Array(bytes.suffix(4)) : nil)
+    if let v4 {
+      if v4[0] == 127 { return .loopback }
+      if v4 == [0, 0, 0, 0] || v4 == [255, 255, 255, 255] { return .invalidDestination }
+    } else {
+      if bytes == Array(repeating: 0, count: 15) + [1] { return .loopback }
+      if bytes.allSatisfy({ $0 == 0 }) { return .invalidDestination }
+    }
+    return nil
   }
 
   package static func normalizeHost(_ raw: String) throws -> String {

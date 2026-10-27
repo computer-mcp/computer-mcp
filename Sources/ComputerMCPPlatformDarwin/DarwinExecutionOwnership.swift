@@ -15,6 +15,7 @@ final class DarwinExecutionOwnership: ExecutionOwnership, @unchecked Sendable {
   private var marker: ExecutionSandboxMarker?
   private let bestEffort: Bool
   private var launchHandlers: [@Sendable (ExecutionMember) throws -> Void] = []
+  private var sandboxViolations: DarwinSandboxViolationObserver?
   private var root: DarwinProcessIdentity?
   private var state = DarwinExecutionScan()
   private var cancellationStarted: ContinuousClock.Instant?
@@ -90,6 +91,18 @@ final class DarwinExecutionOwnership: ExecutionOwnership, @unchecked Sendable {
     lock.withLock { launchHandlers.append(handler) }
   }
 
+  func onSandboxViolation(_ handler: @escaping @Sendable (ExecutionSandboxViolation) -> Void) {
+    guard let marker = lock.withLock({ completion == nil ? self.marker : nil }) else { return }
+    let observer = DarwinSandboxViolationObserver(marker: marker, handler: handler)
+    lock.withLock { sandboxViolations = observer }
+  }
+
+  var observesSandboxViolations: Bool { lock.withLock { sandboxViolations != nil } }
+
+  func observeRootForViolations() {
+    lock.withLock { sandboxViolations }?.observeRoot()
+  }
+
   /// Capture ownership even if the bootstrap never sends a handshake. No process group
   /// is trusted until the real bootstrap has established and reported its isolated session.
   func spawned(_ pid: pid_t) throws {
@@ -127,6 +140,7 @@ final class DarwinExecutionOwnership: ExecutionOwnership, @unchecked Sendable {
       launchHandlers.removeAll()
       return handlers
     }
+    lock.withLock { sandboxViolations }?.admitRoot(identity)
     for handler in handlers { try handler(identity.member) }
   }
 
@@ -386,6 +400,7 @@ final class DarwinExecutionOwnership: ExecutionOwnership, @unchecked Sendable {
 
   private func finish(_ result: Result<ExecutionExit, Error>) {
     guard pendingRevocations == 0 else { return }
+    sandboxViolations?.finish()
     marker = nil
     completion = result
     cancellationHandlers.removeAll()

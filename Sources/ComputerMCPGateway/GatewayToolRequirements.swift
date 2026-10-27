@@ -53,7 +53,6 @@ struct GatewayToolRequirementResolver {
       ?? URL(fileURLWithPath: "/", isDirectory: true)
     var actions = declaration.permissions.map { PermissionAction(requirement: $0) }
     var requirements: [PathRequirement] = []
-    var networks: [NetworkRequirement] = []
     var plugins: Set<PluginIdentity> = []
     var skillLibraries: [GatewaySkillLibraryRequirement] = []
     let access: PermissionValue?
@@ -197,18 +196,14 @@ struct GatewayToolRequirementResolver {
       let value = try selected(selector, in: .object(arguments)).first
     {
       guard let text = value.stringValue, let url = URL(string: text), let host = url.host,
-        ["http", "https"].contains(url.scheme?.lowercased() ?? ""), let sourceID
+        ["http", "https"].contains(url.scheme?.lowercased() ?? ""), sourceID != nil
       else {
         throw GatewayToolError.invalidArguments(
           "[permission.invalid_network] A project and an HTTP(S) URL are required.")
       }
-      let normalized = try NetworkHost.normalize(host)
-      let local =
-        normalized == "localhost" || normalized.hasSuffix(".local")
-        || normalized.hasPrefix("127.") || normalized == "::1" || normalized.hasPrefix("169.254.")
-        || normalized.hasPrefix("10.") || normalized.hasPrefix("192.168.")
-      networks.append(
-        NetworkRequirement(host: normalized, projectID: sourceID, isLocalNetwork: local))
+      _ = try NetworkHost.normalize(host)
+      // The proxy admits each host before DNS, including redirects, then checks
+      // resolved addresses and routes. URL syntax alone cannot classify routes.
     }
     let selectedMode: ExecutionMode =
       declaration.requiresFullAccess && mode == .sandbox ? .fullAccess(.notGranted) : mode
@@ -218,7 +213,7 @@ struct GatewayToolRequirementResolver {
       timeMilliseconds: arguments["timeout_ms"]?.int64Value)
     return (
       InvocationRequirements(
-        actions: actions, paths: requirements, networks: networks,
+        actions: actions, paths: requirements,
         mode: selectedMode, sandboxProjectID: sourceID, execution: execution), plugins,
       skillLibraries
     )

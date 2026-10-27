@@ -87,12 +87,14 @@ struct GatewayExecutionAuditIdentity: Codable, Sendable {
 
   func record(
     _ action: String, executionID: UUID, database: Database,
-    decision: AuditDecision = .allowed, childID: UUID? = nil
+    decision: AuditDecision = .allowed, childID: UUID? = nil,
+    permissionRequestIDs: Set<UUID> = [], requestEvidence: GatewayPermissionAuditEvidence? = nil
   ) throws {
-    var details = evidence.fields
+    var details = (requestEvidence ?? evidence).fields
     details["authorization_id"] = .string(authorizationID.uuidString)
     details["permission_request_ids"] = .array(
-      requestIDs.map { .string($0.uuidString) }.sorted { $0.stringValue! < $1.stringValue! })
+      requestIDs.union(permissionRequestIDs).map { .string($0.uuidString) }
+        .sorted { $0.stringValue! < $1.stringValue! })
     details["execution_id"] = .string(executionID.uuidString)
     if let childID { details["child_id"] = .string(childID.uuidString) }
     try AuditEventRecord(

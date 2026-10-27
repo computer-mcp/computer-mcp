@@ -33,6 +33,37 @@ Directory inventories omit inaccessible children without requesting access to th
 A `permission.denied` response does not state whether the call had already started;
 review the operation's result and effects before retrying.
 
+Programs can discover missing hosts through the execution's egress proxy and
+missing readable folders through trusted system sandbox reports. The denied
+operation still fails. Folder reports are best effort: missing reports or reports
+whose process lifetime cannot be attributed produce no request. Explicit denies,
+managed exclusions and fixed sandbox boundaries, including host data, produce none.
+The root process is recorded before release. A descendant becomes attributable
+only after the host verifies its membership; its first report can be lost, as can
+reports from short-lived descendants or while the system log reader is starting.
+Reports arriving after a synchronous result are not added to that already returned
+result. A retained execution's later result read can expose them.
+
+Known loopback destinations are refused without a request. An ungranted hostname
+produces its host request before DNS resolution. Once granted, its resolved
+addresses must still pass the fixed address and route boundaries; a hostname
+answer cannot open loopback or override those boundaries.
+If an admitted destination needs Local network, it can produce another request
+and require a further explicit retry carrying the earlier answer.
+
+Execution results retain their handles, output, exit status and provider errors.
+When requests are available, `_meta.computer_mcp.permission_requests` and
+`structuredContent.gateway_execution.permission_requests` contain groups with the
+same request and retry fields, `call_dispatched: true`, `execution_id`, and
+`original_call` (`tool` and `project_id`). Each runtime `request_group_id` is its
+execution ID: identical calls can have separate retry groups, whose IDs must not
+be combined. Control-interface errors also include these groups in the error's
+`permission_requests` field while preserving the provider's error details.
+Process and shell snapshots can also include `permission_request_ids`. Retry
+the original call with unchanged arguments, not the result-reading call. Only an
+explicit retry receives the answered permissions, including earlier **Only this
+time** answers carried by that retry. The running execution's grants stay fixed.
+
 Cold dynamic downstream tool calls can return `permission.catalog_required`.
 First make an admitted `mcp.tools.list` request to establish the exact catalog;
 then retry the tool call. Discovery that needs a program launch is subject to
@@ -3975,6 +4006,12 @@ absolute HTTP or HTTPS URL to a project-contained file using fixed
 userinfo credentials, sends no custom headers, cookies, or request body, writes
 through an exclusively created temporary descriptor in the destination directory, and requires
 `confirm_download=true` when `dry_run=false`.
+
+Sandboxed downloads use the project's network policy for the initial host and
+each redirect. A missing host produces an original-call retry request; **Always**
+adds it to the project's `custom` host list, while **Only this time** covers the
+matching retry. DNS and route boundaries are checked on each connection. Full
+access follows its execution mode, and Project write access remains required.
 
 The destination parent directory must already exist unless
 `create_directories=true`. Existing destination files are rejected unless

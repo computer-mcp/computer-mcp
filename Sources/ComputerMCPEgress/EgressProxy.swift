@@ -248,18 +248,33 @@ package final class EgressProxy: @unchecked Sendable {
     [SocketAddress]
   > {
     if revoked { return eventLoop.makeFailedFuture(denial(target, .revoked)) }
+    if let reason = EgressPolicy.fixedRejection(host: target.host) {
+      return eventLoop.makeFailedFuture(denial(target, reason))
+    }
     guard policy.admits(host: target.host) else {
       return eventLoop.makeFailedFuture(denial(target, .hostNotAllowed))
     }
     return resolutions.submit(on: eventLoop) {
-      let addresses = try self.resolver.resolve(host: target.host, port: target.port)
+      let numeric = try? SocketAddress(ipAddress: target.host, port: Int(target.port))
+      let addresses =
+        try numeric.map { [$0] }
+        ?? self.resolver.resolve(host: target.host, port: target.port)
+      guard !addresses.isEmpty else { throw EgressConnectionError.resolutionFailed }
+      var localNetworkRequired = false
       for address in addresses {
         if let reason = self.policy.rejection(
           address: address, routing: self.routing, host: target.host)
         {
-          throw self.denial(target, reason)
+          if reason == .localNetworkRequired {
+            localNetworkRequired = true
+          } else {
+            throw self.denial(target, reason)
+          }
         }
       }
+      // Every admitted hostname resolves again. A fixed denial in any answer
+      // takes precedence over a requestable Local network need.
+      if localNetworkRequired { throw self.denial(target, .localNetworkRequired) }
       return addresses
     }
   }

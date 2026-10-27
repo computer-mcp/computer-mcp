@@ -1,6 +1,5 @@
 import ComputerMCPConfiguration
 import ComputerMCPCore
-import ComputerMCPEgress
 import ComputerMCPPermissions
 import ComputerMCPPersistence
 import ComputerMCPSandbox
@@ -8,7 +7,9 @@ import Foundation
 import GRDB
 import Testing
 
+@testable import ComputerMCPEgress
 @testable import ComputerMCPGateway
+@testable import ComputerMCPPlugins
 @testable import ComputerMCPProcess
 
 #if os(macOS)
@@ -16,6 +17,333 @@ import Testing
 #endif
 
 @Suite struct ExecutionRevocationCoordinatorTests {
+  @Test(arguments: [ComputerMCPPermissions.ExecutionMode.sandbox, .fullAccess(.standing)])
+  func downloadAdmissionKeepsProjectWriteAndDefersHostClassificationToTheProxy(
+    mode: ComputerMCPPermissions.ExecutionMode
+  ) throws {
+    let f = try DurablePathFixture()
+    let paths = try f.store.readWithDatabase { _, ledger in try #require(ledger.environment.paths) }
+    let resolver = GatewayToolRequirementResolver(
+      configuration: .init(), origins: [:], paths: paths)
+    let descriptor = CapabilityDescriptor(
+      id: "file.download", risk: .destructive,
+      requirement: .init(access: .projectWrite, paths: [.init("path", .write)], networkURL: "url"),
+      projectRequirement: .required, usesNetwork: true)
+    let (requirements, _, _) = try resolver.resolve(
+      descriptor: descriptor,
+      arguments: ["url": .string("https://download.example.com/file"), "path": .string("result")],
+      projectID: "derived", mode: mode)
+    #expect(requirements.networks.isEmpty)
+    #expect(
+      requirements.actions.contains {
+        $0.requirement == (try? PermissionRequirement(.project("project"), .write))
+      })
+    #expect(
+      requirements.paths == [
+        .init(
+          path: try CanonicalPath(f.derived.appendingPathComponent("result").path),
+          operation: .write)
+      ])
+    #expect(throws: GatewayToolError.self) {
+      try resolver.resolve(
+        descriptor: descriptor,
+        arguments: ["url": .string("file:///tmp/file"), "path": .string("result")],
+        projectID: "derived", mode: mode)
+    }
+  }
+
+  @Test(
+    arguments: [PermissionAnswer.onlyThisTime, .always], ["api.example.com", "127.example.com"])
+  func proxyNeedsKeepRunningGrantsAndRequireAnExactExplicitRetry(
+    answer: PermissionAnswer, host: String
+  )
+    async throws
+  {
+    let f = try ExecutionFixture()
+    let id = try f.paths.authorize(f.paths.project, operation: .read, once: false)
+    let callbacks = RuntimeDenialCallbacks()
+    let coordinator = try f.coordinator(proxyFactory: { id, policy, onDenial in
+      callbacks.install(id, policy: policy, handler: onDenial)
+      return try await EgressProxy.start(
+        executionID: id.uuidString, policy: policy, routing: ExecutionTestRouting(),
+        limits: .init(), onDenial: onDenial)
+    })
+    try await coordinator.recover()
+    let prepared = try await coordinator.prepare(authorizationID: id, context: f.context)
+    _ = try await f.start(prepared)
+    #expect(callbacks.policy(prepared.executionID)?.access == EgressAccess.none)
+    callbacks.emit(prepared.executionID, host: host)
+    let requests = try prepared.permissionRequests(prepared.executionID)
+    #expect(requests.count == 1)
+    let proof = try f.paths.store.readWithDatabase { _, ledger in
+      try #require(ledger.authorizations[id])
+    }
+    #expect(requests.first?.invocation == proof.invocation)
+    #expect(f.platform.started == 1)
+    let metadata = GatewayExecutionPermissionMetadata.attach(
+      to: .object([
+        "isError": .bool(false),
+        "structuredContent": .object([
+          "session_id": .string("retained"), "exit_code": .integer(13),
+          "gateway_execution": .object(["execution_id": .string(prepared.executionID.uuidString)]),
+        ]),
+      ]), groups: [.init(executionID: prepared.executionID, requests: requests)])
+    #expect(metadata.objectValue?["isError"] == .bool(false))
+    #expect(
+      metadata.objectValue?["structuredContent"]?.objectValue?["session_id"] == .string("retained"))
+    #expect(metadata.objectValue?["structuredContent"]?.objectValue?["exit_code"] == .integer(13))
+    let group = try #require(
+      metadata.objectValue?["_meta"]?.objectValue?["computer_mcp"]?
+        .objectValue?["permission_requests"]?.arrayValue?.first?.objectValue)
+    #expect(group["original_call"]?.objectValue?["tool"] == .string(proof.invocation.tool))
+    #expect(
+      group["retry"]?.objectValue?["instructions"]?.stringValue?.contains("Earlier operations")
+        == true)
+    let providerError = GatewayToolError.executionFailed("Provider failure after partial output")
+    let failed = GatewayExecutionPermissionFailure(
+      underlying: providerError,
+      groups: [.init(executionID: prepared.executionID, requests: requests)])
+    let errorEnvelope = GatewayRuntime.executionErrorEnvelope(
+      failed, context: .init(caller: .localCLI, profileID: .localAdmin),
+      capabilityID: proof.invocation.tool)
+    #expect(errorEnvelope.objectValue?["isError"] == .bool(true))
+    let failure = try #require(
+      errorEnvelope.objectValue?["structuredContent"]?.objectValue?["error"]?.objectValue)
+    #expect(
+      failure["code"]
+        == .string(GatewayRuntime.auditErrorCode(for: providerError) ?? "gateway.execution_failed"))
+    #expect(
+      failure["message"]?.stringValue?.contains("Provider failure after partial output") == true)
+    #expect(
+      errorEnvelope.objectValue?["structuredContent"]?.objectValue?["gateway_execution"]?
+        .objectValue?["permission_requests"]?.arrayValue?.count == 1)
+    #expect(
+      GatewayRuntime.auditDecision(for: failed) == GatewayRuntime.auditDecision(for: providerError))
+    let refusal = try PluginCompatibilityRefusal(
+      pluginID: "fixture", version: PluginVersion("1.0.0"), reason: .hostUpdateRequired,
+      requirement: .pluginAPI(declared: 2, supported: .supported))
+    let underlyingErrors: [any Error] = [GatewayToolError.disabled("fixture"), refusal]
+    for underlying in underlyingErrors {
+      let wrapped = GatewayExecutionPermissionFailure(
+        underlying: underlying,
+        groups: [.init(executionID: prepared.executionID, requests: requests)])
+      let expected = try ControlToolResponse.errorPayload(underlying).objectValue
+      let actual = try ControlToolResponse.errorPayload(wrapped).objectValue
+      #expect(actual?["code"] == expected?["code"])
+      #expect(actual?["message"] == expected?["message"])
+      #expect(actual?["refusal"] == expected?["refusal"])
+      #expect(
+        actual?["permission_requests"]?.arrayValue?.first?.objectValue?["execution_id"]
+          == .string(prepared.executionID.uuidString))
+      #expect(
+        ControlToolResponse.auditDisposition(for: wrapped).decision
+          == ControlToolResponse.auditDisposition(for: underlying).decision)
+      #expect(
+        ControlToolResponse.auditDisposition(for: wrapped).code
+          == ControlToolResponse.auditDisposition(for: underlying).code)
+    }
+    let retried = try f.paths.store.transactionWithDatabase { _, ledger in
+      for request in requests { try ledger.answer(request.id, with: answer, now: Date()) }
+      #expect(ledger.authorizations[id]?.requirements == proof.requirements)
+      #expect(throws: PermissionModelError.retryMismatch) {
+        try ledger.authorize(
+          invocation: .init(
+            principal: proof.invocation.principal, tool: proof.invocation.tool,
+            projectID: proof.invocation.projectID, argumentsDigest: "different"),
+          requirements: proof.requirements, retryIDs: Set(requests.map(\.id)), now: Date())
+      }
+      guard
+        case .allowed(let retry) = try ledger.authorize(
+          invocation: proof.invocation, requirements: proof.requirements,
+          retryIDs: Set(requests.map(\.id)), now: Date())
+      else { throw PermissionModelError.invalidAuthorization }
+      return retry
+    }
+    #expect(f.platform.started == 1)
+    #expect(callbacks.policy(prepared.executionID)?.admits(host: host) == false)
+    let retry = try await coordinator.prepare(authorizationID: retried.id, context: f.context)
+    #expect(callbacks.policy(retry.executionID)?.admits(host: host) == true)
+    #expect(callbacks.policy(retry.executionID)?.admits(host: "other.example.com") == false)
+    _ = try await f.start(retry)
+    #expect(f.platform.started == 2)
+    try prepared.finishAdmission()
+    try retry.finishAdmission()
+    for owner in f.platform.owners { owner.complete() }
+    try await f.untilFinished(prepared.executionID, coordinator)
+    try await f.untilFinished(retry.executionID, coordinator)
+  }
+
+  @Test(arguments: [PermissionAnswer.onlyThisTime, .always])
+  func attributedReadsRequestFoldersWhileFixedBoundariesDoNot(answer: PermissionAnswer) async throws
+  {
+    let f = try ExecutionFixture()
+    let id = try f.paths.authorize(f.paths.project, operation: .read, once: false)
+    let coordinator = try f.coordinator()
+    try await coordinator.recover()
+    let prepared = try await coordinator.prepare(authorizationID: id, context: f.context)
+    _ = try await f.start(prepared)
+    let owner = try #require(f.platform.owners.first)
+    // Program output has no route into this host-only callback.
+    #expect(try prepared.permissionRequests(prepared.executionID).isEmpty)
+    for (operation, path) in [
+      ("file-write-create", f.paths.root.appendingPathComponent("downloads/write").path),
+      ("file-read-unknown", f.paths.root.appendingPathComponent("downloads/unknown").path),
+      ("file-read-data", f.paths.root.appendingPathComponent("host/token").path),
+      ("file-read-data", f.paths.project.appendingPathComponent("inner/secret").path),
+    ] {
+      owner.report(.init(operation: operation, path: path))
+    }
+    #expect(try prepared.permissionRequests(prepared.executionID).isEmpty)
+    owner.report(
+      .init(
+        operation: "file-read-data",
+        path: f.paths.root.appendingPathComponent("downloads/report").path))
+    let requests = try prepared.permissionRequests(prepared.executionID)
+    #expect(requests.count == 1)
+    guard case .permission(let content) = try #require(requests.first).content else {
+      throw PermissionModelError.invalidAuthorization
+    }
+    #expect(content.requirement.permission == .filesAndFolders(.downloads))
+    #expect(f.platform.started == 1)
+    try f.paths.store.transactionWithDatabase { _, ledger in
+      let proof = try #require(ledger.authorizations[id])
+      for request in requests { try ledger.answer(request.id, with: answer, now: Date()) }
+      #expect(ledger.authorizations[id]?.requirements == proof.requirements)
+      guard
+        case .allowed(let retry) = try ledger.authorize(
+          invocation: proof.invocation, requirements: proof.requirements,
+          retryIDs: Set(requests.map(\.id)), now: Date())
+      else { throw PermissionModelError.invalidAuthorization }
+      #expect(
+        retry.requirements.paths.contains(
+          .init(
+            path: try CanonicalPath(f.paths.root.appendingPathComponent("downloads/report").path),
+            operation: .read)))
+    }
+    try prepared.finishAdmission()
+    owner.complete()
+    try await f.untilFinished(prepared.executionID, coordinator)
+    owner.report(
+      .init(
+        operation: "file-read-metadata",
+        path: f.paths.root.appendingPathComponent("downloads/late").path))
+    let continuationID = try f.paths.store.transactionWithDatabase { _, ledger in
+      guard
+        case .allowed(let proof) = try ledger.authorize(
+          invocation: .init(
+            principal: f.paths.principal, tool: "process.read", projectID: nil,
+            argumentsDigest: "read"),
+          requirements: .init(), now: Date())
+      else { throw PermissionModelError.invalidAuthorization }
+      return proof.id
+    }
+    let continuation = try coordinator.continuation(authorizationID: continuationID)
+    _ = try continuation.accessExecution(prepared.executionID, operation: .readResult)
+    let current = try prepared.permissionRequests(prepared.executionID)
+    #expect(
+      try continuation.currentPermissionRequestGroups().flatMap(\.requests).map(\.id)
+        == current.map(\.id))
+    if case .onlyThisTime = answer { #expect(!current.isEmpty) }
+  }
+
+  @Test func expiredRetentionOmitsMetadataWhileRevokedAuthorityStillFails() async throws {
+    let f = try ExecutionFixture()
+    let id = try f.paths.authorize(f.paths.project, operation: .read, once: false)
+    let callbacks = RuntimeDenialCallbacks()
+    let coordinator = try f.coordinator(proxyFactory: { id, policy, onDenial in
+      callbacks.install(id, policy: policy, handler: onDenial)
+      return try await EgressProxy.start(
+        executionID: id.uuidString, policy: policy,
+        routing: ExecutionTestRouting(), limits: .init(), onDenial: onDenial)
+    })
+    try await coordinator.recover()
+    let prepared = try await coordinator.prepare(authorizationID: id, context: f.context)
+    callbacks.emit(prepared.executionID, host: "expired.example")
+    #expect(try prepared.currentPermissionRequestGroups().count == 1)
+    try prepared.finishAdmission()
+    try await f.untilFinished(prepared.executionID, coordinator)
+    try f.paths.store.transactionWithDatabase { _, ledger in
+      try ledger.finishExecution(prepared.executionID, retainUntil: .distantPast)
+    }
+    let groups = try prepared.currentPermissionRequestGroups()
+    #expect(groups.isEmpty)
+    let result = JSONValue.object([
+      "isError": .bool(false),
+      "structuredContent": .object([
+        "session_id": .string("retained-call-result"), "exit_code": .integer(0),
+      ]),
+    ])
+    #expect(GatewayExecutionPermissionMetadata.attach(to: result, groups: groups) == result)
+    try f.revoke()
+    #expect(throws: PermissionModelError.invalidAuthorization) {
+      try prepared.currentPermissionRequestGroups()
+    }
+  }
+
+  @Test func managedNetworkCeilingsDoNotProduceRuntimeRequests() async throws {
+    let f = try ExecutionFixture()
+    let id = try f.paths.authorize(f.paths.project, operation: .read, once: false)
+    try f.paths.store.transactionWithDatabase { _, ledger in
+      var environment = ledger.environment
+      environment.limits[f.paths.principal] = ManagedLimits(sources: [
+        .managedPreferences: .available(ManagedPolicy(network: .none))
+      ])
+      _ = try ledger.reconcile(environment: environment, expectedRevision: ledger.revision)
+    }
+    let callbacks = RuntimeDenialCallbacks()
+    let coordinator = try f.coordinator(proxyFactory: { id, policy, onDenial in
+      callbacks.install(id, policy: policy, handler: onDenial)
+      return try await EgressProxy.start(
+        executionID: id.uuidString, policy: policy,
+        routing: ExecutionTestRouting(), limits: .init(), onDenial: onDenial)
+    })
+    try await coordinator.recover()
+    let prepared = try await coordinator.prepare(authorizationID: id, context: f.context)
+    callbacks.emit(prepared.executionID, host: "limited.example.com")
+    #expect(try prepared.permissionRequests(prepared.executionID).isEmpty)
+    #expect(try f.paths.store.readWithDatabase { _, ledger in ledger.requests.isEmpty })
+    try prepared.finishAdmission()
+    try await f.untilFinished(prepared.executionID, coordinator)
+  }
+
+  @Test func runtimeRequestStormsAndUnrequestableNetworkFailuresAreBounded() async throws {
+    let f = try ExecutionFixture()
+    let id = try f.paths.authorize(f.paths.project, operation: .read, once: false)
+    let callbacks = RuntimeDenialCallbacks()
+    let coordinator = try f.coordinator(proxyFactory: { id, policy, onDenial in
+      callbacks.install(id, policy: policy, handler: onDenial)
+      return try await EgressProxy.start(
+        executionID: id.uuidString, policy: policy, routing: ExecutionTestRouting(),
+        limits: .init(), onDenial: onDenial)
+    })
+    try await coordinator.recover()
+    let prepared = try await coordinator.prepare(authorizationID: id, context: f.context)
+    for reason in [
+      EgressDenial.Reason.loopback, .invalidDestination, .routeUnavailable, .routeChanged, .revoked,
+      .connectionLimit,
+    ] {
+      callbacks.emit(prepared.executionID, host: "blocked.example", reason: reason)
+    }
+    callbacks.emit(prepared.executionID, host: "127.0.0.1")
+    callbacks.emit(prepared.executionID, host: "forged.example", claimedID: UUID())
+    #expect(try prepared.permissionRequests(prepared.executionID).isEmpty)
+    for index in 0..<1000 { callbacks.emit(prepared.executionID, host: "host-\(index).example") }
+    let requests = try prepared.permissionRequests(prepared.executionID)
+    #expect(requests.count == ExecutionPermissionDiscovery.maximumNeeds)
+    #expect(f.platform.started == 0)
+    try f.paths.store.readWithDatabase { database, ledger in
+      let record = try #require(try ExecutionRuntimeRecord.load(prepared.executionID, database))
+      #expect(record.permissionNeeds?.count == ExecutionPermissionDiscovery.maximumNeeds)
+      #expect(ledger.requests.values.filter { $0.status == .pending }.count == requests.count)
+      let count = try Int.fetchOne(
+        database,
+        sql: "SELECT COUNT(*) FROM auditEvents WHERE capabilityID='execution.permission_required'")
+      #expect(count == ExecutionPermissionDiscovery.maximumNeeds)
+    }
+    try prepared.finishAdmission()
+    try await f.untilFinished(prepared.executionID, coordinator)
+  }
+
   @Test(arguments: ["work.completed", "admission.closed"])
   func confirmedCompletionIsRetriedByTheCoordinatorWithoutReplayingWork(action: String) async throws
   {
@@ -206,10 +534,11 @@ import Testing
         expectedRevision: ledger.revision)
     }
     let box = ExecutionProxyBox()
-    let coordinator = try f.coordinator(proxyFactory: { id, policy in
+    let coordinator = try f.coordinator(proxyFactory: { id, policy, onDenial in
       let proxy = try await EgressProxy.start(
         executionID: id.uuidString, policy: policy,
-        routing: ExecutionTestRouting(onCancel: { box.markReleased() }), limits: .init())
+        routing: ExecutionTestRouting(onCancel: { box.markReleased() }), limits: .init(),
+        onDenial: onDenial)
       box.set(proxy)
       return proxy
     })
@@ -461,7 +790,7 @@ import Testing
         expectedRevision: ledger.revision)
     }
     let box = ExecutionProxyBox()
-    let coordinator = try f.coordinator(proxyFactory: { id, policy in
+    let coordinator = try f.coordinator(proxyFactory: { id, policy, onDenial in
       let proxy = try await EgressProxy.start(
         executionID: id.uuidString, policy: policy,
         routing: ExecutionTestRouting(), limits: .init())
@@ -740,6 +1069,7 @@ private final class DurableTestOwnership: ExecutionOwnership, @unchecked Sendabl
   private let lock = NSLock()
   private var handlers: [@Sendable (ExecutionMember) throws -> Void] = []
   private var cancellations: [@Sendable () -> Void] = []
+  private var reports: [@Sendable (ExecutionSandboxViolation) -> Void] = []
   private var finished = false
   var ended: Bool { lock.withLock { finished } }
   init(member: ExecutionMember) { self.member = member }
@@ -756,6 +1086,12 @@ private final class DurableTestOwnership: ExecutionOwnership, @unchecked Sendabl
       return pending
     }
     for handler in pending { try handler(member) }
+  }
+  func onSandboxViolation(_ handler: @escaping @Sendable (ExecutionSandboxViolation) -> Void) {
+    lock.withLock { reports.append(handler) }
+  }
+  func report(_ violation: ExecutionSandboxViolation) {
+    for handler in lock.withLock({ reports }) { handler(violation) }
   }
   func complete() {
     lock.withLock {
@@ -826,10 +1162,11 @@ private struct ExecutionTestObservation: EgressRouteObservation {
       let box = ExecutionProxyBox()
       let coordinator = try f.coordinator(
         launcher: launcher,
-        proxyFactory: { id, policy in
+        proxyFactory: { id, policy, onDenial in
           let proxy = try await EgressProxy.start(
             executionID: id.uuidString, policy: policy,
-            routing: ExecutionTestRouting(onCancel: { box.markReleased() }), limits: .init())
+            routing: ExecutionTestRouting(onCancel: { box.markReleased() }), limits: .init(),
+            onDenial: onDenial)
           box.set(proxy)
           return proxy
         })
@@ -1067,6 +1404,191 @@ private struct ExecutionTestObservation: EgressRouteObservation {
 #endif
 
 @Suite struct AuthorizedOutputRecoveryTests {
+  @Test func identicalOriginalCallsKeepIndependentProcessListRetryGroups() async throws {
+    let f = try ExecutionFixture()
+    let callbacks = RuntimeDenialCallbacks()
+    let coordinator = try f.coordinator(proxyFactory: { id, policy, onDenial in
+      callbacks.install(id, policy: policy, handler: onDenial)
+      return try await EgressProxy.start(
+        executionID: id.uuidString, policy: policy,
+        routing: ExecutionTestRouting(), limits: .init(), onDenial: onDenial)
+    })
+    try await coordinator.recover()
+    let scope = GatewayTerminalSessions.Scope.isolated(UUID())
+    var contexts: [PreparedExecutionContext] = []
+    var records: [TerminalSessionJournal.Record] = []
+    var proofs: [UUID: InvocationAuthorization] = [:]
+    for host in ["first.example", "second.example"] {
+      let id = try f.paths.authorize(f.paths.project, operation: .read, once: false)
+      let prepared = try await coordinator.prepare(authorizationID: id, context: f.context)
+      contexts.append(prepared)
+      proofs[prepared.executionID] = try f.paths.store.readWithDatabase { _, ledger in
+        try #require(ledger.authorizations[id])
+      }
+      let owner = try await f.start(prepared)
+      callbacks.emit(prepared.executionID, host: host)
+      try prepared.finishAdmission()
+      _ = try await owner.cancel()
+      try await f.untilFinished(prepared.executionID, coordinator)
+      records.append(
+        record(
+          prepared, scope: scope, stdout: "partial", stderr: "", offset: -1,
+          order: [.init(stdout: true, count: 7)], registered: true))
+    }
+    #expect(Set(proofs.values.map(\.invocation)).count == 1)
+    let directory = f.paths.root.appendingPathComponent("output")
+    try save(records, to: directory)
+    let storage = GatewayTerminalSessions()
+    let launcher = ExecutionLauncher(platform: f.platform)
+    try storage.enablePersistence(at: directory, launcher: launcher, authority: coordinator)
+    let runtime = ShellSessionRuntime(launcher: launcher, sessions: storage, scope: scope)
+    let processes = ManagedProcessRegistry(launcher: launcher, shellManager: runtime)
+    let continuationID = try f.paths.store.transactionWithDatabase { _, ledger in
+      guard
+        case .allowed(let proof) = try ledger.authorize(
+          invocation: .init(
+            principal: f.paths.principal, tool: "process.list", projectID: nil,
+            argumentsDigest: "list"),
+          requirements: .init(), now: Date())
+      else { throw PermissionModelError.invalidAuthorization }
+      return proof.id
+    }
+    let continuation = try coordinator.continuation(authorizationID: continuationID)
+    let listed = try InvocationExecution.$current.withValue(continuation) { try processes.list() }
+    #expect(listed.count == 2)
+    let groups = try continuation.currentPermissionRequestGroups()
+    #expect(groups.count == 2)
+    #expect(Set(groups.map(\.executionID)) == Set(contexts.map(\.executionID)))
+    let envelope = GatewayExecutionPermissionMetadata.attach(
+      to: .object([
+        "isError": .bool(false),
+        "structuredContent": .object(["processes": .array(listed.map(\.json))]),
+      ]), groups: groups)
+    let serialized = try #require(
+      envelope.objectValue?["_meta"]?.objectValue?["computer_mcp"]?
+        .objectValue?["permission_requests"]?.arrayValue)
+    #expect(serialized.count == 2)
+    #expect(
+      Set(serialized.compactMap { $0.objectValue?["request_group_id"]?.stringValue })
+        == Set(contexts.map { $0.executionID.uuidString }))
+    #expect(f.platform.started == 2)
+    for group in groups {
+      let proof = try #require(proofs[group.executionID])
+      let retried = try f.paths.store.transactionWithDatabase { _, ledger in
+        for request in group.requests {
+          try ledger.answer(request.id, with: .onlyThisTime, now: Date())
+        }
+        guard
+          case .allowed(let retry) = try ledger.authorize(
+            invocation: proof.invocation,
+            requirements: proof.requirements, retryIDs: Set(group.requests.map(\.id)), now: Date())
+        else { throw PermissionModelError.invalidAuthorization }
+        return retry
+      }
+      let host = try #require(
+        group.requests.compactMap { request -> String? in
+          if case .network(let content) = request.content { return content.host }
+          return nil
+        }.first)
+      let retry = try await coordinator.prepare(authorizationID: retried.id, context: f.context)
+      #expect(callbacks.policy(retry.executionID)?.admits(host: host) == true)
+      #expect(
+        callbacks.policy(retry.executionID)?.admits(
+          host: host == "first.example" ? "second.example" : "first.example") == false)
+      let owner = try await f.start(retry)
+      try retry.finishAdmission()
+      _ = try await owner.cancel()
+      try await f.untilFinished(retry.executionID, coordinator)
+    }
+    #expect(f.platform.started == 4)
+    await runtime.shutdown()
+  }
+
+  @Test(arguments: ["unchanged", "revoked", "tightened"])
+  func optionalRequestMetadataFailurePreservesResultsAndFinalAuthority(change: String) async throws
+  {
+    let f = try ExecutionFixture()
+    let coordinator = try f.coordinator()
+    try await coordinator.recover()
+    let id = try f.paths.authorize(f.paths.project, operation: .read, once: false)
+    let prepared = try await coordinator.prepare(authorizationID: id, context: f.context)
+    try prepared.finishAdmission()
+    try await f.untilFinished(prepared.executionID, coordinator)
+    let scope = GatewayTerminalSessions.Scope.isolated(UUID())
+    let directory = f.paths.root.appendingPathComponent("output")
+    let record = record(
+      prepared, scope: scope, stdout: "12345678", stderr: "", offset: -1,
+      order: [.init(stdout: true, count: 8)])
+    try save([record], to: directory)
+    let storage = GatewayTerminalSessions()
+    let launcher = ExecutionLauncher(platform: f.platform)
+    try storage.enablePersistence(at: directory, launcher: launcher, authority: coordinator)
+    let runtime = ShellSessionRuntime(launcher: launcher, sessions: storage, scope: scope)
+    let authority = FailingRequestMetadataAuthority(prepared: prepared) {
+      if change == "revoked" { try f.revoke() }
+      if change == "tightened" { try f.limits(.init(outputBytes: 3)) }
+    }
+    let read = {
+      try InvocationExecution.$current.withValue(authority) {
+        try runtime.read(
+          sessionID: record.snapshot.sessionID, stdoutCursor: 0, stderrCursor: 0,
+          maxReadBytes: 1024, encoding: .utf8)
+      }
+    }
+    if change == "revoked" {
+      #expect(throws: PermissionModelError.self) { try read() }
+    } else {
+      let value = try read()
+      #expect(value.sessionID == record.snapshot.sessionID)
+      #expect(value.executionID == prepared.executionID)
+      #expect(value.stdout.text == (change == "tightened" ? "678" : "12345678"))
+      #expect(value.droppedBytes == (change == "tightened" ? 5 : 0))
+      #expect(value.permissionRequestIDs == nil)
+      #expect(!value.isRunning && value.exitCode == 0)
+    }
+    await runtime.shutdown()
+  }
+
+  @Test func retainedProcessOutputIncludesOriginalCallRequestsWithoutLosingStatus() async throws {
+    let f = try ExecutionFixture()
+    let callbacks = RuntimeDenialCallbacks()
+    let coordinator = try f.coordinator(proxyFactory: { id, policy, onDenial in
+      callbacks.install(id, policy: policy, handler: onDenial)
+      return try await EgressProxy.start(
+        executionID: id.uuidString, policy: policy,
+        routing: ExecutionTestRouting(), limits: .init(), onDenial: onDenial)
+    })
+    try await coordinator.recover()
+    let id = try f.paths.authorize(f.paths.project, operation: .read, once: true)
+    let prepared = try await coordinator.prepare(authorizationID: id, context: f.context)
+    callbacks.emit(prepared.executionID, host: "output.example.com")
+    let requests = try prepared.permissionRequests(prepared.executionID)
+    #expect(requests.count == 1)
+    try prepared.finishAdmission()
+    try await f.untilFinished(prepared.executionID, coordinator)
+    let scope = GatewayTerminalSessions.Scope.isolated(UUID())
+    let directory = f.paths.root.appendingPathComponent("output")
+    let record = record(
+      prepared, scope: scope, stdout: "partial", stderr: "", offset: -1,
+      order: [.init(stdout: true, count: 7)])
+    try save([record], to: directory)
+    let storage = GatewayTerminalSessions()
+    let launcher = ExecutionLauncher(platform: f.platform)
+    try storage.enablePersistence(at: directory, launcher: launcher, authority: coordinator)
+    let runtime = ShellSessionRuntime(launcher: launcher, sessions: storage, scope: scope)
+    let value = try prepared.withValue {
+      try runtime.read(
+        sessionID: record.snapshot.sessionID, stdoutCursor: 0, stderrCursor: 0,
+        maxReadBytes: 1024, encoding: .utf8)
+    }
+    #expect(value.permissionRequestIDs == requests.map(\.id))
+    #expect(value.executionID == prepared.executionID)
+    #expect(value.stdout.text == "partial")
+    #expect(!value.isRunning && value.exitCode == 0)
+    #expect(value.json.objectValue?["permission_request_ids"]?.arrayValue?.count == 1)
+    await runtime.shutdown()
+  }
+
   @Test func finalAuthorityCheckRebuildsOutputAfterTightening() async throws {
     let f = try ExecutionFixture()
     let coordinator = try f.coordinator()
@@ -1239,7 +1761,8 @@ private struct ExecutionTestObservation: EgressRouteObservation {
 
   private func record(
     _ prepared: PreparedExecutionContext, scope: GatewayTerminalSessions.Scope,
-    stdout: String, stderr: String, offset: Double, order: [ShellOutputSegment]
+    stdout: String, stderr: String, offset: Double, order: [ShellOutputSegment],
+    registered: Bool = false
   ) -> TerminalSessionJournal.Record {
     func stream(_ text: String) -> ShellStreamRead {
       .init(
@@ -1248,7 +1771,7 @@ private struct ExecutionTestObservation: EgressRouteObservation {
         text: nil, base64: Data(text.utf8).base64EncodedString())
     }
     return .init(
-      recoveryKey: nil, bootSessionID: "boot", scope: scope, isRegisteredProcess: false,
+      recoveryKey: nil, bootSessionID: "boot", scope: scope, isRegisteredProcess: registered,
       snapshot: .init(
         sessionID: UUID().uuidString, processID: nil, isRunning: false, exitCode: 0,
         signal: nil, timedOut: false, cancelled: false,
@@ -1257,6 +1780,34 @@ private struct ExecutionTestObservation: EgressRouteObservation {
         stdout: stream(stdout), stderr: stream(stderr), executionID: prepared.executionID,
         permissionLimits: prepared.limits),
       members: [], outputOrder: order)
+  }
+}
+
+private final class FailingRequestMetadataAuthority: ExecutionAccessChecking, @unchecked Sendable {
+  let pathAccess: (any HostPathAccessChecking)? = nil
+  let prepared: PreparedExecutionContext
+  let change: @Sendable () throws -> Void
+  private let lock = NSLock()
+  private var changed = false
+
+  init(prepared: PreparedExecutionContext, change: @escaping @Sendable () throws -> Void) {
+    self.prepared = prepared
+    self.change = change
+  }
+
+  func accessExecution(_ id: UUID, operation: ExecutionOperation) throws -> EffectiveExecutionLimits
+  {
+    try prepared.accessExecution(id, operation: operation)
+  }
+
+  func permissionRequests(_ id: UUID) throws -> [PermissionRequest] {
+    let first = lock.withLock {
+      guard !changed else { return false }
+      changed = true
+      return true
+    }
+    if first { try change() }
+    throw CocoaError(.fileReadUnknown)
   }
 }
 
@@ -1306,5 +1857,24 @@ private final class ReconciliationFailureSwitch: @unchecked Sendable {
   func set(_ value: Bool) { lock.withLock { failing = value } }
   func check() throws {
     if lock.withLock({ failing }) { throw PermissionModelError.invalidAuthorization }
+  }
+}
+
+private final class RuntimeDenialCallbacks: @unchecked Sendable {
+  private let lock = NSLock()
+  private var callbacks: [UUID: (EgressPolicy, @Sendable (EgressDenial) -> Void)] = [:]
+
+  func install(
+    _ id: UUID, policy: EgressPolicy, handler: @escaping @Sendable (EgressDenial) -> Void
+  ) {
+    lock.withLock { callbacks[id] = (policy, handler) }
+  }
+  func policy(_ id: UUID) -> EgressPolicy? { lock.withLock { callbacks[id]?.0 } }
+  func emit(
+    _ id: UUID, host: String, reason: EgressDenial.Reason = .hostNotAllowed, claimedID: UUID? = nil
+  ) {
+    let handler = lock.withLock { callbacks[id]?.1 }
+    handler?(
+      .init(executionID: (claimedID ?? id).uuidString, host: host, port: 443, reason: reason))
   }
 }

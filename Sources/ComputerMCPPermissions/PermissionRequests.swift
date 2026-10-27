@@ -1639,7 +1639,11 @@ package struct PermissionLedger: Equatable, Sendable, Codable {
     needs: [DiscoveredRequirement], now: Date
   ) throws -> DiscoveredRequirementDecision {
     propagateRevocations(now: now)
-    guard !needs.isEmpty, let execution = executions[executionID], execution.isRunning,
+    guard !needs.isEmpty, let execution = executions[executionID],
+      execution.isRunning
+        || (execution.endedAt.map {
+          now >= $0 && now.timeIntervalSince($0) <= DiscoveredRequirement.completedReportWindow
+        } == true && execution.retainUntil.map { now < $0 } == true),
       !execution.revoked,
       execution.owner == principal
         || execution.delegatedTo.map({ principal == .plugin($0) }) == true,

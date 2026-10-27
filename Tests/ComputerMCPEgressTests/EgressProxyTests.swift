@@ -13,21 +13,23 @@ import Testing
 #endif
 
 @Suite struct EgressProxyTests {
-  @Test func connectDenialNamesHostAndCannotForgeIdentity() async throws {
+  @Test(arguments: ["example.com", "127.example.com"])
+  func connectDenialNamesHostBeforeResolutionAndCannotForgeIdentity(host: String) async throws {
     let events = Events()
     let proxy = try await EgressProxy.start(
       executionID: "execution-one", policy: .init(access: .trusted),
-      routing: FixedRoute(tunnel: false, direct: false), limits: .init(), onDenial: events.append)
+      routing: FixedRoute(tunnel: false, direct: false),
+      resolver: UnexpectedResolver(), limits: .init(), onDenial: events.append)
     let ports = try await proxy.sandboxPorts()
     let client = try TestSocket(port: ports.http)
     defer { client.close() }
     try client.write(
-      Array("CONNECT example.com:443 HTTP/1.1\r\nX-Execution-ID: execution-two\r\n\r\n".utf8))
+      Array("CONNECT \(host):443 HTTP/1.1\r\nX-Execution-ID: execution-two\r\n\r\n".utf8))
     let response = try client.read()
-    #expect(String(decoding: response, as: UTF8.self).contains("403 example.com"))
-    #expect(String(decoding: response, as: UTF8.self).contains("X-Blocked-Host: example.com"))
+    #expect(String(decoding: response, as: UTF8.self).contains("403 \(host)"))
+    #expect(String(decoding: response, as: UTF8.self).contains("X-Blocked-Host: \(host)"))
     #expect(events.values.first?.executionID == "execution-one")
-    #expect(events.values.first?.host == "example.com")
+    #expect(events.values.first?.host == host)
     #expect(events.values.first?.port == 443)
     try await proxy.releaseAfterExecutionEnds()
   }
@@ -35,7 +37,8 @@ import Testing
   @Test func socksDenialAndIPv6Listener() async throws {
     let proxy = try await EgressProxy.start(
       executionID: "socks", policy: .init(),
-      routing: FixedRoute(tunnel: false, direct: false), limits: .init())
+      routing: FixedRoute(tunnel: false, direct: false),
+      resolver: UnexpectedResolver(), limits: .init())
     let ports = try await proxy.sandboxPorts()
     let client = try TestSocket(port: ports.socks, ipv6: true)
     defer { client.close() }
@@ -81,6 +84,42 @@ import Testing
     defer { client.close() }
     try client.write(Array("CONNECT mixed.test:443 HTTP/1.1\r\n\r\n".utf8))
     #expect(String(decoding: try client.read(), as: UTF8.self).contains("403 mixed.test"))
+    try await proxy.releaseAfterExecutionEnds()
+  }
+
+  @Test(arguments: ["127.0.0.1", "[::1]", "[::ffff:127.0.0.1]", "localhost", "child.localhost"])
+  func fixedLoopbackTargetsDoNotResolveOrRequestHosts(host: String) async throws {
+    let events = Events()
+    let proxy = try await EgressProxy.start(
+      executionID: "none", policy: .init(access: .none),
+      routing: FixedRoute(tunnel: false, direct: true),
+      resolver: UnexpectedResolver(), limits: .init(), onDenial: events.append)
+    let client = try TestSocket(port: try await proxy.sandboxPorts().http)
+    defer { client.close() }
+    try client.write(Array("CONNECT \(host):443 HTTP/1.1\r\n\r\n".utf8))
+    #expect(String(decoding: try client.read(), as: UTF8.self).contains("403"))
+    #expect(events.values.map(\.reason) == [.loopback])
+    try await proxy.releaseAfterExecutionEnds()
+  }
+
+  @Test func everyAdmittedConnectionRechecksTheCurrentDNSAnswer() async throws {
+    let events = Events()
+    let resolver = ChangingResolver()
+    let proxy = try await EgressProxy.start(
+      executionID: "dns",
+      policy: .init(access: .custom(hosts: ["changing.example"], includeTrusted: false)),
+      routing: FixedRoute(tunnel: false, direct: true), resolver: resolver,
+      limits: .init(), onDenial: events.append)
+    let ports = try await proxy.sandboxPorts()
+    for address in ["192.168.1.5", "127.0.0.1"] {
+      resolver.set(address)
+      let client = try TestSocket(port: ports.http)
+      try client.write(Array("CONNECT changing.example:443 HTTP/1.1\r\n\r\n".utf8))
+      #expect(String(decoding: try client.read(), as: UTF8.self).contains("403 changing.example"))
+      client.close()
+    }
+    #expect(resolver.count == 2)
+    #expect(events.values.map(\.reason) == [.localNetworkRequired, .loopback])
     try await proxy.releaseAfterExecutionEnds()
   }
 
@@ -236,5 +275,27 @@ private final class HalfCloseResponder: ChannelInboundHandler, @unchecked Sendab
       let channel = context.channel
       channel.writeAndFlush(response).whenComplete { _ in channel.close(promise: nil) }
     }
+  }
+}
+
+private final class ChangingResolver: EgressResolving, @unchecked Sendable {
+  private let lock = NSLock()
+  private var address = "203.0.113.1"
+  private var calls = 0
+  var count: Int { lock.withLock { calls } }
+  func set(_ value: String) { lock.withLock { address = value } }
+  func resolve(host: String, port: UInt16) throws -> [SocketAddress] {
+    let current = lock.withLock {
+      calls += 1
+      return address
+    }
+    return try [SocketAddress(ipAddress: current, port: Int(port))]
+  }
+}
+
+private struct UnexpectedResolver: EgressResolving {
+  func resolve(host: String, port: UInt16) throws -> [SocketAddress] {
+    Issue.record("A fixed or ungranted destination must not reach the DNS resolver")
+    throw EgressConnectionError.resolutionFailed
   }
 }

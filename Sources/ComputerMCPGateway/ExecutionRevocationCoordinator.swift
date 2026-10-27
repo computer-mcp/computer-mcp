@@ -14,11 +14,14 @@ import GRDB
 package final class ExecutionRevocationCoordinator: ExecutionRecoveryAuthorizing,
   @unchecked Sendable
 {
-  package typealias ProxyFactory = @Sendable (UUID, EgressPolicy) async throws -> EgressProxy
+  package typealias ProxyFactory =
+    @Sendable (UUID, EgressPolicy, @escaping @Sendable (EgressDenial) -> Void) async throws ->
+    EgressProxy
   private let store: SQLitePermissionStore
   private let launcher: ExecutionLauncher
   private let lease: FileLock
-  private let ownerID = UUID()
+  private let ownerID: UUID
+  private let permissionDiscovery: ExecutionPermissionDiscovery
   private let proxyFactory: ProxyFactory?
   private let journal: ExecutionRecoveryJournal
   private let storageDirectory: URL
@@ -54,6 +57,10 @@ package final class ExecutionRevocationCoordinator: ExecutionRecoveryAuthorizing
     self.launcher = launcher
     self.proxyFactory = proxyFactory
     self.refreshPolicy = refreshPolicy
+    let ownerID = UUID()
+    self.ownerID = ownerID
+    permissionDiscovery = ExecutionPermissionDiscovery(
+      store: store, ownerID: ownerID, boot: launcher.bootSessionID, refreshPolicy: refreshPolicy)
     journal = try ExecutionRecoveryJournal(directory: directory.appendingPathComponent("ownership"))
     lease = try FileLock(
       path: directory.appendingPathComponent("executions.lock").path, mode: .exclusive)
@@ -189,13 +196,17 @@ package final class ExecutionRevocationCoordinator: ExecutionRecoveryAuthorizing
       connectionID: connectionID)
     do {
       var sandbox = configuration.sandbox
-      if sandbox != nil, configuration.egress.access != .none {
-        guard let proxyFactory else {
+      if sandbox != nil {
+        if let proxyFactory {
+          let proxy = try await proxyFactory(execution.id, configuration.egress) {
+            [weak permissionDiscovery] denial in
+            permissionDiscovery?.receive(denial, executionID: execution.id)
+          }
+          lock.withLock { proxies[execution.id] = proxy }
+          sandbox = try sandbox!.withProxy(await proxy.sandboxPorts())
+        } else if configuration.egress.access != .none {
           throw ExecutionEnvironmentError.unavailable("Execution egress is unavailable")
         }
-        let proxy = try await proxyFactory(execution.id, configuration.egress)
-        lock.withLock { proxies[execution.id] = proxy }
-        sandbox = try sandbox!.withProxy(await proxy.sandboxPorts())
       }
       let environment: ExecutionEnvironment
       if let sandbox {
@@ -416,6 +427,13 @@ package final class ExecutionRevocationCoordinator: ExecutionRecoveryAuthorizing
     return try outcome.0.get()
   }
 
+  fileprivate func permissionRequests(
+    _ id: UUID, principal: Principal, connectionID: String?, authorizationID: UUID? = nil
+  ) throws -> [PermissionRequest] {
+    try permissionDiscovery.requests(
+      id, principal: principal, connectionID: connectionID, authorizationID: authorizationID)
+  }
+
   fileprivate func reserveChild(_ child: UUID, authority: GatewayExecutionAuthority) throws {
     try publication.withLock {
       guard lock.withLock({ ready && !closedAdmissions.contains(authority.executionID) }) else {
@@ -444,6 +462,9 @@ package final class ExecutionRevocationCoordinator: ExecutionRecoveryAuthorizing
     lock.withLock {
       children[child] = ownership
       proxies[authority.executionID]?.attach(to: ownership)
+    }
+    ownership.onSandboxViolation { [weak permissionDiscovery] violation in
+      permissionDiscovery?.receive(violation, executionID: authority.executionID)
     }
     ownership.beforeStart { [self] _ in
       try publication.withLock {
@@ -913,6 +934,9 @@ private final class GatewayExecutionAuthority: ExecutionAuthorizing, Sendable {
     try coordinator.access(
       id, principal: principal, connectionID: connectionID, operation: operation)
   }
+  func permissionRequests(_ id: UUID) throws -> [PermissionRequest] {
+    try coordinator.permissionRequests(id, principal: principal, connectionID: connectionID)
+  }
 }
 
 struct ExecutionRuntimeRecord: Codable {
@@ -931,6 +955,8 @@ struct ExecutionRuntimeRecord: Codable {
   var workIDs: Set<UUID>?
   var auditIdentity: GatewayExecutionAuditIdentity?
   var revocationRecorded: Bool?
+  var permissionNeeds: [DiscoveredRequirement]?
+  var permissionRequestIDs: Set<UUID>?
 
   func save(_ database: Database) throws {
     try database.execute(
@@ -971,17 +997,44 @@ private final class WeakExecutionContext: @unchecked Sendable {
   init(_ value: PreparedExecutionContext) { self.value = value }
 }
 
-private struct GatewayExecutionAccessScope: ExecutionAccessChecking {
+private final class GatewayExecutionAccessScope: ExecutionAccessChecking, @unchecked Sendable {
   let coordinator: ExecutionRevocationCoordinator
   let principal: Principal
   let connectionID: String?
   let authorizationID: UUID
   let pathAccess: (any HostPathAccessChecking)?
+  private let lock = NSLock()
+  private var observed: Set<UUID> = []
+
+  init(
+    coordinator: ExecutionRevocationCoordinator, principal: Principal, connectionID: String?,
+    authorizationID: UUID, pathAccess: (any HostPathAccessChecking)?
+  ) {
+    self.coordinator = coordinator
+    self.principal = principal
+    self.connectionID = connectionID
+    self.authorizationID = authorizationID
+    self.pathAccess = pathAccess
+  }
   func accessExecution(_ id: UUID, operation: ExecutionOperation) throws -> EffectiveExecutionLimits
   {
-    try coordinator.access(
+    let limits = try coordinator.access(
       id, principal: principal, connectionID: connectionID, operation: operation,
       authorizationID: authorizationID)
+    lock.withLock { _ = observed.insert(id) }
+    return limits
+  }
+
+  func permissionRequests(_ id: UUID) throws -> [PermissionRequest] {
+    try coordinator.permissionRequests(
+      id, principal: principal, connectionID: connectionID, authorizationID: authorizationID)
+  }
+
+  func currentPermissionRequestGroups() throws -> [ExecutionPermissionRequestGroup] {
+    try lock.withLock { observed }.sorted { $0.uuidString < $1.uuidString }.compactMap { id in
+      let requests = try permissionRequests(id)
+      return requests.isEmpty ? nil : .init(executionID: id, requests: requests)
+    }
   }
 }
 

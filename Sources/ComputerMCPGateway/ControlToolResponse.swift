@@ -74,6 +74,9 @@ package enum ControlToolResponse {
   package static func auditDisposition(
     for error: Error
   ) -> (decision: AuditDecision, code: String) {
+    if let failure = error as? GatewayExecutionPermissionFailure {
+      return auditDisposition(for: failure.underlying)
+    }
     if error is MCPHTTPAuthenticationError { return (.failed, "mcp.authentication") }
     if let refusal = error as? PluginCompatibilityRefusal { return (.failed, refusal.code) }
     if error is PluginManifestError { return (.failed, "plugin.invalid_manifest") }
@@ -131,6 +134,12 @@ package enum ControlToolResponse {
   }
 
   package static func errorPayload(_ error: any Error) throws -> JSONValue {
+    if let failure = error as? GatewayExecutionPermissionFailure {
+      var fields = try errorPayload(failure.underlying).objectValue ?? [:]
+      fields["permission_requests"] = .array(
+        GatewayExecutionPermissionMetadata.payload(failure.groups))
+      return .object(fields)
+    }
     var fields: [String: JSONValue] = [
       "code": .string(auditDisposition(for: error).code),
       "message": .string(errorMessage(error)),

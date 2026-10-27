@@ -3,6 +3,10 @@ import Foundation
 /// Facts resolved and attributed by the host, never an authority assertion from
 /// tool arguments. A path includes the operation that the sandbox refused.
 package enum DiscoveredRequirement: Hashable, Sendable, Codable {
+  /// A trusted report may arrive just after process completion. Attribution must
+  /// still prove that the event occurred during the process's owned lifetime.
+  package static let completedReportWindow: TimeInterval = 5
+
   case path(PathRequirement)
   case network(NetworkRequirement)
 }

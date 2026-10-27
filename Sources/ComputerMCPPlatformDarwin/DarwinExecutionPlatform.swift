@@ -164,6 +164,7 @@ package struct DarwinExecutionPlatform: ExecutionPlatform {
                       if case .failure = result { channel.disconnect() }
                       do {
                         try Self.waitForTerminalState(execution.processIdentifier.value)
+                        ownership.observeRootForViolations()
                       } catch {
                         if case .success = result { result = .failure(error) }
                       }
@@ -390,6 +391,10 @@ package struct DarwinExecutionPlatform: ExecutionPlatform {
     do { try channel.accept(pid: pid, ownership: ownership) } catch {
       channel.disconnect()
       failure = error
+    }
+    if ownership.observesSandboxViolations {
+      try? Self.waitForTerminalState(pid)
+      ownership.observeRootForViolations()
     }
     var status: Int32 = 0
     while waitpid(pid, &status, 0) != pid {

@@ -56,6 +56,18 @@ package struct ExecutionMember: Codable, Hashable, Sendable {
   }
 }
 
+/// A best-effort OS report attributed to this execution; permission policy decides whether a
+/// request is useful. It cannot change the execution's existing sandbox or replay its operation.
+package struct ExecutionSandboxViolation: Sendable, Equatable {
+  package let operation: String
+  package let path: String
+
+  package init(operation: String, path: String) {
+    self.operation = operation
+    self.path = path
+  }
+}
+
 /// Persisted before the bootstrap releases its target. Backend data is ownership
 /// evidence, never permission to launch or to expose an execution's results.
 package struct ExecutionRecoveryState: Codable, Sendable {
@@ -118,6 +130,9 @@ package protocol ExecutionOwnership: Sendable {
   /// Installed during bindOwnership; invoked before the target can execute.
   func beforeStart(_ handler: @escaping @Sendable (ExecutionMember) throws -> Void)
 
+  /// Installed before launch. Missing, untrusted or unattributable reports produce no callback.
+  func onSandboxViolation(_ handler: @escaping @Sendable (ExecutionSandboxViolation) -> Void)
+
   /// Return identities whose exit is unconfirmed, including after a deadline. Running sandboxes
   /// return known identities; classification begins after root exit or cancellation.
   func members() async throws -> [ExecutionMember]
@@ -139,6 +154,10 @@ package protocol ExecutionOwnership: Sendable {
 }
 
 extension ExecutionOwnership {
+  package func onSandboxViolation(
+    _ handler: @escaping @Sendable (ExecutionSandboxViolation) -> Void
+  ) {}
+
   package func recoveryState() throws -> ExecutionRecoveryState {
     throw ExecutionEnvironmentError.unavailable("Durable execution ownership is unavailable")
   }

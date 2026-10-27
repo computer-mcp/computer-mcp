@@ -61,7 +61,7 @@ package enum GatewayPermissionCallError: Error, LocalizedError, AuditErrorClassi
       return value
     case .required(let requests, _, let afterDispatch):
       let ids = requests.map { JSONValue.string($0.id.uuidString) }
-      return [
+      var fields: [String: JSONValue] = [
         "request_ids": .array(ids),
         "call_dispatched": .bool(afterDispatch),
         "request_group_id": .string(
@@ -77,6 +77,13 @@ package enum GatewayPermissionCallError: Error, LocalizedError, AuditErrorClassi
           ),
         ]),
       ]
+      if afterDispatch, let invocation = requests.first?.invocation {
+        fields["original_call"] = .object([
+          "tool": .string(invocation.tool),
+          "project_id": invocation.projectID.map(JSONValue.string) ?? .null,
+        ])
+      }
+      return fields
     }
   }
 

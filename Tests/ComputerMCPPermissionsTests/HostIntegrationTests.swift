@@ -4,6 +4,43 @@ import Testing
 @testable import ComputerMCPPermissions
 
 struct HostIntegrationTests {
+  @Test(arguments: [1.0, 5.1])
+  func completedExecutionsAcceptOnlyTheBoundedAttributedReportDrain(delay: TimeInterval) throws {
+    var ledger = PermissionLedger()
+    let original = InvocationRequirements(sandboxProjectID: "project")
+    let proof = try authorization(
+      from: ledger.authorize(invocation: invocation(), requirements: original, now: instant))
+    let execution = try ledger.startExecution(
+      owner: client, authorizationIDs: [proof.id], now: instant)
+    try ledger.finishExecution(
+      execution.id, retainUntil: instant.addingTimeInterval(60), now: instant)
+    let need = DiscoveredRequirement.network(
+      .init(host: "after-exit.example", projectID: "project", isLocalNetwork: false))
+    if delay > DiscoveredRequirement.completedReportWindow {
+      #expect(throws: PermissionModelError.invalidAuthorization) {
+        try ledger.recordDiscoveredNeeds(
+          executionID: execution.id, principal: client, needs: [need],
+          now: instant.addingTimeInterval(delay))
+      }
+      #expect(ledger.requests.isEmpty)
+    } else {
+      guard
+        case .requests(let requests) = try ledger.recordDiscoveredNeeds(
+          executionID: execution.id, principal: client, needs: [need],
+          now: instant.addingTimeInterval(delay))
+      else { throw PermissionModelError.invalidAuthorization }
+      #expect(requests.count == 1)
+      #expect(ledger.authorizations[proof.id]?.requirements == original)
+      #expect(ledger.executions[execution.id]?.isRunning == false)
+      _ = try ledger.revokeAuthorization(proof.id)
+      #expect(throws: PermissionModelError.invalidAuthorization) {
+        try ledger.recordDiscoveredNeeds(
+          executionID: execution.id, principal: client, needs: [need],
+          now: instant.addingTimeInterval(delay))
+      }
+    }
+  }
+
   @Test func simultaneousConnectionConsentsKeepIndependentLifetimes() throws {
     var ledger = PermissionLedger()
     try ledger.setPermission(

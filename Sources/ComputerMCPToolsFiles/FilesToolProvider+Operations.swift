@@ -1822,6 +1822,7 @@ extension FilesToolProvider {
     let marker = "__COMPUTER_MCP_FILE_DOWNLOAD_META__"
     var arguments = [
       "--disable",
+      "--proxytunnel",
       "--fail",
       "--silent",
       "--show-error",

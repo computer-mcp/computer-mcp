@@ -4415,6 +4415,7 @@ final class FilesToolProviderTests {
       (payload.objectValue?["argv"])
         == (.array([
           .string("--disable"),
+          .string("--proxytunnel"),
           .string("--fail"),
           .string("--silent"),
           .string("--show-error"),

@@ -21,10 +21,10 @@ package enum MacOSPlatform {
       gitExecutable: "/usr/bin/git",
       fileChanges: { try DirectoryEventFileChangeMonitor(fileURL: $0) },
       permissionPolicyReader: DarwinManagedPolicyReader(),
-      executionProxy: { id, policy in
+      executionProxy: { id, policy, onDenial in
         try await EgressProxy.start(
           executionID: id.uuidString, policy: policy, routing: DarwinEgressRouting(),
-          limits: EgressLimits())
+          limits: EgressLimits(), onDenial: onDenial)
       }
     )
   }

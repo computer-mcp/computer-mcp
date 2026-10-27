@@ -19,7 +19,14 @@ extension WorktreeRepository {
       validateHead: false,
       { lock -> WorktreeMergeResult? in
         guard var pending = try readMerge(projectID) else { return nil }
-        if pending.phase == .finished {
+        // The checkout phase is durable before any main files or index change.
+        // Earlier candidates can be discarded even if the owner has since
+        // committed or rebased; unknown checkout outcomes must be reconciled.
+        if [.captured, .prepared].contains(pending.phase) {
+          try authorize(pending.record, [])
+          try advanceMerge(&pending, to: .abandoned)
+        }
+        if [.finished, .abandoned].contains(pending.phase) {
           try cleanMergeStaging(pending)
           return nil
         }

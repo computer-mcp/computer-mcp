@@ -18,6 +18,124 @@ import Testing
 #endif
 
 @Suite struct ExecutionRevocationCoordinatorTests {
+  @Test func expiredReconciliationBudgetDoesNotRevokeUnrelatedExecutions() async throws {
+    let f = try ExecutionFixture()
+    let coordinator = try f.coordinator()
+    try await coordinator.recover()
+    let id = try f.paths.authorize(f.paths.project, operation: .read, once: false)
+    let context = try await coordinator.prepare(authorizationID: id, context: f.context)
+    _ = try await f.start(context)
+    try context.finishAdmission()
+    await #expect(throws: WorktreeError.self) {
+      try await coordinator.reconcile(until: .now)
+    }
+    // Join the expired pass, then check that ordinary reconciliation and
+    // admission remain usable while the unrelated execution is still live.
+    try? await coordinator.reconcile()
+    try await coordinator.reconcile()
+    #expect(f.platform.owners.allSatisfy { !$0.ended })
+    let nextID = try f.paths.authorize(f.paths.project, operation: .read, once: false)
+    let next = try await coordinator.prepare(authorizationID: nextID, context: f.context)
+    try next.finishAdmission()
+    try await coordinator.stopExecutions([context.executionID, next.executionID])
+  }
+
+  @Test(arguments: [false, true])
+  func worktreeTerminationUsesOneDeadlineForEveryWriter(expire: Bool) async throws {
+    let f = try ExecutionFixture()
+    let admission = try f.worktreeAdmission()
+    let coordinator = try f.coordinator()
+    try await coordinator.recover()
+    for _ in 0..<3 {
+      let id = try f.paths.authorize(f.paths.project, operation: .read, once: false)
+      let context = try await coordinator.prepare(
+        authorizationID: id, context: f.context, worktreeAdmission: admission)
+      _ = try await f.start(context)
+      try context.finishAdmission()
+    }
+    for owner in f.platform.owners {
+      owner.setCancellation { deadline in
+        if expire {
+          try await Task.sleep(
+            until: min(deadline, .now.advanced(by: .milliseconds(300))), clock: .continuous)
+          throw CancellationError()
+        }
+      }
+    }
+    let operation = UUID()
+    let start = ContinuousClock.now
+    let deadline = start.advanced(by: expire ? .milliseconds(200) : .seconds(2))
+    if expire {
+      await #expect(throws: (any Error).self) {
+        try await coordinator.terminateWorktreeWriters(
+          admission, operationID: operation, until: deadline)
+      }
+      #expect(start.duration(to: .now) < .milliseconds(700))
+      #expect(f.platform.owners.contains { $0.cancellationDeadlines.contains(deadline) })
+      #expect(throws: WorktreeError.self) { try admission.requireDrained(operationID: operation) }
+      #expect(throws: WorktreeError.self) {
+        try admission.reserve(ownerID: UUID(), executionID: UUID())
+      }
+    } else {
+      try await coordinator.terminateWorktreeWriters(
+        admission, operationID: operation, until: deadline)
+      #expect(f.platform.owners.allSatisfy { $0.cancellationDeadlines.contains(deadline) })
+      try admission.requireDrained(operationID: operation)
+    }
+    for owner in f.platform.owners {
+      owner.setCancellation(nil)
+      owner.complete()
+    }
+    // A monitoring pass may still be joining an injected cancellation failure.
+    if expire { try? await coordinator.reconcile() }
+    try await coordinator.reconcile()
+  }
+
+  @Test func worktreeDeadlineBoundsWaitingForUnrelatedReconciliation() async throws {
+    let f = try ExecutionFixture()
+    let admission = try f.worktreeAdmission()
+    let coordinator = try f.coordinator()
+    try await coordinator.recover()
+    let id = try f.paths.authorize(f.paths.project, operation: .read, once: false)
+    let context = try await coordinator.prepare(authorizationID: id, context: f.context)
+    _ = try await f.start(context)
+    try context.finishAdmission()
+    let gate = ReconciliationTestGate()
+    let owner = try #require(f.platform.owners.first)
+    owner.setCancellation { _ in await gate.wait() }
+    let writerID = try f.paths.authorize(f.paths.project, operation: .read, once: false)
+    let writer = try await coordinator.prepare(
+      authorizationID: writerID, context: f.context, worktreeAdmission: admission)
+    _ = try await f.start(writer)
+    try writer.finishAdmission()
+    try f.paths.store.transactionWithDatabase { _, ledger in
+      try ledger.terminateExecution(context.executionID)
+    }
+    let recovery = Task { try await coordinator.reconcile() }
+    let entryDeadline = ContinuousClock.now.advanced(by: .seconds(2))
+    while !(await gate.entered), ContinuousClock.now < entryDeadline {
+      try await Task.sleep(for: .milliseconds(5))
+    }
+    try #require(await gate.entered)
+    let release = Task {
+      try await Task.sleep(for: .seconds(1))
+      await gate.release()
+    }
+    let start = ContinuousClock.now
+    let operation = UUID()
+    await #expect(throws: WorktreeError.self) {
+      try await coordinator.terminateWorktreeWriters(
+        admission, operationID: operation, until: start.advanced(by: .milliseconds(100)))
+    }
+    #expect(start.duration(to: .now) < .milliseconds(700))
+    #expect(throws: WorktreeError.self) { try admission.requireDrained(operationID: operation) }
+    await gate.release()
+    release.cancel()
+    try await recovery.value
+    try await coordinator.reconcile()
+    try admission.requireDrained(operationID: operation)
+  }
+
   @Test func worktreeClosureDrainsInvocationAndDeniesLaunchAndInput() async throws {
     let f = try ExecutionFixture()
     let admission = try f.worktreeAdmission()
@@ -1216,6 +1334,12 @@ private final class DurableTestOwnership: ExecutionOwnership, @unchecked Sendabl
   private var cancellations: [@Sendable () -> Void] = []
   private var reports: [@Sendable (ExecutionSandboxViolation) -> Void] = []
   private var finished = false
+  private var cancellation: (@Sendable (ContinuousClock.Instant) async throws -> Void)?
+  private var deadlines: [ContinuousClock.Instant] = []
+  var cancellationDeadlines: [ContinuousClock.Instant] { lock.withLock { deadlines } }
+  func setCancellation(_ action: (@Sendable (ContinuousClock.Instant) async throws -> Void)?) {
+    lock.withLock { cancellation = action }
+  }
   var ended: Bool { lock.withLock { finished } }
   init(member: ExecutionMember) { self.member = member }
   func recoveryState() throws -> ExecutionRecoveryState {
@@ -1249,6 +1373,11 @@ private final class DurableTestOwnership: ExecutionOwnership, @unchecked Sendabl
     lock.withLock { cancellations.append(handler) }
   }
   func cancel(until deadline: ContinuousClock.Instant) async throws -> ExecutionExit {
+    let action = lock.withLock {
+      deadlines.append(deadline)
+      return cancellation
+    }
+    try await action?(deadline)
     for handler in lock.withLock({ cancellations }) { handler() }
     complete()
     return .init(status: 0)
@@ -1262,6 +1391,22 @@ private final class DurableTestOwnership: ExecutionOwnership, @unchecked Sendabl
       try await Task.sleep(for: .milliseconds(5))
     }
     return .init(status: 0)
+  }
+}
+
+private actor ReconciliationTestGate {
+  private var waiters: [CheckedContinuation<Void, Never>] = []
+  private var released = false
+  private(set) var entered = false
+  func wait() async {
+    entered = true
+    if released { return }
+    await withCheckedContinuation { waiters.append($0) }
+  }
+  func release() {
+    released = true
+    for waiter in waiters { waiter.resume() }
+    waiters.removeAll()
   }
 }
 

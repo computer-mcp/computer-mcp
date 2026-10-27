@@ -360,7 +360,27 @@ extension WorktreeRepository {
     if journal.phase == .publishing {
       let branch = try revision(journal.branch)
       let preserved = try revision(journal.preservationRef)
-      if branch == journal.capturedOID, preserved == journal.expectedOID {
+      if journal.expectedOID == journal.capturedOID {
+        // Git writes no branch reflog entry for an unchanged OID. Accept only
+        // a complete before/after protection set, then replay the transaction
+        // under current authority and expected-value locks.
+        try requireDirectRef(journal.branch, oid: journal.expectedOID)
+        guard let before = journal.protectionsBefore else {
+          throw WorktreeError.recoveryRequired("Publication protection receipt is missing.")
+        }
+        var matchesBefore = true
+        var matchesAfter = true
+        for oid in Set(journal.roots + [journal.expectedOID]) {
+          let ref = preservationRef(journal.record, oid: oid)
+          let current = try revision(ref)
+          if let current { try requireDirectRef(ref, oid: current) }
+          matchesBefore = matchesBefore && current == before[ref]
+          matchesAfter = matchesAfter && current == oid
+        }
+        guard matchesBefore || matchesAfter else {
+          throw WorktreeError.recoveryRequired("Publication refs have a mixed transaction outcome.")
+        }
+      } else if branch == journal.capturedOID, preserved == journal.expectedOID {
         try requireDirectRef(journal.branch, oid: journal.capturedOID)
         let receipt = try command(["reflog", "show", "-1", "--format=%H%x00%gs", journal.branch])
           .output

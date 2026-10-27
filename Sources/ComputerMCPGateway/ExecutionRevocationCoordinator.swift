@@ -296,7 +296,17 @@ package final class ExecutionRevocationCoordinator: ExecutionRecoveryAuthorizing
 
   /// Closing one runtime seals only its executions. Local stop intent survives
   /// failed storage writes until their owned resources and durable receipts join.
-  package func stopExecutions(_ ids: Set<UUID>) async throws {
+  package func stopExecutions(
+    _ ids: Set<UUID>, until deadline: ContinuousClock.Instant? = nil
+  ) async throws {
+    try await ExecutionReconciliation().run(until: deadline) { [self] in
+      try await stopExecutionResources(ids, until: deadline)
+    }
+  }
+
+  private func stopExecutionResources(
+    _ ids: Set<UUID>, until deadline: ContinuousClock.Instant?
+  ) async throws {
     guard !ids.isEmpty else { return }
     let resources = publication.withLock {
       lock.withLock {
@@ -318,15 +328,17 @@ package final class ExecutionRevocationCoordinator: ExecutionRecoveryAuthorizing
     do { try persistOwnerStops(ids) } catch { firstError = error }
     for cancellation in resources.cancellations { Task.detached { await cancellation() } }
     for proxy in resources.proxies {
+      try checkTerminationDeadline(deadline)
       do { try await proxy.revoke() } catch { firstError = firstError ?? error }
     }
     for (executionID, child, ownership) in resources.children {
+      try checkTerminationDeadline(deadline)
       do {
-        _ = try await ownership.cancel()
+        _ = try await ownership.cancel(until: deadline ?? .now.advanced(by: .seconds(5)))
         try confirmChild(child, executionID: executionID)
       } catch { firstError = firstError ?? error }
     }
-    do { try await reconcile() } catch { firstError = firstError ?? error }
+    do { try await reconcile(until: deadline) } catch { firstError = firstError ?? error }
     if let firstError { throw firstError }
   }
 
@@ -362,19 +374,31 @@ package final class ExecutionRevocationCoordinator: ExecutionRecoveryAuthorizing
     guard ContinuousClock.now < deadline else {
       throw WorktreeError.busy("Writer deadline expired.")
     }
-    try await stopExecutions(Set(uses.map(\.executionID)))
+    try await stopExecutions(Set(uses.map(\.executionID)), until: deadline)
     while true {
       try Task.checkCancellation()
       guard ContinuousClock.now < deadline else {
         throw WorktreeError.busy("Worktree writer termination is incomplete.")
       }
-      try await reconcile()
+      try await reconcile(until: deadline)
+      guard ContinuousClock.now < deadline else {
+        throw WorktreeError.busy("Worktree writer termination is incomplete.")
+      }
       do {
         try admission.requireDrained(operationID: operationID)
         return
       } catch WorktreeError.busy {
-        try await Task.sleep(for: .milliseconds(10))
+        try await Task.sleep(
+          until: min(deadline, .now.advanced(by: .milliseconds(10))), clock: .continuous)
       }
+    }
+  }
+
+  private func checkTerminationDeadline(_ deadline: ContinuousClock.Instant?) throws {
+    guard let deadline else { return }
+    try Task.checkCancellation()
+    guard ContinuousClock.now < deadline else {
+      throw ExecutionReconciliation.DeadlineExpired()
     }
   }
 
@@ -410,12 +434,15 @@ package final class ExecutionRevocationCoordinator: ExecutionRecoveryAuthorizing
     }
   }
 
-  package func reconcile() async throws {
-    try await reconciliation.run { [self] in
+  package func reconcile(until deadline: ContinuousClock.Instant? = nil) async throws {
+    try await reconciliation.run(until: deadline) { [self] in
       do {
-        try await reconcileResources()
+        try await reconcileResources(until: deadline)
         try resumeAfterReconciliationIfDrained()
       } catch {
+        // A caller's exhausted budget is not an infrastructure failure. Durable
+        // stop intent remains available to the next monitoring pass.
+        if error is ExecutionReconciliation.DeadlineExpired { throw error }
         lock.withLock { ready = false }
         let resources = lock.withLock {
           (
@@ -424,8 +451,14 @@ package final class ExecutionRevocationCoordinator: ExecutionRecoveryAuthorizing
           )
         }
         for cancellation in resources.2 { Task.detached { await cancellation() } }
-        for proxy in resources.1 { try? await proxy.revoke() }
-        for ownership in resources.0 { _ = try? await ownership.cancel() }
+        // Expiry bounds the caller's wait, but must not skip fail-closed
+        // cancellation of resources whose admission was just sealed.
+        for proxy in resources.1 {
+          try? await proxy.revoke()
+        }
+        for ownership in resources.0 {
+          _ = try? await ownership.cancel(until: deadline ?? .now.advanced(by: .seconds(5)))
+        }
         throw error
       }
     }
@@ -707,7 +740,8 @@ package final class ExecutionRevocationCoordinator: ExecutionRecoveryAuthorizing
     }
   }
 
-  private func reconcileResources() async throws {
+  private func reconcileResources(until deadline: ContinuousClock.Instant?) async throws {
+    try checkTerminationDeadline(deadline)
     try persistOwnerStops(lock.withLock { pendingOwnerStops })
     try refreshPolicy?()
     let pending = lock.withLock {
@@ -720,7 +754,7 @@ package final class ExecutionRevocationCoordinator: ExecutionRecoveryAuthorizing
     }
     for id in pending.0 { try persistAdmissionClosure(id) }
     for (id, executionID) in pending.1 { try persistWorkCompletion(id, executionID: executionID) }
-    try await reconcileIndependentOwnership()
+    try await reconcileIndependentOwnership(until: deadline)
     func validate(_ ledger: inout PermissionLedger) {
       // This reconciles every live proof and queues dependent terminations in
       // one fixed-point pass; individual caller access is checked at each use.
@@ -746,6 +780,7 @@ package final class ExecutionRevocationCoordinator: ExecutionRecoveryAuthorizing
     }
     var firstError: (any Error)?
     for record in snapshot.0 {
+      try checkTerminationDeadline(deadline)
       do {
         let execution = snapshot.1.executions[record.id]
         if let execution {
@@ -791,8 +826,9 @@ package final class ExecutionRevocationCoordinator: ExecutionRecoveryAuthorizing
                 && pendingChildren[record.id]?.contains(child) == true
             })
           {
+            try checkTerminationDeadline(deadline)
             if let ownership = lock.withLock({ children[child] }) {
-              _ = try await ownership.cancel()
+              _ = try await ownership.cancel(until: deadline ?? .now.advanced(by: .seconds(5)))
             } else if let recovery = entry.recovery {
               guard let boot = launcher.bootSessionID else {
                 throw ExecutionEnvironmentError.unavailable("Recovery boot identity is unavailable")
@@ -800,7 +836,7 @@ package final class ExecutionRevocationCoordinator: ExecutionRecoveryAuthorizing
               if record.boot == boot {
                 let ownership = try await launcher.recover(recovery)
                 lock.withLock { children[child] = ownership }
-                _ = try await ownership.cancel()
+                _ = try await ownership.cancel(until: deadline ?? .now.advanced(by: .seconds(5)))
               }
             } else if record.ownerID == ownerID {
               // A current launch may still be moving from reservation to its
@@ -900,10 +936,12 @@ package final class ExecutionRevocationCoordinator: ExecutionRecoveryAuthorizing
     if let firstError { throw firstError }
   }
 
-  private func reconcileIndependentOwnership() async throws {
-    try await reconcileOrphanedProxies()
+  private func reconcileIndependentOwnership(until deadline: ContinuousClock.Instant?) async throws
+  {
+    try await reconcileOrphanedProxies(until: deadline)
     let records = try journal.all()
     for entry in records {
+      try checkTerminationDeadline(deadline)
       let orphaned = try store.readWithDatabase { database, ledger in
         let record = try ExecutionRuntimeRecord.load(entry.execution, database)
         return record?.children[entry.child] == nil || ledger.executions[entry.execution] == nil
@@ -921,7 +959,7 @@ package final class ExecutionRevocationCoordinator: ExecutionRecoveryAuthorizing
             ownership = try await launcher.recover(entry.recovery)
             lock.withLock { children[entry.child] = ownership }
           }
-          _ = try await ownership.cancel()
+          _ = try await ownership.cancel(until: deadline ?? .now.advanced(by: .seconds(5)))
         }
         try confirmChild(entry.child, executionID: entry.execution)
       }
@@ -974,9 +1012,10 @@ package final class ExecutionRevocationCoordinator: ExecutionRecoveryAuthorizing
     }
   }
 
-  private func reconcileOrphanedProxies() async throws {
+  private func reconcileOrphanedProxies(until deadline: ContinuousClock.Instant?) async throws {
     let candidates = lock.withLock { Array(proxies.keys) }
     for id in candidates {
+      try checkTerminationDeadline(deadline)
       let orphaned = try store.readWithDatabase { database, _ in
         try ExecutionRuntimeRecord.load(id, database) == nil
       }
@@ -994,7 +1033,8 @@ package final class ExecutionRevocationCoordinator: ExecutionRecoveryAuthorizing
       }
       try await resources.0?.revoke()
       for (child, ownership) in resources.1 {
-        _ = try await ownership.cancel()
+        try checkTerminationDeadline(deadline)
+        _ = try await ownership.cancel(until: deadline ?? .now.advanced(by: .seconds(5)))
         try confirmChild(child, executionID: id)
       }
       let receipts = try journal.all().filter { $0.execution == id }
@@ -1089,13 +1129,41 @@ struct ExecutionRuntimeRecord: Codable {
 }
 
 private actor ExecutionReconciliation {
-  private var task: Task<Void, any Error>?
-  func run(_ operation: @escaping @Sendable () async throws -> Void) async throws {
-    if let task { return try await task.value }
-    let task = Task { try await operation() }
-    self.task = task
-    defer { self.task = nil }
-    try await task.value
+  struct DeadlineExpired: Error {}
+
+  private var current: (id: UUID, task: Task<Void, any Error>)?
+
+  func run(
+    until deadline: ContinuousClock.Instant? = nil,
+    _ operation: @escaping @Sendable () async throws -> Void
+  ) async throws {
+    if current == nil {
+      let id = UUID()
+      let task = Task {
+        defer { if current?.id == id { current = nil } }
+        try await operation()
+      }
+      current = (id, task)
+    }
+    let work = current!
+    if let deadline {
+      // Reconciliation also serves other callers. Expiry stops this wait, while
+      // the owner retains the in-flight cleanup and its durable completion proof.
+      while current?.id == work.id {
+        try Task.checkCancellation()
+        guard ContinuousClock.now < deadline else {
+          throw WorktreeError.busy("Worktree writer termination is incomplete.")
+        }
+        try await Task.sleep(
+          until: min(deadline, .now.advanced(by: .milliseconds(10))), clock: .continuous)
+      }
+      try Task.checkCancellation()
+    }
+    do {
+      try await work.task.value
+    } catch is DeadlineExpired {
+      throw WorktreeError.busy("Worktree writer termination is incomplete.")
+    }
   }
 }
 

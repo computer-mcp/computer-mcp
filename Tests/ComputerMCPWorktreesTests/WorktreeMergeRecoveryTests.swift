@@ -4,6 +4,62 @@ import Testing
 @testable import ComputerMCPWorktrees
 
 struct WorktreeMergeRecoveryTests {
+  @Test(arguments: ["dirty", "captured", "prepared"])
+  func preCheckoutCandidateCanBeReplacedAfterOwnerCommitAndRebase(interruption: String) throws {
+    try fixture { directory in
+      let f = try WorktreeFixture(directory)
+      let original = try f.service()
+      let created = try original.create(name: "retry")
+      let old = try f.raw(["rev-parse", "HEAD"])
+      _ = try f.privateCommit(original, projectID: created.projectID)
+      let failure = MergePhaseFailure(
+        phase: interruption,
+        url: f.storage.journals.appendingPathComponent("merges/" + created.projectID + ".json"))
+      if interruption == "dirty" {
+        try Data("owner\n".utf8).write(to: f.repository.appendingPathComponent("file.txt"))
+      }
+      let service = try f.service(journalIO: .init(beforeDirectorySync: { try failure.check() }))
+      #expect(throws: (any Error).self) {
+        try service.merge(projectID: created.projectID) { _, _ in }
+      }
+      let pending = try #require(try original.readMerge(created.projectID))
+      #expect([.captured, .prepared].contains(pending.phase))
+      if interruption == "dirty" {
+        try f.raw(["add", "file.txt"])
+        try f.raw(["commit", "-m", "owner"])
+      } else {
+        try f.raw(["commit", "--allow-empty", "-m", "owner"])
+      }
+      let ownerTip = try f.raw(["rev-parse", "HEAD"])
+      let git = PrivateWorktreeGit(
+        f: f, topology: try original.topology(projectID: created.projectID))
+      try git.run(["rebase", "-X", "theirs", "--onto", ownerTip, old])
+      let rebased = try git.run(["rev-parse", "HEAD"])
+      if interruption == "prepared" {
+        let abandoned = MergePhaseFailure(
+          phase: "abandoned",
+          url: f.storage.journals.appendingPathComponent("merges/" + created.projectID + ".json"))
+        let retry = try f.service(journalIO: .init(beforeDirectorySync: { try abandoned.check() }))
+        #expect(throws: CancellationError.self) {
+          try retry.merge(projectID: created.projectID) { _, _ in }
+        }
+        #expect(abandoned.fired)
+        #expect(try f.raw(["rev-parse", "HEAD"]) == ownerTip)
+      }
+      let result = try original.merge(projectID: created.projectID) { _, _ in }
+      #expect(result.operationID != pending.operationID)
+      #expect(result.oid == rebased)
+      #expect(try f.raw(["rev-parse", "HEAD"]) == rebased)
+      #expect(try f.raw(["merge-base", ownerTip, rebased]) == ownerTip)
+      #expect(
+        try f.raw(["rev-parse", original.preservationRef(pending.record, oid: pending.target)])
+          == pending.target)
+      if let stage = pending.staging {
+        #expect(!FileManager.default.fileExists(atPath: stage.path))
+      }
+    }
+  }
+
   @Test(arguments: ["captured", "prepared", "checkout", "ready", "published", "ledger", "finished"])
   func durablePhasesReconcileWithoutReset(phase: String) throws {
     try fixture { directory in

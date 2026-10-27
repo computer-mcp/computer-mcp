@@ -2,7 +2,7 @@ import Foundation
 
 struct WorktreeMergeJournal: Codable {
   enum Phase: String, Codable {
-    case captured, prepared, checkout, ready, published, ledger, finished
+    case captured, prepared, checkout, ready, published, ledger, finished, abandoned
   }
   let version: Int
   let operationID: UUID

@@ -54,11 +54,7 @@ struct ProfileDocument: Codable {
       "plugins", "mcp_servers",
     ]
     for key in c.allKeys where !keys.contains(key.stringValue) {
-      let guidance =
-        key.stringValue == "automation"
-        ? " A principal whose programs control other apps needs Full access (full_access) with local consent."
-        : ""
-      throw ConfigurationError.invalid("Unknown profile field: \(key.stringValue)." + guidance)
+      throw ConfigurationError.invalid("Unknown profile field: \(key.stringValue).")
     }
     let id = try c.decode(GatewayProfileID.self, forKey: ProfileKey("id"))
     let callers = try c.decode(Set<GatewayCallerKind>.self, forKey: ProfileKey("allowed_callers"))

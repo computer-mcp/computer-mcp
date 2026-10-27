@@ -56,25 +56,14 @@ import Testing
     } catch { #expect(String(describing: error).contains(fixture.1)) }
   }
 
-  @Test(
-    arguments: [
-      "", "'com.apple.Notes' = 'allow'", "'*' = 'allow'", "'com.apple.Notes' = 'deny'",
-    ], [false, true])
-  func automationTableIsUnknownWithFullAccessGuidance(entry: String, fullAccess: Bool) throws {
-    let text = prefix + "\nfull_access = \(fullAccess)\n[profiles.automation]\n" + entry
-    for publicConfiguration in [false, true] {
-      do {
-        if publicConfiguration {
-          _ = try GatewayConfiguration.load(text: "schema_version = 1\n" + text)
-        } else {
-          _ = try PermissionProfileManifest.decode(text)
-        }
-        Issue.record("Accepted an unknown profile table")
-      } catch {
-        let message = String(describing: error)
-        #expect(message.contains("Unknown profile field: automation"))
-        #expect(message.contains("Full access"))
-        #expect(message.contains("local consent"))
+  @Test(arguments: ["unknown = true", "[profiles.unknown]\nvalue = 'allow'"], [false, true])
+  func unknownProfileFieldsFail(field: String, publicConfiguration: Bool) {
+    let text = prefix + "\n" + field
+    #expect(throws: ConfigurationError.invalid("Unknown profile field: unknown.")) {
+      if publicConfiguration {
+        _ = try GatewayConfiguration.load(text: "schema_version = 1\n" + text)
+      } else {
+        _ = try PermissionProfileManifest.decode(text)
       }
     }
   }

@@ -3,6 +3,7 @@ import ComputerMCPCore
 import ComputerMCPPermissions
 import ComputerMCPPersistence
 import ComputerMCPSandbox
+import ComputerMCPWorktrees
 import Foundation
 import GRDB
 import Testing
@@ -17,6 +18,59 @@ import Testing
 #endif
 
 @Suite struct ExecutionRevocationCoordinatorTests {
+  @Test func worktreeClosureDrainsInvocationAndDeniesLaunchAndInput() async throws {
+    let f = try ExecutionFixture()
+    let admission = try f.worktreeAdmission()
+    let coordinator = try f.coordinator()
+    try await coordinator.recover()
+    var contexts: [PreparedExecutionContext] = []
+    for _ in 0..<2 {
+      let id = try f.paths.authorize(f.paths.project, operation: .read, once: false)
+      let context = try await coordinator.prepare(
+        authorizationID: id, context: f.context, worktreeAdmission: admission)
+      _ = try await f.start(context)
+      contexts.append(context)
+    }
+    let operation = UUID()
+    await #expect(throws: WorktreeError.self) {
+      try await coordinator.terminateWorktreeWriters(
+        admission, operationID: operation, until: .now.advanced(by: .milliseconds(100)))
+    }
+    #expect(f.platform.owners.allSatisfy { $0.ended })
+    #expect(throws: WorktreeError.self) { try admission.requireDrained(operationID: operation) }
+    await #expect(throws: (any Error).self) { try await f.start(contexts[0]) }
+    #expect(throws: (any Error).self) {
+      try contexts[1].accessExecution(contexts[1].executionID, operation: .writeInput)
+    }
+    for context in contexts { try context.finishAdmission() }
+    try await coordinator.terminateWorktreeWriters(
+      admission, operationID: operation, until: .now.advanced(by: .seconds(2)))
+    try admission.requireDrained(operationID: operation)
+    try await coordinator.terminateWorktreeWriters(
+      admission, operationID: operation, until: .now.advanced(by: .seconds(2)))
+  }
+
+  @Test func foreignWorktreeOwnerAndRestartKeepAdmissionClosed() async throws {
+    let f = try ExecutionFixture()
+    let admission = try f.worktreeAdmission()
+    let foreign = try admission.reserve(ownerID: UUID(), executionID: UUID())
+    let operation = UUID()
+    do {
+      let coordinator = try f.coordinator()
+      try await coordinator.recover()
+      await #expect(throws: WorktreeError.self) {
+        try await coordinator.terminateWorktreeWriters(
+          admission, operationID: operation, until: .now.advanced(by: .seconds(1)))
+      }
+    }
+    let restored = try JSONDecoder().decode(
+      WorktreeAdmission.self, from: JSONEncoder().encode(admission))
+    #expect(throws: WorktreeError.self) { try restored.requireOpen(foreign) }
+    #expect(throws: WorktreeError.self) { try restored.requireDrained(operationID: operation) }
+    try restored.acknowledge(foreign)
+    try restored.requireDrained(operationID: operation)
+  }
+
   @Test(arguments: [ComputerMCPPermissions.ExecutionMode.sandbox, .fullAccess(.standing)])
   func downloadAdmissionKeepsProjectWriteAndDefersHostClassificationToTheProxy(
     mode: ComputerMCPPermissions.ExecutionMode
@@ -921,6 +975,13 @@ import Testing
     let owner = f.platform.makeOwner()
     let recovery = try owner.recoveryState()
     var record = ExecutionRuntimeRecord(id: execution.id, ownerID: UUID(), boot: "boot")
+    let admission = try f.worktreeAdmission()
+    let use = try admission.reserve(ownerID: record.ownerID, executionID: execution.id)
+    let operation = UUID()
+    _ = try admission.close(operationID: operation)
+    record.worktreeUse = use
+    record.worktreeDurable = true
+    record.invocationInFlight = stage != "ack"
     if stage != "reserve" {
       record.children[child] = .init(
         recovery: stage == "child" ? nil : recovery,
@@ -945,10 +1006,15 @@ import Testing
       try journal.save(
         .init(
           child: child, execution: execution.id, owner: record.ownerID,
-          boot: "boot", recovery: recovery, completed: owner.ended, released: stage == "ack"))
+          boot: "boot", recovery: recovery, worktreeUse: use,
+          completed: owner.ended, released: stage == "ack"))
     }
     let coordinator = try f.coordinator()
     try await coordinator.recover()
+    try admission.requireDrained(operationID: operation)
+    #expect(throws: WorktreeError.self) {
+      try admission.reserve(ownerID: UUID(), executionID: UUID())
+    }
     if !["reserve", "child"].contains(stage) { #expect(owner.ended) }
     if !["epoch", "database-rollback"].contains(stage) {
       #expect(try f.execution(execution.id).interruptedAt != nil || stage == "ack")
@@ -1015,6 +1081,23 @@ private final class ExecutionFixture: @unchecked Sendable {
       temporaryDirectory: try! SandboxPath(paths.derived.path), purpose: .projectProgram)
   }
   init() throws { paths = try DurablePathFixture() }
+  func worktreeAdmission() throws -> WorktreeAdmission {
+    let directory = paths.root.appendingPathComponent("admission")
+    try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: false)
+    let identity = try WorktreeDirectory(directory).identity
+    let generation = UUID()
+    let state: [String: Any] = [
+      "projectID": "derived", "generation": generation.uuidString, "writers": [],
+    ]
+    try JSONSerialization.data(withJSONObject: state).write(
+      to: directory.appendingPathComponent("state.json"))
+    let identityJSON = try JSONSerialization.jsonObject(with: JSONEncoder().encode(identity))
+    return try JSONDecoder().decode(
+      WorktreeAdmission.self,
+      from: JSONSerialization.data(withJSONObject: [
+        "projectID": "derived", "generation": generation.uuidString, "directory": identityJSON,
+      ]))
+  }
   func coordinator(
     launcher: ExecutionLauncher? = nil,
     proxyFactory: ExecutionRevocationCoordinator.ProxyFactory? = nil

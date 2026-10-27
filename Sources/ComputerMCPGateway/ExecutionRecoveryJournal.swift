@@ -1,6 +1,7 @@
 import ComputerMCPPlatform
 import ComputerMCPPlatformPOSIX
 import ComputerMCPSandbox
+import ComputerMCPWorktrees
 import Foundation
 
 /// Ownership receipts are separate from permission database backups. A receipt is
@@ -13,6 +14,7 @@ final class ExecutionRecoveryJournal: @unchecked Sendable {
     let owner: UUID
     let boot: String
     let recovery: ExecutionRecoveryState
+    var worktreeUse: WorktreeWriterUse? = nil
     var completed = false
     var released = false
   }

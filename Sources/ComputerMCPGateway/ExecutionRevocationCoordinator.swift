@@ -6,6 +6,7 @@ import ComputerMCPPlatform
 import ComputerMCPPlatformPOSIX
 import ComputerMCPProcess
 import ComputerMCPSandbox
+import ComputerMCPWorktrees
 import Foundation
 import GRDB
 
@@ -87,6 +88,7 @@ package final class ExecutionRevocationCoordinator: ExecutionRecoveryAuthorizing
       try store.transactionWithDatabase { database, ledger in
         for var record in try ExecutionRuntimeRecord.all(database) where !record.completed {
           record.admissionFinished = true
+          record.invocationInFlight = false
           record.workIDs = nil
           try record.auditIdentity?.record(
             "interrupted", executionID: record.id, database: database, decision: .failed)
@@ -137,7 +139,7 @@ package final class ExecutionRevocationCoordinator: ExecutionRecoveryAuthorizing
     authorizationID: UUID, context: GatewaySandboxContext,
     searchPath: [SandboxPath] = [try! SandboxPath("/usr/bin"), try! SandboxPath("/bin")],
     fullAccessEnvironment: [String: String] = [:], connectionID: String? = nil,
-    auditContext: ExecutionContext? = nil
+    auditContext: ExecutionContext? = nil, worktreeAdmission: WorktreeAdmission? = nil
   ) async throws -> PreparedExecutionContext {
     guard lock.withLock({ ready }) else {
       throw ExecutionEnvironmentError.unavailable("Execution recovery has not completed")
@@ -195,6 +197,25 @@ package final class ExecutionRevocationCoordinator: ExecutionRecoveryAuthorizing
       authorizationIDs: execution.authorizationIDs, principal: execution.owner,
       connectionID: connectionID)
     do {
+      if let worktreeAdmission {
+        let use = try worktreeAdmission.reserve(ownerID: ownerID, executionID: execution.id)
+        do {
+          try store.transactionWithDatabase { database, _ in
+            guard var record = try ExecutionRuntimeRecord.load(execution.id, database),
+              record.ownerID == ownerID, !record.completed, !record.admissionFinished
+            else { throw PermissionModelError.invalidAuthorization }
+            record.worktreeUse = use
+            record.invocationInFlight = true
+            record.worktreeDurable =
+              configuration.sandbox != nil || !configuration.permitsProgramLaunch
+            try record.save(database)
+          }
+        } catch {
+          // No prepared context or child has escaped this reservation yet.
+          try? worktreeAdmission.acknowledge(use)
+          throw error
+        }
+      }
       var sandbox = configuration.sandbox
       if sandbox != nil {
         if let proxyFactory {
@@ -309,6 +330,61 @@ package final class ExecutionRevocationCoordinator: ExecutionRecoveryAuthorizing
     if let firstError { throw firstError }
   }
 
+  /// Called with the repository lock held. The persistent gate covers every
+  /// principal and host; this owner can acknowledge only its own executions.
+  package func terminateWorktreeWriters(
+    _ admission: WorktreeAdmission, operationID: UUID,
+    until deadline: ContinuousClock.Instant
+  ) async throws {
+    let uses = try publication.withLock { try admission.close(operationID: operationID) }
+    let records = try store.readWithDatabase { database, _ in
+      try uses.map { use -> ExecutionRuntimeRecord in
+        guard use.ownerID == ownerID,
+          let record = try ExecutionRuntimeRecord.load(use.executionID, database),
+          record.worktreeUse == use
+        else {
+          throw WorktreeError.busy("A different execution owner must acknowledge this writer.")
+        }
+        return record
+      }
+    }
+    // Best-effort Full access ownership cannot authorize destruction of a
+    // writable tree. Its later adapter must retain this distinction.
+    guard
+      records.allSatisfy({ record in
+        record.worktreeDurable == true
+          && record.children.values.allSatisfy { $0.recovery?.sandboxed != false }
+      })
+    else {
+      throw WorktreeError.busy("Unconfined writer completion cannot be proved.")
+    }
+    try Task.checkCancellation()
+    guard ContinuousClock.now < deadline else {
+      throw WorktreeError.busy("Writer deadline expired.")
+    }
+    try await stopExecutions(Set(uses.map(\.executionID)))
+    while true {
+      try Task.checkCancellation()
+      guard ContinuousClock.now < deadline else {
+        throw WorktreeError.busy("Worktree writer termination is incomplete.")
+      }
+      try await reconcile()
+      do {
+        try admission.requireDrained(operationID: operationID)
+        return
+      } catch WorktreeError.busy {
+        try await Task.sleep(for: .milliseconds(10))
+      }
+    }
+  }
+
+  private func requireWorktreeAdmission(_ id: UUID) throws {
+    let use = try store.readWithDatabase { database, _ in
+      try ExecutionRuntimeRecord.load(id, database)?.worktreeUse
+    }
+    if let use { try use.admission.requireOpen(use) }
+  }
+
   private func persistOwnerStops(_ ids: Set<UUID>) throws {
     guard !ids.isEmpty else { return }
     try store.transactionWithDatabase { database, ledger in
@@ -395,6 +471,7 @@ package final class ExecutionRevocationCoordinator: ExecutionRecoveryAuthorizing
   )
     throws -> EffectiveExecutionLimits
   {
+    if operation == .writeInput { try requireWorktreeAdmission(id) }
     let outcome: (Result<EffectiveExecutionLimits, any Error>, Bool) =
       try store.transactionWithDatabase {
         _, ledger in
@@ -436,6 +513,7 @@ package final class ExecutionRevocationCoordinator: ExecutionRecoveryAuthorizing
 
   fileprivate func reserveChild(_ child: UUID, authority: GatewayExecutionAuthority) throws {
     try publication.withLock {
+      try requireWorktreeAdmission(authority.executionID)
       guard lock.withLock({ ready && !closedAdmissions.contains(authority.executionID) }) else {
         throw ExecutionEnvironmentError.unavailable("Execution recovery has not completed")
       }
@@ -468,6 +546,7 @@ package final class ExecutionRevocationCoordinator: ExecutionRecoveryAuthorizing
     }
     ownership.beforeStart { [self] _ in
       try publication.withLock {
+        try requireWorktreeAdmission(authority.executionID)
         guard lock.withLock({ ready && !closedAdmissions.contains(authority.executionID) }) else {
           throw ExecutionEnvironmentError.unavailable("Execution recovery has not completed")
         }
@@ -488,7 +567,10 @@ package final class ExecutionRevocationCoordinator: ExecutionRecoveryAuthorizing
         try journal.save(
           .init(
             child: child, execution: authority.executionID, owner: ownerID, boot: boot,
-            recovery: recovery))
+            recovery: recovery,
+            worktreeUse: try store.readWithDatabase { database, _ in
+              try ExecutionRuntimeRecord.load(authority.executionID, database)?.worktreeUse
+            }))
         let result: Result<Void, any Error> = try store.transactionWithDatabase {
           database, ledger in
           guard var record = try ExecutionRuntimeRecord.load(authority.executionID, database),
@@ -536,6 +618,7 @@ package final class ExecutionRevocationCoordinator: ExecutionRecoveryAuthorizing
   ) throws -> ExecutionWorkLease {
     let workID = UUID()
     try publication.withLock {
+      try requireWorktreeAdmission(authority.executionID)
       try store.transactionWithDatabase { database, ledger in
         guard lock.withLock({ ready && !closedAdmissions.contains(authority.executionID) }),
           var record = try ExecutionRuntimeRecord.load(authority.executionID, database),
@@ -587,8 +670,9 @@ package final class ExecutionRevocationCoordinator: ExecutionRecoveryAuthorizing
   private func persistAdmissionClosure(_ id: UUID) throws {
     try store.transactionWithDatabase { database, ledger in
       guard var record = try ExecutionRuntimeRecord.load(id, database) else { return }
-      guard !record.admissionFinished else { return }
+      guard !record.admissionFinished || record.invocationInFlight == true else { return }
       record.admissionFinished = true
+      record.invocationInFlight = false
       for authorizationID in ledger.executions[id]?.authorizationIDs ?? [] {
         try ledger.finishInvocation(authorizationID)
       }
@@ -741,6 +825,7 @@ package final class ExecutionRevocationCoordinator: ExecutionRecoveryAuthorizing
               }
               guard current.children.values.allSatisfy(\.completed),
                 current.workIDs?.isEmpty ?? true,
+                current.invocationInFlight != true,
                 current.admissionFinished
                   || ledger.pendingExecutionTerminations.contains(current.id)
                   || ledger.executions[current.id] == nil
@@ -759,6 +844,12 @@ package final class ExecutionRevocationCoordinator: ExecutionRecoveryAuthorizing
             }
         if let completed {
           guard sealAdmissionIfDrained(completed.id) else { continue }
+          if let use = completed.worktreeUse {
+            guard completed.invocationInFlight != true,
+              try journal.all().filter({ $0.execution == completed.id }).allSatisfy(\.completed)
+            else { continue }
+            try use.admission.acknowledge(use)
+          }
           // Ports cannot be recycled while any member remains unconfirmed.
           try await proxy?.releaseAfterExecutionEnds()
           for (child, entry) in completed.children where !entry.released {
@@ -860,6 +951,18 @@ package final class ExecutionRevocationCoordinator: ExecutionRecoveryAuthorizing
         }
       }
     }
+    // A database restore may omit the execution entirely. Independent launch
+    // receipts still retain its worktree use until every child is confirmed.
+    let settled = try journal.all()
+    for entry in settled where entry.owner != ownerID {
+      guard let use = entry.worktreeUse,
+        settled.filter({ $0.execution == entry.execution }).allSatisfy(\.completed),
+        try store.readWithDatabase({ database, _ in
+          try ExecutionRuntimeRecord.load(entry.execution, database) == nil
+        })
+      else { continue }
+      try use.admission.acknowledge(use)
+    }
   }
 
   private func sealAdmissionIfDrained(_ id: UUID) -> Bool {
@@ -957,6 +1060,10 @@ struct ExecutionRuntimeRecord: Codable {
   var revocationRecorded: Bool?
   var permissionNeeds: [DiscoveredRequirement]?
   var permissionRequestIDs: Set<UUID>?
+  var worktreeUse: WorktreeWriterUse?
+  /// A stopped admission is not evidence that an in-process invocation returned.
+  var invocationInFlight: Bool?
+  var worktreeDurable: Bool?
 
   func save(_ database: Database) throws {
     try database.execute(

@@ -207,6 +207,8 @@ original call, carrying earlier one-time answers through subsequent retries.
 The gateway persists admission before preparing an execution context. Process
 adapters require an installed context and refuse unsupported execution modes.
 Full access consent selects a mode; Project and privacy permissions still apply.
+Apple events are blocked in the sandbox. A principal whose programs control other
+apps needs Full access; macOS requests consent under each program's own identity.
 
 ### Durable permission ledger
 

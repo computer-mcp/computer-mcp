@@ -19,7 +19,6 @@ package struct OAuthApprovalProfile: Equatable, Sendable {
     struct Authorization: Encodable {
       let permissions: [Entry]
       let networks: [String: NetworkAccess.Configuration]
-      let automation: [String: ProfileGrant.AutomationAccess]
       let fullAccess: Bool
       let callers: [String]
     }
@@ -28,7 +27,7 @@ package struct OAuthApprovalProfile: Equatable, Sendable {
     let entries = grant.permissions.entries.map { Entry(permission: $0.key, state: $0.value) }
     let authorization = Authorization(
       permissions: entries,
-      networks: grant.projectNetworks.mapValues(\.configuration), automation: grant.automation,
+      networks: grant.projectNetworks.mapValues(\.configuration),
       fullAccess: grant.fullAccess, callers: grant.allowedCallers.map(\.rawValue))
     let object = try JSONSerialization.jsonObject(with: encoder.encode(authorization))
     func serialized(_ value: Any) throws -> Data {

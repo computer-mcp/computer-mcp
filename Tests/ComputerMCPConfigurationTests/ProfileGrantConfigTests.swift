@@ -24,7 +24,6 @@ import Testing
     try grant.permissions.set(.granted(.write), for: .project("one"))
     try grant.permissions.set(.denied, for: .screen)
     grant.projectNetworks["one"] = .custom(hosts: ["example.com"], includesTrusted: true)
-    grant.automation["com.apple.Notes"] = .allow
     let config = ProfileGrantConfig(grant: grant)
     let data = try JSONEncoder().encode(config)
     #expect(try JSONDecoder().decode(ProfileGrantConfig.self, from: data) == config)

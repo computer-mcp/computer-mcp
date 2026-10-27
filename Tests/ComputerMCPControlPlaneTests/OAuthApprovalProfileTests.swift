@@ -41,9 +41,6 @@ struct OAuthApprovalProfileTests {
     changed = original
     changed.fullAccess = true
     variants.append(changed)
-    changed = original
-    changed.automation["com.example.Editor"] = .allow
-    variants.append(changed)
     for variant in variants {
       #expect(try OAuthApprovalProfile(grant: variant).authorizationDigest != digest)
     }

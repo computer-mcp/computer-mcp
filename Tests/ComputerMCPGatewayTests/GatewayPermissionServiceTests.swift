@@ -123,7 +123,7 @@ import Testing
 
   @Test(arguments: [
     "project-empty", "project-pattern", "plugin-control", "mcp-length",
-    "network-object", "network-host", "automation-wildcard", "automation-components",
+    "network-object", "network-host",
   ])
   func invalidOwnerProfileFieldsLeaveSavedAuthorityUnchanged(field: String) throws {
     let f = try PermissionServiceFixture()
@@ -136,10 +136,8 @@ import Testing
     case "mcp-length":
       try profile.permissions.set(.notGranted, for: .mcpServer(String(repeating: "x", count: 257)))
     case "network-object": profile.projectNetworks["prefix*"] = .trusted
-    case "network-host":
+    default:
       profile.projectNetworks["fixture"] = .custom(hosts: ["bad host"], includesTrusted: false)
-    case "automation-wildcard": profile.automation["*"] = .allow
-    default: profile.automation["com..fixture"] = .allow
     }
     #expect(throws: PermissionModelError.invalidObject) { try f.update(profile) }
     #expect(try f.view().profiles == before.profiles)

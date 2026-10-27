@@ -12,10 +12,19 @@ package enum ProjectManifestUpgrade {
   }
 
   package static func validate(_ text: String) throws {
-    if try upgraded(text) != nil {
+    let original = try TOMLDecoder().decode(JSONValue.self, from: text)
+    if case .object(let root) = original, case .array(let profiles) = root["profiles"],
+      profiles.contains(where: {
+        if case .object(let fields) = $0 { return fields["mode"] != nil }
+        return false
+      })
+    {
+      throw ConfigurationError.invalid(ProfileDocument.obsoleteModeMessage)
+    }
+    if try transform(original, path: []) != original {
       throw ConfigurationError.invalid(
         "Use projects instead of workspaces, project_id instead of workspace_id, "
-          + "project.* tool IDs instead of workspace.*, and project-operations instead of workspace-operations. "
+          + "project.* tool IDs instead of workspace.*. "
           + "Delivery scopes use project; cwd uses project; risks use project-write or project-write-capable."
       )
     }

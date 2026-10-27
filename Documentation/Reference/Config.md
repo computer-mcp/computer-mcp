@@ -112,9 +112,8 @@ design = "read"
 | `files_and_folders` | Per category: `read` or `deny` |
 | `plugins` | Per plugin ID: `use` or `deny` |
 | `mcp_servers` | Per directly registered server ID: `read`, `all` or `deny` |
-| `automation` | Per concrete app bundle ID: `allow` or `deny`; execution requires a supported host broker |
 
-Object tables accept `"*"` as a fallback except Automation. A concrete entry
+Project, plugin and MCP server tables accept `"*"` as a fallback. A concrete entry
 replaces the fallback for that object. Project access and network resolve their
 fallbacks independently; absent network settings mean none. A custom network
 entry is `{ level = "custom", hosts = ["example.com"], include_trusted = false }`.
@@ -122,9 +121,11 @@ Files and Folders categories are `desktop`, `documents`, `downloads`,
 `icloud-drive`, `network-volumes` and `removable-volumes`.
 
 `full_access = true` permits the owner to consent to Full access for a connection;
-it grants no permission by itself. Managed limits can further narrow permissions,
-network access, execution mode and resource limits. `policy.shell_enabled` remains
-false by default. A program launch without an installed authorized context fails;
+it grants no permission by itself. Apple events are blocked in the sandbox. A
+principal whose programs control other apps needs Full access, where macOS asks
+for consent under each program's own identity. Managed limits can further narrow
+permissions, network access, execution mode and resource limits.
+`policy.shell_enabled` remains false by default. A program launch without an installed authorized context fails;
 sandboxed worktree writes and project-bound plugin/server execution remain
 unavailable until their execution contexts are supplied.
 

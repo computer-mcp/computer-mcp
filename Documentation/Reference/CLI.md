@@ -623,7 +623,7 @@ Explicit denies and managed failures do not become grant prompts.
 
 After a database restore or epoch recovery, saved profiles remain inactive until
 local owner review. Read `permissions requests`, review every returned profile
-including wildcard grants, automation, custom network hosts and allowed callers,
+including wildcard grants, custom network hosts and allowed callers,
 and save the complete `profiles` array as JSON. The App offers the same explicit
 review from Permissions. Confirm that captured snapshot with:
 

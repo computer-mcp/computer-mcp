@@ -80,7 +80,6 @@ final class DefaultGatewayConfigurationTests {
       let profile = configured.grant
       #expect(profile.permissions.entries == Permissions.newPrincipal.entries)
       #expect(profile.projectNetworks.isEmpty)
-      #expect(profile.automation.isEmpty)
       #expect(!profile.fullAccess)
     }
     #expect(configuration.profileGrant(for: .chatGPTObserve).allowedCallers == [.secureTunnel])

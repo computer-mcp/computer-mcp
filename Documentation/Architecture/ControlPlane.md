@@ -163,7 +163,7 @@ without publishing it to remote gateway profiles.
 `OAuthApprovalProfile` pairs each resolved remote grant with its
 `authorization_digest`. The digest is the lowercase SHA-256 hex of compact UTF-8
 JSON, with keys sorted and slashes unescaped. Its keys are `permissions`,
-`networks`, `automation`, `fullAccess` and `callers`. Permission entries and other
+`networks`, `fullAccess` and `callers`. Permission entries and other
 arrays are canonically sorted by their serialized values. Profile
 identity and persistence revision are excluded. `profile.list` and
 `profile.show` include the digest, and the App's Client access snapshot carries

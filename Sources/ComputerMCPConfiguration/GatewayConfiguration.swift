@@ -1457,12 +1457,12 @@ package struct ProfileGrantConfig: Codable, Equatable, Sendable {
   package init(
     id: GatewayProfileID, permissions: Permissions = .init(),
     projectNetworks: [String: NetworkAccess] = [:],
-    automation: [String: ProfileGrant.AutomationAccess] = [:], fullAccess: Bool = false,
+    fullAccess: Bool = false,
     allowedCallers: Set<GatewayCallerKind> = []
   ) {
     grant = ProfileGrant(
       id: id, permissions: permissions, projectNetworks: projectNetworks,
-      automation: automation, fullAccess: fullAccess, allowedCallers: allowedCallers)
+      fullAccess: fullAccess, allowedCallers: allowedCallers)
   }
 
   package init(from decoder: any Decoder) throws {

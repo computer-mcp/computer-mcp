@@ -30,8 +30,6 @@ import Testing
         [profiles.mcp_servers]
         "*" = "all"
         restricted = "read"
-        [profiles.automation]
-        "com.apple.Notes" = "allow"
         """
     let profile = try #require(PermissionProfileManifest.decode(text).first)
     #expect(profile.permissions.state(for: .project("future")) == .granted(.write))
@@ -58,9 +56,31 @@ import Testing
     } catch { #expect(String(describing: error).contains(fixture.1)) }
   }
 
+  @Test(
+    arguments: [
+      "", "'com.apple.Notes' = 'allow'", "'*' = 'allow'", "'com.apple.Notes' = 'deny'",
+    ], [false, true])
+  func automationTableIsUnknownWithFullAccessGuidance(entry: String, fullAccess: Bool) throws {
+    let text = prefix + "\nfull_access = \(fullAccess)\n[profiles.automation]\n" + entry
+    for publicConfiguration in [false, true] {
+      do {
+        if publicConfiguration {
+          _ = try GatewayConfiguration.load(text: "schema_version = 1\n" + text)
+        } else {
+          _ = try PermissionProfileManifest.decode(text)
+        }
+        Issue.record("Accepted an unknown profile table")
+      } catch {
+        let message = String(describing: error)
+        #expect(message.contains("Unknown profile field: automation"))
+        #expect(message.contains("Full access"))
+        #expect(message.contains("local consent"))
+      }
+    }
+  }
+
   @Test(arguments: [
     "[profiles.permissions]\nscreen = 'read'", "[profiles.permissions]\nunknown = 'allow'",
-    "[profiles.automation]\n'*' = 'allow'",
     "[profiles.projects]\np = { access = 'read', network = { level = 'custom', hosts = ['https://example.com'], include_trusted = false } }",
     "[profiles.projects]\np = { access = 'read', network = { level = 'custom', hosts = [] } }",
   ]) func invalidValuesFail(_ suffix: String) {

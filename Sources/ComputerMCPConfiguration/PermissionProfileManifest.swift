@@ -31,15 +31,17 @@ struct ProfileDocument: Codable {
   private static let privacy = PermissionManifestVocabulary.privacy
   private static let folders = PermissionManifestVocabulary.folders
 
-  private static let bundleIdentifierCharacters = CharacterSet(
-    charactersIn: "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-.")
+  static let obsoleteModeMessage =
+    "profiles.mode is obsolete; remove it and use full_access and the profile permission tables instead."
 
   init(from decoder: any Decoder) throws {
     let c = try decoder.container(keyedBy: ProfileKey.self)
+    if c.contains(ProfileKey("mode")) {
+      throw ConfigurationError.invalid(Self.obsoleteModeMessage)
+    }
     let replacements = [
       "capabilities": "permissions, projects, plugins and mcp_servers tables",
       "workspaces": "projects table with access and network",
-      "mode": "full_access and permission tables",
       "full_shell_enabled": "full_access (with local consent)",
       "confirmation_policy": "permission grants; calls within grants execute directly",
       "authorization_revision": "host-owned authorization revisions",
@@ -49,10 +51,14 @@ struct ProfileDocument: Codable {
     }
     let keys: Set<String> = [
       "id", "allowed_callers", "full_access", "permissions", "projects", "files_and_folders",
-      "plugins", "mcp_servers", "automation",
+      "plugins", "mcp_servers",
     ]
     for key in c.allKeys where !keys.contains(key.stringValue) {
-      throw ConfigurationError.invalid("Unknown profile field: \(key.stringValue).")
+      let guidance =
+        key.stringValue == "automation"
+        ? " A principal whose programs control other apps needs Full access (full_access) with local consent."
+        : ""
+      throw ConfigurationError.invalid("Unknown profile field: \(key.stringValue)." + guidance)
     }
     let id = try c.decode(GatewayProfileID.self, forKey: ProfileKey("id"))
     let callers = try c.decode(Set<GatewayCallerKind>.self, forKey: ProfileKey("allowed_callers"))
@@ -125,21 +131,8 @@ struct ProfileDocument: Codable {
         try permissions.set(state, for: .mcpServer(id))
       }
     }
-    let automation =
-      try c.decodeIfPresent(
-        [String: ProfileGrant.AutomationAccess].self, forKey: ProfileKey("automation")) ?? [:]
-    for id in automation.keys {
-      guard id != "*", id.utf8.count <= 256, id.contains("."),
-        !id.split(separator: ".", omittingEmptySubsequences: false).contains(where: \.isEmpty),
-        id.unicodeScalars.allSatisfy(Self.bundleIdentifierCharacters.contains)
-      else {
-        throw ConfigurationError.invalid(
-          "Automation requires a concrete application bundle identifier.")
-      }
-    }
     profile = ProfileGrant(
       id: id, permissions: permissions, projectNetworks: networks,
-      automation: automation,
       fullAccess: try c.decodeIfPresent(Bool.self, forKey: ProfileKey("full_access")) ?? false,
       allowedCallers: callers, authorizationRevision: 1)
   }
@@ -186,7 +179,6 @@ struct ProfileDocument: Codable {
     try c.encode(folders, forKey: ProfileKey("files_and_folders"))
     try c.encode(plugins, forKey: ProfileKey("plugins"))
     try c.encode(servers, forKey: ProfileKey("mcp_servers"))
-    try c.encode(profile.automation, forKey: ProfileKey("automation"))
   }
 
   private static func state(_ text: String, allowed: String, value: PermissionValue) throws

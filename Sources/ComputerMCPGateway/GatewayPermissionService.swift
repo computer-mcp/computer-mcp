@@ -545,14 +545,6 @@ package final class GatewayPermissionService: @unchecked Sendable {
         }
       }
     }
-    let bundleCharacters = CharacterSet(
-      charactersIn: "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-.")
-    for id in profile.automation.keys {
-      guard id != "*", id.utf8.count <= 256, id.contains("."),
-        !id.split(separator: ".", omittingEmptySubsequences: false).contains(where: \.isEmpty),
-        id.unicodeScalars.allSatisfy(bundleCharacters.contains)
-      else { throw PermissionModelError.invalidObject }
-    }
   }
 
   static func validateEdit(

@@ -65,6 +65,20 @@ enum PrivacyPermissionKind: String, CaseIterable, Identifiable, Hashable, Sendab
     }
   }
 
+  /// The symbol for one object row; Files & Folders rows show their folder.
+  func systemImage(for object: PrivacyObject?) -> String {
+    guard self == .filesAndFolders, let id = object?.id else { return systemImage }
+    switch FolderCategory(rawValue: id) {
+    case .desktop: return "menubar.dock.rectangle"
+    case .documents: return "doc.fill"
+    case .downloads: return "arrow.down.circle.fill"
+    case .iCloudDrive: return "icloud.fill"
+    case .networkVolumes: return "externaldrive.connected.to.line.below.fill"
+    case .removableVolumes: return "externaldrive.fill"
+    case nil: return systemImage
+    }
+  }
+
   /// Permissions granted per object list each object as its own group.
   var isPerObject: Bool {
     switch self {

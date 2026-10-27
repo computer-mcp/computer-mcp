@@ -329,7 +329,7 @@ struct PrivacyPermissionDetailView: View {
           ForEach(grants.filter { $0.principalID == principal.id }) { grant in
             PrivacyGrantRow(
               model: model, grant: grant, title: grant.object?.name,
-              systemImage: permission.systemImage
+              systemImage: permission.systemImage(for: grant.object)
             )
             .padding(.leading, 24)
             .help(Text(verbatim: grant.object?.detail ?? ""))
@@ -530,8 +530,9 @@ struct PrivacyPrincipalDetailView: View {
             ForEach(grants.filter { $0.permission == kind }) { grant in
               PrivacyGrantRow(
                 model: model, grant: grant, title: grant.object?.name,
-                systemImage: kind.systemImage, showsNetwork: kind != .projects)
-              if kind == .projects {
+                systemImage: kind.systemImage(for: grant.object),
+                showsNetwork: kind != .projects)
+              if kind == .projects, case .granted = grant.value {
                 PrivacyNetworkPicker(model: model, grant: grant)
               }
             }
@@ -830,7 +831,7 @@ struct PrivacyRequestPrompt: View {
           .multilineTextAlignment(.center)
         if let path = request.object?.detail {
           Text(verbatim: path)
-            .font(.callout).textSelection(.enabled)
+            .font(.callout).foregroundStyle(.secondary).textSelection(.enabled)
             .lineLimit(2).truncationMode(.middle)
             .help(Text(verbatim: path))
             .accessibilityIdentifier("privacy.prompt.path")
@@ -854,15 +855,15 @@ struct PrivacyRequestPrompt: View {
           .font(.caption)
           .foregroundStyle(.secondary)
           .multilineTextAlignment(.center)
+          if case .client = request.principal.kind {
+            let shared = l.format(
+              "Always applies to every connection that uses “%@”.", request.principal.name)
+            Text(verbatim: shared).font(.caption).foregroundStyle(.secondary)
+              .multilineTextAlignment(.center)
+          }
         }
       }
       VStack(spacing: 8) {
-        if case .client = request.principal.kind {
-          let shared = l.format(
-            "Always applies to every connection that uses “%@”.", request.principal.name)
-          Text(verbatim: shared).font(.caption).foregroundStyle(.secondary)
-            .multilineTextAlignment(.center)
-        }
         if request.registration == nil {
           Button {
             answer(.onlyThisTime)
@@ -972,6 +973,17 @@ struct PrivacyConnectionsSection: View {
   private var l: PrivacyText { PrivacyText(locale: locale, resources: resources) }
 
   var body: some View {
+    Group {
+      connections
+      savedApprovals
+    }
+    .disabled(!model.isAvailable || model.isSaving)
+    .sheet(item: $model.pendingConsent) { draft in
+      ClientConsentView(model: model, draftID: draft.id)
+    }
+  }
+
+  private var connections: some View {
     Section(l("Connections")) {
       if let error = model.errorMessage {
         Text(verbatim: error).foregroundStyle(.red)
@@ -982,14 +994,16 @@ struct PrivacyConnectionsSection: View {
       }
       ForEach(sessions) { session in
         LabeledContent {
-          VStack(alignment: .trailing, spacing: 6) {
+          HStack(spacing: 8) {
             let status = l(session.privacyExecutionTitle)
             Text(verbatim: status).foregroundStyle(.secondary)
-            Button(l("Give Full Access…")) { model.requestFullAccess(session) }
-              .disabled(
-                principal.execution == .sandbox || !principal.fullAccessLimitSources.isEmpty
-                  || !session.accessLimit.allowsFullAccess
-                  || session.profile?.grant.fullAccess != true)
+            if session.fullAccessConsent == nil {
+              Button(l("Give Full Access…")) { model.requestFullAccess(session) }
+                .disabled(
+                  principal.execution == .sandbox || !principal.fullAccessLimitSources.isEmpty
+                    || !session.accessLimit.allowsFullAccess
+                    || session.profile?.grant.fullAccess != true)
+            }
           }
         } label: {
           let connection = l(LivePrivacySecurityService.connectionName(session.caller))
@@ -998,26 +1012,26 @@ struct PrivacyConnectionsSection: View {
           Text(verbatim: identity).font(.caption).foregroundStyle(.secondary)
         }
       }
-      let trusts = (model.snapshot?.trusts ?? []).filter {
-        $0.profileID.rawValue == principal.id && $0.fullAccessAllowed
-      }
-      if !trusts.isEmpty {
-        Text(verbatim: l("Saved client approvals")).font(.headline)
-      }
-      ForEach(trusts) { trust in
-        LabeledContent {
-          Button(l("Revoke"), role: .destructive) { Task { await model.revoke(trust) } }
-        } label: {
-          let identity = clientAccessIdentity(trust.principalID, using: l)
-          Text(verbatim: identity)
-          let caller = l(LivePrivacySecurityService.connectionName(trust.caller))
-          Text(verbatim: caller).font(.caption).foregroundStyle(.secondary)
+    }
+  }
+
+  @ViewBuilder private var savedApprovals: some View {
+    let trusts = (model.snapshot?.trusts ?? []).filter {
+      $0.profileID.rawValue == principal.id && $0.fullAccessAllowed
+    }
+    if !trusts.isEmpty {
+      Section(l("Saved client approvals")) {
+        ForEach(trusts) { trust in
+          LabeledContent {
+            Button(l("Revoke")) { Task { await model.revoke(trust) } }
+          } label: {
+            let identity = clientAccessIdentity(trust.principalID, using: l)
+            Text(verbatim: identity)
+            let caller = l(LivePrivacySecurityService.connectionName(trust.caller))
+            Text(verbatim: caller).font(.caption).foregroundStyle(.secondary)
+          }
         }
       }
-    }
-    .disabled(!model.isAvailable || model.isSaving)
-    .sheet(item: $model.pendingConsent) { draft in
-      ClientConsentView(model: model, draftID: draft.id)
     }
   }
 }

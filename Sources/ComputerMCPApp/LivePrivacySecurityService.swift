@@ -224,11 +224,14 @@ final class LivePrivacySecurityService: PrivacySecurityService {
         }
       }
       return grant
-    }.sorted {
-      ($0.permission.rawValue, $0.object?.name ?? "") < (
-        $1.permission.rawValue, $1.object?.name ?? ""
-      )
-    }
+    }.sorted { order($0) < order($1) }
+  }
+
+  /// Wildcard rows first, folder categories in Finder's order, other objects by name.
+  private static func order(_ grant: PrivacyGrant) -> (String, Int, Int, String) {
+    let id = grant.object?.id ?? ""
+    let category = FolderCategory.allCases.firstIndex { $0.rawValue == id } ?? 0
+    return (grant.permission.rawValue, id == "*" ? 0 : 1, category, grant.object?.name ?? "")
   }
 
   static func fullAccessSources(_ limits: [ManagedLimits]) -> [String] {

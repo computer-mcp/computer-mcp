@@ -87,11 +87,12 @@ final class ComputerMCPAppModel: ObservableObject {
     onboardingPreferences: any OnboardingPreferenceStoring = UserDefaultsOnboardingPreferences()
   ) {
     let privacyService = LivePrivacySecurityService(controlPlane: controlPlane)
-    self.privacySecurity = PrivacySecurityModel(service: privacyService)
+    let clientAccess = ClientAccessModel(controlPlane: controlPlane)
+    self.privacySecurity = PrivacySecurityModel(service: privacyService, clientAccess: clientAccess)
     self.controlPlane = controlPlane
     self.pluginManagement = PluginManagementModel(controlPlane: controlPlane)
     self.mcpRegistrations = MCPRegistrationModel(controlPlane: controlPlane)
-    self.clientAccess = ClientAccessModel(controlPlane: controlPlane)
+    self.clientAccess = clientAccess
     self.localClients = LocalClientsModel(controlPlane: controlPlane)
     self.onboardingPreferences = onboardingPreferences
     self.isPresentingWelcome =

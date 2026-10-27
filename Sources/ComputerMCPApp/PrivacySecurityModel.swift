@@ -125,14 +125,14 @@ struct PrivacyPrincipal: Identifiable, Hashable, Sendable {
 
   enum Execution: Hashable, Sendable {
     case sandbox
-    case fullAccessSaved
-    case fullAccessConnection
+    case fullAccessAllowed
   }
 
   let id: String
   let name: String
   let kind: Kind
   var execution: Execution
+  var fullAccessLimitSources: [String] = []
 
   var systemImage: String {
     switch kind {
@@ -155,6 +155,20 @@ struct PrivacyPrincipal: Identifiable, Hashable, Sendable {
 enum PrivacyNetworkAccess: Hashable, Sendable {
   case none, trusted, full
   case custom(hosts: [String], includesTrusted: Bool)
+
+  /// Compare symbolic trusted-host sets without copying the host policy into the UI.
+  func contains(_ other: Self) -> Bool {
+    if other == .none || self == .full { return true }
+    if self == other { return true }
+    switch (self, other) {
+    case (.custom(_, true), .trusted): return true
+    case (.custom(let allowed, let trusted), .custom(let hosts, let includesTrusted)):
+      return (!includesTrusted || trusted)
+        && hosts.allSatisfy { host in allowed.contains { NetworkHost.contains($0, rule: host) } }
+    case (.trusted, .custom(let hosts, _)): return hosts.isEmpty
+    default: return false
+    }
+  }
 
   func validated() throws -> Self {
     guard case .custom(let hosts, let includesTrusted) = self else { return self }
@@ -214,6 +228,16 @@ struct PrivacyGrant: Identifiable, Hashable, Sendable {
   var value: PrivacyGrantValue
   var network: PrivacyNetworkAccess?
   var source: PrivacyGrantSource = .owner
+  var isStored = true
+  var allowedLevels: [PrivacyGrantValue.Level]? = nil
+  var networkLimits: [PrivacyNetworkAccess] = []
+  var networkLimitSources: [String] = []
+
+  var availableLevels: [PrivacyGrantValue.Level] { allowedLevels ?? permission.grantedValues }
+
+  func allowsNetwork(_ value: PrivacyNetworkAccess) -> Bool {
+    networkLimits.allSatisfy { $0.contains(value) }
+  }
 
   var id: String { [principalID, permission.rawValue, object?.id ?? ""].joined(separator: "/") }
 }
@@ -276,6 +300,8 @@ struct PrivacySystemPermission: Identifiable, Hashable, Sendable {
 }
 
 struct PrivacySnapshot: Hashable, Sendable {
+  var revision: UInt64 = 0
+  var profileRevisions: [String: Int64] = [:]
   var requests: [PrivacyRequest] = []
   var principals: [PrivacyPrincipal] = []
   var grants: [PrivacyGrant] = []
@@ -292,12 +318,16 @@ enum PrivacyRequestAnswer: Hashable, Sendable {
 @MainActor
 protocol PrivacySecurityService: AnyObject {
   func privacySnapshot() async throws -> PrivacySnapshot
-  func answer(request id: String, with answer: PrivacyRequestAnswer) async throws
-  func setGrant(_ grant: PrivacyGrant) async throws
-  func setNetwork(_ grant: PrivacyGrant, to network: PrivacyNetworkAccess) async throws
-  func revokeAll(principalID: String) async throws
-  func setExecution(principalID: String, to execution: PrivacyPrincipal.Execution) async throws
-  func confirmRestoredPermissions() async throws
+  func answer(request id: String, with answer: PrivacyRequestAnswer, reviewed: PrivacySnapshot)
+    async throws
+  func setGrant(_ grant: PrivacyGrant, reviewed: PrivacySnapshot) async throws
+  func setNetwork(
+    _ grant: PrivacyGrant, to network: PrivacyNetworkAccess, reviewed: PrivacySnapshot) async throws
+  func revokeAll(principalID: String, reviewed: PrivacySnapshot) async throws
+  func setExecution(
+    principalID: String, to execution: PrivacyPrincipal.Execution, reviewed: PrivacySnapshot)
+    async throws
+  func confirmRestoredPermissions(reviewed: PrivacySnapshot) async throws
   func openSystemSettings(for permission: PrivacySystemPermission.Kind)
 }
 
@@ -307,9 +337,11 @@ final class PrivacySecurityModel: ObservableObject {
   @Published private(set) var snapshot = PrivacySnapshot()
   @Published private(set) var loading = false
   @Published var failure: String?
+  let clientAccess: ClientAccessModel?
   private let service: any PrivacySecurityService
 
-  init(service: any PrivacySecurityService) {
+  init(service: any PrivacySecurityService, clientAccess: ClientAccessModel? = nil) {
+    self.clientAccess = clientAccess
     self.service = service
   }
 
@@ -321,38 +353,56 @@ final class PrivacySecurityModel: ObservableObject {
     }
   }
 
-  func answer(_ request: PrivacyRequest, _ answer: PrivacyRequestAnswer) async {
-    await perform { try await self.service.answer(request: request.id, with: answer) }
-  }
-
-  func set(_ grant: PrivacyGrant, to value: PrivacyGrantValue) async {
-    var changed = grant
-    changed.value = value
-    await perform { try await self.service.setGrant(changed) }
-  }
-
-  @discardableResult
-  func setNetwork(_ grant: PrivacyGrant, to network: PrivacyNetworkAccess) async -> Bool {
-    do {
-      try await service.setNetwork(grant, to: network.validated())
-      snapshot = try await service.privacySnapshot()
-      return true
-    } catch {
-      failure = AppLocalization.errorDescription(error)
-      return false
+  func answer(
+    _ request: PrivacyRequest, _ answer: PrivacyRequestAnswer, reviewed: PrivacySnapshot? = nil
+  ) async {
+    let reviewed = reviewed ?? snapshot
+    await perform {
+      try await self.service.answer(request: request.id, with: answer, reviewed: reviewed)
     }
   }
 
-  func revokeAll(_ principal: PrivacyPrincipal) async {
-    await perform { try await self.service.revokeAll(principalID: principal.id) }
+  func set(_ grant: PrivacyGrant, to value: PrivacyGrantValue, reviewed: PrivacySnapshot? = nil)
+    async
+  {
+    var changed = grant
+    changed.value = value
+    let reviewed = reviewed ?? snapshot
+    await perform { try await self.service.setGrant(changed, reviewed: reviewed) }
   }
 
-  func setExecution(_ principal: PrivacyPrincipal, _ execution: PrivacyPrincipal.Execution) async {
-    await perform { try await self.service.setExecution(principalID: principal.id, to: execution) }
+  @discardableResult
+  func setNetwork(
+    _ grant: PrivacyGrant, to network: PrivacyNetworkAccess,
+    reviewed: PrivacySnapshot? = nil
+  ) async -> Bool {
+    let reviewed = reviewed ?? snapshot
+    return await perform {
+      try await self.service.setNetwork(grant, to: network.validated(), reviewed: reviewed)
+    }
   }
 
-  func confirmRestoredPermissions() async {
-    await perform { try await self.service.confirmRestoredPermissions() }
+  func revokeAll(_ principal: PrivacyPrincipal, reviewed: PrivacySnapshot? = nil) async {
+    let reviewed = reviewed ?? snapshot
+    await perform {
+      try await self.service.revokeAll(principalID: principal.id, reviewed: reviewed)
+    }
+  }
+
+  func setExecution(
+    _ principal: PrivacyPrincipal, _ execution: PrivacyPrincipal.Execution,
+    reviewed: PrivacySnapshot? = nil
+  ) async {
+    let reviewed = reviewed ?? snapshot
+    await perform {
+      try await self.service.setExecution(
+        principalID: principal.id, to: execution, reviewed: reviewed)
+    }
+  }
+
+  func confirmRestoredPermissions(reviewed: PrivacySnapshot? = nil) async {
+    let reviewed = reviewed ?? snapshot
+    await perform { try await self.service.confirmRestoredPermissions(reviewed: reviewed) }
   }
 
   func openSystemSettings(for kind: PrivacySystemPermission.Kind) {
@@ -364,7 +414,7 @@ final class PrivacySecurityModel: ObservableObject {
   }
 
   func grants(for permission: PrivacyPermissionKind) -> [PrivacyGrant] {
-    snapshot.grants.filter { $0.permission == permission }
+    snapshot.grants.filter { $0.permission == permission && $0.isStored }
   }
 
   func grants(for principal: PrivacyPrincipal) -> [PrivacyGrant] {
@@ -383,12 +433,17 @@ final class PrivacySecurityModel: ObservableObject {
     ).count
   }
 
-  private func perform(_ operation: @escaping () async throws -> Void) async {
+  @discardableResult
+  private func perform(_ operation: @escaping () async throws -> Void) async -> Bool {
+    var succeeded = false
     do {
       try await operation()
-      snapshot = try await service.privacySnapshot()
+      succeeded = true
     } catch {
       failure = AppLocalization.errorDescription(error)
     }
+    await refresh()
+    await clientAccess?.reload()
+    return succeeded
   }
 }

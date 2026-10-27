@@ -144,7 +144,7 @@ final class ClientAccessModel: ObservableObject {
   func requestFullAccess(_ session: GatewayControlSessionSnapshot) {
     guard isAvailable, !isSaving, !session.ended,
       session.profile?.grant.allowedCallers.contains(session.caller) == true,
-      session.profile?.grant.fullAccess == true
+      session.profile?.grant.fullAccess == true, session.accessLimit.allowsFullAccess
     else { return }
     let trust = snapshot?.trusts.first {
       $0.principalID == session.principalID && $0.profileID == session.profileID
@@ -157,7 +157,8 @@ final class ClientAccessModel: ObservableObject {
     guard let draft = pendingConsent,
       let current = snapshot?.sessions.first(where: { $0.id == draft.session.id }),
       !current.ended, current.revision == draft.session.revision,
-      current.profile?.grant.allowedCallers.contains(current.caller) == true
+      current.profile?.grant.allowedCallers.contains(current.caller) == true,
+      current.profile?.grant.fullAccess == true, current.accessLimit.allowsFullAccess
     else { return false }
     let trust = snapshot?.trusts.first {
       $0.principalID == current.principalID && $0.profileID == current.profileID
@@ -301,10 +302,10 @@ extension GatewayControlSessionSnapshot {
   }
 }
 
-func clientAccessIdentity(_ principalID: String) -> String {
+func clientAccessIdentity(_ principalID: String, using l: PrivacyText? = nil) -> String {
   let fingerprint = SHA256.hash(data: Data(principalID.utf8)).prefix(4)
     .map { String(format: "%02X", $0) }.joined()
-  return AppLocalization.formatted("Client %@", fingerprint)
+  return l?.format("Client %@", fingerprint) ?? AppLocalization.formatted("Client %@", fingerprint)
 }
 
 extension GatewayCallerKind {
@@ -316,5 +317,24 @@ extension GatewayCallerKind {
     case .secureTunnel: "ChatGPT connection"
     case .cloudflareTunnel: "Remote MCP client"
     }
+  }
+}
+
+extension ClientAccessModel {
+  func privacyExecutionTitle(for principal: PrivacyPrincipal) -> String {
+    let titles = activeSessions.filter { $0.profileID.rawValue == principal.id }
+      .map(\.privacyExecutionTitle)
+    if titles.contains("Full Access") { return "Full Access" }
+    if titles.contains("Full Access for This Session") { return "Full Access for This Session" }
+    return PrivacyPrincipalDetailView.executionTitle(principal.execution)
+  }
+}
+
+extension GatewayControlSessionSnapshot {
+  var privacyExecutionTitle: String {
+    guard hasAccess, profile?.grant.fullAccess == true, accessLimit.allowsFullAccess,
+      let consent = fullAccessConsent
+    else { return "Sandbox" }
+    return consent.lifetime == .thisSession ? "Full Access for This Session" : "Full Access"
   }
 }

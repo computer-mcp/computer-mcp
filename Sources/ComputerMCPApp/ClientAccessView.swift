@@ -320,42 +320,47 @@ struct ClientConsentView: View {
   @ObservedObject var model: ClientAccessModel
   let draftID: UUID
   @Environment(\.dismiss) private var dismiss
+  @Environment(\.locale) private var locale
+  @Environment(\.localizationResources) private var resources
+  private var l: PrivacyText { PrivacyText(locale: locale, resources: resources) }
 
   var body: some View {
     VStack(alignment: .leading, spacing: 18) {
       if let draft = model.pendingConsent, draft.id == draftID {
-        Text("Allow Full Access?", bundle: AppLocalization.resourceBundle).font(.title2.bold())
-        Text(verbatim: AppLocalization.string(draft.session.caller.clientAccessLabel))
+        Text(verbatim: l("Allow Full Access?")).font(.title2.bold())
+        Text(verbatim: l(draft.session.caller.clientAccessLabel))
           .font(.headline)
-        Text(verbatim: clientAccessIdentity(draft.session.principalID))
+        let identity = clientAccessIdentity(draft.session.principalID, using: l)
+        Text(verbatim: identity)
         Text(
-          "This client can run commands and access files, processes, the network, and credentials available to your macOS user. A project does not limit this access. macOS privacy permissions still apply.",
-          bundle: AppLocalization.resourceBundle)
+          verbatim: l(
+            "This client can run commands and access files, processes, the network, and credentials available to your macOS user. A project does not limit this access. macOS privacy permissions still apply."
+          ))
         Picker(
           selection: Binding(
             get: { model.pendingConsent?.lifetime ?? .thisSession },
             set: { if model.pendingConsent?.id == draftID { model.pendingConsent?.lifetime = $0 } }
           )
         ) {
-          Text("This Session", bundle: AppLocalization.resourceBundle)
+          Text(verbatim: l("This Session"))
             .tag(GatewayFullAccessLifetime.thisSession)
-          Text("Always Allow this Client", bundle: AppLocalization.resourceBundle)
+          Text(verbatim: l("Always Allow this Client"))
             .tag(GatewayFullAccessLifetime.alwaysAllowClient)
         } label: {
-          Text("Allow for", bundle: AppLocalization.resourceBundle)
+          Text(verbatim: l("Allow for"))
         }
         .accessibilityIdentifier("client-access.consent.lifetime")
         Text(
-          "Clients sharing the same connection credential share a trusted identity. Ending this session does not revoke an always-allowed client.",
-          bundle: AppLocalization.resourceBundle
+          verbatim: l(
+            "Clients sharing the same connection credential share a trusted identity. Ending this session does not revoke an always-allowed client."
+          )
         ).font(.callout).foregroundStyle(.secondary)
         if let error = model.errorMessage {
           Text(verbatim: error).foregroundStyle(.red).textSelection(.enabled)
         }
         if !model.consentIsCurrent {
           Text(
-            "Client access changed. Close this window and review the connection again.",
-            bundle: AppLocalization.resourceBundle
+            verbatim: l("Client access changed. Close this window and review the connection again.")
           ).foregroundStyle(.secondary)
         }
         HStack {
@@ -363,14 +368,14 @@ struct ClientConsentView: View {
             model.pendingConsent = nil
             dismiss()
           } label: {
-            Text("Cancel", bundle: AppLocalization.resourceBundle)
+            Text(verbatim: l("Cancel"))
           }.keyboardShortcut(.cancelAction)
           Spacer()
           if model.isSaving { ProgressView().controlSize(.small) }
           Button(role: .destructive) {
             Task { if await model.approve() { dismiss() } }
           } label: {
-            Text("Allow Full Access", bundle: AppLocalization.resourceBundle)
+            Text(verbatim: l("Allow Full Access"))
           }
           .accessibilityIdentifier("client-access.consent.allow")
           .disabled(!model.isAvailable || !model.consentIsCurrent)

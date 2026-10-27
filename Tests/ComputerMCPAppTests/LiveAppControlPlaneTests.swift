@@ -433,6 +433,143 @@ final class LiveAppControlPlaneTests {
   }
 
   @Test
+  func privacyEditsRefuseChangesSinceTheOwnerReadTheSnapshot() async throws {
+    try await withAppControlPlaneFixture { fixture in
+      let model = PrivacySecurityModel(
+        service: LivePrivacySecurityService(controlPlane: fixture.app))
+      await model.refresh()
+      let grant = try #require(
+        model.snapshot.grants.first {
+          $0.principalID == GatewayProfileID.chatGPTOperate.rawValue && $0.permission == .screen
+        })
+      let original = model.snapshot.revision
+      let options = try await fixture.app.fetchProfilePermissionOptions(id: .chatGPTOperate)
+      var changed = options.grant
+      try changed.permissions.set(.denied, for: .screen)
+      try await fixture.app.saveProfilePermissions(changed, reviewed: options)
+      await model.set(grant, to: .granted(.allow))
+      #expect(
+        model.failure
+          == AppLocalization.string(
+            "The permissions changed while you were editing. Review them and try again."))
+      #expect(model.snapshot.revision > original)
+      let saved = try await fixture.app.fetchProfilePermissionOptions(id: .chatGPTOperate)
+      #expect(saved.grant.permissions.state(for: .screen) == .denied)
+    }
+  }
+
+  @Test
+  func privacyEditAlsoChecksTheReviewedProfileRevision() async throws {
+    try await withAppControlPlaneFixture { fixture in
+      let service = LivePrivacySecurityService(controlPlane: fixture.app)
+      var reviewed = try await service.privacySnapshot()
+      let grant = try #require(
+        reviewed.grants.first {
+          $0.principalID == GatewayProfileID.chatGPTOperate.rawValue && $0.permission == .screen
+        })
+      reviewed.profileRevisions[grant.principalID] = -1
+      do {
+        try await service.setGrant(grant, reviewed: reviewed)
+        Issue.record("The profile revision must match the reviewed snapshot")
+      } catch {
+        #expect(
+          error.localizedDescription
+            == LivePrivacySecurityService.changedPermissions().localizedDescription)
+      }
+      #expect(try await service.privacySnapshot().revision == reviewed.revision)
+    }
+  }
+
+  @Test
+  func privacyNetworkSheetKeepsItsOpeningRevisionAcrossPolling() async throws {
+    try await withAppControlPlaneFixture { fixture in
+      let model = PrivacySecurityModel(
+        service: LivePrivacySecurityService(controlPlane: fixture.app))
+      await model.refresh()
+      let grant = try #require(
+        model.snapshot.grants.first {
+          $0.principalID == GatewayProfileID.chatGPTOperate.rawValue && $0.permission == .projects
+        })
+      let edit = PrivacyNetworkEdit(grant: grant, snapshot: model.snapshot)
+      let options = try await fixture.app.fetchProfilePermissionOptions(id: .chatGPTOperate)
+      var changed = options.grant
+      changed.projectNetworks[grant.object!.id] = .trusted
+      try await fixture.app.saveProfilePermissions(changed, reviewed: options)
+      await model.refresh()
+      #expect(!(await model.setNetwork(edit.grant, to: .full, reviewed: edit.snapshot)))
+      #expect(model.failure != nil)
+      let saved = try await fixture.app.fetchProfilePermissionOptions(id: .chatGPTOperate)
+      #expect(saved.grant.projectNetworks[grant.object!.id]?.configuration == .trusted)
+    }
+  }
+
+  @Test
+  func privacyRestorationCannotConfirmAViewReplacedByPolling() async throws {
+    try await withAppControlPlaneFixture { fixture in
+      let service = LivePrivacySecurityService(controlPlane: fixture.app)
+      let reviewed = try await service.privacySnapshot()
+      let options = try await fixture.app.fetchProfilePermissionOptions(id: .chatGPTOperate)
+      var changed = options.grant
+      try changed.permissions.set(.denied, for: .screen)
+      try await fixture.app.saveProfilePermissions(changed, reviewed: options)
+      try await fixture.controlPlane.database.connection.writer.write { database in
+        try database.execute(sql: "UPDATE permissionProfiles SET authorityEpoch = NULL")
+      }
+      let polled = try await service.privacySnapshot()
+      #expect(polled.revision != reviewed.revision)
+      do {
+        try await service.confirmRestoredPermissions(reviewed: reviewed)
+        Issue.record("A replaced permission view must not be confirmed")
+      } catch {
+        #expect(
+          error.localizedDescription
+            == LivePrivacySecurityService.changedPermissions().localizedDescription)
+      }
+      #expect(try await service.privacySnapshot().suspendedForReview)
+    }
+  }
+
+  @Test
+  func privacyFullAccessFlagRepresentsEligibilityWithoutConnectionConsent() async throws {
+    try await withAppControlPlaneFixture { fixture in
+      let model = PrivacySecurityModel(
+        service: LivePrivacySecurityService(controlPlane: fixture.app))
+      await model.refresh()
+      let principal = try #require(model.principal(GatewayProfileID.chatGPTOperate.rawValue))
+      await model.setExecution(principal, .fullAccessAllowed)
+      #expect(model.failure == nil)
+      #expect(model.principal(principal.id)?.execution == .fullAccessAllowed)
+      let current = try await fixture.app.fetchProfilePermissionOptions(id: .chatGPTOperate)
+      #expect(current.grant.fullAccess)
+      let connections = try await fixture.app.fetchClientAccess()
+      #expect(connections.sessions.allSatisfy { $0.fullAccessConsent == nil })
+      #expect(connections.trusts.isEmpty)
+    }
+  }
+
+  @Test
+  func privacyRevokeKeepsTheCatalogAndWritesOnlyTheSelectedEntry() async throws {
+    try await withAppControlPlaneFixture { fixture in
+      let model = PrivacySecurityModel(
+        service: LivePrivacySecurityService(controlPlane: fixture.app))
+      await model.refresh()
+      let principal = try #require(model.principal(GatewayProfileID.chatGPTOperate.rawValue))
+      let rowIDs = Set(model.grants(for: principal).map(\.id))
+      await model.revokeAll(principal)
+      let rows = model.grants(for: principal)
+      #expect(Set(rows.map(\.id)) == rowIDs)
+      #expect(rows.allSatisfy { $0.value == .ask && !$0.isStored })
+      #expect(model.grants(for: .screen).allSatisfy { $0.principalID != principal.id })
+      let screen = try #require(rows.first { $0.permission == .screen })
+      await model.set(screen, to: .granted(.allow))
+      #expect(model.failure == nil)
+      let saved = try await fixture.app.fetchProfilePermissionOptions(id: .chatGPTOperate)
+      #expect(saved.grant.permissions.entries.count == 1)
+      #expect(saved.grant.permissions.state(for: .screen) == .granted(.access))
+    }
+  }
+
+  @Test
   func profilePermissionsRoundTripWithoutRestartingTheGateway() async throws {
     try await withAppControlPlaneFixture { fixture in
       try await fixture.app.startApplication()

@@ -4,6 +4,10 @@ import SwiftUI
 import Testing
 
 @testable import ComputerMCPApp
+@testable import ComputerMCPControlPlane
+@testable import ComputerMCPCore
+@testable import ComputerMCPGateway
+@testable import ComputerMCPPermissions
 
 @MainActor
 @Suite struct PrivacySecurityViewTests {
@@ -21,6 +25,10 @@ import Testing
     let l = PrivacyText(locale: Locale(identifier: "en"))
     var request = try #require(PrivacySecurityFake.sample.requests.first)
     request.registration = .newProject
+    #expect(request.object?.detail == "/Users/owner/Developer/site")
+    #expect(
+      PrivacyRequestPrompt.requesterCaption(for: request, using: l)
+        == "git.worktree_add · Secure Tunnel")
     #expect(
       PrivacyRequestPrompt.detail(for: request, using: l)
         == "Allowing registers this folder as a project and gives “ChatGPT” access to it and its worktrees until you revoke it."
@@ -103,6 +111,129 @@ import Testing
     #expect(model.failure != nil)
   }
 
+  @Test func managedLimitsRemoveValuesAndKeepTheirSources() throws {
+    var profile = ProfileGrant(id: .chatGPTOperate, allowedCallers: [.secureTunnel])
+    try profile.permissions.set(.granted(.write), for: .project("p1"))
+    let grants = LivePrivacySecurityService.grants(
+      profile, names: .init(projects: ["p1": "Project"]),
+      paths: ["p1": "/Users/owner/Project"], limits: try Self.limits())
+    let project = try #require(grants.first { $0.object?.id == "p1" })
+    #expect(project.availableLevels == [.read])
+    #expect(project.value == .granted(.read))
+    #expect(project.allowsNetwork(.trusted))
+    #expect(!project.allowsNetwork(.full))
+    #expect(!project.allowsNetwork(.custom(hosts: ["other.example"], includesTrusted: false)))
+    let screen = try #require(grants.first { $0.permission == .screen })
+    #expect(screen.availableLevels.isEmpty)
+    #expect(screen.source == .managedLimit("Machine Policy"))
+    #expect(LivePrivacySecurityService.fullAccessSources(try Self.limits()) == ["Machine Policy"])
+    let denied = LivePrivacySecurityService.grants(
+      profile, names: .init(projects: ["p1": "Project"]),
+      paths: ["p1": "/Users/owner/Project"],
+      limits: [
+        ManagedLimits(
+          machine: .available(
+            ManagedPolicy(deniedReadLocations: [try CanonicalPath("/Users/owner")])))
+      ])
+    #expect(denied.first { $0.object?.id == "p1" }?.availableLevels.isEmpty == true)
+  }
+
+  @Test func principalCatalogIncludesEveryPermissionAndKnownObject() {
+    let rows = LivePrivacySecurityService.grants(
+      .init(id: .chatGPTOperate, allowedCallers: [.secureTunnel]),
+      names: .init(
+        projects: ["p1": "Project"],
+        plugins: ["plugin": "Plugin"], mcpServers: ["server": "Server"]))
+    #expect(rows.allSatisfy { $0.value == .ask && !$0.isStored })
+    #expect(
+      Set(rows.map(\.permission))
+        == Set(PrivacyPermissionKind.allCases.filter { $0 != .fullAccess }))
+    #expect(
+      rows.filter { $0.permission == .filesAndFolders }.count == FolderCategory.allCases.count)
+    #expect(rows.contains { $0.permission == .projects && $0.object?.id == "*" })
+    #expect(rows.contains { $0.permission == .plugins && $0.object?.id == "plugin" })
+    #expect(rows.contains { $0.permission == .mcpServers && $0.object?.id == "server" })
+  }
+
+  @Test func pluginRequestsWithoutProfilesRemainAnswerable() async throws {
+    let principal = Principal.plugin(.package("plugin"))
+    let content = PermissionRequestContent(
+      principal: principal,
+      requirement: try PermissionRequirement(.screen, .access), scope: .principal)
+    let request = PermissionRequest(
+      identity: BasisIdentity(),
+      invocation: InvocationIdentity(
+        principal: principal, tool: "screen.capture", projectID: nil, argumentsDigest: "digest"),
+      content: .permission(content), now: Date(), requirements: .init(actions: []), basis: [])
+    let mapped = try #require(
+      LivePrivacySecurityService.request(
+        .init(request: request, profileID: nil, alwaysIsShared: false), principals: [],
+        names: .init(plugins: ["plugin": "Screen Helper"])))
+    #expect(mapped.principal.name == "Screen Helper")
+    #expect(mapped.principal.kind == .plugin(version: ""))
+    let service = PrivacySecurityFake()
+    service.current.requests = [mapped]
+    let model = PrivacySecurityModel(service: service)
+    await model.refresh()
+    await model.answer(mapped, .always)
+    #expect(service.answers[mapped.id] == .always)
+    #expect(model.snapshot.requests.isEmpty)
+    #expect(
+      LivePrivacySecurityService.invocationPrincipal(
+        .plugin(.localServer("server")),
+        names: .init(mcpServers: ["server": "Local Server"])
+      ).kind == .localServer)
+  }
+
+  @Test func failedWritesRefreshTheOwnersView() async throws {
+    let service = PrivacySecurityFake()
+    let model = PrivacySecurityModel(service: service)
+    await model.refresh()
+    let grant = try #require(model.snapshot.grants.first)
+    service.current.revision += 1
+    service.failNetworkSave = true
+    #expect(!(await model.setNetwork(grant, to: .full)))
+    #expect(model.snapshot.revision == service.current.revision)
+    #expect(model.failure != nil)
+  }
+
+  @Test func fullAccessEligibilityAndConsentHaveDistinctStates() async throws {
+    let service = PrivacyConnectionsFake()
+    let model = ClientAccessModel(controlPlane: service)
+    await model.reload()
+    let principal = service.principal
+    #expect(model.privacyExecutionTitle(for: principal) == "Full Access Allowed")
+    #expect(service.session(nil).privacyExecutionTitle == "Sandbox")
+    service.sessions = [service.session(.thisSession)]
+    await model.reload()
+    #expect(model.privacyExecutionTitle(for: principal) == "Full Access for This Session")
+    service.sessions = [service.session(.alwaysAllowClient)]
+    await model.reload()
+    #expect(model.privacyExecutionTitle(for: principal) == "Full Access")
+    model.requestFullAccess(service.sessions[0])
+    #expect(model.pendingConsent?.lifetime == .thisSession)
+    #expect(model.pendingConsent?.trustRevision == 2)
+    service.sessions = [service.session(nil, restricted: true)]
+    await model.reload()
+    #expect(!model.consentIsCurrent)
+    model.pendingConsent = nil
+    model.requestFullAccess(service.sessions[0])
+    #expect(model.pendingConsent == nil)
+  }
+
+  private static func limits() throws -> [ManagedLimits] {
+    var ceilings = Permissions()
+    try ceilings.set(.granted(.read), for: .project("*"))
+    try ceilings.set(.denied, for: .screen)
+    return [
+      ManagedLimits(
+        machine: .available(
+          ManagedPolicy(
+            permissionCeilings: ceilings,
+            allowsFullAccess: false, network: .trusted)))
+    ]
+  }
+
   @Test func rendersInBothLanguagesAndAppearances() async throws {
     let model = PrivacySecurityModel(service: PrivacySecurityFake())
     await model.refresh()
@@ -142,14 +273,95 @@ import Testing
         name: "privacy-network-custom-" + suffix)
       try render(
         PrivacyRequestPrompt(request: request) { _ in }.styled(locale, dark, resources),
-        size: NSSize(width: 340, height: 420), appearance: appearance,
+        size: NSSize(width: 388, height: 600), appearance: appearance,
         name: "privacy-prompt-" + suffix)
       var registration = request
       registration.registration = .newProject
       try render(
         PrivacyRequestPrompt(request: registration) { _ in }.styled(locale, dark, resources),
-        size: NSSize(width: 340, height: 420), appearance: appearance,
+        size: NSSize(width: 388, height: 600), appearance: appearance,
         name: "privacy-registration-" + suffix)
+      let managedService = PrivacySecurityFake()
+      var profile = ProfileGrant(id: .chatGPTOperate, allowedCallers: [.secureTunnel])
+      try profile.permissions.set(.granted(.write), for: .project("p1"))
+      let managedPrincipal = PrivacyPrincipal(
+        id: profile.id.rawValue, name: "ChatGPT",
+        kind: .client(connection: "Secure Tunnel"), execution: .sandbox,
+        fullAccessLimitSources: ["Machine Policy"])
+      managedService.current.principals = [managedPrincipal]
+      managedService.current.grants = LivePrivacySecurityService.grants(
+        profile,
+        names: .init(projects: ["p1": "Project"]), limits: try Self.limits())
+      let managedModel = PrivacySecurityModel(service: managedService)
+      await managedModel.refresh()
+      try render(
+        NavigationStack {
+          PrivacyPrincipalDetailView(model: managedModel, principalID: managedPrincipal.id)
+        }
+        .styled(locale, dark, resources),
+        size: NSSize(width: 720, height: 1600), appearance: appearance,
+        name: "privacy-managed-" + suffix)
+      var revokedPrincipal = managedPrincipal
+      revokedPrincipal.fullAccessLimitSources = []
+      managedService.current.principals = [revokedPrincipal]
+      managedService.current.grants = LivePrivacySecurityService.grants(
+        .init(id: .chatGPTOperate, allowedCallers: [.secureTunnel]),
+        names: .init(
+          projects: ["p1": "Project"],
+          plugins: ["helper": "Helper"], mcpServers: ["server": "Local Server"]))
+      await managedModel.refresh()
+      try render(
+        NavigationStack {
+          PrivacyPrincipalDetailView(model: managedModel, principalID: managedPrincipal.id)
+        }
+        .styled(locale, dark, resources),
+        size: NSSize(width: 720, height: 1800), appearance: appearance,
+        name: "privacy-revoked-" + suffix)
+      let connectionsService = PrivacyConnectionsFake()
+      connectionsService.sessions = [connectionsService.session(.thisSession)]
+      let connections = ClientAccessModel(controlPlane: connectionsService)
+      await connections.reload()
+      try render(
+        Form {
+          PrivacyConnectionsSection(model: connections, principal: connectionsService.principal)
+        }
+        .formStyle(.grouped).styled(locale, dark, resources),
+        size: NSSize(width: 720, height: 420), appearance: appearance,
+        name: "privacy-connections-" + suffix)
+      connections.requestFullAccess(connectionsService.sessions[0])
+      let draft = try #require(connections.pendingConsent)
+      try render(
+        ClientConsentView(model: connections, draftID: draft.id).styled(locale, dark, resources),
+        size: NSSize(width: 548, height: 580), appearance: appearance,
+        name: "privacy-consent-" + suffix)
+      try render(
+        Form {
+          PrivacyClientExecutionLabel(model: connections, principal: connectionsService.principal)
+        }
+        .formStyle(.grouped).styled(locale, dark, resources),
+        size: NSSize(width: 440, height: 120), appearance: appearance,
+        name: "privacy-full-access-" + suffix)
+      connectionsService.sessions = []
+      await connections.reload()
+      try render(
+        Form {
+          PrivacyClientExecutionLabel(model: connections, principal: connectionsService.principal)
+        }
+        .formStyle(.grouped).styled(locale, dark, resources),
+        size: NSSize(width: 440, height: 120), appearance: appearance,
+        name: "privacy-full-access-allowed-" + suffix)
+      let pluginRequest = PrivacyRequest(
+        id: "plugin-request",
+        principal: .init(
+          id: "plugin/helper",
+          name: "Screen Helper", kind: .plugin(version: ""), execution: .sandbox),
+        permission: .screen, object: nil, level: .allow, purpose: nil,
+        tool: "screen.capture", expires: .distantFuture)
+      try render(
+        PrivacyRequestPrompt(request: pluginRequest) { _ in }.styled(locale, dark, resources),
+        size: NSSize(width: 388, height: 600), appearance: appearance,
+        name: "privacy-plugin-request-" + suffix)
+
     }
   }
 }
@@ -192,17 +404,21 @@ private final class PrivacySecurityFake: PrivacySecurityService {
 
   func privacySnapshot() async throws -> PrivacySnapshot { current }
 
-  func answer(request id: String, with answer: PrivacyRequestAnswer) async throws {
+  func answer(request id: String, with answer: PrivacyRequestAnswer, reviewed: PrivacySnapshot)
+    async throws
+  {
     answers[id] = answer
     current.requests.removeAll { $0.id == id }
   }
 
-  func setGrant(_ grant: PrivacyGrant) async throws {
+  func setGrant(_ grant: PrivacyGrant, reviewed: PrivacySnapshot) async throws {
     current.grants.removeAll { $0.id == grant.id }
     current.grants.append(grant)
   }
 
-  func setNetwork(_ grant: PrivacyGrant, to network: PrivacyNetworkAccess) async throws {
+  func setNetwork(
+    _ grant: PrivacyGrant, to network: PrivacyNetworkAccess, reviewed: PrivacySnapshot
+  ) async throws {
     networkWrites += 1
     if failNetworkSave { throw CancellationError() }
     for index in current.grants.indices where current.grants[index].id == grant.id {
@@ -210,19 +426,23 @@ private final class PrivacySecurityFake: PrivacySecurityService {
     }
   }
 
-  func revokeAll(principalID: String) async throws {
+  func revokeAll(principalID: String, reviewed: PrivacySnapshot) async throws {
     for index in current.grants.indices where current.grants[index].principalID == principalID {
       current.grants[index].value = .ask
     }
   }
 
-  func setExecution(principalID: String, to execution: PrivacyPrincipal.Execution) async throws {
+  func setExecution(
+    principalID: String, to execution: PrivacyPrincipal.Execution, reviewed: PrivacySnapshot
+  ) async throws {
     for index in current.principals.indices where current.principals[index].id == principalID {
       current.principals[index].execution = execution
     }
   }
 
-  func confirmRestoredPermissions() async throws { current.suspendedForReview = false }
+  func confirmRestoredPermissions(reviewed: PrivacySnapshot) async throws {
+    current.suspendedForReview = false
+  }
 
   func openSystemSettings(for permission: PrivacySystemPermission.Kind) {}
 
@@ -232,12 +452,13 @@ private final class PrivacySecurityFake: PrivacySecurityService {
       execution: .sandbox)
     let claude = PrivacyPrincipal(
       id: "claude-code", name: "Claude Code", kind: .client(connection: "This Mac"),
-      execution: .fullAccessConnection)
+      execution: .fullAccessAllowed)
     let codex = PrivacyPrincipal(
       id: "codex", name: "Codex", kind: .plugin(version: "1.4.0"), execution: .sandbox)
     let host = PrivacyObject(
-      id: "p1", name: "computer-mcp", detail: "~/Developer/workspace/tools/computer-mcp")
-    let site = PrivacyObject(id: "p2", name: "computer-mcp.github.io", detail: "~/Developer/site")
+      id: "p1", name: "computer-mcp", detail: "/Users/owner/Developer/workspace/tools/computer-mcp")
+    let site = PrivacyObject(
+      id: "p2", name: "computer-mcp.github.io", detail: "/Users/owner/Developer/site")
     return PrivacySnapshot(
       requests: [
         PrivacyRequest(
@@ -271,6 +492,42 @@ private final class PrivacySecurityFake: PrivacySecurityService {
       systemPermissions: [
         PrivacySystemPermission(kind: .screenRecording, state: .allowed),
         PrivacySystemPermission(kind: .accessibility, state: .notDetermined),
+      ])
+  }
+}
+
+@MainActor
+private final class PrivacyConnectionsFake: ClientAccessManaging {
+  let profile = GatewayControlProfile(
+    grant: .init(
+      id: .chatGPTOperate,
+      fullAccess: true, allowedCallers: [.secureTunnel]), persisted: false)
+  var principal: PrivacyPrincipal {
+    .init(
+      id: profile.grant.id.rawValue, name: "ChatGPT", kind: .client(connection: "Secure Tunnel"),
+      execution: .fullAccessAllowed)
+  }
+  var sessions: [GatewayControlSessionSnapshot] = []
+  func session(_ lifetime: GatewayFullAccessLifetime?, restricted: Bool = false)
+    -> GatewayControlSessionSnapshot
+  {
+    .init(
+      id: "session", principalID: "client", profileID: .chatGPTOperate, caller: .secureTunnel,
+      revision: 1, accessLimit: .init(allowsFullAccess: !restricted), ended: false,
+      fullAccessConsent: lifetime.map {
+        .init(
+          lifetime: $0, grantedAt: .now, profile: profile,
+          trustID: nil, trustRevision: nil)
+      }, profile: profile)
+  }
+  func fetchClientAccess() async throws -> ClientAccessSnapshot {
+    .init(
+      sessions: sessions,
+      trusts: [
+        .init(
+          id: "trust", principalID: "client", profileID: .chatGPTOperate,
+          caller: .secureTunnel, revision: 2, profile: profile, fullAccessAllowed: true,
+          updatedAt: .now)
       ])
   }
 }

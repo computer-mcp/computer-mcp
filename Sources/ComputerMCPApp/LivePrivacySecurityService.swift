@@ -10,8 +10,6 @@ import Foundation
 @MainActor
 final class LivePrivacySecurityService: PrivacySecurityService {
   private let controlPlane: any AppControlPlane
-  /// The store revision the last snapshot was read at; answers must match it.
-  private var revision: UInt64 = 0
   private var view: GatewayPermissionView?
   private var systemPermissions: [PrivacySystemPermission.Kind: PermissionSummary] = [:]
   var requestPermission: ((PermissionSummary) -> Void)?
@@ -29,18 +27,37 @@ final class LivePrivacySecurityService: PrivacySecurityService {
         Self.systemPermission(summary).map { ($0.kind, summary) }
       })
     self.view = view
-    revision = view.revision
-    let principals = view.profiles.map(Self.principal)
+    let paths = Dictionary(
+      uniqueKeysWithValues:
+        try await controlPlane.fetchProjects().map { ($0.id, $0.path) })
+    let principals = view.profiles.map { profile in
+      var principal = Self.principal(profile)
+      principal.fullAccessLimitSources = Self.fullAccessSources(
+        view.subjects.filter { $0.profileID == profile.id }.map(\.limits))
+      return principal
+    }
     return PrivacySnapshot(
-      requests: view.requests.compactMap { Self.request($0, principals: principals, names: names) },
+      revision: view.revision,
+      profileRevisions: Dictionary(
+        uniqueKeysWithValues: view.profiles.map { ($0.id.rawValue, $0.authorizationRevision) }),
+      requests: view.requests.compactMap {
+        Self.request(
+          $0, principals: principals, names: names, paths: paths, subjects: view.subjects)
+      },
       principals: principals,
-      grants: view.profiles.flatMap { Self.grants($0, names: names) },
+      grants: view.profiles.flatMap { profile in
+        Self.grants(
+          profile, names: names, paths: paths,
+          limits: view.subjects.filter { $0.profileID == profile.id }.map(\.limits))
+      },
       managedSources: view.sources.map(Self.source),
       systemPermissions: system.compactMap(Self.systemPermission),
       suspendedForReview: view.suspended || !view.unconfirmedProfileIDs.isEmpty)
   }
 
-  func answer(request id: String, with answer: PrivacyRequestAnswer) async throws {
+  func answer(request id: String, with answer: PrivacyRequestAnswer, reviewed: PrivacySnapshot)
+    async throws
+  {
     guard let uuid = UUID(uuidString: id) else { return }
     let answer: PermissionAnswer? =
       switch answer {
@@ -48,33 +65,42 @@ final class LivePrivacySecurityService: PrivacySecurityService {
       case .always: .always
       case .dontAllow: nil
       }
-    try await controlPlane.answerPermissionRequest(
-      id: uuid, answer: answer, expectedRevision: revision)
+    do {
+      try await controlPlane.answerPermissionRequest(
+        id: uuid, answer: answer, expectedRevision: reviewed.revision)
+    } catch GatewayPermissionError.revisionConflict { throw Self.changedPermissions() }
   }
 
-  func setGrant(_ grant: PrivacyGrant) async throws {
+  func setGrant(_ grant: PrivacyGrant, reviewed: PrivacySnapshot) async throws {
     guard let permission = Self.permission(grant) else { return }
-    try await edit(grant.principalID) { profile in
+    try await edit(grant.principalID, reviewed: reviewed) { profile in
       try profile.permissions.set(Self.state(grant.value), for: permission)
     }
   }
 
-  func revokeAll(principalID: String) async throws {
-    try await edit(principalID) { profile in
+  func revokeAll(principalID: String, reviewed: PrivacySnapshot) async throws {
+    try await edit(principalID, reviewed: reviewed) { profile in
       profile.permissions = Permissions()
       profile.projectNetworks = profile.projectNetworks.mapValues { _ in .none }
       profile.fullAccess = false
     }
   }
 
-  func setExecution(principalID: String, to execution: PrivacyPrincipal.Execution) async throws {
-    try await edit(principalID) { profile in profile.fullAccess = execution != .sandbox }
+  func setExecution(
+    principalID: String, to execution: PrivacyPrincipal.Execution, reviewed: PrivacySnapshot
+  ) async throws {
+    try await edit(principalID, reviewed: reviewed) { profile in
+      profile.fullAccess = execution != .sandbox
+    }
   }
 
-  func confirmRestoredPermissions() async throws {
-    guard let view, let epoch = view.epoch else { return }
-    try await controlPlane.confirmPermissionAuthority(
-      epoch: epoch, expectedRevision: view.revision, profiles: view.profiles)
+  func confirmRestoredPermissions(reviewed: PrivacySnapshot) async throws {
+    guard let view, view.revision == reviewed.revision else { throw Self.changedPermissions() }
+    guard let epoch = view.epoch else { return }
+    do {
+      try await controlPlane.confirmPermissionAuthority(
+        epoch: epoch, expectedRevision: view.revision, profiles: view.profiles)
+    } catch GatewayPermissionError.revisionConflict { throw Self.changedPermissions() }
   }
 
   func openSystemSettings(for permission: PrivacySystemPermission.Kind) {
@@ -82,7 +108,9 @@ final class LivePrivacySecurityService: PrivacySecurityService {
     requestPermission?(summary)
   }
 
-  func setNetwork(_ grant: PrivacyGrant, to network: PrivacyNetworkAccess) async throws {
+  func setNetwork(
+    _ grant: PrivacyGrant, to network: PrivacyNetworkAccess, reviewed: PrivacySnapshot
+  ) async throws {
     guard grant.permission == .projects, let projectID = grant.object?.id else { return }
     let access: NetworkAccess =
       switch try network.validated() {
@@ -92,21 +120,28 @@ final class LivePrivacySecurityService: PrivacySecurityService {
       case .custom(let hosts, let includesTrusted):
         .custom(hosts: Set(hosts), includesTrusted: includesTrusted)
       }
-    try await edit(grant.principalID) { profile in
+    try await edit(grant.principalID, reviewed: reviewed) { profile in
       profile.projectNetworks[projectID] = access
     }
   }
 
   /// Saves one profile against the choices it was read with, so a concurrent change fails
   /// instead of being overwritten.
-  private func edit(_ principalID: String, _ change: (inout ProfileGrant) throws -> Void)
+  private func edit(
+    _ principalID: String, reviewed: PrivacySnapshot, _ change: (inout ProfileGrant) throws -> Void
+  )
     async throws
   {
     guard let id = GatewayProfileID(rawValue: principalID) else { return }
     let options = try await controlPlane.fetchProfilePermissionOptions(id: id)
+    guard options.permissionRevision == reviewed.revision,
+      options.grant.authorizationRevision == reviewed.profileRevisions[principalID]
+    else { throw Self.changedPermissions() }
     var profile = options.grant
     try change(&profile)
-    try await controlPlane.saveProfilePermissions(profile, reviewed: options)
+    do {
+      try await controlPlane.saveProfilePermissions(profile, reviewed: options)
+    } catch GatewayPermissionError.revisionConflict { throw Self.changedPermissions() }
   }
 
   private static func principal(_ profile: ProfileGrant) -> PrivacyPrincipal {
@@ -121,41 +156,139 @@ final class LivePrivacySecurityService: PrivacySecurityService {
     return PrivacyPrincipal(
       id: profile.id.rawValue, name: AppLocalization.string(profile.id.displayName),
       kind: .client(connection: connection),
-      execution: profile.fullAccess ? .fullAccessSaved : .sandbox)
+      execution: profile.fullAccess ? .fullAccessAllowed : .sandbox)
   }
 
-  private static func grants(_ profile: ProfileGrant, names: PermissionObjectNames)
-    -> [PrivacyGrant]
-  {
-    profile.permissions.entries.compactMap { permission, state in
-      guard let (kind, object) = classify(permission, names: names) else { return nil }
-      var network: PrivacyNetworkAccess?
-      if case .project(let id) = permission, let access = profile.projectNetworks[id] {
-        network = Self.network(access.configuration)
+  static func changedPermissions() -> AppControlPlaneError {
+    .unavailable("The permissions changed while you were editing. Review them and try again.")
+  }
+
+  static func grants(
+    _ profile: ProfileGrant, names: PermissionObjectNames,
+    paths: [String: String] = [:], limits: [ManagedLimits] = []
+  ) -> [PrivacyGrant] {
+    var permissions = Set(profile.permissions.entries.keys)
+    permissions.formUnion([
+      .screen, .desktopControl, .localNetwork, .machineInformation, .unifiedLogs, .skills,
+    ])
+    permissions.formUnion(FolderCategory.allCases.map(Permission.filesAndFolders))
+    permissions.formUnion((Array(names.projects.keys) + ["*"]).map(Permission.project))
+    permissions.formUnion((Array(names.plugins.keys) + ["*"]).map(Permission.plugin))
+    permissions.formUnion((Array(names.mcpServers.keys) + ["*"]).map(Permission.mcpServer))
+    return permissions.compactMap { permission in
+      guard let (kind, original) = classify(permission, names: names) else { return nil }
+      let object = original.map { object in
+        PrivacyObject(
+          id: object.id, name: object.name,
+          detail: kind == .projects ? paths[object.id] : object.detail)
       }
-      return PrivacyGrant(
-        principalID: profile.id.rawValue, permission: kind, object: object,
-        value: value(state), network: network)
-    }
-    .sorted {
+      var grant = PrivacyGrant(
+        principalID: profile.id.rawValue, permission: kind,
+        object: object, value: value(profile.permissions.entries[permission] ?? .notGranted),
+        isStored: profile.permissions.entries[permission] != nil)
+      var deniedSources: Set<PolicySource> = []
+      grant.allowedLevels = kind.grantedValues.filter { level in
+        guard case .granted(let value) = state(.granted(level)),
+          let requirement = try? PermissionRequirement(permission, value)
+        else { return false }
+        var sources = limits.reduce(into: Set<PolicySource>()) {
+          $0.formUnion($1.restrictingSources(for: requirement))
+        }
+        if let path = object?.detail, let canonical = try? CanonicalPath(path) {
+          for limit in limits { sources.formUnion(limit.denying(canonical)) }
+        }
+        deniedSources.formUnion(sources)
+        return sources.isEmpty
+      }
+      if grant.availableLevels.isEmpty, !deniedSources.isEmpty {
+        grant.value = .denied
+        grant.source = .managedLimit(sourceNames(deniedSources).joined(separator: " · "))
+      } else if case .granted(let level) = grant.value, !grant.availableLevels.contains(level) {
+        grant.value = grant.availableLevels.last.map(PrivacyGrantValue.granted) ?? .denied
+      }
+      if case .project(let id) = permission {
+        grant.network = Self.network((profile.projectNetworks[id] ?? .none).configuration)
+        for limit in limits {
+          for (source, availability) in limit.sources {
+            let cap: PrivacyNetworkAccess
+            switch availability {
+            case .absent: continue
+            case .unreadable: cap = .none
+            case .available(let policy): cap = network(policy.network.configuration)
+            }
+            if cap != .full {
+              grant.networkLimits.append(cap)
+              grant.networkLimitSources.append(sourceName(source))
+            }
+          }
+        }
+      }
+      return grant
+    }.sorted {
       ($0.permission.rawValue, $0.object?.name ?? "") < (
         $1.permission.rawValue, $1.object?.name ?? ""
       )
     }
   }
 
-  private static func request(
+  static func fullAccessSources(_ limits: [ManagedLimits]) -> [String] {
+    let sources = limits.reduce(into: Set<PolicySource>()) { sources, limit in
+      for (source, availability) in limit.sources {
+        switch availability {
+        case .unreadable: sources.insert(source)
+        case .available(let policy) where !policy.allowsFullAccess: sources.insert(source)
+        default: break
+        }
+      }
+    }
+    return sourceNames(sources)
+  }
+
+  private static func sourceNames(_ sources: Set<PolicySource>) -> [String] {
+    sources.map(sourceName).sorted()
+  }
+
+  private static func sourceName(_ source: PolicySource) -> String {
+    switch source {
+    case .owner: "Owner Policy"
+    case .machine: "Machine Policy"
+    case .managedPreferences: "Configuration Profile"
+    case .connection: "Connection"
+    }
+  }
+
+  static func request(
     _ item: GatewayPermissionRequestView, principals: [PrivacyPrincipal],
-    names: PermissionObjectNames
+    names: PermissionObjectNames, paths: [String: String] = [:],
+    subjects: [GatewayPermissionSubjectView] = []
   ) -> PrivacyRequest? {
     let request = item.request
-    guard request.status == .pending,
-      let principal = principals.first(where: { $0.id == item.profileID?.rawValue })
-    else { return nil }
+    guard request.status == .pending else { return nil }
+    var principal =
+      principals.first(where: { $0.id == item.profileID?.rawValue })
+      ?? invocationPrincipal(request.invocation.principal, names: names)
+    if case .client = request.invocation.principal,
+      let subject = subjects.first(where: { $0.principal == request.invocation.principal })
+    {
+      principal = PrivacyPrincipal(
+        id: principal.id, name: principal.name,
+        kind: .client(connection: connectionName(subject.caller)), execution: principal.execution)
+    }
     switch request.content {
     case .permission(let content):
-      guard let (kind, object) = classify(content.requirement.permission, names: names) else {
+      guard let (kind, classifiedObject) = classify(content.requirement.permission, names: names)
+      else {
         return nil
+      }
+      var object = classifiedObject
+      if let current = object {
+        let path: String?
+        if case .path(let location) = content.scope {
+          path = location.string
+        } else {
+          path = kind == .projects ? paths[current.id] : current.detail
+        }
+        object = PrivacyObject(id: current.id, name: current.name, detail: path)
       }
       return PrivacyRequest(
         id: request.id.uuidString, principal: principal, permission: kind, object: object,
@@ -164,7 +297,9 @@ final class LivePrivacySecurityService: PrivacySecurityService {
     case .network(let content):
       return PrivacyRequest(
         id: request.id.uuidString, principal: principal, permission: .projects,
-        object: project(content.projectID, names: names), level: .read, host: content.host,
+        object: PrivacyObject(
+          id: content.projectID, name: project(content.projectID, names: names).name,
+          detail: paths[content.projectID]), level: .read, host: content.host,
         purpose: content.pluginPurpose, tool: request.invocation.tool,
         expires: request.expiresAt)
     case .projectRegistration(let content):
@@ -178,6 +313,33 @@ final class LivePrivacySecurityService: PrivacySecurityService {
         level: level(content.access),
         registration: item.registrationGrantRoot == nil ? .newProject : .existingProject,
         purpose: nil, tool: request.invocation.tool, expires: request.expiresAt)
+    }
+  }
+
+  static func invocationPrincipal(_ principal: Principal, names: PermissionObjectNames)
+    -> PrivacyPrincipal
+  {
+    switch principal {
+    case .client(let id):
+      PrivacyPrincipal(
+        id: "client/" + id, name: clientAccessIdentity(id),
+        kind: .client(connection: "Connection"), execution: .sandbox)
+    case .plugin(.package(let id)):
+      PrivacyPrincipal(
+        id: "plugin/" + id, name: names.plugins[id] ?? id,
+        kind: .plugin(version: ""), execution: .sandbox)
+    case .plugin(.localServer(let id)):
+      PrivacyPrincipal(
+        id: "server/" + id, name: names.mcpServers[id] ?? id,
+        kind: .localServer, execution: .sandbox)
+    }
+  }
+
+  static func connectionName(_ caller: GatewayCallerKind) -> String {
+    switch caller {
+    case .secureTunnel: "Secure Tunnel"
+    case .cloudflareTunnel: "Cloudflare Tunnel"
+    case .localApp, .localCLI, .localMCP: "This Mac"
     }
   }
 
@@ -219,7 +381,7 @@ final class LivePrivacySecurityService: PrivacySecurityService {
       (
         .filesAndFolders,
         PrivacyObject(
-          id: category.rawValue, name: AppLocalization.string(category.title), detail: nil)
+          id: category.rawValue, name: category.title, detail: category.directory?.path)
       )
     case .plugin(let id):
       (.plugins, PrivacyObject(id: id, name: object(id, names.plugins, "All Plugins"), detail: nil))
@@ -242,7 +404,7 @@ final class LivePrivacySecurityService: PrivacySecurityService {
   }
 
   private static func object(_ id: String, _ names: [String: String], _ all: String) -> String {
-    id == "*" ? AppLocalization.string(all) : names[id] ?? id
+    id == "*" ? all : names[id] ?? id
   }
 
   private static func permission(_ grant: PrivacyGrant) -> Permission? {
@@ -308,6 +470,18 @@ final class LivePrivacySecurityService: PrivacySecurityService {
 }
 
 extension FolderCategory {
+  fileprivate var directory: URL? {
+    let directory: FileManager.SearchPathDirectory
+    switch self {
+    case .desktop: directory = .desktopDirectory
+    case .documents: directory = .documentDirectory
+    case .downloads: directory = .downloadsDirectory
+    case .iCloudDrive, .networkVolumes, .removableVolumes: return nil
+    }
+    return FileManager.default.urls(for: directory, in: .userDomainMask).first?
+      .resolvingSymlinksInPath()
+  }
+
   fileprivate var title: String {
     switch self {
     case .desktop: "Desktop"

@@ -1,3 +1,4 @@
+import ComputerMCPGateway
 import SwiftUI
 
 extension EnvironmentValues {
@@ -46,6 +47,7 @@ struct PrivacySecurityView: View {
   private var l: PrivacyText { PrivacyText(locale: locale, resources: resources) }
   @ObservedObject var model: PrivacySecurityModel
   @State private var prompted: PrivacyRequest?
+  @State private var promptedSnapshot = PrivacySnapshot()
 
   var body: some View {
     NavigationStack(path: $model.path) {
@@ -68,8 +70,9 @@ struct PrivacySecurityView: View {
     }
     .sheet(item: $prompted) { request in
       PrivacyRequestPrompt(request: request) { answer in
+        let reviewed = promptedSnapshot
         prompted = nil
-        Task { await model.answer(request, answer) }
+        Task { await model.answer(request, answer, reviewed: reviewed) }
       }
     }
     .alert(
@@ -100,7 +103,8 @@ struct PrivacySecurityView: View {
         PrivacySymbol(name: "exclamationmark.triangle.fill")
       }
       Button(l("Confirm Permissions")) {
-        Task { await model.confirmRestoredPermissions() }
+        let reviewed = model.snapshot
+        Task { await model.confirmRestoredPermissions(reviewed: reviewed) }
       }
     }
   }
@@ -109,6 +113,7 @@ struct PrivacySecurityView: View {
     Section(l("Requests")) {
       ForEach(model.snapshot.requests) { request in
         Button {
+          promptedSnapshot = model.snapshot
           prompted = request
         } label: {
           HStack {
@@ -355,8 +360,12 @@ struct PrivacyPermissionDetailView: View {
       if principals.isEmpty { emptyRow }
       ForEach(principals) { principal in
         LabeledContent {
-          Text(verbatim: l(PrivacyPrincipalDetailView.executionTitle(principal.execution)))
-            .foregroundStyle(.secondary)
+          if let clientAccess = model.clientAccess {
+            PrivacyClientExecutionLabel(model: clientAccess, principal: principal)
+          } else {
+            let title = l(PrivacyPrincipalDetailView.executionTitle(principal.execution))
+            Text(verbatim: title).foregroundStyle(.secondary)
+          }
         } label: {
           Label {
             Text(verbatim: principal.name)
@@ -368,7 +377,7 @@ struct PrivacyPermissionDetailView: View {
     } footer: {
       Text(
         verbatim: l(
-          "Full Access is turned on from a client's or plugin's page, and needs your confirmation on this Mac."
+          "Each connection needs approval on this Mac before programs can run without the sandbox."
         )
       )
     }
@@ -394,14 +403,17 @@ struct PrivacyGrantRow: View {
   var body: some View {
     Picker(selection: binding) {
       Text(verbatim: l("Ask")).tag(PrivacyGrantValue.ask)
-      ForEach(grant.permission.grantedValues, id: \.self) { level in
+      ForEach(grant.availableLevels, id: \.self) { level in
         Text(verbatim: l(level.title)).tag(PrivacyGrantValue.granted(level))
       }
       Text(verbatim: l("Don't Allow")).tag(PrivacyGrantValue.denied)
     } label: {
       Label {
         VStack(alignment: .leading, spacing: 2) {
-          Text(verbatim: title ?? grant.object?.name ?? "")
+          let name = title ?? grant.object?.name ?? ""
+          let rowTitle =
+            grant.object?.id == "*" || grant.permission == .filesAndFolders ? l(name) : name
+          Text(verbatim: rowTitle)
           if let caption {
             Text(verbatim: caption).font(.caption).foregroundStyle(.secondary)
           }
@@ -426,7 +438,11 @@ struct PrivacyGrantRow: View {
     switch grant.source {
     case .owner: break
     case .pluginDeclaration: parts.append(l("Declared by the plugin"))
-    case .managedLimit(let source): parts.append(l.format("Set by %@", l(source)))
+    case .managedLimit(let source):
+      parts.append(
+        l.format(
+          "Set by %@", source.components(separatedBy: " · ").map { l($0) }.joined(separator: " · "))
+      )
     }
     return parts.isEmpty ? nil : parts.joined(separator: " · ")
   }
@@ -459,7 +475,10 @@ struct PrivacyGrantRow: View {
   private var binding: Binding<PrivacyGrantValue> {
     Binding(
       get: { grant.value },
-      set: { value in Task { await model.set(grant, to: value) } })
+      set: { value in
+        let reviewed = model.snapshot
+        Task { await model.set(grant, to: value, reviewed: reviewed) }
+      })
   }
 }
 
@@ -487,6 +506,9 @@ struct PrivacyPrincipalDetailView: View {
           }
         }
         executionSection(principal)
+        if let clientAccess = model.clientAccess {
+          PrivacyConnectionsSection(model: clientAccess, principal: principal)
+        }
         let grants = model.grants(for: principal)
         let single = grants.filter { !$0.permission.isPerObject }
         if !single.isEmpty {
@@ -531,7 +553,8 @@ struct PrivacyPrincipalDetailView: View {
         isPresented: $confirmRevoke
       ) {
         Button(l("Revoke All Access"), role: .destructive) {
-          Task { await model.revokeAll(principal) }
+          let reviewed = model.snapshot
+          Task { await model.revokeAll(principal, reviewed: reviewed) }
         }
       } message: {
         Text(
@@ -544,7 +567,8 @@ struct PrivacyPrincipalDetailView: View {
         isPresented: $confirmFullAccess
       ) {
         Button(l("Give Full Access"), role: .destructive) {
-          Task { await model.setExecution(principal, .fullAccessSaved) }
+          let reviewed = model.snapshot
+          Task { await model.setExecution(principal, .fullAccessAllowed, reviewed: reviewed) }
         }
       } message: {
         Text(verbatim: l(PrivacyPermissionKind.fullAccess.summary))
@@ -563,21 +587,30 @@ struct PrivacyPrincipalDetailView: View {
           get: { principal.execution == .sandbox ? 0 : 1 },
           set: { choice in
             if choice == 0 {
-              Task { await model.setExecution(principal, .sandbox) }
-            } else {
+              let reviewed = model.snapshot
+              Task { await model.setExecution(principal, .sandbox, reviewed: reviewed) }
+            } else if principal.fullAccessLimitSources.isEmpty {
               confirmFullAccess = true
             }
           })
       ) {
         Text(verbatim: l("Sandbox")).tag(0)
-        Text(verbatim: l("Full Access")).tag(1)
+        Text(verbatim: l("Full Access Allowed")).tag(1)
+          .disabled(!principal.fullAccessLimitSources.isEmpty)
       } label: {
         Text(verbatim: l("Execution"))
       }
       .pickerStyle(.segmented)
+      .disabled(!principal.fullAccessLimitSources.isEmpty && principal.execution == .sandbox)
       .accessibilityIdentifier("privacy.execution.\(principal.id)")
     } footer: {
-      Text(verbatim: l(Self.executionFootnote(principal.execution)))
+      let footnote = l(Self.executionFootnote(principal.execution))
+      Text(verbatim: footnote)
+      if !principal.fullAccessLimitSources.isEmpty {
+        let source = l.list(principal.fullAccessLimitSources.map { l($0) })
+        let message = l.format("Set by %@", source)
+        Text(verbatim: message)
+      }
     }
   }
 
@@ -595,8 +628,7 @@ struct PrivacyPrincipalDetailView: View {
   static func executionTitle(_ execution: PrivacyPrincipal.Execution) -> String {
     switch execution {
     case .sandbox: "Sandbox"
-    case .fullAccessSaved: "Full Access"
-    case .fullAccessConnection: "Full Access for This Connection"
+    case .fullAccessAllowed: "Full Access Allowed"
     }
   }
 
@@ -604,8 +636,8 @@ struct PrivacyPrincipalDetailView: View {
     switch execution {
     case .sandbox:
       "Programs run in the sandbox and change projects only in worktrees."
-    case .fullAccessSaved, .fullAccessConnection:
-      "Programs run as you without the sandbox. They don't inherit Computer MCP's macOS permissions."
+    case .fullAccessAllowed:
+      "Each connection needs approval on this Mac before programs can run without the sandbox."
     }
   }
 }
@@ -617,7 +649,7 @@ struct PrivacyNetworkPicker: View {
   private var l: PrivacyText { PrivacyText(locale: locale, resources: resources) }
   @ObservedObject var model: PrivacySecurityModel
   let grant: PrivacyGrant
-  @State private var showingCustom = false
+  @State private var customEdit: PrivacyNetworkEdit?
 
   private enum Choice: Hashable { case none, trusted, full, custom, edit }
 
@@ -625,7 +657,9 @@ struct PrivacyNetworkPicker: View {
     Picker(selection: selection) {
       Text(verbatim: l("None")).tag(Choice.none)
       Text(verbatim: l("Trusted Hosts")).tag(Choice.trusted)
+        .disabled(!grant.allowsNetwork(.trusted))
       Text(verbatim: l("Any Host")).tag(Choice.full)
+        .disabled(!grant.allowsNetwork(.full))
       if case .custom = network {
         let hosts = PrivacyGrantRow.networkValue(network, using: l)
         Text(verbatim: hosts).tag(Choice.custom)
@@ -634,16 +668,26 @@ struct PrivacyNetworkPicker: View {
       Text(verbatim: l("Custom…")).tag(Choice.edit)
     } label: {
       Label {
-        Text(verbatim: l("Network"))
+        VStack(alignment: .leading, spacing: 2) {
+          Text(verbatim: l("Network"))
+          if !grant.networkLimitSources.isEmpty {
+            let sources = l.list(Array(Set(grant.networkLimitSources)).sorted().map { l($0) })
+            let caption = l.format("Set by %@", sources)
+            Text(verbatim: caption).font(.caption).foregroundStyle(.secondary)
+          }
+        }
       } icon: {
         PrivacySymbol(name: "globe")
       }
     }
     .disabled(managed)
     .accessibilityIdentifier("privacy.network.\(grant.id)")
-    .sheet(isPresented: $showingCustom) {
-      PrivacyNetworkSheet(network: network) { network in
-        await model.setNetwork(grant, to: network)
+    .sheet(item: $customEdit) { edit in
+      PrivacyNetworkSheet(
+        network: edit.grant.network ?? .none, grant: edit.grant,
+        failureMessage: { model.failure }
+      ) { network in
+        await model.setNetwork(edit.grant, to: network, reviewed: edit.snapshot)
       }
     }
   }
@@ -651,7 +695,7 @@ struct PrivacyNetworkPicker: View {
   private var network: PrivacyNetworkAccess { grant.network ?? PrivacyNetworkAccess.none }
 
   private var managed: Bool {
-    if case .managedLimit = grant.source { true } else { false }
+    grant.networkLimits.contains(.none)
   }
 
   private var selection: Binding<Choice> {
@@ -672,12 +716,20 @@ struct PrivacyNetworkPicker: View {
         case .full: access = .full
         case .custom: return
         case .edit:
-          showingCustom = true
+          customEdit = PrivacyNetworkEdit(grant: grant, snapshot: model.snapshot)
           return
         }
-        Task { await model.setNetwork(grant, to: access) }
+        guard grant.allowsNetwork(access) else { return }
+        let reviewed = model.snapshot
+        Task { await model.setNetwork(grant, to: access, reviewed: reviewed) }
       })
   }
+}
+
+struct PrivacyNetworkEdit: Identifiable {
+  let id = UUID()
+  let grant: PrivacyGrant
+  let snapshot: PrivacySnapshot
 }
 
 struct PrivacyNetworkSheet: View {
@@ -688,9 +740,17 @@ struct PrivacyNetworkSheet: View {
   @State private var draft: PrivacyNetworkDraft
   @State private var failure: String?
   @State private var saving = false
+  let grant: PrivacyGrant?
+  let failureMessage: () -> String?
   let save: (PrivacyNetworkAccess) async -> Bool
 
-  init(network: PrivacyNetworkAccess, save: @escaping (PrivacyNetworkAccess) async -> Bool) {
+  init(
+    network: PrivacyNetworkAccess, grant: PrivacyGrant? = nil,
+    failureMessage: @escaping () -> String? = { nil },
+    save: @escaping (PrivacyNetworkAccess) async -> Bool
+  ) {
+    self.grant = grant
+    self.failureMessage = failureMessage
     _draft = State(initialValue: PrivacyNetworkDraft(network))
     self.save = save
   }
@@ -711,6 +771,7 @@ struct PrivacyNetworkSheet: View {
       .font(.caption)
       .foregroundStyle(.secondary)
       Toggle(l("Include trusted hosts"), isOn: $draft.includesTrusted)
+        .disabled(grant?.allowsNetwork(.trusted) == false)
       if let failure {
         Text(verbatim: failure).foregroundStyle(.red).font(.callout)
       }
@@ -726,12 +787,16 @@ struct PrivacyNetworkSheet: View {
             failure = AppLocalization.errorDescription(error)
             return
           }
+          guard grant?.allowsNetwork(network) != false else {
+            failure = l("This network access is not allowed by the managed limits.")
+            return
+          }
           saving = true
           Task {
             if await save(network) {
               dismiss()
             } else {
-              failure = l("The change couldn't be made.")
+              failure = failureMessage() ?? l("The change couldn't be made.")
             }
             saving = false
           }
@@ -763,6 +828,15 @@ struct PrivacyRequestPrompt: View {
         Text(verbatim: text5)
           .font(.headline)
           .multilineTextAlignment(.center)
+        if let path = request.object?.detail {
+          Text(verbatim: path)
+            .font(.callout).textSelection(.enabled)
+            .lineLimit(2).truncationMode(.middle)
+            .help(Text(verbatim: path))
+            .accessibilityIdentifier("privacy.prompt.path")
+        }
+        let requester = Self.requesterCaption(for: request, using: l)
+        Text(verbatim: requester).font(.caption).foregroundStyle(.secondary)
         if let purpose = request.purpose {
           Text(verbatim: purpose)
             .multilineTextAlignment(.center)
@@ -783,6 +857,12 @@ struct PrivacyRequestPrompt: View {
         }
       }
       VStack(spacing: 8) {
+        if case .client = request.principal.kind {
+          let shared = l.format(
+            "Always applies to every connection that uses “%@”.", request.principal.name)
+          Text(verbatim: shared).font(.caption).foregroundStyle(.secondary)
+            .multilineTextAlignment(.center)
+        }
         if request.registration == nil {
           Button {
             answer(.onlyThisTime)
@@ -820,6 +900,16 @@ struct PrivacyRequestPrompt: View {
     .frame(width: 340)
   }
 
+  static func requesterCaption(for request: PrivacyRequest, using l: PrivacyText) -> String {
+    let connection: String
+    switch request.principal.kind {
+    case .client(let name): connection = l(name)
+    case .plugin: connection = l("Plugin")
+    case .localServer: connection = l("Local MCP Server")
+    }
+    return request.tool + " · " + connection
+  }
+
   static func detail(for request: PrivacyRequest, using l: PrivacyText) -> String {
     if request.host != nil {
       return l("Allowing adds the host to the project's network access in the sandbox.")
@@ -839,7 +929,10 @@ struct PrivacyRequestPrompt: View {
   }
 
   static func requestSentence(for request: PrivacyRequest, using l: PrivacyText) -> String {
-    let object = request.object?.name ?? l(request.permission.title)
+    let name = request.object?.name ?? request.permission.title
+    let object =
+      request.object == nil || request.permission == .filesAndFolders || request.object?.id == "*"
+      ? l(name) : name
     if let host = request.host {
       return l.format(
         "“%1$@” would like to connect to “%2$@” from “%3$@”.", request.principal.name, host, object)
@@ -854,6 +947,77 @@ struct PrivacyRequestPrompt: View {
     default:
       return l.format(
         "“%1$@” would like to use “%2$@”.", request.principal.name, object)
+    }
+  }
+}
+
+struct PrivacyClientExecutionLabel: View {
+  @ObservedObject var model: ClientAccessModel
+  let principal: PrivacyPrincipal
+  @Environment(\.locale) private var locale
+  @Environment(\.localizationResources) private var resources
+
+  var body: some View {
+    let l = PrivacyText(locale: locale, resources: resources)
+    let title = l(model.privacyExecutionTitle(for: principal))
+    Text(verbatim: title).foregroundStyle(.secondary)
+  }
+}
+
+struct PrivacyConnectionsSection: View {
+  @ObservedObject var model: ClientAccessModel
+  let principal: PrivacyPrincipal
+  @Environment(\.locale) private var locale
+  @Environment(\.localizationResources) private var resources
+  private var l: PrivacyText { PrivacyText(locale: locale, resources: resources) }
+
+  var body: some View {
+    Section(l("Connections")) {
+      if let error = model.errorMessage {
+        Text(verbatim: error).foregroundStyle(.red)
+      }
+      let sessions = model.activeSessions.filter { $0.profileID.rawValue == principal.id }
+      if sessions.isEmpty {
+        Text(verbatim: l("No connected clients")).foregroundStyle(.secondary)
+      }
+      ForEach(sessions) { session in
+        LabeledContent {
+          VStack(alignment: .trailing, spacing: 6) {
+            let status = l(session.privacyExecutionTitle)
+            Text(verbatim: status).foregroundStyle(.secondary)
+            Button(l("Give Full Access…")) { model.requestFullAccess(session) }
+              .disabled(
+                principal.execution == .sandbox || !principal.fullAccessLimitSources.isEmpty
+                  || !session.accessLimit.allowsFullAccess
+                  || session.profile?.grant.fullAccess != true)
+          }
+        } label: {
+          let connection = l(LivePrivacySecurityService.connectionName(session.caller))
+          Text(verbatim: connection)
+          let identity = clientAccessIdentity(session.principalID, using: l)
+          Text(verbatim: identity).font(.caption).foregroundStyle(.secondary)
+        }
+      }
+      let trusts = (model.snapshot?.trusts ?? []).filter {
+        $0.profileID.rawValue == principal.id && $0.fullAccessAllowed
+      }
+      if !trusts.isEmpty {
+        Text(verbatim: l("Saved client approvals")).font(.headline)
+      }
+      ForEach(trusts) { trust in
+        LabeledContent {
+          Button(l("Revoke"), role: .destructive) { Task { await model.revoke(trust) } }
+        } label: {
+          let identity = clientAccessIdentity(trust.principalID, using: l)
+          Text(verbatim: identity)
+          let caller = l(LivePrivacySecurityService.connectionName(trust.caller))
+          Text(verbatim: caller).font(.caption).foregroundStyle(.secondary)
+        }
+      }
+    }
+    .disabled(!model.isAvailable || model.isSaving)
+    .sheet(item: $model.pendingConsent) { draft in
+      ClientConsentView(model: model, draftID: draft.id)
     }
   }
 }

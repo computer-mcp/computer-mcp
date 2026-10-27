@@ -292,6 +292,7 @@ struct PrivacyPermissionDetailView: View {
         Text(verbatim: l(permission.summary))
           .foregroundStyle(.secondary)
       }
+      PrivacyUnreadableNotice(grants: model.grants(for: permission))
       if permission == .fullAccess {
         fullAccessRows
       } else if permission.isPerObject {
@@ -440,8 +441,10 @@ struct PrivacyGrantRow: View {
     case .owner: break
     case .pluginDeclaration: parts.append(l("Declared by the plugin"))
     }
-    parts += grant.limitNotices.map { $0.text(using: l) }
-    if showsNetwork { parts += grant.networkLimitNotices.map { $0.text(using: l) } }
+    parts += grant.limitNotices.filter(\.isPerRow).map { $0.text(using: l) }
+    if showsNetwork {
+      parts += grant.networkLimitNotices.filter(\.isPerRow).map { $0.text(using: l) }
+    }
     return parts.isEmpty ? nil : parts.joined(separator: " · ")
   }
 
@@ -503,6 +506,7 @@ struct PrivacyPrincipalDetailView: View {
             PrivacySymbol(name: principal.systemImage).font(.title2)
           }
         }
+        PrivacyUnreadableNotice(grants: model.grants(for: principal))
         executionSection(principal)
         if let clientAccess = model.clientAccess {
           PrivacyConnectionsSection(model: clientAccess, principal: principal)
@@ -669,9 +673,9 @@ struct PrivacyNetworkPicker: View {
       Label {
         VStack(alignment: .leading, spacing: 2) {
           Text(verbatim: l("Network"))
-          if !grant.networkLimitNotices.isEmpty {
-            let caption = grant.networkLimitNotices.map { $0.text(using: l) }.joined(
-              separator: " · ")
+          let notices = grant.networkLimitNotices.filter(\.isPerRow)
+          if !notices.isEmpty {
+            let caption = notices.map { $0.text(using: l) }.joined(separator: " · ")
             Text(verbatim: caption).font(.caption).foregroundStyle(.secondary)
           }
         }
@@ -1034,7 +1038,41 @@ struct PrivacyConnectionsSection: View {
   }
 }
 
+/// One notice for policy sources that can't be read, instead of a caption on every row they
+/// disable.
+struct PrivacyUnreadableNotice: View {
+  @Environment(\.locale) private var locale
+  @Environment(\.localizationResources) private var resources
+  private var l: PrivacyText { PrivacyText(locale: locale, resources: resources) }
+  let grants: [PrivacyGrant]
+
+  var body: some View {
+    let sources = Set(
+      grants.flatMap { $0.limitNotices + $0.networkLimitNotices }
+        .filter { !$0.isPerRow }.map(\.source)
+    ).sorted()
+    if !sources.isEmpty {
+      Section {
+        Label {
+          let names = l.list(sources.map { l($0) })
+          let text = l.format(
+            "%@ can't be read. Until it can, nothing it limits is allowed; the settings below apply again once it can be read.",
+            names)
+          Text(verbatim: text)
+        } icon: {
+          PrivacySymbol(name: "exclamationmark.triangle.fill")
+        }
+      }
+    }
+  }
+}
+
 extension PrivacyLimitNotice {
+  /// Unreadable sources disable everything they could limit and are explained once per page.
+  var isPerRow: Bool {
+    if case .unreadable = effect { false } else { true }
+  }
+
   func text(using l: PrivacyText) -> String {
     switch effect {
     case .unreadable:

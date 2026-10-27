@@ -4,10 +4,74 @@ import Foundation
 
 @testable import ComputerMCPWorktrees
 
+#if canImport(Darwin)
+  import Darwin
+#elseif canImport(Glibc)
+  import Glibc
+#endif
+
 /// A pinned native Git adapter used only with disposable test repositories.
 struct WorktreeTestGit: WorktreeGitExecuting {
   let executable: URL
   init() throws { executable = URL(fileURLWithPath: try testExecutable("git")) }
+
+  func withPreparedTransaction(_ command: WorktreeGitCommand, _ body: () throws -> Void) throws {
+    let input = Pipe()
+    let output = Pipe()
+    let errors = Pipe()
+    let process = Process()
+    process.executableURL = executable
+    process.arguments = command.arguments
+    process.currentDirectoryURL = command.directory
+    process.environment = command.environment
+    process.standardInput = input
+    process.standardOutput = output
+    process.standardError = errors
+    let deadline = ContinuousClock.now.advanced(by: .milliseconds(command.timeoutMilliseconds))
+    try process.run()
+    defer {
+      try? input.fileHandleForWriting.close()
+      if process.isRunning { process.terminate() }
+      let end = ContinuousClock.now.advanced(by: .seconds(1))
+      while process.isRunning, ContinuousClock.now < end { Thread.sleep(forTimeInterval: 0.002) }
+      if process.isRunning { _ = kill(process.processIdentifier, SIGKILL) }
+      process.waitUntilExit()
+    }
+    func line() throws -> String {
+      var data = Data()
+      while ContinuousClock.now < deadline, data.count < command.maxOutputBytes {
+        var descriptor = pollfd(
+          fd: output.fileHandleForReading.fileDescriptor, events: Int16(POLLIN), revents: 0)
+        guard poll(&descriptor, 1, 10) > 0 else { continue }
+        guard let byte = try output.fileHandleForReading.read(upToCount: 1), !byte.isEmpty else {
+          throw WorktreeError.commandFailed("Reference transaction ended before acknowledgement.")
+        }
+        data.append(byte)
+        if byte == Data([10]) { return String(decoding: data, as: UTF8.self) }
+      }
+      throw WorktreeError.commandFailed("Reference transaction exceeded its bounds.")
+    }
+    try input.fileHandleForWriting.write(contentsOf: command.input)
+    guard try line() == "start: ok\n", try line() == "prepare: ok\n" else {
+      throw WorktreeError.commandFailed("Reference transaction did not prepare.")
+    }
+    do {
+      try body()
+      guard ContinuousClock.now < deadline else {
+        throw WorktreeError.busy("Reference deadline expired.")
+      }
+      try input.fileHandleForWriting.write(contentsOf: Data("commit\n".utf8))
+      guard try line() == "commit: ok\n" else {
+        throw WorktreeError.commandFailed("Commit failed.")
+      }
+    } catch {
+      if process.isRunning {
+        try? input.fileHandleForWriting.write(contentsOf: Data("abort\n".utf8))
+        _ = try? line()
+      }
+      throw error
+    }
+  }
 
   func execute(_ command: WorktreeGitCommand) throws -> WorktreeGitResult {
     let temporary = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
@@ -85,13 +149,17 @@ struct WorktreeFixture {
     }
   }
 
-  func service(store: (any DerivedProjectStore)? = nil, roots: [URL]? = nil) throws
+  func service(
+    store: (any DerivedProjectStore)? = nil, roots: [URL]? = nil,
+    executor: (any WorktreeGitExecuting)? = nil, journalIO: WorktreeJournalIO = .init()
+  ) throws
     -> WorktreeRepository
   {
     try WorktreeRepository(
       source: source, store: store ?? self.store, storage: storage,
-      executor: executor, registeredProjectRoots: roots ?? [repository],
-      timeoutMilliseconds: 10_000, maxOutputBytes: 1_048_576, lockTimeout: .seconds(1))
+      executor: executor ?? self.executor, registeredProjectRoots: roots ?? [repository],
+      timeoutMilliseconds: 10_000, maxOutputBytes: 1_048_576, lockTimeout: .seconds(1),
+      journalIO: journalIO)
   }
 
   @discardableResult

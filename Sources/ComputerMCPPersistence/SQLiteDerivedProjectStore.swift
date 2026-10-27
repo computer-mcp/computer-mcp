@@ -71,13 +71,33 @@ package final class SQLiteDerivedProjectStore: DerivedProjectStore, Sendable {
         branch.branch.hasPrefix("refs/heads/"), branch.base.hasPrefix("refs/heads/"),
         !branch.baseOID.isEmpty, !branch.publishedOID.isEmpty
       else { throw DerivedProjectStoreError.invalidRecord }
-      try database.execute(
+      if let payload = try Data.fetchOne(
+        database,
         sql:
-          "INSERT INTO protectedWorktreeBranches (repositoryID, branchID, codecVersion, branchRef, payload) VALUES (?, ?, 1, ?, ?)",
-        arguments: [
-          branch.repositoryKey, branch.branchID.uuidString, branch.branch,
-          try encoder.encode(branch),
-        ])
+          "SELECT payload FROM protectedWorktreeBranches WHERE repositoryID = ? AND branchID = ?",
+        arguments: [branch.repositoryKey, branch.branchID.uuidString])
+      {
+        let previous = try JSONDecoder().decode(ProtectedWorktreeBranch.self, from: payload)
+        guard previous.repository == branch.repository, previous.branch == branch.branch,
+          previous.branchID == branch.branchID, previous.base == branch.base,
+          previous.baseOID == branch.baseOID, previous.worktreeID == branch.worktreeID,
+          previous.publishedOID == old?.worktree?.lastPublishedOID
+        else {
+          throw DerivedProjectStoreError.invalidRecord
+        }
+        try database.execute(
+          sql:
+            "UPDATE protectedWorktreeBranches SET payload = ? WHERE repositoryID = ? AND branchID = ?",
+          arguments: [try encoder.encode(branch), branch.repositoryKey, branch.branchID.uuidString])
+      } else {
+        try database.execute(
+          sql:
+            "INSERT INTO protectedWorktreeBranches (repositoryID, branchID, codecVersion, branchRef, payload) VALUES (?, ?, 1, ?, ?)",
+          arguments: [
+            branch.repositoryKey, branch.branchID.uuidString, branch.branch,
+            try encoder.encode(branch),
+          ])
+      }
     }
   }
 

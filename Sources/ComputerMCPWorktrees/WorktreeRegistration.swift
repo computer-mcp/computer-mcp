@@ -14,6 +14,9 @@ package struct WorktreeRegistration: Codable, Equatable, Sendable {
   let objects: WorktreeDirectoryIdentity
   let objectParent: WorktreeDirectoryIdentity
   let runtime: WorktreeDirectoryIdentity
+  var publishedOID: String?
+
+  package var lastPublishedOID: String { publishedOID ?? baseOID }
 
   init(_ journal: WorktreeCreationJournal) throws {
     guard let root = journal.root, let gitDirectory = journal.gitDirectory,
@@ -39,6 +42,7 @@ package struct WorktreeRegistration: Codable, Equatable, Sendable {
     guard case .host = record.provenance, root.path == record.root,
       repository.source.path == record.source.root,
       repository.format.contains(baseOID),
+      publishedOID.map(repository.format.contains) ?? true,
       [branch, base].allSatisfy({
         $0.hasPrefix("refs/heads/") && $0.utf8.count <= 1035
           && !$0.unicodeScalars.contains(where: { $0.value <= 32 || $0.value == 127 })

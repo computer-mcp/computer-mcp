@@ -57,6 +57,7 @@ let neutralTargets: [Target] =
     ),
     .target(name: "ComputerMCPPlatform", dependencies: ["ComputerMCPCore"]),
     .target(name: "CSystemPOSIX"),
+    .target(name: "CSystemZlib", linkerSettings: [.linkedLibrary("z")]),
     .target(
       name: "ComputerMCPPlatformPOSIX",
       dependencies: ["ComputerMCPPlatform", "CSystemPOSIX", "ComputerMCPSandbox"]),
@@ -68,7 +69,11 @@ let neutralTargets: [Target] =
       ]
     ),
     .target(
-      name: "ComputerMCPWorktrees", dependencies: ["ComputerMCPPlatformPOSIX"]),
+      name: "ComputerMCPWorktrees",
+      dependencies: [
+        "ComputerMCPPlatformPOSIX", "CSystemZlib",
+        .product(name: "Crypto", package: "swift-crypto"),
+      ]),
     .testTarget(
       name: "ComputerMCPWorktreesTests",
       dependencies: [

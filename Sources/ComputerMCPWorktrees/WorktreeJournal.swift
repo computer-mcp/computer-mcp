@@ -20,7 +20,9 @@ package struct WorktreeJournalIO: Sendable {
     self.beforeDirectorySync = beforeDirectorySync
   }
 
-  package func read(_ name: String, in directory: WorktreeDirectory, limit: Int) throws -> Data? {
+  package func read(
+    _ name: String, in directory: WorktreeDirectory, limit: Int, synchronize: Bool = false
+  ) throws -> Data? {
     try WorktreeDirectory.requireName(name)
     try directory.verify()
     let fd = openat(directory.descriptor, name, O_RDONLY | O_NOFOLLOW | O_CLOEXEC | O_NONBLOCK)
@@ -36,6 +38,7 @@ package struct WorktreeJournalIO: Sendable {
     guard content.count <= limit else {
       throw WorktreeError.identityChanged("Journal exceeds limit.")
     }
+    if synchronize { try handle.synchronize() }
     try requireIdentity(fd, name: name, directory: directory)
     return content
   }
@@ -88,5 +91,17 @@ package struct WorktreeJournalIO: Sendable {
       current.st_mode & S_IFMT == S_IFREG, current.st_dev == opened.st_dev,
       current.st_ino == opened.st_ino
     else { throw WorktreeError.identityChanged("Journal file identity changed: \(name)") }
+  }
+}
+
+extension WorktreeJournalIO {
+  func remove(_ name: String, in directory: WorktreeDirectory, expecting content: Data) throws {
+    guard try read(name, in: directory, limit: content.count) == content else {
+      throw WorktreeError.identityChanged("Owned journal content changed before removal.")
+    }
+    try directory.verify()
+    guard unlinkat(directory.descriptor, name, 0) == 0 else { throw WorktreeDirectory.posixError() }
+    try beforeDirectorySync()
+    try directory.synchronize()
   }
 }

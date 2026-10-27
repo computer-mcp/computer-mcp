@@ -48,7 +48,8 @@ owns dependency verification and the combinations exercised by release checks.
 | swift-subprocess | `.upToNextMinor(from: "1.0.2")` | Darwin execution launcher backend |
 | GRDB | `from: "7.11.1"` | Transactional App metadata and redacted audit; system SQLite on Linux |
 | swift-log | `from: "1.14.0"` | Runtime logging integration |
-| swift-crypto | `.upToNextMinor(from: "4.5.2")` | SHA-256 in the platform-neutral `ComputerMCPCore`, `ComputerMCPToolsCLI`, `ComputerMCPPlugins`, `ComputerMCPGateway` and `ComputerMCPControlPlane` targets on macOS and Linux |
+| swift-crypto | `.upToNextMinor(from: "4.5.2")` | SHA-256 in the platform-neutral `ComputerMCPCore`, `ComputerMCPToolsCLI`, `ComputerMCPPlugins`, `ComputerMCPGateway`, `ComputerMCPControlPlane` and `ComputerMCPWorktrees` targets on macOS and Linux |
+| System zlib | OS-provided | Bounded streaming decompression for private Git object validation through `CSystemZlib` |
 | macOS system `libarchive.2` | OS-provided | ZIP/TAR/gzip decoding for plugin staging; no downloaded library or decompressor process |
 
 `Tools/Validation` uses `from: "1.8.2"` for ArgumentParser and deliberately keeps
@@ -659,3 +660,11 @@ Inventory reads private HEAD with the host-selected shared alternate and reports
 unknown base or unavailable state explicitly. Foreign checkouts and plugin receipts
 do not mint verified host topology. Topology evidence alone grants no execution
 lease or sandbox authority; lifecycle tools are not registered by this service.
+
+Worktree object verification uses system zlib through `CSystemZlib` for bounded
+streaming decompression before invoking Git. Object and pack digests use the
+existing swift-crypto dependency. Publication captures detached HEAD once and
+validates an exclusive host copy; only its exact reachable closure is promoted.
+Prepared reference transactions retain host recovery roots for replaced commits.
+Explicit replacement acknowledgement releases an obsolete root with expected-value
+checks; ordinary rebase and removal do not expire history by age.

@@ -56,7 +56,7 @@ extension WorktreeRepository {
       guard let record = try store.records().first(where: { $0.projectID == projectID }),
         case .host = record.provenance, record.source == source, record.state == .active,
         let journal = try readJournal(projectID), journal.phase == .active,
-        try activeRecord(journal) == record
+        try matchesActiveRecord(journal, record)
       else {
         throw WorktreeError.recoveryRequired("No active host topology for this registration.")
       }
@@ -72,9 +72,19 @@ extension WorktreeRepository {
     return record
   }
 
+  func matchesActiveRecord(_ journal: WorktreeCreationJournal, _ record: DerivedProjectRecord)
+    throws -> Bool
+  {
+    var expected = try activeRecord(journal)
+    guard record.revision >= expected.revision else { return false }
+    expected.revision = record.revision
+    expected.worktree?.publishedOID = record.worktree?.publishedOID
+    return expected == record
+  }
+
   func verifyTopology(
     _ journal: WorktreeCreationJournal, repository: WorktreeRepositoryIdentity,
-    source: DerivedProjectSource
+    source: DerivedProjectSource, validateHead: Bool = true
   ) throws -> VerifiedWorktreeTopology {
     try verifyDirectories(journal, repository: repository, source: source)
     let topology = try VerifiedWorktreeTopology(journal)
@@ -89,6 +99,10 @@ extension WorktreeRepository {
       atPath: topology.objects.url.appendingPathComponent("info/alternates").path)
     {
       throw WorktreeError.unsafeConfiguration("Private alternate files are unsupported.")
+    }
+    guard validateHead else {
+      try topology.verifyDirectories()
+      return topology
     }
     let head = try directHead(
       root: topology.root.url, administrative: administrative.url, objects: topology.objects.url,

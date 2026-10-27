@@ -91,7 +91,7 @@ package final class WorktreeRepository {
     self.io = journalIO
     self.lockTimeout = lockTimeout
     self.owner = owner
-    guard timeoutMilliseconds > 0, maxOutputBytes > 0 else {
+    guard timeoutMilliseconds > 0, maxOutputBytes > 0, maxOutputBytes < Int.max / 8 else {
       throw WorktreeError.unsafeConfiguration("Git command bounds must be positive.")
     }
     // Git uses the denied global configuration and never executes programs,
@@ -104,7 +104,7 @@ package final class WorktreeRepository {
     try withLock { _ in }
   }
 
-  func validateStorage() throws -> [WorktreeCreationJournal] {
+  func validateStorage(validateHead: Bool = true) throws -> [WorktreeCreationJournal] {
     // Storage is shared across repositories; only each record's live, verified
     // topology can establish an exception for its exact content root.
     var owned: Set<String> = []
@@ -112,7 +112,7 @@ package final class WorktreeRepository {
     for record in try store.records() {
       guard case .host = record.provenance,
         record.state == .active, let journal = try readJournal(record.projectID),
-        [.branch, .active].contains(journal.phase), try activeRecord(journal) == record
+        [.branch, .active].contains(journal.phase), try matchesActiveRecord(journal, record)
       else { continue }
       do {
         let repository =
@@ -121,7 +121,8 @@ package final class WorktreeRepository {
         // Foreign validation only reads; acquiring its lock while holding this
         // repository's lock would invert ordering for concurrent host operations.
         try requireSupportedLayout(repository)
-        _ = try verifyTopology(journal, repository: repository, source: record.source)
+        _ = try verifyTopology(
+          journal, repository: repository, source: record.source, validateHead: validateHead)
         owned.insert(record.root)
         if record.source == source, journal.phase == .branch { activated.append(journal) }
       } catch {
@@ -134,7 +135,7 @@ package final class WorktreeRepository {
     return activated
   }
 
-  func withLock<T>(_ action: (RepositoryLock) throws -> T) throws -> T {
+  func withLock<T>(validateHead: Bool = true, _ action: (RepositoryLock) throws -> T) throws -> T {
     let lock = try RepositoryLock(
       commonDirectory: URL(fileURLWithPath: identity.common.path),
       owner: owner, timeout: lockTimeout)
@@ -145,7 +146,7 @@ package final class WorktreeRepository {
     // Ledger activation and journal publication are separate durable writes.
     // Verify all storage ownership before reconciling this repository's receipt;
     // an active ledger row alone must never authorize writes into overlapping roots.
-    for var journal in try validateStorage() {
+    for var journal in try validateStorage(validateHead: validateHead) {
       _ = try completeCreation(&journal, lock: lock)
     }
     return try action(lock)
@@ -274,5 +275,25 @@ struct WorktreeGit {
       throw WorktreeError.commandFailed("Git output exceeded its bound.")
     }
     return result
+  }
+}
+
+extension WorktreeGit {
+  func transaction(
+    _ input: String, at root: URL, gitDirectory: URL, dereference: Bool = false,
+    message: String, _ body: () throws -> Void
+  ) throws {
+    let names = try configurationNames(at: root, gitDirectory: gitDirectory)
+    let overrides = try HostGitConfiguration.overrides(for: names)
+    let arguments =
+      ["--git-dir=\(gitDirectory.path)", "--work-tree=\(root.path)", "--no-replace-objects"]
+      + HostGitConfiguration.arguments + overrides
+      + ["update-ref"] + (dereference ? [] : ["--no-deref"])
+      + ["--create-reflog", "-m", message, "--stdin"]
+    try executor.withPreparedTransaction(
+      .init(
+        arguments: arguments, directory: root,
+        environment: HostGitConfiguration.environment(home: home), input: Data(input.utf8),
+        timeoutMilliseconds: timeoutMilliseconds, maxOutputBytes: maxOutputBytes), body)
   }
 }

@@ -19,7 +19,7 @@ bundled. Swift targets keep `package` access; no declaration is `public`.
 | Composition | `ComputerMCPControlPlane`, `ComputerMCPGateway` | neutral |
 | Capabilities | `ComputerMCPToolKit`; tool domains `ComputerMCPToolsMCP`, `ComputerMCPToolsCLI`, `ComputerMCPToolsFiles`, `ComputerMCPToolsProject`, `ComputerMCPToolsStructured`, `ComputerMCPToolsGit`, `ComputerMCPToolsShell`, `ComputerMCPToolsSkills`, `ComputerMCPToolsSystem`; `ComputerMCPPlugins`, `ComputerMCPDelivery`, `ComputerMCPAuthorization`; `ComputerMCPComputerUse` | neutral; ComputerUse macOS |
 | Services | `ComputerMCPEgress`, `ComputerMCPConfiguration`, `ComputerMCPPersistence`, `ComputerMCPProcess`, `ComputerMCPTransport`, `ComputerMCPDownstream`, `ComputerMCPTunnels`, `ComputerMCPWorktrees` | neutral |
-| Platform | `ComputerMCPPlatform` (protocols and values), `ComputerMCPPlatformPOSIX`, `CSystemPOSIX`, `ComputerMCPPlatformDarwin`, `CSystemArchive`, `CDarwinExecution`, `computer-mcp-execution-bootstrap` | neutral; POSIX; macOS |
+| Platform | `ComputerMCPPlatform` (protocols and values), `ComputerMCPPlatformPOSIX`, `CSystemPOSIX`, `CSystemZlib`, `ComputerMCPPlatformDarwin`, `CSystemArchive`, `CDarwinExecution`, `computer-mcp-execution-bootstrap` | neutral; POSIX; macOS |
 | Base | `ComputerMCPCore`, `ComputerMCPSandbox`; lower `ComputerMCPPermissions` (Foundation only) | neutral |
 
 Dependencies inside a layer are limited to these:

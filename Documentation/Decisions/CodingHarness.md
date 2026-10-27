@@ -578,10 +578,15 @@ read-only. Git in the worktree writes new objects to a private object store
 for that worktree and keeps its position on a detached `HEAD`; the host
 maintains the named branch. When the host updates the branch (on `git.merge`,
 on `git.worktree_remove`, or when asked to publish the worktree's commits), it
-pauses the worktree's processes, copies the private objects into a host-owned
-staging area, verifies them (`git fsck`, then `git index-pack --strict` on a
-pack built from them), adds them to the shared store, and updates the branch
-with a reference transaction that verifies its previous value. Recovery,
+reads the detached `HEAD` once, copies its reachable private objects into an
+exclusive host-owned staging area, and verifies that copy (`git fsck`, then
+`git index-pack --strict` on a pack containing exactly the validated closure).
+Programs continue running; later commits are outside that publication. Missing,
+torn or substituted input fails verification with a retryable busy result. Only
+the verified staging objects enter the shared store, followed by a reference
+transaction that verifies the branch's previous value. Previously published
+unmerged tips retain host-owned recovery references until an explicit replacement
+acknowledgement or verified integration releases them. Recovery,
 locking and journaling follow the worktree rules below.
 
 The host keeps each worktree branch's base after its worktree is removed,

@@ -52,7 +52,7 @@ ChatGPT · Codex · another MCP client
 ```
 
 Every call is tied to a verified principal, caller, profile, tool and—when relevant—a
-registered project. Unknown tools, ungranted projects, unsafe paths, and
+registered project. Unknown tools, denied projects, unsafe paths, and
 unsupported ownership claims fail closed.
 
 Each host keeps its own credentials, registrations, permissions and audit.
@@ -107,19 +107,18 @@ verified command projection and structured-coverage limits.
 - Connect desktop operations through the Computer Use plugin or native AX tools,
   subject to operation-specific macOS permissions and vendor caller authentication.
 
-Sandboxed writes and command execution require a verified worktree context;
-plugin and local MCP processes require a project-bound context. Those execution
-contexts are not yet available, so affected calls, including `delivery.apply`,
-return an unavailable result. Archive-installed plugin Skills are also unavailable
-until public package content is separated from host-private plugin state.
-See the [execution contract](Documentation/Reference/Tools.md).
+See the [current execution availability](Documentation/Architecture/SecurityAndPrivacy.md#execution-admission)
+for Sandbox, Full access, local MCP and plugin programs. Permission grants alone
+do not make every launch available. Archive-installed plugin Skills remain
+unavailable because their content shares protected host storage with private state.
 
 ## Choose what your agents can use
 
 The host checks every call against the profile's permissions and managed limits.
 Projects have independent read/write access and network settings. Screen,
 Desktop control, Files and Folders, plugins and MCP servers have their own
-permissions. New principals start with Machine information and Skills.
+permissions. See [profile defaults](Documentation/Reference/Config.md#callers-and-profiles)
+for App-created principals and explicit manifest profiles.
 
 An ungranted permission returns `permission.required` with a pending request.
 The owner answers **Only this time**, **Always**, or **Don’t Allow** in the App’s

@@ -204,7 +204,10 @@ files. Runtime-specific diagnosis belongs to the plugin; see the [Codex plugin](
 
 ## Computer Use Is Denied
 
-Open **Permissions**. Grant Accessibility or Screen Recording to the signed
+Open **Privacy & Security**. Review the calling principal’s **Screen** permission
+for observation and **Desktop control** permission for actions. A missing grant
+creates an owner request; an explicit denial must be changed by the owner. Also
+grant Accessibility or Screen Recording to the signed
 `Computer MCP.app` with the local **Request Access** action, complete the
 highlighted step in System Settings, then relaunch if macOS requires it. The
 App automatically rechecks the permission while the guide is visible. Remote

@@ -6,6 +6,31 @@ import Testing
 @testable import ComputerMCPConfiguration
 
 @Suite struct ManagedPolicyDocumentTests {
+  @Test func configurationReferenceExamplesDecodeThroughTheirPublicCodecs() throws {
+    let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
+      .deletingLastPathComponent().deletingLastPathComponent()
+    let reference = try String(
+      contentsOf: root.appendingPathComponent("Documentation/Reference/Config.md"), encoding: .utf8)
+    let section = try #require(reference.components(separatedBy: "## Managed limits\n").last)
+      .components(separatedBy: "## Transport definitions")[0]
+    func example(_ language: String) throws -> Data {
+      let block = try #require(
+        section.components(separatedBy: "```\(language)\n").dropFirst().first)
+      return Data(block.components(separatedBy: "```")[0].utf8)
+    }
+    let machine = try ManagedPolicyDocument.decode(example("toml")).resolved(for: .secureTunnel)
+    #expect(!machine.allowsFullAccess)
+    #expect(machine.permissionCeilings.state(for: .screen) == .denied)
+    #expect(machine.permissionCeilings.state(for: .project("sample")) == .granted(.read))
+    #expect(machine.network == .custom(hosts: ["github.com"], includesTrusted: false))
+    let connection = try JSONDecoder().decode(ManagedPolicy.self, from: example("json"))
+    #expect(!connection.allowsFullAccess)
+    #expect(connection.network == .none)
+    #expect(connection.permissionCeilings.entries.isEmpty)
+    #expect(connection.executionLimits.timeMilliseconds == 30000)
+    #expect(connection.executionLimits.outputBytes == 1_048_576)
+  }
+
   @Test func allLimitKindsDecodeWithConcreteOverridesAndRemoteFullAccess() throws {
     let document = try ManagedPolicyDocument.decode(
       Data(

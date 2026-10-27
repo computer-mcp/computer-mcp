@@ -15,8 +15,8 @@ owner-only CLI ──┘                              └─ AppGatewayService
 ```
 
 `AppControlPlaneOperations` owns lifecycle-aware use cases: gateway start,
-stop, and restart; project registration/grants; profile activation and Full
-Shell state; manifest activation/rollback; provider refresh; and Tunnel
+stop, and restart; project registration/grants; profile activation and execution
+mode; manifest activation/rollback; provider refresh; and Tunnel
 configuration/lifecycle. It preserves desired state, validates compatible
 Tunnel profiles, restarts an already-running gateway when required, reconnects
 desired Tunnels, and rolls profile changes back when activation fails. Managed

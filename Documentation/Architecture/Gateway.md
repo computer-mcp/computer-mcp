@@ -135,7 +135,7 @@ are persisted separately and are not copied into TOML.
 | Builtin | `[builtin].enabled` | Explicit typed local capability |
 | Skills | `[skills]` or accessible plugin contribution | Bounded reads inside admitted Skill roots; archive-installed contributions are unavailable |
 | Native AX fallback | Screen / Desktop control permissions | Generic UI observation/control with TCC preflight |
-| Shell | `[policy]` plus local grant | Direct argv or shell script with complete process I/O |
+| Shell | `policy.shell_enabled`, Project `write` and an enforceable execution context | Direct argv or shell script with complete process I/O |
 
 CLI trees define projected tools and exact argument constraints. Raw
 `cli.describe`, `cli.help` and `cli.exec` remain available under their own policy;
@@ -175,6 +175,5 @@ contribution, Plugin use. An inaccessible root is omitted from aggregate results
 an explicitly selected root retains its permission refusal or request.
 
 Archive-installed plugin Skills remain unavailable because their content resides
-under protected host storage. Host 6 owns the plugin package layout that separates
-public package content from private installation state and makes that content
-readable with Plugin use plus Skills. The host-data boundary remains unchanged.
+under protected host storage alongside private installation state. Plugin use
+and Skills permissions do not bypass the host-data boundary.

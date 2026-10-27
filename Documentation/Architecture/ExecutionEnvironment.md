@@ -57,9 +57,8 @@ Darwin durable ownership requires the sandbox's inherited marker. After host dea
 recovery scans the entire process table in a quiet identity-probe round, validates
 each identity across classification, and retains ambiguous zombies or incomplete
 snapshots as pending. The root birth identity excludes older processes but never
-cuts off enumeration. Prepared Full access execution is unavailable on Darwin
-because unsandboxed descendants can escape observation; sandboxed read helpers
-remain available to Full access principals. There is no unrestricted fallback when the platform refuses prepared execution.
+cuts off enumeration. See [execution admission](SecurityAndPrivacy.md#execution-admission)
+for the current Sandbox and Full access availability matrix.
 
 Permission edits and periodic reconciliation revoke running descendants and proxy
 streams. Standing work survives client disconnect; connection-scoped work ends
@@ -153,10 +152,10 @@ the session store's retention limits. Explicit owner shutdown discards its resul
 
 ## Host infrastructure launches
 
-These services use Full access through the injected launcher and disclaim macOS
-privacy responsibility. They do not inherit the host App's privacy responsibility.
-Downstream MCP servers remain host infrastructure with their configured launch
-environment; their launches are not placed in a tool execution sandbox.
+[Execution admission](SecurityAndPrivacy.md#execution-admission) distinguishes
+explicit local-owner host administration from principal tool execution, including
+local stdio MCP and plugin processes. The mechanisms below preserve the selected
+context; they do not classify every supervised process as host infrastructure.
 
 - `ManagedLineProcess` starts its supervisor through the launcher, retaining the
   child job-control group, owner-death watchdog and termination grace periods.
@@ -452,9 +451,22 @@ of request headers and SOCKS fields. The host retains the leases until the entir
 sandbox process tree ends, even after revocation; an old profile cannot acquire
 another execution's identity through port reuse.
 
-The policy admits `none`, `trusted`, `full`, or `custom` hosts. The trusted catalog
-lives in `EgressPolicy.trustedHosts`. Hostnames and numeric forms are normalized,
-the host system resolver supplies a bounded set of numeric addresses, and every
+The policy admits `none`, `trusted`, `full`, or `custom` hosts. The `trusted`
+catalog contains these exact hosts and explicit subdomain suffixes:
+
+```text
+github.com, api.github.com, codeload.github.com, *.githubusercontent.com, ghcr.io
+registry.npmjs.org, registry.yarnpkg.com, pypi.org, files.pythonhosted.org
+crates.io, index.crates.io, static.crates.io, rubygems.org, *.rubygems.org
+repo.maven.apache.org, repo1.maven.org, plugins.gradle.org, services.gradle.org
+downloads.gradle.org, proxy.golang.org, sum.golang.org, dl.google.com
+api.nuget.org, *.nuget.org, repo.packagist.org, packagist.org
+swift.org, download.swift.org, download.developer.apple.com, developer.apple.com
+swcdn.apple.com, swdownload.apple.com
+```
+
+Wildcards match subdomains, not the suffix's siblings. Hostnames and numeric forms
+are normalized. The host system resolver supplies a bounded set of numeric addresses, and every
 answer is checked before numeric dialing. A new connection resolves again;
 established streams retain their checked address.
 

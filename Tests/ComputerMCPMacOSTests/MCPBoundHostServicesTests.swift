@@ -26,6 +26,7 @@ struct MCPBoundHostServicesTests {
   @Test(.timeLimit(.minutes(1))) func hostMutationCommitRejectsRevokedPersistentClientTrust()
     async throws
   {
+    let evidence = InvocationCallbackEvidence()
     let fixture = try HostAuthorityFixture()
     defer { fixture.remove() }
     let published = try await fixture.runtime.callToolAsync(
@@ -37,8 +38,9 @@ struct MCPBoundHostServicesTests {
       expectedRevision: session.snapshot.revision)
     let consent = try #require(snapshot.fullAccessConsent)
     let directory = try #require(fixture.peer.context(for: "scope")?.tools)
-    _ = try await checkedInvocationResult(revoked: true) {
+    _ = try await checkedInvocationResult(evidence: evidence, revoked: true) {
       try await fixture.during("fixture.audit", context: .init(session: session)) { _, context in
+        evidence.entered()
         let active = try #require(
           directory.active(projectID: "scope", origin: "probe").first {
             $0.id == context.admission?.hostInvocationID
@@ -54,12 +56,14 @@ struct MCPBoundHostServicesTests {
               id: #require(consent.trustID),
               expectedRevision: #require(consent.trustRevision))
             revoked = true
+            evidence.revoked()
             try fixture.database.withHostAuthority(authority) { committedAfterRevocation = true }
           }
         }
         #expect(initiallyAuthorized)
         #expect(revoked)
         #expect(!committedAfterRevocation)
+        evidence.checked()
         return .null
       }
     }
@@ -70,14 +74,16 @@ struct MCPBoundHostServicesTests {
   func profileEditsInvalidateHostMutationAuthority(explicitSession: Bool, change: String)
     async throws
   {
+    let evidence = InvocationCallbackEvidence()
     let fixture = try HostAuthorityFixture()
     defer { fixture.remove() }
     let session = try fixture.session()
     let directory = try #require(fixture.peer.context(for: "scope")?.tools)
-    _ = try await checkedInvocationResult(revoked: true) {
+    _ = try await checkedInvocationResult(evidence: evidence, revoked: true) {
       try await fixture.during(
         "fixture.audit", context: explicitSession ? .init(session: session) : .empty
       ) { _, context in
+        evidence.entered()
         let active = try #require(
           directory.active(projectID: "scope", origin: "probe").first {
             $0.id == context.admission?.hostInvocationID
@@ -95,11 +101,13 @@ struct MCPBoundHostServicesTests {
               try profile.permissions.set(.granted(.access), for: .machineInformation)
             }
             try fixture.database.saveProfile(profile)
+            evidence.revoked()
             try fixture.database.withHostAuthority(authority) { committed = true }
           }
         }
         #expect(attempts == 1)
         #expect(!committed)
+        evidence.checked()
         return .null
       }
     }
@@ -112,6 +120,7 @@ struct MCPBoundHostServicesTests {
     ["capability", "session", "completed", "work-only"])
   func mutationRechecksAfterVerification(operation: String, change: String) async throws {
     let barrier = HostVerificationBarrier()
+    let evidence = InvocationCallbackEvidence()
     let fixture = try HostAuthorityFixture(worktrees: true, verificationBarrier: barrier)
     defer { fixture.remove() }
     let session = try fixture.session()
@@ -134,6 +143,7 @@ struct MCPBoundHostServicesTests {
     }
     let body: @Sendable (MCPBoundHostServices, InvocationContext) async throws -> JSONValue = {
       service, invocationContext in
+      evidence.entered()
       var receipt = provisioning
       let method: String
       if operation == "register" {
@@ -176,14 +186,16 @@ struct MCPBoundHostServicesTests {
         directory.end(active)
       default: directory.end(active)
       }
+      if change == "capability" || change == "session" { evidence.revoked() }
       barrier.resume()
       let result = try await callback.value
       #expect(result.isError == true)
+      evidence.checked()
       retained?.finish()
       return try .encoded(result)
     }
     let result = try await checkedInvocationResult(
-      revoked: change == "capability" || change == "session"
+      evidence: evidence, revoked: change == "capability" || change == "session"
     ) {
       if operation == "register" {
         return try await fixture.during("fixture.provision", provisionArgs, context: context, body)
@@ -206,6 +218,7 @@ struct MCPBoundHostServicesTests {
 
   @Test(.timeLimit(.minutes(1)), arguments: [false, true])
   func idempotentRegistrationCannotAcquireEarlierRollbackOwnership(revoked: Bool) async throws {
+    let evidence = InvocationCallbackEvidence()
     let fixture = try HostAuthorityFixture(worktrees: true)
     defer { fixture.remove() }
     let receipt = try fixture.worktreeReceipt()
@@ -221,8 +234,9 @@ struct MCPBoundHostServicesTests {
     }
     let before = try fixture.database.derivedProjectRegistration(
       id: receipt["workspace_id"]!.stringValue!)
-    let result = try await checkedInvocationResult(revoked: revoked) {
+    let result = try await checkedInvocationResult(evidence: evidence, revoked: revoked) {
       try await fixture.during("fixture.provision", args) { service, _ in
+        evidence.entered()
         let repeated = try await service.call(
           name: "host.workspaces.register", arguments: ["worktree": .object(receipt)])
         try #require(repeated.isError == false)
@@ -230,10 +244,12 @@ struct MCPBoundHostServicesTests {
           var profile = try #require(fixture.database.profiles().first { $0.id == .chatGPTOperate })
           profile.permissions = .init()
           try fixture.database.saveProfile(profile)
+          evidence.revoked()
         }
         let callback = try await service.call(
           name: "host.workspaces.unregister", arguments: ["worktree": .object(receipt)])
         #expect(callback.isError == true)
+        evidence.checked()
         return try .encoded(callback)
       }
     }
@@ -380,6 +396,7 @@ struct MCPBoundHostServicesTests {
   @Test(.timeLimit(.minutes(1))) func unregisterRechecksAuthorityAfterRemovalWasAuthorized()
     async throws
   {
+    let evidence = InvocationCallbackEvidence()
     let fixture = try HostAuthorityFixture(worktrees: true)
     defer { fixture.remove() }
     let provisioning = try fixture.worktreeReceipt()
@@ -399,7 +416,7 @@ struct MCPBoundHostServicesTests {
     receipt["state"] = .string("removal_planned")
     receipt["revision"] = .integer(4)
     let planned = receipt
-    let result = try await checkedInvocationResult(revoked: true) {
+    let result = try await checkedInvocationResult(evidence: evidence, revoked: true) {
       try await fixture.duringInvocation(
         "fixture.remove",
         [
@@ -407,6 +424,7 @@ struct MCPBoundHostServicesTests {
           "confirm_remove": .bool(true),
         ]
       ) { service, _ in
+        evidence.entered()
         let authorized = try await service.call(
           name: "host.workspaces.authorize_removal", arguments: ["worktree": .object(planned)])
         try #require(authorized.isError == false)
@@ -414,12 +432,14 @@ struct MCPBoundHostServicesTests {
         var grant = try #require(fixture.database.profiles().first { $0.id == .chatGPTOperate })
         grant.permissions = .init()
         try fixture.database.saveProfile(grant)
+        evidence.revoked()
         var removed = planned
         removed["state"] = .string("removing")
         removed["revision"] = .integer(5)
         let callback = try await service.call(
           name: "host.workspaces.unregister", arguments: ["worktree": .object(removed)])
         #expect(callback.isError == true)
+        evidence.checked()
         return try .encoded(callback)
       }
     }
@@ -435,10 +455,11 @@ struct MCPBoundHostServicesTests {
   @Test(.timeLimit(.minutes(1))) func exactProvisionRollbackKeepsItsNarrowRevocationException()
     async throws
   {
+    let evidence = InvocationCallbackEvidence()
     let fixture = try HostAuthorityFixture(worktrees: true)
     defer { fixture.remove() }
     let receipt = try fixture.worktreeReceipt()
-    let result = try await checkedInvocationResult(revoked: true) {
+    let result = try await checkedInvocationResult(evidence: evidence, revoked: true) {
       try await fixture.during(
         "fixture.provision",
         [
@@ -446,15 +467,18 @@ struct MCPBoundHostServicesTests {
           "expected_revision": .integer(1), "confirm_provision": .bool(true),
         ]
       ) { service, _ in
+        evidence.entered()
         let registered = try await service.call(
           name: "host.workspaces.register", arguments: ["worktree": .object(receipt)])
         try #require(registered.isError == false)
         var grant = try #require(fixture.database.profiles().first { $0.id == .chatGPTOperate })
         grant.permissions = .init()
         try fixture.database.saveProfile(grant)
+        evidence.revoked()
         let callback = try await service.call(
           name: "host.workspaces.unregister", arguments: ["worktree": .object(receipt)])
         #expect(callback.isError == false)
+        evidence.checked()
         return try .encoded(callback)
       }
     }
@@ -837,6 +861,7 @@ struct MCPBoundHostServicesTests {
     arguments: ["wrong-action", "wrong-id", "wrong-revision", "not-confirmed", "revoked"])
   func genericProvisionCannotBroadenAdmittedArgumentsOrCurrentAuthority(attack: String) async throws
   {
+    let evidence = InvocationCallbackEvidence()
     let fixture = try HostAuthorityFixture(worktrees: true)
     defer { fixture.remove() }
     let receipt = try fixture.worktreeReceipt()
@@ -846,18 +871,22 @@ struct MCPBoundHostServicesTests {
     if attack == "wrong-id" { arguments["plan_id"] = .string(UUID().uuidString.lowercased()) }
     if attack == "wrong-revision" { arguments["expected_revision"] = .integer(2) }
     if attack == "not-confirmed" { arguments["confirm_provision"] = .bool(false) }
-    let result = try await checkedInvocationResult(revoked: attack == "revoked") {
+    let result = try await checkedInvocationResult(evidence: evidence, revoked: attack == "revoked")
+    {
       try await fixture.during(
         attack == "wrong-action" ? "fixture.audit" : "fixture.provision", arguments
       ) { service, _ in
+        evidence.entered()
         if attack == "revoked" {
           var grant = try #require(fixture.database.profiles().first { $0.id == .chatGPTOperate })
           try grant.permissions.set(.denied, for: .project("scope"))
           try fixture.database.saveProfile(grant)
+          evidence.revoked()
         }
         let callback = try await service.call(
           name: "host.workspaces.register", arguments: ["worktree": .object(receipt)])
         #expect(callback.isError == true)
+        evidence.checked()
         return try .encoded(callback)
       }
     }
@@ -1000,14 +1029,18 @@ struct MCPBoundHostServicesTests {
   @Test(
     .timeLimit(.minutes(1)), arguments: ["foreign-channel", "forged-id", "forged-owner", "revoked"])
   func genericInvocationContextRejectsForeignOrRevokedAuthority(attack: String) async throws {
+    let evidence = InvocationCallbackEvidence()
     let fixture = try HostAuthorityFixture()
     let other = try HostAuthorityFixture()
     defer {
       fixture.remove()
       other.remove()
     }
-    let response = try await checkedInvocationResult(revoked: attack == "revoked") {
+    let response = try await checkedInvocationResult(
+      evidence: evidence, revoked: attack == "revoked"
+    ) {
       try await fixture.during("fixture.read") { service, context in
+        evidence.entered()
         let id = try #require(context.admission?.hostInvocationID)
         var arguments: [String: JSONValue] = ["invocation_id": .string(id.uuidString)]
         if attack == "forged-id" { arguments["invocation_id"] = .string(UUID().uuidString) }
@@ -1016,10 +1049,12 @@ struct MCPBoundHostServicesTests {
           var profile = try #require(fixture.database.profiles().first { $0.id == .chatGPTOperate })
           profile.permissions = .init()
           try fixture.database.saveProfile(profile)
+          evidence.revoked()
         }
         let callback = try await (attack == "foreign-channel" ? other.service : service).call(
           name: "host.invocations.describe", arguments: arguments)
         #expect(callback.isError == true)
+        evidence.checked()
         return try .encoded(callback)
       }
     }
@@ -1166,9 +1201,28 @@ private actor HostServicePairBarrier {
   }
 }
 
+private final class InvocationCallbackEvidence: @unchecked Sendable {
+  private let lock = NSLock()
+  private var callbackRan = false
+  private var authorityRevoked = false
+  private var checkCompleted = false
+
+  func entered() { lock.withLock { callbackRan = true } }
+  func revoked() { lock.withLock { authorityRevoked = true } }
+  func checked() { lock.withLock { checkCompleted = true } }
+
+  func verify(revoked: Bool) {
+    let state = lock.withLock { (callbackRan, authorityRevoked, checkCompleted) }
+    #expect(state.0, "The invocation callback must run")
+    #expect(state.1 == revoked, "The intended authority mutation must complete")
+    #expect(state.2, "The callback authorization check must complete")
+  }
+}
+
 private func checkedInvocationResult(
-  revoked: Bool, _ call: () async throws -> JSONValue
+  evidence: InvocationCallbackEvidence, revoked: Bool, _ call: () async throws -> JSONValue
 ) async throws -> JSONValue? {
+  defer { evidence.verify(revoked: revoked) }
   do {
     let result = try await call()
     #expect(!revoked, "Revoked execution returned a result")

@@ -54,7 +54,8 @@ configuration, credential, runtime, and real-request checks together:
    persistent bookmark; the per-profile permission grants access. **Ask** removes
    the explicit entry and uses any wildcard; **Deny** blocks requests even when
    a wildcard grants access.
-3. **Permissions**: review the enabled endpoint requirements. Grant
+3. **Privacy & Security**: review the principal’s Screen and Desktop control
+   permissions and the enabled endpoint requirements. Grant
    Accessibility or Screen Recording to `Computer MCP.app` only when the
    corresponding Computer Use endpoints are intended to be available. A grant
    held by Terminal, Codex, or another app does not apply to Computer MCP.

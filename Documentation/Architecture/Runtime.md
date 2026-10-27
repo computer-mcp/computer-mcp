@@ -237,8 +237,9 @@ establishes their signing identity, publisher provenance or runtime compatibilit
   buffer and applies consumer backpressure between bounded reads. Session
   completion joins both output readers, including inherited pipe writers.
 - Downstream MCP: persistent MCP SDK clients over stdio or Streamable
-  HTTP. Stdio supervisors launch through `ExecutionLauncher` in Full access,
-  preserving their configured environment and explicit host-service descriptors.
+  HTTP. Stdio launch admission and current availability follow
+  [Security and Privacy](SecurityAndPrivacy.md#execution-admission); configured
+  environments and explicit host-service descriptors do not supply launch authority.
   Clients support tools, resources, prompts, list-changed events, and
   cancellation. Each project registry owns an independently scoped client,
   connection pool, and tool-change stream. Authorization wrappers preserve the

@@ -1,3 +1,4 @@
+import ComputerMCPDownstream
 import ComputerMCPMacOS
 import ComputerMCPPermissions
 import ComputerMCPPlatformPOSIX
@@ -95,7 +96,9 @@ struct GatewayPermissionAdmissionTests {
   @Test(arguments: ["admission", "terminal", "lifecycle"])
   func auditFailureClosesAdmissionAndMarksUncertainCompletion(stage: String) async throws {
     let afterDispatch = stage != "admission"
-    let fixture = try AdmissionFixture(permissions: [.machineInformation: .granted(.access)])
+    let provider = AdmissionCountingProvider()
+    let fixture = try AdmissionFixture(
+      permissions: [.machineInformation: .granted(.access)], provider: provider)
     try await fixture.run { fixture in
       try await fixture.database.connection.writer.write { database in
         let predicate =
@@ -110,6 +113,7 @@ struct GatewayPermissionAdmissionTests {
         )
       }
       let report = try await fixture.call("system.info")
+      #expect(provider.executions == (afterDispatch ? 1 : 0))
       let error = try failure(report)
       #expect(report.objectValue?["isError"] == .bool(true))
       let records = try fixture.database.auditEvents().filter { $0.capabilityID == "system.info" }
@@ -123,6 +127,16 @@ struct GatewayPermissionAdmissionTests {
         #expect(records.first?.decision == .failed)
         #expect(records.allSatisfy { $0.errorCode != "permission.admitted" })
       }
+      try await fixture.database.connection.writer.write { database in
+        try database.execute(sql: "DROP TRIGGER fail_fixture_audit")
+      }
+      try await fixture.gateway.permissionRuntime.coordinator.reconcile()
+      #expect(provider.executions == (afterDispatch ? 1 : 0), "Recovery must not replay work")
+      let recovered = try await fixture.call("system.info")
+      #expect(recovered.objectValue?["isError"] != .bool(true))
+      #expect(recovered.objectValue?["executed"] == .bool(true))
+      #expect(
+        provider.executions == (afterDispatch ? 2 : 1), "Only an explicit call dispatches again")
     }
   }
 
@@ -453,7 +467,8 @@ private struct AdmissionFixture {
 
   init(
     permissions: [Permission: PermissionState], projectIDs: [String] = [],
-    boundProjectID: String? = nil, fullAccess: Bool = false
+    boundProjectID: String? = nil, fullAccess: Bool = false,
+    provider: AdmissionCountingProvider? = nil
   ) throws {
     root = FileManager.default.temporaryDirectory.appendingPathComponent("cm-admission-\(UUID())")
     try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
@@ -474,6 +489,16 @@ private struct AdmissionFixture {
       return project
     }
     var platform = fixtureHostedPlatform()
+    if let provider {
+      platform = PlatformServices(
+        launcher: platform.launcher, projectGrants: platform.projectGrants,
+        pluginDirectories: platform.pluginDirectories, applications: platform.applications,
+        toolProviders: AdmissionCountingFactory(provider: provider),
+        managementToolNames: platform.managementToolNames,
+        executableSearchDirectories: platform.executableSearchDirectories,
+        gitExecutable: platform.gitExecutable, fileChanges: platform.fileChanges,
+        executionProxy: platform.executionProxy, hostDataPaths: platform.hostDataPaths)
+    }
     platform.permissionPolicyReader = reader
     let service = try database.permissionRuntime(platform: platform).service
     let owner = try GatewayPermissionOwner(
@@ -537,4 +562,44 @@ private struct AdmissionFixture {
 private actor AdmissionCancellation {
   var value = false
   func mark() { value = true }
+}
+
+private final class AdmissionCountingProvider: GatewayToolProvider, @unchecked Sendable {
+  let id = "admission-counting"
+  private let lock = NSLock()
+  private var count = 0
+  var executions: Int { lock.withLock { count } }
+
+  func definitions() throws -> [ToolDefinition] {
+    [
+      .init(
+        tool: MCPTool(
+          name: "system.info", description: "Admission dispatch probe",
+          inputSchema: .object(["type": .string("object")])),
+        capability: .init(
+          id: "system.info", risk: .readOnly,
+          requirement: .privacy(.machineInformation)))
+    ]
+  }
+
+  func callTool(_ invocation: ToolInvocation) throws -> JSONValue {
+    lock.withLock { count += 1 }
+    return .object(["executed": .bool(true)])
+  }
+}
+
+private struct AdmissionCountingFactory: GatewayToolProviderFactory {
+  let provider: AdmissionCountingProvider
+
+  func makeProviders(
+    configuration: GatewayConfiguration, commandRunner: any CommandRunning,
+    processManager: any ProcessManaging, shellManager: any ShellManaging,
+    mcpClient: any DownstreamMCPClient, hostContext: MCPHostContext
+  ) -> GatewayToolRegistry {
+    .init(
+      providers: { [provider] },
+      downstreamPolicy: { reference, _ in
+        throw GatewayToolError.unknownTool(reference.toolName)
+      })
+  }
 }

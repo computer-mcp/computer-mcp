@@ -235,9 +235,10 @@ desktop, outside any sandbox; granting them is the owner's judgment of that
 principal. The guarantees of the path resolver and the sandbox, such as the
 host's data being unreadable and main checkouts read-only to a sandboxed
 principal, bind host tools and sandboxed programs; what the host does under
-Screen or Desktop control is bounded by those permissions instead. New
-principals have Machine information and Skills; every other permission starts
-not granted.
+Screen or Desktop control is bounded by those permissions instead. Principals
+created by the App have Machine information and Skills; every other permission
+starts not granted. An explicit manifest profile has exactly the permissions it
+lists.
 
 #### Execution mode
 
@@ -777,33 +778,8 @@ project), `files_and_folders`, `plugins`, `mcp_servers`, `full_access`,
 (`capabilities`, `workspaces`, `mode`, `full_shell_enabled`,
 `confirmation_policy`) fail validation with an error naming the replacements.
 
-A database migration converts stored profiles from their effective
-authorization (wildcards expanded against registered tools, projects and
-servers):
-
-| Old | New |
-| --- | --- |
-| `local-full-access` with Full Shell | `full_access = true` (consent still per connection or saved trust); projects at `write` |
-| `local-full-access` without Full Shell, or `workspace-operations` | sandbox; each project at `write` if the profile held any project write tool, else `read` |
-| Workspace `*` | project `*` at the same access, so projects registered later stay covered |
-| `read-only` | sandbox; each project at `read`; only Screen, Machine information, Unified logs and Skills can be granted |
-| Any tool of a per-principal permission | that permission, subject to the row above; `logs.query` maps to Unified logs |
-| Network-using project tools (`file.download`) | network access `none`; each host the tool reaches produces a request that adds the host to the project's `custom` list |
-| `mcp.tools.call` | `"*"` at `all`, or at `read` for a `read-only` profile; downstream tools classified as execution need Full access, as they needed Full Shell |
-| MCP listing, resource, prompt, event and request-reading tools without `mcp.tools.call` | `"*"` at `read`, the servers they applied to; `mcp.requests.cancel` and `mcp.connections.close` held without `mcp.tools.call` are dropped and reported |
-| `mcpServerIDs` | each server at `all`, or at `read` for a `read-only` profile |
-| Individual downstream tools or aliases | each tool's current server, at `read` if every granted tool of that server is read-only and the profile allowed no more, else at `all`; unresolvable grants are dropped and reported |
-| Plugins | Plugin `*` at `use` for profiles that held any plugin contribution, else not granted |
-| `confirmation_policy` | removed |
-
-Files and Folders, Local network and managed limits are new and start not
-granted or empty. Widened: profiles that held some tools of a permission
-receive the whole permission, and calls a confirmation policy held now
-execute. Narrowed: sandboxed principals write only in worktrees, so projects
-whose root is not a Git repository's top level become read-only to them;
-their programs run in the sandbox, where they cannot send Apple events;
-`file.download` asks once for each new host; `git.branch_create`, `rename`,
-`switch`, `git.tag_*` and `git.stash_push` need Full access.
+The [configuration migration reference](../Reference/Config.md#permission-store-activation)
+defines the conversion table and its widening and narrowing effects.
 
 The migration advances every authorization revision, which invalidates saved
 Full access trust bound to the old snapshot, removes pending approval tickets,

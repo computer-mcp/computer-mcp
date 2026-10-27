@@ -24,6 +24,8 @@ full_access = false
 allowed_callers = ["secure-tunnel"]
 
 [profiles.permissions]
+machine = "allow"
+skills = "allow"
 screen = "allow"
 desktop-control = "allow"
 

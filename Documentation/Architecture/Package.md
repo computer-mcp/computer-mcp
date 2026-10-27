@@ -550,8 +550,8 @@ preserve derived ownership and receipt provenance. Runtime composition activates
 converted profiles to the external authority epoch. The database opener alone
 does not activate conversion.
 
-`PermissionProfileManifest` is the codec for the permission-table format in
-`CodingHarness.md`. Missing entries remain requestable, `deny` is explicit, project
+`PermissionProfileManifest` is the codec for the
+[permission-table format](../Reference/Config.md#callers-and-profiles). Missing entries remain requestable, `deny` is explicit, project
 network entries support the custom host form, and revisions belong to the host.
 Access and network settings are independent: a network-only project entry retains
 the access fallback, an access-only entry retains the network fallback, and denying
@@ -586,36 +586,13 @@ service exposes confirmation with reviewed profile edits in the same transaction
 unadopted profiles remain visible and cannot admit calls. Subject bindings are capped
 at 16,384 rather than evicting authority or revocation history.
 
-The platform-neutral `ManagedPolicyReading` contract returns a separate status and
-location for each source. Darwin reads the protected, administrator-owned regular
-file `/Library/Application Support/Computer MCP/policy.toml` and the forced `Policy`
-preference in `com.showxu.computer-mcp`. The preference is a UTF-8 TOML string using
-the same syntax as the file; ordinary user preferences cannot supply machine policy.
-The complete parent chain must also be protected against replacement; descriptor-relative
-opening rejects symlinked or unprotected parents, including mutation grants in ACLs.
-Each document is bounded to 1 MiB. Denied paths resolve through their nearest
-accessible prefix; missing or permission-protected suffixes remain denied without
-requiring access to the object itself. Nonblocking opens also cover FIFO locations.
-Missing, unreadable and malformed sources remain
-distinct; failures provide bounded diagnostics without policy contents. Local owner
-diagnostics and revocation remain available when a machine source fails.
-
-Policy documents contain `permissions`, `projects`, `files_and_folders`, `plugins`
-and `mcp_servers` ceiling tables, `full_access`, `remote_full_access`, `network`,
-`denied_read_locations`, and an `execution` table with `time_ms`, `output_bytes`,
-`memory_bytes`, `retention_seconds` and `retained_output_bytes`. Object tables use
-concrete identifiers or `*`; values follow their permission kind and accept `deny`.
-Network uses the manifest's simple or custom form. Execution ceilings are positive
-integers. Unknown fields or malformed values make the source unreadable.
-
-Each source resolves concrete entries before its fallback, then the permission
-library combines the sources: permission levels and numeric ceilings take the
-strictest value, booleans must all allow, denied paths accumulate, and each network
-destination must satisfy every source. Unreadable sources restrict every kind they
-can limit. Source identity, content revision, read failure and owner profile remain
-available in the control projection; fresh reads with the same meaning preserve
-existing grant evidence. Resource-ceiling-only changes preserve permission evidence
-while tightening running work and retained-output limits.
+The platform-neutral `ManagedPolicyReading` contract returns separate source status
+and location. Darwin adapters read protected machine policy and forced preferences;
+`GatewayPermissionService` reconciles their meaning and owner ceilings with ledger
+authority. The [Managed limits reference](../Reference/Config.md#managed-limits)
+owns locations, document syntax, source combination, failure behavior and the
+connection-limit JSON shape. Resource-ceiling-only changes preserve permission
+evidence while tightening running work and retained-output limits.
 
 ## Host call records
 

@@ -11,8 +11,9 @@ authority; tool names, client labels and risk annotations cannot supply it.
 - Screen, Desktop control, Machine information, Unified logs, Skills and Local
   network are separate permissions. Files and Folders are per category; Plugin
   and MCP server permissions are per object.
-- New principals receive Machine information and Skills. Missing permissions are
-  requestable; explicit denies and managed exclusions refuse without a request.
+- [Profile defaults](../Reference/Config.md#callers-and-profiles) distinguish App-created
+  principals from explicit manifest declarations. Missing permissions are requestable;
+  explicit denies and managed exclusions refuse without a request.
 - Tool listings include declared requirements. Project discovery without Project
   permission exposes only ID, display name and access status, never root paths.
 - `local-admin` remains local-only. Unknown tools, routes and ownership claims
@@ -40,7 +41,7 @@ A missing permission returns `permission.required` and a durable pending request
 Only the local owner answers it, using the reviewed control revision. **Only this
 time** binds to the initiating principal, exact canonical invocation, requirement
 set and retry chain. **Always** changes the profile shared by existing and future
-clients. **Deny** rejects the request. Requests expire after one day. Answering
+clients. **Don’t Allow** rejects the request. Requests expire after one day. Answering
 never dispatches the operation; the initiating caller explicitly retries, and
 changed arguments, routes, principals or stale authority cannot reuse an answer.
 `policy.probe` previews without consuming one-time authority.
@@ -68,15 +69,33 @@ confirmation. Unknown execution outcomes are evidence, never permission to repla
 
 ## Execution admission
 
-A launch requires an installed `PreparedExecutionContext`; there is no implicit
-Full access default. The compiler uses the ledger's path decisions, effective
-network and resource limits. Unsupported enforcement is refused before effects.
-General sandboxed writes need a verified worktree/private Git context; plugin and
-server launches need their project-bound context. These contexts remain future
-integration work. Darwin prepared arbitrary Full access execution also remains
-unavailable where durable ownership cannot be proved. Authorized sandboxed read
-helpers can run for either principal mode. Trusted host administration uses an
-explicit administrative execution scope, never a principal's implicit fallback.
+Program launches on a principal’s behalf require an admitted `PreparedExecutionContext`. Permission
+admission and execution availability are separate: a grant or Full access consent
+does not supply an unsupported backend. On the current Darwin backend:
+
+| Execution | Available behavior |
+| --- | --- |
+| Sandboxed read helpers | Available to Sandbox and Full access principals, subject to the tool's permissions, canonical paths and resource limits. They retain their read-only sandbox in either mode. |
+| Sandboxed project programs, writes, local stdio MCP and plugin programs | Refused: the gateway does not yet supply the verified worktree/private Git context required by the compiler. |
+| Prepared unconfined project programs, local stdio MCP and plugin programs | Refused even with Full access consent: Darwin cannot prove durable ownership of unsandboxed descendants after host death. |
+| Remote HTTP MCP services | Use a prepared service context that cannot launch host programs. The server permission, named-project permission and host-classified execution requirement still apply. |
+| In-process host management and Computer Use | Use their own admitted host paths and permissions; Computer Use also requires the corresponding macOS TCC grant. They do not require an arbitrary program launch. |
+
+Local stdio MCP registrations and plugin-contributed stdio servers use the same
+principal execution path through the MCP connection pool and `ExecutionLauncher`.
+Discovery that would start one of these processes also needs that path; catalog
+refresh without an admitted context cannot start it. A configured environment,
+process supervisor or inherited host-service descriptor does not confer authority.
+
+**Host administration** is a separate, explicitly selected local-owner scope:
+tunnel provisioning, diagnostics and transport supervision, client-registration
+helpers, and plugin archive preparation use it for unconfined infrastructure
+commands. It is not a principal's Full access permission or a fallback for failed
+tool preparation. When both scopes are installed, the prepared context takes
+precedence. The fixed archive worker explicitly owns a separate host-staging scope.
+Subprocesses
+disclaim the App's macOS privacy responsibility; they use their own system identity.
+See [Execution Environment](ExecutionEnvironment.md) for supervision and recovery.
 
 ## Transport And Secrets
 

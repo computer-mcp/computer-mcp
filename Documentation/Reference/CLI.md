@@ -200,7 +200,7 @@ saved-trust revocation invalidate that consent, including when no connection is
 active. Missing or invalidated consent requires fresh local owner approval;
 reconnecting or restoring previous settings cannot renew it.
 
-`limit --limits-file <file>` accepts a `ManagedPolicy` JSON document and may only
+`limit --limits-file <file>` accepts a [`ManagedPolicy` JSON](Config.md#managedpolicy-json) document and may only
 narrow the selected connection's existing ceiling. `end` retires its connection
 scope; permission reconciliation revokes affected work. `revoke` changes saved
 trust and affects connections relying on that trust.
@@ -617,7 +617,9 @@ Answer the exact reviewed request locally:
 computer-mcp permissions answer <request-uuid> --answer only_this_time --expected-revision <revision>
 ```
 
-Other answers are `always` and `deny`. Answering does not dispatch the operation.
+Other answers are `always` and `deny`. Project registration requests accept only
+`always` (the App’s **Allow**) or `deny` (**Don’t Allow**). Answering does not
+dispatch the operation.
 The original client retries its exact call with the returned request identity;
 changed arguments, route, subject or expired authority cannot reuse the answer.
 Explicit denies and managed failures do not become grant prompts.
@@ -626,7 +628,7 @@ After a database restore or epoch recovery, saved profiles remain inactive until
 local owner review. Read `permissions requests`, review every returned profile
 including wildcard grants, custom network hosts and allowed callers,
 and save the complete `profiles` array as JSON. The App offers the same explicit
-review from Permissions. Confirm that captured snapshot with:
+review from Privacy & Security. Confirm that captured snapshot with:
 
 ```sh
 computer-mcp permissions confirm-authority --epoch <uuid> --expected-permission-revision <revision> --profiles-file reviewed-profiles.json

@@ -22,10 +22,10 @@ private owner socket. They do not expose App lifecycle or configuration commands
 | OAuth client access | pending pairing requests, local approval/denial, grant list/revocation | `clients authorizations`, `clients authorize`, `clients deny`, `clients grants`, `clients revoke-grant` | Client access |
 | Readiness | local, ChatGPT, and Cloudflare journey checks | `doctor` | Home and Diagnostics |
 | Configuration | show, validate, export, digest-guarded import, history, rollback | `config …` | Diagnostics manifest editor and revision rollback |
-| Projects | list, canonical add, remove, profile enable/disable, deduplication | `project …` | Projects |
+| Projects | list, canonical add, remove, per-profile Read/Write/Deny/Ask, deduplication | `project …` | Projects |
 | Profiles | list, show, activate, project grant/revoke, permissions, execution mode and network settings | `profile …` | Connection defaults and permission editing |
 | Providers | recorded health and bounded Doctor refresh | `providers list|doctor` | Providers |
-| Permissions | non-prompting TCC status; list and answer durable permission requests; review and confirm saved authority | `permissions status`, `permissions requests`, `permissions answer`, `permissions confirm-authority` | Permissions, pending requests and captured authority review; TCC prompting remains an explicit local UI action |
+| Permissions | non-prompting TCC status; list and answer durable permission requests; review and confirm saved authority | `permissions status`, `permissions requests`, `permissions answer`, `permissions confirm-authority` | Privacy & Security, pending requests and captured authority review; TCC prompting remains an explicit local UI action |
 | Audit | bounded redacted event list | `audit list` | Audit |
 | Gateway tools | list, inspect, and policy-controlled local-admin call | `tools …` | CLI-only diagnostic escape hatch |
 | OpenAI Tunnel | list, Doctor, start, reconnect, stop, provision, logs, save, remove | `tunnel openai …` | Tunnels |
@@ -48,7 +48,7 @@ optional local client-consent socket.
 | `project.remove` | Full Access; `id`, reviewed `expected_root_path`. Removes the registration, preserving files and retained work. |
 | `project.grant` | Full Access; `id`, `access` (`read`, `write` or `deny`), `expected_profile_revision`. Changes only the connection's profile. A changed profile invalidates its prior Full consent. |
 | `profile.show` | Inspect the connection's own session, profile and revisions. |
-| `profile.limit` | `limits` (`ManagedPolicy` JSON) and `expected_revision`; must narrow this session's effective ceiling. |
+| `profile.limit` | `limits` ([`ManagedPolicy` JSON](Config.md#managedpolicy-json)) and `expected_revision`; must narrow this session's effective ceiling. |
 | `plugin.list`, `plugin.describe` | Inspect safe plugin summaries and exact store revision. Both accept `after_id` and `limit` (default 50, maximum 200); describe takes `id` and pages its installations. |
 | `plugin.search` | Official static catalog; optional `query`, `kind` (`mcp`, `cli`, `skills`), `page` (starts at 1), `refresh`. |
 | `plugin.artifacts` | `repository`, exact integer `repository_id`, optional `tag` and `page`. |

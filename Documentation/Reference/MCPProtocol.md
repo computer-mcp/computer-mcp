@@ -26,12 +26,13 @@ this repository.
 ## Downstream tool risk
 
 A downstream tool can declare a minimum risk in
-`_meta["io.github.computer-mcp/risk"]`: `read-only`, `project-write`,
-`external-write`, `destructive` or `full-shell`. The host uses the higher of
-this classification and its configured tool risk. Metadata cannot lower host
-policy or grant a capability. Missing declarations retain configured behavior;
-malformed or unknown declarations fail closed. Standard MCP annotations remain
-hints, not permission grants.
+`_meta["io.github.computer-mcp/risk"]`. The
+[risk-to-permission table](Config.md#downstream-risk-and-permission-values)
+defines all accepted values, their required MCP server and Project permission
+values, and when execution requires Full access. The host uses the higher of this
+classification and its configured tool risk. Missing declarations retain configured
+behavior; malformed or unknown declarations fail closed. Standard MCP annotations
+remain hints and cannot lower host policy or grant permission.
 
 Reexported tools, configured aliases and `mcp.tools.call` use the selected
 project's current definition. The effective risk contributes to the resolved

@@ -79,6 +79,7 @@ final class ComputerMCPAppModel: ObservableObject {
   let pluginManagement: PluginManagementModel
   let mcpRegistrations: MCPRegistrationModel
   let clientAccess: ClientAccessModel
+  let privacySecurity: PrivacySecurityModel
   let localClients: LocalClientsModel
   private let onboardingPreferences: any OnboardingPreferenceStoring
   private let permissionCoach = PermissionCoachWindowController()
@@ -90,6 +91,8 @@ final class ComputerMCPAppModel: ObservableObject {
     controlPlane: any AppControlPlane,
     onboardingPreferences: any OnboardingPreferenceStoring = UserDefaultsOnboardingPreferences()
   ) {
+    let privacyService = LivePrivacySecurityService(controlPlane: controlPlane)
+    self.privacySecurity = PrivacySecurityModel(service: privacyService)
     self.controlPlane = controlPlane
     self.pluginManagement = PluginManagementModel(controlPlane: controlPlane)
     self.mcpRegistrations = MCPRegistrationModel(controlPlane: controlPlane)
@@ -98,6 +101,9 @@ final class ComputerMCPAppModel: ObservableObject {
     self.onboardingPreferences = onboardingPreferences
     self.isPresentingWelcome =
       onboardingPreferences.completedVersion < UserDefaultsOnboardingPreferences.currentVersion
+    privacyService.requestPermission = { [weak self] permission in
+      self?.requestPermission(permission)
+    }
   }
 
   func finishWelcome(selecting section: AppSection = .home) {
@@ -164,7 +170,7 @@ final class ComputerMCPAppModel: ObservableObject {
         refresh(.home)
         refresh(.tunnels)
         await clientAccess.reload()
-        if selectedSection == .permissions { await loadPermissionRequests() }
+        await privacySecurity.refresh()
       }
     }
   }
@@ -222,6 +228,7 @@ final class ComputerMCPAppModel: ObservableObject {
       }
     case .permissions:
       Task {
+        await privacySecurity.refresh()
         await loadPermissions()
         await loadPermissionRequests()
       }

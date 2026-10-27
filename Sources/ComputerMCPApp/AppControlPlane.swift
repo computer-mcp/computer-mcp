@@ -33,7 +33,7 @@ enum AppSection: String, CaseIterable, Identifiable, Sendable {
       case .providers: "Providers"
       case .plugins: "Plugins"
       case .tunnels: "Tunnels"
-      case .permissions: "Permissions"
+      case .permissions: "Privacy & Security"
       case .audit: "Audit"
       case .diagnostics: "Diagnostics"
       }
@@ -50,7 +50,7 @@ enum AppSection: String, CaseIterable, Identifiable, Sendable {
     case .providers: "shippingbox"
     case .plugins: "puzzlepiece.extension"
     case .tunnels: "point.3.connected.trianglepath.dotted"
-    case .permissions: "hand.raised"
+    case .permissions: "hand.raised.fill"
     case .audit: "list.bullet.rectangle"
     case .diagnostics: "stethoscope"
     }

@@ -472,6 +472,9 @@ struct PrivacyPrincipalDetailView: View {
               PrivacyGrantRow(
                 model: model, grant: grant, title: grant.object?.name,
                 systemImage: kind.systemImage)
+              if kind == .projects {
+                PrivacyNetworkMenu(model: model, grant: grant)
+              }
             }
           }
         }
@@ -568,6 +571,117 @@ struct PrivacyPrincipalDetailView: View {
     case .fullAccessSaved, .fullAccessConnection:
       "Programs run as you without the sandbox. They don't inherit Computer MCP's macOS permissions."
     }
+  }
+}
+
+struct PrivacyNetworkMenu: View {
+  @Environment(\.locale) private var locale
+  @Environment(\.localizationResources) private var resources
+  private var l: PrivacyText { PrivacyText(locale: locale, resources: resources) }
+  @ObservedObject var model: PrivacySecurityModel
+  let grant: PrivacyGrant
+  @State private var showingCustom = false
+
+  var body: some View {
+    Menu(l("Network")) {
+      PrivacyNetworkChoices { network in
+        if let network {
+          Task { await model.setNetwork(grant, to: network) }
+        } else {
+          showingCustom = true
+        }
+      }
+    }
+    .disabled(managed)
+    .accessibilityIdentifier("privacy.network.\(grant.id)")
+    .sheet(isPresented: $showingCustom) {
+      PrivacyNetworkSheet(network: grant.network ?? .none) { network in
+        await model.setNetwork(grant, to: network)
+      }
+    }
+  }
+
+  private var managed: Bool {
+    if case .managedLimit = grant.source { true } else { false }
+  }
+}
+
+struct PrivacyNetworkChoices: View {
+  @Environment(\.locale) private var locale
+  @Environment(\.localizationResources) private var resources
+  private var l: PrivacyText { PrivacyText(locale: locale, resources: resources) }
+  let select: (PrivacyNetworkAccess?) -> Void
+
+  var body: some View {
+    Button(l("None")) { select(PrivacyNetworkAccess.none) }
+    Button(l("Trusted Hosts")) { select(.trusted) }
+    Button(l("Any Host")) { select(.full) }
+    Button(l("Custom…")) { select(nil) }
+  }
+}
+
+struct PrivacyNetworkSheet: View {
+  @Environment(\.dismiss) private var dismiss
+  @Environment(\.locale) private var locale
+  @Environment(\.localizationResources) private var resources
+  private var l: PrivacyText { PrivacyText(locale: locale, resources: resources) }
+  @State private var draft: PrivacyNetworkDraft
+  @State private var failure: String?
+  @State private var saving = false
+  let save: (PrivacyNetworkAccess) async -> Bool
+
+  init(network: PrivacyNetworkAccess, save: @escaping (PrivacyNetworkAccess) async -> Bool) {
+    _draft = State(initialValue: PrivacyNetworkDraft(network))
+    self.save = save
+  }
+
+  var body: some View {
+    VStack(alignment: .leading, spacing: 16) {
+      Text(verbatim: l("Custom Network Access")).font(.headline)
+      Text(verbatim: l("Hosts")).font(.subheadline)
+      TextEditor(text: $draft.hosts)
+        .font(.body.monospaced())
+        .frame(height: 120)
+        .border(Color.secondary.opacity(0.25))
+        .accessibilityLabel(l("Hosts"))
+      Text(
+        verbatim: l(
+          "Enter one host per line or separate hosts with commas. Use *. to include subdomains.")
+      )
+      .font(.caption)
+      .foregroundStyle(.secondary)
+      Toggle(l("Include trusted hosts"), isOn: $draft.includesTrusted)
+      if let failure {
+        Text(verbatim: failure).foregroundStyle(.red).font(.callout)
+      }
+      HStack {
+        Spacer()
+        Button(l("Cancel"), role: .cancel) { dismiss() }
+          .keyboardShortcut(.cancelAction)
+        Button(l("Save")) {
+          let network: PrivacyNetworkAccess
+          do {
+            network = try draft.network()
+          } catch {
+            failure = AppLocalization.errorDescription(error)
+            return
+          }
+          saving = true
+          Task {
+            if await save(network) {
+              dismiss()
+            } else {
+              failure = l("The change couldn't be made.")
+            }
+            saving = false
+          }
+        }
+        .keyboardShortcut(.defaultAction)
+      }
+    }
+    .padding(24)
+    .frame(width: 440)
+    .disabled(saving)
   }
 }
 

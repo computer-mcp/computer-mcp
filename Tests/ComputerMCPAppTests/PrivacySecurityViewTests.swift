@@ -26,6 +26,68 @@ import Testing
     #expect(model.holders(of: .fullAccess) == 1)
   }
 
+  @Test func networkEditsRefreshTheProjectGrant() async throws {
+    let service = PrivacySecurityFake()
+    let model = PrivacySecurityModel(service: service)
+    await model.refresh()
+    let grant = try #require(model.snapshot.grants.first { $0.permission == .projects })
+    for network: PrivacyNetworkAccess in [
+      .trusted, .full, .none,
+      .custom(hosts: ["api.example.com", "*.example.org"], includesTrusted: true),
+    ] {
+      #expect(await model.setNetwork(grant, to: network))
+      #expect(
+        model.snapshot.grants.first { $0.id == grant.id }?.network == (try network.validated()))
+    }
+    #expect(service.networkWrites == 4)
+  }
+
+  @Test func customHostsAcceptSeparatorsAndNormalizeWildcardsAndAddresses() throws {
+    var draft = PrivacyNetworkDraft(.trusted)
+    draft.hosts = " API.Example.COM, *.Example.ORG\n127.0.0.1, [2001:db8::1]\napi.example.com, "
+    #expect(
+      try draft.network()
+        == .custom(
+          hosts: ["*.example.org", "127.0.0.1", "2001:db8::1", "api.example.com"],
+          includesTrusted: true))
+    draft.includesTrusted = false
+    let network = try draft.network()
+    let reopened = PrivacyNetworkDraft(network)
+    #expect(try reopened.network() == network)
+    #expect(!reopened.includesTrusted)
+  }
+
+  @Test(arguments: [
+    "https://example.com/path", "bad host", "*.", "a..com", "host:443", "999.1.1.1",
+  ])
+  func invalidHostsDoNotWriteOrChangeTheSnapshot(_ host: String) async throws {
+    let service = PrivacySecurityFake()
+    let model = PrivacySecurityModel(service: service)
+    await model.refresh()
+    let original = model.snapshot
+    let grant = try #require(original.grants.first)
+    var draft = PrivacyNetworkDraft(.none)
+    draft.hosts = host
+    #expect(throws: (any Error).self) { try draft.network() }
+    #expect(!(await model.setNetwork(grant, to: .custom(hosts: [host], includesTrusted: false))))
+    #expect(service.networkWrites == 0)
+    #expect(model.snapshot == original)
+    #expect(model.failure != nil)
+  }
+
+  @Test func failedNetworkSaveKeepsTheSnapshotAndReportsFailure() async throws {
+    let service = PrivacySecurityFake()
+    let model = PrivacySecurityModel(service: service)
+    await model.refresh()
+    let original = model.snapshot
+    let grant = try #require(original.grants.first)
+    service.failNetworkSave = true
+    #expect(!(await model.setNetwork(grant, to: .full)))
+    #expect(service.networkWrites == 1)
+    #expect(model.snapshot == original)
+    #expect(model.failure != nil)
+  }
+
   @Test func rendersInBothLanguagesAndAppearances() async throws {
     let model = PrivacySecurityModel(service: PrivacySecurityFake())
     await model.refresh()
@@ -49,6 +111,25 @@ import Testing
           .styled(locale, dark, resources),
         size: NSSize(width: 720, height: 900), appearance: appearance,
         name: "privacy-chatgpt-" + suffix)
+      let grant = try #require(model.snapshot.grants.first { $0.permission == .projects })
+      try render(
+        Form { PrivacyNetworkMenu(model: model, grant: grant) }
+          .formStyle(.grouped).styled(locale, dark, resources),
+        size: NSSize(width: 440, height: 120), appearance: appearance,
+        name: "privacy-network-menu-" + suffix)
+      try render(
+        VStack(alignment: .leading, spacing: 8) { PrivacyNetworkChoices { _ in } }
+          .padding().styled(locale, dark, resources),
+        size: NSSize(width: 240, height: 160), appearance: appearance,
+        name: "privacy-network-choices-" + suffix)
+      try render(
+        PrivacyNetworkSheet(
+          network: .custom(
+            hosts: ["api.example.com", "*.example.org"], includesTrusted: true)
+        ) { _ in true }
+        .styled(locale, dark, resources),
+        size: NSSize(width: 488, height: 380), appearance: appearance,
+        name: "privacy-network-custom-" + suffix)
       try render(
         PrivacyRequestPrompt(request: request) { _ in }.styled(locale, dark, resources),
         size: NSSize(width: 340, height: 420), appearance: appearance,
@@ -90,6 +171,8 @@ extension View {
 private final class PrivacySecurityFake: PrivacySecurityService {
   var current = PrivacySecurityFake.sample
   var answers: [String: PrivacyRequestAnswer] = [:]
+  var networkWrites = 0
+  var failNetworkSave = false
 
   func privacySnapshot() async throws -> PrivacySnapshot { current }
 
@@ -101,6 +184,14 @@ private final class PrivacySecurityFake: PrivacySecurityService {
   func setGrant(_ grant: PrivacyGrant) async throws {
     current.grants.removeAll { $0.id == grant.id }
     current.grants.append(grant)
+  }
+
+  func setNetwork(_ grant: PrivacyGrant, to network: PrivacyNetworkAccess) async throws {
+    networkWrites += 1
+    if failNetworkSave { throw CancellationError() }
+    for index in current.grants.indices where current.grants[index].id == grant.id {
+      current.grants[index].network = network
+    }
   }
 
   func revokeAll(principalID: String) async throws {

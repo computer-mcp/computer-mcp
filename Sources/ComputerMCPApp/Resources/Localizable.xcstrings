@@ -1,6 +1,13 @@
 {
   "sourceLanguage" : "en",
   "strings" : {
+    "Trusted Hosts" : {"localizations": {"en": {"stringUnit": {"state": "translated", "value": "Trusted Hosts"}}, "zh-Hans": {"stringUnit": {"state": "translated", "value": "受信任的主机"}}}},
+    "Any Host" : {"localizations": {"en": {"stringUnit": {"state": "translated", "value": "Any Host"}}, "zh-Hans": {"stringUnit": {"state": "translated", "value": "任意主机"}}}},
+    "Custom…" : {"localizations": {"en": {"stringUnit": {"state": "translated", "value": "Custom…"}}, "zh-Hans": {"stringUnit": {"state": "translated", "value": "自定义…"}}}},
+    "Custom Network Access" : {"localizations": {"en": {"stringUnit": {"state": "translated", "value": "Custom Network Access"}}, "zh-Hans": {"stringUnit": {"state": "translated", "value": "自定义网络访问"}}}},
+    "Hosts" : {"localizations": {"en": {"stringUnit": {"state": "translated", "value": "Hosts"}}, "zh-Hans": {"stringUnit": {"state": "translated", "value": "主机"}}}},
+    "Enter one host per line or separate hosts with commas. Use *. to include subdomains." : {"localizations": {"en": {"stringUnit": {"state": "translated", "value": "Enter one host per line or separate hosts with commas. Use *. to include subdomains."}}, "zh-Hans": {"stringUnit": {"state": "translated", "value": "每行输入一个主机，或用逗号分隔。使用 *. 前缀以包含子域名。"}}}},
+
     "“%1$@” wants to connect to “%2$@” from “%3$@”." : {"localizations" : {"en" : {"stringUnit" : {"state" : "translated", "value" : "“%1$@” wants to connect to “%2$@” from “%3$@”."}}, "zh-Hans" : {"stringUnit" : {"state" : "translated", "value" : "“%1$@”想要连接“%2$@”（来自“%3$@”）。"}}}},
     "Allowing adds the host to the project's network access in the sandbox." : {"localizations" : {"en" : {"stringUnit" : {"state" : "translated", "value" : "Allowing adds the host to the project's network access in the sandbox."}}, "zh-Hans" : {"stringUnit" : {"state" : "translated", "value" : "允许后，这个主机会加入该项目在沙盒中的网络访问。"}}}},
     "Secure tunnel" : {"localizations" : {"en" : {"stringUnit" : {"state" : "translated", "value" : "Secure tunnel"}}, "zh-Hans" : {"stringUnit" : {"state" : "translated", "value" : "安全隧道"}}}},

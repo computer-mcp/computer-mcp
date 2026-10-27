@@ -1,3 +1,5 @@
+import ComputerMCPControlPlane
+import ComputerMCPPermissions
 import Foundation
 import SwiftUI
 
@@ -152,6 +154,47 @@ struct PrivacyPrincipal: Identifiable, Hashable, Sendable {
 enum PrivacyNetworkAccess: Hashable, Sendable {
   case none, trusted, full
   case custom(hosts: [String], includesTrusted: Bool)
+
+  func validated() throws -> Self {
+    guard case .custom(let hosts, let includesTrusted) = self else { return self }
+    do {
+      let normalized = try hosts.map { host in
+        let wildcard = host.hasPrefix("*.")
+        return (wildcard ? "*." : "")
+          + (try NetworkHost.normalize(wildcard ? String(host.dropFirst(2)) : host))
+      }
+      return .custom(hosts: Array(Set(normalized)).sorted(), includesTrusted: includesTrusted)
+    } catch {
+      throw AppControlPlaneError.unavailable(
+        "Enter valid host names or IP addresses for custom network access.")
+    }
+  }
+}
+
+struct PrivacyNetworkDraft {
+  var hosts: String
+  var includesTrusted: Bool
+
+  init(_ access: PrivacyNetworkAccess) {
+    switch access {
+    case .custom(let hosts, let includesTrusted):
+      self.hosts = hosts.joined(separator: "\n")
+      self.includesTrusted = includesTrusted
+    default:
+      hosts = ""
+      includesTrusted = access == .trusted
+    }
+  }
+
+  func network() throws -> PrivacyNetworkAccess {
+    let hosts = hosts.components(
+      separatedBy: CharacterSet.newlines.union(CharacterSet(charactersIn: ","))
+    )
+    .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+    .filter { !$0.isEmpty }
+    return try PrivacyNetworkAccess.custom(hosts: hosts, includesTrusted: includesTrusted)
+      .validated()
+  }
 }
 
 /// The source of an effective value, shown so the owner knows where to change it.
@@ -239,6 +282,7 @@ protocol PrivacySecurityService: AnyObject {
   func privacySnapshot() async throws -> PrivacySnapshot
   func answer(request id: String, with answer: PrivacyRequestAnswer) async throws
   func setGrant(_ grant: PrivacyGrant) async throws
+  func setNetwork(_ grant: PrivacyGrant, to network: PrivacyNetworkAccess) async throws
   func revokeAll(principalID: String) async throws
   func setExecution(principalID: String, to execution: PrivacyPrincipal.Execution) async throws
   func confirmRestoredPermissions() async throws
@@ -272,6 +316,18 @@ final class PrivacySecurityModel: ObservableObject {
     var changed = grant
     changed.value = value
     await perform { try await self.service.setGrant(changed) }
+  }
+
+  @discardableResult
+  func setNetwork(_ grant: PrivacyGrant, to network: PrivacyNetworkAccess) async -> Bool {
+    do {
+      try await service.setNetwork(grant, to: network.validated())
+      snapshot = try await service.privacySnapshot()
+      return true
+    } catch {
+      failure = AppLocalization.errorDescription(error)
+      return false
+    }
   }
 
   func revokeAll(_ principal: PrivacyPrincipal) async {

@@ -13,6 +13,8 @@ final class LivePrivacySecurityService: PrivacySecurityService {
   /// The store revision the last snapshot was read at; answers must match it.
   private var revision: UInt64 = 0
   private var view: GatewayPermissionView?
+  private var systemPermissions: [PrivacySystemPermission.Kind: PermissionSummary] = [:]
+  var requestPermission: ((PermissionSummary) -> Void)?
 
   init(controlPlane: any AppControlPlane) {
     self.controlPlane = controlPlane
@@ -22,6 +24,10 @@ final class LivePrivacySecurityService: PrivacySecurityService {
     let view = try await controlPlane.fetchPermissionRequests()
     let names = try await controlPlane.fetchPermissionObjectNames()
     let system = (try? await controlPlane.fetchPermissions()) ?? []
+    systemPermissions = Dictionary(
+      uniqueKeysWithValues: system.compactMap { summary in
+        Self.systemPermission(summary).map { ($0.kind, summary) }
+      })
     self.view = view
     revision = view.revision
     let principals = view.profiles.map(Self.principal)
@@ -72,12 +78,23 @@ final class LivePrivacySecurityService: PrivacySecurityService {
   }
 
   func openSystemSettings(for permission: PrivacySystemPermission.Kind) {
-    let id =
-      switch permission {
-      case .screenRecording: "screen-recording"
-      case .accessibility: "accessibility"
+    guard let summary = systemPermissions[permission] else { return }
+    requestPermission?(summary)
+  }
+
+  func setNetwork(_ grant: PrivacyGrant, to network: PrivacyNetworkAccess) async throws {
+    guard grant.permission == .projects, let projectID = grant.object?.id else { return }
+    let access: NetworkAccess =
+      switch try network.validated() {
+      case .none: .none
+      case .trusted: .trusted
+      case .full: .full
+      case .custom(let hosts, let includesTrusted):
+        .custom(hosts: Set(hosts), includesTrusted: includesTrusted)
       }
-    Task { _ = try? await controlPlane.requestPermission(id: id) }
+    try await edit(grant.principalID) { profile in
+      profile.projectNetworks[projectID] = access
+    }
   }
 
   /// Saves one profile against the choices it was read with, so a concurrent change fails

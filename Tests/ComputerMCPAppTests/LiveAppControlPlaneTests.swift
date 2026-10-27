@@ -385,6 +385,45 @@ final class LiveAppControlPlaneTests {
   }
 
   @Test
+  func privacyNetworkEditsPersistAndSystemSettingsUseTheReadSummary() async throws {
+    try await withAppControlPlaneFixture { fixture in
+      let service = LivePrivacySecurityService(controlPlane: fixture.app)
+      let model = PrivacySecurityModel(service: service)
+      await model.refresh()
+      var requested: PermissionSummary?
+      service.requestPermission = { requested = $0 }
+      service.openSystemSettings(for: .accessibility)
+      #expect(requested?.id == "accessibility")
+      #expect(requested?.settingsURL != nil)
+      let grant = PrivacyGrant(
+        principalID: GatewayProfileID.chatGPTOperate.rawValue, permission: .projects,
+        object: .init(id: "*", name: "All Projects", detail: nil), value: .granted(.read))
+      let before = try await fixture.app.fetchProfilePermissionOptions(id: .chatGPTOperate)
+      #expect(
+        await model.setNetwork(
+          grant,
+          to: .custom(
+            hosts: ["API.Example.COM", "*.example.org"], includesTrusted: true)))
+      let after = try await fixture.app.fetchProfilePermissionOptions(id: .chatGPTOperate)
+      #expect(
+        after.grant.projectNetworks["*"]?.configuration
+          == .custom(
+            hosts: ["api.example.com", "*.example.org"], includesTrusted: true))
+      #expect(after.permissionRevision > before.permissionRevision)
+      #expect(after.grant.permissions == before.grant.permissions)
+      #expect(after.grant.allowedCallers == before.grant.allowedCallers)
+      #expect(after.grant.fullAccess == before.grant.fullAccess)
+      #expect(
+        !(await model.setNetwork(
+          grant,
+          to: .custom(
+            hosts: ["https://invalid.example/path"], includesTrusted: false))))
+      let unchanged = try await fixture.app.fetchProfilePermissionOptions(id: .chatGPTOperate)
+      #expect(unchanged.permissionRevision == after.permissionRevision)
+    }
+  }
+
+  @Test
   func profilePermissionEditorRoundTripsWithoutRestartingTheGateway() async throws {
     try await withAppControlPlaneFixture { fixture in
       try await fixture.app.startApplication()

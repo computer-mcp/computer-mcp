@@ -606,8 +606,9 @@ selects subsequent admissions; established connections keep their verified bindi
 
 Use `permissions requests` to inspect `{revision, epoch, suspended, unconfirmed_profile_ids, profiles, sources, requests}`.
 Each request entry contains its `request`, `profile_id` and `always_is_shared`.
-Managed source identity, state and diagnostics explain effective limits. The App
-shows pending request scope and expiry and offers Only this time, Always and Deny.
+Managed source identity, state and diagnostics explain effective limits. The App’s
+Privacy & Security page presents requests and offers Only this time, Always and
+Don’t Allow. Project registration requests offer Allow and Don’t Allow.
 Always changes the profile for all clients sharing it. Requests expire after one day.
 
 Answer the exact reviewed request locally:

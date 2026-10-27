@@ -1210,6 +1210,68 @@ private struct ExecutionTestObservation: EgressRouteObservation {
 
 #if os(macOS)
   @Suite(.nativeIntegration, .serialized) struct AuthorizedProcessIntegrationTests {
+    @Test(.timeLimit(.minutes(1)), arguments: [PermissionAnswer.onlyThisTime, .always])
+    func nativeFolderDenialBecomesAnExplicitRetry(answer: PermissionAnswer) async throws {
+      let f = try ExecutionFixture()
+      let target = f.paths.root.appendingPathComponent("downloads/report")
+      try Data("folder-retry-evidence\n".utf8).write(to: target)
+      let launcher = testExecutionLauncher()
+      let coordinator = try f.coordinator(launcher: launcher)
+      try await coordinator.recover()
+      let id = try f.paths.authorize(f.paths.project, operation: .read, once: false)
+      let prepared = try await coordinator.prepare(authorizationID: id, context: f.context)
+      // Repeated root-process reads exercise delivery after stream attachment;
+      // this does not assert capture of the first denial or an unseen descendant.
+      let script =
+        "for ((i=0;i<100;i++)); do if IFS= read -r value < \"$1\"; then printf '%s' \"$value\"; exit 0; fi; /bin/sleep .1; done; exit 13"
+      let owner = try await prepared.withValue {
+        try await launcher.start(
+          executable: .init("/bin/bash"), arguments: ["-c", script, "fixture", target.path],
+          directory: .init(f.paths.project.path), environment: prepared.environment,
+          mode: prepared.mode)
+      }
+      var requests: [PermissionRequest] = []
+      let deadline = ContinuousClock.now + .seconds(12)
+      while requests.isEmpty && ContinuousClock.now < deadline {
+        try await Task.sleep(for: .milliseconds(100))
+        requests = try prepared.permissionRequests(prepared.executionID)
+      }
+      _ = try await owner.cancel()
+      try prepared.finishAdmission()
+      try await f.untilFinished(prepared.executionID, coordinator)
+      let request = try #require(requests.first, "No attributable kernel folder denial arrived")
+      guard case .permission(let content) = request.content else {
+        Issue.record("Expected a folder permission request")
+        return
+      }
+      #expect(content.requirement.permission == .filesAndFolders(.downloads))
+      let retryID = try f.paths.store.transactionWithDatabase { _, ledger in
+        let proof = try #require(ledger.authorizations[id])
+        _ = try ledger.answer(request.id, with: answer, now: Date())
+        guard
+          case .allowed(let retry) = try ledger.authorize(
+            invocation: proof.invocation,
+            requirements: proof.requirements, retryIDs: [request.id], now: Date())
+        else {
+          throw PermissionModelError.invalidAuthorization
+        }
+        return retry.id
+      }
+      let retry = try await coordinator.prepare(authorizationID: retryID, context: f.context)
+      let cli = CLIProcessExecution(launcher: launcher)
+      let result = try await retry.withValue {
+        try await cli.launchAsync(
+          executable: "/bin/bash",
+          invocation: .init(
+            arguments: ["-c", script, "fixture", target.path], standardInput: Data()),
+          cwd: f.paths.project, environment: [:], timeoutMilliseconds: 3000, maxOutputBytes: 1024)
+      }
+      #expect(result.stdout.base64 == Data("folder-retry-evidence".utf8).base64EncodedString())
+      try retry.finishAdmission()
+      try await f.untilFinished(retry.executionID, coordinator)
+      await cli.shutdown()
+    }
+
     @Test(arguments: [ExecutionLaunchMethod.subprocess, .foundation, .posixSpawn], [false, true])
     func failedNativeLaunchReleasesResourcesAndAllowsNextExecution(
       method: ExecutionLaunchMethod, beforeSpawn: Bool

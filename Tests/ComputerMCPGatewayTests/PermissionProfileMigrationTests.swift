@@ -123,6 +123,34 @@ import Testing
         for: .mcpServer("server")) == .notGranted)
   }
 
+  @Test(arguments: LegacyConfirmationPolicy.allCases)
+  func confirmationPolicyDoesNotSurviveConversion(policy: LegacyConfirmationPolicy) throws {
+    var old = profile(["file.read", "file.write"])
+    let expected = try convert(old).profiles
+    old.confirmationPolicy = policy
+    let migrated = try convert(old).profiles
+    #expect(migrated == expected)
+    let manifest = try PermissionProfileManifest.encode(migrated)
+    #expect(!manifest.contains("confirmation_policy"))
+  }
+
+  @Test(arguments: [LegacyPermissionMode.readOnly, .projectOperations, .localFullAccess])
+  func mixedDownstreamAliasesUseEffectiveServerAccess(mode: LegacyPermissionMode) throws {
+    let tools = [
+      PermissionMigrationTool(
+        id: "server.read", risk: .readOnly, aliases: ["read-alias"], serverID: "server"),
+      PermissionMigrationTool(
+        id: "server.write", risk: .projectWrite, aliases: ["write-alias"], serverID: "server"),
+    ]
+    let plan = try convert(
+      profile(["read-alias", "write-alias", "missing-alias"], mode: mode), tools: tools)
+    #expect(
+      plan.profiles[0].permissions.state(for: .mcpServer("server"))
+        == .granted(mode == .readOnly ? .read : .all))
+    #expect(plan.profiles[0].permissions.state(for: .plugin("ungranted")) == .notGranted)
+    #expect(plan.report.dropped.contains { $0.grant == "missing-alias" })
+  }
+
   @Test func readSurfacesCancelOnlyDisabledAndAbsentTools() throws {
     #expect(
       try convert(profile(["mcp.resources.read"])).profiles[0].permissions.state(

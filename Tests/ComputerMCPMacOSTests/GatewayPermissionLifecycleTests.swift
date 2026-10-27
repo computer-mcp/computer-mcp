@@ -197,6 +197,34 @@ struct GatewayPermissionLifecycleTests {
     }
   }
 
+  @Test(arguments: [ManagedPolicySourceID.machineFile, .managedPreferences])
+  func managedTighteningCapsAnAlreadyPendingHTTPAnswer(source: ManagedPolicySourceID) async throws {
+    let fixture = try PermissionFixture()
+    defer { fixture.removeFiles() }
+    try await fixture.http.startListening()
+    do {
+      let client = try await fixture.connect()
+      let ids = try requestIDs(
+        await client.call(
+          toolName: "file.remove_xattr", arguments: .object(fixture.target)))
+      fixture.reader.set(source, .available(Data("[projects]\nfixture = 'read'\n".utf8)))
+      for answer in [PermissionAnswer.onlyThisTime, .always] {
+        #expect(throws: (any Error).self) { try fixture.answer(ids, answer) }
+      }
+      let denied = try await fixture.retry(client, ids: ids)
+      #expect(try permissionError(denied)["code"] == .string("permission.managed_limit"))
+      #expect(fixture.hasAttribute())
+      #expect(
+        try fixture.control.view().profiles.first { $0.id == .chatGPTOperate }?
+          .permissions.state(for: .project("fixture")) == .granted(.read))
+      await client.disconnect()
+      await fixture.http.stop()
+    } catch {
+      await fixture.http.stop()
+      throw error
+    }
+  }
+
   @Test
   func revocationRetiresPendingRequestAndRejectsStaleOwnerAnswers() async throws {
     let fixture = try PermissionFixture()

@@ -52,7 +52,10 @@ package enum GatewaySandboxCompiler {
       throw ExecutionEnvironmentError.unavailable(
         "Execution requires a verified worktree and private Git context")
     }
-    let projection = try ledger.prepareExecutionPermissions(authorizationID)
+    let sandboxed =
+      authorization.mode == .sandbox || context.purpose == .readOnlyHelper
+      || context.purpose == .remoteService
+    let projection = try ledger.prepareExecutionPermissions(authorizationID, sandboxed: sandboxed)
     try projection.limits.requireEnforceable(by: .init())
     let network: EgressAccess
     switch projection.network {
@@ -72,9 +75,7 @@ package enum GatewaySandboxCompiler {
       access: network, localNetwork: projection.localNetwork,
       localNetworkHosts: projection.localNetworkHosts)
     let sandbox: SandboxConfiguration?
-    if authorization.mode == .sandbox || context.purpose == .readOnlyHelper
-      || context.purpose == .remoteService
-    {
+    if sandboxed {
       let reads = Set(projection.readablePaths.map(\.path))
       let scratch = try ownedTemporaryDirectory.map { try CanonicalPath($0.value) }
       guard ownedTemporaryDirectory == nil || ownedTemporaryDirectory == context.temporaryDirectory

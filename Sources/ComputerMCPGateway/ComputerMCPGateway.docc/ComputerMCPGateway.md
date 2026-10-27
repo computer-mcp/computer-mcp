@@ -183,8 +183,9 @@ These operation checks apply within each tool's existing authorization policy.
 
 ## Tool requirements
 
-Capability descriptors declare path, project, privacy, execution and forwarding
-requirements using `ToolRequirement`. Catalog snapshots retain the declaration
+Tool definitions declare path, project, privacy, execution and forwarding
+requirements using `ToolRequirement`. Catalog classification metadata supplies no
+permission authority. Catalog snapshots retain the declaration
 with the exact provider, and dispatch rejects changed descriptors. Every call
 resolves these declarations into a `ResolvedToolInvocation` containing its exact
 identity, conditions and typed plugin origins. The gateway evaluates it with the
@@ -226,3 +227,22 @@ handoff requires the runtime to stop work from every other epoch before admissio
 resumes. Darwin supplies the counter through Keychain; unsupported platforms fail
 explicitly. The gateway uses this store for permission admission, request answers,
 profile publication and execution revocation.
+
+### Requests, results and audit
+
+Missing requestable permissions create durable requests; explicit denies and
+managed exclusions do not. Owner answers are checked against current policy and
+the reviewed permission revision. Only this time is consumed by one matching
+explicit retry, including across independent processes. Its execution results
+remain readable during retention, subject to current authority and revocation.
+Project registration requests offer Allow and Don't Allow and publish registration
+and access together. `project.instructions` reports instruction and skill sources,
+scopes and bounded unchanged UTF-8 content.
+
+Admission audit is durable before dispatch. Outcomes contain input/output digests
+and bounded metadata, never clear arguments or output. Audit retention is 90 days
+and at most one million entries; pruning does not change permission authority.
+Failure to persist completion reports an unknown outcome and does not replay work.
+Private `host.workspaces.authorize_removal` and `host.workspaces.unregister` calls
+verify a live admitted call record and its exact receipt, principal, arguments and
+current authority. The plugin wire names and receipt digest fields are stable.

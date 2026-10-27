@@ -878,7 +878,7 @@ package struct PermissionLedger: Equatable, Sendable, Codable {
 
   /// Selects implicit process access without creating requests or consuming another
   /// retry. Store callers commit this evidence with reservation before launch.
-  package mutating func prepareExecutionPermissions(_ id: UUID) throws
+  package mutating func prepareExecutionPermissions(_ id: UUID, sandboxed: Bool = true) throws
     -> ExecutionPermissionProjection
   {
     guard let proof = authorizations[id], !proof.finished, proof.executionID == nil,
@@ -898,6 +898,18 @@ package struct PermissionLedger: Equatable, Sendable, Codable {
       {
         limits.sources[.connection] = .available(ceiling)
       }
+    }
+    let effectiveLimits = try EffectiveExecutionLimits.resolve(
+      proof.requirements.execution, limits: [limits])
+    if !sandboxed {
+      guard !proof.mode.isSandbox else { throw PermissionModelError.invalidAuthorization }
+      // An unconfined program has no implicit sandbox openings to pin. Its
+      // admitted requirements, consent and execution limits remain authoritative.
+      return ExecutionPermissionProjection(
+        authorization: proof, readablePaths: [], directoryPaths: [],
+        forbiddenPaths: [], boundaries: [], network: .none,
+        screenCapture: false, accessibility: false, localNetwork: false,
+        localNetworkHosts: [], limits: effectiveLimits)
     }
     var forbidden = paths.hostDataLocations.union(paths.deniedLocations)
       .union(limits.deniedReadLocations)
@@ -985,8 +997,6 @@ package struct PermissionLedger: Equatable, Sendable, Codable {
     let screen = permits(.screen)
     let desktop = permits(.desktopControl)
     let local = permits(.localNetwork)
-    let effectiveLimits = try EffectiveExecutionLimits.resolve(
-      proof.requirements.execution, limits: [limits])
     authorizations[id]!.basis = basis
     for requestID in proof.requestIDs where self.requests[requestID]?.status == .consumed(id) {
       self.requests[requestID]!.basis.formUnion(basis.requestEvidence)

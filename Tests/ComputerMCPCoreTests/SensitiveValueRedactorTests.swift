@@ -2,7 +2,7 @@ import Testing
 
 @testable import ComputerMCPCore
 
-struct HostApprovalRedactorTests {
+struct SensitiveValueRedactorTests {
   @Test(arguments: [
     ("Authorization: Bearer example-value", "Authorization: Bearer [REDACTED]"),
     ("密码 token=example-value; next", "密码 token=[REDACTED]; next"),
@@ -17,16 +17,16 @@ struct HostApprovalRedactorTests {
   ])
   func repeatedRedactionPreservesUnicodeBoundariesAndAllPatterns(input: String, expected: String) {
     for _ in 0..<1_000 {
-      #expect(HostApprovalRedactor.redactString(input) == expected)
+      #expect(SensitiveValueRedactor.redactString(input) == expected)
       #expect(
-        HostApprovalRedactor.redactString(input, maximumCharacters: 8)
+        SensitiveValueRedactor.redactString(input, maximumCharacters: 8)
           == String(expected.prefix(8)))
     }
   }
 
   @Test
   func commandArgumentSecretsAndAPIKeysAreRedacted() {
-    let result = HostApprovalRedactor.redact(
+    let result = SensitiveValueRedactor.redact(
       .object([
         "argv": .array([
           .string("--token"), .string("example-value"),
@@ -49,7 +49,7 @@ struct HostApprovalRedactorTests {
       uniqueKeysWithValues: (0..<20_000).map {
         ("secret_\($0)", JSONValue.string("example-value"))
       })
-    let result = HostApprovalRedactor.redact(.object(fields))
+    let result = SensitiveValueRedactor.redact(.object(fields))
     #expect((result.objectValue?.count ?? 0) <= 10_000)
     #expect(result.objectValue?["_truncated"] == .bool(true))
   }
@@ -60,14 +60,14 @@ struct HostApprovalRedactorTests {
     for _ in 0..<20 {
       nested = .object(["child": nested])
     }
-    let redactedText = HostApprovalRedactor.redact(
+    let redactedText = SensitiveValueRedactor.redact(
       .object([
         "authorization": .string("Bearer approval-secret"),
         "message": .string(String(repeating: "x", count: 20_000)),
         "nested": nested,
       ])
     )
-    let redactedCollection = HostApprovalRedactor.redact(
+    let redactedCollection = SensitiveValueRedactor.redact(
       .array((0..<20_000).map { .number(Double($0)) })
     )
     let object = redactedText.objectValue

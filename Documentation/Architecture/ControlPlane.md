@@ -70,7 +70,7 @@ listener is stopped, with current permission authority intact.
 
 The `computer-mcp` control CLI is not a registered remote `cli.exec` provider.
 Executing it from a Tunnel-originated gateway process would convert a remote
-profile into the owner-only `local-admin` identity. Restricted MCP clients use
+profile into the owner-only `local-admin` identity. MCP clients use
 the catalog with declared requirements and access only authorized objects. An explicitly approved Full Access
 session can manage projects and verified official plugins through typed tools.
 It retains its remote identity and never acquires the local-admin control socket.
@@ -80,8 +80,8 @@ these tools. `AppGatewayService` injects management dispatch bound to the admitt
 runtime key and listener epoch; each request must also hold the actual registered
 control-session reference. Calls delegate to existing App state and prepared
 publication, retaining old execution generations. Read tools and monotonic session
-limits are selectable in the Restricted editor. Configuration and installation
-writes have a host-owned Full Access risk floor.
+limits use typed permission contracts. Configuration and installation
+writes require host-authorized Full access.
 
 An asynchronous management operation captures the session revision and input
 state. Its final non-suspending durable commit rechecks current consent under the
@@ -123,11 +123,18 @@ overwrite an external edit or approve changed profile, project or plugin state.
 Saving updates the shared profile, invalidates stale Full access consent and
 reconciles requests and executions against current authority.
 
-The minimal permission-request view shows missing permissions, request scope,
-expiry and whether Always changes a shared profile. Only the local owner can
-answer Only this time, Always or Deny. Answers never replay the initiating call.
-The CLI exposes the same request projection, managed-source diagnostics and
-revision-bound answer operation.
+Privacy & Security presents permissions by category and by client profile, with
+project access, inherited grants, per-project network settings and managed-source
+diagnostics. Ask, Allow and Deny edits use the same revision-bound permission
+service as the CLI. Full access eligibility and per-connection local consent are
+separate controls.
+
+The request view shows the requesting principal, scope and whether Always changes
+a shared profile. Ordinary requests offer Only this time, Always and Don't Allow;
+project registration offers Allow and Don't Allow. Only the local owner answers.
+The reviewed snapshot travels with the answer; a refresh cannot silently replace
+it. Answers never replay the initiating call. The CLI exposes the same request
+projection, managed-source diagnostics and revision-bound answer operation.
 
 Full access consent requires `full_access` in the current profile and never
 changes its permissions or enables `policy.shell_enabled`. Session limits are

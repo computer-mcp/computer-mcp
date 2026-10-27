@@ -8,6 +8,52 @@ import Testing
 @testable import ComputerMCPGateway
 
 @Suite struct GatewayAuditRetentionTests {
+  @Test func defaultRetentionIncludesTheNinetiethDayBoundary() throws {
+    let database = try GatewayDatabase(inMemory: ())
+    let now = Date(timeIntervalSince1970: 1_800_000_000)
+    try database.connection.writer.write { connection in
+      for (id, age) in [("expired", 90.0 * 86_400 + 1), ("boundary", 90.0 * 86_400)] {
+        try AuditEventRecord(
+          AuditEvent(
+            id: id, occurredAt: now.addingTimeInterval(-age), requestID: id,
+            caller: .localApp, profileID: .localAdmin, capabilityID: "fixture.audit",
+            decision: .allowed)
+        ).insertRetained(connection, now: now)
+      }
+    }
+    #expect(try database.auditEvents().map(\.id) == ["boundary"])
+  }
+
+  @Test(.timeLimit(.minutes(2))) func productionCapIsOneMillionEvenWhenLargerIsRequested() throws {
+    let database = try GatewayDatabase(inMemory: ())
+    let now = Date(timeIntervalSince1970: 1_800_000_000)
+    try database.connection.writer.write { connection in
+      try connection.execute(
+        sql: """
+          WITH RECURSIVE entries(n) AS (VALUES(1) UNION ALL SELECT n + 1 FROM entries WHERE n < 1000000)
+          INSERT INTO auditEvents
+            (id, occurredAt, requestID, caller, profileID, capabilityID, decision)
+          SELECT printf('%07d', n), ?, 'fixture', 'local-app', 'local-admin', 'fixture.audit', 'allowed'
+          FROM entries
+          """, arguments: [now.addingTimeInterval(-1)])
+      let event = AuditEvent(
+        id: "default", occurredAt: now, requestID: "default", caller: .localApp,
+        profileID: .localAdmin, capabilityID: "fixture.audit", decision: .allowed)
+      try AuditEventRecord(event).insertRetained(connection, now: now)
+      #expect(try Int.fetchOne(connection, sql: "SELECT count(*) FROM auditEvents") == 1_000_000)
+      #expect(
+        try String.fetchOne(connection, sql: "SELECT id FROM auditEvents WHERE id = '0000001'")
+          == nil)
+      var next = event
+      next.id = "oversized"
+      try AuditEventRecord(next).insertRetained(connection, now: now, maximumEntries: 1_000_001)
+      #expect(try Int.fetchOne(connection, sql: "SELECT count(*) FROM auditEvents") == 1_000_000)
+      #expect(
+        try String.fetchOne(connection, sql: "SELECT id FROM auditEvents WHERE id = '0000002'")
+          == nil)
+    }
+  }
+
   @Test func ageAndCountPruningLeaveAuthorityUntouched() throws {
     let database = try GatewayDatabase(inMemory: ())
     try database.bootstrapPermissionProfiles([.localAdmin])

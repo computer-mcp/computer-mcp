@@ -54,6 +54,32 @@ unavailable JSON contract. It never falls back to the production App. The
 isolated local-permission CLI acceptance test covers a running host's success
 path.
 
+## Plugin worktree consumer
+
+`PluginWorktreeConsumerTests` runs the unchanged Codex plugin's typed host client
+and removal manager against the current host over standard MCP. It creates a
+private Git repository, registers a derived worktree, removes it through
+`host.workspaces.authorize_removal` and `host.workspaces.unregister`, and refuses
+a callback after its admitted invocation ends. Both alias and generic MCP routes
+must retain live execution-record proof. Git worktree and host registration
+absence are checked independently.
+
+In an isolated checkout of the consumer revision under review, copy
+`Tests/ComputerMCPMacOSTests/Fixtures/HostWorktreeConsumerBridgeTests.swift.txt`
+from this repository to `Tests/CodexAdapterTests/HostWorktreeConsumerBridgeTests.swift`
+and build its tests with SwiftPM's native build system. From this repository run:
+
+```sh
+COMPUTER_MCP_TEST_PLUGIN_CONSUMER_WORKTREE=/absolute/path/to/isolated/plugin-checkout \
+  /usr/bin/swift test --build-system native --filter PluginWorktreeConsumerTests
+```
+
+Record both revisions and remove the copied fixture and isolated consumer checkout
+after the run. The consumer process uses private HOME, TMPDIR and database
+state and invokes no vendor model or user App Server. This test validates the
+unchanged consumer/host-service contract. It does not establish plugin enablement,
+delegated-principal launches or installed-App TCC acceptance.
+
 ## Builtin catalog snapshot
 
 `BuiltinToolCatalogSnapshotTests` compares the complete host-owned MCP catalog
@@ -65,9 +91,9 @@ sources and a downstream stub keep discovery independent of installed tools,
 user directories and network access. No tool is executed.
 
 The snapshot records exported names, titles, descriptions, schemas, annotations,
-metadata and capability risk, project requirement, local-only and network
-flags. JSON keys are sorted; failures identify added, removed and changed tools
-and fields. Update it **only for intentional changes that receive review**:
+metadata, permission requirements, classification risk, project requirement,
+local-only and network flags. JSON keys are sorted; failures identify added, removed
+and changed tools and fields. Update it **only for intentional changes that receive review**:
 
 ```sh
 COMPUTER_MCP_UPDATE_CATALOG_SNAPSHOT=1 /usr/bin/swift test \

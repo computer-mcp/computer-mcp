@@ -8,6 +8,66 @@ import Testing
 @testable import ComputerMCPGateway
 
 @Suite struct GatewaySandboxConfigurationTests {
+  @Test(arguments: ["project", "connection", "managed"])
+  func fullAccessProgramsPinAdmissionRatherThanUnusedSandboxOpenings(revocation: String) throws {
+    var f = try SandboxCompilerFixture()
+    var environment = f.ledger.environment
+    environment.connections["client"] = PermissionConnection(
+      principal: f.principal,
+      consent: f.ledger.consent(for: f.principal, mode: .fullAccess(.connection("client"))))
+    _ = try f.ledger.reconcile(environment: environment, expectedRevision: f.ledger.revision)
+    let requirements = InvocationRequirements(
+      actions: [.init(requirement: try PermissionRequirement(.project("project"), .write))],
+      mode: .fullAccess(.connection("client")), sandboxProjectID: "project")
+    let decision = try f.ledger.authorize(
+      invocation: .init(
+        principal: f.principal, tool: "program", projectID: "project", argumentsDigest: "digest"),
+      requirements: requirements, connectionID: "client", now: Date())
+    guard case .allowed(let proof) = decision else {
+      Issue.record("Full access admission failed")
+      return
+    }
+    let compiled = try GatewaySandboxCompiler.compile(
+      ledger: &f.ledger, authorizationID: proof.id,
+      context: .init(
+        directory: SandboxPath("/people/me/Downloads/repo"),
+        temporaryDirectory: SandboxPath("/tmp/execution"), purpose: .pluginProgram))
+    #expect(compiled.sandbox == nil && compiled.permitsProgramLaunch)
+    #expect(compiled.authorization.basis == proof.basis)
+    let execution = try f.ledger.startExecution(owner: f.principal, authorizationIDs: [proof.id])
+    environment = f.ledger.environment
+    try environment.paths!.setProjects(
+      environment.paths!.registeredProjects + [
+        .init(id: "new-worktree", root: CanonicalPath("/tasks/new"), sourceID: "project")
+      ])
+    _ = try f.ledger.reconcile(environment: environment, expectedRevision: f.ledger.revision)
+    #expect(
+      f.ledger.executionAccess(
+        execution.id, principal: f.principal,
+        operation: .readResult, connectionID: "client", now: Date()) == .allowed)
+    switch revocation {
+    case "project":
+      _ = try f.ledger.revoke(
+        principal: f.principal, permission: .project("project"), expectedRevision: f.ledger.revision
+      )
+    case "connection":
+      environment = f.ledger.environment
+      environment.endedConnections.insert("client")
+      _ = try f.ledger.reconcile(environment: environment, expectedRevision: f.ledger.revision)
+    default:
+      environment = f.ledger.environment
+      var ceiling = ManagedPolicy()
+      try ceiling.permissionCeilings.set(.denied, for: .project("project"))
+      environment.limits[f.principal] = ManagedLimits(sources: [.machine: .available(ceiling)])
+      _ = try f.ledger.reconcile(environment: environment, expectedRevision: f.ledger.revision)
+    }
+    #expect(
+      f.ledger.executionAccess(
+        execution.id, principal: f.principal,
+        operation: .readResult, connectionID: "client", now: Date())
+        == .denied(.authorizationRevoked))
+  }
+
   @Test func pathsKeepProjectPrecedenceNestedDenialsAndHostData() throws {
     var f = try SandboxCompilerFixture()
     let compiled = try f.compile()

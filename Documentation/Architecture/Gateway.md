@@ -56,8 +56,9 @@ bookmarks or Keychain state.
 `GatewayRuntime` composes `GatewayToolProvider` instances through
 `GatewayProviderRouter`. Providers return `ToolDefinition` values through
 `definitions()`, pairing MCP metadata with an explicit `CapabilityDescriptor`
-for classification, project scope, local-only access and TCC services, plus
-declarative permission requirements.
+for catalog classification and a `ToolRequirement` for path, project, privacy,
+execution and forwarding requirements. Classification metadata is not grant
+authority.
 Configured and reexported MCP tools declare their descriptors during discovery
 using configuration risk and downstream declarations.
 
@@ -67,11 +68,11 @@ The execution sequence is:
 2. Bind the verified principal, configured caller, profile and `project_id`.
 3. Resolve current permissions, managed ceilings, project/path requirements and
    the exact host-owned route through the permission library.
-4. Return a durable request for missing requestable permissions, or reserve
-   authorization and install its enforceable execution context.
-5. Dispatch to one provider.
-6. Bound output and return structured content or a stable error.
-7. Persist a redacted audit decision.
+4. Return a durable request for missing requestable permissions, or persist
+   permission admission and its audit event before preparing execution.
+5. Install the enforceable execution context and dispatch to one provider.
+6. Bound output and persist the digest-only outcome before returning it. A failed
+   completion write reports an unknown outcome and never authorizes replay.
 
 Unknown tools, projects and providers fail closed. Domain adapters validate
 their own protocol methods inside the scope delegated by the host.

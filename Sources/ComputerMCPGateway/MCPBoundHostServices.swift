@@ -137,7 +137,7 @@ actor MCPBoundHostServices {
         name: name, decision: .allowed, start: started, arguments: arguments, result: payload)
       return try .init(content: [], structuredContent: payload.sdkValue, isError: false)
     } catch {
-      let message = HostApprovalRedactor.redactString(
+      let message = SensitiveValueRedactor.redactString(
         error.localizedDescription, maximumCharacters: 1024)
       try? audit(name: name, decision: .denied, start: started, arguments: arguments, result: nil)
       return .init(

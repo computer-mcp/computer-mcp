@@ -26,6 +26,46 @@ import Testing
   ),
   .timeLimit(.minutes(2)))
 struct LocalPermissionCLIAcceptanceTests {
+  @Test(arguments: [ManagedPolicySourceID.machineFile, .managedPreferences])
+  func managedTighteningCapsPendingSocketAnswers(source: ManagedPolicySourceID) async throws {
+    let fixture = try PermissionCLIFixture(
+      executable: #require(
+        ProcessInfo.processInfo.environment["COMPUTER_MCP_TEST_GATEWAY_EXECUTABLE"]))
+    var client: GatewayClientSession?
+    do {
+      try Data("private contents".utf8).write(
+        to: fixture.project.appendingPathComponent("value.txt"))
+      try await fixture.controlSocket.start()
+      try await fixture.gatewayService.start(profile: .chatGPTOperate)
+      let connected = try await GatewayClientSession.connectSocket(socketURL: fixture.gatewaySocket)
+      client = connected
+      let ids = try fixture.requestIDs(await fixture.read("value.txt", session: connected))
+      fixture.reader.set(source, .available(Data("[projects]\nfixture = 'deny'\n".utf8)))
+      for answer in ["only_this_time", "always"] {
+        let view = try await fixture.json(["permissions", "requests"])
+        let revision = try #require(view.objectValue?["revision"]?.intValue)
+        let result = try await fixture.run([
+          "permissions", "answer", ids[0], "--answer", answer,
+          "--expected-revision", String(revision),
+        ])
+        #expect(result.exitCode != 0)
+      }
+      let before = try await fixture.requestSet()
+      let denied = try await fixture.read("value.txt", session: connected)
+      #expect(fixture.error(denied)?["code"] == .string("permission.managed_limit"))
+      #expect(fixture.error(denied)?["request_ids"] == nil)
+      #expect(fixture.content(denied) == nil)
+      #expect(try await fixture.requestSet() == before)
+      #expect(try fixture.currentGrant().permissions.state(for: .project("fixture")) == .notGranted)
+      await connected.disconnect()
+      await fixture.stopAndRemove()
+    } catch {
+      await client?.disconnect()
+      await fixture.stopAndRemove()
+      throw error
+    }
+  }
+
   @Test
   func repairCommandPublishesTheSelectedFolderOnTheSameConnection() async throws {
     let fixture = try PermissionCLIFixture(
@@ -326,6 +366,7 @@ private struct PermissionCLIFixture: Sendable {
   let controlSocket: ControlSocketService
   let gatewaySocket: URL
   let controlSocketURL: URL
+  let reader = TestManagedPolicyReader()
   private let commands = BlockingOperationExecutor(label: "computer-mcp.tests.permission-cli")
 
   init(executable: String, projectAccess: PermissionState = .notGranted) throws {
@@ -352,7 +393,7 @@ private struct PermissionCLIFixture: Sendable {
         id: .chatGPTOperate, permissions: permissions, fullAccess: true, allowedCallers: [.localMCP]
       ))
     var platform = MacOSPlatform.services(launcher: testExecutionLauncher())
-    platform.permissionPolicyReader = TestManagedPolicyReader()
+    platform.permissionPolicyReader = reader
     let configuration = GatewayConfiguration(
       runtime: .init(caller: .localMCP, profileID: .chatGPTOperate), profiles: [profile],
       builtin: .init(enabled: ["file.read", "file.write"]), projectDirectory: project)

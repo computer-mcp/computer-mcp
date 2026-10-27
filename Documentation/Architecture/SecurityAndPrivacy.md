@@ -263,6 +263,9 @@ Callbacks into host tools require current permissions and a live call record
 bound to permission-ledger admission. A plugin's native approval does not answer a
 host permission request. Raw arguments and output stay out of redacted audit;
 canonical invocation digests bind retries and private host-action validation.
+An unconfined program retains its admitted permission requirements, connection
+consent and execution limits. Only a sandboxed launch pins the implicit file and
+system-service openings of its sandbox; host callbacks still recheck each use.
 
 ## Stable Denials And Audit Decisions
 
@@ -279,6 +282,12 @@ Representative codes include:
 Malformed arguments and provider/runtime failures remain `failed`. Acceptance
 tests must correlate the client-visible code, Gateway request ID, and exact
 audit row rather than inferring a denial from message text alone.
+
+Call admission must be persisted before dispatch. Audit entries retain identity,
+decision, outcome and input/output digests, never clear arguments or output. The
+default retention is 90 days with a hard ceiling of one million entries. A failure
+to persist the terminal outcome is reported as `outcome_unknown`; it never causes
+the host to dispatch the operation again.
 
 ## Persistence And Logging
 

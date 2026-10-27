@@ -1,0 +1,117 @@
+import Darwin
+import Foundation
+import Testing
+
+@testable import CodexAdapter
+
+@Suite(.serialized, .timeLimit(.minutes(2)))
+struct HostWorktreeConsumerBridgeTests {
+  @Test
+  func existingTypedClientUsesCurrentHost() async throws {
+    let inputPath = try #require(
+      ProcessInfo.processInfo.environment["COMPUTER_MCP_TEST_PLUGIN_CONSUMER_INPUT"])
+    let input = try JSONDecoder().decode(
+      Input.self, from: Data(contentsOf: URL(fileURLWithPath: inputPath)))
+    let handle = try connect(to: input.socketPath)
+    defer { try? handle.close() }
+    let client = try CodexHostMCPClient(takingOwnershipOf: handle, owner: input.owner)
+    do {
+      switch input.mode {
+      case .register:
+        try await client.registerDerivedWorkspace(input.worktree, now: Date())
+        print("PLUGIN_CONSUMER mode=register registered=true")
+      case .remove:
+        try await remove(input, client: client)
+      case .replay:
+        do {
+          try await client.authorizeRemoval(input.worktree)
+          Issue.record("The host accepted removal after the parent invocation ended.")
+        } catch CodexToolError.executionFailed(let message) {
+          try #require(message.contains("one matching live gateway invocation"))
+          print("PLUGIN_CONSUMER mode=replay expected_host_denial=true")
+        }
+      }
+      await client.shutdown()
+    } catch {
+      await client.shutdown()
+      throw error
+    }
+  }
+
+  private func remove(_ input: Input, client: CodexHostMCPClient) async throws {
+    let database = try CodexDatabase(inMemory: ())
+    var record = input.worktree
+    try #require(record.state == .removalPlanned)
+    let now = Date()
+    let activeLease = try database.acquireCodexWorktreeLease(
+      workspaceID: record.workspaceID, workspacePath: record.path, mode: .isolatedWorktree,
+      agentID: record.agentID, threadID: record.threadID, runID: record.runID,
+      parentLeaseID: record.parentLeaseID, branch: record.branch, ttlSeconds: record.ttlSeconds,
+      now: now, managedWorktreeID: record.id)
+    let releasedLease = try CodexWorktreeLeaseManager.release(
+      database: database, workspaceID: record.workspaceID, leaseID: activeLease.id,
+      expectedRevision: activeLease.revision, reason: "Consumer child work accepted", now: now)
+    try #require(releasedLease.state == .released)
+    record.leaseID = releasedLease.id
+    try database.saveCodexManagedWorktree(record)
+    let removed = try await CodexManagedWorktreeManager.performRemoval(
+      database: database, sourceWorkspaceID: record.sourceWorkspaceID,
+      managedWorktreeID: record.id, expectedRevision: record.revision, confirmRemoval: true,
+      workspaceHost: client, liveRuntimeStatus: .object(["runtimes": .array([])]),
+      commandRunner: ProcessCommandRunner(),
+      managedRoot: URL(fileURLWithPath: input.managedRoot, isDirectory: true), now: now)
+    try #require(removed.state == .removed)
+    try #require(removed.revision == record.revision + 2)
+    try #require(try database.codexManagedWorktree(id: record.id) == removed)
+    try #require(!FileManager.default.fileExists(atPath: record.path))
+    print(
+      "PLUGIN_CONSUMER mode=remove manager_removed=true revision=\(removed.revision) path_absent=true"
+    )
+  }
+
+  private func connect(to path: String) throws -> FileHandle {
+    var address = sockaddr_un()
+    let bytes = Array(path.utf8) + [0]
+    try #require(
+      !path.utf8.contains(0) && bytes.count <= MemoryLayout.size(ofValue: address.sun_path))
+    address.sun_family = sa_family_t(AF_UNIX)
+    address.sun_len = UInt8(MemoryLayout<sockaddr_un>.size)
+    withUnsafeMutableBytes(of: &address.sun_path) { $0.copyBytes(from: bytes) }
+    let descriptor = Darwin.socket(AF_UNIX, SOCK_STREAM, 0)
+    guard descriptor >= 0 else { throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO) }
+    let handle = FileHandle(fileDescriptor: descriptor, closeOnDealloc: true)
+    let connected = withUnsafePointer(to: &address) {
+      $0.withMemoryRebound(to: sockaddr.self, capacity: 1) {
+        Darwin.connect(descriptor, $0, socklen_t(MemoryLayout<sockaddr_un>.size))
+      }
+    }
+    guard connected == 0 else {
+      let failure = POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)
+      try? handle.close()
+      throw failure
+    }
+    return handle
+  }
+
+  private struct Input: Decodable {
+    let socketPath: String
+    let mode: Mode
+    let owner: CodexRuntimeOwner
+    let worktree: CodexManagedWorktree
+    let managedRoot: String
+
+    private enum CodingKeys: String, CodingKey {
+      case socketPath = "socket_path"
+      case mode
+      case owner
+      case worktree
+      case managedRoot = "managed_root"
+    }
+  }
+
+  private enum Mode: String, Decodable {
+    case register
+    case remove
+    case replay
+  }
+}

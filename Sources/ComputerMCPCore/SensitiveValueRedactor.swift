@@ -1,6 +1,6 @@
 import Foundation
 
-package enum HostApprovalRedactor {
+package enum SensitiveValueRedactor {
   // Foundation regular expressions are immutable; compile the fixed policy once.
   private static let valuePatterns = [
     #"(?i)(authorization\s*:\s*bearer\s+)[^\s]+"#,

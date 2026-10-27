@@ -44,14 +44,21 @@ import Testing
       try PermissionProfileManifest.encode(PermissionProfileManifest.decode(encoded)) == encoded)
   }
 
-  @Test(arguments: [
-    ("capabilities = []", "permissions"), ("workspaces = []", "projects"),
-    ("mode = ''", "full_access"), ("full_shell_enabled = false", "full_access"),
-    ("confirmation_policy = ''", "permission grants"), ("projects = []", "access and network"),
-    ("mcp_servers = []", "read, all or deny"), ("authorization_revision = 0", "host-owned"),
-  ]) func oldFieldsNameReplacement(_ fixture: (String, String)) throws {
+  @Test(
+    arguments: [
+      ("capabilities = []", "permissions"), ("workspaces = []", "projects"),
+      ("mode = ''", "full_access"), ("full_shell_enabled = false", "full_access"),
+      ("confirmation_policy = ''", "permission grants"), ("projects = []", "access and network"),
+      ("mcp_servers = []", "read, all or deny"), ("authorization_revision = 0", "host-owned"),
+    ], [false, true])
+  func oldFieldsNameReplacement(_ fixture: (String, String), publicConfiguration: Bool) throws {
     do {
-      _ = try PermissionProfileManifest.decode(prefix + "\n" + fixture.0)
+      let text = prefix + "\n" + fixture.0
+      if publicConfiguration {
+        _ = try GatewayConfiguration.load(text: "schema_version = 1\n" + text)
+      } else {
+        _ = try PermissionProfileManifest.decode(text)
+      }
       Issue.record("Accepted an obsolete field")
     } catch { #expect(String(describing: error).contains(fixture.1)) }
   }

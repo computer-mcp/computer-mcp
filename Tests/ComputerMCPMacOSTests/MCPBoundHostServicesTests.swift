@@ -3,7 +3,9 @@ import ComputerMCPMacOS
 import ComputerMCPPermissions
 import ComputerMCPPersistence
 import ComputerMCPTestSupport
+import ComputerMCPTransport
 import CryptoKit
+import Darwin
 import Foundation
 import GRDB
 import MCP
@@ -35,29 +37,31 @@ struct MCPBoundHostServicesTests {
       expectedRevision: session.snapshot.revision)
     let consent = try #require(snapshot.fullAccessConsent)
     let directory = try #require(fixture.peer.context(for: "scope")?.tools)
-    _ = try await fixture.during("fixture.audit", context: .init(session: session)) { _, context in
-      let active = try #require(
-        directory.active(projectID: "scope", origin: "probe").first {
-          $0.id == context.admission?.hostInvocationID
-        })
-      var initiallyAuthorized = false
-      var revoked = false
-      var committedAfterRevocation = false
-      #expect(throws: (any Error).self) {
-        try fixture.runtime.withHostMutation(active) { authority in
-          #expect(authority.consent?.trustID == consent.trustID)
-          try fixture.database.withHostAuthority(authority) { initiallyAuthorized = true }
-          try fixture.database.revokeClientTrust(
-            id: #require(consent.trustID),
-            expectedRevision: #require(consent.trustRevision))
-          revoked = true
-          try fixture.database.withHostAuthority(authority) { committedAfterRevocation = true }
+    _ = try await checkedInvocationResult(revoked: true) {
+      try await fixture.during("fixture.audit", context: .init(session: session)) { _, context in
+        let active = try #require(
+          directory.active(projectID: "scope", origin: "probe").first {
+            $0.id == context.admission?.hostInvocationID
+          })
+        var initiallyAuthorized = false
+        var revoked = false
+        var committedAfterRevocation = false
+        #expect(throws: (any Error).self) {
+          try fixture.runtime.withHostMutation(active) { authority in
+            #expect(authority.consent?.trustID == consent.trustID)
+            try fixture.database.withHostAuthority(authority) { initiallyAuthorized = true }
+            try fixture.database.revokeClientTrust(
+              id: #require(consent.trustID),
+              expectedRevision: #require(consent.trustRevision))
+            revoked = true
+            try fixture.database.withHostAuthority(authority) { committedAfterRevocation = true }
+          }
         }
+        #expect(initiallyAuthorized)
+        #expect(revoked)
+        #expect(!committedAfterRevocation)
+        return .null
       }
-      #expect(initiallyAuthorized)
-      #expect(revoked)
-      #expect(!committedAfterRevocation)
-      return .null
     }
     await fixture.close()
   }
@@ -70,31 +74,34 @@ struct MCPBoundHostServicesTests {
     defer { fixture.remove() }
     let session = try fixture.session()
     let directory = try #require(fixture.peer.context(for: "scope")?.tools)
-    _ = try await fixture.during(
-      "fixture.audit", context: explicitSession ? .init(session: session) : .empty
-    ) { _, context in
-      let active = try #require(
-        directory.active(projectID: "scope", origin: "probe").first {
-          $0.id == context.admission?.hostInvocationID
-        })
-      var attempts = 0
-      var committed = false
-      #expect(throws: (any Error).self) {
-        try fixture.runtime.withHostMutation(active) { authority in
-          attempts += 1
-          var profile = try #require(fixture.database.profiles().first { $0.id == .chatGPTOperate })
-          if change == "revoked" {
-            profile.permissions = .init()
-          } else if change == "increase" {
-            try profile.permissions.set(.granted(.access), for: .machineInformation)
+    _ = try await checkedInvocationResult(revoked: true) {
+      try await fixture.during(
+        "fixture.audit", context: explicitSession ? .init(session: session) : .empty
+      ) { _, context in
+        let active = try #require(
+          directory.active(projectID: "scope", origin: "probe").first {
+            $0.id == context.admission?.hostInvocationID
+          })
+        var attempts = 0
+        var committed = false
+        #expect(throws: (any Error).self) {
+          try fixture.runtime.withHostMutation(active) { authority in
+            attempts += 1
+            var profile = try #require(
+              fixture.database.profiles().first { $0.id == .chatGPTOperate })
+            if change == "revoked" {
+              profile.permissions = .init()
+            } else if change == "increase" {
+              try profile.permissions.set(.granted(.access), for: .machineInformation)
+            }
+            try fixture.database.saveProfile(profile)
+            try fixture.database.withHostAuthority(authority) { committed = true }
           }
-          try fixture.database.saveProfile(profile)
-          try fixture.database.withHostAuthority(authority) { committed = true }
         }
+        #expect(attempts == 1)
+        #expect(!committed)
+        return .null
       }
-      #expect(attempts == 1)
-      #expect(!committed)
-      return .null
     }
     await fixture.close()
   }
@@ -171,21 +178,25 @@ struct MCPBoundHostServicesTests {
       }
       barrier.resume()
       let result = try await callback.value
+      #expect(result.isError == true)
       retained?.finish()
       return try .encoded(result)
     }
-    let result: JSONValue
-    if operation == "register" {
-      result = try await fixture.during("fixture.provision", provisionArgs, context: context, body)
-    } else {
-      result = try await fixture.duringInvocation(
-        "fixture.remove",
-        [
-          "managed_worktree_id": provisioning["id"]!, "expected_revision": .integer(4),
-          "confirm_remove": .bool(true),
-        ], context: context, body)
+    let result = try await checkedInvocationResult(
+      revoked: change == "capability" || change == "session"
+    ) {
+      if operation == "register" {
+        return try await fixture.during("fixture.provision", provisionArgs, context: context, body)
+      } else {
+        return try await fixture.duringInvocation(
+          "fixture.remove",
+          [
+            "managed_worktree_id": provisioning["id"]!, "expected_revision": .integer(4),
+            "confirm_remove": .bool(true),
+          ], context: context, body)
+      }
     }
-    #expect(result.objectValue?["isError"] == .bool(true))
+    if let result { #expect(result.objectValue?["isError"] == .bool(true)) }
     let remains =
       try fixture.database.derivedProjectRegistration(
         id: provisioning["workspace_id"]!.stringValue!) != nil
@@ -210,19 +221,25 @@ struct MCPBoundHostServicesTests {
     }
     let before = try fixture.database.derivedProjectRegistration(
       id: receipt["workspace_id"]!.stringValue!)
-    let result = try await fixture.during("fixture.provision", args) { service, _ in
-      let repeated = try await service.call(
-        name: "host.workspaces.register", arguments: ["worktree": .object(receipt)])
-      try #require(repeated.isError == false)
-      if revoked {
-        var profile = try #require(fixture.database.profiles().first { $0.id == .chatGPTOperate })
-        profile.permissions = .init()
-        try fixture.database.saveProfile(profile)
+    let result = try await checkedInvocationResult(revoked: revoked) {
+      try await fixture.during("fixture.provision", args) { service, _ in
+        let repeated = try await service.call(
+          name: "host.workspaces.register", arguments: ["worktree": .object(receipt)])
+        try #require(repeated.isError == false)
+        if revoked {
+          var profile = try #require(fixture.database.profiles().first { $0.id == .chatGPTOperate })
+          profile.permissions = .init()
+          try fixture.database.saveProfile(profile)
+        }
+        let callback = try await service.call(
+          name: "host.workspaces.unregister", arguments: ["worktree": .object(receipt)])
+        #expect(callback.isError == true)
+        return try .encoded(callback)
       }
-      return try await .encoded(
-        service.call(name: "host.workspaces.unregister", arguments: ["worktree": .object(receipt)]))
     }
-    #expect(result.objectValue?["isError"] == .bool(true))
+    if let result {
+      #expect(result.objectValue?["isError"] == .bool(true))
+    }
     #expect(
       try fixture.database.derivedProjectRegistration(id: receipt["workspace_id"]!.stringValue!)
         == before)
@@ -382,27 +399,33 @@ struct MCPBoundHostServicesTests {
     receipt["state"] = .string("removal_planned")
     receipt["revision"] = .integer(4)
     let planned = receipt
-    let result = try await fixture.duringInvocation(
-      "fixture.remove",
-      [
-        "managed_worktree_id": receipt["id"]!, "expected_revision": .integer(4),
-        "confirm_remove": .bool(true),
-      ]
-    ) { service, _ in
-      let authorized = try await service.call(
-        name: "host.workspaces.authorize_removal", arguments: ["worktree": .object(planned)])
-      try #require(authorized.isError == false)
-      try fixture.removeWorktree(at: planned["path"]!.stringValue!)
-      var grant = try #require(fixture.database.profiles().first { $0.id == .chatGPTOperate })
-      grant.permissions = .init()
-      try fixture.database.saveProfile(grant)
-      var removed = planned
-      removed["state"] = .string("removing")
-      removed["revision"] = .integer(5)
-      return try await .encoded(
-        service.call(name: "host.workspaces.unregister", arguments: ["worktree": .object(removed)]))
+    let result = try await checkedInvocationResult(revoked: true) {
+      try await fixture.duringInvocation(
+        "fixture.remove",
+        [
+          "managed_worktree_id": receipt["id"]!, "expected_revision": .integer(4),
+          "confirm_remove": .bool(true),
+        ]
+      ) { service, _ in
+        let authorized = try await service.call(
+          name: "host.workspaces.authorize_removal", arguments: ["worktree": .object(planned)])
+        try #require(authorized.isError == false)
+        try fixture.removeWorktree(at: planned["path"]!.stringValue!)
+        var grant = try #require(fixture.database.profiles().first { $0.id == .chatGPTOperate })
+        grant.permissions = .init()
+        try fixture.database.saveProfile(grant)
+        var removed = planned
+        removed["state"] = .string("removing")
+        removed["revision"] = .integer(5)
+        let callback = try await service.call(
+          name: "host.workspaces.unregister", arguments: ["worktree": .object(removed)])
+        #expect(callback.isError == true)
+        return try .encoded(callback)
+      }
     }
-    #expect(result.objectValue?["isError"] == .bool(true))
+    if let result {
+      #expect(result.objectValue?["isError"] == .bool(true))
+    }
     #expect(
       try fixture.database.derivedProjectRegistration(id: receipt["workspace_id"]!.stringValue!)
         != nil)
@@ -415,23 +438,29 @@ struct MCPBoundHostServicesTests {
     let fixture = try HostAuthorityFixture(worktrees: true)
     defer { fixture.remove() }
     let receipt = try fixture.worktreeReceipt()
-    let result = try await fixture.during(
-      "fixture.provision",
-      [
-        "plan_id": receipt["id"]!,
-        "expected_revision": .integer(1), "confirm_provision": .bool(true),
-      ]
-    ) { service, _ in
-      let registered = try await service.call(
-        name: "host.workspaces.register", arguments: ["worktree": .object(receipt)])
-      try #require(registered.isError == false)
-      var grant = try #require(fixture.database.profiles().first { $0.id == .chatGPTOperate })
-      grant.permissions = .init()
-      try fixture.database.saveProfile(grant)
-      return try await .encoded(
-        service.call(name: "host.workspaces.unregister", arguments: ["worktree": .object(receipt)]))
+    let result = try await checkedInvocationResult(revoked: true) {
+      try await fixture.during(
+        "fixture.provision",
+        [
+          "plan_id": receipt["id"]!,
+          "expected_revision": .integer(1), "confirm_provision": .bool(true),
+        ]
+      ) { service, _ in
+        let registered = try await service.call(
+          name: "host.workspaces.register", arguments: ["worktree": .object(receipt)])
+        try #require(registered.isError == false)
+        var grant = try #require(fixture.database.profiles().first { $0.id == .chatGPTOperate })
+        grant.permissions = .init()
+        try fixture.database.saveProfile(grant)
+        let callback = try await service.call(
+          name: "host.workspaces.unregister", arguments: ["worktree": .object(receipt)])
+        #expect(callback.isError == false)
+        return try .encoded(callback)
+      }
     }
-    #expect(result.objectValue?["isError"] == .bool(false))
+    if let result {
+      #expect(result.objectValue?["isError"] == .bool(false))
+    }
     #expect(try fixture.database.project(id: receipt["workspace_id"]!.stringValue!) == nil)
     await fixture.close()
   }
@@ -817,18 +846,24 @@ struct MCPBoundHostServicesTests {
     if attack == "wrong-id" { arguments["plan_id"] = .string(UUID().uuidString.lowercased()) }
     if attack == "wrong-revision" { arguments["expected_revision"] = .integer(2) }
     if attack == "not-confirmed" { arguments["confirm_provision"] = .bool(false) }
-    let result = try await fixture.during(
-      attack == "wrong-action" ? "fixture.audit" : "fixture.provision", arguments
-    ) { service, _ in
-      if attack == "revoked" {
-        var grant = try #require(fixture.database.profiles().first { $0.id == .chatGPTOperate })
-        try grant.permissions.set(.denied, for: .project("scope"))
-        try fixture.database.saveProfile(grant)
+    let result = try await checkedInvocationResult(revoked: attack == "revoked") {
+      try await fixture.during(
+        attack == "wrong-action" ? "fixture.audit" : "fixture.provision", arguments
+      ) { service, _ in
+        if attack == "revoked" {
+          var grant = try #require(fixture.database.profiles().first { $0.id == .chatGPTOperate })
+          try grant.permissions.set(.denied, for: .project("scope"))
+          try fixture.database.saveProfile(grant)
+        }
+        let callback = try await service.call(
+          name: "host.workspaces.register", arguments: ["worktree": .object(receipt)])
+        #expect(callback.isError == true)
+        return try .encoded(callback)
       }
-      return try await .encoded(
-        service.call(name: "host.workspaces.register", arguments: ["worktree": .object(receipt)]))
     }
-    #expect(result.objectValue?["isError"] == .bool(true))
+    if let result {
+      #expect(result.objectValue?["isError"] == .bool(true))
+    }
     #expect(try fixture.database.project(id: receipt["workspace_id"]!.stringValue!) == nil)
     await fixture.close()
   }
@@ -971,21 +1006,26 @@ struct MCPBoundHostServicesTests {
       fixture.remove()
       other.remove()
     }
-    let response = try await fixture.during("fixture.read") { service, context in
-      let id = try #require(context.admission?.hostInvocationID)
-      var arguments: [String: JSONValue] = ["invocation_id": .string(id.uuidString)]
-      if attack == "forged-id" { arguments["invocation_id"] = .string(UUID().uuidString) }
-      if attack == "forged-owner" { arguments["principal_id"] = .string("other") }
-      if attack == "revoked" {
-        var profile = try #require(fixture.database.profiles().first { $0.id == .chatGPTOperate })
-        profile.permissions = .init()
-        try fixture.database.saveProfile(profile)
+    let response = try await checkedInvocationResult(revoked: attack == "revoked") {
+      try await fixture.during("fixture.read") { service, context in
+        let id = try #require(context.admission?.hostInvocationID)
+        var arguments: [String: JSONValue] = ["invocation_id": .string(id.uuidString)]
+        if attack == "forged-id" { arguments["invocation_id"] = .string(UUID().uuidString) }
+        if attack == "forged-owner" { arguments["principal_id"] = .string("other") }
+        if attack == "revoked" {
+          var profile = try #require(fixture.database.profiles().first { $0.id == .chatGPTOperate })
+          profile.permissions = .init()
+          try fixture.database.saveProfile(profile)
+        }
+        let callback = try await (attack == "foreign-channel" ? other.service : service).call(
+          name: "host.invocations.describe", arguments: arguments)
+        #expect(callback.isError == true)
+        return try .encoded(callback)
       }
-      return try await .encoded(
-        (attack == "foreign-channel" ? other.service : service).call(
-          name: "host.invocations.describe", arguments: arguments))
     }
-    #expect(response.objectValue?["isError"] == .bool(true))
+    if let response {
+      #expect(response.objectValue?["isError"] == .bool(true))
+    }
     await fixture.close()
     await other.close()
   }
@@ -1123,6 +1163,19 @@ private actor HostServicePairBarrier {
     } else {
       await withCheckedContinuation { waiter = $0 }
     }
+  }
+}
+
+private func checkedInvocationResult(
+  revoked: Bool, _ call: () async throws -> JSONValue
+) async throws -> JSONValue? {
+  do {
+    let result = try await call()
+    #expect(!revoked, "Revoked execution returned a result")
+    return result
+  } catch PermissionModelError.invalidAuthorization {
+    #expect(revoked, "A live execution lost authorization")
+    return nil
   }
 }
 
@@ -1492,4 +1545,304 @@ private final class HostVerificationBarrier: @unchecked Sendable {
     try #require(success)
   }
   func resume() { resumed.signal() }
+}
+
+@Suite(
+  .nativeIntegration, .serialized, .timeLimit(.minutes(2)),
+  .enabled(
+    if: ProcessInfo.processInfo.environment["COMPUTER_MCP_TEST_PLUGIN_CONSUMER_WORKTREE"] != nil,
+    "Build the companion fixture in an isolated plugin checkout to run consumer acceptance."))
+struct PluginWorktreeConsumerTests {
+  @Test(arguments: [false, true])
+  func unchangedConsumerRemovesRealWorktreeThroughLiveHost(generic: Bool) async throws {
+    let fixture = try HostAuthorityFixture()
+    defer { fixture.remove() }
+    let source = fixture.root.resolvingSymlinksInPath()
+    let managed = source.deletingLastPathComponent().appendingPathComponent("managed")
+    try FileManager.default.createDirectory(at: managed, withIntermediateDirectories: false)
+    let git = PluginWorktreeConsumerNativeGit(home: source)
+    _ = try git.setup(["init", "-q"], at: source)
+    _ = try git.setup(
+      [
+        "-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid",
+        "-c", "commit.gpgsign=false", "commit", "--allow-empty", "-qm", "test: baseline",
+      ], at: source)
+    let id = UUID().uuidString.lowercased()
+    let component = SHA256.hash(data: Data("scope".utf8)).prefix(12).map {
+      String(format: "%02x", $0)
+    }.joined()
+    let target = managed.appendingPathComponent(component).appendingPathComponent(id)
+    try FileManager.default.createDirectory(
+      at: target.deletingLastPathComponent(), withIntermediateDirectories: true)
+    _ = try git.setup(["worktree", "add", "-q", "-b", "fixture-" + id, target.path], at: source)
+    let head = try git.setup(["rev-parse", "HEAD"], at: target)
+      .stdout.trimmingCharacters(in: .whitespacesAndNewlines)
+    let captured = try #require(fixture.peer.context(for: "scope"))
+    let scoped = MCPHostContext(
+      runtimeID: captured.launchMetadata.runtimeID,
+      context: .init(
+        caller: captured.launchMetadata.caller, profileID: captured.launchMetadata.profileID,
+        transportTrace: captured.launchMetadata.transportTrace,
+        trustedPrincipalID: captured.launchMetadata.principalID),
+      projectID: "scope", rootURL: source, readOnly: false, tools: captured.tools,
+      managedProjectRoot: managed)
+    let service = MCPBoundHostServices(
+      database: fixture.database, directory: try #require(captured.tools), context: scoped,
+      origin: "probe", gitExecutable: "/usr/bin/git", commandRunner: git)
+    let now = Date().timeIntervalSinceReferenceDate
+    let record: [String: JSONValue] = [
+      "id": .string(id), "source_workspace_id": .string("scope"),
+      "workspace_id": .string("codex-worktree-" + id),
+      "source_repository_root": .string(source.path),
+      "git_common_directory": .string(source.appendingPathComponent(".git").path),
+      "path": .string(target.path), "branch": .string("fixture-" + id),
+      "start_point": .string("HEAD"), "head_oid": .string(head), "agent_id": .string("fixture"),
+      "parent_lease_id": .string("fixture-parent"), "profile_id": .string("chatgpt-operate"),
+      "principal_id": .string("fixture-principal"), "caller": .string("secure-tunnel"),
+      "ttl_seconds": .integer(600), "state": .string("provisioning"), "revision": .integer(2),
+      "created_at": .number(now), "updated_at": .number(now),
+    ]
+    let owner: JSONValue = .object([
+      "workspace_id": .string("scope"), "profile_id": .string("chatgpt-operate"),
+      "principal_id": .string("fixture-principal"), "caller": .string("secure-tunnel"),
+      "transport": .string("gateway_socket"), "socket_connection_id": .string("connection"),
+    ])
+    let bridge = PluginWorktreeConsumerHostBridge(
+      root: source, managed: managed, service: service, database: fixture.database, owner: owner)
+    do {
+      let registered = try await fixture.duringInvocation(
+        "fixture.provision",
+        [
+          "plan_id": .string(id), "expected_revision": .integer(1),
+          "confirm_provision": .bool(true),
+        ],
+        generic: generic
+      ) { _, invocation in
+        try await bridge.run(mode: "register", record: record, invocation: invocation)
+        return .object(["isError": .bool(false)])
+      }
+      #expect(registered.objectValue?["isError"] != .bool(true))
+      #expect(try fixture.database.derivedProjectRegistration(id: "codex-worktree-" + id) != nil)
+      var removal = record
+      removal["state"] = .string("removal_planned")
+      removal["revision"] = .integer(4)
+      removal["plan_expires_at"] = .number(now + 600)
+      let planned = removal
+      let removed = try await fixture.duringInvocation(
+        "fixture.remove",
+        [
+          "managed_worktree_id": .string(id), "expected_revision": .integer(4),
+          "confirm_remove": .bool(true),
+        ], generic: generic
+      ) { _, invocation in
+        let callID = try #require(invocation.admission?.hostInvocationID)
+        let call = try #require(try fixture.database.hostCallRecordStore().record(id: callID))
+        #expect(call.admission.action == .projectRemoval)
+        #expect(
+          call.admission.upstreamName == (generic ? "mcp.tools.call" : "adapter.fixture.remove"))
+        #expect(call.admission.authorizationID != nil && !call.requestLeaseIDs.isEmpty)
+        try await bridge.run(mode: "remove", record: planned, invocation: invocation)
+        return .object(["isError": .bool(false)])
+      }
+      #expect(removed.objectValue?["isError"] != .bool(true))
+      #expect(!FileManager.default.fileExists(atPath: target.path))
+      #expect(try fixture.database.derivedProjectRegistration(id: "codex-worktree-" + id) == nil)
+      #expect(try fixture.database.project(id: "codex-worktree-" + id) == nil)
+      let inventory = try git.setup(["worktree", "list", "--porcelain", "-z"], at: source).stdout
+      #expect(!inventory.contains("worktree " + target.path))
+      try await bridge.run(mode: "replay", record: planned, invocation: nil)
+      await service.close()
+      await fixture.close()
+    } catch {
+      await service.close()
+      await fixture.close()
+      throw error
+    }
+  }
+}
+
+private struct PluginWorktreeConsumerHostBridge: Sendable {
+  let root: URL
+  let managed: URL
+  let service: MCPBoundHostServices
+  let database: GatewayDatabase
+  let owner: JSONValue
+
+  func run(mode: String, record: [String: JSONValue], invocation: InvocationContext?) async throws {
+    let consumer = try #require(
+      ProcessInfo.processInfo.environment["COMPUTER_MCP_TEST_PLUGIN_CONSUMER_WORKTREE"])
+    let socketPath = root.deletingLastPathComponent().appendingPathComponent("c.sock").path
+    let listener = socket(AF_UNIX, SOCK_STREAM, 0)
+    try #require(listener >= 0)
+    defer {
+      Darwin.close(listener)
+      unlink(socketPath)
+    }
+    var address = sockaddr_un()
+    address.sun_family = sa_family_t(AF_UNIX)
+    let path = Array(socketPath.utf8)
+    try #require(path.count < MemoryLayout.size(ofValue: address.sun_path))
+    withUnsafeMutableBytes(of: &address.sun_path) {
+      $0.initializeMemory(as: UInt8.self, repeating: 0)
+      $0.copyBytes(from: path)
+    }
+    let bound = withUnsafePointer(to: &address) {
+      $0.withMemoryRebound(to: sockaddr.self, capacity: 1) {
+        Darwin.bind(listener, $0, socklen_t(MemoryLayout<sockaddr_un>.size))
+      }
+    }
+    try #require(bound == 0 && listen(listener, 1) == 0)
+    let input = root.appendingPathComponent("consumer-" + mode + ".json")
+    try JSONEncoder().encode(
+      JSONValue.object([
+        "socket_path": .string(socketPath), "mode": .string(mode), "owner": owner,
+        "worktree": .object(record), "managed_root": .string(managed.path),
+      ])
+    ).write(to: input)
+    let log = root.appendingPathComponent("consumer-" + mode + ".log")
+    FileManager.default.createFile(atPath: log.path, contents: nil)
+    let output = try FileHandle(forWritingTo: log)
+    defer { try? output.close() }
+    let process = Process()
+    process.executableURL = URL(fileURLWithPath: "/usr/bin/nice")
+    process.arguments = [
+      "-n", "10", "/usr/bin/swift", "test", "--build-system", "native", "--skip-build",
+      "--disable-automatic-resolution", "--no-parallel", "--filter",
+      "HostWorktreeConsumerBridgeTests/existingTypedClientUsesCurrentHost",
+    ]
+    process.currentDirectoryURL = URL(fileURLWithPath: consumer)
+    process.environment = [
+      "PATH": "/usr/bin:/bin:/usr/sbin:/sbin", "HOME": root.path, "TMPDIR": root.path + "/",
+      "COMPUTER_MCP_TEST_PLUGIN_CONSUMER_INPUT": input.path,
+    ]
+    process.standardOutput = output
+    process.standardError = output
+    try process.run()
+    defer {
+      if process.isRunning {
+        process.terminate()
+      }
+    }
+    let descriptor = try await BlockingOperationExecutor(label: "consumer-host-accept").perform {
+      var item = pollfd(fd: listener, events: Int16(POLLIN), revents: 0)
+      guard poll(&item, 1, 8_000) > 0 else {
+        throw CocoaError(
+          .fileReadUnknown, userInfo: [NSLocalizedDescriptionKey: "Consumer socket timeout"])
+      }
+      let accepted = accept(listener, nil, nil)
+      guard accepted >= 0 else { throw CocoaError(.fileReadUnknown) }
+      return accepted
+    }
+    let transport = try MCPInheritedSocketTransport(
+      takingOwnershipOf: FileHandle(fileDescriptor: descriptor, closeOnDealloc: true))
+    let server = MCP.Server(
+      name: "current-host-consumer-test", version: "1", capabilities: .init(tools: .init()))
+    let seen = PluginWorktreeConsumerCallbacks()
+    await server.withMethodHandler(MCP.CallTool.self) { params in
+      let args = (params.arguments ?? [:]).mapValues(JSONValue.init(sdkValue:))
+      if let invocation {
+        let id = try #require(invocation.admission?.hostInvocationID)
+        let call = try #require(try database.hostCallRecordStore().record(id: id))
+        try #require(call.lifecycle == .running)
+        try #require(call.admission.authorizationID != nil && !call.requestLeaseIDs.isEmpty)
+      }
+      let result = try await service.call(name: params.name, arguments: args)
+      await seen.append(params.name, arguments: args, isError: result.isError == true)
+      return result
+    }
+    do {
+      try await server.start(transport: transport)
+      let deadline = ContinuousClock.now + .seconds(45)
+      while process.isRunning && ContinuousClock.now < deadline {
+        try await Task.sleep(for: .milliseconds(20))
+      }
+      try #require(!process.isRunning, "Consumer process did not exit within 45 seconds")
+      let text = try String(contentsOf: log, encoding: .utf8)
+      print("Existing consumer \(mode):\n\(text)")
+      try #require(process.terminationStatus == 0, "\(mode): \(text)")
+      let calls = await seen.calls
+      let expected =
+        mode == "register"
+        ? ["host.workspaces.register"]
+        : mode == "remove"
+          ? ["host.workspaces.authorize_removal", "host.workspaces.unregister"]
+          : ["host.workspaces.authorize_removal"]
+      #expect(calls.map(\.name) == expected)
+      #expect(calls.allSatisfy { $0.isError == (mode == "replay") })
+      if mode == "remove" {
+        #expect(
+          calls.map { $0.arguments["worktree"]?.objectValue?["revision"]?.intValue } == [4, 5])
+        #expect(
+          calls.map { $0.arguments["worktree"]?.objectValue?["state"]?.stringValue }
+            == ["removal_planned", "removing"])
+      }
+      await transport.disconnect()
+      await server.stop()
+    } catch {
+      await transport.disconnect()
+      await server.stop()
+      throw error
+    }
+  }
+}
+
+private actor PluginWorktreeConsumerCallbacks {
+  struct Call: Sendable {
+    let name: String
+    let arguments: [String: JSONValue]
+    let isError: Bool
+  }
+  private(set) var calls: [Call] = []
+  func append(_ name: String, arguments: [String: JSONValue], isError: Bool) {
+    calls.append(.init(name: name, arguments: arguments, isError: isError))
+  }
+}
+
+private struct PluginWorktreeConsumerNativeGit: CommandRunning {
+  let home: URL
+
+  func run(
+    executable: String, arguments: [String], workingDirectory: URL?,
+    environment: [String: String], timeoutMilliseconds: Int, maxOutputBytes: Int
+  ) throws -> CommandResult {
+    try #require(executable == "/usr/bin/git")
+    try #require(
+      [
+        ["rev-parse", "--show-toplevel"], ["rev-parse", "--git-common-dir"],
+        ["worktree", "list", "--porcelain", "-z"],
+      ].contains(arguments))
+    return try setup(arguments, at: #require(workingDirectory))
+  }
+
+  func runData(
+    executable: String, arguments: [String], workingDirectory: URL?, environment: [String: String],
+    timeoutMilliseconds: Int, maxOutputBytes: Int
+  ) throws -> CommandDataResult {
+    throw MCPHostServiceError.denied("Unexpected binary Git operation in consumer fixture.")
+  }
+
+  func setup(_ arguments: [String], at directory: URL) throws -> CommandResult {
+    let process = Process()
+    process.executableURL = URL(fileURLWithPath: "/usr/bin/git")
+    process.arguments = arguments
+    process.currentDirectoryURL = directory
+    process.environment = [
+      "PATH": "/usr/bin:/bin", "HOME": home.path, "TMPDIR": home.path + "/",
+      "GIT_CONFIG_NOSYSTEM": "1", "GIT_CONFIG_GLOBAL": "/dev/null",
+      "GIT_TERMINAL_PROMPT": "0", "LC_ALL": "C",
+    ]
+    let output = Pipe()
+    let errors = Pipe()
+    process.standardOutput = output
+    process.standardError = errors
+    try process.run()
+    process.waitUntilExit()
+    let stdout = String(decoding: output.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
+    let stderr = String(decoding: errors.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
+    try #require(process.terminationStatus == 0, "\(stderr)")
+    return .init(
+      executable: "/usr/bin/git", arguments: arguments, exitCode: process.terminationStatus,
+      timedOut: false, stdout: stdout, stderr: stderr, stdoutTruncated: false,
+      stderrTruncated: false)
+  }
 }

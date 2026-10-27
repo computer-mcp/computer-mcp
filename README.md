@@ -51,7 +51,7 @@ ChatGPT · Codex · another MCP client
        local execution → bounded result → redacted audit receipt
 ```
 
-Every call is tied to a caller, profile, capability, and—when relevant—a
+Every call is tied to a verified principal, caller, profile, tool and—when relevant—a
 registered project. Unknown tools, ungranted projects, unsafe paths, and
 unsupported ownership claims fail closed.
 
@@ -122,9 +122,10 @@ Desktop control, Files and Folders, plugins and MCP servers have their own
 permissions. New principals start with Machine information and Skills.
 
 An ungranted permission returns `permission.required` with a pending request.
-The owner answers **Only this time**, **Always**, or **Deny** in the App or local
-CLI. Always updates the shared profile; Only this time belongs to the exact
-invocation and its execution lifetime. Answering does not execute anything: the
+The owner answers **Only this time**, **Always**, or **Don’t Allow** in the App’s
+**Privacy & Security** page or through the local CLI. Project registration requests
+offer **Allow** and **Don’t Allow**. Always updates the shared profile; Only this
+time belongs to the exact invocation and its execution lifetime. Answering does not execute anything: the
 client explicitly retries. Explicit denies and managed exclusions do not prompt.
 
 Execution mode is separate. Full access requires a profile configured for it

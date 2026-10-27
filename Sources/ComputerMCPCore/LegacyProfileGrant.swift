@@ -21,16 +21,6 @@ package enum LegacyConfirmationPolicy: String, Codable, CaseIterable, Sendable {
   case allWrites = "all-writes"
   case never
 
-  package func requiresConfirmation(for risk: CapabilityRisk) -> Bool {
-    switch self {
-    case .riskBased:
-      risk == .externalWrite || risk == .destructive || risk == .fullShell
-    case .allWrites:
-      risk != .readOnly
-    case .never:
-      false
-    }
-  }
 }
 
 package struct LegacyProfileGrant: Codable, Equatable, Sendable {

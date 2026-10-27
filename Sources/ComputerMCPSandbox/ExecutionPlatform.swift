@@ -101,14 +101,18 @@ package struct ExecutionCompletionFailure: Error, Sendable, CustomStringConverti
   package let members: [Member]
   package let reasons: [String]
   package let bestEffort: Bool
+  /// Set only when this deadline ended confirmation, rather than an ownership failure.
+  package let expiredDeadline: ContinuousClock.Instant?
 
   package init(
-    ownership: any ExecutionOwnership, members: [Member], reasons: [String], bestEffort: Bool
+    ownership: any ExecutionOwnership, members: [Member], reasons: [String], bestEffort: Bool,
+    expiredDeadline: ContinuousClock.Instant? = nil
   ) {
     self.ownership = ownership
     self.members = members
     self.reasons = reasons
     self.bestEffort = bestEffort
+    self.expiredDeadline = expiredDeadline
   }
 
   package var description: String {

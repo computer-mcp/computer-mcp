@@ -264,7 +264,7 @@ final class DarwinExecutionOwnership: ExecutionOwnership, @unchecked Sendable {
           if let completion {
             continuation.resume(with: completion)
           } else if ContinuousClock.now >= deadline {
-            continuation.resume(throwing: failure())
+            continuation.resume(throwing: failure(expiredDeadline: deadline))
           } else {
             waiters.append((deadline, continuation))
             startMonitor()
@@ -368,7 +368,9 @@ final class DarwinExecutionOwnership: ExecutionOwnership, @unchecked Sendable {
     return scan
   }
 
-  private func failure() -> ExecutionCompletionFailure {
+  private func failure(expiredDeadline: ContinuousClock.Instant? = nil)
+    -> ExecutionCompletionFailure
+  {
     ExecutionCompletionFailure(
       ownership: self,
       members: state.known.subtracting(state.exitedMembers).map {
@@ -376,7 +378,7 @@ final class DarwinExecutionOwnership: ExecutionOwnership, @unchecked Sendable {
       }.sorted { $0.process.processID < $1.process.processID },
       reasons: state.scanReasons + (inspecting ? ["Process inspection is pending"] : [])
         + (rootExit == nil ? ["Root exit has not been collected"] : []),
-      bestEffort: bestEffort)
+      bestEffort: bestEffort, expiredDeadline: expiredDeadline)
   }
 
   /// Failure retains ownership. Cleanup keeps observing and, after cancellation, killing members;
@@ -384,10 +386,10 @@ final class DarwinExecutionOwnership: ExecutionOwnership, @unchecked Sendable {
   private func expire() {
     let now = ContinuousClock.now
     guard
-      cancellationDeadline.map({ now >= $0 }) == true
-        || waiters.contains(where: { now >= $0.deadline })
+      let deadline = (waiters.map(\.deadline) + [cancellationDeadline].compactMap { $0 }).min(),
+      now >= deadline
     else { return }
-    let failure = failure()
+    let failure = failure(expiredDeadline: deadline)
     generation &+= 1
     state.complete = false
     cancellationDeadline = nil

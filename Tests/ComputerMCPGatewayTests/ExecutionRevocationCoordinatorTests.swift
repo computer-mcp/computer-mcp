@@ -18,6 +18,92 @@ import Testing
 #endif
 
 @Suite struct ExecutionRevocationCoordinatorTests {
+  @Test(.timeLimit(.minutes(1)), arguments: [false, true])
+  func reconciliationFailureDuringCancellationPreservesItsCause(ownershipFailure: Bool) async throws
+  {
+    let f = try ExecutionFixture()
+    let coordinator = try f.coordinator()
+    try await coordinator.recover()
+    var executions: [UUID: DurableTestOwnership] = [:]
+    var contexts: [PreparedExecutionContext] = []
+    defer { withExtendedLifetime(contexts) {} }
+    for _ in 0..<2 {
+      let id = try f.paths.authorize(f.paths.project, operation: .read, once: false)
+      let context = try await coordinator.prepare(authorizationID: id, context: f.context)
+      executions[context.executionID] = try #require(
+        try await f.start(context) as? DurableTestOwnership)
+      try context.finishAdmission()
+      contexts.append(context)
+    }
+    try await coordinator.reconcile()
+    // Exercise the final record so a subsequent loop's deadline check cannot
+    // replace the ownership error before reconciliation classifies it.
+    let targetID = try f.paths.store.readWithDatabase { database, _ in
+      try #require(try ExecutionRuntimeRecord.all(database).last?.id)
+    }
+    let target = try #require(executions[targetID])
+    let unrelated = try #require(executions.first { $0.key != targetID }?.value)
+    let entered = ReconciliationTestGate()
+    await entered.release()
+    let background = ReconciliationTestGate()
+    let deadline = ContinuousClock.now.advanced(by: .seconds(1))
+    target.setCancellation { supplied in
+      guard supplied == deadline else {
+        await background.wait()
+        return
+      }
+      if !(await entered.entered) {
+        #expect(ContinuousClock.now < supplied)
+        await entered.wait()
+      }
+      try await Task.sleep(until: supplied, clock: .continuous)
+      throw ExecutionCompletionFailure(
+        ownership: target, members: [],
+        reasons: [ownershipFailure ? "Ownership evidence was lost" : "Completion is pending"],
+        bestEffort: false, expiredDeadline: ownershipFailure ? nil : supplied)
+    }
+    defer {
+      target.setCancellation(nil)
+      target.complete()
+      Task { await background.release() }
+    }
+    try f.paths.store.transactionWithDatabase { _, ledger in
+      try ledger.terminateExecution(targetID)
+    }
+    let attempt = Task { try await coordinator.reconcile(until: deadline) }
+    while !(await entered.entered), ContinuousClock.now < deadline {
+      try await Task.sleep(for: .milliseconds(5))
+    }
+    try #require(
+      await entered.entered,
+      "Cancellation deadlines: \(target.cancellationDeadlines), expected: \(deadline), ended: \(target.ended)"
+    )
+    // The bounded caller can return before the shared pass. Join its error
+    // classification before checking admission and unrelated resources.
+    let classification = Task { try await coordinator.reconcile() }
+    await #expect(throws: (any Error).self) { try await attempt.value }
+    if ownershipFailure {
+      await #expect(throws: ExecutionCompletionFailure.self) { try await classification.value }
+    } else {
+      await #expect(throws: WorktreeError.self) { try await classification.value }
+    }
+    #expect(unrelated.ended == ownershipFailure)
+    #expect(unrelated.cancellationDeadlines.isEmpty == !ownershipFailure)
+    let id = try f.paths.authorize(f.paths.project, operation: .read, once: false)
+    if ownershipFailure {
+      await #expect(throws: ExecutionEnvironmentError.self) {
+        _ = try await coordinator.prepare(authorizationID: id, context: f.context)
+      }
+    } else {
+      let next = try await coordinator.prepare(authorizationID: id, context: f.context)
+      try next.finishAdmission()
+    }
+    target.setCancellation(nil)
+    await background.release()
+    try? await coordinator.reconcile()
+    try await coordinator.stopExecutions(Set(executions.keys))
+  }
+
   @Test func expiredReconciliationBudgetDoesNotRevokeUnrelatedExecutions() async throws {
     let f = try ExecutionFixture()
     let coordinator = try f.coordinator()
@@ -1386,7 +1472,8 @@ private final class DurableTestOwnership: ExecutionOwnership, @unchecked Sendabl
     while !ended {
       if ContinuousClock.now >= deadline {
         throw ExecutionCompletionFailure(
-          ownership: self, members: [], reasons: ["pending"], bestEffort: false)
+          ownership: self, members: [], reasons: ["pending"], bestEffort: false,
+          expiredDeadline: deadline)
       }
       try await Task.sleep(for: .milliseconds(5))
     }

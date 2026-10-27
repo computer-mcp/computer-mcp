@@ -9,6 +9,21 @@ import Testing
 // Blocking kernel fixtures share the dispatch thread pool; deadline assertions need each
 // scenario to run without competing blocked fixtures consuming its scheduling budget.
 @Suite(.nativeIntegration, .serialized) struct ExecutionCompletionTests {
+  @Test(arguments: [false, true], [false, true])
+  func confirmationExpiryIdentifiesItsDeadline(cancel: Bool, alreadyExpired: Bool) async throws {
+    let fixture = try SimulatedExecution(configure: { $0.ignoreKill = true })
+    let deadline = ContinuousClock.now.advanced(by: alreadyExpired ? .zero : .milliseconds(80))
+    let failure = try await fixture.failure {
+      if cancel { return try await fixture.owner.cancel(until: deadline) }
+      return try await fixture.owner.wait(until: deadline)
+    }
+    #expect(failure.expiredDeadline == deadline)
+    #expect(fixture.markerExists)
+    fixture.clear()
+    #expect(try await failure.ownership.wait(until: .now.advanced(by: .seconds(5))).status == 23)
+    #expect(!fixture.markerExists)
+  }
+
   @Test func missingKernelSentinelCannotConfirmAnEmptyExecution() async throws {
     let fixture = try SimulatedExecution(configure: { $0.omitKernel = true })
     fixture.rootExited()
@@ -117,6 +132,7 @@ import Testing
       try await fixture.owner.wait(until: .now.advanced(by: .seconds(3)))
     }
     #expect(failure.reasons.contains { $0.contains("Cannot confirm execution sentinel") })
+    #expect(failure.expiredDeadline == nil)
     try await eventually { fixture.processes.state.signals.contains { $0.1 == SIGKILL } }
     #expect(fixture.markerExists)
     _ = try await fixture.failure {

@@ -443,6 +443,11 @@ package final class ExecutionRevocationCoordinator: ExecutionRecoveryAuthorizing
         // A caller's exhausted budget is not an infrastructure failure. Durable
         // stop intent remains available to the next monitoring pass.
         if error is ExecutionReconciliation.DeadlineExpired { throw error }
+        if let deadline, let failure = error as? ExecutionCompletionFailure,
+          failure.expiredDeadline == deadline
+        {
+          throw ExecutionReconciliation.DeadlineExpired()
+        }
         lock.withLock { ready = false }
         let resources = lock.withLock {
           (

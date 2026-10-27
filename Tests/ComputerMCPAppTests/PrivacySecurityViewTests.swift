@@ -113,15 +113,10 @@ import Testing
         name: "privacy-chatgpt-" + suffix)
       let grant = try #require(model.snapshot.grants.first { $0.permission == .projects })
       try render(
-        Form { PrivacyNetworkMenu(model: model, grant: grant) }
+        Form { PrivacyNetworkPicker(model: model, grant: grant) }
           .formStyle(.grouped).styled(locale, dark, resources),
         size: NSSize(width: 440, height: 120), appearance: appearance,
-        name: "privacy-network-menu-" + suffix)
-      try render(
-        VStack(alignment: .leading, spacing: 8) { PrivacyNetworkChoices { _ in } }
-          .padding().styled(locale, dark, resources),
-        size: NSSize(width: 240, height: 160), appearance: appearance,
-        name: "privacy-network-choices-" + suffix)
+        name: "privacy-network-picker-" + suffix)
       try render(
         PrivacyNetworkSheet(
           network: .custom(
@@ -212,10 +207,10 @@ private final class PrivacySecurityFake: PrivacySecurityService {
 
   static var sample: PrivacySnapshot {
     let chatgpt = PrivacyPrincipal(
-      id: "chatgpt", name: "ChatGPT", kind: .client(connection: "Secure tunnel"),
+      id: "chatgpt", name: "ChatGPT", kind: .client(connection: "Secure Tunnel"),
       execution: .sandbox)
     let claude = PrivacyPrincipal(
-      id: "claude-code", name: "Claude Code", kind: .client(connection: "Local"),
+      id: "claude-code", name: "Claude Code", kind: .client(connection: "This Mac"),
       execution: .fullAccessConnection)
     let codex = PrivacyPrincipal(
       id: "codex", name: "Codex", kind: .plugin(version: "1.4.0"), execution: .sandbox)
@@ -245,11 +240,11 @@ private final class PrivacySecurityFake: PrivacySecurityService {
         PrivacyGrant(principalID: "chatgpt", permission: .unifiedLogs, object: nil, value: .denied),
         PrivacyGrant(
           principalID: "chatgpt", permission: .localNetwork, object: nil, value: .denied,
-          source: .managedLimit("Machine policy")),
+          source: .managedLimit("Machine Policy")),
       ],
       managedSources: [
         PrivacyManagedSource(
-          id: "machine", name: "Machine policy",
+          id: "machine", name: "Machine Policy",
           location: "/Library/Application Support/Computer MCP/policy.toml", state: .active)
       ],
       systemPermissions: [

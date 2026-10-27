@@ -13,7 +13,7 @@ enum PrivacyPermissionKind: String, CaseIterable, Identifiable, Hashable, Sendab
   var title: String {
     switch self {
     case .projects: "Projects"
-    case .filesAndFolders: "Files and Folders"
+    case .filesAndFolders: "Files & Folders"
     case .screen: "Screen"
     case .desktopControl: "Desktop Control"
     case .localNetwork: "Local Network"
@@ -117,6 +117,7 @@ enum PrivacyGrantValue: Hashable, Sendable {
 
 struct PrivacyPrincipal: Identifiable, Hashable, Sendable {
   enum Kind: Hashable, Sendable {
+    /// The connection's name, as a localization key.
     case client(connection: String)
     case plugin(version: String)
     case localServer

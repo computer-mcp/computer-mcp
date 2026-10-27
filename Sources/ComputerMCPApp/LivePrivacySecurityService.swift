@@ -112,15 +112,15 @@ final class LivePrivacySecurityService: PrivacySecurityService {
   private static func principal(_ profile: ProfileGrant) -> PrivacyPrincipal {
     let connection =
       if profile.allowedCallers.contains(.secureTunnel) {
-        "Secure tunnel"
+        "Secure Tunnel"
       } else if profile.allowedCallers.contains(.cloudflareTunnel) {
-        "Cloudflare tunnel"
+        "Cloudflare Tunnel"
       } else {
         "This Mac"
       }
     return PrivacyPrincipal(
       id: profile.id.rawValue, name: AppLocalization.string(profile.id.displayName),
-      kind: .client(connection: AppLocalization.string(connection)),
+      kind: .client(connection: connection),
       execution: profile.fullAccess ? .fullAccessSaved : .sandbox)
   }
 
@@ -182,9 +182,9 @@ final class LivePrivacySecurityService: PrivacySecurityService {
   private static func source(_ source: GatewayManagedPolicyView) -> PrivacyManagedSource {
     let name =
       switch source.source {
-      case .owner: "Owner policy"
-      case .machine: "Machine policy"
-      case .managedPreferences: "Configuration profile"
+      case .owner: "Owner Policy"
+      case .machine: "Machine Policy"
+      case .managedPreferences: "Configuration Profile"
       case .connection: "Connection"
       }
     return PrivacyManagedSource(

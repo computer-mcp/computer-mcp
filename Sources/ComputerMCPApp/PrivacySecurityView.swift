@@ -17,6 +17,12 @@ struct PrivacyText {
   func format(_ key: String, _ arguments: CVarArg...) -> String {
     String(format: callAsFunction(key), locale: locale, arguments: arguments)
   }
+
+  func list(_ items: [String]) -> String {
+    let formatter = ListFormatter()
+    formatter.locale = locale
+    return formatter.string(from: items) ?? items.joined(separator: ", ")
+  }
 }
 
 private struct PrivacySymbol: View {
@@ -273,6 +279,7 @@ struct PrivacyPermissionDetailView: View {
   private var l: PrivacyText { PrivacyText(locale: locale, resources: resources) }
   @ObservedObject var model: PrivacySecurityModel
   let permission: PrivacyPermissionKind
+  @State private var collapsed: Set<String> = []
 
   var body: some View {
     Form {
@@ -304,28 +311,42 @@ struct PrivacyPermissionDetailView: View {
     }
   }
 
-  @ViewBuilder private var perObjectSections: some View {
-    let grants = model.grants(for: permission)
-    if grants.isEmpty { Section { emptyRow } }
-    let objects = Dictionary(grouping: grants) { $0.object?.id ?? "" }
-    ForEach(objects.keys.sorted(), id: \.self) { key in
-      let rows = objects[key] ?? []
-      Section {
-        ForEach(rows) { grant in
-          PrivacyGrantRow(
-            model: model, grant: grant, title: model.principal(grant.principalID)?.name,
-            systemImage: model.principal(grant.principalID)?.systemImage)
-        }
-      } header: {
-        VStack(alignment: .leading, spacing: 2) {
-          Text(verbatim: rows.first?.object?.name ?? "")
-          if let detail = rows.first?.object?.detail {
-            Text(verbatim: detail).font(.caption).foregroundStyle(.secondary)
-              .textSelection(.enabled)
+  /// Each client or plugin with its objects beneath it, as Files & Folders lists each app.
+  private var perObjectSections: some View {
+    Section {
+      let grants = model.grants(for: permission)
+      let holders = model.snapshot.principals.filter { principal in
+        grants.contains { $0.principalID == principal.id }
+      }
+      if holders.isEmpty { emptyRow }
+      ForEach(holders) { principal in
+        DisclosureGroup(isExpanded: expansion(principal.id)) {
+          ForEach(grants.filter { $0.principalID == principal.id }) { grant in
+            PrivacyGrantRow(
+              model: model, grant: grant, title: grant.object?.name,
+              systemImage: permission.systemImage
+            )
+            .padding(.leading, 24)
+            .help(Text(verbatim: grant.object?.detail ?? ""))
+          }
+        } label: {
+          Label {
+            Text(verbatim: principal.name)
+          } icon: {
+            PrivacySymbol(name: principal.systemImage)
           }
         }
+        .accessibilityIdentifier("privacy.holder.\(principal.id)")
       }
     }
+  }
+
+  private func expansion(_ id: String) -> Binding<Bool> {
+    Binding(
+      get: { !collapsed.contains(id) },
+      set: { expanded in
+        if expanded { collapsed.remove(id) } else { collapsed.insert(id) }
+      })
   }
 
   private var fullAccessRows: some View {
@@ -418,8 +439,8 @@ struct PrivacyGrantRow: View {
     case .full: l("Any Host")
     case .custom(let hosts, let includesTrusted):
       includesTrusted
-        ? l.format("Trusted Hosts and %@", ListFormatter.localizedString(byJoining: hosts))
-        : ListFormatter.localizedString(byJoining: hosts)
+        ? l.format("Trusted Hosts and %@", l.list(hosts))
+        : l.list(hosts)
     }
   }
 
@@ -431,7 +452,7 @@ struct PrivacyGrantRow: View {
     case .custom(let hosts, let includesTrusted):
       l.format(
         includesTrusted ? "Network: Trusted Hosts and %@" : "Network: %@",
-        ListFormatter.localizedString(byJoining: hosts))
+        l.list(hosts))
     }
   }
 
@@ -489,19 +510,18 @@ struct PrivacyPrincipalDetailView: View {
                 model: model, grant: grant, title: grant.object?.name,
                 systemImage: kind.systemImage, showsNetwork: kind != .projects)
               if kind == .projects {
-                PrivacyNetworkMenu(model: model, grant: grant)
+                PrivacyNetworkPicker(model: model, grant: grant)
               }
             }
           }
         }
         Section {
-          Button(role: .destructive) {
-            confirmRevoke = true
-          } label: {
-            Text(verbatim: l("Revoke All Access…"))
-              .foregroundStyle(.red)
+        } footer: {
+          HStack {
+            Spacer()
+            Button(l("Revoke All Access…")) { confirmRevoke = true }
+              .accessibilityIdentifier("privacy.revoke.\(principal.id)")
           }
-          .buttonStyle(.borderless)
         }
       }
       .formStyle(.grouped)
@@ -564,7 +584,7 @@ struct PrivacyPrincipalDetailView: View {
   static func principalSummary(for principal: PrivacyPrincipal, using l: PrivacyText) -> String {
     var parts = [l(principal.kindTitle)]
     switch principal.kind {
-    case .client(let connection): parts.append(connection)
+    case .client(let connection): parts.append(l(connection))
     case .plugin(let version): parts.append(version)
     case .localServer: break
     }
@@ -590,7 +610,8 @@ struct PrivacyPrincipalDetailView: View {
   }
 }
 
-struct PrivacyNetworkMenu: View {
+/// A project's network access, with Custom… opening the host editor.
+struct PrivacyNetworkPicker: View {
   @Environment(\.locale) private var locale
   @Environment(\.localizationResources) private var resources
   private var l: PrivacyText { PrivacyText(locale: locale, resources: resources) }
@@ -598,21 +619,19 @@ struct PrivacyNetworkMenu: View {
   let grant: PrivacyGrant
   @State private var showingCustom = false
 
+  private enum Choice: Hashable { case none, trusted, full, custom, edit }
+
   var body: some View {
-    LabeledContent {
-      Menu {
-        PrivacyNetworkChoices { network in
-          if let network {
-            Task { await model.setNetwork(grant, to: network) }
-          } else {
-            showingCustom = true
-          }
-        }
-      } label: {
-        let value = PrivacyGrantRow.networkValue(grant.network ?? .none, using: l)
-        Text(verbatim: value)
+    Picker(selection: selection) {
+      Text(verbatim: l("None")).tag(Choice.none)
+      Text(verbatim: l("Trusted Hosts")).tag(Choice.trusted)
+      Text(verbatim: l("Any Host")).tag(Choice.full)
+      if case .custom = network {
+        let hosts = PrivacyGrantRow.networkValue(network, using: l)
+        Text(verbatim: hosts).tag(Choice.custom)
       }
-      .fixedSize()
+      Divider()
+      Text(verbatim: l("Custom…")).tag(Choice.edit)
     } label: {
       Label {
         Text(verbatim: l("Network"))
@@ -623,28 +642,41 @@ struct PrivacyNetworkMenu: View {
     .disabled(managed)
     .accessibilityIdentifier("privacy.network.\(grant.id)")
     .sheet(isPresented: $showingCustom) {
-      PrivacyNetworkSheet(network: grant.network ?? .none) { network in
+      PrivacyNetworkSheet(network: network) { network in
         await model.setNetwork(grant, to: network)
       }
     }
   }
 
+  private var network: PrivacyNetworkAccess { grant.network ?? PrivacyNetworkAccess.none }
+
   private var managed: Bool {
     if case .managedLimit = grant.source { true } else { false }
   }
-}
 
-struct PrivacyNetworkChoices: View {
-  @Environment(\.locale) private var locale
-  @Environment(\.localizationResources) private var resources
-  private var l: PrivacyText { PrivacyText(locale: locale, resources: resources) }
-  let select: (PrivacyNetworkAccess?) -> Void
-
-  var body: some View {
-    Button(l("None")) { select(PrivacyNetworkAccess.none) }
-    Button(l("Trusted Hosts")) { select(.trusted) }
-    Button(l("Any Host")) { select(.full) }
-    Button(l("Custom…")) { select(nil) }
+  private var selection: Binding<Choice> {
+    Binding(
+      get: {
+        switch network {
+        case .none: .none
+        case .trusted: .trusted
+        case .full: .full
+        case .custom: .custom
+        }
+      },
+      set: { choice in
+        let access: PrivacyNetworkAccess
+        switch choice {
+        case .none: access = PrivacyNetworkAccess.none
+        case .trusted: access = .trusted
+        case .full: access = .full
+        case .custom: return
+        case .edit:
+          showingCustom = true
+          return
+        }
+        Task { await model.setNetwork(grant, to: access) }
+      })
   }
 }
 
@@ -743,6 +775,13 @@ struct PrivacyRequestPrompt: View {
           .font(.callout)
           .foregroundStyle(.secondary)
           .multilineTextAlignment(.center)
+        Text(
+          verbatim: l(
+            "Only This Time covers the retried request and the program it starts.")
+        )
+        .font(.caption)
+        .foregroundStyle(.secondary)
+        .multilineTextAlignment(.center)
       }
       VStack(spacing: 8) {
         Button {
@@ -767,13 +806,6 @@ struct PrivacyRequestPrompt: View {
         .accessibilityIdentifier("privacy.prompt.deny")
       }
       .controlSize(.large)
-      Text(
-        verbatim: l(
-          "Only This Time covers the retried request and the program it starts.")
-      )
-      .font(.caption)
-      .foregroundStyle(.secondary)
-      .multilineTextAlignment(.center)
     }
     .padding(24)
     .frame(width: 340)
@@ -783,18 +815,18 @@ struct PrivacyRequestPrompt: View {
     let object = request.object?.name ?? l(request.permission.title)
     if let host = request.host {
       return l.format(
-        "“%1$@” wants to connect to “%2$@” from “%3$@”.", request.principal.name, host, object)
+        "“%1$@” would like to connect to “%2$@” from “%3$@”.", request.principal.name, host, object)
     }
     switch request.level {
     case .readWrite:
       return l.format(
-        "“%1$@” wants to read and change “%2$@”.", request.principal.name, object)
+        "“%1$@” would like to read and change “%2$@”.", request.principal.name, object)
     case .read:
       return l.format(
-        "“%1$@” wants to read “%2$@”.", request.principal.name, object)
+        "“%1$@” would like to read “%2$@”.", request.principal.name, object)
     default:
       return l.format(
-        "“%1$@” wants to use “%2$@”.", request.principal.name, object)
+        "“%1$@” would like to use “%2$@”.", request.principal.name, object)
     }
   }
 }

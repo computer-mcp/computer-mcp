@@ -124,7 +124,7 @@ package enum CLITreeValidation {
       return report
     }
     let execution = CLIProcessExecution(
-      launcher: launcher, policy: .readOnly, inheritsEnvironment: false)
+      launcher: launcher, inheritsEnvironment: false)
     do {
       let identity = try CLIExecutableIdentity.capture(
         executable: executable, cwd: workingDirectory, environment: environment)

@@ -34,12 +34,8 @@ package struct FilesToolProvider: GatewayToolProvider {
   }
 
   package func callTool(_ invocation: ToolInvocation) throws -> JSONValue {
-    let descriptor = try definitions().first { $0.tool.name == invocation.name }?.capability
-    let policy: HostExecutionPolicy =
-      descriptor == nil || descriptor?.risk == .readOnly
-        || descriptor?.projectRequirement == ProjectRequirement.none ? .readOnly : .fullAccess
     return try projectScope.withPathAccess {
-      try HostExecutionPolicy.$current.withValue(policy) { try dispatch(invocation) }
+      try dispatch(invocation)
     }
   }
 

@@ -192,11 +192,13 @@ struct ProcessOutputLifecycleTests {
             for _ in 0..<16 {
               try Task.checkCancellation()
               let result = try await blocking.perform {
-                try runner.run(
-                  executable: "/bin/sh",
-                  arguments: ["-c", "printf '%0128d' 0; printf '%0128d' 0 >&2; exit 7"],
-                  workingDirectory: nil, environment: ["PATH": "/usr/bin:/bin"],
-                  timeoutMilliseconds: 2000, maxOutputBytes: 64)
+                try withCommandAdministration(variables: ["PATH": "/usr/bin:/bin"]) {
+                  try runner.run(
+                    executable: "/bin/sh",
+                    arguments: ["-c", "printf '%0128d' 0; printf '%0128d' 0 >&2; exit 7"],
+                    workingDirectory: nil, environment: ["PATH": "/usr/bin:/bin"],
+                    timeoutMilliseconds: 2000, maxOutputBytes: 64)
+                }
               }
               #expect(result.exitCode == 7 && !result.timedOut)
               #expect(result.stdout + result.stderr == String(repeating: "0", count: 64))

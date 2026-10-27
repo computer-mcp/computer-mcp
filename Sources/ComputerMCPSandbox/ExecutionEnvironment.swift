@@ -105,6 +105,15 @@ package struct ExecutionEnvironment: Sendable, Equatable {
     return result
   }
 
+  /// Fixed host helpers may narrow their environment while retaining every sandbox location and proxy.
+  package func forHostHelper(variables: [String: String]) throws -> Self {
+    if fullAccessVariables != nil { return try Self(fullAccessVariables: variables) }
+    return try Self(
+      searchPath: searchPath, home: home, temporary: temporary, cache: cache,
+      locale: locale, terminal: terminal, developerDirectory: developerDirectory,
+      codexHome: codexHome, hostVariables: variables)
+  }
+
   private static func validate(_ variables: [String: String]) throws {
     guard
       variables.allSatisfy({ key, value in

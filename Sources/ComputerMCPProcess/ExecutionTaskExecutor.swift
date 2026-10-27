@@ -12,10 +12,18 @@ internal enum ExecutionTasks {
     let authority = InvocationExecution.current
     let access = HostPathAccess.current ?? authority?.pathAccess
     let recovery = ExecutionRecovery.key
+    let administration = ExecutionAdministration.current
+    let helperEnvironment = HostCommandEnvironment.current
     let captured: @Sendable () async -> Value = {
       await InvocationExecution.$current.withValue(authority) {
         await HostPathAccess.$current.withValue(access) {
-          await ExecutionRecovery.$key.withValue(recovery, operation: operation)
+          await ExecutionRecovery.$key.withValue(recovery) {
+            await ExecutionAdministration.$current.withValue(administration) {
+              await HostCommandEnvironment.$current.withValue(helperEnvironment) {
+                await operation()
+              }
+            }
+          }
         }
       }
     }
@@ -33,10 +41,18 @@ internal enum ExecutionTasks {
     let authority = InvocationExecution.current
     let access = HostPathAccess.current ?? authority?.pathAccess
     let recovery = ExecutionRecovery.key
+    let administration = ExecutionAdministration.current
+    let helperEnvironment = HostCommandEnvironment.current
     let captured: @Sendable () async throws -> Value = {
       try await InvocationExecution.$current.withValue(authority) {
         try await HostPathAccess.$current.withValue(access) {
-          try await ExecutionRecovery.$key.withValue(recovery, operation: operation)
+          try await ExecutionRecovery.$key.withValue(recovery) {
+            try await ExecutionAdministration.$current.withValue(administration) {
+              try await HostCommandEnvironment.$current.withValue(helperEnvironment) {
+                try await operation()
+              }
+            }
+          }
         }
       }
     }

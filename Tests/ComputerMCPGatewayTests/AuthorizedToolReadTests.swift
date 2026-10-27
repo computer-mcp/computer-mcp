@@ -46,7 +46,8 @@ import Testing
     ], [ReadAttack.opening, .revocation])
   func skillReadsRecheckAtUse(tool: String, attack: ReadAttack) throws {
     let fixture = try ToolReadFixture(tool: tool)
-    try fixture.check(attack, prechecks: 0)
+    let prechecks = ["skills.read", "skills.read_package"].contains(tool) ? 1 : 0
+    try fixture.check(attack, prechecks: prechecks)
   }
 }
 

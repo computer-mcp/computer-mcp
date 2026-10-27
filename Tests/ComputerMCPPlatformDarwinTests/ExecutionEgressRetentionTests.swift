@@ -114,14 +114,19 @@ import Testing
       platform: DarwinExecutionPlatform(
         bootstrapExecutable: SeatbeltFixture.executionBootstrap))
     let launch = Task.detached {
-      try await launcher.start(
-        executable: .init("/bin/sleep"), arguments: ["20"],
-        directory: configuration.worktree, environment: environment, mode: .sandbox(configuration),
-        method: method,
-        bindOwnership: {
-          proxy.attach(to: $0)
-          gate.block()
-        })
+      try await ExecutionAdministration.$current.withValue(
+        .init(mode: .sandbox(configuration), environment: environment)
+      ) {
+        try await launcher.start(
+          executable: .init("/bin/sleep"), arguments: ["20"],
+          directory: configuration.worktree, environment: environment,
+          mode: .sandbox(configuration),
+          method: method,
+          bindOwnership: {
+            proxy.attach(to: $0)
+            gate.block()
+          })
+      }
     }
     try await eventually { gate.entered }
     launch.cancel()

@@ -1,5 +1,6 @@
 import ComputerMCPDownstream
 import ComputerMCPMacOS
+import ComputerMCPPermissions
 import ComputerMCPTestSupport
 import ComputerMCPToolKit
 import ComputerMCPToolsCLI
@@ -20,65 +21,70 @@ struct PluginResolverTests {
   @Test(
     .nativeIntegration, arguments: ["#!/usr/bin/env python3\n", "#!/usr/bin/env -S python3 -e\n"])
   func declaredInterpreterBindingsDriveMCPAndCLIWithoutChangingPath(header: String) async throws {
-    let fixture = try CompositionFixture(
-      text: Self.scriptManifest, script: header + "printf '%s\\n' \"$@\"\n")
-    defer { fixture.cleanup() }
-    let interpreter = fixture.root.appendingPathComponent("Runtime with spaces")
-    try FileManager.default.copyItem(at: URL(fileURLWithPath: "/bin/sh"), to: interpreter)
-    var settings = fixture.settings
-    settings.cli["commands"]?.allowAnyArgs = true
-    settings.mcp["native"]?.args = ["", "a b", "参数", "--"]
-    settings.dependencyExecutables["vendor"] = interpreter.path
-    let state = PluginStoreSnapshot(settings: [fixture.package.manifest.id: settings])
-    let environment = ["PATH": "/usr/bin:/bin"]
-    let resolution = try PluginStore.resolve(
-      snapshot: state, bundled: [fixture.package], hostVersion: PluginVersion("1.0.29"),
-      architecture: "arm64", environment: environment,
-      applications: MacOSPlatform.services(launcher: testExecutionLauncher()).applications)
-    let plugin = try #require(resolution.plugins.first)
-    #expect(plugin.diagnostics.isEmpty)
-    let server = try #require(plugin.mcpServers.first)
-    let script = fixture.root.appendingPathComponent("adapter").path
-    let flags = header.contains("-S") ? ["-e"] : []
-    #expect(server.command == interpreter.path)
-    #expect(server.args == flags + [script, "", "a b", "参数", "--"])
-    let result = try ProcessCommandRunner(
-      launcher: testExecutionLauncher(), environment: environment
-    ).run(
-      executable: try #require(server.command), arguments: server.args,
-      workingDirectory: fixture.root, environment: server.env, timeoutMilliseconds: 2_000,
-      maxOutputBytes: 1_024)
-    #expect(result.exitCode == 0 && result.stdout == "\na b\n参数\n--\n")
+    try await withOwnerFixture(
+      text: Self.scriptManifest, script: header + "printf '%s\\n' \"$@\"\n"
+    ) { fixture in
+      let interpreter = fixture.root.appendingPathComponent("Runtime with spaces")
+      try FileManager.default.copyItem(at: URL(fileURLWithPath: "/bin/sh"), to: interpreter)
+      var settings = fixture.settings
+      settings.cli["commands"]?.allowAnyArgs = true
+      settings.mcp["native"]?.args = ["", "a b", "参数", "--"]
+      settings.dependencyExecutables["vendor"] = interpreter.path
+      let state = PluginStoreSnapshot(settings: [fixture.package.manifest.id: settings])
+      let environment = ["PATH": "/usr/bin:/bin"]
+      let resolution = try PluginStore.resolve(
+        snapshot: state, bundled: [fixture.package], hostVersion: PluginVersion("1.0.29"),
+        architecture: "arm64", environment: environment,
+        applications: MacOSPlatform.services(launcher: testExecutionLauncher()).applications)
+      let plugin = try #require(resolution.plugins.first)
+      #expect(plugin.diagnostics.isEmpty)
+      let server = try #require(plugin.mcpServers.first)
+      let script = fixture.root.appendingPathComponent("adapter").path
+      let flags = header.contains("-S") ? ["-e"] : []
+      #expect(server.command == interpreter.path)
+      #expect(server.args == flags + [script, "", "a b", "参数", "--"])
+      let result = try fixture.withOwnerLaunch {
+        try ProcessCommandRunner(
+          launcher: fixture.ownerLauncher, environment: environment
+        ).run(
+          executable: try #require(server.command), arguments: server.args,
+          workingDirectory: fixture.root, environment: server.env, timeoutMilliseconds: 2_000,
+          maxOutputBytes: 1_024)
+      }
+      #expect(result.exitCode == 0 && result.stdout == "\na b\n参数\n--\n")
 
-    let report = try PluginDoctorReport.inspect(
-      pluginID: fixture.package.manifest.id, state: state,
-      bundled: .init(packages: [fixture.package], issues: []),
-      hostVersion: PluginVersion("1.0.29"), architecture: "arm64", environment: environment,
-      applications: MacOSPlatform.services(launcher: testExecutionLauncher()).applications)
-    #expect(report.status == .passed)
-    let inspection = try #require(
-      report.checks.first { $0.id == "mcp:native:executable" }?.inspection)
-    #expect(inspection.path == script)
-    #expect(inspection.interpreters.last?.path == server.command)
-    #expect(inspection.interpreters.last?.source == "host_binding")
-    let registration = try #require(plugin.cliCommands.first)
-    #expect(registration.executable == script)
-    let commands = RegisteredCommands(
-      configuration: .init(cli: .init(commands: [registration]), projectDirectory: fixture.root),
-      commandRunner: ProcessCommandRunner(
-        launcher: testExecutionLauncher(), environment: environment), environment: environment)
-    do {
-      let result = try commands.runRegisteredCLI(
-        command: registration, args: ["cli argument", ""], timeout: 2_000,
-        requireArbitraryArgs: true)
-      #expect(result.exitCode == 0 && result.stdout == "cli argument\n\n")
-      await commands.execution.shutdown()
-    } catch {
-      await commands.execution.shutdown()
-      throw error
+      let report = try PluginDoctorReport.inspect(
+        pluginID: fixture.package.manifest.id, state: state,
+        bundled: .init(packages: [fixture.package], issues: []),
+        hostVersion: PluginVersion("1.0.29"), architecture: "arm64", environment: environment,
+        applications: MacOSPlatform.services(launcher: testExecutionLauncher()).applications)
+      #expect(report.status == .passed)
+      let inspection = try #require(
+        report.checks.first { $0.id == "mcp:native:executable" }?.inspection)
+      #expect(inspection.path == script)
+      #expect(inspection.interpreters.last?.path == server.command)
+      #expect(inspection.interpreters.last?.source == "host_binding")
+      let registration = try #require(plugin.cliCommands.first)
+      #expect(registration.executable == script)
+      let commands = RegisteredCommands(
+        configuration: .init(cli: .init(commands: [registration]), projectDirectory: fixture.root),
+        commandRunner: ProcessCommandRunner(
+          launcher: fixture.ownerLauncher, environment: environment), environment: environment)
+      do {
+        let result = try fixture.withOwnerLaunch {
+          try commands.runRegisteredCLI(
+            command: registration, args: ["cli argument", ""], timeout: 2_000,
+            requireArbitraryArgs: true)
+        }
+        #expect(result.exitCode == 0 && result.stdout == "cli argument\n\n")
+        await commands.execution.shutdown()
+      } catch {
+        await commands.execution.shutdown()
+        throw error
+      }
+      #expect(state.settings[fixture.package.manifest.id] == settings)
+      #expect(fixture.package.manifest.mcp[0].args == ["mcp"])
     }
-    #expect(state.settings[fixture.package.manifest.id] == settings)
-    #expect(fixture.package.manifest.mcp[0].args == ["mcp"])
   }
 
   @Test
@@ -418,36 +424,45 @@ struct PluginResolverTests {
   }
 
   @Test
-  func explicitRawCLIUsesExistingArgvRunnerAndStructuredSourcesCannotBypassConstraints() throws {
-    let fixture = try CompositionFixture()
-    defer { fixture.cleanup() }
-    var settings = fixture.settings
-    settings.cli["commands"] = .init(registrationID: "commands", allowAnyArgs: true)
-    let plugin = try fixture.resolve(settings: settings)
-    let composition = try GatewayPluginComposition(
-      configuration: GatewayConfiguration(projectDirectory: fixture.root), plugins: [plugin])
-    let provider = CLIToolProvider(
-      environment: ToolEnvironment(
-        launcher: testExecutionLauncher(), configuration: composition.runtimeConfiguration))
-    let output = try provider.callTool(
-      .init(
-        name: "cli.exec",
-        arguments: .object([
-          "id": .string("commands"),
-          "argv": .array([.string("%s"), .string("空 格;$(no-execution)")]),
-        ]), context: .empty))
-    let payload = try #require(output.objectValue?["structuredContent"]?.objectValue?["result"])
-    #expect(payload.objectValue?["stdout"] == .string("空 格;$(no-execution)"))
-    #expect(payload.objectValue?["exit_code"] == .number(0))
-    #expect(output.objectValue?["isError"] == .bool(false))
-    let structured = try CompositionFixture(text: PluginManifestFixture.combined)
-    defer { structured.cleanup() }
-    #expect(throws: ConfigurationError.self) { try structured.resolve(settings: settings) }
+  func explicitRawCLIUsesExistingArgvRunnerAndStructuredSourcesCannotBypassConstraints()
+    async throws
+  {
+    try await withOwnerFixture { fixture in
+      var settings = fixture.settings
+      settings.cli["commands"] = .init(registrationID: "commands", allowAnyArgs: true)
+      let plugin = try fixture.resolve(settings: settings)
+      let composition = try GatewayPluginComposition(
+        configuration: GatewayConfiguration(projectDirectory: fixture.root), plugins: [plugin])
+      let provider = CLIToolProvider(
+        environment: ToolEnvironment(
+          launcher: fixture.ownerLauncher, configuration: composition.runtimeConfiguration))
+      let output = try fixture.withOwnerLaunch {
+        try provider.callTool(
+          .init(
+            name: "cli.exec",
+            arguments: .object([
+              "id": .string("commands"),
+              "argv": .array([.string("%s"), .string("空 格;$(no-execution)")]),
+            ]), context: .empty))
+      }
+      let payload = try #require(output.objectValue?["structuredContent"]?.objectValue?["result"])
+      #expect(payload.objectValue?["stdout"] == .string("空 格;$(no-execution)"))
+      #expect(payload.objectValue?["exit_code"] == .number(0))
+      #expect(output.objectValue?["isError"] == .bool(false))
+      let structured = try CompositionFixture(text: PluginManifestFixture.combined)
+      defer { structured.cleanup() }
+      #expect(throws: ConfigurationError.self) { try structured.resolve(settings: settings) }
+    }
   }
 
   @Test(arguments: [false, true])
   func pluginToolsUseTheSameProfileSelectionAndGenericCallPolicy(all: Bool) async throws {
-    let fixture = try CompositionFixture()
+    let fixture = try CompositionFixture(
+      text: PluginManifestFixture.combined.replacingOccurrences(
+        of: "transport = 'stdio'\nexecutable = { dependency = 'vendor' }\nargs = ['mcp']",
+        with: "transport = 'http'\nurl = 'https://plugin.example.test/mcp'"
+      ).replacingOccurrences(
+        of: "tree = { kind = 'introspection', args = ['schema', '--json'] }\n", with: ""))
     defer { fixture.cleanup() }
     var settings = fixture.settings
     settings.mcp["native"] = .init(
@@ -455,33 +470,57 @@ struct PluginResolverTests {
       prefix: "package", allowAnyTool: all, allowedTools: all ? [] : ["inspect"],
       toolRisks: ["inspect": .readOnly])
     let plugin = try fixture.resolve(settings: settings)
+    #expect(plugin.mcpServers.first?.transport == .http)
     let configuration = GatewayConfiguration(
       runtime: .init(caller: .secureTunnel, profileID: .chatGPTOperate),
       profiles: [
         .init(
-          id: .chatGPTOperate, allowedCallers: [.secureTunnel], mcpServers: ["native"],
-          mode: .projectOperations)
+          id: .chatGPTOperate,
+          permissions: fixturePermissions([
+            .plugin(fixture.package.manifest.id): .granted(.use),
+            .project("fixture"): .granted(.write),
+          ]),
+          allowedCallers: [.secureTunnel])
       ],
       mcp: .init(servers: [
         .init(id: "private", transport: .stdio, command: "/bin/cat", allowAnyTool: true)
       ]))
+    let database = try GatewayDatabase(inMemory: ())
+    let project = RegisteredProject(
+      id: "fixture", displayName: "Fixture", rootPath: fixture.root.path)
+    try database.saveProject(project)
+    try database.saveProfile(configuration.profiles[0].grant)
+    var platform = fixtureHostedPlatform()
+    platform.permissionPolicyReader = TestManagedPolicyReader()
+    let client = CompositionCatalogClient()
     let runtime = try GatewayRuntime(
       configuration: configuration,
-      registeredProjects: [
-        .init(id: "fixture", displayName: "Fixture", rootPath: fixture.root.path)
-      ],
-      platform: MacOSPlatform.services(launcher: testExecutionLauncher()),
-      mcpClient: CompositionCatalogClient(), plugins: [plugin])
+      context: .init(
+        caller: .secureTunnel, profileID: .chatGPTOperate, projectID: project.id,
+        trustedPrincipalID: "plugin-resolver-fixture"),
+      database: database, registeredProjects: [project], platform: platform,
+      mcpClient: client, plugins: [plugin])
     do {
-      let tools = try runtime.listTools(context: .empty).map(\.name)
+      let listed = try runtime.listTools(context: .empty)
+      let tools = listed.map(\.name)
+      #expect(client.discoveryCount == 0 && client.callCount == 0)
+      let inspect = try #require(listed.first { $0.name == "package.inspect" })
+      #expect(inspect.inputSchema.objectValue?["type"] == .string("object"))
+      #expect(
+        inspect.inputSchema.objectValue?["properties"]?.objectValue?["input"]
+          == .object(["type": .string("string")]))
       #expect(tools.contains("package.inspect"))
       #expect(tools.contains("package.future") == all)
       _ = try runtime.callTool(name: "package.inspect", arguments: .object([:]), context: .empty)
+      #expect(client.discoveryCount == 1)
+      #expect(client.callCount == 1)
       _ = try runtime.callTool(
         name: "mcp.tools.call",
         arguments: .object([
           "server": .string("native"), "tool": .string("inspect"), "arguments": .object([:]),
         ]), context: .empty)
+      #expect(client.discoveryCount == 2)
+      #expect(client.callCount == 2)
       #expect(throws: (any Error).self) {
         try runtime.callTool(
           name: "mcp.tools.call",
@@ -489,6 +528,30 @@ struct PluginResolverTests {
             "server": .string("private"), "tool": .string("inspect"), "arguments": .object([:]),
           ]), context: .empty)
       }
+      #expect(client.discoveryCount == 2)
+      #expect(client.callCount == 2)
+      var grant = try #require(try database.profiles().first { $0.id == .chatGPTOperate })
+      let revision = grant.authorizationRevision
+      try grant.permissions.set(.notGranted, for: .plugin(fixture.package.manifest.id))
+      try database.saveProfile(grant, expectedRevision: revision)
+      let requestable = try runtime.listTools(context: .empty).map(\.name)
+      #expect(requestable.contains("package.inspect"))
+      #expect(requestable.contains("package.future") == all)
+      #expect(client.discoveryCount == 2)
+      #expect(client.callCount == 2)
+      do {
+        _ = try runtime.callTool(name: "package.inspect", arguments: .object([:]), context: .empty)
+        Issue.record("An ungranted Plugin dispatched a downstream call")
+      } catch let error as GatewayPermissionCallError {
+        guard case .required(let requests, _) = error else { throw error }
+        #expect(
+          requests.contains {
+            guard case .permission(let content) = $0.content else { return false }
+            return content.requirement.permission == .plugin(fixture.package.manifest.id)
+          })
+      }
+      #expect(client.discoveryCount == 2)
+      #expect(client.callCount == 2)
       #expect(runtime.pluginOrigins.count == 3)
       #expect(runtime.pluginDiagnostics.isEmpty)
       await runtime.shutdown()
@@ -496,6 +559,22 @@ struct PluginResolverTests {
       await runtime.shutdown()
       throw error
     }
+  }
+
+  private func withOwnerFixture(
+    text: String? = nil, script: String? = nil,
+    _ operation: (CompositionFixture) async throws -> Void
+  ) async throws {
+    let fixture = try CompositionFixture(text: text, script: script)
+    do {
+      try await operation(fixture)
+    } catch {
+      try await fixture.finishOwnedLaunches()
+      fixture.cleanup()
+      throw error
+    }
+    try await fixture.finishOwnedLaunches()
+    fixture.cleanup()
   }
 
   @Test
@@ -515,7 +594,28 @@ struct PluginResolverTests {
   }
 }
 
-private struct CompositionCatalogClient: DownstreamMCPClient {
+private final class CompositionCatalogClient: DownstreamMCPClient, @unchecked Sendable {
+  private let lock = NSLock()
+  private var discoveries = 0
+  private var calls = 0
+  var discoveryCount: Int { lock.withLock { discoveries } }
+  var callCount: Int { lock.withLock { calls } }
+
+  private static var tools: [MCPTool] {
+    ["inspect", "future"].map {
+      MCPTool(
+        name: $0, description: $0,
+        inputSchema: .object([
+          "type": .string("object"),
+          "properties": .object(["input": .object(["type": .string("string")])]),
+        ]))
+    }
+  }
+
+  func cachedTools(server: MCPServerConfig, context: InvocationContext) -> [MCPTool]? {
+    Self.tools
+  }
+
   func makeScopedClient(
     workingDirectory: URL, environment: [String: String], hostContext: (any MCPHostEnvironment)?
   )
@@ -523,14 +623,14 @@ private struct CompositionCatalogClient: DownstreamMCPClient {
   { self }
 
   func listTools(server: MCPServerConfig, context: InvocationContext) throws -> [MCPTool] {
-    ["inspect", "future"].map {
-      MCPTool(name: $0, description: $0, inputSchema: .object(["type": .string("object")]))
-    }
+    lock.withLock { discoveries += 1 }
+    return Self.tools
   }
   func callTool(
     server: MCPServerConfig, name: String, arguments: JSONValue, context: InvocationContext
   ) throws -> JSONValue {
-    .object([
+    lock.withLock { calls += 1 }
+    return .object([
       "content": .array([
         .object(["type": .string("text"), "text": .string("\(server.id):\(name)")])
       ])
@@ -555,8 +655,10 @@ private struct CompositionCatalogClient: DownstreamMCPClient {
   { .null }
 }
 
-private struct CompositionFixture {
+private struct CompositionFixture: Sendable {
   let root: URL
+  private let observations = ExecutionObservations()
+  var ownerLauncher: ExecutionLauncher { testExecutionLauncher(observations: observations) }
   let package: PluginPackage
   let settings = PluginSettings(
     enabled: true,
@@ -596,6 +698,33 @@ private struct CompositionFixture {
       package: package, source: .init(kind: kind, root: package.root),
       settings: settings ?? self.settings, dependencyExecutables: bindings,
       hostVersion: PluginVersion("1.0.29"), architecture: "arm64")
+  }
+
+  func withOwnerLaunch<Result>(_ operation: () throws -> Result) throws -> Result {
+    let home = root.appendingPathComponent("owner-home", isDirectory: true)
+    try FileManager.default.createDirectory(
+      at: home, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+    let administration = try ExecutionAdministration(
+      mode: .fullAccess,
+      environment: .init(fullAccessVariables: [
+        "PATH": "/usr/bin:/bin", "HOME": home.path, "TMPDIR": home.path + "/",
+        "TMP": home.path, "TEMP": home.path,
+      ]))
+    return try ExecutionAdministration.$current.withValue(administration, operation: operation)
+  }
+
+  func finishOwnedLaunches() async throws {
+    var firstError: (any Error)?
+    for ownership in observations.ownerships {
+      do {
+        _ = try await ownership.cancel()
+        let members = try await ownership.members()
+        try #require(members.isEmpty)
+      } catch {
+        firstError = firstError ?? error
+      }
+    }
+    if let firstError { throw firstError }
   }
 
   func cleanup() { try? FileManager.default.removeItem(at: root) }

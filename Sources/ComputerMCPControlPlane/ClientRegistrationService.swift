@@ -307,9 +307,13 @@ package struct ClientRegistrationService: Sendable {
   func run(_ executable: String, _ arguments: [String], _ environment: [String: String]) throws
     -> CommandResult
   {
-    try processRunner.run(
-      executable: executable, arguments: arguments, environment: environment,
-      timeoutMilliseconds: timeoutMilliseconds, maxOutputBytes: maxOutputBytes)
+    try ExecutionAdministration.$current.withValue(
+      .init(mode: .fullAccess, environment: try .init(fullAccessVariables: environment))
+    ) {
+      try processRunner.run(
+        executable: executable, arguments: arguments, environment: environment,
+        timeoutMilliseconds: timeoutMilliseconds, maxOutputBytes: maxOutputBytes)
+    }
   }
 
   func execute(_ action: ClientRegistrationAction, plan: RegistrationPlanContents)

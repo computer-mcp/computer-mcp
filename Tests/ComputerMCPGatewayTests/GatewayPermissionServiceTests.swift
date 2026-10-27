@@ -10,6 +10,123 @@ import Testing
 @testable import ComputerMCPGateway
 
 @Suite struct GatewayPermissionServiceTests {
+  @Test func ownerAskEntriesPersistAndOverrideFallbackAuthority() throws {
+    let f = try PermissionServiceFixture()
+    var profile = try #require(f.view().profiles.first)
+    let concrete: [PermissionRequirement] = try [
+      .init(.screen, .access), .init(.project("fixture"), .write),
+      .init(.plugin("fixture"), .use), .init(.mcpServer("fixture"), .all),
+    ]
+    for requirement in concrete {
+      try profile.permissions.set(.granted(requirement.value), for: requirement.permission)
+    }
+    try profile.permissions.set(.granted(.write), for: .project("*"))
+    try profile.permissions.set(.granted(.use), for: .plugin("*"))
+    try profile.permissions.set(.granted(.all), for: .mcpServer("*"))
+    try f.update(profile)
+    let requirements = InvocationRequirements(actions: concrete.map { .init(requirement: $0) })
+    guard case .allowed(let admitted) = try f.admit(requirements: requirements) else {
+      throw PermissionServiceTestError.unexpected
+    }
+    let execution = try f.store.transactionWithDatabase { _, ledger in
+      try ledger.startExecution(
+        owner: f.client.principal, authorizationIDs: [admitted.id], now: f.now)
+    }
+    profile = try #require(f.view().profiles.first)
+    for requirement in concrete {
+      try profile.permissions.set(.notGranted, for: requirement.permission)
+    }
+    let previousRevision = profile.authorizationRevision
+    try f.update(profile)
+    let stored = try #require(f.view().profiles.first)
+    #expect(stored.authorizationRevision == previousRevision + 1)
+    for requirement in concrete {
+      #expect(stored.permissions.entries[requirement.permission] == .notGranted)
+    }
+    guard case .requests(let requests) = try f.admit(arguments: "ask", requirements: requirements)
+    else {
+      throw PermissionServiceTestError.unexpected
+    }
+    let requested = requests.compactMap { request -> Permission? in
+      if case .permission(let content) = request.content { return content.requirement.permission }
+      return nil
+    }
+    #expect(Set(requested) == Set(concrete.map(\.permission)))
+    let inherited = try InvocationRequirements(actions: [
+      .init(requirement: .init(.project("other"), .write)),
+      .init(requirement: .init(.plugin("other"), .use)),
+      .init(requirement: .init(.mcpServer("other"), .all)),
+    ])
+    #expect(isAllowed(try f.admit(arguments: "fallback", requirements: inherited)))
+    try f.store.transactionWithDatabase { _, ledger in
+      #expect(ledger.executions[execution.id]?.revoked == true)
+      #expect(ledger.pendingExecutionTerminations.contains(execution.id))
+      #expect(
+        ledger.executionAccess(
+          execution.id, principal: f.client.principal, operation: .readResult,
+          now: f.now) == .denied(.authorizationRevoked))
+    }
+  }
+
+  @Test(arguments: [
+    "project-empty", "project-pattern", "plugin-control", "mcp-length",
+    "network-object", "network-host", "automation-wildcard", "automation-components",
+  ])
+  func invalidOwnerProfileFieldsLeaveSavedAuthorityUnchanged(field: String) throws {
+    let f = try PermissionServiceFixture()
+    let before = try f.view()
+    var profile = try #require(before.profiles.first)
+    switch field {
+    case "project-empty": try profile.permissions.set(.notGranted, for: .project(""))
+    case "project-pattern": try profile.permissions.set(.notGranted, for: .project("prefix*"))
+    case "plugin-control": try profile.permissions.set(.notGranted, for: .plugin("bad\nplugin"))
+    case "mcp-length":
+      try profile.permissions.set(.notGranted, for: .mcpServer(String(repeating: "x", count: 257)))
+    case "network-object": profile.projectNetworks["prefix*"] = .trusted
+    case "network-host":
+      profile.projectNetworks["fixture"] = .custom(hosts: ["bad host"], includesTrusted: false)
+    case "automation-wildcard": profile.automation["*"] = .allow
+    default: profile.automation["com..fixture"] = .allow
+    }
+    #expect(throws: PermissionModelError.invalidObject) { try f.update(profile) }
+    #expect(try f.view().profiles == before.profiles)
+    #expect(try f.view().revision == before.revision)
+  }
+
+  @Test func askEntriesDoNotPermitRemoteLocalAdministratorProfiles() throws {
+    let f = try PermissionServiceFixture()
+    var profile = ProfileGrant(id: .localAdmin, allowedCallers: [.secureTunnel])
+    try profile.permissions.set(.notGranted, for: .screen)
+    let before = try f.view()
+    #expect(throws: GatewayPolicyConfigurationError.localAdminCannotBeRemote) {
+      try f.service.updateProfile(
+        profile, owner: f.owner, expectedProfileRevision: nil,
+        expectedRevision: before.revision, now: f.now)
+    }
+    #expect(try f.view().profiles == before.profiles)
+    #expect(try f.view().revision == before.revision)
+  }
+
+  @Test(arguments: [
+    (Permission.screen, PermissionValue.access, PermissionValue.use),
+    (.project("fixture"), .read, .access), (.plugin("fixture"), .use, .write),
+    (.mcpServer("fixture"), .all, .use), (.filesAndFolders(.documents), .read, .write),
+  ])
+  func profilePayloadsRejectPermissionValuesFromOtherDomains(
+    permission: Permission, valid: PermissionValue, invalid: PermissionValue
+  ) throws {
+    var profile = ProfileGrant(id: .chatGPTOperate, allowedCallers: [.secureTunnel])
+    try profile.permissions.set(.granted(valid), for: permission)
+    let encoded = String(decoding: try JSONEncoder().encode(profile), as: UTF8.self)
+    let payload = Data(
+      encoded.replacingOccurrences(
+        of: "\"" + valid.rawValue + "\"", with: "\"" + invalid.rawValue + "\""
+      ).utf8)
+    #expect(throws: PermissionModelError.invalidPermissionValue) {
+      _ = try JSONDecoder().decode(ProfileGrant.self, from: payload)
+    }
+  }
+
   @Test func admissionsAndRepeatedViewsDoNotInvalidateOwnerAnswers() throws {
     let f = try PermissionServiceFixture()
     let request = try f.request()
@@ -158,6 +275,70 @@ import Testing
       expectedRevision: view.revision, profileEdits: [edited], now: f.now)
     #expect(try f.admit() == .denied(.permissionDenied(.screen)))
     #expect(try f.view().unconfirmedProfileIDs.isEmpty)
+  }
+
+  @Test(arguments: [false, true])
+  func confirmationRequiresEverySavedProfileAtItsReviewedRevision(suspended: Bool) throws {
+    let f = try PermissionServiceFixture()
+    try f.answer(f.request().id, .always)
+    try f.service.updateProfile(
+      ProfileGrant(id: .localAdmin, allowedCallers: [.localApp]), owner: f.owner,
+      expectedProfileRevision: nil, expectedRevision: f.view().revision, now: f.now)
+    if suspended {
+      f.counter.forget()
+      #expect(try f.admit() == .denied(.authoritySuspended))
+      let epoch = try #require(f.view().epoch)
+      try f.store.transactionWithDatabase { _, ledger in try ledger.acknowledgeEpochRecovery(epoch)
+      }
+    } else {
+      try f.connection.writer.write {
+        try $0.execute(sql: "UPDATE permissionProfiles SET authorityEpoch = NULL")
+      }
+    }
+    let review = try f.view()
+    let epoch = try #require(review.epoch)
+    let first = try #require(review.profiles.first)
+    #expect(review.profiles.count == 2)
+    let savedEpochs = try f.connection.writer.read {
+      try ProfileRecord.order(Column("id")).fetchAll($0).map(\.authorityEpoch)
+    }
+    var duplicate = review.profiles
+    duplicate.append(first)
+    var unknown = review.profiles
+    unknown[0].id = .chatGPTObserve
+    for incomplete in [[], [first], duplicate, unknown] {
+      #expect(throws: GatewayPermissionError.invalidBinding) {
+        try f.service.confirmAuthority(
+          owner: f.owner, epoch: epoch, expectedRevision: review.revision,
+          profileEdits: incomplete, now: f.now)
+      }
+      #expect(try f.view().profiles == review.profiles)
+      #expect(try f.view().revision == review.revision)
+      #expect(try f.view().suspended == suspended)
+      #expect(
+        try f.connection.writer.read {
+          try ProfileRecord.order(Column("id")).fetchAll($0).map(\.authorityEpoch)
+        } == savedEpochs)
+      #expect(try f.admit() == .denied(.authoritySuspended))
+    }
+    var stale = review.profiles
+    stale[0].authorizationRevision += 1
+    #expect(throws: GatewayPermissionError.revisionConflict) {
+      try f.service.confirmAuthority(
+        owner: f.owner, epoch: epoch, expectedRevision: review.revision,
+        profileEdits: stale, now: f.now)
+    }
+    #expect(try f.view().profiles == review.profiles)
+    #expect(try f.admit() == .denied(.authoritySuspended))
+    var approved = review.profiles
+    let clientIndex = try #require(approved.firstIndex { $0.id == .chatGPTOperate })
+    try approved[clientIndex].permissions.set(.denied, for: .screen)
+    try f.service.confirmAuthority(
+      owner: f.owner, epoch: epoch, expectedRevision: review.revision,
+      profileEdits: approved, now: f.now)
+    #expect(try f.view().unconfirmedProfileIDs.isEmpty)
+    #expect(try !f.view().suspended)
+    #expect(try f.admit() == .denied(.permissionDenied(.screen)))
   }
 
   @Test func sourceReadsDoNotHoldTheDatabaseWriter() throws {
@@ -364,8 +545,10 @@ import Testing
     #expect(suspended.suspended)
     let epoch = try #require(suspended.epoch)
     try f.store.transactionWithDatabase { _, ledger in try ledger.acknowledgeEpochRecovery(epoch) }
+    let review = try f.view()
     try f.service.confirmAuthority(
-      owner: f.owner, epoch: epoch, expectedRevision: f.view().revision, now: f.now)
+      owner: f.owner, epoch: epoch, expectedRevision: review.revision,
+      profileEdits: review.profiles, now: f.now)
     #expect(isAllowed(try f.admit()))
     #expect(try f.view().requests.isEmpty)
   }
@@ -521,8 +704,9 @@ private final class PermissionServiceFixture: @unchecked Sendable {
     }
     let view = try service.view(owner: owner, now: now)
     try service.confirmAuthority(
-      owner: owner, epoch: #require(view.epoch), expectedRevision: view.revision, now: now)
-    let profile = PermissionProfile(id: .chatGPTOperate, allowedCallers: [.secureTunnel])
+      owner: owner, epoch: #require(view.epoch), expectedRevision: view.revision,
+      profileEdits: view.profiles, now: now)
+    let profile = ProfileGrant(id: .chatGPTOperate, allowedCallers: [.secureTunnel])
     try service.updateProfile(
       profile, owner: owner, expectedProfileRevision: nil,
       expectedRevision: service.view(owner: owner, now: now).revision, now: now)
@@ -554,7 +738,7 @@ private final class PermissionServiceFixture: @unchecked Sendable {
     _ = try service.answerRequest(
       id, answer: answer, owner: owner, expectedRevision: view().revision, now: now)
   }
-  func update(_ profile: PermissionProfile) throws {
+  func update(_ profile: ProfileGrant) throws {
     try service.updateProfile(
       profile, owner: owner, expectedProfileRevision: profile.authorizationRevision,
       expectedRevision: view().revision, now: now)

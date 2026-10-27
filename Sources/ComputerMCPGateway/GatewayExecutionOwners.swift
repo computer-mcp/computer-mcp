@@ -87,7 +87,7 @@ package enum GatewayOwnerRouting {
       tool: MCPTool(
         name: "runtime.owners.call",
         description:
-          "Call a gateway tool on one retained execution owner. Supply its exact owner, target tool and unchanged target arguments. Current target permissions and approvals still apply; stale owners fail without launching replacements. For operations.prepare or operations.commit, use the same owner for both calls.",
+          "Call a gateway tool on one retained execution owner. Supply its exact owner, target tool and unchanged target arguments. Current target permissions still apply; stale owners fail without launching replacements.",
         inputSchema: .object([
           "type": .string("object"),
           "properties": .object([

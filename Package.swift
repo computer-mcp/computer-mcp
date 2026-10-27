@@ -102,7 +102,7 @@ let neutralTargets: [Target] =
       dependencies: [
         "ComputerMCPToolsFiles", "ComputerMCPToolKit", "ComputerMCPCore",
         "ComputerMCPConfiguration", "ComputerMCPPlatform", "ComputerMCPPlatformPOSIX",
-        "ComputerMCPTestSupport",
+        "ComputerMCPProcess", "ComputerMCPTestSupport",
       ]),
     .target(
       name: "ComputerMCPToolsProject",
@@ -128,6 +128,7 @@ let neutralTargets: [Target] =
     .testTarget(
       name: "ComputerMCPToolsMCPTests",
       dependencies: [
+        "ComputerMCPPermissions",
         "ComputerMCPToolsMCP", "ComputerMCPToolKit", "ComputerMCPCore",
         "ComputerMCPConfiguration", "ComputerMCPDownstream", "ComputerMCPTestSupport",
       ]),
@@ -154,7 +155,7 @@ let neutralTargets: [Target] =
       name: "ComputerMCPToolsStructuredTests",
       dependencies: [
         "ComputerMCPToolsStructured", "ComputerMCPToolKit", "ComputerMCPCore",
-        "ComputerMCPConfiguration",
+        "ComputerMCPConfiguration", "ComputerMCPProcess",
         "ComputerMCPPlatform", "ComputerMCPTestSupport",
       ]),
     .target(
@@ -222,6 +223,7 @@ let neutralTargets: [Target] =
       dependencies: [
         "ComputerMCPToolsCLI", "ComputerMCPToolKit", "ComputerMCPCore", "ComputerMCPConfiguration",
         "ComputerMCPPlatform", "ComputerMCPPlatformPOSIX", "ComputerMCPProcess",
+        "ComputerMCPPermissions", "ComputerMCPSandbox",
         "ComputerMCPTestSupport", .product(name: "Crypto", package: "swift-crypto"),
       ]),
     .target(
@@ -282,6 +284,7 @@ let neutralTargets: [Target] =
     .testTarget(
       name: "ComputerMCPDownstreamTests",
       dependencies: [
+        "ComputerMCPSandbox",
         "ComputerMCPDownstream", "ComputerMCPCore", "ComputerMCPConfiguration",
         "ComputerMCPPlatform",
         "ComputerMCPProcess", "ComputerMCPTestSupport",
@@ -407,7 +410,8 @@ let neutralTargets: [Target] =
       name: "ComputerMCPToolKitTests",
       dependencies: [
         "ComputerMCPToolKit", "ComputerMCPConfiguration", "ComputerMCPCore", "ComputerMCPPlatform",
-        "ComputerMCPPlatformPOSIX", "ComputerMCPProcess", "ComputerMCPTestSupport",
+        "ComputerMCPPlatformPOSIX", "ComputerMCPProcess", "ComputerMCPSandbox",
+        "ComputerMCPTestSupport",
       ]
     ),
     .testTarget(
@@ -426,6 +430,7 @@ let neutralTargets: [Target] =
     .testTarget(
       name: "ComputerMCPProcessTests",
       dependencies: [
+        "ComputerMCPPermissions", "ComputerMCPSandbox",
         "ComputerMCPConfiguration", "ComputerMCPCore", "ComputerMCPPlatform",
         "ComputerMCPPlatformPOSIX", "ComputerMCPProcess", "ComputerMCPTestSupport",
       ]
@@ -505,6 +510,7 @@ let neutralTargets: [Target] =
       .target(
         name: "ComputerMCPMacOS",
         dependencies: [
+          "ComputerMCPEgress",
           "ComputerMCPPlugins",
           "ComputerMCPComputerUse",
           "ComputerMCPToolsShell",
@@ -565,7 +571,7 @@ let neutralTargets: [Target] =
       .testTarget(
         name: "ComputerMCPMacOSTests",
         dependencies: [
-          "ComputerMCPPermissions",
+          "ComputerMCPSandbox", "ComputerMCPPermissions",
           "computer-mcp",
           "ComputerMCPComputerUse",
           "ComputerMCPControlPlane",
@@ -632,7 +638,8 @@ let neutralTargets: [Target] =
         name: "ComputerMCPToolsFilesDarwinTests",
         dependencies: [
           "ComputerMCPToolsFiles", "ComputerMCPToolKit", "ComputerMCPCore",
-          "ComputerMCPConfiguration", "ComputerMCPPlatformDarwin", "ComputerMCPTestSupport",
+          "ComputerMCPConfiguration", "ComputerMCPPlatformDarwin", "ComputerMCPProcess",
+          "ComputerMCPTestSupport",
         ]),
       .testTarget(
         name: "ComputerMCPToolsProjectDarwinTests",
@@ -683,6 +690,9 @@ let neutralTargets: [Target] =
   )
   for target in package.targets where target.type == .test {
     target.dependencies.append("ComputerMCPDarwinTestSupport")
+    if target.name == "ComputerMCPGatewayTests" {
+      target.dependencies.append("ComputerMCPPlatformDarwin")
+    }
   }
 #elseif os(Linux)
   for target in neutralTargets where target.name == "ComputerMCPTestSupport" {

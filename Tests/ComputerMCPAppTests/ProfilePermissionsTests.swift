@@ -1,4 +1,5 @@
 import AppKit
+import ComputerMCPPermissions
 import Foundation
 import SwiftUI
 import Testing
@@ -12,47 +13,90 @@ import Testing
 @Suite(.timeLimit(.minutes(1)))
 struct ProfilePermissionsTests {
   @Test
-  func broadDefaultsBecomeExplicitCurrentSelectionsWithoutFullAccess() {
-    var grant = ProfileGrant.localAdmin
-    grant.id = .chatGPTOperate
-    grant.allowedCallers = [.secureTunnel]
-    let options = permissionOptions(grant: grant)
-    let draft = ProfilePermissionsDraft(options: options)
-    let saved = draft.savedGrant
-    #expect(draft.replacesBroadGrants)
-    #expect(saved.mode == .projectOperations && !saved.fullShellEnabled)
-    #expect(saved.projectIDs == ["project"])
-    #expect(saved.mcpServerIDs == ["notes"])
+  func draftPreservesWildcardDenialsNetworksAndFullAccess() throws {
+    var grant = ProfileGrant.operate
+    try grant.permissions.set(.granted(.write), for: .project("*"))
+    try grant.permissions.set(.denied, for: .project("private"))
+    grant.projectNetworks["*"] = .custom(hosts: ["example.com"], includesTrusted: true)
+    grant.fullAccess = true
+    try grant.permissions.set(.granted(.use), for: .plugin("saved-plugin"))
+    try grant.permissions.set(.granted(.all), for: .mcpServer("saved-server"))
+    grant.automation["com.example.AutomationTarget"] = .allow
+    grant.projectNetworks["network-only"] = .full
+    let draft = ProfilePermissionsDraft(options: permissionOptions(grant: grant))
+    #expect(draft.grant == grant)
+    #expect(draft.projectIDs == ["network-only", "private", "project"])
+    #expect(draft.pluginIDs.contains("saved-plugin"))
+    #expect(draft.serverIDs.contains("saved-server"))
+    #expect(draft.automationTargets == ["com.example.AutomationTarget"])
+    #expect(draft.options.permissionRevision == 17)
+    #expect(draft.options.grant.authorizationRevision == grant.authorizationRevision)
+    #expect(draft.grant.permissions.state(for: .project("private")) == .denied)
     #expect(
-      saved.capabilityIDs
-        == Set(["system.time", "file.write"]).union(ProfilePermissionSelection.supportCapabilities))
-    #expect(saved.allowedCallers == [.secureTunnel])
-    #expect(saved.authorizationRevision == grant.authorizationRevision)
+      draft.grant.projectNetworks["*"]?.configuration == grant.projectNetworks["*"]?.configuration)
   }
 
   @Test
-  func deselectingIntegrationAlsoRevokesItsIndividualVisibleTools() {
-    let grant = ProfileGrant(
-      id: .chatGPTOperate, capabilityIDs: ["notes.search", "custom.unavailable"],
-      allowedCallers: [.secureTunnel], mcpServerIDs: ["notes"], mode: .projectOperations)
+  func authorityReviewIncludesEverySavedRuleAndActualNetworkHosts() throws {
+    var grant = ProfileGrant.operate
+    try grant.permissions.set(.granted(.write), for: .project("*"))
+    try grant.permissions.set(.denied, for: .plugin("unavailable-plugin"))
+    try grant.permissions.set(.notGranted, for: .mcpServer("unavailable-server"))
+    grant.projectNetworks["saved-project"] = .custom(
+      hosts: ["api.example.com", "*.example.org"], includesTrusted: true)
+    grant.automation["com.example.target"] = .allow
+    let rows = ProfileAuthorityReviewRow.rows(for: grant)
+    #expect(
+      rows.count == grant.permissions.entries.count + grant.projectNetworks.count
+        + grant.automation.count)
+    #expect(rows.contains { $0.title.contains("unavailable-plugin") })
+    #expect(rows.contains { $0.title.contains("unavailable-server") })
+    #expect(
+      rows.contains { $0.value.contains("api.example.com") && $0.value.contains("*.example.org") })
+    #expect(rows.contains { $0.title.contains("com.example.target") })
+  }
+
+  @Test
+  func authorityRowsShowKnownNamesAndStableIDsWithLocalizedPermissionLabels() throws {
+    let names = PermissionObjectNames(
+      projects: ["project-id": "My Project"], plugins: ["plugin-id": "My Plugin"],
+      mcpServers: ["server-id": "My Server"])
+    var profile = ProfileGrant.operate
+    try profile.permissions.set(.granted(.read), for: .project("project-id"))
+    try profile.permissions.set(.granted(.use), for: .plugin("plugin-id"))
+    try profile.permissions.set(.granted(.read), for: .mcpServer("server-id"))
+    let rows = ProfileAuthorityReviewRow.rows(for: profile, names: names)
+    for (id, name) in [
+      ("project-id", "My Project"), ("plugin-id", "My Plugin"), ("server-id", "My Server"),
+    ] {
+      #expect(rows.contains { $0.title.contains(id) && $0.title.contains(name) })
+    }
+    #expect(names.title(for: .screen) == AppLocalization.string("Screen"))
+    #expect(names.title(for: .project("unknown-id")).contains("unknown-id"))
+    #expect(PermissionObjectNames.profile(.chatGPTOperate).contains("chatgpt-operate"))
+  }
+
+  @Test
+  func invalidCustomHostsDoNotPublishAProfile() async throws {
+    let service = PermissionOptionsFake()
+    let model = ProfilePermissionsModel(profileID: .chatGPTOperate, controlPlane: service)
+    await model.load()
+    model.draft?.grant.projectNetworks["saved-project"] = .custom(
+      hosts: ["https://example.com/path"], includesTrusted: false)
+    #expect(!(await model.save()))
+    #expect(service.writes.isEmpty)
+    #expect(model.errorMessage != nil)
+    #expect(model.draft?.projectIDs.contains("saved-project") == true)
+  }
+
+  @Test
+  func explicitRequestableOverrideSurvivesSaving() throws {
+    var grant = ProfileGrant.operate
+    try grant.permissions.set(.granted(.all), for: .mcpServer("*"))
     var draft = ProfilePermissionsDraft(options: permissionOptions(grant: grant))
-    draft.selectIntegration("notes", selected: false)
-    #expect(draft.savedGrant.mcpServerIDs.isEmpty)
-    #expect(!draft.savedGrant.capabilityIDs.contains("notes.search"))
-    #expect(draft.savedGrant.capabilityIDs.contains("custom.unavailable"))
-    #expect(!draft.savedGrant.allowedCallers.contains(.localMCP))
-  }
-
-  @Test
-  func observeCanNeverSaveAnArbitraryExecutionGrant() {
-    var draft = ProfilePermissionsDraft(options: permissionOptions())
-    draft.grant.mode = .readOnly
-    draft.grant.fullShellEnabled = true
-    draft.grant.capabilityIDs.formUnion(["*", "shell.run", "mcp.tools.call"])
-    let saved = draft.savedGrant
-    #expect(saved.mode == .readOnly && !saved.fullShellEnabled)
-    #expect(saved.capabilityIDs.isDisjoint(with: ["*", "shell.run", "mcp.tools.call"]))
-    #expect(!saved.permitsRisk(.projectWrite) && !saved.permitsRisk(.fullShell))
+    try draft.grant.permissions.set(.notGranted, for: .mcpServer("notes"))
+    #expect(draft.grant.permissions.state(for: .mcpServer("notes")) == .notGranted)
+    #expect(draft.grant.permissions.state(for: .mcpServer("other")) == .granted(.all))
   }
 
   @Test
@@ -105,40 +149,29 @@ struct ProfilePermissionsTests {
       try render(
         ProfilePermissionsEditor(model: model), size: .init(width: 660, height: 740),
         appearance: try #require(NSAppearance(named: dark ? .darkAqua : .aqua)),
-        name: dark ? "restricted-permissions-dark" : "restricted-permissions-light")
+        name: dark ? "profile-permissions-dark" : "profile-permissions-light")
       try render(
         ProfilePermissionsEditor(model: model), size: .init(width: 660, height: 740),
         appearance: try #require(NSAppearance(named: dark ? .darkAqua : .aqua)),
-        name: dark ? "restricted-projects-dark" : "restricted-projects-light", scrollToBottom: true)
+        name: dark ? "profile-projects-dark" : "profile-projects-light", scrollToBottom: true)
     }
     #expect(service.writes.isEmpty)
   }
 }
 
 private func permissionOptions(grant: ProfileGrant = .operate) -> ProfilePermissionOptions {
-  let project = RegisteredProject(
+  let project = ComputerMCPCore.RegisteredProject(
     id: "project", displayName: "My Project", rootPath: "/tmp/project")
   return .init(
     grant: grant,
-    capabilities: [
-      .init(
-        id: "system.time", title: "Current Time", summary: "Read the system clock.",
-        descriptor: .init(id: "system.time", risk: .readOnly, requirement: .none)),
-      .init(
-        id: "file.write", title: "Write File", summary: "Write a file in a selected project.",
-        descriptor: .init(id: "file.write", risk: .projectWrite, requirement: .none)),
-      .init(
-        id: "notes.search", title: "Search Notes", summary: "Find notes in the connected account.",
-        descriptor: .init(
-          id: "notes.search", risk: .readOnly, requirement: .none,
-          mcpReference: .init(serverID: "notes", toolName: "search"))),
-    ],
     integrations: [.init(id: "notes", title: "Notes", isEnabled: true)],
-    projects: [project],
+    plugins: [.init(id: "tools", title: "Tools", isEnabled: true)],
+    projects: [project], permissionRevision: 17,
     inputs: .init(
       configuration: GatewayConfiguration(projectDirectory: URL(fileURLWithPath: "/tmp")),
       persisted: .init(
-        projects: [project], projectAliases: [:], profiles: [], plugins: .init())))
+        projects: [project], projectAliases: [:], profiles: [],
+        plugins: .init())))
 }
 
 @MainActor

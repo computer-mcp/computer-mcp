@@ -1,5 +1,6 @@
 import ComputerMCPDownstream
 import ComputerMCPMacOS
+import ComputerMCPPermissions
 import ComputerMCPTestSupport
 import ComputerMCPToolKit
 import ComputerMCPToolsCLI
@@ -119,22 +120,26 @@ struct MCPReexportNamingTests {
   }
 
   @Test
-  func explicitNativeCapabilityEnablesDiscoveryWithoutGenericPermission() throws {
+  func serverPermissionGovernsNativeNameDiscovery() throws {
     var server = Self.server("first", prefix: "")
     server.toolRisks = ["codex.app.status": .readOnly]
     let configuration = GatewayConfiguration(mcp: .init(servers: [server]))
     let policy = MCPToolAccessPolicy(
       configuration: configuration,
       grant: .init(
-        id: .chatGPTOperate, capabilityIDs: ["codex.app.status"], allowedCallers: [.secureTunnel]),
-      derivesObserveGrant: false)
+        id: .chatGPTOperate,
+        permissions: fixturePermissions([.mcpServer("first"): .granted(.read)]),
+        allowedCallers: [.secureTunnel]),
+    )
     #expect(policy.canDiscoverTools(on: server))
     #expect(policy.allows(.init(serverID: "first", toolName: "codex.app.status")))
     #expect(!policy.allows(.init(serverID: "first", toolName: "ungranted")))
     let client = AuthorizedMCPClient(
       base: ReexportNamingClient(["first": ["codex.app.status", "ungranted"]]), policy: policy)
     #expect(
-      try client.listTools(server: server, context: .empty).map(\.name) == ["codex.app.status"])
+      try client.listTools(server: server, context: .empty).map(\.name) == [
+        "codex.app.status", "ungranted",
+      ])
   }
 
   @Test
@@ -147,8 +152,9 @@ struct MCPReexportNamingTests {
     let policy = MCPToolAccessPolicy(
       configuration: .init(mcp: .init(servers: [first, second])),
       grant: .init(
-        id: .chatGPTObserve, capabilityIDs: [], allowedCallers: [.secureTunnel],
-        mcpServerIDs: ["first"]), derivesObserveGrant: false)
+        id: .chatGPTObserve,
+        permissions: fixturePermissions([.mcpServer("first"): .granted(.read)]),
+        allowedCallers: [.secureTunnel]))
     #expect(policy.allows(.init(serverID: "first", toolName: "read")))
     #expect(!policy.allows(.init(serverID: "first", toolName: "write")))
     #expect(!policy.allows(.init(serverID: "first", toolName: "unselected")))
@@ -204,8 +210,7 @@ struct MCPReexportNamingTests {
   }
 
   @Test(arguments: [
-    "project.list", "project.describe", "policy.probe", "operations.prepare",
-    "operations.commit",
+    "project.list", "project.describe", "policy.probe",
   ])
   func nativeToolsCannotReplaceHostManagementTools(name: String) throws {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
@@ -282,6 +287,10 @@ struct MCPReexportNamingTests {
 }
 
 private final class ReexportNamingClient: DownstreamMCPClient, @unchecked Sendable {
+  func cachedTools(server: MCPServerConfig, context: InvocationContext) -> [MCPTool]? {
+    try? listTools(server: server, context: context)
+  }
+
   private let lock = NSLock()
   private var names: [String: [String]]
   private var discoveries: [String] = []

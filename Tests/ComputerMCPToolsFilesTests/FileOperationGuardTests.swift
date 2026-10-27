@@ -46,20 +46,23 @@ struct FileOperationGuardTests {
   private func call(_ provider: FilesToolProvider, _ name: String, _ arguments: [String: JSONValue])
     throws
   {
-    _ = try provider.callTool(.init(name: name, arguments: .object(arguments), context: .empty))
+    _ = try provider.callToolAsFixtureOwner(
+      .init(name: name, arguments: .object(arguments), context: .empty))
   }
 
   @discardableResult
   private func git(_ root: URL, _ arguments: [String]) throws -> String {
     let environment = ToolEnvironment(
       launcher: testExecutionLauncher(), configuration: .init(projectDirectory: root))
-    let result = try environment.commandRunner.runIsolated(
-      executable: testExecutable("git"),
-      arguments: HostGitConfiguration.arguments + arguments, workingDirectory: root,
-      environment: [
-        "PATH": systemUtilityPath, "HOME": root.path, "GIT_CONFIG_NOSYSTEM": "1",
-        "GIT_CONFIG_GLOBAL": "/dev/null",
-      ], timeoutMilliseconds: 10_000, maxOutputBytes: 65_536)
+    let result = try withFileCommandAdministration {
+      try environment.commandRunner.runIsolated(
+        executable: testExecutable("git"),
+        arguments: HostGitConfiguration.arguments + arguments, workingDirectory: root,
+        environment: [
+          "PATH": systemUtilityPath, "HOME": root.path, "GIT_CONFIG_NOSYSTEM": "1",
+          "GIT_CONFIG_GLOBAL": "/dev/null",
+        ], timeoutMilliseconds: 10_000, maxOutputBytes: 65_536)
+    }
     try #require(result.exitCode == 0, "\(result.stderr)")
     return result.stdout
   }

@@ -1,5 +1,6 @@
 import ComputerMCPDownstream
 import ComputerMCPMacOS
+import ComputerMCPPermissions
 import ComputerMCPTestSupport
 import ComputerMCPToolKit
 import ComputerMCPToolsMCP
@@ -17,98 +18,64 @@ import Testing
 
 struct MCPAuthorizationTests {
   @Test
-  func genericCallsUseTheSameHostRiskAndOperationTickets() async throws {
-    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
-    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
-    defer { try? FileManager.default.removeItem(at: root) }
+  func allowedCallsExecuteDirectlyThroughGenericAndReexportedRoutes() async throws {
     let server = MCPServerConfig(
       id: "remote", transport: .stdio, command: "/bin/cat", exposure: .reexport,
       prefix: "remote", allowedTools: ["inspect"], toolRisks: ["inspect": .destructive])
-    let database = try GatewayDatabase(inMemory: ())
+    var permissions = Permissions()
+    try permissions.set(.granted(.all), for: .mcpServer("remote"))
     let client = CatalogClient()
+    let database = try GatewayDatabase(inMemory: ())
+    let grant = ProfileGrant(
+      id: .localAdmin, permissions: permissions, fullAccess: true, allowedCallers: [.localMCP])
+    try database.saveProfile(grant)
+    let context = try fixtureConsentedContext(
+      database: database, grant: grant, caller: .localMCP, platform: fixtureHostedPlatform())
     let runtime = try GatewayRuntime(
-      configuration: GatewayConfiguration(
+      configuration: .init(
         runtime: .init(caller: .localMCP, profileID: .localAdmin),
-        mcp: .init(servers: [server])), database: database,
-      registeredProjects: [.init(id: "fixture", displayName: "Fixture", rootPath: root.path)],
-      platform: MacOSPlatform.services(launcher: testExecutionLauncher()), mcpClient: client)
-    let arguments: JSONValue = .object([
-      "server": .string("remote"), "tool": .string("inspect"), "arguments": .object([:]),
-    ])
-    expectThrows(
-      try runtime.callTool(name: "mcp.tools.call", arguments: arguments, context: .empty)
-    ) { error in
-      #expect(error.localizedDescription.contains("operations.approval_required"))
-    }
-    expectThrows(
-      try runtime.callTool(name: "remote.inspect", arguments: .object([:]), context: .empty)
-    ) { error in
-      #expect(error.localizedDescription.contains("operations.approval_required"))
-    }
-    for name in ["mcp.tools.call", "remote.inspect"] {
-      await #expect(throws: (any Error).self) {
-        try await runtime.callToolAsync(
-          name: name, arguments: name == "mcp.tools.call" ? arguments : .object([:]),
-          context: .empty)
+        profiles: [
+          .init(
+            grant: grant)
+        ],
+        mcp: .init(servers: [server])), context: context, database: database,
+      platform: fixtureHostedPlatform(), mcpClient: client)
+    do {
+      for name in ["mcp.tools.call", "remote.inspect"] {
+        let arguments: JSONValue =
+          name == "mcp.tools.call"
+          ? .object([
+            "server": .string("remote"), "tool": .string("inspect"), "arguments": .object([:]),
+          ])
+          : .object([:])
+        _ = try runtime.callTool(name: name, arguments: arguments, context: .empty)
+        _ = try await runtime.callToolAsync(name: name, arguments: arguments, context: .empty)
       }
+      #expect(client.callCount == 4)
+      await runtime.shutdown()
+    } catch {
+      await runtime.shutdown()
+      throw error
     }
-    let prepared = try runtime.callTool(
-      name: "operations.prepare",
-      arguments: .object(["tool": .string("mcp.tools.call"), "arguments": arguments]),
-      context: .empty)
-    let ticket = try #require(
-      prepared.objectValue?["structuredContent"]?.objectValue?["result"]?.objectValue?["ticket_id"]?
-        .stringValue)
-    #expect(try database.operationTicket(id: ticket)?.state == .pendingApproval)
-    #expect(throws: (any Error).self) {
-      try runtime.callTool(
-        name: "operations.commit",
-        arguments: .object([
-          "ticket_id": .string(ticket), "tool": .string("mcp.tools.call"), "arguments": arguments,
-        ]), context: .empty)
-    }
-    #expect(client.callCount == 0)
-    try database.resolveOperationApproval(id: ticket, approved: true, resolver: .localCLI)
-    _ = try runtime.callTool(
-      name: "operations.commit",
-      arguments: .object([
-        "ticket_id": .string(ticket), "tool": .string("mcp.tools.call"), "arguments": arguments,
-      ]), context: .empty)
-    #expect(client.callCount == 1)
-    await runtime.shutdown()
   }
 
   @Test(arguments: [false, true])
-  func defaultObserveGrantUsesHostClassification(hostReadOnly: Bool) async throws {
-    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
-    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
-    defer { try? FileManager.default.removeItem(at: root) }
+  func defaultProfileListsCachedToolsAsRequestable(hostReadOnly: Bool) async throws {
     let server = MCPServerConfig(
       id: "remote", transport: .stdio, command: "/bin/cat", exposure: .reexport,
       prefix: "remote", allowedTools: ["inspect"],
       toolRisks: hostReadOnly ? ["inspect": .readOnly] : [:])
+    let client = CatalogClient()
     let runtime = try GatewayRuntime(
-      configuration: GatewayConfiguration(
+      configuration: .init(
         runtime: .init(caller: .secureTunnel, profileID: .chatGPTObserve),
         mcp: .init(servers: [server])),
-      registeredProjects: [.init(id: "fixture", displayName: "Fixture", rootPath: root.path)],
-      platform: MacOSPlatform.services(launcher: testExecutionLauncher()),
-      mcpClient: CatalogClient())
-    #expect(
-      try runtime.listTools(context: .empty).contains { $0.name == "remote.inspect" }
-        == hostReadOnly)
-    if !hostReadOnly {
-      #expect(throws: (any Error).self) {
-        try runtime.callTool(name: "remote.inspect", arguments: .object([:]), context: .empty)
-      }
-      await #expect(throws: (any Error).self) {
-        try await runtime.callToolAsync(
-          name: "remote.inspect", arguments: .object([:]), context: .empty)
-      }
-    } else {
-      _ = try await runtime.callToolAsync(
-        name: "remote.inspect", arguments: .object([:]), context: .empty)
-    }
+      context: .init(
+        caller: .secureTunnel, profileID: .chatGPTObserve,
+        trustedPrincipalID: "verified-requestable-client"),
+      platform: fixtureHostedPlatform(), mcpClient: client)
+    #expect(try runtime.listTools(context: .empty).contains { $0.name == "remote.inspect" })
+    #expect(client.callCount == 0)
     await runtime.shutdown()
   }
 
@@ -201,22 +168,6 @@ struct MCPAuthorizationTests {
         == .string("second:inspect"))
   }
 
-  @Test(arguments: [GatewayProfileID.chatGPTObserve, .cloudflareObserve, .chatGPTOperate])
-  func readOnlyModeRejectsWriteRiskEvenWithWildcardGrant(profileID: GatewayProfileID) {
-    let caller: GatewayCallerKind = profileID == .chatGPTObserve ? .secureTunnel : .cloudflareTunnel
-    let grant = ProfileGrant(
-      id: profileID, capabilityIDs: ["*"], allowedCallers: [caller], mode: .readOnly)
-    let decision = GatewayPolicyEvaluator().evaluate(
-      capability: .init(id: "remote.inspect", risk: .externalWrite, requirement: .none),
-      context: .init(caller: caller, profileID: profileID), grant: grant,
-      registeredProjectIDs: [])
-    #expect(
-      decision
-        == .deny(
-          code: .readOnlyProfile,
-          message: "Read-only mode requires a host-classified read-only capability."))
-  }
-
   @Test
   func decodesImplicitMappingApprovalAndExportsAnExplicitSelection() throws {
     let configuration = try GatewayConfiguration.load(
@@ -272,6 +223,10 @@ struct MCPAuthorizationTests {
 }
 
 private struct CatalogClient: DownstreamMCPClient {
+  func cachedTools(server: MCPServerConfig, context: InvocationContext) -> [MCPTool]? {
+    try? listTools(server: server, context: context)
+  }
+
   private let calls = NIOLockedValueBox(0)
   var callCount: Int { calls.withLockedValue { $0 } }
   func makeScopedClient(

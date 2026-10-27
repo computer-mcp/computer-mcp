@@ -1,5 +1,6 @@
 import ComputerMCPProcess
 import ComputerMCPSandbox
+import ComputerMCPTestSupport
 import Darwin
 import Foundation
 import Testing
@@ -7,6 +8,21 @@ import Testing
 @testable import ComputerMCPPlatformDarwin
 
 @Suite struct ExecutionLauncherTests {
+  @Test
+  func launchWithoutAnInstalledContextIsRefusedBeforeEffects() async throws {
+    let fixture = try SeatbeltFixture()
+    defer { fixture.remove() }
+    await #expect(
+      throws: ExecutionEnvironmentError.unavailable("No authorized execution context is installed")
+    ) {
+      try await ExecutionLauncher(platform: platform()).run(
+        executable: .init("/bin/sh"), arguments: ["-c", "touch should-not-exist"],
+        directory: .init(fixture.root.path), environment: .init(fullAccessVariables: [:]),
+        mode: .fullAccess)
+    }
+    #expect(!FileManager.default.fileExists(atPath: fixture.root.path + "/should-not-exist"))
+  }
+
   @Test(.timeLimit(.minutes(1)))
   func inheritedDescriptorMappingsPreserveOverlappingSources() async throws {
     let fixture = try SeatbeltFixture()
@@ -15,12 +31,16 @@ import Testing
     let second = Pipe()
     let firstFD = first.fileHandleForWriting.fileDescriptor
     let secondFD = second.fileHandleForWriting.fileDescriptor
-    let owner = try await ExecutionLauncher(platform: platform()).start(
-      executable: .init("/bin/bash"),
-      arguments: ["-c", "printf first >&\(secondFD); printf second >&\(firstFD)"],
-      directory: fixture.configuration().worktree,
-      environment: ExecutionEnvironment(fullAccessVariables: [:]), mode: .fullAccess,
-      inheritedDescriptors: [firstFD: secondFD, secondFD: firstFD])
+    let owner = try await ExecutionAdministration.$current.withValue(
+      .init(mode: .fullAccess, environment: ExecutionEnvironment(fullAccessVariables: [:]))
+    ) {
+      try await ExecutionLauncher(platform: platform()).start(
+        executable: .init("/bin/bash"),
+        arguments: ["-c", "printf first >&\(secondFD); printf second >&\(firstFD)"],
+        directory: fixture.configuration().worktree,
+        environment: ExecutionEnvironment(fullAccessVariables: [:]), mode: .fullAccess,
+        inheritedDescriptors: [firstFD: secondFD, secondFD: firstFD])
+    }
     try first.fileHandleForWriting.close()
     try second.fileHandleForWriting.close()
     let exit = try await owner.wait()
@@ -39,13 +59,98 @@ import Testing
       temporary: configuration.temporaryDirectory, cache: configuration.cacheDirectory)
     let pipe = Pipe()
     defer { try? pipe.fileHandleForWriting.close() }
-    await #expect(throws: ExecutionEnvironmentError.self) {
-      _ = try await ExecutionLauncher(platform: platform()).start(
-        executable: .init("/bin/sh"), arguments: ["-c", "true"],
-        directory: configuration.worktree, environment: environment,
-        mode: .sandbox(configuration),
-        inheritedDescriptors: [3: pipe.fileHandleForWriting.fileDescriptor])
+    await #expect(
+      throws: ExecutionEnvironmentError.invalidConfiguration(
+        "Sandbox launches cannot inherit extra descriptors")
+    ) {
+      _ = try await ExecutionAdministration.$current.withValue(
+        .init(mode: .sandbox(configuration), environment: environment)
+      ) {
+        try await ExecutionLauncher(platform: platform()).start(
+          executable: .init("/bin/sh"), arguments: ["-c", "true"],
+          directory: configuration.worktree, environment: environment,
+          mode: .sandbox(configuration),
+          inheritedDescriptors: [3: pipe.fileHandleForWriting.fileDescriptor])
+      }
     }
+  }
+
+  @Test(.timeLimit(.minutes(1)), arguments: ExecutionLaunchMethod.allCases)
+  func sandboxLaunchUsesThePhysicalWorktreeForDirectoryAliases(method: ExecutionLaunchMethod)
+    async throws
+  {
+    let fixture = try SeatbeltFixture()
+    defer { fixture.remove() }
+    let configuration = try fixture.configuration()
+    let environment = try ExecutionEnvironment(
+      searchPath: [.init("/bin")], home: configuration.homeDirectory,
+      temporary: configuration.temporaryDirectory, cache: configuration.cacheDirectory)
+    let alias = fixture.root.appendingPathComponent("launch-directory")
+    try FileManager.default.createSymbolicLink(
+      at: alias, withDestinationURL: URL(fileURLWithPath: configuration.worktree.value))
+    let observations = ExecutionObservations { command in
+      #expect(command.directory == configuration.worktree)
+    }
+    let launcher = ExecutionLauncher(
+      platform: ObservedExecutionPlatform(base: try platform(), observations: observations))
+    for directory in [
+      URL(fileURLWithPath: configuration.worktree.value).standardizedFileURL, alias,
+    ] {
+      let result = try await ExecutionAdministration.$current.withValue(
+        .init(mode: .sandbox(configuration), environment: environment)
+      ) {
+        try await launcher.run(
+          executable: .init("/bin/sh"),
+          arguments: [
+            "-c", "test \"$(pwd -P)\" = \"$1\" && printf verified > alias-marker", "test",
+            configuration.worktree.value,
+          ],
+          directory: .init(directory.path), environment: environment,
+          mode: .sandbox(configuration), method: method)
+      }
+      #expect(result.status == 0)
+    }
+    #expect(observations.members.count == 2)
+    #expect(
+      try String(
+        contentsOfFile: configuration.worktree.value + "/alias-marker", encoding: .utf8)
+        == "verified")
+  }
+
+  @Test(.timeLimit(.minutes(1)), arguments: [false, true])
+  func sandboxLaunchRefusesMissingOrRedirectedDirectoryBeforeStarting(missing: Bool) async throws {
+    let fixture = try SeatbeltFixture()
+    defer { fixture.remove() }
+    let configuration = try fixture.configuration()
+    let environment = try ExecutionEnvironment(
+      searchPath: [.init("/bin")], home: configuration.homeDirectory,
+      temporary: configuration.temporaryDirectory, cache: configuration.cacheDirectory)
+    let alias = fixture.root.appendingPathComponent("launch-directory")
+    try FileManager.default.createSymbolicLink(
+      at: alias, withDestinationURL: URL(fileURLWithPath: configuration.worktree.value))
+    try FileManager.default.removeItem(at: alias)
+    if !missing {
+      try FileManager.default.createSymbolicLink(
+        at: alias, withDestinationURL: fixture.root.appendingPathComponent("siblings"))
+    }
+    let observations = ExecutionObservations()
+    let launcher = ExecutionLauncher(
+      platform: ObservedExecutionPlatform(base: try platform(), observations: observations))
+    await #expect(throws: (any Error).self) {
+      try await ExecutionAdministration.$current.withValue(
+        .init(mode: .sandbox(configuration), environment: environment)
+      ) {
+        try await launcher.run(
+          executable: .init("/bin/sh"), arguments: ["-c", "touch should-not-exist"],
+          directory: .init(alias.path), environment: environment, mode: .sandbox(configuration))
+      }
+    }
+    #expect(observations.ownerships.isEmpty)
+    #expect(observations.members.isEmpty)
+    #expect(
+      !FileManager.default.fileExists(atPath: configuration.worktree.value + "/should-not-exist"))
+    #expect(
+      !FileManager.default.fileExists(atPath: fixture.root.path + "/siblings/should-not-exist"))
   }
 
   @Test(arguments: ExecutionLaunchMethod.allCases)
@@ -57,14 +162,20 @@ import Testing
       searchPath: [.init("/usr/bin"), .init("/bin")],
       home: configuration.homeDirectory, temporary: configuration.temporaryDirectory,
       cache: configuration.cacheDirectory)
-    let result = try await ExecutionLauncher(platform: platform()).run(
-      executable: .init("/bin/sh"),
-      arguments: [
-        "-c", "test \"$HOME\" = \"$1\" && test -z \"$SSH_AUTH_SOCK\" && test -z \"$GITHUB_TOKEN\"",
-        "test", configuration.homeDirectory.value,
-      ],
-      directory: configuration.worktree, environment: environment, mode: .fullAccess, method: method
-    )
+    let result = try await ExecutionAdministration.$current.withValue(
+      .init(mode: .fullAccess, environment: environment)
+    ) {
+      try await ExecutionLauncher(platform: platform()).run(
+        executable: .init("/bin/sh"),
+        arguments: [
+          "-c",
+          "test \"$HOME\" = \"$1\" && test -z \"$SSH_AUTH_SOCK\" && test -z \"$GITHUB_TOKEN\"",
+          "test", configuration.homeDirectory.value,
+        ],
+        directory: configuration.worktree, environment: environment, mode: .fullAccess,
+        method: method
+      )
+    }
     #expect(result.status == 0)
   }
 
@@ -76,16 +187,26 @@ import Testing
     let environment = try ExecutionEnvironment(
       searchPath: [.init("/bin")], home: configuration.homeDirectory,
       temporary: configuration.temporaryDirectory, cache: configuration.cacheDirectory)
-    for missing in [
-      DarwinPrivacyResponsibility(symbol: { nil }),
-      DarwinPrivacyResponsibility(foundationMethod: { _ in nil }),
+    for (missing, reason) in [
+      (
+        DarwinPrivacyResponsibility(symbol: { nil }),
+        "Full access unavailable: responsibility_spawnattrs_setdisclaim is missing"
+      ),
+      (
+        DarwinPrivacyResponsibility(foundationMethod: { _ in nil }),
+        "Full access unavailable: Foundation responsibility setter is missing"
+      ),
     ] {
-      await #expect(throws: ExecutionEnvironmentError.self) {
-        try await ExecutionLauncher(platform: DarwinExecutionPlatform(responsibility: missing))
-          .run(
-            executable: .init("/bin/sh"), arguments: ["-c", "touch should-not-exist"],
-            directory: configuration.worktree, environment: environment, mode: .fullAccess,
-            method: method)
+      await #expect(throws: ExecutionEnvironmentError.unavailable(reason)) {
+        try await ExecutionAdministration.$current.withValue(
+          .init(mode: .fullAccess, environment: environment)
+        ) {
+          try await ExecutionLauncher(platform: DarwinExecutionPlatform(responsibility: missing))
+            .run(
+              executable: .init("/bin/sh"), arguments: ["-c", "touch should-not-exist"],
+              directory: configuration.worktree, environment: environment, mode: .fullAccess,
+              method: method)
+        }
       }
     }
     #expect(
@@ -100,11 +221,15 @@ import Testing
     let environment = try ExecutionEnvironment(
       searchPath: [.init("/bin")], home: configuration.homeDirectory,
       temporary: configuration.temporaryDirectory, cache: configuration.cacheDirectory)
-    let result = try await ExecutionLauncher(platform: platform()).run(
-      executable: .init("/bin/sh"),
-      arguments: ["-c", "echo ok > allowed && ! (echo no > ../outside)"],
-      directory: configuration.worktree,
-      environment: environment, mode: .sandbox(configuration), method: method)
+    let result = try await ExecutionAdministration.$current.withValue(
+      .init(mode: .sandbox(configuration), environment: environment)
+    ) {
+      try await ExecutionLauncher(platform: platform()).run(
+        executable: .init("/bin/sh"),
+        arguments: ["-c", "echo ok > allowed && ! (echo no > ../outside)"],
+        directory: configuration.worktree,
+        environment: environment, mode: .sandbox(configuration), method: method)
+    }
     #expect(result.status == 0)
   }
 
@@ -115,10 +240,17 @@ import Testing
     let environment = try ExecutionEnvironment(
       searchPath: [.init("/bin")], home: configuration.homeDirectory,
       temporary: configuration.temporaryDirectory, cache: configuration.cacheDirectory)
-    await #expect(throws: ExecutionEnvironmentError.self) {
-      try await ExecutionLauncher().run(
-        executable: .init("/bin/true"), arguments: [], directory: configuration.worktree,
-        environment: environment, mode: .sandbox(configuration))
+    await #expect(
+      throws: ExecutionEnvironmentError.unavailable(
+        "Sandbox execution is unavailable: the Linux bubblewrap backend has not been implemented")
+    ) {
+      try await ExecutionAdministration.$current.withValue(
+        .init(mode: .sandbox(configuration), environment: environment)
+      ) {
+        try await ExecutionLauncher().run(
+          executable: .init("/bin/true"), arguments: [], directory: configuration.worktree,
+          environment: environment, mode: .sandbox(configuration))
+      }
     }
   }
 
@@ -134,11 +266,15 @@ import Testing
       temporary: configuration.temporaryDirectory, cache: configuration.cacheDirectory)
     let launcher = try ExecutionLauncher(platform: platform())
     let child = Task {
-      try await launcher.run(
-        executable: .init("/bin/sh"),
-        arguments: ["-c", "trap '' TERM; echo ready > ready; exec /bin/sleep 20"],
-        directory: configuration.worktree, environment: environment,
-        mode: sandboxed ? .sandbox(configuration) : .fullAccess, method: method)
+      try await ExecutionAdministration.$current.withValue(
+        .init(mode: sandboxed ? .sandbox(configuration) : .fullAccess, environment: environment)
+      ) {
+        try await launcher.run(
+          executable: .init("/bin/sh"),
+          arguments: ["-c", "trap '' TERM; echo ready > ready; exec /bin/sleep 20"],
+          directory: configuration.worktree, environment: environment,
+          mode: sandboxed ? .sandbox(configuration) : .fullAccess, method: method)
+      }
     }
     defer { child.cancel() }
     try await waitForFile(configuration.worktree.value + "/ready")
@@ -164,14 +300,18 @@ import Testing
       temporary: configuration.temporaryDirectory, cache: configuration.cacheDirectory)
     let launcher = try ExecutionLauncher(platform: platform())
     let child = Task {
-      try await launcher.run(
-        executable: .init("/bin/sh"),
-        arguments: [
-          "-c",
-          "trap 'echo terminated > terminated; exit 42' TERM; echo ready > ready; while :; do :; done",
-        ],
-        directory: configuration.worktree, environment: environment, mode: .fullAccess,
-        method: method)
+      try await ExecutionAdministration.$current.withValue(
+        .init(mode: .fullAccess, environment: environment)
+      ) {
+        try await launcher.run(
+          executable: .init("/bin/sh"),
+          arguments: [
+            "-c",
+            "trap 'echo terminated > terminated; exit 42' TERM; echo ready > ready; while :; do :; done",
+          ],
+          directory: configuration.worktree, environment: environment, mode: .fullAccess,
+          method: method)
+      }
     }
     defer { child.cancel() }
     try await waitForFile(configuration.worktree.value + "/ready")
@@ -190,11 +330,16 @@ import Testing
     let environment = try ExecutionEnvironment(
       searchPath: [.init("/bin")], home: configuration.homeDirectory,
       temporary: configuration.temporaryDirectory, cache: configuration.cacheDirectory)
-    let result = try await ExecutionLauncher(platform: platform()).run(
-      executable: .init("/bin/sh"),
-      arguments: ["-c", "read line; test \"$line\" = 'original input'"],
-      directory: configuration.worktree,
-      environment: environment, mode: .fullAccess, method: .foundation, input: input.fileDescriptor)
+    let result = try await ExecutionAdministration.$current.withValue(
+      .init(mode: .fullAccess, environment: environment)
+    ) {
+      try await ExecutionLauncher(platform: platform()).run(
+        executable: .init("/bin/sh"),
+        arguments: ["-c", "read line; test \"$line\" = 'original input'"],
+        directory: configuration.worktree,
+        environment: environment, mode: .fullAccess, method: .foundation,
+        input: input.fileDescriptor)
+    }
     #expect(result.status == 0)
   }
 
@@ -215,13 +360,17 @@ import Testing
     let callerError = Pipe()
     let start = ContinuousClock.now
     do {
-      _ = try await ExecutionLauncher(
-        platform: DarwinExecutionPlatform(bootstrapExecutable: bootstrap)
-      ).run(
-        executable: .init("/bin/sh"), arguments: ["-c", "touch should-not-exist"],
-        directory: fixture.configuration().worktree,
-        environment: ExecutionEnvironment(fullAccessVariables: [:]), mode: .fullAccess,
-        method: method, error: callerError.fileHandleForWriting.fileDescriptor)
+      _ = try await ExecutionAdministration.$current.withValue(
+        .init(mode: .fullAccess, environment: ExecutionEnvironment(fullAccessVariables: [:]))
+      ) {
+        try await ExecutionLauncher(
+          platform: DarwinExecutionPlatform(bootstrapExecutable: bootstrap)
+        ).run(
+          executable: .init("/bin/sh"), arguments: ["-c", "touch should-not-exist"],
+          directory: fixture.configuration().worktree,
+          environment: ExecutionEnvironment(fullAccessVariables: [:]), mode: .fullAccess,
+          method: method, error: callerError.fileHandleForWriting.fileDescriptor)
+      }
       Issue.record("An exited bootstrap must fail launch")
     } catch {
       let message = String(describing: error)
@@ -253,16 +402,21 @@ import Testing
     try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: bootstrap.path)
     let output = Pipe()
     let start = ContinuousClock.now
-    let exit = try await ExecutionLauncher(
-      platform: DarwinExecutionPlatform(bootstrapExecutable: delayHost ? realBootstrap : bootstrap)
-    ).run(
-      executable: .init("/bin/sh"), arguments: ["-c", "printf target-stderr >&2"],
-      directory: fixture.configuration().worktree,
-      environment: ExecutionEnvironment(fullAccessVariables: [:]), mode: .fullAccess,
-      method: method, error: output.fileHandleForWriting.fileDescriptor,
-      bindOwnership: { owner in
-        if delayHost { owner.beforeStart { _ in Thread.sleep(forTimeInterval: 6) } }
-      })
+    let exit = try await ExecutionAdministration.$current.withValue(
+      .init(mode: .fullAccess, environment: ExecutionEnvironment(fullAccessVariables: [:]))
+    ) {
+      try await ExecutionLauncher(
+        platform: DarwinExecutionPlatform(
+          bootstrapExecutable: delayHost ? realBootstrap : bootstrap)
+      ).run(
+        executable: .init("/bin/sh"), arguments: ["-c", "printf target-stderr >&2"],
+        directory: fixture.configuration().worktree,
+        environment: ExecutionEnvironment(fullAccessVariables: [:]), mode: .fullAccess,
+        method: method, error: output.fileHandleForWriting.fileDescriptor,
+        bindOwnership: { owner in
+          if delayHost { owner.beforeStart { _ in Thread.sleep(forTimeInterval: 6) } }
+        })
+    }
     try output.fileHandleForWriting.close()
     #expect(exit.status == 0)
     #expect(try output.fileHandleForReading.readToEnd() == Data("target-stderr".utf8))
@@ -277,10 +431,18 @@ import Testing
     try "#!/bin/sh\nprintf 'bootstrap line fixture failed' >&2\nexit 74\n"
       .write(to: bootstrap, atomically: true, encoding: .utf8)
     try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: bootstrap.path)
-    let process = try ManagedLineProcess(
-      launcher: ExecutionLauncher(
-        platform: DarwinExecutionPlatform(bootstrapExecutable: bootstrap)),
-      configuration: .init(executable: "/bin/cat", workingDirectory: fixture.root))
+    let process = try ExecutionAdministration.$current.withValue(
+      .init(
+        mode: .fullAccess,
+        environment: ExecutionEnvironment(fullAccessVariables: [
+          "PATH": "/usr/bin:/bin", "HOME": fixture.root.path, "TMPDIR": fixture.root.path + "/",
+        ]))
+    ) {
+      try ManagedLineProcess(
+        launcher: ExecutionLauncher(
+          platform: DarwinExecutionPlatform(bootstrapExecutable: bootstrap)),
+        configuration: .init(executable: "/bin/cat", workingDirectory: fixture.root))
+    }
     do {
       for try await _ in process.inboundLines {}
       Issue.record("Bootstrap failure must fail the line stream")
@@ -296,14 +458,18 @@ import Testing
     let fixture = try SeatbeltFixture()
     defer { fixture.remove() }
     await #expect(throws: AdmissionFailure.refused) {
-      _ = try await ExecutionLauncher(platform: platform()).start(
-        executable: .init("/bin/sh"), arguments: ["-c", "touch should-not-exist"],
-        directory: .init(fixture.root.path),
-        environment: ExecutionEnvironment(fullAccessVariables: [:]), mode: .fullAccess,
-        method: method,
-        bindOwnership: { owner in
-          owner.beforeStart { _ in throw AdmissionFailure.refused }
-        })
+      _ = try await ExecutionAdministration.$current.withValue(
+        .init(mode: .fullAccess, environment: ExecutionEnvironment(fullAccessVariables: [:]))
+      ) {
+        try await ExecutionLauncher(platform: platform()).start(
+          executable: .init("/bin/sh"), arguments: ["-c", "touch should-not-exist"],
+          directory: .init(fixture.root.path),
+          environment: ExecutionEnvironment(fullAccessVariables: [:]), mode: .fullAccess,
+          method: method,
+          bindOwnership: { owner in
+            owner.beforeStart { _ in throw AdmissionFailure.refused }
+          })
+      }
     }
     #expect(!FileManager.default.fileExists(atPath: fixture.root.path + "/should-not-exist"))
   }
@@ -313,15 +479,23 @@ import Testing
     let fixture = try SeatbeltFixture()
     defer { fixture.remove() }
     let entered = AsyncStream<Void>.makeStream()
-    let process = try ManagedLineProcess(
-      launcher: ExecutionLauncher(
-        platform: AdmissionPlatform(
-          base: platform(),
-          beforeStart: {
-            entered.continuation.finish()
-            Thread.sleep(forTimeInterval: 6)
-          })),
-      configuration: .init(executable: "/bin/cat", workingDirectory: fixture.root))
+    let process = try ExecutionAdministration.$current.withValue(
+      .init(
+        mode: .fullAccess,
+        environment: ExecutionEnvironment(fullAccessVariables: [
+          "PATH": "/usr/bin:/bin", "HOME": fixture.root.path, "TMPDIR": fixture.root.path + "/",
+        ]))
+    ) {
+      try ManagedLineProcess(
+        launcher: ExecutionLauncher(
+          platform: AdmissionPlatform(
+            base: platform(),
+            beforeStart: {
+              entered.continuation.finish()
+              Thread.sleep(forTimeInterval: 6)
+            })),
+        configuration: .init(executable: "/bin/cat", workingDirectory: fixture.root))
+    }
     for await _ in entered.stream {}
     await process.close()
     #expect(await process.snapshot().hasExited)
@@ -332,14 +506,22 @@ import Testing
   func managedAdmissionErrorsRemainRedacted() async throws {
     let fixture = try SeatbeltFixture()
     defer { fixture.remove() }
-    let process = try ManagedLineProcess(
-      launcher: ExecutionLauncher(
-        platform: AdmissionPlatform(
-          base: platform(),
-          beforeStart: {
-            throw ExecutionEnvironmentError.launchFailed("private-admission-payload")
-          })),
-      configuration: .init(executable: "/bin/cat", workingDirectory: fixture.root))
+    let process = try ExecutionAdministration.$current.withValue(
+      .init(
+        mode: .fullAccess,
+        environment: ExecutionEnvironment(fullAccessVariables: [
+          "PATH": "/usr/bin:/bin", "HOME": fixture.root.path, "TMPDIR": fixture.root.path + "/",
+        ]))
+    ) {
+      try ManagedLineProcess(
+        launcher: ExecutionLauncher(
+          platform: AdmissionPlatform(
+            base: platform(),
+            beforeStart: {
+              throw ExecutionEnvironmentError.launchFailed("private-admission-payload")
+            })),
+        configuration: .init(executable: "/bin/cat", workingDirectory: fixture.root))
+    }
     do {
       for try await _ in process.inboundLines {}
       Issue.record("Admission failure must fail the stream")
@@ -360,22 +542,26 @@ import Testing
     defer { blocked.signal() }
     let start = ContinuousClock.now
     await #expect {
-      _ = try await ExecutionLauncher(
-        platform: DarwinExecutionPlatform(
-          bootstrapExecutable: try SeatbeltFixture.executionBootstrap, launchTimeout: .seconds(1)
-        )
-      ).start(
-        executable: .init("/bin/sh"), arguments: ["-c", "touch should-not-exist"],
-        directory: .init(fixture.root.path), environment: .init(fullAccessVariables: [:]),
-        mode: .fullAccess, method: method,
-        bindOwnership: { owner in
-          capture.setOwner(owner)
-          owner.beforeStart { member in
-            capture.setMember(member)
-            blocked.wait()
-            returned.continuation.finish()
-          }
-        })
+      _ = try await ExecutionAdministration.$current.withValue(
+        .init(mode: .fullAccess, environment: .init(fullAccessVariables: [:]))
+      ) {
+        try await ExecutionLauncher(
+          platform: DarwinExecutionPlatform(
+            bootstrapExecutable: try SeatbeltFixture.executionBootstrap, launchTimeout: .seconds(1)
+          )
+        ).start(
+          executable: .init("/bin/sh"), arguments: ["-c", "touch should-not-exist"],
+          directory: .init(fixture.root.path), environment: .init(fullAccessVariables: [:]),
+          mode: .fullAccess, method: method,
+          bindOwnership: { owner in
+            capture.setOwner(owner)
+            owner.beforeStart { member in
+              capture.setMember(member)
+              blocked.wait()
+              returned.continuation.finish()
+            }
+          })
+      }
     } throws: { error in
       String(describing: error).contains("Launch handshake deadline exceeded")
     }
@@ -402,14 +588,18 @@ import Testing
     let capture = LaunchCapture()
     let start = ContinuousClock.now
     await #expect {
-      _ = try await ExecutionLauncher(
-        platform: DarwinExecutionPlatform(
-          bootstrapExecutable: bootstrap, launchTimeout: .seconds(1)
-        )
-      ).start(
-        executable: .init("/bin/true"), arguments: [], directory: .init(fixture.root.path),
-        environment: .init(fullAccessVariables: [:]), mode: .fullAccess, method: method,
-        bindOwnership: { capture.setOwner($0) })
+      _ = try await ExecutionAdministration.$current.withValue(
+        .init(mode: .fullAccess, environment: .init(fullAccessVariables: [:]))
+      ) {
+        try await ExecutionLauncher(
+          platform: DarwinExecutionPlatform(
+            bootstrapExecutable: bootstrap, launchTimeout: .seconds(1)
+          )
+        ).start(
+          executable: .init("/bin/true"), arguments: [], directory: .init(fixture.root.path),
+          environment: .init(fullAccessVariables: [:]), mode: .fullAccess, method: method,
+          bindOwnership: { capture.setOwner($0) })
+      }
     } throws: { error in
       String(describing: error).contains("Launch handshake deadline exceeded")
     }

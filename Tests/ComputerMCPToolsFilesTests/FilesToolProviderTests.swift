@@ -56,7 +56,7 @@ final class FilesToolProviderTests {
     #expect(names.contains("file.read_files"))
     #expect(names.contains("file.write"))
 
-    let writeResult = try provider.callTool(
+    let writeResult = try provider.callToolAsFixtureOwner(
       .init(
         name: "file.write",
         arguments: .object([
@@ -156,7 +156,7 @@ final class FilesToolProviderTests {
           projectDirectory: directory
         ), builtinExecutables: builtinExecutables))
 
-    let result = try provider.callTool(
+    let result = try provider.callToolAsFixtureOwner(
       .init(
         name: "file.write",
         arguments: .object([
@@ -202,7 +202,7 @@ final class FilesToolProviderTests {
         ), builtinExecutables: builtinExecutables))
 
     expectThrows(
-      try provider.callTool(
+      try provider.callToolAsFixtureOwner(
         .init(
           name: "file.write",
           arguments: .object([
@@ -238,7 +238,7 @@ final class FilesToolProviderTests {
         ), builtinExecutables: builtinExecutables))
 
     expectThrows(
-      try provider.callTool(
+      try provider.callToolAsFixtureOwner(
         .init(
           name: "file.symlink",
           arguments: .object([
@@ -265,7 +265,7 @@ final class FilesToolProviderTests {
           projectDirectory: directory
         ), builtinExecutables: builtinExecutables))
 
-    let dryRunResult = try provider.callTool(
+    let dryRunResult = try provider.callToolAsFixtureOwner(
       .init(
         name: "file.write_files",
         arguments: .object([
@@ -293,7 +293,7 @@ final class FilesToolProviderTests {
     #expect(!(FileManager.default.fileExists(atPath: second.path)))
 
     expectThrows(
-      try provider.callTool(
+      try provider.callToolAsFixtureOwner(
         .init(
           name: "file.write_files",
           arguments: .object([
@@ -306,7 +306,7 @@ final class FilesToolProviderTests {
         ))
     )
 
-    let writeResult = try provider.callTool(
+    let writeResult = try provider.callToolAsFixtureOwner(
       .init(
         name: "file.write_files",
         arguments: .object([
@@ -326,7 +326,7 @@ final class FilesToolProviderTests {
     #expect((try String(contentsOf: second, encoding: .utf8)) == (""))
 
     expectThrows(
-      try provider.callTool(
+      try provider.callToolAsFixtureOwner(
         .init(
           name: "file.write_files",
           arguments: .object([
@@ -337,7 +337,7 @@ final class FilesToolProviderTests {
         ))
     )
     expectThrows(
-      try provider.callTool(
+      try provider.callToolAsFixtureOwner(
         .init(
           name: "file.write_files",
           arguments: .object([
@@ -432,7 +432,7 @@ final class FilesToolProviderTests {
           projectDirectory: directory
         ), builtinExecutables: builtinExecutables))
 
-    let result = try provider.callTool(
+    let result = try provider.callToolAsFixtureOwner(
       .init(
         name: "file.append",
         arguments: .object([
@@ -462,7 +462,7 @@ final class FilesToolProviderTests {
           projectDirectory: directory
         ), builtinExecutables: builtinExecutables))
 
-    let result = try provider.callTool(
+    let result = try provider.callToolAsFixtureOwner(
       .init(
         name: "file.append",
         arguments: .object([
@@ -493,7 +493,7 @@ final class FilesToolProviderTests {
           projectDirectory: directory
         ), builtinExecutables: builtinExecutables))
 
-    let result = try provider.callTool(
+    let result = try provider.callToolAsFixtureOwner(
       .init(
         name: "file.append",
         arguments: .object([
@@ -537,7 +537,7 @@ final class FilesToolProviderTests {
         ), builtinExecutables: builtinExecutables))
 
     expectThrows(
-      try provider.callTool(
+      try provider.callToolAsFixtureOwner(
         .init(
           name: "file.append",
           arguments: .object(["path": .string("logs"), "content": .string("x")]), context: .empty
@@ -547,7 +547,7 @@ final class FilesToolProviderTests {
     }
 
     expectThrows(
-      try provider.callTool(
+      try provider.callToolAsFixtureOwner(
         .init(
           name: "file.append",
           arguments: .object(["path": .string("../outside"), "content": .string("x")]),
@@ -558,7 +558,7 @@ final class FilesToolProviderTests {
     }
 
     expectThrows(
-      try provider.callTool(
+      try provider.callToolAsFixtureOwner(
         .init(
           name: "file.append",
           arguments: .object(["path": .string("notes.txt"), "content": .string("long")]),
@@ -582,7 +582,7 @@ final class FilesToolProviderTests {
           projectDirectory: directory
         ), builtinExecutables: builtinExecutables))
 
-    let result = try provider.callTool(
+    let result = try provider.callToolAsFixtureOwner(
       .init(
         name: "file.replace_text",
         arguments: .object([
@@ -613,7 +613,7 @@ final class FilesToolProviderTests {
           projectDirectory: directory
         ), builtinExecutables: builtinExecutables))
 
-    let result = try provider.callTool(
+    let result = try provider.callToolAsFixtureOwner(
       .init(
         name: "file.replace_text",
         arguments: .object([
@@ -646,7 +646,7 @@ final class FilesToolProviderTests {
           projectDirectory: directory
         ), builtinExecutables: builtinExecutables))
 
-    let result = try provider.callTool(
+    let result = try provider.callToolAsFixtureOwner(
       .init(
         name: "file.replace_text",
         arguments: .object([
@@ -687,7 +687,7 @@ final class FilesToolProviderTests {
           projectDirectory: directory
         ), builtinExecutables: builtinExecutables))
 
-    let result = try provider.callTool(
+    let result = try provider.callToolAsFixtureOwner(
       .init(
         name: "file.replace_text",
         arguments: .object([
@@ -726,7 +726,7 @@ final class FilesToolProviderTests {
         ), builtinExecutables: builtinExecutables))
 
     expectThrows(
-      try provider.callTool(
+      try provider.callToolAsFixtureOwner(
         .init(
           name: "file.replace_text",
           arguments: .object([
@@ -758,7 +758,7 @@ final class FilesToolProviderTests {
         ), builtinExecutables: builtinExecutables))
 
     expectThrows(
-      try provider.callTool(
+      try provider.callToolAsFixtureOwner(
         .init(
           name: "file.replace_text",
           arguments: .object([
@@ -772,7 +772,7 @@ final class FilesToolProviderTests {
     }
 
     expectThrows(
-      try provider.callTool(
+      try provider.callToolAsFixtureOwner(
         .init(
           name: "file.replace_text",
           arguments: .object([
@@ -800,7 +800,7 @@ final class FilesToolProviderTests {
           projectDirectory: directory
         ), builtinExecutables: builtinExecutables))
 
-    let result = try provider.callTool(
+    let result = try provider.callToolAsFixtureOwner(
       .init(
         name: "file.insert_text",
         arguments: .object([
@@ -833,7 +833,7 @@ final class FilesToolProviderTests {
           projectDirectory: directory
         ), builtinExecutables: builtinExecutables))
 
-    let result = try provider.callTool(
+    let result = try provider.callToolAsFixtureOwner(
       .init(
         name: "file.insert_text",
         arguments: .object([
@@ -864,7 +864,7 @@ final class FilesToolProviderTests {
           projectDirectory: directory
         ), builtinExecutables: builtinExecutables))
 
-    _ = try provider.callTool(
+    _ = try provider.callToolAsFixtureOwner(
       .init(
         name: "file.insert_text",
         arguments: .object([
@@ -893,7 +893,7 @@ final class FilesToolProviderTests {
           projectDirectory: directory
         ), builtinExecutables: builtinExecutables))
 
-    let result = try provider.callTool(
+    let result = try provider.callToolAsFixtureOwner(
       .init(
         name: "file.insert_text",
         arguments: .object([
@@ -931,7 +931,7 @@ final class FilesToolProviderTests {
           projectDirectory: directory
         ), builtinExecutables: builtinExecutables))
 
-    let result = try provider.callTool(
+    let result = try provider.callToolAsFixtureOwner(
       .init(
         name: "file.insert_text",
         arguments: .object([
@@ -971,7 +971,7 @@ final class FilesToolProviderTests {
         ), builtinExecutables: builtinExecutables))
 
     expectThrows(
-      try provider.callTool(
+      try provider.callToolAsFixtureOwner(
         .init(
           name: "file.insert_text",
           arguments: .object([
@@ -1002,7 +1002,7 @@ final class FilesToolProviderTests {
         ), builtinExecutables: builtinExecutables))
 
     expectThrows(
-      try provider.callTool(
+      try provider.callToolAsFixtureOwner(
         .init(
           name: "file.insert_text",
           arguments: .object([
@@ -1017,7 +1017,7 @@ final class FilesToolProviderTests {
     }
 
     expectThrows(
-      try provider.callTool(
+      try provider.callToolAsFixtureOwner(
         .init(
           name: "file.insert_text",
           arguments: .object([
@@ -1031,7 +1031,7 @@ final class FilesToolProviderTests {
     }
 
     expectThrows(
-      try provider.callTool(
+      try provider.callToolAsFixtureOwner(
         .init(
           name: "file.insert_text",
           arguments: .object([
@@ -1045,7 +1045,7 @@ final class FilesToolProviderTests {
     }
 
     expectThrows(
-      try provider.callTool(
+      try provider.callToolAsFixtureOwner(
         .init(
           name: "file.insert_text",
           arguments: .object([
@@ -1073,7 +1073,7 @@ final class FilesToolProviderTests {
           projectDirectory: directory
         ), builtinExecutables: builtinExecutables))
 
-    let result = try provider.callTool(
+    let result = try provider.callToolAsFixtureOwner(
       .init(
         name: "file.replace_lines",
         arguments: .object([
@@ -1109,7 +1109,7 @@ final class FilesToolProviderTests {
           projectDirectory: directory
         ), builtinExecutables: builtinExecutables))
 
-    let result = try provider.callTool(
+    let result = try provider.callToolAsFixtureOwner(
       .init(
         name: "file.replace_lines",
         arguments: .object([
@@ -1142,7 +1142,7 @@ final class FilesToolProviderTests {
           projectDirectory: directory
         ), builtinExecutables: builtinExecutables))
 
-    let result = try provider.callTool(
+    let result = try provider.callToolAsFixtureOwner(
       .init(
         name: "file.replace_lines",
         arguments: .object([
@@ -1180,7 +1180,7 @@ final class FilesToolProviderTests {
           projectDirectory: directory
         ), builtinExecutables: builtinExecutables))
 
-    let result = try provider.callTool(
+    let result = try provider.callToolAsFixtureOwner(
       .init(
         name: "file.replace_lines",
         arguments: .object([
@@ -1221,7 +1221,7 @@ final class FilesToolProviderTests {
         ), builtinExecutables: builtinExecutables))
 
     expectThrows(
-      try provider.callTool(
+      try provider.callToolAsFixtureOwner(
         .init(
           name: "file.replace_lines",
           arguments: .object([
@@ -1239,7 +1239,7 @@ final class FilesToolProviderTests {
     #expect((try String(contentsOf: file, encoding: .utf8)) == ("one\ntwo\nthree\n"))
 
     expectThrows(
-      try provider.callTool(
+      try provider.callToolAsFixtureOwner(
         .init(
           name: "file.replace_lines",
           arguments: .object([
@@ -1254,7 +1254,7 @@ final class FilesToolProviderTests {
     }
 
     expectThrows(
-      try provider.callTool(
+      try provider.callToolAsFixtureOwner(
         .init(
           name: "file.replace_lines",
           arguments: .object([
@@ -1269,7 +1269,7 @@ final class FilesToolProviderTests {
     }
 
     expectThrows(
-      try provider.callTool(
+      try provider.callToolAsFixtureOwner(
         .init(
           name: "file.replace_lines",
           arguments: .object([
@@ -3388,7 +3388,7 @@ final class FilesToolProviderTests {
       throws: GatewayToolError.disabled(
         "Builtin command '\(reader)' is unavailable on this platform.")
     ) {
-      _ = try provider.callTool(
+      _ = try provider.callToolAsFixtureOwner(
         .init(
           name: "archive.extract",
           arguments: .object([
@@ -3427,7 +3427,7 @@ final class FilesToolProviderTests {
         ),
         commandRunner: runner, builtinExecutables: builtinExecutables))
 
-    let result = try provider.callTool(
+    let result = try provider.callToolAsFixtureOwner(
       .init(
         name: "archive.extract",
         arguments: .object([
@@ -3488,7 +3488,7 @@ final class FilesToolProviderTests {
         ),
         builtinExecutables: builtinExecutables))
 
-    let result = try provider.callTool(
+    let result = try provider.callToolAsFixtureOwner(
       .init(
         name: "archive.extract",
         arguments: .object([
@@ -3530,7 +3530,7 @@ final class FilesToolProviderTests {
         ),
         commandRunner: missingConfirmRunner, builtinExecutables: builtinExecutables))
     expectThrows(
-      try missingConfirmRegistry.callTool(
+      try missingConfirmRegistry.callToolAsFixtureOwner(
         .init(
           name: "archive.extract",
           arguments: .object([
@@ -3558,7 +3558,7 @@ final class FilesToolProviderTests {
         ),
         commandRunner: traversalRunner, builtinExecutables: builtinExecutables))
     expectThrows(
-      try traversalRegistry.callTool(
+      try traversalRegistry.callToolAsFixtureOwner(
         .init(
           name: "archive.extract",
           arguments: .object([
@@ -3583,7 +3583,7 @@ final class FilesToolProviderTests {
         ),
         commandRunner: linkRunner, builtinExecutables: builtinExecutables))
     expectThrows(
-      try linkRegistry.callTool(
+      try linkRegistry.callToolAsFixtureOwner(
         .init(
           name: "archive.extract",
           arguments: .object([
@@ -3608,7 +3608,7 @@ final class FilesToolProviderTests {
         ),
         commandRunner: overwriteRunner, builtinExecutables: builtinExecutables))
     expectThrows(
-      try overwriteRegistry.callTool(
+      try overwriteRegistry.callToolAsFixtureOwner(
         .init(
           name: "archive.extract",
           arguments: .object([
@@ -3647,7 +3647,7 @@ final class FilesToolProviderTests {
         ),
         commandRunner: runner, builtinExecutables: builtinExecutables))
 
-    let result = try provider.callTool(
+    let result = try provider.callToolAsFixtureOwner(
       .init(
         name: "archive.create",
         arguments: .object([
@@ -3710,7 +3710,7 @@ final class FilesToolProviderTests {
         ),
         commandRunner: runner, builtinExecutables: builtinExecutables))
 
-    let result = try provider.callTool(
+    let result = try provider.callToolAsFixtureOwner(
       .init(
         name: "archive.create",
         arguments: .object([
@@ -3750,7 +3750,7 @@ final class FilesToolProviderTests {
         ),
         commandRunner: missingConfirmRunner, builtinExecutables: builtinExecutables))
     expectThrows(
-      try missingConfirmRegistry.callTool(
+      try missingConfirmRegistry.callToolAsFixtureOwner(
         .init(
           name: "archive.create",
           arguments: .object([
@@ -3774,7 +3774,7 @@ final class FilesToolProviderTests {
           projectDirectory: directory
         ), builtinExecutables: builtinExecutables))
     expectThrows(
-      try existingRegistry.callTool(
+      try existingRegistry.callToolAsFixtureOwner(
         .init(
           name: "archive.create",
           arguments: .object([
@@ -3794,7 +3794,7 @@ final class FilesToolProviderTests {
           projectDirectory: directory
         ), builtinExecutables: builtinExecutables))
     expectThrows(
-      try insideSourceRegistry.callTool(
+      try insideSourceRegistry.callToolAsFixtureOwner(
         .init(
           name: "archive.create",
           arguments: .object([
@@ -3816,7 +3816,7 @@ final class FilesToolProviderTests {
           projectDirectory: directory
         ), builtinExecutables: builtinExecutables))
     expectThrows(
-      try symlinkRegistry.callTool(
+      try symlinkRegistry.callToolAsFixtureOwner(
         .init(
           name: "archive.create",
           arguments: .object([
@@ -3829,7 +3829,7 @@ final class FilesToolProviderTests {
     }
 
     expectThrows(
-      try symlinkRegistry.callTool(
+      try symlinkRegistry.callToolAsFixtureOwner(
         .init(
           name: "archive.create",
           arguments: .object([
@@ -3855,7 +3855,7 @@ final class FilesToolProviderTests {
           projectDirectory: directory
         ), builtinExecutables: builtinExecutables))
 
-    let mkdirResult = try provider.callTool(
+    let mkdirResult = try provider.callToolAsFixtureOwner(
       .init(
         name: "file.mkdir",
         arguments: .object(["path": .string("notes/nested")]), context: .empty
@@ -3864,7 +3864,7 @@ final class FilesToolProviderTests {
     #expect((mkdirPayload.objectValue?["project_relative_path"]) == (.string("notes/nested")))
     #expect((mkdirPayload.objectValue?["created"]) == (.bool(true)))
 
-    let existingResult = try provider.callTool(
+    let existingResult = try provider.callToolAsFixtureOwner(
       .init(
         name: "file.mkdir",
         arguments: .object(["path": .string("notes/nested")]), context: .empty
@@ -3872,7 +3872,7 @@ final class FilesToolProviderTests {
     let existingPayload = try decodeTextPayload(existingResult)
     #expect((existingPayload.objectValue?["created"]) == (.bool(false)))
 
-    let copyResult = try provider.callTool(
+    let copyResult = try provider.callToolAsFixtureOwner(
       .init(
         name: "file.copy",
         arguments: .object([
@@ -3886,7 +3886,7 @@ final class FilesToolProviderTests {
       (try String(contentsOf: directory.appendingPathComponent("notes/nested/copy.txt")))
         == ("source"))
 
-    let moveResult = try provider.callTool(
+    let moveResult = try provider.callToolAsFixtureOwner(
       .init(
         name: "file.move",
         arguments: .object([
@@ -3920,7 +3920,7 @@ final class FilesToolProviderTests {
         ), builtinExecutables: builtinExecutables))
 
     expectThrows(
-      try provider.callTool(
+      try provider.callToolAsFixtureOwner(
         .init(
           name: "file.copy",
           arguments: .object([
@@ -3932,7 +3932,7 @@ final class FilesToolProviderTests {
       #expect(error.localizedDescription.contains("Destination already exists"))
     }
 
-    _ = try provider.callTool(
+    _ = try provider.callToolAsFixtureOwner(
       .init(
         name: "file.copy",
         arguments: .object([
@@ -3956,7 +3956,7 @@ final class FilesToolProviderTests {
         ), builtinExecutables: builtinExecutables))
 
     expectThrows(
-      try provider.callTool(
+      try provider.callToolAsFixtureOwner(
         .init(
           name: "file.mkdir",
           arguments: .object(["path": .string("../outside")]), context: .empty
@@ -3966,7 +3966,7 @@ final class FilesToolProviderTests {
     }
 
     expectThrows(
-      try provider.callTool(
+      try provider.callToolAsFixtureOwner(
         .init(
           name: "file.copy",
           arguments: .object([
@@ -4000,7 +4000,7 @@ final class FilesToolProviderTests {
           projectDirectory: directory
         ), builtinExecutables: builtinExecutables))
 
-    let mkdirResult = try provider.callTool(
+    let mkdirResult = try provider.callToolAsFixtureOwner(
       .init(
         name: "file.mkdir",
         arguments: .object([
@@ -4015,7 +4015,7 @@ final class FilesToolProviderTests {
     #expect(
       !(FileManager.default.fileExists(atPath: directory.appendingPathComponent("notes").path)))
 
-    let touchResult = try provider.callTool(
+    let touchResult = try provider.callToolAsFixtureOwner(
       .init(
         name: "file.touch",
         arguments: .object([
@@ -4031,7 +4031,7 @@ final class FilesToolProviderTests {
     #expect(
       !(FileManager.default.fileExists(atPath: directory.appendingPathComponent("logs").path)))
 
-    let copyResult = try provider.callTool(
+    let copyResult = try provider.callToolAsFixtureOwner(
       .init(
         name: "file.copy",
         arguments: .object([
@@ -4048,7 +4048,7 @@ final class FilesToolProviderTests {
     #expect((copyPayload.objectValue?["would_overwrite"]) == (.bool(true)))
     #expect((try String(contentsOf: target)) == ("target"))
 
-    let moveResult = try provider.callTool(
+    let moveResult = try provider.callToolAsFixtureOwner(
       .init(
         name: "file.move",
         arguments: .object([
@@ -4067,7 +4067,7 @@ final class FilesToolProviderTests {
     #expect(
       !(FileManager.default.fileExists(atPath: directory.appendingPathComponent("moved").path)))
 
-    let symlinkResult = try provider.callTool(
+    let symlinkResult = try provider.callToolAsFixtureOwner(
       .init(
         name: "file.symlink",
         arguments: .object([
@@ -4085,7 +4085,7 @@ final class FilesToolProviderTests {
     #expect(
       !(FileManager.default.fileExists(atPath: directory.appendingPathComponent("links").path)))
 
-    let trashResult = try provider.callTool(
+    let trashResult = try provider.callToolAsFixtureOwner(
       .init(
         name: "file.trash",
         arguments: .object([
@@ -4112,7 +4112,7 @@ final class FilesToolProviderTests {
           projectDirectory: directory
         ), builtinExecutables: builtinExecutables))
 
-    let result = try provider.callTool(
+    let result = try provider.callToolAsFixtureOwner(
       .init(
         name: "file.touch",
         arguments: .object([
@@ -4133,7 +4133,7 @@ final class FilesToolProviderTests {
 
     let oldDate = Date(timeIntervalSince1970: 1)
     try FileManager.default.setAttributes([.modificationDate: oldDate], ofItemAtPath: file.path)
-    let updateResult = try provider.callTool(
+    let updateResult = try provider.callToolAsFixtureOwner(
       .init(
         name: "file.touch",
         arguments: .object([
@@ -4166,7 +4166,7 @@ final class FilesToolProviderTests {
         ), builtinExecutables: builtinExecutables))
 
     expectThrows(
-      try provider.callTool(
+      try provider.callToolAsFixtureOwner(
         .init(
           name: "file.touch",
           arguments: .object([
@@ -4179,7 +4179,7 @@ final class FilesToolProviderTests {
     }
 
     expectThrows(
-      try provider.callTool(
+      try provider.callToolAsFixtureOwner(
         .init(
           name: "file.touch",
           arguments: .object(["path": .string("nested/missing.txt")]), context: .empty
@@ -4189,7 +4189,7 @@ final class FilesToolProviderTests {
     }
 
     expectThrows(
-      try provider.callTool(
+      try provider.callToolAsFixtureOwner(
         .init(
           name: "file.touch",
           arguments: .object(["path": .string("folder")]), context: .empty
@@ -4199,7 +4199,7 @@ final class FilesToolProviderTests {
     }
 
     expectThrows(
-      try provider.callTool(
+      try provider.callToolAsFixtureOwner(
         .init(
           name: "file.touch",
           arguments: .object(["path": .string("../outside.txt")]), context: .empty
@@ -4222,7 +4222,7 @@ final class FilesToolProviderTests {
           projectDirectory: directory
         ), builtinExecutables: builtinExecutables))
 
-    let result = try provider.callTool(
+    let result = try provider.callToolAsFixtureOwner(
       .init(
         name: "file.symlink",
         arguments: .object([
@@ -4259,7 +4259,7 @@ final class FilesToolProviderTests {
         ), builtinExecutables: builtinExecutables))
 
     expectThrows(
-      try provider.callTool(
+      try provider.callToolAsFixtureOwner(
         .init(
           name: "file.symlink",
           arguments: .object([
@@ -4271,7 +4271,7 @@ final class FilesToolProviderTests {
       #expect(error.localizedDescription.contains("outside project"))
     }
 
-    let result = try provider.callTool(
+    let result = try provider.callToolAsFixtureOwner(
       .init(
         name: "file.symlink",
         arguments: .object([
@@ -4308,7 +4308,7 @@ final class FilesToolProviderTests {
         ), builtinExecutables: builtinExecutables))
 
     expectThrows(
-      try provider.callTool(
+      try provider.callToolAsFixtureOwner(
         .init(
           name: "file.symlink",
           arguments: .object([
@@ -4321,7 +4321,7 @@ final class FilesToolProviderTests {
     }
 
     expectThrows(
-      try provider.callTool(
+      try provider.callToolAsFixtureOwner(
         .init(
           name: "file.symlink",
           arguments: .object([
@@ -4334,7 +4334,7 @@ final class FilesToolProviderTests {
     }
 
     expectThrows(
-      try provider.callTool(
+      try provider.callToolAsFixtureOwner(
         .init(
           name: "file.symlink",
           arguments: .object([
@@ -4358,7 +4358,7 @@ final class FilesToolProviderTests {
         ), builtinExecutables: builtinExecutables))
 
     expectThrows(
-      try provider.callTool(
+      try provider.callToolAsFixtureOwner(
         .init(
           name: "file.trash",
           arguments: .object(["path": .string("../outside")]), context: .empty
@@ -4382,7 +4382,7 @@ final class FilesToolProviderTests {
         ),
         commandRunner: runner, builtinExecutables: builtinExecutables))
 
-    let result = try provider.callTool(
+    let result = try provider.callToolAsFixtureOwner(
       .init(
         name: "file.download",
         arguments: .object([
@@ -4464,7 +4464,7 @@ final class FilesToolProviderTests {
         ),
         commandRunner: runner, builtinExecutables: builtinExecutables))
 
-    let result = try provider.callTool(
+    let result = try provider.callToolAsFixtureOwner(
       .init(
         name: "file.download",
         arguments: .object([
@@ -4516,7 +4516,7 @@ final class FilesToolProviderTests {
         commandRunner: missingConfirmRunner, builtinExecutables: builtinExecutables))
 
     expectThrows(
-      try provider.callTool(
+      try provider.callToolAsFixtureOwner(
         .init(
           name: "file.download",
           arguments: .object([
@@ -4531,7 +4531,7 @@ final class FilesToolProviderTests {
     }
 
     expectThrows(
-      try provider.callTool(
+      try provider.callToolAsFixtureOwner(
         .init(
           name: "file.download",
           arguments: .object([
@@ -4544,7 +4544,7 @@ final class FilesToolProviderTests {
     }
 
     expectThrows(
-      try provider.callTool(
+      try provider.callToolAsFixtureOwner(
         .init(
           name: "file.download",
           arguments: .object([
@@ -4557,7 +4557,7 @@ final class FilesToolProviderTests {
     }
 
     expectThrows(
-      try provider.callTool(
+      try provider.callToolAsFixtureOwner(
         .init(
           name: "file.download",
           arguments: .object([
@@ -4895,7 +4895,7 @@ final class FilesToolProviderTests {
           projectDirectory: directory
         ), builtinExecutables: builtinExecutables))
 
-    let result = try provider.callTool(
+    let result = try provider.callToolAsFixtureOwner(
       .init(
         name: "file.chmod",
         arguments: .object([
@@ -4916,7 +4916,7 @@ final class FilesToolProviderTests {
     #expect((mode) == (0o755))
 
     expectThrows(
-      try provider.callTool(
+      try provider.callToolAsFixtureOwner(
         .init(
           name: "file.chmod",
           arguments: .object([
@@ -4947,7 +4947,7 @@ final class FilesToolProviderTests {
           projectDirectory: directory
         ), builtinExecutables: builtinExecutables))
 
-    let result = try provider.callTool(
+    let result = try provider.callToolAsFixtureOwner(
       .init(
         name: "file.chmod",
         arguments: .object([
@@ -4986,7 +4986,7 @@ final class FilesToolProviderTests {
         ), builtinExecutables: builtinExecutables))
 
     expectThrows(
-      try provider.callTool(
+      try provider.callToolAsFixtureOwner(
         .init(
           name: "file.chmod",
           arguments: .object([
@@ -4999,7 +4999,7 @@ final class FilesToolProviderTests {
     }
 
     expectThrows(
-      try provider.callTool(
+      try provider.callToolAsFixtureOwner(
         .init(
           name: "file.chmod",
           arguments: .object([
@@ -5012,7 +5012,7 @@ final class FilesToolProviderTests {
     }
 
     expectThrows(
-      try provider.callTool(
+      try provider.callToolAsFixtureOwner(
         .init(
           name: "file.chmod",
           arguments: .object([
@@ -5407,5 +5407,12 @@ final class FilesToolProviderTests {
     let text = try #require(
       value.objectValue?["content"]?.arrayValue?.first?.objectValue?["text"]?.stringValue)
     return try JSONDecoder().decode(JSONValue.self, from: Data(text.utf8))
+  }
+}
+
+// These direct unit calls own the provider's fixed native helper processes.
+extension FilesToolProvider {
+  func callToolAsFixtureOwner(_ invocation: ToolInvocation) throws -> JSONValue {
+    try withFileCommandAdministration { try callTool(invocation) }
   }
 }

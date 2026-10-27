@@ -58,9 +58,9 @@ path.
 
 `BuiltinToolCatalogSnapshotTests` compares the complete host-owned MCP catalog
 with `Tests/ComputerMCPMacOSTests/Fixtures/builtin-tool-catalog.json`. It enables every
-default builtin, skills, CLI/MCP gateway surfaces, processes and Full Shell,
-and includes runtime discovery, execution owners, operations, Computer Use and
-remote management. An isolated project, an in-memory database, empty plugin
+default builtin, skills, CLI/MCP gateway surfaces and processes,
+and includes runtime discovery, execution owners, permission requirements,
+Computer Use and remote management. An isolated project, an in-memory database, empty plugin
 sources and a downstream stub keep discovery independent of installed tools,
 user directories and network access. No tool is executed.
 
@@ -194,14 +194,14 @@ An error returned by the close action is not itself proof of failed cleanup.
 
 ## Plugin acceptance
 
-Host contract tests use local fixture adapters for callbacks, approvals, routing,
+Host contract tests use local fixture adapters for callbacks, permissions, routing,
 connection lifetime and cleanup. Installed release checks inspect a selected
 plugin through the generic management CLI. Codex runtime and end-to-end
 acceptance belong to the [Codex plugin](https://github.com/computer-mcp/plugin-codex).
 
 ## Evidence contract
 
-Validation Evidence Bundle schema 2 uses three layers:
+Validation Evidence Bundle schema 3 uses three layers:
 
 - `contract`: static inventory and schema identity;
 - `runtime`: transport request, execution, audit, and independent result;
@@ -222,10 +222,16 @@ optional for an external consumer whose UI does not expose its MCP JSON-RPC ID.
 The local audit must still contain the transport request when that transport
 can observe it. No local value is presented as if ChatGPT supplied it.
 
-Schema 2 records the reviewed result class explicitly. `passed` requires one
-exact `allowed` audit row without an error. `expected_denial` requires one exact
-policy `denied` row with a stable error code. A `failed` outcome never proves
-acceptance.
+Schema 3 records the reviewed result class and the dispatched call's admission
+record. Each request has exactly one terminal audit row. `passed` requires an
+`allowed` terminal without an error, plus one matching `permission.admitted`
+record written before gateway dispatch. The admission and terminal must identify
+the same request, caller, profile, capability, input and transport. An admission
+never proves an outcome. `expected_denial` requires a `denied` terminal with a
+stable error code. A pre-admission denial or failure has only its terminal;
+a dispatched failure also retains its admission. Owner Control Socket commands
+use their separate terminal recorder. A `failed` outcome never proves acceptance.
+Missing, duplicate or mismatched audit records reject the evidence.
 
 The lifecycle is:
 
@@ -252,8 +258,9 @@ instance, Tunnel profile, and Gateway Socket connection are all present; it
 remains runtime evidence and cannot claim a ChatGPT consumer result. Named and
 development-only Cloudflare HTTP calls can use `probe http call --observations
 ...`; the selected outer transport remains distinct from the inner loopback
-`streamable_http` audit. `evidence correlate` then queries exactly one audit row
-for every Gateway request and seals the canonical Evidence Bundle.
+`streamable_http` audit. `evidence correlate` queries the unique terminal and any
+required matching admission for every Gateway request, then seals both snapshots
+in the canonical Evidence Bundle.
 
 The specialized release-manifest catalog contains 22 publisher-verifiable Test
 Cases, all required when generating that manifest. It includes the isolated
@@ -263,13 +270,7 @@ outside this catalog because its account, domain, public hostname, and runtime
 token are owned by the deploying user. The Cloudflare runbook remains the
 deployment acceptance procedure when a user chooses that transport.
 
-Mutation probes inspect every prepared ticket's state before committing it.
-The default runner never approves a pending ticket: it reports that local
-approval is required and the target was not executed. Isolated acceptance code
-can inject a resolver backed by its explicitly selected owner-only Control
-Socket; the resolver must return the same ticket in `approved` state. There is
-no production auto-approval flag. A standalone probe without a local approval
-path cannot claim complete mutation coverage under a confirmation policy.
+Mutation probes call granted operations directly. A `permission.required` result contains durable request IDs and the `_permission_request_ids` retry field. The local owner answers in the App or through `computer-mcp permissions answer`; the original caller then explicitly retries the same tool with unchanged arguments and every request ID. Only this time applies to one matching retry and the execution it starts. The validation client checks this structured contract and never repeats an operation automatically.
 
 Cancellation delivery and downstream execution are distinct observations. The
 downstream lifecycle fixture requires its task's cancellation marker as an

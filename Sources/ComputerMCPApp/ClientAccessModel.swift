@@ -3,6 +3,7 @@ import ComputerMCPAuthorization
 import ComputerMCPControlPlane
 import ComputerMCPCore
 import ComputerMCPGateway
+import ComputerMCPPermissions
 import CryptoKit
 import Foundation
 
@@ -20,7 +21,7 @@ struct ClientAccessSnapshot: Sendable {
 /// A profile the owner picked for a sign-in, with the access level they saw.
 struct OAuthProfileChoice: Equatable {
   var id: GatewayProfileID
-  var mode: GatewayPermissionMode
+  var authorizationDigest: String
 }
 
 @MainActor
@@ -30,7 +31,7 @@ protocol ClientAccessManaging {
     id: String, lifetime: GatewayFullAccessLifetime,
     expectedRevision: Int64, expectedTrustRevision: Int64
   ) async throws
-  func limitClientAccess(id: String, mode: GatewayPermissionMode, expectedRevision: Int64)
+  func limitClientAccess(id: String, limits: ManagedPolicy, expectedRevision: Int64)
     async throws
   func endClientAccess(id: String, expectedRevision: Int64) async throws
   func revokeClientTrust(id: String, expectedRevision: Int64) async throws
@@ -49,7 +50,7 @@ extension ClientAccessManaging {
     id: String, lifetime: GatewayFullAccessLifetime,
     expectedRevision: Int64, expectedTrustRevision: Int64
   ) async throws { throw unavailableClientAccess() }
-  func limitClientAccess(id: String, mode: GatewayPermissionMode, expectedRevision: Int64)
+  func limitClientAccess(id: String, limits: ManagedPolicy, expectedRevision: Int64)
     async throws
   {
     throw unavailableClientAccess()
@@ -98,9 +99,9 @@ final class ClientAccessModel: ObservableObject {
 
   init(controlPlane: any ClientAccessManaging) { self.controlPlane = controlPlane }
 
-  var controllingSessions: [GatewayControlSessionSnapshot] {
+  var activeSessions: [GatewayControlSessionSnapshot] {
     (snapshot?.sessions ?? []).filter {
-      $0.currentAccess == .projectOperations || $0.currentAccess == .localFullAccess
+      $0.hasAccess
     }
   }
 
@@ -112,9 +113,9 @@ final class ClientAccessModel: ObservableObject {
       return AppLocalization.formatted(
         "Sign-in requests waiting: %@", String(pendingOAuthRequests.count))
     }
-    return controllingSessions.isEmpty
-      ? AppLocalization.string("No clients have control")
-      : AppLocalization.formatted("Clients with control: %@", String(controllingSessions.count))
+    return activeSessions.isEmpty
+      ? AppLocalization.string("No connected clients")
+      : AppLocalization.formatted("Connected clients: %@", String(activeSessions.count))
   }
 
   func reload() async {
@@ -142,7 +143,8 @@ final class ClientAccessModel: ObservableObject {
 
   func requestFullAccess(_ session: GatewayControlSessionSnapshot) {
     guard isAvailable, !isSaving, !session.ended,
-      session.profile?.grant.allowedCallers.contains(session.caller) == true
+      session.profile?.grant.allowedCallers.contains(session.caller) == true,
+      session.profile?.grant.fullAccess == true
     else { return }
     let trust = snapshot?.trusts.first {
       $0.principalID == session.principalID && $0.profileID == session.profileID
@@ -176,11 +178,12 @@ final class ClientAccessModel: ObservableObject {
     return approved
   }
 
-  func limit(_ session: GatewayControlSessionSnapshot, to mode: GatewayPermissionMode) async {
-    guard mode != .localFullAccess else { return }
+  func useSandbox(_ session: GatewayControlSessionSnapshot) async {
+    var limits = session.accessLimit
+    limits.allowsFullAccess = false
     _ = await perform {
       try await self.controlPlane.limitClientAccess(
-        id: session.id, mode: mode, expectedRevision: session.revision)
+        id: session.id, limits: limits, expectedRevision: session.revision)
     }
   }
 
@@ -199,27 +202,24 @@ final class ClientAccessModel: ObservableObject {
 
   @Published private(set) var oauthProfileChoices: [String: OAuthProfileChoice] = [:]
 
-  /// Approvable profiles from the least to the most access, Cloudflare Observe first.
   var oauthProfileOptions: [ProfileGrant] {
-    (snapshot?.remoteProfiles ?? []).map(\.grant).sorted {
-      ($0.mode.accessRank, $0.id == .cloudflareObserve ? 0 : 1, $0.id.rawValue)
-        < ($1.mode.accessRank, $1.id == .cloudflareObserve ? 0 : 1, $1.id.rawValue)
-    }
+    (snapshot?.remoteProfiles ?? []).map(\.grant).sorted { $0.id.rawValue < $1.id.rawValue }
   }
 
-  /// The owner's pick while it keeps the access level they saw, otherwise the first
-  /// read-only profile. Nil means the owner must choose.
   func oauthProfile(for request: OAuthPendingAuthorization) -> ProfileGrant? {
-    let options = oauthProfileOptions
-    if let choice = oauthProfileChoices[request.id] {
-      return options.first { $0.id == choice.id && $0.mode == choice.mode }
+    guard let choice = oauthProfileChoices[request.id] else { return nil }
+    return oauthProfileOptions.first {
+      $0.id == choice.id
+        && (try? OAuthApprovalProfile(grant: $0).authorizationDigest) == choice.authorizationDigest
     }
-    return options.first { $0.mode == .readOnly }
   }
 
   func chooseOAuthProfile(_ id: GatewayProfileID, for request: OAuthPendingAuthorization) {
-    guard let profile = oauthProfileOptions.first(where: { $0.id == id }) else { return }
-    oauthProfileChoices[request.id] = OAuthProfileChoice(id: profile.id, mode: profile.mode)
+    guard let profile = oauthProfileOptions.first(where: { $0.id == id }),
+      let digest = try? OAuthApprovalProfile(grant: profile).authorizationDigest
+    else { return }
+    oauthProfileChoices[request.id] = OAuthProfileChoice(
+      id: profile.id, authorizationDigest: digest)
   }
 
   /// Approves only with the profile and access level the owner reviewed, before expiry.
@@ -231,7 +231,7 @@ final class ClientAccessModel: ObservableObject {
       return false
     }
     guard let current = oauthProfile(for: request), current.id == reviewed.id,
-      current.mode == reviewed.mode,
+      current == reviewed,
       let reviewedDigest = try? OAuthApprovalProfile(grant: reviewed).authorizationDigest,
       let displayed = snapshot?.remoteProfiles.first(where: {
         $0.grant.id == reviewed.id && $0.authorizationDigest == reviewedDigest
@@ -291,31 +291,13 @@ final class ClientAccessModel: ObservableObject {
   }
 }
 
-extension GatewayPermissionMode {
-  /// Orders modes from the least to the most access.
-  var accessRank: Int {
-    switch self {
-    case .readOnly: 0
-    case .projectOperations: 1
-    case .localFullAccess: 2
-    }
-  }
-
-  var clientAccessLabel: String {
-    switch self {
-    case .readOnly: "Observe"
-    case .projectOperations: "Control — Restricted Access"
-    case .localFullAccess: "Control — Full Access"
-    }
-  }
-}
-
 extension GatewayControlSessionSnapshot {
-  var currentAccess: GatewayPermissionMode? {
-    guard !ended, profile?.grant.allowedCallers.contains(caller) == true else { return nil }
-    guard fullAccessConsent == nil else { return .localFullAccess }
-    return accessLimit == .readOnly || profile?.grant.mode == .readOnly
-      ? .readOnly : .projectOperations
+  var hasAccess: Bool {
+    !ended && profile?.grant.allowedCallers.contains(caller) == true
+  }
+  var accessLabel: String {
+    guard hasAccess else { return ended ? "Access ended" : "Access unavailable" }
+    return fullAccessConsent != nil && profile?.grant.fullAccess == true ? "Full access" : "Sandbox"
   }
 }
 

@@ -29,6 +29,7 @@ package struct PathAccessBasis: Hashable, Sendable, Codable {
     case project(ProjectLocation)
     case folder(FolderCategory, root: CanonicalPath)
     case developer(CanonicalPath)
+    case skillLibrary(CanonicalPath)
     case systemOrApplication(CanonicalPath)
     case outsideUserData, userData
   }
@@ -36,6 +37,7 @@ package struct PathAccessBasis: Hashable, Sendable, Codable {
   package let path: CanonicalPath
   package let operation: PathOperation
   package let location: Location
+  package let purpose: PathPurpose?
   package let readableDescendant: CanonicalPath?
   package let sandboxProjectID: String?
   package let excludedSubtrees: Set<CanonicalPath>?
@@ -46,6 +48,7 @@ package struct PathAccessBasis: Hashable, Sendable, Codable {
     case .project(let project):
       try! PermissionRequirement(.project(project.projectID), operation == .write ? .write : .read)
     case .folder(let category, _): try! PermissionRequirement(.filesAndFolders(category), .read)
+    case .skillLibrary: try! PermissionRequirement(.skills, .access)
     default: nil
     }
   }

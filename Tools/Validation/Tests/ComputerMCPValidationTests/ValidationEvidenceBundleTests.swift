@@ -122,7 +122,7 @@ struct ValidationEvidenceBundleTests {
 
     let encoded = String(decoding: try bundle.canonicalJSON(), as: UTF8.self)
 
-    #expect(encoded.contains("\"schema_version\":2"))
+    #expect(encoded.contains("\"schema_version\":3"))
     #expect(encoded.contains("\"external_consumer\""))
     #expect(encoded.contains("\"test_case_id\""))
     #expect(!encoded.contains(["back", "end"].joined()))
@@ -164,6 +164,9 @@ struct ValidationEvidenceBundleTests {
       occurredAt: Date(timeIntervalSince1970: 1_785_773_084.150)
     )
     let auditEvent = try #require(bundle.runs.first?.attempts.first?.auditEvent)
+    if let admission = bundle.runs.first?.attempts.first?.admissionAuditEvent {
+      try database.recordAudit(admission)
+    }
     try database.recordAudit(auditEvent)
     let decoded = try ValidationEvidenceBundle.decodeCanonicalJSON(bundle.canonicalJSON())
 
@@ -234,6 +237,8 @@ struct ValidationEvidenceBundleTests {
       consumerResultID: "consumer-result-\(transport.rawValue)",
       gatewayRequestID: audit.requestID,
       auditEvent: audit,
+      admissionAuditEvent: audit.decision == .allowed && audit.transport != "control_socket"
+        ? fixtureAdmissionAudit(audit) : nil,
       result: ValidationResultDigest(digest: outputDigest, byteCount: 128),
       outcome: outcome,
       assertions: [

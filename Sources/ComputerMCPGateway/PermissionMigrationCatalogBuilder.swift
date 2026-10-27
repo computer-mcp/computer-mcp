@@ -1,5 +1,8 @@
+import ComputerMCPConfiguration
 import ComputerMCPCore
+import ComputerMCPPlatform
 import ComputerMCPPlugins
+import Foundation
 
 extension PermissionMigrationCatalog {
   /// Inputs are cached, host-validated registration facts. Constructing this
@@ -9,7 +12,8 @@ extension PermissionMigrationCatalog {
     downstream: [CapabilityDescriptor], serverIDs: Set<String>,
     registrations: Set<IntegrationRegistration>, enabledRegistrations: Set<IntegrationRegistration>,
     origins: [IntegrationRegistration: PluginContributionOrigin],
-    manifestProfiles: [ProfileGrant], projectedCLI: [String: [CapabilityDescriptor]] = [:]
+    manifestProfiles: [LegacyProfileGrant], projectedCLI: [String: [CapabilityDescriptor]] = [:],
+    manifestProjects: [ComputerMCPCore.RegisteredProject] = []
   ) throws -> Self {
     guard enabledRegistrations.isSubset(of: registrations),
       origins.keys.allSatisfy({ registrations.contains($0) }),
@@ -79,6 +83,83 @@ extension PermissionMigrationCatalog {
     return try Self(
       configurationDigest: configurationDigest, availableBuiltinIDs: builtinIDs,
       dynamicTools: dynamic, serverIDs: serverIDs, manifestProfiles: manifestProfiles,
-      serverPluginIDs: serverPlugins)
+      serverPluginIDs: serverPlugins, manifestProjects: manifestProjects)
+  }
+}
+
+extension PermissionMigrationCatalog {
+  /// A source snapshot uses registration documents and cached classifications.
+  /// Resolving plugin declarations inspects files; no provider, helper, program,
+  /// or downstream connection is constructed for permission conversion.
+  package static func capture(
+    configuration: GatewayConfiguration, manifestProfiles: [LegacyProfileGrant],
+    configurationDigest: String, plugins: PluginStoreSnapshot,
+    applications: any ApplicationBundleLocating, bundledPlugins: BundledPlugins = .current,
+    manifestProjects: [ComputerMCPCore.RegisteredProject] = []
+  ) throws -> Self {
+    let state = plugins.includingBundledDefaults(bundledPlugins.packages.map(\.manifest))
+    let resolution = try PluginHost.resolve(
+      state, bundled: bundledPlugins, applications: applications)
+    var source = configuration
+    source.knownPluginMCPServerIDs.formUnion(state.knownMCPRegistrationIDs)
+    let composition = try GatewayPluginComposition(
+      configuration: source, plugins: resolution.plugins)
+    let configuration = composition.runtimeConfiguration
+    let knownServers = Set(configuration.mcp.servers.map(\.id)).union(state.knownMCPRegistrationIDs)
+    var registrations = Set(
+      configuration.mcp.servers.map { IntegrationRegistration(kind: .mcp, id: $0.id) }
+        + configuration.cli.commands.map { IntegrationRegistration(kind: .cli, id: $0.id) }
+        + configuration.skills.roots.map { IntegrationRegistration(kind: .skills, id: $0.id) })
+    registrations.formUnion(knownServers.map { .init(kind: .mcp, id: $0) })
+    let enabled = Set(
+      configuration.mcp.servers.filter(\.enabled).map {
+        IntegrationRegistration(kind: .mcp, id: $0.id)
+      }
+        + configuration.cli.commands.map { IntegrationRegistration(kind: .cli, id: $0.id) }
+        + (configuration.skills.enabled
+          ? configuration.skills.roots.map { IntegrationRegistration(kind: .skills, id: $0.id) }
+          : []))
+    let builtins = Set(
+      builtinV1.filter { tool in
+        let domain = tool.id.split(separator: ".").first.map(String.init) ?? ""
+        switch domain {
+        case "cli": return !configuration.cli.commands.isEmpty
+        case "mcp": return !knownServers.isEmpty
+        case "skills": return configuration.skills.enabled
+        case "shell": return configuration.policy.shellEnabled
+        case "process", "profile", "policy": return true
+        case "computer":
+          #if os(macOS)
+            return true
+          #else
+            return false
+          #endif
+        default:
+          return tool.id == "project.list" || tool.id == "project.describe"
+            || configuration.builtin.enabled.contains(tool.id)
+        }
+      }.map(\.id))
+    var downstream: [CapabilityDescriptor] = []
+    for server in configuration.mcp.servers where server.enabled {
+      let mapped = configuration.tools.filter { $0.source == server.id }.compactMap(\.tool)
+      let knownTools = Set(mapped).union(server.allowedTools).union(server.toolRisks.keys)
+      for name in knownTools.sorted()
+      where server.allowAnyTool || server.allowedTools.contains(name) {
+        let reference = MCPToolReference(serverID: server.id, toolName: name)
+        let aliases = configuration.mcpCapabilityIDs(for: reference)
+        guard let id = aliases.sorted().first else { continue }
+        downstream.append(
+          CapabilityDescriptor(
+            id: id, risk: configuration.mcpRisk(for: reference),
+            requirement: .none, projectRequirement: .optional,
+            usesNetwork: server.transport != .stdio, mcpReference: reference,
+            equivalentCapabilityIDs: aliases))
+      }
+    }
+    return try capture(
+      configurationDigest: configurationDigest, builtinIDs: builtins,
+      downstream: downstream, serverIDs: knownServers, registrations: registrations,
+      enabledRegistrations: enabled, origins: composition.origins,
+      manifestProfiles: manifestProfiles, manifestProjects: manifestProjects)
   }
 }

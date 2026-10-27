@@ -446,20 +446,26 @@ extension AppControlPlaneService {
       try stdout.seekToEnd()
       try stderr.seekToEnd()
 
-      let process = try await ManagedServiceProcess.start(
-        launcher: platform.launcher, executable: cloudflared,
-        arguments: [
-          "tunnel", "--no-autoupdate", "--metrics", "127.0.0.1:\(profile.metricsPort)",
-          "run", "--token-file", tokenFile.path,
-        ], directory: URL(fileURLWithPath: FileManager.default.currentDirectoryPath),
-        environment: ProcessInfo.processInfo.environment,
-        output: stdout.fileDescriptor, error: stderr.fileDescriptor
-      ) { [weak self] terminatedProcess in
-        let processID = terminatedProcess.processIdentifier
-        let terminationStatus = terminatedProcess.terminationStatus
-        Task {
-          await self?.handleCloudflareProcessExit(
-            profileID: profileID, processID: processID, terminationStatus: terminationStatus)
+      let process = try await ExecutionAdministration.$current.withValue(
+        .init(
+          mode: .fullAccess,
+          environment: try .init(fullAccessVariables: ProcessInfo.processInfo.environment))
+      ) {
+        try await ManagedServiceProcess.start(
+          launcher: platform.launcher, executable: cloudflared,
+          arguments: [
+            "tunnel", "--no-autoupdate", "--metrics", "127.0.0.1:\(profile.metricsPort)",
+            "run", "--token-file", tokenFile.path,
+          ], directory: URL(fileURLWithPath: FileManager.default.currentDirectoryPath),
+          environment: ProcessInfo.processInfo.environment,
+          output: stdout.fileDescriptor, error: stderr.fileDescriptor
+        ) { [weak self] terminatedProcess in
+          let processID = terminatedProcess.processIdentifier
+          let terminationStatus = terminatedProcess.terminationStatus
+          Task {
+            await self?.handleCloudflareProcessExit(
+              profileID: profileID, processID: processID, terminationStatus: terminationStatus)
+          }
         }
       }
       runtime.process = process
@@ -499,9 +505,13 @@ extension AppControlPlaneService {
     let environment = ProcessInfo.processInfo.environment
     let launcher = platform.launcher
     let result = try await providerProbeOperations.perform {
-      try ManagedCommandRunner(launcher: launcher, policy: .readOnly).run(
-        executable: executable, arguments: ["version"], workingDirectory: nil,
-        environment: environment, timeoutMilliseconds: 5_000, maxOutputBytes: 16_384)
+      try ExecutionAdministration.$current.withValue(
+        .init(mode: .fullAccess, environment: try .init(fullAccessVariables: environment))
+      ) {
+        try ManagedCommandRunner(launcher: launcher).run(
+          executable: executable, arguments: ["version"], workingDirectory: nil,
+          environment: environment, timeoutMilliseconds: 5_000, maxOutputBytes: 16_384)
+      }
     }
     try Task.checkCancellation()
     guard !result.timedOut, !result.stdoutTruncated, !result.stderrTruncated else {

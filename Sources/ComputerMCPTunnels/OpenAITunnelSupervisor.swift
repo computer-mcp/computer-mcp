@@ -241,7 +241,10 @@ internal struct OpenAITunnelClientResolver: OpenAITunnelClientResolving {
       environment: environment,
       systemSearchDirectories: executableSearchDirectories
     )
-    guard let result = try discovery.discover().first,
+    let observations = try ExecutionAdministration.$current.withValue(
+      .init(mode: .fullAccess, environment: .init(fullAccessVariables: environment))
+    ) { try discovery.discover() }
+    guard let result = observations.first,
       let path = result.resolvedPath,
       result.version != nil, result.doctorStatus.state == .notApplicable
     else {
@@ -372,11 +375,11 @@ package actor OpenAITunnelSupervisor {
       resolver
       ?? OpenAITunnelClientResolver(
         executableSearchDirectories: executableSearchDirectories,
-        commandRunner: ManagedCommandRunner(launcher: launcher, policy: .readOnly))
+        commandRunner: ManagedCommandRunner(launcher: launcher))
     self.planBuilder = planBuilder
     self.proxyResolver = proxyResolver
     self.commandRunner =
-      commandRunner ?? ManagedCommandRunner(launcher: launcher, policy: .fullAccess)
+      commandRunner ?? ManagedCommandRunner(launcher: launcher)
     self.processManager =
       processManager
       ?? SubprocessOpenAITunnelProcessManager(
@@ -500,12 +503,15 @@ package actor OpenAITunnelSupervisor {
           stableProcessFailure(doctorResult, secret: context.secret)
         )
       }
-      let sessionID = try processManager.spawn(
-        executable: context.plan.runInvocation.tunnelClient,
-        arguments: context.plan.runInvocation.arguments,
-        environment: context.environment,
-        maxOutputBytes: maxOutputBytes
-      )
+      let sessionID = try ExecutionAdministration.$current.withValue(
+        .init(mode: .fullAccess, environment: .init(fullAccessVariables: context.environment))
+      ) {
+        try processManager.spawn(
+          executable: context.plan.runInvocation.tunnelClient,
+          arguments: context.plan.runInvocation.arguments,
+          environment: context.environment,
+          maxOutputBytes: maxOutputBytes)
+      }
       spawnedSessionID = sessionID
       var snapshot = try processManager.read(
         sessionID: sessionID,
@@ -759,14 +765,17 @@ package actor OpenAITunnelSupervisor {
     _ invocation: OpenAITunnelInvocation,
     environment: [String: String]
   ) throws -> CommandResult {
-    try commandRunner.run(
-      executable: invocation.tunnelClient,
-      arguments: invocation.arguments,
-      workingDirectory: nil,
-      environment: environment,
-      timeoutMilliseconds: 30_000,
-      maxOutputBytes: maxOutputBytes
-    )
+    try ExecutionAdministration.$current.withValue(
+      .init(mode: .fullAccess, environment: .init(fullAccessVariables: environment))
+    ) {
+      try commandRunner.run(
+        executable: invocation.tunnelClient,
+        arguments: invocation.arguments,
+        workingDirectory: nil,
+        environment: environment,
+        timeoutMilliseconds: 30_000,
+        maxOutputBytes: maxOutputBytes)
+    }
   }
 
   private func doctorInvocation(

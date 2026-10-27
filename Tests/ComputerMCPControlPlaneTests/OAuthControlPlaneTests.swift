@@ -2,6 +2,7 @@ import ComputerMCPAuthorization
 import ComputerMCPConfiguration
 import ComputerMCPCore
 import ComputerMCPDownstream
+import ComputerMCPPermissions
 import ComputerMCPPersistence
 import ComputerMCPPlatform
 import ComputerMCPProcess
@@ -75,7 +76,10 @@ struct OAuthControlPlaneTests {
     #expect(request["status_digest"] == nil)
     await #expect(throws: OAuthError.invalidRequest) {
       try await owner.call(
-        name: "clients.authorize", arguments: ["pairing_code": .string("000000")])
+        name: "clients.authorize",
+        arguments: [
+          "pairing_code": .string("000000"), "profile_id": .string("cloudflare-observe"),
+        ])
     }
     let approved = try await owner.call(
       name: "clients.authorize",
@@ -103,7 +107,8 @@ struct OAuthControlPlaneTests {
       try await fixture.service.oauthAuthorizations(approver: caller)
     }
     await #expect(throws: OAuthError.accessDenied) {
-      try await fixture.service.authorizeOAuthClient(pairingCode: "ABCDEF", approver: caller)
+      try await fixture.service.authorizeOAuthClient(
+        pairingCode: "ABCDEF", profileID: .cloudflareObserve, approver: caller)
     }
     await #expect(throws: OAuthError.accessDenied) {
       try await fixture.service.denyOAuthAuthorization(pairingCode: "ABCDEF", approver: caller)
@@ -116,56 +121,32 @@ struct OAuthControlPlaneTests {
     }
   }
 
-  @Test(arguments: [false, true])
-  func defaultApprovalRequiresAnEffectivelyReadOnlyObserveProfile(throughControl: Bool)
-    async throws
-  {
+  @Test
+  func approvalRequiresTheOwnersExplicitProfileSelection() async throws {
     let fixture = try ControlFixture()
     defer { fixture.remove() }
     let server = fixture.server()
     let owner = GatewayClientControl.app(fixture.operations)
-    func approve(_ code: String, profile: GatewayProfileID? = nil) async throws -> GatewayProfileID
-    {
-      if throughControl {
-        var arguments: [String: JSONValue] = ["pairing_code": .string(code)]
-        if let profile { arguments["profile_id"] = .string(profile.rawValue) }
-        let response = try await owner.call(name: "clients.authorize", arguments: arguments)
-        return try #require(
-          GatewayProfileID(rawValue: response.objectValue?["profile_id"]?.stringValue ?? ""))
-      }
-      return try await fixture.service.authorizeOAuthClient(
-        pairingCode: code, profileID: profile
-      ).profileID
-    }
-    let first = try await server.authorize(fixture.fields, address: "fixture")
-    #expect(try await approve(first.request.pairingCode) == .cloudflareObserve)
-
-    var observe = try #require(
-      try await fixture.service.profileGrants().first { $0.id == .cloudflareObserve })
-    observe.mode = .projectOperations
-    try fixture.database.saveProfile(observe, expectedRevision: observe.authorizationRevision)
-    #expect(
-      try await fixture.service.profileGrants().first { $0.id == .cloudflareObserve }?.mode
-        == .projectOperations)
-    let next = try await server.authorize(fixture.fields, address: "fixture")
-    do {
-      _ = try await approve(next.request.pairingCode)
-      Issue.record("Approval needs an explicit profile when Observe permits operations.")
-    } catch GatewayToolError.invalidArguments(let message) {
-      #expect(message.contains("explicit profile"))
-      #expect(message.contains("--profile"))
-      #expect(message.contains("profile_id"))
+    let pairing = try await server.authorize(fixture.fields, address: "fixture")
+    await #expect(throws: (any Error).self) {
+      try await owner.call(
+        name: "clients.authorize", arguments: ["pairing_code": .string(pairing.request.pairingCode)]
+      )
     }
     #expect(try await server.pendingRequests(approver: .localApp).count == 1)
-    #expect(try await server.grants(approver: .localApp).count == 1)
-    #expect(
-      try await approve(next.request.pairingCode, profile: .cloudflareObserve) == .cloudflareObserve
-    )
+    #expect(try await server.grants(approver: .localApp).isEmpty)
+    let response = try await owner.call(
+      name: "clients.authorize",
+      arguments: [
+        "pairing_code": .string(pairing.request.pairingCode),
+        "profile_id": .string("cloudflare-observe"),
+      ])
+    #expect(response.objectValue?["profile_id"] == .string("cloudflare-observe"))
   }
 
   @Test(arguments: [false, true], [false, true])
   func approvalRejectsChangedProfileAuthorizationUntilItIsReviewedAgain(
-    throughControl: Bool, changeMode: Bool
+    throughControl: Bool, changeFullAccess: Bool
   ) async throws {
     let fixture = try ControlFixture()
     defer { fixture.remove() }
@@ -173,13 +154,15 @@ struct OAuthControlPlaneTests {
     let pairing = try await server.authorize(fixture.fields, address: "fixture")
     let reviewed = try #require(
       try await fixture.service.profileGrants().first { $0.id == .cloudflareObserve })
-    #expect(reviewed.mode == .readOnly)
+    #expect(!reviewed.fullAccess)
+    var edited = reviewed
+    edited.fullAccess = changeFullAccess
+    try edited.permissions.set(.granted(.access), for: .screen)
+    let view = try await fixture.service.permissionRequests()
     let changed = try await fixture.service.updateProfilePermissions(
-      profileID: reviewed.id, mode: changeMode ? .projectOperations : nil,
-      capabilityIDs: changeMode ? ["file.read", "file.write"] : ["file.read"],
-      expectedRevision: reviewed.authorizationRevision)
-    #expect(changed.mode == (changeMode ? .projectOperations : .readOnly))
-    #expect(changed.capabilityIDs != reviewed.capabilityIDs)
+      edited, expectedRevision: view.revision)
+    #expect(changed.fullAccess == changeFullAccess)
+    #expect(changed.permissions != reviewed.permissions)
     let owner = GatewayClientControl.app(fixture.operations)
     func approve(digest: String) async throws -> GatewayProfileID {
       if throughControl {
@@ -224,22 +207,25 @@ struct OAuthControlPlaneTests {
         $0.grant.id == .cloudflareObserve
       })
     let lock = await fixture.service.manifestStore.publicationLock
+    let view = try await fixture.service.permissionRequests()
     let approving = Task {
       try await fixture.service.authorizeOAuthClient(
         pairingCode: pairing.request.pairingCode, profileID: reviewed.grant.id,
         expectedAuthorizationDigest: reviewed.authorizationDigest)
     }
     await gate.waitUntilPaused()
+    var edited = reviewed.grant
+    try edited.permissions.set(.granted(.access), for: .screen)
+    let updatedProfile = edited
     let changing = Task {
       try await fixture.service.updateProfilePermissions(
-        profileID: reviewed.grant.id, mode: .projectOperations,
-        capabilityIDs: ["file.read", "file.write"])
+        updatedProfile, expectedRevision: view.revision)
     }
     gate.resume()
     let grant = try await approving.value
     let changed = try await changing.value
     #expect(grant.profileID == reviewed.grant.id)
-    #expect(changed.mode == .projectOperations)
+    #expect(changed.permissions.state(for: .screen) == .granted(.access))
     #expect(
       try OAuthApprovalProfile(grant: changed).authorizationDigest != reviewed.authorizationDigest)
     #expect(try await flow.pendingRequests(approver: .localApp).isEmpty)
@@ -258,7 +244,7 @@ struct OAuthControlPlaneTests {
     let flow = fixture.server()
     let pairing = try await flow.authorize(fixture.fields, address: "fixture")
     let grant = try await fixture.service.authorizeOAuthClient(
-      pairingCode: pairing.request.pairingCode)
+      pairingCode: pairing.request.pairingCode, profileID: .cloudflareObserve)
     let pending = try await flow.authorize(fixture.fields, address: "pending")
     try FileManager.default.removeItem(at: fixture.service.directories.manifest)
     let restarted = try fixture.restartedService()
@@ -288,8 +274,9 @@ struct OAuthControlPlaneTests {
       .init(id: "source", displayName: "Source", rootPath: source.path))
     try fixture.database.saveProfile(
       .init(
-        id: .cloudflareOperate, capabilityIDs: ["project.list"], projectIDs: ["source"],
-        allowedCallers: [.cloudflareTunnel], mode: .projectOperations))
+        id: .cloudflareOperate,
+        permissions: try oauthPermissions([.project("source"): .granted(.write)]),
+        allowedCallers: [.cloudflareTunnel]))
     let registration = MCPDerivedProjectRegistration(
       origin: "fixture", receiptID: "derived-receipt", sourceProjectID: "source",
       sourceRoot: source.path, receiptDigest: "fixture-digest", profileID: .cloudflareOperate,
@@ -301,10 +288,8 @@ struct OAuthControlPlaneTests {
     }
     let connection = try GatewayDatabaseConnection(
       path: try #require(fixture.database.fileURL).path)
-    try await connection.writer.writeWithoutTransaction {
-      try $0.execute(sql: "PRAGMA busy_timeout = 0")
-    }
     let writer = GatewayDatabase(connection: connection)
+    _ = writer.permissionStore(counter: fixture.permissionCounter)
     func changeProject() throws {
       if removing {
         try writer.unregisterDerivedProject(
@@ -320,31 +305,54 @@ struct OAuthControlPlaneTests {
       try await fixture.service.oauthApprovalProfiles().first { $0.grant.id == .cloudflareOperate })
     if changeFirst {
       try changeProject()
-      await #expect(throws: (any Error).self) {
-        try await fixture.service.authorizeOAuthClient(
-          pairingCode: pairing.request.pairingCode, profileID: reviewed.grant.id,
-          expectedAuthorizationDigest: reviewed.authorizationDigest)
-      }
-      #expect(try await flow.grants(approver: .localApp).isEmpty)
-      #expect(try await flow.pendingRequests(approver: .localApp).count == 1)
+      gate.resume()
+      _ = try await fixture.service.authorizeOAuthClient(
+        pairingCode: pairing.request.pairingCode, profileID: reviewed.grant.id,
+        expectedAuthorizationDigest: reviewed.authorizationDigest)
+      #expect(try await flow.grants(approver: .localApp).count == 1)
+      #expect(try await flow.pendingRequests(approver: .localApp).isEmpty)
     } else {
       let approving = Task {
         try await fixture.service.authorizeOAuthClient(
           pairingCode: pairing.request.pairingCode, profileID: reviewed.grant.id,
           expectedAuthorizationDigest: reviewed.authorizationDigest)
       }
-      await gate.waitUntilPaused()
-      // This connection cannot commit between the digest comparison and grant insertion.
-      #expect(throws: DatabaseError.self) { try changeProject() }
-      gate.resume()
-      #expect(try await approving.value.profileID == reviewed.grant.id)
-      try changeProject()
-      #expect(try await flow.pendingRequests(approver: .localApp).isEmpty)
+      do {
+        await gate.waitUntilPaused()
+        let previousTimeout = try await connection.writer.writeWithoutTransaction { database in
+          let value = try #require(try Int.fetchOne(database, sql: "PRAGMA busy_timeout"))
+          try database.execute(sql: "PRAGMA busy_timeout = 0")
+          return value
+        }
+        // Only the paused approval probes immediate contention; successful writes use host policy.
+        let blocked = Result { try changeProject() }
+        try await connection.writer.writeWithoutTransaction {
+          try $0.execute(sql: "PRAGMA busy_timeout = \(previousTimeout)")
+        }
+        switch blocked {
+        case .success:
+          Issue.record("Derived registration must wait for approval's SQLite commit")
+        case .failure(let error as DatabaseError):
+          #expect(error.resultCode == .SQLITE_BUSY)
+        case .failure(let error):
+          throw error
+        }
+        gate.resume()
+        #expect(try await approving.value.profileID == reviewed.grant.id)
+        try changeProject()
+        #expect(try await flow.pendingRequests(approver: .localApp).isEmpty)
+      } catch {
+        gate.resume()
+        approving.cancel()
+        _ = await approving.result
+        throw error
+      }
     }
     let current = try #require(
       try await fixture.service.oauthApprovalProfiles().first { $0.grant.id == reviewed.grant.id })
-    #expect(current.authorizationDigest != reviewed.authorizationDigest)
-    #expect(current.grant.projectIDs.contains("child") == !removing)
+    #expect(current.authorizationDigest == reviewed.authorizationDigest)
+    #expect(current.grant.permissions.entries[.project("child")] == nil)
+    #expect((try fixture.database.project(id: "child") != nil) == !removing)
   }
 
   // These integration cases publish manifests through the macOS exclusive-rename
@@ -358,8 +366,8 @@ struct OAuthControlPlaneTests {
       var configuration = try await fixture.service.activeConfiguration()
       configuration.profiles = [
         .init(
-          id: .cloudflareObserve, capabilities: ["file.read"],
-          allowedCallers: [.cloudflareTunnel], mode: .readOnly)
+          id: .cloudflareObserve, permissions: .newPrincipal,
+          allowedCallers: [.cloudflareTunnel])
       ]
       _ = try await fixture.service.activateManifest(
         configuration.exportedTOML(),
@@ -368,11 +376,11 @@ struct OAuthControlPlaneTests {
         try await fixture.service.oauthApprovalProfiles().first {
           $0.grant.id == .cloudflareObserve
         })
-      #expect(try fixture.database.profiles().isEmpty)
       let flow = fixture.server()
       let pairing = try await flow.authorize(fixture.fields, address: "fixture")
-      configuration.profiles[0].mode = .projectOperations
-      configuration.profiles[0].capabilities = ["file.read", "file.write"]
+      var updated = configuration.profiles[0].grant
+      try updated.permissions.set(.granted(.access), for: .screen)
+      configuration.profiles[0] = .init(grant: updated)
       _ = try await fixture.gatewayService.changeManifest(
         configuration.exportedTOML(),
         expectedDigest: try await fixture.service.configurationDigest())
@@ -381,7 +389,6 @@ struct OAuthControlPlaneTests {
           pairingCode: pairing.request.pairingCode, profileID: reviewed.grant.id,
           expectedAuthorizationDigest: reviewed.authorizationDigest)
       }
-      #expect(try fixture.database.profiles().isEmpty)
       #expect(try await flow.grants(approver: .localApp).isEmpty)
       #expect(try await flow.pendingRequests(approver: .localApp).count == 1)
       let current = try #require(
@@ -410,7 +417,7 @@ struct OAuthControlPlaneTests {
       let pending = try await flow.authorize(fixture.fields, address: "pending")
       let undelivered = try await flow.authorize(fixture.fields, address: "undelivered")
       _ = try await fixture.service.authorizeOAuthClient(
-        pairingCode: undelivered.request.pairingCode)
+        pairingCode: undelivered.request.pairingCode, profileID: .cloudflareObserve)
       var owner = fixture.service
       var listener: GatewayHTTPRuntime?
       if path != "startup" {
@@ -498,7 +505,8 @@ struct OAuthControlPlaneTests {
             try await flow.status(statusToken: pairing.statusToken, address: "pending")
           }
           await #expect(throws: OAuthError.invalidRequest) {
-            try await owner.authorizeOAuthClient(pairingCode: pairing.request.pairingCode)
+            try await owner.authorizeOAuthClient(
+              pairingCode: pairing.request.pairingCode, profileID: .cloudflareObserve)
           }
         }
         await socket.stop()
@@ -724,7 +732,8 @@ struct OAuthControlPlaneTests {
       let flow = fixture.server()
       let pairing = try await flow.authorize(fixture.fields, address: "fixture")
       let approving = Task {
-        try await fixture.service.authorizeOAuthClient(pairingCode: pairing.request.pairingCode)
+        try await fixture.service.authorizeOAuthClient(
+          pairingCode: pairing.request.pairingCode, profileID: .cloudflareObserve)
       }
       await gate.waitUntilPaused()
       let deleting = Task {
@@ -856,12 +865,13 @@ struct OAuthControlPlaneTests {
         ).generatedAccessToken)
       let pairing = try await fixture.server().authorize(fixture.fields, address: "fixture")
       let grant = try await fixture.service.authorizeOAuthClient(
-        pairingCode: pairing.request.pairingCode)
+        pairingCode: pairing.request.pairingCode, profileID: .cloudflareObserve)
       _ = try await fixture.service.startCloudflareTunnel(
         profileID: profile.id, gatewayService: fixture.gatewayService)
       let pending = try await fixture.server().authorize(fixture.fields, address: "pending")
       let delivered = try await fixture.server().authorize(fixture.fields, address: "delivered")
-      _ = try await fixture.service.authorizeOAuthClient(pairingCode: delivered.request.pairingCode)
+      _ = try await fixture.service.authorizeOAuthClient(
+        pairingCode: delivered.request.pairingCode, profileID: .cloudflareObserve)
       guard
         case .redirect(let callback) = try await fixture.server().status(
           statusToken: delivered.statusToken, address: "delivered"),
@@ -917,7 +927,8 @@ struct OAuthControlPlaneTests {
           profile, tunnelToken: "synthetic-recreated")
         #expect(try await fixture.server().pendingRequests(approver: .localApp).isEmpty)
         await #expect(throws: OAuthError.invalidRequest) {
-          try await fixture.service.authorizeOAuthClient(pairingCode: pending.request.pairingCode)
+          try await fixture.service.authorizeOAuthClient(
+            pairingCode: pending.request.pairingCode, profileID: .cloudflareObserve)
         }
         await #expect(throws: OAuthError.invalidRequest) {
           try await fixture.server().status(statusToken: pairing.statusToken, address: "fixture")
@@ -1099,7 +1110,7 @@ struct OAuthControlPlaneTests {
     let flow = fixture.server()
     let pairing = try await flow.authorize(fixture.fields, address: "fixture")
     let grant = try await fixture.service.authorizeOAuthClient(
-      pairingCode: pairing.request.pairingCode)
+      pairingCode: pairing.request.pairingCode, profileID: .cloudflareObserve)
     guard
       case .redirect(let callback) = try await flow.status(
         statusToken: pairing.statusToken, address: "fixture"),
@@ -1183,12 +1194,15 @@ struct OAuthControlPlaneTests {
       GatewayClientControl.contracts.first { $0.name == "clients.authorize" })
     _ = try approve.validate(
       .object([
-        "pairing_code": .string("ABCDEF"),
+        "pairing_code": .string("ABCDEF"), "profile_id": .string("cloudflare-observe"),
         "authorization_digest": .string(String(repeating: "a", count: 64)),
       ]))
     #expect(throws: (any Error).self) {
       try approve.validate(
-        .object(["pairing_code": .string("ABCDEF"), "authorization_digest": .integer(7)]))
+        .object([
+          "pairing_code": .string("ABCDEF"), "profile_id": .string("cloudflare-observe"),
+          "authorization_digest": .integer(7),
+        ]))
     }
   }
 }
@@ -1200,6 +1214,7 @@ private final class ControlFixture: Sendable {
   let service: AppControlPlaneService
   let operations: AppControlPlaneOperations
   let gatewayService: AppGatewayService
+  let permissionCounter = TestAuthorizationEpochCounter()
   let secrets = FixtureSecrets()
   let monitor = FixtureManifestMonitor()
   let configuration = OAuthServerConfiguration(
@@ -1218,6 +1233,7 @@ private final class ControlFixture: Sendable {
       logs: root.appendingPathComponent("Logs"))
     try directories.prepare()
     database = try GatewayDatabase(path: directories.database.path)
+    _ = database.permissionStore(counter: permissionCounter)
     let cloudflared = root.appendingPathComponent("cloudflared-fixture")
     try Data(
       """
@@ -1241,8 +1257,6 @@ private final class ControlFixture: Sendable {
     loader = FixtureManifestLoader(
       base: GatewayManifestConfigurationLoader(
         database: database, applications: TestApplicationBundleLocator()))
-    let store = try AtomicManifestStore(
-      manifestURL: directories.manifest, database: database, loader: loader)
     let monitor = monitor
     let platform = PlatformServices(
       launcher: testExecutionLauncher(),
@@ -1250,9 +1264,22 @@ private final class ControlFixture: Sendable {
       applications: TestApplicationBundleLocator(), toolProviders: UnusedPlatform(),
       managementToolNames: [],
       executableSearchDirectories: [], gitExecutable: "git",
-      fileChanges: { _ in monitor })
+      fileChanges: { _ in monitor }, permissionPolicyReader: TestManagedPolicyReader())
+    try database.bootstrapPermissionProfiles(
+      GatewayProfileID.builtIns.map { manifest.profileGrant(for: $0) },
+      declarations: manifest.profiles.map(\.grant))
+    let permissionRuntime = try database.permissionRuntime(platform: platform)
+    let permissionOwner = try GatewayPermissionOwner(
+      context: .init(
+        caller: .localApp,
+        profileID: .localAdmin, trustedPrincipalID: "fixture-owner"), validate: {})
+    let permissionControl = PermissionControlService(
+      service: permissionRuntime.service, owner: { permissionOwner })
+    let store = try AtomicManifestStore(
+      manifestURL: directories.manifest, database: database, loader: loader)
     service = AppControlPlaneService(
-      directories: directories, database: database, manifestStore: store,
+      directories: directories, database: database, permissionControl: permissionControl,
+      manifestStore: store,
       defaultManifest: try manifest.exportedTOML(), secretStore: secrets,
       openAITunnelSupervisor: OpenAITunnelSupervisor(
         launcher: testExecutionLauncher(),
@@ -1286,7 +1313,8 @@ private final class ControlFixture: Sendable {
   }
   func approvedCode(_ flow: OAuthAuthorizationServer) async throws -> (OAuthGrant, String) {
     let pairing = try await flow.authorize(fields, address: UUID().uuidString)
-    let grant = try await service.authorizeOAuthClient(pairingCode: pairing.request.pairingCode)
+    let grant = try await service.authorizeOAuthClient(
+      pairingCode: pairing.request.pairingCode, profileID: .cloudflareObserve)
     guard
       case .redirect(let target) = try await flow.status(
         statusToken: pairing.statusToken, address: "fixture"),
@@ -1311,11 +1339,18 @@ private final class ControlFixture: Sendable {
   }
   func restartedService() throws -> AppControlPlaneService {
     let directories = service.directories
-    let database = try GatewayDatabase(path: directories.database.path)
+    let permissionRuntime = try database.permissionRuntime(platform: service.platform)
+    let permissionOwner = try GatewayPermissionOwner(
+      context: .init(
+        caller: .localApp,
+        profileID: .localAdmin, trustedPrincipalID: "fixture-owner"), validate: {})
+    let permissionControl = PermissionControlService(
+      service: permissionRuntime.service, owner: { permissionOwner })
     let store = try AtomicManifestStore(
       manifestURL: directories.manifest, database: database, loader: loader)
     return AppControlPlaneService(
-      directories: directories, database: database, manifestStore: store,
+      directories: directories, database: database, permissionControl: permissionControl,
+      manifestStore: store,
       defaultManifest: service.defaultManifest, secretStore: secrets,
       openAITunnelSupervisor: OpenAITunnelSupervisor(
         launcher: testExecutionLauncher(),
@@ -1420,10 +1455,11 @@ private struct ControlDocument: CIMDFetching {
 private struct UnusedPlatform: ProjectBookmarkServicing, PluginArchiveDirectoryFactory,
   GatewayToolProviderFactory, LaunchAtLoginControlling
 {
-  func registerFolder(at url: URL, displayName: String?) throws -> RegisteredProject {
+  func registerFolder(at url: URL, displayName: String?) throws -> ComputerMCPCore.RegisteredProject
+  {
     throw FixtureFailure.unused
   }
-  func resolve(_ project: RegisteredProject) throws -> ResolvedProjectAccess {
+  func resolve(_ project: ComputerMCPCore.RegisteredProject) throws -> ResolvedProjectAccess {
     throw ProjectBookmarkError.bookmarkResolutionFailed(projectID: project.id)
   }
   func create(at url: URL) throws -> any PluginArchiveStagingDirectory {
@@ -1575,4 +1611,10 @@ private final class CommitGate: @unchecked Sendable {
     condition.broadcast()
     condition.unlock()
   }
+}
+
+private func oauthPermissions(_ entries: [Permission: PermissionState]) throws -> Permissions {
+  var permissions = Permissions()
+  for (permission, state) in entries { try permissions.set(state, for: permission) }
+  return permissions
 }

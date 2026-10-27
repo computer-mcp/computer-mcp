@@ -1,3 +1,4 @@
+import ComputerMCPSandbox
 import ComputerMCPTestSupport
 import Foundation
 import Testing
@@ -13,14 +14,19 @@ import Testing
 final class ManagedProcessRegistryTests {
   @Test
   func testSpawnReadAndListUseSharedSessionRuntime() async throws {
+    let scratch = try ScopedTemporaryDirectory()
+    defer { withExtendedLifetime(scratch) {} }
+    let administration = try registryAdministration(directory: scratch.url)
     let registry = ManagedProcessRegistry(launcher: testExecutionLauncher())
-    let id = try registry.spawn(
-      executable: "/bin/sh",
-      arguments: ["-c", "printf process-ready"],
-      workingDirectory: nil,
-      environment: [:],
-      maxOutputBytes: 4_096
-    )
+    let id = try ExecutionAdministration.$current.withValue(administration) {
+      try registry.spawn(
+        executable: "/bin/sh",
+        arguments: ["-c", "printf process-ready"],
+        workingDirectory: scratch.url,
+        environment: [:],
+        maxOutputBytes: 4_096
+      )
+    }
 
     let snapshot = try await waitForSnapshot(id: id, registry: registry) { $0.exitCode != nil }
     #expect(!(snapshot.isRunning))
@@ -31,14 +37,19 @@ final class ManagedProcessRegistryTests {
 
   @Test
   func testCancelTerminatesProcessGroupSession() async throws {
+    let scratch = try ScopedTemporaryDirectory()
+    defer { withExtendedLifetime(scratch) {} }
+    let administration = try registryAdministration(directory: scratch.url)
     let registry = ManagedProcessRegistry(launcher: testExecutionLauncher())
-    let id = try registry.spawn(
-      executable: "/bin/sh",
-      arguments: ["-c", "sleep 30"],
-      workingDirectory: nil,
-      environment: [:],
-      maxOutputBytes: 4_096
-    )
+    let id = try ExecutionAdministration.$current.withValue(administration) {
+      try registry.spawn(
+        executable: "/bin/sh",
+        arguments: ["-c", "sleep 30"],
+        workingDirectory: scratch.url,
+        environment: [:],
+        maxOutputBytes: 4_096
+      )
+    }
 
     let result = try registry.cancel(processID: id)
     #expect((result.processID) == (id))
@@ -71,5 +82,13 @@ final class ManagedProcessRegistryTests {
     }
     Issue.record("Process did not reach the expected snapshot before the test deadline.")
     return try registry.read(processID: id)
+  }
+
+  private func registryAdministration(directory: URL) throws -> ExecutionAdministration {
+    .init(
+      mode: .fullAccess,
+      environment: try .init(fullAccessVariables: [
+        "PATH": "/usr/bin:/bin", "HOME": directory.path, "TMPDIR": directory.path + "/",
+      ]))
   }
 }

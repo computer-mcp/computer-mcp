@@ -5,9 +5,10 @@ import Testing
 
 @Suite("Validation observation correlation")
 struct ValidationObservationTests {
-  @Test("OpenAI consumer result correlates to one audit row")
+  @Test("OpenAI consumer result correlates to admission and terminal audit records")
   func openAICorrelation() throws {
     let database = try GatewayDatabase(inMemory: ())
+    try database.recordAudit(fixtureAdmissionAudit(makeAudit()))
     try database.recordAudit(makeAudit())
 
     let bundle = try ValidationObservationCollector(database: database).collect(
@@ -27,6 +28,7 @@ struct ValidationObservationTests {
   @Test("Observed transport request mismatch is rejected")
   func transportRequestMismatch() throws {
     let database = try GatewayDatabase(inMemory: ())
+    try database.recordAudit(fixtureAdmissionAudit(makeAudit()))
     try database.recordAudit(makeAudit())
     let observations = ValidationObservationBundle(
       generatedAt: timestamp,
@@ -130,6 +132,7 @@ struct ValidationObservationTests {
       outputByteCount: 64,
       outputTruncated: false
     )
+    try database.recordAudit(fixtureAdmissionAudit(runtimeAudit))
     try database.recordAudit(runtimeAudit)
     let observations = ValidationObservationBundle(
       generatedAt: timestamp,
@@ -193,6 +196,7 @@ struct ValidationObservationTests {
       outputByteCount: 64,
       outputTruncated: false
     )
+    try database.recordAudit(fixtureAdmissionAudit(runtimeAudit))
     try database.recordAudit(runtimeAudit)
     let observations = ValidationObservationBundle(
       generatedAt: timestamp,
@@ -306,6 +310,7 @@ struct ValidationObservationTests {
       outputByteCount: 64,
       outputTruncated: false
     )
+    try database.recordAudit(fixtureAdmissionAudit(audit))
     try database.recordAudit(audit)
     let observations = ValidationObservationBundle(
       generatedAt: timestamp,

@@ -1,5 +1,7 @@
 import ComputerMCPDownstream
 import ComputerMCPMacOS
+import ComputerMCPProcess
+import ComputerMCPSandbox
 import ComputerMCPTestSupport
 import ComputerMCPToolKit
 import Darwin
@@ -10,7 +12,9 @@ import Testing
 @testable import ComputerMCPControlPlane
 @testable import ComputerMCPCore
 @testable import ComputerMCPGateway
+@testable import ComputerMCPPermissions
 @testable import ComputerMCPPlatform
+@testable import ComputerMCPPlatformDarwin
 @testable import ComputerMCPPlatformPOSIX
 
 #if os(macOS)
@@ -23,39 +27,53 @@ struct MCPProjectTests {
   func connectionValidationUsesTheConfigurationDirectoryAndCleansUp(_ fail: Bool) async throws {
     let fixture = try MCPProjectFixture()
     defer { fixture.remove() }
-    let marker = fixture.root.appendingPathComponent("started.jsonl")
+    let marker = fixture.first.appendingPathComponent("started.jsonl")
     var configuration = fixture.configuration()
     configuration.mcp.servers[0].cwd = "first"
     configuration.mcp.servers[0].env = ["START_MARKER": marker.path]
-    if fail {
-      configuration.mcp.servers.append(
-        .init(
-          id: "missing", transport: .stdio,
-          command: fixture.root.appendingPathComponent("not-installed").path))
-      await expectThrowsAsync(
-        try await ComputerMCPProductContracts.validateMCPConnections(
-          configuration: configuration,
-          platform: MacOSPlatform.services(launcher: testExecutionLauncher()))
-      ) { error in
-        #expect(error.localizedDescription.contains("missing"))
+    let scope = try MCPProjectUnitScope(directory: fixture.first, readableRoot: fixture.root)
+    let prepared = try scope.prepared(variables: configuration.mcp.servers[0].env)
+    let platform = MacOSPlatform.services(launcher: scope.launcher)
+    do {
+      if fail {
+        configuration.mcp.servers.append(
+          .init(
+            id: "missing", transport: .stdio,
+            command: fixture.root.appendingPathComponent("not-installed").path))
+        let selectedConfiguration = configuration
+        await expectThrowsAsync(
+          try await prepared.withValue {
+            try await ComputerMCPProductContracts.validateMCPConnections(
+              configuration: selectedConfiguration, platform: platform)
+          }
+        ) { error in
+          #expect(error.localizedDescription.contains("missing"))
+        }
+      } else {
+        let selectedConfiguration = configuration
+        let report = try await prepared.withValue {
+          try await ComputerMCPProductContracts.validateMCPConnections(
+            configuration: selectedConfiguration, platform: platform)
+        }
+        let row = try #require(report.arrayValue?.first?.objectValue)
+        #expect(row["id"] == .string("shared"))
+        #expect(row["ok"] == .bool(true))
+        #expect(
+          row["tools"]?.arrayValue?.first?.objectValue?["description"]
+            == .string(fixture.first.path))
       }
-    } else {
-      let report = try await ComputerMCPProductContracts.validateMCPConnections(
-        configuration: configuration,
-        platform: MacOSPlatform.services(launcher: testExecutionLauncher()))
-      let row = try #require(report.arrayValue?.first?.objectValue)
-      #expect(row["id"] == .string("shared"))
-      #expect(row["ok"] == .bool(true))
-      #expect(
-        row["tools"]?.arrayValue?.first?.objectValue?["description"] == .string(fixture.first.path))
+      let records = try String(contentsOf: marker, encoding: .utf8).split(separator: "\n").map {
+        line in
+        try #require(JSONDecoder().decode(JSONValue.self, from: Data(line.utf8)).objectValue)
+      }
+      #expect(records.count == 1)
+      #expect(records.first?["cwd"] == .string(fixture.first.path))
+      try await fixture.expectExited(records)
+      try await scope.finish()
+    } catch {
+      try await scope.finish()
+      throw error
     }
-    let records = try String(contentsOf: marker, encoding: .utf8).split(separator: "\n").map {
-      line in
-      try #require(JSONDecoder().decode(JSONValue.self, from: Data(line.utf8)).objectValue)
-    }
-    #expect(records.count == 1)
-    #expect(records.first?["cwd"] == .string(fixture.first.path))
-    try await fixture.expectExited(records)
   }
 
   @Test(arguments: [false, true])
@@ -63,14 +81,20 @@ struct MCPProjectTests {
     let fixture = try MCPProjectFixture()
     defer { fixture.remove() }
     let configuration = fixture.configuration()
-    let parent = MCPProxyClient(launcher: testExecutionLauncher())
+    let firstScope = try MCPProjectUnitScope(directory: fixture.first, readableRoot: fixture.root)
+    let secondScope = try MCPProjectUnitScope(directory: fixture.second, readableRoot: fixture.root)
+    let firstContext = InvocationContext(
+      executionAuthority: try firstScope.prepared(variables: [:]))
+    let secondContext = InvocationContext(
+      executionAuthority: try secondScope.prepared(variables: [:]))
+    let parent = MCPProxyClient(launcher: firstScope.launcher)
     let client: any DownstreamMCPClient =
       authorized
       ? AuthorizedMCPClient(
         base: parent,
         policy: .init(
           configuration: configuration, grant: configuration.profileGrant(for: .localAdmin),
-          derivesObserveGrant: false))
+        ))
       : parent
     var firstConfiguration = configuration
     firstConfiguration.projectDirectory = fixture.first
@@ -79,30 +103,42 @@ struct MCPProjectTests {
     let first = try GatewayProviderRouter(
       registry: MacOSToolProviders().makeProviders(
         toolEnvironment: ToolEnvironment(
-          launcher: testExecutionLauncher(), configuration: firstConfiguration), mcpClient: client))
+          launcher: firstScope.launcher, configuration: firstConfiguration), mcpClient: client))
     let second = try GatewayProviderRouter(
       registry: MacOSToolProviders().makeProviders(
         toolEnvironment: ToolEnvironment(
-          launcher: testExecutionLauncher(), configuration: secondConfiguration), mcpClient: client)
+          launcher: secondScope.launcher, configuration: secondConfiguration), mcpClient: client)
     )
     let executor = BlockingOperationExecutor(label: "test.mcp-project")
     do {
-      let firstValue = try await executor.perform { try fixture.read(first) }
-      let secondValue = try await executor.perform { try fixture.read(second) }
+      for (router, context) in [(first, firstContext), (second, secondContext)] {
+        _ = try await router.callToolAsync(
+          name: "mcp.tools.list", arguments: .object(["server": .string("shared")]),
+          context: context)
+        try await router.refreshTools(context: context)
+      }
+      let firstValue = try await executor.perform { try fixture.read(first, context: firstContext) }
+      let secondValue = try await executor.perform {
+        try fixture.read(second, context: secondContext)
+      }
       #expect(firstValue["cwd"] == .string(fixture.first.path))
       #expect(secondValue["cwd"] == .string(fixture.second.path))
       #expect(firstValue["pid"] != secondValue["pid"])
       await first.shutdown()
-      let repeated = try await executor.perform { try fixture.read(second) }
+      let repeated = try await executor.perform { try fixture.read(second, context: secondContext) }
       #expect(repeated["pid"] == secondValue["pid"])
       #expect(repeated["cwd"] == secondValue["cwd"])
       await second.shutdown()
       await parent.shutdown()
       try await fixture.expectExited([firstValue, secondValue])
+      try await firstScope.finish()
+      try await secondScope.finish()
     } catch {
       await first.shutdown()
       await second.shutdown()
       await parent.shutdown()
+      try await firstScope.finish()
+      try await secondScope.finish()
       throw error
     }
   }
@@ -113,29 +149,32 @@ struct MCPProjectTests {
     defer { fixture.remove() }
     var configuration = fixture.configuration()
     configuration.mcp.servers[0].env[MCPHostLaunchMetadata.environmentKey] = "forged registration"
-    let context = ExecutionContext(
+    let originalContext = ExecutionContext(
       caller: readOnly ? .secureTunnel : .localMCP,
       profileID: readOnly ? .chatGPTObserve : .localAdmin,
       transportTrace: .init(
         transport: "fixture", socketConnectionID: "socket-owner", tunnelInstanceID: "tunnel-owner",
         tunnelProfileID: "tunnel-profile"), trustedPrincipalID: "project-session-owner")
-    let gateway = try await GatewayRuntime.make(
-      configuration: configuration, context: context,
-      registeredProjects: [
-        .init(id: "first", displayName: "First", rootPath: fixture.first.path),
-        .init(id: "second", displayName: "Second", rootPath: fixture.second.path),
-      ], platform: MacOSPlatform.services(launcher: testExecutionLauncher()),
-      mcpClient: MCPProxyClient(launcher: testExecutionLauncher()), plugins: [])
+    let (gateway, context, invocation) = try await fixture.runtime(
+      configuration: configuration, context: originalContext, readOnly: readOnly)
     do {
+      _ = try #require(context.controlSession as? GatewayControlSession)
+      for project in ["first", "second"] {
+        _ = try await gateway.callToolAsync(
+          name: "mcp.tools.list",
+          arguments: .object(["project_id": .string(project), "server": .string("shared")]),
+          context: context, invocationContext: invocation)
+      }
+      try await gateway.refreshTools(context: invocation)
       async let first = gateway.callToolAsync(
         name: "fixture.context",
         arguments: .object([
           "project_id": .string("first"), "caller": .string("local-admin"),
           "hostContext": .object(["readOnly": .bool(false)]),
-        ]), context: .empty)
+        ]), context: context, invocationContext: invocation)
       async let second = gateway.callToolAsync(
         name: "fixture.context", arguments: .object(["project_id": .string("second")]),
-        context: .empty)
+        context: context, invocationContext: invocation)
       let values = try await [first, second].map { result in
         #expect(result.objectValue?["isError"] != .bool(true))
         return try #require(result.objectValue?["structuredContent"]?.objectValue)
@@ -164,7 +203,7 @@ struct MCPProjectTests {
         #expect(
           host["transportTrace"]?.objectValue?["tunnelProfileID"] == .string("tunnel-profile"))
         runtimeIDs.insert(try #require(host["runtimeID"]?.stringValue))
-        #expect(host["fullShellEnabled"] == nil)
+        #expect(host["permissions"] == nil)
       }
       #expect(runtimeIDs.count == 1)
       #expect(runtimeIDs.first.flatMap(UUID.init(uuidString:)) != nil)
@@ -172,7 +211,7 @@ struct MCPProjectTests {
       reconnected.transportTrace?.socketConnectionID = "new-connection"
       let retained = try await gateway.callToolAsync(
         name: "fixture.context", arguments: .object(["project_id": .string("first")]),
-        context: reconnected, invocationContext: .empty)
+        context: reconnected, invocationContext: invocation)
       #expect(retained.objectValue?["structuredContent"]?.objectValue?["pid"] == values[0]["pid"])
       for changedPrincipal in [false, true] {
         var changedContext = context
@@ -184,15 +223,17 @@ struct MCPProjectTests {
         await expectThrowsAsync(
           try await gateway.callToolAsync(
             name: "fixture.context", arguments: .object(["project_id": .string("first")]),
-            context: changedContext, invocationContext: .empty)
+            context: changedContext, invocationContext: invocation)
         ) { error in
           #expect(error.localizedDescription.contains("policy.caller_denied"))
         }
       }
       await gateway.shutdown()
+      (context.controlSession as? GatewayControlSession)?.end()
       try await fixture.expectExited(values)
     } catch {
       await gateway.shutdown()
+      (context.controlSession as? GatewayControlSession)?.end()
       throw error
     }
   }
@@ -217,18 +258,25 @@ struct MCPProjectTests {
     configuration.mcp.servers[0].cwd = cwd
     configuration.mcp.servers[0].env = ["PATH": "bin", "SCOPE_VALUE": "child", "EMPTY": ""]
     configuration.mcp.servers[0].env[MCPHostLaunchMetadata.environmentKey] = "forged registration"
+    let scope = try MCPProjectUnitScope(directory: directory, readableRoot: fixture.root)
+    let invocation = InvocationContext(
+      executionAuthority: try scope.prepared(variables: configuration.mcp.servers[0].env))
     let registry = try GatewayProviderRouter(
       registry: MacOSToolProviders().makeProviders(
         toolEnvironment: ToolEnvironment(
-          launcher: testExecutionLauncher(),
+          launcher: scope.launcher,
           configuration: configuration,
           environment: [
             "PATH": "/unrelated", "SCOPE_VALUE": "parent", "EMPTY": "parent",
             MCPHostLaunchMetadata.environmentKey: "forged ancestor",
-          ]), mcpClient: MCPProxyClient(launcher: testExecutionLauncher())))
+          ]), mcpClient: MCPProxyClient(launcher: scope.launcher)))
     do {
+      _ = try await registry.callToolAsync(
+        name: "mcp.tools.list", arguments: .object(["server": .string("shared")]),
+        context: invocation)
+      try await registry.refreshTools(context: invocation)
       let value = try await BlockingOperationExecutor(label: "test.mcp-launch").perform {
-        try fixture.read(registry)
+        try fixture.read(registry, context: invocation)
       }
       #expect(value["cwd"] == .string(directory.path))
       #expect(value["script"] == .string(link.standardizedFileURL.path))
@@ -237,8 +285,10 @@ struct MCPProjectTests {
       #expect(value["hostContext"] == .null)
       await registry.shutdown()
       try await fixture.expectExited([value])
+      try await scope.finish()
     } catch {
       await registry.shutdown()
+      try await scope.finish()
       throw error
     }
   }
@@ -267,6 +317,11 @@ private struct MCPProjectFixture: Sendable {
   func configuration() -> GatewayConfiguration {
     GatewayConfiguration(
       runtime: .init(caller: .localMCP, profileID: .localAdmin),
+      profiles: [
+        .init(
+          id: .localAdmin, permissions: fixturePermissions([.mcpServer("shared"): .granted(.all)]),
+          allowedCallers: [.localMCP])
+      ],
       mcp: .init(servers: [
         .init(
           id: "shared", transport: .stdio, command: "/usr/bin/python3", args: [script.path],
@@ -275,11 +330,51 @@ private struct MCPProjectFixture: Sendable {
       ]), projectDirectory: root)
   }
 
-  func read(_ registry: any GatewayToolServing) throws -> [String: JSONValue] {
-    _ = try registry.listTools(context: .empty)
+  func read(_ registry: any GatewayToolServing, context: InvocationContext) throws -> [String:
+    JSONValue]
+  {
+    _ = try registry.listTools(context: context)
     return try #require(
-      registry.callTool(name: "fixture.context", arguments: .object([:]), context: .empty)
+      registry.callTool(name: "fixture.context", arguments: .object([:]), context: context)
         .objectValue?["structuredContent"]?.objectValue)
+  }
+
+  func runtime(
+    configuration: GatewayConfiguration, context: ExecutionContext, readOnly: Bool
+  ) async throws -> (GatewayRuntime, ExecutionContext, InvocationContext) {
+    let launcher = fixtureProtocolExecutionLauncher(
+      root: root, scripts: [Self.server], arguments: [[]])
+    var platform = MacOSPlatform.services(launcher: launcher)
+    platform.permissionPolicyReader = TestManagedPolicyReader()
+    let database = try GatewayDatabase(inMemory: ())
+    _ = database.permissionStore(counter: TestAuthorizationEpochCounter())
+    let grant = ProfileGrant(
+      id: context.profileID,
+      permissions: fixturePermissions([
+        .project("first"): .granted(readOnly ? .read : .write),
+        .project("second"): .granted(readOnly ? .read : .write),
+        .mcpServer("shared"): .granted(.all),
+      ]), fullAccess: true, allowedCallers: [context.caller])
+    for (id, directory) in [("first", first), ("second", second)] {
+      try database.saveProject(.init(id: id, displayName: id, rootPath: directory.path))
+    }
+    try database.bootstrapPermissionProfiles([grant])
+    var configuration = configuration
+    configuration.profiles = [.init(grant: grant)]
+    let runtime = try await GatewayRuntime.make(
+      configuration: configuration, context: context, database: database,
+      registeredProjects: database.projects(), platform: platform,
+      mcpClient: MCPProxyClient(launcher: launcher), plugins: [])
+    do {
+      let session = try runtime.makeControlSession()
+      _ = try session.approveFullAccess(expectedRevision: session.revision)
+      var context = context
+      context.controlSession = session
+      return (runtime, context, InvocationContext(session: session))
+    } catch {
+      await runtime.shutdown()
+      throw error
+    }
   }
 
   func expectExited(_ values: [[String: JSONValue]]) async throws {
@@ -325,4 +420,204 @@ private struct MCPProjectFixture: Sendable {
             response["error"] = {"code": -32601, "message": "not found"}
         print(json.dumps(response), flush=True)
     """
+}
+
+/// Direct transport fixtures own native Sandbox trees; Gateway tests use durable admission.
+private final class MCPProjectUnitScope: @unchecked Sendable {
+  private let authority = MCPProjectUnitAuthority()
+  let launcher: ExecutionLauncher
+  private let sandbox: SandboxConfiguration
+  private let home: SandboxPath
+
+  init(directory: URL, readableRoot: URL) throws {
+    let launcher = testExecutionLauncher()
+    self.launcher = launcher
+    let root = try SandboxPath(ProjectPathResolver.canonicalProject(directory).path)
+    let storage = directory.appendingPathComponent("private-home", isDirectory: true)
+    try FileManager.default.createDirectory(
+      at: storage, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700])
+    let home = try SandboxPath(ProjectPathResolver.canonicalProject(storage).path)
+    self.home = home
+    let reads =
+      [root, try SandboxPath(ProjectPathResolver.canonicalProject(readableRoot).path)]
+      + launcher.hostSystemReadPaths
+    var ancestors: Set<String> = ["/"]
+    for path in reads + [home] {
+      var parent = (path.value as NSString).deletingLastPathComponent
+      while parent != "/" {
+        ancestors.insert(parent)
+        parent = (parent as NSString).deletingLastPathComponent
+      }
+    }
+    sandbox = try SandboxConfiguration(
+      worktree: root, temporaryDirectory: home, homeDirectory: home, cacheDirectory: home,
+      readableRoots: reads, listableAncestors: ancestors.sorted().map(SandboxPath.init))
+  }
+
+  var joined: Bool { authority.joined }
+
+  func prepared(variables: [String: String]) throws -> PreparedExecutionContext {
+    try PreparedExecutionContext(
+      authority: authority, mode: .sandbox(sandbox),
+      environment: .init(
+        searchPath: [SandboxPath("/usr/bin"), SandboxPath("/bin")],
+        home: home, temporary: home, cache: home, hostVariables: variables),
+      limits: MCPProjectUnitAuthority.limits)
+  }
+
+  func finish() async throws {
+    authority.finishAdmission()
+    try await Task.detached { [authority, launcher] in
+      try await authority.joinResources(launcher: launcher)
+    }.value
+  }
+}
+
+private final class MCPProjectUnitAuthority: ExecutionAuthorizing, @unchecked Sendable {
+  static let limits = EffectiveExecutionLimits(
+    timeMilliseconds: 60_000, outputBytes: 8 * 1024 * 1024, memoryBytes: nil,
+    retentionSeconds: 60, retainedOutputBytes: 8 * 1024 * 1024, sources: [:])
+
+  let executionID = UUID()
+  let authorizationIDs: Set<UUID> = [UUID()]
+  private struct Child {
+    var ownership: (any ExecutionOwnership)?
+    var member: ExecutionMember?
+    var failed = false
+    var released = false
+  }
+  private let lock = NSLock()
+  private var closed = false
+  private var didJoin = false
+  private var children: [UUID: Child] = [:]
+  private var work: [UUID: @Sendable () async -> Void] = [:]
+  private var rootObservers: [UUID: Task<Void, Never>] = [:]
+
+  var joined: Bool { lock.withLock { didJoin } }
+
+  func reserveChild(_ id: UUID) throws {
+    try lock.withLock {
+      guard !closed, children[id] == nil else { throw PermissionModelError.invalidAuthorization }
+      children[id] = Child()
+    }
+  }
+
+  func bindChild(_ id: UUID, ownership: any ExecutionOwnership) {
+    lock.withLock { children[id]?.ownership = ownership }
+    ownership.beforeStart { [weak self] member in
+      guard let self else { throw PermissionModelError.invalidAuthorization }
+      try self.lock.withLock {
+        guard !self.closed, self.children[id]?.ownership != nil,
+          self.children[id]?.member == nil
+        else { throw PermissionModelError.invalidAuthorization }
+        self.children[id]?.member = member
+      }
+      #if os(macOS)
+        let root = DarwinProcessIdentity(pid: member.processID, uniqueID: member.identity)
+        let observer = Task.detached { [weak self] in
+          guard let self else { return }
+          await self.observeRoot(id, identity: root, ownership: ownership)
+        }
+        self.lock.withLock {
+          self.rootObservers[id] = observer
+          if self.closed { observer.cancel() }
+        }
+      #endif
+    }
+  }
+
+  #if os(macOS)
+    /// A wrapper's pinned kernel identity survives exec and remains observable until reaped.
+    /// Its departure closes only the original ownership tree, including descendants.
+    private func observeRoot(
+      _ id: UUID, identity: DarwinProcessIdentity, ownership: any ExecutionOwnership
+    ) async {
+      while !Task.isCancelled, lock.withLock({ !closed && children[id]?.released == false }) {
+        do {
+          let current = DarwinProcessIdentity.current(pid: identity.pid, includingZombies: true)
+          if current?.identity != identity {
+            _ = try await ownership.cancel()
+            return
+          }
+        } catch {
+          if Task.isCancelled { return }
+        }
+        do { try await Task.sleep(for: .milliseconds(20)) } catch { return }
+      }
+    }
+  #endif
+
+  func launchFailed(_ id: UUID) {
+    lock.withLock { children[id]?.failed = true }
+  }
+
+  func finishAdmission() { lock.withLock { closed = true } }
+
+  func retainWork(cancellation: @escaping @Sendable () async -> Void) throws -> ExecutionWorkLease {
+    let id = UUID()
+    try lock.withLock {
+      guard !closed else { throw PermissionModelError.invalidAuthorization }
+      work[id] = cancellation
+    }
+    return ExecutionWorkLease { [self] in _ = lock.withLock { work.removeValue(forKey: id) } }
+  }
+
+  func access(_ id: UUID, operation: ExecutionOperation) throws -> EffectiveExecutionLimits {
+    try lock.withLock {
+      guard id == executionID, !closed || operation == .readResult else {
+        throw PermissionModelError.invalidAuthorization
+      }
+      return Self.limits
+    }
+  }
+
+  func joinResources(launcher: ExecutionLauncher) async throws {
+    if joined { return }
+    let rootObservers = lock.withLock { Array(self.rootObservers.values) }
+    for observer in rootObservers { observer.cancel() }
+    let cancellations = lock.withLock { Array(work.values) }
+    let cancelling = cancellations.map { cancellation in Task { await cancellation() } }
+    let deadline = ContinuousClock.now + .seconds(10)
+    var firstError: (any Error)?
+    while true {
+      let pending = lock.withLock { children.filter { !$0.value.released } }
+      for (id, child) in pending {
+        guard let ownership = child.ownership else {
+          if child.failed { lock.withLock { children[id]?.released = true } }
+          continue
+        }
+        do {
+          _ = try await ownership.cancel(until: deadline)
+          try #require(try await ownership.members().isEmpty)
+          if let member = child.member {
+            let recovery = try ownership.recoveryState()
+            try #require(recovery.root == member && recovery.sandboxed)
+            try launcher.releaseRecovery(recovery)
+          }
+          lock.withLock { children[id]?.released = true }
+        } catch { firstError = firstError ?? error }
+      }
+      if let firstError {
+        for task in cancelling { await task.value }
+        for observer in rootObservers { await observer.value }
+        throw firstError
+      }
+      let complete = lock.withLock { children.values.allSatisfy(\.released) && work.isEmpty }
+      if complete {
+        for task in cancelling { await task.value }
+        let observers = lock.withLock { Array(self.rootObservers.values) }
+        for observer in observers {
+          observer.cancel()
+          await observer.value
+        }
+        lock.withLock { didJoin = true }
+        return
+      }
+      guard ContinuousClock.now < deadline else {
+        throw ExecutionEnvironmentError.unavailable(
+          "The native protocol fixture has unjoined child reservations or logical work")
+      }
+      try await Task.sleep(for: .milliseconds(10))
+    }
+  }
 }

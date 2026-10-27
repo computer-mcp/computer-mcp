@@ -229,7 +229,7 @@ establishes their signing identity, publisher provenance or runtime compatibilit
   Declared executable checks run inside each authorized call, before target argv,
   with bounded capture/time and executable/interpreter identity comparisons.
   Listings and static diagnostics do not execute file-backed compatibility checks.
-  Publisher hints do not change the host Full Shell boundary. See
+  Publisher hints do not change the host execution-permission boundary. See
   [CLI Trees](../Reference/CLITrees.md) for the contract and refresh behavior.
 - Shell/process: launcher-owned sessions with stdin, cursor output,
   timeouts, cancellation, process-group cleanup, and byte limits. A shared
@@ -378,7 +378,7 @@ for the wire contract and authorization boundary.
 ## Scoped Plugin Host Services
 
 Callback-enabled owned stdio adapters receive a private standard MCP endpoint.
-The host retains caller grants, project registrations, approval authority and
+The host retains caller grants, project registrations, permission authority and
 audit; the adapter owns domain state and vendor protocol execution.
 `MCPHostInvocation` records the live outer call without exporting a credential.
 The host sends only its correlation UUID in downstream request metadata.
@@ -409,8 +409,8 @@ row to remain present. Current persisted restrictions are reapplied to callbacks
 and projects bounded diagnostics. Its private namespace permits only
 invocation inspection, project registration, verified removal, and diagnostic reads for matching
 live invocations. Plugins declare their semantic actions in tool metadata;
-call records and project grants remain in the Gateway Database. The outer
-operation gate still controls admission; its ticket is not host-callback proof.
+call records and project grants remain in the Gateway Database. Permission-ledger admission binds the live call record. A receipt or compatibility
+field cannot substitute for current ledger and invocation proof.
 
 See [Scoped host services](../Reference/HostServices.md) for configuration,
 wire surface, scope checks, bounds and recovery behavior.
@@ -484,13 +484,11 @@ are separate: an installation recovery operation cannot clear process receipts.
 ## Policy And Results
 
 Every call is bound to `ExecutionContext` containing a verified authorization
-principal, caller provenance, profile, and optional project id. `GatewayPolicy`
-checks the provider's `CapabilityDescriptor` against the explicit grant mode,
-capabilities, project access, and confirmation policy. `operations.prepare`
-binds the exact arguments and supported target state to a short-lived,
-single-use ticket. A `pending_approval` ticket requires local App or management
-CLI approval before `operations.commit`; preparing a ticket or supplying a
-model-authored confirmation flag is not approval.
+principal, caller provenance, profile, and optional project id. The gateway
+resolves declared requirements and evaluates them with `GatewayPermissionService`.
+Missing requestable permissions return a durable request. Explicit denies and
+managed exclusions fail without a prompt. Owner answers bind exact retry identity;
+allowed calls execute directly with a prepared context and never implicitly replay.
 
 MCP tools advertise a title, input schema, output schema, standard annotations,
 and return the bounded JSON value as both compatible text and structured

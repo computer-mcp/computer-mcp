@@ -1,23 +1,37 @@
+import ComputerMCPConfiguration
 import ComputerMCPCore
+import ComputerMCPPermissions
 import ComputerMCPPersistence
 import Foundation
 
 /// Configuration writes discovered by runtime preparation, applied only at publication.
 package struct GatewayConfigurationResolution: Equatable, Sendable {
   package struct Project: Equatable, Sendable {
-    let original: RegisteredProject
-    let resolved: RegisteredProject
+    let original: ComputerMCPCore.RegisteredProject
+    let resolved: ComputerMCPCore.RegisteredProject
   }
 
   var projects: [Project] = []
-  var profiles: [ProfileGrant] = []
+  /// The complete explicit manifest source. An empty array removes its declarations.
+  var profileDeclarations: [ProfileGrant]?
+  var configurationPaths: Set<PathRule>?
 
-  package init(projects: [Project] = [], profiles: [ProfileGrant] = []) {
+  package init(
+    projects: [Project] = [], profileDeclarations: [ProfileGrant]? = nil,
+    configurationPaths: Set<PathRule>? = nil
+  ) {
     self.projects = projects
-    self.profiles = profiles
+    self.profileDeclarations = profileDeclarations
+    self.configurationPaths = configurationPaths
   }
 
   package mutating func merge(_ other: Self) throws {
+    if let incoming = other.configurationPaths {
+      guard configurationPaths == nil || configurationPaths == incoming else {
+        throw GatewayDatabaseError.configurationChanged
+      }
+      configurationPaths = incoming
+    }
     for project in other.projects {
       if let existing = projects.first(where: { $0.original.id == project.original.id }) {
         var comparable = project.resolved
@@ -30,11 +44,16 @@ package struct GatewayConfigurationResolution: Equatable, Sendable {
         projects.append(project)
       }
     }
-    for profile in other.profiles {
-      if let existing = profiles.first(where: { $0.id == profile.id }) {
-        guard existing == profile else { throw GatewayDatabaseError.configurationChanged }
+    if let incoming = other.profileDeclarations {
+      if let existing = profileDeclarations {
+        guard
+          try PermissionProfileManifest.encode(existing)
+            == PermissionProfileManifest.encode(incoming)
+        else {
+          throw GatewayDatabaseError.configurationChanged
+        }
       } else {
-        profiles.append(profile)
+        profileDeclarations = incoming
       }
     }
   }
@@ -49,8 +68,16 @@ package struct GatewayRuntimePreparation: Sendable {
 final class GatewayRuntimePublication: @unchecked Sendable {
   private let lock = NSLock()
   private var published = false
+  private var revisionID: String?
 
-  func publish() { lock.withLock { published = true } }
+  func publish(revisionID: String? = nil) {
+    lock.withLock {
+      self.revisionID = revisionID
+      published = true
+    }
+  }
+
+  var configurationRevisionID: String? { lock.withLock { revisionID } }
 
   func requirePublished() throws {
     guard lock.withLock({ published }) else {

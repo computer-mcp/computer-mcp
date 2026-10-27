@@ -60,6 +60,99 @@ struct HostIntegrationTests {
         connectionID: "B", now: instant) == .denied(.authorizationRevoked))
   }
 
+  @Test(arguments: [false, true], [ExecutionMode.sandbox, .fullAccess(.standing)])
+  func oneConnectionPathCeilingPreservesAnotherConnectionsRetainedWork(
+    restored: Bool, mode: ExecutionMode
+  ) throws {
+    var ledger = PermissionLedger()
+    try ledger.setPermission(
+      .granted(.read), for: .project("project"), principal: client,
+      expectedRevision: ledger.revision)
+    var environment = ledger.environment
+    environment.paths = PathEnvironmentSnapshot(TestPathEnvironment())
+    environment.connections["A"] = PermissionConnection(principal: client)
+    environment.connections["B"] = PermissionConnection(principal: client)
+    try ledger.reconcile(environment: environment, expectedRevision: ledger.revision, now: instant)
+    if !mode.isSandbox {
+      let consent = ledger.consent(for: client, mode: mode)
+      environment = ledger.environment
+      environment.modes[client] = consent
+      try ledger.reconcile(
+        environment: environment, expectedRevision: ledger.revision, now: instant)
+    }
+    let file = path("/people/me/Downloads/repo/file")
+    let requirements = InvocationRequirements(
+      paths: [.init(path: file, operation: .read)], mode: mode,
+      sandboxProjectID: "project", execution: .background)
+    var proofs: [String: UUID] = [:]
+    var executions: [String: UUID] = [:]
+    var pathEvidence: [String: Set<PathAccessBasis>] = [:]
+    for connection in ["A", "B"] {
+      let proof = try authorization(
+        from: ledger.authorize(
+          invocation: invocation(), requirements: requirements,
+          connectionID: connection, now: instant))
+      _ = try ledger.prepareExecutionPermissions(proof.id)
+      let prepared = try #require(ledger.authorizations[proof.id])
+      #expect(prepared.mode == mode)
+      pathEvidence[connection] = Set(
+        prepared.basis.compactMap {
+          if case .path(let path) = $0 { return path }
+          return nil
+        })
+      proofs[connection] = proof.id
+      executions[connection] = try ledger.startExecution(
+        owner: client, authorizationIDs: [proof.id], now: instant
+      ).id
+      try ledger.finishInvocation(proof.id)
+    }
+    #expect(pathEvidence["A"] == pathEvidence["B"])
+    #expect(pathEvidence["A"]?.contains(where: { $0.path == file }) == true)
+    let a = try #require(executions["A"])
+    let b = try #require(executions["B"])
+    environment = ledger.environment
+    environment.connections["A"]!.attenuation.deniedReadLocations = [file]
+    let changed = try ledger.reconcile(
+      environment: environment, expectedRevision: ledger.revision, now: instant)
+    #expect(changed.executionsToTerminate == [a])
+    if restored {
+      ledger = try JSONDecoder().decode(PermissionLedger.self, from: JSONEncoder().encode(ledger))
+    }
+    #expect(ledger.authorizations[try #require(proofs["A"])]?.revoked == true)
+    #expect(ledger.authorizations[try #require(proofs["B"])]?.revoked == false)
+    for operation in [ExecutionOperation.readResult, .writeInput] {
+      #expect(
+        ledger.executionAccess(
+          a, principal: client, operation: operation, connectionID: "A", now: instant)
+          == .denied(.authorizationRevoked))
+      #expect(
+        ledger.executionAccess(
+          b, principal: client, operation: operation, connectionID: "B", now: instant) == .allowed)
+      #expect(
+        ledger.executionAccess(
+          b, principal: client, operation: operation, connectionID: "A", now: instant)
+          == .denied(.managedLimit([.connection])))
+    }
+    environment = ledger.environment
+    environment.connections["A"]!.attenuation.deniedReadLocations = []
+    try ledger.reconcile(environment: environment, expectedRevision: ledger.revision, now: instant)
+    #expect(
+      ledger.executionAccess(
+        a, principal: client, operation: .readResult, connectionID: "A", now: instant)
+        == .denied(.authorizationRevoked))
+    #expect(
+      ledger.executionAccess(
+        b, principal: client, operation: .writeInput, connectionID: "B", now: instant) == .allowed)
+    try ledger.finishExecution(b, retainUntil: instant.addingTimeInterval(60), now: instant)
+    #expect(
+      ledger.executionAccess(
+        b, principal: client, operation: .readResult, connectionID: "B", now: instant) == .allowed)
+    #expect(
+      ledger.executionAccess(
+        b, principal: client, operation: .writeInput, connectionID: "B", now: instant)
+        == .denied(.executionEnded))
+  }
+
   @Test func reconnectingRetryKeepsAnswersButChecksDestinationCeiling() throws {
     var ledger = PermissionLedger()
     var environment = ledger.environment

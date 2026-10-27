@@ -1,5 +1,6 @@
 import ComputerMCPDownstream
 import ComputerMCPMacOS
+import ComputerMCPPermissions
 import ComputerMCPTestSupport
 import Darwin
 import Foundation
@@ -8,6 +9,7 @@ import Testing
 @testable import ComputerMCPConfiguration
 @testable import ComputerMCPCore
 @testable import ComputerMCPGateway
+@testable import ComputerMCPPlatform
 
 #if os(macOS)
   import ComputerMCPDarwinTestSupport
@@ -16,20 +18,16 @@ import Testing
 @Suite(.nativeIntegration, .timeLimit(.minutes(1)))
 struct GatewayConstructionTests {
   @Test(arguments: ["catalog", "cli-tree", "duplicate-project"])
-  func failedConstructionJoinsProcessesBeforeRetry(stage: String) async throws {
+  func failedConstructionJoinsCachedOwnersBeforeRetry(stage: String) async throws {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
     try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
     defer { try? FileManager.default.removeItem(at: root) }
-    let script = root.appendingPathComponent("server.py")
-    try Data(Self.script.utf8).write(to: script)
     var configuration = GatewayConfiguration(
       runtime: .init(caller: .localMCP, profileID: .localAdmin),
       mcp: .init(servers: [
         .init(
-          id: "fixture", transport: .stdio, command: "/usr/bin/python3",
-          args: [script.path, root.path, stage == "catalog" ? "project.list" : "inspect"],
-          exposure: .reexport, prefix: "", allowAnyTool: true,
-          startupTimeoutMs: 5000, requestTimeoutMs: 5000)
+          id: "fixture", transport: .stdio, command: "/unused", exposure: .reexport,
+          prefix: "", allowAnyTool: true)
       ]), projectDirectory: root)
     let first = RegisteredProject(id: "first", displayName: "First", rootPath: root.path)
     var projects = [first]
@@ -41,11 +39,19 @@ struct GatewayConstructionTests {
           tree: .init(kind: .file, path: root.appendingPathComponent("missing-tree.json").path))
       ]
     }
+    var platform = fixtureHostedPlatform()
+    platform.permissionPolicyReader = TestManagedPolicyReader()
+    let context = ExecutionContext(
+      caller: .localMCP, profileID: .localAdmin, trustedPrincipalID: "construction-fixture")
     for _ in 0..<2 {
+      let gate = ConstructionCleanupGate()
+      await gate.release()
+      let client = ConstructionMCPClient(
+        gate: gate, cachedName: stage == "catalog" ? "project.list" : "inspect")
       do {
         let runtime = try await GatewayRuntime.make(
-          configuration: configuration, registeredProjects: projects,
-          platform: MacOSPlatform.services(launcher: testExecutionLauncher()))
+          configuration: configuration, context: context, registeredProjects: projects,
+          platform: platform, mcpClient: client)
         await runtime.shutdown()
         Issue.record("Expected failure at \(stage)")
       } catch {
@@ -55,18 +61,79 @@ struct GatewayConstructionTests {
           #expect(error as? GatewayRuntimeError == .duplicateProjectID("first"))
         }
       }
-      try expectProcessesExited(root)
+      #expect(await gate.count == 1)
+      #expect(client.discoveryCount == 0)
     }
     configuration.cli.commands = []
-    configuration.mcp.servers[0].args = [script.path, root.path, "inspect"]
+    let gate = ConstructionCleanupGate()
+    await gate.release()
+    let client = ConstructionMCPClient(gate: gate, cachedName: "inspect")
     let runtime = try await GatewayRuntime.make(
-      configuration: configuration, registeredProjects: [first],
-      platform: MacOSPlatform.services(launcher: testExecutionLauncher()))
+      configuration: configuration, context: context, registeredProjects: [first],
+      platform: platform, mcpClient: client)
     #expect(try runtime.listTools(context: .empty).contains { $0.name == "inspect" })
     await runtime.shutdown()
-    try expectProcessesExited(root)
-    #expect(!FileManager.default.fileExists(atPath: root.appendingPathComponent("overlap").path))
-    #expect(try pids(root).count == 3)
+    #expect(await gate.count == 1)
+    #expect(client.discoveryCount == 0)
+    #expect(try pids(root).isEmpty)
+  }
+
+  @Test
+  func admittedNativeCatalogJoinsItsProcessBeforeRetry() async throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let script = root.appendingPathComponent("server.py")
+    try Data(Self.script.utf8).write(to: script)
+    let launcher = fixtureProtocolExecutionLauncher(
+      root: root, scripts: [Self.script], arguments: [[root.path, "inspect"]])
+    var platform = MacOSPlatform.services(launcher: launcher)
+    platform.permissionPolicyReader = TestManagedPolicyReader()
+    let first = RegisteredProject(id: "first", displayName: "First", rootPath: root.path)
+    let grant = ProfileGrant(
+      id: .localAdmin,
+      permissions: fixturePermissions([
+        .project("first"): .granted(.write), .mcpServer("fixture"): .granted(.all),
+      ]), fullAccess: true, allowedCallers: [.localMCP])
+    let configuration = GatewayConfiguration(
+      runtime: .init(caller: .localMCP, profileID: grant.id), profiles: [.init(grant: grant)],
+      mcp: .init(servers: [
+        .init(
+          id: "fixture", transport: .stdio, command: "/usr/bin/python3",
+          args: [script.path, root.path, "inspect"], exposure: .reexport, prefix: "",
+          allowAnyTool: true, startupTimeoutMs: 5000, requestTimeoutMs: 5000,
+          toolRisks: ["inspect": .readOnly])
+      ]), projectDirectory: root)
+    for attempt in 0..<3 {
+      let database = try GatewayDatabase(inMemory: ())
+      try database.saveProject(first)
+      try database.saveProfile(grant)
+      let context = try fixtureConsentedContext(
+        database: database, grant: grant, caller: .localMCP,
+        principalID: "construction-native-fixture", platform: platform)
+      let runtime = try await GatewayRuntime.make(
+        configuration: configuration, context: context, database: database,
+        registeredProjects: [first], platform: platform)
+      do {
+        #expect(try pids(root).count == attempt)
+        let discovered = try await runtime.callToolAsync(
+          name: "mcp.tools.list",
+          arguments: .object([
+            "project_id": .string(first.id), "server": .string("fixture"),
+          ]), context: .empty)
+        #expect(discovered.objectValue?["isError"] != .bool(true))
+        try await runtime.refreshTools(context: .empty)
+        #expect(try runtime.listTools(context: .empty).contains { $0.name == "inspect" })
+        await runtime.shutdown()
+        try expectProcessesExited(root)
+        #expect(try pids(root).count == attempt + 1)
+        #expect(
+          !FileManager.default.fileExists(atPath: root.appendingPathComponent("overlap").path))
+      } catch {
+        await runtime.shutdown()
+        throw error
+      }
+    }
   }
 
   @Test(arguments: [false, true])
@@ -86,7 +153,7 @@ struct GatewayConstructionTests {
           RegisteredProject(
             id: "fixture", displayName: "Fixture", rootPath: configuration.projectDirectory.path)
         ],
-        platform: MacOSPlatform.services(launcher: testExecutionLauncher()), mcpClient: client)
+        platform: metadataPlatform(), mcpClient: client)
       shutdown = { await runtime.shutdown() }
     }
     let entered = gate.entered.stream()
@@ -107,10 +174,11 @@ struct GatewayConstructionTests {
   }
 
   @Test
-  func cancellationDuringDiscoveryWaitsForCleanupAndDoesNotPublishRuntime() async throws {
+  func cancellationDuringCachedCatalogPreparationJoinsCleanupAndDoesNotPublishRuntime() async throws
+  {
     let gate = ConstructionCleanupGate()
-    let client = ConstructionMCPClient(gate: gate, pauseDiscovery: true)
-    let discovery = client.discovery.stream()
+    let client = ConstructionMCPClient(gate: gate, pauseCatalog: true)
+    let catalog = client.catalogRequested.stream()
     let cleanup = gate.entered.stream()
     let pending = Task {
       try await GatewayRuntime.make(
@@ -125,12 +193,12 @@ struct GatewayConstructionTests {
             id: "fixture", displayName: "Fixture",
             rootPath: FileManager.default.temporaryDirectory.path)
         ],
-        platform: MacOSPlatform.services(launcher: testExecutionLauncher()), mcpClient: client)
+        platform: metadataPlatform(), mcpClient: client)
     }
-    var discoveries = discovery.makeAsyncIterator()
-    _ = await discoveries.next()
+    var snapshots = catalog.makeAsyncIterator()
+    _ = await snapshots.next()
     pending.cancel()
-    client.releaseDiscovery.signal()
+    client.releaseCatalog.signal()
     var cleanups = cleanup.makeAsyncIterator()
     _ = await cleanups.next()
     await gate.release()
@@ -141,6 +209,13 @@ struct GatewayConstructionTests {
     case .failure(let error): #expect(error is CancellationError)
     }
     #expect(await gate.count == 1)
+    #expect(client.discoveryCount == 0)
+  }
+
+  private func metadataPlatform() -> PlatformServices {
+    var platform = fixtureHostedPlatform()
+    platform.permissionPolicyReader = TestManagedPolicyReader()
+    return platform
   }
 
   private func pids(_ root: URL) throws -> [Int32] {
@@ -170,7 +245,7 @@ struct GatewayConstructionTests {
         if request.get("method") == "initialize":
             result = {"protocolVersion":"2025-11-25", "capabilities":{"tools":{}}, "serverInfo":{"name":"construction", "version":"1"}}
         elif request.get("method") == "tools/list":
-            result = {"tools":[{"name":sys.argv[2], "inputSchema":{"type":"object"}}]}
+            result = {"tools":[{"name":sys.argv[2], "inputSchema":{"type":"object"}, "annotations":{"readOnlyHint":True}}]}
         else:
             continue
         print(json.dumps({"jsonrpc":"2.0", "id":request["id"], "result":result}), flush=True)
@@ -181,38 +256,65 @@ struct GatewayConstructionTests {
 
 private actor ConstructionCleanupGate {
   let entered = GatewayToolChangeBroadcaster()
-  private var waiter: CheckedContinuation<Void, Never>?
+  private var waiters: [CheckedContinuation<Void, Never>] = []
   private(set) var count = 0
   private(set) var released = false
   func close() async {
-    count += 1
-    entered.send()
-    if !released { await withCheckedContinuation { waiter = $0 } }
+    if count == 0 {
+      count = 1
+      entered.send()
+    }
+    if !released { await withCheckedContinuation { waiters.append($0) } }
   }
   func release() {
     released = true
-    waiter?.resume()
-    waiter = nil
+    for waiter in waiters { waiter.resume() }
+    waiters = []
   }
 }
 
-private final class ConstructionMCPClient: DownstreamMCPClient, Sendable {
-  let gate: ConstructionCleanupGate
-  let pauseDiscovery: Bool
-  let discovery = GatewayToolChangeBroadcaster()
-  let releaseDiscovery = DispatchSemaphore(value: 0)
-  init(gate: ConstructionCleanupGate, pauseDiscovery: Bool = false) {
-    self.gate = gate
-    self.pauseDiscovery = pauseDiscovery
+private final class ConstructionMCPClient: DownstreamMCPClient, @unchecked Sendable {
+  private let lock = NSLock()
+  private var paused = false
+  private var discoveries = 0
+  var discoveryCount: Int { lock.withLock { discoveries } }
+  func cachedTools(server: MCPServerConfig, context: InvocationContext) -> [MCPTool]? {
+    let shouldPause = lock.withLock {
+      guard pauseCatalog && !paused else { return false }
+      paused = true
+      return true
+    }
+    if shouldPause {
+      catalogRequested.send()
+      _ = releaseCatalog.wait(timeout: .now() + .seconds(5))
+    }
+    return cachedName.map {
+      [
+        MCPTool(
+          name: $0, description: "Cached construction fixture",
+          inputSchema: .object(["type": .string("object")]),
+          annotations: .init(readOnlyHint: true))
+      ]
+    } ?? []
   }
+
+  let gate: ConstructionCleanupGate
+  let pauseCatalog: Bool
+  let cachedName: String?
+  let catalogRequested = GatewayToolChangeBroadcaster()
+  let releaseCatalog = DispatchSemaphore(value: 0)
+  init(gate: ConstructionCleanupGate, pauseCatalog: Bool = false, cachedName: String? = nil) {
+    self.gate = gate
+    self.pauseCatalog = pauseCatalog
+    self.cachedName = cachedName
+  }
+  // Project and unscoped facades share one downstream owner.
   func makeScopedClient(
     workingDirectory: URL, environment: [String: String], hostContext: (any MCPHostEnvironment)?
   ) -> any DownstreamMCPClient { self }
   func listTools(server: MCPServerConfig, context: InvocationContext) throws -> [MCPTool] {
-    if pauseDiscovery {
-      discovery.send()
-      _ = releaseDiscovery.wait(timeout: .now() + .seconds(5))
-    }
+    lock.withLock { discoveries += 1 }
+    Issue.record("Construction must read cached metadata without downstream discovery")
     return []
   }
   func callTool(

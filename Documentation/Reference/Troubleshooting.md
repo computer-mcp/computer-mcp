@@ -193,8 +193,9 @@ startup, protocol, authentication, and downstream tool failures.
 
 Use `cli.describe` and `cli.help`, then execute the returned argv through
 `cli.exec`. No shell expansion is performed. `cli.exec` is unavailable to a
-remote caller unless its locally selected profile grants Full Shell-equivalent
-authority.
+caller without permission admission and an enforceable execution context.
+Missing sandbox worktree/plugin contexts and unsupported Darwin durable Full
+access execution are refused; granting a permission does not supply a backend.
 
 ## Plugin runtime failures
 

@@ -1,5 +1,6 @@
 import ComputerMCPDownstream
 import ComputerMCPMacOS
+import ComputerMCPPermissions
 import ComputerMCPTestSupport
 import Darwin
 import Foundation
@@ -26,7 +27,8 @@ struct PluginStoreInstallationTests {
       manifest: PreparationFixture.manifest.replacingOccurrences(
         of: "plugin_api = 1", with: "plugin_api = 2\nfuture = true"))
     defer { fixture.files.remove() }
-    let database = try GatewayDatabase(path: fixture.files.root.appendingPathComponent("db").path)
+    let database = try fixturePermissionDatabase(
+      path: fixture.files.root.appendingPathComponent("db").path)
     let store = PluginStore(
       database: database, platform: MacOSPlatform.services(launcher: testExecutionLauncher()))
     let refusal = try #require(
@@ -69,7 +71,7 @@ struct PluginStoreInstallationTests {
       directoryFactory: MacOSPlatform.services(launcher: testExecutionLauncher()).pluginDirectories,
     )
     defer { fixture.files.remove() }
-    let database = try GatewayDatabase(
+    let database = try fixturePermissionDatabase(
       path: fixture.files.root.appendingPathComponent("legacy.sqlite").path)
     let store = PluginStore(
       database: database, platform: MacOSPlatform.services(launcher: testExecutionLauncher()))
@@ -97,7 +99,7 @@ struct PluginStoreInstallationTests {
         try database.updatePluginDirectoryIdentity(modern.identity, replacing: legacy)
       }
       let reopened = PluginStore(
-        database: try GatewayDatabase(path: try #require(database.fileURL).path),
+        database: try fixturePermissionDatabase(path: try #require(database.fileURL).path),
         platform: MacOSPlatform.services(launcher: testExecutionLauncher()))
       #expect(
         try await reopened.recoverInstallations(storageRoot: fixture.installationRoot).isEmpty)
@@ -116,7 +118,7 @@ struct PluginStoreInstallationTests {
     try FileManager.default.copyItem(at: fixture.archive, to: archive)
     let path = fixture.files.root.appendingPathComponent("target.sqlite").path
     let store = PluginStore(
-      database: try GatewayDatabase(path: path),
+      database: try fixturePermissionDatabase(path: path),
       platform: MacOSPlatform.services(launcher: testExecutionLauncher()))
     let installed = try await store.installArchive(
       at: archive, expectedSHA256: fixture.digest, pluginID: "combined",
@@ -125,7 +127,7 @@ struct PluginStoreInstallationTests {
       storageRoot: fixture.files.root.appendingPathComponent("Plugins"),
       workerExecutable: fixture.preparation.workerExecutable, expectedRevision: 0)
     let reopened = PluginStore(
-      database: try GatewayDatabase(path: path),
+      database: try fixturePermissionDatabase(path: path),
       platform: MacOSPlatform.services(launcher: testExecutionLauncher()))
     let snapshot = try await reopened.snapshot()
     #expect(snapshot == installed.snapshot)
@@ -313,7 +315,8 @@ struct PluginStoreInstallationTests {
       directoryFactory: MacOSPlatform.services(launcher: testExecutionLauncher()).pluginDirectories,
     )
     defer { fixture.files.remove() }
-    let database = try GatewayDatabase(path: fixture.files.root.appendingPathComponent("db").path)
+    let database = try fixturePermissionDatabase(
+      path: fixture.files.root.appendingPathComponent("db").path)
     let store = PluginStore(
       database: database, platform: MacOSPlatform.services(launcher: testExecutionLauncher()))
     let installed = try await fixture.install(into: store, revision: 0)
@@ -479,7 +482,7 @@ struct PluginStoreInstallationTests {
       manifest: PreparationFixture.manifest.replacingOccurrences(of: "1.2.3", with: "1.2.4"))
     defer { update.files.remove() }
     let databaseURL = fixture.files.root.appendingPathComponent("gateway.sqlite")
-    let database = try GatewayDatabase(path: databaseURL.path)
+    let database = try fixturePermissionDatabase(path: databaseURL.path)
     let store = PluginStore(
       database: database, platform: MacOSPlatform.services(launcher: testExecutionLauncher()))
     try database.saveProject(
@@ -516,7 +519,7 @@ struct PluginStoreInstallationTests {
       installationID: original.id, for: "combined", expectedRevision: 3)
     #expect(rollback.selectedInstallations["combined"] == original.id)
     let reopened = PluginStore(
-      database: try GatewayDatabase(path: databaseURL.path),
+      database: try fixturePermissionDatabase(path: databaseURL.path),
       platform: MacOSPlatform.services(launcher: testExecutionLauncher()))
     #expect(try await reopened.snapshot() == rollback)
     #expect(try await reopened.recoverInstallations(storageRoot: fixture.installationRoot).isEmpty)
@@ -591,8 +594,8 @@ struct PluginStoreInstallationTests {
     )
     defer { fixture.files.remove() }
     let path = fixture.files.root.appendingPathComponent("gateway.sqlite").path
-    let database = try GatewayDatabase(path: path)
-    let concurrent = try GatewayDatabase(path: path)
+    let database = try fixturePermissionDatabase(path: path)
+    let concurrent = try fixturePermissionDatabase(path: path)
     let store = PluginStore(
       database: database, platform: MacOSPlatform.services(launcher: testExecutionLauncher()),
       expectedConfiguration: try database.configurationState())
@@ -624,8 +627,7 @@ struct PluginStoreInstallationTests {
       default:
         try concurrent.saveProfile(
           ProfileGrant(
-            id: .localAdmin, capabilityIDs: ["project.list"], projectIDs: [],
-            allowedCallers: [.localCLI]))
+            id: .localAdmin, permissions: fixturePermissions([:]), allowedCallers: [.localCLI]))
       }
       let changed = try database.configurationState()
       try Data().write(to: release)
@@ -761,7 +763,7 @@ struct PluginStoreInstallationTests {
     )
     defer { fixture.files.remove() }
     let databaseURL = fixture.files.root.appendingPathComponent("gateway.sqlite")
-    let database = try GatewayDatabase(path: databaseURL.path)
+    let database = try fixturePermissionDatabase(path: databaseURL.path)
     let owned: PluginOwnedDirectory
     do {
       let storage = try PluginInstallationStorage(
@@ -778,7 +780,7 @@ struct PluginStoreInstallationTests {
     let unknown = fixture.installationRoot.appendingPathComponent(UUID().uuidString)
     try FileManager.default.createDirectory(at: unknown, withIntermediateDirectories: false)
     let store = PluginStore(
-      database: try GatewayDatabase(path: databaseURL.path),
+      database: try fixturePermissionDatabase(path: databaseURL.path),
       platform: MacOSPlatform.services(launcher: testExecutionLauncher()))
     #expect(try await store.recoverInstallations(storageRoot: fixture.installationRoot).isEmpty)
     #expect(!FileManager.default.fileExists(atPath: owned.identity.url.path))

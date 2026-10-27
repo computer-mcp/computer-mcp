@@ -2,7 +2,7 @@ import Foundation
 
 /// Saved standing authority displayed for local owner confirmation after recovery.
 /// This snapshot never carries active requests, consents, permits or executions.
-package struct SuspendedPermissionAuthority: Sendable, Codable {
+package struct SuspendedPermissionAuthority: Equatable, Sendable, Codable {
   package let permissions: [Principal: Permissions]
   package let ownerPolicies: [Principal: PolicyAvailability]
   package let sandboxSettings: ProjectSandboxSettings

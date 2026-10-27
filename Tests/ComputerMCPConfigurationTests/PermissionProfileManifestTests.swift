@@ -38,7 +38,7 @@ import Testing
     #expect(profile.permissions.state(for: .project("concrete")) == .denied)
     #expect(profile.permissions.state(for: .machineInformation) == .notGranted)
     #expect(profile.permissions.state(for: .unifiedLogs) == .denied)
-    #expect(profile.authorizationRevision == 0)
+    #expect(profile.authorizationRevision == 1)
     let encoded = try PermissionProfileManifest.encode([profile])
     #expect(!encoded.contains("authorization_revision"))
     #expect(try PermissionProfileManifest.decode(encoded) == [profile])
@@ -70,7 +70,7 @@ import Testing
   }
 
   @Test func unrepresentableOverrideCannotExpandWildcard() throws {
-    var profile = PermissionProfile.newPrincipal(
+    var profile = ProfileGrant.newPrincipal(
       id: .chatGPTOperate, allowedCallers: [.secureTunnel])
     try profile.permissions.set(.granted(.all), for: .mcpServer("*"))
     try profile.permissions.set(.notGranted, for: .mcpServer("limited"))

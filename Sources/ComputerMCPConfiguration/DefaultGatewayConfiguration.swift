@@ -2,7 +2,7 @@ import ComputerMCPCore
 import Foundation
 
 package enum DefaultGatewayConfiguration {
-  package static let observeCapabilities = names(
+  private static let builtinReadTools = names(
     """
     archive.list
     archive.read_file
@@ -197,7 +197,7 @@ package enum DefaultGatewayConfiguration {
     """
   )
 
-  package static let operateAdditionalCapabilities = names(
+  private static let builtinWriteTools = names(
     """
     archive.create
     archive.extract
@@ -250,8 +250,6 @@ package enum DefaultGatewayConfiguration {
     mcp.tools.describe
     mcp.tools.find
     mcp.tools.list
-    operations.commit
-    operations.prepare
     plist.write
     process.list
     project.open
@@ -259,11 +257,9 @@ package enum DefaultGatewayConfiguration {
     """
   )
 
-  package static let operateCapabilities = Array(
-    Set(observeCapabilities + operateAdditionalCapabilities)
-  ).sorted()
-
-  package static let enabledBuiltinCapabilities = operateCapabilities.filter {
+  package static let enabledBuiltinCapabilities = Array(
+    Set(builtinReadTools + builtinWriteTools)
+  ).sorted().filter {
     if $0 == "project.list" || $0 == "project.describe" {
       return false
     }
@@ -273,7 +269,6 @@ package enum DefaultGatewayConfiguration {
       "codex",
       "computer",
       "mcp",
-      "operations",
       "policy",
       "process",
       "skills",
@@ -300,47 +295,48 @@ package enum DefaultGatewayConfiguration {
 
       [[profiles]]
       id = "chatgpt-observe"
-      mode = "read-only"
-      confirmation_policy = "risk-based"
-      capabilities = \(tomlArray(observeCapabilities))
-      projects = []
       allowed_callers = ["secure-tunnel"]
-      full_shell_enabled = false
+      full_access = false
+
+      [profiles.permissions]
+      machine = "allow"
+      skills = "allow"
 
       [[profiles]]
       id = "chatgpt-operate"
-      mode = "project-operations"
-      confirmation_policy = "risk-based"
-      capabilities = \(tomlArray(operateCapabilities))
-      projects = []
       allowed_callers = ["secure-tunnel"]
+      full_access = false
+
+      [profiles.permissions]
+      machine = "allow"
+      skills = "allow"
 
       [[profiles]]
       id = "cloudflare-observe"
-      mode = "read-only"
-      confirmation_policy = "risk-based"
-      capabilities = \(tomlArray(observeCapabilities))
-      projects = []
       allowed_callers = ["cloudflare-tunnel"]
-      full_shell_enabled = false
+      full_access = false
+
+      [profiles.permissions]
+      machine = "allow"
+      skills = "allow"
 
       [[profiles]]
       id = "cloudflare-operate"
-      mode = "project-operations"
-      confirmation_policy = "risk-based"
-      capabilities = \(tomlArray(operateCapabilities))
-      projects = []
       allowed_callers = ["cloudflare-tunnel"]
-      full_shell_enabled = false
+      full_access = false
+
+      [profiles.permissions]
+      machine = "allow"
+      skills = "allow"
 
       [[profiles]]
       id = "local-admin"
-      mode = "local-full-access"
-      confirmation_policy = "risk-based"
-      capabilities = ["*"]
-      projects = ["*"]
       allowed_callers = ["local-app", "local-cli", "local-mcp"]
-      full_shell_enabled = true
+      full_access = false
+
+      [profiles.permissions]
+      machine = "allow"
+      skills = "allow"
 
       [skills]
       enabled = true

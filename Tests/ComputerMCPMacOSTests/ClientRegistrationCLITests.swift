@@ -3,6 +3,7 @@ import ComputerMCPControlPlane
 import ComputerMCPCore
 import ComputerMCPPlatform
 import ComputerMCPProcess
+import ComputerMCPSandbox
 import ComputerMCPTestSupport
 import Foundation
 import Testing
@@ -200,9 +201,10 @@ private struct RegistrationCLIFixture {
     temporary = try ScopedTemporaryDirectory()
     let repository = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
       .deletingLastPathComponent().deletingLastPathComponent()
-    executable = repository.appendingPathComponent(".build/debug/computer-mcp")
-      .resolvingSymlinksInPath()
+    executable = try nativeGatewayTestExecutable()
     _ = try #require(FileManager.default.isExecutableFile(atPath: executable.path))
+    try FileManager.default.setAttributes(
+      [.posixPermissions: 0o700], ofItemAtPath: root.path)
     try Data().write(to: root.appendingPathComponent(".registration-fixture"))
     let script = try String(
       contentsOf: repository.appendingPathComponent(
@@ -246,15 +248,19 @@ private struct RegistrationCLIFixture {
     ).write(to: file)
   }
   func run(_ arguments: [String]) throws -> CommandResult {
-    try RegistrationProcessRunner(launcher: testExecutionLauncher()).run(
-      executable: executable.path, arguments: arguments,
-      environment: [
-        "HOME": root.path, "USER": "fixture", "LOGNAME": "fixture", "LANG": "C",
-        "TMPDIR": root.path,
-        "PATH": "/usr/bin:/bin", "CODEX_HOME": root.appendingPathComponent("codex").path,
-        "CLAUDE_CONFIG_DIR": root.appendingPathComponent("claude").path,
-      ],
-      timeoutMilliseconds: 10_000, maxOutputBytes: 1_048_576)
+    let environment = [
+      "HOME": root.path, "USER": "fixture", "LOGNAME": "fixture", "LANG": "C",
+      "TMPDIR": root.path,
+      "PATH": "/usr/bin:/bin", "CODEX_HOME": root.appendingPathComponent("codex").path,
+      "CLAUDE_CONFIG_DIR": root.appendingPathComponent("claude").path,
+    ]
+    let administration = ExecutionAdministration(
+      mode: .fullAccess, environment: try ExecutionEnvironment(fullAccessVariables: environment))
+    return try ExecutionAdministration.$current.withValue(administration) {
+      try RegistrationProcessRunner(launcher: testExecutionLauncher()).run(
+        executable: executable.path, arguments: arguments, environment: environment,
+        timeoutMilliseconds: 10_000, maxOutputBytes: 1_048_576)
+    }
   }
   func json(_ result: CommandResult) throws -> [String: JSONValue] {
     try #require(JSONDecoder().decode(JSONValue.self, from: Data(result.stdout.utf8)).objectValue)

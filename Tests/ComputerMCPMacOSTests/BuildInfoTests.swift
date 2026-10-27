@@ -2,6 +2,7 @@ import ComputerMCPCore
 import ComputerMCPPlatform
 import ComputerMCPPlugins
 import ComputerMCPProcess
+import ComputerMCPSandbox
 import ComputerMCPTestSupport
 import Foundation
 import Testing
@@ -13,14 +14,24 @@ import Testing
 struct BuildInfoTests {
   @Test
   func jsonAndHumanOutputReportTheHostPluginAPIRange() throws {
-    let repository = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
-      .deletingLastPathComponent().deletingLastPathComponent()
-    let executable = repository.appendingPathComponent(".build/debug/computer-mcp")
+    let scratch = try ScopedTemporaryDirectory()
+    try FileManager.default.setAttributes(
+      [.posixPermissions: 0o700], ofItemAtPath: scratch.url.path)
+    let executable = try nativeGatewayTestExecutable()
     func run(_ arguments: [String]) throws -> CommandResult {
-      try ProcessCommandRunner(launcher: testExecutionLauncher()).run(
-        executable: executable.path, arguments: ["build-info"] + arguments,
-        workingDirectory: repository, environment: [:], timeoutMilliseconds: 10_000,
-        maxOutputBytes: 16_384)
+      let environment = [
+        "PATH": "/usr/bin:/bin:/usr/sbin:/sbin", "HOME": scratch.url.path,
+        "TMPDIR": scratch.url.path + "/", "TMP": scratch.url.path, "TEMP": scratch.url.path,
+      ]
+      let administration = ExecutionAdministration(
+        mode: .fullAccess,
+        environment: try ExecutionEnvironment(fullAccessVariables: environment))
+      return try ExecutionAdministration.$current.withValue(administration) {
+        try ProcessCommandRunner(launcher: testExecutionLauncher(), environment: [:]).run(
+          executable: executable.path, arguments: ["build-info"] + arguments,
+          workingDirectory: scratch.url, environment: environment, timeoutMilliseconds: 10_000,
+          maxOutputBytes: 16_384)
+      }
     }
     for arguments in [[], ["--format", "json"]] {
       let output = try run(arguments)

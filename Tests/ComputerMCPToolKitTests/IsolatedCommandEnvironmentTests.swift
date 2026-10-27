@@ -7,7 +7,10 @@
 #if os(macOS)
   import ComputerMCPConfiguration
   import ComputerMCPDarwinTestSupport
+  import ComputerMCPPlatform
+  import ComputerMCPPlatformPOSIX
   import ComputerMCPProcess
+  import ComputerMCPSandbox
   import ComputerMCPTestSupport
   import ComputerMCPToolKit
   import Foundation
@@ -28,7 +31,24 @@
         to: suppliedHome.appendingPathComponent(".gitconfig"))
       try Data(".print owner-initialization\n".utf8).write(
         to: suppliedHome.appendingPathComponent(".sqliterc"))
-      let executable = try testExecutable(program)
+      let executable: String
+      if program == "git" {
+        let lookup = Process()
+        let output = Pipe()
+        lookup.executableURL = URL(fileURLWithPath: "/usr/bin/xcrun")
+        lookup.arguments = ["--find", "git"]
+        lookup.standardOutput = output
+        lookup.standardError = FileHandle.nullDevice
+        try lookup.run()
+        let data = output.fileHandleForReading.readDataToEndOfFile()
+        lookup.waitUntilExit()
+        try #require(lookup.terminationStatus == 0)
+        executable = String(decoding: data, as: UTF8.self).trimmingCharacters(
+          in: .whitespacesAndNewlines)
+        try #require(executable.hasPrefix("/") && !executable.contains("\n"))
+      } else {
+        executable = try testExecutable(program)
+      }
       let wrapper = root.appendingPathComponent("probe")
       let script = """
         #!/bin/sh
@@ -72,7 +92,38 @@
           "GIT_CONFIG_SYSTEM": suppliedHome.appendingPathComponent(".gitconfig").path,
         ]) { _, value in value })
       let command = CLICommandConfig(id: program, executable: wrapper.path)
-      let result = try HostExecutionPolicy.$current.withValue(readOnly ? .readOnly : .fullAccess) {
+      let scratch = try ScopedTemporaryDirectory()
+      let home = try SandboxPath(ProjectPathResolver.canonicalProject(scratch.url).path)
+      let administration: ExecutionAdministration
+      if readOnly {
+        let project = try SandboxPath(ProjectPathResolver.canonicalProject(root).path)
+        // The fixture executes the selected Git binary with its isolated environment.
+        let developerReads = try [
+          "/Applications", "/Library/Developer",
+        ].map(SandboxPath.init)
+        let reads = [project] + launcher.hostSystemReadPaths + developerReads
+        var ancestorPaths: Set<String> = ["/"]
+        for path in reads + [home] {
+          var parent = (path.value as NSString).deletingLastPathComponent
+          while parent != "/" {
+            ancestorPaths.insert(parent)
+            parent = (parent as NSString).deletingLastPathComponent
+          }
+        }
+        let sandbox = try SandboxConfiguration(
+          readOnly: true, worktree: project, temporaryDirectory: home, homeDirectory: home,
+          cacheDirectory: home, readableRoots: reads,
+          listableAncestors: ancestorPaths.sorted().map(SandboxPath.init))
+        administration = try .init(
+          mode: .sandbox(sandbox),
+          environment: .init(
+            searchPath: systemUtilityPath.split(separator: ":").map { try SandboxPath(String($0)) },
+            home: home, temporary: home, cache: home))
+      } else {
+        administration = try .init(mode: .fullAccess, environment: .init(fullAccessVariables: [:]))
+      }
+      defer { withExtendedLifetime(scratch) {} }
+      let result = try ExecutionAdministration.$current.withValue(administration) {
         if program == "git" {
           return try commands.runHostGit(
             command: command, args: ["config", "--list"], timeout: 10_000)

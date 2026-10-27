@@ -41,16 +41,33 @@ package struct AuthorizedMCPClient: DownstreamMCPClient {
   package func shutdown() async { await base.shutdown() }
 
   package func isServerVisible(_ server: MCPServerConfig, context: InvocationContext) -> Bool {
-    (try? currentPolicy(context: context).isVisible(server)) ?? false
+    guard let policy = try? currentPolicy(context: context) else { return false }
+    let capability = context.resolvedInvocation?.identity.tool ?? "mcp.servers.status"
+    return policy.isVisible(server)
+      || policy.hasAdmittedServer(server, capability: capability, context: context)
+  }
+
+  package func cachedTools(server: MCPServerConfig, context: InvocationContext) throws -> [MCPTool]?
+  {
+    // Host admission resolves exact cached targets before granting permission.
+    // Public catalog routes apply object visibility independently.
+    let policy = try currentPolicy(context: context)
+    guard policy.configuration.mcp.servers.contains(where: { $0.id == server.id && $0.enabled })
+    else { return nil }
+    return try base.cachedTools(server: server, context: context)?.filter {
+      _ = try $0.declaredRiskFloor
+      return server.permitsTool($0.name)
+    }
   }
 
   package func listTools(server: MCPServerConfig, context: InvocationContext) throws -> [MCPTool] {
     let policy = try currentPolicy(context: context)
-    guard policy.canDiscoverTools(on: server) else { return [] }
+    let admitted = policy.hasAdmittedServer(server, capability: "mcp.tools.list", context: context)
+    guard admitted || policy.canDiscoverTools(on: server) else { return [] }
     return try base.listTools(server: server, context: context).filter {
       let reference = MCPToolReference(serverID: server.id, toolName: $0.name)
-      guard policy.allows(reference) else { return false }
-      return try policy.allows(reference, riskFloor: $0.declaredRiskFloor)
+      _ = try $0.declaredRiskFloor
+      return admitted ? server.permitsTool($0.name) : policy.isToolVisible(reference)
     }
   }
 
@@ -194,7 +211,9 @@ package struct AuthorizedMCPClient: DownstreamMCPClient {
     context: InvocationContext
   ) throws {
     let reference = MCPToolReference(serverID: server.id, toolName: name)
-    try requireToolGrant(reference, context: context)
+    let policy = try currentPolicy(context: context)
+    let admitted = policy.hasAdmittedTool(reference, context: context)
+    if !admitted { try requireToolGrant(reference, context: context) }
     guard
       let tool = try base.listTools(server: server, context: context).first(where: {
         $0.name == name
@@ -204,10 +223,9 @@ package struct AuthorizedMCPClient: DownstreamMCPClient {
         "[mcp.tool_unavailable] The downstream tool is not in the current catalog.")
     }
     let floor = try tool.declaredRiskFloor
-    let policy = try currentPolicy(context: context)
-    guard policy.allows(reference, riskFloor: floor) else {
+    guard admitted || policy.allows(reference, riskFloor: floor) else {
       throw GatewayToolError.invalidArguments(
-        "[policy.capability_denied] The profile does not grant the downstream tool's declared risk."
+        "[permission.denied] The client does not have the required downstream MCP server access or Full access consent."
       )
     }
     try context.admission?.validate(
@@ -230,23 +248,30 @@ package struct AuthorizedMCPClient: DownstreamMCPClient {
     }
     // Receipt reads inspect host-owned output, not a new provider operation.
     // Rediscovery can wait behind the very operation whose receipt is being polled.
-    try requireToolGrant(.init(serverID: server.id, toolName: tool), context: context)
+    let policy = try currentPolicy(context: context)
+    if !policy.hasAdmittedServer(server, capability: "mcp.requests.read", context: context) {
+      try requireToolGrant(.init(serverID: server.id, toolName: tool), context: context)
+    }
     return result
   }
 
   private func requireToolGrant(_ reference: MCPToolReference, context: InvocationContext) throws {
     guard try currentPolicy(context: context).allows(reference) else {
       throw GatewayToolError.invalidArguments(
-        "[policy.capability_denied] The profile does not grant this downstream MCP tool.")
+        "[permission.denied] The client does not have the required downstream MCP server access.")
     }
   }
 
   private func requireServer(
     _ server: MCPServerConfig, capability: String, context: InvocationContext
   ) throws {
-    guard try currentPolicy(context: context).permitsServer(server, capability: capability) else {
+    let policy = try currentPolicy(context: context)
+    guard
+      policy.hasAdmittedServer(server, capability: capability, context: context)
+        || policy.permitsServer(server, capability: capability)
+    else {
       throw GatewayToolError.invalidArguments(
-        "[policy.capability_denied] The profile does not grant this downstream MCP surface.")
+        "[permission.denied] The client does not have the required downstream MCP server access.")
     }
   }
 

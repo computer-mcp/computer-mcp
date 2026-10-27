@@ -1,6 +1,7 @@
 import ComputerMCPDelivery
 import ComputerMCPDownstream
 import ComputerMCPMacOS
+import ComputerMCPPermissions
 import ComputerMCPProcess
 import ComputerMCPTestSupport
 import ComputerMCPToolKit
@@ -145,8 +146,14 @@ struct BuiltinToolCatalogSnapshotTests {
       policy: .init(shellEnabled: true),
       profiles: [
         .init(
-          id: .localAdmin, capabilities: ["*"], projects: ["catalog"],
-          allowedCallers: [.localMCP], fullShellEnabled: true, mode: .localFullAccess)
+          id: .localAdmin,
+          permissions: fixturePermissions([
+            .machineInformation: .granted(.access), .skills: .granted(.access),
+            .screen: .granted(.access), .desktopControl: .granted(.access),
+            .unifiedLogs: .granted(.access), .localNetwork: .granted(.access),
+            .project("catalog"): .granted(.write), .mcpServer("*"): .granted(.all),
+            .plugin("*"): .granted(.use),
+          ]), fullAccess: true, allowedCallers: [.localMCP])
       ],
       cli: .init(commands: [.init(id: "fixture", executable: "/unused/catalog-cli")]),
       mcp: .init(servers: [.init(id: "fixture", transport: .stdio, command: "/unused/catalog-mcp")]
@@ -158,7 +165,10 @@ struct BuiltinToolCatalogSnapshotTests {
     // Runtime composition supplies core tools, project schemas, Computer Use and management.
     // Discovery has no plugin sources, CLI trees or downstream tool contributions.
     let runtime = try await GatewayRuntime.make(
-      configuration: configuration, database: GatewayDatabase(inMemory: ()),
+      configuration: configuration,
+      context: .init(
+        caller: .localMCP, profileID: .localAdmin, trustedPrincipalID: "catalog-fixture"),
+      database: GatewayDatabase(inMemory: ()),
       registeredProjects: [
         .init(id: "catalog", displayName: "Catalog", rootPath: project.url.path)
       ],
@@ -230,6 +240,10 @@ struct BuiltinToolCatalogSnapshotTests {
 }
 
 private struct CatalogDiscoveryStub: DownstreamMCPClient {
+  func cachedTools(server: MCPServerConfig, context: InvocationContext) -> [MCPTool]? {
+    try? listTools(server: server, context: context)
+  }
+
   func makeScopedClient(
     workingDirectory: URL, environment: [String: String], hostContext: (any MCPHostEnvironment)?
   ) -> any DownstreamMCPClient { self }

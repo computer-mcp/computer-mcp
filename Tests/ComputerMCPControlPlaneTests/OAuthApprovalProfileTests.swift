@@ -1,25 +1,28 @@
 import ComputerMCPCore
+import ComputerMCPPermissions
 import Foundation
 import Testing
 
 @testable import ComputerMCPControlPlane
 
 struct OAuthApprovalProfileTests {
-  @Test func digestHasACanonicalCrossPlatformEncoding() throws {
-    var grant = ProfileGrant(
-      id: .cloudflareObserve, capabilityIDs: ["file.write", "file.read"],
-      projectIDs: ["z", "a"], allowedCallers: [.localCLI, .cloudflareTunnel],
-      mcpServerIDs: ["two", "one"], mode: .projectOperations,
-      confirmationPolicy: .allWrites)
-    let digest = try OAuthApprovalProfile(grant: grant).authorizationDigest
-    #expect(digest == "e8306ba71960006b18d3f20d849982ff45e7de46eef91d56c476c261d7881d0d")
-    grant.capabilityIDs = Set(["file.read", "file.write"])
-    grant.projectIDs = Set(["a", "z"])
-    grant.allowedCallers = Set([.cloudflareTunnel, .localCLI])
-    grant.mcpServerIDs = Set(["one", "two"])
-    grant.authorizationRevision += 42
-    grant.id = .cloudflareOperate
-    #expect(try OAuthApprovalProfile(grant: grant).authorizationDigest == digest)
+  @Test func digestIgnoresOrderIdentityAndPersistenceRevision() throws {
+    var first = ProfileGrant(
+      id: .cloudflareObserve, allowedCallers: [.cloudflareTunnel, .localCLI])
+    try first.permissions.set(.granted(.read), for: .project("a"))
+    try first.permissions.set(.granted(.write), for: .project("z"))
+    first.projectNetworks["a"] = .custom(
+      hosts: ["example.com", "swift.org"], includesTrusted: false)
+    var second = ProfileGrant(
+      id: .cloudflareOperate, allowedCallers: [.localCLI, .cloudflareTunnel],
+      authorizationRevision: 42)
+    try second.permissions.set(.granted(.write), for: .project("z"))
+    try second.permissions.set(.granted(.read), for: .project("a"))
+    second.projectNetworks["a"] = .custom(
+      hosts: ["swift.org", "example.com"], includesTrusted: false)
+    #expect(
+      try OAuthApprovalProfile(grant: first).authorizationDigest
+        == OAuthApprovalProfile(grant: second).authorizationDigest)
   }
 
   @Test func everyAuthorizationFieldContributesToTheDigest() throws {
@@ -27,25 +30,19 @@ struct OAuthApprovalProfileTests {
     let digest = try OAuthApprovalProfile(grant: original).authorizationDigest
     var variants: [ProfileGrant] = []
     var changed = original
-    changed.mode = .projectOperations
+    try changed.permissions.set(.granted(.read), for: .project("project"))
     variants.append(changed)
     changed = original
-    changed.capabilityIDs.insert("file.read")
-    variants.append(changed)
-    changed = original
-    changed.projectIDs.insert("project")
+    changed.projectNetworks["project"] = .trusted
     variants.append(changed)
     changed = original
     changed.allowedCallers.insert(.localCLI)
     variants.append(changed)
     changed = original
-    changed.fullShellEnabled = true
+    changed.fullAccess = true
     variants.append(changed)
     changed = original
-    changed.mcpServerIDs.insert("integration")
-    variants.append(changed)
-    changed = original
-    changed.confirmationPolicy = .allWrites
+    changed.automation["com.example.Editor"] = .allow
     variants.append(changed)
     for variant in variants {
       #expect(try OAuthApprovalProfile(grant: variant).authorizationDigest != digest)

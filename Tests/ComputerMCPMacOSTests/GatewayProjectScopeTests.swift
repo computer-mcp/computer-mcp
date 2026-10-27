@@ -17,7 +17,7 @@ struct GatewayProjectScopeTests {
   @Test(
     arguments: ["replacement", "symlink", "missing", "file", "denied", "unresolved", "redirected"],
     [false, true])
-  func currentAccessIsCheckedBeforeDispatch(change: String, persisted: Bool) async throws {
+  func currentAccessIsCheckedBeforeDispatch(change: String, fileBacked: Bool) async throws {
     let container = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
     let root = container.appendingPathComponent("project")
     let moved = container.appendingPathComponent("original")
@@ -28,15 +28,26 @@ struct GatewayProjectScopeTests {
     try Data("original".utf8).write(to: root.appendingPathComponent("value.txt"))
     try Data("other".utf8).write(to: other.appendingPathComponent("value.txt"))
     let adapter = MutableScopeBookmarkAdapter(root: root)
-    let database = try GatewayDatabase(path: container.appendingPathComponent("state.sqlite").path)
+    let database =
+      try fileBacked
+      ? fixturePermissionDatabase(path: container.appendingPathComponent("state.sqlite").path)
+      : GatewayDatabase(inMemory: ())
     let project = RegisteredProject(
       id: "project", displayName: "Project", rootPath: root.path,
       bookmarkData: Data("original".utf8))
     try database.saveProject(project)
+    let profile = ProfileGrantConfig(
+      id: .chatGPTOperate,
+      permissions: fixturePermissions([.project("project"): .granted(.read)]),
+      allowedCallers: [.localMCP])
+    try database.saveProfile(profile.grant)
     let runtime = try await GatewayRuntime.make(
       configuration: GatewayConfiguration(
+        runtime: .init(caller: .localMCP, profileID: profile.id), profiles: [profile],
         builtin: .init(enabled: ["file.read"]), projectDirectory: root),
-      database: persisted ? database : nil, registeredProjects: persisted ? nil : [project],
+      context: .init(
+        caller: .localMCP, profileID: profile.id, trustedPrincipalID: "project-scope-fixture"),
+      database: database, registeredProjects: fileBacked ? nil : [project],
       platform: PlatformServices(
         launcher: testExecutionLauncher(),
         projectGrants: ProjectBookmarkService(adapter: adapter),
@@ -49,7 +60,8 @@ struct GatewayProjectScopeTests {
         executableSearchDirectories: MacOSPlatform.services(launcher: testExecutionLauncher())
           .executableSearchDirectories,
         gitExecutable: MacOSPlatform.services(launcher: testExecutionLauncher()).gitExecutable,
-        fileChanges: MacOSPlatform.services(launcher: testExecutionLauncher()).fileChanges),
+        fileChanges: MacOSPlatform.services(launcher: testExecutionLauncher()).fileChanges,
+        permissionPolicyReader: TestManagedPolicyReader()),
       bundledPlugins: .load(directory: nil))
     do {
       let arguments: JSONValue = .object([
@@ -133,9 +145,17 @@ struct GatewayProjectScopeTests {
       .init(
         id: "project", displayName: "Project", rootPath: root.path,
         bookmarkData: Data("original".utf8)))
+    let profile = ProfileGrantConfig(
+      id: .chatGPTOperate,
+      permissions: fixturePermissions([.project("project"): .granted(.read)]),
+      allowedCallers: [.localMCP])
+    try database.saveProfile(profile.grant)
     let runtime = try await GatewayRuntime.make(
       configuration: GatewayConfiguration(
+        runtime: .init(caller: .localMCP, profileID: profile.id), profiles: [profile],
         builtin: .init(enabled: ["file.read"]), projectDirectory: root),
+      context: .init(
+        caller: .localMCP, profileID: profile.id, trustedPrincipalID: "project-scope-fixture"),
       database: database,
       platform: PlatformServices(
         launcher: testExecutionLauncher(),
@@ -149,7 +169,8 @@ struct GatewayProjectScopeTests {
         executableSearchDirectories: MacOSPlatform.services(launcher: testExecutionLauncher())
           .executableSearchDirectories,
         gitExecutable: MacOSPlatform.services(launcher: testExecutionLauncher()).gitExecutable,
-        fileChanges: MacOSPlatform.services(launcher: testExecutionLauncher()).fileChanges),
+        fileChanges: MacOSPlatform.services(launcher: testExecutionLauncher()).fileChanges,
+        permissionPolicyReader: TestManagedPolicyReader()),
       bundledPlugins: .load(directory: nil))
     do {
       var project = try #require(try database.project(id: "project"))
@@ -158,7 +179,9 @@ struct GatewayProjectScopeTests {
       let stored = try database.configurationState()
       do {
         _ = try runtime.callTool(
-          name: "file.read", arguments: .object(["path": .string("value.txt")]), context: .empty)
+          name: "file.read",
+          arguments: .object(["project_id": .string(project.id), "path": .string("value.txt")]),
+          context: .empty)
         Issue.record("A stale in-memory bookmark authorized execution")
       } catch {
         #expect(GatewayRuntime.auditErrorCode(for: error) == "project.bookmark_resolution_failed")

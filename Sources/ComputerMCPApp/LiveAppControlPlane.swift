@@ -4,6 +4,7 @@ import ComputerMCPControlPlane
 import ComputerMCPCore
 import ComputerMCPGateway
 import ComputerMCPMacOS
+import ComputerMCPPermissions
 import ComputerMCPPlatform
 import ComputerMCPPlatformDarwin
 import ComputerMCPPlugins
@@ -176,7 +177,10 @@ final class LiveAppControlPlane: AppControlPlane {
 
   func fetchProjects() async throws -> [ProjectSummary] {
     let activeProfile = try await controlPlane.activeGatewayProfile()
-    let grant = try await controlPlane.profileGrants().first { $0.id == activeProfile }
+    let view = try await controlPlane.permissionRequests()
+    guard let grant = view.profiles.first(where: { $0.id == activeProfile }) else {
+      throw AppControlPlaneServiceError.unknownGatewayProfile(activeProfile.rawValue)
+    }
     return try await controlPlane.projectAccessReports().map { report in
       let project = report.project
       let health: ProjectHealth
@@ -194,10 +198,11 @@ final class LiveAppControlPlane: AppControlPlane {
         path: project.rootPath,
         health: health,
         activeProfileID: activeProfile.rawValue,
-        isEnabled: grant?.projectIDs.contains("*") == true
-          || grant?.projectIDs.contains(project.id) == true,
-        isSelected: grant?.projectIDs.contains("*") == true
-          || grant?.projectIDs.contains(project.id) == true,
+        access: try ProjectAccess(
+          permissionState: grant.permissions.entries[.project(project.id)] ?? .notGranted),
+        effectiveAccess: try ProjectAccess(
+          permissionState: grant.permissions.state(for: .project(project.id))),
+        profileRevision: grant.authorizationRevision, permissionRevision: view.revision,
         lastResolvedAt: report.error == nil ? Date() : nil,
         healthDetail: report.error?.localizedDescription
       )
@@ -210,10 +215,11 @@ final class LiveAppControlPlane: AppControlPlane {
       ProfileSummary(
         id: grant.id.rawValue,
         displayName: grant.id.displayName,
-        summary: grant.mode.summary,
+        summary: grant.fullAccess
+          ? "Programs may use Full access with client consent." : "Programs run in the sandbox.",
         isActive: grant.id == activeProfile,
         isEnabled: grant.id != .localAdmin,
-        riskLevel: grant.mode.riskLevel,
+        riskLevel: grant.fullAccess ? .high : .elevated,
         permitsRemoteAccess: grant.allowedCallers.contains(where: \.isRemote),
         permissions: grant
       )
@@ -260,14 +266,14 @@ final class LiveAppControlPlane: AppControlPlane {
   ) async throws {
     _ = try await operations.approveControlSession(
       id: id, lifetime: lifetime, expectedRevision: expectedRevision,
-      expectedTrustRevision: expectedTrustRevision, enableShellFacility: true)
+      expectedTrustRevision: expectedTrustRevision)
   }
 
-  func limitClientAccess(id: String, mode: GatewayPermissionMode, expectedRevision: Int64)
+  func limitClientAccess(id: String, limits: ManagedPolicy, expectedRevision: Int64)
     async throws
   {
     _ = try await operations.limitControlSession(
-      id: id, to: mode, expectedRevision: expectedRevision)
+      id: id, to: limits, expectedRevision: expectedRevision)
   }
 
   func endClientAccess(id: String, expectedRevision: Int64) async throws {
@@ -602,29 +608,21 @@ final class LiveAppControlPlane: AppControlPlane {
     fileLogger.append(.info, event: "project.removed", fields: ["project_id": id])
   }
 
-  func setProjectEnabled(
-    _ enabled: Bool,
-    projectID: String,
-    profileID: String
+  func setProjectAccess(
+    _ access: ProjectAccess, projectID: String, profileID: String,
+    expectedProfileRevision: Int64, expectedPermissionRevision: UInt64
   ) async throws {
     guard let profile = GatewayProfileID(rawValue: profileID) else {
       throw AppControlPlaneError.unavailable(
-        AppLocalization.formatted("Unknown gateway profile: %@", profileID)
-      )
+        AppLocalization.formatted("Unknown gateway profile: %@", profileID))
     }
-    _ = try await operations.setProjectEnabled(
-      enabled,
-      projectID: projectID,
-      profileID: profile
-    )
+    _ = try await operations.setProjectAccess(
+      access, projectID: projectID, profileID: profile,
+      expectedProfileRevision: expectedProfileRevision,
+      expectedPermissionRevision: expectedPermissionRevision)
     fileLogger.append(
-      .info,
-      event: enabled ? "project.granted" : "project.revoked",
-      fields: [
-        "profile_id": profileID,
-        "project_id": projectID,
-      ]
-    )
+      .info, event: "project.access.updated",
+      fields: ["profile_id": profileID, "project_id": projectID, "access": access.rawValue])
   }
 
   func activateProfile(id: String) async throws {
@@ -650,22 +648,41 @@ final class LiveAppControlPlane: AppControlPlane {
     async throws
   {
     _ = try await operations.updateProfilePermissions(
-      profileID: grant.id, mode: grant.mode, confirmationPolicy: grant.confirmationPolicy,
-      fullShellEnabled: grant.fullShellEnabled, capabilityIDs: grant.capabilityIDs,
-      projectIDs: grant.projectIDs, mcpServerIDs: grant.mcpServerIDs,
-      allowedCallers: grant.allowedCallers, expectedRevision: grant.authorizationRevision,
-      reviewedOptions: reviewed)
+      grant, expectedRevision: reviewed.permissionRevision, reviewedOptions: reviewed)
     fileLogger.append(
       .info, event: "profile.permissions.updated", fields: ["profile_id": grant.id.rawValue])
   }
 
-  func fetchOperationApprovals() async throws -> [OperationTicket] {
-    try await controlPlane.operationApprovals()
+  func fetchPermissionRequests() async throws -> GatewayPermissionView {
+    try await controlPlane.permissionRequests()
   }
 
-  func resolveOperationApproval(id: String, approved: Bool) async throws {
-    _ = try await controlPlane.resolveOperationApproval(
-      id: id, approved: approved, resolver: .localApp)
+  func fetchPermissionObjectNames() async throws -> PermissionObjectNames {
+    let view = try await controlPlane.permissionRequests()
+    guard let profile = view.profiles.first else {
+      let projects = try await controlPlane.projects()
+      return .init(
+        projects: Dictionary(uniqueKeysWithValues: projects.map { ($0.id, $0.displayName) }))
+    }
+    let options = try await controlPlane.profilePermissionOptions(profileID: profile.id)
+    return .init(
+      projects: Dictionary(uniqueKeysWithValues: options.projects.map { ($0.id, $0.displayName) }),
+      plugins: Dictionary(uniqueKeysWithValues: options.plugins.map { ($0.id, $0.title) }),
+      mcpServers: Dictionary(uniqueKeysWithValues: options.integrations.map { ($0.id, $0.title) }))
+  }
+
+  func confirmPermissionAuthority(epoch: UUID, expectedRevision: UInt64, profiles: [ProfileGrant])
+    async throws
+  {
+    try await controlPlane.confirmPermissionAuthority(
+      epoch: epoch, expectedRevision: expectedRevision, profiles: profiles)
+  }
+
+  func answerPermissionRequest(id: UUID, answer: PermissionAnswer?, expectedRevision: UInt64)
+    async throws
+  {
+    try await controlPlane.answerPermissionRequest(
+      id, answer: answer, expectedRevision: expectedRevision)
   }
 
   func startProvider(id: String) async throws {
@@ -1312,25 +1329,6 @@ extension GatewayProfileID {
     return rawValue
   }
 
-}
-
-extension GatewayPermissionMode {
-  fileprivate var summary: String {
-    switch self {
-    case .readOnly: "Read selected tools and projects without changing them."
-    case .projectOperations:
-      "Control selected capabilities, projects, and integrations."
-    case .localFullAccess:
-      "Control selected capabilities. Full Access requires approval for a connected client."
-    }
-  }
-  fileprivate var riskLevel: RiskLevel {
-    switch self {
-    case .readOnly: .low
-    case .projectOperations: .elevated
-    case .localFullAccess: .high
-    }
-  }
 }
 
 extension OpenAITunnelLifecycleState {

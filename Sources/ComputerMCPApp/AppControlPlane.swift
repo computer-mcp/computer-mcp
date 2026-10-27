@@ -1,5 +1,7 @@
 import ComputerMCPControlPlane
 import ComputerMCPCore
+import ComputerMCPGateway
+import ComputerMCPPermissions
 import ComputerMCPPlatform
 import ComputerMCPPlugins
 import ComputerMCPProcess
@@ -173,8 +175,10 @@ struct ProjectSummary: Identifiable, Sendable {
   var path: String
   var health: ProjectHealth
   var activeProfileID: String
-  var isEnabled: Bool
-  var isSelected: Bool
+  var access: ProjectAccess
+  var effectiveAccess: ProjectAccess
+  var profileRevision: Int64
+  var permissionRevision: UInt64
   var lastResolvedAt: Date?
   var healthDetail: String? = nil
 }
@@ -432,8 +436,12 @@ protocol AppControlPlane: PluginManaging, MCPRegistrationManaging, ClientAccessM
   func fetchOpenAITunnels() async throws -> [OpenAITunnelSummary]
   func fetchCloudflareTunnels() async throws -> [CloudflareTunnelSummary]
   func fetchPermissions() async throws -> [PermissionSummary]
-  func fetchOperationApprovals() async throws -> [OperationTicket]
-  func resolveOperationApproval(id: String, approved: Bool) async throws
+  func fetchPermissionRequests() async throws -> GatewayPermissionView
+  func fetchPermissionObjectNames() async throws -> PermissionObjectNames
+  func confirmPermissionAuthority(epoch: UUID, expectedRevision: UInt64, profiles: [ProfileGrant])
+    async throws
+  func answerPermissionRequest(id: UUID, answer: PermissionAnswer?, expectedRevision: UInt64)
+    async throws
   func requestPermission(id: String) async throws -> PermissionRequestOutcome
   func fetchAudit() async throws -> [AuditEntrySummary]
   func fetchDiagnostics() async throws -> DiagnosticsSnapshot
@@ -445,10 +453,9 @@ protocol AppControlPlane: PluginManaging, MCPRegistrationManaging, ClientAccessM
   func registerProject(at url: URL) async throws
   func repairProject(id: String, at url: URL) async throws
   func removeProject(id: String) async throws
-  func setProjectEnabled(
-    _ enabled: Bool,
-    projectID: String,
-    profileID: String
+  func setProjectAccess(
+    _ access: ProjectAccess, projectID: String, profileID: String,
+    expectedProfileRevision: Int64, expectedPermissionRevision: UInt64
   ) async throws
 
   func activateProfile(id: String) async throws
@@ -547,8 +554,14 @@ final class UnavailableControlPlane: AppControlPlane {
   func fetchOpenAITunnels() async throws -> [OpenAITunnelSummary] { throw unavailable() }
   func fetchCloudflareTunnels() async throws -> [CloudflareTunnelSummary] { throw unavailable() }
   func fetchPermissions() async throws -> [PermissionSummary] { throw unavailable() }
-  func fetchOperationApprovals() async throws -> [OperationTicket] { throw unavailable() }
-  func resolveOperationApproval(id: String, approved: Bool) async throws { throw unavailable() }
+  func fetchPermissionRequests() async throws -> GatewayPermissionView { throw unavailable() }
+  func confirmPermissionAuthority(epoch: UUID, expectedRevision: UInt64, profiles: [ProfileGrant])
+    async throws
+  { throw unavailable() }
+  func answerPermissionRequest(id: UUID, answer: PermissionAnswer?, expectedRevision: UInt64)
+    async throws
+  { throw unavailable() }
+  func fetchPermissionObjectNames() async throws -> PermissionObjectNames { .init() }
   func requestPermission(id: String) async throws -> PermissionRequestOutcome {
     throw unavailable()
   }
@@ -561,10 +574,9 @@ final class UnavailableControlPlane: AppControlPlane {
   func registerProject(at url: URL) async throws { throw unavailable() }
   func repairProject(id: String, at url: URL) async throws { throw unavailable() }
   func removeProject(id: String) async throws { throw unavailable() }
-  func setProjectEnabled(
-    _ enabled: Bool,
-    projectID: String,
-    profileID: String
+  func setProjectAccess(
+    _ access: ProjectAccess, projectID: String, profileID: String,
+    expectedProfileRevision: Int64, expectedPermissionRevision: UInt64
   ) async throws {
     throw unavailable()
   }

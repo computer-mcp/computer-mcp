@@ -105,11 +105,12 @@ display_name = "Fixed release acceptance"
 path = {json.dumps(str(project))}
 [[profiles]]
 id = "acceptance"
-mode = "read-only"
-confirmation_policy = "risk-based"
-capabilities = ["system.info", "file.read", "project.list"]
-projects = ["acceptance"]
+full_access = false
 allowed_callers = ["local-mcp"]
+[profiles.permissions]
+machine = "allow"
+[profiles.projects]
+acceptance = {{ access = "read", network = "none" }}
 [builtin]
 enabled = ["system.info", "file.read"]
 ''')

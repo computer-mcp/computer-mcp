@@ -2,6 +2,7 @@ import ComputerMCPCore
 import ComputerMCPEgress
 import ComputerMCPPermissions
 import ComputerMCPPersistence
+import ComputerMCPPlatform
 import ComputerMCPPlatformPOSIX
 import ComputerMCPProcess
 import ComputerMCPSandbox
@@ -20,18 +21,23 @@ package final class ExecutionRevocationCoordinator: ExecutionRecoveryAuthorizing
   private let ownerID = UUID()
   private let proxyFactory: ProxyFactory?
   private let journal: ExecutionRecoveryJournal
+  private let storageDirectory: URL
   private let refreshPolicy: (@Sendable () throws -> Void)?
   private let lock = NSLock()
   private let publication = NSLock()
   private let reconciliation = ExecutionReconciliation()
+  private let recovery = ExecutionReconciliation()
   private var ready = false
   private var recoveryStarted = false
   private var deliveredLimits: [UUID: EffectiveExecutionLimits] = [:]
   private var unpublishedRecovery: [UUID: ExecutionRecoveryState] = [:]
   private var limitObservers: [UUID: [@Sendable (EffectiveExecutionLimits) -> Void]] = [:]
   private var children: [UUID: any ExecutionOwnership] = [:]
+  private var logicalWork: [UUID: ExecutionLogicalWork] = [:]
   private var pendingChildren: [UUID: Set<UUID>] = [:]
   private var closedAdmissions: Set<UUID> = []
+  private var pendingAdmissionClosures: Set<UUID> = []
+  private var pendingOwnerStops: Set<UUID> = []
   private var contexts: [UUID: WeakExecutionContext] = [:]
   private var proxies: [UUID: EgressProxy] = [:]
   private var monitoring: Task<Void, Never>?
@@ -40,14 +46,15 @@ package final class ExecutionRevocationCoordinator: ExecutionRecoveryAuthorizing
     store: SQLitePermissionStore, launcher: ExecutionLauncher, directory: URL,
     proxyFactory: ProxyFactory? = nil, refreshPolicy: (@Sendable () throws -> Void)? = nil
   ) throws {
+    try FileManager.default.createDirectory(
+      at: directory, withIntermediateDirectories: true,
+      attributes: [.posixPermissions: 0o700])
     self.store = store
+    self.storageDirectory = try ProjectPathResolver.canonicalProject(directory)
     self.launcher = launcher
     self.proxyFactory = proxyFactory
     self.refreshPolicy = refreshPolicy
     journal = try ExecutionRecoveryJournal(directory: directory.appendingPathComponent("ownership"))
-    try FileManager.default.createDirectory(
-      at: directory, withIntermediateDirectories: true,
-      attributes: [.posixPermissions: 0o700])
     lease = try FileLock(
       path: directory.appendingPathComponent("executions.lock").path, mode: .exclusive)
   }
@@ -57,21 +64,30 @@ package final class ExecutionRevocationCoordinator: ExecutionRecoveryAuthorizing
   /// A lifetime lease excludes the previous host before its durable records are
   /// marked interrupted. No new execution or proxy is admitted during recovery.
   package func recover() async throws {
-    let epoch = try store.readWithDatabase { _, ledger in ledger.authorizationEpochID }
-    let first = lock.withLock {
-      let first = !recoveryStarted
-      recoveryStarted = true
-      ready = false
-      return first
+    try await recovery.run { [self] in
+      do { try await recoverIfNeeded() } catch {
+        lock.withLock { ready = false }
+        throw error
+      }
     }
+  }
+
+  private func recoverIfNeeded() async throws {
+    guard !lock.withLock({ ready }) else { return }
+    let epoch = try store.readWithDatabase { _, ledger in ledger.authorizationEpochID }
+    let first = lock.withLock { !recoveryStarted }
     if first {
       try store.transactionWithDatabase { database, ledger in
         for var record in try ExecutionRuntimeRecord.all(database) where !record.completed {
           record.admissionFinished = true
+          record.workIDs = nil
+          try record.auditIdentity?.record(
+            "interrupted", executionID: record.id, database: database, decision: .failed)
           if ledger.executions[record.id] != nil { try ledger.interruptExecution(record.id) }
           try record.save(database)
         }
       }
+      lock.withLock { recoveryStarted = true }
       startMonitoring()
     }
     try await reconcile()
@@ -89,13 +105,32 @@ package final class ExecutionRevocationCoordinator: ExecutionRecoveryAuthorizing
         try ledger.acknowledgeEpochRecovery(recovery.epochID)
       }
     }
+    try requireNoUnownedScratch()
     lock.withLock { ready = true }
+  }
+
+  private func requireNoUnownedScratch() throws {
+    let owned = try store.readWithDatabase { database, _ in
+      Set(try ExecutionRuntimeRecord.all(database).compactMap(\.scratchDirectory))
+    }
+    let unowned = try FileManager.default.contentsOfDirectory(
+      at: storageDirectory,
+      includingPropertiesForKeys: nil
+    ).filter {
+      UUID(uuidString: $0.lastPathComponent) != nil && !owned.contains($0.path)
+    }.map(\.lastPathComponent).sorted()
+    guard unowned.isEmpty else {
+      throw ExecutionEnvironmentError.unavailable(
+        "Unowned private execution directories are quarantined for local owner review: "
+          + unowned.prefix(8).joined(separator: ", "))
+    }
   }
 
   package func prepare(
     authorizationID: UUID, context: GatewaySandboxContext,
     searchPath: [SandboxPath] = [try! SandboxPath("/usr/bin"), try! SandboxPath("/bin")],
-    fullAccessEnvironment: [String: String] = [:], connectionID: String? = nil
+    fullAccessEnvironment: [String: String] = [:], connectionID: String? = nil,
+    auditContext: ExecutionContext? = nil
   ) async throws -> PreparedExecutionContext {
     guard lock.withLock({ ready }) else {
       throw ExecutionEnvironmentError.unavailable("Execution recovery has not completed")
@@ -103,9 +138,18 @@ package final class ExecutionRevocationCoordinator: ExecutionRecoveryAuthorizing
     let reserved: Result<(AuthorizedExecution, GatewayExecutionConfiguration), any Error> =
       try store.transactionWithDatabase { database, ledger in
         let result = Result {
+          let ownedRoot = try ProjectPathResolver.canonicalProject(storageDirectory)
+          let expectedScratch = ownedRoot.appendingPathComponent(authorizationID.uuidString).path
+          let ownedTemporary =
+            context.temporaryDirectory.value == expectedScratch
+            ? context.temporaryDirectory : nil
           let configuration = try GatewaySandboxCompiler.compile(
-            ledger: &ledger, authorizationID: authorizationID, context: context)
-          guard launcher.supportsDurableOwnership(sandboxed: configuration.sandbox != nil) else {
+            ledger: &ledger, authorizationID: authorizationID, context: context,
+            ownedTemporaryDirectory: ownedTemporary)
+          guard
+            !configuration.permitsProgramLaunch
+              || launcher.supportsDurableOwnership(sandboxed: configuration.sandbox != nil)
+          else {
             throw ExecutionEnvironmentError.unavailable(
               "This backend cannot enforce durable ownership in the requested execution mode")
           }
@@ -118,7 +162,23 @@ package final class ExecutionRevocationCoordinator: ExecutionRecoveryAuthorizing
           guard let boot = launcher.bootSessionID else {
             throw ExecutionEnvironmentError.unavailable("Execution boot identity is unavailable")
           }
-          try ExecutionRuntimeRecord(id: execution.id, ownerID: ownerID, boot: boot).save(database)
+          var record = ExecutionRuntimeRecord(id: execution.id, ownerID: ownerID, boot: boot)
+          guard let authorization = ledger.authorizations[authorizationID] else {
+            throw PermissionModelError.invalidAuthorization
+          }
+          record.auditIdentity = try GatewayExecutionAuditIdentity(
+            database: database, ledger: ledger,
+            authorization: authorization, context: auditContext)
+          try record.auditIdentity?.record(
+            "reserved", executionID: execution.id, database: database)
+          let scratch = try ProjectPathResolver.canonicalProject(
+            URL(fileURLWithPath: context.temporaryDirectory.value))
+          if scratch.deletingLastPathComponent().path == storageDirectory.path,
+            scratch.lastPathComponent == authorizationID.uuidString
+          {
+            record.scratchDirectory = scratch.path
+          }
+          try record.save(database)
         }
         return result
       }
@@ -149,7 +209,8 @@ package final class ExecutionRevocationCoordinator: ExecutionRecoveryAuthorizing
         authority: authority,
         mode: sandbox.map { .sandbox($0) } ?? .fullAccess, environment: environment,
         limits: execution.limits,
-        pathAccess: GatewayPathAccess(store: store, authorizationID: authorizationID))
+        pathAccess: GatewayPathAccess(store: store, authorizationID: authorizationID),
+        permitsProgramLaunch: configuration.permitsProgramLaunch)
       _ = try authority.access(execution.id, operation: .readResult)
       lock.withLock { contexts[execution.id] = WeakExecutionContext(prepared) }
       return prepared
@@ -201,15 +262,106 @@ package final class ExecutionRevocationCoordinator: ExecutionRecoveryAuthorizing
     Task.detached { [self] in try? await reconcile() }
   }
 
+  /// Closing one runtime seals only its executions. Local stop intent survives
+  /// failed storage writes until their owned resources and durable receipts join.
+  package func stopExecutions(_ ids: Set<UUID>) async throws {
+    guard !ids.isEmpty else { return }
+    let resources = publication.withLock {
+      lock.withLock {
+        closedAdmissions.formUnion(ids)
+        pendingOwnerStops.formUnion(ids)
+        return (
+          proxies: ids.compactMap { proxies[$0] },
+          children: ids.flatMap { executionID in
+            (pendingChildren[executionID] ?? []).compactMap { child in
+              children[child].map { (executionID, child, $0) }
+            }
+          },
+          cancellations: logicalWork.values.filter { ids.contains($0.executionID) }
+            .compactMap { $0.takeCancellation() }
+        )
+      }
+    }
+    var firstError: (any Error)?
+    do { try persistOwnerStops(ids) } catch { firstError = error }
+    for cancellation in resources.cancellations { Task.detached { await cancellation() } }
+    for proxy in resources.proxies {
+      do { try await proxy.revoke() } catch { firstError = firstError ?? error }
+    }
+    for (executionID, child, ownership) in resources.children {
+      do {
+        _ = try await ownership.cancel()
+        try confirmChild(child, executionID: executionID)
+      } catch { firstError = firstError ?? error }
+    }
+    do { try await reconcile() } catch { firstError = firstError ?? error }
+    if let firstError { throw firstError }
+  }
+
+  private func persistOwnerStops(_ ids: Set<UUID>) throws {
+    guard !ids.isEmpty else { return }
+    try store.transactionWithDatabase { database, ledger in
+      for id in ids {
+        guard var record = try ExecutionRuntimeRecord.load(id, database),
+          record.ownerID == ownerID || record.completed
+        else { continue }
+        if !record.admissionFinished {
+          record.admissionFinished = true
+          for authorizationID in ledger.executions[id]?.authorizationIDs ?? [] {
+            try ledger.finishInvocation(authorizationID)
+          }
+          try record.auditIdentity?.record("admission.closed", executionID: id, database: database)
+          try record.save(database)
+        }
+        if let execution = ledger.executions[id],
+          execution.isRunning
+            || !record.completed && !ledger.pendingExecutionTerminations.contains(id)
+        {
+          try ledger.terminateExecution(id)
+        }
+      }
+    }
+  }
+
   package func reconcile() async throws {
     try await reconciliation.run { [self] in
-      do { try await reconcileResources() } catch {
+      do {
+        try await reconcileResources()
+        try resumeAfterReconciliationIfDrained()
+      } catch {
         lock.withLock { ready = false }
-        let resources = lock.withLock { (Array(children.values), Array(proxies.values)) }
+        let resources = lock.withLock {
+          (
+            Array(children.values), Array(proxies.values),
+            logicalWork.values.compactMap { $0.takeCancellation() }
+          )
+        }
+        for cancellation in resources.2 { Task.detached { await cancellation() } }
         for proxy in resources.1 { try? await proxy.revoke() }
         for ownership in resources.0 { _ = try? await ownership.cancel() }
         throw error
       }
+    }
+  }
+
+  /// An infrastructure failure closes admission until every previously owned
+  /// resource has joined and the durable recovery barrier is clear again.
+  private func resumeAfterReconciliationIfDrained() throws {
+    guard lock.withLock({ recoveryStarted && !ready }),
+      try journal.all().allSatisfy({ $0.completed && $0.released })
+    else { return }
+    let resumed = try store.transactionWithDatabase { database, ledger in
+      guard try ExecutionRuntimeRecord.all(database).allSatisfy(\.completed),
+        ledger.pendingExecutionTerminations.isEmpty
+      else { return false }
+      if let pending = ledger.pendingEpochRecovery {
+        try ledger.acknowledgeEpochRecovery(pending.epochID)
+      }
+      return true
+    }
+    if resumed {
+      try requireNoUnownedScratch()
+      lock.withLock { ready = true }
     }
   }
 
@@ -232,26 +384,36 @@ package final class ExecutionRevocationCoordinator: ExecutionRecoveryAuthorizing
   )
     throws -> EffectiveExecutionLimits
   {
-    let result: Result<EffectiveExecutionLimits, any Error> = try store.transactionWithDatabase {
-      _, ledger in
-      _ = ledger.reconcileExecutionLimits(now: Date())
-      if let authorizationID {
-        do {
-          guard try ledger.invocationAccess(authorizationID).invocation.principal == principal
-          else { return .failure(PermissionModelError.invalidAuthorization) }
-        } catch { return .failure(error) }
+    let outcome: (Result<EffectiveExecutionLimits, any Error>, Bool) =
+      try store.transactionWithDatabase {
+        _, ledger in
+        let executions = ledger.executions
+        let terminations = ledger.pendingExecutionTerminations
+        let decision: PermissionDecision
+        if operation == .writeInput, lock.withLock({ pendingOwnerStops.contains(id) }) {
+          decision = .denied(.executionEnded)
+        } else {
+          decision = ledger.executionAccess(
+            id, principal: principal, operation: operation,
+            connectionID: connectionID, authorizingInvocation: authorizationID, now: Date())
+        }
+        let result: Result<EffectiveExecutionLimits, any Error>
+        if decision == .allowed,
+          let execution = ledger.executions[id]
+        {
+          if operation == .cancel { try ledger.terminateExecution(id) }
+          result = .success(execution.limits)
+        } else {
+          result = .failure(PermissionModelError.invalidAuthorization)
+        }
+        return (
+          result,
+          decision != .allowed || operation == .cancel || ledger.executions != executions
+            || ledger.pendingExecutionTerminations != terminations
+        )
       }
-      guard
-        ledger.executionAccess(
-          id, principal: principal, operation: operation,
-          connectionID: connectionID, now: Date()) == .allowed,
-        let execution = ledger.executions[id]
-      else { return .failure(PermissionModelError.invalidAuthorization) }
-      if operation == .cancel { try ledger.terminateExecution(id) }
-      return .success(execution.limits)
-    }
-    notify()
-    return try result.get()
+    if outcome.1 { notify() }
+    return try outcome.0.get()
   }
 
   fileprivate func reserveChild(_ child: UUID, authority: GatewayExecutionAuthority) throws {
@@ -318,6 +480,8 @@ package final class ExecutionRevocationCoordinator: ExecutionRecoveryAuthorizing
           else { return .failure(PermissionModelError.invalidAuthorization) }
           entry.recovery = recovery
           record.children[child] = entry
+          try record.auditIdentity?.record(
+            "starting", executionID: record.id, database: database, childID: child)
           try record.save(database)
           return .success(())
         }
@@ -346,18 +510,71 @@ package final class ExecutionRevocationCoordinator: ExecutionRecoveryAuthorizing
     notify()
   }
 
-  fileprivate func finishAdmission(_ id: UUID) throws {
-    try store.transactionWithDatabase { database, ledger in
-      guard var record = try ExecutionRuntimeRecord.load(id, database) else {
-        throw PermissionModelError.unknownExecution
+  fileprivate func retainWork(
+    authority: GatewayExecutionAuthority, cancellation: @escaping @Sendable () async -> Void
+  ) throws -> ExecutionWorkLease {
+    let workID = UUID()
+    try publication.withLock {
+      try store.transactionWithDatabase { database, ledger in
+        guard lock.withLock({ ready && !closedAdmissions.contains(authority.executionID) }),
+          var record = try ExecutionRuntimeRecord.load(authority.executionID, database),
+          record.ownerID == ownerID, !record.admissionFinished, !record.completed,
+          ledger.executions[authority.executionID]?.isRunning == true,
+          ledger.executionAccess(
+            authority.executionID, principal: authority.principal,
+            operation: .readResult, connectionID: authority.connectionID, now: Date()) == .allowed
+        else { throw PermissionModelError.invalidAuthorization }
+        var workIDs = record.workIDs ?? []
+        workIDs.insert(workID)
+        record.workIDs = workIDs
+        try record.auditIdentity?.record(
+          "work.started", executionID: record.id, database: database, childID: workID)
+        try record.save(database)
       }
+      lock.withLock {
+        logicalWork[workID] = ExecutionLogicalWork(executionID: authority.executionID, cancellation)
+      }
+    }
+    return ExecutionWorkLease { [self] in
+      lock.withLock { logicalWork[workID]?.confirmCompletion() }
+      defer { notify() }
+      try persistWorkCompletion(workID, executionID: authority.executionID)
+    }
+  }
+
+  private func persistWorkCompletion(_ workID: UUID, executionID: UUID) throws {
+    try store.transactionWithDatabase { database, _ in
+      guard var record = try ExecutionRuntimeRecord.load(executionID, database) else { return }
+      if record.workIDs?.remove(workID) != nil {
+        try record.auditIdentity?.record(
+          "work.completed", executionID: record.id, database: database, childID: workID)
+        try record.save(database)
+      }
+    }
+    lock.withLock { logicalWork[workID] = nil }
+  }
+
+  fileprivate func finishAdmission(_ id: UUID) throws {
+    lock.withLock {
+      closedAdmissions.insert(id)
+      pendingAdmissionClosures.insert(id)
+    }
+    defer { notify() }
+    try persistAdmissionClosure(id)
+  }
+
+  private func persistAdmissionClosure(_ id: UUID) throws {
+    try store.transactionWithDatabase { database, ledger in
+      guard var record = try ExecutionRuntimeRecord.load(id, database) else { return }
+      guard !record.admissionFinished else { return }
       record.admissionFinished = true
       for authorizationID in ledger.executions[id]?.authorizationIDs ?? [] {
         try ledger.finishInvocation(authorizationID)
       }
+      try record.auditIdentity?.record("admission.closed", executionID: id, database: database)
       try record.save(database)
     }
-    notify()
+    _ = lock.withLock { pendingAdmissionClosures.remove(id) }
   }
 
   private func confirmChild(_ child: UUID, executionID: UUID) throws {
@@ -369,7 +586,11 @@ package final class ExecutionRevocationCoordinator: ExecutionRecoveryAuthorizing
         else { return }
         record.children[child]!.recovery =
           record.children[child]!.recovery ?? lock.withLock { unpublishedRecovery[child] }
-        record.children[child]!.completed = true
+        if !record.children[child]!.completed {
+          try record.auditIdentity?.record(
+            "child.completed", executionID: record.id, database: database, childID: child)
+          record.children[child]!.completed = true
+        }
         try record.save(database)
       }
       lock.withLock {
@@ -382,14 +603,23 @@ package final class ExecutionRevocationCoordinator: ExecutionRecoveryAuthorizing
   }
 
   private func reconcileResources() async throws {
+    try persistOwnerStops(lock.withLock { pendingOwnerStops })
     try refreshPolicy?()
+    let pending = lock.withLock {
+      (
+        Array(pendingAdmissionClosures),
+        logicalWork.compactMap { id, work in
+          work.isCompleted ? (id, work.executionID) : nil
+        }
+      )
+    }
+    for id in pending.0 { try persistAdmissionClosure(id) }
+    for (id, executionID) in pending.1 { try persistWorkCompletion(id, executionID: executionID) }
     try await reconcileIndependentOwnership()
     func validate(_ ledger: inout PermissionLedger) {
+      // This reconciles every live proof and queues dependent terminations in
+      // one fixed-point pass; individual caller access is checked at each use.
       _ = ledger.reconcileExecutionLimits(now: Date())
-      for execution in ledger.executions.values where execution.isRunning {
-        _ = ledger.executionAccess(
-          execution.id, principal: execution.owner, operation: .readResult, now: Date())
-      }
     }
     let preview = try store.readWithDatabase { database, original in
       var ledger = original
@@ -429,9 +659,33 @@ package final class ExecutionRevocationCoordinator: ExecutionRecoveryAuthorizing
           snapshot.1.pendingExecutionTerminations.contains(record.id) || execution == nil
           || snapshot.1.pendingEpochRecovery?.executionsToTerminate.contains(record.id) == true
         let proxy = lock.withLock { proxies[record.id] }
-        if terminate { try await proxy?.revoke() }
         if terminate {
-          for (child, entry) in record.children where !entry.completed {
+          do {
+            try store.transactionWithDatabase { database, _ in
+              guard var current = try ExecutionRuntimeRecord.load(record.id, database),
+                current.revocationRecorded != true
+              else { return }
+              try current.auditIdentity?.record(
+                "revoked", executionID: record.id, database: database, decision: .denied)
+              current.revocationRecorded = true
+              try current.save(database)
+            }
+          } catch { if firstError == nil { firstError = error } }
+          try await proxy?.revoke()
+        }
+        if terminate {
+          for workID in record.workIDs ?? [] {
+            if let cancellation = lock.withLock({ logicalWork[workID]?.takeCancellation() }) {
+              Task.detached { await cancellation() }
+            }
+          }
+          for (child, entry) in record.children
+          where !entry.completed
+            || lock.withLock({
+              pendingOwnerStops.contains(record.id)
+                && pendingChildren[record.id]?.contains(child) == true
+            })
+          {
             if let ownership = lock.withLock({ children[child] }) {
               _ = try await ownership.cancel()
             } else if let recovery = entry.recovery {
@@ -453,7 +707,7 @@ package final class ExecutionRevocationCoordinator: ExecutionRecoveryAuthorizing
         }
         let mayComplete =
           record.completed || terminate
-          || (record.children.values.allSatisfy(\.completed)
+          || (record.children.values.allSatisfy(\.completed) && (record.workIDs?.isEmpty ?? true)
             && (record.admissionFinished || terminate))
         let completed: ExecutionRuntimeRecord? =
           record.completed
@@ -465,6 +719,7 @@ package final class ExecutionRevocationCoordinator: ExecutionRecoveryAuthorizing
                 return nil
               }
               guard current.children.values.allSatisfy(\.completed),
+                current.workIDs?.isEmpty ?? true,
                 current.admissionFinished
                   || ledger.pendingExecutionTerminations.contains(current.id)
                   || ledger.executions[current.id] == nil
@@ -474,6 +729,8 @@ package final class ExecutionRevocationCoordinator: ExecutionRecoveryAuthorizing
                   try ledger.finishExecution(
                     current.id, retainUntil: Date().addingTimeInterval(86_400))
                 }
+                try current.auditIdentity?.record(
+                  "completed", executionID: current.id, database: database)
                 current.completed = true
                 try current.save(database)
               }
@@ -494,12 +751,37 @@ package final class ExecutionRevocationCoordinator: ExecutionRecoveryAuthorizing
               try current.save(database)
             }
           }
+          if let scratch = completed.scratchDirectory {
+            let url = URL(fileURLWithPath: scratch)
+            guard url.deletingLastPathComponent().path == storageDirectory.path,
+              UUID(uuidString: url.lastPathComponent) != nil
+            else { throw PermissionModelError.invalidAuthorization }
+            if FileManager.default.fileExists(atPath: url.path) {
+              try FileManager.default.removeItem(at: url)
+            }
+            try store.transactionWithDatabase { database, _ in
+              guard var record = try ExecutionRuntimeRecord.load(completed.id, database) else {
+                return
+              }
+              record.scratchDirectory = nil
+              try record.save(database)
+            }
+          }
           if snapshot.1.pendingExecutionTerminations.contains(completed.id) {
             try store.transactionWithDatabase { _, ledger in
               ledger.acknowledgeExecutionTerminations([completed.id])
             }
           }
-          lock.withLock { proxies[completed.id] = nil }
+          lock.withLock {
+            proxies[completed.id] = nil
+            if completed.children.values.allSatisfy(\.completed),
+              completed.workIDs?.isEmpty ?? true,
+              pendingChildren[completed.id]?.isEmpty ?? true,
+              !logicalWork.values.contains(where: { $0.executionID == completed.id })
+            {
+              pendingOwnerStops.remove(completed.id)
+            }
+          }
         }
       } catch { firstError = firstError ?? error }
     }
@@ -624,6 +906,9 @@ private final class GatewayExecutionAuthority: ExecutionAuthorizing, Sendable {
   }
   func launchFailed(_ id: UUID) { coordinator.launchFailed(id, executionID: executionID) }
   func finishAdmission() throws { try coordinator.finishAdmission(executionID) }
+  func retainWork(cancellation: @escaping @Sendable () async -> Void) throws -> ExecutionWorkLease {
+    try coordinator.retainWork(authority: self, cancellation: cancellation)
+  }
   func access(_ id: UUID, operation: ExecutionOperation) throws -> EffectiveExecutionLimits {
     try coordinator.access(
       id, principal: principal, connectionID: connectionID, operation: operation)
@@ -642,6 +927,10 @@ struct ExecutionRuntimeRecord: Codable {
   var admissionFinished = false
   var completed = false
   var children: [UUID: Child] = [:]
+  var scratchDirectory: String?
+  var workIDs: Set<UUID>?
+  var auditIdentity: GatewayExecutionAuditIdentity?
+  var revocationRecorded: Bool?
 
   func save(_ database: Database) throws {
     try database.execute(
@@ -693,5 +982,30 @@ private struct GatewayExecutionAccessScope: ExecutionAccessChecking {
     try coordinator.access(
       id, principal: principal, connectionID: connectionID, operation: operation,
       authorizationID: authorizationID)
+  }
+}
+
+private final class ExecutionLogicalWork: @unchecked Sendable {
+  let executionID: UUID
+  private let lock = NSLock()
+  private var cancellation: (@Sendable () async -> Void)?
+  private var completed = false
+  init(executionID: UUID, _ cancellation: @escaping @Sendable () async -> Void) {
+    self.executionID = executionID
+    self.cancellation = cancellation
+  }
+  var isCompleted: Bool { lock.withLock { completed } }
+  func confirmCompletion() {
+    lock.withLock {
+      completed = true
+      cancellation = nil
+    }
+  }
+  func takeCancellation() -> (@Sendable () async -> Void)? {
+    lock.withLock {
+      let result = cancellation
+      cancellation = nil
+      return result
+    }
   }
 }

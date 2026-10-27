@@ -20,6 +20,7 @@ extension PathEnvironment {
   package var hostDataLocations: Set<CanonicalPath> { locations(of: .hostData) }
   package var deniedLocations: Set<CanonicalPath> { locations(of: .denied) }
   package var developerLocations: Set<CanonicalPath> { locations(of: .developer) }
+  package var skillLibraryLocations: Set<CanonicalPath> { locations(of: .skillLibrary) }
   package var userDataLocations: Set<CanonicalPath> { locations(of: .userData) }
   package var systemOrApplicationLocations: Set<CanonicalPath> {
     locations(of: .systemOrApplication)
@@ -46,26 +47,25 @@ extension PathEnvironment {
 
 /// Serializable classification records. Preserve identities across adapter reads.
 package struct PathEnvironmentSnapshot: PathEnvironment, Hashable, Codable {
-  package internal(set) var registeredProjects: [RegisteredProject]
+  private var projectCatalog: ProjectCatalog
+  package var registeredProjects: [RegisteredProject] { projectCatalog.projects }
   package var pathRules: Set<PathRule>
   package internal(set) var outsideUserDataIdentity: BasisIdentity
 
   package init(_ environment: some PathEnvironment) {
-    registeredProjects = environment.projects.projects
+    projectCatalog = environment.projects
     pathRules = environment.pathRules
     outsideUserDataIdentity = environment.outsideUserDataIdentity
   }
 
   package init(projects: [RegisteredProject] = [], rules: Set<PathRule> = []) throws {
-    _ = try ProjectCatalog(projects)
-    registeredProjects = projects
+    projectCatalog = try ProjectCatalog(projects)
     pathRules = rules
     outsideUserDataIdentity = BasisIdentity()
   }
 
   package mutating func setProjects(_ projects: [RegisteredProject]) throws {
-    _ = try ProjectCatalog(projects)
-    registeredProjects = projects
+    projectCatalog = try ProjectCatalog(projects)
   }
 
   private enum CodingKeys: String, CodingKey {
@@ -75,14 +75,31 @@ package struct PathEnvironmentSnapshot: PathEnvironment, Hashable, Codable {
   package init(from decoder: any Decoder) throws {
     let values = try decoder.container(keyedBy: CodingKeys.self)
     let projects = try values.decode([RegisteredProject].self, forKey: .registeredProjects)
-    _ = try ProjectCatalog(projects)
-    registeredProjects = projects
+    projectCatalog = try ProjectCatalog(projects)
     pathRules = try values.decode(Set<PathRule>.self, forKey: .pathRules)
     outsideUserDataIdentity = try values.decode(
       BasisIdentity.self, forKey: .outsideUserDataIdentity)
   }
 
-  package var projects: ProjectCatalog { try! ProjectCatalog(registeredProjects) }
+  package func encode(to encoder: any Encoder) throws {
+    var values = encoder.container(keyedBy: CodingKeys.self)
+    try values.encode(registeredProjects, forKey: .registeredProjects)
+    try values.encode(pathRules, forKey: .pathRules)
+    try values.encode(outsideUserDataIdentity, forKey: .outsideUserDataIdentity)
+  }
+
+  package static func == (lhs: Self, rhs: Self) -> Bool {
+    lhs.registeredProjects == rhs.registeredProjects && lhs.pathRules == rhs.pathRules
+      && lhs.outsideUserDataIdentity == rhs.outsideUserDataIdentity
+  }
+
+  package func hash(into hasher: inout Hasher) {
+    hasher.combine(registeredProjects)
+    hasher.combine(pathRules)
+    hasher.combine(outsideUserDataIdentity)
+  }
+
+  package var projects: ProjectCatalog { projectCatalog }
 }
 
 /// The exact permission and path evidence used to allow this operation.
@@ -107,7 +124,7 @@ protocol PathPermissionResolving: Sendable {
     _ path: CanonicalPath, operation: PathOperation, principal: Principal,
     permissions: Permissions, mode: ExecutionMode, limits: ManagedLimits,
     sandbox: SandboxSettings, sandboxProjectID: String?, oneTimeRequests: [PermissionRequest],
-    pluginPurpose: String?, recordedBasis: Set<AuthorizationBasis>
+    pluginPurpose: String?, purpose: PathPurpose?, recordedBasis: Set<AuthorizationBasis>
   ) -> PathPermissionDecision
   func registrationDenial(
     for content: ProjectRegistrationRequest, permissions: Permissions,
@@ -124,11 +141,14 @@ extension PathPermissionResolving {
   func evaluate(
     _ path: CanonicalPath, operation: PathOperation, principal: Principal,
     permissions: Permissions, mode: ExecutionMode = .sandbox, limits: ManagedLimits = .init(),
-    sandbox: SandboxSettings = .init(), pluginPurpose: String? = nil
+    sandbox: SandboxSettings = .init(), pluginPurpose: String? = nil, purpose: PathPurpose? = nil
   ) -> PermissionDecision {
     let resolution = InvocationEvaluation.evaluate(
       InvocationRequirements(
-        paths: [PathRequirement(path: path, operation: operation, pluginPurpose: pluginPurpose)],
+        paths: [
+          PathRequirement(
+            path: path, operation: operation, pluginPurpose: pluginPurpose, purpose: purpose)
+        ],
         mode: mode), principal: principal, permissions: permissions,
       limits: limits, trustedHosts: [], settings: { _ in sandbox }, pathResolver: { _ in self })
     if let denial = resolution.denial { return .denied(denial) }
@@ -162,11 +182,17 @@ struct PathPermissions<Environment: PathEnvironment>: PathPermissionResolving {
     permissions: Permissions, mode: ExecutionMode = .sandbox, limits: ManagedLimits = .init(),
     sandbox: SandboxSettings = .init(), sandboxProjectID: String? = nil,
     oneTimeRequests: [PermissionRequest] = [], pluginPurpose: String? = nil,
-    recordedBasis: Set<AuthorizationBasis> = []
+    purpose: PathPurpose? = nil, recordedBasis: Set<AuthorizationBasis> = []
   ) -> PathPermissionDecision {
-    let location = classify(path)
+    guard valid(purpose: purpose, at: path, operation: operation) else {
+      return .denied(.invalidPathRequirement)
+    }
+    let location = classify(path, purpose: purpose)
+    if case .skillLibrary = location, purpose == nil { return .denied(.userData) }
     let recorded = recordedBasis.compactMap { element -> PathAccessBasis? in
-      if case .path(let basis) = element, basis.path == path, basis.operation == operation {
+      if case .path(let basis) = element, basis.path == path, basis.operation == operation,
+        basis.purpose == purpose
+      {
         return basis
       }
       return nil
@@ -191,14 +217,17 @@ struct PathPermissions<Environment: PathEnvironment>: PathPermissionResolving {
       let resolution = PermissionEvaluation.resolveRequirement(
         principal: principal,
         action: PermissionAction(
-          requirement: requirement, scope: .path(path), pluginPurpose: pluginPurpose),
+          requirement: requirement,
+          scope: requirement.permission == .skills ? .principal : .path(path),
+          pluginPurpose: pluginPurpose),
         permissions: permissions, mode: mode, limits: limits, sandbox: sandbox,
         oneTimeRequests: oneTimeRequests,
         recordedGrant: recordedBasis.permissionGrant(
-          for: requirement, scope: .path(path), pluginPurpose: pluginPurpose,
+          for: requirement, scope: requirement.permission == .skills ? .principal : .path(path),
+          pluginPurpose: pluginPurpose,
           oneTimeRequests: oneTimeRequests))
       switch resolution.decision {
-      case .allowed: return .allowed(resolution.basis.union([.path(direct)]))
+      case .allowed: return withLibraryPermission(resolution.basis.union([.path(direct)]))
       case .denied(let reason): return .denied(reason)
       case .request(let content):
         if let traversal = traversalBasis() {
@@ -207,27 +236,47 @@ struct PathPermissions<Environment: PathEnvironment>: PathPermissionResolving {
         return .request(content)
       }
     }
-    return .allowed([.path(direct)])
+    return withLibraryPermission([.path(direct)])
+
+    func withLibraryPermission(_ evidence: Set<AuthorizationBasis>) -> PathPermissionDecision {
+      guard purpose != nil, direct.requirement?.permission != .skills else {
+        return .allowed(evidence)
+      }
+      let requirement = try! PermissionRequirement(.skills, .access)
+      let result = PermissionEvaluation.resolveRequirement(
+        principal: principal, action: PermissionAction(requirement: requirement),
+        permissions: permissions, mode: mode, limits: limits, sandbox: sandbox,
+        oneTimeRequests: oneTimeRequests,
+        recordedGrant: recordedBasis.permissionGrant(
+          for: requirement, scope: .principal,
+          pluginPurpose: nil, oneTimeRequests: oneTimeRequests))
+      switch result.decision {
+      case .allowed: return .allowed(evidence.union(result.basis))
+      case .request(let content): return .request(content)
+      case .denied(let reason): return .denied(reason)
+      }
+    }
 
     func basis(descendant: CanonicalPath? = nil) -> PathAccessBasis {
       let exclusions = Set(
         boundaries(limits: limits, sandbox: sandbox, mode: mode).filter {
           $0 != path && path.contains($0)
-            && (classify($0) != location
+            && (classify($0, purpose: purpose) != location
               || denial(
-                at: $0, operation: operation, location: classify($0), mode: mode,
+                at: $0, operation: operation, location: classify($0, purpose: purpose), mode: mode,
                 limits: limits, sandbox: sandbox) != nil)
         })
       let excludedRoots = exclusions.filter { candidate in
         !exclusions.contains { $0 != candidate && $0.contains(candidate) }
       }
       return PathAccessBasis(
-        path: path, operation: operation, location: location, readableDescendant: descendant,
+        path: path, operation: operation, location: location, purpose: purpose,
+        readableDescendant: descendant,
         sandboxProjectID: sandboxProjectID,
         excludedSubtrees: operation.isDirectoryTraversal
           ? nil
           : excludedRoots,
-        ruleIdentities: identities(for: location, at: path).union(
+        ruleIdentities: identities(for: location, at: path, purpose: purpose).union(
           exclusionIdentities(operation.isDirectoryTraversal ? [] : excludedRoots, sandbox: sandbox)
         ))
     }
@@ -237,6 +286,7 @@ struct PathPermissions<Environment: PathEnvironment>: PathPermissionResolving {
     func traversalBasis() -> Set<AuthorizationBasis>? {
       guard operation.isDirectoryTraversal else { return nil }
       var locations = environment.developerLocations
+      if let purpose { locations.insert(purpose.libraryRoot) }
       locations.formUnion(environment.projects.allLocations.map(\.root))
       for category in FolderCategory.allCases {
         locations.formUnion(environment.locations(in: category))
@@ -262,7 +312,7 @@ struct PathPermissions<Environment: PathEnvironment>: PathPermissionResolving {
             descendant, operation: .read, principal: principal, permissions: permissions,
             mode: mode, limits: limits, sandbox: sandbox, sandboxProjectID: sandboxProjectID,
             oneTimeRequests: oneTimeRequests, pluginPurpose: pluginPurpose,
-            recordedBasis: recordedBasis)
+            purpose: purpose, recordedBasis: recordedBasis)
         {
           return evidence.union([.path(basis(descendant: descendant))])
         }
@@ -315,12 +365,16 @@ struct PathPermissions<Environment: PathEnvironment>: PathPermissionResolving {
     for basis: PathAccessBasis, permissions: Permissions, mode: ExecutionMode,
     limits: ManagedLimits, sandbox: SandboxSettings
   ) -> DenialReason? {
-    guard classify(basis.path) == basis.location,
+    guard valid(purpose: basis.purpose, at: basis.path, operation: basis.operation),
+      classify(basis.path, purpose: basis.purpose) == basis.location,
       basis.ruleIdentities.isSubset(
-        of: identities(for: basis.location, at: basis.path).union(
+        of: identities(for: basis.location, at: basis.path, purpose: basis.purpose).union(
           exclusionIdentities(basis.excludedSubtrees ?? [], sandbox: sandbox))),
       (basis.excludedSubtrees == nil) == basis.operation.isDirectoryTraversal
     else { return .authorizationRevoked }
+    if case .skillLibrary = basis.location, basis.purpose == nil {
+      return .authorizationRevoked
+    }
     if let reason = denial(
       at: basis.path, operation: basis.operation, location: basis.location,
       mode: mode, limits: limits, sandbox: sandbox)
@@ -338,7 +392,9 @@ struct PathPermissions<Environment: PathEnvironment>: PathPermissionResolving {
       for boundary in boundaries(limits: limits, sandbox: sandbox, mode: mode)
       where basis.path.contains(boundary) && !exclusions.contains(where: { $0.contains(boundary) })
       {
-        guard classify(boundary) == basis.location else { return .authorizationRevoked }
+        guard classify(boundary, purpose: basis.purpose) == basis.location else {
+          return .authorizationRevoked
+        }
         if let reason = denial(
           at: boundary, operation: basis.operation, location: basis.location,
           mode: mode, limits: limits, sandbox: sandbox)
@@ -346,6 +402,13 @@ struct PathPermissions<Environment: PathEnvironment>: PathPermissionResolving {
           return reason
         }
       }
+    }
+    if basis.purpose != nil,
+      let reason = PermissionEvaluation.denial(
+        for: PermissionAction(requirement: try! PermissionRequirement(.skills, .access)),
+        permissions: permissions, mode: mode, limits: limits, sandbox: sandbox)
+    {
+      return reason
     }
     if let requirement = basis.requirement {
       return PermissionEvaluation.denial(
@@ -360,7 +423,8 @@ struct PathPermissions<Environment: PathEnvironment>: PathPermissionResolving {
   {
     var roots = environment.hostDataLocations.union(environment.deniedLocations)
       .union(environment.developerLocations).union(environment.userDataLocations)
-      .union(environment.systemOrApplicationLocations).union(limits.deniedReadLocations)
+      .union(environment.systemOrApplicationLocations).union(environment.skillLibraryLocations)
+      .union(limits.deniedReadLocations)
       .union(environment.projects.allLocations.map(\.root))
     if mode.isSandbox { roots.formUnion(sandbox.deniedReadLocations) }
     for category in FolderCategory.allCases { roots.formUnion(environment.locations(in: category)) }
@@ -378,15 +442,22 @@ struct PathPermissions<Environment: PathEnvironment>: PathPermissionResolving {
         .flatMap { $0.registrations.map(\.identity) })
   }
 
-  private func identities(for location: PathAccessBasis.Location, at path: CanonicalPath)
-    -> Set<BasisIdentity>
-  {
+  private func identities(
+    for location: PathAccessBasis.Location, at path: CanonicalPath, purpose: PathPurpose? = nil
+  ) -> Set<BasisIdentity> {
+    let libraryIDs = Set(
+      environment.pathRules.filter {
+        $0.kind == .skillLibrary && $0.root == purpose?.libraryRoot
+      }.map(\.identity))
     let kind: PathRule.Kind
     let root: CanonicalPath?
     switch location {
-    case .project(let project): return Set(project.registrations.map(\.identity))
+    case .project(let project): return Set(project.registrations.map(\.identity)).union(libraryIDs)
     case .folder(let category, let selected):
       kind = .folder(category)
+      root = selected
+    case .skillLibrary(let selected):
+      kind = .skillLibrary
       root = selected
     case .developer(let selected):
       kind = .developer
@@ -397,21 +468,43 @@ struct PathPermissions<Environment: PathEnvironment>: PathPermissionResolving {
     case .userData:
       kind = .userData
       root = nil
-    case .outsideUserData: return [environment.outsideUserDataIdentity]
+    case .outsideUserData: return libraryIDs.union([environment.outsideUserDataIdentity])
     }
     return Set(
       environment.pathRules.filter {
         $0.kind == kind && (root == nil ? $0.root.contains(path) : $0.root == root)
-      }.map(\.identity))
+      }.map(\.identity)
+    ).union(libraryIDs)
   }
 
-  private func classify(_ path: CanonicalPath) -> PathAccessBasis.Location {
+  private func valid(purpose: PathPurpose?, at path: CanonicalPath, operation: PathOperation)
+    -> Bool
+  {
+    guard let purpose else { return true }
+    let root = purpose.libraryRoot
+    return operation != .write && environment.skillLibraryLocations.contains(root)
+      && (root.contains(path) || operation.isDirectoryTraversal && path.contains(root))
+  }
+
+  private func classify(_ path: CanonicalPath, purpose: PathPurpose? = nil)
+    -> PathAccessBasis.Location
+  {
     if let project = environment.projects.location(at: path) { return .project(project) }
     if let category = environment.category(containing: path),
       let root = environment.locations(in: category).filter({ $0.contains(path) })
         .max(by: { $0.string.count < $1.string.count })
     {
       return .folder(category, root: root)
+    }
+    if let root = purpose?.libraryRoot, root.contains(path),
+      environment.skillLibraryLocations.contains(root)
+    {
+      return .skillLibrary(root)
+    }
+    if let root = environment.skillLibraryLocations.filter({ $0.contains(path) })
+      .max(by: { $0.string.count < $1.string.count })
+    {
+      return .skillLibrary(root)
     }
     if let root = environment.developerLocations.filter({ $0.contains(path) })
       .max(by: { $0.string.count < $1.string.count })

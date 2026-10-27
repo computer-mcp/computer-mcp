@@ -113,7 +113,7 @@ package struct AuditEvent: Codable, Equatable, Sendable, Identifiable {
   package var capabilityID: String
   package var decision: AuditDecision
   package var errorCode: String?
-  /// Structured domain refusal details; contains no invocation arguments or credentials.
+  /// Structured authority or refusal evidence; contains no invocation arguments or credentials.
   package var errorDetails: JSONValue?
   package var durationMilliseconds: Int?
   package var inputDigest: String?
@@ -177,92 +177,5 @@ package struct AuditEvent: Codable, Equatable, Sendable, Identifiable {
     guard let principalID, !principalID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     else { return nil }
     return SHA256.hash(data: Data(principalID.utf8)).map { String(format: "%02x", $0) }.joined()
-  }
-}
-
-package enum OperationTicketState: String, Codable, Sendable {
-  case prepared
-  case pendingApproval = "pending_approval"
-  case approved
-  case denied
-  case expired
-  case executing
-  case succeeded
-  case failed
-}
-
-package struct OperationTicket: Codable, Equatable, Sendable, Identifiable {
-  package var id: String
-  package var capabilityID: String
-  package var caller: GatewayCallerKind
-  package var profileID: GatewayProfileID
-  package var principalID: String
-  package var projectID: String?
-  package var inputDigest: String
-  package var stateDigest: String?
-  package var state: OperationTicketState
-  package var prepareRequestID: String
-  package var invocationID: String?
-  package var parentRequestID: String?
-  package var createdAt: Date
-  package var expiresAt: Date
-  package var executingAt: Date?
-  package var completedAt: Date?
-  package var failureCode: String?
-  package var authorizationRevision: Int64?
-  package var controlSessionID: String?
-  package var controlSessionRevision: Int64?
-  package var reviewSummary: String?
-  /// Captured presentation metadata; target identity and authorization use the ticket bindings.
-  package var reviewTitle: String?
-
-  package init(
-    id: String = UUID().uuidString,
-    capabilityID: String,
-    caller: GatewayCallerKind,
-    profileID: GatewayProfileID,
-    principalID: String? = nil,
-    projectID: String? = nil,
-    inputDigest: String,
-    stateDigest: String? = nil,
-    state: OperationTicketState = .prepared,
-    prepareRequestID: String = UUID().uuidString,
-    invocationID: String? = nil,
-    parentRequestID: String? = nil,
-    createdAt: Date = Date(),
-    expiresAt: Date,
-    executingAt: Date? = nil,
-    completedAt: Date? = nil,
-    failureCode: String? = nil,
-    authorizationRevision: Int64? = nil,
-    controlSessionID: String? = nil,
-    controlSessionRevision: Int64? = nil,
-    reviewSummary: String? = nil,
-    reviewTitle: String? = nil
-  ) {
-    self.id = id
-    self.capabilityID = capabilityID
-    self.caller = caller
-    self.profileID = profileID
-    self.principalID =
-      principalID
-      ?? "\(caller.rawValue):\(profileID.rawValue)"
-    self.projectID = projectID
-    self.inputDigest = inputDigest
-    self.stateDigest = stateDigest
-    self.state = state
-    self.prepareRequestID = prepareRequestID
-    self.invocationID = invocationID
-    self.parentRequestID = parentRequestID
-    self.createdAt = createdAt
-    self.expiresAt = expiresAt
-    self.executingAt = executingAt
-    self.completedAt = completedAt
-    self.failureCode = failureCode
-    self.authorizationRevision = authorizationRevision
-    self.controlSessionID = controlSessionID
-    self.controlSessionRevision = controlSessionRevision
-    self.reviewSummary = reviewSummary
-    self.reviewTitle = reviewTitle
   }
 }

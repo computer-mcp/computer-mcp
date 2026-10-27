@@ -1460,11 +1460,6 @@ struct DownstreamProbeVerify: AsyncParsableCommand {
   var observations: String?
 
   mutating func run() async throws {
-    try await run(localApprovalResolver: nil)
-  }
-
-  // The management channel is supplied explicitly by an isolated acceptance fixture.
-  mutating func run(localApprovalResolver: ValidationLocalApprovalResolver?) async throws {
     guard (endpoint == nil) != (socket == nil) else {
       throw ValidationError("Provide exactly one of --endpoint or --socket.")
     }
@@ -1488,8 +1483,7 @@ struct DownstreamProbeVerify: AsyncParsableCommand {
       }
       session = try await GatewayClientSession.connectHTTP(
         endpoint: endpointURL,
-        accessToken: accessToken,
-        localApprovalResolver: localApprovalResolver
+        accessToken: accessToken
       )
     } else if let socket {
       guard socket.hasPrefix("/") else {
@@ -1502,8 +1496,7 @@ struct DownstreamProbeVerify: AsyncParsableCommand {
         socketURL: URL(fileURLWithPath: socket)
       )
       session = try await GatewayClientSession.connectSocket(
-        configuration: socketConfiguration,
-        localApprovalResolver: localApprovalResolver
+        configuration: socketConfiguration
       )
     } else {
       throw ValidationError("Provide exactly one of --endpoint or --socket.")
@@ -1814,7 +1807,7 @@ private struct DownstreamProbeVerifyRunner {
       afterCursor: eventBaselineCursor
     )
 
-    let echo = try await destructiveCall(
+    let echo = try await call(
       "mcp.tools.call",
       arguments: [
         "server": .string(stdioServer),
@@ -1886,7 +1879,7 @@ private struct DownstreamProbeVerifyRunner {
       throw ValidationError("The stdio prompt surface did not round-trip.")
     }
 
-    _ = try await destructiveCall(
+    _ = try await call(
       "mcp.tools.call",
       arguments: [
         "server": .string(stdioServer),
@@ -1906,7 +1899,7 @@ private struct DownstreamProbeVerifyRunner {
     guard !toolNames(in: afterDrift).contains("fixture_added") else {
       throw ValidationError("Provider drift escaped the reviewed allowed_tools catalog.")
     }
-    let driftDenial = await expectedDestructiveFailure(
+    let driftDenial = await expectedFailure(
       "mcp.tools.call",
       arguments: [
         "server": .string(stdioServer),
@@ -1916,7 +1909,7 @@ private struct DownstreamProbeVerifyRunner {
 
     let cancellation = try await exerciseCancellation()
 
-    _ = try await destructiveCall(
+    _ = try await call(
       "mcp.tools.call",
       arguments: [
         "server": .string(stdioServer),
@@ -1964,7 +1957,7 @@ private struct DownstreamProbeVerifyRunner {
     guard names.contains("get-sum"), names.contains("echo") else {
       throw ValidationError("The official HTTP fixture tools were not discovered.")
     }
-    let sum = try await destructiveCall(
+    let sum = try await call(
       "mcp.tools.call",
       arguments: [
         "server": .string(httpServer),
@@ -2047,29 +2040,7 @@ private struct DownstreamProbeVerifyRunner {
       "request_id": .string(requestID),
       "wait_for_result": .bool(false),
     ]
-    let prepared = try payload(
-      await call(
-        "operations.prepare",
-        arguments: [
-          "tool": .string("mcp.tools.call"),
-          "arguments": .object(targetArguments),
-        ]
-      )
-    )
-    guard let ticketID = prepared.objectValue?["ticket_id"]?.stringValue else {
-      throw ValidationError("The hanging downstream call received no operation ticket.")
-    }
-    try await session.resolvePreparedOperation(prepared)
-    let started = try payload(
-      await call(
-        "operations.commit",
-        arguments: [
-          "ticket_id": .string(ticketID),
-          "tool": .string("mcp.tools.call"),
-          "arguments": .object(targetArguments),
-        ]
-      )
-    )
+    let started = try payload(await call("mcp.tools.call", arguments: targetArguments))
     guard started.objectValue?["state"]?.stringValue == "running" else {
       throw ValidationError("The downstream request did not enter the running state.")
     }
@@ -2093,7 +2064,7 @@ private struct DownstreamProbeVerifyRunner {
     }
 
     let cancelled = try payload(
-      await destructiveCall(
+      await call(
         "mcp.requests.cancel",
         arguments: [
           "server": .string(stdioServer),
@@ -2200,45 +2171,6 @@ private struct DownstreamProbeVerifyRunner {
       throw ValidationError("Tool \(tool) returned an MCP error result.")
     }
     return report
-  }
-
-  private mutating func destructiveCall(
-    _ tool: String,
-    arguments: [String: JSONValue]
-  ) async throws -> GatewayCallReport {
-    let prepared = try payload(
-      await call(
-        "operations.prepare",
-        arguments: [
-          "tool": .string(tool),
-          "arguments": .object(arguments),
-        ]
-      )
-    )
-    guard let ticketID = prepared.objectValue?["ticket_id"]?.stringValue else {
-      throw ValidationError("operations.prepare returned no ticket for \(tool).")
-    }
-    try await session.resolvePreparedOperation(prepared)
-    return try await call(
-      "operations.commit",
-      arguments: [
-        "ticket_id": .string(ticketID),
-        "tool": .string(tool),
-        "arguments": .object(arguments),
-      ]
-    )
-  }
-
-  private mutating func expectedDestructiveFailure(
-    _ tool: String,
-    arguments: [String: JSONValue]
-  ) async -> String {
-    do {
-      _ = try await destructiveCall(tool, arguments: arguments)
-      return "unexpected-success"
-    } catch {
-      return "request-failed"
-    }
   }
 
   private func expectedFailure(

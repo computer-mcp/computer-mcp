@@ -16,8 +16,11 @@ import Testing
     let owner = try GatewayPermissionOwner(
       context: .init(caller: .localApp, profileID: .localAdmin, trustedPrincipalID: "owner"),
       validate: {})
-    let services = MacOSPermissionServices(
-      connection: connection, counter: counter, policyReader: reader, owner: { owner })
+    let database = GatewayDatabase(connection: connection)
+    var platform = MacOSPlatform.services(launcher: testExecutionLauncher())
+    platform.permissionPolicyReader = reader
+    let services = try MacOSPermissionServices(
+      database: database, counter: counter, platform: platform, owner: { owner })
     let store = SQLitePermissionStore(connection: connection, counter: counter)
     let now = Date()
     var view = try services.control.view(now: now)
@@ -25,7 +28,7 @@ import Testing
     try store.transactionWithDatabase { _, ledger in try ledger.acknowledgeEpochRecovery(epoch) }
     view = try services.control.view(now: now)
     try services.control.confirmAuthority(
-      epoch: epoch, expectedRevision: view.revision, now: now)
+      epoch: epoch, expectedRevision: view.revision, profileEdits: view.profiles, now: now)
     try services.control.updateProfile(
       .init(id: .chatGPTOperate, allowedCallers: [.secureTunnel]), expectedProfileRevision: nil,
       expectedRevision: services.control.view(now: now).revision, now: now)
@@ -64,3 +67,7 @@ import Testing
         requirements: requirements, now: now) == .denied(.managedLimit([.machine])))
   }
 }
+
+#if os(macOS)
+  import ComputerMCPDarwinTestSupport
+#endif

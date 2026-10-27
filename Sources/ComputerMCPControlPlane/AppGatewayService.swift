@@ -1,6 +1,7 @@
 import ComputerMCPConfiguration
 import ComputerMCPCore
 import ComputerMCPGateway
+import ComputerMCPPermissions
 import ComputerMCPPersistence
 import ComputerMCPPlatform
 import ComputerMCPPlatformPOSIX
@@ -291,9 +292,11 @@ package actor AppGatewayService {
     let epoch = UUID()
     administrationEpoch = epoch
     do {
+      try await controlPlane.startPermissionAdministration(epoch: epoch)
       try await startManifestMonitoring()
       return epoch
     } catch {
+      await controlPlane.stopPermissionAdministration(epoch: epoch)
       administrationEpoch = nil
       throw error
     }
@@ -306,6 +309,7 @@ package actor AppGatewayService {
     defer { releaseLifecycle() }
     guard administrationEpoch == epoch else { return }
     administrationEpoch = nil
+    await controlPlane.stopPermissionAdministration(epoch: epoch)
     await stopManifestMonitoring()
     await stopRuntimes(owner: .administration)
     try? administrationTerminalSessions.discardResults()
@@ -541,43 +545,27 @@ package actor AppGatewayService {
   package func approveControlSession(
     id: String, lifetime: GatewayFullAccessLifetime = .thisSession,
     expectedRevision: Int64, expectedTrustRevision: Int64 = 0,
-    enableShellFacility: Bool = false, approver: GatewayCallerKind = .localApp
+    approver: GatewayCallerKind = .localApp
   ) async throws -> GatewayControlSessionSnapshot {
     guard approver == .localApp || approver == .localCLI else {
       throw GatewayToolError.invalidArguments("Client consent requires a local owner.")
     }
     guard let record = controlSessionRecords[id] else { throw GatewaySocketError.notConnected }
     try record.session.requireRevision(expectedRevision)
-    var configuration = try await controlPlane.activeConfiguration()
-    try record.session.requireRevision(expectedRevision)
-    if !configuration.policy.shellEnabled {
-      guard enableShellFacility else { throw AppControlPlaneServiceError.fullShellManifestDisabled }
-      guard
-        record.session.snapshot.profile?.grant.allowedCallers.contains(record.key.caller) == true
-      else {
-        throw GatewayToolError.invalidArguments(
-          "[policy.control_session_denied] The client is not admitted by its profile.")
-      }
-      let trust = try controlPlane.database.clientTrust(
-        principalID: record.key.principalID, profileID: record.key.profileID,
-        caller: record.key.caller)
-      guard (trust?.revision ?? 0) == expectedTrustRevision else {
-        throw GatewayDatabaseError.configurationChanged
-      }
-      let digest = try controlPlane.manifestStore.admittedDigest(for: configuration)
-      configuration.policy.shellEnabled = true
-      _ = try await changeManifest(configuration.exportedTOML(), expectedDigest: digest)
+    guard record.session.snapshot.profile?.grant.fullAccess == true else {
+      throw GatewayToolError.invalidArguments(
+        "Enable Full access in this profile before granting client consent.")
     }
-    return try record.session.approveFullAccess(
-      lifetime: lifetime, expectedRevision: expectedRevision,
+    return try await controlPlane.approveFullAccess(
+      session: record.session, lifetime: lifetime, expectedRevision: expectedRevision,
       expectedTrustRevision: expectedTrustRevision, approver: approver)
   }
 
   package func limitControlSession(
-    id: String, to mode: GatewayPermissionMode, expectedRevision: Int64
+    id: String, to limits: ManagedPolicy, expectedRevision: Int64
   ) throws -> GatewayControlSessionSnapshot {
     guard let record = controlSessionRecords[id] else { throw GatewaySocketError.notConnected }
-    try record.session.limitAccess(to: mode, expectedRevision: expectedRevision)
+    try record.session.limitAccess(to: limits, expectedRevision: expectedRevision)
     return record.session.snapshot
   }
 
@@ -822,12 +810,8 @@ package actor AppGatewayService {
         ownership: try runtime.ownedWork.admitInvocation(
           projectID: lookup.projectID, resourceID: name))
     }
-    var tool = name
-    var object = arguments?.objectValue ?? [:]
-    if tool == "operations.prepare" || tool == "operations.commit" {
-      tool = object["tool"]?.stringValue ?? ""
-      object = object["arguments"]?.objectValue ?? [:]
-    }
+    let tool = name
+    let object = arguments?.objectValue ?? [:]
     let kind: GatewayOwnedWork.Kind
     let id: String
     switch tool {
@@ -835,7 +819,7 @@ package actor AppGatewayService {
       kind = .shell
       guard let value = object["session_id"]?.stringValue else { return nil }
       id = value
-    case "process.read", "process.cancel":
+    case "process.read", "process.write", "process.cancel":
       kind = .shell
       guard let value = object["process_id"]?.stringValue else { return nil }
       id = value
@@ -948,6 +932,8 @@ package actor AppGatewayService {
   ) async throws -> JSONValue {
     try requireAdmission(key: key, epoch: epoch)
     guard let contract = GatewayRemoteManagement.byName[name],
+      let invocation = InvocationExecution.current as? GatewayManagementInvocation,
+      invocation.authorization.invocation.tool == name,
       let authority = context.controlSession, let record = controlSessionRecords[authority.id],
       record.key == key, record.session === authority,
       context.trustedPrincipalID == key.principalID,
@@ -956,10 +942,15 @@ package actor AppGatewayService {
     let session = record.session
     let args = try contract.input.validate(.object(arguments))
     let snapshot = session.snapshot
-    let authorization = GatewayManagementAuthorization(
+    let authorization = try GatewayManagementAuthorization(
       session: session, context: context, revision: snapshot.revision,
-      requiresFullAccess: contract.risk == .fullShell)
-    try authorization.perform {}
+      requiresFullAccess: contract.risk == .fullShell, invocation: invocation)
+    func requireAuthorization() throws {
+      try authorization.perform {
+        try controlPlane.database.validateManagementAuthorization(authorization)
+      }
+    }
+    try requireAuthorization()
     func string(_ key: String) -> String { args[key]?.stringValue ?? "" }
     func revision(_ key: String = "expected_revision") throws -> Int64 {
       guard let value = args[key]?.intValue, value >= 0 else {
@@ -977,18 +968,17 @@ package actor AppGatewayService {
     case "profile.show":
       result = try ControlToolResponse.encodedPayload(snapshot)
     case "profile.limit":
-      let mode: GatewayPermissionMode
-      switch string("mode") {
-      case "observe": mode = .readOnly
-      case "restricted": mode = .projectOperations
-      default: throw GatewayToolError.invalidArguments("mode must be observe or restricted.")
+      guard let limits = args["limits"] else {
+        throw GatewayToolError.invalidArguments("limits is required.")
       }
-      try session.limitAccess(to: mode, expectedRevision: revision(), allowIncrease: false)
+      let decoded = try CanonicalJSONCoding.decoder().decode(
+        ManagedPolicy.self, from: JSONEncoder().encode(limits))
+      try session.limitAccess(to: decoded, expectedRevision: revision(), allowIncrease: false)
       return try ControlToolResponse.encodedPayload(session.snapshot)
     case "project.add", "project.remove", "project.repair", "project.grant":
       let inputs = try await controlPlane.gatewayInputs()
       try requireAdmission(key: key, epoch: epoch)
-      try authorization.perform {}
+      try requireAuthorization()
       let id = string("id")
       if name != "project.add" {
         guard let project = inputs.projects.first(where: { $0.id == id }) else {
@@ -1000,9 +990,16 @@ package actor AppGatewayService {
       }
       if name == "project.grant" {
         guard let profile = snapshot.profile else { throw GatewaySocketError.notConnected }
+        let access: ComputerMCPPermissions.PermissionState
+        switch string("access") {
+        case "read": access = .granted(.read)
+        case "write": access = .granted(.write)
+        case "deny": access = .denied
+        default: throw GatewayToolError.invalidArguments("access must be read, write or deny.")
+        }
         let grant = try await withConfigurationChange {
           try await controlPlane.applyRemoteProjectGrant(
-            id: id, enabled: args["enabled"]?.boolValue == true, profile: profile,
+            id: id, access: access, profile: profile,
             expectedRevision: revision("expected_profile_revision"), inputs: inputs,
             authorization: authorization)
         }
@@ -1079,7 +1076,7 @@ package actor AppGatewayService {
       let expected = try revision()
       let plugins = try await controlPlane.pluginSnapshot()
       try requireAdmission(key: key, epoch: epoch)
-      try authorization.perform {}
+      try requireAuthorization()
       guard plugins.state.revision == expected else {
         throw PluginStoreError.staleRevision(expected: expected, actual: plugins.state.revision)
       }
@@ -1121,7 +1118,7 @@ package actor AppGatewayService {
       return .object(["revision": .integer(changed.state.revision), "changed": .bool(true)])
     }
     try requireAdmission(key: key, epoch: epoch)
-    try authorization.perform {}
+    try requireAuthorization()
     return result
   }
 
@@ -1137,7 +1134,8 @@ package actor AppGatewayService {
         [self] expected, proposed, storage in
         let state = GatewayDatabase.ConfigurationState(
           projects: expected.projects, projectAliases: expected.persisted.projectAliases,
-          profiles: expected.profiles, plugins: proposed)
+          profiles: expected.profiles, plugins: proposed,
+          profileSource: expected.persisted.profileSource)
         _ = try await preparePublication(expected: expected, proposed: state, storage: storage) {
           resolution in
           let commit = {

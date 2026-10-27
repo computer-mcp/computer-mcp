@@ -1,3 +1,4 @@
+import ComputerMCPPlatform
 import ComputerMCPPlatformPOSIX
 import ComputerMCPSandbox
 import Foundation
@@ -19,10 +20,10 @@ final class ExecutionRecoveryJournal: @unchecked Sendable {
   private let lock = NSLock()
 
   init(directory: URL) throws {
-    self.directory = directory
     try FileManager.default.createDirectory(
       at: directory, withIntermediateDirectories: true,
       attributes: [.posixPermissions: 0o700])
+    self.directory = try ProjectPathResolver.canonicalProject(directory)
   }
 
   func all() throws -> [Entry] {

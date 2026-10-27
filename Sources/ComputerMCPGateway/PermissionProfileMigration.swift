@@ -34,7 +34,8 @@ package struct PermissionMigrationReport: Equatable, Sendable {
 }
 
 package struct PermissionMigrationPlan: Sendable {
-  package let profiles: [PermissionProfile]
+  package let profiles: [ProfileGrant]
+  package let projects: [ComputerMCPCore.RegisteredProject]
   package let derived: [MCPDerivedProjectRegistration]
   package let report: PermissionMigrationReport
   package let inputDigest: String
@@ -44,7 +45,7 @@ package struct PermissionMigrationPlan: Sendable {
 /// Pure conversion of a host snapshot. It never opens a provider or discovers tools.
 package enum PermissionProfileMigration {
   package static func plan(
-    profiles: [ProfileGrant], catalog: PermissionMigrationCatalog,
+    profiles: [LegacyProfileGrant], catalog: PermissionMigrationCatalog,
     projects: PermissionMigrationProjects
   ) throws -> PermissionMigrationPlan {
     guard Set(profiles.map(\.id)).count == profiles.count,
@@ -102,7 +103,7 @@ package enum PermissionProfileMigration {
     }
     var dropped: [PermissionMigrationReport.DroppedGrant] = []
     var omitted = 0
-    func report(_ profile: ProfileGrant, _ grant: String, _ reason: String) {
+    func report(_ profile: LegacyProfileGrant, _ grant: String, _ reason: String) {
       if dropped.count < 256 {
         dropped.append(
           .init(profileID: profile.id, grant: String(grant.prefix(128)), reason: reason))
@@ -110,7 +111,7 @@ package enum PermissionProfileMigration {
         omitted += 1
       }
     }
-    var converted: [PermissionProfile] = []
+    var converted: [ProfileGrant] = []
     for profile in effective.sorted(by: { $0.id.rawValue < $1.id.rawValue }) {
       let projectIDs = Set(
         profile.projectIDs.sorted().compactMap { id -> String? in
@@ -132,14 +133,11 @@ package enum PermissionProfileMigration {
         fullAccess
         || (profile.mode != .readOnly
           && tools.contains { $0.access == .projectWrite || $0.access == .sourceProjectWrite })
-      let network = tools.contains {
-        $0.serverID == nil && $0.projectRequirement != .none && $0.usesNetwork
-      }
       var permissions = Permissions()
       var networks: [String: NetworkAccess] = [:]
       for id in projectIDs.sorted() {
         try permissions.set(.granted(writes ? .write : .read), for: .project(id))
-        networks[id] = network ? .full : NetworkAccess.none
+        networks[id] = NetworkAccess.none
       }
       for tool in tools {
         for requirement in tool.permissions {
@@ -162,7 +160,7 @@ package enum PermissionProfileMigration {
       if genericCall {
         try permissions.set(.granted(serverLevel), for: .mcpServer("*"))
       } else if tools.contains(where: {
-        $0.serverID == nil && ProfileGrant.mcpSurfaceCapabilities.contains($0.id)
+        $0.serverID == nil && LegacyProfileGrant.mcpSurfaceCapabilities.contains($0.id)
           && $0.risk == .readOnly
           && (profile.capabilityIDs.contains($0.id) || profile.capabilityIDs.contains("*"))
       }) {
@@ -179,7 +177,16 @@ package enum PermissionProfileMigration {
       where tool.serverID != nil
         && !profile.capabilityIDs.isDisjoint(with: Set([tool.id] + tool.aliases))
       {
-        try permissions.set(.granted(serverLevel), for: .mcpServer(tool.serverID!))
+        let server = tool.serverID!
+        let grantedTools = tools.filter {
+          $0.serverID == server
+            && !profile.capabilityIDs.isDisjoint(with: Set([$0.id] + $0.aliases))
+        }
+        let level: PermissionValue = grantedTools.allSatisfy { $0.risk == .readOnly } ? .read : .all
+        let existing = permissions.state(for: .mcpServer(server))
+        if existing != .granted(.all) {
+          try permissions.set(.granted(level), for: .mcpServer(server))
+        }
       }
       if tools.contains(where: { $0.pluginID != nil })
         || catalog.serverPluginIDs.keys.contains(where: {
@@ -199,13 +206,14 @@ package enum PermissionProfileMigration {
         }
       }
       converted.append(
-        PermissionProfile(
+        ProfileGrant(
           id: profile.id, permissions: permissions, projectNetworks: networks,
           fullAccess: fullAccess, allowedCallers: profile.allowedCallers,
           authorizationRevision: profile.authorizationRevision + 1))
     }
     return PermissionMigrationPlan(
-      profiles: converted, derived: projects.derived.sorted { $0.project.id < $1.project.id },
+      profiles: converted, projects: projects.registered.sorted { $0.id < $1.id },
+      derived: projects.derived.sorted { $0.project.id < $1.project.id },
       report: .init(dropped: dropped, omittedCount: omitted), inputDigest: inputDigest,
       catalogDigest: catalog.digest)
   }
@@ -220,7 +228,7 @@ package enum PermissionProfileMigration {
   }
 
   static func fingerprint(
-    profiles: [ProfileGrant], projects: PermissionMigrationProjects,
+    profiles: [LegacyProfileGrant], projects: PermissionMigrationProjects,
     catalog: PermissionMigrationCatalog
   ) throws -> String {
     struct Snapshot: Encodable {

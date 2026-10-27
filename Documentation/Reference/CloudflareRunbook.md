@@ -107,9 +107,8 @@ must support CIMD and S256 PKCE. Its browser page displays client host, redirect
 host and six-character code. Review the matching local request before approval.
 In the App, **Client access** lists it under **Sign-in requests** with the same
 code, client host, redirect host and connection. It offers the profiles that
-allow `cloudflare-tunnel`, grouped by access level, and preselects a read-only
-one, Cloudflare Observe first; without a read-only profile you choose one
-explicitly, and approval stops if the chosen profile's access changes. Expired
+allow `cloudflare-tunnel` and requires an explicit selection. Approval binds the
+reviewed profile digest and stops if that profile's authority changes. Expired
 requests cannot be approved. **Signed-in remote clients** lists live grants with
 their connection, profile, approval time and last use; **Revoke** ends one.
 Only the local owner control plane can approve or deny; the public page polls
@@ -119,9 +118,8 @@ returns `access_denied`.
 
 `authorizations` and `grants` accept `--id`, `--after-id`, `--limit` (default
 100, maximum 200) and `--tunnel-id`. Approval and denial accept `--tunnel-id`
-to disambiguate codes across connections. Approval defaults to
-`cloudflare-observe` only while its effective mode is read-only; otherwise an
-explicit `--profile` is required. The selected profile must allow
+to disambiguate codes across connections. Approval requires an explicit
+`--profile`. The selected profile must allow
 `cloudflare-tunnel` and cannot be `local-admin`. The grant acts as
 `oauth:<grant ID>` with that profile. Full
 Access still requires separate local session consent. `clients revoke-grant`

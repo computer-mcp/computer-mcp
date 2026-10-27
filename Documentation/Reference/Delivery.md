@@ -3,7 +3,7 @@
 `delivery.scopes.list` and `delivery.apply` expose host-declared repository edits
 within a selected `project_id`. Both require a project and use no network
 operations. Listing is read-only; apply has `project-write` risk. Profile grants,
-project access and action confirmation follow the ordinary gateway policy.
+project access and execution admission follow the ordinary permission authority.
 The provider ID and namespace are `delivery`.
 
 ## Configuration
@@ -39,9 +39,8 @@ matches zero directories. Other glob operators are unsupported. `default_branch`
 is required. `sparse` defaults to false. `mode` is `land` (default) or `commit-only`.
 
 Enable the two names in `[builtin].enabled`, register a CLI command with ID `git`,
-and grant the tools and project to the calling profile. Once scopes are enabled,
-users can withdraw a profile's direct file-writing capabilities through existing
-profile permissions.
+and configure the calling profile's Project permission. Calls require an
+enforceable execution context; scope configuration alone does not authorize writes.
 
 ## Tools
 

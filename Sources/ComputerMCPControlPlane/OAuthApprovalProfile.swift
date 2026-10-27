@@ -1,4 +1,5 @@
 import ComputerMCPCore
+import ComputerMCPPermissions
 import Crypto
 import Foundation
 
@@ -11,18 +12,38 @@ package struct OAuthApprovalProfile: Equatable, Sendable {
   /// set members. Identity and persistence revisions are not authorization fields.
   package init(grant: ProfileGrant) throws {
     self.grant = grant
-    let authorization: JSONValue = .object([
-      "mode": .string(grant.mode.rawValue),
-      "capabilities": .array(grant.capabilityIDs.sorted().map(JSONValue.string)),
-      "projects": .array(grant.projectIDs.sorted().map(JSONValue.string)),
-      "callers": .array(grant.allowedCallers.map(\.rawValue).sorted().map(JSONValue.string)),
-      "full_shell_enabled": .bool(grant.fullShellEnabled),
-      "mcp_servers": .array(grant.mcpServerIDs.sorted().map(JSONValue.string)),
-      "confirmation_policy": .string(grant.confirmationPolicy.rawValue),
-    ])
+    struct Entry: Encodable {
+      let permission: Permission
+      let state: PermissionState
+    }
+    struct Authorization: Encodable {
+      let permissions: [Entry]
+      let networks: [String: NetworkAccess.Configuration]
+      let automation: [String: ProfileGrant.AutomationAccess]
+      let fullAccess: Bool
+      let callers: [String]
+    }
     let encoder = JSONEncoder()
     encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
-    let data = try encoder.encode(authorization)
+    let entries = grant.permissions.entries.map { Entry(permission: $0.key, state: $0.value) }
+    let authorization = Authorization(
+      permissions: entries,
+      networks: grant.projectNetworks.mapValues(\.configuration), automation: grant.automation,
+      fullAccess: grant.fullAccess, callers: grant.allowedCallers.map(\.rawValue))
+    let object = try JSONSerialization.jsonObject(with: encoder.encode(authorization))
+    func serialized(_ value: Any) throws -> Data {
+      try JSONSerialization.data(
+        withJSONObject: value, options: [.sortedKeys, .fragmentsAllowed, .withoutEscapingSlashes])
+    }
+    func normalized(_ value: Any) throws -> Any {
+      if let values = value as? [Any] {
+        return try values.map(normalized).map { (try serialized($0), $0) }
+          .sorted { $0.0.lexicographicallyPrecedes($1.0) }.map(\.1)
+      }
+      if let values = value as? [String: Any] { return try values.mapValues(normalized) }
+      return value
+    }
+    let data = try serialized(normalized(object))
     authorizationDigest = SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
   }
 }

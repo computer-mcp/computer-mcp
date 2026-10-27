@@ -20,27 +20,15 @@ path = ".."
 
 [[profiles]]
 id = "chatgpt-operate"
-mode = "project-operations"
-confirmation_policy = "risk-based"
-capabilities = [
-  "project.list",
-  "project.describe",
-  "computer.permissions",
-  "computer.displays",
-  "computer.screenshot",
-  "computer.windows",
-  "computer.pointer.move",
-  "computer.pointer.click",
-  "computer.keyboard.key",
-  "computer.keyboard.text",
-  "computer.scroll",
-  "computer.accessibility.query",
-  "computer.accessibility.action",
-  "computer.verify",
-]
-projects = ["computer-mcp"]
+full_access = false
 allowed_callers = ["secure-tunnel"]
-full_shell_enabled = false
+
+[profiles.permissions]
+screen = "allow"
+desktop-control = "allow"
+
+[profiles.projects]
+"computer-mcp" = { access = "read", network = "none" }
 
 [builtin]
 enabled = []

@@ -1,4 +1,6 @@
 import ComputerMCPMacOS
+import ComputerMCPPermissions
+import ComputerMCPSandbox
 import ComputerMCPTestSupport
 import Foundation
 import Testing
@@ -26,7 +28,7 @@ struct GatewayHTTPClientControlTests {
       let second = try await fixture.connect()
       let owner = fixture.owner
       let tools = try await first.listToolNames()
-      #expect(!tools.contains("shell.run") && !tools.contains("clients.allow"))
+      #expect(tools.contains("shell.run") && !tools.contains("clients.allow"))
       #expect(
         try await first.call(toolName: "clients.allow", arguments: fixture.approval(original))
           .result.objectValue?["isError"] == .bool(true))
@@ -48,7 +50,7 @@ struct GatewayHTTPClientControlTests {
           == .string("this-session"))
       #expect(try fixture.database.clientTrusts().isEmpty)
       #expect(try await first.listToolNames().contains("shell.run"))
-      #expect(try await !second.listToolNames().contains("shell.run"))
+      #expect(try await second.listToolNames().contains("shell.run"))
       #expect(
         try await first.call(toolName: "shell.run", arguments: fixture.shell).result.objectValue?[
           "isError"] == .bool(false))
@@ -66,10 +68,11 @@ struct GatewayHTTPClientControlTests {
         "clients.limit",
         arguments: .object([
           "id": .string(original.id), "expected_revision": .integer(original.revision + 1),
-          "mode": .string("observe"),
+          "limits": try .encoded(ManagedPolicy(allowsFullAccess: false)),
         ]))
-      #expect(limited.objectValue?["access_limit"] == .string("read-only"))
-      #expect(try await !first.listToolNames().contains("shell.run"))
+      #expect(
+        limited.objectValue?["access_limit"]?.objectValue?["allows_full_access"] == .bool(false))
+      #expect(try await first.listToolNames().contains("shell.run"))
       #expect(
         try await first.call(toolName: "shell.run", arguments: fixture.shell).result.objectValue?[
           "isError"] == .bool(true))
@@ -110,7 +113,7 @@ struct GatewayHTTPClientControlTests {
       #expect(try await session.listToolNames().contains("shell.run"))
       await session.disconnect()
       let next = try await fixture.connect()
-      #expect(try await !next.listToolNames().contains("shell.run"))
+      #expect(try await next.listToolNames().contains("shell.run"))
       await next.disconnect()
       await fixture.stopAndRemove()
     } catch {
@@ -140,7 +143,7 @@ struct GatewayHTTPClientControlTests {
       #expect(
         staleJSON.objectValue?["error"]?.objectValue?["code"]
           == .string("control.invalid_arguments"))
-      #expect(try await !session.listToolNames().contains("shell.run"))
+      #expect(try await session.listToolNames().contains("shell.run"))
       let approved = try await fixture.json([
         "allow", original.id, "--full-access", "--always-allow-client",
       ])
@@ -156,9 +159,11 @@ struct GatewayHTTPClientControlTests {
       #expect(
         try await fixture.command(["revoke", trust.id, "--expected-revision", "0"]).exitCode != 0)
       _ = try await fixture.json(["revoke", trust.id])
-      #expect(try await !next.listToolNames().contains("shell.run"))
+      #expect(try await next.listToolNames().contains("shell.run"))
       let nextScope = try #require(await fixture.runtime.controlSessions().first)
-      _ = try await fixture.json(["limit", nextScope.id, "--mode", "observe"])
+      let limits = fixture.root.appendingPathComponent("limits.json")
+      try JSONEncoder().encode(ManagedPolicy(allowsFullAccess: false)).write(to: limits)
+      _ = try await fixture.json(["limit", nextScope.id, "--limits-file", limits.path])
       _ = try await fixture.json(["end", nextScope.id])
       #expect(try await next.listToolNames().isEmpty)
       #expect(try fixture.database.clientTrusts().first?.fullAccessAllowed == false)
@@ -264,25 +269,39 @@ private struct HTTPClientControlFixture: Sendable {
 
   init(persistent: Bool = false, authenticated: Bool = true, port: Int = 0) throws {
     root = URL(
-      fileURLWithPath: "/tmp/cm-http-owner-" + UUID().uuidString.prefix(8), isDirectory: true)
-    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+      fileURLWithPath: "/tmp/cm-http-owner-" + UUID().uuidString.prefix(8), isDirectory: true
+    )
+    .resolvingSymlinksInPath()
+    try FileManager.default.createDirectory(
+      at: root, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
     socket = root.appendingPathComponent("control.sock")
     database =
       try persistent
-      ? GatewayDatabase(path: root.appendingPathComponent("state.sqlite").path)
+      ? fixturePermissionDatabase(path: root.appendingPathComponent("state.sqlite").path)
       : GatewayDatabase(inMemory: ())
     token = authenticated ? "isolated-http-owner-test" : nil
     let profile = ProfileGrantConfig(
-      id: .chatGPTOperate, capabilities: ["system.time", "file.read"],
-      projects: ["fixture"], allowedCallers: [.secureTunnel], mode: .projectOperations)
+      id: .chatGPTOperate,
+      permissions: fixturePermissions([
+        .machineInformation: .granted(.access), .project("fixture"): .granted(.write),
+      ]), fullAccess: true, allowedCallers: [.secureTunnel])
     var configuration = GatewayConfiguration(
       runtime: .init(caller: .secureTunnel, profileID: .chatGPTOperate), profiles: [profile],
-      builtin: .init(enabled: ["system.time", "file.read"]))
+      builtin: .init(enabled: ["system.time", "file.read"]), projectDirectory: root)
     configuration.policy.shellEnabled = true
+    try database.saveProject(.init(id: "fixture", displayName: "Fixture", rootPath: root.path))
+    try database.bootstrapPermissionProfiles(
+      GatewayProfileID.builtIns.map { configuration.profileGrant(for: $0) },
+      declarations: configuration.profiles.map(\.grant))
+    try Self.program.write(
+      to: root.appendingPathComponent("consent.py"), atomically: true, encoding: .utf8)
+    let launcher = fixtureProtocolExecutionLauncher(
+      root: root, scripts: [Self.program], arguments: [["append"]])
+    var platform = MacOSPlatform.services(launcher: launcher)
+    platform.permissionPolicyReader = TestManagedPolicyReader()
     let gateway = try GatewayRuntime(
       configuration: configuration, database: database,
-      registeredProjects: [.init(id: "fixture", displayName: "Fixture", rootPath: root.path)],
-      platform: MacOSPlatform.services(launcher: testExecutionLauncher()))
+      registeredProjects: try database.projects(), platform: platform)
     runtime = GatewayHTTPRuntime(
       configuration: configuration, registry: gateway,
       host: "127.0.0.1", port: port, publicBaseURL: nil, accessToken: token,
@@ -310,24 +329,25 @@ private struct HTTPClientControlFixture: Sendable {
   var shell: JSONValue {
     .object([
       "project_id": .string("fixture"), "mode": .string("argv"),
-      "executable": .string("/bin/sh"),
-      "argv": .array([.string("-c"), .string("printf approved >> consent.txt")]),
+      "executable": .string("/usr/bin/python3"),
+      "argv": .array([.string(root.appendingPathComponent("consent.py").path), .string("append")]),
       "cwd": .string(root.path),
     ])
   }
 
   func command(_ arguments: [String]) async throws -> CommandResult {
-    let executable = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
-      .deletingLastPathComponent().deletingLastPathComponent().appendingPathComponent(
-        ".build/debug/computer-mcp")
+    let executable = try nativeGatewayTestExecutable()
     let result = try await commands.perform {
-      try ProcessCommandRunner(
-        launcher: testExecutionLauncher(), environment: ["PATH": "/usr/bin:/bin"]
-      ).run(
-        executable: executable.path,
-        arguments: ["clients"] + arguments + ["--control-socket", socket.path],
-        workingDirectory: root, environment: [:], timeoutMilliseconds: 10_000,
-        maxOutputBytes: 1_048_576)
+      let environment = ["PATH": "/usr/bin:/bin", "HOME": root.path, "TMPDIR": root.path]
+      let administration = ExecutionAdministration(
+        mode: .fullAccess, environment: try ExecutionEnvironment(fullAccessVariables: environment))
+      return try ExecutionAdministration.$current.withValue(administration) {
+        try ProcessCommandRunner(launcher: testExecutionLauncher(), environment: environment).run(
+          executable: executable.path,
+          arguments: ["clients"] + arguments + ["--control-socket", socket.path],
+          workingDirectory: root, environment: environment, timeoutMilliseconds: 10_000,
+          maxOutputBytes: 1_048_576)
+      }
     }
     try #require(!result.timedOut && !result.stdoutTruncated && !result.stderrTruncated)
     return result
@@ -343,4 +363,12 @@ private struct HTTPClientControlFixture: Sendable {
     await runtime.stop()
     try? FileManager.default.removeItem(at: root)
   }
+
+  private static let program = """
+    import pathlib, sys
+    if sys.argv[1:] != ["append"]:
+        raise SystemExit(64)
+    with pathlib.Path("consent.txt").open("a") as output:
+        output.write("approved")
+    """
 }

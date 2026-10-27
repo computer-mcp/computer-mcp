@@ -1,4 +1,5 @@
 import ComputerMCPMacOS
+import ComputerMCPPermissions
 import ComputerMCPTestSupport
 import ComputerMCPToolsProject
 import Foundation
@@ -19,7 +20,7 @@ import Testing
 @Suite(.timeLimit(.minutes(1)))
 struct GatewayRuntimePreparationTests {
   @Test(arguments: [false, true])
-  func projectPreviewPublishesNoGrantTicketReceiptOrNotification(removing: Bool) async throws {
+  func projectPreviewPublishesNoPermissionReceiptOrNotification(removing: Bool) async throws {
     let stream = try { () -> AsyncStream<Void> in
       let fixture = try PreparationStateFixture()
       defer { fixture.cleanup() }
@@ -28,15 +29,11 @@ struct GatewayRuntimePreparationTests {
       duplicate.createdAt = duplicate.createdAt.addingTimeInterval(1)
       try fixture.database.saveProject(duplicate)
       var profile = try #require(try fixture.database.profiles().first)
-      profile.projectIDs = [removing ? "fixture" : "duplicate"]
+      profile.permissions = fixturePermissions([
+        .project(removing ? "fixture" : "duplicate"): .granted(.read)
+      ])
       try fixture.database.saveProfile(profile)
-      try fixture.database.saveOperationTicket(
-        OperationTicket(
-          id: "pending", capabilityID: "file.trash", caller: .localCLI,
-          profileID: profile.id, inputDigest: "fixture", state: .approved,
-          expiresAt: Date().addingTimeInterval(3_600)))
       let expected = try fixture.database.configurationState()
-      let ticket = try fixture.database.operationTicket(id: "pending")
       let changes = fixture.database.profileChanges(for: profile.id)
       let plan = try fixture.database.projectDeduplicationPlan()
       let mutation: ProjectConfigurationMutation =
@@ -47,7 +44,6 @@ struct GatewayRuntimePreparationTests {
       #expect(prepared.proposed != expected)
       #expect(try fixture.database.configurationState() == expected)
       #expect(try fixture.database.projectDeduplicationPlan() == plan)
-      #expect(try fixture.database.operationTicket(id: "pending") == ticket)
       let connection = try DatabaseQueue(path: #require(fixture.database.fileURL).path)
       let receipts = try connection.read {
         try Int.fetchOne($0, sql: "SELECT COUNT(*) FROM projectDeduplicationReceipts")
@@ -91,9 +87,10 @@ struct GatewayRuntimePreparationTests {
       #expect(try fixture.database.configurationState() == original)
       var resolution = prepared.resolution
       if fail {
-        var conflict = try #require(resolution.profiles.first)
-        conflict.authorizationRevision = 1
-        resolution.profiles = [conflict]
+        let conflict = try #require(resolution.projects.first)
+        var stale = conflict.original
+        stale.bookmarkData = Data("stale".utf8)
+        resolution.projects = [.init(original: stale, resolved: conflict.resolved)]
         #expect(throws: GatewayDatabaseError.configurationChanged) {
           try fixture.database.saveProjectChange(change, resolution: resolution)
         }
@@ -101,7 +98,7 @@ struct GatewayRuntimePreparationTests {
       } else {
         let committed = try fixture.database.saveProjectChange(change, resolution: resolution)
         #expect(committed.projects.contains { $0.id == extra.id } == (operation == "register"))
-        #expect(committed.profiles.first?.authorizationRevision == 1)
+        #expect(committed.profiles == original.profiles)
         #expect(
           committed.projects.first { $0.id == "fixture" }?.bookmarkData == Data("refreshed".utf8))
         #expect(committed.plugins == original.plugins)
@@ -128,9 +125,10 @@ struct GatewayRuntimePreparationTests {
       proposed.revision += 1
       var resolution = prepared.resolution
       if fail {
-        var conflict = try #require(resolution.profiles.first)
-        conflict.authorizationRevision = 1
-        resolution.profiles = [conflict]
+        let conflict = try #require(resolution.projects.first)
+        var stale = conflict.original
+        stale.bookmarkData = Data("stale".utf8)
+        resolution.projects = [.init(original: stale, resolved: conflict.resolved)]
         #expect(throws: GatewayDatabaseError.configurationChanged) {
           try fixture.database.savePluginStoreSnapshot(
             proposed, expectedRevision: 0, expectedConfiguration: original, resolution: resolution)
@@ -141,7 +139,7 @@ struct GatewayRuntimePreparationTests {
           proposed, expectedRevision: 0, expectedConfiguration: original, resolution: resolution)
         #expect(committed.plugins == proposed)
         #expect(committed.projects.first?.bookmarkData == Data("refreshed".utf8))
-        #expect(committed.profiles.first?.authorizationRevision == 1)
+        #expect(committed.profiles == original.profiles)
         try prepared.runtime.requirePreparedPublication()
         prepared.runtime.publishPrepared()
         _ = try await prepared.runtime.callToolAsync(
@@ -157,7 +155,7 @@ struct GatewayRuntimePreparationTests {
   }
 
   @Test(arguments: [false, true])
-  func preparationDefersBookmarkAndLegacyAuthorityWrites(fail: Bool) async throws {
+  func preparationDefersBookmarkAndPermissionWrites(fail: Bool) async throws {
     let fixture = try PreparationStateFixture()
     defer { fixture.cleanup() }
     let original = try fixture.database.configurationState()
@@ -177,8 +175,6 @@ struct GatewayRuntimePreparationTests {
         #expect(project.original == original.projects.first)
         #expect(project.resolved.bookmarkData == Data("refreshed".utf8))
         #expect(project.resolved.createdAt == project.original.createdAt)
-        #expect(prepared.resolution.profiles.count == 1)
-        #expect(prepared.resolution.profiles.first?.authorizationRevision == 0)
         #expect(throws: GatewayToolError.self) {
           try prepared.runtime.authenticatedSession(principalID: "another", transportTrace: nil)
         }
@@ -233,7 +229,8 @@ private struct PreparationStateFixture: Sendable {
   init(gated: Bool = false) throws {
     root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
     try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
-    database = try GatewayDatabase(path: root.appendingPathComponent("gateway.sqlite").path)
+    database = try fixturePermissionDatabase(
+      path: root.appendingPathComponent("gateway.sqlite").path)
     adapter = PreparationBookmarkAdapter(root: root, gated: gated)
     try database.saveProject(
       RegisteredProject(
@@ -242,21 +239,18 @@ private struct PreparationStateFixture: Sendable {
         updatedAt: Date(timeIntervalSince1970: 1000)))
     try database.saveProfile(
       ProfileGrant(
-        id: .localAdmin, capabilityIDs: ["project.list"], projectIDs: ["fixture"],
+        id: .localAdmin, permissions: fixturePermissions([.project("fixture"): .granted(.read)]),
         allowedCallers: [.localCLI]))
-    // Recreate the persisted pre-migration authority shape.
-    let legacy = try DatabaseQueue(path: root.appendingPathComponent("gateway.sqlite").path)
-    try legacy.write { database in
-      try database.execute(sql: "UPDATE profiles SET authorizationRevision = 0")
-    }
-    try legacy.close()
+
   }
 
   func prepare(state: GatewayDatabase.ConfigurationState) async throws -> GatewayRuntimePreparation
   {
     try await GatewayRuntime.prepare(
       configuration: GatewayConfiguration(projectDirectory: root),
-      context: ExecutionContext(caller: .localCLI, profileID: .localAdmin, projectID: "fixture"),
+      context: ExecutionContext(
+        caller: .localCLI, profileID: .localAdmin, projectID: "fixture",
+        trustedPrincipalID: "preparation-fixture"),
       database: database, state: state,
       platform: PlatformServices(
         launcher: testExecutionLauncher(),
@@ -271,7 +265,8 @@ private struct PreparationStateFixture: Sendable {
         executableSearchDirectories: MacOSPlatform.services(launcher: testExecutionLauncher())
           .executableSearchDirectories,
         gitExecutable: MacOSPlatform.services(launcher: testExecutionLauncher()).gitExecutable,
-        fileChanges: MacOSPlatform.services(launcher: testExecutionLauncher()).fileChanges),
+        fileChanges: MacOSPlatform.services(launcher: testExecutionLauncher()).fileChanges,
+        permissionPolicyReader: TestManagedPolicyReader()),
       bundledPlugins: BundledPlugins(packages: [], issues: []))
   }
 

@@ -241,12 +241,16 @@ import Testing
       platform: DarwinExecutionPlatform(bootstrapExecutable: SeatbeltFixture.executionBootstrap))
     let status = try await withThrowingTaskGroup(of: Int32.self) { group in
       group.addTask {
-        try await launcher.run(
-          executable: SandboxPath(executable), arguments: arguments,
-          directory: configuration.worktree,
-          environment: environment, mode: .sandbox(configuration), output: descriptor,
-          error: descriptor
-        ).status
+        try await ExecutionAdministration.$current.withValue(
+          .init(mode: .sandbox(configuration), environment: environment)
+        ) {
+          try await launcher.run(
+            executable: SandboxPath(executable), arguments: arguments,
+            directory: configuration.worktree,
+            environment: environment, mode: .sandbox(configuration), output: descriptor,
+            error: descriptor
+          ).status
+        }
       }
       group.addTask {
         try await Task.sleep(for: .seconds(180))

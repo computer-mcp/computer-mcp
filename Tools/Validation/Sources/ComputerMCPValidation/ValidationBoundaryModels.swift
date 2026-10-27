@@ -97,7 +97,6 @@ public struct AuditEvent: Codable, Equatable, Sendable, Identifiable {
   public var mcpRequestID: String?
   public var invocationID: String?
   public var parentRequestID: String?
-  public var ticketID: String?
   public var caller: GatewayCallerKind
   public var transport: String?
   public var socketConnectionID: String?
@@ -121,7 +120,6 @@ public struct AuditEvent: Codable, Equatable, Sendable, Identifiable {
     mcpRequestID: String? = nil,
     invocationID: String? = nil,
     parentRequestID: String? = nil,
-    ticketID: String? = nil,
     caller: GatewayCallerKind,
     transport: String? = nil,
     socketConnectionID: String? = nil,
@@ -144,7 +142,6 @@ public struct AuditEvent: Codable, Equatable, Sendable, Identifiable {
     self.mcpRequestID = mcpRequestID
     self.invocationID = invocationID
     self.parentRequestID = parentRequestID
-    self.ticketID = ticketID
     self.caller = caller
     self.transport = transport
     self.socketConnectionID = socketConnectionID

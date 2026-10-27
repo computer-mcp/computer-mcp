@@ -30,7 +30,8 @@ struct FileMutationRaceTests {
   private func call(_ tools: FilesToolProvider, _ name: String, _ arguments: [String: JSONValue])
     throws
   {
-    _ = try tools.callTool(.init(name: name, arguments: .object(arguments), context: .empty))
+    _ = try tools.callToolAsFixtureOwner(
+      .init(name: name, arguments: .object(arguments), context: .empty))
   }
 
   @Test(arguments: ["file", "parent", "hardlink"])

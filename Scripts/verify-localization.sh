@@ -57,8 +57,8 @@ critical_keys = [
   "Warning",
   "Fail",
   "Allowed",
-  "Prepared",
-  "Committed",
+  "Only this time",
+  "Permission requests",
 ]
 critical_keys.each do |key|
   entry = catalog.fetch(key).fetch("localizations")

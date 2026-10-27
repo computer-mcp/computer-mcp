@@ -6,6 +6,29 @@ annotations. Successful calls return the same bounded JSON value as readable
 JSON text and as `structuredContent.result`. Downstream MCP tools keep their
 provider-declared schemas and result shape when the Swift SDK exposes them.
 
+## Permission requirements and retry
+
+Tool listings publish the host declaration in `_meta.computer_mcp.requirements`.
+Requestable tools remain discoverable within managed limits; listing does not
+confer permission. The host resolves argument paths, project identity and plugin
+or server provenance before evaluating every call.
+
+`permission.required` returns `request_ids`, `request_group_id`, `requests` and
+`retry`. Each request names its principal, permission, object, required value,
+scope, purpose when available, expiry and local owner. After the owner answers,
+retry the same tool and unchanged arguments with `_permission_request_ids` set
+to all returned UUIDs. The host strips this reserved field before dispatch and
+binds it to the exact invocation, route and current authority. Answers never
+execute or automatically replay a call. Permission and execution availability are
+independent: a retry still requires an enforceable execution context and can
+return unavailable after permission is granted. Explicit denies and managed
+exclusions produce refusals without pending requests.
+
+Cold dynamic downstream tool calls can return `permission.catalog_required`.
+First make an admitted `mcp.tools.list` request to establish the exact catalog;
+then retry the tool call. Discovery that needs a program launch is subject to
+its own execution context and may be unavailable.
+
 ## `delivery.scopes.list` and `delivery.apply`
 
 The `delivery` provider lists host-declared scopes (read-only) and applies ordered
@@ -17,7 +40,7 @@ or retains its branch, with durable recovery and bounded file snippets. See
 ## Execution owners
 
 `runtime.owners.list` lists retained work in one granted `project_id`. It
-requires its own capability grant. An optional `server` filters MCP registration
+requires current Project access and matching ownership. An optional `server` filters MCP registration
 IDs. `limit` defaults to 50 and accepts 1–100; pass the returned `next_cursor` as
 `after` to continue. Pages contain at most 128 KiB of encoded rows, so a byte
 budget can end a page before its requested count. This is a live directory;
@@ -32,8 +55,8 @@ available through ordinary result reads for its retention period, independently
 of execution ownership.
 
 `runtime.owners.call` selects an exact owner when duplicate native handles are
-ambiguous or a call needs a retained provider instance. It requires its own
-capability and the target's current permissions. Supply the `owner` unchanged,
+ambiguous or a call needs a retained provider instance. It evaluates the
+target's resolved requirements and current permissions. Supply the `owner` unchanged,
 the same `project_id`, the gateway `tool` name and its original `arguments`:
 
 ```json
@@ -57,10 +80,8 @@ a stale, foreign or disconnected owner fails without launching a replacement.
 Owner tools cannot recursively target themselves. Native tool arguments do not
 receive the locator.
 
-For writes requiring approval, select the same owner around both
-`operations.prepare` and `operations.commit`. The review and ticket bind that
-exact owner along with the tool, arguments, project and provider identity.
-Changing the owner does not transfer approval. `target_execution` in a successful
+A permission retry must select the same owner, tool, arguments, project and
+provider identity. Changing the owner cannot reuse an answer. `target_execution` in a successful
 wrapped result identifies the selected invocation; ordinary `gateway_execution`
 identifies the routing call. Permission checks still run immediately before the
 target executes.
@@ -234,9 +255,8 @@ Arguments:
 Calls a tool on one downstream MCP server.
 The exact tool name must be selected by the host's whitelist or all-tools policy;
 discovery itself grants no authority. An explicit all-tools grant includes future
-tools, while a whitelist grants only its selected names. Profile and host risk
-checks apply to the actual target, including operation tickets for destructive
-tools.
+tools, while a whitelist grants only its selected names. The host evaluates the actual target's requirements, selected server or plugin
+permission, project scope and execution context.
 Calls wait for the downstream result by default. For a long-running request
 that must remain controllable by a sequential MCP consumer, set
 `wait_for_result` to `false` and supply a nonempty caller-stable `request_id`.
@@ -284,8 +304,8 @@ Closes one exact retained downstream connection and joins its managed-process
 teardown. This destructive operation affects **all work on that connection**.
 Select a live owner with `runtime.owners.call` and pass `server` as the target's
 only argument. Unbound or stale selections fail without starting a replacement.
-Current target permissions apply. When approval is required, wrap both
-`operations.prepare` and `operations.commit` with the same owner.
+Current target permissions and live ownership apply. Permission retries must
+retain the same owner.
 
 The result separates the observed outcomes:
 
@@ -484,7 +504,8 @@ For prompts, use `mcp.prompts.list` and `mcp.prompts.get`.
 background work. Use `shell.read` with `stdout_cursor` and `stderr_cursor` from the
 previous response's `next_cursor`, `shell.write` to send text or base64 bytes or
 close stdin, and `shell.cancel` to terminate the owned execution tree. Calls remain
-subject to Full Shell permission and the existing capability and project checks.
+subject to current permission-ledger execution authority. Starting work requires
+an enforceable prepared context; a continuation never authorizes another launch.
 
 Waiting commands default to `timeout_ms: 120000` and accept at most `600000`.
 Background commands have no timeout unless requested. The default output budget is
@@ -511,11 +532,11 @@ descendants that escape observation or launch through another service.
 
 Spawn, list, inspect, and cancel long-running commands by registered CLI id.
 `process.list` reports only sessions created through `process.spawn`; it is not
-a macOS process-table tool. The default `chatgpt-operate` grant exposes only
-the read-only `process.list` surface. `process.spawn` is arbitrary execution:
-it requires an explicit capability grant, `local-full-access` mode, separate
-Full Shell permission, and the grant's confirmation policy. These checks apply
-equally to local and Tunnel callers; a Profile's name does not grant access.
+a macOS process-table tool. `process.spawn` and `process.write` declare execution
+requirements; stdin can direct an existing program to perform further work.
+Permission checks apply equally to local and tunnel callers; a profile name does
+not grant authority. A one-time admitted execution retains its authorized input,
+output and cancellation access until revocation or expiry.
 Use `policy.probe` to inspect the effective authorization without execution.
 `process.cancel` reports the owned process lifecycle; downstream MCP cancellation
 uses the separate `mcp.requests.cancel` and receipt-query surfaces.
@@ -528,43 +549,32 @@ The existing top-level status, stdout and stderr fields remain available.
 `close: true` to deliver EOF after queued writes. `process.cancel` uses the shared
 execution owner's process-tree cancellation.
 
-`cli.exec` uses the same bounded launcher and retains Full Shell authorization.
-Host read-only command calls and calls without a project use a sandbox in which
-only private temporary files are writable. CLI compatibility checks and catalog
-exporters also run with these read-only restrictions.
+`cli.exec` uses the same bounded launcher and permission context. Host read
+helpers preserve their semantic read restrictions. Sandbox writes and arbitrary
+execution require verified worktree/private Git contexts; plugin/server launches
+require project-bound contexts. These integrations are not yet available. Darwin
+prepared arbitrary Full access execution also refuses when durable process
+ownership cannot be enforced. Missing contexts never fall back to Full access.
+Shell additionally requires `policy.shell_enabled = true`.
 
 ## `policy.probe`
 
-Evaluate one exact Gateway capability against the active caller, profile, and
-project without executing the target. An allowed target returns its risk and
-bound project. A denied target returns the same stable `policy.*` error that
-execution would produce, and the probe is written to the Gateway audit log.
+Preview one exact tool's resolved requirements for the active caller, profile,
+project and connection. The result reports requirements and an allowed, requestable
+or denied decision. It does not dispatch, create a pending request or consume
+Only this time authority.
 
-## Project And Operation Tools
+## Project discovery
 
-`project.list` returns stable projects granted to the caller.
-`project.describe` returns one project after grant and bookmark
-resolution. Every scoped tool accepts `project_id`; omission is rejected when
-more than one project is available.
+`project.list` and `project.describe` expose stable project ID, display name and
+access status without Project permission. Root paths and detailed metadata require
+Project access. Every scoped tool accepts `project_id`; omission is rejected when
+selection is ambiguous.
 
-Remote project tools never register an authorization root. Add or remove a
-project through the local App or `computer-mcp project …` CLI. Do not use
-Computer Use to operate Computer MCP's own UI as an administration fallback.
-
-`operations.prepare` creates a short-lived, single-use ticket for an authorized
-write. Depending on the profile's confirmation policy it returns `prepared`
-or `pending_approval`. A direct call requiring confirmation also returns an
-`operations.approval_required` error with the ticket id before any target side
-effect. The local App or `computer-mcp permissions approvals` commands approve
-or deny the request; a remote `confirm` argument cannot do so.
-
-`operations.commit` executes the exact canonical tool name and arguments bound
-into a prepared or locally approved ticket. It checks principal, profile,
-project, arguments, target state, expiry and grant revision, then consumes
-the ticket once. Parameter/target changes, rejection, expiry, revocation or
-reuse fail before execution. Tickets do not grant capabilities or expand a
-project. A preview that cannot safely fit the review budget is rejected
-instead of presenting an incomplete approval.
+Project registration is an owner-controlled operation. Use the local App or
+`computer-mcp project …` CLI, or the typed App-managed remote management contract
+when its requirements are satisfied. Computer Use cannot operate the host's own
+UI as an administration fallback.
 
 ## Plugin tools
 
@@ -575,15 +585,26 @@ for its coding tools, configuration, diagnostics and acceptance.
 
 `skills.*` belongs to the main gateway, independently of Codex. When
 `[skills].enabled = true`, ChatGPT, Codex, or any other authorized MCP client
-can discover and read configured skill packages directly. The mechanical flow
+can discover and read accessible configured skill packages directly. The mechanical flow
 is `skills.list` or `skills.search`, then `skills.read`, followed by
 `skills.files`, `skills.read_file(s)`, or `skills.read_package` for referenced
 content. Skill reads never execute bundled scripts; subsequent actions remain
 explicit calls through the same MCP gateway.
 
+Without `root_id`, list, search and name-based reads scan only accessible roots.
+Each scanned root is declared in the invocation's library read requirements;
+plugin roots also require Plugin use. A denied or protected root does not prevent
+results from other roots. Specifying `root_id` checks that root directly and can
+return a permission request or refusal.
+
+Archive-installed plugin Skills are unavailable while package content shares
+protected host storage with private plugin state. Host 6 owns their public-content
+layout and availability under Plugin use plus Skills; Skills grants do not bypass
+the host-data boundary.
+
 ## `skills.roots`
 
-Available only when `[skills].enabled = true`. Lists configured local skill
+Available only when `[skills].enabled = true`. Lists accessible configured local skill
 roots and filesystem readiness metadata. It does not read skill contents.
 
 ## `skills.list`
@@ -5278,13 +5299,12 @@ need to consume a large unfiltered CoreGraphics window table:
 case-insensitive by default. `max_results` defaults to 10 and is capped at 200;
 filtering occurs before truncation.
 
-## Full Shell
+## Shell policy and retention
 
-`shell.run`, `shell.spawn`, `shell.list`, `shell.read`, `shell.write`, and
-`shell.cancel` require a profile whose permission mode allows local full
-access, the corresponding capabilities and Full Shell grant, and an enabled
-manifest Shell policy. Profile names and connection channels do not select
-the permission mode.
+Shell launches require the resolved permissions, an enforceable execution context
+and `policy.shell_enabled = true`. Profile names and transport channels convey no
+authority. Existing execution I/O and cancellation validate the original execution
+and its live ledger evidence, including Only this time lifetime authority.
 
 The plane supports explicit argv or shell-script mode, selected environment,
 project/cwd binding, stdin, separate stdout/stderr cursors, timeout,
@@ -5295,9 +5315,9 @@ The App gateway listener and owner control service retain Shell and
 registered-process sessions across runtime
 configuration changes within the same authenticated principal, profile, caller,
 project registration, and resolved folder identity. Reads, writes, cancellation,
-and listing still require current permission. A task continues using its original
-launch settings and output limit; the executing runtime owns it until the process
-and its output streams finish.
+and listing still require current permission. A task retains its original launch identity; permission revocation and tighter
+resource limits reconcile its authority and output. Its runtime owns cleanup until
+the process and output streams finish.
 
 Completed results remain in memory for up to 24 hours. Each serving scope has a
 budget of 64 completed sessions and 8 MiB of stdout/stderr, shared by its runtime
@@ -5313,12 +5333,7 @@ before the retention limits or the owning service stops. Stopping the gateway
 listener preserves local-admin work; stopping the owner control service preserves
 gateway work. App shutdown stops both scopes.
 
-Full Shell gives the caller the current macOS user's effective terminal
-authority. Prefer typed tools or registered CLI argv execution when that
-authority is unnecessary.
-
-For App-managed profiles, configure the permission mode and confirmation policy
-through the local App or management CLI. Shell also requires
-`policy.shell_enabled = true`. Risk-based confirmation requests local approval
-for arbitrary execution; changing its working directory is not process
-sandboxing.
+Full access is an execution mode requiring explicit local consent and does not
+supply missing permissions. Unsupported execution contexts are refused before
+launch. See [Shell executions](#shell-executions) for the current availability
+boundary and the permission retry contract above.

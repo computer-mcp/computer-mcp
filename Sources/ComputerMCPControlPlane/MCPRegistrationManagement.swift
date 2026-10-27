@@ -47,7 +47,7 @@ package enum MCPRegistrationChange: Sendable {
     case .remove:
       guard let index else { throw GatewayToolError.unknownMCPServer(id) }
       guard !proposed.tools.contains(where: { $0.source == id }),
-        !proposed.profiles.contains(where: { $0.mcpServers.contains(id) })
+        !proposed.profiles.contains(where: { $0.grant.permissions.entries[.mcpServer(id)] != nil })
       else {
         throw ConfigurationError.invalid(
           "MCP registration '\(id)' is referenced by tool mappings or profile grants. Disable it, or review and remove those references before removal."

@@ -67,7 +67,7 @@ import Testing
           }
         })
       #expect(throws: (any Error).self) {
-        _ = try provider.callTool(
+        _ = try provider.callToolAsFixtureOwner(
           .init(
             name: tool,
             arguments: .object([
@@ -75,6 +75,7 @@ import Testing
               "name": .string("com.example.guard"),
             ]), context: .empty))
       }
+      #expect(FileManager.default.fileExists(atPath: outside.path))
       var after = stat()
       try #require(fstat(fd, &after) == 0)
       #expect(after.st_mode == before.st_mode)

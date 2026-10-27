@@ -1,3 +1,5 @@
+import ComputerMCPCore
+import ComputerMCPProcess
 import ComputerMCPTestSupport
 import ComputerMCPToolKit
 import Foundation
@@ -17,7 +19,7 @@ struct ProjectFileMutationTests {
     let target = root.appendingPathComponent("existing")
     let link = temporary.url.appendingPathComponent("linked")
     try Data("original".utf8).write(to: target)
-    let files = try ProjectFileAccess(project: root, launcher: testExecutionLauncher()) {
+    let files = try fixtureProjectFileAccess(project: root) {
       operation, _, phase in
       if operation == "unlinkat", phase == .willMutate {
         let name = try #require(
@@ -45,7 +47,7 @@ struct ProjectFileMutationTests {
     let target = parent.appendingPathComponent("existing")
     try Data("original".utf8).write(to: target)
     let mover = FileGuardDirectoryMover(from: parent, to: outside)
-    let files = try ProjectFileAccess(project: root, launcher: testExecutionLauncher()) {
+    let files = try fixtureProjectFileAccess(project: root) {
       name, url, step in
       let expected = operation == "mkdirat" ? "leaf" : "existing"
       if name == operation, step == phase, url.lastPathComponent == expected { try mover.move() }
@@ -75,7 +77,7 @@ struct ProjectFileMutationTests {
     try Data("original".utf8).write(to: input.appendingPathComponent("source"))
     let outside = temporary.url.appendingPathComponent("outside")
     let mover = FileGuardDirectoryMover(from: destinationMoves ? output : input, to: outside)
-    let files = try ProjectFileAccess(project: root, launcher: testExecutionLauncher()) {
+    let files = try fixtureProjectFileAccess(project: root) {
       operation, _, phase in
       if operation == "renameatx_np", phase == .didMutate { try mover.move() }
     }
@@ -98,7 +100,7 @@ struct ProjectFileMutationTests {
     let parent = root.appendingPathComponent("parent")
     let outside = temporary.url.appendingPathComponent("outside")
     try FileManager.default.createDirectory(at: parent, withIntermediateDirectories: true)
-    let files = try ProjectFileAccess(project: root, launcher: testExecutionLauncher())
+    let files = try fixtureProjectFileAccess(project: root)
     var replacement: String?
     #expect(throws: (any Error).self) {
       try files.writeGenerated(
@@ -171,5 +173,37 @@ final class FileGuardConcurrentAction: @unchecked Sendable {
 
   static func run(_ body: @escaping @Sendable () throws -> Void) throws {
     try FileGuardConcurrentAction(body).wait()
+  }
+}
+
+/// Direct file fixtures own their fixed helper processes and private process home.
+func withFileCommandAdministration<Value>(_ operation: () throws -> Value) throws -> Value {
+  try #require(InvocationExecution.current == nil)
+  let scratch = try ScopedTemporaryDirectory()
+  try FileManager.default.setAttributes(
+    [.posixPermissions: 0o700], ofItemAtPath: scratch.url.path)
+  let administration = ExecutionAdministration(
+    mode: .fullAccess,
+    environment: try .init(fullAccessVariables: [
+      "PATH": systemUtilityPath, "HOME": scratch.url.path, "TMPDIR": scratch.url.path + "/",
+      "XDG_CONFIG_HOME": scratch.url.appendingPathComponent(".config").path,
+      "XDG_CACHE_HOME": scratch.url.appendingPathComponent(".cache").path,
+      "LANG": "C", "LC_ALL": "C", "GIT_CONFIG_NOSYSTEM": "1", "GIT_CONFIG_GLOBAL": "/dev/null",
+      "GIT_TERMINAL_PROMPT": "0",
+    ]))
+  defer { withExtendedLifetime(scratch) {} }
+  return try ExecutionAdministration.$current.withValue(administration, operation: operation)
+}
+
+/// Construction runs fixed Git-layout probes; mutation checks retain their supplied observers.
+func fixtureProjectFileAccess(
+  project: URL,
+  mutationObserver: ((String, URL, ProjectFileAccess.MutationPhase) throws -> Void)? = nil,
+  identityReader: ((Int32) throws -> ProjectFileAccess.CreatedIdentity)? = nil
+) throws -> ProjectFileAccess {
+  try withFileCommandAdministration {
+    try ProjectFileAccess(
+      project: project, launcher: testExecutionLauncher(),
+      mutationObserver: mutationObserver, identityReader: identityReader)
   }
 }

@@ -4,6 +4,7 @@ import Crypto
 import Foundation
 
 package enum PermissionMigrationError: Error, Equatable {
+  case activationRequired
   case invalidCatalog
   case missingManifestProfile(String)
   case ownershipConflict(String, reason: String)
@@ -60,14 +61,16 @@ package struct PermissionMigrationCatalog: Sendable {
   package let tools: [PermissionMigrationTool]
   package let serverIDs: Set<String>
   package let serverPluginIDs: [String: String]
-  package let manifestProfiles: [ProfileGrant]
+  package let manifestProfiles: [LegacyProfileGrant]
+  package let manifestProjects: [ComputerMCPCore.RegisteredProject]
   package let configurationDigest: String
   package let digest: String
 
   package init(
     configurationDigest: String, availableBuiltinIDs: Set<String>,
     dynamicTools: [PermissionMigrationTool] = [], serverIDs: Set<String>,
-    manifestProfiles: [ProfileGrant], serverPluginIDs: [String: String] = [:]
+    manifestProfiles: [LegacyProfileGrant], serverPluginIDs: [String: String] = [:],
+    manifestProjects: [ComputerMCPCore.RegisteredProject] = []
   ) throws {
     let builtins = Self.builtinV1.filter { availableBuiltinIDs.contains($0.id) }
     let tools = (builtins + dynamicTools).sorted {
@@ -102,6 +105,7 @@ package struct PermissionMigrationCatalog: Sendable {
     }
     self.serverPluginIDs = serverPluginIDs
     self.manifestProfiles = manifestProfiles
+    self.manifestProjects = manifestProjects
     self.configurationDigest = configurationDigest
     let encoder = JSONEncoder()
     encoder.outputFormatting = [.sortedKeys]
@@ -109,7 +113,8 @@ package struct PermissionMigrationCatalog: Sendable {
       version: 1, configurationDigest: configurationDigest,
       tools: tools, serverIDs: serverIDs.sorted(), serverPluginIDs: serverPluginIDs,
       manifestProfiles: manifestProfiles.sorted { $0.id.rawValue < $1.id.rawValue }.map(
-        LegacyProfileIdentity.init))
+        LegacyProfileIdentity.init),
+      manifestProjects: manifestProjects.sorted { $0.id < $1.id })
     digest = SHA256.hash(data: try encoder.encode(payload)).map { String(format: "%02x", $0) }
       .joined()
   }
@@ -121,6 +126,7 @@ package struct PermissionMigrationCatalog: Sendable {
     let serverIDs: [String]
     let serverPluginIDs: [String: String]
     let manifestProfiles: [LegacyProfileIdentity]
+    let manifestProjects: [ComputerMCPCore.RegisteredProject]
   }
 }
 
@@ -136,7 +142,7 @@ struct LegacyProfileIdentity: Codable {
   let confirmation: String
   let revision: Int64
 
-  init(_ profile: ProfileGrant) {
+  init(_ profile: LegacyProfileGrant) {
     id = profile.id.rawValue
     capabilities = profile.capabilityIDs.sorted()
     projects = profile.projectIDs.sorted()

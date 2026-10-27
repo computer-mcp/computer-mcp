@@ -18,12 +18,16 @@ struct DescriptorCommandLifetimeTests {
     defer { close(output) }
     let platform = RetryingDescriptorPlatform(startFails: startFails)
     let runner = ManagedCommandRunner(
-      launcher: ExecutionLauncher(platform: platform), policy: .readOnly)
-    #expect(throws: ExecutionEnvironmentError.self) {
-      try runner.runToFile(
-        executable: testExecutable("echo"), arguments: [], workingDirectory: temporary.url,
-        environment: [:], timeoutMilliseconds: 10_000, maxOutputBytes: 1024,
-        outputDescriptor: output)
+      launcher: ExecutionLauncher(platform: platform))
+    try withCommandAdministration(readOnly: true, workingDirectory: temporary.url) {
+      #expect(throws: ExecutionEnvironmentError.self) {
+        try runner.runToFile(
+          executable: testExecutable("echo"), arguments: [], workingDirectory: temporary.url,
+          environment: [:], timeoutMilliseconds: 10_000, maxOutputBytes: 1024,
+          outputDescriptor: output)
+      }
+      let owner = try #require(platform.owner)
+      #expect(FileManager.default.fileExists(atPath: owner.home))
     }
     let owner = try #require(platform.owner)
     #expect(owner.cancellations == 2)

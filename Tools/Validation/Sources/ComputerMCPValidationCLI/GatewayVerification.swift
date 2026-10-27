@@ -35,11 +35,6 @@ struct GatewayProbeVerify: AsyncParsableCommand {
   var json: String
 
   mutating func run() async throws {
-    try await run(localApprovalResolver: nil)
-  }
-
-  // Approval authority is an explicit fixture dependency, never a parsed command-line option.
-  mutating func run(localApprovalResolver: ValidationLocalApprovalResolver?) async throws {
     guard (1...65_535).contains(port) else {
       throw ValidationError("port must be between 1 and 65535.")
     }
@@ -98,7 +93,7 @@ struct GatewayProbeVerify: AsyncParsableCommand {
     do {
       try await host.waitUntilHealthy()
       let session = try await GatewayClientSession.connectHTTP(
-        endpoint: endpoint, localApprovalResolver: localApprovalResolver)
+        endpoint: endpoint)
       do {
         let toolCatalog = try await session.listTools().map(\.validationTool)
         var runner = GatewayVerificationRunner(
@@ -286,8 +281,6 @@ private struct GatewayVerificationRunner {
       "process.spawn",
       "shell.run",
       "git.status",
-      "operations.prepare",
-      "operations.commit",
     ])
     guard requiredTools.isSubset(of: Set(names)) else {
       throw ValidationError("Temporary Gateway core catalog is incomplete.")
@@ -755,7 +748,7 @@ private struct GatewayVerificationRunner {
       arguments: ["process_id": .string(processID)],
       projectID: repositoryProject
     )
-    _ = try await destructiveCall(
+    _ = try await call(
       "process.cancel",
       arguments: ["process_id": .string(processID)],
       projectID: fixtureProject
@@ -921,31 +914,6 @@ private struct GatewayVerificationRunner {
       "create_directories": .bool(true),
     ]
     try validateMutationArguments(tool: "file.write", arguments: writeArguments)
-    let prepared = try payload(
-      await call(
-        "operations.prepare",
-        arguments: [
-          "tool": .string("file.write"),
-          "arguments": .object(writeArguments),
-        ],
-        projectID: fixtureProject
-      )
-    )
-    let ticketID = try requiredString("ticket_id", in: prepared)
-    try await session.resolvePreparedOperation(prepared)
-    denials["operation_ticket_mismatch"] = await expectedFailure(
-      "operations.commit",
-      arguments: [
-        "ticket_id": .string(ticketID),
-        "tool": .string("file.write"),
-        "arguments": .object([
-          "path": .string("Mutation/different.txt"),
-          "content": .string("different"),
-          "create_directories": .bool(true),
-        ]),
-      ],
-      projectID: fixtureProject
-    )
     _ = try await mutationCall(
       "file.write",
       arguments: writeArguments,
@@ -1332,9 +1300,6 @@ private struct GatewayVerificationRunner {
         "The source is absent and the harness removed the owned fixture item from the current user's Trash."
     )
 
-    guard denials["operation_ticket_mismatch"] != "unexpected-success" else {
-      throw ValidationError("Operation ticket argument binding was bypassed.")
-    }
   }
 
   private mutating func exerciseGitMutations() async throws {
@@ -1667,7 +1632,7 @@ private struct GatewayVerificationRunner {
     let definition = try mutationToolDefinition(named: tool)
     let report: GatewayCallReport
     if definition.annotations?.destructiveHint == true {
-      report = try await destructiveCall(
+      report = try await call(
         tool,
         arguments: arguments,
         projectID: projectID
@@ -1681,36 +1646,6 @@ private struct GatewayVerificationRunner {
     }
     invokedMutationTools.insert(tool)
     schemaValidatedMutationTools.insert(tool)
-    return report
-  }
-
-  private mutating func destructiveCall(
-    _ tool: String,
-    arguments: [String: JSONValue],
-    projectID: String
-  ) async throws -> GatewayCallReport {
-    let prepared = try payload(
-      await call(
-        "operations.prepare",
-        arguments: [
-          "tool": .string(tool),
-          "arguments": .object(arguments),
-        ],
-        projectID: projectID
-      )
-    )
-    let ticketID = try requiredString("ticket_id", in: prepared)
-    try await session.resolvePreparedOperation(prepared)
-    let report = try await call(
-      "operations.commit",
-      arguments: [
-        "ticket_id": .string(ticketID),
-        "tool": .string(tool),
-        "arguments": .object(arguments),
-      ],
-      projectID: projectID
-    )
-    completedTools.insert(tool)
     return report
   }
 
@@ -1853,15 +1788,6 @@ private func stableCoreError(_ error: Error) -> String {
   return String(describing: error)
 }
 
-private struct ProductInventoryNames: Decodable {
-  struct Tool: Decodable {
-    let name: String
-  }
-
-  let schemaVersion: Int
-  let tools: [Tool]
-}
-
 private func productInventoryToolNames(
   product: ValidationProductCommand,
   configURL: URL,
@@ -1874,7 +1800,7 @@ private func productInventoryToolNames(
     "--profile", profileID.rawValue,
   ])
   let inventory = try ValidationCanonicalJSONCoding.decoder().decode(
-    ProductInventoryNames.self,
+    ValidationToolInventoryContract.self,
     from: data
   )
   guard inventory.schemaVersion == 1 else {
@@ -1884,7 +1810,7 @@ private func productInventoryToolNames(
       actual: inventory.schemaVersion
     )
   }
-  return inventory.tools.map(\.name).sorted()
+  return inventory.tools.filter(\.isIndependentReadProbe).map(\.name).sorted()
 }
 
 private func defaultBuiltinCapabilities(in manifest: Data) throws -> [String] {
@@ -1951,12 +1877,12 @@ private func writeCoreGatewayManifest(
 
     [[profiles]]
     id = "local-admin"
-    mode = "local-full-access"
-    confirmation_policy = "risk-based"
-    capabilities = ["*"]
-    projects = ["fixture", "repository"]
+    permissions = { machine = "allow", skills = "allow", screen = "allow", desktop-control = "allow", unified-logs = "allow", local-network = "allow" }
+    projects = { fixture = { access = "write", network = "full" }, repository = { access = "write", network = "full" } }
+    mcp_servers = { "*" = "all" }
+    plugins = { "*" = "use" }
     allowed_callers = ["local-app", "local-cli", "local-mcp"]
-    full_shell_enabled = true
+    full_access = true
 
     [skills]
     enabled = true

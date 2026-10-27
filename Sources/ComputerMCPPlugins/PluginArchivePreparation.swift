@@ -1,3 +1,4 @@
+import ComputerMCPCore
 import ComputerMCPPlatform
 import ComputerMCPProcess
 import ComputerMCPSandbox
@@ -111,13 +112,20 @@ package struct PluginArchivePreparation: Sendable {
           if let inheritedLockDescriptor, inheritedLockDescriptor <= STDERR_FILENO {
             throw PluginArchiveError.invalidInput
           }
-          let execution = try await launcher.capture(
-            executable: SandboxPath(workerExecutable.path),
-            arguments: ["_plugin-archive", "--sha256", sha256],
-            directory: SandboxPath(directory.path), environment: environment, mode: .fullAccess,
-            input: input,
-            inheritedDescriptors: inheritedLockDescriptor.map { [$0: $0] } ?? [:],
-            maxOutputBytes: 16_384, maxErrorBytes: 4_096)
+          // The fixed worker owns host staging, independently of a principal's
+          // program context. It joins before staging or the installation lock is released.
+          let administration = ExecutionAdministration(mode: .fullAccess, environment: environment)
+          let execution = try await InvocationExecution.$current.withValue(nil) {
+            try await ExecutionAdministration.$current.withValue(administration) {
+              try await launcher.capture(
+                executable: SandboxPath(workerExecutable.path),
+                arguments: ["_plugin-archive", "--sha256", sha256],
+                directory: SandboxPath(directory.path), environment: environment, mode: .fullAccess,
+                input: input,
+                inheritedDescriptors: inheritedLockDescriptor.map { [$0: $0] } ?? [:],
+                maxOutputBytes: 16_384, maxErrorBytes: 4_096)
+            }
+          }
           try Task.checkCancellation()
           let output = execution.stdout
           if execution.exit != ExecutionExit(status: 0) {

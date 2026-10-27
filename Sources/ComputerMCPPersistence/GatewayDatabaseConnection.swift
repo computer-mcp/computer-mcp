@@ -113,6 +113,19 @@ package final class GatewayDatabaseConnection: @unchecked Sendable {
         sql: "CREATE TABLE permissionRuntimeExecutions (id TEXT PRIMARY KEY, payload BLOB NOT NULL)"
       )
     }
+    migrator.registerMigration("permission-activation") { database in
+      try database.execute(sql: "DROP TABLE operationTickets")
+      try database.alter(table: "permissionMigration") { $0.add(column: "manifestDigest", .text) }
+    }
+    migrator.registerMigration("permission-profile-publication") { database in
+      try database.execute(
+        sql: """
+          CREATE TABLE permissionProfilePublication (
+            id INTEGER PRIMARY KEY CHECK (id = 1),
+            payload BLOB NOT NULL
+          )
+          """)
+    }
     return migrator
   }()
 

@@ -1,7 +1,11 @@
 import ComputerMCPDownstream
 import ComputerMCPMacOS
+import ComputerMCPPermissions
+import ComputerMCPSandbox
 import ComputerMCPTestSupport
+import ComputerMCPToolKit
 import ComputerMCPTransport
+import CryptoKit
 import Darwin
 import Foundation
 import GRDB
@@ -11,6 +15,8 @@ import Testing
 @testable import ComputerMCPConfiguration
 @testable import ComputerMCPCore
 @testable import ComputerMCPGateway
+@testable import ComputerMCPPlatform
+@testable import ComputerMCPPlatformDarwin
 @testable import ComputerMCPPlugins
 @testable import ComputerMCPProcess
 
@@ -21,16 +27,16 @@ import Testing
 @Suite(.nativeIntegration, .timeLimit(.minutes(1)))
 struct MCPHostSessionTests {
   @Test(arguments: [false, true])
-  func manifestProjectHostCallbacksDoNotRequirePersistedRegistration(fileBacked: Bool)
+  func manifestProjectsBecomeDurableBeforeHostCallbacks(fileBacked: Bool)
     async throws
   {
     let fixture = try HostFixture(fileBacked: fileBacked, persistProjects: false)
     defer { fixture.remove() }
-    #expect(try fixture.database.projects().isEmpty)
+    #expect(try Set(fixture.database.projects().map(\.id)) == ["first", "second"])
     let result = try await fixture.call("file.read", ["path": .string("value.txt")])
     #expect(result.objectValue?["isError"] != .bool(true))
     #expect(fixture.payload(result)["content"] == .string("first"))
-    #expect(try fixture.database.projects().isEmpty)
+    #expect(try Set(fixture.database.projects().map(\.id)) == ["first", "second"])
     await fixture.runtime.shutdown()
   }
 
@@ -43,9 +49,10 @@ struct MCPHostSessionTests {
     let path = try #require(fixture.database.fileURL).path
     let writer = try DatabaseQueue(path: path)
     try await writer.write { database in
-      try database.execute(sql: "DELETE FROM profiles WHERE id = ?", arguments: ["chatgpt-operate"])
+      try database.execute(
+        sql: "DELETE FROM permissionProfiles WHERE id = ?", arguments: ["chatgpt-operate"])
     }
-    #expect(try fixture.database.profiles().isEmpty)
+    #expect(try !fixture.database.profiles().contains { $0.id == .chatGPTOperate })
     #expect(throws: (any Error).self) {
       try fixture.runtime.hostToolCatalog(projectID: "first", origin: "plugin")
     }
@@ -98,7 +105,7 @@ struct MCPHostSessionTests {
   }
 
   @Test(arguments: [
-    "alias.callback", "loop.operation", "mcp.tools.call", "policy.probe", "operations.prepare",
+    "alias.callback", "loop.operation", "mcp.tools.call", "policy.probe",
     "nested-project", "selected-owner",
   ])
   func indirectCallsCannotReenterTheOriginOrWidenProject(route: String) async throws {
@@ -114,8 +121,6 @@ struct MCPHostSessionTests {
       arguments = ["server": .string("plugin"), "tool": .string("operation")]
     } else if route == "policy.probe" {
       arguments = ["capability_id": .string("alias.callback"), "arguments": .object([:])]
-    } else if route == "operations.prepare" {
-      arguments = ["tool": .string("alias.callback"), "arguments": .object([:])]
     } else if route == "selected-owner" {
       name = "runtime.owners.call"
       arguments = [
@@ -134,31 +139,30 @@ struct MCPHostSessionTests {
         ]),
       ]
     }
+    let previousAudits = Set(try fixture.database.auditEvents().map(\.id))
     let result = try await fixture.call(name, arguments)
     #expect(result.objectValue?["isError"] == .bool(true))
     if route == "selected-owner" {
       #expect(String(describing: result).contains("policy.host_recursion_denied"))
     }
     #expect(fixture.downstream.invocations == 0)
-    #expect(try fixture.database.auditEvents().count == 1)
+    #expect(
+      try fixture.database.auditEvents().filter { !previousAudits.contains($0.id) }.count == 1)
     await fixture.runtime.shutdown()
   }
 
   @Test
-  func gitDryRunThroughHostCallbackPreservesTheIndexWithoutApproval() async throws {
+  func gitDryRunThroughHostCallbackPreservesTheIndex() async throws {
     let fixture = try HostFixture(git: true)
     defer { fixture.remove() }
-    func git(_ arguments: [String]) throws -> String {
-      let result = try ProcessCommandRunner(launcher: testExecutionLauncher()).run(
-        executable: "/usr/bin/git", arguments: arguments, workingDirectory: fixture.first,
-        environment: ["GIT_TERMINAL_PROMPT": "0", "LC_ALL": "C"],
-        timeoutMilliseconds: 5_000, maxOutputBytes: 16_384)
-      try #require(result.exitCode == 0, "\(result.stderr)")
-      return result.stdout
+    func git(_ arguments: [String]) async throws -> String {
+      try await BlockingOperationExecutor(label: "host-callback-git-setup").perform {
+        try fixture.ownerGit(arguments)
+      }
     }
     do {
-      _ = try git(["init", "--quiet"])
-      _ = try git(["add", "value.txt"])
+      _ = try await git(["init", "--quiet"])
+      _ = try await git(["add", "value.txt"])
       let index = try Data(contentsOf: fixture.first.appendingPathComponent(".git/index"))
       try "changed".write(
         to: fixture.first.appendingPathComponent("value.txt"), atomically: true, encoding: .utf8)
@@ -166,8 +170,7 @@ struct MCPHostSessionTests {
         "git.add", ["paths": .array([.string("value.txt")]), "dry_run": .bool(true)])
       #expect(result.objectValue?["isError"] != .bool(true), "\(result)")
       #expect(try Data(contentsOf: fixture.first.appendingPathComponent(".git/index")) == index)
-      #expect(try git(["show", ":value.txt"]) == "first")
-      #expect(try fixture.database.operationApprovals().isEmpty)
+      #expect(try await git(["show", ":value.txt"]) == "first")
       await fixture.runtime.shutdown()
     } catch {
       await fixture.runtime.shutdown()
@@ -176,40 +179,42 @@ struct MCPHostSessionTests {
   }
 
   @Test
-  func destructiveCallsKeepSingleUseTicketsAndLinkedAuditReceipts() async throws {
+  func destructiveCallsPreserveOriginalAuditAttribution() async throws {
     let fixture = try HostFixture()
     defer { fixture.remove() }
-    let target: JSONValue = .object([
-      "path": .string("value.txt"), "search": .string("first"), "replacement": .string("updated"),
-      "expected_replacements": .number(1), "dry_run": .bool(false),
-    ])
-    let direct = try await fixture.call("file.replace_text", target.objectValue!)
-    #expect(direct.objectValue?["isError"] == .bool(true))
-    let prepared = try await fixture.call(
-      "operations.prepare", ["tool": .string("file.replace_text"), "arguments": target])
-    let ticket = try #require(fixture.payload(prepared)["ticket_id"]?.stringValue)
-    #expect(try fixture.database.operationTicket(id: ticket)?.state == .pendingApproval)
-    try fixture.database.resolveOperationApproval(id: ticket, approved: true, resolver: .localCLI)
-    let arguments: [String: JSONValue] = [
-      "tool": .string("file.replace_text"), "arguments": target, "ticket_id": .string(ticket),
-    ]
-    let committed = try await fixture.call("operations.commit", arguments)
-    #expect(committed.objectValue?["isError"] == .bool(false))
-    #expect(
-      try String(contentsOf: fixture.first.appendingPathComponent("value.txt"), encoding: .utf8)
-        == "updated")
-    let repeated = try await fixture.call("operations.commit", arguments)
-    #expect(repeated.objectValue?["isError"] == .bool(true))
-    let record = try #require(try fixture.database.operationTicket(id: ticket))
-    #expect(record.state == .succeeded)
-    let audit = try #require(
-      try fixture.database.auditEvents().first {
-        $0.capabilityID == "file.replace_text" && $0.ticketID == ticket && $0.decision == .allowed
-      })
-    #expect(audit.invocationID == record.invocationID)
-    #expect(audit.parentRequestID == record.parentRequestID)
-    #expect(audit.socketConnectionID == "original-socket")
-    await fixture.runtime.shutdown()
+    let session = try fixture.session()
+    let client = MCP.Client(name: "plugin-fixture", version: "1")
+    let transport = try MCPInheritedSocketTransport(takingOwnershipOf: session.childHandle)
+    do {
+      _ = try await client.connect(transport: transport)
+      let request: RequestContext<MCP.CallTool.Result> = try await client.callTool(
+        name: "file.replace_text",
+        arguments: [
+          "path": .string("value.txt"), "search": .string("first"),
+          "replacement": .string("updated"),
+          "expected_replacements": .int(1), "dry_run": .bool(false),
+        ])
+      let result = try await request.value
+      #expect(result.isError == false)
+      #expect(
+        try String(contentsOf: fixture.first.appendingPathComponent("value.txt"), encoding: .utf8)
+          == "updated")
+      let audit = try #require(
+        try fixture.database.auditEvents().first {
+          $0.capabilityID == "file.replace_text" && $0.decision == .allowed
+        })
+      #expect(audit.socketConnectionID == "original-socket")
+      #expect(audit.requestID.hasPrefix("host:"))
+      await client.disconnect()
+      await session.close()
+      await fixture.runtime.shutdown()
+    } catch {
+      await transport.disconnect()
+      await client.disconnect()
+      await session.close()
+      await fixture.runtime.shutdown()
+      throw error
+    }
   }
 
   @Test(arguments: [
@@ -220,20 +225,27 @@ struct MCPHostSessionTests {
     defer { fixture.remove() }
     if reason == "grant-revoked" {
       var grant = fixture.grant
-      grant.projectIDs.removeAll()
+      try grant.permissions.set(.denied, for: .project("first"))
       try fixture.database.saveProfile(grant)
     } else if reason == "project-removed" {
       try fixture.database.deleteProject(id: "first")
     } else if reason == "project-changed" {
+      let replacement = fixture.root.appendingPathComponent("replacement")
+      try FileManager.default.createDirectory(at: replacement, withIntermediateDirectories: false)
       try fixture.database.saveProject(
-        .init(
-          id: "first", displayName: "Changed",
-          rootPath: fixture.root.appendingPathComponent("second").path))
+        .init(id: "first", displayName: "Changed", rootPath: replacement.path))
     } else if reason == "shutdown" {
       await fixture.runtime.shutdown()
     }
     let name = reason == "observe" ? "file.replace_text" : "file.read"
-    let result = try await fixture.call(name, ["path": .string("value.txt")])
+    var arguments: [String: JSONValue] = ["path": .string("value.txt")]
+    if reason == "observe" {
+      arguments.merge([
+        "search": .string("first"), "replacement": .string("changed"),
+        "expected_replacements": .integer(1), "dry_run": .bool(false),
+      ]) { _, value in value }
+    }
+    let result = try await fixture.call(name, arguments)
     #expect(result.objectValue?["isError"] == .bool(true))
     #expect(
       try String(contentsOf: fixture.first.appendingPathComponent("value.txt"), encoding: .utf8)
@@ -242,7 +254,7 @@ struct MCPHostSessionTests {
   }
 
   @Test
-  func revokedProjectGrantRemovesTheCallbackCatalog() async throws {
+  func revokedProjectGrantDeniesCallbacksWhileKnownToolsRemainRequestable() async throws {
     let fixture = try HostFixture()
     defer { fixture.remove() }
     #expect(
@@ -250,9 +262,14 @@ struct MCPHostSessionTests {
         $0.name == "file.read"
       })
     var grant = fixture.grant
-    grant.projectIDs.removeAll()
+    try grant.permissions.set(.denied, for: .project("first"))
     try fixture.database.saveProfile(grant)
-    #expect(try fixture.runtime.hostToolCatalog(projectID: "first", origin: "plugin").isEmpty)
+    #expect(
+      try fixture.runtime.hostToolCatalog(projectID: "first", origin: "plugin").contains {
+        $0.name == "file.read"
+      })
+    let denied = try await fixture.call("file.read", ["path": .string("value.txt")])
+    #expect(denied.objectValue?["isError"] == .bool(true))
     await fixture.runtime.shutdown()
   }
 
@@ -297,18 +314,30 @@ struct MCPHostSessionTests {
     let transport = try MCPInheritedSocketTransport(takingOwnershipOf: pair.0)
     let source =
       "import os,socket; s=socket.socket(fileno=3); s.sendall(b'owned-child\\n'); s.close(); print('completed',flush=True)"
-    let process = try ManagedLineProcess(
-      launcher: testExecutionLauncher(),
-      configuration: .init(
-        executable: "/usr/bin/python3", arguments: ["-c", source], environment: [:],
-        workingDirectory: FileManager.default.temporaryDirectory, inheritedDescriptors: [3: pair.1])
-    )
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: false)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let script = root.appendingPathComponent("inherited.py")
+    try source.write(to: script, atomically: true, encoding: .utf8)
+    let command = MCPServerConfig(
+      id: "inherited-descriptor", transport: .stdio, command: "/usr/bin/python3",
+      args: [script.path])
+    let authority = try ProxyExecutionFixture(server: command, root: root)
+    defer { try? authority.close() }
+    let execution = try #require(try authority.context.executionAuthority)
+    let process = try InvocationExecution.$current.withValue(execution) {
+      try ManagedLineProcess(
+        launcher: authority.launcher,
+        configuration: .init(
+          executable: "/usr/bin/python3", arguments: [script.path], environment: [:],
+          workingDirectory: root, inheritedDescriptors: [3: pair.1]))
+    }
     try pair.1.close()
     do {
       try await transport.connect()
       var received = await transport.receive().makeAsyncIterator()
       #expect(try await received.next() == Data("owned-child".utf8))
-      // EOF would not arrive here if the supervisor/watchdog retained the child endpoint.
+      // EOF requires every host copy of the child endpoint to be closed.
       #expect(try await received.next() == nil)
       var lines = process.inboundLines.makeAsyncIterator()
       #expect(try await lines.next() == "completed")
@@ -332,13 +361,17 @@ private final class HostFixture: Sendable {
   let downstream = HostCatalogClient()
   let context: ExecutionContext
   let registration: MCPServerConfig
+  private let gitBackend: HostCallbackGitBackend?
 
   init(
     observe: Bool = false, fileBacked: Bool = false, persistProjects: Bool = true,
     git: Bool = false
   ) throws {
-    root = FileManager.default.temporaryDirectory.appendingPathComponent(
+    let directory = FileManager.default.temporaryDirectory.appendingPathComponent(
       "host-fixture-" + UUID().uuidString)
+    try FileManager.default.createDirectory(
+      at: directory, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700])
+    root = try ProjectPathResolver.canonicalProject(directory)
     first = root.appendingPathComponent("first")
     let second = root.appendingPathComponent("second")
     for directory in [first, second] {
@@ -348,7 +381,7 @@ private final class HostFixture: Sendable {
     }
     database =
       try fileBacked
-      ? GatewayDatabase(path: root.appendingPathComponent("gateway.sqlite").path)
+      ? fixturePermissionDatabase(path: root.appendingPathComponent("gateway.sqlite").path)
       : GatewayDatabase(inMemory: ())
     let projects = [first, second].map {
       RegisteredProject(
@@ -357,20 +390,40 @@ private final class HostFixture: Sendable {
     if persistProjects {
       for project in projects { try database.saveProject(project) }
     }
+    var platform: PlatformServices
+    let gitCommand: CLICommandConfig
+    if git {
+      let backend = try HostCallbackGitBackend(
+        directory: first, scratch: root.appendingPathComponent("git-scratch"))
+      gitBackend = backend
+      platform = MacOSPlatform.services(launcher: ExecutionLauncher(platform: backend))
+      gitCommand = .init(id: "git", executable: backend.executable.value)
+    } else {
+      gitBackend = nil
+      let nonGit = try fixtureNonGitProject(root: first)
+      platform = nonGit.platform
+      gitCommand = nonGit.git
+    }
+    platform.permissionPolicyReader = TestManagedPolicyReader()
     let profile: GatewayProfileID = observe ? .chatGPTObserve : .chatGPTOperate
-    let capabilities =
-      [
-        "project.list", "project.describe", "policy.probe", "operations.prepare",
-        "operations.commit", "file.read", "file.replace_text", "mcp.tools.call", "alias.callback",
-        "loop.operation", "runtime.owners.call",
-      ] + (git ? ["git.add"] : [])
     grant = ProfileGrant(
-      id: profile, capabilityIDs: Set(capabilities), projectIDs: ["first", "second"],
-      allowedCallers: [.secureTunnel], mode: observe ? .readOnly : .projectOperations)
+      id: profile,
+      permissions: fixturePermissions([
+        .project("first"): .granted(observe ? .read : .write),
+        .project("second"): .granted(observe ? .read : .write),
+        .mcpServer("plugin"): .granted(.all),
+      ]), fullAccess: !observe, allowedCallers: [.secureTunnel])
     try database.saveProfile(grant)
-    context = ExecutionContext(
-      caller: .secureTunnel, profileID: profile,
-      transportTrace: .init(transport: "gateway_socket", socketConnectionID: "original-socket"))
+    let trace = GatewayTransportTrace(
+      transport: "gateway_socket", socketConnectionID: "original-socket")
+    context =
+      observe
+      ? ExecutionContext(
+        caller: .secureTunnel, profileID: profile, transportTrace: trace,
+        trustedPrincipalID: "original-principal")
+      : try fixtureConsentedContext(
+        database: database, grant: grant, caller: .secureTunnel,
+        principalID: "original-principal", transportTrace: trace, platform: platform)
     registration = MCPServerConfig(
       id: "plugin", transport: .stdio, command: "/bin/cat", exposure: .reexport,
       prefix: "loop", allowedTools: ["operation"], toolRisks: ["operation": .readOnly],
@@ -382,18 +435,33 @@ private final class HostFixture: Sendable {
           .init(id: $0.id, displayName: $0.displayName, path: $0.rootPath)
         },
         profiles: [
-          .init(
-            id: profile, capabilities: capabilities, projects: ["first", "second"],
-            allowedCallers: [.secureTunnel], mode: observe ? .readOnly : .projectOperations)
+          .init(grant: grant)
         ],
-        cli: .init(commands: git ? [.init(id: "git", executable: "/usr/bin/git")] : []),
+        cli: .init(commands: [gitCommand]),
         mcp: .init(servers: [registration]),
         tools: [.init(name: "alias.callback", adapter: .mcp, source: "plugin", tool: "operation")],
         builtin: .init(enabled: ["file.read", "file.replace_text"] + (git ? ["git.add"] : []))),
       context: context, database: database,
       registeredProjects: persistProjects ? projects : nil,
-      platform: MacOSPlatform.services(launcher: testExecutionLauncher()),
+      platform: platform,
       mcpClient: downstream)
+  }
+
+  func ownerGit(_ arguments: [String]) throws -> String {
+    let backend = try #require(gitBackend)
+    try #require(
+      [["init", "--quiet"], ["add", "value.txt"], ["show", ":value.txt"]].contains(arguments))
+    let administration = ExecutionAdministration(
+      mode: .fullAccess,
+      environment: try ExecutionEnvironment(fullAccessVariables: backend.environment))
+    let result = try ExecutionAdministration.$current.withValue(administration) {
+      try ProcessCommandRunner(launcher: testExecutionLauncher()).run(
+        executable: backend.executable.value, arguments: HostGitConfiguration.arguments + arguments,
+        workingDirectory: first, environment: backend.environment,
+        timeoutMilliseconds: 5_000, maxOutputBytes: 16_384)
+    }
+    try #require(result.exitCode == 0 && !result.timedOut, "\(result.stderr)")
+    return result.stdout
   }
 
   func session() throws -> MCPHostSession {
@@ -416,6 +484,13 @@ private final class HostFixture: Sendable {
 }
 
 private final class HostCatalogClient: DownstreamMCPClient, @unchecked Sendable {
+  private static let tools = [
+    MCPTool(name: "operation", description: "Fixture", inputSchema: .object([:]))
+  ]
+  func cachedTools(server: MCPServerConfig, context: InvocationContext) -> [MCPTool]? {
+    Self.tools
+  }
+
   private let lock = NSLock()
   private var count = 0
   var invocations: Int { lock.withLock { count } }
@@ -423,7 +498,7 @@ private final class HostCatalogClient: DownstreamMCPClient, @unchecked Sendable 
     workingDirectory: URL, environment: [String: String], hostContext: (any MCPHostEnvironment)?
   ) -> any DownstreamMCPClient { self }
   func listTools(server: MCPServerConfig, context: InvocationContext) throws -> [MCPTool] {
-    [.init(name: "operation", description: "Fixture", inputSchema: .object([:]))]
+    Self.tools
   }
   func callTool(
     server: MCPServerConfig, name: String, arguments: JSONValue, context: InvocationContext
@@ -448,4 +523,122 @@ private final class HostCatalogClient: DownstreamMCPClient, @unchecked Sendable 
   ) throws
     -> JSONValue
   { .null }
+}
+
+/// The callback owns a real Git process whose writes are confined to fixture scratch.
+private struct HostCallbackGitBackend: ExecutionPlatform {
+  let executable: SandboxPath
+  let directory: SandboxPath
+  let scratch: SandboxPath
+  private let executableDigest: Data
+  private let base = DarwinExecutionPlatform(
+    bootstrapExecutable: (try? nativeGatewayTestExecutable())?
+      .deletingLastPathComponent().appendingPathComponent("computer-mcp-execution-bootstrap"))
+
+  init(directory: URL, scratch: URL) throws {
+    let candidates = [
+      "/Applications/Xcode.app/Contents/Developer/usr/bin/git",
+      "/Library/Developer/CommandLineTools/usr/bin/git",
+    ]
+    let path = try #require(candidates.first { FileManager.default.isExecutableFile(atPath: $0) })
+    executable = try SandboxPath(
+      ProjectPathResolver.canonicalProject(URL(fileURLWithPath: path)).path)
+    executableDigest = Data(
+      SHA256.hash(data: try Data(contentsOf: URL(fileURLWithPath: executable.value))))
+    self.directory = try SandboxPath(ProjectPathResolver.canonicalProject(directory).path)
+    try FileManager.default.createDirectory(at: scratch, withIntermediateDirectories: false)
+    self.scratch = try SandboxPath(ProjectPathResolver.canonicalProject(scratch).path)
+    for name in ["home", "cache"] {
+      try FileManager.default.createDirectory(
+        at: URL(fileURLWithPath: self.scratch.value).appendingPathComponent(name),
+        withIntermediateDirectories: false)
+    }
+  }
+
+  var environment: [String: String] {
+    HostGitConfiguration.environment(
+      home: URL(fileURLWithPath: scratch.value).appendingPathComponent("home")
+    )
+    .merging(["PATH": "/usr/bin:/bin"]) { _, value in value }
+  }
+  var supportsRecovery: Bool { base.supportsRecovery }
+  var bootSessionID: String? { base.bootSessionID }
+  var hostSystemReadPaths: [SandboxPath] { base.hostSystemReadPaths }
+  func supportsDurableOwnership(sandboxed: Bool) -> Bool { true }
+
+  func start(
+    _ command: ExecutionCommand, sandbox: SandboxConfiguration?, method: ExecutionLaunchMethod,
+    input: Int32, output: Int32, error: Int32,
+    bindOwnership: @Sendable (any ExecutionOwnership) -> Void
+  ) async throws -> any ExecutionOwnership {
+    let fixedNames = HostGitConfiguration.arguments.enumerated().compactMap { index, argument in
+      index > 0 && HostGitConfiguration.arguments[index - 1] == "-c"
+        ? String(argument.prefix { $0 != "=" }).lowercased() : nil
+    }.joined(separator: "\0")
+    let fixedOverrides = try HostGitConfiguration.overrides(for: fixedNames)
+    let queries = [
+      HostGitConfiguration.arguments + [
+        "config", "--null", "--name-only", "--list", "--no-includes",
+      ],
+      HostGitConfiguration.arguments + fixedOverrides + [
+        "--literal-pathspecs", "add", "--dry-run", "--", "value.txt",
+      ],
+    ]
+    let actualDirectory = try SandboxPath(
+      ProjectPathResolver.canonicalProject(URL(fileURLWithPath: command.directory.value)).path)
+    guard try PreparedExecutionContext.current() != nil,
+      command.executable == executable, actualDirectory == directory,
+      command.inheritedDescriptors.isEmpty, queries.contains(command.arguments),
+      Data(SHA256.hash(data: try Data(contentsOf: URL(fileURLWithPath: executable.value))))
+        == executableDigest
+    else {
+      throw ExecutionEnvironmentError.unavailable(
+        "The Git fixture accepts only its reviewed callback commands")
+    }
+    let scratchURL = URL(fileURLWithPath: scratch.value)
+    let readableRoots =
+      try base.hostSystemReadPaths + [
+        directory,
+        SandboxPath(
+          URL(fileURLWithPath: executable.value).deletingLastPathComponent()
+            .deletingLastPathComponent().path),
+      ]
+    let contentRoots = readableRoots + [scratch]
+    var ancestors = Set<SandboxPath>()
+    // dyld opens the filesystem root before resolving its shared cache.
+    for root in contentRoots {
+      var ancestor = URL(fileURLWithPath: root.value).deletingLastPathComponent()
+      while true {
+        let canonical = try SandboxPath(ProjectPathResolver.canonicalProject(ancestor).path)
+        if !contentRoots.contains(where: { $0.contains(canonical) }) {
+          ancestors.insert(canonical)
+        }
+        if ancestor.path == "/" { break }
+        ancestor.deleteLastPathComponent()
+      }
+    }
+    let profile = try SandboxConfiguration(
+      readOnly: true, worktree: directory, temporaryDirectory: scratch,
+      homeDirectory: SandboxPath(scratchURL.appendingPathComponent("home").path),
+      cacheDirectory: SandboxPath(scratchURL.appendingPathComponent("cache").path),
+      readableRoots: readableRoots,
+      listableAncestors: ancestors.sorted { $0.value < $1.value })
+    let fixedEnvironment = try ExecutionEnvironment(
+      searchPath: [SandboxPath("/usr/bin"), SandboxPath("/bin")],
+      home: profile.homeDirectory, temporary: profile.temporaryDirectory,
+      cache: profile.cacheDirectory, locale: "C"
+    ).variables(sandbox: profile).merging(environment) { _, value in value }
+    let controlled = ExecutionCommand(
+      executable: executable, arguments: command.arguments, directory: directory,
+      environment: fixedEnvironment, directoryDescriptor: command.directoryDescriptor)
+    return try await base.start(
+      controlled, sandbox: profile, method: method,
+      input: input, output: output, error: error, bindOwnership: bindOwnership)
+  }
+
+  func recover(_ state: ExecutionRecoveryState) async throws -> any ExecutionOwnership {
+    try await base.recover(state)
+  }
+  func interrupt(_ members: [ExecutionMember]) async throws { try await base.interrupt(members) }
+  func releaseRecovery(_ state: ExecutionRecoveryState) throws { try base.releaseRecovery(state) }
 }

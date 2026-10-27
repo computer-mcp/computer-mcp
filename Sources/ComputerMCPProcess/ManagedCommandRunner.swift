@@ -5,17 +5,15 @@ import Foundation
 /// Synchronous callers must use their blocking executor, not a UI or cooperative executor.
 package struct ManagedCommandRunner: CommandRunning {
   private let execution: CLIProcessExecution
-  private let policy: HostExecutionPolicy
   private let launcher: ExecutionLauncher
 
-  package init(
-    launcher: ExecutionLauncher = ExecutionLauncher(), policy: HostExecutionPolicy = .fullAccess,
-    hostVariables: [String: String] = [:]
-  ) {
+  package init(launcher: ExecutionLauncher = ExecutionLauncher()) {
     self.launcher = launcher
-    self.policy = policy
-    execution = CLIProcessExecution(
-      launcher: launcher, policy: policy, hostVariables: hostVariables, inheritsEnvironment: false)
+    execution = CLIProcessExecution(launcher: launcher, inheritsEnvironment: false)
+  }
+
+  package init(launcher: ExecutionLauncher, policy _: HostExecutionPolicy) {
+    self.init(launcher: launcher)
   }
 
   package func run(
@@ -37,10 +35,12 @@ package struct ManagedCommandRunner: CommandRunning {
     executable: String, arguments: [String], workingDirectory: URL?,
     environment: [String: String], timeoutMilliseconds: Int, maxOutputBytes: Int
   ) throws -> CommandResult {
-    try ManagedCommandRunner(launcher: launcher, policy: policy, hostVariables: environment).run(
-      executable: executable, arguments: arguments, workingDirectory: workingDirectory,
-      environment: environment, timeoutMilliseconds: timeoutMilliseconds,
-      maxOutputBytes: maxOutputBytes)
+    try HostCommandEnvironment.$current.withValue(environment) {
+      try ManagedCommandRunner(launcher: launcher).run(
+        executable: executable, arguments: arguments, workingDirectory: workingDirectory,
+        environment: environment, timeoutMilliseconds: timeoutMilliseconds,
+        maxOutputBytes: maxOutputBytes)
+    }
   }
 
   package func runToFile(
@@ -50,12 +50,14 @@ package struct ManagedCommandRunner: CommandRunning {
   ) throws -> CommandResult {
     let input = try FileHandle(forReadingFrom: URL(fileURLWithPath: "/dev/null"))
     defer { try? input.close() }
-    return try DescriptorCommandExecution.run(
-      launcher: launcher, policy: policy, executable: executable, arguments: arguments,
-      workingDirectory: workingDirectory, directoryDescriptor: nil,
-      inputDescriptor: input.fileDescriptor, outputDescriptor: outputDescriptor,
-      environment: environment, timeoutMilliseconds: timeoutMilliseconds,
-      maxOutputBytes: maxOutputBytes)
+    return try HostCommandEnvironment.$current.withValue(environment) {
+      try DescriptorCommandExecution.run(
+        launcher: launcher, executable: executable, arguments: arguments,
+        workingDirectory: workingDirectory, directoryDescriptor: nil,
+        inputDescriptor: input.fileDescriptor, outputDescriptor: outputDescriptor,
+        environment: environment, timeoutMilliseconds: timeoutMilliseconds,
+        maxOutputBytes: maxOutputBytes)
+    }
   }
 
   package func runInDirectory(
@@ -63,12 +65,14 @@ package struct ManagedCommandRunner: CommandRunning {
     inputDescriptor: Int32, outputDescriptor: Int32, environment: [String: String],
     timeoutMilliseconds: Int, maxOutputBytes: Int
   ) throws -> CommandResult {
-    try DescriptorCommandExecution.run(
-      launcher: launcher, policy: policy, executable: executable, arguments: arguments,
-      workingDirectory: nil, directoryDescriptor: directoryDescriptor,
-      inputDescriptor: inputDescriptor, outputDescriptor: outputDescriptor,
-      environment: environment, timeoutMilliseconds: timeoutMilliseconds,
-      maxOutputBytes: maxOutputBytes)
+    try HostCommandEnvironment.$current.withValue(environment) {
+      try DescriptorCommandExecution.run(
+        launcher: launcher, executable: executable, arguments: arguments,
+        workingDirectory: nil, directoryDescriptor: directoryDescriptor,
+        inputDescriptor: inputDescriptor, outputDescriptor: outputDescriptor,
+        environment: environment, timeoutMilliseconds: timeoutMilliseconds,
+        maxOutputBytes: maxOutputBytes)
+    }
   }
 
   package func runData(

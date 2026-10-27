@@ -13,12 +13,14 @@ import Testing
 @Suite(.timeLimit(.minutes(1)))
 struct GatewayHTTPLifecycleTests {
   @Test
-  func fullShellPreconditionPrecedesSessionLookup() async throws {
+  func consentLookupIsIndependentOfTheShellFacility() async throws {
     let runtime = GatewayHTTPRuntime(
       configuration: .init(), registry: HTTPLifecycleRegistry(pauseDiscovery: false),
       host: "127.0.0.1", port: 0, publicBaseURL: nil)
-    await #expect(throws: GatewayControlError.fullShellManifestDisabled) {
-      try await runtime.approveControlSession(id: "missing", expectedRevision: 0)
+    await #expect(throws: ConfigurationError.self) {
+      try await runtime.approveControlSession(
+        id: "missing", lifetime: .thisSession,
+        expectedRevision: 0, expectedTrustRevision: 0)
     }
   }
 

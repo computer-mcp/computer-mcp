@@ -1,5 +1,8 @@
 import ComputerMCPDownstream
 import ComputerMCPMacOS
+import ComputerMCPPermissions
+import ComputerMCPProcess
+import ComputerMCPSandbox
 import ComputerMCPTestSupport
 import ComputerMCPToolKit
 import ComputerMCPTransport
@@ -373,48 +376,95 @@ struct GatewayToolCatalogTests {
 
   enum CatalogTransport: CaseIterable, Sendable { case memory, http, socket }
 
-  @Test
-  func standaloneStdioGatewayRefreshesAndPreservesMultimodalResults() async throws {
+  @Test(arguments: [false, true])
+  func requestableDownstreamWritesRemainListedAndCallsRequireAuthority(denied: Bool) async throws {
     let fixture = try DynamicMCPProcessFixture()
     defer { fixture.cleanup() }
+    let profile = ProfileGrantConfig(
+      id: .localAdmin,
+      permissions: fixturePermissions([
+        .project("fixture"): .granted(.read),
+        .mcpServer("native"): denied ? .denied : .granted(.read),
+      ]), allowedCallers: [.localMCP])
+    var platform = fixtureHostedPlatform()
+    platform.permissionPolicyReader = TestManagedPolicyReader()
+    let database = try GatewayDatabase(inMemory: ())
+    try database.saveProject(
+      .init(id: "fixture", displayName: "Fixture", rootPath: fixture.root.path))
+    try database.saveProfile(profile.grant)
+    let runtime = try await GatewayRuntime.make(
+      configuration: .init(
+        runtime: .init(caller: .localMCP, profileID: .localAdmin), profiles: [profile],
+        mcp: .init(servers: [fixture.server]), projectDirectory: fixture.root),
+      context: .init(
+        caller: .localMCP, profileID: .localAdmin, trustedPrincipalID: "catalog-requestability"),
+      database: database, registeredProjects: try database.projects(),
+      platform: platform, mcpClient: MutableCatalogClient(),
+      bundledPlugins: .init(packages: [], issues: []))
+    do {
+      let tool = try #require(
+        try runtime.listTools(context: .empty).first { $0.name == "native.sample" })
+      #expect(tool.meta?.objectValue?["computer_mcp"]?.objectValue?["requirements"] != nil)
+      let result = try await runtime.callToolForMCPAsync(
+        name: tool.name, arguments: .object([:]), context: .empty)
+      #expect(result.objectValue?["isError"] == .bool(true))
+      #expect(
+        result.objectValue?["structuredContent"]?.objectValue?["error"]?.objectValue?["code"]
+          == .string(denied ? "permission.denied" : "permission.required"))
+      await runtime.shutdown()
+    } catch {
+      await runtime.shutdown()
+      throw error
+    }
+  }
+
+  @Test(arguments: [false, true])
+  func standaloneStdioCatalogRequiresAdmittedDownstreamDiscovery(granted: Bool) async throws {
+    let fixture = try DynamicMCPProcessFixture()
+    defer { fixture.cleanup() }
+    var permissions = fixturePermissions([.project("fixture"): .granted(.read)])
+    if granted { try permissions.set(.granted(.all), for: .mcpServer("native")) }
     let configuration = GatewayConfiguration(
       runtime: .init(caller: .localMCP, profileID: .localAdmin),
       projects: [.init(id: "fixture", path: fixture.root.path)],
-      profiles: [Self.catalogProfile],
+      profiles: [.init(id: .localAdmin, permissions: permissions, allowedCallers: [.localMCP])],
       mcp: .init(servers: [fixture.server]), projectDirectory: fixture.root)
     let manifest = fixture.root.appendingPathComponent("gateway.toml")
     try Data(configuration.exportedTOML().utf8).write(to: manifest)
-    let executable = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
-      .deletingLastPathComponent().deletingLastPathComponent()
-      .appendingPathComponent(".build/debug/computer-mcp")
+    let executable = try nativeGatewayTestExecutable()
+    let environment = [
+      "PATH": "/usr/bin:/bin", "HOME": fixture.root.path, "TMPDIR": fixture.root.path,
+    ]
+    let administration = ExecutionAdministration(
+      mode: .fullAccess, environment: try ExecutionEnvironment(fullAccessVariables: environment))
     let transport = try MCPChildProcessTransport(
       launcher: testExecutionLauncher(),
       server: .init(
         id: "gateway", transport: .stdio, command: executable.path,
         args: ["serve", "stdio", "--config", manifest.path]),
-      workingDirectory: fixture.root, environment: [:])
+      workingDirectory: fixture.root, environment: environment)
     let client = MCP.Client(name: "stdio-catalog", version: "1")
-    let changes = GatewayToolChangeBroadcaster()
-    let events = changes.stream()
-    await client.onNotification(ToolListChangedNotification.self) { _ in changes.send() }
     do {
-      let initialized = try await client.connect(transport: transport)
+      let initialized = try await ExecutionAdministration.$current.withValue(administration) {
+        try await client.connect(transport: transport)
+      }
       #expect(initialized.capabilities.tools?.listChanged == true)
-      #expect(try await client.listTools().tools.contains { $0.name == "native.sample" })
-      let advance: RequestContext<CallTool.Result> = try await client.callTool(
-        name: "native.advance", arguments: [:])
-      try #require(try await advance.value.isError != true)
-      #expect(try await Self.nextEvent(events))
       let tools = try await client.listTools().tools
-      #expect(tools.contains { $0.name == "native.added" })
       #expect(!tools.contains { $0.name == "native.sample" })
-      let call: RequestContext<CallTool.Result> = try await client.callTool(
-        name: "native.added", arguments: [:])
-      let result = try await call.value
-      #expect(result.isError == false)
+      let forwarded = try #require(tools.first { $0.name == "mcp.tools.call" })
+      #expect(forwarded.annotations.readOnlyHint == false)
       #expect(
-        try JSONValue.encoded(result.content)
-          == JSONDecoder().decode(JSONValue.self, from: Data(catalogMultimodalJSON.utf8)))
+        try JSONValue.encoded(forwarded).objectValue?["_meta"]?.objectValue?["computer_mcp"]?
+          .objectValue?["requirements"] != nil)
+      #expect(!String(describing: tools).contains(fixture.root.path))
+      let discovery: RequestContext<CallTool.Result> = try await client.callTool(
+        name: "mcp.tools.list", arguments: ["server": .string("native")])
+      let refused = try await discovery.value
+      #expect(refused.isError == true)
+      #expect(
+        refused.structuredContent?.objectValue?["error"]?.objectValue?["code"]
+          == .string(granted ? "execution.unavailable" : "permission.required"))
+      #expect(try await client.listTools().tools.allSatisfy { !$0.name.hasPrefix("native.") })
       await client.disconnect()
       #expect(await transport.shutdownConfirmed())
     } catch {
@@ -433,20 +483,12 @@ struct GatewayToolCatalogTests {
     var configuration = GatewayConfiguration(
       runtime: .init(caller: .localMCP, profileID: .localAdmin),
       profiles: [Self.catalogProfile],
-      mcp: .init(servers: [fixture.server]))
-    let nativeConfiguration = configuration
-    let nativeRuntime = try await BlockingOperationExecutor(label: "catalog-test-native").perform {
-      try GatewayRuntime(
-        configuration: nativeConfiguration,
-        registeredProjects: [
-          .init(id: "fixture", displayName: "Fixture", rootPath: fixture.root.path)
-        ], platform: MacOSPlatform.services(launcher: testExecutionLauncher()))
-    }
+      mcp: .init(servers: [fixture.server]), projectDirectory: fixture.root)
+    let nativeRuntime = try await fixture.runtime(configuration: configuration)
     let origin =
-      downstreamHTTP
-      ? GatewayHTTPRuntime(
-        configuration: configuration, registry: nativeRuntime,
-        host: "127.0.0.1", port: 0, publicBaseURL: nil) : nil
+      try downstreamHTTP
+      ? CatalogHTTPGatewayFixture(
+        configuration: configuration, registry: nativeRuntime, serverID: "native") : nil
     let runtime: GatewayRuntime
     do {
       if let origin {
@@ -457,16 +499,12 @@ struct GatewayToolCatalogTests {
             id: "bridge", transport: .streamableHTTP, url: "http://127.0.0.1:\(port)/mcp",
             exposure: .reexport, prefix: "",
             allowedTools: ["native.advance", "native.sample", "native.added"],
-            startupTimeoutMs: 5000, requestTimeoutMs: 5000)
+            startupTimeoutMs: 5000, requestTimeoutMs: 5000,
+            authentication: .init(
+              endpoint: "http://127.0.0.1:\(port)/mcp", keychainAccount: "catalog-origin"))
         ]
-        let proxyConfiguration = configuration
-        runtime = try await BlockingOperationExecutor(label: "catalog-test-proxy").perform {
-          try GatewayRuntime(
-            configuration: proxyConfiguration,
-            registeredProjects: [
-              .init(id: "fixture", displayName: "Fixture", rootPath: fixture.root.path)
-            ], platform: MacOSPlatform.services(launcher: testExecutionLauncher()))
-        }
+        runtime = try await fixture.runtime(
+          configuration: configuration, secretStore: origin.secrets)
       } else {
         runtime = nativeRuntime
       }
@@ -489,11 +527,11 @@ struct GatewayToolCatalogTests {
     let eventsB = noticesB.stream()
     var logger = Logger(label: "catalog-http-test")
     logger.logLevel = .debug
+    let serverID = downstreamHTTP ? "bridge" : "native"
     let http =
-      upstream == .http
-      ? GatewayHTTPRuntime(
-        configuration: configuration, registry: runtime,
-        host: "127.0.0.1", port: 0, publicBaseURL: nil, logger: logger) : nil
+      try upstream == .http
+      ? CatalogHTTPGatewayFixture(
+        configuration: configuration, registry: runtime, serverID: serverID, logger: logger) : nil
     let socketRoot = URL(fileURLWithPath: "/tmp/catalog-\(UUID().uuidString.prefix(8))")
     defer { try? FileManager.default.removeItem(at: socketRoot) }
     let socketConfiguration = GatewaySocketConfiguration(
@@ -508,6 +546,7 @@ struct GatewayToolCatalogTests {
     await clientA.onNotification(ToolListChangedNotification.self) { _ in noticesA.send() }
     await clientB.onNotification(ToolListChangedNotification.self) { _ in noticesB.send() }
     do {
+      if http == nil { try await Self.discover(runtime, serverID: serverID) }
       let clientTransportA: any Transport
       let clientTransportB: any Transport
       if let http {
@@ -518,9 +557,11 @@ struct GatewayToolCatalogTests {
         sessionConfiguration.timeoutIntervalForRequest = 5
         sessionConfiguration.timeoutIntervalForResource = 20
         clientTransportA = MCPHTTPClientTransport(
-          endpoint: endpoint, configuration: sessionConfiguration, streaming: true, logger: logger)
+          endpoint: endpoint, configuration: sessionConfiguration, streaming: true,
+          bearerToken: { http.token }, logger: logger)
         clientTransportB = MCPHTTPClientTransport(
-          endpoint: endpoint, configuration: sessionConfiguration, streaming: true, logger: logger)
+          endpoint: endpoint, configuration: sessionConfiguration, streaming: true,
+          bearerToken: { http.token }, logger: logger)
       } else if let socket {
         try await socket.start()
         clientTransportA = GatewaySocketTransport(configuration: socketConfiguration)
@@ -542,11 +583,20 @@ struct GatewayToolCatalogTests {
       try #require(advanced.isError != true, "Downstream advance failed: \(advanced)")
       #expect(try await Self.nextEvent(eventsA))
       #expect(try await Self.nextEvent(eventsB))
+      try await origin?.discover()
+      if let http {
+        try await http.discover()
+      } else {
+        try await Self.discover(runtime, serverID: serverID)
+      }
       for client in [clientA, clientB] {
         let tools = try await client.listTools().tools
-        #expect(tools.contains { $0.name == "native.added" })
+        try #require(
+          tools.contains { $0.name == "native.added" },
+          "Catalog after admitted refresh: \(tools.map(\.name))")
         #expect(!tools.contains { $0.name == "native.sample" })
         #expect(tools.first { $0.name == "native.advance" }?.description == "revision 2")
+        #expect(!String(describing: tools).contains(fixture.root.path))
         let advance = try #require(tools.first { $0.name == "native.advance" })
         #expect(
           JSONValue(sdkValue: advance.inputSchema).objectValue?["properties"]?.objectValue?[
@@ -554,7 +604,7 @@ struct GatewayToolCatalogTests {
         let call: RequestContext<CallTool.Result> = try await client.callTool(
           name: "native.added", arguments: [:])
         let result = try await call.value
-        #expect(result.isError == false)
+        try #require(result.isError == false, "Downstream added returned: \(result)")
         let expectedContent = try JSONDecoder().decode(
           JSONValue.self, from: Data(catalogMultimodalJSON.utf8))
         #expect(try JSONValue.encoded(result.content) == expectedContent)
@@ -566,7 +616,9 @@ struct GatewayToolCatalogTests {
           name: "native.added", arguments: ["fail": .bool(true)])
         let errorResult = try await failure.value
         #expect(errorResult.isError == true)
-        #expect(try JSONValue.encoded(errorResult.content) == expectedContent)
+        #expect(
+          try JSONValue.encoded(errorResult.content) == expectedContent,
+          "Downstream error result: \(errorResult)")
         #expect(
           errorResult.structuredContent.map(JSONValue.init(sdkValue:))?.objectValue?["revision"]
             == .number(2))
@@ -599,9 +651,21 @@ struct GatewayToolCatalogTests {
   private static var catalogProfile: ProfileGrantConfig {
     .init(
       id: .localAdmin,
-      capabilities: ["native.advance", "native.sample", "native.added"],
-      projects: ["fixture"], allowedCallers: [.localMCP],
-      mode: .projectOperations, confirmationPolicy: .never)
+      permissions: fixturePermissions([
+        .project("fixture"): .granted(.write), .mcpServer("native"): .granted(.all),
+        .mcpServer("bridge"): .granted(.all),
+      ]), fullAccess: true,
+      allowedCallers: [.localMCP])
+  }
+
+  private static func discover(_ runtime: GatewayRuntime, serverID: String) async throws {
+    let result = try await runtime.callToolAsync(
+      name: "mcp.tools.list",
+      arguments: .object(["project_id": .string("fixture"), "server": .string(serverID)]),
+      context: .empty)
+    try #require(
+      result.objectValue?["isError"] != .bool(true), "Catalog discovery failed: \(result)")
+    try await runtime.refreshTools(context: .empty)
   }
 
   private static func nextEvent(_ stream: AsyncStream<Void>) async throws -> Bool {
@@ -620,7 +684,86 @@ struct GatewayToolCatalogTests {
   }
 }
 
-private enum CatalogTestError: Error { case timeout }
+private enum CatalogTestError: Error { case timeout, invalidPrincipal }
+
+private final class CatalogHTTPGatewayFixture: Sendable {
+  let token: String
+  let secrets: CatalogFixtureSecrets
+  private let listener: GatewayHTTPRuntime
+  private let runtime: GatewayRuntime
+  private let catalogSession: GatewayControlSession
+  private let serverID: String
+
+  init(
+    configuration: GatewayConfiguration, registry: GatewayRuntime, serverID: String,
+    logger: Logger? = nil
+  ) throws {
+    let token = UUID().uuidString
+    self.token = token
+    let credential = HTTPAccessTokenCredential(token: token)
+    let principal = try #require(credential.principalID(for: token))
+    let bound = try registry.authenticatedSession(
+      principalID: principal, transportTrace: .init(transport: "http"), requiresControlSession: true
+    )
+    let catalogSession = try bound.makeControlSession()
+    // One saved trust identity authorizes the shared downstream connection. Each
+    // HTTP connection restores that identity without replacing standing consent.
+    _ = try catalogSession.approveFullAccess(
+      lifetime: .alwaysAllowClient, expectedRevision: catalogSession.revision)
+    self.runtime = bound
+    self.catalogSession = catalogSession
+    self.serverID = serverID
+    secrets = CatalogFixtureSecrets(values: ["catalog-origin": token])
+    listener = GatewayHTTPRuntime(
+      configuration: configuration,
+      source: .managed(
+        .init(
+          makeSession: { incomingPrincipal in
+            guard incomingPrincipal == principal else { throw CatalogTestError.invalidPrincipal }
+            let session = try bound.makeControlSession()
+            try #require(session.snapshot.fullAccessConsent?.lifetime == .alwaysAllowClient)
+            return GatewayControlSessionServing(base: bound, session: session)
+          }, closeSession: { _ in },
+          shutdown: {
+            catalogSession.end()
+            await bound.shutdown()
+          })),
+      host: "127.0.0.1", port: 0, publicBaseURL: nil, accessCredential: credential, logger: logger)
+  }
+
+  func discover() async throws {
+    let result = try await runtime.callToolAsync(
+      name: "mcp.tools.list",
+      arguments: .object(["project_id": .string("fixture"), "server": .string(serverID)]),
+      context: .init(session: catalogSession))
+    try #require(
+      result.objectValue?["isError"] != .bool(true), "Catalog discovery failed: \(result)")
+    try await runtime.refreshTools(context: .init(session: catalogSession))
+  }
+
+  func startListening() async throws {
+    try await discover()
+    try await listener.startListening()
+  }
+  func boundPort() async -> Int? { await listener.boundPort() }
+  func activeSessionCount() async -> Int { await listener.activeSessionCount() }
+  func stop() async { await listener.stop() }
+}
+
+private actor CatalogFixtureSecrets: SecretStore {
+  var values: [String: String]
+  init(values: [String: String]) { self.values = values }
+  func setAsynchronously(_ secret: String, for reference: SecretReference) {
+    values[reference.account] = secret
+  }
+  func valueAsynchronously(
+    for reference: SecretReference, authenticationUI: KeychainAuthenticationUI
+  ) -> String? { values[reference.account] }
+  func containsAsynchronously(
+    _ reference: SecretReference, authenticationUI: KeychainAuthenticationUI
+  ) -> Bool { values[reference.account] != nil }
+  func deleteAsynchronously(_ reference: SecretReference) { values[reference.account] = nil }
+}
 
 private actor CatalogCleanupGate {
   private var continuation: CheckedContinuation<Void, Never>?
@@ -685,6 +828,10 @@ private struct CatalogProviderFixture: GatewayToolProvider {
 }
 
 private final class MutableCatalogClient: DownstreamMCPClient, Sendable {
+  func cachedTools(server: MCPServerConfig, context: InvocationContext) -> [MCPTool]? {
+    try? listTools(server: server, context: context)
+  }
+
   func makeScopedClient(
     workingDirectory: URL, environment: [String: String], hostContext: (any MCPHostEnvironment)?
   )
@@ -726,15 +873,11 @@ private final class MutableCatalogClient: DownstreamMCPClient, Sendable {
   { .null }
 }
 
-private struct DynamicMCPProcessFixture {
+private struct DynamicMCPProcessFixture: Sendable {
   let root: URL
   let server: MCPServerConfig
 
-  init() throws {
-    root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
-    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
-    let script = root.appendingPathComponent("dynamic-mcp.py")
-    try """
+  private static let program = """
     import json
     import sys
     mixed = json.loads(r'''\(catalogMultimodalJSON)''')
@@ -760,10 +903,43 @@ private struct DynamicMCPProcessFixture {
         else:
             response["error"] = {"code": -32601, "message": "not found"}
         print(json.dumps(response), flush=True)
-    """.write(to: script, atomically: true, encoding: .utf8)
+    """
+
+  init() throws {
+    root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+      .resolvingSymlinksInPath()
+    try FileManager.default.createDirectory(
+      at: root, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+    let script = root.appendingPathComponent("dynamic-mcp.py")
+    try Self.program.write(to: script, atomically: true, encoding: .utf8)
     server = .init(
       id: "native", transport: .stdio, command: "/usr/bin/python3", args: [script.path],
       exposure: .reexport, prefix: "native", allowAnyTool: true, requestTimeoutMs: 5_000)
+  }
+
+  func runtime(configuration: GatewayConfiguration, secretStore: (any SecretStore)? = nil)
+    async throws -> GatewayRuntime
+  {
+    try await BlockingOperationExecutor(label: "catalog-test-runtime").perform {
+      let database = try GatewayDatabase(inMemory: ())
+      let project = ComputerMCPCore.RegisteredProject(
+        id: "fixture", displayName: "Fixture", rootPath: root.path)
+      try database.saveProject(project)
+      let grant = configuration.profileGrant(for: .localAdmin)
+      try database.saveProfile(grant)
+      let launcher = fixtureProtocolExecutionLauncher(
+        root: root, scripts: [Self.program], arguments: [[]])
+      var platform = MacOSPlatform.services(launcher: launcher)
+      platform.permissionPolicyReader = TestManagedPolicyReader()
+      let context = try fixtureConsentedContext(
+        database: database, grant: grant, caller: .localMCP,
+        principalID: "catalog-fixture", projectID: project.id, platform: platform)
+      return try GatewayRuntime(
+        configuration: configuration, context: context, database: database,
+        registeredProjects: [project], platform: platform,
+        mcpClient: MCPProxyClient(launcher: launcher, secretStore: secretStore),
+        bundledPlugins: .init(packages: [], issues: []))
+    }
   }
 
   func cleanup() { try? FileManager.default.removeItem(at: root) }

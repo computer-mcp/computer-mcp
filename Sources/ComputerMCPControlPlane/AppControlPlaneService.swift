@@ -1,6 +1,7 @@
 import ComputerMCPConfiguration
 import ComputerMCPCore
 import ComputerMCPGateway
+import ComputerMCPPermissions
 import ComputerMCPPersistence
 import ComputerMCPPlatform
 import ComputerMCPPlugins
@@ -60,6 +61,8 @@ package actor AppControlPlaneService {
   package nonisolated let gatewayExecutablePath: String
 
   let database: GatewayDatabase
+  package nonisolated let permissionControl: PermissionControlService?
+  private var permissionAdministrationEpoch: UUID?
   let manifestStore: AtomicManifestStore
   package nonisolated let defaultManifest: String
   let secretStore: any SecretStore
@@ -96,6 +99,7 @@ package actor AppControlPlaneService {
   package init(
     directories: AppControlPlaneServiceDirectories,
     database: GatewayDatabase,
+    permissionControl: PermissionControlService? = nil,
     manifestStore: AtomicManifestStore,
     defaultManifest: String,
     secretStore: any SecretStore,
@@ -115,6 +119,7 @@ package actor AppControlPlaneService {
     self.directories = directories
     self.gatewayExecutablePath = gatewayExecutablePath
     self.database = database
+    self.permissionControl = permissionControl
     self.manifestStore = manifestStore
     self.defaultManifest = defaultManifest
     self.secretStore = secretStore
@@ -123,7 +128,7 @@ package actor AppControlPlaneService {
       providerDiscovery
       ?? AppControlPlaneProviderDiscovery(
         executableSearchDirectories: platform.executableSearchDirectories,
-        commandRunner: ManagedCommandRunner(launcher: platform.launcher, policy: .readOnly))
+        commandRunner: ManagedCommandRunner(launcher: platform.launcher))
     self.launchAtLoginController = launchAtLoginController
     self.computerUsePermissionReader = computerUsePermissionReader
     self.platform = platform
@@ -249,23 +254,13 @@ package actor AppControlPlaneService {
         path: project.rootPath
       )
     }.sorted { $0.id < $1.id }
-    configuration.profiles = grants.map { grant in
-      ProfileGrantConfig(
-        id: grant.id,
-        capabilities: grant.capabilityIDs.sorted(),
-        projects: grant.projectIDs.sorted(),
-        allowedCallers: grant.allowedCallers.sorted { $0.rawValue < $1.rawValue },
-        fullShellEnabled: grant.fullShellEnabled,
-        mcpServers: grant.mcpServerIDs.sorted(),
-        mode: grant.mode,
-        confirmationPolicy: grant.confirmationPolicy
-      )
-    }.sorted { $0.id.rawValue < $1.id.rawValue }
+    configuration.profiles = grants.map(ProfileGrantConfig.init(grant:))
+      .sorted { $0.id.rawValue < $1.id.rawValue }
     try configuration.validate()
     return configuration
   }
 
-  package func projects() throws -> [RegisteredProject] {
+  package func projects() throws -> [ComputerMCPCore.RegisteredProject] {
     try database.projects()
   }
 
@@ -277,7 +272,7 @@ package actor AppControlPlaneService {
   package func registerProject(
     at url: URL,
     displayName: String? = nil
-  ) async throws -> RegisteredProject {
+  ) async throws -> ComputerMCPCore.RegisteredProject {
     await manifestStore.publicationLock.acquire()
     defer { manifestStore.publicationLock.release() }
     try Task.checkCancellation()
@@ -308,19 +303,9 @@ package actor AppControlPlaneService {
     defer { manifestStore.publicationLock.release() }
     try Task.checkCancellation()
     let expected = try database.configurationState()
-    let plan = try database.projectDeduplicationPlan()
-    let resolved = try await resolveLegacyProjectProfiles(
-      expected, projectIDs: Set(plan.groups.flatMap(\.duplicateProjectIDs)))
-    try Task.checkCancellation()
-    let commit = {
-      try self.database.applyProjectDeduplication(
-        expectedPlanDigest: expectedPlanDigest, allowMetadataConflicts: allowMetadataConflicts,
-        expectedConfiguration: expected, resolvedProfiles: resolved.profiles)
-    }
-    if let configuration = resolved.configuration {
-      return try manifestStore.withCurrentConfiguration(configuration, publication: commit)
-    }
-    return try commit()
+    return try database.applyProjectDeduplication(
+      expectedPlanDigest: expectedPlanDigest, allowMetadataConflicts: allowMetadataConflicts,
+      expectedConfiguration: expected)
   }
 
   package func removeProject(id: String) async throws {
@@ -332,37 +317,7 @@ package actor AppControlPlaneService {
     guard expected.projects.contains(where: { $0.id == canonicalID }) else {
       throw AppControlPlaneServiceError.unknownProject(id)
     }
-    let removedIDs = Set(
-      expected.projectAliases.filter { $0.value == canonicalID }.map(\.key) + [canonicalID])
-    let resolved = try await resolveLegacyProjectProfiles(expected, projectIDs: removedIDs)
-    try Task.checkCancellation()
-    let commit = {
-      try self.database.removeProject(
-        id: canonicalID, expectedConfiguration: expected, resolvedProfiles: resolved.profiles)
-    }
-    if let configuration = resolved.configuration {
-      try manifestStore.withCurrentConfiguration(configuration, publication: commit)
-    } else {
-      try commit()
-    }
-  }
-
-  private func resolveLegacyProjectProfiles(
-    _ expected: GatewayDatabase.ConfigurationState, projectIDs: Set<String>,
-    includeWildcard: Bool = false
-  ) async throws -> (profiles: [ProfileGrant], configuration: GatewayConfiguration?) {
-    guard
-      expected.profiles.contains(where: {
-        $0.authorizationRevision == 0
-          && (!$0.projectIDs.isDisjoint(with: projectIDs)
-            || (includeWildcard && $0.projectIDs.contains("*")))
-      })
-    else { return ([], nil) }
-    let inputs = try gatewayInputs()
-    guard inputs.persisted == expected else { throw GatewayDatabaseError.configurationChanged }
-    let profiles = try await profileGrants()
-    try requireCurrentGatewayInputs(inputs)
-    return (profiles, inputs.configuration)
+    try database.removeProject(id: canonicalID, expectedConfiguration: expected)
   }
 
   func applyProjectChange(
@@ -380,14 +335,11 @@ package actor AppControlPlaneService {
     try Task.checkCancellation()
     let inputs = try gatewayInputs()
     let mutation: ProjectConfigurationMutation
-    let affectedProjectIDs: Set<String>
     var requestedDisplayName: String?
-    var includeWildcard = false
     switch change {
     case .register(let url, let displayName):
       let project = try platform.projectGrants.registerFolder(at: url, displayName: displayName)
       mutation = .register(project)
-      affectedProjectIDs = []
       if displayName?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false {
         requestedDisplayName = project.displayName
       }
@@ -413,21 +365,12 @@ package actor AppControlPlaneService {
       repaired.createdAt = original.createdAt
       if displayName == nil { repaired.displayName = original.displayName }
       mutation = .repair(repaired, root: identity)
-      affectedProjectIDs = Set(
-        inputs.persisted.projectAliases.filter { $0.value == canonicalID }.map(\.key) + [
-          canonicalID
-        ])
-      includeWildcard = true
     case .remove(let id):
       let canonicalID = inputs.persisted.projectAliases[id] ?? id
       guard inputs.projects.contains(where: { $0.id == canonicalID }) else {
         throw AppControlPlaneServiceError.unknownProject(id)
       }
       mutation = .remove(canonicalID)
-      affectedProjectIDs = Set(
-        inputs.persisted.projectAliases.filter { $0.value == canonicalID }.map(\.key) + [
-          canonicalID
-        ])
     case .deduplicate(let digest, let allowMetadataConflicts):
       mutation = .deduplicate(
         expectedPlanDigest: digest, allowMetadataConflicts: allowMetadataConflicts)
@@ -435,13 +378,10 @@ package actor AppControlPlaneService {
       guard plan.planDigest == digest else {
         throw ProjectDeduplicationError.planChanged(expected: digest, actual: plan.planDigest)
       }
-      affectedProjectIDs = Set(plan.groups.flatMap(\.duplicateProjectIDs))
     }
-    let resolved = try await resolveLegacyProjectProfiles(
-      inputs.persisted, projectIDs: affectedProjectIDs, includeWildcard: includeWildcard)
     try requireCurrentGatewayInputs(inputs)
     let prepared = try database.prepareProjectChange(
-      mutation, expected: inputs.persisted, resolvedProfiles: resolved.profiles)
+      mutation, expected: inputs.persisted)
     if case .registered(let project, false) = prepared.result,
       let requestedDisplayName, project.displayName != requestedDisplayName
     {
@@ -464,95 +404,53 @@ package actor AppControlPlaneService {
   }
 
   package func profileGrants() async throws -> [ProfileGrant] {
-    let inputs = try gatewayInputs()
-    var grants = Dictionary(
-      uniqueKeysWithValues: try await baseProfileGrants(inputs: inputs).map { ($0.id, $0) })
-    for persisted in inputs.profiles {
-      guard let configured = grants[persisted.id] else { continue }
-      var effective = configured.applyingPersistedRuntimeState(persisted)
-      if persisted.authorizationRevision == 0, effective.capabilityIDs.contains("*") {
-        effective.projectIDs.formUnion(inputs.projects.map(\.id))
-      }
-      grants[persisted.id] = effective
-    }
-    try requireCurrentGatewayInputs(inputs)
-    return grants.values.sorted { $0.id.rawValue < $1.id.rawValue }
+    try requirePermissionControl().view().profiles.sorted { $0.id.rawValue < $1.id.rawValue }
   }
 
   func baseProfileGrants(inputs: GatewayInputs) async throws -> [ProfileGrant] {
-    let configuration = inputs.configuration
-    let configuredProfileIDs = Set(configuration.profiles.map(\.id))
-    let profileIDs = Array(
-      Set(GatewayProfileID.builtIns + configuration.profiles.map(\.id))
-    ).sorted { $0.rawValue < $1.rawValue }
-    var grants = Dictionary(
-      uniqueKeysWithValues: profileIDs.map {
-        var grant = configuration.profileGrant(for: $0)
-        grant.authorizationRevision = 0
-        return ($0, grant)
-      }
-    )
-    for (profileID, caller) in [
-      (GatewayProfileID.chatGPTObserve, GatewayCallerKind.secureTunnel),
-      (GatewayProfileID.cloudflareObserve, GatewayCallerKind.cloudflareTunnel),
-    ] where !configuredProfileIDs.contains(profileID) {
-      let gateway = try await makeGateway(
-        inputs: inputs, caller: caller, profileID: profileID, persistentState: false)
-      let tools: [MCPTool]
-      do {
-        // Profile administration inventories the host catalog without a caller invocation.
-        tools = try gateway.listTools(context: .empty)
-      } catch {
-        await gateway.shutdown()
-        throw error
-      }
-      await gateway.shutdown()
-      try requireCurrentGatewayInputs(inputs)
-      grants[profileID] = ProfileGrant(
-        id: profileID,
-        capabilityIDs: Set(tools.map(\.name)),
-        projectIDs: Set(inputs.projects.map(\.id)),
-        allowedCallers: [caller],
-        mode: .readOnly,
-        authorizationRevision: 0
-      )
-    }
     try requireCurrentGatewayInputs(inputs)
-    return profileIDs.compactMap { grants[$0] }
+    return try await profileGrants()
+  }
+
+  func requirePermissionControl() throws -> PermissionControlService {
+    guard let permissionControl else {
+      throw AppControlPlaneServiceError.permissionServiceUnavailable
+    }
+    return permissionControl
   }
 
   @discardableResult
-  package func setProjectEnabled(
-    _ enabled: Bool,
-    projectID: String,
-    profileID: GatewayProfileID
+  package func setProjectAccess(
+    _ access: ProjectAccess, projectID: String, profileID: GatewayProfileID,
+    expectedProfileRevision: Int64, expectedPermissionRevision: UInt64
   ) async throws -> ProfileGrant {
-    let inputs = try gatewayInputs()
-    guard try database.projects().contains(where: { $0.id == projectID }) else {
-      throw AppControlPlaneServiceError.unknownProject(projectID)
-    }
-    let grants = try await profileGrants()
     await manifestStore.publicationLock.acquire()
     defer { manifestStore.publicationLock.release() }
     try Task.checkCancellation()
-    try requireCurrentGatewayInputs(inputs)
     let configuration = try manifestStore.activeConfiguration()
-    guard var grant = grants.first(where: { $0.id == profileID }) else {
+    guard try database.projects().contains(where: { $0.id == projectID }) else {
+      throw AppControlPlaneServiceError.unknownProject(projectID)
+    }
+    let service = try requirePermissionControl()
+    let view = try service.view()
+    guard var grant = view.profiles.first(where: { $0.id == profileID }) else {
       throw AppControlPlaneServiceError.unknownGatewayProfile(profileID.rawValue)
     }
-    if enabled {
-      grant.projectIDs.insert(projectID)
+    guard grant.authorizationRevision == expectedProfileRevision,
+      view.revision == expectedPermissionRevision
+    else { throw GatewayPermissionError.revisionConflict }
+    if let state = access.permissionState {
+      try grant.permissions.set(state, for: .project(projectID))
     } else {
-      if grant.projectIDs.remove("*") != nil {
-        grant.projectIDs.formUnion(try database.projects().map(\.id))
-      }
-      grant.projectIDs.remove(projectID)
+      grant.permissions.removeEntry(for: .project(projectID))
     }
-    try grant.validate()
     try manifestStore.withCurrentConfiguration(configuration) {
-      try database.saveProfile(grant, expectedRevision: grant.authorizationRevision)
+      try requireCurrentPermissionOwnerRouter()
+      try service.updateProfile(
+        grant, expectedProfileRevision: expectedProfileRevision,
+        expectedRevision: expectedPermissionRevision)
     }
-    return try database.profiles().first { $0.id == profileID } ?? grant
+    return try service.view().profiles.first(where: { $0.id == profileID }) ?? grant
   }
 
   package func activeGatewayProfile() throws -> GatewayProfileID {
@@ -611,118 +509,106 @@ package actor AppControlPlaneService {
   }
 
   @discardableResult
-  package func setFullShellEnabled(
-    _ enabled: Bool,
-    profileID: GatewayProfileID
-  ) async throws -> ProfileGrant {
-    let inputs = try gatewayInputs()
-    if enabled {
-      guard try manifestStore.activeConfiguration().policy.shellEnabled else {
-        throw AppControlPlaneServiceError.fullShellManifestDisabled
-      }
-    }
-    let grants = try await profileGrants()
-    await manifestStore.publicationLock.acquire()
-    defer { manifestStore.publicationLock.release() }
-    try Task.checkCancellation()
-    try requireCurrentGatewayInputs(inputs)
-    let configuration = try manifestStore.activeConfiguration()
-    if enabled && !configuration.policy.shellEnabled {
-      throw AppControlPlaneServiceError.fullShellManifestDisabled
-    }
-    guard var grant = grants.first(where: { $0.id == profileID }) else {
-      throw AppControlPlaneServiceError.unknownGatewayProfile(profileID.rawValue)
-    }
-    guard !enabled || grant.supportsFullShell else {
-      throw GatewayPolicyConfigurationError.fullShellRequiresFullAccess
-    }
-    grant.fullShellEnabled = enabled
-    if enabled {
-      grant.capabilityIDs.formUnion(ProfileGrant.fullShellCapabilities)
-    }
-    try grant.validate()
-    try manifestStore.withCurrentConfiguration(configuration) {
-      try database.saveProfile(grant, expectedRevision: grant.authorizationRevision)
-    }
-    return try database.profiles().first { $0.id == profileID } ?? grant
-  }
-
-  @discardableResult
   package func updateProfilePermissions(
-    profileID: GatewayProfileID,
-    mode: GatewayPermissionMode? = nil,
-    confirmationPolicy: GatewayConfirmationPolicy? = nil,
-    fullShellEnabled: Bool? = nil,
-    capabilityIDs: Set<String>? = nil,
-    projectIDs: Set<String>? = nil,
-    mcpServerIDs: Set<String>? = nil,
-    allowedCallers: Set<GatewayCallerKind>? = nil,
-    expectedRevision: Int64? = nil,
+    _ grant: ProfileGrant, expectedRevision: UInt64,
     reviewedOptions: ProfilePermissionOptions? = nil
   ) async throws -> ProfileGrant {
-    let inputs = try gatewayInputs()
-    guard var grant = try await profileGrants().first(where: { $0.id == profileID }) else {
-      throw AppControlPlaneServiceError.unknownGatewayProfile(profileID.rawValue)
-    }
     await manifestStore.publicationLock.acquire()
     defer { manifestStore.publicationLock.release() }
     try Task.checkCancellation()
-    try requireCurrentGatewayInputs(inputs)
     if let reviewedOptions {
       try requireCurrentGatewayInputs(reviewedOptions.inputs)
-      guard reviewedOptions.grant == grant else {
-        throw AppControlPlaneServiceError.gatewayInputsChanged
-      }
+      guard reviewedOptions.grant.id == grant.id,
+        reviewedOptions.grant.authorizationRevision == grant.authorizationRevision,
+        reviewedOptions.permissionRevision == expectedRevision
+      else { throw AppControlPlaneServiceError.gatewayInputsChanged }
     }
-    let revision = expectedRevision ?? grant.authorizationRevision
-    if let mode {
-      grant.mode = mode
-      if mode != .localFullAccess, fullShellEnabled == nil { grant.fullShellEnabled = false }
-    }
-    if let confirmationPolicy { grant.confirmationPolicy = confirmationPolicy }
-    if let fullShellEnabled { grant.fullShellEnabled = fullShellEnabled }
-    if let capabilityIDs { grant.capabilityIDs = capabilityIDs }
-    if let projectIDs { grant.projectIDs = projectIDs }
-    if let mcpServerIDs { grant.mcpServerIDs = mcpServerIDs }
-    if let allowedCallers { grant.allowedCallers = allowedCallers }
+    let service = try requirePermissionControl()
     let configuration = try manifestStore.activeConfiguration()
-    if grant.fullShellEnabled && !configuration.policy.shellEnabled {
-      throw AppControlPlaneServiceError.fullShellManifestDisabled
+    try manifestStore.withCurrentConfiguration(configuration) {
+      try requireCurrentPermissionOwnerRouter()
+      try service.updateProfile(
+        grant, expectedProfileRevision: grant.authorizationRevision,
+        expectedRevision: expectedRevision)
     }
-    let knownProjectIDs = Set(try database.projects().map(\.id))
-    if let unknown = grant.projectIDs.subtracting(knownProjectIDs).subtracting(["*"]).sorted()
-      .first
-    {
-      throw AppControlPlaneServiceError.unknownProject(unknown)
+    guard let saved = try service.view().profiles.first(where: { $0.id == grant.id }) else {
+      throw AppControlPlaneServiceError.unknownGatewayProfile(grant.id.rawValue)
     }
-    let pluginState = try database.pluginStoreSnapshot()
-      .includingBundledDefaults(bundledPlugins.packages.map(\.manifest))
-    let composition = try GatewayPluginComposition(
-      configuration: configuration,
-      plugins: PluginHost.resolve(
-        pluginState, bundled: bundledPlugins, applications: platform.applications
-      ).plugins)
-    try ProfileGrantConfig(
-      id: grant.id, capabilities: grant.capabilityIDs.sorted(),
-      projects: grant.projectIDs.sorted(), allowedCallers: Array(grant.allowedCallers),
-      fullShellEnabled: grant.fullShellEnabled, mcpServers: grant.mcpServerIDs.sorted(),
-      mode: grant.mode, confirmationPolicy: grant.confirmationPolicy
-    ).validate(
-      knownProjectIDs: knownProjectIDs,
-      knownMCPServerIDs: Set(composition.runtimeConfiguration.mcp.servers.map(\.id)))
-    if let reviewedOptions {
-      try manifestStore.withCurrentConfiguration(configuration) {
-        guard try database.configurationState() == reviewedOptions.inputs.persisted else {
-          throw AppControlPlaneServiceError.gatewayInputsChanged
+    return saved
+  }
+
+  func approveFullAccess(
+    session: GatewayControlSession, lifetime: GatewayFullAccessLifetime,
+    expectedRevision: Int64, expectedTrustRevision: Int64,
+    approver: GatewayCallerKind
+  ) throws -> GatewayControlSessionSnapshot {
+    try manifestStore.withCurrentConfiguration(manifestStore.activeConfiguration()) {
+      try session.approveFullAccess(
+        lifetime: lifetime, expectedRevision: expectedRevision,
+        expectedTrustRevision: expectedTrustRevision, approver: approver)
+    }
+  }
+
+  /// The actor cannot process stop/restart between this check and the synchronous owner transaction.
+  private func requireCurrentPermissionOwnerRouter() throws {
+    try Task.checkCancellation()
+    guard let expected = PermissionOwnerAuditScope.administrationEpoch else { return }
+    guard permissionAdministrationEpoch == expected else { throw GatewaySocketError.notConnected }
+  }
+
+  func startPermissionAdministration(epoch: UUID) throws {
+    guard permissionAdministrationEpoch == nil else {
+      throw GatewaySocketError.invalidConfiguration("Permission administration is already running.")
+    }
+    permissionAdministrationEpoch = epoch
+  }
+
+  func stopPermissionAdministration(epoch: UUID) {
+    if permissionAdministrationEpoch == epoch { permissionAdministrationEpoch = nil }
+  }
+
+  func callPermissionOwnerTool(
+    name: String, arguments: [String: JSONValue], administrationEpoch: UUID
+  ) throws -> JSONValue {
+    try Task.checkCancellation()
+    guard permissionAdministrationEpoch == administrationEpoch else {
+      throw GatewaySocketError.notConnected
+    }
+    return try PermissionOwnerControl.call(
+      name: name, arguments: arguments, service: requirePermissionControl())
+  }
+
+  package func permissionRequests() throws -> GatewayPermissionView {
+    try requirePermissionControl().view()
+  }
+
+  package func confirmPermissionAuthority(
+    epoch: UUID, expectedRevision: UInt64, profiles: [ProfileGrant]
+  ) throws {
+    let service = try requirePermissionControl()
+    let view = try service.view()
+    guard view.epoch == epoch, view.revision == expectedRevision,
+      profiles.count == view.profiles.count,
+      Set(profiles.map(\.id)) == Set(view.profiles.map(\.id)),
+      profiles.allSatisfy({ proposed in
+        view.profiles.contains {
+          $0.id == proposed.id && $0.authorizationRevision == proposed.authorizationRevision
         }
-        try database.saveProfile(grant, expectedRevision: revision)
-      }
+      })
+    else { throw GatewayPermissionError.revisionConflict }
+    try service.confirmAuthority(
+      epoch: epoch, expectedRevision: expectedRevision, profileEdits: profiles)
+  }
+
+  package func answerPermissionRequest(
+    _ id: UUID, answer: PermissionAnswer?, expectedRevision: UInt64
+  ) throws {
+    let service = try requirePermissionControl()
+    if let answer {
+      _ = try service.answerRequest(id, answer: answer, expectedRevision: expectedRevision)
     } else {
-      try manifestStore.withCurrentConfiguration(configuration) {
-        try database.saveProfile(grant, expectedRevision: revision)
-      }
+      _ = try service.declineRequest(id, expectedRevision: expectedRevision)
     }
-    return try database.profiles().first { $0.id == profileID } ?? grant
   }
 
   package func auditEvents(limit: Int = 200) throws -> [AuditEvent] {
@@ -751,25 +637,6 @@ package actor AppControlPlaneService {
 
   package func computerUsePermissions() -> ComputerUsePermissionSnapshot {
     computerUsePermissionReader.permissionSnapshot()
-  }
-
-  package func operationApprovals(limit: Int = 100) throws -> [OperationTicket] {
-    try database.operationApprovals(limit: limit)
-  }
-
-  @discardableResult
-  package func resolveOperationApproval(
-    id: String, approved: Bool, resolver: GatewayCallerKind
-  ) throws -> OperationTicket {
-    let ticket = try database.resolveOperationApproval(
-      id: id, approved: approved, resolver: resolver)
-    try database.recordAudit(
-      AuditEvent(
-        requestID: UUID().uuidString, ticketID: ticket.id, caller: resolver,
-        profileID: .localAdmin, projectID: ticket.projectID,
-        capabilityID: approved ? "approvals.approve" : "approvals.deny",
-        decision: .allowed, inputDigest: ticket.inputDigest))
-    return ticket
   }
 
   package func makeGatewaySocketSession(
@@ -835,7 +702,7 @@ package actor AppControlPlaneService {
   struct GatewayInputs: Equatable, Sendable {
     let configuration: GatewayConfiguration
     let persisted: GatewayDatabase.ConfigurationState
-    var projects: [RegisteredProject] { persisted.projects }
+    var projects: [ComputerMCPCore.RegisteredProject] { persisted.projects }
     var profiles: [ProfileGrant] { persisted.profiles }
     var plugins: PluginStoreSnapshot { persisted.plugins }
   }
@@ -1044,20 +911,32 @@ package actor AppControlPlaneService {
   {
     let profile = try requireOpenAITunnelConfiguration(profileID)
     try await validateOpenAITunnelSurface(profile)
-    return try await openAITunnelSupervisor.provision(
-      profile,
-      configuration: manifestStore.activeConfiguration(),
-      force: force
-    )
+    return try await ExecutionAdministration.$current.withValue(
+      .init(
+        mode: .fullAccess,
+        environment: try .init(fullAccessVariables: ProcessInfo.processInfo.environment))
+    ) {
+      try await openAITunnelSupervisor.provision(
+        profile,
+        configuration: manifestStore.activeConfiguration(),
+        force: force
+      )
+    }
   }
 
   package func doctorOpenAITunnel(profileID: String) async throws -> OpenAITunnelDoctorReport {
     let profile = try requireOpenAITunnelConfiguration(profileID)
     try await validateOpenAITunnelSurface(profile)
-    return try await openAITunnelSupervisor.doctor(
-      profile,
-      configuration: manifestStore.activeConfiguration()
-    )
+    return try await ExecutionAdministration.$current.withValue(
+      .init(
+        mode: .fullAccess,
+        environment: try .init(fullAccessVariables: ProcessInfo.processInfo.environment))
+    ) {
+      try await openAITunnelSupervisor.doctor(
+        profile,
+        configuration: manifestStore.activeConfiguration()
+      )
+    }
   }
 
   package func startOpenAITunnel(
@@ -1066,11 +945,17 @@ package actor AppControlPlaneService {
   ) async throws -> OpenAITunnelStatus {
     let profile = try requireOpenAITunnelConfiguration(profileID)
     try await validateOpenAITunnelSurface(profile)
-    let status = try await openAITunnelSupervisor.start(
-      profile,
-      configuration: manifestStore.activeConfiguration(),
-      authenticationUI: allowKeychainAuthenticationUI ? .allow : .fail
-    )
+    let status = try await ExecutionAdministration.$current.withValue(
+      .init(
+        mode: .fullAccess,
+        environment: try .init(fullAccessVariables: ProcessInfo.processInfo.environment))
+    ) {
+      try await openAITunnelSupervisor.start(
+        profile,
+        configuration: manifestStore.activeConfiguration(),
+        authenticationUI: allowKeychainAuthenticationUI ? .allow : .fail
+      )
+    }
     do {
       try setOpenAITunnelDesiredRunning(true, profileID: profileID)
     } catch {
@@ -1086,11 +971,17 @@ package actor AppControlPlaneService {
   ) async throws -> OpenAITunnelStatus {
     let profile = try requireOpenAITunnelConfiguration(profileID)
     try await validateOpenAITunnelSurface(profile)
-    let status = try await openAITunnelSupervisor.reconnect(
-      profile,
-      configuration: manifestStore.activeConfiguration(),
-      authenticationUI: allowKeychainAuthenticationUI ? .allow : .fail
-    )
+    let status = try await ExecutionAdministration.$current.withValue(
+      .init(
+        mode: .fullAccess,
+        environment: try .init(fullAccessVariables: ProcessInfo.processInfo.environment))
+    ) {
+      try await openAITunnelSupervisor.reconnect(
+        profile,
+        configuration: manifestStore.activeConfiguration(),
+        authenticationUI: allowKeychainAuthenticationUI ? .allow : .fail
+      )
+    }
     do {
       try setOpenAITunnelDesiredRunning(true, profileID: profileID)
     } catch {
@@ -1208,13 +1099,14 @@ package actor AppControlPlaneService {
   }
 
   private func validateOpenAITunnelSurface(_ profile: OpenAITunnelConfiguration) async throws {
+    _ = try requirePermissionControl().view()
     let inputs = try gatewayInputs()
+    // This host-owned identity is scoped to catalog inspection; it never executes a client call.
     let gateway = try await makeGateway(
-      inputs: inputs, caller: .secureTunnel, profileID: profile.gatewayProfile)
+      inputs: inputs, caller: .secureTunnel, profileID: profile.gatewayProfile,
+      trustedPrincipalID: "host:transport-catalog:" + profile.gatewayProfile.rawValue)
     do {
-      _ = try ChatGPTProfileAuditor().audit(
-        configuration: inputs.configuration, registry: gateway,
-        allowWriteTools: profile.gatewayProfile == .chatGPTOperate)
+      _ = try ChatGPTProfileAuditor().audit(registry: gateway)
       await gateway.shutdown()
       try requireCurrentGatewayInputs(inputs)
       guard try requireOpenAITunnelConfiguration(profile.id) == profile else {
@@ -1298,7 +1190,7 @@ package enum AppControlPlaneServiceError: ControlErrorClassifying, LocalizedErro
   )
   case invalidStoredProfile(String)
   case localAdminCannotBeSocketProfile
-  case fullShellManifestDisabled
+  case permissionServiceUnavailable
   case invalidDesiredOpenAITunnelState
   case gatewayInputsChanged
 
@@ -1332,8 +1224,8 @@ package enum AppControlPlaneServiceError: ControlErrorClassifying, LocalizedErro
       return "The stored active gateway profile is invalid: \(id)"
     case .localAdminCannotBeSocketProfile:
       return "local-admin cannot be bound to the Tunnel-facing local socket."
-    case .fullShellManifestDisabled:
-      return "Enable policy.shell_enabled in the active manifest before enabling Full Shell."
+    case .permissionServiceUnavailable:
+      return "The durable permission service is unavailable. Restart the App and try again."
     case .invalidDesiredOpenAITunnelState:
       return "The persisted Tunnel runtime state is invalid."
     case .gatewayInputsChanged:

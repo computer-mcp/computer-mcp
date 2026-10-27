@@ -1,5 +1,6 @@
 import ComputerMCPConfiguration
 import ComputerMCPCore
+import ComputerMCPProcess
 import ComputerMCPTestSupport
 import ComputerMCPToolKit
 import Foundation
@@ -58,13 +59,16 @@ struct StructuredOperationGuardTests {
       let initializer = ToolEnvironment(
         launcher: testExecutionLauncher(),
         configuration: .init(projectDirectory: root), environment: environment)
-      let initialized = try initializer.commandRunner.run(
-        executable: command.executable,
-        arguments: [
-          "-init", "/dev/null", "-safe", root.appendingPathComponent("database.sqlite").path,
-          "CREATE TABLE sample (value TEXT)",
-        ],
-        workingDirectory: root, environment: [:], timeoutMilliseconds: 10_000, maxOutputBytes: 4096)
+      let initialized = try withStructuredAdministration(home: home) {
+        try initializer.commandRunner.run(
+          executable: command.executable,
+          arguments: [
+            "-init", "/dev/null", "-safe", root.appendingPathComponent("database.sqlite").path,
+            "CREATE TABLE sample (value TEXT)",
+          ],
+          workingDirectory: root, environment: [:], timeoutMilliseconds: 10_000,
+          maxOutputBytes: 4096)
+      }
       try #require(initialized.exitCode == 0)
     }
     let provider = StructuredToolProvider(
@@ -80,7 +84,7 @@ struct StructuredOperationGuardTests {
         "path": .string("database.sqlite"), "query": .string("SELECT 1 AS value"),
       ]), context: .empty)
     if command != nil {
-      _ = try provider.callTool(invocation)
+      _ = try callStructuredToolAsOwner(provider, home: home, invocation)
     } else {
       #expect(
         throws: GatewayToolError.disabled("SQLite inspection is unavailable on this platform.")
@@ -114,14 +118,20 @@ struct StructuredOperationGuardTests {
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: [tool]), projectDirectory: root)))
     #expect(throws: (any Error).self) {
-      _ = try provider.callTool(
-        .init(
-          name: tool,
-          arguments: .object([
-            "path": .string(path), "value": .object(["value": .integer(1)]),
-            "overwrite": .bool(true),
-            "dry_run": .bool(false), "confirm_write": .bool(true),
-          ]), context: .empty))
+      do {
+        _ = try callStructuredToolAsOwner(
+          provider, home: root,
+          .init(
+            name: tool,
+            arguments: .object([
+              "path": .string(path), "value": .object(["value": .integer(1)]),
+              "overwrite": .bool(true),
+              "dry_run": .bool(false), "confirm_write": .bool(true),
+            ]), context: .empty))
+      } catch {
+        #expect(error.localizedDescription.contains("[policy.project_denied]"))
+        throw error
+      }
     }
     #expect(try Data(contentsOf: original) == Data("original".utf8))
   }
@@ -146,7 +156,14 @@ struct StructuredOperationGuardTests {
         "path": .string("database.sqlite"), "query": .string("SELECT \(expression)"),
       ]), context: .empty)
     if command != nil {
-      #expect(throws: (any Error).self) { _ = try provider.callTool(invocation) }
+      #expect(throws: (any Error).self) {
+        do {
+          _ = try callStructuredToolAsOwner(provider, home: root, invocation)
+        } catch {
+          #expect(error.localizedDescription.contains("sqlite.query failed"))
+          throw error
+        }
+      }
     } else {
       #expect(
         throws: GatewayToolError.disabled("SQLite inspection is unavailable on this platform.")
@@ -156,4 +173,22 @@ struct StructuredOperationGuardTests {
     }
     #expect(!FileManager.default.fileExists(atPath: root.appendingPathComponent("marker").path))
   }
+}
+
+func callStructuredToolAsOwner(
+  _ provider: StructuredToolProvider, home: URL, _ invocation: ToolInvocation
+) throws -> JSONValue {
+  try withStructuredAdministration(home: home) { try provider.callTool(invocation) }
+}
+
+/// Each synchronous helper joins before the fixture releases its private home.
+private func withStructuredAdministration<T>(home: URL, _ operation: () throws -> T) throws -> T {
+  try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: home.path)
+  let administration = ExecutionAdministration(
+    mode: .fullAccess,
+    environment: try .init(fullAccessVariables: [
+      "PATH": systemUtilityPath, "HOME": home.path, "TMPDIR": home.path + "/",
+      "TMP": home.path, "TEMP": home.path,
+    ]))
+  return try ExecutionAdministration.$current.withValue(administration, operation: operation)
 }

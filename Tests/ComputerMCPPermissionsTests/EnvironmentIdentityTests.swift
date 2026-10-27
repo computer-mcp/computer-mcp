@@ -549,14 +549,66 @@ struct ComputerMCPPermissionsEnvironmentIdentityTests {
       try paths.setProjects([project, project])
     }
     #expect(paths.registeredProjects == [project])
+    #expect(paths.projects.location(at: path("/project/file"))?.registrations == [project])
     var encoded = try #require(
       JSONSerialization.jsonObject(with: JSONEncoder().encode(paths)) as? [String: Any])
+    #expect(Set(encoded.keys) == ["registeredProjects", "pathRules", "outsideUserDataIdentity"])
     let projects = try #require(encoded["registeredProjects"] as? [Any])
     encoded["registeredProjects"] = projects + projects
     let data = try JSONSerialization.data(withJSONObject: encoded)
     #expect(throws: PermissionModelError.invalidProjectGraph) {
       try JSONDecoder().decode(PathEnvironmentSnapshot.self, from: data)
     }
+  }
+
+  @Test(arguments: [false, true])
+  func projectSnapshotCopiesKeepIndependentClassification(restored: Bool) throws {
+    let sourceA = RegisteredProject(id: "A", root: path("/source/a"))
+    let sourceB = RegisteredProject(id: "B", root: path("/source/b"))
+    let nested = RegisteredProject(id: "nested", root: path("/source/a/private"))
+    let derived = RegisteredProject(id: "derived", root: path("/worktree"), sourceID: "A")
+    let original = try PathEnvironmentSnapshot(projects: [sourceA, sourceB, nested, derived])
+    var updated = original
+    var moved = derived
+    moved.root = path("/replacement")
+    moved.sourceID = "B"
+    var movedNested = nested
+    movedNested.root = path("/source/b/restricted")
+    try updated.setProjects([sourceA, sourceB, movedNested, moved])
+    if restored {
+      updated = try JSONDecoder().decode(
+        PathEnvironmentSnapshot.self, from: JSONEncoder().encode(updated))
+    }
+    #expect(original.projects.sourceID(for: "derived") == "A")
+    #expect(original.projects.location(at: path("/worktree/private/file"))?.projectID == "nested")
+    #expect(original.projects.location(at: path("/replacement/file")) == nil)
+    #expect(updated.projects.sourceID(for: "derived") == "B")
+    #expect(updated.projects.location(at: path("/worktree/private/file")) == nil)
+    let projected = try #require(
+      updated.projects.location(at: path("/replacement/restricted/file")))
+    #expect(projected.projectID == "nested")
+    #expect(projected.registrations == [sourceB, movedNested, moved])
+    #expect(!projected.registrations.contains(derived))
+    #expect(Set([original, updated]).count == 2)
+
+    var ledger = PermissionLedger()
+    var environment = ledger.environment
+    environment.paths = updated
+    try ledger.reconcile(environment: environment, expectedRevision: ledger.revision)
+    let committed = try #require(ledger.environment.paths)
+    let committedProjects = Set(
+      committed.registeredProjects.filter {
+        ["B", "nested", "derived"].contains($0.id)
+      })
+    #expect(
+      committed.projects.location(at: path("/replacement/restricted/file"))?.registrations
+        == committedProjects)
+    let restoredCommitted = try JSONDecoder().decode(
+      PathEnvironmentSnapshot.self, from: JSONEncoder().encode(committed))
+    #expect(Set([committed, restoredCommitted]).count == 1)
+    #expect(
+      restoredCommitted.projects.location(at: path("/replacement/restricted/file"))?.registrations
+        == committedProjects)
   }
 
 }

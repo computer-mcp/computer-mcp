@@ -38,12 +38,12 @@ computer-mcp app restart [--control-socket <control-socket>]
 computer-mcp app launch-at-login [--control-socket <control-socket>] [--enabled] [--no-enabled]
 computer-mcp clients list [--control-socket <control-socket>] [--id <id>] [--after-id <after-id>] [--limit <limit>]
 computer-mcp clients allow [--control-socket <control-socket>] <id> [--expected-revision <expected-revision>] [--full-access] [--always-allow-client] [--expected-trust-revision <expected-trust-revision>]
-computer-mcp clients limit [--control-socket <control-socket>] <id> [--expected-revision <expected-revision>] --mode <mode>
+computer-mcp clients limit [--control-socket <control-socket>] <id> [--expected-revision <expected-revision>] --limits-file <limits-file>
 computer-mcp clients end [--control-socket <control-socket>] <id> [--expected-revision <expected-revision>]
 computer-mcp clients trusts [--control-socket <control-socket>] [--id <id>] [--after-id <after-id>] [--limit <limit>]
 computer-mcp clients revoke [--control-socket <control-socket>] <id> [--expected-revision <expected-revision>]
 computer-mcp clients authorizations [--control-socket <control-socket>] [--id <id>] [--after-id <after-id>] [--limit <limit>] [--tunnel-id <tunnel-id>]
-computer-mcp clients authorize [--control-socket <control-socket>] <pairing-code> [--tunnel-id <tunnel-id>] [--profile <profile>] [--authorization-digest <authorization-digest>]
+computer-mcp clients authorize [--control-socket <control-socket>] <pairing-code> [--tunnel-id <tunnel-id>] --profile <profile> [--authorization-digest <authorization-digest>]
 computer-mcp clients deny [--control-socket <control-socket>] <pairing-code> [--tunnel-id <tunnel-id>]
 computer-mcp clients grants [--control-socket <control-socket>] [--id <id>] [--after-id <after-id>] [--limit <limit>] [--tunnel-id <tunnel-id>]
 computer-mcp clients revoke-grant [--control-socket <control-socket>] <id>
@@ -63,14 +63,12 @@ computer-mcp project list [--control-socket <control-socket>]
 computer-mcp project add [--control-socket <control-socket>] <path> [--display-name <display-name>]
 computer-mcp project repair [--control-socket <control-socket>] <id> <path> [--display-name <display-name>]
 computer-mcp project remove [--control-socket <control-socket>] <id>
-computer-mcp project enable [--control-socket <control-socket>] <id> --profile <profile> [--enabled] [--no-enabled]
+computer-mcp project access [--control-socket <control-socket>] <id> --profile <profile> --access <access> --expected-profile-revision <expected-profile-revision> --expected-permission-revision <expected-permission-revision>
 computer-mcp project deduplicate [--control-socket <control-socket>] [--apply] [--expected-plan-digest <expected-plan-digest>] [--allow-metadata-conflicts]
 computer-mcp profile list [--control-socket <control-socket>]
 computer-mcp profile show <id> [--control-socket <control-socket>]
 computer-mcp profile activate <id> [--control-socket <control-socket>]
-computer-mcp profile grant <id> --project <project> [--enabled] [--no-enabled] [--control-socket <control-socket>]
-computer-mcp profile shell <id> [--enabled] [--no-enabled] [--control-socket <control-socket>]
-computer-mcp profile permissions <id> [--control-socket <control-socket>] [--mode <mode>] [--confirmation-policy <confirmation-policy>] [--arbitrary-execution] [--no-arbitrary-execution] [--capabilities <capabilities>] [--projects <projects>] [--mcp-servers <mcp-servers>] [--allowed-callers <allowed-callers>] [--expected-revision <expected-revision>]
+computer-mcp profile permissions --file <file> --expected-permission-revision <expected-permission-revision> [--control-socket <control-socket>]
 computer-mcp tunnel openai list [--control-socket <control-socket>]
 computer-mcp tunnel openai doctor [--control-socket <control-socket>] <id>
 computer-mcp tunnel openai start [--control-socket <control-socket>] <id>
@@ -92,9 +90,9 @@ computer-mcp tools inspect <name> [--control-socket <control-socket>] [--config 
 computer-mcp tools call <name> [--arguments-json <arguments-json>] [--control-socket <control-socket>] [--config <config>] [--caller <caller>] [--profile <profile>] [--project-id <project-id>]
 computer-mcp tools inventory --config <config> [--caller <caller>] [--profile <profile>] [--project-id <project-id>]
 computer-mcp permissions status [--control-socket <control-socket>]
-computer-mcp permissions approvals list [--limit <limit>] [--control-socket <control-socket>]
-computer-mcp permissions approvals approve <id> [--control-socket <control-socket>]
-computer-mcp permissions approvals deny <id> [--control-socket <control-socket>]
+computer-mcp permissions requests [--control-socket <control-socket>]
+computer-mcp permissions answer <id> --answer <answer> --expected-revision <expected-revision> [--control-socket <control-socket>]
+computer-mcp permissions confirm-authority [--control-socket <control-socket>] --epoch <epoch> --expected-permission-revision <expected-permission-revision> --profiles-file <profiles-file>
 computer-mcp audit list [--control-socket <control-socket>] [--limit <limit>]
 computer-mcp audit export --database <database> [--request-id <request-id>] [--limit <limit>]
 computer-mcp providers list [--control-socket <control-socket>]
@@ -159,8 +157,7 @@ computer-mcp clients revoke-grant <grant-id>
 `--after-id`, `--limit` (default 100, maximum 200) and optional `--tunnel-id`.
 Pending rows include pairing code, client host, redirect host and expiry.
 `authorize` and `deny` accept `--tunnel-id` to resolve ambiguous codes. Approval
-defaults to `cloudflare-observe` only while its effective mode is read-only.
-Otherwise approval requires an explicit `--profile`. The selected profile must
+requires an explicit `--profile`. The selected profile must
 allow `cloudflare-tunnel`. Pairing lasts ten minutes and decisions are single-use.
 Pass `--authorization-digest <digest>` to bind approval to the chosen
 profile's reviewed `authorization_digest` from `profile show` (also returned by
@@ -169,7 +166,7 @@ manifest and persisted permission overrides. If its mode or
 permissions have changed, approval fails; review the current profile before
 trying again. The argument is optional for CLI approvals.
 Grant revocation immediately invalidates its tokens. OAuth approval retains
-the existing separate Full Access session consent requirement.
+the separate local Full access consent requirement.
 
 Enable OAuth per connection with `tunnel cloudflare save … --oauth-enabled`;
 use `--no-oauth-enabled` to disable it. Repeat `--oauth-client-host <host>` to
@@ -186,24 +183,27 @@ including revoked entries. Both accept `--id`, `--after-id` and `--limit`
 ```sh
 computer-mcp clients list
 computer-mcp clients allow <connection-id> --full-access
-computer-mcp clients limit <connection-id> --mode observe
+computer-mcp clients limit <connection-id> --limits-file limits.json
 computer-mcp clients end <connection-id>
 computer-mcp clients trusts
 computer-mcp clients revoke <trust-id>
 ```
 
-`allow --full-access` is explicit consent to arbitrary execution as the current
-macOS user, including access to that user's files, processes, network and
-credentials. A project provides context, not a sandbox; macOS privacy
-permissions still apply. The default is **This Session**. Add
-`--always-allow-client` deliberately to save approval for future connections
-with the same authenticated principal, caller and unchanged profile. Changing
-the profile or revoking its saved trust invalidates that approval.
+`allow --full-access` selects Full access execution mode for a profile already
+configured with `full_access = true`. It does not grant Project, Screen or any
+other permission, change `policy.shell_enabled`, or supply an unavailable
+execution backend. The default is **This Session**. Add `--always-allow-client`
+deliberately to save consent for the same authenticated principal, caller and
+unchanged profile and permission environment. Reconnecting reuses valid saved
+consent and its standing work. Profile edits, permission-environment changes and
+saved-trust revocation invalidate that consent, including when no connection is
+active. Missing or invalidated consent requires fresh local owner approval;
+reconnecting or restoring previous settings cannot renew it.
 
-`limit --mode observe|restricted` sets the selected connection's access ceiling;
-its profile remains an upper bound for Restricted Access. `end` stops new
-requests on that connection. These commands do not cancel already started work.
-`revoke` changes saved approval and affects connections relying on that approval.
+`limit --limits-file <file>` accepts a `ManagedPolicy` JSON document and may only
+narrow the selected connection's existing ceiling. `end` retires its connection
+scope; permission reconciliation revokes affected work. `revoke` changes saved
+trust and affects connections relying on that trust.
 
 Mutations read the selected record once, capture its revisions and submit one
 write. Automation can supply `--expected-revision` and, for `allow`,
@@ -213,7 +213,11 @@ JSON; control failures return an `error` object with `code` and `message` and
 exit nonzero. Argument parsing failures use standard CLI diagnostics. After an
 unknown transport outcome, inspect access before deciding whether to try again.
 
-For an independently started HTTP gateway, select a private absolute Unix socket:
+For an independently started HTTP gateway, use a separate database and a private
+absolute Unix socket. App-managed databases are refused before startup changes
+their schema or epoch counter; manage the App through its local control socket.
+The standalone epoch counter is bound to its database location and requires an
+accessible login Keychain (or the signed distribution’s Keychain access group).
 
 ```sh
 computer-mcp serve http --config /absolute/computer-mcp.toml --database /absolute/state.sqlite --control-socket /absolute/private/control.sock
@@ -221,9 +225,8 @@ computer-mcp clients list --control-socket /absolute/private/control.sock
 computer-mcp clients allow <connection-id> --full-access --control-socket /absolute/private/control.sock
 ```
 
-The standalone manifest must already set `policy.shell_enabled = true` before
-Full Access can be approved. Approval does not rewrite that manifest. Persistent
-approval also requires `--database` and an authenticated HTTP principal; anonymous
+The standalone profile must already allow Full access. Consent does not rewrite
+that manifest or enable Shell. Persistent consent also requires `--database` and an authenticated HTTP principal; anonymous
 or memory-only hosts can use This Session. The existing HTTP authentication,
 loopback, origin and request-size guards apply. The socket uses current-user peer
 validation and accepts only local-CLI identity. Its commands are absent from the
@@ -271,30 +274,23 @@ contributions; `show <id>` returns one entry and the current manifest digest.
 Plugin-owned contributions are edited through plugin settings.
 
 `mcp doctor <id> --project-id <id>` and the App's **Check connection** action
-actively initialize the selected enabled registration in an explicitly selected
-registered project, retrieve its catalog, and close the probe. They use the
-resolved launch configuration and the standard MCP connection path, including
-timeouts and scoped host callbacks. Other registrations are not started. Disabled
-registrations are reported without launching; external dependencies are never
-installed. Starting a third-party executable still runs that executable's startup
-code; this check is not a process sandbox.
+inspect the selected registration's configuration, credential availability,
+executable/interpreter and process-cleanup records. Connection and catalog
+checks are unavailable in this build: an enabled registration that passes the
+preliminary checks returns `execution.unavailable` at the `execution` stage.
+The command does not start a provider or open an MCP connection.
 
 The JSON report records the configuration digest, observation time, status,
-failure stage, executable/interpreter inspection, catalog receipt and negotiated
-versions. Exit status is zero for a verified connection/catalog and one for a
-failed or disabled check. Configuration/control errors use the usual CLI error
-path. The report omits launch environment values and raw downstream errors.
-It does not invoke downstream tools or change registration/profile grants.
-Its ephemeral host callback scope is read-only and has no persistence authority.
-Success does not prove tool execution, remote profile access, system permissions
-or persistent host services. Recheck after configuration or environment changes.
+failure stage and executable/interpreter inspection. Unavailable, failed and
+disabled checks exit with status one. Configuration/control errors use the usual
+CLI error path. The report excludes launch environment values and credentials;
+it does not invoke downstream tools or change registration/profile grants.
 
 For stdio registrations, `process_receipts` reports host-local process cleanup
-state before connecting and after closing the probe. The check uses the same
-database-adjacent ownership storage as the App runtime, while its host callback
-scope retains no database authority. Inspection may initialize private empty
-bookkeeping directories; it does not launch processes or retire failed records.
-A blocking record produces the `cleanup` stage and prevents the probe launch.
+state using the same database-adjacent ownership storage as the App runtime.
+Inspection may initialize private empty bookkeeping directories; it does not
+launch processes or retire failed records. A blocking record produces the
+`cleanup` stage before execution availability is considered.
 Records identify their receipt, digest, owner PID, state, launch blocking and
 whether recovery is currently safe. `running` is an independent live session;
 `stopped` can be reconciled by the next launch. `cleanup_pending` means an
@@ -553,11 +549,11 @@ The selected folder receives those existing permissions. A folder registered to
 another canonical project is rejected. The App exposes the same operation
 through each project's Repair action and native folder chooser.
 
-Repair invalidates unused approvals for the affected project and advances
-affected profile authorization, including wildcard grants. Executing operations
-retain their state. New calls use the selected folder after candidate validation;
-old-owner calls still require their original folder identity and current access.
-Failure or concurrent configuration changes preserve the previous registration.
+Repair advances affected profile authorization, including wildcard grants, and
+reconciles requests, consent and execution authority against the new path identity.
+New calls use the selected folder after candidate validation; old-owner calls
+still require their original folder identity and current access. Failure or
+concurrent configuration changes preserve the previous registration.
 
 To repair older duplicates, first preview:
 
@@ -572,63 +568,75 @@ deletes the project directory; retired ids remain aliases for historical
 references.
 
 Removal and deduplication commit project records, affected profile grants, and
-approval invalidation together. A failed commit leaves them unchanged. Each
-affected profile receives one new authorization revision; already executing
-operations and historical audit records retain their original state. Concurrent
+permission reconciliation together. A failed commit leaves them unchanged. Each
+affected profile receives one new authorization revision; historical audit records retain their original state. Running work is reconciled
+against the changed authority. Concurrent
 configuration changes invalidate prepared project changes and require a retry.
 
 The owner commands for adding, repairing, removing and deduplicating projects prepare the
 new runtime configuration before committing. Connected clients stay connected;
 new calls use the published configuration while existing work keeps its original
 runtime. A failed candidate leaves prior registration and routing intact. Removing
-a project denies new calls in its old scope without stopping existing work.
+a project revokes access to its old scope and reconciles affected executions.
 
 ## Host permission commands
 
-`profile permissions` updates one profile's host authority. Modes are
-`read-only`, `project-operations`, and `local-full-access`; they are independent
-of the profile's name and connection channel. Unspecified options retain their
-current values. `profile show` returns `authorization_revision`; pass it with
-`--expected-revision` to reject an edit based on stale settings.
+`project access` sets an explicit project permission for one profile. `ask`
+removes that project entry, so the profile wildcard applies when present and
+otherwise access is requestable. `deny` overrides a wildcard and prevents
+requests; `read` and `write` grant the selected level. Capture the profile and
+permission revisions from `profile show`; stale edits fail without retry.
+
+`profile permissions --file <grant.json> --expected-permission-revision <revision>`
+replaces one canonical profile grant. Save the JSON object returned by
+`profile show`, retain its `id` and `authorization_revision`, edit its permission
+and setting fields, and submit the `permission_revision` from that same response.
+The host compares both revisions; stale edits fail without rebasing.
 
 Every `profile` and `permissions` subcommand accepts `--control-socket <path>`
 for an isolated owner-only App instance. Omitting it selects the production App.
+Profile permission tables and TOML values are documented in [Configuration](Config.md).
+Full access is independent of permissions and still requires local owner
+consent. Program launches require an enforceable execution context; Shell also
+requires `policy.shell_enabled`.
 
-Confirmation policies are `risk-based`, `all-writes`, and `never`. Risk-based
-confirmation covers host-classified destructive actions, external writes, and
-arbitrary execution. Changing confirmation policy does not grant a capability.
-Plugin runtime configuration and execution permissions remain plugin-owned;
-these controls govern Computer MCP-owned tools and access to registered tools.
+Edits update the shared profile, invalidate stale consent and reconcile affected
+requests, running work and retained-result access. Switching the active profile
+selects subsequent admissions; established connections keep their verified binding.
 
-Advanced lists are comma-separated replacements. An empty value clears the
-list. A capability `*` grants tools, not projects; the separate project `*`
-explicitly grants all registered and future projects. MCP registration grants
-include that registration's host-selected tools. Caller kinds are `local-app`,
-`local-cli`, `local-mcp`, `secure-tunnel`, and `cloudflare-tunnel`.
+Use `permissions requests` to inspect `{revision, epoch, suspended, unconfirmed_profile_ids, profiles, sources, requests}`.
+Each request entry contains its `request`, `profile_id` and `always_is_shared`.
+Managed source identity, state and diagnostics explain effective limits. The App
+shows pending request scope and expiry and offers Only this time, Always and Deny.
+Always changes the profile for all clients sharing it. Requests expire after one day.
 
-Arbitrary execution requires `local-full-access`, separate execution permission,
-and a corresponding tool grant. Shell tools also require the manifest's
-`policy.shell_enabled`. A working directory does not contain an unsandboxed
-process or isolate it from the current macOS user's other resources.
+Answer the exact reviewed request locally:
 
-Permission edits apply to new requests and invalidate pending confirmations.
-They do not restart the gateway or tunnels, or stop existing work. Switching the
-active profile selects the profile for subsequent admissions; established
-connections retain their verified binding.
+```sh
+computer-mcp permissions answer <request-uuid> --answer only_this_time --expected-revision <revision>
+```
 
-Use `permissions approvals list` to review exact host requests, their client,
-profile, project, arguments summary, expiry, and state. Approve or deny an exact
-ticket through the local App or management CLI. Approval permits the prepared
-operation to be committed once; it does not execute the operation itself.
-Changing arguments, target, authority, or using an expired ticket requires a new
-request. These approvals authorize only the exact host operation.
+Other answers are `always` and `deny`. Answering does not dispatch the operation.
+The original client retries its exact call with the returned request identity;
+changed arguments, route, subject or expired authority cannot reuse the answer.
+Explicit denies and managed failures do not become grant prompts.
 
-The App presents the tool title captured when the request was prepared and its
-redacted arguments as individual fields. Technical details retain the capability
-and request identifiers and original review JSON. Display metadata does not
-authorize execution: the exact target, arguments, expiry and current permission
-checks still govern the single-use ticket. A request whose details cannot be
-read must be sent again before the App can approve it.
+After a database restore or epoch recovery, saved profiles remain inactive until
+local owner review. Read `permissions requests`, review every returned profile
+including wildcard grants, automation, custom network hosts and allowed callers,
+and save the complete `profiles` array as JSON. The App offers the same explicit
+review from Permissions. Confirm that captured snapshot with:
+
+```sh
+computer-mcp permissions confirm-authority --epoch <uuid> --expected-permission-revision <revision> --profiles-file reviewed-profiles.json
+```
+
+The epoch, permission revision, every profile ID and every profile authorization
+revision must match. Missing profiles and stale reviews fail; the command does
+not reload or retry the review. Confirmation activates the reviewed saved
+profiles for the current epoch. Existing pending and one-time authority is not
+replayed. The standalone HTTP owner's private socket exposes the same requests,
+answer and confirmation contracts when selected with `--control-socket`.
 
 ## App-owned operation
 
@@ -732,7 +740,7 @@ after configuration changes. The owner control service works while the gateway
 listener is stopped; stopping or restarting that listener does not cancel local
 administration work. Stopping the owner control service or exiting the App joins
 its owned processes and clears its retained results. Each continuation still
-requires current project access, permissions and any operation approval.
+requires current project access and permission-ledger authority.
 
 ## Explicit standalone mode
 
@@ -749,8 +757,13 @@ computer-mcp tools inspect project.info --config Examples/computer-mcp.toml [--c
 
 Standalone mode uses in-process state and TOML paths. It does not use App
 bookmarks, the App database, or App Keychain transport credentials. An explicit
-`--database <path>` may preserve a disposable Gateway audit database for a
-Validation Run; omitting it keeps the database in memory. Never point this
+`--database <path>` preserves gateway state and uses a durable Darwin Keychain
+authorization watermark plus a writer lock outside the database tree. The
+namespace follows the database’s canonical logical location, so replacing its
+bytes retains rollback protection and separate locations have separate authority.
+A raw native executable uses the login Keychain; a provisioned App distribution
+uses its access group. An inaccessible Keychain fails without a memory fallback.
+The optional database may be used for a Validation Run; omitting it keeps the database in memory. Never point this
 option at the App database or run standalone mode as a second service owner.
 
 Standalone `tools list`, `tools inspect`, and `tools call` close their owned

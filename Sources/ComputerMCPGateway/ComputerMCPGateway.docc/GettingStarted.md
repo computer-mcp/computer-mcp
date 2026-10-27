@@ -88,6 +88,6 @@ For Codex runtime setup and operation, see the independent
 The default manifest's generic Codex CLI registration stores the absolute entry
 path discovered from `PATH` or a known installation location, preserving symbolic
 links across installer upgrades. Existing configured paths remain unchanged.
-Skills are gateway capabilities independent of Codex. Generic CLI execution,
-process spawning and Full Shell require explicit host capability authorization
-and the corresponding permission mode; profile names do not grant access.
+Skills are a gateway permission independent of Codex. Generic CLI execution and
+process spawning require permission admission and an enforceable execution
+context; profile names do not grant access.

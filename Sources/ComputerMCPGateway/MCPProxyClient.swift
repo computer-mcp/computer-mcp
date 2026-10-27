@@ -1,6 +1,7 @@
 import ComputerMCPConfiguration
 import ComputerMCPCore
 import ComputerMCPDownstream
+import ComputerMCPPermissions
 import ComputerMCPPlatform
 import ComputerMCPProcess
 import ComputerMCPTransport
@@ -15,6 +16,7 @@ package final class MCPProxyClient: DownstreamMCPClient, @unchecked Sendable {
   private let secretStore: (any SecretStore)?
   private let processOwnershipRoot: URL?
   private let journal: MCPExecutionJournal
+  private let catalogs: MCPResolvedCatalogCache
   private let calls = BlockingOperationExecutor(label: "computer-mcp.mcp-calls", serial: false)
 
   package init(
@@ -33,6 +35,8 @@ package final class MCPProxyClient: DownstreamMCPClient, @unchecked Sendable {
     let hostContextError: GatewayToolError? =
       hostContext != nil && gatewayContext == nil
       ? .executionFailed("Gateway MCP connections require a gateway host environment.") : nil
+    let catalogs = MCPResolvedCatalogCache()
+    self.catalogs = catalogs
     let changes = GatewayToolChangeBroadcaster()
     self.changes = changes
     self.secretStore = secretStore
@@ -57,7 +61,10 @@ package final class MCPProxyClient: DownstreamMCPClient, @unchecked Sendable {
       environment: environment,
       hostContext: hostContext, hostContextError: hostContextError,
       secretStore: secretStore, journal: journal,
-      toolsChanged: { changes.send() })
+      toolsChanged: {
+        catalogs.removeAll()
+        changes.send()
+      })
   }
 
   package func makeScopedClient(
@@ -83,10 +90,19 @@ package final class MCPProxyClient: DownstreamMCPClient, @unchecked Sendable {
     _ = pool.shutdown()
   }
 
+  package func cachedTools(server: MCPServerConfig, context: InvocationContext) throws -> [MCPTool]?
+  {
+    catalogs.tools(for: server)
+  }
+
   package func listTools(server: MCPServerConfig, context: InvocationContext) throws -> [MCPTool] {
-    try run(server: server, notifyToolsOnConnect: false, context: context) { connection in
+    let tools = try run(server: server, notifyToolsOnConnect: false, context: context) {
+      connection in
       try await connection.listTools()
     }
+    catalogs.save(tools, for: server)
+    changes.send()
+    return tools
   }
 
   package func callTool(
@@ -154,6 +170,9 @@ package final class MCPProxyClient: DownstreamMCPClient, @unchecked Sendable {
       )
     }
 
+    guard let execution = context.executionAuthority as? PreparedExecutionContext else {
+      throw PermissionModelError.invalidAuthorization
+    }
     let retainsResult = requestID != nil
     let continuation = context.continuationTarget
     if continuation != nil { _ = try pool.connection(for: server, continuation: continuation) }
@@ -163,8 +182,10 @@ package final class MCPProxyClient: DownstreamMCPClient, @unchecked Sendable {
         throw GatewayToolError.invalidArguments("Downstream MCP request id must not be empty.")
       }
       let reservation = try journal.reserve(
-        server: server, tool: name, arguments: arguments, requestID: requestID)
+        server: server, tool: name, arguments: arguments, requestID: requestID,
+        executionID: try preparedExecutionID(context: context))
       if !reservation.inserted {
+        try requireExecutionAccess(reservation.record, operation: .readResult, context: context)
         guard reservation.record.state == .succeeded || reservation.record.state == .failed,
           reservation.record.outputExpiresAt.map({ $0 > Date() }) == true,
           reservation.record.retainedByteCount == reservation.record.outputByteCount,
@@ -182,7 +203,8 @@ package final class MCPProxyClient: DownstreamMCPClient, @unchecked Sendable {
       return try run(server: server, context: context) { connection in
         try await connection.callTool(
           name: name, arguments: object, gatewayRequestID: requestID, cancellation: cancellation,
-          retainsResult: retainsResult, hostInvocationID: hostInvocationID,
+          retainsResult: retainsResult, execution: execution,
+          hostInvocationID: hostInvocationID,
           continuation: continuation,
           cancellationDeliveryFailed: {
             self.pool.invalidate(server: server, connection: connection)
@@ -220,9 +242,14 @@ package final class MCPProxyClient: DownstreamMCPClient, @unchecked Sendable {
 
     let continuation = context.continuationTarget
     if continuation != nil { _ = try pool.connection(for: server, continuation: continuation) }
+    guard let prepared = context.executionAuthority as? PreparedExecutionContext else {
+      throw PermissionModelError.invalidAuthorization
+    }
     let reservation = try journal.reserve(
-      server: server, tool: name, arguments: arguments, requestID: requestID)
+      server: server, tool: name, arguments: arguments, requestID: requestID,
+      executionID: try preparedExecutionID(context: context))
     if !reservation.inserted {
+      try requireExecutionAccess(reservation.record, operation: .readResult, context: context)
       return try reservation.record.snapshot(instance: journal.instanceID)
     }
     let hostInvocationID = context.admission?.correlationID(for: server, tool: name)
@@ -230,7 +257,8 @@ package final class MCPProxyClient: DownstreamMCPClient, @unchecked Sendable {
       return try run(server: server, context: context) { connection in
         try await connection.startToolCall(
           name: name, arguments: object, gatewayRequestID: requestID,
-          hostInvocationID: hostInvocationID, continuation: continuation)
+          hostInvocationID: hostInvocationID, continuation: continuation,
+          execution: prepared)
       }
     } catch {
       try journal.update(serverID: server.id, requestID: requestID) {
@@ -245,8 +273,33 @@ package final class MCPProxyClient: DownstreamMCPClient, @unchecked Sendable {
     server: MCPServerConfig, requestID: String, offset: Int, maxBytes: Int,
     context: InvocationContext
   ) throws -> JSONValue {
-    try journal.read(serverID: server.id, requestID: requestID)
-      .snapshot(instance: journal.instanceID, offset: offset, maxBytes: maxBytes)
+    let record = try journal.read(serverID: server.id, requestID: requestID)
+    try requireExecutionAccess(record, operation: .readResult, context: context)
+    return try record.snapshot(instance: journal.instanceID, offset: offset, maxBytes: maxBytes)
+  }
+
+  private func preparedExecutionID(context: InvocationContext) throws -> UUID {
+    guard let prepared = context.executionAuthority as? PreparedExecutionContext else {
+      throw PermissionModelError.invalidAuthorization
+    }
+    _ = try prepared.accessExecution(prepared.executionID, operation: .readResult)
+    return prepared.executionID
+  }
+
+  private func executionAccess(context: InvocationContext) throws -> any ExecutionAccessChecking {
+    guard let access = context.executionAuthority as? any ExecutionAccessChecking else {
+      throw PermissionModelError.invalidAuthorization
+    }
+    return access
+  }
+
+  private func requireExecutionAccess(
+    _ record: MCPExecutionRecord, operation: ExecutionOperation, context: InvocationContext
+  ) throws {
+    guard let executionID = record.executionID else {
+      throw PermissionModelError.invalidAuthorization
+    }
+    _ = try executionAccess(context: context).accessExecution(executionID, operation: operation)
   }
 
   package func listResources(server: MCPServerConfig, cursor: String?, context: InvocationContext)
@@ -360,6 +413,7 @@ package final class MCPProxyClient: DownstreamMCPClient, @unchecked Sendable {
   package func activeRequests(server: MCPServerConfig, context: InvocationContext) throws
     -> JSONValue
   {
+    let access = try executionAccess(context: context)
     guard
       let connection = pool.existingConnection(
         for: server, continuation: context.continuationTarget)
@@ -371,7 +425,7 @@ package final class MCPProxyClient: DownstreamMCPClient, @unchecked Sendable {
       ])
     }
     return try runExisting(server: server, connection: connection, context: context) { connection in
-      await connection.activeRequestsJSON()
+      await connection.activeRequestsJSON(access: access)
     }
   }
 
@@ -398,6 +452,7 @@ package final class MCPProxyClient: DownstreamMCPClient, @unchecked Sendable {
     requestID: String,
     reason: String?, context: InvocationContext
   ) throws -> JSONValue {
+    let access = try executionAccess(context: context)
     guard
       let connection = pool.existingConnection(
         for: server, continuation: context.continuationTarget)
@@ -409,7 +464,7 @@ package final class MCPProxyClient: DownstreamMCPClient, @unchecked Sendable {
     return try runExisting(server: server, connection: connection, context: context) { connection in
       try await connection.cancelRequest(
         gatewayRequestID: requestID,
-        reason: reason ?? "Cancelled by computer-mcp caller."
+        reason: reason ?? "Cancelled by computer-mcp caller.", access: access
       )
     }
   }
@@ -443,7 +498,7 @@ package final class MCPProxyClient: DownstreamMCPClient, @unchecked Sendable {
     let timeout = timeoutMilliseconds ?? server.requestTimeoutMs ?? 30_000
     let box = AsyncOperationBox<T>()
     let selected = context.continuationTarget
-    let execution = InvocationExecution.current
+    let execution = context.executionAuthority ?? InvocationExecution.current
     let access = HostPathAccess.current ?? execution?.pathAccess
     let task = Task.detached {
       do {
@@ -484,6 +539,7 @@ package final class MCPProxyClient: DownstreamMCPClient, @unchecked Sendable {
     // A rejected or explicitly cancelled request does not revoke other requests
     // on the same session. Startup, timeouts and transport failures still retire it.
     if error is CancellationError { return false }
+    if error is PermissionModelError { return false }
     if let error = error as? GatewayToolError, case .invalidArguments = error { return false }
     if let error = error as? MCPError {
       switch error {
@@ -685,6 +741,7 @@ private actor MCPProxyConnection {
     let downstreamRequestID: MCP.ID
     let tool: String
     let startedAt: Date
+    let executionID: UUID?
     var retainsResult = false
     var cancellationRequested = false
 
@@ -719,6 +776,8 @@ private actor MCPProxyConnection {
   private let eventSessionID = UUID().uuidString
   private var nextEventCursor = 1
   private var activeRequests: [String: ActiveRequest] = [:]
+  private var logicalRequestIDs: Set<String> = []
+  private var pendingWorkCancellation: Set<String> = []
   private let ownedWork: GatewayOwnedWork?
   private let projectID: String?
   private let hostTools: MCPHostToolDirectory?
@@ -822,6 +881,7 @@ private actor MCPProxyConnection {
     gatewayRequestID: String,
     cancellation: MCPCallCancellation? = nil,
     retainsResult: Bool = false,
+    execution: PreparedExecutionContext,
     hostInvocationID: UUID? = nil,
     continuation: MCPContinuationTarget? = nil,
     cancellationDeliveryFailed: @escaping @Sendable () -> Void = {}
@@ -839,6 +899,15 @@ private actor MCPProxyConnection {
     }
     defer { reservedRequestIDs.remove(gatewayRequestID) }
 
+    let work = try execution.retainWork { [weak self] in
+      await self?.cancelRetainedWork(gatewayRequestID: gatewayRequestID)
+    }
+    logicalRequestIDs.insert(gatewayRequestID)
+    defer {
+      logicalRequestIDs.remove(gatewayRequestID)
+      pendingWorkCancellation.remove(gatewayRequestID)
+      try? work.finish()
+    }
     let (context, ownership) = try await dispatchTool(
       name: name, arguments: arguments, gatewayRequestID: gatewayRequestID,
       hostInvocationID: hostInvocationID, continuation: continuation)
@@ -852,7 +921,7 @@ private actor MCPProxyConnection {
       gatewayRequestID: gatewayRequestID,
       downstreamRequestID: context.requestID,
       tool: name,
-      startedAt: Date(), retainsResult: retainsResult
+      startedAt: Date(), executionID: execution.executionID, retainsResult: retainsResult
     )
     if retainsResult {
       try journal.update(serverID: server.id, requestID: gatewayRequestID) {
@@ -889,6 +958,10 @@ private actor MCPProxyConnection {
       }
     }
 
+    if pendingWorkCancellation.remove(gatewayRequestID) != nil {
+      _ = try? await requestCancellation(
+        gatewayRequestID: gatewayRequestID, reason: "Execution authority was revoked.")
+    }
     let result: CallTool.Result
     do {
       result = try await context.value
@@ -915,7 +988,8 @@ private actor MCPProxyConnection {
   func startToolCall(
     name: String,
     arguments: [String: JSONValue],
-    gatewayRequestID: String, hostInvocationID: UUID?, continuation: MCPContinuationTarget?
+    gatewayRequestID: String, hostInvocationID: UUID?, continuation: MCPContinuationTarget?,
+    execution: PreparedExecutionContext
   ) async throws -> JSONValue {
     try await ensureConnected()
     // Reserve before crossing into the SDK actor so concurrent calls cannot
@@ -929,6 +1003,18 @@ private actor MCPProxyConnection {
     }
     defer { reservedRequestIDs.remove(gatewayRequestID) }
 
+    let work = try execution.retainWork { [weak self] in
+      await self?.cancelRetainedWork(gatewayRequestID: gatewayRequestID)
+    }
+    logicalRequestIDs.insert(gatewayRequestID)
+    var observing = false
+    defer {
+      if !observing {
+        logicalRequestIDs.remove(gatewayRequestID)
+        pendingWorkCancellation.remove(gatewayRequestID)
+        try? work.finish()
+      }
+    }
     let (context, ownership) = try await dispatchTool(
       name: name, arguments: arguments, gatewayRequestID: gatewayRequestID,
       hostInvocationID: hostInvocationID, continuation: continuation)
@@ -940,16 +1026,11 @@ private actor MCPProxyConnection {
       gatewayRequestID: gatewayRequestID,
       downstreamRequestID: context.requestID,
       tool: name,
-      startedAt: Date(), retainsResult: true
+      startedAt: Date(), executionID: execution.executionID, retainsResult: true
     )
     activeRequests[gatewayRequestID] = active
-    try journal.update(serverID: server.id, requestID: gatewayRequestID) {
-      $0.state = .running
-      $0.downstreamRequestID = context.requestID.description
-    }
-    appendEvent(kind: "request.started", requestID: gatewayRequestID)
-
     observers[context.requestID] = Task { [weak self] in
+      defer { try? work.finish() }
       var confirmedResponse = false
       do {
         let result = try await context.value
@@ -976,6 +1057,17 @@ private actor MCPProxyConnection {
           confirmedResponse: confirmedResponse || Self.isResponseError(error)
         )
       }
+    }
+    observing = true
+    try journal.update(serverID: server.id, requestID: gatewayRequestID) {
+      $0.state = .running
+      $0.downstreamRequestID = context.requestID.description
+    }
+    appendEvent(kind: "request.started", requestID: gatewayRequestID)
+
+    if pendingWorkCancellation.remove(gatewayRequestID) != nil {
+      _ = try? await requestCancellation(
+        gatewayRequestID: gatewayRequestID, reason: "Execution authority was revoked.")
     }
 
     return .object([
@@ -1086,17 +1178,42 @@ private actor MCPProxyConnection {
     ])
   }
 
-  func activeRequestsJSON() -> JSONValue {
+  func activeRequestsJSON(access: any ExecutionAccessChecking) -> JSONValue {
     .object([
       "server": .string(server.id),
       "requests": .array(
-        activeRequests.values.sorted { $0.gatewayRequestID < $1.gatewayRequestID }.map(\.json)
+        activeRequests.values.filter {
+          guard let executionID = $0.executionID else { return false }
+          return (try? access.accessExecution(executionID, operation: .readResult)) != nil
+        }.sorted { $0.gatewayRequestID < $1.gatewayRequestID }.map(\.json)
       ),
       "persistent_session": .bool(true),
     ])
   }
 
-  func cancelRequest(gatewayRequestID: String, reason: String) async throws -> JSONValue {
+  func cancelRequest(
+    gatewayRequestID: String, reason: String, access: any ExecutionAccessChecking
+  ) async throws -> JSONValue {
+    guard let active = activeRequests[gatewayRequestID], let executionID = active.executionID else {
+      throw PermissionModelError.invalidAuthorization
+    }
+    _ = try access.accessExecution(executionID, operation: .cancel)
+    return try await requestCancellation(gatewayRequestID: gatewayRequestID, reason: reason)
+  }
+
+  private func cancelRetainedWork(gatewayRequestID: String) async {
+    guard logicalRequestIDs.contains(gatewayRequestID) else { return }
+    guard activeRequests[gatewayRequestID] != nil else {
+      pendingWorkCancellation.insert(gatewayRequestID)
+      return
+    }
+    _ = try? await requestCancellation(
+      gatewayRequestID: gatewayRequestID, reason: "Execution authority was revoked.")
+  }
+
+  private func requestCancellation(gatewayRequestID: String, reason: String) async throws
+    -> JSONValue
+  {
     guard var active = activeRequests[gatewayRequestID] else {
       throw GatewayToolError.invalidArguments(
         "Unknown active downstream MCP request id: \(gatewayRequestID)"
@@ -1155,6 +1272,8 @@ private actor MCPProxyConnection {
     result: JSONValue? = nil, failed: Bool = false,
     ownership: RequestOwnership?, confirmedResponse: Bool = false
   ) {
+    logicalRequestIDs.remove(gatewayRequestID)
+    pendingWorkCancellation.remove(gatewayRequestID)
     settleOwnership(ownership, confirmed: confirmedResponse)
     observers.removeValue(forKey: downstreamRequestID)
     // Only the matching native request may end this gateway request's observation.
@@ -1607,4 +1726,17 @@ private final class AsyncOperationBox<T: Sendable>: @unchecked Sendable {
     defer { lock.unlock() }
     return try result!.get()
   }
+}
+
+private final class MCPResolvedCatalogCache: @unchecked Sendable {
+  private let lock = NSLock()
+  private var values: [String: [MCPTool]] = [:]
+  private func key(_ server: MCPServerConfig) -> String {
+    MCPExecutionRecord.digest((try? .encoded(server)) ?? .null)
+  }
+  func tools(for server: MCPServerConfig) -> [MCPTool]? { lock.withLock { values[key(server)] } }
+  func save(_ tools: [MCPTool], for server: MCPServerConfig) {
+    lock.withLock { values[key(server)] = tools }
+  }
+  func removeAll() { lock.withLock { values.removeAll() } }
 }

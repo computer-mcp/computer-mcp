@@ -202,7 +202,7 @@ struct Project: ParsableCommand {
     commandName: "project",
     subcommands: [
       ProjectList.self, ProjectAdd.self, ProjectRepair.self, ProjectRemove.self,
-      ProjectEnable.self,
+      ProjectAccessCommand.self,
       ProjectDeduplicate.self,
     ]
   )
@@ -264,22 +264,39 @@ struct ProjectRemove: AsyncParsableCommand {
   }
 }
 
-struct ProjectEnable: AsyncParsableCommand {
+struct ProjectAccessCommand: AsyncParsableCommand {
   @OptionGroup var connection: AppControlConnectionOptions
 
-  static let configuration = CommandConfiguration(commandName: "enable")
+  static let configuration = CommandConfiguration(
+    commandName: "access", abstract: "Set one project's access at reviewed revisions.",
+    discussion: "Ask clears the explicit rule. A wildcard project rule still applies.")
   @Argument var id: String
   @Option(name: .long) var profile: String
-  @Flag(name: .long, inversion: .prefixedNo) var enabled = true
+  @Option(name: .long, help: "ask, deny, read or write.") var access: String
+  @Option(name: .long) var expectedProfileRevision: Int64
+  @Option(name: .long) var expectedPermissionRevision: Int64
+
+  func validate() throws {
+    guard ProjectAccess(rawValue: access) != nil else {
+      throw ValidationError("access must be ask, deny, read or write.")
+    }
+    guard expectedProfileRevision > 0, expectedPermissionRevision >= 0 else {
+      throw ValidationError(
+        "Supply the positive profile revision and nonnegative permission revision from profile show."
+      )
+    }
+  }
+
   func run() async throws {
     printJSON(
       try await connection.client().call(
-        "project.enable",
+        "project.access",
         arguments: .object([
-          "project_id": .string(id), "profile": .string(profile), "enabled": .bool(enabled),
-        ])
-      )
-    )
+          "project_id": .string(id), "profile": .string(profile),
+          "access": .string(access),
+          "expected_profile_revision": .integer(expectedProfileRevision),
+          "expected_permission_revision": .integer(expectedPermissionRevision),
+        ])))
   }
 }
 
@@ -327,8 +344,8 @@ struct Profile: ParsableCommand {
   static let configuration = CommandConfiguration(
     commandName: "profile",
     subcommands: [
-      ProfileList.self, ProfileShow.self, ProfileActivate.self, ProfileGrant.self,
-      ProfileShell.self, ProfilePermissions.self,
+      ProfileList.self, ProfileShow.self, ProfileActivate.self,
+      ProfilePermissions.self,
     ]
   )
 }
@@ -369,109 +386,35 @@ struct ProfileShow: AsyncParsableCommand {
   }
 }
 
-struct ProfileGrant: AsyncParsableCommand {
-  static let configuration = CommandConfiguration(commandName: "grant")
-  @Argument var id: String
-  @Option(name: .long) var project: String
-  @Flag(name: .long, inversion: .prefixedNo) var enabled = true
-  @OptionGroup var connection: AppControlConnectionOptions
-  func run() async throws {
-    printJSON(
-      try await connection.client().call(
-        "profile.grant",
-        arguments: .object([
-          "profile": .string(id), "project_id": .string(project),
-          "enabled": .bool(enabled),
-        ])
-      )
-    )
-  }
-}
-
-struct ProfileShell: AsyncParsableCommand {
-  static let configuration = CommandConfiguration(
-    commandName: "shell",
-    abstract: "Separately allow or revoke arbitrary execution in local-full-access mode."
-  )
-
-  @Argument var id: String
-  @Flag(name: .long, inversion: .prefixedNo) var enabled = true
-  @OptionGroup var connection: AppControlConnectionOptions
-
-  func run() async throws {
-    printJSON(
-      try await connection.client().call(
-        "profile.shell",
-        arguments: .object([
-          "profile": .string(id), "enabled": .bool(enabled),
-        ])
-      )
-    )
-  }
-}
-
 struct ProfilePermissions: AsyncParsableCommand {
   static let configuration = CommandConfiguration(
     commandName: "permissions",
-    abstract: "Update host permissions without restarting the gateway or stopping active work.",
+    abstract: "Replace a profile's permissions with a reviewed JSON grant.",
     discussion:
-      "Unspecified settings are preserved. Run profile show first; use --expected-revision to reject a stale edit. Full Access does not automatically grant arbitrary execution."
+      "Run profile show, edit the returned grant, and supply its permission_revision. Revoking a permission ends work that uses it."
   )
-
-  @Argument(help: "Profile ID from profile list.") var id: String
+  @Option(name: .long, help: "JSON profile grant file, based on profile show.") var file: String
+  @Option(name: .long, help: "Permission revision returned by profile show.")
+  var expectedPermissionRevision: Int64
   @OptionGroup var connection: AppControlConnectionOptions
-  @Option(name: .long) var mode: GatewayPermissionMode?
-  @Option(name: .long) var confirmationPolicy: GatewayConfirmationPolicy?
-  @Flag(name: .long, inversion: .prefixedNo) var arbitraryExecution: Bool?
-  @Option(
-    name: .long, help: "Replace tool grants with comma-separated IDs; an empty value clears them.")
-  var capabilities: String?
-  @Option(name: .long, help: "Replace granted project IDs; comma-separated, empty clears them.")
-  var projects: String?
-  @Option(name: .long, help: "Replace MCP registration grants; comma-separated, empty clears them.")
-  var mcpServers: String?
-  @Option(
-    name: .long, help: "Replace allowed caller kinds; comma-separated, empty denies all callers.")
-  var allowedCallers: String?
-  @Option(name: .long, help: "Authorization revision returned by profile show.")
-  var expectedRevision: Int64?
 
   func run() async throws {
-    var arguments: [String: JSONValue] = ["profile": .string(id)]
-    if let mode { arguments["mode"] = .string(mode.rawValue) }
-    if let confirmationPolicy {
-      arguments["confirmation_policy"] = .string(confirmationPolicy.rawValue)
+    guard expectedPermissionRevision >= 0 else {
+      throw ValidationError("--expected-permission-revision must not be negative.")
     }
-    if let arbitraryExecution { arguments["full_shell_enabled"] = .bool(arbitraryExecution) }
-    for (key, value) in [
-      ("capabilities", capabilities), ("projects", projects),
-      ("mcp_servers", mcpServers), ("allowed_callers", allowedCallers),
-    ] {
-      if let value {
-        arguments[key] = .array(
-          value.split(separator: ",").map {
-            .string($0.trimmingCharacters(in: .whitespacesAndNewlines))
-          })
-      }
-    }
-    guard arguments.count > 1 else {
-      throw ValidationError(
-        "Provide at least one permission setting; use profile show to read settings.")
-    }
-    if let expectedRevision {
-      guard expectedRevision >= 0 else {
-        throw ValidationError("--expected-revision must not be negative.")
-      }
-      arguments["expected_revision"] = .number(Double(expectedRevision))
+    let grant = try JSONDecoder().decode(
+      JSONValue.self, from: Data(contentsOf: URL(fileURLWithPath: file)))
+    guard grant.objectValue != nil else {
+      throw ValidationError("The grant must be a JSON object.")
     }
     printJSON(
       try await connection.client().call(
-        "profile.permissions", arguments: .object(arguments)))
+        "profile.permissions",
+        arguments: .object([
+          "grant": grant, "expected_permission_revision": .integer(expectedPermissionRevision),
+        ])))
   }
 }
-
-extension GatewayPermissionMode: ExpressibleByArgument {}
-extension GatewayConfirmationPolicy: ExpressibleByArgument {}
 
 struct Tunnel: ParsableCommand {
   static let configuration = CommandConfiguration(
@@ -703,63 +646,92 @@ struct CloudflareTunnelRemove: AsyncParsableCommand {
 struct Permissions: ParsableCommand {
   static let configuration = CommandConfiguration(
     commandName: "permissions",
-    abstract: "Inspect macOS permissions and resolve host operation approvals locally.",
-    subcommands: [PermissionsStatus.self, PermissionApprovals.self]
-  )
+    abstract: "Inspect macOS access and answer durable client permission requests locally.",
+    subcommands: [
+      PermissionsStatus.self, PermissionRequests.self, PermissionRequestAnswer.self,
+      PermissionConfirmAuthority.self,
+    ])
 }
 
 struct PermissionsStatus: AsyncParsableCommand {
   static let configuration = CommandConfiguration(commandName: "status")
   @OptionGroup var connection: AppControlConnectionOptions
+  func run() async throws { printJSON(try await connection.client().call("permissions.status")) }
+}
+
+struct PermissionRequests: AsyncParsableCommand {
+  static let configuration = CommandConfiguration(
+    commandName: "requests",
+    abstract: "List durable permission requests and their current revision.")
+  @OptionGroup var connection: AppControlConnectionOptions
+  func run() async throws { printJSON(try await connection.client().call("permissions.requests")) }
+}
+
+struct PermissionConfirmAuthority: AsyncParsableCommand {
+  static let configuration = CommandConfiguration(
+    commandName: "confirm-authority",
+    abstract: "Confirm a complete saved profile snapshot after reviewing restored authority.",
+    discussion:
+      "Read permissions requests, review every returned profile, then pass its complete profiles array with the captured epoch and revision. The command never refreshes or retries a stale review."
+  )
+  @OptionGroup var connection: AppControlConnectionOptions
+  @Option(name: .long, help: "Epoch UUID from the reviewed permissions requests snapshot.")
+  var epoch: String
+  @Option(name: .long, help: "Permission revision from the same reviewed snapshot.")
+  var expectedPermissionRevision: Int64
+  @Option(name: .long, help: "JSON file containing the complete reviewed ProfileGrant array.")
+  var profilesFile: String
+
+  func validate() throws {
+    guard UUID(uuidString: epoch) != nil, expectedPermissionRevision >= 0 else {
+      throw ValidationError(
+        "--epoch must be a UUID and --expected-permission-revision must not be negative.")
+    }
+  }
 
   func run() async throws {
-    printJSON(try await connection.client().call("permissions.status"))
+    let profiles = try JSONDecoder().decode(
+      JSONValue.self, from: Data(contentsOf: URL(fileURLWithPath: profilesFile)))
+    guard let rows = profiles.arrayValue, rows.allSatisfy({ $0.objectValue != nil }) else {
+      throw ValidationError("--profiles-file must contain the complete reviewed profiles array.")
+    }
+    printJSON(
+      try await connection.client().call(
+        "permissions.confirm_authority",
+        arguments: .object([
+          "epoch": .string(epoch),
+          "expected_permission_revision": .integer(expectedPermissionRevision),
+          "profiles": profiles,
+        ])))
   }
 }
 
-struct PermissionApprovals: ParsableCommand {
+struct PermissionRequestAnswer: AsyncParsableCommand {
   static let configuration = CommandConfiguration(
-    commandName: "approvals",
-    abstract: "Review and resolve host operation approvals.",
-    subcommands: [List.self, Approve.self, Deny.self])
-
-  struct List: AsyncParsableCommand {
-    static let configuration = CommandConfiguration(commandName: "list")
-    @Option(name: .long) var limit = 100
-    @OptionGroup var connection: AppControlConnectionOptions
-    func run() async throws {
-      guard (1...500).contains(limit) else {
-        throw ValidationError("--limit must be between 1 and 500.")
-      }
-      printJSON(
-        try await connection.client().call(
-          "approvals.list", arguments: .object(["limit": .number(Double(limit))])))
+    commandName: "answer",
+    abstract: "Answer one reviewed permission request. The original client retries the call.")
+  @Argument(help: "Request UUID from permissions requests.") var id: String
+  @Option(name: .long) var answer: PermissionRequestAnswerChoice
+  @Option(name: .long, help: "Revision returned by permissions requests.") var expectedRevision:
+    Int64
+  @OptionGroup var connection: AppControlConnectionOptions
+  func run() async throws {
+    guard UUID(uuidString: id) != nil, expectedRevision >= 0 else {
+      throw ValidationError("A request UUID and non-negative --expected-revision are required.")
     }
+    printJSON(
+      try await connection.client().call(
+        "permissions.answer",
+        arguments: .object([
+          "id": .string(id), "answer": .string(answer.rawValue),
+          "expected_revision": .integer(expectedRevision),
+        ])))
   }
+}
 
-  struct Approve: AsyncParsableCommand {
-    static let configuration = CommandConfiguration(
-      commandName: "approve",
-      abstract: "Approve one exact pending host operation after reviewing its details.")
-    @Argument(help: "Ticket ID from approvals list.") var id: String
-    @OptionGroup var connection: AppControlConnectionOptions
-    func run() async throws {
-      printJSON(
-        try await connection.client().call(
-          "approvals.approve", arguments: .object(["id": .string(id)])))
-    }
-  }
-
-  struct Deny: AsyncParsableCommand {
-    static let configuration = CommandConfiguration(commandName: "deny")
-    @Argument(help: "Ticket ID from approvals list.") var id: String
-    @OptionGroup var connection: AppControlConnectionOptions
-    func run() async throws {
-      printJSON(
-        try await connection.client().call(
-          "approvals.deny", arguments: .object(["id": .string(id)])))
-    }
-  }
+enum PermissionRequestAnswerChoice: String, ExpressibleByArgument {
+  case onlyThisTime = "only_this_time"
+  case always, deny
 }
 
 struct OpenAITunnelLogs: AsyncParsableCommand {

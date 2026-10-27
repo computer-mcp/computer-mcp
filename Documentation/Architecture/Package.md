@@ -99,7 +99,7 @@ package product and does not install or bundle vendor binaries.
 | `Sources/ComputerMCPComputerUse/` | macOS Computer Use provider, observation and action service, native Accessibility and screen capture adapter, and permission readings |
 | `Sources/ComputerMCPPersistence/` | Platform-neutral database connection, schema migrations, stored records, serialized permission ledger and authority-epoch recovery |
 | `Sources/ComputerMCPPlatformDarwin/` | macOS implementations: Keychain, security-scoped bookmarks, `SMAppService`, Launch Services lookup, directory-event file change monitoring, archive extraction, private staging, directory identities and exclusive rename, system network proxy lookup, ImageIO/PDFKit/AVFoundation media inspection, extended attributes, Trash, project opening and native system readings |
-| `Sources/ComputerMCPGateway/` | Platform-neutral runtime, provider routing, admission, approvals, receipts, continuations, host services, HTTP adapter, domain stores, owned work and audit; injected management and client-control contracts |
+| `Sources/ComputerMCPGateway/` | Platform-neutral runtime, provider routing, admission, permission requests, receipts, continuations, host services, HTTP adapter, domain stores, owned work and audit; injected management and client-control contracts |
 | `Sources/ComputerMCPControlPlane/` | Platform-neutral App and CLI administration, client control, remote management, manifest transactions, plugin and tunnel administration, product readiness and client registration |
 | `Sources/ComputerMCPMacOS/` | macOS composition root that supplies project grants, tool providers, Computer Use permission readings, the Git executable, executable search directories, file change monitors, plugin directory and application lookup services, tunnel proxy resolution, native macOS tool definitions and dispatch, the secret store, login item controller, default manifest and live App services |
 | `Sources/CSystemArchive/` | Internal declarations for the macOS system archive library |
@@ -451,12 +451,12 @@ library terms. Declarations distinguish canonical path operations, project write
 execution continuations, forwarding targets, plugin registration provenance and
 Full access. Inline structured data has no path requirement when no path is supplied.
 The router publishes requirements with their provider and rejects a changed
-descriptor at dispatch. These declarations are catalog metadata; live admission
-still uses the profile, risk and confirmation evaluator.
+descriptor at dispatch. The gateway resolves these declarations and evaluates
+each invocation through the permission library before dispatch.
 
 `ResolvedToolInvocation` represents host-resolved invocation conditions and typed
-plugin origins. `InvocationContext` has an optional field for this value; live
-call paths currently leave it empty. It does not itself grant authority.
+plugin origins. `InvocationContext` carries this host-resolved value alongside
+admitted permission evidence. A declaration alone does not grant authority.
 
 ### Permission admission and execution evidence
 
@@ -489,9 +489,10 @@ The chain carries prior Only this time answers from valid execution authority;
 new requests expire after one day. Answers authorize a matching retry and its
 new execution. The original execution's requirements remain fixed.
 
-The production gateway still uses its existing evaluator and execution adapters.
-These library APIs are integration contracts; connection selection, runtime
-violation attribution and limit enforcement are not wired into live dispatch.
+`GatewayRuntime` resolves every call's requirements and selects its authenticated
+connection before permission admission. `ExecutionRevocationCoordinator` prepares
+execution contexts, reconciles resource limits and joins revoked work. A launch
+whose context or enforcement backend is unavailable fails before dispatch.
 
 ### Durable permission state
 
@@ -527,9 +528,7 @@ a platform without that facility. The host must select the same namespace and lo
 directory for every writer, including database replacement.
 
 `GatewayDatabase.permissionStore(counter:)` shares its connection with the ledger store,
-and `transactionWithDatabase` permits atomic project/profile SQL changes. The store and
-epoch handoff are library facilities; the live gateway still uses its existing
-authorization and storage path.
+and `transactionWithDatabase` permits atomic project/profile SQL changes. The live gateway composes its authority through this store and epoch handoff.
 
 `PermissionProfileMigration` converts a versioned host snapshot without constructing
 providers or querying downstream processes. `PermissionMigrationCatalog` freezes the
@@ -537,16 +536,21 @@ built-in classifications at migration version 1; the host supplies available too
 validated aliases and contribution origins, and the configuration digest. Revision-zero
 profiles first resolve their manifest defaults. Missing or ineffective grants produce
 bounded diagnostics rather than broader grants.
+Every migrated project starts with network access `none`, including projects with
+network-using tools such as `file.download`. Subsequent host requests allow the
+owner to add individual destinations to that project's `custom` host list.
 
 `PermissionMigrationStore.prepare` reads profiles, projects, aliases, derived receipts
 and configuration identity together. Explicit activation recomputes that conversion
 inside the permission-store transaction, verifies the expected input and catalog,
-advances profile authorization revisions, clears saved consent and operation tickets,
+advances profile authorization revisions, clears saved consent, removes the obsolete
+ticket table,
 and records an idempotent receipt. Additive permission-profile and source-parent tables
-preserve derived ownership and receipt provenance. The database opener does not activate
-conversion; the live gateway continues to use `ProfileGrant`.
+preserve derived ownership and receipt provenance. Runtime composition activates the conversion before admitting calls and binds
+converted profiles to the external authority epoch. The database opener alone
+does not activate conversion.
 
-`PermissionProfileManifest` is the internal codec for the permission-table format in
+`PermissionProfileManifest` is the codec for the permission-table format in
 `CodingHarness.md`. Missing entries remain requestable, `deny` is explicit, project
 network entries support the custom host form, and revisions belong to the host.
 Access and network settings are independent: a network-only project entry retains
@@ -555,14 +559,13 @@ access does not erase its saved network setting. Without a fallback, omitted net
 settings mean none.
 An empty custom host list is valid and denies network unless it includes trusted hosts.
 Obsolete profile fields fail with replacement guidance, including empty and false
-values. The public configuration parser retains its current contract until cutover.
+values. The public configuration parser uses this permission-table contract.
 
 `GatewayPermissionService` provides admission, request answers, shared profile edits,
 revocation, owner ceilings and machine-policy reconciliation on the same
 `SQLitePermissionStore`. `PermissionControlService` accepts an in-process local-owner
 proof for each action; `MacOSPermissionServices` constructs both adapters over one
-connection and external epoch counter. These compositions are prepared APIs, not a
-second active App authority before the gateway cutover.
+connection and external epoch counter. The gateway and local owner controls use this shared authority.
 
 Verified client identity, profile and caller form a stable subject. Only this time
 answers remain bound to that subject's exact invocation and retry dependency chain.
@@ -621,8 +624,7 @@ provider dispatch when persistence is available. Declared host actions require
 persistence; workspace mutations also require a verified client. `HostCallRecord`
 binds client and acting plugin or local server, profile/caller, actual/source project,
 route/action, canonical argument digest and admission revisions. It contains no raw
-arguments. Its optional permission authorization ID is populated only by permission
-ledger admission; the current outer operation gate does not fabricate that identity.
+arguments. Its permission authorization ID links the call to live permission-ledger admission.
 Control-session revision records admission evidence; callbacks consult the live session.
 
 `HostCallRecordStore` uses the host database and retains at most one million records.
@@ -648,5 +650,5 @@ The private protocol retains the same invocation/workspace fields, receipt ident
 digest and confirmation arguments. Removal and unregister validate current authority.
 Exact provisioning rollback requires its creating invocation and revision, even when
 the grant has since been revoked; idempotent registration never transfers rollback
-ownership. The outer operation gate remains authoritative for admission. Its ticket
-ID in the version-1 response is audit linkage, rather than callback proof.
+ownership. Permission-ledger admission remains authoritative. The version-1 `ticket_id`
+compatibility field is null; callbacks validate the live call record and ledger.

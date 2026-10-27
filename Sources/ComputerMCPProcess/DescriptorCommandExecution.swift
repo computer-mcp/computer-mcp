@@ -6,7 +6,7 @@ import NIOConcurrencyHelpers
 /// Host file operations retain their descriptors until execution and output consumption finish.
 internal enum DescriptorCommandExecution {
   static func run(
-    launcher: ExecutionLauncher, policy: HostExecutionPolicy, executable: String,
+    launcher: ExecutionLauncher, executable: String,
     arguments: [String],
     workingDirectory: URL?, directoryDescriptor: Int32?, inputDescriptor: Int32,
     outputDescriptor: Int32, environment: [String: String],
@@ -23,10 +23,7 @@ internal enum DescriptorCommandExecution {
     guard !inspection.hasKnownFailure, let path = inspection.path else {
       throw CommandRunnerError.launchFailed(inspection.message)
     }
-    let setup = try policy.prepare(
-      directory: directory, environment: environment, hostVariables: environment,
-      systemReadPaths: launcher.hostSystemReadPaths)
-    defer { setup.removeTemporaryDirectory() }
+    let setup = try HostExecutionSetup.prepare()
     let launchDirectory: SandboxPath
     if case .sandbox(let configuration) = setup.mode {
       launchDirectory = configuration.worktree

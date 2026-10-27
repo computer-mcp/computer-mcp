@@ -9,9 +9,9 @@ import GRDB
 /// One durable authority shared by the App and service. Inputs to admission are
 /// authenticated host facts, never decoded tool arguments. Dispatch follows commit.
 package final class GatewayPermissionService: @unchecked Sendable {
-  private let store: SQLitePermissionStore
-  private let policyReader: any ManagedPolicyReading
-  private let onAuthorityChange: @Sendable () -> Void
+  let store: SQLitePermissionStore
+  let policyReader: any ManagedPolicyReading
+  let onAuthorityChange: @Sendable () -> Void
 
   package init(
     store: SQLitePermissionStore, policyReader: any ManagedPolicyReading,
@@ -27,42 +27,67 @@ package final class GatewayPermissionService: @unchecked Sendable {
     argumentsDigest: String, requirements: InvocationRequirements, retryIDs: Set<UUID> = [],
     connectionID: String? = nil, now: Date = Date()
   ) throws -> AuthorizationDecision {
-    let result: Result<AuthorizationDecision, any Error> = try transactionWithPolicy {
-      database, ledger, policies in
-      let binding = try Self.bind(subject, database: database)
-      _ = try refresh(database, ledger: &ledger, snapshot: policies, now: now)
-      guard ledger.suspendedAuthority == nil, ledger.pendingEpochRecovery == nil else {
-        return .success(.denied(.authoritySuspended))
+    try evaluate(
+      subject: subject, tool: tool, projectID: projectID,
+      argumentsDigest: argumentsDigest, requirements: requirements, retryIDs: retryIDs,
+      connectionID: connectionID, now: now
+    ).decision
+  }
+
+  func evaluate(
+    subject: GatewayPermissionSubject, tool: String, projectID: String?,
+    argumentsDigest: String, requirements: InvocationRequirements, retryIDs: Set<UUID> = [],
+    connectionID: String? = nil, now: Date = Date(),
+    skillLibraries: [GatewaySkillLibraryRequirement] = []
+  ) throws -> GatewayPermissionEvaluation {
+    let evaluated: (Result<AuthorizationDecision, any Error>, GatewayPermissionAuditEvidence) =
+      try transactionWithPolicy {
+        database, ledger, policies in
+        let result: Result<AuthorizationDecision, any Error> = try {
+          () throws -> Result<AuthorizationDecision, any Error> in
+          let binding = try Self.bind(subject, database: database)
+          _ = try refresh(database, ledger: &ledger, snapshot: policies, now: now)
+          guard ledger.suspendedAuthority == nil, ledger.pendingEpochRecovery == nil else {
+            return .success(.denied(.authoritySuspended))
+          }
+          let profile: ProfileGrant
+          do {
+            profile = try Self.profile(
+              binding.profileID, database: database, epoch: ledger.authorizationEpochID)
+          } catch GatewayPermissionError.profileUnavailable {
+            return .success(.denied(.authoritySuspended))
+          }
+          guard profile.allowedCallers.contains(subject.caller) else {
+            throw GatewayPermissionError.invalidBinding
+          }
+          try Self.synchronize(
+            profile, principal: subject.principal,
+            requestedProject: requirements.sandboxProjectID
+              ?? projectID.flatMap { ledger.environment.paths?.projects.sourceID(for: $0) }
+              ?? projectID,
+            ledger: &ledger)
+          if requirements.mode != .sandbox && !profile.fullAccess {
+            return .success(.denied(.fullAccessRequired))
+          }
+          let invocation = InvocationIdentity(
+            principal: subject.principal, tool: tool, projectID: projectID,
+            argumentsDigest: argumentsDigest)
+          let selected = GatewaySkillLibraryRequirement.selecting(
+            skillLibraries, requirements: requirements, ledger: ledger,
+            principal: subject.principal, connectionID: connectionID)
+          return Result {
+            try ledger.authorize(
+              invocation: invocation, requirements: selected, retryIDs: retryIDs,
+              connectionID: connectionID, now: now)
+          }
+        }()
+        return (
+          result,
+          try GatewayPermissionAuditEvidence(
+            database: database, ledger: ledger, profileID: subject.profileID)
+        )
       }
-      let profile: PermissionProfile
-      do {
-        profile = try Self.profile(
-          binding.profileID, database: database, epoch: ledger.authorizationEpochID)
-      } catch GatewayPermissionError.profileUnavailable {
-        return .success(.denied(.authoritySuspended))
-      }
-      guard profile.allowedCallers.contains(subject.caller) else {
-        throw GatewayPermissionError.invalidBinding
-      }
-      try Self.synchronize(
-        profile, principal: subject.principal,
-        requestedProject: requirements.sandboxProjectID
-          ?? projectID.flatMap { ledger.environment.paths?.projects.sourceID(for: $0) }
-          ?? projectID,
-        ledger: &ledger)
-      if requirements.mode != .sandbox && !profile.fullAccess {
-        return .success(.denied(.fullAccessRequired))
-      }
-      let invocation = InvocationIdentity(
-        principal: subject.principal, tool: tool, projectID: projectID,
-        argumentsDigest: argumentsDigest)
-      return Result {
-        try ledger.authorize(
-          invocation: invocation, requirements: requirements, retryIDs: retryIDs,
-          connectionID: connectionID, now: now)
-      }
-    }
-    return try result.get()
+    return GatewayPermissionEvaluation(decision: try evaluated.0.get(), evidence: evaluated.1)
   }
 
   package func answerRequest(
@@ -106,7 +131,16 @@ package final class GatewayPermissionService: @unchecked Sendable {
         try Self.save(profile, database: database, epoch: ledger.authorizationEpochID)
         try Self.synchronizeBound(profile, database: database, ledger: &ledger)
       }
+      let action: String
+      switch answer {
+      case .always: action = "always"
+      case .onlyThisTime: action = "only_this_time"
+      }
       try Self.advanceControlRevision(database)
+      try GatewayPermissionAudit.record(
+        action, capabilityID: "permissions.answer",
+        owner: owner, database: database, ledger: ledger, profileIDs: [profile.id],
+        request: request, expectedRevision: expectedRevision, now: now)
       return .success(ledger.pendingRevocations)
     }
     return try result.get()
@@ -115,8 +149,9 @@ package final class GatewayPermissionService: @unchecked Sendable {
   /// Profile edits are shared by all verified clients bound to that profile.
   /// Expected revisions are supplied from the owner's current control-plane view.
   package func updateProfile(
-    _ proposed: PermissionProfile, owner: GatewayPermissionOwner,
-    expectedProfileRevision: Int64?, expectedRevision: UInt64, now: Date = Date()
+    _ proposed: ProfileGrant, owner: GatewayPermissionOwner,
+    expectedProfileRevision: Int64?, expectedRevision: UInt64,
+    authorization: GatewayManagementAuthorization? = nil, now: Date = Date()
   ) throws {
     let result: Result<Void, any Error> = try transactionWithPolicy { database, ledger, policies in
       try owner.authorize()
@@ -125,6 +160,10 @@ package final class GatewayPermissionService: @unchecked Sendable {
       guard ledger.suspendedAuthority == nil, ledger.pendingEpochRecovery == nil else {
         return .failure(PermissionModelError.authoritySuspended)
       }
+      do {
+        try GatewayDatabase.requireManagementAuthorization(
+          authorization, in: database, ledger: &ledger)
+      } catch { return .failure(error) }
       let previous = try Self.optionalProfile(
         proposed.id, database: database, epoch: ledger.authorizationEpochID)
       guard previous?.authorizationRevision == expectedProfileRevision else {
@@ -139,6 +178,12 @@ package final class GatewayPermissionService: @unchecked Sendable {
       try Self.save(profile, database: database, epoch: ledger.authorizationEpochID)
       try Self.synchronizeBound(profile, database: database, ledger: &ledger)
       try Self.advanceControlRevision(database)
+      try GatewayPermissionAudit.record(
+        "update_profile", capabilityID: "profile.permissions", owner: owner,
+        database: database, ledger: ledger, profileIDs: [profile.id],
+        permissions: Set(profile.permissions.entries.keys).union(
+          previous.map { Set($0.permissions.entries.keys) } ?? []),
+        expectedRevision: expectedRevision, now: now)
       return .success(())
     }
     try result.get()
@@ -159,6 +204,10 @@ package final class GatewayPermissionService: @unchecked Sendable {
       try Self.save(profile, database: database, epoch: ledger.authorizationEpochID)
       try Self.synchronizeBound(profile, database: database, ledger: &ledger)
       try Self.advanceControlRevision(database)
+      try GatewayPermissionAudit.record(
+        "revoke_permission", capabilityID: "profile.permissions", owner: owner,
+        database: database, ledger: ledger, profileIDs: [profile.id], permissions: [permission],
+        expectedRevision: expectedRevision, now: now)
       return ledger.pendingRevocations
     }
   }
@@ -185,12 +234,17 @@ package final class GatewayPermissionService: @unchecked Sendable {
         database, ledger: &ledger, snapshot: policies.settingOwner(record, document: resolved),
         now: now)
       try Self.advanceControlRevision(database)
+      try GatewayPermissionAudit.record(
+        document == nil ? "clear_owner_policy" : "set_owner_policy",
+        capabilityID: "permissions.owner_policy", owner: owner,
+        database: database, ledger: ledger, profileIDs: [profileID],
+        expectedRevision: expectedRevision, now: now)
       return ledger.pendingRevocations
     }
   }
 
-  package func reconcilePolicy(now: Date = Date()) throws -> RevocationResult {
-    try transactionWithPolicy { database, ledger, policies in
+  package func reconcilePolicy(now: Date = Date(), notify: Bool = true) throws -> RevocationResult {
+    try transactionWithPolicy(notify: notify) { database, ledger, policies in
       _ = try refresh(database, ledger: &ledger, snapshot: policies, now: now)
       return ledger.pendingRevocations
     }
@@ -218,7 +272,7 @@ package final class GatewayPermissionService: @unchecked Sendable {
       ).map { row in
         let bytes: Data = row["payload"]
         guard bytes.count <= 4_194_304 else { throw PermissionPersistenceError.invalidCurrentState }
-        return try JSONDecoder().decode(PermissionProfile.self, from: bytes)
+        return try JSONDecoder().decode(ProfileGrant.self, from: bytes)
       }
       return GatewayPermissionView(
         revision: try Self.controlRevision(database),
@@ -253,7 +307,7 @@ package final class GatewayPermissionService: @unchecked Sendable {
   /// new epoch; merely reading SQL cannot restore authority after rollback.
   package func confirmAuthority(
     owner: GatewayPermissionOwner, epoch: UUID,
-    expectedRevision: UInt64, profileEdits: [PermissionProfile] = [], now: Date = Date()
+    expectedRevision: UInt64, profileEdits: [ProfileGrant], now: Date = Date()
   ) throws {
     try transactionWithPolicy { database, ledger, policies in
       try owner.authorize()
@@ -261,21 +315,26 @@ package final class GatewayPermissionService: @unchecked Sendable {
       guard ledger.authorizationEpochID == epoch, ledger.pendingEpochRecovery == nil else {
         throw GatewayPermissionError.revisionConflict
       }
+      let saved = try ProfileRecord.order(Column("id")).fetchAll(database).map { try $0.value() }
+      let reviewedIDs = Set(profileEdits.map(\.id))
+      guard reviewedIDs.count == profileEdits.count, reviewedIDs == Set(saved.map(\.id)) else {
+        throw GatewayPermissionError.invalidBinding
+      }
+      let previousByID = Dictionary(uniqueKeysWithValues: saved.map { ($0.id, $0) })
+      let adopted = policies.adoptingOwners(epoch: epoch)
+      for proposed in profileEdits {
+        let previous = previousByID[proposed.id]!
+        guard previous.authorizationRevision == proposed.authorizationRevision else {
+          throw GatewayPermissionError.revisionConflict
+        }
+        try Self.validateEdit(proposed, previous: previous, snapshot: adopted, ledger: ledger)
+      }
       try ledger.confirmSuspendedAuthority(epochID: epoch, expectedRevision: ledger.revision)
       try database.execute(
         sql: "UPDATE permissionProfiles SET authorityEpoch = ?", arguments: [epoch.uuidString])
       try database.execute(
         sql: "UPDATE permissionOwnerPolicies SET authorityEpoch = ?", arguments: [epoch.uuidString])
-      let adopted = policies.adoptingOwners(epoch: epoch)
-      guard Set(profileEdits.map(\.id)).count == profileEdits.count else {
-        throw GatewayPermissionError.invalidBinding
-      }
       for proposed in profileEdits {
-        let previous = try Self.profile(proposed.id, database: database, epoch: epoch)
-        guard previous.authorizationRevision == proposed.authorizationRevision else {
-          throw GatewayPermissionError.revisionConflict
-        }
-        try Self.validateEdit(proposed, previous: previous, snapshot: adopted, ledger: ledger)
         var edited = proposed
         try Self.advance(&edited)
         try Self.save(edited, database: database, epoch: epoch)
@@ -286,12 +345,18 @@ package final class GatewayPermissionService: @unchecked Sendable {
       }
       _ = try refresh(database, ledger: &ledger, snapshot: adopted, now: now)
       try Self.advanceControlRevision(database)
+      try GatewayPermissionAudit.record(
+        "confirm_authority", capabilityID: "permissions.confirm_authority", owner: owner,
+        database: database, ledger: ledger, profileIDs: profileEdits.map(\.id),
+        permissions: Set(profileEdits.flatMap { $0.permissions.entries.keys }),
+        expectedRevision: expectedRevision, now: now)
     }
   }
 
   /// A source read may wait on disk or preferences, so it never holds the writer.
   /// A concurrent publisher invalidates the observed source state and forces a fresh read.
-  private func transactionWithPolicy<Result>(
+  func transactionWithPolicy<Result>(
+    notify: Bool = true,
     _ body: (Database, inout PermissionLedger, GatewayPermissionPolicySnapshot) throws -> Result
   ) throws -> Result {
     for _ in 0..<3 {
@@ -306,7 +371,7 @@ package final class GatewayPermissionService: @unchecked Sendable {
           }
           return try body(database, &ledger, snapshot)
         }
-        onAuthorityChange()
+        if notify { onAuthorityChange() }
         return result
       } catch GatewayPermissionError.invalidPolicySnapshot { continue }
     }
@@ -323,21 +388,37 @@ package final class GatewayPermissionService: @unchecked Sendable {
     return try encoder.encode(projections + owners.map { try encoder.encode($0) })
   }
 
-  private func refresh(
+  func refresh(
     _ database: Database, ledger: inout PermissionLedger,
     snapshot: GatewayPermissionPolicySnapshot, now: Date
   ) throws -> [GatewayManagedPolicyView] {
     let views = snapshot.views(
       epoch: ledger.authorizationEpochID,
       suspended: ledger.suspendedAuthority != nil || ledger.pendingEpochRecovery != nil)
-    try database.execute(sql: "DELETE FROM permissionPolicySources")
     let encoder = JSONEncoder()
     encoder.outputFormatting = [.sortedKeys]
-    for view in views {
-      let key = view.source.rawValue + (view.profileID.map { ":" + $0.rawValue } ?? "")
+    let incoming = try Dictionary(
+      uniqueKeysWithValues: views.map { view in
+        (
+          view.source.rawValue + (view.profileID.map { ":" + $0.rawValue } ?? ""),
+          try encoder.encode(view)
+        )
+      })
+    let stored = try Dictionary(
+      uniqueKeysWithValues: Row.fetchAll(
+        database, sql: "SELECT source, payload FROM permissionPolicySources"
+      ).map { row in
+        (row["source"] as String, row["payload"] as Data)
+      })
+    for key in stored.keys where incoming[key] == nil {
       try database.execute(
-        sql: "INSERT INTO permissionPolicySources (source, payload) VALUES (?, ?)",
-        arguments: [key, try encoder.encode(view)])
+        sql: "DELETE FROM permissionPolicySources WHERE source = ?", arguments: [key])
+    }
+    for (key, payload) in incoming where stored[key] != payload {
+      try database.execute(
+        sql:
+          "INSERT INTO permissionPolicySources (source, payload) VALUES (?, ?) ON CONFLICT(source) DO UPDATE SET payload=excluded.payload",
+        arguments: [key, payload])
     }
     var environment = ledger.environment
     for binding in try Self.bindings(database) {
@@ -362,6 +443,7 @@ package final class GatewayPermissionService: @unchecked Sendable {
       default: break
       }
     }
+    try Self.reconcileStandingConsents(database: database, ledger: &ledger)
     return views
   }
 
@@ -394,7 +476,7 @@ package final class GatewayPermissionService: @unchecked Sendable {
     return UInt64(value)
   }
 
-  private static func requireRevision(_ revision: UInt64, database: Database) throws {
+  static func requireRevision(_ revision: UInt64, database: Database) throws {
     guard try controlRevision(database) == revision else {
       throw GatewayPermissionError.revisionConflict
     }
@@ -408,19 +490,49 @@ package final class GatewayPermissionService: @unchecked Sendable {
       sql: "UPDATE permissionControlRevision SET revision = revision + 1 WHERE id = 1")
   }
 
-  private static func advance(_ profile: inout PermissionProfile) throws {
+  private static func advance(_ profile: inout ProfileGrant) throws {
     guard profile.authorizationRevision < Int64.max else {
       throw PermissionMigrationError.revisionExhausted
     }
     profile.authorizationRevision += 1
   }
 
-  private static func validateProfile(_ profile: PermissionProfile) throws {
-    _ = try PermissionProfileManifest.decode(PermissionProfileManifest.encode([profile]))
+  private static func validateProfile(_ profile: ProfileGrant) throws {
+    try profile.validate()
+    func validateObject(_ id: String) throws {
+      guard !id.isEmpty, id.utf8.count <= 256,
+        !id.unicodeScalars.contains(where: { $0.value < 32 || $0.value == 127 }),
+        id == "*" || !id.contains("*")
+      else { throw PermissionModelError.invalidObject }
+    }
+    var permissions = Permissions()
+    for (permission, state) in profile.permissions.entries {
+      switch permission {
+      case .project(let id), .plugin(let id), .mcpServer(let id): try validateObject(id)
+      default: break
+      }
+      try permissions.set(state, for: permission)
+    }
+    for (id, network) in profile.projectNetworks {
+      try validateObject(id)
+      if case .custom(let hosts, _) = network.configuration {
+        guard hosts.allSatisfy({ NetworkHost.contains($0, rule: $0) }) else {
+          throw PermissionModelError.invalidObject
+        }
+      }
+    }
+    let bundleCharacters = CharacterSet(
+      charactersIn: "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-.")
+    for id in profile.automation.keys {
+      guard id != "*", id.utf8.count <= 256, id.contains("."),
+        !id.split(separator: ".", omittingEmptySubsequences: false).contains(where: \.isEmpty),
+        id.unicodeScalars.allSatisfy(bundleCharacters.contains)
+      else { throw PermissionModelError.invalidObject }
+    }
   }
 
-  private static func validateEdit(
-    _ proposed: PermissionProfile, previous: PermissionProfile?,
+  static func validateEdit(
+    _ proposed: ProfileGrant, previous: ProfileGrant?,
     snapshot: GatewayPermissionPolicySnapshot, ledger: PermissionLedger
   ) throws {
     try validateProfile(proposed)
@@ -496,7 +608,7 @@ package final class GatewayPermissionService: @unchecked Sendable {
   }
 
   private static func checkFallbackEdits(
-    _ profile: PermissionProfile, previous: PermissionProfile?, limits: ManagedLimits
+    _ profile: ProfileGrant, previous: ProfileGrant?, limits: ManagedLimits
   ) throws {
     for permission in [Permission.project("*"), .plugin("*"), .mcpServer("*")] {
       guard case .granted(let proposed) = profile.permissions.entries[permission],
@@ -529,8 +641,8 @@ package final class GatewayPermissionService: @unchecked Sendable {
     }
   }
 
-  private static func synchronizeBound(
-    _ profile: PermissionProfile, database: Database, ledger: inout PermissionLedger
+  static func synchronizeBound(
+    _ profile: ProfileGrant, database: Database, ledger: inout PermissionLedger
   ) throws {
     for binding in try bindings(database) where binding.profileID == profile.id {
       var effective = profile
@@ -541,7 +653,7 @@ package final class GatewayPermissionService: @unchecked Sendable {
       }
       try synchronize(
         effective, principal: binding.principal, requestedProject: nil, ledger: &ledger)
-      if !profile.fullAccess || !profile.allowedCallers.contains(binding.caller) {
+      do {
         var environment = ledger.environment
         environment.modes[binding.principal] = nil
         for (id, connection) in environment.connections
@@ -556,8 +668,8 @@ package final class GatewayPermissionService: @unchecked Sendable {
     }
   }
 
-  private static func synchronize(
-    _ profile: PermissionProfile, principal: Principal, requestedProject: String?,
+  static func synchronize(
+    _ profile: ProfileGrant, principal: Principal, requestedProject: String?,
     ledger: inout PermissionLedger
   ) throws {
     ledger.register(principal)
@@ -585,8 +697,8 @@ package final class GatewayPermissionService: @unchecked Sendable {
     }
   }
 
-  private static func profile(_ id: GatewayProfileID, database: Database, epoch: UUID?) throws
-    -> PermissionProfile
+  static func profile(_ id: GatewayProfileID, database: Database, epoch: UUID?) throws
+    -> ProfileGrant
   {
     guard let profile = try optionalProfile(id, database: database, epoch: epoch) else {
       throw GatewayPermissionError.unknownProfile
@@ -594,8 +706,8 @@ package final class GatewayPermissionService: @unchecked Sendable {
     return profile
   }
 
-  private static func optionalProfile(_ id: GatewayProfileID, database: Database, epoch: UUID?)
-    throws -> PermissionProfile?
+  static func optionalProfile(_ id: GatewayProfileID, database: Database, epoch: UUID?)
+    throws -> ProfileGrant?
   {
     guard
       let row = try Row.fetchOne(
@@ -607,14 +719,14 @@ package final class GatewayPermissionService: @unchecked Sendable {
     }
     let bytes: Data = row["payload"]
     guard bytes.count <= 4_194_304 else { throw PermissionPersistenceError.invalidCurrentState }
-    let profile = try JSONDecoder().decode(PermissionProfile.self, from: bytes)
+    let profile = try JSONDecoder().decode(ProfileGrant.self, from: bytes)
     guard profile.id == id, profile.authorizationRevision == row["authorizationRevision"] else {
       throw PermissionPersistenceError.invalidCurrentState
     }
     return profile
   }
 
-  private static func save(_ profile: PermissionProfile, database: Database, epoch: UUID?) throws {
+  static func save(_ profile: ProfileGrant, database: Database, epoch: UUID?) throws {
     guard let epoch else { throw GatewayPermissionError.profileUnavailable }
     try database.execute(
       sql:
@@ -625,12 +737,12 @@ package final class GatewayPermissionService: @unchecked Sendable {
       ])
   }
 
-  private struct Binding {
+  struct Binding {
     let principal: Principal
     let profileID: GatewayProfileID
     let caller: GatewayCallerKind
   }
-  private static func bindings(_ database: Database) throws -> [Binding] {
+  static func bindings(_ database: Database) throws -> [Binding] {
     try Row.fetchAll(database, sql: "SELECT * FROM permissionSubjects ORDER BY principal").map {
       row in
       let bytes: Data = row["principal"]
@@ -644,13 +756,13 @@ package final class GatewayPermissionService: @unchecked Sendable {
         caller: caller)
     }
   }
-  private static func binding(_ principal: Principal, database: Database) throws -> Binding {
+  static func binding(_ principal: Principal, database: Database) throws -> Binding {
     guard let binding = try bindings(database).first(where: { $0.principal == principal }) else {
       throw GatewayPermissionError.invalidBinding
     }
     return binding
   }
-  private static func bind(_ subject: GatewayPermissionSubject, database: Database) throws
+  static func bind(_ subject: GatewayPermissionSubject, database: Database) throws
     -> Binding
   {
     let bytes = try JSONEncoder().encode(subject.principal)

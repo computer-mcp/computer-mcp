@@ -494,10 +494,12 @@ private struct ProjectRow: View {
 
   var body: some View {
     HStack(spacing: 12) {
-      Image(systemName: project.isSelected ? "folder.fill.badge.checkmark" : "folder")
-        .font(.title3)
-        .foregroundStyle(project.isEnabled ? Color.accentColor : Color.secondary)
-        .frame(width: 24)
+      Image(
+        systemName: project.effectiveAccess.isGranted ? "folder.fill.badge.checkmark" : "folder"
+      )
+      .font(.title3)
+      .foregroundStyle(project.effectiveAccess.isGranted ? Color.accentColor : Color.secondary)
+      .frame(width: 24)
 
       VStack(alignment: .leading, spacing: 3) {
         HStack(spacing: 8) {
@@ -536,24 +538,37 @@ private struct ProjectRow: View {
 
       Spacer()
 
-      Toggle(
-        isOn: Binding(
-          get: { project.isSelected },
-          set: { enabled in
-            model.setProjectEnabled(enabled, project: project)
+      VStack(alignment: .leading, spacing: 4) {
+        Picker(
+          selection: Binding(
+            get: { project.access },
+            set: { model.setProjectAccess($0, project: project) })
+        ) {
+          ForEach(ProjectAccess.allCases, id: \.self) { access in
+            Text(verbatim: access.localizedTitle).tag(access)
           }
-        )
-      ) {
+        } label: {
+          AppLocalization.verbatimText(
+            AppLocalization.formatted("Access for %@", project.activeProfileID))
+        }
+        .accessibilityIdentifier("project.\(project.id).access")
+        .disabled(model.isActionRunning("project.access.\(project.id)"))
+        .help(
+          Text(
+            "Ask uses the profile's default project rule. A wildcard rule still applies.",
+            bundle: AppLocalization.resourceBundle))
         AppLocalization.verbatimText(
           AppLocalization.formatted(
-            "Enabled for %@",
-            project.activeProfileID
-          )
+            "Effective access: %@", project.effectiveAccess.localizedTitle)
         )
-      }
-      .accessibilityIdentifier("project.\(project.id).enabled")
-      .toggleStyle(.switch)
-      .help("Grant this project to the active profile")
+        .font(.caption).foregroundStyle(.secondary)
+        AppLocalization.verbatimText(
+          AppLocalization.formatted(
+            "Profile revision: %@ · Permission revision: %@",
+            String(project.profileRevision), String(project.permissionRevision))
+        )
+        .font(.caption2).foregroundStyle(.secondary)
+      }.frame(width: 230)
 
       Button("Repair…", action: repair)
         .disabled(model.isActionRunning("project.repair.\(project.id)"))

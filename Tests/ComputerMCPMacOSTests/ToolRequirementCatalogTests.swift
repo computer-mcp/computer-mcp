@@ -109,6 +109,9 @@ struct ToolRequirementCatalogTests {
           "Privacy mismatch: \(name)")
       }
     }
+    let shell = try #require(catalog["shell.run"]?.objectValue?["description"]?.stringValue)
+    #expect(shell.contains("Sandbox") && shell.contains("consented Full access"))
+    #expect(shell.contains("Project permissions") && shell.contains("execution limits"))
     #expect(reviewed == Set(catalog.keys))
   }
 
@@ -128,7 +131,7 @@ struct ToolRequirementCatalogTests {
       mcp.tools.describe mcp.tools.find mcp.tools.list network.arp network.connections network.dns
       network.hardware_ports network.http_check network.interfaces network.listeners
       network.locations network.ping network.proxy network.resolve network.routes network.services
-      network.tcp_check network.vpn network.wifi operations.commit operations.prepare
+      network.tcp_check network.vpn network.wifi
       plugin.artifacts plugin.configure plugin.describe plugin.disable plugin.enable
       plugin.install plugin.list plugin.search plugin.uninstall plugin.update policy.probe
       profile.limit profile.show project.add project.describe project.grant project.list

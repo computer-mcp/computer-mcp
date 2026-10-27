@@ -1,4 +1,6 @@
 import ComputerMCPMacOS
+import ComputerMCPPermissions
+import ComputerMCPSandbox
 import ComputerMCPTestSupport
 import ComputerMCPTransport
 import ComputerMCPTunnels
@@ -240,7 +242,11 @@ struct PluginControlPlaneTests {
       var configuration = GatewayConfiguration(projectDirectory: fixture.root)
       configuration.knownPluginMCPServerIDs = ["plugin-12-test-package-native"]
       configuration.profiles = [
-        .init(id: .chatGPTOperate, mcpServers: ["plugin-12-test-package-native"])
+        .init(
+          id: .chatGPTOperate,
+          permissions: fixturePermissions([
+            .mcpServer("plugin-12-test-package-native"): .granted(.all)
+          ]))
       ]
       #expect(
         try await fixture.host.parseManifest(configuration.exportedTOML()).profiles.count == 1)
@@ -276,7 +282,7 @@ struct PluginControlPlaneTests {
       #expect(try fixture.database.pluginOwnedDirectories().isEmpty)
       #expect(try Data(contentsOf: manifestURL) == original)
       #expect(
-        try GatewayDatabase(path: fixture.directories.database.path).pluginStoreSnapshot()
+        try fixturePermissionDatabase(path: fixture.directories.database.path).pluginStoreSnapshot()
           == final.state)
     } catch {
       await fixture.socket.stop()
@@ -728,29 +734,34 @@ struct PluginControlFixture: Sendable {
     worker: String = "computer-mcp", releases: GitHubPluginReleases = GitHubPluginReleases(),
     download: GitHubPluginDownload = GitHubPluginDownload(),
     bundled: BundledPlugins = .current,
-    cliExecutable: URL? = nil
+    cliExecutable: URL? = nil,
+    executionLauncher: (@Sendable (URL) throws -> ExecutionLauncher)? = nil,
+    permissionPolicyReader: (any ManagedPolicyReading)? = nil
   ) throws {
-    self.cliExecutable =
-      cliExecutable
-      ?? URL(fileURLWithPath: #filePath)
-      .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
-      .appendingPathComponent(".build/debug/computer-mcp")
+    self.cliExecutable = try cliExecutable ?? nativeGatewayTestExecutable()
     root = URL(fileURLWithPath: "/private/tmp/cm-pc-\(UUID().uuidString.prefix(8))")
     directories = AppControlPlaneServiceDirectories(
       applicationSupport: root.appendingPathComponent("support"),
       logs: root.appendingPathComponent("logs"))
     try directories.prepare()
-    database = try GatewayDatabase(path: directories.database.path)
+    try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: root.path)
+    database = try fixturePermissionDatabase(path: directories.database.path)
+    let launcher = try executionLauncher?(root) ?? testExecutionLauncher()
+    var platform = MacOSPlatform.services(launcher: launcher)
+    platform.permissionPolicyReader = permissionPolicyReader ?? TestManagedPolicyReader()
+    let permissionControl = try fixturePermissionControl(database: database, platform: platform)
     let manifestStore = try AtomicManifestStore(
       manifestURL: directories.manifest, database: database,
       loader: GatewayManifestConfigurationLoader(
         database: database, bundledPlugins: bundled,
-        applications: MacOSPlatform.services(launcher: testExecutionLauncher()).applications))
+        applications: platform.applications))
     _ = try manifestStore.activate(
       manifest: GatewayConfiguration(projectDirectory: root).exportedTOML())
     let secrets = try KeychainSecretStore(adapter: MemoryKeychainAdapter())
     host = AppControlPlaneService(
-      directories: directories, database: database, manifestStore: manifestStore,
+      directories: directories, database: database,
+      permissionControl: permissionControl,
+      manifestStore: manifestStore,
       defaultManifest: DefaultGatewayConfiguration.manifest,
       secretStore: secrets,
       openAITunnelSupervisor: OpenAITunnelSupervisor(
@@ -763,7 +774,8 @@ struct PluginControlFixture: Sendable {
       gatewayExecutablePath: worker,
       launchAtLoginController: SMAppServiceLaunchAtLoginController(),
       computerUsePermissionReader: FixedComputerUsePermissionReader(),
-      platform: MacOSPlatform.services(launcher: testExecutionLauncher()), pluginReleases: releases,
+      platform: platform,
+      pluginReleases: releases,
       pluginDownload: download,
       bundledPlugins: bundled)
     gateway = AppGatewayService.live(controlPlane: host, directories: directories)
@@ -774,11 +786,18 @@ struct PluginControlFixture: Sendable {
   func cli(_ arguments: [String]) async throws -> CommandResult {
     let executable = cliExecutable
     return try await BlockingOperationExecutor(label: "plugin-cli-test").perform {
-      try ProcessCommandRunner(launcher: testExecutionLauncher()).run(
-        executable: executable.path,
-        arguments: ["plugins"] + arguments + ["--control-socket", directories.controlSocket.path],
-        workingDirectory: root, environment: [:], timeoutMilliseconds: 30_000,
-        maxOutputBytes: 1_048_576)
+      let environment = ["PATH": "/usr/bin:/bin", "HOME": root.path, "TMPDIR": root.path]
+      let administration = ExecutionAdministration(
+        mode: .fullAccess, environment: try ExecutionEnvironment(fullAccessVariables: environment))
+      return try ExecutionAdministration.$current.withValue(administration) {
+        try ProcessCommandRunner(launcher: testExecutionLauncher(), environment: environment).run(
+          executable: executable.path,
+          arguments: ["plugins"] + arguments + [
+            "--control-socket", directories.controlSocket.path,
+          ],
+          workingDirectory: root, environment: environment, timeoutMilliseconds: 30_000,
+          maxOutputBytes: 1_048_576)
+      }
     }
   }
 

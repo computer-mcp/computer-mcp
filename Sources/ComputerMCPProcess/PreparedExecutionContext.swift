@@ -13,7 +13,32 @@ package protocol ExecutionAuthorizing: Sendable {
   func bindChild(_ id: UUID, ownership: any ExecutionOwnership)
   func launchFailed(_ id: UUID)
   func finishAdmission() throws
+  func retainWork(cancellation: @escaping @Sendable () async -> Void) throws -> ExecutionWorkLease
   func access(_ executionID: UUID, operation: ExecutionOperation) throws -> EffectiveExecutionLimits
+}
+
+extension ExecutionAuthorizing {
+  package func retainWork(cancellation: @escaping @Sendable () async -> Void) throws
+    -> ExecutionWorkLease
+  {
+    throw ExecutionEnvironmentError.unavailable(
+      "This execution authority cannot retain provider work")
+  }
+}
+
+/// A host-owned logical request remains live until its downstream outcome settles.
+/// Dropping the handle does not assert that remote work stopped.
+package final class ExecutionWorkLease: Sendable {
+  private let completed = NIOLockedValueBox(false)
+  private let completion: @Sendable () throws -> Void
+  package init(completion: @escaping @Sendable () throws -> Void) { self.completion = completion }
+  package func finish() throws {
+    try completed.withLockedValue { value in
+      guard !value else { return }
+      try completion()
+      value = true
+    }
+  }
 }
 
 package protocol ExecutionAccessChecking: InvocationExecutionAuthority {
@@ -32,6 +57,7 @@ package final class PreparedExecutionContext: ExecutionAccessChecking, Sendable 
   package let authority: any ExecutionAuthorizing
   package let mode: ComputerMCPSandbox.ExecutionMode
   package let environment: ExecutionEnvironment
+  package let permitsProgramLaunch: Bool
   package let pathAccess: (any HostPathAccessChecking)?
   private struct State: Sendable {
     var limits: EffectiveExecutionLimits
@@ -43,12 +69,14 @@ package final class PreparedExecutionContext: ExecutionAccessChecking, Sendable 
   package init(
     authority: any ExecutionAuthorizing, mode: ComputerMCPSandbox.ExecutionMode,
     environment: ExecutionEnvironment,
-    limits: EffectiveExecutionLimits, pathAccess: (any HostPathAccessChecking)? = nil
+    limits: EffectiveExecutionLimits, pathAccess: (any HostPathAccessChecking)? = nil,
+    permitsProgramLaunch: Bool = true
   ) {
     self.authority = authority
     self.mode = mode
     self.environment = environment
     self.pathAccess = pathAccess
+    self.permitsProgramLaunch = permitsProgramLaunch
     state = .init(State(limits: limits))
   }
 
@@ -86,6 +114,12 @@ package final class PreparedExecutionContext: ExecutionAccessChecking, Sendable 
   }
 
   package func finishAdmission() throws { try authority.finishAdmission() }
+
+  package func retainWork(cancellation: @escaping @Sendable () async -> Void) throws
+    -> ExecutionWorkLease
+  {
+    try authority.retainWork(cancellation: cancellation)
+  }
 
   package func observeLimits(_ observer: @escaping @Sendable (EffectiveExecutionLimits) -> Void) {
     let limits = state.withLockedValue {

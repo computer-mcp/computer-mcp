@@ -12,6 +12,8 @@ package protocol DownstreamMCPClient: Sendable {
   func toolChanges() -> AsyncStream<Void>
   func shutdown() async
   func isServerVisible(_ server: MCPServerConfig, context: InvocationContext) -> Bool
+  /// Returns only host-observed metadata and never connects or launches a provider.
+  func cachedTools(server: MCPServerConfig, context: InvocationContext) throws -> [MCPTool]?
   func listTools(server: MCPServerConfig, context: InvocationContext) throws -> [MCPTool]
   func callTool(
     server: MCPServerConfig, name: String, arguments: JSONValue, context: InvocationContext
@@ -66,6 +68,9 @@ package protocol DownstreamMCPClient: Sendable {
 }
 
 extension DownstreamMCPClient {
+  package func cachedTools(server: MCPServerConfig, context: InvocationContext) throws -> [MCPTool]?
+  { nil }
+
   package func closeConnection(server: MCPServerConfig, context: InvocationContext) throws
     -> JSONValue
   {

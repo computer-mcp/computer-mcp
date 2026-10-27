@@ -1,5 +1,7 @@
 import ComputerMCPDownstream
 import ComputerMCPMacOS
+import ComputerMCPPermissions
+import ComputerMCPPlatform
 import ComputerMCPTestSupport
 import Foundation
 import NIOConcurrencyHelpers
@@ -38,7 +40,7 @@ struct MCPRiskFloorTests {
 
   @Test(arguments: ["sync", "async", "detached"])
   func sameRiskHostActionChangeCannotFollowAdmission(path: String) async throws {
-    let fixture = try RiskFixture(fullAccess: true, risk: .string("workspace-write"))
+    let fixture = try RiskFixture(allAccess: true, risk: .string("workspace-write"))
     defer { fixture.remove() }
     fixture.client.setAction(.string("workspaces.provision"))
     fixture.client.changeActionAfterNextDiscovery(.string("diagnostics.snapshot"))
@@ -62,85 +64,18 @@ struct MCPRiskFloorTests {
   }
 
   @Test
-  func sameRiskHostActionChangeInvalidatesPreparedTicket() async throws {
-    let fixture = try RiskFixture(fullAccess: true, risk: .string("workspace-write"))
-    defer { fixture.remove() }
-    fixture.client.setAction(.string("workspaces.provision"))
-    let prepared = try fixture.runtime.callTool(
-      name: "operations.prepare",
-      arguments: .object([
-        "tool": .string("mcp.tools.call"), "arguments": arguments(for: "mcp.tools.call"),
-      ]), context: .empty)
-    let ticket = try #require(
-      prepared.objectValue?["structuredContent"]?.objectValue?["result"]?
-        .objectValue?["ticket_id"]?.stringValue)
-    #expect(try fixture.database.operationTicket(id: ticket)?.state == .prepared)
-    fixture.client.setAction(.string("diagnostics.snapshot"))
-    do {
-      _ = try await fixture.runtime.callToolAsync(
-        name: "operations.commit",
-        arguments: .object([
-          "ticket_id": .string(ticket), "tool": .string("mcp.tools.call"),
-          "arguments": arguments(for: "mcp.tools.call"),
-        ]), context: .empty)
-      Issue.record("An unchanged risk must not let an approval change its semantic action.")
-    } catch {
-      #expect(error.localizedDescription.contains("operations.ticket_arguments_mismatch"))
-    }
-    #expect(try fixture.database.operationTicket(id: ticket)?.state == .prepared)
-    #expect(fixture.client.calls == 0)
-    await fixture.runtime.shutdown()
-  }
-
-  @Test(arguments: [false, true])
-  func consumedTicketCannotChangeActionBeforeTargetAdmission(asynchronous: Bool) async throws {
-    let fixture = try RiskFixture(fullAccess: true, risk: .string("workspace-write"))
-    defer { fixture.remove() }
-    fixture.client.setAction(.string("workspaces.provision"))
-    let prepared = try fixture.runtime.callTool(
-      name: "operations.prepare",
-      arguments: .object([
-        "tool": .string("mcp.tools.call"), "arguments": arguments(for: "mcp.tools.call"),
-      ]), context: .empty)
-    let ticket = try #require(
-      prepared.objectValue?["structuredContent"]?.objectValue?["result"]?
-        .objectValue?["ticket_id"]?.stringValue)
-    fixture.client.changeActionAfterNextDiscovery(.string("diagnostics.snapshot"))
-    let args = JSONValue.object([
-      "ticket_id": .string(ticket), "tool": .string("mcp.tools.call"),
-      "arguments": arguments(for: "mcp.tools.call"),
-    ])
-    do {
-      if asynchronous {
-        _ = try await fixture.runtime.callToolAsync(
-          name: "operations.commit", arguments: args, context: .empty)
-      } else {
-        _ = try fixture.runtime.callTool(
-          name: "operations.commit", arguments: args, context: .empty)
-      }
-      Issue.record("A consumed ticket changed its reviewed action before target admission.")
-    } catch {
-      #expect(error.localizedDescription.contains("operations.ticket_arguments_mismatch"))
-    }
-    #expect(fixture.client.calls == 0)
-    #expect(try fixture.database.operationTicket(id: ticket)?.state == .failed)
-    await fixture.runtime.shutdown()
-  }
-
-  @Test
   func pendingReceiptReadsUseCurrentGrantWithoutProviderDiscovery() throws {
     let server = MCPServerConfig(
       id: "vendor", transport: .stdio, command: "/bin/cat", allowAnyTool: true,
       toolRisks: ["inspect": .readOnly])
     let configuration = GatewayConfiguration(mcp: .init(servers: [server]))
     func policy(tools: Bool) -> MCPToolAccessPolicy {
-      .init(
+      var permissions = Permissions()
+      try! permissions.set(tools ? .granted(.read) : .denied, for: .mcpServer("vendor"))
+      return .init(
         configuration: configuration,
-        grant: .init(
-          id: .chatGPTOperate,
-          capabilityIDs: tools ? ["mcp.requests.read", "mcp.tools.call"] : ["mcp.requests.read"],
-          allowedCallers: [.secureTunnel], mode: .projectOperations),
-        derivesObserveGrant: false)
+        grant: .init(id: .chatGPTOperate, permissions: permissions, allowedCallers: [.secureTunnel])
+      )
     }
     let current = NIOLockedValueBox(policy(tools: true))
     let base = RiskCatalogClient(risk: .string("read-only"))
@@ -158,7 +93,7 @@ struct MCPRiskFloorTests {
         server: server, requestID: "pending", offset: 0, maxBytes: 1024, context: .empty)
       Issue.record("A revoked tool grant must deny its execution receipt.")
     } catch {
-      #expect(error.localizedDescription.contains("policy.capability_denied"))
+      #expect(error.localizedDescription.contains("permission.denied"))
     }
   }
 
@@ -201,13 +136,11 @@ struct MCPRiskFloorTests {
 
   @Test(arguments: ["mcp.tools.call", "vendor.inspect", "review.inspect"])
   func publisherRiskCannotBeDowngradedByConfiguration(tool: String) async throws {
-    let fixture = try RiskFixture(fullAccess: false, risk: .string("full-shell"))
+    let fixture = try RiskFixture(allAccess: false, risk: .string("full-shell"))
     defer { fixture.remove() }
     do {
       #expect(
-        try !fixture.runtime.listTools(context: .empty).contains {
-          $0.name == "vendor.inspect" || $0.name == "review.inspect"
-        })
+        try fixture.runtime.listTools(context: .empty).contains { $0.name == "vendor.inspect" })
       await #expect(throws: (any Error).self) {
         try await fixture.runtime.callToolAsync(
           name: tool, arguments: arguments(for: tool), context: .empty)
@@ -221,33 +154,12 @@ struct MCPRiskFloorTests {
   }
 
   @Test(arguments: ["mcp.tools.call", "vendor.inspect", "review.inspect"])
-  func declaredRiskRequiresConsentAndApprovedExecutionStillWorks(tool: String) async throws {
-    let fixture = try RiskFixture(fullAccess: true, risk: .string("full-shell"))
+  func publisherRiskFloorRequiresServerAllAccess(tool: String) async throws {
+    let fixture = try RiskFixture(allAccess: true, risk: .string("full-shell"))
     defer { fixture.remove() }
     do {
-      do {
-        _ = try await fixture.runtime.callToolAsync(
-          name: tool, arguments: arguments(for: tool), context: .empty)
-        Issue.record("A configured read-only override must not bypass publisher risk consent.")
-      } catch {
-        #expect(error.localizedDescription.contains("operations.approval_required"))
-      }
-      #expect(fixture.client.calls == 0)
-      let prepared = try fixture.runtime.callTool(
-        name: "operations.prepare",
-        arguments: .object([
-          "tool": .string(tool), "arguments": arguments(for: tool),
-        ]), context: .empty)
-      let ticket = try #require(
-        prepared.objectValue?["structuredContent"]?.objectValue?["result"]?
-          .objectValue?["ticket_id"]?.stringValue)
-      #expect(try fixture.database.operationTicket(id: ticket)?.state == .pendingApproval)
-      try fixture.database.resolveOperationApproval(id: ticket, approved: true, resolver: .localCLI)
       _ = try await fixture.runtime.callToolAsync(
-        name: "operations.commit",
-        arguments: .object([
-          "ticket_id": .string(ticket), "tool": .string(tool), "arguments": arguments(for: tool),
-        ]), context: .empty)
+        name: tool, arguments: arguments(for: tool), context: .empty)
       #expect(fixture.client.calls == 1)
       await fixture.runtime.shutdown()
     } catch {
@@ -258,7 +170,7 @@ struct MCPRiskFloorTests {
 
   @Test(arguments: ["sync", "async", "detached"])
   func riskChangeBetweenAdmissionAndDispatchCannotBypassConsent(path: String) async throws {
-    let fixture = try RiskFixture(fullAccess: true, risk: .string("read-only"))
+    let fixture = try RiskFixture(allAccess: true, risk: .string("read-only"))
     defer { fixture.remove() }
     fixture.client.raiseAfterNextDiscovery()
     var arguments = arguments(for: "mcp.tools.call").objectValue!
@@ -282,7 +194,7 @@ struct MCPRiskFloorTests {
 
   @Test
   func invalidRiskAfterFailedRefreshCannotUseOldCatalog() async throws {
-    let fixture = try RiskFixture(fullAccess: true, risk: .string("read-only"))
+    let fixture = try RiskFixture(allAccess: true, risk: .string("read-only"))
     defer { fixture.remove() }
     fixture.client.setRisk(.string("unknown-risk"))
     await #expect(throws: (any Error).self) {
@@ -301,7 +213,7 @@ struct MCPRiskFloorTests {
   @Test
   func policyProbeUsesTheSelectedProjectCatalog() async throws {
     let fixture = try RiskFixture(
-      fullAccess: true, risk: .string("read-only"), secondProject: true)
+      allAccess: true, risk: .string("read-only"), secondProject: true)
     defer { fixture.remove() }
     do {
       for tool in ["mcp.tools.call", "vendor.inspect", "review.inspect"] {
@@ -316,37 +228,6 @@ struct MCPRiskFloorTests {
             response.objectValue?["structuredContent"]?.objectValue?["result"]?.objectValue?["risk"]
               == .string(risk))
         }
-      }
-      #expect(fixture.client.calls == 0)
-      await fixture.runtime.shutdown()
-    } catch {
-      await fixture.runtime.shutdown()
-      throw error
-    }
-  }
-
-  @Test
-  func riskIncreaseInvalidatesPreparedTicket() async throws {
-    let fixture = try RiskFixture(fullAccess: true, risk: .string("workspace-write"))
-    defer { fixture.remove() }
-    do {
-      let prepared = try fixture.runtime.callTool(
-        name: "operations.prepare",
-        arguments: .object([
-          "tool": .string("mcp.tools.call"), "arguments": arguments(for: "mcp.tools.call"),
-        ]), context: .empty)
-      let ticket = try #require(
-        prepared.objectValue?["structuredContent"]?.objectValue?["result"]?
-          .objectValue?["ticket_id"]?.stringValue)
-      #expect(try fixture.database.operationTicket(id: ticket)?.state == .prepared)
-      fixture.client.setRisk(.string("full-shell"))
-      await #expect(throws: (any Error).self) {
-        try await fixture.runtime.callToolAsync(
-          name: "operations.commit",
-          arguments: .object([
-            "ticket_id": .string(ticket), "tool": .string("mcp.tools.call"),
-            "arguments": arguments(for: "mcp.tools.call"),
-          ]), context: .empty)
       }
       #expect(fixture.client.calls == 0)
       await fixture.runtime.shutdown()
@@ -371,27 +252,41 @@ private struct RiskFixture {
   let client: RiskCatalogClient
   let runtime: GatewayRuntime
 
-  init(fullAccess: Bool, risk: JSONValue, secondProject: Bool = false) throws {
-    root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
-    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+  init(allAccess: Bool, risk: JSONValue, secondProject: Bool = false) throws {
+    let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+    root = try ProjectPathResolver.canonicalProject(directory)
     database = try GatewayDatabase(inMemory: ())
     let second = root.appendingPathComponent("second")
-    var projects: [RegisteredProject] = [
+    var projects: [ComputerMCPCore.RegisteredProject] = [
       .init(id: "fixture", displayName: "Fixture", rootPath: root.path)
     ]
     if secondProject {
       try FileManager.default.createDirectory(at: second, withIntermediateDirectories: true)
       projects.append(.init(id: "second", displayName: "Second", rootPath: second.path))
     }
+    for index in projects.indices {
+      projects[index].rootPath = try ProjectPathResolver.canonicalProject(
+        URL(fileURLWithPath: projects[index].rootPath)
+      ).path
+    }
     client = RiskCatalogClient(risk: risk, scopedHighRisk: secondProject ? second.path : nil)
+    var permissions = Permissions()
+    try permissions.set(.granted(allAccess ? .all : .read), for: .mcpServer("vendor"))
+    for project in projects { try permissions.set(.granted(.write), for: .project(project.id)) }
+    let grant = ProfileGrant(
+      id: .chatGPTOperate, permissions: permissions, fullAccess: true,
+      allowedCallers: [.secureTunnel])
+    for project in projects { try database.saveProject(project) }
+    try database.saveProfile(grant)
+    let context = try fixtureConsentedContext(
+      database: database, grant: grant, caller: .secureTunnel, platform: fixtureHostedPlatform())
     runtime = try GatewayRuntime(
       configuration: .init(
         runtime: .init(caller: .secureTunnel, profileID: .chatGPTOperate),
         profiles: [
           .init(
-            id: .chatGPTOperate, capabilities: ["*"], projects: projects.map(\.id),
-            allowedCallers: [.secureTunnel], fullShellEnabled: fullAccess,
-            mode: fullAccess ? .localFullAccess : .readOnly, confirmationPolicy: .riskBased)
+            grant: grant)
         ],
         mcp: .init(servers: [
           .init(
@@ -399,15 +294,19 @@ private struct RiskFixture {
             prefix: "vendor", allowAnyTool: true, toolRisks: ["inspect": .readOnly])
         ]),
         tools: [.init(name: "review.inspect", adapter: .mcp, source: "vendor", tool: "inspect")]),
-      database: database,
+      context: context, database: database,
       registeredProjects: projects,
-      platform: MacOSPlatform.services(launcher: testExecutionLauncher()), mcpClient: client)
+      platform: fixtureHostedPlatform(), mcpClient: client)
   }
 
   func remove() { try? FileManager.default.removeItem(at: root) }
 }
 
 private final class RiskCatalogClient: DownstreamMCPClient, Sendable {
+  func cachedTools(server: MCPServerConfig, context: InvocationContext) -> [MCPTool]? {
+    try? listTools(server: server, context: context)
+  }
+
   private struct State {
     var risk: JSONValue
     var raiseAfterDiscovery = false

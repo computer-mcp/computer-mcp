@@ -1,4 +1,5 @@
 import ComputerMCPMacOS
+import ComputerMCPPermissions
 import ComputerMCPTestSupport
 import Foundation
 import Testing
@@ -75,104 +76,21 @@ final class DefaultGatewayConfigurationTests {
         ]))
     #expect(configuration.cli.commands.map(\.id) == ["git", "swift", "codex"])
 
-    let observe = try #require(
-      configuration.profiles.first { $0.id == .chatGPTObserve }
-    )
-    let operate = try #require(
-      configuration.profiles.first { $0.id == .chatGPTOperate }
-    )
-    let localAdmin = try #require(
-      configuration.profiles.first { $0.id == .localAdmin }
-    )
-    #expect((Set(observe.capabilities)) == (Set(DefaultGatewayConfiguration.observeCapabilities)))
-    #expect((Set(operate.capabilities)) == (Set(DefaultGatewayConfiguration.operateCapabilities)))
-    #expect((localAdmin.capabilities) == (["*"]))
-    #expect(observe.projects.isEmpty)
-    #expect(operate.projects.isEmpty)
-    #expect((observe.allowedCallers) == ([.secureTunnel]))
-    #expect((operate.allowedCallers) == ([.secureTunnel]))
-    #expect((Set(localAdmin.allowedCallers)) == ([.localApp, .localCLI, .localMCP]))
-    #expect(!(observe.fullShellEnabled))
-    #expect(!(operate.fullShellEnabled))
-    #expect(localAdmin.fullShellEnabled)
-    #expect(localAdmin.projects == ["*"])
-    #expect(localAdmin.mode == .localFullAccess)
-    #expect(observe.mode == .readOnly)
-    #expect(operate.mode == .projectOperations)
-    #expect(configuration.profiles.allSatisfy { $0.confirmationPolicy == .riskBased })
-
-    let operateCapabilities = Set(operate.capabilities)
-    #expect(operateCapabilities.contains("file.write"))
-    #expect(operateCapabilities.contains("operations.prepare"))
-    #expect(operateCapabilities.contains("computer.pointer.click"))
-    #expect(operateCapabilities.contains("mcp.tools.call"))
-    #expect(operateCapabilities.contains("policy.probe"))
-    #expect(operateCapabilities.isDisjoint(with: ProfileGrant.fullShellCapabilities))
-    #expect(operateCapabilities.contains("process.list"))
-    #expect(!(operateCapabilities.contains("process.read")))
-    #expect(!(operateCapabilities.contains("process.cancel")))
-  }
-
-  @Test
-  func testObserveCatalogIsReadOnlyAndOperateCatalogAddsReviewedWriteProviders() throws {
-    let fixture = try DefaultManifestFixture()
-    defer { fixture.cleanup() }
-    var configuration = try GatewayConfiguration.load(path: fixture.manifest.path)
-    for index in configuration.profiles.indices {
-      configuration.profiles[index].projects = ["project"]
+    for configured in configuration.profiles {
+      let profile = configured.grant
+      #expect(profile.permissions.entries == Permissions.newPrincipal.entries)
+      #expect(profile.projectNetworks.isEmpty)
+      #expect(profile.automation.isEmpty)
+      #expect(!profile.fullAccess)
     }
-    try configuration.validate()
-    let project = RegisteredProject(
-      id: "project",
-      displayName: "Project",
-      rootPath: fixture.project.path
-    )
-
-    let observeGateway = try GatewayRuntime(
-      configuration: configuration,
-      context: ExecutionContext(
-        caller: .secureTunnel,
-        profileID: .chatGPTObserve,
-        projectID: project.id
-      ),
-      registeredProjects: [project],
-      platform: MacOSPlatform.services(launcher: testExecutionLauncher())
-    )
-    let observeTools = try observeGateway.listTools(context: .empty)
+    #expect(configuration.profileGrant(for: .chatGPTObserve).allowedCallers == [.secureTunnel])
+    #expect(configuration.profileGrant(for: .chatGPTOperate).allowedCallers == [.secureTunnel])
     #expect(
-      (Set(observeTools.map(\.name))) == (Set(DefaultGatewayConfiguration.observeCapabilities)))
-    #expect(observeTools.allSatisfy { $0.annotations?.readOnlyHint == true })
-    #expect(observeTools.contains { $0.name == "git.commit_files" })
-    _ = try ChatGPTProfileAuditor().audit(
-      configuration: configuration,
-      registry: observeGateway,
-      allowWriteTools: false
-    )
-
-    let operateGateway = try GatewayRuntime(
-      configuration: configuration,
-      context: ExecutionContext(
-        caller: .secureTunnel,
-        profileID: .chatGPTOperate,
-        projectID: project.id
-      ),
-      registeredProjects: [project],
-      platform: MacOSPlatform.services(launcher: testExecutionLauncher())
-    )
-    let operateNames = Set(try operateGateway.listTools(context: .empty).map(\.name))
-    #expect(operateNames.isSuperset(of: Set(observeTools.map(\.name))))
-    #expect(operateNames.contains("file.write"))
-    #expect(operateNames.contains("computer.keyboard.text"))
-    #expect(operateNames.contains("policy.probe"))
-    #expect(operateNames.contains("process.list"))
-    #expect(!(operateNames.contains("cli.exec")))
-    #expect(!(operateNames.contains("process.spawn")))
-    #expect(!(operateNames.contains { $0.hasPrefix("shell.") }))
-    _ = try ChatGPTProfileAuditor().audit(
-      configuration: configuration,
-      registry: operateGateway,
-      allowWriteTools: true
-    )
+      configuration.profileGrant(for: .localAdmin).allowedCallers == [
+        .localApp, .localCLI, .localMCP,
+      ])
+    #expect(configuration.builtin.enabled.contains("file.write"))
+    #expect(configuration.builtin.enabled.contains("system.time"))
   }
 
   @Test
@@ -190,6 +108,9 @@ final class DefaultGatewayConfigurationTests {
 
     let localGateway = try GatewayRuntime(
       configuration: localAdmin,
+      context: .init(
+        caller: .localMCP, profileID: .localAdmin,
+        trustedPrincipalID: "verified-default-profile"),
       database: GatewayDatabase(inMemory: ()),
       platform: MacOSPlatform.services(launcher: testExecutionLauncher())
     )

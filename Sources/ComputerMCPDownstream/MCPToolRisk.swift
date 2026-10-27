@@ -17,12 +17,12 @@ extension InvocationAdmission {
   ) throws {
     guard self.reference == reference, self.risk.raised(to: risk) == self.risk else {
       throw GatewayToolError.invalidArguments(
-        "[mcp.risk_changed] The downstream tool risk changed after host authorization. Retry through the current host policy and approval flow."
+        "[mcp.risk_changed] The downstream tool risk changed after host authorization. Retry through the current host permission policy."
       )
     }
     guard self.hostServiceAction == hostServiceAction else {
       throw GatewayToolError.invalidArguments(
-        "[mcp.host_action_changed] The downstream host action changed after authorization. Retry through the current policy and approval flow."
+        "[mcp.host_action_changed] The downstream host action changed after authorization. Retry through the current permission policy."
       )
     }
   }

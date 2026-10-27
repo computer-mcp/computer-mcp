@@ -25,8 +25,8 @@ integration.
   directly or together in a plugin package.
 - **Work across computers.** Connect each host, select its project, and use
   tools in that computer's environment.
-- **Choose the access.** Configure tools, projects and confirmation policy;
-  review host actions requiring approval locally.
+- **Choose the access.** Set permissions for projects, integrations and private
+  data; answer missing-permission requests locally.
 
 Computer MCP runs on macOS 14 or later and supports ChatGPT and other compatible
 MCP clients. Tools need installation and configuration, as described in each
@@ -42,7 +42,7 @@ ChatGPT · Codex · another MCP client
                  ▼
           Computer MCP.app
                  │
- caller → profile → registered project → policy → approval when required
+ caller → profile → declared requirements → permissions → execution context
                  │
                  ▼
  Builtin · Skills · CLI · MCP · AX fallback · Git · Shell
@@ -55,7 +55,7 @@ Every call is tied to a caller, profile, capability, and—when relevant—a
 registered project. Unknown tools, ungranted projects, unsafe paths, and
 unsupported ownership claims fail closed.
 
-Each host keeps its own credentials, registrations, approvals and audit.
+Each host keeps its own credentials, registrations, permissions and audit.
 Project IDs belong to that host; connecting several computers does not share
 their files or move running processes. See
 [Product Identity](Documentation/Architecture/ProductIdentity.md).
@@ -107,44 +107,42 @@ verified command projection and structured-coverage limits.
 - Connect desktop operations through the Computer Use plugin or native AX tools,
   subject to operation-specific macOS permissions and vendor caller authentication.
 
+Sandboxed writes and command execution require a verified worktree context;
+plugin and local MCP processes require a project-bound context. Those execution
+contexts are not yet available, so affected calls, including `delivery.apply`,
+return an unavailable result. Archive-installed plugin Skills are also unavailable
+until public package content is separated from host-private plugin state.
+See the [execution contract](Documentation/Reference/Tools.md).
+
 ## Choose what your agents can use
 
-Computer MCP makes two separate decisions:
+The host checks every call against the profile's permissions and managed limits.
+Projects have independent read/write access and network settings. Screen,
+Desktop control, Files and Folders, plugins and MCP servers have their own
+permissions. New principals start with Machine information and Skills.
 
-1. **Policy authorization:** Is this caller allowed to use this capability in
-   this registered project at all?
-2. **Action consent:** If host policy requires confirmation, has the local user
-   approved this exact operation?
+An ungranted permission returns `permission.required` with a pending request.
+The owner answers **Only this time**, **Always**, or **Deny** in the App or local
+CLI. Always updates the shared profile; Only this time belongs to the exact
+invocation and its execution lifetime. Answering does not execute anything: the
+client explicitly retries. Explicit denies and managed exclusions do not prompt.
 
-In the App's **Client access** page, review connected clients and explicitly
-grant Full Access, defaulting to **This Session**. Full Access permits arbitrary
-execution as your macOS user; projects provide project context, not a sandbox.
-**Always Allow this Client** is a separate choice. You can downgrade or end a
-connection's access and separately revoke saved client approvals. Access changes
-apply to new requests without cancelling work already started. The local
-`computer-mcp clients` commands provide the same access controls; see
-[Client access](Documentation/Reference/CLI.md#client-access) for explicit
-consent and standalone HTTP usage.
+Execution mode is separate. Full access requires a profile configured for it
+and local owner consent; it does not supply missing host permissions.
+Where supported, Full access programs use the macOS user's operating-system
+authority, including accessible files and credentials. The App's **Client access** page and `computer-mcp clients` commands manage
+session consent and saved client trust. Editing permissions invalidates stale
+consent and reconciles running executions against the new authority.
 
-On an App-managed connection, approved Full Access also enables typed project
-management and verified official plugin installation, configuration and updates.
-Clients use these tools directly while existing work continues; see
+Sandboxed writes and program launches require a verified execution context.
+General worktree contexts and project-bound plugin/server contexts are not yet
+available; affected calls are refused. A missing context never selects Full
+access. See [Client access](Documentation/Reference/CLI.md#client-access) and
 [Remote management](Documentation/Reference/ControlPlaneCapabilities.md#remote-management).
 
-Choose **restricted permissions** to select readable capabilities, projects and
-integrations, and the connection types allowed to use them. These defaults apply
-to clients sharing the profile; each session can impose a lower access level.
-Saving a selection invalidates previous Full Access approvals for that profile.
-
-An individual action confirmation never expands the client's current access.
-Restricted Access uses its selected tools and projects and prohibits arbitrary
-execution. Credentials stay in the signed App's macOS Data Protection Keychain;
-examples, diagnostics, logs, and audit rows keep only placeholders or redacted
-summaries.
-
-Plugin execution settings and runtime permissions are documented by each plugin.
-Callbacks into Computer MCP require the corresponding host capabilities and
-local confirmation.
+Credentials stay in the signed App's macOS Data Protection Keychain. Examples,
+diagnostics, logs and audit contain placeholders or redacted summaries. Plugin
+callbacks pass through the same host permissions as direct calls.
 
 File and structured-data writes check directory handles, refuse observed symlinks
 and existing files with multiple hard links, and protect Git metadata and
@@ -189,23 +187,23 @@ vulnerability.
 
 | Status | Capability | Notes |
 | --- | --- | --- |
-| Stable | App-owned local gateway, project registration, profiles, policy, operation tickets, and redacted audit | Default product control plane on macOS 14+ |
+| Stable | App-owned local gateway, project registration, profiles, permission requests and redacted audit | Default product control plane on macOS 14+ |
 | Stable | Local MCP, ChatGPT through OpenAI Secure MCP Tunnel, and Cloudflare named-tunnel connections | Each remote path has its own caller and profile boundary |
 | Stable | Builtin, Skill, registered CLI, downstream MCP, Shell, and native AX fallback | Availability still depends on the selected profile, project, dependency, and macOS permission |
-| Stable | Governed project and Git operations | Writes require policy; destructive atomics use reviewed single-use tickets; no implicit push |
-| Stable | Plugin package lifecycle, direct/plugin MCP registration, verified CLI trees and Skills | Host grants remain separate; external dependencies are not installed automatically |
+| Stable | Governed project and Git operations | Calls require permissions and an enforceable execution context; no implicit push |
+| Stable | Plugin package lifecycle, direct/plugin MCP registration, verified CLI trees and configured Skills libraries | Host grants remain separate; external dependencies are not installed automatically |
 | Planned | Broader platform support and more first-class UI for advanced orchestration | No committed release date; the current signed App is macOS-only |
 
 Shell and registered process executions expose stable IDs, output cursors, stdin
 writes and cancellation. Waiting calls default to two minutes (maximum ten);
 background work has no default deadline and retains the latest 8 MiB of output.
 See [execution tools](Documentation/Reference/Tools.md#shell-executions) for limits,
-reconnects and restart recovery. Full Shell authorization remains required.
+reconnects and restart recovery. Launches require an authorized execution context.
 
 ## ChatGPT orchestrates, Codex executes
 
 ChatGPT can inspect a registered project and delegate coding work through the
-[Codex plugin](https://github.com/computer-mcp/plugin-codex). The host governs tool access, project grants, approvals and
+[Codex plugin](https://github.com/computer-mcp/plugin-codex). The host governs tool access, project permissions, permission requests and
 audit. The plugin owns coding execution and its runtime lifecycle.
 
 ## Computer MCP, Dots and Codex Remote
@@ -285,14 +283,14 @@ connection editor, or use the owner CLI or manifest. When a client signs in,
 compare the six-character pairing code on its browser page with the request in
 **Client access**, choose its profile and approve; `computer-mcp clients
 authorizations` and `computer-mcp clients authorize <code>` do the same from a
-terminal. Grants default to Observe and retain the existing local Full Access
+terminal. The owner selects a profile; grants retain the separate local Full Access
 consent boundary. See the
 [OAuth setup and revocation steps](Documentation/Reference/CloudflareRunbook.md#oauth-client-pairing).
 Verified follows the current Access Token or a live OAuth grant; replacing or
 revoking that credential requires fresh verification for its replacement.
 
 The gateway then resolves the exact tool, binds caller/profile/project,
-checks policy and any operation ticket, obtains action consent when needed,
+evaluates permissions and managed limits, admits the execution context,
 dispatches one bounded adapter, and records the redacted outcome. Standalone
 TOML modes are development and diagnostic surfaces; they do not share the
 App's bookmarks or Keychain state.

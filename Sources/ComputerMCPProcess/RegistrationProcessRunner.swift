@@ -24,7 +24,7 @@ package struct RegistrationProcessRunner: RegistrationProcessRunning {
     }
     let result: CommandDataResult
     do {
-      result = try ManagedCommandRunner(launcher: launcher, policy: HostExecutionPolicy.current)
+      result = try ManagedCommandRunner(launcher: launcher)
         .runData(
           executable: executable, arguments: arguments,
           workingDirectory: URL(fileURLWithPath: FileManager.default.currentDirectoryPath),

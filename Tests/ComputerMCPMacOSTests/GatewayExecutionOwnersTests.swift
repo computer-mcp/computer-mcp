@@ -1,4 +1,5 @@
 import ComputerMCPMacOS
+import ComputerMCPPermissions
 import ComputerMCPTestSupport
 import Foundation
 import Testing
@@ -43,9 +44,8 @@ struct GatewayExecutionOwnersTests {
       policy: .init(shellEnabled: true),
       profiles: [GatewayProfileID.localAdmin, .chatGPTOperate].map {
         ProfileGrantConfig(
-          id: $0, capabilities: ["runtime.owners.list", "runtime.owners.call"],
-          projects: ["root"], allowedCallers: [.localMCP, .localCLI],
-          fullShellEnabled: true, mode: .localFullAccess, confirmationPolicy: .never)
+          id: $0, permissions: fixturePermissions([.project("root"): .granted(.read)]),
+          fullAccess: true, allowedCallers: [.localMCP, .localCLI])
       })
     for profile in configuration.profiles { try database.saveProfile(profile.grant) }
     let own = ExecutionContext(
@@ -134,10 +134,6 @@ struct GatewayExecutionOwnersTests {
         ] {
           #expect(throws: GatewayToolError.self) { try page(invalid) }
         }
-        var grant = try #require(try database.profiles().first { $0.id == .localAdmin })
-        grant.fullShellEnabled = false
-        try database.saveProfile(grant, expectedRevision: grant.authorizationRevision)
-        #expect(try page()["owners"] == .array([]))
         let foreignOwner = GatewayOwnerSelection(
           runtimeID: runtimes[2].generationID, projectID: "root",
           ownershipID: try #require(leases.last).id)
@@ -150,9 +146,24 @@ struct GatewayExecutionOwnersTests {
           ]), context: .empty)
         #expect(rejected.objectValue?["isError"] == .bool(true))
         #expect(String(describing: rejected).contains("runtime.owner_unavailable"))
+        var grant = try #require(try database.profiles().first { $0.id == .localAdmin })
+        try grant.permissions.set(.denied, for: .project("root"))
+        try database.saveProfile(grant, expectedRevision: grant.authorizationRevision)
+        var deniedPage: [String: JSONValue]?
+        do {
+          deniedPage = try page()
+          Issue.record("A directory query exposed owners after Project read was denied.")
+        } catch let error as GatewayPermissionCallError {
+          guard case .denied(let reason, _) = error else { throw error }
+          #expect(error.code == "permission.denied")
+          #expect(reason == .permissionDenied(.project("root")))
+        }
+        #expect(deniedPage == nil)
       }
+      for lease in leases { lease.finish() }
       for runtime in runtimes { await runtime.shutdown() }
     } catch {
+      for lease in leases { lease.finish() }
       for runtime in runtimes { await runtime.shutdown() }
       throw error
     }

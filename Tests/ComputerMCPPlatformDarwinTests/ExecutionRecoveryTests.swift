@@ -55,12 +55,17 @@ import Testing
     let output = Pipe()
     let probe = try SeatbeltFixture.executionBootstrap.deletingLastPathComponent()
       .appendingPathComponent("ComputerMCPExecutionProbe")
-    let result = try await ExecutionLauncher(
-      platform: DarwinExecutionPlatform(bootstrapExecutable: try SeatbeltFixture.executionBootstrap)
-    ).run(
-      executable: .init(probe.path), arguments: ["child", "privacy", "leaf"], directory: path,
-      environment: .init(fullAccessVariables: ["PATH": "/usr/bin:/bin"]), mode: .fullAccess,
-      method: method, output: output.fileHandleForWriting.fileDescriptor)
+    let result = try await ExecutionAdministration.$current.withValue(
+      .init(mode: .fullAccess, environment: .init(fullAccessVariables: ["PATH": "/usr/bin:/bin"]))
+    ) {
+      try await ExecutionLauncher(
+        platform: DarwinExecutionPlatform(
+          bootstrapExecutable: try SeatbeltFixture.executionBootstrap)
+      ).run(
+        executable: .init(probe.path), arguments: ["child", "privacy", "leaf"], directory: path,
+        environment: .init(fullAccessVariables: ["PATH": "/usr/bin:/bin"]), mode: .fullAccess,
+        method: method, output: output.fileHandleForWriting.fileDescriptor)
+    }
     try output.fileHandleForWriting.close()
     let fields = String(
       decoding: try output.fileHandleForReading.readToEnd() ?? Data(), as: UTF8.self

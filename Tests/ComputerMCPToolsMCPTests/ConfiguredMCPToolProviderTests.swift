@@ -1,6 +1,7 @@
 import ComputerMCPConfiguration
 import ComputerMCPCore
 import ComputerMCPDownstream
+import ComputerMCPPermissions
 import ComputerMCPTestSupport
 import ComputerMCPToolKit
 import Foundation
@@ -106,35 +107,39 @@ struct ConfiguredMCPToolProviderTests {
   }
 
   @Test
-  func directResolutionUsesListingPermissionsAndVisibility() throws {
+  func knownToolsRemainRequestableAndDirectCallsEnforceTheirObjectGrant() throws {
     var first = Self.server("first", prefix: "")
     first.allowAnyTool = false
     first.allowedTools = ["inspect"]
     first.toolRisks = ["inspect": .readOnly]
     let configuration = GatewayConfiguration.fixture(
-      mcp: .init(servers: [Self.server("second", prefix: ""), first]))
+      mcp: .init(servers: [Self.server("second", prefix: "second"), first]))
     let base = ReexportNamingClient([
       "first": ["inspect", "blocked"], "second": ["inspect", "hidden"],
     ])
+    var permissions = Permissions()
+    try permissions.set(.granted(.read), for: .mcpServer("first"))
     let client = AuthorizedMCPClient(
       base: base,
       policy: .init(
         configuration: configuration,
         grant: .init(
-          id: .chatGPTObserve, capabilityIDs: [], allowedCallers: [.secureTunnel],
-          mcpServerIDs: ["first"]), derivesObserveGrant: false))
+          id: .chatGPTObserve, permissions: permissions, allowedCallers: [.secureTunnel])))
     let provider = ConfiguredMCPToolProvider(
       environment: ToolEnvironment(launcher: testExecutionLauncher(), configuration: configuration),
       mcpClient: client)
     #expect(
+      Set(try provider.definitions().map(\.tool.name))
+        == ["inspect", "second.inspect", "second.hidden"])
+    #expect(
       try provider.callTool(.init(name: "inspect", arguments: nil, context: .empty))
         == .string("first:inspect"))
-    for name in ["blocked", "hidden"] {
-      #expect(throws: GatewayToolError.unknownTool(name)) {
-        try provider.callTool(.init(name: name, arguments: nil, context: .empty))
-      }
+    #expect(throws: GatewayToolError.unknownTool("blocked")) {
+      try provider.callTool(.init(name: "blocked", arguments: nil, context: .empty))
     }
-    #expect(base.discoveredServers == ["first", "first"])
+    #expect(throws: (any Error).self) {
+      try provider.callTool(.init(name: "second.hidden", arguments: nil, context: .empty))
+    }
     #expect(base.calls == ["first:inspect"])
   }
 
@@ -189,6 +194,10 @@ struct ConfiguredMCPToolProviderTests {
 }
 
 private final class ReexportNamingClient: DownstreamMCPClient, @unchecked Sendable {
+  func cachedTools(server: MCPServerConfig, context: InvocationContext) throws -> [MCPTool]? {
+    try listTools(server: server, context: context)
+  }
+
   private let lock = NSLock()
   private var names: [String: [String]]
   private var discoveries: [String] = []

@@ -194,16 +194,19 @@ private struct ArtifactProvenanceFixture {
     <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
     <plist version="1.0"><dict><key>source_commit</key><string>\(sourceCommit)</string></dict></plist>
     """.write(to: buildIdentity, atomically: true, encoding: .utf8)
-    return try runner.run(
-      executable: writer.path,
-      arguments: [artifact.path, receipt.path, artifactClass],
-      workingDirectory: root,
-      environment: environment.merging(["BUILD_IDENTITY_PATH": buildIdentity.path]) { current, _ in
-        current
-      },
-      timeoutMilliseconds: 5_000,
-      maxOutputBytes: 64 * 1_024
-    )
+    let variables = environment.merging(["BUILD_IDENTITY_PATH": buildIdentity.path]) { current, _ in
+      current
+    }
+    return try withAdministration(environment: variables) {
+      try runner.run(
+        executable: writer.path,
+        arguments: [artifact.path, receipt.path, artifactClass],
+        workingDirectory: root,
+        environment: variables,
+        timeoutMilliseconds: 5_000,
+        maxOutputBytes: 64 * 1_024
+      )
+    }
   }
 
   func verifyReceipt(
@@ -211,14 +214,28 @@ private struct ArtifactProvenanceFixture {
     artifact: URL,
     artifactClass: String
   ) throws -> CommandResult {
-    try runner.run(
-      executable: verifier.path,
-      arguments: [receipt.path, artifact.path, artifactClass],
-      workingDirectory: root,
-      environment: ["BUILD_IDENTITY_PATH": buildIdentity.path],
-      timeoutMilliseconds: 5_000,
-      maxOutputBytes: 64 * 1_024
-    )
+    try withAdministration(environment: ["BUILD_IDENTITY_PATH": buildIdentity.path]) {
+      try runner.run(
+        executable: verifier.path,
+        arguments: [receipt.path, artifact.path, artifactClass],
+        workingDirectory: root,
+        environment: ["BUILD_IDENTITY_PATH": buildIdentity.path],
+        timeoutMilliseconds: 5_000,
+        maxOutputBytes: 64 * 1_024
+      )
+    }
+  }
+
+  private func withAdministration<T>(
+    environment: [String: String], _ operation: () throws -> T
+  ) throws -> T {
+    let variables = [
+      "PATH": systemUtilityPath, "HOME": directory.path, "ZDOTDIR": directory.path,
+      "TMPDIR": directory.path + "/",
+    ].merging(environment) { _, value in value }
+    let administration = ExecutionAdministration(
+      mode: .fullAccess, environment: try .init(fullAccessVariables: variables))
+    return try ExecutionAdministration.$current.withValue(administration, operation: operation)
   }
 
   func remove() {

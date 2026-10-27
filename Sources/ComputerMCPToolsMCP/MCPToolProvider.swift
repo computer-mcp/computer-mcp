@@ -30,11 +30,7 @@ package struct MCPToolProvider: GatewayToolProvider {
   }
 
   package func callTool(_ invocation: ToolInvocation) throws -> JSONValue {
-    let descriptor = try definitions().first { $0.tool.name == invocation.name }?.capability
-    let policy: HostExecutionPolicy =
-      descriptor == nil || descriptor?.risk == .readOnly
-        || descriptor?.projectRequirement == ProjectRequirement.none ? .readOnly : .fullAccess
-    return try HostExecutionPolicy.$current.withValue(policy) { try dispatch(invocation) }
+    return try dispatch(invocation)
   }
 
   private func dispatch(_ invocation: ToolInvocation) throws -> JSONValue {
@@ -139,15 +135,19 @@ package struct MCPToolProvider: GatewayToolProvider {
   package func downstreamPolicy(
     for reference: MCPToolReference, context: InvocationContext
   ) throws -> MCPToolAdmissionPolicy {
-    let server = try mcpServer(reference.serverID, context: context)
+    guard
+      let server = configuration.mcp.servers.first(where: {
+        $0.id == reference.serverID && $0.enabled
+      })
+    else { throw GatewayToolError.unknownMCPServer(reference.serverID) }
     try requireDownstreamToolAllowed(reference.toolName, server: server)
     guard
-      let tool = try permittedDownstreamTools(server: server, context: context).first(where: {
+      let tool = try mcpClient.cachedTools(server: server, context: context)?.first(where: {
         $0.name == reference.toolName
       })
     else {
       throw GatewayToolError.invalidArguments(
-        "[mcp.tool_unavailable] The downstream tool is not available in the current authorized catalog."
+        "[permission.catalog_required] Call mcp.tools.list for this server before invoking an exact downstream tool."
       )
     }
     return try .init(

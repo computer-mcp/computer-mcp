@@ -232,6 +232,7 @@ public struct ValidationAttempt: Codable, Equatable, Sendable {
   public let consumerResultID: String?
   public let gatewayRequestID: String
   public let auditEvent: AuditEvent
+  public let admissionAuditEvent: AuditEvent?
   public let result: ValidationResultDigest
   public let outcome: ValidationAttemptOutcome
   public let assertions: [ValidationAssertion]
@@ -250,6 +251,7 @@ public struct ValidationAttempt: Codable, Equatable, Sendable {
     consumerResultID: String? = nil,
     gatewayRequestID: String,
     auditEvent: AuditEvent,
+    admissionAuditEvent: AuditEvent? = nil,
     result: ValidationResultDigest,
     outcome: ValidationAttemptOutcome,
     assertions: [ValidationAssertion],
@@ -267,6 +269,7 @@ public struct ValidationAttempt: Codable, Equatable, Sendable {
     self.consumerResultID = consumerResultID
     self.gatewayRequestID = gatewayRequestID
     self.auditEvent = auditEvent
+    self.admissionAuditEvent = admissionAuditEvent
     self.result = result
     self.outcome = outcome
     self.assertions = assertions
@@ -303,7 +306,7 @@ public struct ValidationRun: Codable, Equatable, Sendable {
 }
 
 public struct ValidationEvidenceBundle: Codable, Equatable, Sendable {
-  public static let currentSchemaVersion = 2
+  public static let currentSchemaVersion = 3
 
   public let schemaVersion: Int
   public let id: String
@@ -596,6 +599,13 @@ public struct ValidationEvidenceBundleVerifier: Sendable {
             "An audit event cannot prove more than one attempt."
           )
         }
+        if let admission = attempt.admissionAuditEvent, !auditEventIDs.insert(admission.id).inserted
+        {
+          issue(
+            "audit.id_duplicate", "\(attemptPath).admissionAuditEvent.id",
+            "Audit IDs must be unique across attempts.")
+        }
+
         validateAttempt(
           attempt,
           run: run,
@@ -628,25 +638,23 @@ public struct ValidationEvidenceBundleVerifier: Sendable {
         let path = "$.runs[\(runIndex)].attempts[\(attemptIndex)].auditEvent"
         do {
           let rows = try database.auditEvents(requestID: attempt.gatewayRequestID)
-          if rows.count != 1 {
-            issues.append(
-              ValidationEvidenceIssue(
-                code: "audit.grdb_cardinality_mismatch",
-                path: path,
-                message:
-                  "Expected exactly one GRDB audit row for gateway request "
-                  + "'\(attempt.gatewayRequestID)'; found \(rows.count)."
-              )
-            )
-          } else if !auditEventsMatch(rows[0], attempt.auditEvent) {
-            issues.append(
-              ValidationEvidenceIssue(
-                code: "audit.grdb_snapshot_mismatch",
-                path: path,
-                message: "The evidenceBundle audit snapshot does not match the exact GRDB row."
-              )
-            )
+          let trail = try ValidationAuditTrail(events: rows, requestID: attempt.gatewayRequestID)
+          let admissionMatches: Bool
+          switch (trail.admission, attempt.admissionAuditEvent) {
+          case (nil, nil): admissionMatches = true
+          case (.some(let persisted), .some(let snapshot)):
+            admissionMatches = auditEventsMatch(persisted, snapshot)
+          default: admissionMatches = false
           }
+          if !auditEventsMatch(trail.terminal, attempt.auditEvent) || !admissionMatches {
+            issues.append(
+              ValidationEvidenceIssue(
+                code: "audit.grdb_snapshot_mismatch", path: path,
+                message:
+                  "The terminal and admission snapshots do not match the exact persisted audit trail."
+              ))
+          }
+
         } catch {
           issues.append(
             ValidationEvidenceIssue(
@@ -1030,6 +1038,13 @@ public struct ValidationEvidenceBundleVerifier: Sendable {
     }
 
     let audit = attempt.auditEvent
+    do {
+      _ = try ValidationAuditTrail(
+        events: [audit] + (attempt.admissionAuditEvent.map { [$0] } ?? []),
+        requestID: attempt.gatewayRequestID)
+    } catch {
+      issue("audit.trail_invalid", "\(path).auditEvent", error.localizedDescription)
+    }
     validateIdentifier(audit.id, path: "\(path).auditEvent.id", issue: issue)
     if audit.requestID != attempt.gatewayRequestID {
       issue(

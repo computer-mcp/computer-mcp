@@ -973,6 +973,10 @@ private final class FakeDownstreamMCPClient: DownstreamMCPClient, @unchecked Sen
   var events: JSONValue = .object(["events": .array([])])
   var activeRequestPayload: JSONValue = .object(["requests": .array([])])
 
+  func cachedTools(server: MCPServerConfig, context: InvocationContext) throws -> [MCPTool]? {
+    tools
+  }
+
   func listTools(server: MCPServerConfig, context: InvocationContext) throws -> [MCPTool] {
     tools
   }

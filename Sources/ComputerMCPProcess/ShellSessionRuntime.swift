@@ -621,8 +621,6 @@ package final class ShellSessionRuntime: ShellManaging, Sendable {
     var shutdown: Task<Void, Never>?
   }
 
-  private let hostVariables: [String: String]
-  private let policy: HostExecutionPolicy
   private let launcher: ExecutionLauncher
   private let executionState = NIOLockedValueBox(ExecutionState())
   private let sessions: GatewayTerminalSessions
@@ -633,14 +631,11 @@ package final class ShellSessionRuntime: ShellManaging, Sendable {
 
   package init(
     launcher: ExecutionLauncher = ExecutionLauncher(),
-    policy: HostExecutionPolicy = .fullAccess, hostVariables: [String: String] = [:],
     ownedWork: (any OwnedWorkTracking)? = nil, projectID: String? = nil,
     sessions: GatewayTerminalSessions = GatewayTerminalSessions(),
     scope: GatewayTerminalSessions.Scope = .isolated(UUID()),
     recoveryKey: @escaping @Sendable () -> String? = { "isolated" }
   ) {
-    self.hostVariables = hostVariables
-    self.policy = policy
     self.launcher = launcher
     installBrokenPipeHandler()
     self.ownedWork = ownedWork
@@ -772,8 +767,6 @@ package final class ShellSessionRuntime: ShellManaging, Sendable {
         isRegisteredProcess: isRegisteredProcess)
       let ownership = ownedWork?.retainShell(projectID: projectID, sessionID: session.id)
       let launcher = self.launcher
-      let policy = self.policy
-      let hostVariables = self.hostVariables
       let task = ExecutionTasks.start(priority: .userInitiated) { [sessions, weak self] in
         defer {
           ownership?.finish()
@@ -794,10 +787,7 @@ package final class ShellSessionRuntime: ShellManaging, Sendable {
             }
           }
         }
-        await Self.launch(
-          resolved, session: session, launcher: launcher, policy: policy,
-          hostVariables: hostVariables
-        ) {
+        await Self.launch(resolved, session: session, launcher: launcher) {
           try sessions.checkpoint(session)
         }
         checkpoint.cancel()
@@ -976,16 +966,13 @@ package final class ShellSessionRuntime: ShellManaging, Sendable {
 
   private static func launch(
     _ launch: ResolvedShellLaunch, session: ShellSession, launcher: ExecutionLauncher,
-    policy: HostExecutionPolicy, hostVariables: [String: String],
     checkpoint: @escaping @Sendable () throws -> Void
   ) async {
     let inputPipe = Pipe()
     let stdoutPipe = Pipe()
     let stderrPipe = Pipe()
     var readers: [ProcessOutputReader] = []
-    var setup: HostExecutionSetup?
     var writer: DescriptorInputWriter?
-    defer { setup?.removeTemporaryDirectory() }
     do {
       let stdout = try ProcessOutputReader(
         handle: stdoutPipe.fileHandleForReading,
@@ -1008,10 +995,7 @@ package final class ShellSessionRuntime: ShellManaging, Sendable {
       guard !inspection.hasKnownFailure, let executable = inspection.path else {
         throw ShellRuntimeError.launchFailed(inspection.message)
       }
-      let prepared = try policy.prepare(
-        directory: launch.workingDirectory, environment: environment, hostVariables: hostVariables,
-        systemReadPaths: launcher.hostSystemReadPaths)
-      setup = prepared
+      let prepared = try HostExecutionSetup.prepare()
       let directory: SandboxPath
       if case .sandbox(let configuration) = prepared.mode {
         directory = configuration.worktree
@@ -1056,8 +1040,6 @@ package final class ShellSessionRuntime: ShellManaging, Sendable {
       await stderr.stop(drainRemainingOutput: true)
       await session.input.finish()
       await session.input.bodyReturning()
-      setup?.removeTemporaryDirectory()
-      setup = nil
       session.finish(status: outcome!)
     } catch {
       if let owner = session.executionOwnership {
@@ -1082,8 +1064,6 @@ package final class ShellSessionRuntime: ShellManaging, Sendable {
       try? stdoutPipe.fileHandleForWriting.close()
       try? stderrPipe.fileHandleForWriting.close()
       for reader in readers { await reader.stop(drainRemainingOutput: false) }
-      setup?.removeTemporaryDirectory()
-      setup = nil
       session.failLaunchOrExecution(String(describing: error))
     }
   }

@@ -21,19 +21,23 @@ import System
       let environment = try ExecutionEnvironment(
         searchPath: [.init("/usr/bin"), .init("/bin")], home: root, temporary: root, cache: root)
       let launcher = ExecutionLauncher(platform: DarwinExecutionPlatform())
-      let owner = try await launcher.start(
-        executable: .init("/usr/bin/ruby"),
-        arguments: [
-          "-e",
-          "fork { Process.setsid; File.write('leaf', Process.pid.to_s); exec('/bin/sleep', '60') }; sleep 60",
-        ],
-        directory: root, environment: environment, mode: .sandbox(sandbox), method: method,
-        bindOwnership: { ownership in
-          ownership.beforeStart { _ in
-            try JSONEncoder().encode(ownership.recoveryState()).write(
-              to: directory.appendingPathComponent("ownership.json"), options: .atomic)
-          }
-        })
+      let owner = try await ExecutionAdministration.$current.withValue(
+        .init(mode: .sandbox(sandbox), environment: environment)
+      ) {
+        try await launcher.start(
+          executable: .init("/usr/bin/ruby"),
+          arguments: [
+            "-e",
+            "fork { Process.setsid; File.write('leaf', Process.pid.to_s); exec('/bin/sleep', '60') }; sleep 60",
+          ],
+          directory: root, environment: environment, mode: .sandbox(sandbox), method: method,
+          bindOwnership: { ownership in
+            ownership.beforeStart { _ in
+              try JSONEncoder().encode(ownership.recoveryState()).write(
+                to: directory.appendingPathComponent("ownership.json"), options: .atomic)
+            }
+          })
+      }
       for _ in 0..<500 {
         if FileManager.default.fileExists(atPath: directory.appendingPathComponent("leaf").path) {
           withExtendedLifetime(owner) { _exit(0) }
@@ -52,10 +56,14 @@ import System
         readableRoots: [.init("/")])
       let environment = try ExecutionEnvironment(
         searchPath: [.init("/bin")], home: root, temporary: root, cache: root)
-      let owner = try await ExecutionLauncher(platform: DarwinExecutionPlatform()).start(
-        executable: .init("/bin/sh"),
-        arguments: ["-c", "echo ready > ready; while [ ! -f finish ]; do /bin/sleep 0.01; done"],
-        directory: root, environment: environment, mode: .sandbox(sandbox), method: method)
+      let owner = try await ExecutionAdministration.$current.withValue(
+        .init(mode: .sandbox(sandbox), environment: environment)
+      ) {
+        try await ExecutionLauncher(platform: DarwinExecutionPlatform()).start(
+          executable: .init("/bin/sh"),
+          arguments: ["-c", "echo ready > ready; while [ ! -f finish ]; do /bin/sleep 0.01; done"],
+          directory: root, environment: environment, mode: .sandbox(sandbox), method: method)
+      }
       guard try await owner.wait(until: .now.advanced(by: .seconds(15))).status == 0 else {
         exit(15)
       }
@@ -76,12 +84,20 @@ import System
       let runtime = ShellSessionRuntime(
         launcher: launcher, sessions: sessions,
         scope: .isolated(UUID(uuidString: arguments[3])!))
-      let id = try runtime.spawn(
-        request: .init(
-          mode: .argv, executable: "/bin/sh",
-          argv: ["-c", "sleep 60 & echo ready:$!; wait"]), defaultShell: "/bin/sh",
-        defaultWorkingDirectory: root, timeoutMilliseconds: nil, maxOutputBytes: 4096,
-        maxSessions: 1)
+      let id = try ExecutionAdministration.$current.withValue(
+        .init(
+          mode: .fullAccess,
+          environment: ExecutionEnvironment(fullAccessVariables: [
+            "PATH": "/usr/bin:/bin", "HOME": root.path, "TMPDIR": root.path + "/",
+          ]))
+      ) {
+        try runtime.spawn(
+          request: .init(
+            mode: .argv, executable: "/bin/sh",
+            argv: ["-c", "sleep 60 & echo ready:$!; wait"]), defaultShell: "/bin/sh",
+          defaultWorkingDirectory: root, timeoutMilliseconds: nil, maxOutputBytes: 4096,
+          maxSessions: 1)
+      }
       for _ in 0..<100 {
         let value = try runtime.read(
           sessionID: id, stdoutCursor: 0, stderrCursor: 0,
@@ -127,9 +143,13 @@ import System
     let environment = try ExecutionEnvironment(
       searchPath: [.init("/usr/bin"), .init("/bin")], home: path, temporary: path, cache: path)
     for method in ExecutionLaunchMethod.allCases {
-      let result = try await ExecutionLauncher(platform: DarwinExecutionPlatform()).run(
-        executable: .init(arguments[0]), arguments: ["child", method.rawValue + "-disclaim"],
-        directory: path, environment: environment, mode: .fullAccess, method: method)
+      let result = try await ExecutionAdministration.$current.withValue(
+        .init(mode: .fullAccess, environment: environment)
+      ) {
+        try await ExecutionLauncher(platform: DarwinExecutionPlatform()).run(
+          executable: .init(arguments[0]), arguments: ["child", method.rawValue + "-disclaim"],
+          directory: path, environment: environment, mode: .fullAccess, method: method)
+      }
       guard result.status == 0 else { exit(4) }
     }
     try spawn(arguments: ["child", "posixSpawn-inherit"], disclaim: false)

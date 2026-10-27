@@ -52,7 +52,7 @@ package final class ProcessCommandRunner: CommandRunning, Sendable {
     executable: String, arguments: [String], workingDirectory: URL?,
     environment: [String: String], timeoutMilliseconds: Int, maxOutputBytes: Int
   ) throws -> CommandResult {
-    try ManagedCommandRunner(launcher: launcher, policy: HostExecutionPolicy.current).runIsolated(
+    try ManagedCommandRunner(launcher: launcher).runIsolated(
       executable: executable, arguments: arguments, workingDirectory: workingDirectory,
       environment: environment, timeoutMilliseconds: timeoutMilliseconds,
       maxOutputBytes: maxOutputBytes)
@@ -63,7 +63,7 @@ package final class ProcessCommandRunner: CommandRunning, Sendable {
     environment: [String: String], timeoutMilliseconds: Int, maxOutputBytes: Int,
     outputDescriptor: Int32
   ) throws -> CommandResult {
-    try ManagedCommandRunner(launcher: launcher, policy: HostExecutionPolicy.current).runToFile(
+    try ManagedCommandRunner(launcher: launcher).runToFile(
       executable: executable, arguments: arguments, workingDirectory: workingDirectory,
       environment: environment,
       timeoutMilliseconds: timeoutMilliseconds, maxOutputBytes: maxOutputBytes,
@@ -75,7 +75,7 @@ package final class ProcessCommandRunner: CommandRunning, Sendable {
     inputDescriptor: Int32, outputDescriptor: Int32, environment: [String: String],
     timeoutMilliseconds: Int, maxOutputBytes: Int
   ) throws -> CommandResult {
-    try ManagedCommandRunner(launcher: launcher, policy: HostExecutionPolicy.current)
+    try ManagedCommandRunner(launcher: launcher)
       .runInDirectory(
         executable: executable, arguments: arguments, directoryDescriptor: directoryDescriptor,
         inputDescriptor: inputDescriptor, outputDescriptor: outputDescriptor,
@@ -92,14 +92,11 @@ package final class ProcessCommandRunner: CommandRunning, Sendable {
     maxOutputBytes: Int
   ) throws -> CommandDataResult {
     do {
-      return try ManagedCommandRunner(
-        launcher: launcher,
-        policy: workingDirectory == nil ? .readOnly : HostExecutionPolicy.current
-      )
-      .runData(
-        executable: executable, arguments: arguments, workingDirectory: workingDirectory,
-        environment: baseEnvironment.merging(environment) { _, value in value },
-        timeoutMilliseconds: timeoutMilliseconds, maxOutputBytes: maxOutputBytes)
+      return try ManagedCommandRunner(launcher: launcher)
+        .runData(
+          executable: executable, arguments: arguments, workingDirectory: workingDirectory,
+          environment: baseEnvironment.merging(environment) { _, value in value },
+          timeoutMilliseconds: timeoutMilliseconds, maxOutputBytes: maxOutputBytes)
     } catch let error as ProcessLaunchError {
       throw CommandRunnerError.launchFailed(error.localizedDescription)
     }

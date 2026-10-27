@@ -5,6 +5,7 @@ import ComputerMCPPermissions
 import ComputerMCPPersistence
 import ComputerMCPSandbox
 import Foundation
+import GRDB
 import Testing
 
 @testable import ComputerMCPGateway
@@ -15,6 +16,186 @@ import Testing
 #endif
 
 @Suite struct ExecutionRevocationCoordinatorTests {
+  @Test(arguments: ["work.completed", "admission.closed"])
+  func confirmedCompletionIsRetriedByTheCoordinatorWithoutReplayingWork(action: String) async throws
+  {
+    let f = try ExecutionFixture()
+    let coordinator = try f.coordinator()
+    try await coordinator.recover()
+    let id = try f.paths.authorize(f.paths.project, operation: .read, once: false)
+    let prepared = try await coordinator.prepare(authorizationID: id, context: f.context)
+    let cancelled = ExecutionProxyBox()
+    let work =
+      action == "work.completed" ? try prepared.retainWork { cancelled.markReleased() } : nil
+    if work != nil { try prepared.finishAdmission() }
+    try f.paths.store.transactionWithDatabase { database, _ in
+      try database.execute(
+        sql:
+          "CREATE TRIGGER fail_completion_audit BEFORE INSERT ON auditEvents WHEN NEW.capabilityID = ? BEGIN SELECT RAISE(ABORT, 'fixture audit failure'); END"
+          .replacingOccurrences(of: "?", with: "'execution.\(action)'"))
+    }
+    #expect(throws: (any Error).self) {
+      if let work { try work.finish() } else { try prepared.finishAdmission() }
+    }
+    try f.paths.store.transactionWithDatabase { database, _ in
+      try database.execute(sql: "DROP TRIGGER fail_completion_audit")
+    }
+    try await f.untilFinished(prepared.executionID, coordinator)
+    #expect(f.platform.started == 0)
+    #expect(!cancelled.released)
+    try f.paths.store.readWithDatabase { database, ledger in
+      let current = try #require(try ExecutionRuntimeRecord.load(prepared.executionID, database))
+      #expect(current.completed && current.admissionFinished && (current.workIDs?.isEmpty ?? true))
+      #expect(ledger.executions[prepared.executionID]?.isRunning == false)
+      let count = try Int.fetchOne(
+        database, sql: "SELECT count(*) FROM auditEvents WHERE capabilityID = ?",
+        arguments: ["execution." + action])
+      #expect(count == 1)
+    }
+  }
+
+  @Test func transientReconciliationFailureReopensOnlyAfterOwnedWorkJoins() async throws {
+    let f = try ExecutionFixture()
+    let failure = ReconciliationFailureSwitch()
+    let coordinator = try ExecutionRevocationCoordinator(
+      store: f.paths.store,
+      launcher: ExecutionLauncher(platform: f.platform), directory: f.directory,
+      refreshPolicy: { try failure.check() })
+    try await coordinator.recover()
+    let id = try f.paths.authorize(f.paths.project, operation: .read, once: false)
+    let prepared = try await coordinator.prepare(authorizationID: id, context: f.context)
+    let cancelled = ExecutionProxyBox()
+    let work = try prepared.retainWork { cancelled.markReleased() }
+    try prepared.finishAdmission()
+    failure.set(true)
+    await #expect(throws: (any Error).self) { try await coordinator.reconcile() }
+    let pending = try f.paths.authorize(f.paths.project, operation: .read, once: false)
+    await #expect(throws: (any Error).self) {
+      try await coordinator.prepare(authorizationID: pending, context: f.context)
+    }
+    for _ in 0..<100 {
+      if cancelled.released { break }
+      try await Task.sleep(for: .milliseconds(5))
+    }
+    #expect(cancelled.released)
+    failure.set(false)
+    try await coordinator.reconcile()
+    await #expect(throws: (any Error).self) {
+      try await coordinator.prepare(authorizationID: pending, context: f.context)
+    }
+    try work.finish()
+    try await f.untilFinished(prepared.executionID, coordinator)
+    let resumed = try await coordinator.prepare(authorizationID: pending, context: f.context)
+    try resumed.finishAdmission()
+    try await f.untilFinished(resumed.executionID, coordinator)
+  }
+
+  @Test func unrecordedScratchIsQuarantinedWithoutDeletingItsContents() async throws {
+    let f = try ExecutionFixture()
+    try FileManager.default.createDirectory(at: f.directory, withIntermediateDirectories: true)
+    let orphan = f.directory.appendingPathComponent(UUID().uuidString)
+    try FileManager.default.createDirectory(at: orphan, withIntermediateDirectories: false)
+    let sentinel = orphan.appendingPathComponent("owner-file")
+    try Data("preserve".utf8).write(to: sentinel)
+    let coordinator = try f.coordinator()
+    do {
+      try await coordinator.recover()
+      Issue.record("Unowned scratch did not close execution admission")
+    } catch {
+      #expect(
+        (error as? ExecutionEnvironmentError)?.description.contains(
+          "quarantined for local owner review") == true)
+    }
+    #expect(try String(contentsOf: sentinel, encoding: .utf8) == "preserve")
+  }
+
+  @Test func remoteServiceAuthorityCannotStartAHostProgram() async throws {
+    let f = try ExecutionFixture()
+    let id = try f.paths.authorize(f.paths.project, operation: .read, once: false)
+    let coordinator = try f.coordinator()
+    try await coordinator.recover()
+    let scratch = f.directory.appendingPathComponent(id.uuidString).resolvingSymlinksInPath()
+    try FileManager.default.createDirectory(at: scratch, withIntermediateDirectories: true)
+    let prepared = try await coordinator.prepare(
+      authorizationID: id,
+      context: .init(
+        directory: SandboxPath(scratch.path),
+        temporaryDirectory: SandboxPath(scratch.path), purpose: .remoteService,
+        privateWorkingDirectory: true))
+    #expect(!prepared.permitsProgramLaunch)
+    await #expect(throws: (any Error).self) { try await f.start(prepared) }
+    #expect(f.platform.started == 0)
+    try prepared.finishAdmission()
+    try await f.untilFinished(prepared.executionID, coordinator)
+  }
+
+  @Test(arguments: [false, true])
+  func retainedLogicalRequestOutlivesAdmissionAndJoinsRevocation(auditUnavailable: Bool)
+    async throws
+  {
+    let f = try ExecutionFixture()
+    let id = try f.paths.authorize(f.paths.project, operation: .read, once: true)
+    let coordinator = try f.coordinator()
+    try await coordinator.recover()
+    let prepared = try await coordinator.prepare(authorizationID: id, context: f.context)
+    let cancelled = ExecutionProxyBox()
+    let work = try prepared.retainWork { cancelled.markReleased() }
+    try prepared.finishAdmission()
+    try await coordinator.reconcile()
+    #expect(try f.execution(prepared.executionID).isRunning)
+    _ = try prepared.accessExecution(prepared.executionID, operation: .writeInput)
+    if auditUnavailable {
+      try f.paths.store.transactionWithDatabase { database, _ in
+        try database.execute(
+          sql:
+            "CREATE TRIGGER fail_revocation_audit BEFORE INSERT ON auditEvents WHEN NEW.capabilityID = 'execution.revoked' BEGIN SELECT RAISE(ABORT, 'fixture audit failure'); END"
+        )
+      }
+    }
+    try f.revoke()
+    for _ in 0..<100 {
+      do { try await coordinator.reconcile() } catch { #expect(auditUnavailable) }
+      if cancelled.released { break }
+      try await Task.sleep(for: .milliseconds(5))
+    }
+    #expect(cancelled.released)
+    let pending = try f.paths.store.readWithDatabase { database, _ in
+      try ExecutionRuntimeRecord.load(prepared.executionID, database)?.completed
+    }
+    #expect(pending == false)
+    if auditUnavailable {
+      try f.paths.store.transactionWithDatabase { database, _ in
+        try database.execute(sql: "DROP TRIGGER fail_revocation_audit")
+      }
+    }
+    try work.finish()
+    try work.finish()
+    try await f.untilFinished(prepared.executionID, coordinator)
+    #expect(throws: (any Error).self) {
+      try prepared.accessExecution(prepared.executionID, operation: .readResult)
+    }
+  }
+
+  @Test func emptyInvocationReclaimsOnlyItsOwnedScratchDirectory() async throws {
+    let f = try ExecutionFixture()
+    let id = try f.paths.authorize(f.paths.project, operation: .read, once: false)
+    let coordinator = try f.coordinator()
+    try await coordinator.recover()
+    let scratch = f.directory.appendingPathComponent(id.uuidString).resolvingSymlinksInPath()
+    try FileManager.default.createDirectory(at: scratch, withIntermediateDirectories: true)
+    let sibling = f.directory.appendingPathComponent("retained")
+    try FileManager.default.createDirectory(at: sibling, withIntermediateDirectories: true)
+    let prepared = try await coordinator.prepare(
+      authorizationID: id,
+      context: .init(
+        directory: SandboxPath(f.paths.project.path),
+        temporaryDirectory: SandboxPath(scratch.path)))
+    try prepared.finishAdmission()
+    try await f.untilFinished(prepared.executionID, coordinator)
+    #expect(!FileManager.default.fileExists(atPath: scratch.path))
+    #expect(FileManager.default.fileExists(atPath: sibling.path))
+  }
+
   @Test(arguments: ["prepared", "reserved", "bound", "older-record"])
   func restoredRuntimeRecordReleasesProxyAfterEveryReservationSettles(stage: String) async throws {
     let f = try ExecutionFixture()
@@ -108,6 +289,148 @@ import Testing
     try await f.untilFinished(prepared.executionID, coordinator)
     #expect(f.platform.owners.allSatisfy { $0.ended })
     _ = try prepared.accessExecution(prepared.executionID, operation: .readResult)
+  }
+
+  @Test func ownerStopJoinsOnlySelectedExecutionsAndLeavesSharedAdmissionOpen() async throws {
+    let f = try ExecutionFixture()
+    let coordinator = try f.coordinator()
+    try await coordinator.recover()
+    let firstID = try f.paths.authorize(f.paths.project, operation: .read, once: false)
+    let selected = try await coordinator.prepare(authorizationID: firstID, context: f.context)
+    _ = try await f.start(selected)
+    _ = try await f.start(selected)
+    let selectedOwners = f.platform.owners
+    let otherID = try f.paths.authorize(f.paths.project, operation: .read, once: false)
+    let other = try await coordinator.prepare(authorizationID: otherID, context: f.context)
+    _ = try await f.start(other)
+    let otherOwner = try #require(f.platform.owners.last)
+
+    try await coordinator.stopExecutions([selected.executionID])
+    #expect(selectedOwners.allSatisfy { $0.ended })
+    #expect(!otherOwner.ended)
+    #expect(try f.execution(selected.executionID).isRunning == false)
+    #expect(try f.execution(other.executionID).isRunning)
+    #expect(throws: (any Error).self) { try selected.authority.reserveChild(UUID()) }
+    #expect(throws: (any Error).self) { try selected.retainWork {} }
+    #expect(throws: (any Error).self) {
+      try selected.accessExecution(selected.executionID, operation: .writeInput)
+    }
+    _ = try selected.accessExecution(selected.executionID, operation: .readResult)
+    _ = try await f.start(other)
+    #expect(f.platform.started == 4)
+    try await f.untilFinished(selected.executionID, coordinator)
+    try f.paths.store.readWithDatabase { database, ledger in
+      let record = try #require(try ExecutionRuntimeRecord.load(selected.executionID, database))
+      #expect(record.admissionFinished && record.completed)
+      #expect(record.children.values.allSatisfy { $0.completed && $0.released })
+      var validation = ledger
+      #expect(throws: PermissionModelError.invalidAuthorization) {
+        try validation.invocationAccess(firstID)
+      }
+      #expect(
+        validation.executionAccess(
+          selected.executionID, principal: f.paths.principal, operation: .readResult, now: Date())
+          == .allowed)
+    }
+    try await coordinator.stopExecutions([other.executionID])
+    try await f.untilFinished(other.executionID, coordinator)
+    #expect(f.platform.owners.allSatisfy { $0.ended })
+  }
+
+  @Test(arguments: ["admission-audit", "runtime-write", "revocation-audit"])
+  func ownerStopRetriesStorageFailureAfterJoiningNativeChildren(failure: String) async throws {
+    let f = try ExecutionFixture()
+    let coordinator = try f.coordinator()
+    try await coordinator.recover()
+    let id = try f.paths.authorize(f.paths.project, operation: .read, once: false)
+    let prepared = try await coordinator.prepare(authorizationID: id, context: f.context)
+    _ = try await f.start(prepared)
+    let owner = try #require(f.platform.owners.first)
+    let cancelled = ExecutionProxyBox()
+    let work = try prepared.retainWork { cancelled.markReleased() }
+    let trigger: String
+    if failure == "runtime-write" {
+      trigger = """
+        CREATE TRIGGER fail_owner_stop BEFORE UPDATE ON permissionRuntimeExecutions
+        BEGIN SELECT RAISE(ABORT, 'fixture runtime write failure'); END
+        """
+    } else {
+      let action = failure == "admission-audit" ? "admission.closed" : "revoked"
+      trigger = """
+        CREATE TRIGGER fail_owner_stop BEFORE INSERT ON auditEvents
+        WHEN NEW.capabilityID = 'execution.\(action)'
+        BEGIN SELECT RAISE(ABORT, 'fixture audit failure'); END
+        """
+    }
+    try f.paths.store.transactionWithDatabase { database, _ in
+      try database.execute(sql: trigger)
+    }
+    await #expect(throws: (any Error).self) {
+      try await coordinator.stopExecutions([prepared.executionID])
+    }
+    #expect(owner.ended)
+    #expect(throws: (any Error).self) { try prepared.authority.reserveChild(UUID()) }
+    #expect(throws: (any Error).self) {
+      try prepared.accessExecution(prepared.executionID, operation: .writeInput)
+    }
+    for _ in 0..<100 {
+      if cancelled.released { break }
+      try await Task.sleep(for: .milliseconds(5))
+    }
+    #expect(cancelled.released)
+    if failure == "runtime-write" {
+      for _ in 0..<100 {
+        if try f.execution(prepared.executionID).interruptedAt != nil { break }
+        try await Task.sleep(for: .milliseconds(5))
+      }
+    }
+    if failure != "revocation-audit" {
+      try f.paths.store.readWithDatabase { database, ledger in
+        let record = try #require(try ExecutionRuntimeRecord.load(prepared.executionID, database))
+        #expect(!record.admissionFinished && !record.completed)
+        let execution = try #require(ledger.executions[prepared.executionID])
+        if failure == "runtime-write" {
+          #expect(!execution.isRunning && execution.interruptedAt != nil)
+          #expect(ledger.pendingExecutionTerminations.contains(prepared.executionID))
+        } else {
+          #expect(execution.isRunning)
+        }
+      }
+    }
+    try f.paths.store.transactionWithDatabase { database, _ in
+      try database.execute(sql: "DROP TRIGGER fail_owner_stop")
+    }
+    try work.finish()
+    try await f.untilFinished(prepared.executionID, coordinator)
+    try f.paths.store.readWithDatabase { database, ledger in
+      let record = try #require(try ExecutionRuntimeRecord.load(prepared.executionID, database))
+      #expect(record.admissionFinished && record.completed && (record.workIDs?.isEmpty ?? true))
+      #expect(record.children.values.allSatisfy { $0.completed && $0.released })
+      #expect(ledger.executions[prepared.executionID]?.isRunning == false)
+      #expect(!ledger.pendingExecutionTerminations.contains(prepared.executionID))
+    }
+    #expect(f.platform.started == 1)
+  }
+
+  @Test func ownerStopKeepsAnUnpublishedReservationUntilItSettles() async throws {
+    let f = try ExecutionFixture()
+    let coordinator = try f.coordinator()
+    try await coordinator.recover()
+    let id = try f.paths.authorize(f.paths.project, operation: .read, once: false)
+    let prepared = try await coordinator.prepare(authorizationID: id, context: f.context)
+    let child = UUID()
+    try prepared.authority.reserveChild(child)
+    try await coordinator.stopExecutions([prepared.executionID])
+    try f.paths.store.readWithDatabase { database, ledger in
+      let record = try #require(try ExecutionRuntimeRecord.load(prepared.executionID, database))
+      #expect(record.admissionFinished && !record.completed)
+      #expect(record.children[child]?.completed == false)
+      #expect(ledger.pendingExecutionTerminations.contains(prepared.executionID))
+    }
+    #expect(throws: (any Error).self) { try prepared.authority.reserveChild(UUID()) }
+    prepared.authority.launchFailed(child)
+    try await f.untilFinished(prepared.executionID, coordinator)
+    #expect(f.platform.started == 0)
   }
 
   @Test(arguments: [false, true]) func failedLaunchDoesNotResurrectRetry(afterBinding: Bool)
@@ -531,15 +854,20 @@ private struct ExecutionTestObservation: EgressRouteObservation {
             })
         }
       }
-      let owner = try #require(owners.value)
-      _ = try await owner.waitForExit()
-      _ = try await owner.cancel()
+      if beforeSpawn {
+        #expect(owners.value == nil)
+      } else {
+        let owner = try #require(owners.value)
+        _ = try await owner.waitForExit()
+        _ = try await owner.cancel()
+      }
+      try prepared.finishAdmission()
       try await f.untilFinished(prepared.executionID, coordinator)
       #expect(box.released)
       let children = try f.paths.store.readWithDatabase { database, _ in
         try #require(try ExecutionRuntimeRecord.load(prepared.executionID, database)).children
       }
-      #expect(children.count == 1)
+      #expect(children.count == (beforeSpawn ? 0 : 1))
       #expect(children.values.allSatisfy { $0.completed && $0.released })
       await #expect(throws: (any Error).self) {
         try await coordinator.prepare(authorizationID: id, context: f.context)
@@ -631,7 +959,7 @@ private struct ExecutionTestObservation: EgressRouteObservation {
       try f.limits(.init(outputBytes: 4))
       let id = try f.paths.authorize(f.paths.project, operation: .read, once: true)
       let prepared = try await coordinator.prepare(authorizationID: id, context: f.context)
-      let cli = CLIProcessExecution(launcher: launcher, policy: .fullAccess)
+      let cli = CLIProcessExecution(launcher: launcher)
       let result = try await prepared.withValue {
         try await cli.launchAsync(
           executable: "/usr/bin/printf",
@@ -970,4 +1298,13 @@ private final class FailedLaunchOwnerships: @unchecked Sendable {
   private var owner: (any ExecutionOwnership)?
   var value: (any ExecutionOwnership)? { lock.withLock { owner } }
   func bind(_ owner: any ExecutionOwnership) { lock.withLock { self.owner = owner } }
+}
+
+private final class ReconciliationFailureSwitch: @unchecked Sendable {
+  private let lock = NSLock()
+  private var failing = false
+  func set(_ value: Bool) { lock.withLock { failing = value } }
+  func check() throws {
+    if lock.withLock({ failing }) { throw PermissionModelError.invalidAuthorization }
+  }
 }

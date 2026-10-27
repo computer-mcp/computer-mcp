@@ -3,9 +3,9 @@ import ComputerMCPPermissions
 import Foundation
 import TOML
 
-/// Preparatory codec for permission profiles; GatewayConfiguration retains the live format.
+/// The manifest representation of stored profile permissions and settings.
 package enum PermissionProfileManifest {
-  package static func decode(_ text: String) throws -> [PermissionProfile] {
+  package static func decode(_ text: String) throws -> [ProfileGrant] {
     let documents = try TOMLDecoder().decode(Document.self, from: text).profiles
     guard Set(documents.map { $0.profile.id }).count == documents.count else {
       throw ConfigurationError.invalid("profiles contains duplicate IDs.")
@@ -13,7 +13,7 @@ package enum PermissionProfileManifest {
     return documents.map(\.profile)
   }
 
-  package static func encode(_ profiles: [PermissionProfile]) throws -> String {
+  package static func encode(_ profiles: [ProfileGrant]) throws -> String {
     let encoder = TOMLEncoder()
     encoder.outputFormatting = [.sortedKeys]
     return try encoder.encodeToString(
@@ -24,9 +24,9 @@ package enum PermissionProfileManifest {
   private struct Document: Codable { let profiles: [ProfileDocument] }
 }
 
-private struct ProfileDocument: Codable {
-  let profile: PermissionProfile
-  init(_ profile: PermissionProfile) { self.profile = profile }
+struct ProfileDocument: Codable {
+  let profile: ProfileGrant
+  init(_ profile: ProfileGrant) { self.profile = profile }
 
   private static let privacy = PermissionManifestVocabulary.privacy
   private static let folders = PermissionManifestVocabulary.folders
@@ -127,7 +127,7 @@ private struct ProfileDocument: Codable {
     }
     let automation =
       try c.decodeIfPresent(
-        [String: PermissionProfile.AutomationAccess].self, forKey: ProfileKey("automation")) ?? [:]
+        [String: ProfileGrant.AutomationAccess].self, forKey: ProfileKey("automation")) ?? [:]
     for id in automation.keys {
       guard id != "*", id.utf8.count <= 256, id.contains("."),
         !id.split(separator: ".", omittingEmptySubsequences: false).contains(where: \.isEmpty),
@@ -137,11 +137,11 @@ private struct ProfileDocument: Codable {
           "Automation requires a concrete application bundle identifier.")
       }
     }
-    profile = PermissionProfile(
+    profile = ProfileGrant(
       id: id, permissions: permissions, projectNetworks: networks,
       automation: automation,
       fullAccess: try c.decodeIfPresent(Bool.self, forKey: ProfileKey("full_access")) ?? false,
-      allowedCallers: callers, authorizationRevision: 0)
+      allowedCallers: callers, authorizationRevision: 1)
   }
 
   func encode(to encoder: any Encoder) throws {

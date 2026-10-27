@@ -53,18 +53,13 @@ package final class CLIProcessExecution: Sendable {
   private let state = NIOLockedValueBox(State())
   private let blocking = BlockingOperationExecutor(label: "computer-mcp.cli", serial: false)
   private let maxConcurrentCalls: Int
-  private let hostVariables: [String: String]
-  private let policy: HostExecutionPolicy
   private let launcher: ExecutionLauncher
   private let inheritsEnvironment: Bool
 
   package init(
-    launcher: ExecutionLauncher = ExecutionLauncher(), policy: HostExecutionPolicy = .fullAccess,
-    hostVariables: [String: String] = [:], maxConcurrentCalls: Int = 32,
+    launcher: ExecutionLauncher = ExecutionLauncher(), maxConcurrentCalls: Int = 32,
     inheritsEnvironment: Bool = true
   ) {
-    self.hostVariables = hostVariables
-    self.policy = policy
     self.launcher = launcher
     self.maxConcurrentCalls = max(1, maxConcurrentCalls)
     self.inheritsEnvironment = inheritsEnvironment
@@ -127,8 +122,7 @@ package final class CLIProcessExecution: Sendable {
         throw ProcessLaunchError.invalid("CLI invocation limit reached.")
       }
       let id = UUID()
-      let call = BoundedProcessCall(
-        launcher: launcher, policy: policy, hostVariables: hostVariables)
+      let call = BoundedProcessCall(launcher: launcher)
       state.calls[id] = call
       return (id, call)
     }
@@ -144,16 +138,9 @@ package final class BoundedProcessCall: Sendable {
   }
   private let state = NIOLockedValueBox(State())
   private let launcher: ExecutionLauncher
-  private let hostVariables: [String: String]
-  private let policy: HostExecutionPolicy
 
-  package init(
-    launcher: ExecutionLauncher = ExecutionLauncher(), policy: HostExecutionPolicy = .readOnly,
-    hostVariables: [String: String] = [:]
-  ) {
+  package init(launcher: ExecutionLauncher = ExecutionLauncher()) {
     self.launcher = launcher
-    self.hostVariables = hostVariables
-    self.policy = policy
   }
 
   package var isCancelled: Bool { state.withLockedValue { $0.cancelled } }
@@ -199,18 +186,16 @@ package final class BoundedProcessCall: Sendable {
     return try execute(
       executable: resolvedExecutable, arguments: launch.arguments + invocation.arguments,
       standardInput: invocation.standardInput, cwd: cwd, environment: childEnvironment,
-      timeoutMilliseconds: timeoutMilliseconds, maxOutputBytes: maxOutputBytes, policy: policy)
+      timeoutMilliseconds: timeoutMilliseconds, maxOutputBytes: maxOutputBytes)
   }
 
   /// Runs `executable` without a shell, writes `standardInput` and closes it, and waits
   /// for the exit or the timeout.
   package func execute(
     executable: String, arguments: [String], standardInput: Data, cwd: URL,
-    environment: [String: String], timeoutMilliseconds: Int, maxOutputBytes: Int,
-    policy: HostExecutionPolicy = .readOnly
+    environment: [String: String], timeoutMilliseconds: Int, maxOutputBytes: Int
   ) throws -> ShellSessionSnapshot {
-    let runtime = ShellSessionRuntime(
-      launcher: launcher, policy: policy, hostVariables: hostVariables)
+    let runtime = ShellSessionRuntime(launcher: launcher)
     let id = try runtime.spawn(
       request: .init(
         mode: .argv, executable: executable, argv: arguments,

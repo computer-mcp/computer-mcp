@@ -17,10 +17,13 @@ struct ShellLaunchFailureTests {
     let runtime = ShellSessionRuntime(launcher: ExecutionLauncher(platform: platform))
     let starting = Task {
       try await BlockingOperationExecutor(label: "test.cancelled-startup").perform {
-        try runtime.spawn(
-          request: .init(mode: .argv, executable: "/bin/cat", inheritsEnvironment: false),
-          defaultShell: "/bin/sh", defaultWorkingDirectory: FileManager.default.temporaryDirectory,
-          timeoutMilliseconds: nil, maxOutputBytes: 1024, maxSessions: 1)
+        try withCommandAdministration {
+          try runtime.spawn(
+            request: .init(mode: .argv, executable: "/bin/cat", inheritsEnvironment: false),
+            defaultShell: "/bin/sh",
+            defaultWorkingDirectory: FileManager.default.temporaryDirectory,
+            timeoutMilliseconds: nil, maxOutputBytes: 1024, maxSessions: 1)
+        }
       }
     }
     for await _ in platform.bound.stream { break }
@@ -35,11 +38,17 @@ struct ShellLaunchFailureTests {
   @Test func boundLaunchFailureCompletesShutdown() async throws {
     let runtime = ShellSessionRuntime(launcher: ExecutionLauncher(platform: FailedBoundPlatform()))
     let started = ContinuousClock.now
-    #expect(throws: ShellRuntimeError.self) {
-      try runtime.run(
-        request: .init(mode: .argv, executable: "/bin/sh", argv: [], inheritsEnvironment: false),
-        defaultShell: "/bin/sh", defaultWorkingDirectory: FileManager.default.temporaryDirectory,
-        timeoutMilliseconds: 1000, maxOutputBytes: 1024, maxSessions: 1)
+    _ = try await BlockingOperationExecutor(label: "test.failed-bound-startup").perform {
+      try withCommandAdministration {
+        #expect(throws: ShellRuntimeError.self) {
+          try runtime.run(
+            request: .init(
+              mode: .argv, executable: "/bin/sh", argv: [], inheritsEnvironment: false),
+            defaultShell: "/bin/sh",
+            defaultWorkingDirectory: FileManager.default.temporaryDirectory,
+            timeoutMilliseconds: 1000, maxOutputBytes: 1024, maxSessions: 1)
+        }
+      }
     }
     await runtime.shutdown()
     #expect(started.duration(to: .now) < .seconds(5))
@@ -51,14 +60,16 @@ struct ShellLaunchFailureTests {
     let root = try ScopedTemporaryDirectory()
     let runtime = ShellSessionRuntime(launcher: testExecutionLauncher())
     let started = ContinuousClock.now
-    #expect(throws: ShellRuntimeError.self) {
-      try runtime.run(
-        request: .init(
-          mode: .argv, executable: "/bin/sh", argv: ["-c", "exit 0"],
-          workingDirectory: root.url.appendingPathComponent("missing").path,
-          inheritsEnvironment: false),
-        defaultShell: "/bin/sh", defaultWorkingDirectory: root.url, timeoutMilliseconds: 5_000,
-        maxOutputBytes: 1_024, maxSessions: 1)
+    _ = try withCommandAdministration {
+      #expect(throws: ShellRuntimeError.self) {
+        try runtime.run(
+          request: .init(
+            mode: .argv, executable: "/bin/sh", argv: ["-c", "exit 0"],
+            workingDirectory: root.url.appendingPathComponent("missing").path,
+            inheritsEnvironment: false),
+          defaultShell: "/bin/sh", defaultWorkingDirectory: root.url, timeoutMilliseconds: 5_000,
+          maxOutputBytes: 1_024, maxSessions: 1)
+      }
     }
     #expect(started.duration(to: .now) < .seconds(5))
   }

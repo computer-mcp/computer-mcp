@@ -19,6 +19,17 @@ public struct ValidationToolContract: Codable, Equatable, Sendable {
   public let meta: JSONValue?
   public let capability: ValidationCapabilityContract
 
+  /// Selects bounded read probes; catalog visibility is not an authorization decision.
+  public var isIndependentReadProbe: Bool {
+    guard capability.risk == "read-only",
+      let requirements = meta?.objectValue?["computer_mcp"]?.objectValue?["requirements"]?
+        .objectValue,
+      requirements["target"]?.objectValue?["forwarded"] == nil,
+      let execution = requirements["execution"]?.objectValue
+    else { return false }
+    return execution["none"] != nil || execution["list"] != nil
+  }
+
   public var tool: MCPTool {
     let hints = annotations?.objectValue
     return MCPTool(

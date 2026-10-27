@@ -50,13 +50,13 @@ struct ArchiveExtractionGuardTests {
         throws: GatewayToolError.disabled(
           "Builtin command 'bsdtar' is unavailable on this platform.")
       ) {
-        _ = try tools.callTool(invocation)
+        _ = try tools.callToolAsFixtureOwner(invocation)
       }
       #expect(runner.calls == 0)
       #expect(try FileManager.default.contentsOfDirectory(atPath: root.path) == before)
       return false
     }
-    _ = try tools.callTool(invocation)
+    _ = try tools.callToolAsFixtureOwner(invocation)
     return true
   }
 
@@ -516,7 +516,7 @@ struct ArchiveExtractionGuardTests {
         if operation == "renameatx_np", phase == .didMutate { try mover.move() }
       })
     #expect(throws: (any Error).self) {
-      _ = try tools.callTool(
+      _ = try tools.callToolAsFixtureOwner(
         .init(
           name: "archive.extract",
           arguments: .object([

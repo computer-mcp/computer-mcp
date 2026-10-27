@@ -49,11 +49,12 @@ Open **ChatGPT** under Get Started. The page shows dependency, account,
 configuration, credential, runtime, and real-request checks together:
 
 1. Select **Add Connection** and use `chatgpt-observe` for the initial connection.
-2. **Projects**: add the folders ChatGPT may inspect or operate, then turn on
-   **Enabled for chatgpt-observe** for each folder. Registration creates the
-   persistent bookmark; the per-profile switch grants access. These are
-   separate operations.
-4. **Permissions**: review the enabled endpoint requirements. Grant
+2. **Projects**: add the folders ChatGPT may inspect, then select **Read** for
+   `chatgpt-observe` in each project’s access selector. Registration creates the
+   persistent bookmark; the per-profile permission grants access. **Ask** removes
+   the explicit entry and uses any wildcard; **Deny** blocks requests even when
+   a wildcard grants access.
+3. **Permissions**: review the enabled endpoint requirements. Grant
    Accessibility or Screen Recording to `Computer MCP.app` only when the
    corresponding Computer Use endpoints are intended to be available. A grant
    held by Terminal, Codex, or another app does not apply to Computer MCP.

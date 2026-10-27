@@ -47,11 +47,11 @@ channel is not an OS sandbox for malicious plugin code.
 
 Ordinary callbacks use the Gateway's authenticated subject, current profile,
 caller and project. Connection IDs correlate requests, not authority. The
-host filters discovery against the live grant and reauthorizes
-execution. Aliases, nested policy/ticket targets and other callback-enabled MCP
+host lists requirements within managed limits and reauthorizes
+execution. Aliases, forwarded targets and other callback-enabled MCP
 registrations cannot create a recursive route or widen the project.
-Risky tools keep the ordinary `operations.prepare` / local approval /
-`operations.commit` contract. The adapter cannot approve its own pending ticket.
+Every callback uses the permission library. Missing permissions follow the same
+request-and-explicit-retry contract; an adapter cannot answer its own request.
 
 Configuration and builtin profile grants do not require a persisted profile
 record. If the runtime was initialized with a persisted profile, deleting that
@@ -71,13 +71,13 @@ cancellation delivery alone does not.
 | Private tool | Required inputs | Purpose |
 | --- | --- | --- |
 | `host.invocations.describe` | `invocation_id` | Inspect an exact invocation retained by a request or validated work on this private channel |
-| `host.workspaces.register` | `worktree` | Register an exact derived worktree and its source profile grant atomically |
+| `host.workspaces.register` | `worktree` | Register an exact derived worktree and its source permission relationship atomically |
 | `host.workspaces.authorize_removal` | `worktree` | Check the exact live removal call before removal |
 | `host.workspaces.unregister` | `worktree` | Remove the unchanged owned registration, or confirm an ownership-free no-op |
 | `host.diagnostics.snapshot` | `limit` | Read bounded host receipts for the verified subject/profile/project |
 
 These tools return `structuredContent.result`; rejected calls return `isError`
-and a bounded error. They do not accept caller-supplied identity, local approval authority
+and a bounded error. They do not accept caller-supplied identity, local permission-answer authority
 or arbitrary database operations. Inspect their actual MCP schemas for input
 constraints. They require host persistence; directory metadata alone is not a
 host-service implementation.
@@ -108,15 +108,15 @@ is the grant revision admitted for that invocation; inspection checks current
 authorization again. Plugin/contribution identities come from host composition
 and are null for a direct registration. The argument digest uses SHA-256 over
 the host-recorded downstream argument object encoded as sorted-key JSON.
-`ticket_id` is audit linkage and is null when no operation ticket applies; callbacks
-validate the live call record. Workspace mutations require a verified client identity;
+`ticket_id` is a version-1 compatibility field and is always null. Callbacks
+validate the live call record and its permission-ledger authorization. Workspace mutations require a verified client identity;
 inspection records the identity supplied by the host, which can be absent on local
 unauthenticated connections. Identity fields and
 authorization revisions cannot be overridden in the inspection request.
 
 Concurrent invocations have distinct identities even when their tool and
 arguments match. This inspection contract carries no authority to start new
-work, approve operations or retain a background job after its downstream
+work, answer permission requests or retain a background job after its downstream
 request has completed.
 
 ## Derived projects and recovery
@@ -164,7 +164,7 @@ query its records after reconnecting; connection IDs only correlate individual
 calls. Historical records without a verified subject remain stored but are not
 exposed through this service. They return receipt identities and digests, not command bodies
 or raw output. Missing host data is reported as unavailable.
-Private service audits retain the originating request/ticket relationship when
+Private service audits retain the originating invocation and permission authorization when
 one is present.
 
 ## Semantic action admission
@@ -186,11 +186,10 @@ The host recognizes these actions and imposes the corresponding minimum risk:
 
 The declaration selects host validation; it grants no project or capability.
 Unknown or malformed declarations fail closed. The host records the recognized
-action in its admitted capability before policy and consent, and exposes it as
-`host_action` in invocation inspection. Operation tickets bind that capability,
-the exact arguments and provider identity. A changed action invalidates the
-binding even if its risk is unchanged, including during target admission after
-ticket consumption. Dispatch checks the current provider declaration again.
+action in its admitted capability before permission admission, and exposes it as
+`host_action` in invocation inspection. Live call records bind the capability, exact arguments, provider identity and
+permission authorization. A changed action invalidates that binding even if its
+risk is unchanged. Dispatch checks the current provider declaration again.
 Callbacks use the captured action without rediscovering a provider that may be
 waiting for the callback; current subject, profile and project access are
 still rechecked.

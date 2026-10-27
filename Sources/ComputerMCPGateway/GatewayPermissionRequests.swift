@@ -32,6 +32,8 @@ package struct GatewayPermissionSubject: Equatable, Sendable {
 /// An in-process control-plane capability. Its validator runs while the database
 /// transaction owns the mutation; no Codable representation conveys this authority.
 package struct GatewayPermissionOwner: Sendable {
+  let auditContext: ExecutionContext
+  private(set) var auditParentRequestID: String?
   private let validate: @Sendable () throws -> Void
 
   package init(context: ExecutionContext, validate: @escaping @Sendable () throws -> Void) throws {
@@ -40,7 +42,16 @@ package struct GatewayPermissionOwner: Sendable {
     else {
       throw GatewayPermissionError.localOwnerRequired
     }
+    auditContext = context
+    auditParentRequestID = nil
     self.validate = validate
+  }
+
+  /// Adapter provenance is separate from the proof: its live validator is retained.
+  package func recording(context: ExecutionContext) throws -> GatewayPermissionOwner {
+    var owner = try GatewayPermissionOwner(context: context, validate: validate)
+    owner.auditParentRequestID = context.requestID
+    return owner
   }
 
   func authorize() throws { try validate() }
@@ -62,7 +73,7 @@ package struct GatewayManagedPolicyView: Equatable, Sendable, Codable {
 
 package struct GatewayPermissionView: Sendable {
   package let revision: UInt64
-  package let profiles: [PermissionProfile]
+  package let profiles: [ProfileGrant]
   package let subjects: [GatewayPermissionSubjectView]
   package let requests: [GatewayPermissionRequestView]
   package let sources: [GatewayManagedPolicyView]

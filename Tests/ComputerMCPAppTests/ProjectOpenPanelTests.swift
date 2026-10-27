@@ -10,8 +10,8 @@ struct ProjectOpenPanelTests {
   func repairDirectorySelection() {
     let project = ProjectSummary(
       id: "stable", displayName: "Project", path: "/private/tmp/missing-project",
-      health: .missing, activeProfileID: "chatgpt-operate", isEnabled: true,
-      isSelected: true, lastResolvedAt: nil)
+      health: .missing, activeProfileID: "chatgpt-operate", access: .read,
+      effectiveAccess: .read, profileRevision: 1, permissionRevision: 0, lastResolvedAt: nil)
     let panel = ProjectOpenPanelFactory.make(repairing: project)
     #expect(panel.title == AppLocalization.string("Repair Project"))
     #expect(

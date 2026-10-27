@@ -1,5 +1,30 @@
 import Foundation
 
+/// A fixed-point revocation pass cannot edit path authority or connection ceilings.
+/// Request and consent decisions remain live; only identical path checks are reused.
+private final class PathValidationMemo {
+  private struct Key: Hashable {
+    let path: PathAccessBasis
+    let principal: Principal
+    let mode: ExecutionMode
+    let connectionID: String?
+    let ceiling: BasisIdentity?
+  }
+  private var results: [Key: Bool] = [:]
+
+  func validate(
+    _ path: PathAccessBasis, principal: Principal, mode: ExecutionMode,
+    connectionID: String?, ceiling: BasisIdentity?, operation: () -> Bool
+  ) -> Bool {
+    let key = Key(
+      path: path, principal: principal, mode: mode, connectionID: connectionID, ceiling: ceiling)
+    if let result = results[key] { return result }
+    let result = operation()
+    results[key] = result
+    return result
+  }
+}
+
 package enum PermissionAnswer: Sendable {
   case onlyThisTime, always
 }
@@ -165,7 +190,7 @@ package struct RevocationResult: Equatable, Sendable {
 ///   policy consequences; the adapter authenticates/resolves them before submission.
 /// - Codable restores trusted durable state, including counters, transaction tokens
 ///   and consumption. It is not an import format for caller-supplied authority.
-package struct PermissionLedger: Sendable, Codable {
+package struct PermissionLedger: Equatable, Sendable, Codable {
   package private(set) var authorizationEpochID: UUID?
   package private(set) var suspendedAuthority: SuspendedPermissionAuthority?
   package private(set) var pendingEpochRecovery: AuthorizationEpochRecovery?
@@ -388,6 +413,29 @@ package struct PermissionLedger: Sendable, Codable {
   /// acknowledged IDs are harmless; acknowledgements cannot restore authority.
   package mutating func acknowledgeExecutionTerminations(_ ids: Set<UUID>) {
     pendingExecutionTerminations.subtract(ids)
+  }
+
+  /// Selects aggregate library candidates without issuing requests or authority.
+  /// Skills itself is admitted with the complete selected paths, preserving exact retries.
+  package func permitsSkillLibrary(
+    _ root: CanonicalPath, pluginID: String?, principal: Principal,
+    mode: ExecutionMode, sandboxProjectID: String?, connectionID: String?
+  ) -> Bool {
+    let actions =
+      pluginID.map {
+        [PermissionAction(requirement: try! PermissionRequirement(.plugin($0), .use))]
+      } ?? []
+    let requirements = InvocationRequirements(
+      actions: actions,
+      paths: [.init(path: root, operation: .read, purpose: .skillLibrary(root: root))],
+      mode: mode, sandboxProjectID: sandboxProjectID)
+    let resolution = evaluate(
+      requirements, principal: principal, connectionID: connectionID, admission: true)
+    return resolution.denial == nil
+      && resolution.missing.allSatisfy {
+        if case .permission(let request) = $0 { return request.requirement.permission == .skills }
+        return false
+      }
   }
 
   package func permissions(for principal: Principal) -> Permissions {
@@ -861,15 +909,30 @@ package struct PermissionLedger: Sendable, Codable {
     }
     var reads: [PathAccessBasis] = []
     var directories: [PathAccessBasis] = []
+    func purposes(at path: CanonicalPath, operation: PathOperation) -> [PathPurpose?] {
+      var result: Set<PathPurpose?> = [nil]
+      for declared in proof.requirements.paths
+      where declared.purpose != nil
+        && declared.operation != .write
+        && (declared.path.contains(path)
+          || operation.isDirectoryTraversal && path.contains(declared.path))
+      {
+        result.insert(declared.purpose)
+      }
+      return result.sorted { ($0?.libraryRoot.string ?? "") < ($1?.libraryRoot.string ?? "") }
+    }
     for path in boundaries.sorted(by: { $0.string < $1.string }) {
-      let result = resolve(conditions(paths: [.init(path: path, operation: .read)]))
-      guard result.isAllowed else { continue }
-      basis.formUnion(result.basis)
-      reads += result.basis.compactMap {
-        if case .path(let value) = $0, value.path == path, value.operation == .read {
-          return value
+      for purpose in purposes(at: path, operation: .read) {
+        let result = resolve(
+          conditions(paths: [.init(path: path, operation: .read, purpose: purpose)]))
+        guard result.isAllowed else { continue }
+        basis.formUnion(result.basis)
+        reads += result.basis.compactMap {
+          if case .path(let value) = $0, value.path == path, value.operation == .read {
+            return value
+          }
+          return nil
         }
-        return nil
       }
     }
     let ancestors = Set(
@@ -883,14 +946,17 @@ package struct PermissionLedger: Sendable, Codable {
         }
       })
     for path in ancestors.sorted(by: { $0.string < $1.string }) {
-      let result = resolve(conditions(paths: [.init(path: path, operation: .listDirectory)]))
-      guard result.isAllowed else { continue }
-      basis.formUnion(result.basis)
-      directories += result.basis.compactMap {
-        if case .path(let value) = $0, value.path == path, value.operation == .listDirectory {
-          return value
+      for purpose in purposes(at: path, operation: .listDirectory) {
+        let result = resolve(
+          conditions(paths: [.init(path: path, operation: .listDirectory, purpose: purpose)]))
+        guard result.isAllowed else { continue }
+        basis.formUnion(result.basis)
+        directories += result.basis.compactMap {
+          if case .path(let value) = $0, value.path == path, value.operation == .listDirectory {
+            return value
+          }
+          return nil
         }
-        return nil
       }
     }
     func permits(_ permission: Permission) -> Bool {
@@ -944,49 +1010,75 @@ package struct PermissionLedger: Sendable, Codable {
     guard let proof = authorizations[id], !proof.finished, validateAuthorization(id),
       pathResolver != nil
     else { throw PermissionModelError.invalidAuthorization }
-    let requirements = InvocationRequirements(
-      paths: [.init(path: path, operation: operation)], mode: proof.mode,
-      sandboxProjectID: proof.sandboxProjectID, execution: proof.requirements.execution)
     let requests = evidenceRequests(proof.basis, authorizationID: id)
-    let result = evaluate(
-      requirements, principal: proof.invocation.principal,
-      oneTimeRequests: requests, basis: proof.basis)
-    guard result.isAllowed else { throw PermissionModelError.invalidAuthorization }
-    for element in proof.basis {
-      if case .connection(let connectionID, _) = element,
-        let connection = environment.connections[connectionID],
-        !evaluateCeiling(
-          connection.attenuation, requirements: requirements,
-          principal: proof.invocation.principal, requests: requests
-        ).isAllowed
-      {
-        throw PermissionModelError.invalidAuthorization
-      }
-    }
-    // Traversal may use a readable descendant, but cannot import grants acquired
-    // after admission. Every permission used at this boundary must already belong
-    // to the invocation, with the same principal, purpose and containing scope.
-    for element in result.basis {
-      guard case .permission(let used) = element else { continue }
-      guard
+    // Only declared, admitted path evidence can carry host library intent into
+    // a later file use. Projection openings and registration alone confer none.
+    var candidates = proof.requirements.paths.filter { declared in
+      guard declared.purpose != nil || declared.pluginPurpose != nil,
         proof.basis.contains(where: {
-          guard case .permission(let existing) = $0,
-            existing.principal == used.principal, existing.pluginPurpose == used.pluginPurpose,
-            existing.requirement.permission == used.requirement.permission,
-            PermissionState.granted(existing.requirement.value).allows(used.requirement.value)
-          else { return false }
-          if case .standing = existing.source, existing.source == used.source { return true }
-          if existing.scope == used.scope { return true }
-          switch (existing.scope, used.scope) {
-          case (.principal, _): return true
-          case (.project(let id), .path): return used.requirement.permission == .project(id)
-          case (.path(let root), .path(let child)): return root.contains(child)
-          default: return false
+          if case .path(let admitted) = $0 {
+            return admitted.path == declared.path && admitted.operation == declared.operation
+              && admitted.purpose == declared.purpose
           }
+          return false
         })
-      else { throw PermissionModelError.invalidAuthorization }
+      else { return false }
+      if declared.operation.isDirectoryTraversal {
+        return declared.path == path && operation.isDirectoryTraversal
+      }
+      return (declared.operation == .write || operation != .write)
+        && (declared.path.contains(path)
+          || operation.isDirectoryTraversal && path.contains(declared.path))
+    }.map {
+      PathRequirement(
+        path: path, operation: operation, pluginPurpose: $0.pluginPurpose, purpose: $0.purpose)
     }
-    authorizations[id]!.basis.formUnion(result.basis)
+    candidates.append(.init(path: path, operation: operation))
+    candidate: for candidate in candidates {
+      let requirements = InvocationRequirements(
+        paths: [candidate], mode: proof.mode,
+        sandboxProjectID: proof.sandboxProjectID, execution: proof.requirements.execution)
+      let result = evaluate(
+        requirements, principal: proof.invocation.principal,
+        oneTimeRequests: requests, basis: proof.basis)
+      guard result.isAllowed else { continue }
+      for element in proof.basis {
+        if case .connection(let connectionID, _) = element,
+          let connection = environment.connections[connectionID],
+          !evaluateCeiling(
+            connection.attenuation, requirements: requirements,
+            principal: proof.invocation.principal, requests: requests
+          ).isAllowed
+        {
+          continue candidate
+        }
+      }
+      // Traversal may use a readable descendant, but cannot import grants acquired
+      // after admission. Every permission must retain its principal and purpose.
+      for element in result.basis {
+        guard case .permission(let used) = element else { continue }
+        guard
+          proof.basis.contains(where: {
+            guard case .permission(let existing) = $0,
+              existing.principal == used.principal, existing.pluginPurpose == used.pluginPurpose,
+              existing.requirement.permission == used.requirement.permission,
+              PermissionState.granted(existing.requirement.value).allows(used.requirement.value)
+            else { return false }
+            if case .standing = existing.source, existing.source == used.source { return true }
+            if existing.scope == used.scope { return true }
+            switch (existing.scope, used.scope) {
+            case (.principal, _): return true
+            case (.project(let id), .path): return used.requirement.permission == .project(id)
+            case (.path(let root), .path(let child)): return root.contains(child)
+            default: return false
+            }
+          })
+        else { continue candidate }
+      }
+      authorizations[id]!.basis.formUnion(result.basis)
+      return
+    }
+    throw PermissionModelError.invalidAuthorization
   }
 
   /// Ends invocation work; execution consumption is independently durable.
@@ -1108,6 +1200,31 @@ package struct PermissionLedger: Sendable, Codable {
   ) -> PermissionDecision {
     guard !authorityIsSuspended else { return .denied(.authoritySuspended) }
     propagateRevocations()
+    return executionAccessAfterRevalidation(
+      id, principal: principal, operation: operation, connectionID: connectionID, now: now)
+  }
+
+  /// A host I/O boundary checks the calling invocation and effective execution
+  /// limits against the same freshly revalidated authority state.
+  package mutating func executionAccess(
+    _ id: UUID, principal: Principal, operation: ExecutionOperation, connectionID: String?,
+    authorizingInvocation: UUID?, now: Date
+  ) -> PermissionDecision {
+    _ = reconcileExecutionLimits(now: now)
+    guard !authorityIsSuspended else { return .denied(.authoritySuspended) }
+    if let authorizingInvocation {
+      guard let proof = authorizations[authorizingInvocation], !proof.revoked, !proof.finished,
+        proof.invocation.principal == principal
+      else { return .denied(.authorizationRevoked) }
+    }
+    return executionAccessAfterRevalidation(
+      id, principal: principal, operation: operation, connectionID: connectionID, now: now)
+  }
+
+  private func executionAccessAfterRevalidation(
+    _ id: UUID, principal: Principal, operation: ExecutionOperation, connectionID: String?,
+    now: Date
+  ) -> PermissionDecision {
     guard let execution = executions[id], execution.owner == principal else {
       return .denied(.executionOwner)
     }
@@ -1137,13 +1254,11 @@ package struct PermissionLedger: Sendable, Codable {
         if let denial = resolution.denial { return .denied(denial) }
       }
     }
-    var valid = true
-    for id in execution.authorizationIDs {
-      if !validateAuthorization(id) {
-        valid = false
-      }
+    // The fixed-point pass above revalidated every proof. The intervening
+    // consent and connection checks do not mutate their authority.
+    guard execution.authorizationIDs.allSatisfy({ authorizations[$0]?.revoked == false }) else {
+      return .denied(.authorizationRevoked)
     }
-    guard valid else { return .denied(.authorizationRevoked) }
     if !execution.isRunning {
       guard operation == .readResult else { return .denied(.executionEnded) }
       guard let retainUntil = execution.retainUntil, now < retainUntil else {
@@ -1215,16 +1330,35 @@ package struct PermissionLedger: Sendable, Codable {
     return consent
   }
 
+  /// Read-only validation of an issued identity; retired consent never becomes valid again.
+  package func isConsentValid(_ consent: ModeConsent, for principal: Principal) -> Bool {
+    guard !authorityIsSuspended, issuedConsents[principal]?.contains(consent) == true,
+      consentIsValid(consent, principal: principal)
+    else { return false }
+    if case .fullAccess(.connection(let id)) = consent.mode {
+      return activeConnection(id, principal: principal) != nil
+    }
+    return true
+  }
+
   /// Every state transition re-evaluates every live proof to a fixed point. Revocation
   /// and its durable execution notification commit together and are never undone.
   @discardableResult
   private mutating func propagateRevocations(
     now: Date? = nil
   ) -> RevocationResult {
+    // Revoking proofs and requests does not change profile authority. Reuse its
+    // digest within this fixed-point pass without caching across state edits.
+    let profileDigests = Dictionary(
+      uniqueKeysWithValues: issuedConsents.compactMap { principal, consents in
+        consents.contains(where: { $0.mode == .fullAccess(.standing) })
+          ? (principal, profileDigest(for: principal)) : nil
+      })
+    let paths = PathValidationMemo()
     for (principal, consents) in issuedConsents {
       for consent in consents where !consent.mode.isSandbox {
         if (consent.mode == .fullAccess(.standing)
-          && consent.profileDigest != profileDigest(for: principal))
+          && consent.profileDigest != profileDigests[principal])
           || {
             if case .fullAccess(.connection(let id)) = consent.mode {
               return environment.endedConnections.contains(id)
@@ -1254,14 +1388,18 @@ package struct PermissionLedger: Sendable, Codable {
             requirements: request.requirements,
             principal: request.content.principal,
             authorizationID: owner,
-            now: now)
+            now: now,
+            currentProfileDigest: profileDigests[request.content.principal], paths: paths)
         {
           requests[id]!.status = .revoked
           changed = true
         }
       }
       for (id, authorization) in authorizations where !authorization.revoked {
-        if !isValid(authorization) {
+        if !isValid(
+          authorization, currentProfileDigest: profileDigests[authorization.invocation.principal],
+          paths: paths)
+        {
           authorizations[id]!.revoked = true
           changed = true
         }
@@ -1288,7 +1426,8 @@ package struct PermissionLedger: Sendable, Codable {
   }
 
   private func isValid(
-    _ authorization: InvocationAuthorization
+    _ authorization: InvocationAuthorization, currentProfileDigest: String? = nil,
+    paths: PathValidationMemo? = nil
   ) -> Bool {
     guard !authorization.revoked,
       authorization.mode.isSandbox
@@ -1300,7 +1439,8 @@ package struct PermissionLedger: Sendable, Codable {
         authorization.basis,
         requirements: authorization.requirements,
         principal: authorization.invocation.principal,
-        authorizationID: authorization.id)
+        authorizationID: authorization.id,
+        currentProfileDigest: currentProfileDigest, paths: paths)
     else { return false }
     return true
   }
@@ -1320,13 +1460,19 @@ package struct PermissionLedger: Sendable, Codable {
 
   private func basisRemainsValid(
     _ basis: Set<AuthorizationBasis>, requirements: InvocationRequirements, principal: Principal,
-    authorizationID: UUID? = nil, now: Date? = nil
+    authorizationID: UUID? = nil, now: Date? = nil, currentProfileDigest: String? = nil,
+    paths: PathValidationMemo? = nil
   ) -> Bool {
     var limits = currentLimits[principal] ?? .init()
-    let connectionCeiling = basis.compactMap { element -> ManagedPolicy? in
-      if case .connection(let id, _) = element { return environment.connections[id]?.attenuation }
+    let connection = basis.compactMap { element -> (String, ManagedPolicy)? in
+      if case .connection(let id, _) = element,
+        let policy = environment.connections[id]?.attenuation
+      {
+        return (id, policy)
+      }
       return nil
     }.first
+    let connectionCeiling = connection?.1
     if let connectionCeiling { limits.sources[.connection] = .available(connectionCeiling) }
     let mode = requirements.mode
     let evidenceRequests = evidenceRequests(basis, authorizationID: authorizationID)
@@ -1404,7 +1550,8 @@ package struct PermissionLedger: Sendable, Codable {
         return recorded == mode && limits.modeDenial(mode) == nil
       case .consent(let identity):
         return issuedConsents[principal]?.contains {
-          $0.identity == identity && consentIsValid($0, principal: principal)
+          $0.identity == identity
+            && consentIsValid($0, principal: principal, currentProfileDigest: currentProfileDigest)
         } == true
       case .retryOrigin(let identity):
         return authorizations[identity.id]?.identity == identity
@@ -1431,9 +1578,14 @@ package struct PermissionLedger: Sendable, Codable {
           path.sandboxProjectID.flatMap {
             sandboxSettings.entries[SandboxSettingsKey(principal: principal, projectID: $0)]
           } ?? .init()
-        return resolver.validate(
-          path, principal: principal, permissions: permissions, mode: mode,
-          limits: limits, sandbox: sandbox)
+        let validate = {
+          resolver.validate(
+            path, principal: principal, permissions: permissions, mode: mode,
+            limits: limits, sandbox: sandbox)
+        }
+        return paths?.validate(
+          path, principal: principal, mode: mode, connectionID: connection?.0,
+          ceiling: connectionCeiling?.identity, operation: validate) ?? validate()
       case .sandbox(let original):
         guard mode.isSandbox else { return true }
         let current =
@@ -1734,10 +1886,12 @@ package struct PermissionLedger: Sendable, Codable {
     return connection
   }
 
-  private func consentIsValid(_ consent: ModeConsent, principal: Principal) -> Bool {
+  private func consentIsValid(
+    _ consent: ModeConsent, principal: Principal, currentProfileDigest: String? = nil
+  ) -> Bool {
     guard !retiredConsents.contains(consent.identity) else { return false }
     if consent.mode == .fullAccess(.standing),
-      consent.profileDigest != profileDigest(for: principal)
+      consent.profileDigest != (currentProfileDigest ?? profileDigest(for: principal))
     {
       return false
     }
@@ -1848,7 +2002,7 @@ package struct PermissionLedger: Sendable, Codable {
           let matches = restricted.basis.compactMap { candidate -> PathAccessBasis? in
             if case .path(let path) = candidate, path.path == original.path,
               path.operation == original.operation,
-              path.location == original.location,
+              path.location == original.location, path.purpose == original.purpose,
               path.readableDescendant == original.readableDescendant
             {
               return path
@@ -1858,7 +2012,8 @@ package struct PermissionLedger: Sendable, Codable {
           return .path(
             PathAccessBasis(
               path: original.path, operation: original.operation,
-              location: original.location, readableDescendant: original.readableDescendant,
+              location: original.location, purpose: original.purpose,
+              readableDescendant: original.readableDescendant,
               sandboxProjectID: original.sandboxProjectID,
               excludedSubtrees: matches.reduce(exclusions) { $0.union($1.excludedSubtrees ?? []) },
               ruleIdentities: matches.reduce(original.ruleIdentities) {

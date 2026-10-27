@@ -17,42 +17,6 @@ private enum GatewayOperationOutcome<Value: Sendable>: Sendable {
   case cancelled
 }
 
-typealias ValidationLocalApprovalResolver = @Sendable (_ ticketID: String) async throws -> JSONValue
-
-enum ValidationOperationApproval {
-  static func resolve(
-    _ prepared: JSONValue,
-    using resolver: ValidationLocalApprovalResolver?
-  ) async throws {
-    guard let object = prepared.objectValue,
-      let ticketID = object["ticket_id"]?.stringValue, !ticketID.isEmpty,
-      let state = object["state"]?.stringValue
-    else {
-      throw ValidationProcessError.launchFailed("Preparation returned no ticket identity or state.")
-    }
-    switch state {
-    case "prepared", "approved":
-      return
-    case "pending_approval":
-      guard let resolver else {
-        throw ValidationProcessError.launchFailed(
-          "Operation ticket \(ticketID) requires local approval; its target was not executed.")
-      }
-      let approval = try await resolver(ticketID)
-      guard approval.objectValue?["id"]?.stringValue == ticketID,
-        approval.objectValue?["state"]?.stringValue == "approved"
-      else {
-        throw ValidationProcessError.launchFailed(
-          "Local approval did not approve the exact operation ticket \(ticketID); its target was not executed."
-        )
-      }
-    default:
-      throw ValidationProcessError.launchFailed(
-        "Operation ticket \(ticketID) is \(state), not eligible for execution.")
-    }
-  }
-}
-
 extension JSONValue {
   fileprivate var sdkValue: MCP.Value {
     switch self {
@@ -142,7 +106,6 @@ actor GatewayClientSession {
   private let bridgeProcess: Process?
   private let bridgePipes: [Pipe]
   private let stderrDrain: Task<Void, Error>?
-  private let localApprovalResolver: ValidationLocalApprovalResolver?
   private var cleanupTask: Task<Void, Error>?
   private var initialization: Initialize.Result?
 
@@ -151,15 +114,13 @@ actor GatewayClientSession {
     endpoint: String,
     bridgeProcess: Process? = nil,
     bridgePipes: [Pipe] = [],
-    stderrDrain: Task<Void, Error>? = nil,
-    localApprovalResolver: ValidationLocalApprovalResolver? = nil
+    stderrDrain: Task<Void, Error>? = nil
   ) {
     self.transportName = transportName
     self.endpoint = endpoint
     self.bridgeProcess = bridgeProcess
     self.bridgePipes = bridgePipes
     self.stderrDrain = stderrDrain
-    self.localApprovalResolver = localApprovalResolver
   }
 
   static func connectSocket(socketURL: URL) async throws -> GatewayClientSession {
@@ -168,8 +129,7 @@ actor GatewayClientSession {
 
   static func connectSocket(
     configuration: GatewaySocketConfiguration,
-    timeoutSeconds: Int = 30,
-    localApprovalResolver: ValidationLocalApprovalResolver? = nil
+    timeoutSeconds: Int = 30
   ) async throws -> GatewayClientSession {
     let executable =
       try configuration.bridgeExecutableURL
@@ -224,8 +184,7 @@ actor GatewayClientSession {
       endpoint: configuration.socketURL.path,
       bridgeProcess: process,
       bridgePipes: [input, output, error],
-      stderrDrain: drain,
-      localApprovalResolver: localApprovalResolver
+      stderrDrain: drain
     )
     do {
       try await session.connect(transport: transport, timeoutSeconds: timeoutSeconds)
@@ -238,13 +197,11 @@ actor GatewayClientSession {
   static func connectHTTP(
     endpoint: URL,
     accessToken: String? = nil,
-    streaming: Bool = true,
-    localApprovalResolver: ValidationLocalApprovalResolver? = nil
+    streaming: Bool = true
   ) async throws -> GatewayClientSession {
     let session = GatewayClientSession(
       transportName: streaming ? "streamable_http" : "http",
-      endpoint: endpoint.absoluteString,
-      localApprovalResolver: localApprovalResolver
+      endpoint: endpoint.absoluteString
     )
     let transport = HTTPClientTransport(
       endpoint: endpoint,
@@ -278,10 +235,6 @@ actor GatewayClientSession {
     }
   }
 
-  func resolvePreparedOperation(_ prepared: JSONValue) async throws {
-    try await ValidationOperationApproval.resolve(prepared, using: localApprovalResolver)
-  }
-
   private func performCall(
     toolName: String,
     arguments: JSONValue,
@@ -298,7 +251,7 @@ actor GatewayClientSession {
       arguments: arguments.mapValues(\.sdkValue)
     )
     let result = try await context.value
-    return GatewayCallReport(
+    let report = GatewayCallReport(
       generatedAt: Self.timestamp(generatedAt),
       transport: transportName,
       endpoint: endpoint,
@@ -314,6 +267,8 @@ actor GatewayClientSession {
         meta: result._meta
       )
     )
+    _ = try ValidationPermissionChallenge(result: report.result)
+    return report
   }
 
   func listToolNames() async throws -> [String] {

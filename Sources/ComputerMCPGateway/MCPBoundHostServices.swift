@@ -263,7 +263,7 @@ actor MCPBoundHostServices {
       "host_action": active.admittedCapability.hostServiceAction.map { .string($0.rawValue) }
         ?? .null,
       "arguments_digest": .string(try MCPHostInvocation.argumentsDigest(active.arguments)),
-      "ticket_id": active.ticketID.map(JSONValue.string) ?? .null,
+      "ticket_id": .null,
     ])
   }
 
@@ -611,8 +611,8 @@ actor MCPBoundHostServices {
     try database.recordAudit(
       .init(
         requestID: "host-service:" + UUID().uuidString,
-        invocationID: auditInvocation?.auditInvocationID,
-        parentRequestID: auditInvocation?.context.requestID, ticketID: auditInvocation?.ticketID,
+        invocationID: auditInvocation?.id.uuidString,
+        parentRequestID: auditInvocation?.context.requestID,
         caller: context.launchMetadata.caller,
         principalDigest: AuditEvent.verifiedPrincipalDigest(context.verifiedPrincipalID),
         transport: trace?.transport,

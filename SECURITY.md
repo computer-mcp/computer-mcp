@@ -29,9 +29,10 @@ Include:
 - CLI commands and local or remote MCP servers registered directly or through
   plugin contributions, under the same host policy and project boundaries.
 - Builtins explicitly enabled in TOML.
-- Optional Full Shell only when both manifest and local profile enable it.
+- Principal launches require an authorized, enforceable execution context;
+  Shell also requires the manifest facility to be enabled.
 - Codex execution through the independent MCP adapter, with host-owned tool
-  grants, approvals and scoped services. Adapter configuration owns vendor
+  permissions, requests and scoped services. Adapter configuration owns vendor
   execution settings and domain state.
 - Native Computer Use subject to vendor caller authentication and system
   permissions; generic AX fallback subject to local TCC grants.

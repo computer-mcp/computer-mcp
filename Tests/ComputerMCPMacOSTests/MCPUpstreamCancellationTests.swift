@@ -1,4 +1,5 @@
 import ComputerMCPMacOS
+import ComputerMCPPermissions
 import ComputerMCPTestSupport
 import ComputerMCPTransport
 import Darwin
@@ -25,30 +26,35 @@ struct MCPUpstreamCancellationTests {
     defer { try? FileManager.default.removeItem(at: root) }
     let script = root.appendingPathComponent("server.py")
     try Data(Self.script.utf8).write(to: script)
+    let nativeServer = MCPServerConfig(
+      id: "native", transport: .stdio, command: "/usr/bin/python3",
+      args: [script.path, root.path], exposure: .reexport, prefix: "native",
+      allowAnyTool: true)
+    let authority = try ProxyExecutionFixture(
+      server: nativeServer, root: root,
+      additionalPermissions: [.localNetwork: .granted(.access)])
+    defer { try? authority.close() }
+    let profile = try #require(try authority.database.profiles().first { $0.id == .chatGPTOperate })
+    let session = try #require(authority.callerContext.controlSession as? GatewayControlSession)
     var configuration = GatewayConfiguration(
-      runtime: .init(caller: .localMCP, profileID: .localAdmin),
-      profiles: [
-        .init(
-          id: .localAdmin, capabilities: ["*"], projects: ["fixture"],
-          allowedCallers: [.localMCP], mode: .projectOperations, confirmationPolicy: .never)
-      ],
-      mcp: .init(servers: [
-        .init(
-          id: "native", transport: .stdio, command: "/usr/bin/python3",
-          args: [script.path, root.path], exposure: .reexport, prefix: "native",
-          allowAnyTool: true)
-      ]), tools: [.init(name: "wait_alias", adapter: .mcp, source: "native", tool: "wait")],
+      runtime: .init(caller: .localMCP, profileID: profile.id),
+      profiles: [.init(grant: profile)], mcp: .init(servers: [nativeServer]),
+      tools: [.init(name: "wait_alias", adapter: .mcp, source: "native", tool: "wait")],
       projectDirectory: root)
-    let projects = [
-      RegisteredProject(id: "fixture", displayName: "Fixture", rootPath: root.path)
-    ]
+    let projects = try authority.database.projects()
     let native = try await GatewayRuntime.make(
-      configuration: configuration, registeredProjects: projects,
-      platform: MacOSPlatform.services(launcher: testExecutionLauncher()))
+      configuration: configuration, context: authority.callerContext,
+      database: authority.database, registeredProjects: projects,
+      platform: MacOSPlatform.services(launcher: authority.launcher))
+    do { try await discover(native) } catch {
+      await native.shutdown()
+      throw error
+    }
+    let nativeServing = GatewayControlSessionServing(base: native, session: session)
     let origin =
       overHTTP
       ? GatewayHTTPRuntime(
-        configuration: configuration, registry: native, host: "127.0.0.1", port: 0,
+        configuration: configuration, registry: nativeServing, host: "127.0.0.1", port: 0,
         publicBaseURL: nil) : nil
     let runtime: GatewayRuntime
     let downstreamWait: String
@@ -66,8 +72,10 @@ struct MCPUpstreamCancellationTests {
           .init(name: "wait_alias", adapter: .mcp, source: "native", tool: downstreamWait)
         ]
         runtime = try await GatewayRuntime.make(
-          configuration: configuration, registeredProjects: projects,
-          platform: MacOSPlatform.services(launcher: testExecutionLauncher()))
+          configuration: configuration, context: authority.callerContext,
+          database: authority.database, registeredProjects: projects,
+          platform: MacOSPlatform.services(launcher: authority.launcher))
+        try await discover(runtime)
       } else {
         downstreamWait = "wait"
         runtime = native
@@ -77,13 +85,14 @@ struct MCPUpstreamCancellationTests {
       await native.shutdown()
       throw error
     }
+    let serving = GatewayControlSessionServing(base: runtime, session: session)
     let server = await MCPRuntimeAdapter.makeGatewayServer(
-      configuration: configuration, registry: runtime)
+      configuration: configuration, registry: serving)
     let pair = await InMemoryTransport.createConnectedPair()
     let http =
       overHTTP
       ? GatewayHTTPRuntime(
-        configuration: configuration, registry: runtime, host: "127.0.0.1", port: 0,
+        configuration: configuration, registry: serving, host: "127.0.0.1", port: 0,
         publicBaseURL: nil) : nil
     let client = MCP.Client(name: "cancel-upstream", version: "1")
     do {
@@ -151,6 +160,15 @@ struct MCPUpstreamCancellationTests {
       await native.shutdown()
       throw error
     }
+  }
+
+  private func discover(_ runtime: GatewayRuntime) async throws {
+    let discovered = try await runtime.callToolAsync(
+      name: "mcp.tools.list", arguments: .object(["server": .string("native")]), context: .empty)
+    try #require(discovered.objectValue?["isError"] == .bool(false), "\(discovered)")
+    try await runtime.refreshTools(context: .empty)
+    let tools = try await runtime.listToolsAsync(context: .empty)
+    try #require(tools.contains { $0.name == "native.wait" })
   }
 
   private func events(_ root: URL) throws -> [String] {

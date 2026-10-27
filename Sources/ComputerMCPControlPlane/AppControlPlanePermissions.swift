@@ -1,14 +1,49 @@
 import ComputerMCPCore
 import ComputerMCPGateway
+import ComputerMCPPermissions
 import ComputerMCPPersistence
 import ComputerMCPPlugins
 import Foundation
 
-package struct ProfilePermissionCapability: Equatable, Sendable, Identifiable {
-  package let id: String
-  package let title: String
-  package let summary: String
-  package let descriptor: CapabilityDescriptor
+package enum ProjectAccess: String, CaseIterable, Codable, Sendable {
+  case ask, deny, read, write
+
+  package var permissionState: PermissionState? {
+    switch self {
+    case .ask: nil
+    case .deny: .denied
+    case .read: .granted(.read)
+    case .write: .granted(.write)
+    }
+  }
+
+  package init(permissionState: PermissionState) throws {
+    self =
+      switch permissionState {
+      case .notGranted: .ask
+      case .denied: .deny
+      case .granted(.read): .read
+      case .granted(.write): .write
+      default: throw PermissionModelError.invalidPermissionValue
+      }
+  }
+
+  package var isGranted: Bool { self == .read || self == .write }
+}
+
+package struct PermissionObjectNames: Sendable {
+  package let projects: [String: String]
+  package let plugins: [String: String]
+  package let mcpServers: [String: String]
+
+  package init(
+    projects: [String: String] = [:], plugins: [String: String] = [:],
+    mcpServers: [String: String] = [:]
+  ) {
+    self.projects = projects
+    self.plugins = plugins
+    self.mcpServers = mcpServers
+  }
 }
 
 package struct ProfilePermissionIntegration: Equatable, Sendable, Identifiable {
@@ -17,18 +52,19 @@ package struct ProfilePermissionIntegration: Equatable, Sendable, Identifiable {
   package let isEnabled: Bool
 }
 
-/// Owner presentation data bound to the configuration that was reviewed.
+/// Owner choices and durable revisions captured for an exact permission edit.
 package struct ProfilePermissionOptions: Sendable {
   package let grant: ProfileGrant
-  package let capabilities: [ProfilePermissionCapability]
   package let integrations: [ProfilePermissionIntegration]
-  package let projects: [RegisteredProject]
+  package let plugins: [ProfilePermissionIntegration]
+  package let projects: [ComputerMCPCore.RegisteredProject]
+  package let permissionRevision: UInt64
   let inputs: AppControlPlaneService.GatewayInputs
 }
 
 extension AppControlPlaneService {
   func applyRemoteProjectGrant(
-    id: String, enabled: Bool, profile: GatewayControlProfile, expectedRevision: Int64,
+    id: String, access: PermissionState, profile: GatewayControlProfile, expectedRevision: Int64,
     inputs: GatewayInputs, authorization: GatewayManagementAuthorization
   ) async throws -> ProfileGrant {
     await manifestStore.publicationLock.acquire()
@@ -38,31 +74,28 @@ extension AppControlPlaneService {
     guard profile.grant.authorizationRevision == expectedRevision,
       inputs.projects.contains(where: { $0.id == id })
     else { throw GatewayDatabaseError.configurationChanged }
-    var grant = profile.grant
-    if enabled {
-      grant.projectIDs.insert(id)
-    } else {
-      if grant.projectIDs.remove("*") != nil {
-        grant.projectIDs.formUnion(inputs.projects.map(\.id))
-      }
-      grant.projectIDs.remove(id)
-    }
-    try grant.validate()
-    return try manifestStore.withCurrentConfiguration(inputs.configuration) {
+    let service = try requirePermissionControl()
+    let view = try service.view()
+    guard var grant = view.profiles.first(where: { $0.id == profile.grant.id }),
+      grant.authorizationRevision == expectedRevision
+    else { throw GatewayDatabaseError.configurationChanged }
+    try grant.permissions.set(access, for: .project(id))
+    try manifestStore.withCurrentConfiguration(inputs.configuration) {
       try authorization.perform {
-        try database.saveProfile(
-          grant, expectedRevision: profile.persisted ? expectedRevision : 0,
-          expectedConfiguration: inputs.persisted, authorization: authorization)
-        return try database.profiles().first { $0.id == grant.id } ?? grant
+        try service.updateProfile(
+          grant, expectedProfileRevision: expectedRevision, expectedRevision: view.revision,
+          authorization: authorization)
       }
     }
+    return try service.view().profiles.first(where: { $0.id == grant.id }) ?? grant
   }
 
   package func profilePermissionOptions(profileID: GatewayProfileID) async throws
     -> ProfilePermissionOptions
   {
     let inputs = try gatewayInputs()
-    guard let grant = try await profileGrants().first(where: { $0.id == profileID }) else {
+    let view = try requirePermissionControl().view()
+    guard let grant = view.profiles.first(where: { $0.id == profileID }) else {
       throw AppControlPlaneServiceError.unknownGatewayProfile(profileID.rawValue)
     }
     let resolved = try PluginHost.resolve(
@@ -74,44 +107,26 @@ extension AppControlPlaneService {
       let plugin = bundledPlugins.packages.first { $0.manifest.id == origin?.pluginID }
       let title = origin.map { "\(plugin?.manifest.name ?? $0.pluginID) · \($0.componentID)" }
       return ProfilePermissionIntegration(
-        id: server.id, title: title ?? server.id,
-        isEnabled: server.enabled)
+        id: server.id, title: title ?? server.id, isEnabled: server.enabled)
     }.sorted { $0.id < $1.id }
-    let gateway = try await makeGateway(
-      inputs: inputs, caller: .localApp, profileID: .localAdmin, persistentState: false)
-    let capabilities: [ProfilePermissionCapability]
-    do {
-      // Permission options enumerate the host catalog outside any caller invocation.
-      capabilities = try
-        (gateway.listTools(context: .empty)
-        + GatewayRemoteManagement.definitions.map(\.tool))
-        .compactMap { tool in
-          let descriptor =
-            try GatewayRemoteManagement.byName[tool.name]?.definition.capability
-            ?? gateway.capabilityDescriptor(named: tool.name)
-          guard descriptor.risk != .fullShell,
-            !ProfileGrant.mcpSurfaceCapabilities.contains(tool.name),
-            !ProfilePermissionSelection.supportCapabilities.contains(tool.name)
-          else { return nil }
-          return ProfilePermissionCapability(
-            id: tool.name, title: tool.title, summary: tool.description, descriptor: descriptor)
-        }.sorted { $0.id < $1.id }
-    } catch {
-      await gateway.shutdown()
-      throw error
+    var pluginNames = Dictionary(
+      uniqueKeysWithValues: bundledPlugins.packages.map {
+        ($0.manifest.id, $0.manifest.name)
+      })
+    for installation in inputs.plugins.installations
+    where inputs.plugins.selectedInstallations[installation.pluginID] == installation.id {
+      if let package = try? PluginPackage.load(at: installation.source.root) {
+        pluginNames[installation.pluginID] = package.manifest.name
+      }
     }
-    await gateway.shutdown()
+    let enabledPluginIDs = Set(resolved.plugins.map(\.id))
+    let plugins = Set(pluginNames.keys).union(enabledPluginIDs).sorted().map { id in
+      ProfilePermissionIntegration(
+        id: id, title: pluginNames[id] ?? id, isEnabled: enabledPluginIDs.contains(id))
+    }
     try requireCurrentGatewayInputs(inputs)
     return ProfilePermissionOptions(
-      grant: grant, capabilities: capabilities, integrations: integrations,
-      projects: inputs.projects, inputs: inputs)
+      grant: grant, integrations: integrations, plugins: plugins,
+      projects: inputs.projects, permissionRevision: view.revision, inputs: inputs)
   }
-}
-
-/// Normal selection grants the reviewed scope; routing and approval helpers still
-/// admit every target against that scope and cannot authorize an additional effect.
-package enum ProfilePermissionSelection {
-  package static let supportCapabilities: Set<String> = [
-    "policy.probe", "operations.prepare", "operations.commit",
-  ]
 }

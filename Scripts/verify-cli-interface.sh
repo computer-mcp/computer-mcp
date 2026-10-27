@@ -71,7 +71,6 @@ verify_help "$ROOT_CLI" permissions
 verify_help "$ROOT_CLI" tunnel
 verify_help "$ROOT_CLI" tunnel openai
 verify_help "$ROOT_CLI" tunnel cloudflare
-verify_help "$ROOT_CLI" permissions approvals
 verify_help "$ROOT_CLI" tools
 verify_help "$ROOT_CLI" audit
 verify_help "$ROOT_CLI" providers
@@ -114,13 +113,11 @@ public_leaf_commands=(
   "project add"
   "project repair"
   "project remove"
-  "project enable"
+  "project access"
   "project deduplicate"
   "profile list"
   "profile show"
   "profile activate"
-  "profile grant"
-  "profile shell"
   "profile permissions"
   "tunnel openai list"
   "tunnel openai doctor"
@@ -143,9 +140,9 @@ public_leaf_commands=(
   "tools call"
   "tools inventory"
   "permissions status"
-  "permissions approvals list"
-  "permissions approvals approve"
-  "permissions approvals deny"
+  "permissions requests"
+  "permissions answer"
+  "permissions confirm-authority"
   "audit list"
   "audit export"
   "providers list"

@@ -2,18 +2,20 @@ import AppKit
 import ComputerMCPConfiguration
 import ComputerMCPControlPlane
 import ComputerMCPCore
+import ComputerMCPGateway
 import ComputerMCPMacOS
+import ComputerMCPPermissions
 import SwiftUI
 
 struct PermissionsView: View {
   @EnvironmentObject private var model: ComputerMCPAppModel
-  @State private var showsApprovals = true
+  @State private var showsRequests = true
 
   var body: some View {
     VStack(spacing: 0) {
       ProjectHeader(
         "Permissions",
-        subtitle: "Host operation approvals and macOS privacy access"
+        subtitle: "Client permissions and macOS privacy access"
       ) {
         RefreshButton {
           model.refresh(.permissions)
@@ -22,14 +24,14 @@ struct PermissionsView: View {
 
       Divider()
 
-      Picker("Permissions", selection: $showsApprovals) {
-        Text("Operation approvals", bundle: AppLocalization.resourceBundle).tag(true)
+      Picker("Permissions", selection: $showsRequests) {
+        Text("Permission requests", bundle: AppLocalization.resourceBundle).tag(true)
         Text("macOS privacy", bundle: AppLocalization.resourceBundle).tag(false)
       }
       .pickerStyle(.segmented).padding(16)
 
-      if showsApprovals {
-        OperationApprovalsView()
+      if showsRequests {
+        PermissionRequestsView()
       } else {
         switch model.permissions {
         case .idle, .loading:
@@ -60,110 +62,210 @@ struct PermissionsView: View {
   }
 }
 
-private struct OperationApprovalsView: View {
+private struct PermissionRequestsView: View {
   @EnvironmentObject private var model: ComputerMCPAppModel
+  @State private var authorityReview: PermissionAuthorityReviewSnapshot?
 
   var body: some View {
-    switch model.operationApprovals {
+    switch model.permissionRequests {
     case .idle, .loading:
-      LoadingProjectView(title: "Loading operation approvals")
+      LoadingProjectView(title: "Loading permission requests")
     case .failed(let message):
       FailedProjectView(message: message) { model.refresh(.permissions) }
-    case .loaded(let tickets) where tickets.isEmpty:
-      EmptyProjectView(
-        title: "No operation approvals",
-        detail:
-          "Requests that need your approval appear here.",
-        systemImage: "checkmark.shield")
-    case .loaded(let tickets):
-      ScrollView {
-        LazyVStack(alignment: .leading, spacing: 16) {
-          ForEach(tickets) { ticket in
-            let details = OperationApprovalDetails(ticket: ticket)
-            VStack(alignment: .leading, spacing: 8) {
-              HStack {
-                Text(verbatim: details.title).font(.headline)
-                Spacer()
-                Text(verbatim: AppLocalization.string(ticket.state.approvalLabel))
-                  .foregroundStyle(.secondary)
+    case .loaded(let view):
+      let pending = view.requests.filter {
+        $0.request.status == .pending && $0.request.expiresAt > Date()
+      }
+      VStack(spacing: 0) {
+        if view.suspended || !view.unconfirmedProfileIDs.isEmpty {
+          VStack(alignment: .leading, spacing: 8) {
+            Text("Saved authority needs review", bundle: AppLocalization.resourceBundle).font(
+              .headline)
+            Text(
+              "Saved permissions remain inactive until you review and confirm them for the current epoch.",
+              bundle: AppLocalization.resourceBundle
+            )
+            .foregroundStyle(.secondary)
+            Button(AppLocalization.string("Review saved authority…")) {
+              authorityReview = .init(view: view, names: model.permissionObjectNames)
+            }.disabled(view.epoch == nil)
+              .accessibilityIdentifier("permission.authority.review")
+          }.frame(maxWidth: .infinity, alignment: .leading).padding(16)
+          Divider()
+        }
+        if !view.sources.isEmpty {
+          PermissionManagedSourcesView(sources: view.sources)
+          Divider()
+        }
+        if pending.isEmpty {
+          EmptyProjectView(
+            title: "No permission requests", detail: "Requests from connected clients appear here.",
+            systemImage: "checkmark.shield")
+        } else {
+          ScrollView {
+            LazyVStack(alignment: .leading, spacing: 16) {
+              ForEach(pending, id: \.request.id) { item in
+                requestRow(
+                  item, revision: view.revision,
+                  suspended: view.suspended
+                    || item.profileID.map(view.unconfirmedProfileIDs.contains) == true)
+                Divider()
               }
-              LabeledContent("Profile", value: AppLocalization.string(ticket.profileID.displayName))
-              LabeledContent("Project", value: ticket.projectID ?? "—")
-              LabeledContent(
-                "Caller", value: AppLocalization.string(ticket.caller.clientAccessLabel))
-              LabeledContent("Client", value: clientAccessIdentity(ticket.principalID))
-              if let fields = details.fields {
-                ForEach(fields) { field in
-                  VStack(alignment: .leading, spacing: 3) {
-                    if !field.label.isEmpty {
-                      Text(verbatim: field.label).font(.caption).foregroundStyle(.secondary)
-                    }
-                    Text(verbatim: field.value).textSelection(.enabled)
-                  }
-                }
-              } else {
-                Text(
-                  "Request details are unavailable. Ask the client to send a new request.",
-                  bundle: AppLocalization.resourceBundle
-                ).foregroundStyle(.secondary)
-              }
-              DisclosureGroup {
-                LabeledContent("Capability", value: ticket.capabilityID)
-                LabeledContent("Request ID", value: ticket.id)
-                if let summary = ticket.reviewSummary {
-                  Text(verbatim: summary).font(.caption.monospaced()).textSelection(.enabled)
-                }
-              } label: {
-                Text("Technical details", bundle: AppLocalization.resourceBundle)
-              }
-              LabeledContent(
-                "Expires", value: ticket.expiresAt.formatted(date: .abbreviated, time: .shortened)
-              )
-              .font(.caption).foregroundStyle(.secondary)
-              if ticket.state == .pendingApproval {
-                HStack {
-                  Button(role: .cancel) {
-                    model.resolveOperationApproval(id: ticket.id, approved: false)
-                  } label: {
-                    Text("Deny", bundle: AppLocalization.resourceBundle)
-                  }
-                  .accessibilityIdentifier("approval.\(ticket.id).deny")
-                  Button {
-                    model.resolveOperationApproval(id: ticket.id, approved: true)
-                  } label: {
-                    Text("Approve once", bundle: AppLocalization.resourceBundle)
-                  }
-                  .buttonStyle(.borderedProminent)
-                  .accessibilityIdentifier("approval.\(ticket.id).approve")
-                  .disabled(details.fields == nil)
-                }
-                .disabled(
-                  ticket.expiresAt <= Date()
-                    || model.isActionRunning("approval.resolve.\(ticket.id)"))
-              }
-            }
-            .accessibilityElement(children: .contain)
-            .accessibilityIdentifier("approval.\(ticket.id)")
-            Divider()
+            }.padding(16)
           }
         }
-        .padding(16)
+      }.sheet(item: $authorityReview) { reviewed in
+        PermissionAuthorityReview(snapshot: reviewed) {
+          try await model.confirmPermissionAuthority(reviewed.view)
+        }
       }
+
+    }
+  }
+
+  private func requestRow(_ item: GatewayPermissionRequestView, revision: UInt64, suspended: Bool)
+    -> some View
+  {
+    let request = item.request
+    return VStack(alignment: .leading, spacing: 8) {
+      Text(verbatim: request.permissionTitle(names: model.permissionObjectNames)).font(.headline)
+      if case .permission(let value) = request.content {
+        LabeledContent(
+          AppLocalization.string("Access"),
+          value: AppLocalization.string(value.requirement.value.permissionTitle))
+      }
+      if let profile = item.profileID {
+        LabeledContent(
+          AppLocalization.string("Profile"), value: PermissionObjectNames.profile(profile))
+      }
+      LabeledContent(
+        AppLocalization.string("Client"),
+        value: request.principalTitle(names: model.permissionObjectNames))
+      LabeledContent(AppLocalization.string("Requested by"), value: request.invocation.tool)
+      Text(verbatim: request.scopeTitle(names: model.permissionObjectNames)).textSelection(.enabled)
+      if let purpose = request.pluginPurpose {
+        LabeledContent(AppLocalization.string("Plugin purpose"), value: purpose)
+      }
+      Text(
+        "After allowing access, ask the client to retry its request. The App does not repeat the operation.",
+        bundle: AppLocalization.resourceBundle
+      ).font(.caption).foregroundStyle(.secondary)
+      if item.alwaysIsShared {
+        Text(
+          "Always applies to every client using this profile.",
+          bundle: AppLocalization.resourceBundle
+        ).font(.caption).foregroundStyle(.secondary)
+      }
+      LabeledContent(
+        AppLocalization.string("Expires"),
+        value: request.expiresAt.formatted(date: .abbreviated, time: .shortened)
+      )
+      .font(.caption).foregroundStyle(.secondary)
+      HStack {
+        Button(AppLocalization.string("Deny"), role: .cancel) {
+          model.answerPermissionRequest(id: request.id, answer: nil, expectedRevision: revision)
+        }.accessibilityIdentifier("permission.request.\(request.id).deny")
+        if case .projectRegistration = request.content {
+          Text("Project registration is unavailable.", bundle: AppLocalization.resourceBundle)
+            .font(.caption).foregroundStyle(.secondary)
+        } else {
+          Button(AppLocalization.string("Only this time")) {
+            model.answerPermissionRequest(
+              id: request.id, answer: .onlyThisTime, expectedRevision: revision)
+          }.accessibilityIdentifier("permission.request.\(request.id).once")
+          Button(AppLocalization.string("Always")) {
+            model.answerPermissionRequest(
+              id: request.id, answer: .always, expectedRevision: revision)
+          }.accessibilityIdentifier("permission.request.\(request.id).always")
+        }
+      }.disabled(suspended || model.isActionRunning("permission.answer.\(request.id)"))
+    }.accessibilityElement(children: .contain)
+      .accessibilityIdentifier("permission.request.\(request.id)")
+  }
+}
+
+private struct PermissionManagedSourcesView: View {
+  let sources: [GatewayManagedPolicyView]
+
+  var body: some View {
+    VStack(alignment: .leading, spacing: 8) {
+      ForEach(Array(sources.filter { $0.failure != nil }.enumerated()), id: \.offset) { _, source in
+        Text(verbatim: source.location + " · " + (source.failure ?? ""))
+          .font(.caption).foregroundStyle(.red).textSelection(.enabled)
+      }
+      DisclosureGroup(AppLocalization.string("Managed sources")) {
+        ScrollView {
+          VStack(alignment: .leading, spacing: 12) {
+            ForEach(Array(sources.enumerated()), id: \.offset) { _, source in
+              VStack(alignment: .leading, spacing: 4) {
+                Text(verbatim: source.source.rawValue + " · " + source.location)
+                if let profile = source.profileID { Text(verbatim: profile.rawValue) }
+                LabeledContent(
+                  AppLocalization.string("State"),
+                  value: AppLocalization.string(
+                    source.failure != nil
+                      ? "Unavailable" : source.revision == "absent" ? "Not configured" : "Available"
+                  ))
+                LabeledContent(AppLocalization.string("Revision"), value: source.revision)
+              }.font(.caption).textSelection(.enabled)
+            }
+          }.frame(maxWidth: .infinity, alignment: .leading)
+        }.frame(maxHeight: 180)
+      }
+    }.padding(16).frame(maxWidth: .infinity, alignment: .leading)
+  }
+}
+
+extension PermissionRequest {
+  fileprivate func principalTitle(names: PermissionObjectNames) -> String {
+    switch invocation.principal {
+    case .client(let id): id
+    case .plugin(.package(let id)): names.plugin(id)
+    case .plugin(.localServer(let id)): names.server(id)
+    }
+  }
+  fileprivate func permissionTitle(names: PermissionObjectNames) -> String {
+    switch content {
+    case .permission(let value): names.title(for: value.requirement.permission)
+    case .network: AppLocalization.string("Network access")
+    case .projectRegistration: AppLocalization.string("Project access")
+    }
+  }
+  fileprivate func scopeTitle(names: PermissionObjectNames) -> String {
+    switch content {
+    case .permission(let value):
+      switch value.scope {
+      case .principal: AppLocalization.string(value.requirement.value.permissionTitle)
+      case .project(let id): names.project(id)
+      case .path(let path): path.string
+      case .host(let host, let project): "\(host) · \(names.project(project))"
+      }
+    case .network(let value): "\(value.host) · \(names.project(value.projectID))"
+    case .projectRegistration(let value): value.path.string
+    }
+  }
+  fileprivate var pluginPurpose: String? {
+    switch content {
+    case .permission(let value): value.pluginPurpose
+    case .network(let value): value.pluginPurpose
+    case .projectRegistration: nil
     }
   }
 }
 
-extension OperationTicketState {
-  fileprivate var approvalLabel: String {
+extension Permission {
+  var permissionTitle: String {
     switch self {
-    case .prepared: "Prepared"
-    case .pendingApproval: "Waiting for your approval"
-    case .approved: "Approved"
-    case .denied: "Denied"
-    case .expired: "Expired"
-    case .executing: "Executing"
-    case .succeeded: "Succeeded"
-    case .failed: "Failed"
+    case .project(let id): "Project · \(id)"
+    case .filesAndFolders(let category): category.permissionTitle
+    case .plugin(let id): "Plugin · \(id)"
+    case .mcpServer(let id): "MCP server · \(id)"
+    case .screen: "Screen"
+    case .desktopControl: "Desktop control"
+    case .localNetwork: "Local network"
+    case .machineInformation: "Machine information"
+    case .unifiedLogs: "Unified logs"
+    case .skills: "Skills"
     }
   }
 }
@@ -422,18 +524,18 @@ struct DiagnosticsView: View {
     Form {
       Section {
         LabeledContent(
-          "Generated",
+          AppLocalization.string("Generated"),
           value: DateFormatter.computerMCPDateTime.string(from: snapshot.generatedAt)
         )
-        LabeledContent("Application support") {
+        LabeledContent(AppLocalization.string("Application support")) {
           pathText(snapshot.applicationSupportDirectory)
         }
-        LabeledContent("Logs") {
+        LabeledContent(AppLocalization.string("Logs")) {
           pathText(snapshot.logDirectory)
         }
 
         if let exportedURL = model.exportedDiagnosticsURL {
-          LabeledContent("Last export") {
+          LabeledContent(AppLocalization.string("Last export")) {
             Button {
               NSWorkspace.shared.activateFileViewerSelecting([exportedURL])
             } label: {
@@ -446,8 +548,8 @@ struct DiagnosticsView: View {
         Text("Support")
       }
 
-      Section("Configuration") {
-        LabeledContent("Manifest") {
+      Section(AppLocalization.string("Configuration")) {
+        LabeledContent(AppLocalization.string("Manifest")) {
           Text(snapshot.manifest.path)
             .font(.system(.caption, design: .monospaced))
             .lineLimit(1)
@@ -513,7 +615,7 @@ struct DiagnosticsView: View {
         }
       }
 
-      Section("Checks") {
+      Section(AppLocalization.string("Checks")) {
         if snapshot.items.isEmpty {
           Text("No diagnostic checks were returned.")
             .foregroundStyle(.secondary)
@@ -624,11 +726,11 @@ private struct ManifestEditorView: View {
         .accessibilityIdentifier("manifest.load-built-in-defaults")
         .help("Replace the editor content with the built-in manifest")
         Spacer()
-        Button("Cancel") {
+        Button(AppLocalization.string("Cancel")) {
           dismiss()
         }
         .keyboardShortcut(.cancelAction)
-        Button("Validate and Activate") {
+        Button(AppLocalization.string("Validate and Activate")) {
           model.saveManifest(content, expectedDigest: baseDigest)
           dismiss()
         }

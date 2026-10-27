@@ -19,6 +19,7 @@ package actor MCPChildProcessTransport: MCP.Transport {
   private let command: String
   private let workingDirectory: URL
   private let environment: [String: String]
+  private let hostProtocolMetadata: [String: String]
   private let hostContext: (any MCPHostEnvironment)?
   private var hostSession: (any MCPHostSessionHandle)?
   private var process: ManagedLineProcess?
@@ -51,6 +52,8 @@ package actor MCPChildProcessTransport: MCP.Transport {
       .standardizedFileURL
     self.environment = try MCPHostLaunchMetadata.launchEnvironment(
       inherited: environment, overrides: server.env, context: hostContext?.launchMetadata)
+    hostProtocolMetadata = try MCPHostLaunchMetadata.launchEnvironment(
+      inherited: [:], overrides: [:], context: hostContext?.launchMetadata)
     self.logger =
       logger
       ?? Logger(
@@ -78,14 +81,17 @@ package actor MCPChildProcessTransport: MCP.Transport {
     let session =
       try server.hostServices
       ? hostContext.map { try $0.makeHostSession(server: server) } : nil
-    var environment = environment
-    if session != nil { environment[MCPHostLaunchMetadata.descriptorEnvironmentKey] = "3" }
+    var hostProtocolMetadata = hostProtocolMetadata
+    if session != nil {
+      hostProtocolMetadata[MCPHostLaunchMetadata.descriptorEnvironmentKey] = "3"
+    }
     let process: ManagedLineProcess
     do {
       process = try ManagedLineProcess(
         launcher: launcher,
         configuration: .init(
           executable: executable, arguments: server.args, environment: environment,
+          hostProtocolMetadata: hostProtocolMetadata,
           workingDirectory: workingDirectory,
           maximumMessageBytes: 16 * 1_024 * 1_024,
           inheritedDescriptors: session.map { [3: $0.childHandle] } ?? [:],

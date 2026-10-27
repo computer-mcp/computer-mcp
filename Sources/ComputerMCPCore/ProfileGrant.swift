@@ -1,9 +1,9 @@
 import ComputerMCPPermissions
 import Foundation
 
-/// Stored permission profile. The live gateway continues to use ProfileGrant until cutover.
+/// Stored permissions and settings shared by every admitted caller of a profile.
 /// Full access records the owner's setting; a connection still needs separate consent.
-package struct PermissionProfile: Codable, Equatable, Sendable {
+package struct ProfileGrant: Codable, Equatable, Sendable {
   package enum AutomationAccess: String, Codable, Sendable { case allow, deny }
 
   package var id: GatewayProfileID
@@ -42,5 +42,22 @@ package struct PermissionProfile: Codable, Equatable, Sendable {
     -> Self
   {
     Self(id: id, permissions: .newPrincipal, allowedCallers: allowedCallers)
+  }
+}
+
+extension ProfileGrant {
+  package static let observe = newPrincipal(id: .chatGPTObserve, allowedCallers: [.secureTunnel])
+  package static let operate = newPrincipal(id: .chatGPTOperate, allowedCallers: [.secureTunnel])
+  package static let cloudflareObserve = newPrincipal(
+    id: .cloudflareObserve, allowedCallers: [.cloudflareTunnel])
+  package static let cloudflareOperate = newPrincipal(
+    id: .cloudflareOperate, allowedCallers: [.cloudflareTunnel])
+  package static let localAdmin = newPrincipal(
+    id: .localAdmin, allowedCallers: [.localApp, .localCLI, .localMCP])
+
+  package func validate() throws {
+    if id == .localAdmin && allowedCallers.contains(where: \.isRemote) {
+      throw GatewayPolicyConfigurationError.localAdminCannotBeRemote
+    }
   }
 }

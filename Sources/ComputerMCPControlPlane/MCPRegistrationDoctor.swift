@@ -100,62 +100,11 @@ extension AppControlPlaneService {
       }
     }
 
-    // Discovery is explicitly invoked after the real runtime has attached its host context.
-    // Package resolution has already selected the executable and launch settings.
-    var server = entry.server
-    server.exposure = .gateway
-    server.prefix = nil
-    let configuration = GatewayConfiguration(
-      runtime: .init(caller: .localCLI, profileID: .chatGPTObserve),
-      profiles: [
-        .init(
-          id: .chatGPTObserve, capabilities: ["mcp.tools.list", "mcp.servers.status"],
-          projects: [projectID], allowedCallers: [.localCLI], mcpServers: [id])
-      ],
-      mcp: .init(servers: [server]))
-    // This ephemeral read-only scope has no persistence authority or unrelated providers.
-    let runtime = try await GatewayRuntime.make(
-      configuration: configuration, registeredProjects: [project],
-      platform: platform,
-      mcpClient: MCPProxyClient(
-        launcher: platform.launcher, secretStore: secretStore, processOwnershipRoot: ownershipRoot),
-      plugins: [], bundledPlugins: .load(directory: nil))
-    let arguments: JSONValue = .object([
-      "server": .string(id), "project_id": .string(projectID),
-    ])
-    do {
-      let catalog = try await runtime.callToolForMCPAsync(
-        name: "mcp.tools.list", arguments: arguments, context: .empty)
-      let status = try await runtime.callToolForMCPAsync(
-        name: "mcp.servers.status", arguments: arguments, context: .empty)
-      let statusResult = status.objectValue?["structuredContent"]?.objectValue?["result"]
-      let payload = statusResult?.objectValue?["servers"]?.arrayValue?.first?.objectValue
-      let connection = payload?["connection"]?.objectValue
-      report.stage = "connection_and_catalog"
-      let tools = catalog.objectValue?["structuredContent"]?.objectValue?["result"]?.arrayValue
-      let connected = connection?["state"] == .string("connected")
-      report.status =
-        connected && tools != nil && catalog.objectValue?["isError"] != .bool(true)
-        ? .passed : .failed
-      report.catalogReceived = tools != nil && catalog.objectValue?["isError"] != .bool(true)
-      let initialization = connection?["initialize"]?.objectValue
-      report.protocolVersion = initialization?["protocolVersion"]?.stringValue
-      report.serverVersion = initialization?["serverInfo"]?.objectValue?["version"]?.stringValue.map
-      { String($0.prefix(128)) }
-      report.errorCode =
-        catalog.objectValue?["structuredContent"]?.objectValue?["error"]?.objectValue?["code"]?
-        .stringValue
-      report.message =
-        report.status == .passed
-        ? "The selected MCP initialized and returned its tool catalog. Tool execution and production permissions were not checked."
-        : "The selected MCP did not complete connection and catalog discovery. Check the launch configuration, endpoint authentication and system permissions."
-      await runtime.shutdown()
-      try inspectCleanup()
-      return report
-    } catch {
-      await runtime.shutdown()
-      throw error
-    }
+    report.status = .failed
+    report.stage = "execution"
+    report.errorCode = "execution.unavailable"
+    report.message = "Connection checks are unavailable in this build."
+    return report
   }
 
   package func recoverMCPProcessReceipt(

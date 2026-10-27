@@ -4009,7 +4009,7 @@ final class GitToolProviderTests {
             "git.ignored", "git.blame", "git.add", "git.unstage", "git.restore_worktree",
             "git.commit", "git.stash_show", "git.stash_push",
           ])
-        )
+        ), commandRunner: GitCommandRecorder()
       ))
 
     expectThrows(

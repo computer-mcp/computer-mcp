@@ -2,6 +2,8 @@ import AppKit
 import Combine
 import ComputerMCPControlPlane
 import ComputerMCPCore
+import ComputerMCPGateway
+import ComputerMCPPermissions
 import Foundation
 
 enum LoadState<Value> {
@@ -59,7 +61,8 @@ final class ComputerMCPAppModel: ObservableObject {
   @Published private(set) var openAITunnels: LoadState<[OpenAITunnelSummary]> = .idle
   @Published private(set) var cloudflareTunnels: LoadState<[CloudflareTunnelSummary]> = .idle
   @Published private(set) var permissions: LoadState<[PermissionSummary]> = .idle
-  @Published private(set) var operationApprovals: LoadState<[OperationTicket]> = .idle
+  @Published private(set) var permissionRequests: LoadState<GatewayPermissionView> = .idle
+  @Published private(set) var permissionObjectNames = PermissionObjectNames()
   @Published private(set) var audit: LoadState<[AuditEntrySummary]> = .idle
   @Published private(set) var diagnostics: LoadState<DiagnosticsSnapshot> = .idle
   @Published private(set) var openAITunnelLogs: [String: LoadState<OpenAITunnelLogSnapshot>] = [:]
@@ -161,7 +164,7 @@ final class ComputerMCPAppModel: ObservableObject {
         refresh(.home)
         refresh(.tunnels)
         await clientAccess.reload()
-        if selectedSection == .permissions { await loadOperationApprovals() }
+        if selectedSection == .permissions { await loadPermissionRequests() }
       }
     }
   }
@@ -220,7 +223,7 @@ final class ComputerMCPAppModel: ObservableObject {
     case .permissions:
       Task {
         await loadPermissions()
-        await loadOperationApprovals()
+        await loadPermissionRequests()
       }
     case .audit:
       Task { await loadAudit() }
@@ -288,17 +291,15 @@ final class ComputerMCPAppModel: ObservableObject {
     }
   }
 
-  func setProjectEnabled(_ enabled: Bool, project: ProjectSummary) {
+  func setProjectAccess(_ access: ProjectAccess, project: ProjectSummary) {
     performAction(
-      key: "project.grant.\(project.id)",
-      title: "Unable to update project access",
-      refresh: [.projects, .home]
+      key: "project.access.\(project.id)", title: "Unable to update project access",
+      refresh: [.projects, .profiles, .home]
     ) {
-      try await self.controlPlane.setProjectEnabled(
-        enabled,
-        projectID: project.id,
-        profileID: project.activeProfileID
-      )
+      try await self.controlPlane.setProjectAccess(
+        access, projectID: project.id, profileID: project.activeProfileID,
+        expectedProfileRevision: project.profileRevision,
+        expectedPermissionRevision: project.permissionRevision)
     }
   }
 
@@ -680,19 +681,36 @@ final class ComputerMCPAppModel: ObservableObject {
     }
   }
 
-  private func loadOperationApprovals() async {
-    operationApprovals.beginRefresh()
-    do { operationApprovals = .loaded(try await controlPlane.fetchOperationApprovals()) } catch {
-      operationApprovals.failRefresh(with: AppLocalization.errorDescription(error))
+  private func loadPermissionRequests() async {
+    permissionRequests.beginRefresh()
+    do {
+      permissionRequests = .loaded(try await controlPlane.fetchPermissionRequests())
+      permissionObjectNames = (try? await controlPlane.fetchPermissionObjectNames()) ?? .init()
+    } catch {
+      permissionRequests.failRefresh(with: AppLocalization.errorDescription(error))
     }
   }
 
-  func resolveOperationApproval(id: String, approved: Bool) {
+  func confirmPermissionAuthority(_ reviewed: GatewayPermissionView) async throws {
+    let key = "permission.confirm-authority"
+    guard let epoch = reviewed.epoch, !runningActions.contains(key) else {
+      throw AppControlPlaneError.unavailable(
+        "Saved authority is unavailable. Refresh and review it again.")
+    }
+    runningActions.insert(key)
+    defer { runningActions.remove(key) }
+    try await controlPlane.confirmPermissionAuthority(
+      epoch: epoch, expectedRevision: reviewed.revision, profiles: reviewed.profiles)
+    for section in [AppSection.permissions, .profiles, .audit] { refresh(section) }
+  }
+
+  func answerPermissionRequest(id: UUID, answer: PermissionAnswer?, expectedRevision: UInt64) {
     performAction(
-      key: "approval.resolve.\(id)", title: "Unable to resolve approval",
+      key: "permission.answer.\(id)", title: "Unable to answer permission request",
       refresh: [.permissions, .audit]
     ) {
-      try await self.controlPlane.resolveOperationApproval(id: id, approved: approved)
+      try await self.controlPlane.answerPermissionRequest(
+        id: id, answer: answer, expectedRevision: expectedRevision)
     }
   }
 

@@ -1,7 +1,9 @@
+import ComputerMCPConfiguration
 import ComputerMCPCore
 import ComputerMCPDownstream
 import ComputerMCPPermissions
 import ComputerMCPPlatform
+import ComputerMCPTestSupport
 import Foundation
 import GRDB
 import Testing
@@ -15,16 +17,17 @@ import Testing
     id: "project", displayName: "Fixture", rootPath: "/fixture/project",
     createdAt: Date(timeIntervalSince1970: 0), updatedAt: Date(timeIntervalSince1970: 0))
   func profile(
-    _ capabilities: Set<String> = [], mode: GatewayPermissionMode = .projectOperations,
+    _ capabilities: Set<String> = [], mode: LegacyPermissionMode = .projectOperations,
     shell: Bool = false, projects: Set<String> = ["project"], servers: Set<String> = []
-  ) -> ProfileGrant {
-    ProfileGrant(
+  ) -> LegacyProfileGrant {
+    LegacyProfileGrant(
       id: .chatGPTOperate, capabilityIDs: capabilities, projectIDs: projects,
       allowedCallers: [.secureTunnel], fullShellEnabled: shell, mcpServerIDs: servers,
       mode: mode, authorizationRevision: 7)
   }
   func catalog(
-    _ profile: ProfileGrant, tools: [PermissionMigrationTool] = [], available: Set<String>? = nil
+    _ profile: LegacyProfileGrant, tools: [PermissionMigrationTool] = [],
+    available: Set<String>? = nil
   ) throws -> PermissionMigrationCatalog {
     try PermissionMigrationCatalog(
       configurationDigest: "config",
@@ -32,7 +35,8 @@ import Testing
       dynamicTools: tools, serverIDs: ["server"], manifestProfiles: [profile])
   }
   func convert(
-    _ profile: ProfileGrant, tools: [PermissionMigrationTool] = [], available: Set<String>? = nil
+    _ profile: LegacyProfileGrant, tools: [PermissionMigrationTool] = [],
+    available: Set<String>? = nil
   ) throws -> PermissionMigrationPlan {
     try PermissionProfileMigration.plan(
       profiles: [profile], catalog: catalog(profile, tools: tools, available: available),
@@ -40,9 +44,9 @@ import Testing
   }
 
   @Test(
-    arguments: [GatewayPermissionMode.localFullAccess, .projectOperations, .readOnly],
+    arguments: [LegacyPermissionMode.localFullAccess, .projectOperations, .readOnly],
     [false, true])
-  func modesAndRiskFiltering(mode: GatewayPermissionMode, write: Bool) throws {
+  func modesAndRiskFiltering(mode: LegacyPermissionMode, write: Bool) throws {
     let old = profile(write ? ["file.write"] : ["file.read"], mode: mode)
     let new = try #require(convert(old).profiles.first)
     #expect(new.fullAccess == false)
@@ -76,14 +80,27 @@ import Testing
     #expect(readonly.permissions.state(for: .skills) == .granted(.access))
     #expect(readonly.permissions.state(for: .localNetwork) == .notGranted)
     #expect(readonly.projectNetworks["project"] == NetworkAccess.none)
-    #expect(try convert(profile(["file.download"])).profiles[0].projectNetworks["project"] == .full)
+    #expect(
+      try convert(profile(["file.download"])).profiles[0].projectNetworks["project"]
+        == NetworkAccess.none)
     #expect(
       try convert(profile(["network.interfaces"])).profiles[0].projectNetworks["project"]
         == NetworkAccess.none)
   }
 
-  @Test(arguments: [GatewayPermissionMode.readOnly, .projectOperations])
-  func downstreamWrappersServersAndAliases(mode: GatewayPermissionMode) throws {
+  @Test(arguments: [LegacyPermissionMode.localFullAccess, .projectOperations, .readOnly])
+  func networkUsingProjectToolsStartWithNoNetworkAccess(mode: LegacyPermissionMode) throws {
+    let converted = try convert(
+      profile(["file.download"], mode: mode, shell: true, projects: ["*", "project"]))
+    let migrated = try #require(converted.profiles.first)
+    #expect(migrated.projectNetworks == ["*": NetworkAccess.none, "project": NetworkAccess.none])
+    #expect(
+      migrated.permissions.state(for: .project("project"))
+        == .granted(mode == .readOnly ? .read : .write))
+  }
+
+  @Test(arguments: [LegacyPermissionMode.readOnly, .projectOperations])
+  func downstreamWrappersServersAndAliases(mode: LegacyPermissionMode) throws {
     let value: PermissionState = .granted(mode == .readOnly ? .read : .all)
     #expect(
       try convert(profile(["mcp.tools.call"], mode: mode)).profiles[0].permissions.state(
@@ -98,7 +115,7 @@ import Testing
       id: "server.read", risk: .readOnly, aliases: ["old.read"], serverID: "server",
       pluginID: "package")
     let plan = try convert(profile(["old.read"], mode: mode), tools: [tool])
-    #expect(plan.profiles[0].permissions.state(for: .mcpServer("server")) == value)
+    #expect(plan.profiles[0].permissions.state(for: .mcpServer("server")) == .granted(.read))
     #expect(plan.profiles[0].permissions.state(for: .plugin("package")) == .granted(.use))
     #expect(plan.report.dropped.isEmpty)
     #expect(
@@ -128,7 +145,7 @@ import Testing
     #expect(plan.profiles[0].authorizationRevision == 1)
     #expect(try convert(profile()).profiles[0].permissions.state(for: .skills) == .notGranted)
     #expect(
-      PermissionProfile.newPrincipal(id: .chatGPTOperate, allowedCallers: [.secureTunnel])
+      ProfileGrant.newPrincipal(id: .chatGPTOperate, allowedCallers: [.secureTunnel])
         .permissions.state(for: .skills) == .granted(.access))
     let missing = try PermissionMigrationCatalog(
       configurationDigest: "config", availableBuiltinIDs: [], serverIDs: [], manifestProfiles: [])
@@ -208,7 +225,7 @@ import Testing
     let old = profile(["file.write"])
     if !historical {
       try connection.writer.write { database in
-        try ProfileRecord(old, updatedAt: project.updatedAt).insert(database)
+        try LegacyProfileRecord(old, updatedAt: project.updatedAt).insert(database)
         try ProjectRecord(project).insert(database)
       }
     }
@@ -224,7 +241,7 @@ import Testing
     let connection = try GatewayDatabaseConnection(inMemory: ())
     let old = profile(["file.read"])
     try connection.writer.write {
-      try ProfileRecord(old, updatedAt: project.updatedAt).insert($0)
+      try LegacyProfileRecord(old, updatedAt: project.updatedAt).insert($0)
       try ProjectRecord(project).insert($0)
     }
     let store = PermissionMigrationStore(connection: connection, counter: MigrationCounter())
@@ -243,34 +260,24 @@ import Testing
     let connection = try GatewayDatabaseConnection(inMemory: ())
     let old = profile(["file.write"])
     try connection.writer.write {
-      try ProfileRecord(old, updatedAt: project.updatedAt).insert($0)
+      try LegacyProfileRecord(old, updatedAt: project.updatedAt).insert($0)
       try ProjectRecord(project).insert($0)
     }
-    let gateway = GatewayDatabase(connection: connection)
-    try gateway.saveOperationTicket(
-      OperationTicket(
-        id: "pending", capabilityID: "file.write", caller: .secureTunnel,
-        profileID: old.id, inputDigest: "fixture", state: .approved,
-        expiresAt: Date().addingTimeInterval(3600)))
     try connection.writer.write {
       try $0.execute(
         sql:
           "INSERT INTO clientControlTrust (id, principalID, profileID, caller, revision, profile, fullAccessAllowed, updatedAt) VALUES ('trust', 'client', 'chatgpt-operate', 'secure-tunnel', 7, ?, 1, ?)",
-        arguments: [
-          String(
-            decoding: try JSONEncoder().encode(GatewayControlProfile(grant: old, persisted: true)),
-            as: UTF8.self), project.updatedAt,
-        ])
+        arguments: ["historical-profile", project.updatedAt])
     }
     let counter = MigrationCounter()
     let store = PermissionMigrationStore(connection: connection, counter: counter)
     let catalog = try catalog(old)
     let (plan, state) = try store.prepare(catalog: catalog)
     #expect(try store.profiles().isEmpty)
-    #expect(try gateway.operationTicket(id: "pending") != nil)
     #expect(
-      try gateway.clientTrust(principalID: "client", profileID: old.id, caller: .secureTunnel)?
-        .fullAccessAllowed == true)
+      try connection.writer.read {
+        try Int.fetchOne($0, sql: "SELECT count(*) FROM clientControlTrust")
+      } == 1)
     let changed = try PermissionMigrationCatalog(
       configurationDigest: "changed",
       availableBuiltinIDs: Set(PermissionMigrationCatalog.builtinV1.map(\.id)),
@@ -288,24 +295,136 @@ import Testing
       try store.apply(plan, expectedState: state, currentCatalog: catalog)
     }
     #expect(try store.profiles().isEmpty)
-    #expect(try gateway.operationTicket(id: "pending")?.state == .approved)
     #expect(
-      try gateway.clientTrust(principalID: "client", profileID: old.id, caller: .secureTunnel)?
-        .profile.grant == old)
+      try connection.writer.read {
+        try String.fetchOne($0, sql: "SELECT profile FROM clientControlTrust WHERE id = 'trust'")
+      } == "historical-profile")
     try connection.writer.write { try $0.execute(sql: "DROP TRIGGER fail_migration") }
     #expect(try store.apply(plan, expectedState: state, currentCatalog: catalog))
     let watermark = try counter.withExclusiveAccess { try $0.read() }
     #expect(try !store.apply(plan, expectedState: state, currentCatalog: catalog))
     #expect(try counter.withExclusiveAccess { try $0.read() } == watermark)
     #expect(try store.profiles() == plan.profiles)
-    #expect(try gateway.operationTicket(id: "pending") == nil)
+    #expect(try store.isActivated())
+    try connection.writer.write {
+      try $0.execute(sql: "UPDATE profiles SET authorizationRevision = 999")
+    }
+    #expect(try !store.apply(plan, expectedState: state, currentCatalog: changed))
     #expect(
       try connection.writer.read {
         try Int.fetchOne($0, sql: "SELECT count(*) FROM clientControlTrust")
       } == 0)
     #expect(
-      try connection.writer.read { try ProfileRecord.fetchOne($0, key: old.id.rawValue)?.value() }
-        == old)
+      try connection.writer.read {
+        try LegacyProfileRecord.fetchOne($0, key: old.id.rawValue)?.authorizationRevision
+      }
+        == 999)
+  }
+
+  @Test func currentStandaloneManifestActivatesLegacyDatabaseWithoutChangingSourceBytes() throws {
+    let database = try GatewayDatabase(inMemory: ())
+    _ = database.permissionStore(counter: TestAuthorizationEpochCounter())
+    let old = profile(["system.info"])
+    try database.connection.writer.write {
+      try LegacyProfileRecord(old, updatedAt: Date()).insert($0)
+    }
+    let manifest = try GatewayConfiguration(
+      profiles: [.init(grant: .operate)], builtin: .init(enabled: ["system.info"])
+    ).exportedTOML()
+    let original = manifest
+    let report = try database.activatePermissionMigration(
+      manifest: manifest,
+      baseURL: URL(fileURLWithPath: "/fixture"), applications: TestApplicationBundleLocator(),
+      bundledPlugins: .init(packages: [], issues: []))
+    #expect(report != nil)
+    let converted = try #require(database.profiles().first)
+    #expect(converted.permissions.state(for: .machineInformation) == .granted(.access))
+    #expect(converted.permissions.state(for: .skills) == .notGranted)
+    #expect(manifest == original)
+    #expect(
+      try database.activatePermissionMigration(
+        manifest: manifest,
+        baseURL: URL(fileURLWithPath: "/fixture"), applications: TestApplicationBundleLocator(),
+        bundledPlugins: .init(packages: [], issues: [])) == nil)
+  }
+
+  @Test func productionActivationConvertsManifestFallbackAndPinsOriginalBytes() throws {
+    let database = try GatewayDatabase(inMemory: ())
+    _ = database.permissionStore(counter: TestAuthorizationEpochCounter())
+    let manifest = """
+      schema_version = 1
+      [builtin]
+      enabled = ["system.info", "file.write"]
+      [[workspaces]]
+      id = "project"
+      path = "/fixture/project"
+      [[profiles]]
+      id = "chatgpt-operate"
+      mode = "workspace-operations"
+      capabilities = ["system.info", "file.write"]
+      workspaces = ["project"]
+      allowed_callers = ["secure-tunnel"]
+      """
+    let applications = TestApplicationBundleLocator()
+    let bundled = BundledPlugins(packages: [], issues: [])
+    let report = try database.activatePermissionMigration(
+      manifest: manifest, baseURL: URL(fileURLWithPath: "/fixture"),
+      applications: applications, bundledPlugins: bundled)
+    #expect(report?.dropped.isEmpty == true)
+    #expect(try database.projects().map(\.id) == ["project"])
+    var profile = try #require(database.profiles().first)
+    #expect(profile.permissions.state(for: .project("project")) == .granted(.write))
+    #expect(profile.permissions.state(for: .machineInformation) == .granted(.access))
+    #expect(profile.permissions.state(for: .skills) == .notGranted)
+    let source = try #require(database.configurationState().profileSource)
+    let convertedSource = try PermissionProfileManifest.encode(database.profiles())
+    #expect(String(data: source, encoding: .utf8) == convertedSource)
+    try database.validatePermissionMigrationManifest(manifest)
+    try profile.permissions.set(.denied, for: .screen)
+    try database.saveProfile(profile, expectedRevision: profile.authorizationRevision)
+    let edited = try database.profiles()
+    #expect(
+      try database.activatePermissionMigration(
+        manifest: manifest, baseURL: URL(fileURLWithPath: "/fixture"),
+        applications: applications, bundledPlugins: bundled) == nil)
+    #expect(try database.profiles() == edited)
+    #expect(try database.configurationState().profileSource == source)
+    #expect(throws: PermissionMigrationError.stateChanged) {
+      try database.activatePermissionMigration(
+        manifest: manifest + "\n# external edit\n", baseURL: URL(fileURLWithPath: "/fixture"),
+        applications: applications, bundledPlugins: bundled)
+    }
+  }
+
+  @Test func activationPublishesEpochAndRecoveryRequiresOwnerConfirmation() throws {
+    let connection = try GatewayDatabaseConnection(inMemory: ())
+    let old = profile(["system.info"])
+    try connection.writer.write {
+      try LegacyProfileRecord(old, updatedAt: project.updatedAt).insert($0)
+    }
+    let counter = MigrationCounter()
+    let permissions = SQLitePermissionStore(connection: connection, counter: counter)
+    let migration = PermissionMigrationStore(connection: connection, store: permissions)
+    let catalog = try catalog(old)
+    let (plan, state) = try migration.prepare(catalog: catalog)
+    #expect(try migration.apply(plan, expectedState: state, currentCatalog: catalog))
+    let initial = try permissions.readWithDatabase { database, ledger in
+      #expect(ledger.suspendedAuthority == nil)
+      #expect(ledger.pendingEpochRecovery == nil)
+      return (
+        try ProfileRecord.fetchOne(database, key: old.id.rawValue), ledger.authorizationEpochID
+      )
+    }
+    #expect(initial.0?.authorityEpoch == initial.1?.uuidString)
+    counter.forget()
+    let recovered = try permissions.readWithDatabase { _, ledger in ledger }
+    #expect(recovered.authorizationEpochID != initial.1)
+    #expect(recovered.suspendedAuthority != nil)
+    #expect(try !migration.apply(plan, expectedState: state, currentCatalog: catalog))
+    let preservedEpoch = try connection.writer.read {
+      try String.fetchOne($0, sql: "SELECT authorityEpoch FROM permissionProfiles")
+    }
+    #expect(preservedEpoch == initial.1?.uuidString)
   }
 
   @Test func requiredProjectMustResolveBeforeInferringPrivacy() throws {
@@ -410,15 +529,26 @@ import Testing
       sourceRoot: root.resolvingSymlinksInPath().path, receiptDigest: "digest",
       profileID: .chatGPTOperate, principalID: "client", caller: .secureTunnel, project: child)
     let connection = try GatewayDatabaseConnection(inMemory: ())
-    let gateway = GatewayDatabase(connection: connection)
-    let old = profile(["file.write"])
-    try gateway.saveProject(source)
-    try gateway.saveProfile(old)
-    try gateway.registerDerivedProject(row, verifiedPrincipalID: "client", caller: .secureTunnel)
-    try connection.writer.write {
+    var old = profile(["file.write"])
+    old.projectIDs.insert(child.id)
+    try connection.writer.write { database in
+      try ProjectRecord(source).insert(database)
+      try ProjectRecord(child).insert(database)
+      try LegacyProfileRecord(old, updatedAt: date).insert(database)
+      try ProjectCanonicalRootRecord(
+        canonicalRootPath: root.resolvingSymlinksInPath().path, projectID: source.id,
+        createdAt: date
+      ).insert(database)
       try ProjectCanonicalRootRecord(
         canonicalRootPath: "/fixture/previous-root", projectID: source.id, createdAt: date
-      ).insert($0)
+      ).insert(database)
+      try database.execute(
+        sql:
+          "INSERT INTO pluginDerivedProjects (projectID, origin, sourceProjectID, receiptID, payloadJSON) VALUES (?, ?, ?, ?, ?)",
+        arguments: [
+          child.id, row.origin, source.id, row.receiptID,
+          String(decoding: try JSONEncoder().encode(row), as: UTF8.self),
+        ])
     }
     let store = PermissionMigrationStore(connection: connection, counter: MigrationCounter())
     let catalog = try catalog(old)
@@ -452,7 +582,7 @@ import Testing
     let connection = try GatewayDatabaseConnection(inMemory: ())
     let old = profile(["file.read"])
     try connection.writer.write {
-      try ProfileRecord(old, updatedAt: project.updatedAt).insert($0)
+      try LegacyProfileRecord(old, updatedAt: project.updatedAt).insert($0)
       try ProjectRecord(project).insert($0)
     }
     let store = PermissionMigrationStore(connection: connection, counter: MigrationCounter())
@@ -486,6 +616,7 @@ private final class MigrationCounter: AuthorizationEpochCounter, @unchecked Send
     defer { lock.unlock() }
     return try body(access)
   }
+  func forget() { lock.withLock { access.watermark = nil } }
   private final class Access: AuthorizationEpochCounterAccess {
     var watermark: AuthorizationEpochWatermark?
     func read() throws -> AuthorizationEpochWatermark? { watermark }

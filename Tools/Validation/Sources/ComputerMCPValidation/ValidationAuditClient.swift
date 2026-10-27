@@ -80,7 +80,8 @@ public struct GatewayDatabase: Sendable {
   }
 
   public func auditEvent(requestID: String) throws -> AuditEvent? {
-    try auditEvents(requestID: requestID).first
+    try ValidationAuditTrail(events: auditEvents(requestID: requestID), requestID: requestID)
+      .terminal
   }
 
   public func projects() throws -> [RegisteredProject] {

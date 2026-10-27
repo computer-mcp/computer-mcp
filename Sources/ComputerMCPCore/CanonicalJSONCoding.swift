@@ -31,6 +31,7 @@ package enum CanonicalJSONCoding {
   }
 
   internal static func snakeCase(_ propertyName: String) -> String {
+    if isPositionalPayloadKey(propertyName) { return propertyName }
     let characters = Array(propertyName)
     var words: [String] = []
     var index = 0
@@ -72,6 +73,7 @@ package enum CanonicalJSONCoding {
   }
 
   package static func swiftPropertyName(_ snakeCaseKey: String) -> String {
+    if isPositionalPayloadKey(snakeCaseKey) { return snakeCaseKey }
     let components = snakeCaseKey.split(separator: "_").map(String.init)
     guard let first = components.first else { return snakeCaseKey }
     return first
@@ -79,6 +81,11 @@ package enum CanonicalJSONCoding {
         swiftInitialisms[component]
           ?? component.prefix(1).uppercased() + component.dropFirst()
       }.joined()
+  }
+
+  private static func isPositionalPayloadKey(_ key: String) -> Bool {
+    key.hasPrefix("_") && key.utf8.count > 1
+      && key.dropFirst().utf8.allSatisfy { (48...57).contains($0) }
   }
 
   private static let initialisms = [

@@ -1,3 +1,5 @@
+import ComputerMCPPermissions
+import ComputerMCPSandbox
 import ComputerMCPTestSupport
 import ComputerMCPTransport
 import CryptoKit
@@ -39,9 +41,19 @@ struct CombinedPluginWorkflowTests {
     let sourceRoot = packages.appendingPathComponent("combined")
     _ = try PluginArchiveExtractor().extract(archive, toNewDirectory: sourceRoot)
     let digest = Self.digest(try Data(contentsOf: archive))
+    let worker = try nativeGatewayTestExecutable()
+    let serverPrograms = [
+      Self.server,
+      Self.server.replacingOccurrences(of: "combined MCP reply", with: "updated MCP reply"),
+    ]
     let fixture = try PluginControlFixture(
-      worker: Self.repository.appendingPathComponent(".build/debug/computer-mcp").path,
-      bundled: source == .bundled ? .load(directory: packages) : .load(directory: nil))
+      worker: worker.path,
+      bundled: source == .bundled ? .load(directory: packages) : .load(directory: nil),
+      executionLauncher: { root in
+        ExecutionLauncher(
+          platform: CombinedWorkflowExecutionPlatform(
+            root: root, sourceRoot: sourceRoot, scripts: serverPrograms, worker: worker))
+      })
     defer { fixture.remove() }
     let manualSkills = fixture.root.appendingPathComponent("manual-skills/manual-guide")
     try FileManager.default.createDirectory(at: manualSkills, withIntermediateDirectories: true)
@@ -57,9 +69,14 @@ struct CombinedPluginWorkflowTests {
     configuration.policy.shellEnabled = true
     configuration.profiles = [
       .init(
-        id: .chatGPTOperate, capabilities: ["*"],
-        projects: ["fixture"], allowedCallers: [.localCLI], mode: .localFullAccess,
-        confirmationPolicy: .never)
+        id: .chatGPTOperate,
+        permissions: fixturePermissions([
+          .machineInformation: .granted(.access), .skills: .granted(.access),
+          .screen: .granted(.access), .desktopControl: .granted(.access),
+          .unifiedLogs: .granted(.access), .localNetwork: .granted(.access),
+          .project("fixture"): .granted(.write), .mcpServer("*"): .granted(.all),
+          .plugin("*"): .granted(.use),
+        ]), fullAccess: true, allowedCallers: [.localCLI])
     ]
     configuration.mcp.servers = [
       .init(
@@ -81,11 +98,7 @@ struct CombinedPluginWorkflowTests {
       configuration.exportedTOML(), expectedDigest: try? await fixture.host.configurationDigest())
     try fixture.database.saveProject(
       .init(id: "fixture", displayName: "Fixture", rootPath: fixture.root.path))
-    let grant = ProfileGrant(
-      id: .chatGPTOperate, capabilityIDs: ["*"], projectIDs: ["fixture"],
-      allowedCallers: [.localCLI], fullShellEnabled: true,
-      mode: .localFullAccess, confirmationPolicy: .never)
-    try fixture.database.saveProfile(grant)
+    let grant = try #require(fixture.database.profiles().first { $0.id == .chatGPTOperate })
     let initialManifest = try Data(contentsOf: fixture.directories.manifest)
     let initialVendor = try Data(contentsOf: vendor)
     try await fixture.socket.start()
@@ -133,7 +146,7 @@ struct CombinedPluginWorkflowTests {
       await active.disconnect()
       client = nil
       await fixture.gateway.stop()
-      try Self.checkExited(starts, count: 3)
+      try Self.checkExited(starts, count: 2)
       var rejectedEntries = entries
       rejectedEntries[0].content =
         Self.manifest
@@ -154,7 +167,7 @@ struct CombinedPluginWorkflowTests {
       await retained.disconnect()
       client = nil
       await fixture.gateway.stop()
-      try Self.checkExited(starts, count: 4)
+      try Self.checkExited(starts, count: 3)
 
       var updatedEntries = entries
       updatedEntries[0].content = Self.manifest
@@ -180,7 +193,7 @@ struct CombinedPluginWorkflowTests {
       await updated.disconnect()
       client = nil
       await fixture.gateway.stop()
-      try Self.checkExited(starts, count: 6)
+      try Self.checkExited(starts, count: 4)
 
       let selection = installation.map { ["--installation-id", $0.id] } ?? ["--bundled"]
       snapshot = try await Self.run(
@@ -193,7 +206,7 @@ struct CombinedPluginWorkflowTests {
       await restored.disconnect()
       client = nil
       await fixture.gateway.stop()
-      try Self.checkExited(starts, count: 8)
+      try Self.checkExited(starts, count: 5)
       snapshot = try await Self.run(
         fixture, ["uninstall", updateID], revision: snapshot.state.revision)
       #expect(!FileManager.default.fileExists(atPath: updateRoot.path))
@@ -227,7 +240,7 @@ struct CombinedPluginWorkflowTests {
       await removed.disconnect()
       client = nil
       await fixture.gateway.stop()
-      try Self.checkExited(starts, count: 9)
+      try Self.checkExited(starts, count: 5)
       #expect(try Data(contentsOf: fixture.directories.manifest) == initialManifest)
       #expect(try Data(contentsOf: vendor) == initialVendor)
       #expect(try Self.digest(Data(contentsOf: archive)) == digest)
@@ -254,6 +267,8 @@ struct CombinedPluginWorkflowTests {
   private static func checkActive(_ client: Client, reply: String = "combined MCP reply")
     async throws -> String
   {
+    try await discover(client, server: "combined-mcp")
+    try await discover(client, server: "manual")
     let tools = try await allTools(client)
     #expect(tools.contains { $0.name == "combined.inspect" })
     let projected = try #require(
@@ -271,14 +286,16 @@ struct CombinedPluginWorkflowTests {
     let skill = try await call(
       client, "skills.read",
       ["root_id": .string("combined-skills"), "name": .string("combined-guide")])
-    #expect(skill.isError != true)
+    #expect(skill.isError != true, "Registered plugin skill result: \(skill)")
     #expect(
       skill.structuredContent?.objectValue?["result"]?.objectValue?["content"]?.stringValue?
-        .contains("Read the combined fixture guidance.") == true)
+        .contains("Read the combined fixture guidance.") == true,
+      "Registered plugin skill result: \(skill)")
     return projected.name
   }
 
   private static func checkIndependent(_ client: Client, removedCLI: String) async throws {
+    try await discover(client, server: "manual")
     let tools = try await allTools(client)
     #expect(!tools.contains { $0.name == "combined.inspect" || $0.name == removedCLI })
     #expect(try await client.callTool(name: "combined.inspect", arguments: [:]).isError == true)
@@ -292,16 +309,26 @@ struct CombinedPluginWorkflowTests {
       try await client.callTool(
         name: manualCLI.name, arguments: ["values": .array([.string("retained")])]
       ).isError != true)
+    let removedSkill = try await call(
+      client, "skills.read",
+      ["root_id": .string("combined-skills"), "name": .string("combined-guide")])
+    #expect(removedSkill.isError == true, "Disabled plugin skill result: \(removedSkill)")
     #expect(
-      try await client.callTool(
-        name: "skills.read",
-        arguments: ["root_id": .string("combined-skills"), "name": .string("combined-guide")]
-      ).isError == true)
+      removedSkill.structuredContent?.objectValue?["error"]?.objectValue?["code"]
+        == .string("gateway.invalid_arguments"),
+      "Disabled plugin skill result: \(removedSkill)")
+    let manualSkill = try await call(
+      client, "skills.read",
+      ["root_id": .string("manual-skills"), "name": .string("manual-guide")])
+    #expect(manualSkill.isError != true, "Independent skill result: \(manualSkill)")
     #expect(
-      try await client.callTool(
-        name: "skills.read",
-        arguments: ["root_id": .string("manual-skills"), "name": .string("manual-guide")]
-      ).isError != true)
+      manualSkill.structuredContent?.objectValue?["result"]?.objectValue?["name"]
+        == .string("manual-guide"),
+      "Independent skill result: \(manualSkill)")
+    #expect(
+      manualSkill.structuredContent?.objectValue?["result"]?.objectValue?["content"]?.stringValue?
+        .contains("Read the combined fixture guidance.") == true,
+      "Independent skill result: \(manualSkill)")
   }
 
   private static func call(_ client: Client, _ name: String, _ arguments: [String: MCP.Value] = [:])
@@ -310,6 +337,12 @@ struct CombinedPluginWorkflowTests {
     let request: RequestContext<MCP.CallTool.Result> = try await client.callTool(
       name: name, arguments: arguments)
     return try await request.value
+  }
+
+  private static func discover(_ client: Client, server: String) async throws {
+    let result = try await call(
+      client, "mcp.tools.list", ["project_id": .string("fixture"), "server": .string(server)])
+    try #require(result.isError != true, "Discovery for \(server): \(result)")
   }
 
   private static func allTools(_ client: Client) async throws -> [MCP.Tool] {
@@ -400,4 +433,173 @@ struct CombinedPluginWorkflowTests {
             result = {"content": [{"type": "text", "text": "combined MCP reply"}], "isError": False}
         print(json.dumps({"jsonrpc": "2.0", "id": req["id"], "result": result}), flush=True)
     """#
+}
+
+/// These fixed programs create no descendants, so native root identity tracking
+/// owns their complete lifetime without claiming a general Full access backend.
+private struct CombinedWorkflowExecutionPlatform: ExecutionPlatform {
+  let root: URL
+  let sourceRoot: URL
+  let scripts: [String]
+  let worker: URL
+
+  private var base: DarwinExecutionPlatform {
+    DarwinExecutionPlatform(
+      bootstrapExecutable: worker.deletingLastPathComponent()
+        .appendingPathComponent("computer-mcp-execution-bootstrap"))
+  }
+
+  var supportsRecovery: Bool { true }
+  var bootSessionID: String? { base.bootSessionID }
+  var hostSystemReadPaths: [SandboxPath] { base.hostSystemReadPaths }
+  func supportsDurableOwnership(sandboxed: Bool) -> Bool {
+    // Host-only library reads reserve a read-only execution without launching a program.
+    sandboxed ? base.supportsDurableOwnership(sandboxed: true) : true
+  }
+
+  func start(
+    _ command: ExecutionCommand, sandbox: SandboxConfiguration?, method: ExecutionLaunchMethod,
+    input: Int32, output: Int32, error: Int32,
+    bindOwnership: @Sendable (any ExecutionOwnership) -> Void
+  ) async throws -> any ExecutionOwnership {
+    guard let prepared = try PreparedExecutionContext.current() else {
+      try validateArchiveWorker(command, sandbox: sandbox, input: input)
+      return try await base.start(
+        command, sandbox: sandbox, method: method, input: input, output: output, error: error,
+        bindOwnership: bindOwnership)
+    }
+    guard sandbox == nil, case .fullAccess = prepared.mode,
+      canonical(command.directory.value) == root.resolvingSymlinksInPath().path,
+      command.inheritedDescriptors.isEmpty
+    else { throw unavailable(command) }
+
+    let controlled: ExecutionCommand
+    if command.executable.value == "/usr/bin/printf" {
+      guard
+        [
+          ["--", "%s\n", "含 空格", "-1", ""],
+          ["--", "%s\n", "retained"],
+        ].contains(command.arguments)
+      else { throw unavailable(command) }
+      controlled = command
+    } else {
+      let script: String
+      let arguments: [String]
+      if command.executable.value == "/usr/bin/python3", let first = command.arguments.first {
+        script = first
+        arguments = Array(command.arguments.dropFirst())
+      } else {
+        script = command.executable.value
+        arguments = command.arguments
+      }
+      let path = canonical(script)
+      guard
+        [root, sourceRoot].contains(where: {
+          path.hasPrefix($0.resolvingSymlinksInPath().path + "/")
+        }),
+        let contents = try? String(contentsOfFile: path, encoding: .utf8),
+        scripts.contains(contents),
+        arguments.isEmpty || arguments == [root.appendingPathComponent("plugin-pids").path]
+      else { throw unavailable(command) }
+      controlled = ExecutionCommand(
+        executable: try SandboxPath("/usr/bin/python3"), arguments: ["-I", path] + arguments,
+        directory: command.directory, environment: command.environment,
+        directoryDescriptor: command.directoryDescriptor,
+        inheritedDescriptors: command.inheritedDescriptors)
+    }
+    let ownership = try await base.start(
+      controlled, sandbox: nil, method: method, input: input, output: output, error: error,
+      bindOwnership: { bindOwnership(CombinedWorkflowOwnership(base: $0)) })
+    return CombinedWorkflowOwnership(base: ownership)
+  }
+
+  private func validateArchiveWorker(
+    _ command: ExecutionCommand, sandbox: SandboxConfiguration?, input: Int32
+  ) throws {
+    var information = stat()
+    let directory = URL(fileURLWithPath: command.directory.value).resolvingSymlinksInPath()
+    guard let administration = ExecutionAdministration.current,
+      case .fullAccess = administration.mode, sandbox == nil,
+      canonical(command.executable.value) == worker.resolvingSymlinksInPath().path,
+      command.arguments.count == 3,
+      Array(command.arguments.prefix(2)) == ["_plugin-archive", "--sha256"],
+      command.arguments[2].utf8.count == 64,
+      command.arguments[2].utf8.allSatisfy({ (48...57).contains($0) || (97...102).contains($0) }),
+      directory.path.hasPrefix(root.resolvingSymlinksInPath().path + "/"),
+      UUID(uuidString: directory.lastPathComponent) != nil,
+      command.environment == [
+        "PATH": "/usr/bin:/bin:/usr/sbin:/sbin", "LANG": "en_US.UTF-8",
+        "TMPDIR": command.directory.value,
+      ],
+      input > STDERR_FILENO, fstat(input, &information) == 0,
+      information.st_mode & S_IFMT == S_IFREG,
+      command.inheritedDescriptors.count <= 1,
+      command.inheritedDescriptors.allSatisfy({
+        $0.key > STDERR_FILENO && $0.key == $0.value && fcntl($0.value, F_GETFD) >= 0
+      })
+    else { throw unavailable(command) }
+  }
+
+  func recover(_ state: ExecutionRecoveryState) async throws -> any ExecutionOwnership {
+    guard state.backend == CombinedWorkflowOwnership.backend, !state.sandboxed,
+      state.root.processID > 0, state.root.identity > 0
+    else {
+      throw ExecutionEnvironmentError.unavailable("Invalid combined workflow fixture recovery")
+    }
+    try await base.interrupt([state.root])
+    return CombinedWorkflowCompletedOwnership(state: state)
+  }
+
+  func interrupt(_ members: [ExecutionMember]) async throws { try await base.interrupt(members) }
+
+  func releaseRecovery(_ state: ExecutionRecoveryState) throws {
+    guard state.backend == CombinedWorkflowOwnership.backend, !state.sandboxed else {
+      throw ExecutionEnvironmentError.unavailable("Invalid combined workflow fixture recovery")
+    }
+  }
+
+  private func canonical(_ path: String) -> String {
+    URL(fileURLWithPath: path).resolvingSymlinksInPath().path
+  }
+
+  private func unavailable(_ command: ExecutionCommand) -> ExecutionEnvironmentError {
+    Issue.record(
+      "Unexpected combined workflow program: \(command.executable.value) \(command.arguments)")
+    return .unavailable("The combined workflow backend accepts fixed fixture programs only")
+  }
+}
+
+private struct CombinedWorkflowOwnership: ExecutionOwnership {
+  static let backend = "combined-workflow-fixture"
+  let base: any ExecutionOwnership
+
+  func recoveryState() throws -> ExecutionRecoveryState {
+    let state = try base.recoveryState()
+    return ExecutionRecoveryState(root: state.root, sandboxed: false, backend: Self.backend)
+  }
+  func beforeStart(_ handler: @escaping @Sendable (ExecutionMember) throws -> Void) {
+    base.beforeStart(handler)
+  }
+  func members() async throws -> [ExecutionMember] { try await base.members() }
+  func onCancellation(_ handler: @escaping @Sendable () -> Void) { base.onCancellation(handler) }
+  func cancel(until deadline: ContinuousClock.Instant) async throws -> ExecutionExit {
+    try await base.cancel(until: deadline)
+  }
+  func wait(until deadline: ContinuousClock.Instant) async throws -> ExecutionExit {
+    try await base.wait(until: deadline)
+  }
+}
+
+private struct CombinedWorkflowCompletedOwnership: ExecutionOwnership {
+  let state: ExecutionRecoveryState
+  func recoveryState() throws -> ExecutionRecoveryState { state }
+  func beforeStart(_ handler: @escaping @Sendable (ExecutionMember) throws -> Void) {}
+  func members() async throws -> [ExecutionMember] { [] }
+  func onCancellation(_ handler: @escaping @Sendable () -> Void) {}
+  func cancel(until deadline: ContinuousClock.Instant) async throws -> ExecutionExit {
+    ExecutionExit(status: 128 + SIGTERM, signal: SIGTERM)
+  }
+  func wait(until deadline: ContinuousClock.Instant) async throws -> ExecutionExit {
+    ExecutionExit(status: 128 + SIGTERM, signal: SIGTERM)
+  }
 }

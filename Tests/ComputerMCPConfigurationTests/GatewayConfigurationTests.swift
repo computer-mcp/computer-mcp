@@ -1,3 +1,4 @@
+import ComputerMCPPermissions
 import ComputerMCPTestSupport
 import Foundation
 import Testing
@@ -8,6 +9,20 @@ import Testing
 @Suite
 
 final class GatewayConfigurationTests {
+  @Test
+  func anEmptyManifestDoesNotRegisterTheConfigurationDirectory() throws {
+    let configuration = try GatewayConfiguration.load(text: "schema_version = 1")
+    #expect(configuration.manifestProjects.isEmpty)
+    let legacy = try PermissionManifestUpgrade.source(
+      manifest: """
+        schema_version = 1
+        [[profiles]]
+        id = "local-admin"
+        capabilities = ["system.info"]
+        """)
+    #expect(legacy.configuration.manifestProjects.map(\.id) == ["default"])
+  }
+
   @Test
   func executionDefaultsMatchDecodedPolicy() throws {
     let decoded = try JSONDecoder().decode(PolicyConfig.self, from: Data("{}".utf8))
@@ -33,12 +48,13 @@ final class GatewayConfigurationTests {
 
         [[profiles]]
         id = "partner-observe"
-        capabilities = ["system.time"]
+        permissions = { machine = "allow" }
         allowed_callers = ["local-cli"]
 
         [[profiles]]
         id = "cloudflare-observe"
-        capabilities = ["system.time"]
+        permissions = { machine = "allow" }
+        allowed_callers = ["cloudflare-tunnel"]
         """,
       baseURL: URL(fileURLWithPath: "/tmp/computer-mcp-schema-1")
     )
@@ -60,13 +76,14 @@ final class GatewayConfigurationTests {
 
           [[profiles]]
           id = "chatgpt-observe"
-          capabilities = ["system.time"]
+          allowed_callers = []
+          permissions = { machine = "allow" }
           obsolete_access = true
           """,
         baseURL: URL(fileURLWithPath: "/tmp/computer-mcp-schema-1")
       )
     ) { error in
-      #expect(error.localizedDescription.contains("Unknown configuration field"))
+      #expect(error.localizedDescription.contains("Unknown"))
       #expect(error.localizedDescription.contains("obsolete_access"))
     }
   }
@@ -545,24 +562,6 @@ final class GatewayConfigurationTests {
   }
 
   @Test
-  func testRejectsNoncanonicalProfileCapabilityIDs() throws {
-    for capability in ["project", "Project.info", "project.bad-name", "project.bad__name"] {
-      let path = try writeConfig(
-        """
-        [[profiles]]
-        id = "custom-observe"
-        capabilities = ["\(capability)"]
-        allowed_callers = ["secure-tunnel"]
-        """
-      )
-
-      expectThrows(try GatewayConfiguration.load(path: path)) { error in
-        #expect(error.localizedDescription.contains("lowercase namespace"))
-      }
-    }
-  }
-
-  @Test
   func testRejectsCLIBackedTool() throws {
     let path = try writeConfig(
       """
@@ -736,7 +735,8 @@ final class GatewayConfigurationTests {
 
         [[profiles]]
         id = "chatgpt-observe"
-        capabilities = ["project.info", "project.governance_files"]
+        allowed_callers = []
+        permissions = { machine = "allow" }
 
         [builtin]
         enabled = ["project.info", "project.governance_files"]
@@ -745,7 +745,9 @@ final class GatewayConfigurationTests {
     )
 
     #expect(configuration.builtin.enabled == ["project.info"])
-    #expect(configuration.profiles.first?.capabilities == ["project.info"])
+    #expect(
+      configuration.profiles.first?.grant.permissions.state(for: .machineInformation)
+        == .granted(.access))
   }
 
   @Test
@@ -885,14 +887,12 @@ final class GatewayConfigurationTests {
 
       [[profiles]]
       id = "chatgpt-observe"
-      capabilities = ["project.list", "file.read"]
-      projects = ["primary"]
+      projects = { primary = { access = "read" } }
       allowed_callers = ["secure-tunnel"]
 
       [[profiles]]
       id = "chatgpt-operate"
-      capabilities = ["file.read", "file.write"]
-      projects = ["primary"]
+      projects = { primary = { access = "write" } }
       allowed_callers = ["secure-tunnel"]
       """
     )
@@ -911,8 +911,9 @@ final class GatewayConfigurationTests {
     #expect((config.projects.last?.path) == nil)
     #expect((config.manifestProjects.map(\.id)) == (["primary"]))
     #expect(
-      (config.profileGrant(for: .chatGPTOperate).capabilityIDs) == (["file.read", "file.write"]))
-    #expect(!(config.profileGrant(for: .chatGPTOperate).fullShellEnabled))
+      config.profileGrant(for: .chatGPTOperate).permissions.state(for: .project("primary"))
+        == .granted(.write))
+    #expect(!(config.profileGrant(for: .chatGPTOperate).fullAccess))
   }
 
   @Test
@@ -944,8 +945,8 @@ final class GatewayConfigurationTests {
 
       [[profiles]]
       id = "chatgpt-operate"
-      capabilities = ["file.read"]
-      projects = ["unknown"]
+      allowed_callers = []
+      projects = { unknown = { access = "read" } }
       """
     )
     expectThrows(try GatewayConfiguration.load(path: unknownProject)) { error in
@@ -977,46 +978,6 @@ final class GatewayConfigurationTests {
     }
   }
 
-  @Test(
-    arguments: [
-      GatewayProfileID.chatGPTObserve, .chatGPTOperate, .cloudflareObserve, .cloudflareOperate,
-      GatewayProfileID(rawValue: "custom-shell")!,
-    ], GatewayPermissionMode.allCases)
-  func testSchemaV1FullShellEligibilityDependsOnMode(
-    profileID: GatewayProfileID, mode: GatewayPermissionMode
-  ) throws {
-    let manifest = try writeConfig(
-      """
-      schema_version = 1
-
-      [policy]
-      shell_enabled = true
-
-      [[profiles]]
-      id = "\(profileID.rawValue)"
-      capabilities = ["shell.run"]
-      allowed_callers = ["secure-tunnel", "cloudflare-tunnel"]
-      mode = "\(mode.rawValue)"
-      full_shell_enabled = true
-      """
-    )
-    if mode == .localFullAccess {
-      let configuration = try GatewayConfiguration.load(path: manifest)
-      let grant = configuration.profileGrant(for: profileID)
-      #expect(configuration.policy.shellEnabled)
-      #expect(grant.mode == .localFullAccess)
-      #expect(grant.fullShellEnabled)
-      #expect(grant.capabilityIDs == ["shell.run"])
-      #expect(grant.allowedCallers == [.secureTunnel, .cloudflareTunnel])
-    } else {
-      expectThrows(try GatewayConfiguration.load(path: manifest)) { error in
-        #expect(
-          error.localizedDescription.contains(
-            GatewayPolicyConfigurationError.fullShellRequiresFullAccess.localizedDescription))
-      }
-    }
-  }
-
   @Test
   func testSchemaV1RejectsRemoteCallersForLocalAdministrationProfile() throws {
     let remoteAdmin = try writeConfig(
@@ -1025,7 +986,6 @@ final class GatewayConfigurationTests {
 
       [[profiles]]
       id = "local-admin"
-      capabilities = ["*"]
       allowed_callers = ["secure-tunnel"]
       """
     )

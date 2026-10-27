@@ -8,8 +8,8 @@ execution ID, and retains ownership through the complete process lifetime.
 `ExecutionPlatform`. Every host subprocess uses this entry point, including shell
 sessions, registered processes, CLI and host commands, downstream MCP supervisors,
 plugin archive workers and Cloudflare tunnels. The macOS composition root supplies the
-Darwin backend; neutral modules never construct it. Full Shell authorization
-continues to gate arbitrary shell, process and CLI execution.
+Darwin backend; neutral modules never construct it. An authorized execution context
+is required for every principal shell, process and CLI launch.
 
 ## Permission configuration
 
@@ -28,8 +28,7 @@ network grant opens only its named host. Direct Apple events and sandbox
 extensions remain closed. `GatewayPathAccess` revalidates host file use against
 durable invocation evidence. File mutation keeps its descriptor and inode guards
 and checks permissions before and after effects, including each recursive entry.
-These composition services are available to the permission admission path; the
-current gateway still uses its existing profile admission contract.
+The live gateway installs these services at the permission admission boundary.
 
 ## Durable execution authority
 
@@ -60,8 +59,7 @@ each identity across classification, and retains ambiguous zombies or incomplete
 snapshots as pending. The root birth identity excludes older processes but never
 cuts off enumeration. Prepared Full access execution is unavailable on Darwin
 because unsandboxed descendants can escape observation; sandboxed read helpers
-remain available to Full access principals. Existing profile execution remains on
-its current admission path until the permission-contract cutover.
+remain available to Full access principals. There is no unrestricted fallback when the platform refuses prepared execution.
 
 Permission edits and periodic reconciliation revoke running descendants and proxy
 streams. Standing work survives client disconnect; connection-scoped work ends
@@ -132,13 +130,11 @@ an end reason. Cancellation delegates to `ExecutionOwnership` and completes only
 after ownership confirms termination; the Full access membership limitations
 described below still apply.
 
-The host selects `HostExecutionPolicy` after authorization. Read-only and
-project-independent command calls, CLI compatibility checks and catalog exporters
-use the read-only sandbox variant: only a private temporary directory is writable,
-and HOME and caches reside within it. The environment is rebuilt from fixed sandbox values and any explicitly selected
-host variables. Host network diagnostics use system read roots, a temporary
-working directory and network access; they receive no project read root. Arbitrary
-Full Shell execution retains its explicit caller environment and working directory.
+The admitted permission context determines process mode, paths, network and
+limits. Semantic read helpers retain their read restrictions in either principal
+mode. Trusted host compatibility checks and catalog exporters require an explicit
+administrative scope; principal-triggered helpers use principal authority. Missing
+contexts refuse launches rather than selecting a default policy.
 
 `GatewayTerminalSessions` owns optional durable execution records separately from
 runtime generations and transport connections. App listeners and standalone servers
@@ -546,3 +542,15 @@ cases and six opt-in public HTTPS/Git/SwiftPM/npm/SOCKS/IPv6 cases.
 Sandbox-runtime adaptations are identified in source headers and
 [THIRD_PARTY_NOTICES.md](../../THIRD_PARTY_NOTICES.md); the Apache-2.0 text is
 included in packaged notices.
+
+Fixed network diagnostics that launch `ping`, `nc`, or `curl` currently return
+`execution.unavailable`: their prepared service-specific network context belongs
+to Host 5 execution integration. Machine information still permits the fixed
+read-only network inspection tools and the host resolver. A networked helper
+cannot borrow administrative execution authority or a project network setting.
+
+Remote MCP transport uses a prepared service context that cannot launch host
+programs. Its retained requests keep their exact ledger execution authority
+through completion and cancellation. Local stdio servers require their own
+project/plugin execution context; catalog discovery cannot borrow the remote
+service context or a read-only host helper context.

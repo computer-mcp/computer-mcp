@@ -2,6 +2,9 @@ import ComputerMCPCore
 import Foundation
 import TOML
 
+import struct ComputerMCPPermissions.NetworkAccess
+import struct ComputerMCPPermissions.Permissions
+
 struct ConfigurationCodingKey: CodingKey {
   let stringValue: String
   let intValue: Int?
@@ -17,7 +20,7 @@ struct ConfigurationCodingKey: CodingKey {
   }
 }
 
-private indirect enum ConfigurationNode: Decodable {
+indirect enum ConfigurationNode: Decodable {
   case object([String: ConfigurationNode])
   case array([ConfigurationNode])
   case scalar
@@ -97,6 +100,8 @@ package struct GatewayConfiguration: Equatable, Sendable {
   package var skills: SkillsConfig
   package var delivery: DeliveryConfig
   package var projectDirectory: URL
+  /// Host-owned configuration and credential files are never project content.
+  package var hostDataPaths: Set<URL> = []
   /// Host-owned identities remain referenceable while their contributions are disabled or unavailable.
   package var knownPluginMCPServerIDs: Set<String> = []
 
@@ -140,9 +145,11 @@ package struct GatewayConfiguration: Equatable, Sendable {
     guard let text = String(data: data, encoding: .utf8) else {
       throw ConfigurationError.invalid("Config file is not valid UTF-8: \(path)")
     }
-    return try load(
+    var configuration = try load(
       text: text, baseURL: url.deletingLastPathComponent(),
       knownPluginMCPServerIDs: knownPluginMCPServerIDs)
+    configuration.hostDataPaths.insert(url.standardizedFileURL)
+    return configuration
   }
 
   package static func load(
@@ -732,17 +739,7 @@ package struct GatewayConfiguration: Equatable, Sendable {
   }
 
   package var manifestProjects: [RegisteredProject] {
-    if projects.isEmpty {
-      return [
-        RegisteredProject(
-          id: "default",
-          displayName: projectDirectory.lastPathComponent.isEmpty
-            ? "Default Project" : projectDirectory.lastPathComponent,
-          rootPath: projectDirectory.path
-        )
-      ]
-    }
-    return projects.compactMap(\.registeredProject)
+    projects.compactMap(\.registeredProject)
   }
 
   package func profileGrant(for id: GatewayProfileID) -> ProfileGrant {
@@ -754,7 +751,7 @@ package struct GatewayConfiguration: Equatable, Sendable {
     if id == .cloudflareObserve { return .cloudflareObserve }
     if id == .cloudflareOperate { return .cloudflareOperate }
     if id == .localAdmin { return .localAdmin }
-    return ProfileGrant(id: id, capabilityIDs: [], allowedCallers: [])
+    return ProfileGrant(id: id, allowedCallers: [])
   }
 
   package func executionContext(
@@ -840,6 +837,10 @@ extension GatewayConfiguration: Codable {
   }
 
   package init(from decoder: any Decoder) throws {
+    try self.init(from: decoder, profileOverride: nil)
+  }
+
+  init(from decoder: any Decoder, profileOverride: [ProfileGrantConfig]?) throws {
     let container = try decoder.container(keyedBy: CodingKeys.self)
     self.schemaVersion = try container.decode(Int.self, forKey: .schemaVersion)
     self.server =
@@ -852,7 +853,8 @@ extension GatewayConfiguration: Codable {
     self.projects =
       try container.decodeIfPresent([ProjectManifestConfig].self, forKey: .projects) ?? []
     self.profiles =
-      try container.decodeIfPresent([ProfileGrantConfig].self, forKey: .profiles) ?? []
+      try profileOverride ?? container.decodeIfPresent([ProfileGrantConfig].self, forKey: .profiles)
+      ?? []
     self.transports =
       try container.decodeIfPresent(TransportSectionConfig.self, forKey: .transports)
       ?? TransportSectionConfig()
@@ -881,9 +883,6 @@ extension GatewayConfiguration: Codable {
 
   private mutating func dropRetiredBuiltins() {
     builtin.enabled.removeAll { Self.retiredBuiltins.contains($0) }
-    for index in profiles.indices {
-      profiles[index].capabilities.removeAll { Self.retiredBuiltins.contains($0) }
-    }
   }
 
   private mutating func migrateImplicitMCPApprovals(from shape: ConfigurationNode) {
@@ -1411,7 +1410,7 @@ package struct ProjectManifestConfig: Codable, Equatable, Sendable {
     path = try container.decodeIfPresent(String.self, forKey: .path)
   }
 
-  fileprivate func resolved(base: URL) -> ProjectManifestConfig {
+  func resolved(base: URL) -> ProjectManifestConfig {
     guard let path else {
       return self
     }
@@ -1424,7 +1423,7 @@ package struct ProjectManifestConfig: Codable, Equatable, Sendable {
     return ProjectManifestConfig(id: id, displayName: displayName, path: resolvedPath)
   }
 
-  fileprivate func validate() throws {
+  package func validate() throws {
     try validateConfigIdentifier(id, label: "projects.id")
     guard !displayName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
       throw ConfigurationError.invalid("projects.display_name must not be empty.")
@@ -1450,146 +1449,54 @@ package struct ProjectManifestConfig: Codable, Equatable, Sendable {
 }
 
 package struct ProfileGrantConfig: Codable, Equatable, Sendable {
-  package var id: GatewayProfileID
-  package var capabilities: [String]
-  package var projects: [String]
-  package var allowedCallers: [GatewayCallerKind]
-  package var fullShellEnabled: Bool
-  package var mcpServers: [String]
-  package var mode: GatewayPermissionMode
-  package var confirmationPolicy: GatewayConfirmationPolicy
+  package var grant: ProfileGrant
+  package var id: GatewayProfileID { grant.id }
+
+  package init(grant: ProfileGrant) { self.grant = grant }
 
   package init(
-    id: GatewayProfileID,
-    capabilities: [String] = [],
-    projects: [String] = [],
-    allowedCallers: [GatewayCallerKind]? = nil,
-    fullShellEnabled: Bool = false,
-    mcpServers: [String] = [],
-    mode: GatewayPermissionMode = .readOnly,
-    confirmationPolicy: GatewayConfirmationPolicy = .riskBased
+    id: GatewayProfileID, permissions: Permissions = .init(),
+    projectNetworks: [String: NetworkAccess] = [:],
+    automation: [String: ProfileGrant.AutomationAccess] = [:], fullAccess: Bool = false,
+    allowedCallers: Set<GatewayCallerKind> = []
   ) {
-    self.id = id
-    self.capabilities = capabilities
-    self.projects = projects
-    self.allowedCallers = allowedCallers ?? []
-    self.fullShellEnabled = fullShellEnabled
-    self.mcpServers = mcpServers
-    self.mode = mode
-    self.confirmationPolicy = confirmationPolicy
-  }
-
-  private enum CodingKeys: String, CodingKey {
-    case id
-    case capabilities
-    case projects
-    case allowedCallers = "allowed_callers"
-    case fullShellEnabled = "full_shell_enabled"
-    case mcpServers = "mcp_servers"
-    case mode
-    case confirmationPolicy = "confirmation_policy"
+    grant = ProfileGrant(
+      id: id, permissions: permissions, projectNetworks: projectNetworks,
+      automation: automation, fullAccess: fullAccess, allowedCallers: allowedCallers)
   }
 
   package init(from decoder: any Decoder) throws {
-    let container = try decoder.container(keyedBy: CodingKeys.self)
-    id = try container.decode(GatewayProfileID.self, forKey: .id)
-    capabilities = try container.decodeIfPresent([String].self, forKey: .capabilities) ?? []
-    projects = try container.decodeIfPresent([String].self, forKey: .projects) ?? []
-    if let configured = try container.decodeIfPresent(
-      [GatewayCallerKind].self,
-      forKey: .allowedCallers
-    ) {
-      allowedCallers = configured
-    } else {
-      allowedCallers = container.contains(.mode) ? [] : Self.legacyAllowedCallers(for: id)
-    }
-    fullShellEnabled =
-      try container.decodeIfPresent(Bool.self, forKey: .fullShellEnabled) ?? false
-    mcpServers = try container.decodeIfPresent([String].self, forKey: .mcpServers) ?? []
-    mode =
-      try container.decodeIfPresent(GatewayPermissionMode.self, forKey: .mode)
-      ?? .legacy(profileID: id, fullShellEnabled: fullShellEnabled)
-    confirmationPolicy =
-      try container.decodeIfPresent(GatewayConfirmationPolicy.self, forKey: .confirmationPolicy)
-      ?? .riskBased
+    grant = try ProfileDocument(from: decoder).profile
   }
 
   package func encode(to encoder: any Encoder) throws {
-    var container = encoder.container(keyedBy: CodingKeys.self)
-    try container.encode(id, forKey: .id)
-    try container.encode(capabilities, forKey: .capabilities)
-    try container.encode(projects, forKey: .projects)
-    try container.encode(allowedCallers, forKey: .allowedCallers)
-    try container.encode(fullShellEnabled, forKey: .fullShellEnabled)
-    try container.encode(mcpServers, forKey: .mcpServers)
-    try container.encode(mode, forKey: .mode)
-    try container.encode(confirmationPolicy, forKey: .confirmationPolicy)
+    try ProfileDocument(grant).encode(to: encoder)
   }
 
   package func validate(knownProjectIDs: Set<String>, knownMCPServerIDs: Set<String>) throws {
-    guard Set(mcpServers).count == mcpServers.count else {
-      throw ConfigurationError.invalid("Profile '\(id.rawValue)' has duplicate mcp_servers.")
+    try grant.validate()
+    _ = try PermissionProfileManifest.decode(PermissionProfileManifest.encode([grant]))
+    for permission in grant.permissions.entries.keys {
+      switch permission {
+      case .project(let id):
+        guard id == "*" || knownProjectIDs.isEmpty || knownProjectIDs.contains(id) else {
+          throw ConfigurationError.invalid(
+            "Profile '\(grant.id.rawValue)' references unknown project '\(id)'.")
+        }
+      case .mcpServer(let id):
+        guard id == "*" || knownMCPServerIDs.contains(id) else {
+          throw ConfigurationError.invalid(
+            "Profile '\(grant.id.rawValue)' references unknown MCP server '\(id)'.")
+        }
+      default: break
+      }
     }
-    for serverID in mcpServers {
-      guard knownMCPServerIDs.contains(serverID) else {
+    for id in grant.projectNetworks.keys {
+      guard id == "*" || knownProjectIDs.isEmpty || knownProjectIDs.contains(id) else {
         throw ConfigurationError.invalid(
-          "Profile '\(id.rawValue)' references unknown MCP server '\(serverID)'.")
+          "Profile '\(grant.id.rawValue)' references unknown project '\(id)'.")
       }
     }
-    var capabilityIDs = Set<String>()
-    for capability in capabilities {
-      if capability != "*" {
-        try validateGatewayToolID(capability, label: "profiles.capabilities")
-      }
-      guard capabilityIDs.insert(capability).inserted else {
-        throw ConfigurationError.invalid(
-          "Profile '\(id.rawValue)' contains duplicate capability '\(capability)'."
-        )
-      }
-    }
-    var projectIDs = Set<String>()
-    for projectID in projects {
-      if projectID != "*" {
-        try validateConfigIdentifier(projectID, label: "profiles.projects")
-      }
-      guard projectIDs.insert(projectID).inserted else {
-        throw ConfigurationError.invalid(
-          "Profile '\(id.rawValue)' contains duplicate project '\(projectID)'."
-        )
-      }
-      guard
-        projectID == "*" || knownProjectIDs.isEmpty || knownProjectIDs.contains(projectID)
-      else {
-        throw ConfigurationError.invalid(
-          "Profile '\(id.rawValue)' references unknown project '\(projectID)'."
-        )
-      }
-    }
-    do {
-      try grant.validate()
-    } catch {
-      throw ConfigurationError.invalid(error.localizedDescription)
-    }
-  }
-
-  package var grant: ProfileGrant {
-    ProfileGrant(
-      id: id,
-      capabilityIDs: Set(capabilities),
-      projectIDs: Set(projects),
-      allowedCallers: Set(allowedCallers),
-      fullShellEnabled: fullShellEnabled,
-      mcpServerIDs: Set(mcpServers),
-      mode: mode,
-      confirmationPolicy: confirmationPolicy
-    )
-  }
-
-  private static func legacyAllowedCallers(for id: GatewayProfileID) -> [GatewayCallerKind] {
-    if id == .chatGPTObserve || id == .chatGPTOperate { return [.secureTunnel] }
-    if id == .cloudflareObserve || id == .cloudflareOperate { return [.cloudflareTunnel] }
-    if id == .localAdmin { return [.localApp, .localCLI, .localMCP] }
-    return []
   }
 }
 
@@ -1680,7 +1587,7 @@ package struct SkillsConfig: Codable, Equatable, Sendable {
     try container.encode(maxBytesPerSkill, forKey: .maxBytesPerSkill)
   }
 
-  fileprivate func resolved(base: URL) -> SkillsConfig {
+  func resolved(base: URL) -> SkillsConfig {
     SkillsConfig(
       enabled: enabled,
       roots: roots.map { $0.resolved(base: base) },
@@ -1723,7 +1630,7 @@ package struct SkillRootConfig: Codable, Equatable, Sendable {
     self.description = description
   }
 
-  fileprivate func resolved(base: URL) -> SkillRootConfig {
+  func resolved(base: URL) -> SkillRootConfig {
     let resolvedPath: String
     if path.hasPrefix("/") {
       resolvedPath = URL(fileURLWithPath: path).standardizedFileURL.path

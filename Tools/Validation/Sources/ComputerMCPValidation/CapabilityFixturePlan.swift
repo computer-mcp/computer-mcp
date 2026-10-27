@@ -1,23 +1,15 @@
 import Foundation
 
-public enum CapabilityFixtureExecution: Equatable, Sendable {
-  case direct
-  case committed
-}
-
 public struct CapabilityFixtureInvocation: Equatable, Sendable {
   public var arguments: [String: JSONValue]
   public var expectedMarker: String?
-  public var execution: CapabilityFixtureExecution
 
   public init(
     arguments: [String: JSONValue],
-    expectedMarker: String? = nil,
-    execution: CapabilityFixtureExecution = .direct
+    expectedMarker: String? = nil
   ) {
     self.arguments = arguments
     self.expectedMarker = expectedMarker
-    self.execution = execution
   }
 }
 
@@ -68,6 +60,8 @@ public struct CapabilityFixturePlan: Sendable {
     pointerPosition: (x: Double, y: Double)? = nil
   ) -> CapabilityFixtureInvocation? {
     switch tool {
+    case "runtime.owners.list":
+      return invocation([:], marker: "owners")
     case "project.list":
       return invocation([:], marker: projectID)
     case "project.describe":
@@ -151,8 +145,7 @@ public struct CapabilityFixturePlan: Sendable {
           ]),
           "wait_for_result": .bool(true),
         ],
-        expectedMarker: "CMCP-VALIDATION-DOWNSTREAM-CALL",
-        execution: .committed
+        expectedMarker: "CMCP-VALIDATION-DOWNSTREAM-CALL"
       )
 
     case "cli.list":
@@ -345,7 +338,7 @@ public struct CapabilityFixturePlan: Sendable {
         marker: "hello from archive"
       )
     case "archive.create":
-      return committedPrimary(
+      return primary(
         [
           "path": .string(path("Mutations/generated.zip")),
           "sources": .array([.string(path("ArchiveSource"))]),
@@ -357,7 +350,7 @@ public struct CapabilityFixturePlan: Sendable {
         marker: "Mutations/generated.zip"
       )
     case "archive.extract":
-      return committedPrimary(
+      return primary(
         [
           "path": .string(path("Artifacts/sample.zip")),
           "destination": .string(path("Mutations/extracted")),
@@ -541,7 +534,7 @@ public struct CapabilityFixturePlan: Sendable {
         marker: "Mutations/append.txt"
       )
     case "file.chmod":
-      return committedPrimary(
+      return primary(
         [
           "path": .string(path("Scripts/fixture.sh")),
           "mode": .string("0700"),
@@ -550,7 +543,7 @@ public struct CapabilityFixturePlan: Sendable {
         marker: "Scripts/fixture.sh"
       )
     case "file.copy":
-      return committedPrimary(
+      return primary(
         [
           "source": .string(path("README.md")),
           "destination": .string(path("Mutations/copied.md")),
@@ -563,7 +556,7 @@ public struct CapabilityFixturePlan: Sendable {
       guard let loopbackHTTPURL else {
         return nil
       }
-      return committedPrimary(
+      return primary(
         [
           "url": .string(loopbackHTTPURL.appendingPathComponent("README.md").absoluteString),
           "path": .string(path("Mutations/downloaded.md")),
@@ -576,7 +569,7 @@ public struct CapabilityFixturePlan: Sendable {
         marker: "Mutations/downloaded.md"
       )
     case "file.insert_text":
-      return committedPrimary(
+      return primary(
         [
           "path": .string(path("Text/lines.txt")),
           "line": .number(2),
@@ -591,7 +584,7 @@ public struct CapabilityFixturePlan: Sendable {
         marker: "Mutations/directory"
       )
     case "file.move":
-      return committedPrimary(
+      return primary(
         [
           "source": .string(path("Mutations/copied.md")),
           "destination": .string(path("Mutations/moved.md")),
@@ -600,7 +593,7 @@ public struct CapabilityFixturePlan: Sendable {
         marker: "Mutations/moved.md"
       )
     case "file.remove_xattr":
-      return committedPrimary(
+      return primary(
         [
           "path": .string(path("Xattrs/tagged.txt")),
           "name": .string("com.showxu.computer-mcp.fixture"),
@@ -608,7 +601,7 @@ public struct CapabilityFixturePlan: Sendable {
         marker: "com.showxu.computer-mcp.fixture"
       )
     case "file.replace_lines":
-      return committedPrimary(
+      return primary(
         [
           "path": .string(path("Text/lines.txt")),
           "start_line": .number(3),
@@ -618,7 +611,7 @@ public struct CapabilityFixturePlan: Sendable {
         marker: "Text/lines.txt"
       )
     case "file.replace_text":
-      return committedPrimary(
+      return primary(
         [
           "path": .string(path("Docs/guide.md")),
           "search": .string("CMCP-FIXTURE-ALPHA"),
@@ -638,7 +631,7 @@ public struct CapabilityFixturePlan: Sendable {
         marker: "Mutations/readme-link.md"
       )
     case "file.touch":
-      return committedPrimary(
+      return primary(
         [
           "path": .string(path("Mutations/touched.txt")),
           "create_directories": .bool(true),
@@ -647,12 +640,12 @@ public struct CapabilityFixturePlan: Sendable {
         marker: "Mutations/touched.txt"
       )
     case "file.trash":
-      return committedPrimary(
+      return primary(
         ["path": .string(path("Mutations/moved.md"))],
         marker: "Mutations/moved.md"
       )
     case "file.write":
-      return committedPrimary(
+      return primary(
         [
           "path": .string(path("Mutations/write.txt")),
           "content": .string("CMCP-VALIDATION-WRITE\n"),
@@ -662,7 +655,7 @@ public struct CapabilityFixturePlan: Sendable {
         marker: "Mutations/write.txt"
       )
     case "file.write_files":
-      return committedPrimary(
+      return primary(
         [
           "files": .array([
             .object([
@@ -689,7 +682,7 @@ public struct CapabilityFixturePlan: Sendable {
     case "json.read":
       return primary(["path": .string(path("Data/sample.json"))], marker: "computer-mcp")
     case "json.write":
-      return committedPrimary(
+      return primary(
         [
           "path": .string(path("Mutations/generated.json")),
           "value": .object([
@@ -733,7 +726,7 @@ public struct CapabilityFixturePlan: Sendable {
     case "plist.read":
       return primary(["path": .string(path("Data/sample.plist"))], marker: "computer-mcp")
     case "plist.write":
-      return committedPrimary(
+      return primary(
         [
           "path": .string(path("Mutations/generated.plist")),
           "value": .object([
@@ -891,7 +884,7 @@ public struct CapabilityFixturePlan: Sendable {
         marker: "validation-created"
       )
     case "git.branch_rename":
-      return committedRepository(
+      return repository(
         [
           "old_name": .string("fixture-base"),
           "new_name": .string("fixture-base-renamed"),
@@ -902,7 +895,7 @@ public struct CapabilityFixturePlan: Sendable {
         marker: "fixture-base-renamed"
       )
     case "git.branch_switch":
-      return committedRepository(
+      return repository(
         [
           "name": .string("fixture-base-renamed"),
           "dry_run": .bool(false),
@@ -912,7 +905,7 @@ public struct CapabilityFixturePlan: Sendable {
         marker: "fixture-base-renamed"
       )
     case "git.branch_delete":
-      return committedRepository(
+      return repository(
         [
           "name": .string("validation-created"),
           "dry_run": .bool(false),
@@ -922,7 +915,7 @@ public struct CapabilityFixturePlan: Sendable {
         marker: "validation-created"
       )
     case "git.clean":
-      return committedRepository(
+      return repository(
         [
           "paths": .array([.string(".fixture-ignored")]),
           "ignored_only": .bool(true),
@@ -941,7 +934,7 @@ public struct CapabilityFixturePlan: Sendable {
         marker: "validation-tag"
       )
     case "git.tag_delete":
-      return committedRepository(
+      return repository(
         [
           "name": .string("validation-tag"),
           "dry_run": .bool(false),
@@ -950,7 +943,7 @@ public struct CapabilityFixturePlan: Sendable {
         marker: "validation-tag"
       )
     case "git.restore_worktree":
-      return committedRepository(
+      return repository(
         [
           "paths": .array([.string("README.md")]),
           "dry_run": .bool(false),
@@ -959,7 +952,7 @@ public struct CapabilityFixturePlan: Sendable {
         marker: "README.md"
       )
     case "git.add":
-      return committedRepository(
+      return repository(
         [
           "paths": .array([.string("untracked.txt")]),
           "dry_run": .bool(false),
@@ -967,7 +960,7 @@ public struct CapabilityFixturePlan: Sendable {
         marker: "untracked.txt"
       )
     case "git.stash_push":
-      return committedRepository(
+      return repository(
         [
           "message": .string("Validation mutation stash"),
           "paths": .array([.string("Sources/main.swift")]),
@@ -977,7 +970,7 @@ public struct CapabilityFixturePlan: Sendable {
         marker: "Validation mutation stash"
       )
     case "git.unstage":
-      return committedRepository(
+      return repository(
         [
           "paths": .array([
             .string("staged.txt"),
@@ -1179,35 +1172,6 @@ public struct CapabilityFixturePlan: Sendable {
     return invocation(
       arguments.merging(["project_id": .string(repositoryProjectID)]) { current, _ in current },
       marker: marker
-    )
-  }
-
-  private func committedRepository(
-    _ arguments: [String: JSONValue],
-    marker: String? = nil
-  ) -> CapabilityFixtureInvocation? {
-    guard let repositoryProjectID else {
-      return nil
-    }
-    return CapabilityFixtureInvocation(
-      arguments: arguments.merging(["project_id": .string(repositoryProjectID)]) {
-        current, _ in current
-      },
-      expectedMarker: marker,
-      execution: .committed
-    )
-  }
-
-  private func committedPrimary(
-    _ arguments: [String: JSONValue],
-    marker: String? = nil
-  ) -> CapabilityFixtureInvocation {
-    CapabilityFixtureInvocation(
-      arguments: arguments.merging(["project_id": .string(projectID)]) { current, _ in
-        current
-      },
-      expectedMarker: marker,
-      execution: .committed
     )
   }
 

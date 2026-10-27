@@ -11,8 +11,8 @@ services. Together they provide:
 
 - MCP Swift SDK server and client integration;
 - a private current-user Unix socket and stdio bridge;
-- registered projects and static capability profiles;
-- policy, single-use operation tickets, and redacted audit persistence;
+- registered projects and permission profiles;
+- permission requests, execution authority and redacted audit persistence;
 - bounded Builtin, Skill, CLI, Shell, process, downstream MCP, and Computer Use
   execution planes;
 - Codex execution through an independent standard MCP adapter plugin;
@@ -30,16 +30,16 @@ private socket. `computer-mcp bridge` is a transport adapter; it does not start
 a second gateway. Project bookmarks and secrets are App-managed state and do
 not belong in TOML.
 
-Tunnel profiles expose explicit capabilities only. Generic CLI execution,
-process spawning, and Full Shell remain off by default; only
-`chatgpt-operate` can receive them through an explicit local opt-in.
+Tool listings publish declared requirements; every call uses current permission
+authority. Full access needs separate local consent and grants no permissions.
+Shell remains disabled by default.
 
 ### Execution lifecycle
 
 The macOS composition root injects `ExecutionLauncher` into shell, registered
-process, CLI and host command runners. Full Shell authorization remains a gateway
-responsibility. Read-only and project-independent host command calls use a sandbox
-with private temporary storage as their only writable location.
+process, CLI and host command runners. Every principal launch requires an
+authorized prepared context; missing or unenforceable contexts are refused.
+Read helpers retain their semantic read restrictions in either principal mode.
 
 `GatewayTerminalSessions` outlives individual runtime generations and transport
 connections. Execution snapshots expose stable IDs, byte cursors, applied limits,
@@ -185,10 +185,13 @@ These operation checks apply within each tool's existing authorization policy.
 
 Capability descriptors declare path, project, privacy, execution and forwarding
 requirements using `ToolRequirement`. Catalog snapshots retain the declaration
-with the exact provider, and dispatch rejects changed descriptors. The live
-gateway continues to use its profile and confirmation evaluator. The optional
-`ResolvedToolInvocation` field in `InvocationContext` represents resolved
-conditions and typed plugin origins; live call paths currently leave it empty.
+with the exact provider, and dispatch rejects changed descriptors. Every call
+resolves these declarations into a `ResolvedToolInvocation` containing its exact
+identity, conditions and typed plugin origins. The gateway evaluates it with the
+permission library before dispatch and passes the admitted invocation to the provider.
+Tool listings include requirements; missing requestable permission returns
+`permission.required`. A local owner can answer the request, and the client must
+retry the same call with the returned request IDs.
 
 ## Permission library integration
 
@@ -201,8 +204,9 @@ authority, including the lifetime of connection-scoped consent.
 Execution records expose effective resource limits and termination reasons.
 Host-attributed path and network discoveries produce requests bound to the
 original call, carrying earlier one-time answers through subsequent retries.
-These library contracts are not yet used by the production gateway evaluator or
-process adapters.
+The gateway persists admission before preparing an execution context. Process
+adapters require an installed context and refuse unsupported execution modes.
+Full access consent selects a mode; Project and privacy permissions still apply.
 
 ### Durable permission ledger
 
@@ -218,4 +222,5 @@ permissions, consent and execution access are discarded; standing authority awai
 owner confirmation against the displayed epoch and revision. A durable recovery
 handoff requires the runtime to stop work from every other epoch before admission
 resumes. Darwin supplies the counter through Keychain; unsupported platforms fail
-explicitly. These APIs do not change the live gateway's authorization path.
+explicitly. The gateway uses this store for permission admission, request answers,
+profile publication and execution revocation.

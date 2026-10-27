@@ -11,11 +11,25 @@ import Testing
       "(allow process-info* (target same-sandbox))", "(allow signal (target same-sandbox))",
       "(allow sysctl-read (sysctl-name \"hw.ncpu\"))",
       "(allow file-write-data (literal \"/dev/null\"))",
+      "(allow file-read* (literal \"/dev/null\"))",
     ] {
       #expect(profile.contains(rule))
     }
     #expect(!profile.contains("network-"))
     #expect(!profile.contains("mach-lookup"))
+  }
+
+  @Test func nullDevicePlumbingRespectsExplicitReadExclusions() throws {
+    let root = try SandboxPath("/test")
+    let profile = SeatbeltProfile.generate(
+      try SandboxConfiguration(
+        worktree: root, temporaryDirectory: root, homeDirectory: root, cacheDirectory: root,
+        readableRoots: [root], forbiddenReads: [.init("/dev/null")]))
+    #expect(
+      profile.contains(
+        "(allow file-read* (require-all (literal \"/dev/null\") (require-not (subpath \"/dev/null\"))))"
+      ))
+    #expect(!profile.contains("(allow file-read* (subpath \"/dev\"))"))
   }
 
   @Test func pathEscapingAndReadExceptions() throws {

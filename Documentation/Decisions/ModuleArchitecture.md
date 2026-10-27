@@ -72,7 +72,7 @@ Dependencies inside a layer are limited to these:
   grants approved locally.
 - `ComputerUse`: the native Accessibility provider; macOS only, registered by
   the composition root.
-- `Gateway`: runtime and routing, admission, approvals and operation tickets,
+- `Gateway`: runtime and routing, permission admission and requests,
   receipts, continuations, host services, the HTTP server adapter, owned work
   and audit.
 - `ControlPlane`: App and CLI administration, remote management, client control,
@@ -127,7 +127,6 @@ above them and supplied by the composition root:
 | `OpenAITunnelHTTPProxyResolving` | `Tunnels` | system proxy lookup in tunnel supervision; `PlatformDarwin` reads system settings and `MacOS` supplies the conformance that parses them in `Tunnels` |
 | `AuditErrorClassifying` | `Core` | concrete Computer Use error checks in gateway runtime audit classification; errors supply an optional audit decision and code |
 | `ControlErrorClassifying` | `Gateway` | concrete control-plane error checks in control responses; errors supply an optional audit decision and code |
-| `GatewayControlError` | `Gateway` | the HTTP Full Shell approval precondition, with localized messages and the existing audit and control-response defaults |
 | `GatewayManagementProvider` | `Gateway` | control-plane management definitions, read capabilities, name lookup and asynchronous dispatch; `PlatformServices` reserves contract names independently of provider availability |
 | `GatewayClientControlProvider` | `Gateway` | control-plane client-control contracts, argument validation and HTTP generation dispatch |
 | `SecretStore` | `Platform` | `KeychainSecretStore` in configuration, tunnels, gateway and control plane |

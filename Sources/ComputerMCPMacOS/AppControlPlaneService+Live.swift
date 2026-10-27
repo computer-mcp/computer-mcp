@@ -1,6 +1,7 @@
 import ComputerMCPComputerUse
 import ComputerMCPConfiguration
 import ComputerMCPControlPlane
+import ComputerMCPCore
 import ComputerMCPGateway
 import ComputerMCPPersistence
 import ComputerMCPPlatformDarwin
@@ -20,7 +21,25 @@ extension AppControlPlaneService {
     let database = try GatewayDatabase(path: resolvedDirectories.database.path)
     try resolvedDirectories.secureDatabaseFiles()
     let bundledPlugins = BundledPlugins.current
-    let platform = MacOSPlatform.services
+    var platform = MacOSPlatform.services
+    platform.hostDataPaths.formUnion(resolvedDirectories.hostDataPaths)
+    let counter = try KeychainAuthorizationEpochCounter(
+      keychain: SecurityKeychainAdapter(accessGroup: keychainAccessGroup),
+      lockDirectory: resolvedDirectories.runtime,
+      service: keychainService + ".permissions", account: "authorization-epoch")
+    try database.claimPermissionComposition(.app)
+    _ = database.permissionStore(counter: counter)
+    _ = try AtomicManifestStore.activatePermissionMigration(
+      manifestURL: resolvedDirectories.manifest, database: database,
+      applications: platform.applications, bundledPlugins: bundledPlugins)
+    let permissions = try MacOSPermissionServices(
+      database: database, counter: counter, platform: platform,
+      owner: {
+        try GatewayPermissionOwner(
+          context: ExecutionContext(
+            caller: .localApp, profileID: .localAdmin, trustedPrincipalID: "local-app"),
+          validate: {})
+      })
     let manifestStore = try AtomicManifestStore(
       manifestURL: resolvedDirectories.manifest,
       database: database,
@@ -39,9 +58,17 @@ extension AppControlPlaneService {
     if !FileManager.default.fileExists(atPath: resolvedDirectories.manifest.path) {
       _ = try manifestStore.activate(manifest: defaultManifest)
     }
+    let configuration = try manifestStore.activeConfiguration()
+    let profileIDs = Set(GatewayProfileID.builtIns + configuration.profiles.map(\.id))
+    let initialProfiles = profileIDs.sorted { $0.rawValue < $1.rawValue }
+      .map { configuration.profileGrant(for: $0) }
+    try database.bootstrapPermissionProfiles(
+      initialProfiles,
+      declarations: configuration.profiles.map(\.grant))
     return AppControlPlaneService(
       directories: resolvedDirectories,
       database: database,
+      permissionControl: permissions.control,
       manifestStore: manifestStore,
       defaultManifest: defaultManifest,
       secretStore: secretStore,

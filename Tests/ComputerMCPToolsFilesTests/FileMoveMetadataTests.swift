@@ -41,10 +41,13 @@ struct FileMoveMetadataTests {
           try #require(setxattr(source.path, key, bytes.baseAddress, bytes.count, 0, 0) == 0)
         }
       }
-      let permission = try tools.commandRunner.run(
-        executable: testExecutable("chmod"),
-        arguments: ["+a", "everyone allow read,readattr,readextattr,readsecurity", source.path],
-        workingDirectory: root, environment: [:], timeoutMilliseconds: 10_000, maxOutputBytes: 4096)
+      let permission = try withFileCommandAdministration {
+        try tools.commandRunner.run(
+          executable: testExecutable("chmod"),
+          arguments: ["+a", "everyone allow read,readattr,readextattr,readsecurity", source.path],
+          workingDirectory: root, environment: [:], timeoutMilliseconds: 10_000,
+          maxOutputBytes: 4096)
+      }
       try #require(permission.exitCode == 0)
       let fd = open(source.path, O_RDWR | O_NOFOLLOW)
       try #require(fd >= 0)
@@ -64,7 +67,7 @@ struct FileMoveMetadataTests {
       let originalACL = try acl(source)
       var original = stat()
       try #require(lstat(source.path, &original) == 0)
-      _ = try FilesToolProvider(environment: tools).callTool(
+      _ = try FilesToolProvider(environment: tools).callToolAsFixtureOwner(
         .init(
           name: tool,
           arguments: .object(["source": .string(source.path), "destination": .string(target.path)]),
@@ -156,7 +159,7 @@ struct FileMoveMetadataTests {
               existing ? "target" : "missing/parent/target")
             if existing { try Data("destination".utf8).write(to: target) }
             let error = #expect(throws: (any Error).self) {
-              _ = try provider.callTool(
+              _ = try provider.callToolAsFixtureOwner(
                 .init(
                   name: "file.move",
                   arguments: .object([
@@ -184,7 +187,7 @@ struct FileMoveMetadataTests {
       try Data("original".utf8).write(to: source)
       try Data("destination".utf8).write(to: sentinel)
       let error = #expect(throws: (any Error).self) {
-        _ = try provider.callTool(
+        _ = try provider.callToolAsFixtureOwner(
           .init(
             name: "file.move",
             arguments: .object([
@@ -201,7 +204,7 @@ struct FileMoveMetadataTests {
           setxattr(source.path, "com.apple.ResourceFork", $0.baseAddress, $0.count, 0, 0) == 0)
       }
       let copied = destination.appendingPathComponent("copied")
-      _ = try provider.callTool(
+      _ = try provider.callToolAsFixtureOwner(
         .init(
           name: "file.copy",
           arguments: .object([

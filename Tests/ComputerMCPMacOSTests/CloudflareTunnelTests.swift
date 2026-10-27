@@ -1,4 +1,5 @@
 import ComputerMCPMacOS
+import ComputerMCPPermissions
 import ComputerMCPTestSupport
 import ComputerMCPTunnels
 import Darwin
@@ -90,10 +91,12 @@ final class CloudflareTunnelTests {
   }
 
   @Test(arguments: [false, true])
-  func pendingOriginDiscoveryRejectsReplacementAndJoinsStopOrConfigurationChange(stop: Bool)
+  func pendingOriginPreparationRejectsReplacementAndJoinsStopOrConfigurationChange(stop: Bool)
     async throws
   {
-    let fixture = try CloudflareControlPlaneFixture()
+    let gate = CloudflareProjectResolutionGate()
+    defer { gate.release() }
+    let fixture = try CloudflareControlPlaneFixture(projectBookmarks: gate)
     defer { fixture.cleanup() }
     let controlPlane = fixture.controlPlane
     let gatewayService = fixture.gatewayService
@@ -107,8 +110,8 @@ final class CloudflareTunnelTests {
       accessTokenReference: try SecretReference(account: "cloudflare.pending.access-token"))
     _ = try await controlPlane.saveCloudflareTunnelConfiguration(
       profile, tunnelToken: "fixture-token")
-    let script = root.appendingPathComponent("gated-mcp.py")
-    try Data(Self.gatedMCPScript.utf8).write(to: script)
+    let script = root.appendingPathComponent("unadmitted-mcp.py")
+    try Data(Self.unadmittedMCPScript.utf8).write(to: script)
     var configuration = try await controlPlane.activeConfiguration()
     configuration.mcp.servers = [
       .init(
@@ -119,26 +122,26 @@ final class CloudflareTunnelTests {
     configuration.profiles.removeAll { $0.id == .cloudflareObserve }
     configuration.profiles.append(
       .init(
-        id: .cloudflareObserve, capabilities: ["project.list", "fixture.inspect"],
-        projects: ["fixture"], allowedCallers: [.cloudflareTunnel], mcpServers: ["fixture"]))
+        id: .cloudflareObserve,
+        permissions: fixturePermissions([
+          .project("fixture"): .granted(.read), .mcpServer("fixture"): .granted(.all),
+        ]), allowedCallers: [.cloudflareTunnel]))
     _ = try await controlPlane.activateManifest(
       configuration.exportedTOML(), expectedDigest: try? await controlPlane.configurationDigest())
     try fixture.database.saveProject(
       RegisteredProject(id: "fixture", displayName: "Fixture", rootPath: root.path))
+    gate.arm()
     let pending = Task {
       try await controlPlane.startCloudflareTunnel(
         profileID: profile.id, gatewayService: gatewayService)
     }
-    let release = root.appendingPathComponent("release")
     do {
       let deadline = ContinuousClock.now.advanced(by: .seconds(5))
-      while !FileManager.default.fileExists(atPath: root.appendingPathComponent("waiting").path),
-        ContinuousClock.now < deadline
-      {
+      while !gate.entered, ContinuousClock.now < deadline {
         try await Task.sleep(for: .milliseconds(10))
       }
-      try #require(
-        FileManager.default.fileExists(atPath: root.appendingPathComponent("waiting").path))
+      try #require(gate.entered)
+      #expect(!FileManager.default.fileExists(atPath: root.appendingPathComponent("pid").path))
       #expect(await controlPlane.cloudflareTunnelStatuses().first?.state == .starting)
       await #expect(throws: CloudflareTunnelError.alreadyRunning(profile.id)) {
         _ = try await controlPlane.startCloudflareTunnel(
@@ -153,7 +156,7 @@ final class CloudflareTunnelTests {
           await Task.yield()
         }
         #expect(await controlPlane.cloudflareTunnelStatuses().first?.state == .stopping)
-        try Data().write(to: release)
+        gate.release()
         #expect(try await first.value.state == .stopped)
         #expect(try await second.value.state == .stopped)
       } else {
@@ -162,7 +165,7 @@ final class CloudflareTunnelTests {
           configuration.exportedTOML(),
           expectedDigest: try? await controlPlane.configurationDigest()
         )
-        try Data().write(to: release)
+        gate.release()
       }
       switch await pending.result {
       case .success: Issue.record("Obsolete origin startup must not launch cloudflared")
@@ -183,35 +186,22 @@ final class CloudflareTunnelTests {
         !FileManager.default.fileExists(
           atPath: fixture.directories.logs.appendingPathComponent("cloudflare-pending.stdout.log")
             .path))
-      let pidText = try String(contentsOf: root.appendingPathComponent("pid"), encoding: .utf8)
-      let pid = try #require(Int32(pidText))
-      #expect(kill(pid, 0) == -1 && errno == ESRCH)
+      #expect(gate.opened > 0 && gate.opened == gate.closed)
+      #expect(!FileManager.default.fileExists(atPath: root.appendingPathComponent("pid").path))
     } catch {
       pending.cancel()
-      try? Data().write(to: release)
+      gate.release()
       _ = await pending.result
       _ = try? await controlPlane.stopCloudflareTunnel(profileID: profile.id)
       throw error
     }
   }
 
-  private static let gatedMCPScript = #"""
-    import json, os, pathlib, sys, time
+  private static let unadmittedMCPScript = #"""
+    import os, pathlib, sys
     root = pathlib.Path(sys.argv[1])
     (root / "pid").write_text(str(os.getpid()))
-    for line in sys.stdin:
-        request = json.loads(line)
-        if request.get("method") == "initialize":
-            result = {"protocolVersion":"2025-11-25", "capabilities":{"tools":{}}, "serverInfo":{"name":"gated", "version":"1"}}
-        elif request.get("method") == "tools/list":
-            (root / "waiting").touch()
-            deadline = time.monotonic() + 3
-            while not (root / "release").exists() and time.monotonic() < deadline:
-                time.sleep(0.01)
-            result = {"tools":[{"name":"inspect", "inputSchema":{"type":"object"}}]}
-        else:
-            continue
-        print(json.dumps({"jsonrpc":"2.0", "id":request["id"], "result":result}), flush=True)
+    raise RuntimeError("This registration has no execution admission")
     """#
 
   @Test
@@ -260,8 +250,13 @@ final class CloudflareTunnelTests {
     defer { fixture.cleanup() }
     let project = try await fixture.controlPlane.registerProject(
       at: fixture.temporaryDirectory.url, displayName: "Fixture")
-    _ = try await fixture.controlPlane.setProjectEnabled(
-      true, projectID: project.id, profileID: .cloudflareObserve)
+    let permissionReview = try await fixture.controlPlane.permissionRequests()
+    let profileReview = try #require(
+      permissionReview.profiles.first { $0.id == .cloudflareObserve })
+    _ = try await fixture.controlPlane.setProjectAccess(
+      .read, projectID: project.id, profileID: .cloudflareObserve,
+      expectedProfileRevision: profileReview.authorizationRevision,
+      expectedPermissionRevision: permissionReview.revision)
     let ports = try availableLoopbackPorts(count: 2)
     let executable = try fixture.makeFakeCloudflared()
     let tokenReference = try SecretReference(account: "cloudflare.primary.tunnel-token")
@@ -340,7 +335,7 @@ final class CloudflareTunnelTests {
       await #expect(throws: (any Error).self) { try await client.listToolNames() }
       let renewedClient = try await GatewayClientSession.connectHTTP(
         endpoint: try #require(URL(string: "http://127.0.0.1:\(ports[0])/mcp")),
-        accessToken: try #require(replacement.generatedAccessToken))
+        accessToken: replacement.generatedAccessToken)
       _ = try await renewedClient.call(toolName: "project.list", arguments: .object([:]))
       let reverified = try await fixture.controlPlane.readinessSnapshot(
         journey: .cloudflare,
@@ -784,6 +779,48 @@ private final class OccupiedLoopbackPort {
   }
 }
 
+private final class CloudflareProjectResolutionGate: ProjectBookmarkServicing, @unchecked Sendable {
+  private let base = ProjectBookmarkService()
+  private let condition = NSCondition()
+  private var armed = false
+  private var isEntered = false
+  private var isReleased = false
+  private var openedCount = 0
+  private var closedCount = 0
+
+  var entered: Bool { condition.withLock { isEntered } }
+  var opened: Int { condition.withLock { openedCount } }
+  var closed: Int { condition.withLock { closedCount } }
+  func arm() { condition.withLock { armed = true } }
+  func release() {
+    condition.withLock {
+      isReleased = true
+      condition.broadcast()
+    }
+  }
+  func registerFolder(at url: URL, displayName: String?) throws -> ComputerMCPCore.RegisteredProject
+  {
+    try base.registerFolder(at: url, displayName: displayName)
+  }
+  func resolve(_ project: ComputerMCPCore.RegisteredProject) throws -> ResolvedProjectAccess {
+    condition.lock()
+    if armed && !isEntered {
+      isEntered = true
+      while !isReleased { condition.wait() }
+    }
+    condition.unlock()
+    let access = try base.resolve(project)
+    condition.withLock { openedCount += 1 }
+    return try ResolvedProjectAccess(
+      project: access.project, rootURL: access.rootURL,
+      bookmarkWasRefreshed: access.bookmarkWasRefreshed,
+      stopAccessing: {
+        access.close()
+        self.condition.withLock { self.closedCount += 1 }
+      })
+  }
+}
+
 private final class CloudflareControlPlaneFixture {
   let temporaryDirectory: ScopedTemporaryDirectory
   let directories: AppControlPlaneServiceDirectories
@@ -791,20 +828,30 @@ private final class CloudflareControlPlaneFixture {
   let controlPlane: AppControlPlaneService
   let gatewayService: AppGatewayService
 
-  init() throws {
+  init(projectBookmarks: (any ProjectBookmarkServicing)? = nil) throws {
     temporaryDirectory = try ScopedTemporaryDirectory()
     directories = AppControlPlaneServiceDirectories(
       applicationSupport: temporaryDirectory.url.appendingPathComponent("Application Support"),
       logs: temporaryDirectory.url.appendingPathComponent("Logs")
     )
     try directories.prepare()
-    database = try GatewayDatabase(path: directories.database.path)
+    database = try fixturePermissionDatabase(path: directories.database.path)
+    let native = MacOSPlatform.services(launcher: testExecutionLauncher())
+    let platform = PlatformServices(
+      launcher: native.launcher, projectGrants: projectBookmarks ?? native.projectGrants,
+      pluginDirectories: native.pluginDirectories, applications: native.applications,
+      toolProviders: native.toolProviders, managementToolNames: native.managementToolNames,
+      executableSearchDirectories: native.executableSearchDirectories,
+      gitExecutable: native.gitExecutable, fileChanges: native.fileChanges,
+      permissionPolicyReader: TestManagedPolicyReader(), executionProxy: native.executionProxy,
+      hostDataPaths: native.hostDataPaths)
+    let permissionControl = try fixturePermissionControl(database: database, platform: platform)
     let manifestStore = try AtomicManifestStore(
       manifestURL: directories.manifest,
       database: database,
       loader: GatewayManifestConfigurationLoader(
         database: database,
-        applications: MacOSPlatform.services(launcher: testExecutionLauncher()).applications))
+        applications: platform.applications))
     _ = try manifestStore.activate(manifest: DefaultGatewayConfiguration.manifest)
     let secretStore = try KeychainSecretStore(
       service: "com.showxu.computer-mcp.cloudflare-tests",
@@ -824,13 +871,14 @@ private final class CloudflareControlPlaneFixture {
     controlPlane = AppControlPlaneService(
       directories: directories,
       database: database,
+      permissionControl: permissionControl,
       manifestStore: manifestStore,
       defaultManifest: DefaultGatewayConfiguration.manifest,
       secretStore: secretStore,
       openAITunnelSupervisor: openAITunnelSupervisor,
       launchAtLoginController: SMAppServiceLaunchAtLoginController(),
       computerUsePermissionReader: FixedComputerUsePermissionReader(),
-      platform: MacOSPlatform.services(launcher: testExecutionLauncher())
+      platform: platform
     )
     gatewayService = AppGatewayService(
       controlPlane: controlPlane,

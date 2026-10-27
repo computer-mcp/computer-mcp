@@ -1,5 +1,6 @@
 import ComputerMCPDownstream
 import ComputerMCPMacOS
+import ComputerMCPPermissions
 import ComputerMCPPersistence
 import ComputerMCPTestSupport
 import CryptoKit
@@ -18,51 +19,59 @@ import Testing
   import ComputerMCPDarwinTestSupport
 #endif
 
-@Suite(.nativeIntegration, .serialized, .timeLimit(.minutes(1)))
+@Suite(.nativeIntegration, .serialized)
 struct MCPBoundHostServicesTests {
-  @Test func hostMutationCommitRejectsRevokedPersistentClientTrust() async throws {
+  @Test(.timeLimit(.minutes(1))) func hostMutationCommitRejectsRevokedPersistentClientTrust()
+    async throws
+  {
     let fixture = try HostAuthorityFixture()
     defer { fixture.remove() }
-    let session = GatewayControlSession(
-      principalID: "fixture-principal",
-      profileID: .chatGPTOperate, caller: .secureTunnel, database: fixture.database)
+    let published = try await fixture.runtime.callToolAsync(
+      name: "project.list", arguments: nil, context: .empty)
+    try #require(published.objectValue?["isError"] == .bool(false))
+    let session = try fixture.session(consent: false)
     let snapshot = try session.approveFullAccess(
       lifetime: .alwaysAllowClient,
       expectedRevision: session.snapshot.revision)
     let consent = try #require(snapshot.fullAccessConsent)
-    let directory = try #require(fixture.peer.context?.tools)
+    let directory = try #require(fixture.peer.context(for: "scope")?.tools)
     _ = try await fixture.during("fixture.audit", context: .init(session: session)) { _, context in
       let active = try #require(
         directory.active(projectID: "scope", origin: "probe").first {
           $0.id == context.admission?.hostInvocationID
         })
+      var initiallyAuthorized = false
+      var revoked = false
+      var committedAfterRevocation = false
       #expect(throws: (any Error).self) {
         try fixture.runtime.withHostMutation(active) { authority in
           #expect(authority.consent?.trustID == consent.trustID)
-          try fixture.database.withHostAuthority(authority) {}
+          try fixture.database.withHostAuthority(authority) { initiallyAuthorized = true }
           try fixture.database.revokeClientTrust(
             id: #require(consent.trustID),
             expectedRevision: #require(consent.trustRevision))
-          try fixture.database.withHostAuthority(authority) {
-            Issue.record("Revoked trust reached mutation")
-          }
+          revoked = true
+          try fixture.database.withHostAuthority(authority) { committedAfterRevocation = true }
         }
       }
+      #expect(initiallyAuthorized)
+      #expect(revoked)
+      #expect(!committedAfterRevocation)
       return .null
     }
     await fixture.close()
   }
 
-  @Test(arguments: [false, true], ["compatible", "revoked", "churn"])
-  func hostMutationRechecksProfileConflictOnce(hasSession: Bool, change: String) async throws {
+  @Test(.timeLimit(.minutes(1)), arguments: [false, true], ["increase", "revoked", "unchanged"])
+  func profileEditsInvalidateHostMutationAuthority(explicitSession: Bool, change: String)
+    async throws
+  {
     let fixture = try HostAuthorityFixture()
     defer { fixture.remove() }
-    let session = GatewayControlSession(
-      principalID: "fixture-principal", profileID: .chatGPTOperate,
-      caller: .secureTunnel, database: fixture.database)
-    let directory = try #require(fixture.peer.context?.tools)
+    let session = try fixture.session()
+    let directory = try #require(fixture.peer.context(for: "scope")?.tools)
     _ = try await fixture.during(
-      "fixture.audit", context: hasSession ? .init(session: session) : .empty
+      "fixture.audit", context: explicitSession ? .init(session: session) : .empty
     ) { _, context in
       let active = try #require(
         directory.active(projectID: "scope", origin: "probe").first {
@@ -70,43 +79,37 @@ struct MCPBoundHostServicesTests {
         })
       var attempts = 0
       var committed = false
-      do {
+      #expect(throws: (any Error).self) {
         try fixture.runtime.withHostMutation(active) { authority in
           attempts += 1
-          if attempts == 1 || change == "churn" {
-            var profile = try #require(fixture.database.profiles().first)
-            if change == "revoked" {
-              profile.capabilityIDs = []
-            } else {
-              profile.projectIDs.insert("concurrent-derived-project")
-            }
-            try fixture.database.saveProfile(profile)
+          var profile = try #require(fixture.database.profiles().first { $0.id == .chatGPTOperate })
+          if change == "revoked" {
+            profile.permissions = .init()
+          } else if change == "increase" {
+            try profile.permissions.set(.granted(.access), for: .machineInformation)
           }
+          try fixture.database.saveProfile(profile)
           try fixture.database.withHostAuthority(authority) { committed = true }
         }
-        #expect(change == "compatible")
-      } catch {
-        #expect(change != "compatible", "Unexpected mutation error: \(error)")
       }
-      #expect(attempts == (change == "revoked" ? 1 : 2))
-      #expect(committed == (change == "compatible"))
+      #expect(attempts == 1)
+      #expect(!committed)
       return .null
     }
     await fixture.close()
   }
 
   @Test(
+    .timeLimit(.minutes(1)),
     arguments: ["register", "authorize", "unregister"],
     ["capability", "session", "completed", "work-only"])
   func mutationRechecksAfterVerification(operation: String, change: String) async throws {
     let barrier = HostVerificationBarrier()
     let fixture = try HostAuthorityFixture(worktrees: true, verificationBarrier: barrier)
     defer { fixture.remove() }
-    let session = GatewayControlSession(
-      principalID: "fixture-principal",
-      profileID: .chatGPTOperate, caller: .secureTunnel)
+    let session = try fixture.session()
     let context = InvocationContext(session: session)
-    let directory = try #require(fixture.peer.context?.tools)
+    let directory = try #require(fixture.peer.context(for: "scope")?.tools)
     let provisioning = try fixture.worktreeReceipt()
     let provisionArgs: [String: JSONValue] = [
       "plan_id": provisioning["id"]!,
@@ -157,8 +160,8 @@ struct MCPBoundHostServicesTests {
       var retained: MCPHostToolDirectory.InvocationLease?
       switch change {
       case "capability":
-        var profile = try #require(fixture.database.profiles().first)
-        profile.capabilityIDs = []
+        var profile = try #require(fixture.database.profiles().first { $0.id == .chatGPTOperate })
+        profile.permissions = .init()
         try fixture.database.saveProfile(profile)
       case "session": session.end()
       case "work-only":
@@ -175,7 +178,7 @@ struct MCPBoundHostServicesTests {
     if operation == "register" {
       result = try await fixture.during("fixture.provision", provisionArgs, context: context, body)
     } else {
-      result = try await fixture.duringApproved(
+      result = try await fixture.duringInvocation(
         "fixture.remove",
         [
           "managed_worktree_id": provisioning["id"]!, "expected_revision": .integer(4),
@@ -190,7 +193,7 @@ struct MCPBoundHostServicesTests {
     await fixture.close()
   }
 
-  @Test(arguments: [false, true])
+  @Test(.timeLimit(.minutes(1)), arguments: [false, true])
   func idempotentRegistrationCannotAcquireEarlierRollbackOwnership(revoked: Bool) async throws {
     let fixture = try HostAuthorityFixture(worktrees: true)
     defer { fixture.remove() }
@@ -212,8 +215,8 @@ struct MCPBoundHostServicesTests {
         name: "host.workspaces.register", arguments: ["worktree": .object(receipt)])
       try #require(repeated.isError == false)
       if revoked {
-        var profile = try #require(fixture.database.profiles().first)
-        profile.capabilityIDs = []
+        var profile = try #require(fixture.database.profiles().first { $0.id == .chatGPTOperate })
+        profile.permissions = .init()
         try fixture.database.saveProfile(profile)
       }
       return try await .encoded(
@@ -226,7 +229,7 @@ struct MCPBoundHostServicesTests {
     await fixture.close()
   }
 
-  @Test func rollbackRequiresTheExactProvisioningRevision() async throws {
+  @Test(.timeLimit(.minutes(1))) func rollbackRequiresTheExactProvisioningRevision() async throws {
     let fixture = try HostAuthorityFixture(worktrees: true)
     defer { fixture.remove() }
     let receipt = try fixture.worktreeReceipt()
@@ -256,11 +259,11 @@ struct MCPBoundHostServicesTests {
     await fixture.close()
   }
 
-  @Test(arguments: ["principal", "profile", "caller"])
+  @Test(.timeLimit(.minutes(1)), arguments: ["principal", "profile", "caller"])
   func channelScopeCannotBorrowAnotherLiveRecord(field: String) async throws {
     let fixture = try HostAuthorityFixture()
     defer { fixture.remove() }
-    let captured = try #require(fixture.peer.context)
+    let captured = try #require(fixture.peer.context(for: "scope"))
     let foreign = MCPHostContext(
       runtimeID: captured.launchMetadata.runtimeID,
       context: .init(
@@ -282,10 +285,10 @@ struct MCPBoundHostServicesTests {
     await fixture.close()
   }
 
-  @Test func shutdownCompletesRetainedCallRecords() async throws {
+  @Test(.timeLimit(.minutes(1))) func shutdownCompletesRetainedCallRecords() async throws {
     let fixture = try HostAuthorityFixture()
     defer { fixture.remove() }
-    let directory = try #require(fixture.peer.context?.tools)
+    let directory = try #require(fixture.peer.context(for: "scope")?.tools)
     let retained = RetainedControlInvocation()
     _ = try await fixture.during("fixture.audit") { _, context in
       let id = try #require(context.admission?.hostInvocationID)
@@ -299,7 +302,7 @@ struct MCPBoundHostServicesTests {
     await retained.finish()
   }
 
-  @Test(arguments: [false, true], [false, true])
+  @Test(.timeLimit(.minutes(1)), arguments: [false, true], [false, true])
   func metadataOnlyRecoveryUsesANewExactLiveCall(pathExists: Bool, registered: Bool) async throws {
     let fixture = try HostAuthorityFixture(worktrees: true)
     defer { fixture.remove() }
@@ -328,7 +331,7 @@ struct MCPBoundHostServicesTests {
     receipt["revision"] = .integer(5)
     if !pathExists { try fixture.removeWorktree(at: receipt["path"]!.stringValue!) }
     let recovering = receipt
-    let result = try await fixture.duringApproved(
+    let result = try await fixture.duringInvocation(
       "fixture.remove",
       [
         "managed_worktree_id": receipt["id"]!, "expected_revision": .integer(5),
@@ -357,7 +360,9 @@ struct MCPBoundHostServicesTests {
     await fixture.close()
   }
 
-  @Test func unregisterRechecksAuthorityAfterRemovalWasAuthorized() async throws {
+  @Test(.timeLimit(.minutes(1))) func unregisterRechecksAuthorityAfterRemovalWasAuthorized()
+    async throws
+  {
     let fixture = try HostAuthorityFixture(worktrees: true)
     defer { fixture.remove() }
     let provisioning = try fixture.worktreeReceipt()
@@ -377,7 +382,7 @@ struct MCPBoundHostServicesTests {
     receipt["state"] = .string("removal_planned")
     receipt["revision"] = .integer(4)
     let planned = receipt
-    let result = try await fixture.duringApproved(
+    let result = try await fixture.duringInvocation(
       "fixture.remove",
       [
         "managed_worktree_id": receipt["id"]!, "expected_revision": .integer(4),
@@ -388,8 +393,8 @@ struct MCPBoundHostServicesTests {
         name: "host.workspaces.authorize_removal", arguments: ["worktree": .object(planned)])
       try #require(authorized.isError == false)
       try fixture.removeWorktree(at: planned["path"]!.stringValue!)
-      var grant = try #require(fixture.database.profiles().first)
-      grant.capabilityIDs = []
+      var grant = try #require(fixture.database.profiles().first { $0.id == .chatGPTOperate })
+      grant.permissions = .init()
       try fixture.database.saveProfile(grant)
       var removed = planned
       removed["state"] = .string("removing")
@@ -404,7 +409,9 @@ struct MCPBoundHostServicesTests {
     await fixture.close()
   }
 
-  @Test func exactProvisionRollbackKeepsItsNarrowRevocationException() async throws {
+  @Test(.timeLimit(.minutes(1))) func exactProvisionRollbackKeepsItsNarrowRevocationException()
+    async throws
+  {
     let fixture = try HostAuthorityFixture(worktrees: true)
     defer { fixture.remove() }
     let receipt = try fixture.worktreeReceipt()
@@ -418,9 +425,8 @@ struct MCPBoundHostServicesTests {
       let registered = try await service.call(
         name: "host.workspaces.register", arguments: ["worktree": .object(receipt)])
       try #require(registered.isError == false)
-      var grant = try #require(fixture.database.profiles().first)
-      grant.capabilityIDs = []
-      grant.projectIDs.remove("scope")
+      var grant = try #require(fixture.database.profiles().first { $0.id == .chatGPTOperate })
+      grant.permissions = .init()
       try fixture.database.saveProfile(grant)
       return try await .encoded(
         service.call(name: "host.workspaces.unregister", arguments: ["worktree": .object(receipt)]))
@@ -430,7 +436,9 @@ struct MCPBoundHostServicesTests {
     await fixture.close()
   }
 
-  @Test(arguments: ["unchanged", "principal", "project", "origin", "digest", "completed", "lease"])
+  @Test(
+    .timeLimit(.minutes(1)),
+    arguments: ["unchanged", "principal", "project", "origin", "digest", "completed", "lease"])
   func persistedCallTamperingCannotAuthorizeCallbacks(attack: String) async throws {
     let fixture = try HostAuthorityFixture()
     defer { fixture.remove() }
@@ -469,7 +477,7 @@ struct MCPBoundHostServicesTests {
     await fixture.close()
   }
 
-  @Test func durableBeginFailurePreventsProviderDispatch() async throws {
+  @Test(.timeLimit(.minutes(1))) func durableBeginFailurePreventsProviderDispatch() async throws {
     let fixture = try HostAuthorityFixture()
     defer { fixture.remove() }
     try await fixture.connection.writer.write { database in
@@ -487,11 +495,12 @@ struct MCPBoundHostServicesTests {
     await fixture.close()
   }
 
-  @Test func failedCompletionCannotRecreateLostLiveAuthority() async throws {
+  @Test(.timeLimit(.minutes(1))) func failedCompletionCannotRecreateLostLiveAuthority() async throws
+  {
     let fixture = try HostAuthorityFixture()
     defer { fixture.remove() }
     let retained = RetainedControlInvocation()
-    let directory = try #require(fixture.peer.context?.tools)
+    let directory = try #require(fixture.peer.context(for: "scope")?.tools)
     _ = try await fixture.during("fixture.audit") { _, context in
       let id = try #require(context.admission?.hostInvocationID)
       let lease = try directory.retainWork(id: id, projectID: "scope", origin: "probe")
@@ -518,13 +527,12 @@ struct MCPBoundHostServicesTests {
     await fixture.close()
   }
 
-  @Test
+  @Test(.timeLimit(.minutes(1)))
   func retainedInvocationRechecksItsControlSessionOutsideTheOriginalTask() async throws {
     let fixture = try HostAuthorityFixture(requiresControlSession: true)
     defer { fixture.remove() }
-    let session = GatewayControlSession(
-      principalID: "fixture-principal", profileID: .chatGPTOperate, caller: .secureTunnel)
-    let directory = try #require(fixture.peer.context?.tools)
+    let session = try fixture.session()
+    let directory = try #require(fixture.peer.context(for: "scope")?.tools)
     let retained = RetainedControlInvocation()
     do {
       _ = try await fixture.during(
@@ -542,7 +550,11 @@ struct MCPBoundHostServicesTests {
       _ = try await Task.detached {
         try fixture.runtime.requireHostInvocation(projectID: "scope", origin: "probe", id: id)
       }.value
-      try session.limitAccess(to: .readOnly, expectedRevision: 0)
+      try session.limitAccess(
+        to: .init(
+          permissionCeilings: fixturePermissions([
+            .project("*"): .granted(.read), .mcpServer("*"): .granted(.read),
+          ]), allowsFullAccess: false), expectedRevision: session.revision)
       await #expect(throws: (any Error).self) {
         try await Task.detached {
           try fixture.runtime.requireHostInvocation(projectID: "scope", origin: "probe", id: id)
@@ -575,20 +587,17 @@ struct MCPBoundHostServicesTests {
     }
   }
 
-  @Test(arguments: [true, false])
+  @Test(.timeLimit(.minutes(1)), arguments: [true, false])
   func genericCallbacksResolveCommonConsentAndRefuseMixedSessions(sameSession: Bool) async throws {
-    let fixture = try HostAuthorityFixture(requiresControlSession: true)
+    let fixture = try HostAuthorityFixture(requiresControlSession: true, multiplexed: true)
     defer { fixture.remove() }
-    let firstSession = GatewayControlSession(
-      principalID: "fixture-principal", profileID: .chatGPTOperate, caller: .secureTunnel)
+    let firstSession = try fixture.session()
     let secondSession =
       sameSession
       ? firstSession
-      : GatewayControlSession(
-        principalID: "fixture-principal", profileID: .chatGPTOperate, caller: .secureTunnel)
+      : try fixture.session()
     let entered = HostServicePairBarrier()
     let finished = HostServicePairBarrier()
-    fixture.peer.allowConcurrentDiscovery()
     fixture.peer.setHandler { _ in
       await entered.arrive()
       let result = try await fixture.runtime.callHostTool(
@@ -612,7 +621,7 @@ struct MCPBoundHostServicesTests {
     }
   }
 
-  @Test
+  @Test(.timeLimit(.minutes(1)))
   func vendorNeutralDiagnosticsUseTheAdmittedSemanticAction() async throws {
     let fixture = try HostAuthorityFixture()
     defer { fixture.remove() }
@@ -625,7 +634,7 @@ struct MCPBoundHostServicesTests {
     await fixture.close()
   }
 
-  @Test(arguments: ["fixture.read", "codex.diagnostics.snapshot"])
+  @Test(.timeLimit(.minutes(1)), arguments: ["fixture.read", "codex.diagnostics.snapshot"])
   func privateActionsRequireExplicitMetadata(method: String) async throws {
     let fixture = try HostAuthorityFixture()
     defer { fixture.remove() }
@@ -637,20 +646,16 @@ struct MCPBoundHostServicesTests {
     await fixture.close()
   }
 
-  @Test(arguments: [false, true])
+  @Test(.timeLimit(.minutes(1)), arguments: [false, true])
   func concurrentIdenticalActionsNeverSelectAnArbitraryInvocation(removal: Bool) async throws {
-    let fixture = try HostAuthorityFixture(worktrees: true)
+    let fixture = try HostAuthorityFixture(worktrees: true, multiplexed: true)
     defer { fixture.remove() }
-    var grant = try #require(fixture.database.profiles().first)
-    grant.confirmationPolicy = .never
-    try fixture.database.saveProfile(grant)
     var receipt = try fixture.worktreeReceipt()
     receipt["state"] = .string("removal_planned")
     receipt["revision"] = .integer(4)
     let sent = receipt
     let entered = HostServicePairBarrier()
     let finished = HostServicePairBarrier()
-    fixture.peer.allowConcurrentDiscovery()
     fixture.peer.setHandler { _ in
       await entered.arrive()
       let result = try await fixture.service.call(
@@ -678,10 +683,10 @@ struct MCPBoundHostServicesTests {
     await fixture.close()
   }
 
-  @Test func leaseCapacityDoesNotLoseAnExistingLiveCall() async throws {
+  @Test(.timeLimit(.minutes(1))) func leaseCapacityDoesNotLoseAnExistingLiveCall() async throws {
     let fixture = try HostAuthorityFixture()
     defer { fixture.remove() }
-    let directory = try #require(fixture.peer.context?.tools)
+    let directory = try #require(fixture.peer.context(for: "scope")?.tools)
     _ = try await fixture.during("fixture.audit") { _, context in
       let id = try #require(context.admission?.hostInvocationID)
       var leases: [MCPHostToolDirectory.InvocationLease] = []
@@ -700,7 +705,7 @@ struct MCPBoundHostServicesTests {
     await fixture.close()
   }
 
-  @Test
+  @Test(.timeLimit(.minutes(1)))
   func vendorNeutralProvisionRegistersItsExactReceipt() async throws {
     let fixture = try HostAuthorityFixture(worktrees: true)
     defer { fixture.remove() }
@@ -741,9 +746,11 @@ struct MCPBoundHostServicesTests {
     await fixture.close()
   }
 
-  @Test(arguments: ["codex-worktree-", "derived-workspace-"], [false, true])
-  func reviewedRemovalPreservesReceiptFormatsAndRoutes(prefix: String, generic: Bool) async throws {
-    let fixture = try HostAuthorityFixture(worktrees: true, nativeGit: true)
+  @Test(
+    .timeLimit(.minutes(1)), arguments: ["codex-worktree-", "derived-workspace-"], [false, true])
+  func consentedRemovalPreservesReceiptFormatsAndRoutes(prefix: String, generic: Bool) async throws
+  {
+    let fixture = try HostAuthorityFixture(worktrees: true)
     defer { fixture.remove() }
     var receipt = try fixture.worktreeReceipt()
     receipt["workspace_id"] = .string(prefix + receipt["id"]!.stringValue!)
@@ -763,7 +770,7 @@ struct MCPBoundHostServicesTests {
     receipt["state"] = .string("removal_planned")
     receipt["revision"] = .integer(4)
     let planned = receipt
-    let result = try await fixture.duringApproved(
+    let result = try await fixture.duringInvocation(
       "fixture.remove",
       [
         "managed_worktree_id": receipt["id"]!, "expected_revision": .integer(4),
@@ -775,18 +782,8 @@ struct MCPBoundHostServicesTests {
       #expect(call.admission.action == .projectRemoval)
       #expect(
         call.admission.upstreamName == (generic ? "mcp.tools.call" : "adapter.fixture.remove"))
-      // The outer gate has already admitted this call. Its live proof must not
-      // depend on the approval row remaining present during provider callbacks.
-      let tickets = try await fixture.connection.writer.write { database in
-        let rows = try OperationTicketRecord.fetchAll(database)
-        try database.execute(sql: "DELETE FROM operationTickets")
-        return rows
-      }
-      defer {
-        try? fixture.connection.writer.write { database in
-          for ticket in tickets { try ticket.insert(database) }
-        }
-      }
+      #expect(call.admission.authorizationID != nil)
+      #expect(!call.requestLeaseIDs.isEmpty)
       let authorized = try await service.call(
         name: "host.workspaces.authorize_removal", arguments: ["worktree": .object(planned)])
       try #require(authorized.isError == false)
@@ -806,7 +803,9 @@ struct MCPBoundHostServicesTests {
     await fixture.close()
   }
 
-  @Test(arguments: ["wrong-action", "wrong-id", "wrong-revision", "not-confirmed", "revoked"])
+  @Test(
+    .timeLimit(.minutes(1)),
+    arguments: ["wrong-action", "wrong-id", "wrong-revision", "not-confirmed", "revoked"])
   func genericProvisionCannotBroadenAdmittedArgumentsOrCurrentAuthority(attack: String) async throws
   {
     let fixture = try HostAuthorityFixture(worktrees: true)
@@ -822,8 +821,8 @@ struct MCPBoundHostServicesTests {
       attack == "wrong-action" ? "fixture.audit" : "fixture.provision", arguments
     ) { service, _ in
       if attack == "revoked" {
-        var grant = try #require(fixture.database.profiles().first)
-        grant.projectIDs = []
+        var grant = try #require(fixture.database.profiles().first { $0.id == .chatGPTOperate })
+        try grant.permissions.set(.denied, for: .project("scope"))
         try fixture.database.saveProfile(grant)
       }
       return try await .encoded(
@@ -834,7 +833,7 @@ struct MCPBoundHostServicesTests {
     await fixture.close()
   }
 
-  @Test
+  @Test(.timeLimit(.minutes(1)))
   func genericHostCallbackRequiresProjectWhenSelectionIsAmbiguous() async throws {
     let fixture = try HostAuthorityFixture(additionalProject: true)
     defer { fixture.remove() }
@@ -851,7 +850,7 @@ struct MCPBoundHostServicesTests {
     await fixture.close()
   }
 
-  @Test(arguments: [false, true])
+  @Test(.timeLimit(.minutes(1)), arguments: [false, true])
   func genericDiagnosticsBindTheHostProject(explicitProject: Bool) async throws {
     let fixture = try HostAuthorityFixture()
     defer { fixture.remove() }
@@ -862,7 +861,9 @@ struct MCPBoundHostServicesTests {
     await fixture.close()
   }
 
-  @Test(arguments: ["no-invocation", "wrong-method", "extra-owner", "caller-time"])
+  @Test(
+    .timeLimit(.minutes(1)),
+    arguments: ["no-invocation", "wrong-method", "extra-owner", "caller-time"])
   func diagnosticCallbacksRequireAnExactLiveInvocation(attack: String) async throws {
     let fixture = try HostAuthorityFixture()
     defer { fixture.remove() }
@@ -885,7 +886,7 @@ struct MCPBoundHostServicesTests {
     await fixture.close()
   }
 
-  @Test
+  @Test(.timeLimit(.minutes(1)))
   func invocationEndsOnBothSuccessAndError() async throws {
     let fixture = try HostAuthorityFixture()
     defer { fixture.remove() }
@@ -905,7 +906,7 @@ struct MCPBoundHostServicesTests {
     await fixture.close()
   }
 
-  @Test
+  @Test(.timeLimit(.minutes(1)))
   func privateServiceSurfaceIsNotExposedUpstream() async throws {
     let fixture = try HostAuthorityFixture()
     defer { fixture.remove() }
@@ -925,7 +926,7 @@ struct MCPBoundHostServicesTests {
     }
   }
 
-  @Test
+  @Test(.timeLimit(.minutes(1)))
   func genericInvocationContextIsHostBoundAndExpiresWithTheCall() async throws {
     let fixture = try HostAuthorityFixture()
     defer { fixture.remove() }
@@ -948,7 +949,9 @@ struct MCPBoundHostServicesTests {
     #expect(value["authorization_revision"]?.intValue != nil)
     #expect(
       value["generation_id"]
-        == fixture.peer.context.map { .string($0.launchMetadata.runtimeID.uuidString) })
+        == fixture.peer.context(for: "scope").map {
+          .string($0.launchMetadata.runtimeID.uuidString)
+        })
     #expect(value["plugin_id"] == .null)
     #expect(value["contribution_id"] == .null)
     let id = try #require(value["invocation_id"])
@@ -959,7 +962,8 @@ struct MCPBoundHostServicesTests {
     await fixture.close()
   }
 
-  @Test(arguments: ["foreign-channel", "forged-id", "forged-owner", "revoked"])
+  @Test(
+    .timeLimit(.minutes(1)), arguments: ["foreign-channel", "forged-id", "forged-owner", "revoked"])
   func genericInvocationContextRejectsForeignOrRevokedAuthority(attack: String) async throws {
     let fixture = try HostAuthorityFixture()
     let other = try HostAuthorityFixture()
@@ -973,8 +977,8 @@ struct MCPBoundHostServicesTests {
       if attack == "forged-id" { arguments["invocation_id"] = .string(UUID().uuidString) }
       if attack == "forged-owner" { arguments["principal_id"] = .string("other") }
       if attack == "revoked" {
-        var profile = try #require(fixture.database.profiles().first)
-        profile.capabilityIDs = []
+        var profile = try #require(fixture.database.profiles().first { $0.id == .chatGPTOperate })
+        profile.permissions = .init()
         try fixture.database.saveProfile(profile)
       }
       return try await .encoded(
@@ -986,31 +990,48 @@ struct MCPBoundHostServicesTests {
     await other.close()
   }
 
-  @Test
+  @Test(.timeLimit(.minutes(5)))
   func completedProvisionInvocationsDoNotExhaustTheConnection() async throws {
-    let fixture = try HostAuthorityFixture(worktrees: true)
+    let fixture = try HostAuthorityFixture(worktrees: true, worktreeStorage: .application)
     defer { fixture.remove() }
-    for index in 0..<129 {
-      let receipt = try fixture.worktreeReceipt()
-      let result = try await fixture.during(
-        "fixture.provision",
-        [
-          "plan_id": receipt["id"]!, "expected_revision": .number(1),
-          "confirm_provision": .bool(true),
-        ]
-      ) { service, _ in
-        try await .encoded(
-          service.call(name: "host.workspaces.register", arguments: ["worktree": .object(receipt)]))
+    let started = ContinuousClock.now
+    var completed = 0
+    defer { #expect(completed == 129) }
+    var checkpoints: [String] = []
+    do {
+      for index in 0..<129 {
+        let receipt = try fixture.worktreeReceipt()
+        let result = try await fixture.during(
+          "fixture.provision",
+          [
+            "plan_id": receipt["id"]!, "expected_revision": .number(1),
+            "confirm_provision": .bool(true),
+          ]
+        ) { service, _ in
+          try await .encoded(
+            service.call(
+              name: "host.workspaces.register", arguments: ["worktree": .object(receipt)]))
+        }
+        try #require(
+          result.objectValue?["isError"] == .bool(false), "Provision \(index + 1): \(result)")
+        let projectID = try #require(receipt["workspace_id"]?.stringValue)
+        #expect(try fixture.database.derivedProjectRegistration(id: projectID) != nil)
+        completed += 1
+        if [1, 32, 64, 96, 128, 129].contains(completed) {
+          checkpoints.append("\(completed): \(started.duration(to: .now))")
+        }
       }
-      try #require(
-        result.objectValue?["isError"] == .bool(false), "Provision \(index + 1): \(result)")
-      let projectID = try #require(receipt["workspace_id"]?.stringValue)
-      #expect(try fixture.database.derivedProjectRegistration(id: projectID) != nil)
+    } catch {
+      Issue.record(
+        "Provision capacity failed after \(completed)/129 registrations in \(started.duration(to: .now)); checkpoints: \(checkpoints.joined(separator: ", ")); \(error)"
+      )
+      await fixture.close()
+      throw error
     }
     await fixture.close()
   }
 
-  @Test(arguments: [false, true])
+  @Test(.timeLimit(.minutes(1)), arguments: [false, true])
   func registrationRollbackRequiresItsOriginalLiveInvocation(laterInvocation: Bool) async throws {
     let fixture = try HostAuthorityFixture(worktrees: true)
     defer { fixture.remove() }
@@ -1041,7 +1062,7 @@ struct MCPBoundHostServicesTests {
     await fixture.close()
   }
 
-  @Test(arguments: ["missing", "other-principal"])
+  @Test(.timeLimit(.minutes(1)), arguments: ["missing", "other-principal"])
   func derivedReceiptMustBelongToTheVerifiedPrincipal(principal: String) async throws {
     let fixture = try HostAuthorityFixture(worktrees: true)
     defer { fixture.remove() }
@@ -1066,7 +1087,7 @@ struct MCPBoundHostServicesTests {
     await fixture.close()
   }
 
-  @Test
+  @Test(.timeLimit(.minutes(1)))
   func receiptCallerIsProvenanceRatherThanResourceOwnership() async throws {
     let fixture = try HostAuthorityFixture(worktrees: true)
     defer { fixture.remove() }
@@ -1093,8 +1114,6 @@ struct MCPBoundHostServicesTests {
 
 }
 
-/// Explicit protocol peer substitute for negative host authorization tests.
-/// The separate opt-in integration suite uses the real compiled adapter.
 private actor HostServicePairBarrier {
   private var waiter: CheckedContinuation<Void, Never>?
   func arrive() async {
@@ -1108,20 +1127,28 @@ private actor HostServicePairBarrier {
 }
 
 private final class HostAuthorityFixture: @unchecked Sendable {
+  enum WorktreeStorage { case project, application }
+
   let root: URL
   let connection: GatewayDatabaseConnection
   let database: GatewayDatabase
   let runtime: GatewayRuntime
   let service: MCPBoundHostServices
-  let peer = HostServiceProbe()
-  private let nativeGit: Bool
+  let peer: HostServiceProbe
+  private let storageRoot: URL
+  private let managedProjectRoot: URL
   init(
-    worktrees: Bool = false, persistedProfile: Bool = true, additionalProject: Bool = false,
-    nativeGit: Bool = false, requiresControlSession: Bool = false,
-    verificationBarrier: HostVerificationBarrier? = nil
+    worktrees: Bool = false, additionalProject: Bool = false,
+    requiresControlSession: Bool = false, multiplexed: Bool = false,
+    verificationBarrier: HostVerificationBarrier? = nil,
+    worktreeStorage: WorktreeStorage = .project
   ) throws {
-    self.nativeGit = nativeGit
-    root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    peer = HostServiceProbe(multiplexed: multiplexed)
+    storageRoot = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    root = storageRoot.appendingPathComponent("scope")
+    managedProjectRoot =
+      (worktreeStorage == .project ? root : storageRoot)
+      .appendingPathComponent("managed").standardizedFileURL
     try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
     connection = try GatewayDatabaseConnection(inMemory: ())
     database = GatewayDatabase(connection: connection)
@@ -1129,27 +1156,33 @@ private final class HostAuthorityFixture: @unchecked Sendable {
     try database.saveProject(project)
     var projects = [project]
     if additionalProject {
-      let other = RegisteredProject(id: "other", displayName: "Other", rootPath: root.path)
+      let otherRoot = storageRoot.appendingPathComponent("other")
+      try FileManager.default.createDirectory(at: otherRoot, withIntermediateDirectories: false)
+      let other = RegisteredProject(id: "other", displayName: "Other", rootPath: otherRoot.path)
       try database.saveProject(other)
       projects.append(other)
     }
-    let caps =
-      ["mcp.tools.call", "operations.prepare", "operations.commit"]
-      + (requiresControlSession ? ["project.list"] : [])
-    if persistedProfile {
-      try database.saveProfile(
-        .init(
-          id: .chatGPTOperate, capabilityIDs: Set(caps), projectIDs: ["scope"],
-          allowedCallers: [.secureTunnel], mode: .projectOperations))
-    }
+    let profile = ProfileGrant(
+      id: .chatGPTOperate,
+      permissions: fixturePermissions([
+        .project("scope"): .granted(.write),
+        .plugin("*"): .granted(.use), .mcpServer("probe"): .granted(.all),
+      ]),
+      fullAccess: true, allowedCallers: [.secureTunnel])
+    try database.saveProfile(profile)
+    let trace = GatewayTransportTrace(transport: "gateway_socket", socketConnectionID: "connection")
+    let context =
+      !requiresControlSession
+      ? try fixtureConsentedContext(
+        database: database, grant: profile, caller: .secureTunnel,
+        principalID: "fixture-principal", transportTrace: trace, platform: fixtureHostedPlatform())
+      : ExecutionContext(
+        caller: .secureTunnel, profileID: .chatGPTOperate, transportTrace: trace,
+        trustedPrincipalID: "fixture-principal")
     runtime = try GatewayRuntime(
       configuration: .init(
         runtime: .init(caller: .secureTunnel, profileID: .chatGPTOperate),
-        profiles: [
-          .init(
-            id: .chatGPTOperate, capabilities: caps, projects: ["scope"],
-            allowedCallers: [.secureTunnel], mode: .projectOperations)
-        ],
+        profiles: [.init(grant: profile)],
         mcp: .init(servers: [
           .init(
             id: "probe", transport: .stdio, command: "/bin/cat", exposure: .reexport,
@@ -1158,18 +1191,16 @@ private final class HostAuthorityFixture: @unchecked Sendable {
               uniqueKeysWithValues: HostServiceProbe.methods.map { ($0, .projectWrite) }),
             hostServices: true)
         ])),
-      context: .init(
-        caller: .secureTunnel, profileID: .chatGPTOperate,
-        transportTrace: .init(transport: "gateway_socket", socketConnectionID: "connection"),
-        trustedPrincipalID: "fixture-principal"),
+      context: context,
       database: database, registeredProjects: projects,
-      platform: MacOSPlatform.services(launcher: testExecutionLauncher()),
+      platform: fixtureHostedPlatform(),
       mcpClient: peer,
       requiresControlSession: requiresControlSession)
-    let captured = try #require(peer.context)
+    let captured = try #require(peer.context(for: "scope"))
     if worktrees {
-      let managed = root.resolvingSymlinksInPath().appendingPathComponent("managed")
-      try FileManager.default.createDirectory(at: managed, withIntermediateDirectories: false)
+      try FileManager.default.createDirectory(
+        at: managedProjectRoot, withIntermediateDirectories: false)
+      let managed = try ProjectPathResolver.canonicalProject(managedProjectRoot)
       let scoped = MCPHostContext(
         runtimeID: captured.launchMetadata.runtimeID,
         context: .init(
@@ -1182,19 +1213,11 @@ private final class HostAuthorityFixture: @unchecked Sendable {
         managedProjectRoot: managed)
       service = MCPBoundHostServices(
         database: database, directory: try #require(captured.tools), context: scoped,
-        origin: "probe", gitExecutable: nativeGit ? "/usr/bin/git" : "fixture-git",
-        commandRunner: nativeGit
-          ? ProcessCommandRunner(launcher: testExecutionLauncher())
-          : HostWorktreeGitStub(
-            source: captured.launchMetadata.project.rootPath, barrier: verificationBarrier))
+        origin: "probe", gitExecutable: "fixture-git",
+        commandRunner: HostWorktreeGitStub(
+          source: captured.launchMetadata.project.rootPath, barrier: verificationBarrier))
     } else {
       service = try #require(try runtime.makeHostServices(context: captured, origin: "probe"))
-    }
-    if nativeGit {
-      try git(["init", "--quiet"])
-      try git(["config", "user.name", "Host Services Fixture"])
-      try git(["config", "user.email", "fixture@example.invalid"])
-      try git(["commit", "--quiet", "--allow-empty", "-m", "fixture"])
     }
   }
   func worktreeReceipt() throws -> [String: JSONValue] {
@@ -1203,15 +1226,10 @@ private final class HostAuthorityFixture: @unchecked Sendable {
     let component = SHA256.hash(data: Data("scope".utf8)).prefix(12).map {
       String(format: "%02x", $0)
     }.joined()
-    let path = source.appendingPathComponent("managed").appendingPathComponent(component)
+    let path = managedProjectRoot.appendingPathComponent(component)
       .appendingPathComponent(id)
-    if nativeGit {
-      try FileManager.default.createDirectory(
-        at: path.deletingLastPathComponent(), withIntermediateDirectories: true)
-      try git(["worktree", "add", "--quiet", "-b", "fixture-" + id, path.path, "HEAD"])
-    } else {
-      try FileManager.default.createDirectory(at: path, withIntermediateDirectories: true)
-    }
+    try FileManager.default.createDirectory(at: path, withIntermediateDirectories: true)
+    #expect(FileManager.default.fileExists(atPath: path.path))
     return [
       "id": .string(id), "workspace_id": .string("codex-worktree-" + id),
       "source_workspace_id": .string("scope"), "source_repository_root": .string(source.path),
@@ -1223,18 +1241,8 @@ private final class HostAuthorityFixture: @unchecked Sendable {
     ]
   }
   func removeWorktree(at path: String) throws {
-    if nativeGit {
-      try git(["worktree", "remove", path])
-    } else {
-      try FileManager.default.removeItem(atPath: path)
-    }
-  }
-  private func git(_ arguments: [String]) throws {
-    let result = try ProcessCommandRunner(launcher: testExecutionLauncher()).run(
-      executable: "/usr/bin/git", arguments: arguments, workingDirectory: root,
-      environment: ["GIT_TERMINAL_PROMPT": "0", "LC_ALL": "C"], timeoutMilliseconds: 5_000,
-      maxOutputBytes: 16_384)
-    try #require(result.exitCode == 0 && !result.timedOut, "\(result.stderr)")
+    try FileManager.default.removeItem(atPath: path)
+    #expect(!FileManager.default.fileExists(atPath: path))
   }
   func during(
     _ method: String, _ arguments: [String: JSONValue] = [:],
@@ -1252,7 +1260,7 @@ private final class HostAuthorityFixture: @unchecked Sendable {
   func direct(_ name: String, _ arguments: [String: JSONValue]) async throws -> JSONValue {
     try await .encoded(service.call(name: name, arguments: arguments))
   }
-  func duringApproved(
+  func duringInvocation(
     _ method: String, _ arguments: [String: JSONValue], generic: Bool = false,
     context: InvocationContext = .empty,
     _ body: @escaping @Sendable (MCPBoundHostServices, InvocationContext) async throws -> JSONValue
@@ -1269,18 +1277,18 @@ private final class HostAuthorityFixture: @unchecked Sendable {
         "tool": .string(method), "arguments": .object(arguments),
       ]
     }
-    let prepared = try await runtime.callToolAsync(
-      name: "operations.prepare",
-      arguments: .object(["tool": .string(tool), "arguments": .object(args)]), context: context)
-    let ticket = try #require(
-      prepared.objectValue?["structuredContent"]?.objectValue?["result"]?.objectValue?["ticket_id"]?
-        .stringValue)
-    try database.resolveOperationApproval(id: ticket, approved: true, resolver: .localCLI)
-    return try await runtime.callToolAsync(
-      name: "operations.commit",
-      arguments: .object([
-        "ticket_id": .string(ticket), "tool": .string(tool), "arguments": .object(args),
-      ]), context: context)
+    return try await runtime.callToolAsync(name: tool, arguments: .object(args), context: context)
+  }
+  func session(consent: Bool = true) throws -> GatewayControlSession {
+    let profile = try #require(database.profiles().first { $0.id == .chatGPTOperate })
+    let session = GatewayControlSession(
+      principalID: "fixture-principal", profileID: profile.id,
+      caller: .secureTunnel, database: database, profile: .init(grant: profile, persisted: true),
+      permissionService: try database.permissionRuntime(
+        platform: fixtureHostedPlatform()
+      ).service)
+    if consent { _ = try session.approveFullAccess(expectedRevision: session.revision) }
+    return session
   }
   func genericDiagnostics(projectID: String?) async throws -> JSONValue {
     let service = service
@@ -1307,7 +1315,7 @@ private final class HostAuthorityFixture: @unchecked Sendable {
     await service.close()
     await runtime.shutdown()
   }
-  func remove() { try? FileManager.default.removeItem(at: root) }
+  func remove() { try? FileManager.default.removeItem(at: storageRoot) }
 }
 
 private final class HostServiceProbe: DownstreamMCPClient, @unchecked Sendable {
@@ -1315,45 +1323,72 @@ private final class HostServiceProbe: DownstreamMCPClient, @unchecked Sendable {
     "fixture.read", "fixture.audit", "fixture.provision", "fixture.remove",
     "codex.diagnostics.snapshot",
   ]
-  private let lock = NSLock()
-  private var captured: MCPHostContext?
-  private var handler: (@Sendable (InvocationContext) async throws -> JSONValue)?
-  private var activeCalls = 0
-  private var concurrentDiscovery = false
-  var context: MCPHostContext? { lock.withLock { captured } }
-  func allowConcurrentDiscovery() { lock.withLock { concurrentDiscovery = true } }
+  private static let observedTools: [MCPTool] = methods.map { name in
+    let action = [
+      "fixture.audit": "diagnostics.snapshot", "fixture.provision": "workspaces.provision",
+      "fixture.remove": "workspaces.remove",
+    ][name]
+    return .init(
+      name: name, description: "Fixture", inputSchema: .object([:]),
+      meta: action.map { .object(["io.github.computer-mcp/host-action": .string($0)]) })
+  }
+  private final class State: @unchecked Sendable {
+    let lock = NSLock()
+    var contexts: [String: MCPHostContext] = [:]
+    var handler: (@Sendable (InvocationContext) async throws -> JSONValue)?
+    var activeCalls = 0
+    let multiplexed: Bool
+    init(multiplexed: Bool) { self.multiplexed = multiplexed }
+  }
+  private let state: State
+  private let hostContext: MCPHostContext?
+
+  init(multiplexed: Bool = false) {
+    state = State(multiplexed: multiplexed)
+    hostContext = nil
+  }
+  private init(state: State, hostContext: MCPHostContext?) {
+    self.state = state
+    self.hostContext = hostContext
+  }
+  func context(for projectID: String) -> MCPHostContext? {
+    state.lock.withLock { state.contexts[projectID] }
+  }
   func setHandler(_ value: (@Sendable (InvocationContext) async throws -> JSONValue)?) {
-    lock.withLock { handler = value }
+    state.lock.withLock { state.handler = value }
   }
   func makeScopedClient(
     workingDirectory: URL, environment: [String: String], hostContext: (any MCPHostEnvironment)?
   ) -> any DownstreamMCPClient {
-    lock.withLock { captured = hostContext as? MCPHostContext }
-    return self
+    let scoped = hostContext as? MCPHostContext
+    if let scoped {
+      state.lock.withLock { state.contexts[scoped.launchMetadata.project.id] = scoped }
+    }
+    return HostServiceProbe(state: state, hostContext: scoped)
+  }
+  func cachedTools(server: MCPServerConfig, context: InvocationContext) -> [MCPTool]? {
+    Self.observedTools
   }
   func listTools(server: MCPServerConfig, context: InvocationContext) throws -> [MCPTool] {
-    // A serial provider cannot answer discovery while waiting for its host callback.
-    guard lock.withLock({ activeCalls == 0 || concurrentDiscovery }) else {
+    // Multiplexed peers can answer metadata while another request awaits its callback.
+    guard state.lock.withLock({ state.activeCalls == 0 || state.multiplexed }) else {
       throw MCPHostServiceError.denied("Catalog queried while the parent call is suspended.")
     }
-    return Self.methods.map { name in
-      let action = [
-        "fixture.audit": "diagnostics.snapshot", "fixture.provision": "workspaces.provision",
-        "fixture.remove": "workspaces.remove",
-      ][name]
-      return .init(
-        name: name, description: "Fixture", inputSchema: .object([:]),
-        meta: action.map { .object(["io.github.computer-mcp/host-action": .string($0)]) })
-    }
+    return Self.observedTools
   }
   func callTool(
     server: MCPServerConfig, name: String, arguments: JSONValue, context: InvocationContext
   ) throws -> JSONValue {
-    guard let handler = lock.withLock({ handler }) else {
+    guard let hostContext,
+      hostContext.launchMetadata.project.id == context.resolvedInvocation?.identity.projectID
+    else {
+      throw MCPHostServiceError.denied("The fixture call reached another project channel.")
+    }
+    guard let handler = state.lock.withLock({ state.handler }) else {
       throw MCPHostServiceError.denied("Fixture handler absent.")
     }
-    lock.withLock { activeCalls += 1 }
-    defer { lock.withLock { activeCalls -= 1 } }
+    state.lock.withLock { state.activeCalls += 1 }
+    defer { state.lock.withLock { state.activeCalls -= 1 } }
     let box = HostProbeResult()
     let ready = DispatchSemaphore(value: 0)
     let task = Task.detached {
@@ -1385,7 +1420,7 @@ private final class HostServiceProbe: DownstreamMCPClient, @unchecked Sendable {
   { .null }
 }
 
-/// Isolates host invocation lifetime from Git execution; packaged integration tests use real Git.
+/// Fixed Git-layout metadata keeps these host contract tests inside the hosted fixture.
 private struct HostWorktreeGitStub: CommandRunning {
   let source: String
   var barrier: HostVerificationBarrier? = nil

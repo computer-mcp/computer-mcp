@@ -15,9 +15,11 @@ struct MCPExecutionRecordTests {
     }
     let first = try input("9007199254740992")
     let next = try input("9007199254740993")
-    _ = try journal.reserve(server: server, tool: "write", arguments: first, requestID: "same")
+    _ = try journal.reserve(
+      server: server, tool: "write", arguments: first, requestID: "same", executionID: nil)
     #expect(throws: (any Error).self) {
-      try journal.reserve(server: server, tool: "write", arguments: next, requestID: "same")
+      try journal.reserve(
+        server: server, tool: "write", arguments: next, requestID: "same", executionID: nil)
     }
   }
 
@@ -25,34 +27,65 @@ struct MCPExecutionRecordTests {
     let database = try GatewayDatabase(inMemory: ())
     let first = MCPExecutionJournal(database: database, scope: "credential-a/project")
     let input = JSONValue.object(["body": .string("hello")])
+    let executionID = UUID()
     let reservation = try first.reserve(
-      server: server, tool: "write", arguments: input, requestID: "one")
+      server: server, tool: "write", arguments: input, requestID: "one", executionID: executionID)
     #expect(reservation.inserted)
+    #expect(reservation.record.executionID == executionID)
     #expect(
-      try !first.reserve(server: server, tool: "write", arguments: input, requestID: "one").inserted
+      try !first.reserve(
+        server: server, tool: "write", arguments: input, requestID: "one", executionID: executionID
+      ).inserted
     )
     #expect(throws: (any Error).self) {
-      try first.reserve(server: server, tool: "write", arguments: .object([:]), requestID: "one")
+      try first.reserve(
+        server: server, tool: "write", arguments: .object([:]), requestID: "one",
+        executionID: executionID)
     }
     let next = MCPExecutionJournal(database: database, scope: "credential-a/project")
     let recovered = try next.reserve(
-      server: server, tool: "write", arguments: input, requestID: "one")
+      server: server, tool: "write", arguments: input, requestID: "one", executionID: executionID)
     #expect(!recovered.inserted)
+    #expect(recovered.record.executionID == executionID)
     #expect(
       try recovered.record.snapshot(instance: next.instanceID).objectValue?["state"]
         == .string("outcome_unknown"))
     #expect(throws: (any Error).self) {
-      try next.update(serverID: server.id, requestID: "one") { $0.state = .running }
+      try next.update(serverID: server.id, requestID: "one") {
+        $0.state = .running
+      }
     }
     let stranger = MCPExecutionJournal(database: database, scope: "credential-b/project")
-    #expect(throws: (any Error).self) { try stranger.read(serverID: server.id, requestID: "one") }
+    #expect(throws: (any Error).self) {
+      try stranger.read(serverID: server.id, requestID: "one")
+    }
+  }
+
+  @Test func receiptIdentityKeepsItsOriginalExecutionAuthority() throws {
+    let database = try GatewayDatabase(inMemory: ())
+    let journal = MCPExecutionJournal(database: database, scope: "owner")
+    let original = UUID()
+    _ = try journal.reserve(
+      server: server, tool: "write", arguments: .object([:]), requestID: "bound",
+      executionID: original)
+    let duplicate = try journal.reserve(
+      server: server, tool: "write", arguments: .object([:]), requestID: "bound",
+      executionID: UUID())
+    #expect(!duplicate.inserted)
+    #expect(duplicate.record.executionID == original)
+    let bytes = try JSONEncoder().encode(duplicate.record)
+    var historical = try #require(try JSONSerialization.jsonObject(with: bytes) as? [String: Any])
+    historical.removeValue(forKey: "executionID")
+    let restored = try JSONDecoder().decode(
+      MCPExecutionRecord.self, from: JSONSerialization.data(withJSONObject: historical))
+    #expect(restored.executionID == nil)
   }
 
   @Test func successfulEmptyResultIsRetainedAndExpiryIsNotEmptySuccess() throws {
     let database = try GatewayDatabase(inMemory: ())
     let journal = MCPExecutionJournal(database: database, scope: "owner")
     _ = try journal.reserve(
-      server: server, tool: "empty", arguments: .object([:]), requestID: "empty")
+      server: server, tool: "empty", arguments: .object([:]), requestID: "empty", executionID: nil)
     let result = JSONValue.object(["content": .array([]), "isError": .bool(false)])
     try journal.update(serverID: server.id, requestID: "empty") {
       try $0.finish(result: result, failed: false)
@@ -73,7 +106,7 @@ struct MCPExecutionRecordTests {
   @Test func boundedUnicodeOutputHasRepeatableValidCursorsAndExplicitTruncation() throws {
     var record = MCPExecutionRecord(
       scope: "owner", serverID: "fixture", requestID: "large", instanceID: "instance",
-      tool: "large", inputDigest: "digest", createdAt: Date())
+      tool: "large", inputDigest: "digest", executionID: nil, createdAt: Date())
     try record.finish(result: .string(String(repeating: "完整", count: 70_000)), failed: false)
     #expect(record.retainedByteCount <= MCPExecutionRecord.maximumOutputBytes)
     let first = try record.snapshot(instance: "instance", maxBytes: 17)
@@ -95,13 +128,16 @@ struct MCPExecutionRecordTests {
     try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
     defer { try? FileManager.default.removeItem(at: root) }
     let path = root.appendingPathComponent("receipts.sqlite").path
-    let first = MCPExecutionJournal(database: try GatewayDatabase(path: path), scope: "shared")
-    let second = MCPExecutionJournal(database: try GatewayDatabase(path: path), scope: "shared")
+    let first = MCPExecutionJournal(
+      database: try fixturePermissionDatabase(path: path), scope: "shared")
+    let second = MCPExecutionJournal(
+      database: try fixturePermissionDatabase(path: path), scope: "shared")
     let results = try await withThrowingTaskGroup(of: Bool.self) { group in
       for journal in [first, second] {
         group.addTask {
           try journal.reserve(
-            server: server, tool: "write", arguments: .object([:]), requestID: "same"
+            server: server, tool: "write", arguments: .object([:]), requestID: "same",
+            executionID: nil
           ).inserted
         }
       }

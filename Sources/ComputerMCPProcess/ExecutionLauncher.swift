@@ -1,5 +1,13 @@
+import ComputerMCPPlatform
+import ComputerMCPPlatformPOSIX
 import ComputerMCPSandbox
 import Foundation
+
+#if canImport(Darwin)
+  import Darwin
+#elseif canImport(Glibc)
+  import Glibc
+#endif
 
 /// Constructs the entire child environment before handing an admitted command to an OS backend.
 /// Callers supply authorization separately; a mode is a launch instruction, not a permission grant.
@@ -36,6 +44,7 @@ package struct ExecutionLauncher: Sendable {
     method: ExecutionLaunchMethod = .subprocess,
     input: Int32 = 0, output: Int32 = 1, error: Int32 = 2,
     directoryDescriptor: Int32? = nil, inheritedDescriptors: [Int32: Int32] = [:],
+    hostProtocolMetadata: [String: String] = [:],
     bindOwnership: @Sendable (any ExecutionOwnership) -> Void = { _ in }
   ) async throws -> any ExecutionOwnership {
     try Task.checkCancellation()
@@ -46,15 +55,29 @@ package struct ExecutionLauncher: Sendable {
       throw ExecutionEnvironmentError.invalidConfiguration(
         "Invalid arguments or stream descriptors")
     }
+    try Self.validateHostProtocolMetadata(
+      hostProtocolMetadata, inheritedDescriptors: inheritedDescriptors)
     let prepared = try PreparedExecutionContext.current()
-    let mode = prepared?.mode ?? mode
-    let environment = prepared?.environment ?? environment
+    guard prepared?.permitsProgramLaunch != false else {
+      throw ExecutionEnvironmentError.unavailable("This service context cannot start host programs")
+    }
+    guard prepared != nil || ExecutionAdministration.current != nil else {
+      throw ExecutionEnvironmentError.unavailable("No authorized execution context is installed")
+    }
+    let mode = prepared?.mode ?? ExecutionAdministration.current!.mode
+    let environment = try HostCommandEnvironment.applying(
+      to: prepared?.environment ?? ExecutionAdministration.current!.environment)
+    var launchDirectory = directory
     let sandbox: SandboxConfiguration?
     switch mode {
     case .sandbox(let configuration):
-      guard directoryDescriptor == nil || configuration.readOnly,
-        directory == configuration.worktree
-      else {
+      guard directoryDescriptor == nil || configuration.readOnly else {
+        throw ExecutionEnvironmentError.invalidConfiguration(
+          "Sandbox working directory must be its worktree")
+      }
+      launchDirectory = try SandboxPath(
+        ProjectPathResolver.canonicalProject(URL(fileURLWithPath: directory.value)).path)
+      guard launchDirectory == configuration.worktree else {
         throw ExecutionEnvironmentError.invalidConfiguration(
           "Sandbox working directory must be its worktree")
       }
@@ -70,9 +93,12 @@ package struct ExecutionLauncher: Sendable {
       throw ExecutionEnvironmentError.unavailable(
         "This backend cannot enforce durable execution ownership in the requested mode")
     }
-    let command = try ExecutionCommand(
-      executable: executable, arguments: arguments, directory: directory,
-      environment: environment.variables(sandbox: sandbox),
+    var variables = try environment.variables(sandbox: sandbox)
+    for key in Self.reservedHostProtocolKeys { variables.removeValue(forKey: key) }
+    variables.merge(hostProtocolMetadata) { _, value in value }
+    let command = ExecutionCommand(
+      executable: executable, arguments: arguments, directory: launchDirectory,
+      environment: variables,
       directoryDescriptor: directoryDescriptor,
       inheritedDescriptors: inheritedDescriptors
     )
@@ -90,6 +116,29 @@ package struct ExecutionLauncher: Sendable {
     } catch {
       prepared?.authority.launchFailed(childID)
       throw error
+    }
+  }
+
+  private static let reservedHostProtocolKeys: Set<String> = [
+    "COMPUTER_MCP_HOST_CONTEXT", "COMPUTER_MCP_HOST_FD", "COMPUTER_MCP_HOST_READ_HANDLE",
+    "COMPUTER_MCP_HOST_WRITE_HANDLE",
+  ]
+
+  private static func validateHostProtocolMetadata(
+    _ metadata: [String: String], inheritedDescriptors: [Int32: Int32]
+  ) throws {
+    guard Set(metadata.keys).isSubset(of: ["COMPUTER_MCP_HOST_CONTEXT", "COMPUTER_MCP_HOST_FD"]),
+      metadata.values.allSatisfy({ !$0.isEmpty && !$0.contains("\0") && $0.utf8.count <= 16_384 })
+    else {
+      throw ExecutionEnvironmentError.invalidConfiguration("Invalid host protocol launch metadata")
+    }
+    if let descriptor = metadata["COMPUTER_MCP_HOST_FD"] {
+      guard descriptor == "3", metadata["COMPUTER_MCP_HOST_CONTEXT"] != nil,
+        let source = inheritedDescriptors[3], fcntl(source, F_GETFD) >= 0
+      else {
+        throw ExecutionEnvironmentError.invalidConfiguration(
+          "Host protocol metadata requires its inherited descriptor")
+      }
     }
   }
 

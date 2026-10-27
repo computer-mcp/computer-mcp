@@ -1,4 +1,6 @@
 import ComputerMCPMacOS
+import ComputerMCPPermissions
+import ComputerMCPPlatform
 import ComputerMCPTestSupport
 import Foundation
 import GRDB
@@ -18,18 +20,15 @@ struct GatewayFullAccessConsentTests {
   func executionJournalUsesInvocationConsent(lifetime: GatewayFullAccessLifetime) async throws {
     let store = GatewayTerminalSessions()
     let journal = try ScopedTemporaryDirectory()
-    try store.enablePersistence(at: journal.url, launcher: testExecutionLauncher())
     let fixture = try ConsentFixture(terminalSessions: store)
+    try store.enablePersistence(at: journal.url, launcher: fixture.launcher)
     defer { fixture.remove() }
-    let session = fixture.session()
+    let session = try fixture.session()
     let approved = try session.approveFullAccess(lifetime: lifetime, expectedRevision: 0)
     do {
       let result = try await fixture.gateway.callToolAsync(
         name: "shell.run",
-        arguments: .object([
-          "project_id": .string("fixture"), "mode": .string("argv"),
-          "executable": .string("/bin/echo"), "argv": .array([.string("retained")]),
-        ]), context: .init(session: session))
+        arguments: fixture.arguments("journal"), context: .init(session: session))
       #expect(result.objectValue?["isError"] != .bool(true))
       await fixture.gateway.shutdown()
       let files = try FileManager.default.contentsOfDirectory(
@@ -54,29 +53,76 @@ struct GatewayFullAccessConsentTests {
     try store.discardResults()
   }
 
-  @Test(arguments: [false, true])
-  func changedRestrictedProfileRejectsAnOpenFullAccessConfirmation(persisted: Bool) throws {
+  @Test func pathChangesClearTheSessionProjectionUntilFreshOwnerApproval() async throws {
+    let fixture = try ConsentFixture()
+    defer { fixture.remove() }
+    do {
+      let first = try fixture.session()
+      _ = try first.approveFullAccess(lifetime: .alwaysAllowClient, expectedRevision: 0)
+      try await fixture.run(first)
+      let store = fixture.permissionService.store
+      let original = try #require(store.readWithDatabase { _, ledger in ledger.environment.paths })
+      let oldConsent = try #require(
+        store.readWithDatabase { _, ledger in
+          ledger.environment.modes.values.first
+        })
+      let library = fixture.root.appendingPathComponent("skills")
+      try FileManager.default.createDirectory(at: library, withIntermediateDirectories: true)
+      var paths = original
+      paths.pathRules.insert(
+        .init(
+          root: try CanonicalPath(ProjectPathResolver.canonicalProject(library).path),
+          kind: .skillLibrary))
+      try fixture.permissionService.configureEnvironment(
+        paths, trustedHosts: [], expectedProjects: fixture.database.projects(),
+        expectedConfigurationRevision: nil)
+      #expect(first.snapshot.fullAccessConsent == nil)
+      await #expect(throws: (any Error).self) { try await fixture.run(first) }
+      #expect(try String(contentsOf: fixture.output, encoding: .utf8) == "approved")
+      first.end()
+      let next = try fixture.session()
+      try next.restoreTrustedAccess()
+      #expect(next.snapshot.fullAccessConsent == nil)
+      await #expect(throws: (any Error).self) { try await fixture.run(next) }
+      let trust = try #require(fixture.database.clientTrusts().first)
+      #expect(!trust.fullAccessAllowed)
+      _ = try next.approveFullAccess(
+        lifetime: .alwaysAllowClient, expectedRevision: next.revision,
+        expectedTrustRevision: trust.revision)
+      try await fixture.run(next)
+      #expect(try String(contentsOf: fixture.output, encoding: .utf8) == "approvedapproved")
+      try store.readWithDatabase { _, ledger in
+        let principal = try #require(ledger.environment.connections[next.id]).principal
+        #expect(!ledger.isConsentValid(oldConsent, for: principal))
+        #expect(ledger.environment.modes[principal]?.identity != oldConsent.identity)
+      }
+      await fixture.gateway.shutdown()
+    } catch {
+      await fixture.gateway.shutdown()
+      throw error
+    }
+  }
+
+  @Test func changedRestrictedProfileRejectsAnOpenFullAccessConfirmation() throws {
     let database = try GatewayDatabase(inMemory: ())
     let original = ProfileGrant(
-      id: .chatGPTOperate, capabilityIDs: ["file.read"], projectIDs: ["fixture"],
-      allowedCallers: [.secureTunnel], mode: .projectOperations)
-    if persisted { try database.saveProfile(original) }
+      id: .chatGPTOperate, permissions: fixturePermissions([.project("fixture"): .granted(.read)]),
+      fullAccess: true, allowedCallers: [.secureTunnel])
+    try database.saveProfile(original)
+    let service = try GatewayPermissionService(
+      store: database.configuredPermissionStore(), policyReader: TestManagedPolicyReader())
     let session = GatewayControlSession(
       principalID: "verified-client", profileID: original.id, caller: .secureTunnel,
-      database: database, profile: .init(grant: original, persisted: persisted))
+      database: database, permissionService: service)
     let reviewed = session.snapshot
     var changed = original
-    changed.projectIDs.insert("another-project")
-    if persisted {
-      try database.saveProfile(changed, expectedRevision: original.authorizationRevision)
-    } else {
-      session.updateProfile(.init(grant: changed, persisted: false))
-    }
+    try changed.permissions.set(.granted(.read), for: .project("another-project"))
+    try database.saveProfile(changed, expectedRevision: original.authorizationRevision)
     #expect(throws: (any Error).self) {
       try session.approveFullAccess(expectedRevision: reviewed.revision)
     }
     #expect(session.snapshot.revision > reviewed.revision)
-    #expect(session.snapshot.profile?.grant.projectIDs == changed.projectIDs)
+    #expect(session.snapshot.profile?.grant.permissions == changed.permissions)
     #expect(session.snapshot.fullAccessConsent == nil)
     #expect(try database.clientTrusts().isEmpty)
     #expect(try database.auditEvents().isEmpty)
@@ -85,70 +131,69 @@ struct GatewayFullAccessConsentTests {
   }
 
   @Test
-  func configuredProfilePublicationRevokesConsentForRetainedContexts() throws {
+  func profilePublicationRevokesConsentForRetainedContexts() throws {
     let database = try GatewayDatabase(inMemory: ())
     let original = ProfileGrant(
-      id: .chatGPTOperate, capabilityIDs: ["file.read"], projectIDs: ["fixture"],
-      allowedCallers: [.secureTunnel], mode: .projectOperations)
+      id: .chatGPTOperate, permissions: fixturePermissions([.project("fixture"): .granted(.read)]),
+      fullAccess: true, allowedCallers: [.secureTunnel])
+    try database.saveProfile(original)
+    let service = try GatewayPermissionService(
+      store: database.configuredPermissionStore(), policyReader: TestManagedPolicyReader())
     let session = GatewayControlSession(
       principalID: "verified-client", profileID: original.id, caller: .secureTunnel,
-      database: database,
-      profile: .init(grant: original, persisted: false, configuredGrant: original))
+      database: database, permissionService: service)
     let approved = try session.approveFullAccess(lifetime: .alwaysAllowClient, expectedRevision: 0)
     let context = ExecutionContext(
       caller: .secureTunnel, profileID: original.id, trustedPrincipalID: "verified-client")
     let effective = try session.apply(to: original, context: context)
-    #expect(effective.mode == .localFullAccess)
+    #expect(effective.fullAccess)
     #expect(effective.id == original.id)
     #expect(effective.allowedCallers == original.allowedCallers)
     var expanded = original
-    expanded.capabilityIDs.insert("new-integration.read")
-    expanded.projectIDs.insert("new-project")
-    session.updateProfile(.init(grant: expanded, persisted: false, configuredGrant: original))
-    #expect(session.snapshot.fullAccessConsent != nil)
-    try session.requireRevision(approved.revision)
-    var changed = original
-    changed.mode = .readOnly
-    session.updateProfile(.init(grant: changed, persisted: false))
+    try expanded.permissions.set(.granted(.use), for: .plugin("new-integration"))
+    try expanded.permissions.set(.granted(.read), for: .project("new-project"))
+    try database.saveProfile(expanded, expectedRevision: original.authorizationRevision)
+    #expect(session.snapshot.fullAccessConsent == nil)
+    #expect(throws: (any Error).self) { try session.requireRevision(approved.revision) }
+    var changed = try #require(database.profiles().first { $0.id == .chatGPTOperate })
+    changed.fullAccess = false
+    try database.saveProfile(changed, expectedRevision: changed.authorizationRevision)
     #expect(throws: (any Error).self) { try session.requireRevision(approved.revision) }
     // An old execution generation cannot reinstate the profile captured at its creation.
-    #expect(try session.apply(to: original, context: context).mode == .readOnly)
+    #expect(try session.apply(to: original, context: context).fullAccess == false)
     #expect(session.snapshot.fullAccessConsent == nil)
     let next = GatewayControlSession(
       principalID: "verified-client", profileID: original.id, caller: .secureTunnel,
-      database: database, profile: .init(grant: changed, persisted: false))
+      database: database, permissionService: service)
     try next.restoreTrustedAccess()
     #expect(next.snapshot.fullAccessConsent == nil)
-    #expect(try database.profiles().isEmpty)
+    #expect(try database.profiles().first { $0.id == .chatGPTOperate }?.fullAccess == false)
   }
 
   @Test
   func localConsentAllowsRealExecutionForOnlyTheSelectedSession() async throws {
     let fixture = try ConsentFixture()
     defer { fixture.remove() }
-    let first = fixture.session()
-    let sibling = fixture.session()
+    let first = try fixture.session()
+    let sibling = try fixture.session()
     do {
       await #expect(throws: (any Error).self) { try await fixture.run(first) }
       #expect(!FileManager.default.fileExists(atPath: fixture.output.path))
-      #expect(throws: (any Error).self) {
-        try first.limitAccess(to: .localFullAccess, expectedRevision: 0)
-      }
       let approved = try first.approveFullAccess(expectedRevision: 0)
       #expect(approved.fullAccessConsent?.lifetime == .thisSession)
       #expect(try fixture.database.clientTrusts().isEmpty)
       try await fixture.run(first)
       try await fixture.run(first)
       #expect(try String(contentsOf: fixture.output, encoding: .utf8) == "approvedapproved")
-      #expect(try fixture.database.operationApprovals().isEmpty)
       await #expect(throws: (any Error).self) { try await fixture.run(sibling) }
-      #expect(try fixture.database.profiles().first?.mode == .projectOperations)
-      try first.limitAccess(to: .projectOperations, expectedRevision: approved.revision)
+      #expect(
+        try fixture.database.profiles().first { $0.id == .chatGPTOperate }?.fullAccess == true)
+      try first.limitAccess(to: .init(allowsFullAccess: false), expectedRevision: approved.revision)
       await #expect(throws: (any Error).self) { try await fixture.run(first) }
       try first.restoreTrustedAccess()
       #expect(first.snapshot.fullAccessConsent == nil)
       first.end()
-      let reconnected = fixture.session()
+      let reconnected = try fixture.session()
       try reconnected.restoreTrustedAccess()
       await #expect(throws: (any Error).self) { try await fixture.run(reconnected) }
       await fixture.gateway.shutdown()
@@ -162,17 +207,17 @@ struct GatewayFullAccessConsentTests {
   func persistentTrustMatchesVerifiedIdentityAndRevocationReachesExistingSessions() throws {
     let fixture = try ConsentFixture()
     defer { fixture.remove() }
-    let first = fixture.session()
+    let first = try fixture.session()
     let approved = try first.approveFullAccess(lifetime: .alwaysAllowClient, expectedRevision: 0)
     first.end()
-    let reopened = try GatewayDatabase(path: fixture.databasePath.path)
+    let reopened = try fixturePermissionDatabase(path: fixture.databasePath.path)
     let trust = try #require(reopened.clientTrusts().first)
     #expect(trust.fullAccessAllowed)
     #expect(trust.revision == approved.fullAccessConsent?.trustRevision)
-    let next = fixture.session(database: reopened)
+    let next = try fixture.session(database: reopened)
     try next.restoreTrustedAccess()
     #expect(next.snapshot.fullAccessConsent?.lifetime == .alwaysAllowClient)
-    let stranger = fixture.session(principal: "different-verified-client", database: reopened)
+    let stranger = try fixture.session(principal: "different-verified-client", database: reopened)
     try stranger.restoreTrustedAccess()
     #expect(stranger.snapshot.fullAccessConsent == nil)
     let otherTransport = GatewayControlSession(
@@ -186,8 +231,7 @@ struct GatewayFullAccessConsentTests {
     #expect(next.snapshot.fullAccessConsent != nil)
     try reopened.revokeClientTrust(id: trust.id, expectedRevision: trust.revision)
     #expect(next.snapshot.fullAccessConsent == nil)
-    #expect(next.snapshot.accessLimit == .projectOperations)
-    let afterRevocation = fixture.session(database: reopened)
+    let afterRevocation = try fixture.session(database: reopened)
     try afterRevocation.restoreTrustedAccess()
     #expect(afterRevocation.snapshot.fullAccessConsent == nil)
     #expect(
@@ -200,10 +244,10 @@ struct GatewayFullAccessConsentTests {
   {
     let fixture = try ConsentFixture()
     defer { fixture.remove() }
-    let session = fixture.session()
+    let session = try fixture.session()
     let approved = try session.approveFullAccess(lifetime: lifetime, expectedRevision: 0)
-    var grant = try #require(fixture.database.profiles().first)
-    grant.mode = .readOnly
+    var grant = try #require(fixture.database.profiles().first { $0.id == .chatGPTOperate })
+    grant.fullAccess = false
     try fixture.database.saveProfile(grant, expectedRevision: grant.authorizationRevision)
     #expect(throws: (any Error).self) { try session.requireRevision(approved.revision) }
     #expect(throws: (any Error).self) {
@@ -212,8 +256,8 @@ struct GatewayFullAccessConsentTests {
         expectedTrustRevision: approved.fullAccessConsent?.trustRevision ?? 0)
     }
     #expect(session.snapshot.fullAccessConsent == nil)
-    #expect(session.snapshot.accessLimit == .readOnly)
-    let next = fixture.session()
+    #expect(session.snapshot.profile?.grant.fullAccess == false)
+    let next = try fixture.session()
     try next.restoreTrustedAccess()
     #expect(next.snapshot.fullAccessConsent == nil)
   }
@@ -230,7 +274,7 @@ struct GatewayFullAccessConsentTests {
           BEGIN SELECT RAISE(ABORT, 'fixture rejects trust'); END
           """)
     }
-    let session = fixture.session()
+    let session = try fixture.session()
     #expect(throws: (any Error).self) {
       try session.approveFullAccess(lifetime: .alwaysAllowClient, expectedRevision: 0)
     }
@@ -245,17 +289,19 @@ struct GatewayFullAccessConsentTests {
   func changingToThisSessionRevokesPersistentTrustAndRejectsStaleChoices() async throws {
     let fixture = try ConsentFixture()
     defer { fixture.remove() }
-    let first = fixture.session()
+    let first = try fixture.session()
     _ = try first.approveFullAccess(lifetime: .alwaysAllowClient, expectedRevision: 0)
     let trust = try #require(fixture.database.clientTrusts().first)
-    let sibling = fixture.session()
+    let sibling = try fixture.session()
     try sibling.restoreTrustedAccess()
     let siblingBefore = sibling.snapshot
-    let another = fixture.session()
+    let another = try fixture.session()
+    let beforeStaleChoice = another.snapshot.fullAccessConsent
+    #expect(beforeStaleChoice?.lifetime == .alwaysAllowClient)
     #expect(throws: (any Error).self) {
       try another.approveFullAccess(expectedRevision: 0)
     }
-    #expect(another.snapshot.fullAccessConsent == nil)
+    #expect(another.snapshot.fullAccessConsent == beforeStaleChoice)
     let selected = try another.approveFullAccess(
       expectedRevision: 0, expectedTrustRevision: trust.revision)
     #expect(selected.fullAccessConsent?.lifetime == .thisSession)
@@ -266,7 +312,7 @@ struct GatewayFullAccessConsentTests {
     do {
       try await fixture.run(another)
       await #expect(throws: (any Error).self) { try await fixture.run(sibling) }
-      let next = fixture.session()
+      let next = try fixture.session()
       try next.restoreTrustedAccess()
       #expect(next.snapshot.fullAccessConsent == nil)
       await fixture.gateway.shutdown()
@@ -280,10 +326,14 @@ struct GatewayFullAccessConsentTests {
   func clientTrustChangesPublishOnlyCommittedRevisions(staleRevision: Bool) async throws {
     let stream = try { () -> AsyncStream<Void> in
       let database = try GatewayDatabase(inMemory: ())
-      try database.saveProfile(.operate)
+      var profile = ProfileGrant.operate
+      profile.fullAccess = true
+      try database.saveProfile(profile)
+      let service = try GatewayPermissionService(
+        store: database.configuredPermissionStore(), policyReader: TestManagedPolicyReader())
       let session = GatewayControlSession(
         principalID: "verified-client", profileID: .chatGPTOperate, caller: .secureTunnel,
-        database: database)
+        database: database, permissionService: service)
       _ = try session.approveFullAccess(lifetime: .alwaysAllowClient, expectedRevision: 0)
       let trust = try #require(database.clientTrusts().first)
       let stream = database.profileChanges(for: .chatGPTOperate)
@@ -309,7 +359,7 @@ struct GatewayFullAccessConsentTests {
   func sessionConsentPreservesTheDisabledShellFacilityGuard() async throws {
     let fixture = try ConsentFixture(shellEnabled: false)
     defer { fixture.remove() }
-    let session = fixture.session()
+    let session = try fixture.session()
     _ = try session.approveFullAccess(expectedRevision: 0)
     await #expect(throws: (any Error).self) { try await fixture.run(session) }
     #expect(!FileManager.default.fileExists(atPath: fixture.output.path))
@@ -322,7 +372,20 @@ private struct ConsentFixture {
   let databasePath: URL
   let database: GatewayDatabase
   let gateway: GatewayRuntime
+  let permissionService: GatewayPermissionService
+  let launcher: ExecutionLauncher
   var output: URL { root.appendingPathComponent("outside-project.txt") }
+
+  private static let program = """
+    import pathlib, sys
+    if sys.argv[1:] == ["journal"]:
+        print("retained")
+    elif len(sys.argv) == 3 and sys.argv[1] == "append":
+        with pathlib.Path(sys.argv[2]).open("a") as output:
+            output.write("approved")
+    else:
+        raise SystemExit(64)
+    """
 
   init(
     shellEnabled: Bool = true, terminalSessions: GatewayTerminalSessions = GatewayTerminalSessions()
@@ -330,13 +393,23 @@ private struct ConsentFixture {
     root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
     let project = root.appendingPathComponent("project")
     try FileManager.default.createDirectory(at: project, withIntermediateDirectories: true)
+    let executable = project.appendingPathComponent("consent-fixture.py")
+    try Self.program.write(to: executable, atomically: true, encoding: .utf8)
+    try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: executable.path)
+    let output = root.appendingPathComponent("outside-project.txt")
+    launcher = fixtureProtocolExecutionLauncher(
+      root: root, scripts: [Self.program], arguments: [["journal"], ["append", output.path]])
     databasePath = root.appendingPathComponent("host.sqlite")
-    database = try GatewayDatabase(path: databasePath.path)
+    database = try fixturePermissionDatabase(path: databasePath.path)
     let profile = ProfileGrantConfig(
-      id: .chatGPTOperate, capabilities: ["file.read", "operations.prepare", "operations.commit"],
-      projects: ["fixture"], allowedCallers: [.secureTunnel], mode: .projectOperations,
-      confirmationPolicy: .allWrites)
+      id: .chatGPTOperate, permissions: fixturePermissions([.project("fixture"): .granted(.write)]),
+      fullAccess: true, allowedCallers: [.secureTunnel])
     try database.saveProfile(profile.grant)
+    let registration = ComputerMCPCore.RegisteredProject(
+      id: "fixture", displayName: "Fixture", rootPath: project.path)
+    try database.saveProject(registration)
+    var platform = MacOSPlatform.services(launcher: launcher)
+    platform.permissionPolicyReader = TestManagedPolicyReader()
     gateway = try GatewayRuntime(
       configuration: .init(
         runtime: .init(caller: .secureTunnel, profileID: .chatGPTOperate),
@@ -345,36 +418,42 @@ private struct ConsentFixture {
       context: .init(
         caller: .secureTunnel, profileID: .chatGPTOperate, trustedPrincipalID: "verified-client"),
       database: database,
-      registeredProjects: [
-        .init(id: "fixture", displayName: "Fixture", rootPath: project.path)
-      ],
-      platform: MacOSPlatform.services(launcher: testExecutionLauncher()),
+      registeredProjects: [registration], platform: platform,
       terminalSessions: terminalSessions, requiresControlSession: true)
+    permissionService = try database.permissionRuntime(platform: platform).service
   }
 
-  func session(principal: String = "verified-client", database: GatewayDatabase? = nil)
+  func session(principal: String = "verified-client", database: GatewayDatabase? = nil) throws
     -> GatewayControlSession
   {
-    GatewayControlSession(
+    if principal == "verified-client", database == nil { return try gateway.makeControlSession() }
+    let selected = database ?? self.database
+    let service =
+      database.map {
+        GatewayPermissionService(
+          store: $0.permissionStore(
+            counter: TestAuthorizationEpochCounter.shared(forDatabasePath: databasePath.path)),
+          policyReader: TestManagedPolicyReader())
+      } ?? permissionService
+    return GatewayControlSession(
       principalID: principal, profileID: .chatGPTOperate, caller: .secureTunnel,
-      database: database ?? self.database)
+      database: selected, permissionService: service)
+  }
+
+  func arguments(_ operation: String) -> JSONValue {
+    let project = root.appendingPathComponent("project")
+    return .object([
+      "project_id": .string("fixture"), "mode": .string("argv"),
+      "executable": .string(project.appendingPathComponent("consent-fixture.py").path),
+      "argv": .array(
+        (operation == "journal" ? ["journal"] : ["append", output.path]).map(JSONValue.string)),
+      "cwd": .string(project.path),
+    ])
   }
 
   func run(_ session: GatewayControlSession) async throws {
-    var context = ExecutionContext(
-      caller: .secureTunnel, profileID: .chatGPTOperate, projectID: "fixture",
-      trustedPrincipalID: "verified-client")
-    context.controlSession = session
     let result = try await gateway.callToolAsync(
-      name: "shell.run",
-      arguments: .object([
-        "mode": .string("argv"), "executable": .string("/bin/sh"),
-        "argv": .array([
-          .string("-c"), .string("printf approved >> \"$1\""), .string("fixture"),
-          .string(output.path),
-        ]),
-        "cwd": .string(root.path),
-      ]), context: context, invocationContext: .empty)
+      name: "shell.run", arguments: arguments("append"), context: .init(session: session))
     #expect(result.objectValue?["isError"] != .bool(true))
     #expect(
       result.objectValue?["structuredContent"]?.objectValue?["result"]?.objectValue?["exit_code"]

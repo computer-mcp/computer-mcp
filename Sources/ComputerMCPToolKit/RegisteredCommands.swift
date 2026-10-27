@@ -29,7 +29,7 @@ package struct RegisteredCommands: Sendable {
     self.sqliteCommand = sqliteCommand
     self.builtinExecutables = builtinExecutables
     self.inspectionExecution = CLIProcessExecution(
-      launcher: launcher, policy: .readOnly,
+      launcher: launcher,
       maxConcurrentCalls: configuration.policy.maxShellSessions, inheritsEnvironment: false)
     self.execution = CLIProcessExecution(
       launcher: launcher, maxConcurrentCalls: configuration.policy.maxShellSessions,

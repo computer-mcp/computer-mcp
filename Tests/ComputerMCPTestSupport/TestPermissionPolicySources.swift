@@ -5,6 +5,20 @@ package final class TestAuthorizationEpochCounter: AuthorizationEpochCounter, @u
   private let lock = NSLock()
   private let access = Access()
   package init() {}
+  private final class Registry: @unchecked Sendable {
+    let lock = NSLock()
+    var counters: [String: TestAuthorizationEpochCounter] = [:]
+  }
+  private static let registry = Registry()
+  package static func shared(forDatabasePath path: String) -> TestAuthorizationEpochCounter {
+    let key = URL(fileURLWithPath: path).resolvingSymlinksInPath().path
+    return registry.lock.withLock {
+      if let counter = registry.counters[key] { return counter }
+      let counter = TestAuthorizationEpochCounter()
+      registry.counters[key] = counter
+      return counter
+    }
+  }
   package func withExclusiveAccess<Result>(
     _ body: (any AuthorizationEpochCounterAccess) throws -> Result
   ) throws -> Result {

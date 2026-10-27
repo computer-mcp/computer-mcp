@@ -116,7 +116,7 @@ struct BundledPluginsTests {
     defer { files.cleanup() }
     let root = try files.makePackage(directory: "Plugins/base", text: PluginStoreFixture.manifest)
     let bundled = BundledPlugins.load(directory: root.deletingLastPathComponent())
-    let database = try GatewayDatabase(path: files.databaseURL.path)
+    let database = try fixturePermissionDatabase(path: files.databaseURL.path)
     let store = PluginStore(
       database: database, platform: MacOSPlatform.services(launcher: testExecutionLauncher()))
     var settings = files.settings
@@ -154,7 +154,7 @@ struct BundledPluginsTests {
     #expect(fallback.contributions.count == 3 && fallback.issues.isEmpty)
     #expect(fallback.contributions.allSatisfy { $0.source.kind == .bundled })
     #expect(fallback.state.installations.map(\.id) == [id])
-    let reopened = try GatewayDatabase(path: files.databaseURL.path)
+    let reopened = try fixturePermissionDatabase(path: files.databaseURL.path)
     #expect(try reopened.pluginStoreSnapshot() == restored)
     let runtime = try GatewayRuntime(
       configuration: GatewayConfiguration(projectDirectory: files.root), database: reopened,

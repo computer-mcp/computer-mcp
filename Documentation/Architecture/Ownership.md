@@ -8,7 +8,7 @@ bounded execution, or a deliberate safety gate.
 
 | Owner | Responsibilities |
 | --- | --- |
-| Computer MCP core | MCP transports, App socket, profiles, project grants, audit, operation tickets, CLI/MCP bridges, Skills, typed project/file/Git/structured/system tools, Shell, and generic Computer Use |
+| Computer MCP core | MCP transports, App socket, profiles, project grants, audit, permission requests, CLI/MCP bridges, Skills, typed project/file/Git/structured/system tools, Shell, and generic Computer Use |
 | Plugins | Domain state, runtime configuration and vendor execution |
 | `apple-cli` / `apple-cli-mcp` | Clipboard, notifications, Finder, application launching, URL opening, and Apple application/domain workflows |
 | Browser provider | Browser engine, page lifecycle, selectors, and browser automation |
@@ -24,7 +24,7 @@ primitives. They do not form a general Finder or application automation API.
 ## Plugin ownership
 
 Plugins own their runtime configuration, domain state and vendor execution.
-The host owns admission, project registrations, grants, operation tickets and
+The host owns admission, project registrations, grants, permission requests and
 audit through the [host-service contract](../Reference/HostServices.md).
 For coding runtime details, see the [Codex plugin](https://github.com/computer-mcp/plugin-codex).
 
@@ -41,16 +41,13 @@ the retired IDs become durable aliases so historical audit and ownership
 receipts continue to resolve. Deduplication never deletes the underlying
 project and never treats equal-looking path text as sufficient ownership.
 
-## Approval Ownership
+## Permission ownership
 
-Host capability authorization and human confirmation are separate decisions.
-The host decides whether the authenticated caller may use a capability in a
-registered project, then applies its confirmation policy to that operation.
-Only the local control plane resolves pending host approval tickets.
-
-Plugin execution approvals do not approve host operation tickets. Calls back
-into host tools follow the host authorization and confirmation path.
-MCP elicitation is interaction, not permission.
+The host evaluates declared requirements for every authenticated invocation. The
+local owner answers missing-permission requests and edits shared profiles within
+managed limits. An allowed call executes directly with its admitted context.
+Plugin execution approvals do not answer host permission requests. Callbacks use
+the same host permission authority; MCP elicitation is interaction, not a grant.
 
 ## External Provider Composition
 
@@ -58,8 +55,8 @@ For `apple-cli-mcp` or another local MCP provider:
 
 1. Register it under `[[mcp.servers]]`.
 2. Select exact `allowed_tools` or explicitly choose `allow_any_tool = true`.
-   Grant the registration to the intended profile through `mcp_servers`, or
-   grant particular tool capabilities. Registration policy remains host-owned.
+   Grant `read` or `all` through the profile's `mcp_servers` table, or `use`
+   for the owning plugin. Registration policy remains host-owned.
 3. Check `mcp.servers.status`.
 4. Inspect `mcp.tools.list` and `mcp.tools.describe`.
 5. Invoke through `mcp.tools.call`, or opt into a reviewed pinned/reexported

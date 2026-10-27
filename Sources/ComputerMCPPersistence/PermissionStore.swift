@@ -10,13 +10,17 @@ package enum PermissionPersistenceError: Error, Equatable {
 }
 
 /// Complete permission state serialized under an immediate SQLite write lock.
-/// No cached snapshot participates in reads or mutations. The external counter
-/// advances before every durable commit, including authority-epoch recovery.
+/// Every access reads the current SQL record and external watermark. A decoded
+/// representation is reused only for an exactly equal, validated SQL record.
+/// The counter advances before durable commits, including authority-epoch recovery.
 package final class SQLitePermissionStore: PermissionStore, @unchecked Sendable {
   private let connection: GatewayDatabaseConnection
   private let counter: any AuthorizationEpochCounter
   private let operations = BlockingOperationExecutor(label: "computer-mcp.permissions")
   private let commitHook: (@Sendable (CommitStage) throws -> Void)?
+  // Access is confined to connection.writer's serial database queue. The ledger
+  // is a value, so mutation of a returned candidate cannot alter this record.
+  private var decoded: (record: PermissionLedgerRecord, ledger: PermissionLedger)?
 
   enum CommitStage: Sendable {
     case beforeLock, beforeWrite, afterCounterAdvance, beforeCommit, afterCommit
@@ -85,28 +89,41 @@ package final class SQLitePermissionStore: PermissionStore, @unchecked Sendable 
           let recovered =
             row == nil || watermark == nil
             || watermark?.databaseID != row?.databaseID || watermark?.revision != row?.counter
-          var current = try row?.decode() ?? PermissionLedger()
+          var current: PermissionLedger
+          if let row {
+            if let decoded, decoded.record == row {
+              current = decoded.ledger
+            } else {
+              current = try row.decode()
+              decoded = (row, current)
+            }
+          } else {
+            current = PermissionLedger()
+          }
           let databaseID = row?.databaseID ?? UUID()
           let epoch = recovered ? UUID() : row!.epoch
           if recovered { current.beginAuthorizationEpoch(epoch) }
           var candidate = current
           let result: Swift.Result<Result, any Error>
+          var changed = recovered
           // A savepoint rolls back related SQL if the user closure throws. Epoch
           // recovery itself still commits, without any partial candidate changes.
           try database.execute(sql: "SAVEPOINT permission_mutation")
           do {
+            let sqlChanges = database.totalChangesCount
             let value = try body(database, &candidate)
-            if mutation { try candidate.commitTransaction(replacing: current) }
+            changed = recovered || database.totalChangesCount != sqlChanges || candidate != current
+            if mutation && changed { try candidate.commitTransaction(replacing: current) }
             try database.execute(sql: "RELEASE SAVEPOINT permission_mutation")
             result = .success(value)
           } catch {
             result = .failure(error)
             candidate = current
+            changed = recovered
             try database.execute(sql: "ROLLBACK TO SAVEPOINT permission_mutation")
             try database.execute(sql: "RELEASE SAVEPOINT permission_mutation")
           }
-          let changed: Bool
-          if case .success = result { changed = mutation || recovered } else { changed = recovered }
+          var committedRecord: PermissionLedgerRecord?
           if changed {
             let revision = max(row?.counter ?? 0, watermark?.revision ?? 0)
             guard revision < UInt64(Int64.max) else {
@@ -120,9 +137,11 @@ package final class SQLitePermissionStore: PermissionStore, @unchecked Sendable 
             try access.advance(
               to: AuthorizationEpochWatermark(databaseID: databaseID, revision: revision + 1))
             try commitHook?(.afterCounterAdvance)
+            committedRecord = record
           }
           try commitHook?(.beforeCommit)
           try database.execute(sql: "COMMIT")
+          if let committedRecord { decoded = (committedRecord, candidate) }
           try commitHook?(.afterCommit)
           return result
         }
@@ -135,7 +154,7 @@ package final class SQLitePermissionStore: PermissionStore, @unchecked Sendable 
   }
 }
 
-struct PermissionLedgerRecord {
+struct PermissionLedgerRecord: Equatable {
   static let codecVersion = 1
   let payload: Data
   let databaseID: UUID

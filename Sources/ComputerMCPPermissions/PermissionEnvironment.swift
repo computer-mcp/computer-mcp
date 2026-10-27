@@ -41,7 +41,7 @@ package struct HostRule: Hashable, Sendable, Codable {
 
 package struct PathRule: Hashable, Sendable, Codable {
   package enum Kind: Hashable, Sendable, Codable {
-    case hostData, denied, developer, userData, systemOrApplication
+    case hostData, denied, developer, userData, systemOrApplication, skillLibrary
     case folder(FolderCategory)
   }
 
@@ -61,7 +61,7 @@ package struct PathRule: Hashable, Sendable, Codable {
 
 /// An editable environment snapshot. Submit it with the ledger revision at which
 /// it was read; successful reconciliation publishes ledger-assigned identities.
-package struct PermissionEnvironment: Sendable, Codable {
+package struct PermissionEnvironment: Equatable, Sendable, Codable {
   package var limits: [Principal: ManagedLimits] = [:]
   package var trustedHosts: Set<HostRule> = []
   package var paths: PathEnvironmentSnapshot?
@@ -96,7 +96,7 @@ extension PathRule {
 
 /// Host-authenticated admission context. A closed record remains available to
 /// validate restrictions on standing work; only its connection-scoped consent ends.
-package struct PermissionConnection: Sendable, Codable {
+package struct PermissionConnection: Equatable, Sendable, Codable {
   package let principal: Principal
   package var consent: ModeConsent?
   package var attenuation: ManagedPolicy

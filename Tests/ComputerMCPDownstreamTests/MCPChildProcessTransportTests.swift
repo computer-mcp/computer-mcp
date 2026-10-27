@@ -2,6 +2,7 @@ import ComputerMCPConfiguration
 import ComputerMCPCore
 import ComputerMCPPlatform
 import ComputerMCPProcess
+import ComputerMCPSandbox
 import ComputerMCPTestSupport
 import Foundation
 import MCP
@@ -44,7 +45,14 @@ struct MCPChildProcessTransportTests {
         args: ["-c", #"printf '%s\n' "$COMPUTER_MCP_HOST_FD""#],
         env: [MCPHostLaunchMetadata.descriptorEnvironmentKey: "9"], hostServices: true),
       workingDirectory: root, environment: [:], hostContext: environment)
-    try await transport.connect()
+    let administration = ExecutionAdministration(
+      mode: .fullAccess,
+      environment: try ExecutionEnvironment(fullAccessVariables: [
+        "PATH": "/usr/bin:/bin", "HOME": root.path, "TMPDIR": root.path + "/",
+      ]))
+    try await ExecutionAdministration.$current.withValue(administration) {
+      try await transport.connect()
+    }
     var lines: [String] = []
     var streamError: (any Error)?
     do {

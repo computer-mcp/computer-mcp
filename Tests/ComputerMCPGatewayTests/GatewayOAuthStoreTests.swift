@@ -37,8 +37,8 @@ struct GatewayOAuthStoreTests {
     try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
     defer { try? FileManager.default.removeItem(at: directory) }
     let path = directory.appendingPathComponent("gateway.sqlite").path
-    let firstStore = try GatewayDatabase(path: path)
-    let secondStore = try GatewayDatabase(path: path)
+    let firstStore = try fixturePermissionDatabase(path: path)
+    let secondStore = try fixturePermissionDatabase(path: path)
     let configuration = OAuthServerConfiguration(
       tunnelID: "tunnel", tunnelName: "named", hostname: "gateway.example",
       clientAllowlist: ["client.example"])

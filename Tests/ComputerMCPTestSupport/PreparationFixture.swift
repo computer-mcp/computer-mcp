@@ -11,6 +11,7 @@ package struct PreparationFixture: Sendable {
   package let digest: String
   package let staging: URL
   private let launcher: ExecutionLauncher
+  private let workerExecutable: URL
   private let directoryFactory: any PluginArchiveDirectoryFactory
 
   package static let manifest = """
@@ -66,6 +67,7 @@ package struct PreparationFixture: Sendable {
   ) throws {
     self.launcher = launcher
     self.directoryFactory = directoryFactory
+    workerExecutable = try nativeGatewayTestExecutable()
     files = try ArchiveFixture()
     archive = try files.archive(
       [
@@ -82,11 +84,8 @@ package struct PreparationFixture: Sendable {
   }
 
   package var preparation: PluginArchivePreparation {
-    let repository = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
-      .deletingLastPathComponent().deletingLastPathComponent()
-    return PluginArchivePreparation(
-      launcher: launcher,
-      workerExecutable: repository.appendingPathComponent(".build/debug/computer-mcp"),
+    PluginArchivePreparation(
+      launcher: launcher, workerExecutable: workerExecutable,
       stagingParent: staging, directoryFactory: directoryFactory)
   }
 
@@ -143,3 +142,37 @@ private func blockingFixtureIO<Result: Sendable>(
     }
   }
 }
+
+/// The worker belongs to the running test build, including custom SwiftPM build roots.
+package func nativeGatewayTestExecutable() throws -> URL {
+  let files = FileManager.default
+  if let path = ProcessInfo.processInfo.environment["COMPUTER_MCP_TEST_GATEWAY_EXECUTABLE"] {
+    try #require(path.hasPrefix("/"), "COMPUTER_MCP_TEST_GATEWAY_EXECUTABLE must be absolute")
+    let executable = URL(fileURLWithPath: path).resolvingSymlinksInPath()
+    try #require(
+      files.isExecutableFile(atPath: executable.path),
+      "The exact native test executable is unavailable: \(path)")
+    return executable
+  }
+  let locations = [
+    URL(fileURLWithPath: CommandLine.arguments[0]).resolvingSymlinksInPath(),
+    Bundle(for: NativeGatewayTestBundle.self).bundleURL.resolvingSymlinksInPath(),
+  ]
+  var directories: [URL] = []
+  for location in locations {
+    directories.append(location.deletingLastPathComponent())
+    for ancestor in sequence(first: location, next: { $0.deletingLastPathComponent() }).prefix(6)
+    where ancestor.pathExtension == "xctest" {
+      directories.append(ancestor.deletingLastPathComponent())
+    }
+  }
+  let candidates = directories.map {
+    $0.appendingPathComponent("computer-mcp").resolvingSymlinksInPath()
+  }
+  return try #require(
+    candidates.first { files.isExecutableFile(atPath: $0.path) },
+    "Set COMPUTER_MCP_TEST_GATEWAY_EXECUTABLE to the exact computer-mcp artifact next to the running native test build"
+  )
+}
+
+private final class NativeGatewayTestBundle: NSObject {}

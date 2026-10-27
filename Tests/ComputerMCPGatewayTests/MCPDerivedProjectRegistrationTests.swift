@@ -1,4 +1,5 @@
 import ComputerMCPDownstream
+import ComputerMCPPermissions
 import Foundation
 import GRDB
 import Testing
@@ -26,7 +27,27 @@ struct MCPDerivedProjectRegistrationTests {
         ])
     }
     try earlier.close()
-    let migrated = try GatewayDatabase(path: path)
+    let migrated = try fixturePermissionDatabase(path: path)
+    #expect(try migrated.derivedProjectRegistration(id: fixture.registration.project.id) == nil)
+    #expect(try migrated.profiles().isEmpty)
+    let source = try #require(
+      try fixture.database.project(id: fixture.registration.sourceProjectID))
+    let legacy = LegacyProfileGrant(
+      id: fixture.registration.profileID, capabilityIDs: ["file.write"],
+      projectIDs: [source.id, fixture.registration.project.id], allowedCallers: [.secureTunnel],
+      mode: .projectOperations)
+    let catalog = try PermissionMigrationCatalog(
+      configurationDigest: "historical-derived-fixture", availableBuiltinIDs: ["file.write"],
+      serverIDs: [], manifestProfiles: [legacy],
+      manifestProjects: [source, fixture.registration.project])
+    let permissions = try migrated.configuredPermissionStore()
+    let migration = PermissionMigrationStore(connection: migrated.connection, store: permissions)
+    let (plan, state) = try migration.prepare(catalog: catalog)
+    #expect(plan.derived == [fixture.registration])
+    #expect(plan.profiles.first?.permissions.state(for: .project(source.id)) == .granted(.write))
+    #expect(
+      plan.profiles.first?.permissions.entries[.project(fixture.registration.project.id)] == nil)
+    #expect(try migration.apply(plan, expectedState: state, currentCatalog: catalog))
     let registration = try #require(
       try migrated.derivedProjectRegistration(id: fixture.registration.project.id))
     #expect(registration == fixture.registration)
@@ -37,42 +58,61 @@ struct MCPDerivedProjectRegistrationTests {
       try reader.read {
         try String.fetchOne($0, sql: "SELECT payloadJSON FROM pluginDerivedProjects")
       } == payload)
-    #expect(
-      try GatewayDatabase(path: path).derivedProjectRegistration(id: registration.project.id)
-        == registration)
+    let profiles = try migrated.profiles()
+    let authority = try permissions.readWithDatabase { database, ledger in
+      (
+        ledger: ledger,
+        controlRevision: try #require(
+          try Int64.fetchOne(
+            database, sql: "SELECT revision FROM permissionControlRevision WHERE id = 1"))
+      )
+    }
+    let configuration = try migrated.configurationState()
+    #expect(try migration.apply(plan, expectedState: state, currentCatalog: catalog) == false)
+    let reopened = try fixturePermissionDatabase(path: path)
+    #expect(try reopened.derivedProjectRegistration(id: registration.project.id) == registration)
+    #expect(try reopened.profiles() == profiles)
+    #expect(try reopened.configurationState() == configuration)
+    try reopened.configuredPermissionStore().readWithDatabase { database, ledger in
+      #expect(ledger == authority.ledger)
+      let revision = try Int64.fetchOne(
+        database, sql: "SELECT revision FROM permissionControlRevision WHERE id = 1")
+      #expect(revision == authority.controlRevision)
+    }
   }
 
   @Test
-  func registrationAndGrantAreAtomicDurableAndIdempotent() throws {
+  func registrationInheritanceIsAtomicDurableAndIdempotent() throws {
     let fixture = try DerivedFixture()
     defer { fixture.remove() }
+    let profile = try #require(fixture.database.profiles().first)
     try fixture.register()
     let storedProject = try #require(try fixture.database.project(id: "child"))
     try fixture.register()
-    let reopened = try GatewayDatabase(path: fixture.databasePath.path)
+    let reopened = try fixturePermissionDatabase(path: fixture.databasePath.path)
     #expect(try reopened.project(id: "child") == storedProject)
     #expect(storedProject.rootPath == fixture.registration.project.rootPath)
-    #expect(try reopened.profiles().first?.projectIDs == ["source", "child"])
+    #expect(try reopened.profiles().first == profile)
     #expect(try reopened.derivedProjectRegistration(id: "child") == fixture.registration)
     try reopened.unregisterDerivedProject(
       fixture.registration, verifiedPrincipalID: fixture.principal, caller: .secureTunnel)
     try reopened.unregisterDerivedProject(
       fixture.registration, verifiedPrincipalID: fixture.principal, caller: .secureTunnel)
     #expect(try fixture.database.project(id: "child") == nil)
-    #expect(try fixture.database.profiles().first?.projectIDs == ["source"])
+    #expect(try fixture.database.profiles().first == profile)
     #expect(FileManager.default.fileExists(atPath: fixture.registration.project.rootPath))
   }
 
   @Test(arguments: ["source-grant", "existing-path", "preexisting-grant", "changed-source"])
-  func failedRegistrationLeavesNoPartialRowsOrGrant(change: String) throws {
+  func failedRegistrationLeavesNoPartialRowsOrPermissionChanges(change: String) throws {
     let fixture = try DerivedFixture()
     defer { fixture.remove() }
     if change == "source-grant" || change == "preexisting-grant" {
       var grant = try #require(try fixture.database.profiles().first)
       if change == "source-grant" {
-        grant.projectIDs.remove("source")
+        try grant.permissions.set(.denied, for: .project("source"))
       } else {
-        grant.projectIDs.insert("child")
+        try grant.permissions.set(.granted(.write), for: .project("child"))
       }
       try fixture.database.saveProfile(grant)
     } else if change == "existing-path" {
@@ -102,7 +142,7 @@ struct MCPDerivedProjectRegistrationTests {
     if change == "new-profile" {
       try fixture.database.saveProfile(
         .init(
-          id: .chatGPTObserve, capabilityIDs: [], projectIDs: ["child"],
+          id: .chatGPTObserve, permissions: try derivedPermissions(["child"]),
           allowedCallers: [.secureTunnel]))
     } else {
       var child = fixture.registration.project
@@ -126,13 +166,14 @@ struct MCPDerivedProjectRegistrationTests {
     defer { fixture.remove() }
     try fixture.register()
     var grant = try #require(try fixture.database.profiles().first)
-    grant.projectIDs.remove("source")
+    try grant.permissions.set(.denied, for: .project("source"))
     try fixture.database.saveProfile(grant)
     #expect(throws: (any Error).self) { try fixture.unregister() }
     #expect(try fixture.database.project(id: "child") != nil)
     try fixture.unregister(rollback: true)
     #expect(try fixture.database.project(id: "child") == nil)
-    #expect(try fixture.database.profiles().first?.projectIDs.isEmpty == true)
+    #expect(
+      try fixture.database.profiles().first?.permissions.state(for: .project("source")) == .denied)
   }
 
   @Test
@@ -143,17 +184,31 @@ struct MCPDerivedProjectRegistrationTests {
     var historical = try #require(
       JSONSerialization.jsonObject(with: JSONEncoder().encode(fixture.registration))
         as? [String: Any])
-    historical.removeValue(forKey: "principalID")
-    let payload = String(
-      decoding: try JSONSerialization.data(withJSONObject: historical), as: UTF8.self)
-    try DatabaseQueue(path: fixture.databasePath.path).write { database in
+    #expect(historical["sourceWorkspaceID"] as? String == fixture.registration.sourceProjectID)
+    #expect(historical["workspace"] != nil)
+    let removedPrincipal = historical.removeValue(forKey: "principalID")
+    _ = try #require(removedPrincipal)
+    let payload = try JSONSerialization.data(withJSONObject: historical, options: [.sortedKeys])
+    try fixture.database.connection.writer.write { database in
       try database.execute(
-        sql: "UPDATE pluginDerivedProjects SET payloadJSON = ? WHERE projectID = ?",
+        sql: "UPDATE permissionDerivedProjects SET payload = ? WHERE projectID = ?",
         arguments: [payload, "child"])
+      #expect(database.changesCount == 1)
     }
     let stored = try #require(try fixture.database.derivedProjectRegistration(id: "child"))
     #expect(stored.principalID == nil)
+    #expect(stored.receiptDigest == fixture.registration.receiptDigest)
     let profiles = try fixture.database.profiles()
+    let configuration = try fixture.database.configurationState()
+    let permissions = try fixture.database.configuredPermissionStore()
+    let authority = try permissions.readWithDatabase { database, ledger in
+      (
+        ledger: ledger,
+        controlRevision: try #require(
+          try Int64.fetchOne(
+            database, sql: "SELECT revision FROM permissionControlRevision WHERE id = 1"))
+      )
+    }
     #expect(throws: (any Error).self) { try fixture.register() }
     #expect(throws: (any Error).self) {
       try fixture.database.unregisterDerivedProject(
@@ -163,6 +218,13 @@ struct MCPDerivedProjectRegistrationTests {
     #expect(try fixture.database.derivedProjectRegistration(id: "child") == stored)
     #expect(try fixture.database.project(id: "child") != nil)
     #expect(try fixture.database.profiles() == profiles)
+    #expect(try fixture.database.configurationState() == configuration)
+    try permissions.readWithDatabase { database, ledger in
+      #expect(ledger == authority.ledger)
+      let revision = try Int64.fetchOne(
+        database, sql: "SELECT revision FROM permissionControlRevision WHERE id = 1")
+      #expect(revision == authority.controlRevision)
+    }
     #expect(FileManager.default.fileExists(atPath: stored.project.rootPath))
   }
 
@@ -189,75 +251,38 @@ struct MCPDerivedProjectRegistrationTests {
     let fixture = try DerivedFixture()
     defer { fixture.remove() }
     var profile = try #require(try fixture.database.profiles().first)
-    profile.projectIDs = ["*"]
+    profile.permissions = try derivedPermissions(["*"])
     profile.allowedCallers = [.localCLI]
     try fixture.database.saveProfile(profile)
     #expect(throws: (any Error).self) { try fixture.register() }
     try fixture.database.registerDerivedProject(
       fixture.registration, verifiedPrincipalID: fixture.principal, caller: .localCLI)
-    #expect(try fixture.database.profiles().first?.projectIDs == ["*", "child"])
+    #expect(
+      try fixture.database.profiles().first?.permissions.entries == profile.permissions.entries)
     // The creation channel is audit evidence, not the identity used to claim this resource.
     #expect(try fixture.database.derivedProjectRegistration(id: "child")?.caller == .secureTunnel)
     #expect(throws: (any Error).self) { try fixture.unregister() }
     try fixture.database.unregisterDerivedProject(
       fixture.registration, verifiedPrincipalID: fixture.principal, caller: .localCLI)
-    #expect(try fixture.database.profiles().first?.projectIDs == ["*"])
+    #expect(
+      try fixture.database.profiles().first?.permissions.entries == profile.permissions.entries)
   }
 
   @Test
-  func permissionMutationsInvalidateOnlyPendingTicketsAndPublishAfterCommit() async throws {
+  func registrationAndRemovalDoNotEditStandingPermissionsOrRevision() throws {
     let fixture = try DerivedFixture()
     defer { fixture.remove() }
-    let initialRevision = try #require(try fixture.database.profiles().first?.authorizationRevision)
-    for state in [OperationTicketState.prepared, .pendingApproval, .approved, .executing] {
-      try fixture.ticket(id: state.rawValue, state: state)
-    }
-    try fixture.ticket(id: "other-profile", state: .pendingApproval, profileID: .chatGPTObserve)
-    var changes = fixture.database.profileChanges(for: .chatGPTOperate).makeAsyncIterator()
+    let original = try fixture.database.profiles()
     try fixture.register()
-    #expect(await changes.next() != nil)
-    let reopened = try GatewayDatabase(path: fixture.databasePath.path)
-    #expect(try reopened.profiles().first?.authorizationRevision == initialRevision + 1)
-    for state in [OperationTicketState.prepared, .pendingApproval, .approved] {
-      let ticket = try #require(try reopened.operationTicket(id: state.rawValue))
-      #expect(ticket.state == .denied)
-      #expect(ticket.failureCode == "operations.authorization_changed")
-    }
-    #expect(try reopened.operationTicket(id: "executing")?.state == .executing)
-    #expect(try reopened.operationTicket(id: "other-profile")?.state == .pendingApproval)
     try fixture.register()
-    #expect(try fixture.database.profiles().first?.authorizationRevision == initialRevision + 1)
-    try fixture.ticket(id: "remove-pending", state: .approved)
+    let reopened = try fixturePermissionDatabase(path: fixture.databasePath.path)
+    #expect(try reopened.profiles() == original)
+    #expect(try reopened.profiles().first?.permissions.entries[.project("child")] == nil)
     try fixture.unregister()
-    #expect(await changes.next() != nil)
-    #expect(try reopened.profiles().first?.authorizationRevision == initialRevision + 2)
-    #expect(try reopened.operationTicket(id: "remove-pending")?.state == .denied)
-    #expect(try reopened.operationTicket(id: "executing")?.state == .executing)
-    #expect(try reopened.operationTicket(id: "other-profile")?.state == .pendingApproval)
+    #expect(try reopened.profiles() == original)
+    #expect(try reopened.project(id: "child") == nil)
   }
 
-  @Test(arguments: [false, true])
-  func revisionFailureRollsBackEveryRegistrationMutation(removing: Bool) throws {
-    let fixture = try DerivedFixture()
-    defer { fixture.remove() }
-    if removing { try fixture.register() }
-    try fixture.ticket(id: "pending", state: .pendingApproval)
-    try DatabaseQueue(path: fixture.databasePath.path).write { database in
-      try database.execute(
-        sql: "UPDATE profiles SET authorizationRevision = ? WHERE id = ?",
-        arguments: [Int64.max, GatewayProfileID.chatGPTOperate.rawValue])
-    }
-    let profiles = try fixture.database.profiles()
-    let project = try fixture.database.project(id: "child")
-    let registration = try fixture.database.derivedProjectRegistration(id: "child")
-    #expect(throws: (any Error).self) {
-      if removing { try fixture.unregister() } else { try fixture.register() }
-    }
-    #expect(try fixture.database.profiles() == profiles)
-    #expect(try fixture.database.project(id: "child") == project)
-    #expect(try fixture.database.derivedProjectRegistration(id: "child") == registration)
-    #expect(try fixture.database.operationTicket(id: "pending")?.state == .pendingApproval)
-  }
 }
 
 private final class DerivedFixture {
@@ -276,12 +301,12 @@ private final class DerivedFixture {
       try FileManager.default.createDirectory(at: path, withIntermediateDirectories: false)
     }
     databasePath = root.appendingPathComponent("host.sqlite")
-    database = try GatewayDatabase(path: databasePath.path)
+    database = try fixturePermissionDatabase(path: databasePath.path)
     try database.saveProject(.init(id: "source", displayName: "Source", rootPath: source.path))
     try database.saveProfile(
       .init(
-        id: .chatGPTOperate, capabilityIDs: [], projectIDs: ["source"],
-        allowedCallers: [.secureTunnel], mode: .projectOperations))
+        id: .chatGPTOperate, permissions: try derivedPermissions(["source"]),
+        allowedCallers: [.secureTunnel]))
     registration = .init(
       origin: "fixture", receiptID: UUID().uuidString, sourceProjectID: "source",
       sourceRoot: source.path,
@@ -298,15 +323,11 @@ private final class DerivedFixture {
       registration, verifiedPrincipalID: principal, caller: .secureTunnel,
       allowRevokedSourceForRollback: rollback)
   }
-  func ticket(
-    id: String, state: OperationTicketState, profileID: GatewayProfileID = .chatGPTOperate
-  ) throws {
-    try database.saveOperationTicket(
-      .init(
-        id: id, capabilityID: "fixture", caller: .secureTunnel, profileID: profileID,
-        principalID: principal, projectID: "source", inputDigest: "fixture", state: state,
-        expiresAt: Date().addingTimeInterval(3_600),
-        authorizationRevision: try database.profiles().first?.authorizationRevision))
-  }
   func remove() { try? FileManager.default.removeItem(at: root) }
+}
+
+private func derivedPermissions(_ projects: Set<String>) throws -> Permissions {
+  var permissions = Permissions()
+  for project in projects { try permissions.set(.granted(.write), for: .project(project)) }
+  return permissions
 }

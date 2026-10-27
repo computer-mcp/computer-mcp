@@ -41,6 +41,9 @@ package enum SeatbeltProfile {
         let exceptions = region.exceptions.map(subpath)
         return all([subpath(region.path)] + exceptions.map { "(require-not \($0))" })
       } + configuration.forbiddenReads.map(subpath)
+    rules.append(
+      "(allow file-read* \(all(["(literal \"/dev/null\")"] + exclusions.map { "(require-not \($0))" })))"
+    )
     let reads =
       configuration.readableRoots + configuration.writableDirectories
       + (configuration.git.map {

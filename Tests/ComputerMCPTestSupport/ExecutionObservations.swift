@@ -34,6 +34,9 @@ package struct ObservedExecutionPlatform: ExecutionPlatform {
   }
 
   package var supportsRecovery: Bool { base.supportsRecovery }
+  package func supportsDurableOwnership(sandboxed: Bool) -> Bool {
+    base.supportsDurableOwnership(sandboxed: sandboxed)
+  }
   package var bootSessionID: String? { base.bootSessionID }
   package var hostSystemReadPaths: [SandboxPath] { base.hostSystemReadPaths }
   package func interrupt(_ members: [ExecutionMember]) async throws {

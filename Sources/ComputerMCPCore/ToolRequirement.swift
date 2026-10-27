@@ -1,7 +1,7 @@
 import ComputerMCPPermissions
 
 /// A tool's declaration, before argument and canonical-path resolution. It is
-/// catalog metadata; the gateway's profile evaluator still controls live admission.
+/// catalog metadata; the permission library controls live admission.
 /// Providers must declare every access independently of MCP effect annotations.
 /// Project access, path operations and execution provenance are conjunctive.
 package struct ToolRequirement: Codable, Equatable, Sendable {

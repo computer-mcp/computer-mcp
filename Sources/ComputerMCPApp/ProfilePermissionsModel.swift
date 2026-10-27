@@ -1,6 +1,7 @@
 import Combine
 import ComputerMCPControlPlane
 import ComputerMCPCore
+import ComputerMCPPermissions
 import Foundation
 
 @MainActor
@@ -27,54 +28,52 @@ extension ProfilePermissionManaging {
 struct ProfilePermissionsDraft {
   let options: ProfilePermissionOptions
   var grant: ProfileGrant
-  let replacesBroadGrants: Bool
+  var customHostText: [String: String] = [:]
 
   init(options: ProfilePermissionOptions) {
     self.options = options
-    var grant = options.grant
-    let wildcard = grant.capabilityIDs.contains("*")
-    let allIntegrations = wildcard || grant.capabilityIDs.contains("mcp.tools.call")
-    replacesBroadGrants = wildcard || allIntegrations || grant.projectIDs.contains("*")
-    grant.mode = grant.mode == .readOnly ? .readOnly : .projectOperations
-    grant.fullShellEnabled = false
-    if wildcard {
-      grant.capabilityIDs = Set(
-        options.capabilities.filter {
-          $0.descriptor.mcpReference == nil && grant.permitsRisk($0.descriptor.risk)
-        }.map(\.id))
-    }
-    grant.capabilityIDs.subtract(ProfileGrant.fullShellCapabilities)
-    grant.capabilityIDs.subtract(ProfileGrant.mcpSurfaceCapabilities)
-    grant.capabilityIDs.subtract(ProfilePermissionSelection.supportCapabilities)
-    if allIntegrations { grant.mcpServerIDs.formUnion(options.integrations.map(\.id)) }
-    if grant.projectIDs.remove("*") != nil {
-      grant.projectIDs.formUnion(options.projects.map(\.id))
-    }
-    self.grant = grant
+    self.grant = options.grant
   }
 
-  var savedGrant: ProfileGrant {
-    var result = grant
-    result.fullShellEnabled = false
-    result.mode = grant.mode == .readOnly ? .readOnly : .projectOperations
-    result.capabilityIDs.remove("*")
-    result.capabilityIDs.subtract(ProfileGrant.fullShellCapabilities)
-    result.capabilityIDs.subtract(ProfileGrant.mcpSurfaceCapabilities)
-    result.capabilityIDs.formUnion(ProfilePermissionSelection.supportCapabilities)
-    return result
+  var projectIDs: [String] {
+    objectIDs { if case .project(let id) = $0 { id } else { nil } }
+      .union(options.projects.map(\.id)).union(options.grant.projectNetworks.keys)
+      .union(grant.projectNetworks.keys).subtracting(["*"]).sorted()
   }
 
-  mutating func selectIntegration(_ id: String, selected: Bool) {
-    if selected {
-      grant.mcpServerIDs.insert(id)
-    } else {
-      grant.mcpServerIDs.remove(id)
-      grant.capabilityIDs.subtract(
-        options.capabilities.filter {
-          $0.descriptor.mcpReference?.serverID == id
-        }.map(\.id))
+  var pluginIDs: [String] {
+    objectIDs { if case .plugin(let id) = $0 { id } else { nil } }
+      .union(options.plugins.map(\.id)).subtracting(["*"]).sorted()
+  }
+
+  var serverIDs: [String] {
+    objectIDs { if case .mcpServer(let id) = $0 { id } else { nil } }
+      .union(options.integrations.map(\.id)).subtracting(["*"]).sorted()
+  }
+
+  var automationTargets: [String] {
+    Set(options.grant.automation.keys).union(grant.automation.keys).sorted()
+  }
+
+  private func objectIDs(_ select: (Permission) -> String?) -> Set<String> {
+    Set(options.grant.permissions.entries.keys.compactMap(select))
+      .union(grant.permissions.entries.keys.compactMap(select))
+  }
+
+  func validateNetworks() throws {
+    for network in grant.projectNetworks.values {
+      guard case .custom(let hosts, _) = network.configuration else { continue }
+      for host in hosts {
+        do {
+          _ = try NetworkHost.normalize(host.hasPrefix("*.") ? String(host.dropFirst(2)) : host)
+        } catch {
+          throw AppControlPlaneError.unavailable(
+            "Enter valid host names or IP addresses for custom network access.")
+        }
+      }
     }
   }
+
 }
 
 @MainActor
@@ -110,7 +109,8 @@ final class ProfilePermissionsModel: ObservableObject {
     defer { isSaving = false }
     do {
       try Task.checkCancellation()
-      try await controlPlane.saveProfilePermissions(draft.savedGrant, reviewed: draft.options)
+      try draft.validateNetworks()
+      try await controlPlane.saveProfilePermissions(draft.grant, reviewed: draft.options)
       return true
     } catch {
       // A failed write leaves the exact reviewed draft intact; reopening obtains new choices.

@@ -16,7 +16,7 @@ struct MCPRegistrationDoctorView: View {
       Text("Check connection", bundle: AppLocalization.resourceBundle).font(.title2.bold())
       Text(verbatim: registrationID).font(.headline)
       Text(
-        "Starts only this enabled MCP to check its connection and catalog. No tools are called, dependencies installed or grants changed.",
+        "Checks this MCP’s configuration, credentials and process records. Connection and catalog checks are unavailable in this build.",
         bundle: AppLocalization.resourceBundle)
       if case .loaded(let projects) = appModel.projects, !projects.isEmpty {
         Picker(AppLocalization.string("Project"), selection: $projectID) {

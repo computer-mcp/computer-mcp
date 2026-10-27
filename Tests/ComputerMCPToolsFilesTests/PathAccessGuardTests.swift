@@ -1,4 +1,5 @@
 import ComputerMCPCore
+import ComputerMCPProcess
 import ComputerMCPTestSupport
 import ComputerMCPToolKit
 import ComputerMCPToolsFiles
@@ -17,15 +18,15 @@ import Testing
     let target = root.appendingPathComponent("target")
     try Data("original".utf8).write(to: target)
     let checker = MutablePathChecker()
-    let files = try ProjectFileAccess(
-      project: root, launcher: testExecutionLauncher(),
+    let files = try fileAccess(
+      project: root, checker: checker,
       mutationObserver: { operation, url, phase in
         if operation == "renameatx_np", url == target,
           phase == (revokeAfterMutation ? .didMutate : .willMutate)
         {
           checker.deny(target)
         }
-      }, pathAccess: checker)
+      })
     #expect(throws: (any Error).self) { try files.write(Data("changed".utf8), to: target) }
     #expect(try Data(contentsOf: target) == Data("original".utf8))
   }
@@ -41,8 +42,7 @@ import Testing
     try Data("secret".utf8).write(to: secret)
     let checker = MutablePathChecker()
     checker.deny(denySource ? secret : destination)
-    let files = try ProjectFileAccess(
-      project: root, launcher: testExecutionLauncher(), pathAccess: checker)
+    let files = try fileAccess(project: root, checker: checker)
     #expect(throws: (any Error).self) {
       try files.copy(source, to: destination, overwrite: false, createDirectories: false)
     }
@@ -154,6 +154,21 @@ import Testing
       }
     }
     #expect(toolChecker.lock.withLock { toolChecker.swapped })
+  }
+
+  private func fileAccess(
+    project: URL, checker: any HostPathAccessChecking,
+    mutationObserver: ((String, URL, ProjectFileAccess.MutationPhase) throws -> Void)? = nil
+  ) throws -> ProjectFileAccess {
+    let administration = ExecutionAdministration(
+      mode: .fullAccess,
+      environment: try .init(fullAccessVariables: ["PATH": systemUtilityPath]))
+    // Initialization runs the fixed Git-layout probe; mutation tests use their injected checker.
+    return try ExecutionAdministration.$current.withValue(administration) {
+      try ProjectFileAccess(
+        project: project, launcher: testExecutionLauncher(),
+        mutationObserver: mutationObserver, pathAccess: checker)
+    }
   }
 }
 

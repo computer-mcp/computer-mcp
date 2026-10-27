@@ -18,11 +18,7 @@ package struct CLIToolProvider: GatewayToolProvider {
   }
 
   package func callTool(_ invocation: ToolInvocation) throws -> JSONValue {
-    let descriptor = try definitions().first { $0.tool.name == invocation.name }?.capability
-    let policy: HostExecutionPolicy =
-      descriptor == nil || descriptor?.risk == .readOnly
-        || descriptor?.projectRequirement == ProjectRequirement.none ? .readOnly : .fullAccess
-    return try HostExecutionPolicy.$current.withValue(policy) { try dispatch(invocation) }
+    return try dispatch(invocation)
   }
 
   private func dispatch(_ invocation: ToolInvocation) throws -> JSONValue {
@@ -58,6 +54,8 @@ package struct CLIToolProvider: GatewayToolProvider {
   package func treeProviders() throws -> [any GatewayToolProvider] {
     try environment.configuration.cli.commands.compactMap { command in
       guard let source = command.tree else { return nil }
+      // Catalog preparation cannot execute a registration without an admitted call.
+      guard source.kind == .file || InvocationExecution.current != nil else { return nil }
       var command = command
       command.env = environment.environment.merging(command.env) { _, value in value }
       let tree = try source.load(

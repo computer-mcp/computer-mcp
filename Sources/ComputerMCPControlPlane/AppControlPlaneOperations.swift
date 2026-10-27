@@ -1,6 +1,7 @@
 import ComputerMCPConfiguration
 import ComputerMCPCore
 import ComputerMCPGateway
+import ComputerMCPPermissions
 import ComputerMCPPersistence
 import ComputerMCPPlatform
 import ComputerMCPPlugins
@@ -203,7 +204,7 @@ package struct AppControlPlaneOperations: Sendable {
   package func registerProject(
     at url: URL,
     displayName: String? = nil
-  ) async throws -> RegisteredProject {
+  ) async throws -> ComputerMCPCore.RegisteredProject {
     guard
       case .registered(let project, _) =
         try await gatewayService.changeProjects(.register(url, displayName: displayName))
@@ -215,7 +216,7 @@ package struct AppControlPlaneOperations: Sendable {
 
   package func repairProject(
     id: String, at url: URL, displayName: String? = nil
-  ) async throws -> RegisteredProject {
+  ) async throws -> ComputerMCPCore.RegisteredProject {
     guard
       case .repaired(let project) = try await gatewayService.changeProjects(
         .repair(id: id, root: url, displayName: displayName))
@@ -244,17 +245,14 @@ package struct AppControlPlaneOperations: Sendable {
     return result
   }
 
-  package func setProjectEnabled(
-    _ enabled: Bool,
-    projectID: String,
-    profileID: GatewayProfileID
+  package func setProjectAccess(
+    _ access: ProjectAccess, projectID: String, profileID: GatewayProfileID,
+    expectedProfileRevision: Int64, expectedPermissionRevision: UInt64
   ) async throws -> ProfileGrant {
-    let grant = try await controlPlane.setProjectEnabled(
-      enabled,
-      projectID: projectID,
-      profileID: profileID
-    )
-    return grant
+    try await controlPlane.setProjectAccess(
+      access, projectID: projectID, profileID: profileID,
+      expectedProfileRevision: expectedProfileRevision,
+      expectedPermissionRevision: expectedPermissionRevision)
   }
 
   package func activateProfile(_ profile: GatewayProfileID) async throws
@@ -273,14 +271,6 @@ package struct AppControlPlaneOperations: Sendable {
     }
   }
 
-  package func setFullShellEnabled(
-    _ enabled: Bool,
-    profileID: GatewayProfileID
-  ) async throws -> ProfileGrant {
-    let grant = try await controlPlane.setFullShellEnabled(enabled, profileID: profileID)
-    return grant
-  }
-
   package func controlSessions() async -> [GatewayControlSessionSnapshot] {
     await gatewayService.controlSessions()
   }
@@ -288,11 +278,11 @@ package struct AppControlPlaneOperations: Sendable {
   package func approveControlSession(
     id: String, lifetime: GatewayFullAccessLifetime = .thisSession,
     expectedRevision: Int64, expectedTrustRevision: Int64 = 0,
-    enableShellFacility: Bool = false, approver: GatewayCallerKind = .localApp
+    approver: GatewayCallerKind = .localApp
   ) async throws -> GatewayControlSessionSnapshot {
     try await gatewayService.approveControlSession(
       id: id, lifetime: lifetime, expectedRevision: expectedRevision,
-      expectedTrustRevision: expectedTrustRevision, enableShellFacility: enableShellFacility,
+      expectedTrustRevision: expectedTrustRevision,
       approver: approver)
   }
 
@@ -308,10 +298,10 @@ package struct AppControlPlaneOperations: Sendable {
   }
 
   package func limitControlSession(
-    id: String, to mode: GatewayPermissionMode, expectedRevision: Int64
+    id: String, to limits: ManagedPolicy, expectedRevision: Int64
   ) async throws -> GatewayControlSessionSnapshot {
     try await gatewayService.limitControlSession(
-      id: id, to: mode, expectedRevision: expectedRevision)
+      id: id, to: limits, expectedRevision: expectedRevision)
   }
 
   package func endControlSession(id: String, expectedRevision: Int64) async throws {
@@ -319,19 +309,11 @@ package struct AppControlPlaneOperations: Sendable {
   }
 
   package func updateProfilePermissions(
-    profileID: GatewayProfileID, mode: GatewayPermissionMode? = nil,
-    confirmationPolicy: GatewayConfirmationPolicy? = nil, fullShellEnabled: Bool? = nil,
-    capabilityIDs: Set<String>? = nil, projectIDs: Set<String>? = nil,
-    mcpServerIDs: Set<String>? = nil, allowedCallers: Set<GatewayCallerKind>? = nil,
-    expectedRevision: Int64? = nil,
+    _ grant: ProfileGrant, expectedRevision: UInt64,
     reviewedOptions: ProfilePermissionOptions? = nil
   ) async throws -> ProfileGrant {
     try await controlPlane.updateProfilePermissions(
-      profileID: profileID, mode: mode, confirmationPolicy: confirmationPolicy,
-      fullShellEnabled: fullShellEnabled, capabilityIDs: capabilityIDs,
-      projectIDs: projectIDs, mcpServerIDs: mcpServerIDs,
-      allowedCallers: allowedCallers, expectedRevision: expectedRevision,
-      reviewedOptions: reviewedOptions)
+      grant, expectedRevision: expectedRevision, reviewedOptions: reviewedOptions)
   }
 
   package func activateManifest(_ manifest: String, expectedDigest: String? = nil) async throws

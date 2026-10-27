@@ -1,5 +1,6 @@
 import ComputerMCPCore
 import ComputerMCPProcess
+import ComputerMCPSandbox
 import Foundation
 import Testing
 
@@ -19,14 +20,13 @@ package struct HTTPStreamProcessFixture {
     try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
     let script = root.appendingPathComponent("server.py")
     try Self.script.write(to: script, atomically: true, encoding: .utf8)
-    let process = try ManagedLineProcess(
-      launcher: launcher,
-      configuration: .init(
-        executable: "/usr/bin/env", arguments: ["python3", script.path, root.path],
-        environment: ProcessInfo.processInfo.environment.merging(["PATH": systemUtilityPath]) {
-          $1
-        },
-        workingDirectory: root, terminationGraceMilliseconds: 100, killGraceMilliseconds: 2_000))
+    let process: ManagedLineProcess
+    do {
+      process = try Self.startServer(launcher: launcher, script: script, root: root)
+    } catch {
+      try? FileManager.default.removeItem(at: root)
+      throw error
+    }
     do {
       let deadline = ContinuousClock.now.advanced(by: .seconds(5))
       let ready = root.appendingPathComponent("port")
@@ -54,6 +54,31 @@ package struct HTTPStreamProcessFixture {
       await Self.stop(process, root: root)
       if await process.snapshot().hasExited { try? FileManager.default.removeItem(at: root) }
       throw error
+    }
+  }
+
+  private static func startServer(
+    launcher: ExecutionLauncher, script: URL, root: URL
+  ) throws -> ManagedLineProcess {
+    let executable = "/usr/bin/python3"
+    let arguments = ["-I", script.path, root.path]
+    guard InvocationExecution.current == nil,
+      FileManager.default.isExecutableFile(atPath: executable),
+      script.resolvingSymlinksInPath()
+        == root.resolvingSymlinksInPath().appendingPathComponent("server.py"),
+      try String(contentsOf: script, encoding: .utf8) == Self.script
+    else { throw HTTPStreamTestError.startup("The reviewed HTTP fixture command is unavailable") }
+    let variables = [
+      "PATH": "/usr/bin:/bin", "HOME": root.path, "TMPDIR": root.path,
+      "LANG": "C", "LC_ALL": "C",
+    ]
+    let configuration = ManagedLineProcess.Configuration(
+      executable: executable, arguments: arguments, environment: variables,
+      workingDirectory: root, terminationGraceMilliseconds: 100, killGraceMilliseconds: 2_000)
+    let administration = ExecutionAdministration(
+      mode: .fullAccess, environment: try ExecutionEnvironment(fullAccessVariables: variables))
+    return try ExecutionAdministration.$current.withValue(administration) {
+      try ManagedLineProcess(launcher: launcher, configuration: configuration)
     }
   }
 

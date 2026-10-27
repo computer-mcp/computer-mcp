@@ -26,8 +26,7 @@ package struct NetworkToolProvider: GatewayToolProvider {
   }
 
   package func callTool(_ invocation: ToolInvocation) throws -> JSONValue {
-    let policy: HostExecutionPolicy = .networkDiagnostic
-    return try HostExecutionPolicy.$current.withValue(policy) { try dispatch(invocation) }
+    return try dispatch(invocation)
   }
 
   private func dispatch(_ invocation: ToolInvocation) throws -> JSONValue {

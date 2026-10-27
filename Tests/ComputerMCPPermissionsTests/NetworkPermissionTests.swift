@@ -4,6 +4,31 @@ import Testing
 @testable import ComputerMCPPermissions
 
 struct ComputerMCPPermissionsNetworkTests {
+  @Test func networkNoneRequestsEachHostAndAlwaysBuildsCustomList() throws {
+    var ledger = PermissionLedger()
+    let key = SandboxSettingsKey(principal: client, projectID: "project")
+    _ = try ledger.setSandboxSettings(
+      SandboxSettings(network: .none), for: key, expectedRevision: ledger.revision)
+    var hosts = Set<String>()
+    for host in ["downloads.example", "cdn.example"] {
+      let pending = try request(
+        from: ledger.authorizeNetwork(
+          invocation: invocation(), host: host, sourceProjectID: "project",
+          isLocalNetwork: false, now: instant))
+      try ledger.answer(pending.id, with: .always, now: instant)
+      hosts.insert(host)
+      #expect(
+        ledger.sandboxSettings.entries[key]?.network.configuration
+          == .custom(hosts: hosts, includesTrusted: false))
+      for allowed in hosts {
+        _ = try authorization(
+          from: ledger.authorizeNetwork(
+            invocation: invocation(), host: allowed, sourceProjectID: "project",
+            isLocalNetwork: false, now: instant))
+      }
+    }
+  }
+
   @Test func networkRequestsRespectDenialsAndManagedCeilings() throws {
     var ledger = PermissionLedger()
     try ledger.setPermission(

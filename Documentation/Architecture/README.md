@@ -15,7 +15,7 @@ These documents state the current architecture truth for `computer-mcp`.
 - [Capability Ownership](Ownership.md): gateway, plugin, Apple-provider, and
   builtin admission boundaries.
 - [Security and Privacy](SecurityAndPrivacy.md): profiles, projects, secrets,
-  TCC, logging, and Full Shell boundaries.
+  TCC, logging, and execution-permission boundaries.
 - [Documentation](Documentation.md): repository documentation role model.
 - [Naming](Naming.md): frozen product, runtime, protocol, and Validation terms.
 

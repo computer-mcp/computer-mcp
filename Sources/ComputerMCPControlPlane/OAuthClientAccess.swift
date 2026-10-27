@@ -63,7 +63,7 @@ extension AppControlPlaneService {
 
   package func authorizeOAuthClient(
     pairingCode: String, tunnelID: String? = nil,
-    profileID: GatewayProfileID? = nil, expectedAuthorizationDigest: String? = nil,
+    profileID: GatewayProfileID, expectedAuthorizationDigest: String? = nil,
     approver: GatewayCallerKind = .localApp
   ) async throws -> OAuthGrant {
     let requests = try await oauthAuthorizations(tunnelID: tunnelID, approver: approver)
@@ -80,12 +80,9 @@ extension AppControlPlaneService {
         $0.id == request.tunnelID && $0.oauthEnabled
       }),
       let base = try await baseProfileGrants(inputs: inputs).first(where: {
-        $0.id == (profileID ?? .cloudflareObserve)
+        $0.id == profileID
       })
     else { throw OAuthError.invalidRequest }
-    let derivesProjects =
-      base.id == .cloudflareObserve
-      && !inputs.configuration.profiles.contains { $0.id == base.id }
     let willCommit = oauthApprovalWillCommit
     return try await oauthServer(for: tunnel).approve(
       pairingCode: request.pairingCode,
@@ -95,25 +92,15 @@ extension AppControlPlaneService {
             $0.id == request.id && $0.status == .pending
           })
         else { throw OAuthError.invalidRequest }
-        var profile = base
-        if derivesProjects { profile.projectIDs = try transaction.projectIDs() }
-        if let persisted = try transaction.profile(id: base.id) {
-          profile = profile.applyingPersistedRuntimeState(persisted)
-          if persisted.authorizationRevision == 0, profile.capabilityIDs.contains("*") {
-            profile.projectIDs.formUnion(try transaction.projectIDs())
-          }
-        }
+        guard let profile = try transaction.profile(id: base.id),
+          profile.allowedCallers.contains(.cloudflareTunnel)
+        else { throw OAuthError.invalidRequest }
         if let expectedAuthorizationDigest,
           try OAuthApprovalProfile(grant: profile).authorizationDigest
             != expectedAuthorizationDigest
         {
           throw GatewayToolError.invalidArguments(
             "Profile authorization changed. Reload the profile and review it before approving.")
-        }
-        guard profileID != nil || profile.mode == .readOnly else {
-          throw GatewayToolError.invalidArguments(
-            "cloudflare-observe is not read-only. Choose an explicit profile with --profile in the CLI or profile_id in the control plane."
-          )
         }
         try willCommit()
         try Task.checkCancellation()

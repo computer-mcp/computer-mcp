@@ -1,4 +1,5 @@
 import ComputerMCPMacOS
+import ComputerMCPPermissions
 import ComputerMCPTestSupport
 import ComputerMCPTunnels
 import Darwin
@@ -9,6 +10,7 @@ import Testing
 @testable import ComputerMCPControlPlane
 @testable import ComputerMCPCore
 @testable import ComputerMCPGateway
+@testable import ComputerMCPPlatform
 @testable import ComputerMCPPlatformDarwin
 
 #if os(macOS)
@@ -20,21 +22,30 @@ struct GatewaySocketPrincipalLifecycleTests {
   @Test
   func disconnectedCallerCanObserveAndCancelItsOriginalExecutionAfterReconnect() async throws {
     let root = URL(fileURLWithPath: "/private/tmp/cm-owner-\(UUID().uuidString.prefix(8))")
-    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    try FileManager.default.createDirectory(
+      at: root, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
     defer { try? FileManager.default.removeItem(at: root) }
     let directories = AppControlPlaneServiceDirectories(
       applicationSupport: root.appendingPathComponent("state"),
       logs: root.appendingPathComponent("logs"))
     try directories.prepare()
-    let database = try GatewayDatabase(path: directories.database.path)
+    let database = try fixturePermissionDatabase(path: directories.database.path)
+    let script = root.appendingPathComponent("fixture.py")
+    try Data(Self.server.utf8).write(to: script)
+    let launcher = fixtureProtocolExecutionLauncher(
+      root: root, scripts: [Self.server], arguments: [[root.path]])
+    var platform = MacOSPlatform.services(launcher: launcher)
+    platform.permissionPolicyReader = TestManagedPolicyReader()
+    let permissionControl = try fixturePermissionControl(database: database, platform: platform)
     let manifest = try AtomicManifestStore(
       manifestURL: directories.manifest, database: database,
       loader: GatewayManifestConfigurationLoader(
         database: database,
-        applications: MacOSPlatform.services(launcher: testExecutionLauncher()).applications))
+        applications: platform.applications))
     let secrets = try KeychainSecretStore(adapter: MemoryKeychainAdapter())
     let control = AppControlPlaneService(
-      directories: directories, database: database, manifestStore: manifest,
+      directories: directories, database: database,
+      permissionControl: permissionControl, manifestStore: manifest,
       defaultManifest: DefaultGatewayConfiguration.manifest, secretStore: secrets,
       openAITunnelSupervisor: OpenAITunnelSupervisor(
         launcher: testExecutionLauncher(),
@@ -45,20 +56,17 @@ struct GatewaySocketPrincipalLifecycleTests {
       ),
       launchAtLoginController: SMAppServiceLaunchAtLoginController(),
       computerUsePermissionReader: FixedComputerUsePermissionReader(),
-      platform: MacOSPlatform.services(launcher: testExecutionLauncher()),
+      platform: platform,
       bundledPlugins: .init(packages: [], issues: []))
-    let script = root.appendingPathComponent("fixture.py")
-    try Data(Self.server.utf8).write(to: script)
     let configuration = GatewayConfiguration(
       runtime: .init(caller: .localMCP, profileID: .chatGPTOperate),
       profiles: [
         .init(
           id: .chatGPTOperate,
-          capabilities: [
-            "mcp.tools.call", "mcp.requests.list", "mcp.requests.read", "mcp.requests.cancel",
-          ],
-          projects: ["fixture"], allowedCallers: [.localMCP], mcpServers: ["fixture"],
-          mode: .projectOperations, confirmationPolicy: .never)
+          permissions: fixturePermissions([
+            .project("fixture"): .granted(.write), .mcpServer("fixture"): .granted(.all),
+            .mcpServer("*"): .granted(.all),
+          ]), fullAccess: true, allowedCallers: [.localMCP])
       ],
       mcp: .init(servers: [
         .init(
@@ -74,10 +82,25 @@ struct GatewaySocketPrincipalLifecycleTests {
     let service = AppGatewayService(
       controlPlane: control,
       socketConfiguration: .init(socketURL: root.appendingPathComponent("gateway.sock")))
+    let operations = AppControlPlaneOperations(controlPlane: control, gatewayService: service)
     try await service.start(profile: .chatGPTOperate)
     do {
       let first = try await GatewayClientSession.connectSocket(
         socketURL: service.socketConfiguration.socketURL)
+      let firstScope = try #require(await operations.controlSessions().first)
+      #expect(firstScope.fullAccessConsent == nil)
+      let approved = try await operations.approveControlSession(
+        id: firstScope.id, lifetime: .alwaysAllowClient,
+        expectedRevision: firstScope.revision, expectedTrustRevision: 0)
+      let trust = try #require(try operations.clientTrusts().first)
+      #expect(approved.fullAccessConsent?.lifetime == .alwaysAllowClient)
+      #expect(approved.fullAccessConsent?.trustID == trust.id)
+      #expect(trust.fullAccessAllowed && trust.principalID == firstScope.principalID)
+      let discovered = try await first.call(
+        toolName: "mcp.tools.list",
+        arguments: .object(["project_id": .string("fixture"), "server": .string("fixture")]))
+      try #require(
+        discovered.result.objectValue?["isError"] != .bool(true), "\(discovered.result)")
       let started = try await first.call(
         toolName: "mcp.tools.call",
         arguments: .object([
@@ -85,7 +108,7 @@ struct GatewaySocketPrincipalLifecycleTests {
           "arguments": .object([:]), "request_id": .string("owned-execution"),
           "wait_for_result": .bool(false),
         ]))
-      #expect(started.result.objectValue?["isError"] != .bool(true))
+      try #require(started.result.objectValue?["isError"] != .bool(true), "\(started.result)")
       await first.disconnect()
       let pid = try #require(
         Int32(String(contentsOf: root.appendingPathComponent("pid"), encoding: .utf8)))
@@ -93,6 +116,13 @@ struct GatewaySocketPrincipalLifecycleTests {
 
       let reconnected = try await GatewayClientSession.connectSocket(
         socketURL: service.socketConfiguration.socketURL)
+      let restored = try #require(
+        await operations.controlSessions().first { $0.id != firstScope.id })
+      #expect(restored.principalID == firstScope.principalID)
+      #expect(restored.fullAccessConsent?.lifetime == .alwaysAllowClient)
+      #expect(restored.fullAccessConsent?.trustID == trust.id)
+      #expect(restored.fullAccessConsent?.trustRevision == trust.revision)
+      #expect(try operations.clientTrusts().first == trust)
       let selector: JSONValue = .object([
         "project_id": .string("fixture"), "server": .string("fixture"),
         "request_id": .string("owned-execution"),

@@ -1,12 +1,12 @@
 import ComputerMCPConfiguration
 import ComputerMCPCore
 import ComputerMCPPlatform
-import ComputerMCPProcess
 import ComputerMCPTestSupport
 import ComputerMCPToolKit
 import Foundation
 import Testing
 
+@testable import ComputerMCPProcess
 @testable import ComputerMCPToolsCLI
 
 #if os(macOS)
@@ -201,6 +201,34 @@ final class CLIToolProviderTests {
             "id": .string("fixture"), "path": .array([.string("unregistered")]),
           ]), context: .empty))
     }
+  }
+
+  @Test
+  func execWithoutExecutionContextDoesNotStartTheRegisteredCommand() throws {
+    let temporary = try ScopedTemporaryDirectory()
+    let script = temporary.url.appendingPathComponent("command")
+    let marker = temporary.url.appendingPathComponent("started")
+    try "#!/bin/sh\nprintf started > started\n".write(
+      to: script, atomically: true, encoding: .utf8)
+    try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: script.path)
+    var configuration = GatewayConfiguration.fixture(
+      cli: .init(commands: [.init(id: "fixture", executable: script.path)]))
+    configuration.projectDirectory = temporary.url
+    let provider = CLIToolProvider(
+      environment: .init(launcher: testExecutionLauncher(), configuration: configuration))
+    InvocationExecution.$current.withValue(nil) {
+      ExecutionAdministration.$current.withValue(nil) {
+        #expect(
+          throws: ShellRuntimeError.launchFailed("No authorized execution context is installed")
+        ) {
+          try provider.callTool(
+            .init(
+              name: "cli.exec",
+              arguments: .object(["id": .string("fixture"), "argv": .array([])]), context: .empty))
+        }
+      }
+    }
+    #expect(!FileManager.default.fileExists(atPath: marker.path))
   }
 
   @Test

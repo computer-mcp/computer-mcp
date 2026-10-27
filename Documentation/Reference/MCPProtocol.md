@@ -34,9 +34,9 @@ malformed or unknown declarations fail closed. Standard MCP annotations remain
 hints, not permission grants.
 
 Reexported tools, configured aliases and `mcp.tools.call` use the selected
-project's current definition. The effective risk applies to discovery,
-authorization, approval preparation and ticket commit. Execution rechecks the
-declaration; a higher risk observed after admission is rejected with `mcp.risk_changed`
+project's current definition. The effective risk contributes to the resolved
+permission requirements. Execution rechecks the declaration; a higher risk
+observed after admission is rejected with `mcp.risk_changed`
 before dispatch. Retry through current host authorization and consent. Background
 calls use the same checks before starting work.
 
@@ -215,8 +215,8 @@ Clients can use the host's typed `runtime.owners.list` and `runtime.owners.call`
 tools to select a retained instance explicitly. A locator binds the runtime,
 project and a live host ownership lease, not just a reusable native handle.
 The selected lease and original connection are rechecked before dispatch.
-Current target authorization and operation approval remain mandatory; approval
-tickets also bind the selected locator. See [Execution owners](Tools.md#execution-owners)
+Current target permission and execution authority remain mandatory; permission
+retry identity also binds the selected locator. See [Execution owners](Tools.md#execution-owners)
 for paging, scope and call syntax. These host locators are not forwarded as
 downstream arguments or accepted as authorization.
 
@@ -303,7 +303,7 @@ override it. A standalone client or explicit connection validation without a
 gateway runtime removes inherited/configured values of this reserved key.
 Remote HTTP registrations do not receive this stdio environment contract.
 
-The value contains no credential, capability grant or Full Shell approval.
+The value contains no credential, permission grant or Full access consent.
 `readOnly` conveys the host profile's independent mutation boundary; `false`
 does not authorize a tool or grant unrestricted execution. The gateway checks
 the current registration selection, risk, caller and project grant at each

@@ -1,5 +1,6 @@
 import AppKit
 import ComputerMCPMacOS
+import ComputerMCPSandbox
 import ComputerMCPTestSupport
 import Foundation
 import SwiftUI
@@ -66,14 +67,25 @@ struct PluginReleaseTests {
     let output = FileManager.default.temporaryDirectory
       .appendingPathComponent("ComputerMCPReleaseLocalization-\(UUID().uuidString)")
     defer { try? FileManager.default.removeItem(at: output) }
-    let result = try ProcessCommandRunner(launcher: testExecutionLauncher()).run(
-      executable: "/usr/bin/xcrun",
-      arguments: [
-        "xcstringstool", "compile",
-        root.appendingPathComponent("Sources/ComputerMCPApp/Resources/Localizable.xcstrings").path,
-        "--output-directory", output.path, "--serialization-format", "binary",
-      ], workingDirectory: root, environment: [:], timeoutMilliseconds: 30_000,
-      maxOutputBytes: 16_384)
+    try FileManager.default.createDirectory(
+      at: output, withIntermediateDirectories: false,
+      attributes: [.posixPermissions: 0o700])
+    let environment = [
+      "PATH": "/usr/bin:/bin", "HOME": output.path, "TMPDIR": output.path + "/",
+    ]
+    let administration = ExecutionAdministration(
+      mode: .fullAccess, environment: try ExecutionEnvironment(fullAccessVariables: environment))
+    let result = try ExecutionAdministration.$current.withValue(administration) {
+      try ProcessCommandRunner(launcher: testExecutionLauncher()).run(
+        executable: "/usr/bin/xcrun",
+        arguments: [
+          "xcstringstool", "compile",
+          root.appendingPathComponent("Sources/ComputerMCPApp/Resources/Localizable.xcstrings")
+            .path,
+          "--output-directory", output.path, "--serialization-format", "binary",
+        ], workingDirectory: output, environment: environment, timeoutMilliseconds: 30_000,
+        maxOutputBytes: 16_384)
+    }
     try #require(result.exitCode == 0, "\(result.stderr)")
     let bundle = try #require(Bundle(url: output))
     #expect(

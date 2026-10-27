@@ -1,6 +1,7 @@
 import ComputerMCPConfiguration
 import ComputerMCPCore
 import ComputerMCPGateway
+import ComputerMCPPermissions
 import ComputerMCPPlatform
 import ComputerMCPPlugins
 import Crypto
@@ -9,6 +10,7 @@ import Foundation
 internal enum ManifestChangeReason: String, Codable, Equatable, Sendable {
   case activated
   case projectTerminology = "project-terminology"
+  case permissionProfiles = "permission-profiles"
   case rolledBack = "rolled-back"
   case externalReload = "external-reload"
 }
@@ -78,6 +80,30 @@ package final class AtomicManifestStore: @unchecked Sendable {
     ManifestFileTransaction(manifestURL: manifestURL, database: database, fileManager: fileManager)
   }
 
+  package static func activatePermissionMigration(
+    manifestURL: URL, database: GatewayDatabase,
+    applications: any ApplicationBundleLocating, bundledPlugins: BundledPlugins = .current
+  ) throws -> PermissionMigrationReport? {
+    try Self.ensureDirectory(manifestURL.deletingLastPathComponent(), fileManager: .default)
+    let files = ManifestFileTransaction(
+      manifestURL: manifestURL, database: database, fileManager: .default)
+    return try files.withExclusiveAccess {
+      try files.recover()
+      let manifest: String
+      if let data = try files.currentData() {
+        guard let text = String(data: data, encoding: .utf8) else {
+          throw AtomicManifestStoreError.invalidManifestEncoding
+        }
+        manifest = text
+      } else {
+        return nil
+      }
+      return try database.activatePermissionMigration(
+        manifest: manifest, baseURL: manifestURL.deletingLastPathComponent(),
+        applications: applications, bundledPlugins: bundledPlugins)
+    }
+  }
+
   package init(
     manifestURL: URL,
     database: GatewayDatabase,
@@ -102,10 +128,39 @@ package final class AtomicManifestStore: @unchecked Sendable {
       guard let text = String(data: data, encoding: .utf8) else {
         throw AtomicManifestStoreError.invalidManifestEncoding
       }
-      if let upgraded = try ProjectManifestUpgrade.upgraded(text) {
+      let renamed = try ProjectManifestUpgrade.upgraded(text)
+      let manifest = renamed ?? text
+      if try PermissionManifestUpgrade.isRequired(manifest: manifest) {
+        try database.validatePermissionMigrationManifest(text)
+        let upgraded = try PermissionManifestUpgrade.upgraded(
+          manifest: manifest, profiles: database.profiles(),
+          baseURL: self.manifestURL.deletingLastPathComponent())
         _ = try write(
-          manifest: upgraded, reason: .projectTerminology, expectedDigest: Self.digest(of: data))
+          manifest: upgraded.exportedTOML(), reason: .permissionProfiles,
+          expectedDigest: Self.digest(of: data))
+      } else if let renamed {
+        _ = try write(
+          manifest: renamed, reason: .projectTerminology, expectedDigest: Self.digest(of: data))
       }
+      try reconcileInitialProfileSource()
+    }
+  }
+
+  private func reconcileInitialProfileSource() throws {
+    let loaded = try activeConfiguration()
+    let source = Data(try PermissionProfileManifest.encode(loaded.profiles.map(\.grant)).utf8)
+    guard try database.configurationState().profileSource != source else { return }
+    let data = try Data(contentsOf: manifestURL)
+    guard let manifest = String(data: data, encoding: .utf8) else {
+      throw AtomicManifestStoreError.invalidManifestEncoding
+    }
+    do {
+      _ = try write(
+        manifest: manifest, reason: .externalReload, expectedDigest: Self.digest(of: data))
+    } catch PermissionModelError.authoritySuspended {
+      // Diagnostics can review saved authority; reading a source never adopts a recovered epoch.
+    } catch GatewayPermissionError.profileUnavailable {
+      // An unconfirmed profile remains inactive until the owner reviews its saved snapshot.
     }
   }
 
@@ -138,7 +193,7 @@ package final class AtomicManifestStore: @unchecked Sendable {
     try write(manifest: manifest, reason: .activated, expectedDigest: expectedDigest)
   }
 
-  internal func activeConfiguration() throws -> GatewayConfiguration {
+  package func activeConfiguration() throws -> GatewayConfiguration {
     writeLock.lock()
     defer { writeLock.unlock() }
     if let configuration { return configuration }
@@ -177,7 +232,8 @@ package final class AtomicManifestStore: @unchecked Sendable {
       throw AtomicManifestStoreError.manifestMissing
     }
     let data = try Data(contentsOf: manifestURL)
-    let loaded = try loader.load(path: manifestURL.path)
+    var loaded = try loader.load(path: manifestURL.path)
+    loaded.hostDataPaths.insert(manifestURL)
     guard try Data(contentsOf: manifestURL) == data else {
       throw AtomicManifestStoreError.staleDigest
     }
@@ -245,7 +301,9 @@ package final class AtomicManifestStore: @unchecked Sendable {
         ".\(manifestURL.lastPathComponent).staged.\(UUID().uuidString)")
       defer { try? fileManager.removeItem(at: stagedURL) }
       try ManifestFileTransaction.writeAndSynchronize(data, to: stagedURL)
-      let loaded = try loader.load(path: stagedURL.path)
+      var loaded = try loader.load(path: stagedURL.path)
+      loaded.hostDataPaths.remove(stagedURL.standardizedFileURL)
+      loaded.hostDataPaths.insert(manifestURL)
       guard try Data(contentsOf: stagedURL) == data else {
         throw AtomicManifestStoreError.staleDigest
       }
@@ -271,6 +329,11 @@ package final class AtomicManifestStore: @unchecked Sendable {
       revision.activatedAt = Date()
       let persisted: GatewayDatabase.ConfigurationState
       let activeTunnelIDs = Set(prepared.configuration.transports.cloudflare.map(\.id))
+      var resolution = resolution
+      try resolution.merge(
+        .init(
+          profileDeclarations: prepared.configuration.profiles.map(\.grant),
+          configurationPaths: GatewayConfigurationPaths.capture(prepared.configuration)))
       if prepared.reason == .externalReload {
         // The editor owns these bytes. Admission records them without rewriting
         // the file or creating a new filesystem event on a failed DB commit.

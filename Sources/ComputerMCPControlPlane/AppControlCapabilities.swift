@@ -54,10 +54,10 @@ package enum AppControlCapabilityCatalog {
       "Explicitly approve Full Access for one client connection.", idempotent: false),
     item(
       "clients.limit", "computer-mcp clients limit",
-      "Limit one connection to Observe or Restricted Access.", idempotent: false),
+      "Narrow one connection using the reviewed permission limits.", idempotent: false),
     item(
       "clients.end", "computer-mcp clients end",
-      "End access for one client connection without cancelling started work.", idempotent: false),
+      "End one client connection and its connection-scoped authority.", idempotent: false),
     item(
       "clients.trusts", "computer-mcp clients trusts",
       "List saved client approvals and their revisions.", readOnly: true),
@@ -70,7 +70,8 @@ package enum AppControlCapabilityCatalog {
       destructive: true, idempotent: false),
     item(
       "mcp.doctor", "computer-mcp mcp doctor",
-      "Probe one MCP connection and catalog in a registered project.", readOnly: true),
+      "Inspect one MCP registration, credentials, executable and process-cleanup records.",
+      readOnly: true),
     item(
       "mcp.list", "computer-mcp mcp list", "List manual and resolved plugin MCP registrations.",
       readOnly: true),
@@ -145,8 +146,9 @@ package enum AppControlCapabilityCatalog {
       "Remove a registration and its profile grants without deleting user files.", destructive: true
     ),
     item(
-      "project.enable", "computer-mcp project enable",
-      "Enable or disable one project for one profile."),
+      "project.access", "computer-mcp project access",
+      "Set Ask, Deny, Read or Write for one project at the reviewed profile and permission revisions."
+    ),
     item(
       "profile.list", "computer-mcp profile list", "List profile grants and runtime state.",
       readOnly: true),
@@ -155,14 +157,8 @@ package enum AppControlCapabilityCatalog {
       "profile.activate", "computer-mcp profile activate",
       "Activate a compatible gateway profile with rollback on failure."),
     item(
-      "profile.grant", "computer-mcp profile grant",
-      "Grant or revoke one project for one profile."),
-    item(
-      "profile.shell", "computer-mcp profile shell",
-      "Separately allow or revoke arbitrary execution in local-full-access mode."),
-    item(
       "profile.permissions", "computer-mcp profile permissions",
-      "Update explicit permission mode, confirmation policy and advanced grants without restarting."
+      "Replace profile permissions using the exact reviewed authorization and permission revisions."
     ),
     item(
       "provider.list", "computer-mcp providers list", "List recorded provider health.",
@@ -174,14 +170,15 @@ package enum AppControlCapabilityCatalog {
       "permissions.status", "computer-mcp permissions status",
       "Read current macOS permission status without prompting.", readOnly: true),
     item(
-      "approvals.list", "computer-mcp permissions approvals list",
-      "List host operation approval requests and outcomes.", readOnly: true),
+      "permissions.requests", "computer-mcp permissions requests",
+      "List durable client permission requests and managed sources.", readOnly: true),
     item(
-      "approvals.approve", "computer-mcp permissions approvals approve",
-      "Approve one pending host operation for its exact request and authorization revision."),
+      "permissions.confirm_authority", "computer-mcp permissions confirm-authority",
+      "Confirm the complete reviewed saved authority using its epoch and exact permission revision."
+    ),
     item(
-      "approvals.deny", "computer-mcp permissions approvals deny",
-      "Deny one pending host operation."),
+      "permissions.answer", "computer-mcp permissions answer",
+      "Answer one permission request using the exact reviewed revision."),
     item(
       "plugin.list", "computer-mcp plugins list",
       "Read plugin source selections, settings and resolution diagnostics.",

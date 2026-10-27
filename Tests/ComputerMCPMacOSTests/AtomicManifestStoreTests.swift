@@ -1,4 +1,5 @@
 import ComputerMCPMacOS
+import ComputerMCPPermissions
 import ComputerMCPPlatformDarwin
 import ComputerMCPPlatformPOSIX
 import ComputerMCPTestSupport
@@ -19,6 +20,66 @@ import Testing
 @Suite
 
 final class AtomicManifestStoreTests {
+  @Test(arguments: [false, true])
+  func startupReconcilesEditedProfileSourceWithoutRewritingItsBytes(unconfirmed: Bool) throws {
+    let fixture = try ManifestStoreFixture(persistent: true)
+    defer { fixture.cleanup() }
+    var grant = ProfileGrant(id: .chatGPTOperate, allowedCallers: [.localMCP])
+    var configuration = GatewayConfiguration(profiles: [.init(grant: grant)])
+    let original = try fixture.store.activate(manifest: configuration.exportedTOML())
+    let before = try fixture.database.configurationState()
+    #expect(
+      before.profiles.first { $0.id == grant.id }?.permissions.state(for: .screen) == .notGranted)
+    if unconfirmed {
+      try fixture.database.connection.writer.write {
+        try $0.execute(
+          sql: "UPDATE permissionProfiles SET authorityEpoch = NULL WHERE id = ?",
+          arguments: [grant.id.rawValue])
+      }
+    }
+    try grant.permissions.set(.granted(.access), for: .screen)
+    configuration.profiles = [.init(grant: grant)]
+    let edited = Data(try configuration.exportedTOML().utf8)
+    try edited.write(to: fixture.manifestURL, options: .atomic)
+    let fingerprint = try #require(FileFingerprint.current(of: fixture.manifestURL))
+    let platform = MacOSPlatform.services(launcher: testExecutionLauncher())
+    let reopened = try AtomicManifestStore(
+      manifestURL: fixture.manifestURL, database: fixture.database,
+      loader: GatewayManifestConfigurationLoader(
+        database: fixture.database, applications: platform.applications))
+    #expect(
+      try reopened.activeConfiguration().profiles.first?.grant.permissions.state(for: .screen)
+        == .granted(.access))
+    #expect(try Data(contentsOf: fixture.manifestURL) == edited)
+    #expect(FileFingerprint.current(of: fixture.manifestURL) == fingerprint)
+    let state = try fixture.database.configurationState()
+    if unconfirmed {
+      #expect(state.profileSource == before.profileSource)
+      #expect(state.profiles == before.profiles)
+      let owner = try GatewayPermissionOwner(
+        context: .init(
+          caller: .localApp, profileID: .localAdmin, trustedPrincipalID: "fixture-owner"),
+        validate: {})
+      let view = try fixture.database.permissionRuntime(platform: platform).service.view(
+        owner: owner)
+      #expect(view.unconfirmedProfileIDs.contains(grant.id))
+      #expect(try reopened.history().map(\.id) == [original.id])
+    } else {
+      #expect(
+        state.profileSource
+          == Data(try PermissionProfileManifest.encode(configuration.profiles.map(\.grant)).utf8))
+      #expect(
+        state.profiles.first { $0.id == grant.id }?.permissions.state(for: .screen)
+          == .granted(.access))
+      #expect(try reopened.history().count == 2)
+      _ = try AtomicManifestStore(
+        manifestURL: fixture.manifestURL, database: fixture.database,
+        loader: GatewayManifestConfigurationLoader(
+          database: fixture.database, applications: platform.applications))
+      #expect(try reopened.history().count == 2)
+    }
+  }
+
   @Test(arguments: [nil, Data(), Data([0xFF]), Data("schema_version = 999\n".utf8)] as [Data?])
   func rejectedExternalBytesRemainUnmodifiedAndUnadmitted(data: Data?) throws {
     let fixture = try ManifestStoreFixture()
@@ -55,8 +116,7 @@ final class AtomicManifestStoreTests {
     let input = try #require(try fixture.store.externalInput())
     let prepared = try fixture.store.prepare(
       manifest: input.manifest, reason: .externalReload, expectedDigest: input.digest)
-    let connection = try DatabaseQueue(path: try #require(fixture.database.fileURL).path)
-    defer { try? connection.close() }
+    let connection = fixture.database.connection.writer
     try connection.write {
       try $0.execute(
         sql: """
@@ -67,7 +127,12 @@ final class AtomicManifestStoreTests {
           BEGIN INSERT INTO externalManifestChild VALUES (1); END;
           """)
     }
-    #expect(throws: DatabaseError.self) { try fixture.store.commit(prepared) }
+    do {
+      _ = try fixture.store.commit(prepared)
+      Issue.record("The deferred foreign key must reject the manifest commit.")
+    } catch let error as DatabaseError {
+      #expect(error.resultCode == .SQLITE_CONSTRAINT)
+    }
     #expect(FileFingerprint.current(of: fixture.manifestURL) == before)
     #expect(try Data(contentsOf: fixture.manifestURL) == Data(text.utf8))
     #expect(try fixture.store.activeConfiguration().server.name == "original")
@@ -163,8 +228,7 @@ final class AtomicManifestStoreTests {
     let original = try fixture.store.activate(
       manifest: Self.manifest(name: "original"),
       expectedDigest: try? fixture.store.admittedDigest(for: fixture.store.activeConfiguration()))
-    let connection = try DatabaseQueue(path: try #require(fixture.database.fileURL).path)
-    defer { try? connection.close() }
+    let connection = fixture.database.connection.writer
     try connection.write {
       try $0.execute(
         sql: """
@@ -183,10 +247,13 @@ final class AtomicManifestStoreTests {
         applications: MacOSPlatform.services(launcher: testExecutionLauncher()).applications),
       fileManager: manager)
     let proposed = Self.manifest(name: "rejected")
-    #expect(throws: DatabaseError.self) {
-      try store.activate(
+    do {
+      _ = try store.activate(
         manifest: proposed,
         expectedDigest: try? store.admittedDigest(for: store.activeConfiguration()))
+      Issue.record("The deferred foreign key must reject the manifest commit.")
+    } catch let error as DatabaseError {
+      #expect(error.resultCode == .SQLITE_CONSTRAINT)
     }
     // The deferred constraint fails at COMMIT, after the real replacement completed.
     #expect(manager.replacedData == Data(proposed.utf8))
@@ -227,14 +294,16 @@ final class AtomicManifestStoreTests {
       manifest: Self.manifest(name: "original"),
       expectedDigest: try? fixture.store.admittedDigest(for: fixture.store.activeConfiguration()))
     let external = Self.manifest(name: "external")
+    let loader = MutatingManifestLoader(
+      externalURL: editActive ? fixture.manifestURL : nil, replacement: external)
     let store = try AtomicManifestStore(
-      manifestURL: fixture.manifestURL, database: fixture.database,
-      loader: MutatingManifestLoader(
-        externalURL: editActive ? fixture.manifestURL : nil, replacement: external))
+      manifestURL: fixture.manifestURL, database: fixture.database, loader: loader)
+    loader.arm()
     #expect(throws: AtomicManifestStoreError.staleDigest) {
       try store.activate(
         manifest: Self.manifest(name: "candidate"), expectedDigest: original.digest)
     }
+    #expect(loader.didMutate)
     #expect(
       try Data(contentsOf: fixture.manifestURL)
         == Data((editActive ? external : original.manifest).utf8))
@@ -253,6 +322,7 @@ final class AtomicManifestStoreTests {
     defer { fixture.cleanup() }
     let previous: Data?
     if initialActivation {
+      try fixture.database.bootstrapPermissionProfiles([])
       previous = nil
     } else {
       _ = try fixture.store.activate(
@@ -266,12 +336,28 @@ final class AtomicManifestStoreTests {
       try Data(revision.manifest.utf8).write(to: fixture.manifestURL)
     }
     if committed { try fixture.database.saveConfigurationRevision(revision) }
+    // Store restart borrows this host's authority; a separate SQL reader verifies
+    // the durable commit decision without creating another execution coordinator.
     let reopenedDatabase = try GatewayDatabase(path: try #require(fixture.database.fileURL).path)
+    _ = reopenedDatabase.permissionStore(counter: fixture.counter)
+    let persistedRevision = try reopenedDatabase.configurationRevision(id: revision.id)
+    if committed {
+      let persisted = try #require(persistedRevision)
+      #expect(persisted.id == revision.id)
+      #expect(persisted.digest == revision.digest)
+      #expect(persisted.manifest == revision.manifest)
+      #expect(persisted.activationError == revision.activationError)
+      // GRDB's default Date codec persists UTC SQL text at millisecond precision.
+      #expect(persisted.createdAt.databaseValue == revision.createdAt.databaseValue)
+      #expect(persisted.activatedAt?.databaseValue == revision.activatedAt?.databaseValue)
+    } else {
+      #expect(persistedRevision == nil)
+    }
+    let platform = MacOSPlatform.services(launcher: testExecutionLauncher())
     let reopened = try AtomicManifestStore(
-      manifestURL: fixture.manifestURL, database: reopenedDatabase,
+      manifestURL: fixture.manifestURL, database: fixture.database,
       loader: GatewayManifestConfigurationLoader(
-        database: reopenedDatabase,
-        applications: MacOSPlatform.services(launcher: testExecutionLauncher()).applications))
+        database: fixture.database, applications: platform.applications))
     #expect(
       try fixture.files.currentData() == (committed ? Data(revision.manifest.utf8) : previous))
     if committed || !initialActivation {
@@ -283,6 +369,8 @@ final class AtomicManifestStoreTests {
       }
     }
     #expect(try reopened.history().count == (initialActivation ? 0 : 1) + (committed ? 1 : 0))
+    #expect(try reopened.history() == reopenedDatabase.configurationRevisions())
+    #expect(try fixture.database.configurationState() == reopenedDatabase.configurationState())
     #expect(!FileManager.default.fileExists(atPath: fixture.files.recoveryURL.path))
   }
 
@@ -625,11 +713,11 @@ final class AtomicManifestStoreTests {
     let historical = ConfigurationRevision(
       digest: try AtomicManifestStore.digest(of: Data(text.utf8)), manifest: text)
     try fixture.database.saveConfigurationRevision(historical)
+    let platform = MacOSPlatform.services(launcher: testExecutionLauncher())
     let loader = GatewayManifestConfigurationLoader(
       database: fixture.database,
-      applications: MacOSPlatform.services(launcher: testExecutionLauncher()).applications)
-    let connection = try DatabaseQueue(path: try #require(fixture.database.fileURL).path)
-    defer { try? connection.close() }
+      applications: platform.applications)
+    let connection = fixture.database.connection.writer
     if failure == "database" {
       try connection.write {
         try $0.execute(
@@ -644,7 +732,10 @@ final class AtomicManifestStoreTests {
     let original = try Data(contentsOf: fixture.manifestURL)
     if failure != "success" {
       #expect(throws: (any Error).self) {
-        try AtomicManifestStore(
+        _ = try AtomicManifestStore.activatePermissionMigration(
+          manifestURL: fixture.manifestURL, database: fixture.database,
+          applications: platform.applications)
+        _ = try AtomicManifestStore(
           manifestURL: fixture.manifestURL, database: fixture.database, loader: loader,
           fileManager: failure == "file"
             ? RejectingManifestMetadata(manifestURL: fixture.manifestURL) : .default)
@@ -656,41 +747,38 @@ final class AtomicManifestStoreTests {
       }
       if failure == "validation" { try Data(text.utf8).write(to: fixture.manifestURL) }
     }
-    let reopenedDatabase = try GatewayDatabase(path: try #require(fixture.database.fileURL).path)
+    let admissionDatabase = fixture.database
+    _ = admissionDatabase.permissionStore(counter: fixture.counter)
+    _ = try AtomicManifestStore.activatePermissionMigration(
+      manifestURL: fixture.manifestURL, database: admissionDatabase,
+      applications: platform.applications)
     let store = try AtomicManifestStore(
-      manifestURL: fixture.manifestURL, database: reopenedDatabase, loader: loader)
+      manifestURL: fixture.manifestURL, database: admissionDatabase, loader: loader)
     let config = try store.activeConfiguration()
     #expect(config.projects.first?.id == "workspace-id")
     #expect(config.projects.first?.displayName == "workspace.list")
-    #expect(config.profiles.first?.projects == ["workspace-id"])
-    #expect(config.profiles.first?.capabilities == ["project.list"])
-    #expect(config.profiles.first?.mode == .projectOperations)
+    #expect(
+      config.profiles.first?.grant.permissions.state(for: .project("workspace-id"))
+        == .granted(.read))
+    #expect(config.profiles.first?.grant.fullAccess == false)
     #expect(config.builtin.enabled == ["project.instructions"])
     #expect(try store.history().count == 2)
-    #expect(try reopenedDatabase.configurationRevision(id: historical.id)?.manifest == text)
+    #expect(try admissionDatabase.configurationRevision(id: historical.id)?.manifest == text)
     let bytes = try Data(contentsOf: fixture.manifestURL)
     _ = try AtomicManifestStore(
-      manifestURL: fixture.manifestURL, database: reopenedDatabase, loader: loader)
+      manifestURL: fixture.manifestURL, database: admissionDatabase, loader: loader)
     #expect(try Data(contentsOf: fixture.manifestURL) == bytes)
     #expect(try store.history().count == 2)
 
     let savedHistorical = try #require(
-      try reopenedDatabase.configurationRevision(id: historical.id))
-    let rollback = try store.rollback(
-      to: historical.id, expectedDigest: AtomicManifestStore.digest(of: bytes))
-    #expect(rollback.id != historical.id)
-    #expect(
-      try GatewayConfiguration.load(
-        text: rollback.manifest, baseURL: fixture.manifestURL.deletingLastPathComponent()) == config
-    )
+      try admissionDatabase.configurationRevision(id: historical.id))
+    #expect(throws: (any Error).self) {
+      try store.rollback(to: historical.id, expectedDigest: AtomicManifestStore.digest(of: bytes))
+    }
     #expect(try store.activeConfiguration() == config)
-    #expect(try Data(contentsOf: fixture.manifestURL) == Data(rollback.manifest.utf8))
-    #expect(try store.history().count == 3)
-    #expect(try reopenedDatabase.configurationRevision(id: historical.id) == savedHistorical)
-    let stored = try #require(try reopenedDatabase.configurationRevision(id: rollback.id))
-    #expect(stored.manifest == rollback.manifest)
-    #expect(stored.digest == rollback.digest)
-    #expect(stored.activatedAt != nil)
+    #expect(try Data(contentsOf: fixture.manifestURL) == bytes)
+    #expect(try store.history().count == 2)
+    #expect(try admissionDatabase.configurationRevision(id: historical.id) == savedHistorical)
   }
 
   private static func manifest(name: String) -> String {
@@ -710,14 +798,34 @@ final class AtomicManifestStoreTests {
 
 private struct ManifestWriteFailure: Error {}
 
-private struct MutatingManifestLoader: ManifestConfigurationLoading {
+private final class MutatingManifestLoader: ManifestConfigurationLoading, @unchecked Sendable {
   let externalURL: URL?
   let replacement: String
+  private let lock = NSLock()
+  private var armed = false
+  private var mutationApplied = false
+
+  init(externalURL: URL?, replacement: String) {
+    self.externalURL = externalURL
+    self.replacement = replacement
+  }
+
+  var didMutate: Bool { lock.withLock { mutationApplied } }
+
+  func arm() { lock.withLock { armed = true } }
 
   func load(path: String) throws -> GatewayConfiguration {
     let loaded = try GatewayConfiguration.load(path: path)
-    try replacement.write(
-      to: externalURL ?? URL(fileURLWithPath: path), atomically: true, encoding: .utf8)
+    let shouldMutate = lock.withLock {
+      guard armed else { return false }
+      armed = false
+      return true
+    }
+    if shouldMutate {
+      try replacement.write(
+        to: externalURL ?? URL(fileURLWithPath: path), atomically: true, encoding: .utf8)
+      lock.withLock { mutationApplied = true }
+    }
     return loaded
   }
 }
@@ -778,6 +886,7 @@ private final class ManifestStoreFixture {
   let manifestURL: URL
   let database: GatewayDatabase
   let store: AtomicManifestStore
+  let counter = TestAuthorizationEpochCounter()
 
   init(persistent: Bool = false) throws {
     root = FileManager.default.temporaryDirectory
@@ -789,6 +898,10 @@ private final class ManifestStoreFixture {
     } else {
       database = try GatewayDatabase(inMemory: ())
     }
+    _ = database.permissionStore(counter: counter)
+    var platform = MacOSPlatform.services(launcher: testExecutionLauncher())
+    platform.permissionPolicyReader = TestManagedPolicyReader()
+    _ = try database.permissionRuntime(platform: platform)
     store = try AtomicManifestStore(
       manifestURL: manifestURL, database: database,
       loader: GatewayManifestConfigurationLoader(

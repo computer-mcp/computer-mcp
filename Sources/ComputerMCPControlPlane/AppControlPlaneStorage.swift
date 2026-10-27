@@ -75,6 +75,15 @@ package struct AppControlPlaneServiceDirectories: Codable, Equatable, Sendable {
     }
   }
 
+  /// Every host-owned storage root remains protected when its location is customized.
+  package var hostDataPaths: Set<URL> {
+    Set(
+      [
+        applicationSupport, configuration, logs, plugins, tunnelClientProfiles, runtime,
+        database, manifest,
+      ].map(\.standardizedFileURL))
+  }
+
   package var gatewaySocket: URL {
     runtime.appendingPathComponent("gateway.sock")
   }

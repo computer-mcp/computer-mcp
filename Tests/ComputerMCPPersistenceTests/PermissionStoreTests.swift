@@ -65,6 +65,28 @@ private struct FileEpochCounter: AuthorizationEpochCounter {
   }
 }
 
+private final class CountingEpochCounter: AuthorizationEpochCounter, @unchecked Sendable {
+  private let base: FileEpochCounter
+  private let lock = NSLock()
+  private var count = 0
+  var advances: Int { lock.withLock { count } }
+  init(_ base: FileEpochCounter) { self.base = base }
+  func withExclusiveAccess<Result>(
+    _ body: (any AuthorizationEpochCounterAccess) throws -> Result
+  ) throws -> Result {
+    try base.withExclusiveAccess { try body(Access(base: $0, owner: self)) }
+  }
+  private struct Access: AuthorizationEpochCounterAccess {
+    let base: any AuthorizationEpochCounterAccess
+    let owner: CountingEpochCounter
+    func read() throws -> AuthorizationEpochWatermark? { try base.read() }
+    func advance(to watermark: AuthorizationEpochWatermark) throws {
+      try base.advance(to: watermark)
+      owner.lock.withLock { owner.count += 1 }
+    }
+  }
+}
+
 private final class StoreFixture: @unchecked Sendable {
   let directory: URL
   var path: String { directory.appendingPathComponent("ledger.sqlite").path }
@@ -125,8 +147,147 @@ private func consumeRetry(_ store: SQLitePermissionStore, id: UUID) async throws
   }
 }
 
+private func countedStore(_ fixture: StoreFixture) async throws
+  -> (SQLitePermissionStore, CountingEpochCounter)
+{
+  let counter = CountingEpochCounter(fixture.counter)
+  let store = try SQLitePermissionStore(connection: fixture.connection(), counter: counter)
+  _ = try await store.read()
+  try await store.transaction { ledger in
+    try ledger.acknowledgeEpochRecovery(#require(ledger.authorizationEpochID))
+    try ledger.confirmSuspendedAuthority(
+      epochID: #require(ledger.authorizationEpochID), expectedRevision: ledger.revision)
+  }
+  return (store, counter)
+}
+
 @Suite(.timeLimit(.minutes(2)))
 struct PermissionStoreTests {
+  @Test func aWarmReaderObservesAnIndependentWritersAuthorityChanges() async throws {
+    let fixture = try StoreFixture()
+    let reader = try await fixture.activate()
+    let writer = try fixture.open()
+    let original = try await reader.read()
+    _ = try await writer.transaction { ledger in
+      try ledger.setPermission(
+        .granted(.access), for: .screen, principal: storeClient,
+        expectedRevision: ledger.revision)
+    }
+    let granted = try await reader.read()
+    #expect(granted.permissions(for: storeClient).state(for: .screen) == .granted(.access))
+    #expect(granted.revision > original.revision)
+    try await writer.transaction { ledger in
+      _ = try ledger.revoke(
+        principal: storeClient, permission: .screen, expectedRevision: ledger.revision)
+    }
+    #expect(try await reader.read().permissions(for: storeClient).state(for: .screen) == .denied)
+    await #expect(throws: PermissionModelError.revisionConflict) {
+      try await reader.transaction { $0 = original }
+    }
+  }
+
+  @Test func stableReadsAndNoopsPreserveTheExternalWatermark() async throws {
+    let fixture = try StoreFixture()
+    let (store, counter) = try await countedStore(fixture)
+    _ = try await fixture.pending(store)
+    try await store.transaction { ledger in
+      ledger.register(.client("other"))
+      ledger.register(.plugin(.package("fixture")))
+      var environment = ledger.environment
+      environment.trustedHosts = [HostRule("b.example.com"), HostRule("a.example.com")]
+      environment.paths = try PathEnvironmentSnapshot(rules: [
+        .init(root: CanonicalPath("/host"), kind: .hostData),
+        .init(root: CanonicalPath("/people"), kind: .userData),
+      ])
+      _ = try ledger.reconcile(environment: environment, expectedRevision: ledger.revision)
+    }
+    let before = try await store.read()
+    let advances = counter.advances
+    for _ in 0..<8 {
+      _ = try await store.read()
+      try await store.transaction { ledger in _ = ledger.reconcileExecutionLimits(now: storeNow) }
+    }
+    try await store.transaction { ledger in
+      ledger = try JSONDecoder().decode(PermissionLedger.self, from: JSONEncoder().encode(ledger))
+    }
+    #expect(try await store.read() == before)
+    #expect(counter.advances == advances)
+    try FileManager.default.removeItem(at: fixture.counter.url)
+    let recovered = try await store.read()
+    #expect(recovered.authorizationEpochID != before.authorizationEpochID)
+    #expect(recovered.suspendedAuthority != nil)
+    #expect(counter.advances == advances + 1)
+    _ = try await store.read()
+    #expect(counter.advances == advances + 1)
+  }
+
+  @Test func sqlAndLedgerChangesAdvanceEvenWhenTheOtherStateIsUnchanged() async throws {
+    let fixture = try StoreFixture()
+    let (store, counter) = try await countedStore(fixture)
+    let before = counter.advances
+    try store.transactionWithDatabase { database, _ in
+      try database.execute(
+        sql: "INSERT INTO runtimeSettings VALUES ('fixture', 'one', '2026-10-26')")
+    }
+    #expect(counter.advances == before + 1)
+    try store.transactionWithDatabase { database, _ in
+      try database.execute(sql: "UPDATE runtimeSettings SET value = 'two' WHERE key = 'fixture'")
+    }
+    #expect(counter.advances == before + 2)
+    try store.transactionWithDatabase { database, _ in
+      try database.execute(
+        sql: """
+          INSERT INTO auditEvents
+            (id, occurredAt, requestID, caller, profileID, capabilityID, decision)
+          VALUES ('counted', '2026-10-26', 'fixture', 'local-app', 'local-admin', 'control.fixture', 'allowed')
+          """)
+    }
+    #expect(counter.advances == before + 3)
+    try await store.transaction { ledger in ledger.register(storeClient) }
+    #expect(counter.advances == before + 4)
+    try await store.transaction { ledger in ledger.register(storeClient) }
+    #expect(counter.advances == before + 4)
+    #expect(
+      try fixture.sql {
+        try String.fetchOne($0, sql: "SELECT value FROM runtimeSettings WHERE key = 'fixture'")
+      } == "two")
+    #expect(
+      try fixture.sql {
+        try Int.fetchOne($0, sql: "SELECT count(*) FROM auditEvents WHERE id = 'counted'")
+      } == 1)
+  }
+
+  @Test func returnedValidationRetirementAdvancesButRolledBackWorkDoesNot() async throws {
+    let fixture = try StoreFixture()
+    let (store, counter) = try await countedStore(fixture)
+    let id = try await fixture.pending(store)
+    let before = counter.advances
+    let error = try await store.transaction { ledger -> PermissionModelError? in
+      do {
+        _ = try ledger.authorize(
+          invocation: storeCall, requirements: storeRequirements(),
+          retryIDs: [id], now: storeNow.addingTimeInterval(86_401))
+        return nil
+      } catch let error as PermissionModelError { return error }
+    }
+    #expect(error == .expiredRequest)
+    #expect(counter.advances == before + 1)
+    #expect(try await store.read().requests[id]?.status == .revoked)
+    #expect(throws: StoreTestError.injected) {
+      try store.transactionWithDatabase { database, ledger in
+        ledger.register(.client("rolled-back"))
+        try database.execute(
+          sql: "INSERT INTO runtimeSettings VALUES ('rolled-back', 'value', '2026-10-26')")
+        throw StoreTestError.injected
+      }
+    }
+    #expect(counter.advances == before + 1)
+    #expect(
+      try fixture.sql {
+        try Int.fetchOne($0, sql: "SELECT count(*) FROM runtimeSettings WHERE key = 'rolled-back'")
+      } == 0)
+  }
+
   @Test func independentConnectionsConsumeExactlyOnceAndRejectStaleImport() async throws {
     let fixture = try StoreFixture()
     let setup = try await fixture.activate()
@@ -356,6 +517,7 @@ struct PermissionStoreTests {
           arguments: [try JSONSerialization.data(withJSONObject: object)])
       }
     }
+    await #expect(throws: PermissionPersistenceError.self) { try await store.read() }
     await #expect(throws: PermissionPersistenceError.self) { try await fixture.open().read() }
   }
 

@@ -11,9 +11,9 @@ Each entry contains `id`, `cli_command`, `surface`, `read_only`, `destructive`,
 `idempotent`, and `local_only`. The embedded CLI reads the catalog directly, so
 it remains available when the App is stopped. The same catalog validates the
 current-user control socket and is never part of a remote profile's MCP tool
-list. Standalone HTTP hosts expose the six session/trust `clients` contracts on their
-explicit private owner socket; they do not expose App lifecycle or configuration
-commands.
+list. Standalone HTTP hosts expose the six session/trust `clients` contracts and the
+permission request, answer and authority-confirmation contracts on their explicit
+private owner socket. They do not expose App lifecycle or configuration commands.
 
 | Family | Shared operations | CLI entry points | UI |
 | --- | --- | --- | --- |
@@ -23,9 +23,9 @@ commands.
 | Readiness | local, ChatGPT, and Cloudflare journey checks | `doctor` | Home and Diagnostics |
 | Configuration | show, validate, export, digest-guarded import, history, rollback | `config …` | Diagnostics manifest editor and revision rollback |
 | Projects | list, canonical add, remove, profile enable/disable, deduplication | `project …` | Projects |
-| Profiles | list, show, activate, project grant/revoke, permission mode, confirmation policy, advanced grants | `profile …` | Connection defaults and restricted permission selection |
+| Profiles | list, show, activate, project grant/revoke, permissions, execution mode and network settings | `profile …` | Connection defaults and permission editing |
 | Providers | recorded health and bounded Doctor refresh | `providers list|doctor` | Providers |
-| Permissions | non-prompting TCC status; list, approve, or deny exact host operation tickets | `permissions status`, `permissions approvals …` | Permissions and pending host approvals; TCC prompting remains an explicit local UI action |
+| Permissions | non-prompting TCC status; list and answer durable permission requests; review and confirm saved authority | `permissions status`, `permissions requests`, `permissions answer`, `permissions confirm-authority` | Permissions, pending requests and captured authority review; TCC prompting remains an explicit local UI action |
 | Audit | bounded redacted event list | `audit list` | Audit |
 | Gateway tools | list, inspect, and policy-controlled local-admin call | `tools …` | CLI-only diagnostic escape hatch |
 | OpenAI Tunnel | list, Doctor, start, reconnect, stop, provision, logs, save, remove | `tunnel openai …` | Tunnels |
@@ -34,7 +34,7 @@ commands.
 ## Remote management
 
 App-managed gateway connections expose typed management through their verified
-session. The host applies the same capability policy, execution metadata and audit
+session. The host applies the same permission evaluation, execution metadata and audit
 as other tools. Full Access must already have explicit local consent; normal
 project changes and verified official plugin changes need no additional prompt.
 Standalone fixed-manifest gateways expose their configured execution tools and
@@ -42,13 +42,13 @@ optional local client-consent socket.
 
 | Tools | Inputs and authority |
 | --- | --- |
-| `project.list`, `project.describe` | Inspect projects within the current grant; describe takes `project_id`. |
+| `project.list`, `project.describe` | ID, display name and access status without Project permission; detailed metadata needs access. Describe takes `project_id`. |
 | `project.add` | Full Access; absolute `path`, optional `display_name`. |
 | `project.repair` | Full Access; `id`, new `path`, reviewed `expected_root_path`, optional `display_name`. |
 | `project.remove` | Full Access; `id`, reviewed `expected_root_path`. Removes the registration, preserving files and retained work. |
-| `project.grant` | Full Access; `id`, `enabled`, `expected_profile_revision`. Changes only the connection's profile. A changed profile invalidates its prior Full consent. |
+| `project.grant` | Full Access; `id`, `access` (`read`, `write` or `deny`), `expected_profile_revision`. Changes only the connection's profile. A changed profile invalidates its prior Full consent. |
 | `profile.show` | Inspect the connection's own session, profile and revisions. |
-| `profile.limit` | `mode` (`observe` or `restricted`) and `expected_revision`; may only reduce this session's access. |
+| `profile.limit` | `limits` (`ManagedPolicy` JSON) and `expected_revision`; must narrow this session's effective ceiling. |
 | `plugin.list`, `plugin.describe` | Inspect safe plugin summaries and exact store revision. Both accept `after_id` and `limit` (default 50, maximum 200); describe takes `id` and pages its installations. |
 | `plugin.search` | Official static catalog; optional `query`, `kind` (`mcp`, `cli`, `skills`), `page` (starts at 1), `refresh`. |
 | `plugin.artifacts` | `repository`, exact integer `repository_id`, optional `tag` and `page`. |
@@ -57,9 +57,8 @@ optional local client-consent socket.
 | `plugin.enable`, `plugin.disable` | Full Access; `id` and `expected_revision`. Activation requires bundled or verified official code. |
 | `plugin.uninstall` | Full Access; `installation_id` and `expected_revision`. Active work retains its artifact lease. |
 
-Tool discovery reflects the current session authority. Read operations and
-`profile.limit` can be selected in the local Restricted permission editor;
-configuration writes require Full Access even if a Restricted profile names them.
+Tool listings include requirements and requestable tools within managed limits.
+Full access consent changes execution mode without granting permissions.
 Read summaries omit credential bindings and launch argument values. Input objects
 reject unknown fields. Results use the normal gateway envelope and
 `structuredContent.result`; errors use `structuredContent.error`.
@@ -88,14 +87,13 @@ HTTP owner socket. OAuth approval retains separate Full Access session consent.
 | Operation | Arguments and result |
 | --- | --- |
 | `clients.authorizations` | Optional `tunnel_id`, `id`, `after_id`, `limit` (default 100, maximum 200). Returns `authorizations` with ID, tunnel ID, pairing code, client/redirect hosts and creation/expiry times; plus `next_after_id`. |
-| `clients.authorize` | Required `pairing_code`; optional `tunnel_id`, `profile_id`, `authorization_digest` (a SHA-256 hex string). Omission of `profile_id` selects `cloudflare-observe` only while its effective mode is read-only; otherwise an explicit `profile_id` is required. When supplied, `authorization_digest` must match the chosen profile's current effective authorization digest or approval fails and the owner must review the profile again. Approves one unexpired pending request with a profile permitting `cloudflare-tunnel`; returns the grant. Ambiguous codes require `tunnel_id`. `profile.list` and `profile.show` include `authorization_digest`. |
+| `clients.authorize` | Required `pairing_code`; required `profile_id`; optional `tunnel_id`, `authorization_digest` (a SHA-256 hex string). When supplied, `authorization_digest` must match the chosen profile's current effective authorization digest or approval fails and the owner must review the profile again. Approves one unexpired pending request with a profile permitting `cloudflare-tunnel`; returns the grant. Ambiguous codes require `tunnel_id`. `profile.list` and `profile.show` include `authorization_digest`. |
 | `clients.deny` | Required `pairing_code`, optional `tunnel_id`. Denies one pending request. |
 | `clients.grants` | Same paging/filter fields as authorizations. Returns `grants`, including revoked records, and `next_after_id`. Grants carry client ID, redirect host, profile, resource, scope and creation/last-use/revocation times. |
 | `clients.revoke_grant` | Required grant `id`. Immediately invalidates all grant tokens; repeated revocation is harmless. |
 
-The local `authorizeOAuthClient` API follows the same default: omitting
-`profileID` selects `cloudflare-observe` only in effective read-only mode;
-otherwise the caller must choose an explicit profile. Its optional
+The local `authorizeOAuthClient` API also requires the owner to choose an
+explicit profile. Its optional
 `expectedAuthorizationDigest` binds approval to the reviewed
 `OAuthApprovalProfile.authorizationDigest`, computed from the effective grant.
 The App snapshot carries this digest with each remote profile, and the App
@@ -118,3 +116,21 @@ Save compares it with the current tunnel while holding both the tunnel mutation
 slot and configuration publication lock; a mismatch refuses the save with a
 stale-configuration error and requires reopening the tunnel. New tunnels and
 owner CLI saves omit the digest and retain their existing save behavior.
+
+## Saved authority recovery
+
+`permissions.requests` returns the permission `revision`, current `epoch`,
+`suspended` state, `unconfirmed_profile_ids`, complete canonical `profiles`,
+managed `sources`, and durable `requests`. Reading does not adopt saved authority.
+
+`permissions.confirm_authority` requires an epoch UUID, an
+`expected_permission_revision`, and the complete reviewed `profiles` array.
+Every saved profile ID and authorization revision must match; an owner may
+include reviewed permission edits in that snapshot. Missing, duplicate, unknown
+or stale profiles fail before authority is adopted. The App review remains bound
+to its captured snapshot while live request views refresh. The CLI requires
+`--profiles-file` and never refreshes or retries a stale review.
+
+The App socket and standalone HTTP private owner socket expose this operation.
+The HTTP owner validates its active generation synchronously through commit.
+These contracts remain absent from remote MCP catalogs.

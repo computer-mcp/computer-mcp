@@ -1,6 +1,7 @@
 import ComputerMCPAuthorization
 import ComputerMCPConfiguration
 import ComputerMCPCore
+import ComputerMCPPermissions
 import ComputerMCPTransport
 import ComputerMCPTunnels
 import Foundation
@@ -199,9 +200,9 @@ package final class GatewayHTTPRuntime: HTTPOriginLifecycle, @unchecked Sendable
   }
 
   package func limitControlSession(
-    id: String, to mode: GatewayPermissionMode, expectedRevision: Int64
+    id: String, to limits: ManagedPolicy, expectedRevision: Int64
   ) async throws -> GatewayControlSessionSnapshot {
-    try await app.limitControlSession(id: id, to: mode, expectedRevision: expectedRevision)
+    try await app.limitControlSession(id: id, to: limits, expectedRevision: expectedRevision)
   }
 
   package func endControlSession(id: String, expectedRevision: Int64) async throws {
@@ -760,6 +761,13 @@ package actor GatewayHTTPApp {
     return control.database
   }
 
+  package func withLocalControl<Result: Sendable>(
+    generation: UUID, operation: @Sendable () throws -> Result
+  ) throws -> Result {
+    _ = try requireLocalControl(generation)
+    return try operation()
+  }
+
   package func localControlSessions(generation: UUID) throws -> [GatewayControlSessionSnapshot] {
     _ = try requireLocalControl(generation)
     return controlSessions()
@@ -789,10 +797,10 @@ package actor GatewayHTTPApp {
   }
 
   package func limitLocalControlSession(
-    id: String, to mode: GatewayPermissionMode, expectedRevision: Int64, generation: UUID
+    id: String, to limits: ManagedPolicy, expectedRevision: Int64, generation: UUID
   ) throws -> GatewayControlSessionSnapshot {
     _ = try requireLocalControl(generation)
-    return try limitControlSession(id: id, to: mode, expectedRevision: expectedRevision)
+    return try limitControlSession(id: id, to: limits, expectedRevision: expectedRevision)
   }
 
   package func endLocalControlSession(id: String, expectedRevision: Int64, generation: UUID) throws
@@ -811,19 +819,16 @@ package actor GatewayHTTPApp {
     id: String, lifetime: GatewayFullAccessLifetime,
     expectedRevision: Int64, expectedTrustRevision: Int64, approver: GatewayCallerKind = .localApp
   ) throws -> GatewayControlSessionSnapshot {
-    guard configuration.policy.shellEnabled else {
-      throw GatewayControlError.fullShellManifestDisabled
-    }
     return try controlSession(id: id).approveFullAccess(
       lifetime: lifetime, expectedRevision: expectedRevision,
       expectedTrustRevision: expectedTrustRevision, approver: approver)
   }
 
   package func limitControlSession(
-    id: String, to mode: GatewayPermissionMode, expectedRevision: Int64
+    id: String, to limits: ManagedPolicy, expectedRevision: Int64
   ) throws -> GatewayControlSessionSnapshot {
     let scope = try controlSession(id: id)
-    try scope.limitAccess(to: mode, expectedRevision: expectedRevision)
+    try scope.limitAccess(to: limits, expectedRevision: expectedRevision)
     return scope.snapshot
   }
 

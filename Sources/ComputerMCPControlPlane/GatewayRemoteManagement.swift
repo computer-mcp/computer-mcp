@@ -5,7 +5,7 @@ import ComputerMCPProcess
 import Foundation
 
 /// App-owned management is injected into each admitted generation; the normal
-/// gateway still owns tool admission, invocation leases, tickets and audit.
+/// gateway owns permission admission, invocation leases and audit.
 package struct GatewayRemoteManagement: GatewayManagementProvider {
   let call: @Sendable (String, [String: JSONValue], ExecutionContext) async throws -> JSONValue
 
@@ -48,10 +48,10 @@ package struct GatewayRemoteManagement: GatewayManagementProvider {
       risk: .readOnly, requirement: .none),
     .init(
       input: .init(
-        "profile.limit", arguments: ["mode": .string, "expected_revision": .integer],
-        required: ["mode", "expected_revision"], readOnly: false),
+        "profile.limit", arguments: ["limits": .object, "expected_revision": .integer],
+        required: ["limits", "expected_revision"], readOnly: false),
       summary:
-        "Reduce only this session to observe or restricted using its reviewed revision. Full Access and persistent trust require local consent.",
+        "Narrow only this connection’s permission and execution limits using its reviewed revision. Full Access and persistent trust require local consent.",
       risk: .projectWrite, requirement: .none),
     .init(
       input: .init(
@@ -81,8 +81,8 @@ package struct GatewayRemoteManagement: GatewayManagementProvider {
     .init(
       input: .init(
         "project.grant",
-        arguments: ["id": .string, "enabled": .boolean, "expected_profile_revision": .integer],
-        required: ["id", "enabled", "expected_profile_revision"], readOnly: false),
+        arguments: ["id": .string, "access": .string, "expected_profile_revision": .integer],
+        required: ["id", "access", "expected_profile_revision"], readOnly: false),
       summary:
         "Change one project grant for this connection's profile using its exact revision. Requires approved Full Access. Changing profile authority invalidates prior Full consent.",
       risk: .fullShell, requirement: .fullAccess),

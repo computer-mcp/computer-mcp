@@ -33,13 +33,20 @@ import Testing
       })
     let launcher = ExecutionLauncher(platform: platform)
     let runner = ManagedCommandRunner(launcher: launcher)
+    let fullAccess = ExecutionAdministration(
+      mode: .fullAccess,
+      environment: try ExecutionEnvironment(fullAccessVariables: ["PATH": "/usr/bin:/bin"]))
     let pairStart = ContinuousClock.now
-    let pairWork = try await runShortCommands(runner, directory: fixture.root, count: 2)
+    let pairWork = try await runShortCommands(
+      runner, directory: fixture.root, count: 2, administration: fullAccess)
     let pairDuration = pairStart.duration(to: .now)
     let concurrentStart = ContinuousClock.now
     let longestLane = try await withThrowingTaskGroup(of: Duration.self) { group in
       for _ in 0..<8 {
-        group.addTask { try await runShortCommands(runner, directory: fixture.root, count: 16) }
+        group.addTask {
+          try await runShortCommands(
+            runner, directory: fixture.root, count: 16, administration: fullAccess)
+        }
       }
       var longest = Duration.zero
       for try await duration in group { longest = max(longest, duration) }
@@ -54,33 +61,42 @@ import Testing
     #expect(counter.count(.membership) == 0)
 
     // A sandboxed control proves that the injected counters observe the real kernel boundary.
+    let configuration = try fixture.configuration()
+    let sandbox = ExecutionAdministration(
+      mode: .sandbox(configuration),
+      environment: try ExecutionEnvironment(
+        searchPath: [.init("/usr/bin"), .init("/bin")], home: configuration.homeDirectory,
+        temporary: configuration.temporaryDirectory, cache: configuration.cacheDirectory))
     _ = try await runShortCommands(
-      ManagedCommandRunner(launcher: launcher, policy: .readOnly), directory: fixture.root,
-      count: 1)
+      runner, directory: URL(fileURLWithPath: configuration.worktree.value), count: 1,
+      administration: sandbox)
     #expect(counter.count(.snapshot) > 0)
     #expect(counter.count(.probe) > 0)
     #expect(counter.count(.sentinel) == 1)
     #expect(counter.count(.membership) > 0)
   }
 
-  private func runShortCommands(_ runner: ManagedCommandRunner, directory: URL, count: Int)
-    async throws -> Duration
-  {
+  private func runShortCommands(
+    _ runner: ManagedCommandRunner, directory: URL, count: Int,
+    administration: ExecutionAdministration
+  ) async throws -> Duration {
     try await withCheckedThrowingContinuation {
       (continuation: CheckedContinuation<Duration, Error>) in
       DispatchQueue(label: "test.short-commands").async {
         continuation.resume(
           with: Result {
-            // Native cases can delay the async test's resumption after this worker has finished.
-            let start = ContinuousClock.now
-            for _ in 0..<count {
-              let result = try runner.run(
-                executable: "/usr/bin/true", arguments: [], workingDirectory: directory,
-                environment: ["PATH": "/usr/bin:/bin"], timeoutMilliseconds: 5_000,
-                maxOutputBytes: 1024)
-              try #require(result.exitCode == 0)
+            try ExecutionAdministration.$current.withValue(administration) {
+              // Native cases can delay the async test's resumption after this worker has finished.
+              let start = ContinuousClock.now
+              for _ in 0..<count {
+                let result = try runner.run(
+                  executable: "/usr/bin/true", arguments: [], workingDirectory: directory,
+                  environment: ["PATH": "/usr/bin:/bin"], timeoutMilliseconds: 5_000,
+                  maxOutputBytes: 1024)
+                try #require(result.exitCode == 0)
+              }
+              return start.duration(to: .now)
             }
-            return start.duration(to: .now)
           })
       }
     }

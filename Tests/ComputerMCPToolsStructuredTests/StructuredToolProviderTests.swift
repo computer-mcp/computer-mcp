@@ -41,7 +41,8 @@ final class StructuredToolProviderTests {
           ]),
           projectDirectory: directory), sqliteCommand: .init(id: "sqlite3", executable: "sqlite3")
       ))
-    _ = try provider.callTool(
+    _ = try callStructuredToolAsOwner(
+      provider, home: directory,
       .init(
         name: "plist.write",
         arguments: .object([
@@ -1232,7 +1233,8 @@ final class StructuredToolProviderTests {
           projectDirectory: directory
         ), sqliteCommand: .init(id: "sqlite3", executable: "sqlite3")))
 
-    let dryRunResult = try provider.callTool(
+    let dryRunResult = try callStructuredToolAsOwner(
+      provider, home: directory,
       .init(
         name: "json.write",
         arguments: .object([
@@ -1262,7 +1264,8 @@ final class StructuredToolProviderTests {
         atPath: directory.appendingPathComponent("config/out.json").path)))
 
     expectThrows(
-      try provider.callTool(
+      try callStructuredToolAsOwner(
+        provider, home: directory,
         .init(
           name: "json.write",
           arguments: .object([
@@ -1276,7 +1279,8 @@ final class StructuredToolProviderTests {
       #expect(error.localizedDescription.contains("confirm_write=true"))
     }
 
-    let writeResult = try provider.callTool(
+    let writeResult = try callStructuredToolAsOwner(
+      provider, home: directory,
       .init(
         name: "json.write",
         arguments: .object([
@@ -1330,7 +1334,8 @@ final class StructuredToolProviderTests {
         ), sqliteCommand: .init(id: "sqlite3", executable: "sqlite3")))
 
     expectThrows(
-      try provider.callTool(
+      try callStructuredToolAsOwner(
+        provider, home: directory,
         .init(
           name: "json.write",
           arguments: .object([
@@ -1343,7 +1348,8 @@ final class StructuredToolProviderTests {
     }
 
     expectThrows(
-      try provider.callTool(
+      try callStructuredToolAsOwner(
+        provider, home: directory,
         .init(
           name: "json.write",
           arguments: .object([
@@ -1356,7 +1362,8 @@ final class StructuredToolProviderTests {
     }
 
     expectThrows(
-      try provider.callTool(
+      try callStructuredToolAsOwner(
+        provider, home: directory,
         .init(
           name: "json.write",
           arguments: .object([
@@ -1369,7 +1376,8 @@ final class StructuredToolProviderTests {
     }
 
     expectThrows(
-      try provider.callTool(
+      try callStructuredToolAsOwner(
+        provider, home: directory,
         .init(
           name: "json.write",
           arguments: .object([
@@ -1382,7 +1390,8 @@ final class StructuredToolProviderTests {
     }
 
     expectThrows(
-      try provider.callTool(
+      try callStructuredToolAsOwner(
+        provider, home: directory,
         .init(
           name: "json.write",
           arguments: .object([
@@ -2228,7 +2237,8 @@ final class StructuredToolProviderTests {
       ]),
     ])
 
-    let dryRunResult = try provider.callTool(
+    let dryRunResult = try callStructuredToolAsOwner(
+      provider, home: directory,
       .init(
         name: "plist.write",
         arguments: .object([
@@ -2253,7 +2263,8 @@ final class StructuredToolProviderTests {
         atPath: directory.appendingPathComponent("generated/Info.plist").path)))
 
     expectThrows(
-      try provider.callTool(
+      try callStructuredToolAsOwner(
+        provider, home: directory,
         .init(
           name: "plist.write",
           arguments: .object([
@@ -2267,7 +2278,8 @@ final class StructuredToolProviderTests {
       #expect(error.localizedDescription.contains("confirm_write=true"))
     }
 
-    let writeResult = try provider.callTool(
+    let writeResult = try callStructuredToolAsOwner(
+      provider, home: directory,
       .init(
         name: "plist.write",
         arguments: .object([
@@ -2323,7 +2335,8 @@ final class StructuredToolProviderTests {
         ), sqliteCommand: .init(id: "sqlite3", executable: "sqlite3")))
 
     expectThrows(
-      try provider.callTool(
+      try callStructuredToolAsOwner(
+        provider, home: directory,
         .init(
           name: "plist.write",
           arguments: .object([
@@ -2336,7 +2349,8 @@ final class StructuredToolProviderTests {
     }
 
     expectThrows(
-      try provider.callTool(
+      try callStructuredToolAsOwner(
+        provider, home: directory,
         .init(
           name: "plist.write",
           arguments: .object([
@@ -2349,7 +2363,8 @@ final class StructuredToolProviderTests {
     }
 
     expectThrows(
-      try provider.callTool(
+      try callStructuredToolAsOwner(
+        provider, home: directory,
         .init(
           name: "plist.write",
           arguments: .object([
@@ -2362,7 +2377,8 @@ final class StructuredToolProviderTests {
     }
 
     expectThrows(
-      try provider.callTool(
+      try callStructuredToolAsOwner(
+        provider, home: directory,
         .init(
           name: "plist.write",
           arguments: .object([
@@ -2375,7 +2391,8 @@ final class StructuredToolProviderTests {
     }
 
     expectThrows(
-      try provider.callTool(
+      try callStructuredToolAsOwner(
+        provider, home: directory,
         .init(
           name: "plist.write",
           arguments: .object([
@@ -2389,7 +2406,8 @@ final class StructuredToolProviderTests {
     }
 
     expectThrows(
-      try provider.callTool(
+      try callStructuredToolAsOwner(
+        provider, home: directory,
         .init(
           name: "plist.write",
           arguments: .object([
@@ -2402,7 +2420,8 @@ final class StructuredToolProviderTests {
     }
 
     expectThrows(
-      try provider.callTool(
+      try callStructuredToolAsOwner(
+        provider, home: directory,
         .init(
           name: "plist.write",
           arguments: .object([
@@ -2420,7 +2439,8 @@ final class StructuredToolProviderTests {
     }
 
     expectThrows(
-      try provider.callTool(
+      try callStructuredToolAsOwner(
+        provider, home: directory,
         .init(
           name: "plist.write",
           arguments: .object([

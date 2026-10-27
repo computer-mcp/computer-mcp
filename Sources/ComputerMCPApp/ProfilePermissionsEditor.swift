@@ -1,166 +1,120 @@
 import ComputerMCPControlPlane
 import ComputerMCPCore
+import ComputerMCPPermissions
 import SwiftUI
 
 struct ProfilePermissionsEditor: View {
   @StateObject var model: ProfilePermissionsModel
   var didSave: () -> Void = {}
   @Environment(\.dismiss) private var dismiss
-  @State private var search = ""
-  @State private var confirmSave = false
 
   var body: some View {
     VStack(spacing: 0) {
       if let draft = model.draft {
         Form {
           Section {
-            LabeledContent {
-              Text(verbatim: AppLocalization.string(draft.grant.id.displayName))
-            } label: {
-              Text("Connection permissions", bundle: AppLocalization.resourceBundle)
-            }
-            Picker(selection: binding(\.mode, default: .readOnly)) {
-              Text("Observe", bundle: AppLocalization.resourceBundle).tag(
-                GatewayPermissionMode.readOnly)
-              Text("Control — Restricted Access", bundle: AppLocalization.resourceBundle)
-                .tag(GatewayPermissionMode.projectOperations)
-            } label: {
-              Text("Access", bundle: AppLocalization.resourceBundle)
-            }
-            .accessibilityIdentifier("profile.permissions.mode")
+            LabeledContent(
+              AppLocalization.string("Profile"),
+              value: AppLocalization.string(draft.grant.id.displayName))
+            LabeledContent(
+              AppLocalization.string("Profile revision"),
+              value: String(draft.options.grant.authorizationRevision))
+            LabeledContent(
+              AppLocalization.string("Permission revision"),
+              value: String(draft.options.permissionRevision))
             Text(
-              "These permissions apply to every client using this connection profile. Full Access is approved separately for a connected client.",
+              "These permissions apply to every client using this profile. Revoking a permission ends work that uses it.",
               bundle: AppLocalization.resourceBundle
             ).foregroundStyle(.secondary)
+            Toggle(
+              AppLocalization.string("Full access"),
+              isOn: Binding(
+                get: { model.draft?.grant.fullAccess ?? false },
+                set: { model.draft?.grant.fullAccess = $0 }))
             Text(
-              "A client's current session can impose a lower access level.",
+              "Full access runs programs outside the sandbox and requires separate consent for a connected client. Host tools still require their permissions.",
               bundle: AppLocalization.resourceBundle
             ).font(.caption).foregroundStyle(.secondary)
-            if draft.replacesBroadGrants {
-              Text(
-                "Saving replaces broad access with the projects, capabilities, and integrations selected below. New projects and integrations require selection.",
-                bundle: AppLocalization.resourceBundle
-              ).foregroundStyle(.secondary)
+          }
+          Section(AppLocalization.string("Permissions")) {
+            ForEach(principalPermissions, id: \.permission) { item in
+              permissionPicker(item.title, permission: item.permission, values: [.access])
             }
           }
-          Section {
-            TextField(text: $search) {
-              Text("Search capabilities", bundle: AppLocalization.resourceBundle)
-            }.accessibilityIdentifier("profile.permissions.search")
-            ScrollView {
-              LazyVStack(alignment: .leading, spacing: 12) {
-                ForEach(visibleCapabilities(draft)) { capability in
-                  capabilityRow(capability, draft: draft)
-                }
-                if visibleCapabilities(draft).isEmpty {
-                  Text("No matching capabilities.", bundle: AppLocalization.resourceBundle)
-                    .foregroundStyle(.secondary)
-                }
-              }.padding(.vertical, 4)
-            }.frame(height: 200)
-          } header: {
-            Text("Capabilities", bundle: AppLocalization.resourceBundle)
+          Section(AppLocalization.string("Files and Folders")) {
+            ForEach(FolderCategory.allCases, id: \.self) { category in
+              permissionPicker(
+                category.permissionTitle, permission: .filesAndFolders(category), values: [.read])
+            }
           }
-          Section {
+          Section(AppLocalization.string("Projects")) {
+            permissionPicker("All projects", permission: .project("*"), values: [.read, .write])
+            ForEach(draft.projectIDs, id: \.self) { id in
+              let project = draft.options.projects.first { $0.id == id }
+              VStack(alignment: .leading, spacing: 4) {
+                permissionPicker(
+                  project?.displayName ?? id, permission: .project(id), values: [.read, .write],
+                  localizedTitle: false)
+                Text(verbatim: project?.rootPath ?? id).font(.caption).foregroundStyle(.secondary)
+                if project == nil { savedEntryLabel }
+                networkPicker(id)
+              }
+            }
+            networkPicker("*")
+          }
+          Section(AppLocalization.string("Plugins")) {
+            permissionPicker("All plugins", permission: .plugin("*"), values: [.use])
+            ForEach(draft.pluginIDs, id: \.self) { id in
+              let plugin = draft.options.plugins.first { $0.id == id }
+              permissionPicker(
+                plugin?.title ?? id, permission: .plugin(id), values: [.use], localizedTitle: false)
+              if plugin == nil { savedEntryLabel }
+            }
+          }
+          Section(AppLocalization.string("MCP servers")) {
+            permissionPicker("All MCP servers", permission: .mcpServer("*"), values: [.read, .all])
+            ForEach(draft.serverIDs, id: \.self) { id in
+              let server = draft.options.integrations.first { $0.id == id }
+              permissionPicker(
+                server?.title ?? id, permission: .mcpServer(id), values: [.read, .all],
+                localizedTitle: false)
+              if server == nil { savedEntryLabel }
+            }
+          }
+          if !draft.automationTargets.isEmpty {
+            Section(AppLocalization.string("Automation")) {
+              ForEach(draft.automationTargets, id: \.self) { target in
+                Picker(
+                  selection: Binding<String>(
+                    get: { model.draft?.grant.automation[target]?.rawValue ?? "inherit" },
+                    set: {
+                      model.draft?.grant.automation[target] = ProfileGrant.AutomationAccess(
+                        rawValue: $0)
+                    }
+                  )
+                ) {
+                  Text("Default", bundle: AppLocalization.resourceBundle).tag("inherit")
+                  Text("Allow", bundle: AppLocalization.resourceBundle).tag("allow")
+                  Text("Deny", bundle: AppLocalization.resourceBundle).tag("deny")
+                } label: {
+                  Text(verbatim: target)
+                }
+              }
+            }
+          }
+          Section(AppLocalization.string("Allow connections from")) {
             ForEach(GatewayCallerKind.permissionChoices, id: \.self) { caller in
-              Toggle(isOn: selection(caller, in: \.allowedCallers)) {
+              Toggle(isOn: callerSelection(caller)) {
                 Text(verbatim: AppLocalization.string(caller.permissionLabel))
-              }
-              .accessibilityIdentifier("profile.permissions.caller.\(caller.rawValue)")
-              .disabled(draft.grant.id == .localAdmin && caller.isRemote)
+              }.disabled(draft.grant.id == .localAdmin && caller.isRemote)
             }
-          } header: {
-            Text("Allow connections from", bundle: AppLocalization.resourceBundle)
           }
-          Section {
-            if draft.options.projects.isEmpty {
-              Text(
-                "Register a project to select it here.", bundle: AppLocalization.resourceBundle)
-            }
-            ForEach(draft.options.projects, id: \.id) { project in
-              Toggle(isOn: selection(project.id, in: \.projectIDs)) {
-                VStack(alignment: .leading, spacing: 3) {
-                  Text(verbatim: project.displayName)
-                  Text(verbatim: project.rootPath).font(.caption).foregroundStyle(.secondary)
-                }
-              }.accessibilityIdentifier("profile.permissions.project.\(project.id)")
-            }
-          } header: {
-            Text("Projects", bundle: AppLocalization.resourceBundle)
-          }
-          Section {
-            if draft.options.integrations.isEmpty {
-              Text("No integrations are registered.", bundle: AppLocalization.resourceBundle)
-            }
-            ForEach(draft.options.integrations) { integration in
-              Toggle(
-                isOn: Binding(
-                  get: { model.draft?.grant.mcpServerIDs.contains(integration.id) == true },
-                  set: { model.draft?.selectIntegration(integration.id, selected: $0) }
-                )
-              ) {
-                HStack {
-                  Text(verbatim: integration.title)
-                  if !integration.isEnabled {
-                    Text("Disabled", bundle: AppLocalization.resourceBundle).foregroundStyle(
-                      .secondary)
-                  }
-                }
-              }.accessibilityIdentifier("profile.permissions.integration.\(integration.id)")
-            }
-            Text(
-              "An integration includes its current and future host-allowed tools. Observe permits reading only. Restricted Access never permits arbitrary execution.",
-              bundle: AppLocalization.resourceBundle
-            ).font(.caption).foregroundStyle(.secondary)
-          } header: {
-            Text("Integrations", bundle: AppLocalization.resourceBundle)
-          }
-          DisclosureGroup {
-            Picker(selection: binding(\.confirmationPolicy, default: .riskBased)) {
-              ForEach(GatewayConfirmationPolicy.allCases, id: \.self) { policy in
-                Text(verbatim: AppLocalization.string(policy.permissionLabel)).tag(policy)
-              }
-            } label: {
-              Text("Confirmation policy", bundle: AppLocalization.resourceBundle)
-            }
-            Text(verbatim: draft.grant.capabilityIDs.sorted().joined(separator: "\n"))
-              .font(.caption.monospaced()).textSelection(.enabled)
-            let unavailable = draft.grant.capabilityIDs.subtracting(
-              draft.options.capabilities.map(\.id))
-            if !unavailable.isEmpty {
-              Text(
-                "Some saved capabilities are currently unavailable. They remain selected until you remove them.",
-                bundle: AppLocalization.resourceBundle
-              ).font(.caption).foregroundStyle(.secondary)
-              ForEach(unavailable.sorted(), id: \.self) { id in
-                Toggle(isOn: selection(id, in: \.capabilityIDs)) { Text(verbatim: id) }
-              }
-            }
-            ForEach(
-              draft.grant.mcpServerIDs.subtracting(draft.options.integrations.map(\.id)).sorted(),
-              id: \.self
-            ) { id in
-              Toggle(isOn: selection(id, in: \.mcpServerIDs)) { Text(verbatim: id) }
-            }
-            ForEach(
-              draft.grant.projectIDs.subtracting(draft.options.projects.map(\.id)).sorted(),
-              id: \.self
-            ) { id in
-              Toggle(isOn: selection(id, in: \.projectIDs)) { Text(verbatim: id) }
-            }
-          } label: {
-            Text("Advanced permissions", bundle: AppLocalization.resourceBundle)
-          }
-        }
-        .formStyle(.grouped).disabled(model.isSaving)
+        }.formStyle(.grouped).disabled(model.isSaving)
       } else if model.isLoading {
         ProgressView().frame(maxWidth: .infinity, maxHeight: .infinity)
       } else {
-        Button {
-          Task { await model.load() }
-        } label: {
-          Text("Retry", bundle: AppLocalization.resourceBundle)
-        }.frame(maxWidth: .infinity, maxHeight: .infinity)
+        Button(AppLocalization.string("Retry")) { Task { await model.load() } }
+          .frame(maxWidth: .infinity, maxHeight: .infinity)
       }
       if let error = model.errorMessage {
         Text(verbatim: error).foregroundStyle(.red).textSelection(.enabled).padding()
@@ -168,111 +122,155 @@ struct ProfilePermissionsEditor: View {
           "Close and reopen to review current permission choices.",
           bundle: AppLocalization.resourceBundle
         )
-        .font(.caption).foregroundStyle(.secondary).padding(.bottom)
+        .font(.caption).foregroundStyle(.secondary)
       }
       Divider()
       HStack {
-        Button {
-          dismiss()
-        } label: {
-          Text("Cancel", bundle: AppLocalization.resourceBundle)
-        }.keyboardShortcut(.cancelAction)
+        Button(AppLocalization.string("Cancel")) { dismiss() }.keyboardShortcut(.cancelAction)
         Spacer()
         if model.isSaving { ProgressView().controlSize(.small) }
-        Button {
-          confirmSave = true
-        } label: {
-          Text("Save", bundle: AppLocalization.resourceBundle)
+        Button(AppLocalization.string("Save")) {
+          Task {
+            if await model.save() {
+              didSave()
+              dismiss()
+            }
+          }
         }.keyboardShortcut(.defaultAction)
-          .disabled(model.draft == nil || model.isLoading)
+          .disabled(model.draft == nil || model.isLoading || model.isSaving)
           .accessibilityIdentifier("profile.permissions.save")
       }.padding().disabled(model.isSaving)
     }
     .frame(width: 640, height: 720)
     .interactiveDismissDisabled(model.isSaving)
     .task { await model.load() }
-    .confirmationDialog("Apply permission changes?", isPresented: $confirmSave) {
-      Button(role: .destructive) {
-        Task {
-          if await model.save() {
-            didSave()
-            dismiss()
-          }
-        }
-      } label: {
-        Text("Apply", bundle: AppLocalization.resourceBundle)
-      }
-    } message: {
-      Text(
-        "All clients using this profile receive the selected permissions on their next request. Full Access approvals and pending confirmations become invalid. Already started work is not stopped.",
-        bundle: AppLocalization.resourceBundle)
-    }
   }
 
-  private func visibleCapabilities(_ draft: ProfilePermissionsDraft)
-    -> [ProfilePermissionCapability]
-  {
-    draft.options.capabilities.filter {
-      search.isEmpty || $0.title.localizedCaseInsensitiveContains(search)
-        || $0.summary.localizedCaseInsensitiveContains(search)
-    }
+  private var principalPermissions: [(title: String, permission: Permission)] {
+    [
+      ("Screen", .screen), ("Desktop control", .desktopControl), ("Local network", .localNetwork),
+      ("Machine information", .machineInformation), ("Unified logs", .unifiedLogs),
+      ("Skills", .skills),
+    ]
   }
 
-  private func capabilityRow(
-    _ capability: ProfilePermissionCapability, draft: ProfilePermissionsDraft
+  private var savedEntryLabel: some View {
+    Text(
+      "Saved entry; the object is not currently registered.", bundle: AppLocalization.resourceBundle
+    )
+    .font(.caption).foregroundStyle(.secondary)
+  }
+
+  private func permissionPicker(
+    _ title: String, permission: Permission, values: [PermissionValue], localizedTitle: Bool = true
   )
     -> some View
   {
-    let integrated =
-      capability.descriptor.mcpReference.map {
-        draft.grant.mcpServerIDs.contains($0.serverID)
-      } ?? false
-    return Toggle(
-      isOn: Binding(
-        get: { integrated || model.draft?.grant.capabilityIDs.contains(capability.id) == true },
-        set: { selected in
-          if selected {
-            model.draft?.grant.capabilityIDs.insert(capability.id)
-          } else {
-            model.draft?.grant.capabilityIDs.remove(capability.id)
+    Picker(
+      selection: Binding<String>(
+        get: {
+          guard let entry = model.draft?.grant.permissions.entries[permission] else {
+            return "inherit"
           }
-        }
-      )
+          switch entry {
+          case .notGranted: return "ask"
+          case .denied: return "deny"
+          case .granted(let value): return value.rawValue
+          }
+        },
+        set: { selected in
+          guard var draft = model.draft else { return }
+          if selected == "inherit" {
+            draft.grant.permissions.removeEntry(for: permission)
+          } else {
+            let state: ComputerMCPPermissions.PermissionState =
+              selected == "deny"
+              ? .denied
+              : selected == "ask" ? .notGranted : .granted(PermissionValue(rawValue: selected)!)
+            try? draft.grant.permissions.set(state, for: permission)
+          }
+          model.draft = draft
+        })
     ) {
-      VStack(alignment: .leading, spacing: 3) {
-        HStack {
-          Text(verbatim: capability.title).font(.body.weight(.medium))
-          Text(verbatim: AppLocalization.string(capability.descriptor.risk.permissionLabel))
-            .font(.caption).foregroundStyle(.secondary)
-        }
-        Text(verbatim: capability.summary).font(.caption).foregroundStyle(.secondary).lineLimit(2)
+      Text("Default", bundle: AppLocalization.resourceBundle).tag("inherit")
+      Text("Ask", bundle: AppLocalization.resourceBundle).tag("ask")
+      ForEach(values, id: \.self) { value in
+        Text(verbatim: AppLocalization.string(value.permissionTitle)).tag(value.rawValue)
+      }
+      Text("Deny", bundle: AppLocalization.resourceBundle).tag("deny")
+    } label: {
+      Text(verbatim: localizedTitle ? AppLocalization.string(title) : title)
+    }
+  }
+
+  private func networkPicker(_ id: String) -> some View {
+    VStack(alignment: .leading, spacing: 6) {
+      Picker(
+        selection: Binding<String>(
+          get: {
+            guard let network = model.draft?.grant.projectNetworks[id] else { return "inherit" }
+            switch network.configuration {
+            case .none: return "none"
+            case .trusted: return "trusted"
+            case .full: return "full"
+            case .custom: return "custom"
+            }
+          },
+          set: {
+            switch $0 {
+            case "none": model.draft?.grant.projectNetworks[id] = NetworkAccess.none
+            case "trusted": model.draft?.grant.projectNetworks[id] = .trusted
+            case "full": model.draft?.grant.projectNetworks[id] = .full
+            case "custom":
+              model.draft?.customHostText[id] = ""
+              model.draft?.grant.projectNetworks[id] = .custom(hosts: [], includesTrusted: false)
+            default: model.draft?.grant.projectNetworks[id] = nil
+            }
+          })
+      ) {
+        Text("Default", bundle: AppLocalization.resourceBundle).tag("inherit")
+        Text("None", bundle: AppLocalization.resourceBundle).tag("none")
+        Text("Trusted hosts", bundle: AppLocalization.resourceBundle).tag("trusted")
+        Text("Full network", bundle: AppLocalization.resourceBundle).tag("full")
+        Text("Custom hosts", bundle: AppLocalization.resourceBundle).tag("custom")
+      } label: {
+        Text(verbatim: AppLocalization.string(id == "*" ? "Network for all projects" : "Network"))
+      }
+      if case .custom(let hosts, let includesTrusted)? = model.draft?.grant.projectNetworks[id]?
+        .configuration
+      {
+        TextField(
+          AppLocalization.string("Hosts, separated by commas"),
+          text: Binding(
+            get: { model.draft?.customHostText[id] ?? hosts.sorted().joined(separator: ", ") },
+            set: { text in
+              model.draft?.customHostText[id] = text
+              model.draft?.grant.projectNetworks[id] = .custom(
+                hosts: Set(
+                  text.split(separator: ",").map {
+                    $0.trimmingCharacters(in: .whitespacesAndNewlines)
+                  }.filter { !$0.isEmpty }),
+                includesTrusted: includesTrusted)
+            }))
+        Toggle(
+          AppLocalization.string("Include trusted hosts"),
+          isOn: Binding(
+            get: { includesTrusted },
+            set: {
+              model.draft?.grant.projectNetworks[id] = .custom(hosts: hosts, includesTrusted: $0)
+            }))
       }
     }
-    .disabled(integrated || !draft.grant.permitsRisk(capability.descriptor.risk))
-    .help(capability.summary)
-    .accessibilityIdentifier("profile.permissions.capability.\(capability.id)")
   }
 
-  private func binding<Value>(_ key: WritableKeyPath<ProfileGrant, Value>, default fallback: Value)
-    -> Binding<Value>
-  {
+  private func callerSelection(_ caller: GatewayCallerKind) -> Binding<Bool> {
     Binding(
-      get: { model.draft?.grant[keyPath: key] ?? fallback },
-      set: { model.draft?.grant[keyPath: key] = $0 })
-  }
-
-  private func selection<Value: Hashable>(
-    _ value: Value, in key: WritableKeyPath<ProfileGrant, Set<Value>>
-  )
-    -> Binding<Bool>
-  {
-    Binding(
-      get: { model.draft?.grant[keyPath: key].contains(value) == true },
-      set: { selected in
-        if selected {
-          model.draft?.grant[keyPath: key].insert(value)
+      get: { model.draft?.grant.allowedCallers.contains(caller) == true },
+      set: {
+        if $0 {
+          model.draft?.grant.allowedCallers.insert(caller)
         } else {
-          model.draft?.grant[keyPath: key].remove(value)
+          model.draft?.grant.allowedCallers.remove(caller)
         }
       })
   }
@@ -293,24 +291,26 @@ extension GatewayCallerKind {
   }
 }
 
-extension GatewayConfirmationPolicy {
-  var permissionLabel: String {
+extension PermissionValue {
+  var permissionTitle: String {
     switch self {
-    case .riskBased: "Confirm risky actions"
-    case .allWrites: "Confirm all writes"
-    case .never: "No confirmation"
+    case .access, .use: "Allow"
+    case .read: "Read"
+    case .write: "Write"
+    case .all: "All tools"
     }
   }
 }
 
-extension CapabilityRisk {
-  var permissionLabel: String {
+extension FolderCategory {
+  var permissionTitle: String {
     switch self {
-    case .readOnly: "Read only"
-    case .projectWrite: "Changes project files"
-    case .externalWrite: "Affects other apps or services"
-    case .destructive: "May delete data"
-    case .fullShell: "Arbitrary execution"
+    case .desktop: "Desktop"
+    case .documents: "Documents"
+    case .downloads: "Downloads"
+    case .iCloudDrive: "iCloud Drive"
+    case .networkVolumes: "Network volumes"
+    case .removableVolumes: "Removable volumes"
     }
   }
 }

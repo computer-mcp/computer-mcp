@@ -1,5 +1,6 @@
 import ComputerMCPDownstream
 import ComputerMCPMacOS
+import ComputerMCPPermissions
 import ComputerMCPTestSupport
 import ComputerMCPToolKit
 import Foundation
@@ -37,7 +38,11 @@ struct MCPRegistrationManagementTests {
       env: ["FIXTURE": "fixture-value"], exposure: .reexport, prefix: "manual",
       allowedTools: ["inspect"], requestTimeoutMs: 1234, toolRisks: ["inspect": .readOnly])
     let configuration = GatewayConfiguration(
-      profiles: [.init(id: .chatGPTObserve, mcpServers: [server.id])],
+      profiles: [
+        .init(
+          id: .chatGPTObserve,
+          permissions: fixturePermissions([.mcpServer(server.id): .granted(.read)]))
+      ],
       mcp: .init(servers: [server]))
     let disabled = try MCPRegistrationChange.enabled(id: server.id, false).applying(
       to: configuration)
@@ -104,10 +109,11 @@ struct MCPRegistrationManagementTests {
       id: "manual", transport: .stdio, command: "/bin/cat", allowAnyTool: true,
       toolRisks: ["inspect": .readOnly], enabled: false)
     let grant = ProfileGrant(
-      id: .localAdmin, capabilityIDs: wildcard ? ["*"] : [], allowedCallers: [.localMCP],
-      fullShellEnabled: true, mcpServerIDs: wildcard ? [] : [server.id])
+      id: .localAdmin,
+      permissions: fixturePermissions([.mcpServer(wildcard ? "*" : server.id): .granted(.all)]),
+      allowedCallers: [.localMCP])
     let policy = MCPToolAccessPolicy(
-      configuration: .init(mcp: .init(servers: [server])), grant: grant, derivesObserveGrant: true)
+      configuration: .init(mcp: .init(servers: [server])), grant: grant)
     #expect(!policy.allows(.init(serverID: server.id, toolName: "inspect")))
     #expect(!policy.canDiscoverTools(on: server))
     #expect(!policy.permitsServer(server, capability: "mcp.resources.read"))

@@ -373,17 +373,21 @@ private struct OwnershipFixture {
     -> any ExecutionOwnership
   {
     let bootstrap = try SeatbeltFixture.executionBootstrap
-    return try await ExecutionLauncher(
-      platform: DarwinExecutionPlatform(
-        bootstrapExecutable: bootstrap,
-        makeSentinel: {
-          if let sentinel { return sentinel }
-          return try await DarwinExecutionSentinel.create()
-        })
-    ).start(
-      executable: executable, arguments: [variant], directory: configuration.worktree,
-      environment: environment, mode: sandboxed ? .sandbox(configuration) : .fullAccess,
-      method: method)
+    return try await ExecutionAdministration.$current.withValue(
+      .init(mode: sandboxed ? .sandbox(configuration) : .fullAccess, environment: environment)
+    ) {
+      try await ExecutionLauncher(
+        platform: DarwinExecutionPlatform(
+          bootstrapExecutable: bootstrap,
+          makeSentinel: {
+            if let sentinel { return sentinel }
+            return try await DarwinExecutionSentinel.create()
+          })
+      ).start(
+        executable: executable, arguments: [variant], directory: configuration.worktree,
+        environment: environment, mode: sandboxed ? .sandbox(configuration) : .fullAccess,
+        method: method)
+    }
   }
 
   func record(_ name: String) async throws -> (

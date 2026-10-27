@@ -280,7 +280,7 @@ package struct SandboxSettingsKey: Hashable, Sendable, Codable {
   }
 }
 
-package struct ProjectSandboxSettings: Sendable, Codable {
+package struct ProjectSandboxSettings: Equatable, Sendable, Codable {
   package var entries: [SandboxSettingsKey: SandboxSettings]
 
   package init(entries: [SandboxSettingsKey: SandboxSettings] = [:]) { self.entries = entries }

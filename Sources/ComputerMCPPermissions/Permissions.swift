@@ -320,7 +320,7 @@ enum PermissionEvaluation {
       path, operation: action.pathOperation, principal: principal, permissions: permissions,
       mode: mode, limits: limits, sandbox: sandbox, sandboxProjectID: sandboxProjectID,
       oneTimeRequests: oneTimeRequests, pluginPurpose: action.pluginPurpose,
-      recordedBasis: recordedBasis)
+      purpose: nil, recordedBasis: recordedBasis)
     if case .denied(let reason) = resolution {
       return PermissionResolution(decision: .denied(reason))
     }

@@ -25,8 +25,8 @@ struct CreatedEntryIdentityTests {
     var replaced = false
     // Model allocator reuse deterministically: only the regular file's inode number is
     // reused, under a new generation, as ext4 reuses inodes within one clock tick.
-    let files = try ProjectFileAccess(
-      project: temporary.url, launcher: testExecutionLauncher(),
+    let files = try fixtureProjectFileAccess(
+      project: temporary.url,
       identityReader: { fd in
         var identity = try ProjectFileAccess.createdIdentity(fd)
         var value = stat()
@@ -61,8 +61,8 @@ struct CreatedEntryIdentityTests {
     await #expect(processExitsWith: .success) {
       try Self.limitDescriptors(to: 192)
       let temporary = try ScopedTemporaryDirectory()
-      let files = try ProjectFileAccess(
-        project: temporary.url, launcher: testExecutionLauncher(),
+      let files = try fixtureProjectFileAccess(
+        project: temporary.url,
         identityReader: { fd in
           var identity = try ProjectFileAccess.createdIdentity(fd)
           identity.generation = .unavailable
@@ -87,8 +87,8 @@ struct CreatedEntryIdentityTests {
   @Test(arguments: [false, true])
   func failedMetadataRollbackKeepsCreatedOwnership(postCheck: Bool) throws {
     let temporary = try ScopedTemporaryDirectory()
-    let files = try ProjectFileAccess(
-      project: temporary.url, launcher: testExecutionLauncher(),
+    let files = try fixtureProjectFileAccess(
+      project: temporary.url,
       mutationObserver: { operation, _, phase in
         if postCheck, operation == "metadata", phase == .didMutate { throw POSIXError(.EIO) }
       })
@@ -110,8 +110,8 @@ struct CreatedEntryIdentityTests {
   func fallbackRollbackRemovesDeepTreeAtDescriptorLimit() async {
     await #expect(processExitsWith: .success) {
       let temporary = try ScopedTemporaryDirectory()
-      let files = try ProjectFileAccess(
-        project: temporary.url, launcher: testExecutionLauncher(),
+      let files = try fixtureProjectFileAccess(
+        project: temporary.url,
         identityReader: { fd in
           var identity = try ProjectFileAccess.createdIdentity(fd)
           identity.generation = .unavailable
@@ -146,8 +146,8 @@ struct CreatedEntryIdentityTests {
   func cleanupRetainsDirectoryReplacedBeforeDescending() throws {
     let temporary = try ScopedTemporaryDirectory()
     var replaced: URL?
-    let files = try ProjectFileAccess(
-      project: temporary.url, launcher: testExecutionLauncher(),
+    let files = try fixtureProjectFileAccess(
+      project: temporary.url,
       mutationObserver: { operation, url, _ in
         guard operation == "descend", replaced == nil, url.lastPathComponent == "member" else {
           return
@@ -219,7 +219,7 @@ struct CreatedEntryIdentityTests {
       alarm(10)
       defer { alarm(0) }
       let temporary = try ScopedTemporaryDirectory()
-      let files = try ProjectFileAccess(project: temporary.url, launcher: testExecutionLauncher())
+      let files = try fixtureProjectFileAccess(project: temporary.url)
       var foreign: URL?
       let error = #expect(throws: (any Error).self) {
         try files.withStagingDirectory(in: temporary.url) { staging, _ in
@@ -243,8 +243,8 @@ struct CreatedEntryIdentityTests {
       defer { alarm(0) }
       let temporary = try ScopedTemporaryDirectory()
       var replacement: URL?
-      let files = try ProjectFileAccess(
-        project: temporary.url, launcher: testExecutionLauncher(),
+      let files = try fixtureProjectFileAccess(
+        project: temporary.url,
         mutationObserver: { operation, _, phase in
           guard operation == "openat", phase == .didMutate else { return }
           let name = try #require(
@@ -268,8 +268,8 @@ struct CreatedEntryIdentityTests {
   @Test
   func identityReadFailureCleansTheAnchoredCreation() throws {
     let temporary = try ScopedTemporaryDirectory()
-    let files = try ProjectFileAccess(
-      project: temporary.url, launcher: testExecutionLauncher(),
+    let files = try fixtureProjectFileAccess(
+      project: temporary.url,
       identityReader: { _ in
         throw POSIXError(.EIO)
       })
@@ -294,7 +294,7 @@ struct CreatedEntryIdentityTests {
           launcher: testExecutionLauncher(),
           configuration: .init(
             builtin: .init(enabled: ["file.copy"]), projectDirectory: temporary.url)))
-      _ = try tools.callTool(
+      _ = try tools.callToolAsFixtureOwner(
         .init(
           name: "file.copy",
           arguments: .object([

@@ -133,13 +133,13 @@ extension ManagedPolicy: PermissionRecord {
 
 extension PathEnvironmentSnapshot {
   mutating func commit(against current: Self?, in ledger: inout PermissionLedger) throws {
-    let projects = try ProjectCatalog(registeredProjects)
-    registeredProjects = try projects.projects.map { project in
+    let projects = try registeredProjects.map { project in
       var project = project
       try project.commit(
         against: current?.registeredProjects.first { $0.id == project.id }, in: &ledger)
       return project
     }
+    try setProjects(projects)
     try pathRules.commit(against: current?.pathRules ?? [], in: &ledger)
     outsideUserDataIdentity = try ledger.commitIdentity(
       outsideUserDataIdentity, replacing: current?.outsideUserDataIdentity, changed: false)

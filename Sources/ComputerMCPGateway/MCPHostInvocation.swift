@@ -13,8 +13,6 @@ struct MCPHostInvocation: Sendable {
   let upstreamName: String
   let arguments: [String: JSONValue]
   let context: ExecutionContext
-  let ticketID: String?
-  let auditInvocationID: String?
   let authorizationRevision: Int64
 
   static let metadataKey = "io.github.computer-mcp/host-invocation"
@@ -33,6 +31,17 @@ struct HostCallAuthoritySnapshot {
   let context: ExecutionContext
   let profileRevision: Int64
   let consent: GatewayFullAccessConsent?
+  let authorizationID: UUID?
+
+  init(
+    context: ExecutionContext, profileRevision: Int64,
+    consent: GatewayFullAccessConsent?, authorizationID: UUID? = nil
+  ) {
+    self.context = context
+    self.profileRevision = profileRevision
+    self.consent = consent
+    self.authorizationID = authorizationID
+  }
 }
 
 /// Raised before metadata changes so a fresh policy check can retry once.

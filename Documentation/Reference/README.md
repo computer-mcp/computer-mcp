@@ -12,7 +12,7 @@ This directory contains detailed operational reference material.
 - [Tools](Tools.md): complete gateway tool families and result contracts.
 - [Isolated delivery](Delivery.md): declared scopes, edit-and-land tools, journals and recovery.
 - [MCP Protocol](MCPProtocol.md): stdio transport and JSON-RPC examples.
-- [Scoped Host Services](HostServices.md): inherited MCP callbacks, approval
+- [Scoped Host Services](HostServices.md): inherited MCP callbacks, permission
   ownership, derived registrations, diagnostics and recovery.
 - [CLI Trees](CLITrees.md): machine-readable command descriptors, argv/stdin
   encoding, projected tools, output validation, and coverage.

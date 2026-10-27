@@ -28,7 +28,11 @@ package struct InvocationRequirements: Hashable, Sendable, Codable {
           pathOperation: $0.pathOperation)
       }, by: \.sortKey)
     self.paths = Self.canonical(
-      paths, by: { [$0.path.string, $0.operation.sortKey] + Self.optionalKey($0.pluginPurpose) })
+      paths,
+      by: {
+        [$0.path.string, $0.operation.sortKey] + Self.optionalKey($0.pluginPurpose)
+          + Self.optionalKey($0.purpose?.libraryRoot.string)
+      })
     self.networks = Self.canonical(
       networks.map {
         NetworkRequirement(
@@ -87,6 +91,8 @@ package struct InvocationRequirements: Hashable, Sendable, Codable {
 
   var permissionActions: [PermissionAction] {
     actions + (mode.isSandbox ? networks.filter(\.isLocalNetwork).map(\.localAction) : [])
+      + (paths.contains(where: { $0.purpose != nil })
+        ? [PermissionAction(requirement: try! PermissionRequirement(.skills, .access))] : [])
   }
 
   func settingsProjectID(for action: PermissionAction) -> String? {
@@ -100,15 +106,31 @@ package struct InvocationRequirements: Hashable, Sendable, Codable {
 /// A canonical path operation. Read and write cover a subtree with classification
 /// boundaries retained in the authorization evidence. Opening or listing covers
 /// only the named directory.
+/// Host-resolved intent for a registered library. Tool arguments cannot confer it.
+package enum PathPurpose: Hashable, Sendable, Codable {
+  case skillLibrary(root: CanonicalPath)
+
+  package var libraryRoot: CanonicalPath {
+    switch self {
+    case .skillLibrary(let root): root
+    }
+  }
+}
+
 package struct PathRequirement: Hashable, Sendable, Codable {
   package let path: CanonicalPath
   package let operation: PathOperation
   package let pluginPurpose: String?
+  package let purpose: PathPurpose?
 
-  package init(path: CanonicalPath, operation: PathOperation, pluginPurpose: String? = nil) {
+  package init(
+    path: CanonicalPath, operation: PathOperation, pluginPurpose: String? = nil,
+    purpose: PathPurpose? = nil
+  ) {
     self.path = path
     self.operation = operation
     self.pluginPurpose = pluginPurpose
+    self.purpose = purpose
   }
 }
 
@@ -204,7 +226,7 @@ enum InvocationEvaluation {
         path.path, operation: path.operation, principal: principal, permissions: permissions,
         mode: mode, limits: limits, sandbox: settings(projectID), sandboxProjectID: projectID,
         oneTimeRequests: oneTimeRequests, pluginPurpose: path.pluginPurpose,
-        recordedBasis: recordedBasis)
+        purpose: path.purpose, recordedBasis: recordedBasis)
       switch resolution {
       case .allowed(let basis): result.basis.formUnion(basis)
       case .denied(let reason): result.denial = result.denial ?? reason
@@ -215,16 +237,20 @@ enum InvocationEvaluation {
         var prospective = permissions
         try! prospective.set(
           .granted(content.requirement.value), for: content.requirement.permission)
+        if path.purpose != nil {
+          try! prospective.set(.granted(.access), for: .skills)
+        }
         if case .allowed(let basis) = resolver.resolve(
           path.path, operation: path.operation, principal: principal, permissions: prospective,
           mode: mode, limits: limits, sandbox: settings(projectID), sandboxProjectID: projectID,
           oneTimeRequests: oneTimeRequests, pluginPurpose: path.pluginPurpose,
-          recordedBasis: recordedBasis)
+          purpose: path.purpose, recordedBasis: recordedBasis)
         {
           result.basis.formUnion(
             basis.filter {
               if case .permission(let grant) = $0 {
                 return grant.requirement != content.requirement
+                  && !(path.purpose != nil && grant.requirement.permission == .skills)
               }
               return true
             })

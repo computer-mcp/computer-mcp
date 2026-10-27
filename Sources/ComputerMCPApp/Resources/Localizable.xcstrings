@@ -1,6 +1,7 @@
 {
   "sourceLanguage" : "en",
   "strings" : {
+    "Trusted Hosts and %@" : {"localizations" : {"en" : {"stringUnit" : {"state" : "translated", "value" : "Trusted Hosts and %@"}}, "zh-Hans" : {"stringUnit" : {"state" : "translated", "value" : "可信主机及 %@"}}}},
     "Denied" : { "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Denied" } }, "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "已拒绝" } } } },
     "Permissions…" : {"localizations": {"en": {"stringUnit": {"state": "translated", "value": "Permissions…"}}, "zh-Hans": {"stringUnit": {"state": "translated", "value": "权限…"}}}},
 
@@ -92,7 +93,7 @@
     "Ask uses the profile's default project rule. A wildcard rule still applies." : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Ask uses the profile's default project rule. A wildcard rule still applies."}},"zh-Hans":{"stringUnit":{"state":"translated","value":"“询问”使用配置方案的默认项目规则。通配规则仍然生效。"}}}},
     "MCP server" : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"MCP server"}},"zh-Hans":{"stringUnit":{"state":"translated","value":"MCP 服务器"}}}},
     "Allow" : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Allow"}},"zh-Hans":{"stringUnit":{"state":"translated","value":"允许"}}}},
-    "Include trusted hosts" : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Include trusted hosts"}},"zh-Hans":{"stringUnit":{"state":"translated","value":"包含受信任主机"}}}},
+    "Include trusted hosts" : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Include trusted hosts"}},"zh-Hans":{"stringUnit":{"state":"translated","value":"包含可信主机"}}}},
     "Enter valid host names or IP addresses for custom network access." : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Enter valid host names or IP addresses for custom network access."}},"zh-Hans":{"stringUnit":{"state":"translated","value":"请为自定义网络访问输入有效的主机名或 IP 地址。"}}}},
     "None" : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"None"}},"zh-Hans":{"stringUnit":{"state":"translated","value":"无"}}}},
     "Allow Full access…" : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Allow Full access…"}},"zh-Hans":{"stringUnit":{"state":"translated","value":"允许完全访问…"}}}},

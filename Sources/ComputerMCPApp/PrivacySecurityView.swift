@@ -367,6 +367,8 @@ struct PrivacyGrantRow: View {
   let grant: PrivacyGrant
   let title: String?
   let systemImage: String?
+  /// Off where a separate row edits the project's network access.
+  var showsNetwork = true
 
   var body: some View {
     Picker(selection: binding) {
@@ -397,13 +399,28 @@ struct PrivacyGrantRow: View {
 
   private var caption: String? {
     var parts: [String] = []
-    if let network = grant.network { parts.append(Self.networkTitle(network, using: l)) }
+    if showsNetwork, let network = grant.network {
+      parts.append(Self.networkTitle(network, using: l))
+    }
     switch grant.source {
     case .owner: break
     case .pluginDeclaration: parts.append(l("Declared by the plugin"))
     case .managedLimit(let source): parts.append(l.format("Set by %@", l(source)))
     }
     return parts.isEmpty ? nil : parts.joined(separator: " · ")
+  }
+
+  /// The network level alone, as a picker shows its current value.
+  static func networkValue(_ network: PrivacyNetworkAccess, using l: PrivacyText) -> String {
+    switch network {
+    case .none: l("None")
+    case .trusted: l("Trusted Hosts")
+    case .full: l("Any Host")
+    case .custom(let hosts, let includesTrusted):
+      includesTrusted
+        ? l.format("Trusted Hosts and %@", ListFormatter.localizedString(byJoining: hosts))
+        : ListFormatter.localizedString(byJoining: hosts)
+    }
   }
 
   static func networkTitle(_ network: PrivacyNetworkAccess, using l: PrivacyText) -> String {
@@ -470,7 +487,7 @@ struct PrivacyPrincipalDetailView: View {
             ForEach(grants.filter { $0.permission == kind }) { grant in
               PrivacyGrantRow(
                 model: model, grant: grant, title: grant.object?.name,
-                systemImage: kind.systemImage)
+                systemImage: kind.systemImage, showsNetwork: kind != .projects)
               if kind == .projects {
                 PrivacyNetworkMenu(model: model, grant: grant)
               }
@@ -582,13 +599,25 @@ struct PrivacyNetworkMenu: View {
   @State private var showingCustom = false
 
   var body: some View {
-    Menu(l("Network")) {
-      PrivacyNetworkChoices { network in
-        if let network {
-          Task { await model.setNetwork(grant, to: network) }
-        } else {
-          showingCustom = true
+    LabeledContent {
+      Menu {
+        PrivacyNetworkChoices { network in
+          if let network {
+            Task { await model.setNetwork(grant, to: network) }
+          } else {
+            showingCustom = true
+          }
         }
+      } label: {
+        let value = PrivacyGrantRow.networkValue(grant.network ?? .none, using: l)
+        Text(verbatim: value)
+      }
+      .fixedSize()
+    } label: {
+      Label {
+        Text(verbatim: l("Network"))
+      } icon: {
+        PrivacySymbol(name: "globe")
       }
     }
     .disabled(managed)

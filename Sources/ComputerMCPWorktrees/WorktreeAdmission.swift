@@ -151,6 +151,7 @@ package struct WorktreeAdmission: Codable, Equatable, Sendable {
   /// requires the same operation and complete writer acknowledgement.
   package func reopen(operationID: UUID) throws {
     try transaction { state in
+      guard state.closedBy != nil else { return }
       guard state.closedBy == operationID, state.writers.isEmpty else {
         throw WorktreeError.recoveryRequired("Cannot reopen an unresolved worktree admission.")
       }

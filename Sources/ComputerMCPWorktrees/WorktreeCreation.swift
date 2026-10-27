@@ -8,7 +8,9 @@ package struct CreatedWorktree: Sendable {
 }
 
 struct WorktreeCreationJournal: Codable {
-  enum Phase: String, Codable { case reserved, directories, checkout, branch, active }
+  enum Phase: String, Codable {
+    case reserved, directories, checkout, branch, active, removing, removed
+  }
   let version: Int
   let operationID: UUID
   let repository: WorktreeRepositoryIdentity
@@ -24,6 +26,7 @@ struct WorktreeCreationJournal: Codable {
   var objects: WorktreeDirectoryIdentity?
   var runtime: WorktreeDirectoryIdentity?
   var gitDirectory: WorktreeDirectoryIdentity?
+  var baseHistory: WorktreeRefHistory?
 
   var id: String { record.projectID }
   var result: CreatedWorktree {
@@ -49,6 +52,10 @@ extension WorktreeRepository {
       try recoverLocked(lock)
       let branchRef = try requireBranch(branch ?? "worktree/" + name)
       guard try revision(branchRef) == nil,
+        try !hasPendingBranchDeletion(branchRef),
+        try !store.protectedBranches().contains(where: {
+          $0.repository == identity.common && $0.branch == branchRef
+        }),
         try command(["symbolic-ref", "--quiet", branchRef], accepting: [0, 1]).exitCode == 1
       else {
         throw WorktreeError.invalidRequest("The requested branch already exists.")
@@ -95,6 +102,7 @@ extension WorktreeRepository {
         version: 1, operationID: worktreeID,
         repository: identity, record: record, branchID: UUID(), branch: branchRef,
         base: baseRef, baseOID: oid, phase: .reserved)
+      journal.baseHistory = try captureRefHistory(baseRef, expectedOID: oid)
       try lock.verify()
       try storage.prepare()
       try saveJournal(journal, replacing: nil)
@@ -148,7 +156,7 @@ extension WorktreeRepository {
         throw WorktreeError.recoveryRequired(
           "Source registration changed; retained worktree requires reconciliation.")
       }
-      if journal.phase == .active { continue }
+      if [.active, .removing, .removed].contains(journal.phase) { continue }
       _ = try completeCreation(&journal, lock: lock)
     }
   }
@@ -242,7 +250,8 @@ extension WorktreeRepository {
           protecting: .init(
             repository: identity.common, branchID: journal.branchID,
             branch: journal.branch, base: journal.base, baseOID: journal.baseOID,
-            publishedOID: journal.baseOID, worktreeID: journal.operationID))
+            publishedOID: journal.baseOID, worktreeID: journal.operationID,
+            baseHistory: journal.baseHistory))
       }
       let previous = try encoded(journal)
       journal.phase = .active

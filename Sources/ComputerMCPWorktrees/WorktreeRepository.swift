@@ -110,6 +110,14 @@ package final class WorktreeRepository {
     var owned: Set<String> = []
     var activated: [WorktreeCreationJournal] = []
     for record in try store.records() {
+      if record.state == .removing, record.source == source,
+        let removal = try readRemoval(record.projectID), removal.record.root == record.root,
+        removal.record.worktree == record.worktree,
+        ![.closing, .abandoned, .finished].contains(removal.phase)
+      {
+        owned.insert(record.root)
+        continue
+      }
       guard case .host = record.provenance,
         record.state == .active, let journal = try readJournal(record.projectID),
         [.branch, .active].contains(journal.phase), try matchesActiveRecord(journal, record)
@@ -136,10 +144,15 @@ package final class WorktreeRepository {
   }
 
   func withLock<T>(validateHead: Bool = true, _ action: (RepositoryLock) throws -> T) throws -> T {
+    let lock = try acquireLock(validateHead: validateHead)
+    defer { lock.release() }
+    return try action(lock)
+  }
+
+  func acquireLock(validateHead: Bool = true) throws -> RepositoryLock {
     let lock = try RepositoryLock(
       commonDirectory: URL(fileURLWithPath: identity.common.path),
       owner: owner, timeout: lockTimeout)
-    defer { lock.release() }
     try identity.verify()
     try lock.verify()
     try requireSupportedLayout(identity)
@@ -149,7 +162,7 @@ package final class WorktreeRepository {
     for var journal in try validateStorage(validateHead: validateHead) {
       _ = try completeCreation(&journal, lock: lock)
     }
-    return try action(lock)
+    return lock
   }
 
   func requireSupportedLayout(_ repository: WorktreeRepositoryIdentity) throws {

@@ -11,6 +11,47 @@ package final class SQLiteDerivedProjectStore: DerivedProjectStore, Sendable {
     try connection.writer.read(Self.records)
   }
 
+  package func remove(_ id: String, expecting revision: Int64) throws {
+    try connection.writer.write { try Self.remove(id, expecting: revision, in: $0) }
+  }
+
+  package func protectedBranches() throws -> [ProtectedWorktreeBranch] {
+    try connection.writer.read { database in
+      try Row.fetchAll(
+        database, sql: "SELECT * FROM protectedWorktreeBranches ORDER BY repositoryID, branchID"
+      ).map { row in
+        let payload: Data = row["payload"]
+        guard payload.count <= 131_072, row["codecVersion"] as Int == 1 else {
+          throw DerivedProjectStoreError.invalidRecord
+        }
+        let branch = try JSONDecoder().decode(ProtectedWorktreeBranch.self, from: payload)
+        guard branch.repositoryKey == row["repositoryID"],
+          branch.branchID.uuidString == row["branchID"],
+          branch.branch == row["branchRef"]
+        else { throw DerivedProjectStoreError.invalidRecord }
+        return branch
+      }
+    }
+  }
+
+  package func releaseProtection(_ branch: ProtectedWorktreeBranch) throws {
+    try connection.writer.write { database in
+      guard
+        let payload = try Data.fetchOne(
+          database,
+          sql:
+            "SELECT payload FROM protectedWorktreeBranches WHERE repositoryID = ? AND branchID = ?",
+          arguments: [branch.repositoryKey, branch.branchID.uuidString])
+      else { return }
+      guard try JSONDecoder().decode(ProtectedWorktreeBranch.self, from: payload) == branch else {
+        throw DerivedProjectStoreError.revisionConflict
+      }
+      try database.execute(
+        sql: "DELETE FROM protectedWorktreeBranches WHERE repositoryID = ? AND branchID = ?",
+        arguments: [branch.repositoryKey, branch.branchID.uuidString])
+    }
+  }
+
   package func commit(
     _ record: DerivedProjectRecord, expecting revision: Int64?,
     protecting branch: ProtectedWorktreeBranch? = nil
@@ -81,6 +122,7 @@ package final class SQLiteDerivedProjectStore: DerivedProjectStore, Sendable {
         guard previous.repository == branch.repository, previous.branch == branch.branch,
           previous.branchID == branch.branchID, previous.base == branch.base,
           previous.baseOID == branch.baseOID, previous.worktreeID == branch.worktreeID,
+          previous.baseHistory == branch.baseHistory,
           previous.publishedOID == old?.worktree?.lastPublishedOID,
           previous.mergedOID == old?.worktree?.lastMergedOID,
           branch.mergedOID == record.worktree?.lastMergedOID

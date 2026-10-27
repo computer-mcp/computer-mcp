@@ -109,7 +109,7 @@ extension WorktreeRepository {
     return paths
   }
 
-  private func finishMerge(
+  func finishMerge(
     _ journal: inout WorktreeMergeJournal, lock: RepositoryLock, limits: WorktreePromotionLimits,
     authorize: (DerivedProjectRecord, [URL]) throws -> Void
   ) throws -> WorktreeMergeResult {
@@ -279,7 +279,8 @@ extension WorktreeRepository {
             branch: registration.branch,
             base: registration.base, baseOID: registration.baseOID,
             publishedOID: registration.lastPublishedOID,
-            worktreeID: worktreeID, mergedOID: journal.target))
+            worktreeID: worktreeID, mergedOID: journal.target, baseHistory: registration.baseHistory
+          ))
       }
       try advanceMerge(&journal, to: .ledger)
     }
@@ -346,7 +347,7 @@ extension WorktreeRepository {
     "computer-mcp merge " + journal.operationID.uuidString.lowercased()
   }
 
-  private func cleanMergeStaging(_ journal: WorktreeMergeJournal) throws {
+  func cleanMergeStaging(_ journal: WorktreeMergeJournal) throws {
     guard let path = journal.staging?.path else { return }
     guard (try? FileManager.default.attributesOfItem(atPath: path)) != nil else { return }
     let stage = try mergeStaging(journal)

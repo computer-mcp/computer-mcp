@@ -8,6 +8,7 @@ package struct WorktreeRegistration: Codable, Equatable, Sendable {
   let branch: String
   let base: String
   let baseOID: String
+  let baseHistory: WorktreeRefHistory?
   let root: WorktreeDirectoryIdentity
   let gitDirectory: WorktreeDirectoryIdentity
   let contentParent: WorktreeDirectoryIdentity
@@ -32,6 +33,7 @@ package struct WorktreeRegistration: Codable, Equatable, Sendable {
     branch = journal.branch
     base = journal.base
     baseOID = journal.baseOID
+    baseHistory = journal.baseHistory
     self.root = root
     self.gitDirectory = gitDirectory
     self.contentParent = contentParent

@@ -22,7 +22,9 @@ package enum DerivedProjectProvenance: Codable, Equatable, Sendable {
 }
 
 package struct DerivedProjectRecord: Codable, Equatable, Sendable {
-  package enum State: String, Codable, Sendable { case creating, active, recoveryRequired }
+  package enum State: String, Codable, Sendable {
+    case creating, active, removing, recoveryRequired
+  }
 
   package let projectID: String
   package let source: DerivedProjectSource
@@ -71,10 +73,12 @@ package struct ProtectedWorktreeBranch: Codable, Equatable, Sendable {
   package let publishedOID: String
   package let mergedOID: String?
   package let worktreeID: UUID
+  package let baseHistory: WorktreeRefHistory?
 
   package init(
     repository: WorktreeDirectoryIdentity, branchID: UUID, branch: String, base: String,
-    baseOID: String, publishedOID: String, worktreeID: UUID, mergedOID: String? = nil
+    baseOID: String, publishedOID: String, worktreeID: UUID, mergedOID: String? = nil,
+    baseHistory: WorktreeRefHistory? = nil
   ) {
     self.repository = repository
     self.branchID = branchID
@@ -84,6 +88,7 @@ package struct ProtectedWorktreeBranch: Codable, Equatable, Sendable {
     self.publishedOID = publishedOID
     self.mergedOID = mergedOID
     self.worktreeID = worktreeID
+    self.baseHistory = baseHistory
   }
 
   package var repositoryKey: String {
@@ -103,4 +108,7 @@ package protocol DerivedProjectStore: Sendable {
     _ record: DerivedProjectRecord, expecting revision: Int64?,
     protecting branch: ProtectedWorktreeBranch?
   ) throws
+  func remove(_ id: String, expecting revision: Int64) throws
+  func protectedBranches() throws -> [ProtectedWorktreeBranch]
+  func releaseProtection(_ branch: ProtectedWorktreeBranch) throws
 }

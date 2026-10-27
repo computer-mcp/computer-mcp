@@ -204,6 +204,13 @@ final class WorktreeActivationFailure: DerivedProjectStore, @unchecked Sendable 
     self.afterCommit = afterCommit
   }
   func records() throws -> [DerivedProjectRecord] { try store.records() }
+  func remove(_ id: String, expecting revision: Int64) throws {
+    try store.remove(id, expecting: revision)
+  }
+  func protectedBranches() throws -> [ProtectedWorktreeBranch] { try store.protectedBranches() }
+  func releaseProtection(_ branch: ProtectedWorktreeBranch) throws {
+    try store.releaseProtection(branch)
+  }
   func commit(
     _ record: DerivedProjectRecord, expecting revision: Int64?,
     protecting branch: ProtectedWorktreeBranch?

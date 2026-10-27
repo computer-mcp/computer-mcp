@@ -16,83 +16,96 @@ extension WorktreeRepository {
   ) throws -> WorktreePublication {
     try limits.validate()
     return try withLock(validateHead: false) { lock in
-      if var pending = try readPublication(projectID),
-        ![.finished, .rejected].contains(pending.phase)
-      {
-        return try recoverPublication(&pending, lock: lock, authorize: authorize)
-      }
-      if let previous = try readPublication(projectID) { try cleanPublicationStaging(previous) }
-      guard let record = try store.records().first(where: { $0.projectID == projectID }),
-        let registration = record.worktree, let creation = try readJournal(projectID),
-        creation.phase == .active, try matchesActiveRecord(creation, record),
-        roots.allSatisfy(identity.format.contains)
-      else { throw WorktreeError.recoveryRequired("No active publication registration.") }
-      try authorize(record)
-      let topology = try verifyTopology(
-        creation, repository: identity, source: source, validateHead: false)
-      let expected = registration.publishedOID ?? registration.baseOID
-      try requireDirectRef(registration.branch, oid: expected)
-      // This is the publication's only read of live HEAD. No later operation
-      // resolves a mutable private ref or asks Git to open private objects.
-      let bytes: Data
-      do {
-        guard let head = try io.read("HEAD", in: topology.gitDirectory, limit: 128),
-          head.count == identity.format.hexCount + 1, head.last == 10
-        else {
-          throw WorktreeError.busy("Cannot capture a detached worktree HEAD.")
-        }
-        bytes = head
-      } catch {
-        throw WorktreeError.busy("Worktree HEAD changed or cannot be captured; retry publication.")
-      }
-      let captured = String(decoding: bytes.dropLast(), as: UTF8.self)
-      guard identity.format.contains(captured) else {
-        throw WorktreeError.busy("Worktree HEAD is not a direct object ID.")
-      }
-      var journal = WorktreePublicationJournal(
-        version: 1, operationID: UUID(), repository: identity, record: record,
-        expectedOID: expected, capturedOID: captured, maxPackBytes: limits.inputBytes,
-        roots: Array(Set([captured] + roots)).sorted(),
-        preservationRef: preservationRef(record, oid: expected), phase: .captured)
-      let previous = try readPublication(projectID).map(publicationBytes)
-      try savePublication(journal, replacing: previous)
-      do {
-        let staging = try publicationDirectory().child(
-          journal.operationID.uuidString.lowercased(), create: true, exclusive: true)
-        try io.write(publicationOwner(journal), name: "owner.json", in: staging, replacing: nil)
-        let old = try publicationBytes(journal)
-        journal.staging = staging.identity
-        try savePublication(journal, replacing: old)
-        let objects = try staging.child("objects", create: true, exclusive: true)
-        var budget = try WorktreeObjectBudget(limits)
-        let snapshot = WorktreeObjectSnapshot(io: io, format: identity.format)
-        let files = try snapshot.copy(from: topology.objects, to: objects, budget: &budget)
-        let uncopied = try publicationBytes(journal)
-        journal.files = files
-        journal.phase = .copied
-        try savePublication(journal, replacing: uncopied)
-        try snapshot.validateRaw(files, in: objects, budget: &budget)
-        try verifyPublication(&journal, budget: &budget)
-      } catch {
-        // A rejected attempt cannot install objects. Retain the input worktree;
-        // a retry captures a fresh HEAD instead of trusting a partial snapshot.
-        let reason =
-          (error as? WorktreeError)?.errorDescription
-          ?? (error is CancellationError
-            ? "Object capture was cancelled." : "Object capture I/O failed.")
-        if [.captured, .copied].contains(journal.phase) {
-          let previous = try publicationBytes(journal)
-          journal.rejection = String(reason.prefix(512))
-          journal.phase = .rejected
-          try savePublication(journal, replacing: previous)
-          try cleanPublicationStaging(journal)
-        }
-        if error is CancellationError { throw error }
-        throw WorktreeError.busy(
-          "Private object publication is busy: " + String(reason.prefix(512)))
-      }
-      return try finishPublication(&journal, lock: lock, authorize: authorize)
+      try publishLocked(
+        projectID: projectID, preserving: roots, limits: limits, lock: lock, authorize: authorize)
     }
+  }
+
+  func publishLocked(
+    projectID: String, preserving roots: [String], limits: WorktreePromotionLimits,
+    lock: RepositoryLock, removalAcknowledgements: [String]? = nil,
+    authorize: (DerivedProjectRecord) throws -> Void
+  ) throws -> WorktreePublication {
+    if var pending = try readPublication(projectID),
+      ![.finished, .rejected].contains(pending.phase)
+    {
+      return try recoverPublication(&pending, lock: lock, authorize: authorize)
+    }
+    if let previous = try readPublication(projectID) { try cleanPublicationStaging(previous) }
+    guard let record = try store.records().first(where: { $0.projectID == projectID }),
+      let registration = record.worktree, let creation = try readJournal(projectID),
+      creation.phase == .active, try matchesActiveRecord(creation, record),
+      roots.allSatisfy(identity.format.contains)
+    else { throw WorktreeError.recoveryRequired("No active publication registration.") }
+    try authorize(record)
+    let topology = try verifyTopology(
+      creation, repository: identity, source: source, validateHead: false)
+    let expected = registration.publishedOID ?? registration.baseOID
+    try requireDirectRef(registration.branch, oid: expected)
+    // This is the publication's only read of live HEAD. No later operation
+    // resolves a mutable private ref or asks Git to open private objects.
+    let bytes: Data
+    do {
+      guard let head = try io.read("HEAD", in: topology.gitDirectory, limit: 128),
+        head.count == identity.format.hexCount + 1, head.last == 10
+      else {
+        throw WorktreeError.busy("Cannot capture a detached worktree HEAD.")
+      }
+      bytes = head
+    } catch {
+      throw WorktreeError.busy("Worktree HEAD changed or cannot be captured; retry publication.")
+    }
+    let captured = String(decoding: bytes.dropLast(), as: UTF8.self)
+    guard identity.format.contains(captured) else {
+      throw WorktreeError.busy("Worktree HEAD is not a direct object ID.")
+    }
+    var journal = WorktreePublicationJournal(
+      version: 1, operationID: UUID(), repository: identity, record: record,
+      expectedOID: expected, capturedOID: captured, maxPackBytes: limits.inputBytes,
+      roots: Array(Set([captured] + roots)).sorted(),
+      preservationRef: preservationRef(record, oid: expected), phase: .captured)
+    let previousJournal = try readPublication(projectID)
+    journal.replacementAcknowledgements = previousJournal?.replacementAcknowledgements
+    let previous = try previousJournal.map(publicationBytes)
+    try savePublication(journal, replacing: previous)
+    do {
+      let staging = try publicationDirectory().child(
+        journal.operationID.uuidString.lowercased(), create: true, exclusive: true)
+      try io.write(publicationOwner(journal), name: "owner.json", in: staging, replacing: nil)
+      let old = try publicationBytes(journal)
+      journal.staging = staging.identity
+      try savePublication(journal, replacing: old)
+      let objects = try staging.child("objects", create: true, exclusive: true)
+      var budget = try WorktreeObjectBudget(limits)
+      let snapshot = WorktreeObjectSnapshot(io: io, format: identity.format)
+      let files = try snapshot.copy(from: topology.objects, to: objects, budget: &budget)
+      let uncopied = try publicationBytes(journal)
+      journal.files = files
+      journal.phase = .copied
+      try savePublication(journal, replacing: uncopied)
+      try snapshot.validateRaw(files, in: objects, budget: &budget)
+      try verifyPublication(
+        &journal, budget: &budget, removalAcknowledgements: removalAcknowledgements)
+    } catch {
+      // A rejected attempt cannot install objects. Retain the input worktree;
+      // a retry captures a fresh HEAD instead of trusting a partial snapshot.
+      let reason =
+        (error as? WorktreeError)?.errorDescription
+        ?? (error is CancellationError
+          ? "Object capture was cancelled." : "Object capture I/O failed.")
+      if [.captured, .copied].contains(journal.phase) {
+        let previous = try publicationBytes(journal)
+        journal.rejection = String(reason.prefix(512))
+        journal.phase = .rejected
+        try savePublication(journal, replacing: previous)
+        try cleanPublicationStaging(journal)
+      }
+      if error is CancellationError { throw error }
+      if case WorktreeError.recoveryRequired = error { throw error }
+      throw WorktreeError.busy(
+        "Private object publication is busy: " + String(reason.prefix(512)))
+    }
+    return try finishPublication(&journal, lock: lock, authorize: authorize)
   }
 
   func requireDirectRef(_ ref: String, oid: String) throws {
@@ -102,7 +115,8 @@ extension WorktreeRepository {
   }
 
   private func verifyPublication(
-    _ journal: inout WorktreePublicationJournal, budget: inout WorktreeObjectBudget
+    _ journal: inout WorktreePublicationJournal, budget: inout WorktreeObjectBudget,
+    removalAcknowledgements: [String]?
   ) throws {
     let staging = try publicationStaging(journal)
     let objects = try staging.child("objects")
@@ -153,6 +167,11 @@ extension WorktreeRepository {
     guard !manifest.isEmpty, manifest.count <= budget.limits.objectCount,
       Set(manifest).count == manifest.count, manifest.allSatisfy(identity.format.contains)
     else { throw WorktreeError.busy("Invalid or excessive reachable object manifest.") }
+    if let removalAcknowledgements {
+      try requirePrivateCommitCoverage(
+        journal, manifest: Set(manifest), acknowledgements: removalAcknowledgements,
+        run: { try run($0, input: $1).output })
+    }
     // Include shared dependencies in the limits and in the self-contained pack.
     let sizes = try run(
       ["cat-file", "--batch-check=%(objectname) %(objecttype) %(objectsize)"],
@@ -287,7 +306,7 @@ extension WorktreeRepository {
             repository: identity.common, branchID: registration.branchID,
             branch: registration.branch, base: registration.base, baseOID: registration.baseOID,
             publishedOID: journal.capturedOID, worktreeID: worktreeID,
-            mergedOID: registration.mergedOID))
+            mergedOID: registration.mergedOID, baseHistory: registration.baseHistory))
       }
       try advancePublication(&journal, to: .ledger)
     }
@@ -348,7 +367,7 @@ extension WorktreeRepository {
     try shared.synchronize()
   }
 
-  private func recoverPublication(
+  func recoverPublication(
     _ journal: inout WorktreePublicationJournal, lock: RepositoryLock,
     authorize: (DerivedProjectRecord) throws -> Void
   ) throws -> WorktreePublication {
@@ -414,7 +433,7 @@ extension WorktreeRepository {
     }
   }
 
-  private func cleanPublicationStaging(_ journal: WorktreePublicationJournal) throws {
+  func cleanPublicationStaging(_ journal: WorktreePublicationJournal) throws {
     if journal.phase == .finished, let pack = journal.pack {
       let shared = try WorktreeDirectory(URL(fileURLWithPath: identity.objects.path)).child("pack")
       let owned = Data((publicationMessage(journal) + "\n").utf8)

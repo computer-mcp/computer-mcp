@@ -51,7 +51,11 @@ the same host permission authority; MCP elicitation is interaction, not a grant.
 
 ## External Provider Composition
 
-For `apple-cli-mcp` or another local MCP provider:
+For `apple-cli-mcp` or another local MCP provider, registration and tool selection
+are separate from launch availability. Local stdio launches are currently refused
+on Darwin in both execution modes; see the
+[execution availability matrix](SecurityAndPrivacy.md#execution-admission).
+The configuration and inspection surfaces are:
 
 1. Register it under `[[mcp.servers]]`.
 2. Select exact `allowed_tools` or explicitly choose `allow_any_tool = true`.

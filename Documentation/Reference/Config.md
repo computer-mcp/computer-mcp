@@ -139,9 +139,19 @@ host-owned target and requirements; discovery never grants tool execution.
 Permission revisions belong to the host and cannot be set in TOML. App/CLI edits
 compare the reviewed revision, update the shared profile and reconcile requests,
 consent and running executions atomically. Export writes the permission tables.
-The obsolete profile fields `mode`, `capabilities`, `workspaces`,
-`full_shell_enabled` and `confirmation_policy`, and array forms of `projects` or
-`mcp_servers`, are rejected with replacement guidance, including empty values.
+Retired profile fields are rejected even when empty or false. Their replacements
+are:
+
+| Retired input | Current replacement |
+| --- | --- |
+| `mode` | `full_access` plus the permission tables; mode alone grants no permission. |
+| `capabilities` | `permissions`, `projects`, `plugins` and `mcp_servers` tables. |
+| `workspaces` | `projects` table with per-project `access` and `network`. |
+| `full_shell_enabled` | `full_access`, with local owner consent. |
+| `confirmation_policy` | Permission grants; calls within their grants execute directly. |
+| `authorization_revision` | Host-owned authorization revisions; omit from TOML. |
+| `projects` array | `projects` table with `access` and `network` entries. |
+| `mcp_servers` array | `mcp_servers` table with `read`, `all` or `deny` entries. |
 
 ## Managed limits
 
@@ -151,7 +161,7 @@ Managed limits cap permissions; they never grant them. The sources are:
 | --- | --- |
 | Machine file | `/Library/Application Support/Computer MCP/policy.toml`; a protected administrator-owned regular file. The entire parent chain must resist replacement; symlinks and writable parents, including mutation grants in ACLs, are rejected. |
 | Managed preferences | Forced `Policy` key in the `com.showxu.computer-mcp` preferences domain, containing a UTF-8 TOML string in the same format. Ordinary user preferences do not supply this source. |
-| Owner policy | Per-profile TOML stored in the permission database through the local-owner `PermissionControlService.setOwnerPolicy` operation. There is currently no App editor or public CLI command for setting this source. Profile permissions and connection limits are separate controls. |
+| Owner policy | Per-profile policy stored in the permission database. It currently has no owner-facing setting: neither the App nor the public CLI can set it. Profile permissions and connection limits are separate controls. |
 | Connection limits | `clients limit` or `profile.limit`, using [ManagedPolicy JSON](#managedpolicy-json); can only narrow the existing connection ceiling. |
 
 Each TOML document is bounded to 1 MiB. Its top-level fields are:

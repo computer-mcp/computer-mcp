@@ -134,11 +134,11 @@ authority, including accessible files and credentials. The App's **Client access
 session consent and saved client trust. Editing permissions invalidates stale
 consent and reconciles running executions against the new authority.
 
-Sandboxed writes and program launches require a verified execution context.
-General worktree contexts and project-bound plugin/server contexts are not yet
-available; affected calls are refused. A missing context never selects Full
-access. See [Client access](Documentation/Reference/CLI.md#client-access) and
-[Remote management](Documentation/Reference/ControlPlaneCapabilities.md#remote-management).
+The [execution availability matrix](Documentation/Architecture/SecurityAndPrivacy.md#execution-admission)
+describes what each mode can run, including host file/Git writes and local
+MCP/plugin launches. See [Client access](Documentation/Reference/CLI.md#client-access)
+and [Remote management](Documentation/Reference/ControlPlaneCapabilities.md#remote-management)
+for owner controls.
 
 Credentials stay in the signed App's macOS Data Protection Keychain. Examples,
 diagnostics, logs and audit contain placeholders or redacted summaries. Plugin

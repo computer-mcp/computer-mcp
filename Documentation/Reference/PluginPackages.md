@@ -433,8 +433,9 @@ the socket server waits for those owners to finish before reporting completion.
 The host chooses its embedded archive worker and stores installations under
 its Application Support `Plugins` directory; neither path is a plugin or
 control-socket argument. An unavailable embedded worker fails without a PATH
-fallback. Worker startup uses the host execution launcher in Full access with
-disclaimed privacy responsibility. Its explicit archive and lock descriptors
+fallback. Worker startup uses the host execution launcher under
+[host administration](../Architecture/SecurityAndPrivacy.md#execution-admission).
+Its explicit archive and lock descriptors
 remain owned until termination is confirmed, including output overflow, timeout
 and cancellation. App and CLI archive installation accepts a local file. The host's
 GitHub release installer adds public provenance verification to this same

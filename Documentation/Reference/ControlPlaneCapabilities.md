@@ -46,7 +46,7 @@ optional local client-consent socket.
 | `project.add` | Full Access; absolute `path`, optional `display_name`. |
 | `project.repair` | Full Access; `id`, new `path`, reviewed `expected_root_path`, optional `display_name`. |
 | `project.remove` | Full Access; `id`, reviewed `expected_root_path`. Removes the registration, preserving files and retained work. |
-| `project.grant` | Full Access; `id`, `access` (`read`, `write` or `deny`), `expected_profile_revision`. Changes only the connection's profile. A changed profile invalidates its prior Full consent. |
+| `project.grant` | Full Access; `id`, `access` (`read`, `write` or `deny`), `expected_profile_revision`. Changes only the connection's profile. A changed profile invalidates its prior Full access consent. |
 | `profile.show` | Inspect the connection's own session, profile and revisions. |
 | `profile.limit` | `limits` ([`ManagedPolicy` JSON](Config.md#managedpolicy-json)) and `expected_revision`; must narrow this session's effective ceiling. |
 | `plugin.list`, `plugin.describe` | Inspect safe plugin summaries and exact store revision. Both accept `after_id` and `limit` (default 50, maximum 200); describe takes `id` and pages its installations. |

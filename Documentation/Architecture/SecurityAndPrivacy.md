@@ -76,8 +76,9 @@ does not supply an unsupported backend. On the current Darwin backend:
 | Execution | Available behavior |
 | --- | --- |
 | Sandboxed read helpers | Available to Sandbox and Full access principals, subject to the tool's permissions, canonical paths and resource limits. They retain their read-only sandbox in either mode. |
-| Sandboxed project programs, writes, local stdio MCP and plugin programs | Refused: the gateway does not yet supply the verified worktree/private Git context required by the compiler. |
+| Sandboxed project programs, local stdio MCP and plugin programs | Refused: the gateway does not yet supply the verified worktree/private Git context required by the compiler. |
 | Prepared unconfined project programs, local stdio MCP and plugin programs | Refused even with Full access consent: Darwin cannot prove durable ownership of unsandboxed descendants after host death. |
+| Host file and Git write tools (`file.write`, `git.commit`, and other declared writes), including in-process implementations | Refused before dispatch in both modes. They enter the project-program preparation path: Sandbox lacks the verified worktree/private Git context; Full access lacks Darwin durable ownership support. Project `write` permission alone does not bypass preparation. |
 | Remote HTTP MCP services | Use a prepared service context that cannot launch host programs. The server permission, named-project permission and host-classified execution requirement still apply. |
 | In-process host management and Computer Use | Use their own admitted host paths and permissions; Computer Use also requires the corresponding macOS TCC grant. They do not require an arbitrary program launch. |
 
@@ -92,9 +93,10 @@ tunnel provisioning, diagnostics and transport supervision, client-registration
 helpers, and plugin archive preparation use it for unconfined infrastructure
 commands. It is not a principal's Full access permission or a fallback for failed
 tool preparation. When both scopes are installed, the prepared context takes
-precedence. The fixed archive worker explicitly owns a separate host-staging scope.
-Subprocesses
-disclaim the App's macOS privacy responsibility; they use their own system identity.
+precedence. The fixed archive worker uses host administration for its host-owned
+staging operation, explicitly clearing any principal execution context before
+launch. These subprocesses disclaim the App’s macOS privacy responsibility and
+use their own system identity.
 See [Execution Environment](ExecutionEnvironment.md) for supervision and recovery.
 
 ## Transport And Secrets

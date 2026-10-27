@@ -222,6 +222,191 @@ struct BuiltinToolCatalogSnapshotTests {
     }
   }
 
+  @Test func documentedToolRequirementsMatchCatalogSnapshot() throws {
+    let (document, expected) = try Self.requirementReference()
+    let differences = Self.requirementDifferences(document: document, expected: expected)
+    #expect(
+      differences.isEmpty,
+      "Tool requirement reference drift:\n\(differences.joined(separator: "\n"))")
+  }
+
+  @Test(arguments: [
+    "missing", "duplicate", "permission", "value", "fullAccess", "forwarding", "continuation",
+  ])
+  func requirementReferenceRejectsDrift(change: String) throws {
+    let (document, expected) = try Self.requirementReference()
+    let name =
+      change == "forwarding"
+      ? "mcp.tools.call" : change == "continuation" ? "shell.read" : "file.write"
+    let row = try #require(expected[name])
+    let replacement: String
+    switch change {
+    case "missing": replacement = ""
+    case "duplicate": replacement = row + "\n" + row
+    case "permission":
+      replacement = row.replacingOccurrences(of: "Project `write`", with: "Skills `allow`")
+    case "value":
+      replacement = row.replacingOccurrences(of: "Project `write`", with: "Project `read`")
+    case "fullAccess": replacement = row.replacingOccurrences(of: "| No |", with: "| Yes |")
+    case "forwarding", "continuation":
+      var cells = row.components(separatedBy: " | ")
+      cells[3] = "None |"
+      replacement = cells.joined(separator: " | ")
+    default: throw RequirementReferenceError.invalidFixture
+    }
+    try #require(replacement != row)
+    let changed = document.replacingOccurrences(of: row, with: replacement)
+    #expect(!Self.requirementDifferences(document: changed, expected: expected).isEmpty)
+  }
+
+  private static let requirementStart = "<!-- tool-requirements:start -->"
+  private static let requirementEnd = "<!-- tool-requirements:end -->"
+  private static let requirementHeader =
+    "| Tool | Declared permissions | Full access required | Conditions |"
+  private enum RequirementReferenceError: Error { case invalidFixture }
+
+  private static func requirementReference() throws -> (String, [String: String]) {
+    let tests = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
+    let snapshot = try JSONDecoder().decode(
+      [String: JSONValue].self,
+      from: Data(contentsOf: tests.appendingPathComponent("Fixtures/builtin-tool-catalog.json")))
+    let document = try String(
+      contentsOf: tests.deletingLastPathComponent().deletingLastPathComponent()
+        .appendingPathComponent("Documentation/Reference/Tools.md"), encoding: .utf8)
+    let expected = try snapshot.mapValues { tool in
+      let value = try #require(tool.objectValue?["capability"]?.objectValue?["requirement"])
+      return try JSONDecoder().decode(ToolRequirement.self, from: JSONEncoder().encode(value))
+    }.map { name, requirement in (name, requirementRow(name, requirement)) }
+    return (document, Dictionary(uniqueKeysWithValues: expected))
+  }
+
+  private static func requirementDifferences(document: String, expected: [String: String])
+    -> [String]
+  {
+    let sections = document.components(separatedBy: requirementStart)
+    guard sections.count == 2 else { return ["Expected exactly one requirement table"] }
+    let end = sections[1].components(separatedBy: requirementEnd)
+    guard end.count == 2 else { return ["Expected exactly one requirement table end"] }
+    let lines = end[0].split(separator: "\n").map(String.init)
+    guard lines.first == requirementHeader, lines.dropFirst().first == "| --- | --- | --- | --- |"
+    else {
+      return ["Invalid requirement table header"]
+    }
+    var seen: Set<String> = []
+    var differences: [String] = []
+    for line in lines.dropFirst(2) {
+      let cells = line.components(separatedBy: "|").map { $0.trimmingCharacters(in: .whitespaces) }
+      guard cells.count == 6, cells.first == "", cells.last == "",
+        cells[1].hasPrefix("`"), cells[1].hasSuffix("`")
+      else {
+        differences.append("Malformed requirement row: \(line)")
+        continue
+      }
+      let name = String(cells[1].dropFirst().dropLast())
+      if !seen.insert(name).inserted { differences.append("Duplicate: \(name)") }
+      if expected[name] != line { differences.append("Changed or unknown: \(name)") }
+    }
+    differences += Set(expected.keys).subtracting(seen).sorted().map { "Missing: \($0)" }
+    let outside = sections[0] + end[1]
+    if outside.contains("Required permission:")
+      || outside.contains("| Tool | Required permission |")
+    {
+      differences.append("Duplicate permission declarations outside the canonical table")
+    }
+    return differences
+  }
+
+  private static func requirementRow(_ name: String, _ requirement: ToolRequirement) -> String {
+    var permissions: [String] = []
+    switch requirement.access {
+    case .none: break
+    case .read: permissions.append("Project `read`")
+    case .projectWrite: permissions.append("Project `write`")
+    case .sourceProjectWrite: permissions.append("Source Project `write`")
+    }
+    if let value = requirement.namedProjectAccess {
+      permissions.append("Named Project `\(value.rawValue)`")
+    }
+    permissions += requirement.permissions.map { entry in
+      let value = entry.value == .access ? "allow" : entry.value.rawValue
+      return "\(permissionName(entry.permission)) `\(value)`"
+    }.sorted()
+    if !requirement.paths.isEmpty {
+      let operations = Set(
+        requirement.paths.map { path in
+          switch path.operation {
+          case .read: "read"
+          case .write: "write"
+          case .openDirectory: "openDirectory"
+          case .listDirectory: "listDirectory"
+          }
+        }
+      ).sorted().joined(separator: ", ")
+      permissions.append("Resolved paths (\(operations))")
+    }
+    var conditions: [String] = []
+    switch requirement.target {
+    case .none: break
+    case .mcp(let server, let value):
+      permissions.append("MCP server `\(value.rawValue)` (\(objectName(server)))")
+    case .forwarded(let tool, let arguments, let server):
+      conditions.append(
+        "Forward \(tool)(\(arguments))" + (server.map { " on \($0)" } ?? "")
+          + "; check target requirements")
+    }
+    switch requirement.execution {
+    case .none: break
+    case .start: conditions.append("Start execution")
+    case .list: conditions.append("Retained execution list")
+    case .read(let argument): conditions.append("Retained execution read (\(argument))")
+    case .input(let argument): conditions.append("Retained execution input (\(argument))")
+    case .cancel(let argument): conditions.append("Retained execution cancel (\(argument))")
+    }
+    if let contribution = requirement.contribution {
+      let kind: String
+      let object: ToolRequirement.Object
+      switch contribution {
+      case .cli(let selection):
+        kind = "CLI"
+        object = selection
+      case .skills(let selection):
+        kind = "Skills"
+        object = selection
+      case .mcp(let selection):
+        kind = "MCP"
+        object = selection
+      }
+      conditions.append("Plugin `use` if contributed: \(kind) \(objectName(object))")
+    }
+    if let url = requirement.networkURL { conditions.append("Network URL: \(url)") }
+    return "| `\(name)` | \(permissions.isEmpty ? "None" : permissions.joined(separator: "; ")) | "
+      + "\(requirement.requiresFullAccess ? "Yes" : "No") | \(conditions.isEmpty ? "None" : conditions.joined(separator: "; ")) |"
+  }
+
+  private static func objectName(_ object: ToolRequirement.Object) -> String {
+    switch object {
+    case .argument(let name): "argument \(name)"
+    case .registered(let id): "registered \(id)"
+    case .catalog: "catalog"
+    case .skill(let name, let root): "skill \(name) in \(root)"
+    }
+  }
+
+  private static func permissionName(_ permission: Permission) -> String {
+    switch permission {
+    case .project(let id): "Project \(id)"
+    case .plugin(let id): "Plugin \(id)"
+    case .mcpServer(let id): "MCP server \(id)"
+    case .filesAndFolders(let category): "Files and Folders \(category.rawValue)"
+    case .screen: "Screen"
+    case .desktopControl: "Desktop control"
+    case .localNetwork: "Local network"
+    case .machineInformation: "Machine information"
+    case .unifiedLogs: "Unified logs"
+    case .skills: "Skills"
+    }
+  }
+
   private static func differences(expected: [String: JSONValue], actual: [String: JSONValue])
     -> [String]
   {

@@ -8,13 +8,14 @@ provider-declared schemas and result shape when the Swift SDK exposes them.
 
 ## Permission requirements and retry
 
-The per-tool entries below state catalog requirements; **Full access required: No**
-means the declaration does not require that mode, not that every execution is
-currently available. See the [execution availability matrix](../Architecture/SecurityAndPrivacy.md#execution-admission).
+The [catalog table](#catalog-permission-requirements) states each tool’s declared
+permissions, values, Full access flag and conditional requirements. A declaration
+does not make an execution backend available. See the [execution availability matrix](../Architecture/SecurityAndPrivacy.md#execution-admission).
 Privacy permissions use `allow` in TOML (`access` in Codable values). Path-bearing
 calls additionally check every canonical path: Project `read`/`write`, Files and
-Folders `read` where applicable, and fixed host-data denials. File writes require
-a writable project context. A tool's preview/dry-run flag does not lower its
+Folders `read` where applicable, and fixed host-data denials. The matrix also
+describes the current refusal of host file and Git writes in both modes.
+A tool's preview/dry-run flag does not lower its
 catalog requirement. Plugin contributions add Plugin `use`; for plugin-owned MCP
 servers that replaces the directly registered MCP server permission. Aggregate
 catalogs include only entries visible under the corresponding permissions.
@@ -85,9 +86,307 @@ First make an admitted `mcp.tools.list` request to establish the exact catalog;
 then retry the tool call. Discovery that needs a program launch is subject to
 its own execution context and may be unavailable.
 
-## `project.request`
+## Catalog permission requirements
 
-Required permission: None. Full access required: No.
+This table is checked against the complete host catalog snapshot by
+`BuiltinToolCatalogSnapshotTests`. Each host tool has exactly one row. Dynamic
+CLI trees and downstream/plugin tools follow the conditional rules in their
+sections below.
+
+The permissions column records the catalog declaration. **Retained execution**
+conditions use the originating execution’s live grants, including Only this time,
+instead of obtaining fresh standing permissions; the declaration’s read/write
+values describe the continuation's operation. **Forward** checks the resolved
+target's requirements, including its Full access flag. **No** only means the
+wrapper's own declaration does not require Full access. Plugin-owned MCP targets
+use Plugin `use` in place of the directly registered MCP server permission.
+Catalog selections filter entries under their corresponding permissions.
+
+<!-- tool-requirements:start -->
+
+| Tool | Declared permissions | Full access required | Conditions |
+| --- | --- | --- | --- |
+| `archive.create` | Project `write`; Resolved paths (read, write) | No | None |
+| `archive.extract` | Project `write`; Resolved paths (read, write) | No | None |
+| `archive.list` | Project `read`; Resolved paths (read) | No | None |
+| `archive.read_file` | Project `read`; Resolved paths (read) | No | None |
+| `cli.describe` | Machine information `allow` | No | None |
+| `cli.exec` | Project `write` | No | Start execution; Plugin `use` if contributed: CLI argument id |
+| `cli.help` | Machine information `allow` | No | None |
+| `cli.list` | Machine information `allow` | No | None |
+| `cli.status` | Machine information `allow` | No | None |
+| `computer.accessibility.action` | Desktop control `allow` | No | None |
+| `computer.accessibility.query` | Screen `allow` | No | None |
+| `computer.displays` | Screen `allow` | No | None |
+| `computer.keyboard.key` | Desktop control `allow` | No | None |
+| `computer.keyboard.text` | Desktop control `allow` | No | None |
+| `computer.permissions` | Screen `allow` | No | None |
+| `computer.pointer.click` | Desktop control `allow` | No | None |
+| `computer.pointer.move` | Desktop control `allow` | No | None |
+| `computer.pointer.position` | Screen `allow` | No | None |
+| `computer.screenshot` | Screen `allow` | No | None |
+| `computer.scroll` | Desktop control `allow` | No | None |
+| `computer.verify` | Screen `allow` | No | None |
+| `computer.windows` | Screen `allow` | No | None |
+| `csv.read` | Project `read`; Resolved paths (read) | No | None |
+| `delivery.apply` | Project `write`; Resolved paths (write) | No | None |
+| `delivery.scopes.list` | Project `read`; Resolved paths (read) | No | None |
+| `env.describe` | Machine information `allow` | No | None |
+| `file.append` | Project `write`; Resolved paths (write) | No | None |
+| `file.chmod` | Project `write`; Resolved paths (write) | No | None |
+| `file.compare_trees` | Project `read`; Resolved paths (read) | No | None |
+| `file.copy` | Project `write`; Resolved paths (read, write) | No | None |
+| `file.count` | Project `read`; Resolved paths (read) | No | None |
+| `file.diff` | Project `read`; Resolved paths (read) | No | None |
+| `file.disk_usage` | Project `read`; Resolved paths (read) | No | None |
+| `file.download` | Project `write`; Resolved paths (write) | No | Network URL: url |
+| `file.duplicates` | Project `read`; Resolved paths (read) | No | None |
+| `file.exists` | Project `read`; Resolved paths (read) | No | None |
+| `file.find` | Project `read`; Resolved paths (read) | No | None |
+| `file.hash` | Project `read`; Resolved paths (read) | No | None |
+| `file.head` | Project `read`; Resolved paths (read) | No | None |
+| `file.hexdump` | Project `read`; Resolved paths (read) | No | None |
+| `file.insert_text` | Project `write`; Resolved paths (write) | No | None |
+| `file.list` | Project `read`; Resolved paths (listDirectory) | No | None |
+| `file.metadata` | Project `read`; Resolved paths (read) | No | None |
+| `file.mkdir` | Project `write`; Resolved paths (write) | No | None |
+| `file.move` | Project `write`; Resolved paths (write) | No | None |
+| `file.outline` | Project `read`; Resolved paths (read) | No | None |
+| `file.permissions` | Project `read`; Resolved paths (read) | No | None |
+| `file.read` | Project `read`; Resolved paths (read) | No | None |
+| `file.read_context` | Project `read`; Resolved paths (read) | No | None |
+| `file.read_files` | Project `read`; Resolved paths (read) | No | None |
+| `file.read_lines` | Project `read`; Resolved paths (read) | No | None |
+| `file.read_window` | Project `read`; Resolved paths (read) | No | None |
+| `file.readlink` | Project `read`; Resolved paths (read) | No | None |
+| `file.remove_xattr` | Project `write`; Resolved paths (write) | No | None |
+| `file.replace_lines` | Project `write`; Resolved paths (write) | No | None |
+| `file.replace_text` | Project `write`; Resolved paths (write) | No | None |
+| `file.resolve` | Project `read`; Resolved paths (read) | No | None |
+| `file.search` | Project `read`; Resolved paths (read) | No | None |
+| `file.stat` | Project `read`; Resolved paths (read) | No | None |
+| `file.symlink` | Project `write`; Resolved paths (read, write) | No | None |
+| `file.tail` | Project `read`; Resolved paths (read) | No | None |
+| `file.timeline` | Project `read`; Resolved paths (read) | No | None |
+| `file.touch` | Project `write`; Resolved paths (write) | No | None |
+| `file.trash` | Project `write`; Resolved paths (write) | No | None |
+| `file.tree` | Project `read`; Resolved paths (listDirectory) | No | None |
+| `file.type` | Project `read`; Resolved paths (read) | No | None |
+| `file.volume_info` | Project `read`; Resolved paths (read) | No | None |
+| `file.write` | Project `write`; Resolved paths (write) | No | None |
+| `file.write_files` | Project `write`; Resolved paths (write) | No | None |
+| `file.xattrs` | Project `read`; Resolved paths (read) | No | None |
+| `git.add` | Project `write`; Resolved paths (write) | No | None |
+| `git.blame` | Project `read`; Resolved paths (read) | No | None |
+| `git.branch` | Project `read`; Resolved paths (read) | No | None |
+| `git.branch_create` | Project `write`; Resolved paths (read) | Yes | None |
+| `git.branch_delete` | Source Project `write`; Resolved paths (read) | No | None |
+| `git.branch_rename` | Project `write`; Resolved paths (read) | Yes | None |
+| `git.branch_switch` | Project `write`; Resolved paths (read) | Yes | None |
+| `git.clean` | Project `write`; Resolved paths (write) | No | None |
+| `git.clean_preview` | Project `read`; Resolved paths (read) | No | None |
+| `git.commit` | Project `write`; Resolved paths (write) | No | None |
+| `git.commit_files` | Project `read`; Resolved paths (read) | No | None |
+| `git.compare_refs` | Project `read`; Resolved paths (read) | No | None |
+| `git.config` | Project `read`; Resolved paths (read) | No | None |
+| `git.conflicts` | Project `read`; Resolved paths (read) | No | None |
+| `git.diff` | Project `read`; Resolved paths (read) | No | None |
+| `git.diff_check` | Project `read`; Resolved paths (read) | No | None |
+| `git.diff_summary` | Project `read`; Resolved paths (read) | No | None |
+| `git.file_at_revision` | Project `read`; Resolved paths (read) | No | None |
+| `git.file_history` | Project `read`; Resolved paths (read) | No | None |
+| `git.files` | Project `read`; Resolved paths (read) | No | None |
+| `git.grep` | Project `read`; Resolved paths (read) | No | None |
+| `git.ignored` | Project `read`; Resolved paths (read) | No | None |
+| `git.is_ancestor` | Project `read`; Resolved paths (read) | No | None |
+| `git.log` | Project `read`; Resolved paths (read) | No | None |
+| `git.merge_base` | Project `read`; Resolved paths (read) | No | None |
+| `git.reflog` | Project `read`; Resolved paths (read) | No | None |
+| `git.refs` | Project `read`; Resolved paths (read) | No | None |
+| `git.remotes` | Project `read`; Resolved paths (read) | No | None |
+| `git.resolve_ref` | Project `read`; Resolved paths (read) | No | None |
+| `git.restore_worktree` | Project `write`; Resolved paths (write) | No | None |
+| `git.root` | Project `read`; Resolved paths (read) | No | None |
+| `git.show` | Project `read`; Resolved paths (read) | No | None |
+| `git.staged_file` | Project `read`; Resolved paths (read) | No | None |
+| `git.stash_push` | Project `write`; Resolved paths (write) | Yes | None |
+| `git.stash_show` | Project `read`; Resolved paths (read) | No | None |
+| `git.stashes` | Project `read`; Resolved paths (read) | No | None |
+| `git.status` | Project `read`; Resolved paths (read) | No | None |
+| `git.submodules` | Project `read`; Resolved paths (read) | No | None |
+| `git.tag_create` | Project `write`; Resolved paths (read) | Yes | None |
+| `git.tag_delete` | Project `write`; Resolved paths (read) | Yes | None |
+| `git.tag_show` | Project `read`; Resolved paths (read) | No | None |
+| `git.tags` | Project `read`; Resolved paths (read) | No | None |
+| `git.tracking_status` | Project `read`; Resolved paths (read) | No | None |
+| `git.unstage` | Project `write`; Resolved paths (write) | No | None |
+| `git.worktrees` | Project `read`; Resolved paths (read) | No | None |
+| `image.info` | Project `read`; Resolved paths (read) | No | None |
+| `json.read` | Project `read`; Resolved paths (read) | No | None |
+| `json.write` | Project `write`; Resolved paths (write) | No | None |
+| `jsonl.read` | Project `read`; Resolved paths (read) | No | None |
+| `logs.query` | Unified logs `allow` | No | None |
+| `macos.applications` | Machine information `allow` | No | None |
+| `macos.default_application` | Machine information `allow`; Resolved paths (read) | No | None |
+| `macos.frontmost_application` | Machine information `allow` | No | None |
+| `macos.running_applications` | Machine information `allow` | No | None |
+| `macos.screens` | Machine information `allow` | No | None |
+| `macos.spotlight_search` | Machine information `allow`; Resolved paths (read) | No | None |
+| `macos.user_directories` | Machine information `allow` | No | None |
+| `markdown.frontmatter` | Project `read`; Resolved paths (read) | No | None |
+| `markdown.link_check` | Project `read`; Resolved paths (read) | No | None |
+| `markdown.links` | Project `read`; Resolved paths (read) | No | None |
+| `markdown.section` | Project `read`; Resolved paths (read) | No | None |
+| `markdown.tables` | Project `read`; Resolved paths (read) | No | None |
+| `mcp.connections.close` | MCP server `all` (argument server) | No | Plugin `use` if contributed: MCP argument server |
+| `mcp.events.read` | MCP server `read` (argument server) | No | Plugin `use` if contributed: MCP argument server |
+| `mcp.prompts.get` | MCP server `read` (argument server) | No | Plugin `use` if contributed: MCP argument server |
+| `mcp.prompts.list` | MCP server `read` (argument server) | No | Plugin `use` if contributed: MCP argument server |
+| `mcp.requests.cancel` | MCP server `all` (argument server) | No | Retained execution cancel (request_id); Plugin `use` if contributed: MCP argument server |
+| `mcp.requests.list` | MCP server `read` (argument server) | No | Retained execution list; Plugin `use` if contributed: MCP argument server |
+| `mcp.requests.read` | MCP server `read` (argument server) | No | Retained execution read (request_id); Plugin `use` if contributed: MCP argument server |
+| `mcp.resources.list` | MCP server `read` (argument server) | No | Plugin `use` if contributed: MCP argument server |
+| `mcp.resources.read` | MCP server `read` (argument server) | No | Plugin `use` if contributed: MCP argument server |
+| `mcp.resources.templates.list` | MCP server `read` (argument server) | No | Plugin `use` if contributed: MCP argument server |
+| `mcp.servers.list` | MCP server `read` (catalog) | No | Plugin `use` if contributed: MCP catalog |
+| `mcp.servers.status` | MCP server `read` (argument server) | No | Plugin `use` if contributed: MCP argument server |
+| `mcp.tools.call` | None | No | Forward tool(arguments) on server; check target requirements |
+| `mcp.tools.describe` | MCP server `read` (argument server) | No | Plugin `use` if contributed: MCP argument server |
+| `mcp.tools.find` | MCP server `read` (argument server) | No | Plugin `use` if contributed: MCP argument server |
+| `mcp.tools.list` | MCP server `read` (argument server) | No | Plugin `use` if contributed: MCP argument server |
+| `media.info` | Project `read`; Resolved paths (read) | No | None |
+| `network.arp` | Machine information `allow` | No | None |
+| `network.connections` | Machine information `allow` | No | None |
+| `network.dns` | Machine information `allow` | No | None |
+| `network.hardware_ports` | Machine information `allow` | No | None |
+| `network.http_check` | Machine information `allow` | No | None |
+| `network.interfaces` | Machine information `allow` | No | None |
+| `network.listeners` | Machine information `allow` | No | None |
+| `network.locations` | Machine information `allow` | No | None |
+| `network.ping` | Machine information `allow` | No | None |
+| `network.proxy` | Machine information `allow` | No | None |
+| `network.resolve` | Machine information `allow` | No | None |
+| `network.routes` | Machine information `allow` | No | None |
+| `network.services` | Machine information `allow` | No | None |
+| `network.tcp_check` | Machine information `allow` | No | None |
+| `network.vpn` | Machine information `allow` | No | None |
+| `network.wifi` | Machine information `allow` | No | None |
+| `pdf.info` | Project `read`; Resolved paths (read) | No | None |
+| `pdf.text` | Project `read`; Resolved paths (read) | No | None |
+| `plist.read` | Project `read`; Resolved paths (read) | No | None |
+| `plist.write` | Project `write`; Resolved paths (write) | No | None |
+| `plugin.artifacts` | Machine information `allow` | No | None |
+| `plugin.configure` | None | Yes | None |
+| `plugin.describe` | Machine information `allow` | No | None |
+| `plugin.disable` | None | Yes | None |
+| `plugin.enable` | None | Yes | None |
+| `plugin.install` | None | Yes | None |
+| `plugin.list` | Machine information `allow` | No | None |
+| `plugin.search` | Machine information `allow` | No | None |
+| `plugin.uninstall` | None | Yes | None |
+| `plugin.update` | None | Yes | None |
+| `policy.probe` | None | No | None |
+| `process.cancel` | Project `write` | No | Retained execution cancel (process_id) |
+| `process.list` | Project `read` | No | Retained execution list |
+| `process.read` | Project `read` | No | Retained execution read (process_id) |
+| `process.spawn` | Project `write` | No | Start execution; Plugin `use` if contributed: CLI argument id |
+| `process.write` | Project `write` | No | Retained execution input (process_id) |
+| `profile.limit` | None | No | None |
+| `profile.show` | None | No | None |
+| `project.add` | None | Yes | None |
+| `project.agent_files` | Project `read`; Resolved paths (read) | No | None |
+| `project.archive_files` | Project `read`; Resolved paths (read) | No | None |
+| `project.artifact_directories` | Project `read`; Resolved paths (read) | No | None |
+| `project.asset_files` | Project `read`; Resolved paths (read) | No | None |
+| `project.ci_files` | Project `read`; Resolved paths (read) | No | None |
+| `project.commands` | Project `read`; Resolved paths (read) | No | None |
+| `project.config_files` | Project `read`; Resolved paths (read) | No | None |
+| `project.data_files` | Project `read`; Resolved paths (read) | No | None |
+| `project.dependency_files` | Project `read`; Resolved paths (read) | No | None |
+| `project.describe` | None | No | None |
+| `project.directory_stats` | Project `read`; Resolved paths (listDirectory) | No | None |
+| `project.documentation_files` | Project `read`; Resolved paths (read) | No | None |
+| `project.empty_directories` | Project `read`; Resolved paths (listDirectory) | No | None |
+| `project.env_files` | Project `read`; Resolved paths (read) | No | None |
+| `project.executable_files` | Project `read`; Resolved paths (read) | No | None |
+| `project.file_types` | Project `read`; Resolved paths (read) | No | None |
+| `project.git_changes` | Project `read`; Resolved paths (read) | No | None |
+| `project.grant` | None | Yes | None |
+| `project.ignore_files` | Project `read`; Resolved paths (read) | No | None |
+| `project.info` | Project `read`; Resolved paths (read) | No | None |
+| `project.infra_files` | Project `read`; Resolved paths (read) | No | None |
+| `project.instructions` | Project `read`; Resolved paths (read) | No | None |
+| `project.large_files` | Project `read`; Resolved paths (read) | No | None |
+| `project.list` | None | No | None |
+| `project.log_files` | Project `read`; Resolved paths (read) | No | None |
+| `project.manifests` | Project `read`; Resolved paths (read) | No | None |
+| `project.open` | Desktop control `allow` | No | None |
+| `project.outline` | Project `read`; Resolved paths (read) | No | None |
+| `project.project_roots` | Project `read`; Resolved paths (read) | No | None |
+| `project.recent_files` | Project `read`; Resolved paths (read) | No | None |
+| `project.remove` | None | Yes | None |
+| `project.repair` | None | Yes | None |
+| `project.request` | None | No | None |
+| `project.reveal` | Desktop control `allow` | No | None |
+| `project.schema_files` | Project `read`; Resolved paths (read) | No | None |
+| `project.source_files` | Project `read`; Resolved paths (read) | No | None |
+| `project.status` | Project `read`; Resolved paths (read) | No | None |
+| `project.symlinks` | Project `read`; Resolved paths (read) | No | None |
+| `project.test_files` | Project `read`; Resolved paths (read) | No | None |
+| `project.todos` | Project `read`; Resolved paths (read) | No | None |
+| `runtime.owners.call` | None | No | Forward tool(arguments); check target requirements |
+| `runtime.owners.list` | Project `read`; Resolved paths (read) | No | None |
+| `service.status` | Machine information `allow` | No | None |
+| `shell.cancel` | Project `write` | No | Retained execution cancel (session_id) |
+| `shell.list` | Project `read` | No | Retained execution list |
+| `shell.read` | Project `read` | No | Retained execution read (session_id) |
+| `shell.run` | Project `write`; Resolved paths (write) | No | Start execution |
+| `shell.spawn` | Project `write`; Resolved paths (write) | No | Start execution |
+| `shell.write` | Project `write` | No | Retained execution input (session_id) |
+| `skills.describe` | Skills `allow` | No | Plugin `use` if contributed: Skills skill name in root_id |
+| `skills.files` | Skills `allow` | No | Plugin `use` if contributed: Skills skill name in root_id |
+| `skills.frontmatter` | Skills `allow` | No | Plugin `use` if contributed: Skills skill name in root_id |
+| `skills.link_check` | Skills `allow` | No | Plugin `use` if contributed: Skills skill name in root_id |
+| `skills.links` | Skills `allow` | No | Plugin `use` if contributed: Skills skill name in root_id |
+| `skills.list` | Skills `allow` | No | Plugin `use` if contributed: Skills argument root_id |
+| `skills.outline` | Skills `allow` | No | Plugin `use` if contributed: Skills skill name in root_id |
+| `skills.read` | Skills `allow` | No | Plugin `use` if contributed: Skills skill name in root_id |
+| `skills.read_file` | Skills `allow` | No | Plugin `use` if contributed: Skills skill name in root_id |
+| `skills.read_files` | Skills `allow` | No | Plugin `use` if contributed: Skills skill name in root_id |
+| `skills.read_package` | Skills `allow` | No | Plugin `use` if contributed: Skills skill name in root_id |
+| `skills.roots` | Skills `allow` | No | Plugin `use` if contributed: Skills catalog |
+| `skills.search` | Skills `allow` | No | Plugin `use` if contributed: Skills argument root_id |
+| `skills.search_files` | Skills `allow` | No | Plugin `use` if contributed: Skills skill name in root_id |
+| `skills.section` | Skills `allow` | No | Plugin `use` if contributed: Skills skill name in root_id |
+| `skills.tables` | Skills `allow` | No | Plugin `use` if contributed: Skills skill name in root_id |
+| `skills.validate` | Skills `allow` | No | Plugin `use` if contributed: Skills skill name in root_id |
+| `sqlite.query` | Project `read`; Resolved paths (read) | No | None |
+| `sqlite.schema` | Project `read`; Resolved paths (read) | No | None |
+| `structured.get` | Project `read`; Resolved paths (read) | No | None |
+| `system.cpu` | Machine information `allow` | No | None |
+| `system.groups` | Machine information `allow` | No | None |
+| `system.info` | Machine information `allow` | No | None |
+| `system.kernel` | Machine information `allow` | No | None |
+| `system.load` | Machine information `allow` | No | None |
+| `system.locale` | Machine information `allow` | No | None |
+| `system.memory` | Machine information `allow` | No | None |
+| `system.path` | Machine information `allow` | No | None |
+| `system.power` | Machine information `allow` | No | None |
+| `system.processes` | Machine information `allow` | No | None |
+| `system.software` | Machine information `allow` | No | None |
+| `system.thermal` | Machine information `allow` | No | None |
+| `system.time` | Machine information `allow` | No | None |
+| `system.uptime` | Machine information `allow` | No | None |
+| `system.user` | Machine information `allow` | No | None |
+| `system.volumes` | Machine information `allow` | No | None |
+| `system.which` | Machine information `allow` | No | None |
+| `toml.read` | Project `read`; Resolved paths (read) | No | None |
+| `xml.read` | Project `read`; Resolved paths (read) | No | None |
+| `yaml.read` | Project `read`; Resolved paths (read) | No | None |
+
+<!-- tool-requirements:end -->
+
+## `project.request`
 
 Requests registration of an existing absolute folder with `path` and `access`
 (`read` or `write`). It requires an authenticated principal, but no existing
@@ -112,11 +411,6 @@ configuration. Direct project registration and removal remain owner operations.
 
 ## `delivery.scopes.list` and `delivery.apply`
 
-| Tool | Required permission | Full access required |
-| --- | --- | --- |
-| `delivery.scopes.list` | Project `read` and resolved path access | No |
-| `delivery.apply` | Project `write` and resolved path access | No |
-
 The `delivery` provider lists host-declared scopes (read-only) and applies ordered
 UTF-8 edits in an isolated Git worktree (project write). Both require a project
 and declare no network use. Apply commits and fast-forwards onto the default branch
@@ -124,11 +418,6 @@ or retains its branch, with durable recovery and bounded file snippets. See
 [Isolated delivery](Delivery.md) for schemas, reason codes and recovery.
 
 ## Execution owners
-
-| Tool | Required permission | Full access required |
-| --- | --- | --- |
-| `runtime.owners.list` | Project `read` and resolved path access; inaccessible owners are omitted | No |
-| `runtime.owners.call` | The resolved target's permissions and execution authority | As required by the target |
 
 `runtime.owners.list` lists retained work in one granted `project_id`. It
 requires current Project access and matching ownership. An optional `server` filters MCP registration
@@ -179,15 +468,11 @@ target executes.
 
 ## `cli.list`
 
-Required permission: Machine information `allow`. Full access required: No.
-
 Lists directly registered and Plugin-contributed CLI providers. Entries include
 `has_interface` and `has_tree`; `cli.describe` provides their registration details.
 Validated [CLI Trees](CLITrees.md) contribute typed tools to the same catalog.
 
 ## `cli.describe`
-
-Required permission: Machine information `allow`. Full access required: No.
 
 Returns one CLI provider's configuration metadata, mechanical interface and tree source.
 Environment values are not returned.
@@ -201,8 +486,6 @@ Arguments:
 ```
 
 ## `cli.status`
-
-Required permission: Machine information `allow`. Full access required: No.
 
 Reports whether registered CLI provider executables can be resolved without
 invoking provider command trees. Omit `id` to inspect all configured providers.
@@ -226,8 +509,6 @@ Arguments:
 
 ## `cli.help`
 
-Required permission: Machine information `allow`. Full access required: No.
-
 For file-backed trees, returns the declared node's description, input schema,
 coverage and help argv with `executed: false`. Unknown paths are rejected.
 Executable tree exporters are not run by this read-only capability.
@@ -250,8 +531,6 @@ Arguments for a file-backed tree:
 CLI command-tree tools, whose names come from the configured tree, have the same
 Project `write` and Plugin `use` (when contributed) requirements as `cli.exec`,
 and do not declare a Full access requirement.
-
-Required permission: Project `write` and resolved path access. Full access required: No.
 
 Executes a registered local CLI through this MCP gateway with explicit argv.
 Use this for raw registrations that permit arbitrary arguments. Tree-backed
@@ -279,13 +558,9 @@ truncation flags.
 
 ## `mcp.servers.list`
 
-Required permission: Selected directly registered MCP server `read`. Full access required: No.
-
 Lists TOML-registered downstream MCP servers visible to the current profile.
 
 ## `mcp.servers.status`
-
-Required permission: Selected directly registered MCP server `read`. Full access required: No.
 
 Reports non-executing readiness metadata for registered downstream MCP
 servers without starting subprocesses or calling downstream tools. For stdio
@@ -310,8 +585,6 @@ Omit `server` to inspect every downstream MCP server visible to the profile.
 
 ## `mcp.tools.list`
 
-Required permission: Selected directly registered MCP server `read`. Full access required: No.
-
 Calls downstream `tools/list` for one server. The complete paginated catalog is
 filtered by the host's `allowed_tools` / `allow_any_tool` selection and the
 profile's tool authority and risk limits. `profiles.mcp_servers` can explicitly
@@ -328,8 +601,6 @@ Arguments:
 
 ## `mcp.tools.describe`
 
-Required permission: Selected directly registered MCP server `read`. Full access required: No.
-
 Calls downstream `tools/list` for one server, then returns the exact matching
 tool definition by name plus `call_context` for `mcp.tools.call`. Matching is
 case-sensitive and exact; this is not semantic tool selection.
@@ -344,8 +615,6 @@ Arguments:
 ```
 
 ## `mcp.tools.find`
-
-Required permission: Selected directly registered MCP server `read`. Full access required: No.
 
 Calls downstream `tools/list` for one server, then filters the returned tool
 definitions with deterministic string matching. It can match `name`,
@@ -366,8 +635,6 @@ Arguments:
 ```
 
 ## `mcp.tools.call`
-
-Required permission: Resolved target’s permissions and values. Full access required: As required by the target.
 
 Calls a tool on one downstream MCP server.
 The exact tool name must be selected by the host's whitelist or all-tools policy;
@@ -417,8 +684,6 @@ Start-only arguments:
 
 ## `mcp.connections.close`
 
-Required permission: Selected directly registered MCP server `all`. Full access required: No.
-
 Closes one exact retained downstream connection and joins its managed-process
 teardown. This destructive operation affects **all work on that connection**.
 Select a live owner with `runtime.owners.call` and pass `server` as the target's
@@ -444,8 +709,6 @@ A later new invocation may start a fresh connection under current configuration.
 
 ## `mcp.events.read`
 
-Required permission: Selected directly registered MCP server `read`. Full access required: No.
-
 Reads the retained connection and catalog-change events for one registered
 downstream server. The query never starts or reconnects that server. Events are
 in-memory observations of a particular session, with the latest 512 retained.
@@ -466,15 +729,11 @@ count (`missed_events: null`), rather than launching a provider.
 
 ## `mcp.requests.list`
 
-Required permission: Originating execution’s retained read/list authority. Full access required: No.
-
 Lists active downstream tool requests for one persistent provider session.
 The `request_id` values are the caller-stable identifiers supplied to
 `mcp.tools.call`.
 
 ## `mcp.requests.cancel`
-
-Required permission: Originating execution’s retained input/cancellation authority. Full access required: No.
 
 Requests cancellation of one active downstream request by its caller-stable
 `request_id`. This is a write-capability call and follows host policy. Delivery
@@ -485,8 +744,6 @@ reported separately. Only an owned process whose exit has been observed can
 have confirmed cleanup; remote HTTP cleanup can remain unknown.
 
 ## `mcp.requests.read`
-
-Required permission: Originating execution’s retained read/list authority. Full access required: No.
 
 Reads the original request receipt without starting a connection or model run.
 Required arguments are `server` and `request_id`; `offset` defaults to zero and
@@ -512,8 +769,6 @@ may not support execution recovery, and result loss is reported honestly.
 
 ## `mcp.resources.list`
 
-Required permission: Selected directly registered MCP server `read`. Full access required: No.
-
 Calls downstream `resources/list` for one server. Returned resources include
 `read_context` for `mcp.resources.read` when a resource URI is present. This
 does not read resource content.
@@ -529,8 +784,6 @@ Arguments:
 
 ## `mcp.resources.templates.list`
 
-Required permission: Selected directly registered MCP server `read`. Full access required: No.
-
 Calls downstream `resources/templates/list` for one server. The gateway returns
 templates as declared by the provider and does not expand URI templates.
 
@@ -544,8 +797,6 @@ Arguments:
 ```
 
 ## `mcp.resources.read`
-
-Required permission: Selected directly registered MCP server `read`. Full access required: No.
 
 Calls downstream `resources/read` for one server and URI. The gateway forwards
 the URI exactly and does not interpret it as a local filesystem or network path.
@@ -561,8 +812,6 @@ Arguments:
 
 ## `mcp.prompts.list`
 
-Required permission: Selected directly registered MCP server `read`. Full access required: No.
-
 Calls downstream `prompts/list` for one server. Returned prompts include
 `get_context` for `mcp.prompts.get` when a prompt name is present. This does
 not fetch prompt messages or choose a prompt semantically.
@@ -577,8 +826,6 @@ Arguments:
 ```
 
 ## `mcp.prompts.get`
-
-Required permission: Selected directly registered MCP server `read`. Full access required: No.
 
 Calls downstream `prompts/get` for one server and prompt name. Prompt arguments,
 when supplied, must be string values. The gateway forwards the name and
@@ -643,12 +890,6 @@ For prompts, use `mcp.prompts.list` and `mcp.prompts.get`.
 
 ## Shell executions
 
-| Tool | Required permission | Full access required |
-| --- | --- | --- |
-| `shell.run`, `shell.spawn` | Project `write`, canonical cwd access and `policy.shell_enabled = true` | No |
-| `shell.list`, `shell.read` | Originating execution’s retained read/list authority | No |
-| `shell.write`, `shell.cancel` | Originating execution’s retained input/cancellation authority | No |
-
 `shell.run` waits for a command; `shell.spawn` returns a stable `session_id` for
 background work. Use `shell.read` with `stdout_cursor` and `stderr_cursor` from the
 previous response's `next_cursor`, `shell.write` to send text or base64 bytes or
@@ -679,14 +920,6 @@ descendants that escape observation or launch through another service.
 
 ## `process.spawn`, `process.list`, `process.read`, `process.write`, `process.cancel`
 
-| Tool | Required permission | Full access required |
-| --- | --- | --- |
-| `process.spawn` | Project `write` and resolved path access | No |
-| `process.list` | Originating execution’s retained read/list authority | No |
-| `process.read` | Originating execution’s retained read/list authority | No |
-| `process.write` | Originating execution’s retained input/cancellation authority | No |
-| `process.cancel` | Originating execution’s retained input/cancellation authority | No |
-
 Spawn, list, inspect, and cancel long-running commands by registered CLI id.
 `process.list` reports only sessions created through `process.spawn`; it is not
 a macOS process-table tool. `process.spawn` and `process.write` declare execution
@@ -713,20 +946,12 @@ Shell additionally requires `policy.shell_enabled = true`.
 
 ## `policy.probe`
 
-Required permission: None. Full access required: No.
-
 Preview one exact tool's resolved requirements for the active caller, profile,
 project and connection. The result reports requirements and an allowed, requestable
 or denied decision. It does not dispatch, create a pending request or consume
 Only this time authority.
 
 ## Project discovery
-
-| Tool | Required permission | Full access required |
-| --- | --- | --- |
-| `project.list`, `project.describe` | None for ID, name and access; detailed metadata requires Project `read` | No |
-| `project.add`, `project.grant`, `project.remove`, `project.repair` | No additional permission; reviewed owner consent and revisions apply | Yes |
-| `profile.show`, `profile.limit` | None; a limit can only narrow the current connection | No |
 
 `project.list` and `project.describe` expose stable project ID, display name and
 access status without Project permission. Root paths and detailed metadata require
@@ -739,11 +964,6 @@ when its requirements are satisfied. Computer Use cannot operate the host's own
 UI as an administration fallback.
 
 ## Plugin tools
-
-| Tool | Required permission | Full access required |
-| --- | --- | --- |
-| `plugin.list`, `plugin.describe`, `plugin.search`, `plugin.artifacts` | Machine information `allow` | No |
-| `plugin.install`, `plugin.update`, `plugin.configure`, `plugin.enable`, `plugin.disable`, `plugin.uninstall` | No additional permission; owner consent and reviewed revisions apply | Yes |
 
 Plugins own their tool schemas and runtime behavior. See the [Codex plugin](https://github.com/computer-mcp/plugin-codex)
 for its coding tools, configuration, diagnostics and acceptance.
@@ -770,14 +990,10 @@ do not bypass the host-data boundary.
 
 ## `skills.roots`
 
-Required permission: Skills `allow`. Full access required: No.
-
 Available only when `[skills].enabled = true`. Lists accessible configured local skill
 roots and filesystem readiness metadata. It does not read skill contents.
 
 ## `skills.list`
-
-Required permission: Skills `allow`. Full access required: No.
 
 Available only when `[skills].enabled = true`. Lists `SKILL.md` entries from
 configured roots. Roots can contain a `SKILL.md` directly or immediate child
@@ -798,8 +1014,6 @@ Returned rows include `root_id`, `name`, `directory_name`, `description`,
 `files_context` for listing the full skill directory.
 
 ## `skills.describe`
-
-Required permission: Skills `allow`. Full access required: No.
 
 Available only when `[skills].enabled = true`. Returns a read-only package
 manifest for one configured local skill. It reports entrypoint metadata,
@@ -824,8 +1038,6 @@ Returned data includes `entrypoint.read_context`, package `resources` with
 `files_context` for a full `skills.files` listing.
 
 ## `skills.validate`
-
-Required permission: Skills `allow`. Full access required: No.
 
 Available only when `[skills].enabled = true`. Mechanically validates one
 configured local skill package. It checks required `SKILL.md` frontmatter,
@@ -852,8 +1064,6 @@ Returned data includes `frontmatter`, `entrypoint`, `resources`,
 and `files_context`.
 
 ## `skills.frontmatter`
-
-Required permission: Skills `allow`. Full access required: No.
 
 Available only when `[skills].enabled = true`. Reads leading YAML or TOML
 frontmatter from one Markdown file inside a configured local skill package.
@@ -886,8 +1096,6 @@ frontmatter returns `found = true`, `parsed = false`, `parse_error`, and
 
 ## `skills.read`
 
-Required permission: Skills `allow`. Full access required: No.
-
 Available only when `[skills].enabled = true`. Reads full bounded `SKILL.md`
 content for one configured local skill. The tool is read-only and does not
 execute skill scripts or follow relative references by itself.
@@ -907,8 +1115,6 @@ Arguments:
 `content`, `content_bytes_read`, `content_truncated`, and `valid_utf8`.
 
 ## `skills.files`
-
-Required permission: Skills `allow`. Full access required: No.
 
 Available only when `[skills].enabled = true`. Lists files inside one
 configured skill directory, including `references/`, `scripts/`, `agents/`,
@@ -936,8 +1142,6 @@ continuing the listing from that subdirectory.
 
 ## `skills.read_file`
 
-Required permission: Skills `allow`. Full access required: No.
-
 Available only when `[skills].enabled = true`. Reads a bounded file from inside
 one configured skill directory by skill-relative path. It rejects absolute
 paths, `..`, and symlink targets that resolve outside the selected skill
@@ -962,8 +1166,6 @@ files return base64 content. The result includes `content`,
 returned `encoding`.
 
 ## `skills.read_files`
-
-Required permission: Skills `allow`. Full access required: No.
 
 Available only when `[skills].enabled = true`. Reads multiple bounded files
 from inside one configured skill directory by explicit skill-relative paths. It
@@ -990,8 +1192,6 @@ values. Returned data includes one entry per file with `content`,
 plus aggregate byte and truncation counts.
 
 ## `skills.read_package`
-
-Required permission: Skills `allow`. Full access required: No.
 
 Available only when `[skills].enabled = true`. Reads a bounded snapshot of
 files inside one configured skill directory, including `SKILL.md`,
@@ -1023,8 +1223,6 @@ package files so the entrypoint is preserved when byte budgets are tight.
 
 ## `skills.outline`
 
-Required permission: Skills `allow`. Full access required: No.
-
 Available only when `[skills].enabled = true`. Returns a bounded mechanical
 outline for one UTF-8 file inside a configured skill package. It uses the same
 outline recognizers as `file.outline`, including Markdown headings and common
@@ -1050,8 +1248,6 @@ when applicable, `name`, and raw outline text. Results also include
 `tables_context`, `links_context`, and `link_check_context` for Markdown files.
 
 ## `skills.section`
-
-Required permission: Skills `allow`. Full access required: No.
 
 Available only when `[skills].enabled = true`. Extracts one raw Markdown
 section by exact ATX heading text from one file inside a configured skill
@@ -1087,8 +1283,6 @@ Results include follow-up contexts for `skills.read_file`, `skills.outline`,
 
 ## `skills.tables`
 
-Required permission: Skills `allow`. Full access required: No.
-
 Available only when `[skills].enabled = true`. Extracts bounded
 GitHub-flavored pipe tables from one Markdown file inside a configured skill
 package. It uses the same mechanical table recognizer as `markdown.tables` and
@@ -1120,8 +1314,6 @@ contexts for `skills.read_file`, `skills.outline`, `skills.frontmatter`,
 skill-relative file.
 
 ## `skills.links`
-
-Required permission: Skills `allow`. Full access required: No.
 
 Available only when `[skills].enabled = true`. Extracts a bounded mechanical
 Markdown link inventory from one file inside a configured skill package. It
@@ -1157,8 +1349,6 @@ Use `skills.link_check` after `skills.links` when the caller needs existence or
 fragment validation.
 
 ## `skills.link_check`
-
-Required permission: Skills `allow`. Full access required: No.
 
 Available only when `[skills].enabled = true`. Checks local Markdown links in
 one file inside a configured skill package. It resolves reference definitions,
@@ -1198,8 +1388,6 @@ same skill-relative Markdown file.
 
 ## `skills.search`
 
-Required permission: Skills `allow`. Full access required: No.
-
 Available only when `[skills].enabled = true`. Performs deterministic
 substring search over skill metadata and, when requested, bounded `SKILL.md`
 content. It is not semantic skill selection.
@@ -1220,8 +1408,6 @@ Matches include `matched_fields` for metadata hits and up to five
 `content_matches` per skill when `search_content` is true.
 
 ## `skills.search_files`
-
-Required permission: Skills `allow`. Full access required: No.
 
 Available only when `[skills].enabled = true`. Searches files inside one
 configured local skill package by deterministic substring matching over
@@ -1250,8 +1436,6 @@ Returned rows include `path`, file metadata, `matched_fields`,
 
 ## `project.info`
 
-Required permission: Project `read` and resolved path access. Full access required: No.
-
 Available only when `[builtin].enabled` includes `project.info`. Returns a
 non-secret summary of the configured gateway: project root, policy values,
 enabled builtins, CLI ids, MCP server ids, configured top-level tools, and
@@ -1264,8 +1448,6 @@ Arguments:
 ```
 
 ## `project.status`
-
-Required permission: Project `read` and resolved path access. Full access required: No.
 
 Available only when `[builtin].enabled` includes `project.status`. Returns a
 read-only state summary of the configured project root: existence,
@@ -1283,8 +1465,6 @@ Arguments:
 ```
 
 ## `project.manifests`
-
-Required permission: Project `read` and resolved path access. Full access required: No.
 
 Available only when `[builtin].enabled` includes `project.manifests`.
 Returns existence and type metadata for a fixed catalog of common project
@@ -1304,8 +1484,6 @@ Arguments:
 
 ## `project.recent_files`
 
-Required permission: Project `read` and resolved path access. Full access required: No.
-
 Available only when `[builtin].enabled` includes `project.recent_files`.
 Returns a bounded list of recently modified regular files under the configured
 project using filesystem metadata only. It sorts by modification time
@@ -1323,8 +1501,6 @@ Arguments:
 ```
 
 ## `project.directory_stats`
-
-Required permission: Project `read` and resolved path access. Full access required: No.
 
 Available only when `[builtin].enabled` includes `project.directory_stats`.
 Returns bounded directory-level shape statistics grouped by the first child
@@ -1353,8 +1529,6 @@ Returned group rows include `project_relative_path`, `name`, `file_count`,
 
 ## `project.artifact_directories`
 
-Required permission: Project `read` and resolved path access. Full access required: No.
-
 Available only when `[builtin].enabled` includes
 `project.artifact_directories`. Returns a bounded metadata-only list of common
 generated, build output, cache, dependency install, coverage, and temporary
@@ -1381,8 +1555,6 @@ recursed into.
 
 ## `project.empty_directories`
 
-Required permission: Project `read` and resolved path access. Full access required: No.
-
 Available only when `[builtin].enabled` includes `project.empty_directories`.
 Returns a bounded list of actually empty directories under a
 project-contained path using filesystem metadata only. A directory containing
@@ -1408,8 +1580,6 @@ Returned directory rows include `project_relative_path`, `name`, `depth`,
 
 ## `project.git_changes`
 
-Required permission: Project `read` and resolved path access. Full access required: No.
-
 Available only when `[builtin].enabled` includes `project.git_changes` and a
 CLI provider with `id = "git"` is registered. Returns structured
 project-relative Git working tree change entries from fixed
@@ -1433,8 +1603,6 @@ truncation flags, and command exit/stderr metadata.
 
 ## `project.file_types`
 
-Required permission: Project `read` and resolved path access. Full access required: No.
-
 Available only when `[builtin].enabled` includes `project.file_types`.
 Returns a bounded extension histogram for regular files under the configured
 project using filesystem metadata only. It reports extension labels, file
@@ -1452,8 +1620,6 @@ Arguments:
 ```
 
 ## `project.large_files`
-
-Required permission: Project `read` and resolved path access. Full access required: No.
 
 Available only when `[builtin].enabled` includes `project.large_files`.
 Returns a bounded list of the largest regular files under the configured
@@ -1473,8 +1639,6 @@ Arguments:
 
 ## `project.symlinks`
 
-Required permission: Project `read` and resolved path access. Full access required: No.
-
 Available only when `[builtin].enabled` includes `project.symlinks`.
 Returns a bounded list of symbolic links under the configured project. It
 reports each link path, raw destination, resolved target path, whether the
@@ -1493,8 +1657,6 @@ Arguments:
 
 ## `project.executable_files`
 
-Required permission: Project `read` and resolved path access. Full access required: No.
-
 Available only when `[builtin].enabled` includes `project.executable_files`.
 Returns a bounded list of regular files under the configured project with the
 executable bit set, using filesystem metadata only. It sorts by
@@ -1512,8 +1674,6 @@ Arguments:
 ```
 
 ## `project.todos`
-
-Required permission: Project `read` and resolved path access. Full access required: No.
 
 Available only when `[builtin].enabled` includes `project.todos`. Searches
 UTF-8 files under a project-contained file or directory for common TODO-style
@@ -1539,8 +1699,6 @@ Arguments:
 
 ## `project.env_files`
 
-Required permission: Project `read` and resolved path access. Full access required: No.
-
 Available only when `[builtin].enabled` includes `project.env_files`. Finds
 project env files such as `.env`, `.env.local`, and `example.env`, then returns
 only variable key metadata. Values are always redacted and never returned. By
@@ -1562,8 +1720,6 @@ Arguments:
 ```
 
 ## `project.dependency_files`
-
-Required permission: Project `read` and resolved path access. Full access required: No.
 
 Available only when `[builtin].enabled` includes `project.dependency_files`.
 Finds common package manifest, requirements, lock, and checksum files under a
@@ -1589,8 +1745,6 @@ Returned file rows include `project_relative_path`, `name`, `ecosystem`,
 
 ## `project.project_roots`
 
-Required permission: Project `read` and resolved path access. Full access required: No.
-
 Available only when `[builtin].enabled` includes `project.project_roots`.
 Groups common dependency manifest, lock, requirements, and checksum files by
 containing directory to find candidate project roots using filename metadata
@@ -1614,8 +1768,6 @@ Returned candidate rows include `project_relative_path`, `ecosystems`,
 `dependency_files`, and `is_project_root`.
 
 ## `project.documentation_files`
-
-Required permission: Project `read` and resolved path access. Full access required: No.
 
 Available only when `[builtin].enabled` includes `project.documentation_files`.
 Finds README, AGENTS, CONTRIBUTING, SECURITY, SUPPORT, changelog, license, and
@@ -1643,8 +1795,6 @@ explicit follow-up inspection through `markdown.links` and
 
 ## `project.agent_files`
 
-Required permission: Project `read` and resolved path access. Full access required: No.
-
 Available only when `[builtin].enabled` includes `project.agent_files`.
 Finds project agent instruction and skill entrypoint files such as
 `AGENTS.md`, `CLAUDE.md`, `GEMINI.md`,
@@ -1670,8 +1820,6 @@ Returned file rows include `project_relative_path`, `name`, `kind`, `source`,
 returned path to read selected files through the gateway.
 
 ## `project.instructions`
-
-Required permission: Project `read` and resolved path access. Full access required: No.
 
 Available only when `[builtin].enabled` includes `project.instructions`.
 Returns the bounded agent instruction files that apply to one target
@@ -1715,8 +1863,6 @@ and skills are data: collecting them executes no project declaration.
 
 ## `project.test_files`
 
-Required permission: Project `read` and resolved path access. Full access required: No.
-
 Available only when `[builtin].enabled` includes `project.test_files`. Finds
 likely test/spec files under a project-contained path using path and filename
 metadata only. It does not read file contents, infer test frameworks, or run
@@ -1738,8 +1884,6 @@ Returned file rows include `project_relative_path`, `name`, `language`,
 `match_source`, `style`, `type`, `size_bytes`, `modified_at`, and `is_symlink`.
 
 ## `project.ci_files`
-
-Required permission: Project `read` and resolved path access. Full access required: No.
 
 Available only when `[builtin].enabled` includes `project.ci_files`. Finds
 common CI/CD and hosted build pipeline configuration files under a
@@ -1763,8 +1907,6 @@ Returned file rows include `project_relative_path`, `name`, `provider`,
 `is_symlink`.
 
 ## `project.infra_files`
-
-Required permission: Project `read` and resolved path access. Full access required: No.
 
 Available only when `[builtin].enabled` includes `project.infra_files`. Finds
 likely infrastructure, deployment, container, orchestration, and platform
@@ -1801,8 +1943,6 @@ explicit follow-up inspection through `file.read_lines`, `json.read`,
 
 ## `project.config_files`
 
-Required permission: Project `read` and resolved path access. Full access required: No.
-
 Available only when `[builtin].enabled` includes `project.config_files`.
 Finds common editor, formatter, linter, toolchain, and build-tool configuration
 files under a project-contained path using path and filename metadata only.
@@ -1825,8 +1965,6 @@ Returned file rows include `project_relative_path`, `name`, `tool`,
 `is_symlink`.
 
 ## `project.ignore_files`
-
-Required permission: Project `read` and resolved path access. Full access required: No.
 
 Available only when `[builtin].enabled` includes `project.ignore_files`.
 Finds common ignore-rule files such as `.gitignore`, `.dockerignore`,
@@ -1854,8 +1992,6 @@ and `read_context`. Use `read_context.tool = "file.read"` and the returned path
 to read selected ignore files through the gateway.
 
 ## `project.asset_files`
-
-Required permission: Project `read` and resolved path access. Full access required: No.
 
 Available only when `[builtin].enabled` includes `project.asset_files`.
 Finds common project asset files such as images, icons, fonts, audio, video,
@@ -1888,8 +2024,6 @@ context objects to inspect a selected asset through `file.stat`,
 
 ## `project.archive_files`
 
-Required permission: Project `read` and resolved path access. Full access required: No.
-
 Available only when `[builtin].enabled` includes `project.archive_files`.
 Finds common archive, compressed stream, installer, disk image, and application
 package files under a project-contained path using extension and path metadata
@@ -1918,8 +2052,6 @@ until the MCP consumer selects a concrete member from `archive.list`.
 
 ## `project.log_files`
 
-Required permission: Project `read` and resolved path access. Full access required: No.
-
 Available only when `[builtin].enabled` includes `project.log_files`. Finds
 likely log, process output, trace, and crash-report files under a
 project-contained path using filename, extension, rotated suffix, and
@@ -1945,8 +2077,6 @@ Returned file rows include `project_relative_path`, `name`, `extension`,
 `search_context.tool = "file.search"` with a query for explicit content search.
 
 ## `project.data_files`
-
-Required permission: Project `read` and resolved path access. Full access required: No.
 
 Available only when `[builtin].enabled` includes `project.data_files`. Finds
 common data artifacts such as CSV, TSV, JSONL, SQLite, DuckDB, Parquet, Arrow,
@@ -1981,8 +2111,6 @@ when they are found inside a data-like directory. JSONL/NDJSON files return
 
 ## `project.schema_files`
 
-Required permission: Project `read` and resolved path access. Full access required: No.
-
 Available only when `[builtin].enabled` includes `project.schema_files`.
 Finds likely API, interface, data, and database schema/contract files such as
 OpenAPI, Swagger, AsyncAPI, GraphQL, Protocol Buffers, JSON Schema, Avro schema,
@@ -2015,8 +2143,6 @@ through `file.read_lines`; JSON-readable schema files also return
 
 ## `project.source_files`
 
-Required permission: Project `read` and resolved path access. Full access required: No.
-
 Available only when `[builtin].enabled` includes `project.source_files`.
 Finds likely source, script, component, markup, style, header, and query files
 under a project-contained path using file extension and path metadata only.
@@ -2040,8 +2166,6 @@ Returned file rows include `project_relative_path`, `name`, `language`,
 `kind`, `match_source`, `type`, `size_bytes`, `modified_at`, and `is_symlink`.
 
 ## `project.outline`
-
-Required permission: Project `read` and resolved path access. Full access required: No.
 
 Available only when `[builtin].enabled` includes `project.outline`. Returns a
 bounded mechanical outline across outline-capable project files by extracting
@@ -2071,8 +2195,6 @@ Returned outline rows include `project_relative_path`, `language`, `line`,
 skipped by default through the same source-file traversal boundary.
 
 ## `project.commands`
-
-Required permission: Project `read` and resolved path access. Full access required: No.
 
 Available only when `[builtin].enabled` includes `project.commands`.
 Finds deterministic project command entrypoints from common manifests such as
@@ -2104,8 +2226,6 @@ provider working directory.
 
 ## `system.info`
 
-Required permission: Machine information `allow`. Full access required: No.
-
 Available only when `[builtin].enabled` includes `system.info`. Returns a
 non-secret macOS and current gateway process summary. It does not return the
 process environment.
@@ -2118,8 +2238,6 @@ Arguments:
 
 ## `system.kernel`
 
-Required permission: Machine information `allow`. Full access required: No.
-
 Available only when `[builtin].enabled` includes `system.kernel`. Returns
 read-only macOS kernel and machine identity from `uname`, plus OS version and
 processor counts from `ProcessInfo`. It does not execute a subprocess.
@@ -2131,8 +2249,6 @@ Arguments:
 ```
 
 ## `system.software`
-
-Required permission: Machine information `allow`. Full access required: No.
 
 Available only when `[builtin].enabled` includes `system.software`. Returns
 read-only macOS product name, product version, and build version using fixed
@@ -2149,8 +2265,6 @@ Arguments:
 
 ## `system.locale`
 
-Required permission: Machine information `allow`. Full access required: No.
-
 Available only when `[builtin].enabled` includes `system.locale`. Returns
 read-only current locale, preferred languages, calendar, and time-zone summary
 from Foundation. It does not execute a subprocess.
@@ -2162,8 +2276,6 @@ Arguments:
 ```
 
 ## `system.memory`
-
-Required permission: Machine information `allow`. Full access required: No.
 
 Available only when `[builtin].enabled` includes `system.memory`. Returns
 read-only macOS virtual-memory page counters and memory event counters using
@@ -2178,8 +2290,6 @@ Arguments:
 
 ## `system.load`
 
-Required permission: Machine information `allow`. Full access required: No.
-
 Available only when `[builtin].enabled` includes `system.load`. Returns
 read-only macOS 1, 5, and 15 minute load averages using `getloadavg`, plus the
 same values normalized by active processor count. It does not inspect
@@ -2192,8 +2302,6 @@ Arguments:
 ```
 
 ## `system.cpu`
-
-Required permission: Machine information `allow`. Full access required: No.
 
 Available only when `[builtin].enabled` includes `system.cpu`. Returns
 read-only CPU counts, machine/model identifiers, optional CPU brand/frequency
@@ -2209,8 +2317,6 @@ Arguments:
 
 ## `system.thermal`
 
-Required permission: Machine information `allow`. Full access required: No.
-
 Available only when `[builtin].enabled` includes `system.thermal`. Returns
 read-only thermal state, a mechanical thermal-state rank, low-power-mode status,
 and processor counts from `ProcessInfo`. It does not inspect processes, read
@@ -2224,8 +2330,6 @@ Arguments:
 
 ## `system.time`
 
-Required permission: Machine information `allow`. Full access required: No.
-
 Available only when `[builtin].enabled` includes `system.time`. Returns the
 current local time, Unix timestamp, current time zone, and system uptime. It is
 read-only and does not execute a subprocess.
@@ -2237,8 +2341,6 @@ Arguments:
 ```
 
 ## `system.uptime`
-
-Required permission: Machine information `allow`. Full access required: No.
 
 Available only when `[builtin].enabled` includes `system.uptime`. Returns
 read-only system uptime and a derived boot-time snapshot from
@@ -2253,8 +2355,6 @@ Arguments:
 
 ## `system.user`
 
-Required permission: Machine information `allow`. Full access required: No.
-
 Available only when `[builtin].enabled` includes `system.user`. Returns
 read-only POSIX identity for the current gateway process: real/effective user
 and group ids, passwd entry fields for those users, and group names for those
@@ -2268,8 +2368,6 @@ Arguments:
 
 ## `system.groups`
 
-Required permission: Machine information `allow`. Full access required: No.
-
 Available only when `[builtin].enabled` includes `system.groups`. Returns
 read-only supplementary POSIX groups for the current gateway process, plus the
 real and effective primary group ids. It resolves only those group ids through
@@ -2282,8 +2380,6 @@ Arguments:
 ```
 
 ## `system.power`
-
-Required permission: Machine information `allow`. Full access required: No.
 
 Available only when `[builtin].enabled` includes `system.power`. Runs the fixed
 read-only command `/usr/bin/pmset -g batt` and returns the raw command result
@@ -2299,8 +2395,6 @@ Arguments:
 
 ## `system.volumes`
 
-Required permission: Machine information `allow`. Full access required: No.
-
 Available only when `[builtin].enabled` includes `system.volumes`. Lists mounted
 macOS volumes with non-secret mount and capacity metadata. Hidden volumes are
 skipped by default.
@@ -2314,8 +2408,6 @@ Arguments:
 ```
 
 ## `system.processes`
-
-Required permission: Machine information `allow`. Full access required: No.
 
 Available only when `[builtin].enabled` includes `system.processes`. Reads a
 bounded process snapshot in the host through libproc and sysctl. It reports
@@ -2357,8 +2449,6 @@ Arguments:
 
 ## `system.which`
 
-Required permission: Machine information `allow`. Full access required: No.
-
 Available only when `[builtin].enabled` includes `system.which`. Locates an
 executable basename on the gateway process `PATH` without running a shell and
 without invoking the executable. The response includes whether it was found, the
@@ -2376,8 +2466,6 @@ Arguments:
 
 ## `system.path`
 
-Required permission: Machine information `allow`. Full access required: No.
-
 Available only when `[builtin].enabled` includes `system.path`. Returns
 structured gateway process `PATH` search directories without running a shell and
 without returning other environment values. Each entry includes the original
@@ -2394,8 +2482,6 @@ Arguments:
 ```
 
 ## `logs.query`
-
-Required permission: Unified logs `allow`. Full access required: No.
 
 Available only when `[builtin].enabled` includes `logs.query`. Queries a
 bounded recent window of the macOS unified log with fixed
@@ -2428,8 +2514,6 @@ interpolated.
 
 ## `service.status`
 
-Required permission: Machine information `allow`. Full access required: No.
-
 Available only when `[builtin].enabled` includes `service.status`. Inspects one
 macOS launchd service with fixed `/bin/launchctl print` argv. `domain` must be
 `system`, `user`, or `gui`; user and GUI targets are always restricted to the
@@ -2455,8 +2539,6 @@ Arguments:
 
 ## `network.interfaces`
 
-Required permission: Machine information `allow`. Full access required: No.
-
 Available only when `[builtin].enabled` includes `network.interfaces`. Runs
 `/sbin/ifconfig` with fixed argv and returns the raw command result. Pass
 `interface` to inspect one interface, or omit it to run `ifconfig -a`.
@@ -2473,8 +2555,6 @@ Arguments:
 
 ## `network.dns`
 
-Required permission: Machine information `allow`. Full access required: No.
-
 Available only when `[builtin].enabled` includes `network.dns`. Runs the fixed
 read-only command `/usr/sbin/scutil --dns` and returns the raw command result
 with stdout, stderr, exit code, timeout, and truncation metadata.
@@ -2488,8 +2568,6 @@ Arguments:
 ```
 
 ## `network.resolve`
-
-Required permission: Machine information `allow`. Full access required: No.
 
 Available only when `[builtin].enabled` includes `network.resolve`. Resolves a
 hostname or IP address through the system resolver using `getaddrinfo` and
@@ -2511,8 +2589,6 @@ Arguments:
 
 ## `network.proxy`
 
-Required permission: Machine information `allow`. Full access required: No.
-
 Available only when `[builtin].enabled` includes `network.proxy`. Runs the fixed
 read-only command `/usr/sbin/scutil --proxy` and returns the raw command result
 with stdout, stderr, exit code, timeout, and truncation metadata. This reads the
@@ -2527,8 +2603,6 @@ Arguments:
 ```
 
 ## `network.services`
-
-Required permission: Machine information `allow`. Full access required: No.
 
 Available only when `[builtin].enabled` includes `network.services`. Runs fixed
 read-only `/usr/sbin/networksetup -listallnetworkservices` argv and returns the
@@ -2547,8 +2621,6 @@ Arguments:
 
 ## `network.hardware_ports`
 
-Required permission: Machine information `allow`. Full access required: No.
-
 Available only when `[builtin].enabled` includes `network.hardware_ports`. Runs
 fixed read-only `/usr/sbin/networksetup -listallhardwareports` argv and returns
 the raw command result with stdout, stderr, exit code, timeout, and truncation
@@ -2566,8 +2638,6 @@ Arguments:
 ```
 
 ## `network.wifi`
-
-Required permission: Machine information `allow`. Full access required: No.
 
 Available only when `[builtin].enabled` includes `network.wifi`. Uses fixed
 read-only `/usr/sbin/networksetup` argv to discover or accept a Wi-Fi interface
@@ -2591,8 +2661,6 @@ discovery, power, and current-network reads.
 
 ## `network.vpn`
 
-Required permission: Machine information `allow`. Full access required: No.
-
 Available only when `[builtin].enabled` includes `network.vpn`. Runs fixed
 read-only `/usr/sbin/scutil --nc list` argv and parses macOS Network
 Connection/VPN services into structured rows. It does not start, stop, select,
@@ -2614,8 +2682,6 @@ raw stdout.
 
 ## `network.locations`
 
-Required permission: Machine information `allow`. Full access required: No.
-
 Available only when `[builtin].enabled` includes `network.locations`. Runs
 fixed read-only `/usr/sbin/networksetup -getcurrentlocation` and
 `/usr/sbin/networksetup -listlocations` argv and returns both raw command
@@ -2635,8 +2701,6 @@ Arguments:
 
 ## `network.routes`
 
-Required permission: Machine information `allow`. Full access required: No.
-
 Available only when `[builtin].enabled` includes `network.routes`. Runs fixed
 read-only `/usr/sbin/netstat -rn` argv and returns the raw command result with
 stdout, stderr, exit code, timeout, and truncation metadata. This reads the
@@ -2655,8 +2719,6 @@ Arguments:
 `family` may be `all`, `inet`, or `inet6`.
 
 ## `network.connections`
-
-Required permission: Machine information `allow`. Full access required: No.
 
 Available only when `[builtin].enabled` includes `network.connections`. Runs
 fixed read-only `/usr/sbin/netstat -an` argv and returns the raw command result
@@ -2678,8 +2740,6 @@ Arguments:
 
 ## `network.arp`
 
-Required permission: Machine information `allow`. Full access required: No.
-
 Available only when `[builtin].enabled` includes `network.arp`. Runs fixed
 read-only `/usr/sbin/arp -an` argv and returns the raw command result with
 stdout, stderr, exit code, timeout, and truncation metadata. This reads the
@@ -2696,8 +2756,6 @@ Arguments:
 ```
 
 ## `network.ping`
-
-Required permission: Machine information `allow`. Full access required: No.
 
 Available only when `[builtin].enabled` includes `network.ping`. Runs bounded
 `/sbin/ping -c <count> <host>` argv and returns the raw command result with
@@ -2718,8 +2776,6 @@ Arguments:
 
 ## `network.tcp_check`
 
-Required permission: Machine information `allow`. Full access required: No.
-
 Available only when `[builtin].enabled` includes `network.tcp_check`. Runs fixed
 `/usr/bin/nc -G <seconds> -zv <host> <port>` argv and returns the raw command
 result with stdout, stderr, exit code, timeout, and truncation metadata. This
@@ -2739,8 +2795,6 @@ Arguments:
 ```
 
 ## `network.http_check`
-
-Required permission: Machine information `allow`. Full access required: No.
 
 Available only when `[builtin].enabled` includes `network.http_check`. Runs
 fixed `/usr/bin/curl` argv against one absolute `http` or `https` URL. It
@@ -2776,8 +2830,6 @@ Returned fields include `http_code`, `url_effective`, `content_type`,
 
 ## `network.listeners`
 
-Required permission: Machine information `allow`. Full access required: No.
-
 Available only when `[builtin].enabled` includes `network.listeners`. Runs fixed
 `/usr/sbin/lsof -nP -iTCP -sTCP:LISTEN` argv and returns the raw command result
 with stdout, stderr, exit code, timeout, and truncation metadata. This does not
@@ -2795,8 +2847,6 @@ Arguments:
 ```
 
 ## `macos.user_directories`
-
-Required permission: Machine information `allow`. Full access required: No.
 
 Available only when `[builtin].enabled` includes `macos.user_directories`.
 Returns a fixed read-only catalog of common macOS user and application
@@ -2821,8 +2871,6 @@ Returned rows include `id`, `category`, `description`, `path`, `exists`,
 `is_writable`, `is_traversable`, `is_symlink`, and `symlink_destination`.
 
 ## `macos.default_application`
-
-Required permission: Machine information `allow` and resolved path access. Full access required: No.
 
 Available only when `[builtin].enabled` includes
 `macos.default_application`. Returns the default macOS application, and
@@ -2850,8 +2898,6 @@ The result includes `target`, `default_application_available`,
 
 ## `macos.applications`
 
-Required permission: Machine information `allow`. Full access required: No.
-
 Available only when `[builtin].enabled` includes `macos.applications`. Lists
 installed application bundles from standard macOS Applications directories. It
 does not inspect windows, UI state, or the process table.
@@ -2870,8 +2916,6 @@ Arguments:
 
 ## `macos.screens`
 
-Required permission: Machine information `allow`. Full access required: No.
-
 Available only when `[builtin].enabled` includes `macos.screens`. Lists
 attached macOS screens with frame, visible frame, backing scale, color-space,
 and device metadata. It is read-only and does not capture pixels.
@@ -2883,8 +2927,6 @@ Arguments:
 ```
 
 ## `macos.spotlight_search`
-
-Required permission: Machine information `allow` and resolved path access. Full access required: No.
 
 Available only when `[builtin].enabled` includes `macos.spotlight_search`.
 Runs `/usr/bin/mdfind -onlyin` against a project-contained directory and
@@ -2906,8 +2948,6 @@ Arguments:
 
 ## `macos.running_applications`
 
-Required permission: Machine information `allow`. Full access required: No.
-
 Available only when `[builtin].enabled` includes
 `macos.running_applications`. Lists running applications visible to the current
 user session. It is read-only and does not inspect windows, screen content, or
@@ -2927,8 +2967,6 @@ Arguments:
 
 ## `macos.frontmost_application`
 
-Required permission: Machine information `allow`. Full access required: No.
-
 Available only when `[builtin].enabled` includes
 `macos.frontmost_application`. Returns the current frontmost macOS application
 reported by the user session. It is read-only.
@@ -2940,8 +2978,6 @@ Arguments:
 ```
 
 ## `env.describe`
-
-Required permission: Machine information `allow`. Full access required: No.
 
 Available only when `[builtin].enabled` includes `env.describe`. Reports
 environment variable names declared by gateway configuration and whether those
@@ -2956,8 +2992,6 @@ Arguments:
 
 ## `file.exists`
 
-Required permission: Project `read` and resolved path access. Full access required: No.
-
 Available only when `[builtin].enabled` includes `file.exists`. Checks whether
 a project-contained path exists without treating absence as an error. Use
 `file.stat` when metadata is needed.
@@ -2971,8 +3005,6 @@ Arguments:
 ```
 
 ## `file.list`
-
-Required permission: Project `read` and resolved path access. Full access required: No.
 
 Available only when `[builtin].enabled` includes `file.list`. Lists entries
 under a project-contained directory with deterministic sorting and bounded
@@ -2990,8 +3022,6 @@ Arguments:
 ```
 
 ## `file.tree`
-
-Required permission: Project `read` and resolved path access. Full access required: No.
 
 Available only when `[builtin].enabled` includes `file.tree`. Returns a bounded
 hierarchical JSON tree for a project-contained directory. It follows the same
@@ -3012,8 +3042,6 @@ Arguments:
 
 ## `file.stat`
 
-Required permission: Project `read` and resolved path access. Full access required: No.
-
 Available only when `[builtin].enabled` includes `file.stat`. Returns file
 metadata without reading content.
 
@@ -3026,8 +3054,6 @@ Arguments:
 ```
 
 ## `file.permissions`
-
-Required permission: Project `read` and resolved path access. Full access required: No.
 
 Available only when `[builtin].enabled` includes `file.permissions`. Returns
 POSIX mode, owner/group ids and names when available, current-process
@@ -3043,8 +3069,6 @@ Arguments:
 ```
 
 ## `file.chmod`
-
-Required permission: Project `write` and resolved path access. Full access required: No.
 
 Available only when `[builtin].enabled` includes `file.chmod`. Sets the POSIX
 mode for a project-contained path without invoking `/bin/chmod`. This is a
@@ -3065,8 +3089,6 @@ Arguments:
 
 ## `file.type`
 
-Required permission: Project `read` and resolved path access. Full access required: No.
-
 Available only when `[builtin].enabled` includes `file.type`. Returns MIME type
 and charset for a project-contained file using fixed `/usr/bin/file -b --mime`
 argv. It is read-only and does not return file content.
@@ -3083,8 +3105,6 @@ Arguments:
 
 ## `file.count`
 
-Required permission: Project `read` and resolved path access. Full access required: No.
-
 Available only when `[builtin].enabled` includes `file.count`. Returns line,
 word, and byte counts for a project-contained file using fixed
 `/usr/bin/wc -l -w -c` argv. It is read-only and does not return file content.
@@ -3100,8 +3120,6 @@ Arguments:
 ```
 
 ## `file.disk_usage`
-
-Required permission: Project `read` and resolved path access. Full access required: No.
 
 Available only when `[builtin].enabled` includes `file.disk_usage`. Returns
 disk usage for a project-contained file or directory using fixed
@@ -3120,8 +3138,6 @@ Arguments:
 
 ## `file.volume_info`
 
-Required permission: Project `read` and resolved path access. Full access required: No.
-
 Available only when `[builtin].enabled` includes `file.volume_info`. Returns
 the mounted volume and filesystem capability metadata for a project-contained
 path using Foundation URL resource values. It is read-only, does not run shell
@@ -3137,8 +3153,6 @@ Arguments:
 ```
 
 ## `file.find`
-
-Required permission: Project `read` and resolved path access. Full access required: No.
 
 Available only when `[builtin].enabled` includes `file.find`. Finds files or
 directories by name under a project-contained directory. Matching is
@@ -3164,8 +3178,6 @@ Arguments:
 
 ## `file.search`
 
-Required permission: Project `read` and resolved path access. Full access required: No.
-
 Available only when `[builtin].enabled` includes `file.search`. Searches UTF-8
 text content under a project-contained file or directory. Output is bounded by
 file count, match count, and bytes per file.
@@ -3186,8 +3198,6 @@ Arguments:
 ```
 
 ## `file.timeline`
-
-Required permission: Project `read` and resolved path access. Full access required: No.
 
 Available only when `[builtin].enabled` includes `file.timeline`. Lists regular
 non-symlink files under a project-contained directory using filesystem
@@ -3216,8 +3226,6 @@ result truncation flags.
 
 ## `file.read`
 
-Required permission: Project `read` and resolved path access. Full access required: No.
-
 Available only when `[builtin].enabled` includes `file.read`. Reads a
 project-contained file as UTF-8 text.
 
@@ -3231,8 +3239,6 @@ Arguments:
 ```
 
 ## `file.read_files`
-
-Required permission: Project `read` and resolved path access. Full access required: No.
 
 Available only when `[builtin].enabled` includes `file.read_files`. Reads
 multiple explicitly named project-contained files in one call. This is a
@@ -3258,8 +3264,6 @@ Arguments:
 
 ## `file.read_window`
 
-Required permission: Project `read` and resolved path access. Full access required: No.
-
 Available only when `[builtin].enabled` includes `file.read_window`. Reads a
 bounded UTF-8 text byte window from a project-contained file. Use it when a
 consumer already has a byte offset, for example after a previous
@@ -3284,8 +3288,6 @@ sequence or contains non-text bytes.
 
 ## `file.read_lines`
 
-Required permission: Project `read` and resolved path access. Full access required: No.
-
 Available only when `[builtin].enabled` includes `file.read_lines`. Reads a
 bounded one-based line range from a project-contained UTF-8 file. The tool
 scans at most `max_bytes` from the start of the file and reports whether that
@@ -3303,8 +3305,6 @@ Arguments:
 ```
 
 ## `file.read_context`
-
-Required permission: Project `read` and resolved path access. Full access required: No.
 
 Available only when `[builtin].enabled` includes `file.read_context`. Reads a
 bounded UTF-8 line window around a one-based target line from a
@@ -3331,8 +3331,6 @@ reached the requested line range.
 
 ## `file.head`
 
-Required permission: Project `read` and resolved path access. Full access required: No.
-
 Available only when `[builtin].enabled` includes `file.head`. Reads the first
 lines from a project-contained UTF-8 file using a bounded byte window. This
 is the direct counterpart to `file.tail` for quick file orientation. When the
@@ -3353,8 +3351,6 @@ Returned line rows include `line`, `head_index`, `text`, and
 `line_truncated`.
 
 ## `file.outline`
-
-Required permission: Project `read` and resolved path access. Full access required: No.
 
 Available only when `[builtin].enabled` includes `file.outline`. Returns a
 bounded mechanical outline for a project-contained UTF-8 file by extracting
@@ -3378,8 +3374,6 @@ declarations such as classes/functions/types/extensions, optional import-like
 lines, and Makefile targets.
 
 ## `markdown.links`
-
-Required permission: Project `read` and resolved path access. Full access required: No.
 
 Available only when `[builtin].enabled` includes `markdown.links`. Extracts a
 bounded mechanical link inventory from a project-contained UTF-8 Markdown
@@ -3410,8 +3404,6 @@ is project-contained and, when it is, the normalized
 
 ## `markdown.tables`
 
-Required permission: Project `read` and resolved path access. Full access required: No.
-
 Available only when `[builtin].enabled` includes `markdown.tables`. Extracts
 bounded GitHub-flavored pipe tables from a project-contained UTF-8 Markdown
 file. A table is recognized mechanically as a header row followed immediately
@@ -3438,8 +3430,6 @@ truncated to the header column count, `missing_cell_count`, and `extra_cells`.
 Escaped pipe characters such as `\\|` are treated as cell content.
 
 ## `markdown.section`
-
-Required permission: Project `read` and resolved path access. Full access required: No.
 
 Available only when `[builtin].enabled` includes `markdown.section`. Extracts
 one raw Markdown section by exact ATX heading text from a project-contained
@@ -3470,8 +3460,6 @@ headings return `matched = false` with `failure.reason = "missing_heading"`.
 
 ## `markdown.frontmatter`
 
-Required permission: Project `read` and resolved path access. Full access required: No.
-
 Available only when `[builtin].enabled` includes `markdown.frontmatter`. Reads
 leading YAML or TOML frontmatter from a project-contained UTF-8 Markdown file.
 The opening delimiter must be the first line: exactly `---` for YAML or `+++`
@@ -3499,8 +3487,6 @@ frontmatter returns `found = true`, `parsed = false`, `parse_error`, and
 `value = null`.
 
 ## `markdown.link_check`
-
-Required permission: Project `read` and resolved path access. Full access required: No.
 
 Available only when `[builtin].enabled` includes `markdown.link_check`. Checks
 local Markdown links from one project-contained UTF-8 Markdown file. It
@@ -3534,8 +3520,6 @@ and target existence/fragment metadata. Status values are mechanical:
 
 ## `file.tail`
 
-Required permission: Project `read` and resolved path access. Full access required: No.
-
 Available only when `[builtin].enabled` includes `file.tail`. Reads the last
 lines from a project-contained UTF-8 file using a bounded tail window. When
 the file is larger than `max_bytes`, returned line numbers are reported as
@@ -3554,8 +3538,6 @@ Arguments:
 
 ## `file.hexdump`
 
-Required permission: Project `read` and resolved path access. Full access required: No.
-
 Available only when `[builtin].enabled` includes `file.hexdump`. Reads a
 bounded byte window from a project-contained file and returns deterministic
 hex/ascii rows. It is read-only and useful for inspecting binary headers,
@@ -3572,8 +3554,6 @@ Arguments:
 ```
 
 ## `file.xattrs`
-
-Required permission: Project `read` and resolved path access. Full access required: No.
 
 Available only when `[builtin].enabled` includes `file.xattrs`. Lists extended
 attributes for a project-contained file or directory. By default it returns
@@ -3593,8 +3573,6 @@ Arguments:
 ```
 
 ## `file.remove_xattr`
-
-Required permission: Project `write` and resolved path access. Full access required: No.
 
 Available only when `[builtin].enabled` includes `file.remove_xattr`. Removes
 one extended attribute from a project-contained file or directory using the
@@ -3616,8 +3594,6 @@ Arguments:
 
 ## `file.metadata`
 
-Required permission: Project `read` and resolved path access. Full access required: No.
-
 Available only when `[builtin].enabled` includes `file.metadata`. Reads
 Spotlight metadata for a project-contained file or directory using fixed
 `/usr/bin/mdls -plist -` argv. This is read-only and macOS-specific. Optional
@@ -3637,8 +3613,6 @@ Arguments:
 
 ## `file.readlink`
 
-Required permission: Project `read` and resolved path access. Full access required: No.
-
 Available only when `[builtin].enabled` includes `file.readlink`. Reads the raw
 destination of a project-contained symbolic link without following the final
 link. The link path itself must be inside the project, and symlinked parent
@@ -3655,8 +3629,6 @@ Arguments:
 
 ## `file.resolve`
 
-Required permission: Project `read` and resolved path access. Full access required: No.
-
 Available only when `[builtin].enabled` includes `file.resolve`. Resolves a
 project-contained path mechanically without reading file contents or creating
 missing paths. The response includes the lexical project path, existence,
@@ -3672,8 +3644,6 @@ Arguments:
 ```
 
 ## `image.info`
-
-Required permission: Project `read` and resolved path access. Full access required: No.
 
 Available only when `[builtin].enabled` includes `image.info`. Reads mechanical
 metadata for a project-contained image file using ImageIO. It reports format,
@@ -3700,8 +3670,6 @@ The result includes `type_identifier`, `mime_type`, `frame_count`,
 
 ## `pdf.info`
 
-Required permission: Project `read` and resolved path access. Full access required: No.
-
 Available only when `[builtin].enabled` includes `pdf.info`. Reads mechanical
 metadata for a project-contained PDF file using PDFKit. It reports page
 count, encryption and permission flags, optional document attributes, and
@@ -3727,8 +3695,6 @@ for media, crop, bleed, trim, and art boxes.
 
 ## `pdf.text`
 
-Required permission: Project `read` and resolved path access. Full access required: No.
-
 Available only when `[builtin].enabled` includes `pdf.text`. Extracts bounded
 searchable text from a project-contained PDF file using PDFKit
 `PDFPage.string`. It is read-only, respects PDF locking and copying flags, and
@@ -3753,8 +3719,6 @@ and `pages`. Page rows include one-based `number`, optional `label`, extracted
 per-page `text_truncated`.
 
 ## `media.info`
-
-Required permission: Project `read` and resolved path access. Full access required: No.
 
 Available only when `[builtin].enabled` includes `media.info`. Reads mechanical
 metadata for a project-contained audio or video file using AVFoundation. It
@@ -3782,8 +3746,6 @@ Track rows include `media_type`, optional `duration_seconds`, `natural_size`,
 
 ## `json.read`
 
-Required permission: Project `read` and resolved path access. Full access required: No.
-
 Available only when `[builtin].enabled` includes `json.read`. Reads and parses
 a project-contained JSON file into a JSON value using the gateway JSON
 decoder. This is read-only and does not execute a subprocess.
@@ -3798,8 +3760,6 @@ Arguments:
 ```
 
 ## `jsonl.read`
-
-Required permission: Project `read` and resolved path access. Full access required: No.
 
 Available only when `[builtin].enabled` includes `jsonl.read`. Reads a bounded
 preview of a project-contained JSON Lines / NDJSON UTF-8 file by parsing each
@@ -3827,8 +3787,6 @@ Returned data includes parsed `records` with source line numbers, parse
 through the final line.
 
 ## `json.write`
-
-Required permission: Project `write` and resolved path access. Full access required: No.
 
 Available only when `[builtin].enabled` includes `json.write`. Serializes a
 provided JSON value and writes it to a project-contained path. It defaults to
@@ -3858,8 +3816,6 @@ requested.
 
 ## `toml.read`
 
-Required permission: Project `read` and resolved path access. Full access required: No.
-
 Available only when `[builtin].enabled` includes `toml.read`. Reads and parses
 a project-contained TOML file into a JSON value using the existing
 `swift-toml` decoder. This is read-only and does not execute a subprocess.
@@ -3875,8 +3831,6 @@ Arguments:
 ```
 
 ## `yaml.read`
-
-Required permission: Project `read` and resolved path access. Full access required: No.
 
 Available only when `[builtin].enabled` includes `yaml.read`. Reads and parses
 a project-contained YAML file into JSON-compatible values using Yams. This is
@@ -3906,8 +3860,6 @@ non-finite numbers.
 
 ## `xml.read`
 
-Required permission: Project `read` and resolved path access. Full access required: No.
-
 Available only when `[builtin].enabled` includes `xml.read`. Reads and parses a
 project-contained XML file into a bounded element tree using Foundation
 `XMLParser`. This is read-only, disables external entity resolution, does not
@@ -3934,8 +3886,6 @@ direct `text`, `child_count`, `returned_child_count`, and returned `children`.
 
 ## `plist.read`
 
-Required permission: Project `read` and resolved path access. Full access required: No.
-
 Available only when `[builtin].enabled` includes `plist.read`. Reads and parses
 a project-contained macOS property list file into JSON using Foundation
 `PropertyListSerialization`. This is read-only and does not execute a
@@ -3952,8 +3902,6 @@ Arguments:
 ```
 
 ## `structured.get`
-
-Required permission: Project `read` and resolved path access. Full access required: No.
 
 Available only when `[builtin].enabled` includes `structured.get`. Reads one
 value at an explicit path from a project-contained JSON, YAML, TOML, or plist
@@ -3983,8 +3931,6 @@ multiple documents as an array of document values, and an empty stream as
 failing segment.
 
 ## `plist.write`
-
-Required permission: Project `write` and resolved path access. Full access required: No.
 
 Available only when `[builtin].enabled` includes `plist.write`. Serializes a
 provided JSON value as a project-contained macOS property list using
@@ -4019,8 +3965,6 @@ not support `null`; calls containing null values fail deterministically.
 
 ## `csv.read`
 
-Required permission: Project `read` and resolved path access. Full access required: No.
-
 Available only when `[builtin].enabled` includes `csv.read`. Reads a bounded
 preview of a project-contained CSV/TSV-style UTF-8 text file. It parses
 delimiter characters, quoted fields, rows, and cells mechanically; it does not
@@ -4047,8 +3991,6 @@ non-newline character. The result includes `headers`, row objects with
 `parse_incomplete` flags.
 
 ## `sqlite.schema`
-
-Required permission: Project `read` and resolved path access. Full access required: No.
 
 Available only when `[builtin].enabled` includes `sqlite.schema`. Inspects a
 project-contained SQLite database schema using fixed
@@ -4083,8 +4025,6 @@ reported by the SQLite CLI. Output is bounded with `max_entries` and
 
 ## `sqlite.query`
 
-Required permission: Project `read` and resolved path access. Full access required: No.
-
 Available only when `[builtin].enabled` includes `sqlite.query`. Runs one
 read-only SQLite statement against a project-contained database using fixed
 `/usr/bin/sqlite3 -batch -readonly -json` argv. Accepted statements are
@@ -4116,8 +4056,6 @@ interpolation.
 
 ## `file.hash`
 
-Required permission: Project `read` and resolved path access. Full access required: No.
-
 Available only when `[builtin].enabled` includes `file.hash`. Computes a
 SHA-256 digest for a project-contained file without returning file content.
 
@@ -4131,8 +4069,6 @@ Arguments:
 ```
 
 ## `file.diff`
-
-Required permission: Project `read` and resolved path access. Full access required: No.
 
 Available only when `[builtin].enabled` includes `file.diff`. Returns a bounded
 unified diff between two project-contained files using fixed `/usr/bin/diff`
@@ -4153,8 +4089,6 @@ Arguments:
 ```
 
 ## `file.compare_trees`
-
-Required permission: Project `read` and resolved path access. Full access required: No.
 
 Available only when `[builtin].enabled` includes `file.compare_trees`. Compares
 two project-contained directories by relative path using bounded
@@ -4183,8 +4117,6 @@ Arguments:
 ```
 
 ## `file.duplicates`
-
-Required permission: Project `read` and resolved path access. Full access required: No.
 
 Available only when `[builtin].enabled` includes `file.duplicates`. Finds
 duplicate regular files under one project-contained directory by first
@@ -4216,8 +4148,6 @@ Arguments:
 
 ## `archive.list`
 
-Required permission: Project `read` and resolved path access. Full access required: No.
-
 Available only when `[builtin].enabled` includes `archive.list`. Lists entries
 in a project-contained zip or tar archive using fixed read-only argv. Zip-like
 archives use `/usr/bin/zipinfo -1`; tar-like archives use `/usr/bin/tar -tf`.
@@ -4239,8 +4169,6 @@ Arguments:
 ```
 
 ## `archive.read_file`
-
-Required permission: Project `read` and resolved path access. Full access required: No.
 
 Available only when `[builtin].enabled` includes `archive.read_file`. Reads one
 file member from a project-contained zip or tar archive using fixed read-only
@@ -4267,8 +4195,6 @@ Arguments:
 ```
 
 ## `archive.extract`
-
-Required permission: Project `write` and resolved path access. Full access required: No.
 
 Available only when `[builtin].enabled` includes `archive.extract`. Extracts a
 project-contained zip or tar archive into a project-contained destination
@@ -4365,8 +4291,6 @@ Arguments:
 
 ## `archive.create`
 
-Required permission: Project `write` and resolved path access. Full access required: No.
-
 Available only when `[builtin].enabled` includes `archive.create`. Creates a zip
 or tar archive from explicit project-contained source files/directories using
 fixed argv. The tool defaults to `dry_run=true`, refuses symlink sources and
@@ -4398,8 +4322,6 @@ Arguments:
 ```
 
 ## `file.download`
-
-Required permission: Project `write` and resolved path access. Full access required: No.
 
 Available only when `[builtin].enabled` includes `file.download`. Downloads an
 absolute HTTP or HTTPS URL to a project-contained file using fixed
@@ -4513,8 +4435,6 @@ Archive extraction uses the staging and validation procedure above.
 
 ## `file.write`
 
-Required permission: Project `write` and resolved path access. Full access required: No.
-
 Available only when `[builtin].enabled` includes `file.write`. Writes UTF-8 text
 under the configured project. Set `dry_run` to true to validate parent
 directory and overwrite behavior without creating directories or writing
@@ -4535,8 +4455,6 @@ Arguments:
 ```
 
 ## `file.write_files`
-
-Required permission: Project `write` and resolved path access. Full access required: No.
 
 Available only when `[builtin].enabled` includes `file.write_files`. Writes
 multiple explicitly named UTF-8 files under the project. This is a batch form
@@ -4568,8 +4486,6 @@ Arguments:
 
 ## `file.append`
 
-Required permission: Project `write` and resolved path access. Full access required: No.
-
 Available only when `[builtin].enabled` includes `file.append`. Appends UTF-8
 text to a project-contained file without rewriting existing content. The file
 is created by default when missing; parent directories are created only when
@@ -4592,8 +4508,6 @@ Arguments:
 ```
 
 ## `file.replace_text`
-
-Required permission: Project `write` and resolved path access. Full access required: No.
 
 Available only when `[builtin].enabled` includes `file.replace_text`. Performs
 exact UTF-8 string replacement in a project-contained file. It does not parse
@@ -4619,8 +4533,6 @@ Arguments:
 ```
 
 ## `file.insert_text`
-
-Required permission: Project `write` and resolved path access. Full access required: No.
 
 Available only when `[builtin].enabled` includes `file.insert_text`. Inserts
 exact UTF-8 text before or after an existing one-based line in a
@@ -4648,8 +4560,6 @@ Arguments:
 
 ## `file.replace_lines`
 
-Required permission: Project `write` and resolved path access. Full access required: No.
-
 Available only when `[builtin].enabled` includes `file.replace_lines`. Replaces
 or deletes an exact one-based line range in a project-contained UTF-8 file. It
 does not parse or semantically edit content. Use `expected_content` to assert
@@ -4676,8 +4586,6 @@ Arguments:
 
 ## `file.mkdir`
 
-Required permission: Project `write` and resolved path access. Full access required: No.
-
 Available only when `[builtin].enabled` includes `file.mkdir`. Creates a
 project-contained directory. Missing parents are created by default. Set
 `dry_run` to validate the create intent without creating directories.
@@ -4693,8 +4601,6 @@ Arguments:
 ```
 
 ## `file.touch`
-
-Required permission: Project `write` and resolved path access. Full access required: No.
 
 Available only when `[builtin].enabled` includes `file.touch`. Creates an empty
 project-contained file if it is missing, or updates an existing file's
@@ -4715,8 +4621,6 @@ Arguments:
 
 ## `file.copy`
 
-Required permission: Project `write` and resolved path access. Full access required: No.
-
 Available only when `[builtin].enabled` includes `file.copy`. Copies a file or
 directory between project-contained paths. Existing destinations are rejected
 unless `overwrite` is true. Set `dry_run` to validate source, destination,
@@ -4736,8 +4640,6 @@ Arguments:
 ```
 
 ## `file.move`
-
-Required permission: Project `write` and resolved path access. Full access required: No.
 
 Available only when `[builtin].enabled` includes `file.move`. Moves or renames a
 file or directory between project-contained paths on the same volume, preserving
@@ -4762,8 +4664,6 @@ Arguments:
 
 ## `file.symlink`
 
-Required permission: Project `write` and resolved path access. Full access required: No.
-
 Available only when `[builtin].enabled` includes `file.symlink`. Creates a
 symbolic link at a project-contained path. By default the raw destination must
 resolve inside the project; set `allow_external_destination` only when an
@@ -4787,8 +4687,6 @@ Arguments:
 
 ## `file.trash`
 
-Required permission: Project `write` and resolved path access. Full access required: No.
-
 Available only when `[builtin].enabled` includes `file.trash`. Refuses the project
 root, checks every directory member for protected paths and unsafe types, and
 allows multiply linked regular files. Moves a
@@ -4807,14 +4705,10 @@ Arguments:
 
 ## `project.open`
 
-Required permission: Desktop control `allow`. Full access required: No.
-
 Available only when `[builtin].enabled` includes `project.open`. Opens the
 project root or an in-project path with macOS `open`.
 
 ## `project.reveal`
-
-Required permission: Desktop control `allow`. Full access required: No.
 
 Available only when `[builtin].enabled` includes `project.reveal`. Reveals a
 project-contained path in Finder using macOS `open -R`.
@@ -4837,8 +4731,6 @@ with the `git` provider when raw Git behavior is required.
 
 ### `git.root`
 
-Required permission: Project `read` and resolved path access. Full access required: No.
-
 Runs fixed read-only `git rev-parse` repository identity checks through the
 registered `git` CLI provider.
 
@@ -4851,8 +4743,6 @@ Arguments:
 ```
 
 ### `git.config`
-
-Required permission: Project `read` and resolved path access. Full access required: No.
 
 Runs fixed read-only
 `git config --list --show-origin --show-scope --null` through the registered
@@ -4875,8 +4765,6 @@ Arguments:
 
 ### `git.remotes`
 
-Required permission: Project `read` and resolved path access. Full access required: No.
-
 Runs fixed read-only `git remote --verbose` through the registered `git` CLI
 provider. This reads local remote configuration and does not contact remotes.
 
@@ -4889,8 +4777,6 @@ Arguments:
 ```
 
 ### `git.worktrees`
-
-Required permission: Project `read` and resolved path access. Full access required: No.
 
 Runs fixed read-only `git worktree list --porcelain` through the registered
 `git` CLI provider. This reads local worktree metadata and does not create,
@@ -4906,8 +4792,6 @@ Arguments:
 
 ### `git.stashes`
 
-Required permission: Project `read` and resolved path access. Full access required: No.
-
 Runs fixed read-only `git stash list --date=iso-strict` through the registered
 `git` CLI provider. This lists local stash entries and does not apply, pop, or
 drop stashes.
@@ -4921,8 +4805,6 @@ Arguments:
 ```
 
 ### `git.stash_show`
-
-Required permission: Project `read` and resolved path access. Full access required: No.
 
 Runs fixed read-only `git stash show` for one local stash through the registered
 `git` CLI provider. The `stash` argument is constrained to `stash@{N}` syntax,
@@ -4946,8 +4828,6 @@ Arguments:
 
 ### `git.tags`
 
-Required permission: Project `read` and resolved path access. Full access required: No.
-
 Runs fixed read-only `git tag --list --sort=-creatordate --format=...` through
 the registered `git` CLI provider. Output is tab-separated tag metadata and does
 not contact remotes.
@@ -4961,8 +4841,6 @@ Arguments:
 ```
 
 ### `git.tag_show`
-
-Required permission: Project `read` and resolved path access. Full access required: No.
 
 Shows one local tag with fixed `git show --date=iso-strict` argv against
 `refs/tags/<name>` through the registered `git` CLI provider. This does not
@@ -4986,8 +4864,6 @@ Arguments:
 ```
 
 ### `git.tag_create`
-
-Required permission: Project `write` and resolved path access. Full access required: Yes.
 
 Creates one lightweight local tag with fixed `git tag <name> <target>` argv
 through the registered `git` CLI provider. This does not create annotated tags,
@@ -5017,8 +4893,6 @@ Arguments:
 
 ### `git.tag_delete`
 
-Required permission: Project `write` and resolved path access. Full access required: Yes.
-
 Deletes one local tag with fixed `git tag -d <name>` argv through the
 registered `git` CLI provider. This does not push remote tag deletion, fetch
 remotes, force-delete anything else, or change the index or working tree.
@@ -5044,8 +4918,6 @@ Arguments:
 
 ### `git.ignored`
 
-Required permission: Project `read` and resolved path access. Full access required: No.
-
 Runs fixed read-only `git check-ignore --verbose -- <paths...>` through the
 registered `git` CLI provider. It requires explicit project-relative paths,
 including literal names such as `:(glob)*`. `check-ignore` takes paths, so the host
@@ -5064,8 +4936,6 @@ Arguments:
 
 ### `git.submodules`
 
-Required permission: Project `read` and resolved path access. Full access required: No.
-
 Runs fixed read-only `git submodule status --recursive` through the registered
 `git` CLI provider. This reads local submodule status and does not initialize,
 update, sync, or fetch submodules.
@@ -5079,8 +4949,6 @@ Arguments:
 ```
 
 ### `git.files`
-
-Required permission: Project `read` and resolved path access. Full access required: No.
 
 Runs fixed read-only `git ls-files --stage --eol` through the registered `git`
 CLI provider. Optional paths are literal project-relative paths passed after
@@ -5096,8 +4964,6 @@ Arguments:
 ```
 
 ### `git.grep`
-
-Required permission: Project `read` and resolved path access. Full access required: No.
 
 Runs bounded read-only fixed-string `git grep --line-number -I --null` through
 the registered `git` CLI provider. Optional paths are literal
@@ -5122,8 +4988,6 @@ the gateway.
 
 ### `git.blame`
 
-Required permission: Project `read` and resolved path access. Full access required: No.
-
 Runs bounded read-only `git blame --line-porcelain -L <start>,+<count>` through
 the registered `git` CLI provider. The path is a literal project-relative file
 path passed after `--`. Output is Git's raw line porcelain blame data.
@@ -5140,8 +5004,6 @@ Arguments:
 ```
 
 ### `git.file_history`
-
-Required permission: Project `read` and resolved path access. Full access required: No.
 
 Runs bounded read-only `git log` for one project-relative file through the
 registered `git` CLI provider. It defaults to `--follow` so history can continue
@@ -5166,8 +5028,6 @@ Returned entries include `commit`, `abbreviated_commit`, `committed_at`,
 
 ### `git.file_at_revision`
 
-Required permission: Project `read` and resolved path access. Full access required: No.
-
 Runs fixed read-only `git show <revision>:<path>` through the registered `git`
 CLI provider and returns bounded UTF-8 content for one project-relative file
 at a constrained revision. It does not change refs, the index, or the working
@@ -5190,8 +5050,6 @@ metadata.
 
 ### `git.staged_file`
 
-Required permission: Project `read` and resolved path access. Full access required: No.
-
 Runs fixed read-only `git show :<path>` through the registered `git` CLI
 provider and returns bounded UTF-8 content for one project-relative file from
 the Git index. It does not change refs, the index, or the working tree.
@@ -5212,8 +5070,6 @@ Returned data includes `content`, `bytes_returned`, `line_count`,
 
 ### `git.conflicts`
 
-Required permission: Project `read` and resolved path access. Full access required: No.
-
 Runs fixed read-only `git ls-files --unmerged` through the registered `git` CLI
 provider. Optional paths are literal project-relative paths passed after `--`.
 Output is Git's raw unmerged index entries for conflict inspection.
@@ -5229,8 +5085,6 @@ Arguments:
 
 ### `git.status`
 
-Required permission: Project `read` and resolved path access. Full access required: No.
-
 Runs `git status --short --branch --porcelain=v1`.
 
 Arguments:
@@ -5243,8 +5097,6 @@ Arguments:
 ```
 
 ### `git.tracking_status`
-
-Required permission: Project `read` and resolved path access. Full access required: No.
 
 Runs read-only `git status --branch --porcelain=v1` through the registered
 `git` CLI provider and parses the first branch header line into current
@@ -5265,8 +5117,6 @@ Possible states include `up_to_date`, `ahead`, `behind`, `diverged`,
 `no_upstream`, `detached`, `unborn`, and `gone`.
 
 ### `git.clean_preview`
-
-Required permission: Project `read` and resolved path access. Full access required: No.
 
 Runs read-only `git clean --dry-run -d` through the registered `git` CLI
 provider and parses the preview rows. It does not delete files. Use
@@ -5289,8 +5139,6 @@ Returned items include `action`, `project_relative_path`, `directory`, and
 
 ### `git.reflog`
 
-Required permission: Project `read` and resolved path access. Full access required: No.
-
 Runs read-only `git reflog show --date=iso-strict` through the registered
 `git` CLI provider and returns bounded local HEAD reflog entries. It does not
 change refs, the index, or the working tree.
@@ -5310,8 +5158,6 @@ Returned entries include `commit`, `abbreviated_commit`, `selector`, `action`,
 `raw_lines` and command metadata.
 
 ### `git.refs`
-
-Required permission: Project `read` and resolved path access. Full access required: No.
 
 Runs read-only `git for-each-ref` through the registered `git` CLI provider and
 returns a bounded inventory of local branches, remote-tracking branches, and
@@ -5337,8 +5183,6 @@ Returned refs include `kind`, `refname`, `short_name`, `object`,
 
 ### `git.resolve_ref`
 
-Required permission: Project `read` and resolved path access. Full access required: No.
-
 Runs fixed read-only `git rev-parse --verify <ref>^{object}` and
 `git cat-file -t <object>` through the registered `git` CLI provider. It
 returns the resolved object id and Git object type for one constrained ref,
@@ -5358,8 +5202,6 @@ Returned data includes `object_spec`, `object`, `object_type`, fixed `argv`,
 and command metadata for each underlying Git command.
 
 ### `git.merge_base`
-
-Required permission: Project `read` and resolved path access. Full access required: No.
 
 Runs fixed read-only `git merge-base` through the registered `git` CLI provider
 for 2 to 16 constrained refs. It returns one or more merge-base object ids;
@@ -5382,8 +5224,6 @@ Returned data includes `merge_base`, `merge_bases`, `merge_base_count`,
 `has_merge_base`, fixed `argv`, and command metadata.
 
 ### `git.compare_refs`
-
-Required permission: Project `read` and resolved path access. Full access required: No.
 
 Runs read-only `git rev-list --left-right --count`, `git merge-base`, and
 bounded `git log --left-right` through the registered `git` CLI provider for a
@@ -5408,8 +5248,6 @@ and command metadata for each underlying Git command.
 
 ### `git.is_ancestor`
 
-Required permission: Project `read` and resolved path access. Full access required: No.
-
 Runs fixed read-only `git merge-base --is-ancestor <ancestor> <descendant>`
 through the registered `git` CLI provider and returns `is_ancestor` as a
 boolean. Exit code 0 maps to true, exit code 1 maps to false, and other exit
@@ -5428,8 +5266,6 @@ Arguments:
 
 ### `git.diff`
 
-Required permission: Project `read` and resolved path access. Full access required: No.
-
 Runs a bounded read-only `git diff`.
 
 Arguments:
@@ -5444,8 +5280,6 @@ Arguments:
 ```
 
 ### `git.diff_summary`
-
-Required permission: Project `read` and resolved path access. Full access required: No.
 
 Runs read-only `git diff --numstat -z` and `git diff --summary` through the
 registered `git` CLI provider, then returns a structured file-level overview.
@@ -5469,8 +5303,6 @@ events such as create, delete, rename, copy, and mode changes.
 
 ### `git.diff_check`
 
-Required permission: Project `read` and resolved path access. Full access required: No.
-
 Runs read-only `git diff --check` through the registered `git` CLI provider and
 returns structured issue rows plus bounded raw output lines. This reports the
 same whitespace and leftover conflict-marker checks that Git reports; it does
@@ -5493,8 +5325,6 @@ bounded `raw_lines` for the exact Git output context.
 
 ### `git.branch`
 
-Required permission: Project `read` and resolved path access. Full access required: No.
-
 Runs read-only `git branch`.
 
 Arguments:
@@ -5507,8 +5337,6 @@ Arguments:
 ```
 
 ### `git.log`
-
-Required permission: Project `read` and resolved path access. Full access required: No.
 
 Runs read-only `git log` with a bounded commit limit and tab-separated fields:
 full hash, short hash, ISO date, author name, and subject.
@@ -5523,8 +5351,6 @@ Arguments:
 ```
 
 ### `git.commit_files`
-
-Required permission: Project `read` and resolved path access. Full access required: No.
 
 Runs fixed read-only `git show -s` and
 `git diff-tree --root --no-commit-id --name-status -M -r -z <revision>` through
@@ -5547,8 +5373,6 @@ Returned file rows include `status`, `kind`, `path`, `old_path`, `score`, and
 old path separately.
 
 ### `git.show`
-
-Required permission: Project `read` and resolved path access. Full access required: No.
 
 Runs read-only `git show` for one revision or object. Defaults to `HEAD` and no
 patch.
@@ -5590,8 +5414,6 @@ working tree content, or deleting untracked files.
 
 ### `git.add`
 
-Required permission: Project `write` and resolved path access. Full access required: No.
-
 Stages explicit project-relative paths with `git add -- <paths...>`. Set
 `dry_run` to run `git add --dry-run` instead.
 
@@ -5607,8 +5429,6 @@ Arguments:
 ```
 
 ### `git.unstage`
-
-Required permission: Project `write` and resolved path access. Full access required: No.
 
 Unstages explicit project-relative paths with
 `git restore --staged -- <paths...>`. This changes the Git index but does not
@@ -5628,8 +5448,6 @@ Arguments:
 
 ### `git.restore_worktree`
 
-Required permission: Project `write` and resolved path access. Full access required: No.
-
 Discards unstaged working-tree changes for explicit project-relative paths
 with `git restore --worktree -- <paths...>`. This can destroy local file
 content that is not staged, so `dry_run` defaults to true. Set
@@ -5647,8 +5465,6 @@ Arguments:
 ```
 
 ### `git.clean`
-
-Required permission: Project `write` and resolved path access. Full access required: No.
 
 Removes untracked files/directories with `git clean -d -f` through the
 registered `git` CLI provider. This is destructive, so `dry_run` defaults to
@@ -5672,8 +5488,6 @@ Arguments:
 ```
 
 ### `git.branch_create`
-
-Required permission: Project `write` and resolved path access. Full access required: Yes.
 
 Creates a local branch ref with fixed
 `git branch <name> <start_point>` argv through the registered `git` CLI
@@ -5702,8 +5516,6 @@ Arguments:
 
 ### `git.branch_delete`
 
-Required permission: Source Project `write` and resolved path access. Full access required: No.
-
 Deletes one local branch ref with fixed `git branch -d <name>` or
 `git branch -D <name>` argv through the registered `git` CLI provider. This
 does not checkout or switch branches, fetch, push, delete remote branches, or
@@ -5731,8 +5543,6 @@ Arguments:
 ```
 
 ### `git.branch_rename`
-
-Required permission: Project `write` and resolved path access. Full access required: Yes.
 
 Renames one local branch ref with fixed `git branch -m <old_name> <new_name>` or
 `git branch -M <old_name> <new_name>` argv through the registered `git` CLI
@@ -5766,8 +5576,6 @@ Arguments:
 ```
 
 ### `git.branch_switch`
-
-Required permission: Project `write` and resolved path access. Full access required: Yes.
 
 Switches to one existing local branch with fixed
 `git switch --no-guess <name>` argv through the registered `git` CLI provider.
@@ -5814,8 +5622,6 @@ literal pathspecs after `--`.
 
 ### `git.commit`
 
-Required permission: Project `write` and resolved path access. Full access required: No.
-
 Creates a commit with `git commit --only -m <message> -- <paths>`. Both the
 message (at most 10000 characters) and a nonempty `paths` list are required.
 Only those paths are committed; other staged changes remain staged. Set
@@ -5834,8 +5640,6 @@ Arguments:
 ```
 
 ### `git.stash_push`
-
-Required permission: Project `write` and resolved path access. Full access required: Yes.
 
 Creates a stash with fixed `git stash push -m <message>` argv through the
 registered `git` CLI provider. This changes the working tree and possibly the
@@ -5859,11 +5663,6 @@ Arguments:
 ```
 
 ## Computer Use
-
-| Tool | Required permission | Full access required |
-| --- | --- | --- |
-| `computer.permissions`, `computer.displays`, `computer.windows`, `computer.screenshot`, `computer.accessibility.query`, `computer.pointer.position`, `computer.verify` | Screen `allow` | No |
-| `computer.pointer.move`, `computer.pointer.click`, `computer.keyboard.text`, `computer.keyboard.key`, `computer.scroll`, `computer.accessibility.action` | Desktop control `allow` | No |
 
 The Computer Use provider exposes generic macOS observation and input tools.
 It requires the corresponding Screen Recording or Accessibility permission to

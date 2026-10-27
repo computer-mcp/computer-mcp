@@ -97,8 +97,9 @@ discarded and automatically retried when configuration changes.
 Cloudflare startup has one owned task per profile. Stop cancels and joins a
 pending start before closing any published origin and process; concurrent stops
 join the same task, and replacement starts are refused during either transition.
-The process starts through `ExecutionLauncher` in Full access with disclaimed
-privacy responsibility. Stop joins confirmed execution cleanup before releasing
+The process starts through `ExecutionLauncher` under
+[host administration](SecurityAndPrivacy.md#execution-admission). Stop joins
+confirmed execution cleanup before releasing
 the origin, token file and log descriptors.
 Startup rechecks the host configuration, project, grant and plugin inputs
 around origin creation and process publication. Its downstream MCP client uses

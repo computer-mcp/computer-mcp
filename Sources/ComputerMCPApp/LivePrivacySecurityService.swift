@@ -168,14 +168,16 @@ final class LivePrivacySecurityService: PrivacySecurityService {
         purpose: content.pluginPurpose, tool: request.invocation.tool,
         expires: request.expiresAt)
     case .projectRegistration(let content):
+      let root = item.registrationGrantRoot ?? content.path
       return PrivacyRequest(
         id: request.id.uuidString, principal: principal, permission: .projects,
         object: PrivacyObject(
           id: content.projectID,
-          name: URL(fileURLWithPath: content.path.string).lastPathComponent,
-          detail: content.path.string),
-        level: level(content.access), purpose: nil, tool: request.invocation.tool,
-        expires: request.expiresAt)
+          name: item.registrationGrantName ?? URL(fileURLWithPath: root.string).lastPathComponent,
+          detail: root.string),
+        level: level(content.access),
+        registration: item.registrationGrantRoot == nil ? .newProject : .existingProject,
+        purpose: nil, tool: request.invocation.tool, expires: request.expiresAt)
     }
   }
 

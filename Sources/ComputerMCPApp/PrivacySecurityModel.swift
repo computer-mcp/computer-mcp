@@ -232,9 +232,20 @@ struct PrivacyRequest: Identifiable, Hashable, Sendable {
   let level: PrivacyGrantValue.Level
   /// A network host the principal's program tried to reach from the project in `object`.
   var host: String? = nil
+  /// Set when allowing registers a folder; such a request is answered Allow or Don't Allow.
+  var registration: Registration? = nil
   let purpose: String?
   let tool: String
   let expires: Date
+}
+
+extension PrivacyRequest {
+  enum Registration: Hashable, Sendable {
+    /// The folder becomes a new project.
+    case newProject
+    /// The folder is already a registered project; allowing grants access to it.
+    case existingProject
+  }
 }
 
 struct PrivacyManagedSource: Identifiable, Hashable, Sendable {

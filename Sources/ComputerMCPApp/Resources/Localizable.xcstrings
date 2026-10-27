@@ -1,6 +1,8 @@
 {
   "sourceLanguage" : "en",
   "strings" : {
+    "Allowing registers this folder as a project and gives “%@” access to it and its worktrees until you revoke it." : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Allowing registers this folder as a project and gives “%@” access to it and its worktrees until you revoke it."}},"zh-Hans":{"stringUnit":{"state":"translated","value":"允许后，此文件夹会注册为项目，“%@”可以访问它及其所有 worktree，直到你撤销权限。"}}}},
+    "Allowing gives “%@” access to this project and all its worktrees until you revoke it." : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Allowing gives “%@” access to this project and all its worktrees until you revoke it."}},"zh-Hans":{"stringUnit":{"state":"translated","value":"允许后，“%@”可以访问此项目及其所有 worktree，直到你撤销权限。"}}}},
     "Trusted Hosts and %@" : {"localizations" : {"en" : {"stringUnit" : {"state" : "translated", "value" : "Trusted Hosts and %@"}}, "zh-Hans" : {"stringUnit" : {"state" : "translated", "value" : "可信主机及 %@"}}}},
     "Denied" : { "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Denied" } }, "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "已拒绝" } } } },
     "Permissions…" : {"localizations": {"en": {"stringUnit": {"state": "translated", "value": "Permissions…"}}, "zh-Hans": {"stringUnit": {"state": "translated", "value": "权限…"}}}},

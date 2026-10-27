@@ -17,6 +17,21 @@ import Testing
     #expect(model.snapshot.requests.isEmpty)
   }
 
+  @Test func registrationRequestsExplainWhatAllowingGrants() throws {
+    let l = PrivacyText(locale: Locale(identifier: "en"))
+    var request = try #require(PrivacySecurityFake.sample.requests.first)
+    request.registration = .newProject
+    #expect(
+      PrivacyRequestPrompt.detail(for: request, using: l)
+        == "Allowing registers this folder as a project and gives “ChatGPT” access to it and its worktrees until you revoke it."
+    )
+    request.registration = .existingProject
+    #expect(
+      PrivacyRequestPrompt.detail(for: request, using: l)
+        == "Allowing gives “ChatGPT” access to this project and all its worktrees until you revoke it."
+    )
+  }
+
   @Test func holdersCountGrantedPrincipalsOnly() async {
     let model = PrivacySecurityModel(service: PrivacySecurityFake())
     await model.refresh()
@@ -129,6 +144,12 @@ import Testing
         PrivacyRequestPrompt(request: request) { _ in }.styled(locale, dark, resources),
         size: NSSize(width: 340, height: 420), appearance: appearance,
         name: "privacy-prompt-" + suffix)
+      var registration = request
+      registration.registration = .newProject
+      try render(
+        PrivacyRequestPrompt(request: registration) { _ in }.styled(locale, dark, resources),
+        size: NSSize(width: 340, height: 420), appearance: appearance,
+        name: "privacy-registration-" + suffix)
     }
   }
 }

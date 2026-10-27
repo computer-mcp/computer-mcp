@@ -767,36 +767,45 @@ struct PrivacyRequestPrompt: View {
           Text(verbatim: purpose)
             .multilineTextAlignment(.center)
         }
-        let detail =
-          request.host == nil
-          ? l(request.permission.summary)
-          : l("Allowing adds the host to the project's network access in the sandbox.")
+        let detail = Self.detail(for: request, using: l)
         Text(verbatim: detail)
           .font(.callout)
           .foregroundStyle(.secondary)
           .multilineTextAlignment(.center)
-        Text(
-          verbatim: l(
-            "Only This Time covers the retried request and the program it starts.")
-        )
-        .font(.caption)
-        .foregroundStyle(.secondary)
-        .multilineTextAlignment(.center)
+        if request.registration == nil {
+          Text(
+            verbatim: l(
+              "Only This Time covers the retried request and the program it starts.")
+          )
+          .font(.caption)
+          .foregroundStyle(.secondary)
+          .multilineTextAlignment(.center)
+        }
       }
       VStack(spacing: 8) {
-        Button {
-          answer(.onlyThisTime)
-        } label: {
-          Text(verbatim: l("Only This Time")).frame(maxWidth: .infinity)
+        if request.registration == nil {
+          Button {
+            answer(.onlyThisTime)
+          } label: {
+            Text(verbatim: l("Only This Time")).frame(maxWidth: .infinity)
+          }
+          .keyboardShortcut(.defaultAction)
+          .accessibilityIdentifier("privacy.prompt.once")
+          Button {
+            answer(.always)
+          } label: {
+            Text(verbatim: l("Always")).frame(maxWidth: .infinity)
+          }
+          .accessibilityIdentifier("privacy.prompt.always")
+        } else {
+          Button {
+            answer(.always)
+          } label: {
+            Text(verbatim: l("Allow")).frame(maxWidth: .infinity)
+          }
+          .keyboardShortcut(.defaultAction)
+          .accessibilityIdentifier("privacy.prompt.allow")
         }
-        .keyboardShortcut(.defaultAction)
-        .accessibilityIdentifier("privacy.prompt.once")
-        Button {
-          answer(.always)
-        } label: {
-          Text(verbatim: l("Always")).frame(maxWidth: .infinity)
-        }
-        .accessibilityIdentifier("privacy.prompt.always")
         Button(role: .cancel) {
           answer(.dontAllow)
         } label: {
@@ -809,6 +818,24 @@ struct PrivacyRequestPrompt: View {
     }
     .padding(24)
     .frame(width: 340)
+  }
+
+  static func detail(for request: PrivacyRequest, using l: PrivacyText) -> String {
+    if request.host != nil {
+      return l("Allowing adds the host to the project's network access in the sandbox.")
+    }
+    switch request.registration {
+    case .newProject:
+      return l.format(
+        "Allowing registers this folder as a project and gives “%@” access to it and its worktrees until you revoke it.",
+        request.principal.name)
+    case .existingProject:
+      return l.format(
+        "Allowing gives “%@” access to this project and all its worktrees until you revoke it.",
+        request.principal.name)
+    case nil:
+      return l(request.permission.summary)
+    }
   }
 
   static func requestSentence(for request: PrivacyRequest, using l: PrivacyText) -> String {

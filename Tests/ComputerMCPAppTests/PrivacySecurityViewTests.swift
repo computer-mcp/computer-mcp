@@ -153,10 +153,6 @@ private final class PrivacySecurityFake: PrivacySecurityService {
         PrivacyGrant(principalID: "chatgpt", permission: .desktopControl, object: nil, value: .ask),
         PrivacyGrant(principalID: "chatgpt", permission: .unifiedLogs, object: nil, value: .denied),
         PrivacyGrant(
-          principalID: "chatgpt", permission: .automation,
-          object: PrivacyObject(id: "com.apple.Notes", name: "Notes", detail: nil),
-          value: .granted(.allow)),
-        PrivacyGrant(
           principalID: "chatgpt", permission: .localNetwork, object: nil, value: .denied,
           source: .managedLimit("Machine policy")),
       ],
@@ -167,8 +163,7 @@ private final class PrivacySecurityFake: PrivacySecurityService {
       ],
       systemPermissions: [
         PrivacySystemPermission(kind: .screenRecording, state: .allowed),
-        PrivacySystemPermission(kind: .accessibility, state: .allowed),
-        PrivacySystemPermission(kind: .automation(app: "Notes"), state: .notDetermined),
+        PrivacySystemPermission(kind: .accessibility, state: .notDetermined),
       ])
   }
 }

@@ -3,7 +3,7 @@ import SwiftUI
 
 /// The permissions a principal can hold, in the order Privacy & Security lists them.
 enum PrivacyPermissionKind: String, CaseIterable, Identifiable, Hashable, Sendable {
-  case projects, filesAndFolders, screen, desktopControl, automation, localNetwork
+  case projects, filesAndFolders, screen, desktopControl, localNetwork
   case plugins, mcpServers, machineInformation, unifiedLogs, skills, fullAccess
 
   var id: Self { self }
@@ -14,7 +14,6 @@ enum PrivacyPermissionKind: String, CaseIterable, Identifiable, Hashable, Sendab
     case .filesAndFolders: "Files and Folders"
     case .screen: "Screen"
     case .desktopControl: "Desktop Control"
-    case .automation: "Automation"
     case .localNetwork: "Local Network"
     case .plugins: "Plugins"
     case .mcpServers: "MCP Servers"
@@ -31,7 +30,6 @@ enum PrivacyPermissionKind: String, CaseIterable, Identifiable, Hashable, Sendab
     case .filesAndFolders: "doc.on.doc.fill"
     case .screen: "rectangle.dashed.badge.record"
     case .desktopControl: "cursorarrow.motionlines"
-    case .automation: "gearshape.2.fill"
     case .localNetwork: "network"
     case .plugins: "puzzlepiece.extension.fill"
     case .mcpServers: "server.rack"
@@ -52,8 +50,6 @@ enum PrivacyPermissionKind: String, CaseIterable, Identifiable, Hashable, Sendab
       "Take screenshots and read windows, displays and accessibility information."
     case .desktopControl:
       "Use the keyboard and pointer, perform accessibility actions and open files in apps. This acts on your whole desktop, outside any sandbox."
-    case .automation:
-      "Send Apple events to the apps you allow. An app carries them out with its own access, outside the sandbox."
     case .localNetwork:
       "Connect from the sandbox to devices on your local network."
     case .plugins: "Use the tools and skills that plugins contribute."
@@ -70,7 +66,7 @@ enum PrivacyPermissionKind: String, CaseIterable, Identifiable, Hashable, Sendab
   /// Permissions granted per object list each object as its own group.
   var isPerObject: Bool {
     switch self {
-    case .projects, .filesAndFolders, .automation, .plugins, .mcpServers: true
+    case .projects, .filesAndFolders, .plugins, .mcpServers: true
     default: false
     }
   }
@@ -190,6 +186,8 @@ struct PrivacyRequest: Identifiable, Hashable, Sendable {
   let permission: PrivacyPermissionKind
   let object: PrivacyObject?
   let level: PrivacyGrantValue.Level
+  /// A network host the principal's program tried to reach from the project in `object`.
+  var host: String? = nil
   let purpose: String?
   let tool: String
   let expires: Date
@@ -207,7 +205,6 @@ struct PrivacyManagedSource: Identifiable, Hashable, Sendable {
 struct PrivacySystemPermission: Identifiable, Hashable, Sendable {
   enum Kind: Hashable, Sendable {
     case screenRecording, accessibility
-    case automation(app: String)
   }
 
   enum State: Hashable, Sendable { case allowed, notAllowed, notDetermined }
@@ -219,7 +216,6 @@ struct PrivacySystemPermission: Identifiable, Hashable, Sendable {
     switch kind {
     case .screenRecording: "screen-recording"
     case .accessibility: "accessibility"
-    case .automation(let app): "automation/" + app
     }
   }
 }

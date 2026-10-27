@@ -249,8 +249,6 @@ struct PrivacySecurityView: View {
     switch kind {
     case .screenRecording: l("Screen Recording")
     case .accessibility: l("Accessibility")
-    case .automation(let app):
-      l.format("Automation of %@", app)
     }
   }
 
@@ -258,7 +256,6 @@ struct PrivacySecurityView: View {
     switch kind {
     case .screenRecording: "rectangle.dashed.badge.record"
     case .accessibility: "accessibility"
-    case .automation: "gearshape.2.fill"
     }
   }
 
@@ -596,7 +593,11 @@ struct PrivacyRequestPrompt: View {
           Text(verbatim: purpose)
             .multilineTextAlignment(.center)
         }
-        Text(verbatim: l(request.permission.summary))
+        let detail =
+          request.host == nil
+          ? l(request.permission.summary)
+          : l("Allowing adds the host to the project's network access in the sandbox.")
+        Text(verbatim: detail)
           .font(.callout)
           .foregroundStyle(.secondary)
           .multilineTextAlignment(.center)
@@ -638,6 +639,10 @@ struct PrivacyRequestPrompt: View {
 
   static func requestSentence(for request: PrivacyRequest, using l: PrivacyText) -> String {
     let object = request.object?.name ?? l(request.permission.title)
+    if let host = request.host {
+      return l.format(
+        "“%1$@” wants to connect to “%2$@” from “%3$@”.", request.principal.name, host, object)
+    }
     switch request.level {
     case .readWrite:
       return l.format(

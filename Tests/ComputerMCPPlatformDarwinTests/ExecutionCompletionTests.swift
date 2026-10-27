@@ -9,18 +9,44 @@ import Testing
 // Blocking kernel fixtures share the dispatch thread pool; deadline assertions need each
 // scenario to run without competing blocked fixtures consuming its scheduling budget.
 @Suite(.nativeIntegration, .serialized) struct ExecutionCompletionTests {
-  @Test(arguments: [false, true], [false, true])
-  func confirmationExpiryIdentifiesItsDeadline(cancel: Bool, alreadyExpired: Bool) async throws {
+  @Test(arguments: [false, true])
+  func oneWaiterExpiringLeavesOtherWaitersPending(cancel: Bool) async throws {
     let fixture = try SimulatedExecution(configure: { $0.ignoreKill = true })
-    let deadline = ContinuousClock.now.advanced(by: alreadyExpired ? .zero : .milliseconds(80))
-    let failure = try await fixture.failure {
+    let laterDone = InspectionGate()
+    let unboundedDone = InspectionGate()
+    let later = Task {
+      defer { laterDone.release() }
+      return try await fixture.owner.wait(until: .now.advanced(by: .milliseconds(450)))
+    }
+    let unbounded = Task {
+      defer { unboundedDone.release() }
+      return try await fixture.owner.wait()
+    }
+    await #expect(throws: ExecutionWaitExpired.self) {
+      let deadline = ContinuousClock.now.advanced(by: .milliseconds(150))
       if cancel { return try await fixture.owner.cancel(until: deadline) }
       return try await fixture.owner.wait(until: deadline)
     }
-    #expect(failure.expiredDeadline == deadline)
+    #expect(!laterDone.isReleased)
+    #expect(!unboundedDone.isReleased)
+    #expect(fixture.markerExists)
+    await #expect(throws: ExecutionWaitExpired.self) { try await later.value }
+    #expect(!unboundedDone.isReleased)
+    fixture.clear()
+    #expect(try await unbounded.value.status == 23)
+  }
+
+  @Test(arguments: [false, true], [false, true])
+  func confirmationExpiryRetainsOwnership(cancel: Bool, alreadyExpired: Bool) async throws {
+    let fixture = try SimulatedExecution(configure: { $0.ignoreKill = true })
+    let deadline = ContinuousClock.now.advanced(by: alreadyExpired ? .zero : .milliseconds(80))
+    let expiry = try await fixture.expiry {
+      if cancel { return try await fixture.owner.cancel(until: deadline) }
+      return try await fixture.owner.wait(until: deadline)
+    }
     #expect(fixture.markerExists)
     fixture.clear()
-    #expect(try await failure.ownership.wait(until: .now.advanced(by: .seconds(5))).status == 23)
+    #expect(try await expiry.ownership.wait(until: .now.advanced(by: .seconds(5))).status == 23)
     #expect(!fixture.markerExists)
   }
 
@@ -28,9 +54,7 @@ import Testing
     let fixture = try SimulatedExecution(configure: { $0.omitKernel = true })
     fixture.rootExited()
     fixture.processes.mutate { $0.entries = [:] }
-    let failure = try await fixture.failure {
-      try await fixture.owner.wait(until: .now.advanced(by: .milliseconds(150)))
-    }
+    let failure = try await fixture.terminationFailure(after: .milliseconds(150))
     #expect(failure.reasons.contains { $0.contains("kernproc") })
     #expect(fixture.markerExists)
     fixture.processes.mutate { $0.omitKernel = false }
@@ -47,9 +71,7 @@ import Testing
     })
     fixture.rootExited()
     fixture.processes.mutate { $0.entries[SimulatedExecution.leaf.pid] = nil }
-    let failure = try await fixture.failure {
-      try await fixture.owner.wait(until: .now.advanced(by: .milliseconds(150)))
-    }
+    let failure = try await fixture.terminationFailure(after: .milliseconds(150))
     #expect(failure.reasons.contains { $0.contains("snapshot watermark") })
     #expect(fixture.markerExists)
     fixture.processes.mutate { $0.watermark = uniqueID + 1 }
@@ -60,9 +82,7 @@ import Testing
     let fixture = try SimulatedExecution(configure: { $0.probeFails = true })
     fixture.rootExited()
     fixture.processes.mutate { $0.entries = [:] }
-    let failure = try await fixture.failure {
-      try await fixture.owner.wait(until: .now.advanced(by: .milliseconds(150)))
-    }
+    let failure = try await fixture.terminationFailure(after: .milliseconds(150))
     #expect(failure.reasons.contains { $0.contains("Identity probe failed") })
     #expect(fixture.markerExists)
     fixture.processes.mutate { $0.probeFails = false }
@@ -78,9 +98,7 @@ import Testing
     })
     fixture.rootExited()
     fixture.processes.mutate { $0.entries[SimulatedExecution.leaf.pid] = nil }
-    let failure = try await fixture.failure {
-      try await fixture.owner.wait(until: .now.advanced(by: .milliseconds(150)))
-    }
+    let failure = try await fixture.terminationFailure(after: .milliseconds(150))
     #expect(failure.reasons.contains { $0.contains("changed during membership inspection") })
     #expect(fixture.markerExists)
     fixture.processes.mutate { $0.changeIdentityDuringContains = false }
@@ -90,7 +108,7 @@ import Testing
   @Test func unreadableMemberRetainsOwnershipUntilIdentityCanBeSignalled() async throws {
     let fixture = try SimulatedExecution(configure: { $0.readFails = true })
     fixture.rootExited()
-    _ = try await fixture.failure {
+    _ = try await fixture.expiry {
       try await fixture.owner.cancel(until: .now.advanced(by: .milliseconds(750)))
     }
     #expect(fixture.processes.state.signals.isEmpty)
@@ -115,9 +133,7 @@ import Testing
     let fixture = try SimulatedExecution(configure: { $0.omitSentinel = true })
     fixture.rootExited()
     fixture.processes.mutate { $0.entries = [:] }
-    let failure = try await fixture.failure {
-      try await fixture.owner.wait(until: .now.advanced(by: .milliseconds(150)))
-    }
+    let failure = try await fixture.terminationFailure(after: .milliseconds(150))
     #expect(failure.reasons.contains { $0.contains("did not reach execution sentinel") })
     #expect(fixture.markerExists)
     fixture.processes.mutate { $0.omitSentinel = false }
@@ -128,11 +144,8 @@ import Testing
     let fixture = try SimulatedExecution()
     fixture.rootExited()
     fixture.processes.mutate { $0.sentinelMissing = true }
-    let failure = try await fixture.failure {
-      try await fixture.owner.wait(until: .now.advanced(by: .seconds(3)))
-    }
+    let failure = try await fixture.terminationFailure(after: .seconds(3))
     #expect(failure.reasons.contains { $0.contains("Cannot confirm execution sentinel") })
-    #expect(failure.expiredDeadline == nil)
     try await eventually { fixture.processes.state.signals.contains { $0.1 == SIGKILL } }
     #expect(fixture.markerExists)
     _ = try await fixture.failure {
@@ -157,7 +170,7 @@ import Testing
     fixture.owner.onCancellation { revoked.release() }
     fixture.rootExited()
     try await eventually { gate.entered }
-    _ = try await fixture.failure {
+    _ = try await fixture.expiry {
       try await fixture.owner.wait(until: .now.advanced(by: .milliseconds(80)))
     }
     gate.release()
@@ -174,9 +187,7 @@ import Testing
     let fixture = try SimulatedExecution(configure: { $0.exitingBeforeSZOMB = true })
     fixture.rootExited()
     fixture.processes.mutate { $0.entries = [:] }
-    let failure = try await fixture.failure {
-      try await fixture.owner.wait(until: .now.advanced(by: .milliseconds(150)))
-    }
+    let failure = try await fixture.terminationFailure(after: .milliseconds(150))
     #expect(failure.reasons.contains { $0.contains("zombie membership cannot be classified") })
     #expect(fixture.markerExists)
     fixture.processes.mutate { $0.exitingBeforeSZOMB = false }
@@ -229,9 +240,7 @@ import Testing
       #expect(fixture.processes.state.entries[zombiePID]?.state == .zombie)
       #expect(fixture.processes.state.signals.isEmpty)
     } else {
-      let failure = try await fixture.failure {
-        try await fixture.owner.wait(until: .now.advanced(by: .milliseconds(150)))
-      }
+      let failure = try await fixture.terminationFailure(after: .milliseconds(150))
       if condition == "traced" || condition == "bsd-unreadable" {
         #expect(failure.reasons.contains { $0.contains("zombie membership cannot be classified") })
         #expect(fixture.processes.state.entries[zombiePID]?.state == .zombie)
@@ -285,9 +294,7 @@ import Testing
       }
     }
     let started = ContinuousClock.now
-    let failure = try await fixture.failure {
-      try await fixture.owner.cancel(until: .now.advanced(by: .seconds(3)))
-    }
+    let failure = try await fixture.terminationFailure(after: .seconds(3))
     #expect(started.duration(to: .now) < .seconds(6))
     #expect(!failure.bestEffort)
     #expect(!failure.members.isEmpty)
@@ -310,15 +317,11 @@ import Testing
   func waitDeadlineAndFullAccessCancellationAreBounded(sandboxed: Bool) async throws {
     let fixture = try SimulatedExecution(sandboxed: sandboxed)
     fixture.processes.mutate { $0.failedSignal = SIGKILL }
-    let waited = try await fixture.failure {
+    _ = try await fixture.expiry {
       try await fixture.owner.wait(until: .now.advanced(by: .milliseconds(80)))
     }
-    #expect(waited.bestEffort == !sandboxed)
-    #expect(!waited.members.isEmpty)
     #expect(fixture.processes.state.signals.isEmpty)
-    let cancelled = try await fixture.failure {
-      try await fixture.owner.cancel(until: .now.advanced(by: .seconds(3)))
-    }
+    let cancelled = try await fixture.terminationFailure(after: .seconds(3))
     #expect(cancelled.bestEffort == !sandboxed)
     #expect(
       cancelled.members.contains { $0.reason.contains("errno 1") }
@@ -327,20 +330,21 @@ import Testing
     #expect(try await fixture.owner.wait(until: .now.advanced(by: .seconds(2))).status == 23)
   }
 
-  @Test func earliestConcurrentDeadlineLeavesSharedCleanupRunning() async throws {
-    let fixture = try SimulatedExecution()
-    async let first = fixture.failure {
-      try await fixture.owner.wait(until: .now.advanced(by: .milliseconds(100)))
+  @Test func terminationBudgetFailureReachesEveryPendingWaiter() async throws {
+    let fixture = try SimulatedExecution(configure: { $0.ignoreKill = true })
+    let deadline = ContinuousClock.now.advanced(by: .milliseconds(150))
+    fixture.owner.requestCancellation(until: deadline)
+    async let simultaneous = fixture.failure { try await fixture.owner.wait(until: deadline) }
+    async let later = fixture.failure {
+      try await fixture.owner.wait(until: .now.advanced(by: .seconds(2)))
     }
-    async let second = fixture.failure {
-      try await fixture.owner.cancel(until: .now.advanced(by: .seconds(2)))
-    }
-    let failures = try await (first, second)
-    #expect(!failures.0.members.isEmpty && !failures.1.members.isEmpty)
+    async let unbounded = fixture.failure { try await fixture.owner.wait() }
+    let failures = try await (simultaneous, later, unbounded)
+    #expect(
+      !failures.0.members.isEmpty && !failures.1.members.isEmpty && !failures.2.members.isEmpty)
+    #expect(fixture.markerExists)
     fixture.clear()
-    try await eventually { !fixture.markerExists }
-    _ = try await fixture.owner.wait(until: .now.advanced(by: .seconds(2)))
-    #expect(!fixture.markerExists)
+    #expect(try await fixture.owner.wait().status == 23)
   }
 
   @Test func identityReuseIsExitOfOriginalMemberWithoutSignallingReplacement() async throws {
@@ -459,9 +463,7 @@ import Testing
     let fixture = try SimulatedExecution(configure: { $0.systemExitOnList = Int.max })
     fixture.rootExited()
     let start = ContinuousClock.now
-    let failure = try await fixture.failure {
-      try await fixture.owner.cancel(until: .now.advanced(by: .milliseconds(750)))
-    }
+    let failure = try await fixture.terminationFailure(after: .milliseconds(750))
     #expect(start.duration(to: .now) < .seconds(2))
     #expect(failure.reasons.contains { $0.contains("disappeared during classification") })
     #expect(fixture.processes.state.signals.contains { $0.1 == SIGKILL })
@@ -500,9 +502,7 @@ import Testing
     let fixture = try SimulatedExecution()
     fixture.rootExited()
     fixture.processes.mutate { $0.continuousChurn = true }
-    let failure = try await fixture.failure {
-      try await fixture.owner.cancel(until: .now.advanced(by: .milliseconds(750)))
-    }
+    let failure = try await fixture.terminationFailure(after: .milliseconds(750))
     #expect(!failure.reasons.isEmpty)
     #expect(fixture.markerExists)
     let scans = fixture.processes.state.listCount
@@ -532,9 +532,7 @@ import Testing
     fixture.owner.requestCancellation()
     try await eventually { gate.entered }
     let started = ContinuousClock.now
-    let failure = try await fixture.failure {
-      try await fixture.owner.cancel(until: .now.advanced(by: .milliseconds(120)))
-    }
+    let failure = try await fixture.terminationFailure(after: .milliseconds(120))
     let elapsed = started.duration(to: .now)
     #expect(elapsed < .milliseconds(500))
     #expect(!failure.members.isEmpty)
@@ -593,15 +591,11 @@ import Testing
       }
     }
     try await eventually { late.entered }
-    _ = try await fixture.failure {
-      try await fixture.owner.wait(until: .now.advanced(by: .milliseconds(80)))
-    }
+    _ = try await fixture.terminationFailure(after: .milliseconds(80))
     late.release()
     try await eventually { fresh.entered }
     #expect(fixture.markerExists)
-    _ = try await fixture.failure {
-      try await fixture.owner.wait(until: .now.advanced(by: .milliseconds(80)))
-    }
+    _ = try await fixture.terminationFailure(after: .milliseconds(80))
     #expect(fixture.markerExists)
     fresh.release()
     try await eventually { !fixture.markerExists }
@@ -618,7 +612,7 @@ import Testing
       $0.zombieOnKill = true
     })
     fixture.rootExited()
-    _ = try await fixture.failure {
+    _ = try await fixture.expiry {
       try await fixture.owner.cancel(until: .now.advanced(by: .milliseconds(750)))
     }
     #expect(fixture.processes.state.entries[SimulatedExecution.leaf.pid]?.state == .zombie)
@@ -729,9 +723,7 @@ import Testing
           group: SimulatedExecution.root.pid, session: SimulatedExecution.root.pid, state: .running)
       })
     fixture.rootExited()
-    let failure = try await fixture.failure {
-      try await fixture.owner.cancel(until: .now.advanced(by: .milliseconds(150)))
-    }
+    let failure = try await fixture.terminationFailure(after: .milliseconds(150))
     #expect(failure.bestEffort)
     #expect(failure.reasons.contains { $0.contains("ownership anchor") })
     #expect(fixture.processes.state.signals.isEmpty)
@@ -750,9 +742,7 @@ import Testing
           group: SimulatedExecution.root.pid, session: SimulatedExecution.root.pid, state: .running)
       })
     fixture.rootExited()
-    let failure = try await fixture.failure {
-      try await fixture.owner.cancel(until: .now.advanced(by: .milliseconds(150)))
-    }
+    let failure = try await fixture.terminationFailure(after: .milliseconds(150))
     #expect(failure.bestEffort)
     #expect(fixture.processes.state.entries[SimulatedExecution.leaf.pid]?.group == 0)
     #expect(!fixture.processes.state.signals.contains { $0.0 == replacement })
@@ -771,7 +761,7 @@ import Testing
     }
     try await eventually { gate.entered }
     fixture.clear()
-    _ = try await fixture.failure {
+    _ = try await fixture.expiry {
       try await fixture.owner.wait(until: .now.advanced(by: .milliseconds(650)))
     }
     #expect(fixture.markerExists == sandboxed)
@@ -814,6 +804,19 @@ final class SimulatedExecution: Sendable {
   func clear() {
     processes.mutate { $0 = .init(entries: [:]) }
     owner.exited(.success(.init(status: 23)))
+  }
+
+  func terminationFailure(after duration: Duration) async throws -> ExecutionCompletionFailure {
+    owner.requestCancellation(until: .now.advanced(by: duration))
+    return try await failure { try await owner.wait() }
+  }
+
+  func expiry(_ operation: () async throws -> ExecutionExit) async throws -> ExecutionWaitExpired {
+    do {
+      _ = try await operation()
+      Issue.record("Expected wait expiry")
+      throw CancellationError()
+    } catch let expiry as ExecutionWaitExpired { return expiry }
   }
 
   func failure(_ operation: () async throws -> ExecutionExit) async throws

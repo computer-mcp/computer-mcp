@@ -31,7 +31,7 @@ final class DarwinExecutionOwnership: ExecutionOwnership, @unchecked Sendable {
   private var completion: Result<ExecutionExit, Error>?
   private var startup: CheckedContinuation<any ExecutionOwnership, Error>?
   private var waiters:
-    [(deadline: ContinuousClock.Instant, continuation: CheckedContinuation<ExecutionExit, Error>)] =
+    [(deadline: ContinuousClock.Instant?, continuation: CheckedContinuation<ExecutionExit, Error>)] =
       []
 
   init(
@@ -253,18 +253,28 @@ final class DarwinExecutionOwnership: ExecutionOwnership, @unchecked Sendable {
   }
 
   package func cancel(until deadline: ContinuousClock.Instant) async throws -> ExecutionExit {
-    requestCancellation(until: deadline)
+    requestCancellation()
     return try await wait(until: deadline)
   }
 
   package func wait(until deadline: ContinuousClock.Instant) async throws -> ExecutionExit {
+    try await waitForCompletion(until: deadline)
+  }
+
+  package func wait() async throws -> ExecutionExit {
+    try await waitForCompletion(until: nil)
+  }
+
+  private func waitForCompletion(until deadline: ContinuousClock.Instant?) async throws
+    -> ExecutionExit
+  {
     try await withTaskCancellationHandler {
       try await withCheckedThrowingContinuation { continuation in
         lock.withLock {
           if let completion {
             continuation.resume(with: completion)
-          } else if ContinuousClock.now >= deadline {
-            continuation.resume(throwing: failure(expiredDeadline: deadline))
+          } else if let deadline, ContinuousClock.now >= deadline {
+            continuation.resume(throwing: ExecutionWaitExpired(ownership: self))
           } else {
             waiters.append((deadline, continuation))
             startMonitor()
@@ -272,7 +282,7 @@ final class DarwinExecutionOwnership: ExecutionOwnership, @unchecked Sendable {
         }
       }
     } onCancel: {
-      requestCancellation(until: min(deadline, .now.advanced(by: .seconds(5))))
+      requestCancellation()
     }
   }
 
@@ -287,8 +297,7 @@ final class DarwinExecutionOwnership: ExecutionOwnership, @unchecked Sendable {
     }
     let deadline = min(
       ContinuousClock.now.advanced(by: .seconds(1)),
-      cancellationDeadline ?? .now.advanced(by: .seconds(1)),
-      waiters.map(\.deadline).min() ?? .now.advanced(by: .seconds(1)))
+      cancellationDeadline ?? .now.advanced(by: .seconds(1)))
     let generation = self.generation
     let initial = state
     let started = cancellationStarted
@@ -297,7 +306,6 @@ final class DarwinExecutionOwnership: ExecutionOwnership, @unchecked Sendable {
     worker.async { [self] in
       var scan = inspect(initial, started: started, deadline: deadline, generation: generation)
       let handlers: [@Sendable () -> Void]? = lock.withLock {
-        expire()
         inspecting = false
         // Exit, cancellation and membership requests that arrived during this round need
         // a fresh observation immediately. Timer ticks alone must not create a busy loop.
@@ -323,6 +331,7 @@ final class DarwinExecutionOwnership: ExecutionOwnership, @unchecked Sendable {
           startup?.resume(throwing: failure)
           startup = nil
         }
+        expire()
         // A timed-out query cannot publish observations, retire markers or release resources.
         guard self.generation == generation, ContinuousClock.now < deadline,
           completion == nil
@@ -368,9 +377,7 @@ final class DarwinExecutionOwnership: ExecutionOwnership, @unchecked Sendable {
     return scan
   }
 
-  private func failure(expiredDeadline: ContinuousClock.Instant? = nil)
-    -> ExecutionCompletionFailure
-  {
+  private func failure() -> ExecutionCompletionFailure {
     ExecutionCompletionFailure(
       ownership: self,
       members: state.known.subtracting(state.exitedMembers).map {
@@ -378,26 +385,29 @@ final class DarwinExecutionOwnership: ExecutionOwnership, @unchecked Sendable {
       }.sorted { $0.process.processID < $1.process.processID },
       reasons: state.scanReasons + (inspecting ? ["Process inspection is pending"] : [])
         + (rootExit == nil ? ["Root exit has not been collected"] : []),
-      bestEffort: bestEffort, expiredDeadline: expiredDeadline)
+      bestEffort: bestEffort)
   }
 
   /// Failure retains ownership. Cleanup keeps observing and, after cancellation, killing members;
   /// sandbox resources require a fresh, fully classified snapshot before retirement.
   private func expire() {
     let now = ContinuousClock.now
-    guard
-      let deadline = (waiters.map(\.deadline) + [cancellationDeadline].compactMap { $0 }).min(),
-      now >= deadline
-    else { return }
-    let failure = failure(expiredDeadline: deadline)
-    generation &+= 1
-    state.complete = false
-    cancellationDeadline = nil
-    let pending = waiters
-    waiters.removeAll()
-    for waiter in pending { waiter.continuation.resume(throwing: failure) }
-    startup?.resume(throwing: failure)
-    startup = nil
+    if let deadline = cancellationDeadline, now >= deadline {
+      let failure = failure()
+      generation &+= 1
+      state.complete = false
+      cancellationDeadline = nil
+      let pending = waiters
+      waiters.removeAll()
+      for waiter in pending { waiter.continuation.resume(throwing: failure) }
+      startup?.resume(throwing: failure)
+      startup = nil
+    }
+    let expired = waiters.filter { $0.deadline.map { now >= $0 } == true }
+    waiters.removeAll { $0.deadline.map { now >= $0 } == true }
+    for waiter in expired {
+      waiter.continuation.resume(throwing: ExecutionWaitExpired(ownership: self))
+    }
   }
 
   private func finish(_ result: Result<ExecutionExit, Error>) {

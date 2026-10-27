@@ -1031,7 +1031,7 @@ package final class ShellSessionRuntime: ShellManaging, Sendable {
       // ownership and retries; only confirmed completion can retire this session.
       var outcome: ExecutionExit?
       while outcome == nil {
-        do { outcome = try await ownership.wait(until: .now.advanced(by: .seconds(120))) } catch let
+        do { outcome = try await ownership.wait() } catch let
           failure as ExecutionCompletionFailure
         {
           session.recordStreamError(failure.description)
@@ -1052,6 +1052,8 @@ package final class ShellSessionRuntime: ShellManaging, Sendable {
             confirmed = true
           } catch let failure as ExecutionCompletionFailure {
             session.recordStreamError(failure.description)
+          } catch is ExecutionWaitExpired {
+            continue
           } catch {
             session.recordStreamError(String(describing: error))
             confirmed = true

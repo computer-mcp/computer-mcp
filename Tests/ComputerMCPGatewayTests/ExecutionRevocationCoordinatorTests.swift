@@ -18,9 +18,10 @@ import Testing
 #endif
 
 @Suite struct ExecutionRevocationCoordinatorTests {
-  @Test(.timeLimit(.minutes(1)), arguments: [false, true])
-  func reconciliationFailureDuringCancellationPreservesItsCause(ownershipFailure: Bool) async throws
-  {
+  @Test(.timeLimit(.minutes(1)), arguments: [false, true], [false, true])
+  func reconciliationFailureDuringCancellationPreservesItsCause(
+    ownershipFailure: Bool, failureFirst: Bool
+  ) async throws {
     let f = try ExecutionFixture()
     let coordinator = try f.coordinator()
     try await coordinator.recover()
@@ -36,10 +37,9 @@ import Testing
       contexts.append(context)
     }
     try await coordinator.reconcile()
-    // Exercise the final record so a subsequent loop's deadline check cannot
-    // replace the ownership error before reconciliation classifies it.
     let targetID = try f.paths.store.readWithDatabase { database, _ in
-      try #require(try ExecutionRuntimeRecord.all(database).last?.id)
+      let records = try ExecutionRuntimeRecord.all(database)
+      return try #require((failureFirst ? records.first : records.last)?.id)
     }
     let target = try #require(executions[targetID])
     let unrelated = try #require(executions.first { $0.key != targetID }?.value)
@@ -47,20 +47,20 @@ import Testing
     await entered.release()
     let background = ReconciliationTestGate()
     let deadline = ContinuousClock.now.advanced(by: .seconds(1))
-    target.setCancellation { supplied in
-      guard supplied == deadline else {
-        await background.wait()
-        return
-      }
-      if !(await entered.entered) {
-        #expect(ContinuousClock.now < supplied)
+    target.setCancellation { _ in
+      let first = !(await entered.entered)
+      if first {
+        #expect(ContinuousClock.now < deadline)
         await entered.wait()
+        try await Task.sleep(until: deadline, clock: .continuous)
       }
-      try await Task.sleep(until: supplied, clock: .continuous)
-      throw ExecutionCompletionFailure(
-        ownership: target, members: [],
-        reasons: [ownershipFailure ? "Ownership evidence was lost" : "Completion is pending"],
-        bestEffort: false, expiredDeadline: ownershipFailure ? nil : supplied)
+      if ownershipFailure {
+        throw ExecutionCompletionFailure(
+          ownership: target, members: [], reasons: ["Ownership evidence was lost"],
+          bestEffort: false)
+      }
+      if first { throw ExecutionWaitExpired(ownership: target) }
+      await background.wait()
     }
     defer {
       target.setCancellation(nil)
@@ -85,7 +85,11 @@ import Testing
     if ownershipFailure {
       await #expect(throws: ExecutionCompletionFailure.self) { try await classification.value }
     } else {
-      await #expect(throws: WorktreeError.self) { try await classification.value }
+      let retryDeadline = ContinuousClock.now.advanced(by: .seconds(2))
+      while !(await background.entered), ContinuousClock.now < retryDeadline {
+        try await Task.sleep(for: .milliseconds(5))
+      }
+      try #require(await background.entered)
     }
     #expect(unrelated.ended == ownershipFailure)
     #expect(unrelated.cancellationDeadlines.isEmpty == !ownershipFailure)
@@ -100,6 +104,7 @@ import Testing
     }
     target.setCancellation(nil)
     await background.release()
+    if !ownershipFailure { try await classification.value }
     try? await coordinator.reconcile()
     try await coordinator.stopExecutions(Set(executions.keys))
   }
@@ -127,7 +132,7 @@ import Testing
   }
 
   @Test(arguments: [false, true])
-  func worktreeTerminationUsesOneDeadlineForEveryWriter(expire: Bool) async throws {
+  func worktreeTerminationDeadlineBoundsCallerWhileCleanupContinues(expire: Bool) async throws {
     let f = try ExecutionFixture()
     let admission = try f.worktreeAdmission()
     let coordinator = try f.coordinator()
@@ -144,7 +149,7 @@ import Testing
         if expire {
           try await Task.sleep(
             until: min(deadline, .now.advanced(by: .milliseconds(300))), clock: .continuous)
-          throw CancellationError()
+          throw ExecutionWaitExpired(ownership: owner)
         }
       }
     }
@@ -157,7 +162,7 @@ import Testing
           admission, operationID: operation, until: deadline)
       }
       #expect(start.duration(to: .now) < .milliseconds(700))
-      #expect(f.platform.owners.contains { $0.cancellationDeadlines.contains(deadline) })
+      #expect(f.platform.owners.contains { !$0.cancellationDeadlines.isEmpty })
       #expect(throws: WorktreeError.self) { try admission.requireDrained(operationID: operation) }
       #expect(throws: WorktreeError.self) {
         try admission.reserve(ownerID: UUID(), executionID: UUID())
@@ -165,7 +170,7 @@ import Testing
     } else {
       try await coordinator.terminateWorktreeWriters(
         admission, operationID: operation, until: deadline)
-      #expect(f.platform.owners.allSatisfy { $0.cancellationDeadlines.contains(deadline) })
+      #expect(f.platform.owners.allSatisfy { $0.ended })
       try admission.requireDrained(operationID: operation)
     }
     for owner in f.platform.owners {
@@ -1471,9 +1476,7 @@ private final class DurableTestOwnership: ExecutionOwnership, @unchecked Sendabl
   func wait(until deadline: ContinuousClock.Instant) async throws -> ExecutionExit {
     while !ended {
       if ContinuousClock.now >= deadline {
-        throw ExecutionCompletionFailure(
-          ownership: self, members: [], reasons: ["pending"], bestEffort: false,
-          expiredDeadline: deadline)
+        throw ExecutionWaitExpired(ownership: self)
       }
       try await Task.sleep(for: .milliseconds(5))
     }

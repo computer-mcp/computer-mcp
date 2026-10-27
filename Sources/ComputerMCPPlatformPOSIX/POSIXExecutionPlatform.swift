@@ -201,9 +201,7 @@
         if let error = lock.withLock({ failure }) { throw error }
         if let result = lock.withLock({ exit }) { return result }
         if ContinuousClock.now >= deadline {
-          throw ExecutionCompletionFailure(
-            ownership: self, members: [], reasons: ["POSIX execution remains active"],
-            bestEffort: true)
+          throw ExecutionWaitExpired(ownership: self)
         }
         if Task.isCancelled {
           let callbacks = lock.withLock {

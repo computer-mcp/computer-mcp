@@ -351,13 +351,16 @@ is inherited through fork, only members can create members, and the launcher has
 stopped creating processes for this execution; therefore none can appear after t.
 
 `cancel(until:)` and `wait(until:)` accept absolute `ContinuousClock` deadlines.
-Their convenience defaults are 5 seconds and 120 seconds respectively; cancellation
-includes its grace, kill and confirmation stages in that total. Signal
+Each deadline ends only that caller's wait with `ExecutionWaitExpired`, retaining
+its ownership handle. `cancel()` waits up to 5 seconds; `wait()` has no caller
+deadline. Cancellation starts an independent 5-second termination attempt covering
+grace, kill and confirmation; exhausting that budget is an ownership failure. Signal
 retries and process enumeration also have bounded work. Kernel queries and signals
 run on a serial worker without holding the ownership lock; a separate timer advances
-deadlines even when libproc waits for exec. Concurrent callers share confirmation:
-the earliest deadline fails all current waiters and invalidates in-flight inspection.
-Late results cannot publish exit observations or release resources. A late sentinel
+deadlines even when libproc waits for exec. Other waiters and in-flight inspection
+continue when one caller's wait expires. Ownership failures reach all pending waiters.
+Inspection and termination budgets invalidate late observations; caller wait deadlines
+do not. Late results cannot publish exit observations or release resources. A late sentinel
 failure still revokes egress and starts KILL cleanup because it only reduces authority. A blocked worker must return
 before the next scan starts, bounding outstanding inspection work per execution.
 `ExecutionCompletionFailure` reports remaining or unconfirmed identities, reasons,

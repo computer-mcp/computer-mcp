@@ -300,13 +300,11 @@ package final class ExecutionRevocationCoordinator: ExecutionRecoveryAuthorizing
     _ ids: Set<UUID>, until deadline: ContinuousClock.Instant? = nil
   ) async throws {
     try await ExecutionReconciliation().run(until: deadline) { [self] in
-      try await stopExecutionResources(ids, until: deadline)
+      try await stopExecutionResources(ids)
     }
   }
 
-  private func stopExecutionResources(
-    _ ids: Set<UUID>, until deadline: ContinuousClock.Instant?
-  ) async throws {
+  private func stopExecutionResources(_ ids: Set<UUID>) async throws {
     guard !ids.isEmpty else { return }
     let resources = publication.withLock {
       lock.withLock {
@@ -328,17 +326,15 @@ package final class ExecutionRevocationCoordinator: ExecutionRecoveryAuthorizing
     do { try persistOwnerStops(ids) } catch { firstError = error }
     for cancellation in resources.cancellations { Task.detached { await cancellation() } }
     for proxy in resources.proxies {
-      try checkTerminationDeadline(deadline)
       do { try await proxy.revoke() } catch { firstError = firstError ?? error }
     }
     for (executionID, child, ownership) in resources.children {
-      try checkTerminationDeadline(deadline)
       do {
-        _ = try await ownership.cancel(until: deadline ?? .now.advanced(by: .seconds(5)))
+        try await cancelOwnedExecution(ownership)
         try confirmChild(child, executionID: executionID)
       } catch { firstError = firstError ?? error }
     }
-    do { try await reconcile(until: deadline) } catch { firstError = firstError ?? error }
+    do { try await reconcile() } catch { firstError = firstError ?? error }
     if let firstError { throw firstError }
   }
 
@@ -394,11 +390,13 @@ package final class ExecutionRevocationCoordinator: ExecutionRecoveryAuthorizing
     }
   }
 
-  private func checkTerminationDeadline(_ deadline: ContinuousClock.Instant?) throws {
-    guard let deadline else { return }
-    try Task.checkCancellation()
-    guard ContinuousClock.now < deadline else {
-      throw ExecutionReconciliation.DeadlineExpired()
+  /// Cleanup belongs to the execution owner, independently of any caller's wait.
+  private func cancelOwnedExecution(_ ownership: any ExecutionOwnership) async throws {
+    while true {
+      do {
+        _ = try await ownership.cancel()
+        return
+      } catch is ExecutionWaitExpired { continue }
     }
   }
 
@@ -437,17 +435,9 @@ package final class ExecutionRevocationCoordinator: ExecutionRecoveryAuthorizing
   package func reconcile(until deadline: ContinuousClock.Instant? = nil) async throws {
     try await reconciliation.run(until: deadline) { [self] in
       do {
-        try await reconcileResources(until: deadline)
+        try await reconcileResources()
         try resumeAfterReconciliationIfDrained()
       } catch {
-        // A caller's exhausted budget is not an infrastructure failure. Durable
-        // stop intent remains available to the next monitoring pass.
-        if error is ExecutionReconciliation.DeadlineExpired { throw error }
-        if let deadline, let failure = error as? ExecutionCompletionFailure,
-          failure.expiredDeadline == deadline
-        {
-          throw ExecutionReconciliation.DeadlineExpired()
-        }
         lock.withLock { ready = false }
         let resources = lock.withLock {
           (
@@ -462,7 +452,7 @@ package final class ExecutionRevocationCoordinator: ExecutionRecoveryAuthorizing
           try? await proxy.revoke()
         }
         for ownership in resources.0 {
-          _ = try? await ownership.cancel(until: deadline ?? .now.advanced(by: .seconds(5)))
+          try? await cancelOwnedExecution(ownership)
         }
         throw error
       }
@@ -745,8 +735,7 @@ package final class ExecutionRevocationCoordinator: ExecutionRecoveryAuthorizing
     }
   }
 
-  private func reconcileResources(until deadline: ContinuousClock.Instant?) async throws {
-    try checkTerminationDeadline(deadline)
+  private func reconcileResources() async throws {
     try persistOwnerStops(lock.withLock { pendingOwnerStops })
     try refreshPolicy?()
     let pending = lock.withLock {
@@ -759,7 +748,7 @@ package final class ExecutionRevocationCoordinator: ExecutionRecoveryAuthorizing
     }
     for id in pending.0 { try persistAdmissionClosure(id) }
     for (id, executionID) in pending.1 { try persistWorkCompletion(id, executionID: executionID) }
-    try await reconcileIndependentOwnership(until: deadline)
+    try await reconcileIndependentOwnership()
     func validate(_ ledger: inout PermissionLedger) {
       // This reconciles every live proof and queues dependent terminations in
       // one fixed-point pass; individual caller access is checked at each use.
@@ -785,7 +774,7 @@ package final class ExecutionRevocationCoordinator: ExecutionRecoveryAuthorizing
     }
     var firstError: (any Error)?
     for record in snapshot.0 {
-      try checkTerminationDeadline(deadline)
+      if let firstError { throw firstError }
       do {
         let execution = snapshot.1.executions[record.id]
         if let execution {
@@ -831,9 +820,8 @@ package final class ExecutionRevocationCoordinator: ExecutionRecoveryAuthorizing
                 && pendingChildren[record.id]?.contains(child) == true
             })
           {
-            try checkTerminationDeadline(deadline)
             if let ownership = lock.withLock({ children[child] }) {
-              _ = try await ownership.cancel(until: deadline ?? .now.advanced(by: .seconds(5)))
+              try await cancelOwnedExecution(ownership)
             } else if let recovery = entry.recovery {
               guard let boot = launcher.bootSessionID else {
                 throw ExecutionEnvironmentError.unavailable("Recovery boot identity is unavailable")
@@ -841,7 +829,7 @@ package final class ExecutionRevocationCoordinator: ExecutionRecoveryAuthorizing
               if record.boot == boot {
                 let ownership = try await launcher.recover(recovery)
                 lock.withLock { children[child] = ownership }
-                _ = try await ownership.cancel(until: deadline ?? .now.advanced(by: .seconds(5)))
+                try await cancelOwnedExecution(ownership)
               }
             } else if record.ownerID == ownerID {
               // A current launch may still be moving from reservation to its
@@ -941,12 +929,10 @@ package final class ExecutionRevocationCoordinator: ExecutionRecoveryAuthorizing
     if let firstError { throw firstError }
   }
 
-  private func reconcileIndependentOwnership(until deadline: ContinuousClock.Instant?) async throws
-  {
-    try await reconcileOrphanedProxies(until: deadline)
+  private func reconcileIndependentOwnership() async throws {
+    try await reconcileOrphanedProxies()
     let records = try journal.all()
     for entry in records {
-      try checkTerminationDeadline(deadline)
       let orphaned = try store.readWithDatabase { database, ledger in
         let record = try ExecutionRuntimeRecord.load(entry.execution, database)
         return record?.children[entry.child] == nil || ledger.executions[entry.execution] == nil
@@ -964,7 +950,7 @@ package final class ExecutionRevocationCoordinator: ExecutionRecoveryAuthorizing
             ownership = try await launcher.recover(entry.recovery)
             lock.withLock { children[entry.child] = ownership }
           }
-          _ = try await ownership.cancel(until: deadline ?? .now.advanced(by: .seconds(5)))
+          try await cancelOwnedExecution(ownership)
         }
         try confirmChild(entry.child, executionID: entry.execution)
       }
@@ -1017,10 +1003,9 @@ package final class ExecutionRevocationCoordinator: ExecutionRecoveryAuthorizing
     }
   }
 
-  private func reconcileOrphanedProxies(until deadline: ContinuousClock.Instant?) async throws {
+  private func reconcileOrphanedProxies() async throws {
     let candidates = lock.withLock { Array(proxies.keys) }
     for id in candidates {
-      try checkTerminationDeadline(deadline)
       let orphaned = try store.readWithDatabase { database, _ in
         try ExecutionRuntimeRecord.load(id, database) == nil
       }
@@ -1038,8 +1023,7 @@ package final class ExecutionRevocationCoordinator: ExecutionRecoveryAuthorizing
       }
       try await resources.0?.revoke()
       for (child, ownership) in resources.1 {
-        try checkTerminationDeadline(deadline)
-        _ = try await ownership.cancel(until: deadline ?? .now.advanced(by: .seconds(5)))
+        try await cancelOwnedExecution(ownership)
         try confirmChild(child, executionID: id)
       }
       let receipts = try journal.all().filter { $0.execution == id }
@@ -1134,8 +1118,6 @@ struct ExecutionRuntimeRecord: Codable {
 }
 
 private actor ExecutionReconciliation {
-  struct DeadlineExpired: Error {}
-
   private var current: (id: UUID, task: Task<Void, any Error>)?
 
   func run(
@@ -1164,11 +1146,7 @@ private actor ExecutionReconciliation {
       }
       try Task.checkCancellation()
     }
-    do {
-      try await work.task.value
-    } catch is DeadlineExpired {
-      throw WorktreeError.busy("Worktree writer termination is incomplete.")
-    }
+    try await work.task.value
   }
 }
 

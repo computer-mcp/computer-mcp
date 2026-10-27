@@ -211,7 +211,7 @@ import Testing
     do {
       _ = try await handle.wait(until: .now.advanced(by: .milliseconds(150)))
       Issue.record("Unreaped member must prevent completion")
-    } catch is ExecutionCompletionFailure {}
+    } catch is ExecutionWaitExpired {}
     #expect(try DarwinExecutionProcessTable.system.read(leaf.identity.pid)?.state == .zombie)
     try fixture.files.write("worktree/finish", "go")
     #expect(try await handle.wait(until: .now.advanced(by: .seconds(5))).status == 23)
@@ -261,7 +261,7 @@ import Testing
     do {
       _ = try await owner.wait(until: .now.advanced(by: .milliseconds(200)))
       Issue.record("Last unreaped member must prevent completion")
-    } catch is ExecutionCompletionFailure {}
+    } catch is ExecutionWaitExpired {}
     #expect(try DarwinExecutionProcessTable.system.read(identity.pid)?.state == .zombie)
     member = nil
     #expect(DarwinProcessIdentity.current(pid: identity.pid, includingZombies: true) == nil)

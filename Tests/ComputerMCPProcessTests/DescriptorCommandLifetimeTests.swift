@@ -11,12 +11,12 @@ import Testing
 #endif
 
 struct DescriptorCommandLifetimeTests {
-  @Test(arguments: [false, true])
-  func failedConfirmationRetainsResources(startFails: Bool) throws {
+  @Test(arguments: [false, true], [false, true])
+  func unconfirmedCompletionRetainsResources(startFails: Bool, waitExpires: Bool) throws {
     let temporary = try ScopedTemporaryDirectory()
     let output = open("/dev/null", O_WRONLY | O_CLOEXEC)
     defer { close(output) }
-    let platform = RetryingDescriptorPlatform(startFails: startFails)
+    let platform = RetryingDescriptorPlatform(startFails: startFails, waitExpires: waitExpires)
     let runner = ManagedCommandRunner(
       launcher: ExecutionLauncher(platform: platform))
     try withCommandAdministration(readOnly: true, workingDirectory: temporary.url) {
@@ -39,9 +39,13 @@ private final class RetryingDescriptorPlatform: ExecutionPlatform, @unchecked Se
   private let lock = NSLock()
   private var value: RetryingDescriptorOwnership?
   let startFails: Bool
+  let waitExpires: Bool
   var owner: RetryingDescriptorOwnership? { lock.withLock { value } }
 
-  init(startFails: Bool) { self.startFails = startFails }
+  init(startFails: Bool, waitExpires: Bool) {
+    self.startFails = startFails
+    self.waitExpires = waitExpires
+  }
 
   func start(
     _ command: ExecutionCommand, sandbox: SandboxConfiguration?, method: ExecutionLaunchMethod,
@@ -49,7 +53,8 @@ private final class RetryingDescriptorPlatform: ExecutionPlatform, @unchecked Se
     bindOwnership: @Sendable (any ExecutionOwnership) -> Void
   ) async throws -> any ExecutionOwnership {
     let owner = RetryingDescriptorOwnership(
-      home: try #require(command.environment["HOME"]), output: output, error: error)
+      home: try #require(command.environment["HOME"]), output: output, error: error,
+      waitExpires: waitExpires)
     lock.withLock { value = owner }
     bindOwnership(owner)
     if startFails { throw ExecutionEnvironmentError.launchFailed("fixture") }
@@ -63,10 +68,12 @@ private final class RetryingDescriptorOwnership: ExecutionOwnership, @unchecked 
   let home: String
   private let output: Int32
   private let error: Int32
+  private let waitExpires: Bool
   var cancellations: Int { lock.withLock { attempts } }
 
-  init(home: String, output: Int32, error: Int32) {
+  init(home: String, output: Int32, error: Int32, waitExpires: Bool) {
     self.home = home
+    self.waitExpires = waitExpires
     // Model the platform's ownership of duplicated child stream descriptors.
     self.output = dup(output)
     self.error = dup(error)
@@ -96,6 +103,7 @@ private final class RetryingDescriptorOwnership: ExecutionOwnership, @unchecked 
       return attempts
     }
     if attempt == 1 {
+      if waitExpires { throw ExecutionWaitExpired(ownership: self) }
       throw ExecutionCompletionFailure(
         ownership: self, members: [], reasons: ["fixture"], bestEffort: false)
     }

@@ -232,6 +232,8 @@ package struct DarwinExecutionPlatform: ExecutionPlatform {
       if Task.isCancelled {
         do { _ = try await ownership.cancel() } catch let failure as ExecutionCompletionFailure {
           throw failure
+        } catch let expiry as ExecutionWaitExpired {
+          throw expiry
         } catch {}
         throw CancellationError()
       }

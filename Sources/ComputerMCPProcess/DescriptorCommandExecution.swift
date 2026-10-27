@@ -85,7 +85,7 @@ internal enum DescriptorCommandExecution {
         var timedOut = false
         do {
           exit = try await handle.wait(until: deadline)
-        } catch is ExecutionCompletionFailure where ContinuousClock.now >= deadline {
+        } catch is ExecutionWaitExpired {
           timedOut = true
           exit = try await cancelAndConfirm(handle)
         }
@@ -124,6 +124,8 @@ internal enum DescriptorCommandExecution {
     while true {
       do { return try await owner.cancel() } catch is ExecutionCompletionFailure {
         // Borrowed descriptors and sandbox paths remain live until termination is confirmed.
+      } catch is ExecutionWaitExpired {
+        continue
       }
     }
   }

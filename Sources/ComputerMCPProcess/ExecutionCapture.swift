@@ -88,6 +88,8 @@ extension ExecutionOwnership {
         return
       } catch is ExecutionCompletionFailure {
         continue
+      } catch is ExecutionWaitExpired {
+        continue
       } catch {
         return
       }

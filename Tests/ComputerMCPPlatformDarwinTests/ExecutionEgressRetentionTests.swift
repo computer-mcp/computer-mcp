@@ -19,15 +19,17 @@ import Testing
       $0.ignoreKill = true
       $0.sentinelMissing = lostSentinel
     }
-    let failure = try await fixture.failure {
-      _ = try await fixture.owner.cancel(until: .now.advanced(by: .milliseconds(750)))
-      return try await proxy.releaseAfterExecutionEnds(fixture.owner)
-    }
+    let failure = try await fixture.terminationFailure(after: .milliseconds(750))
     #expect(!failure.members.isEmpty)
     try await proxy.revoke()
-    _ = try await fixture.failure {
-      try await proxy.releaseAfterExecutionEnds(
+    do {
+      _ = try await proxy.releaseAfterExecutionEnds(
         failure.ownership, until: .now.advanced(by: .milliseconds(80)))
+      Issue.record("Unconfirmed execution must retain proxy leases")
+    } catch is ExecutionWaitExpired {
+      #expect(!lostSentinel)
+    } catch is ExecutionCompletionFailure {
+      #expect(lostSentinel)
     }
     #expect(fixture.markerExists)
     for port in [ports.http, ports.socks] {
@@ -63,7 +65,7 @@ import Testing
     fixture.rootExited()
     try await eventually { gate.entered }
     let cancellation = Task {
-      try await fixture.failure {
+      try await fixture.expiry {
         if cancelWaiter {
           return try await fixture.owner.wait(until: .now.advanced(by: .milliseconds(400)))
         }
@@ -141,6 +143,8 @@ import Testing
       // The launcher collected every member before reporting task cancellation.
     } catch let failure as ExecutionCompletionFailure {
       _ = try await failure.ownership.wait()
+    } catch let expiry as ExecutionWaitExpired {
+      _ = try await expiry.ownership.wait()
     }
     try await proxy.releaseAfterExecutionEnds()
   }

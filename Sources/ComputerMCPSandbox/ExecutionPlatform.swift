@@ -84,7 +84,16 @@ package struct ExecutionRecoveryState: Codable, Sendable {
   }
 }
 
-/// Failed confirmation retains execution resources, whether caused by a deadline or lost ownership evidence.
+/// Only the caller's wait ended; ownership and cleanup remain live.
+package struct ExecutionWaitExpired: Error, Sendable, CustomStringConvertible {
+  package let ownership: any ExecutionOwnership
+
+  package init(ownership: any ExecutionOwnership) { self.ownership = ownership }
+
+  package var description: String { "Execution wait deadline expired" }
+}
+
+/// Ownership or termination could not be confirmed; execution resources remain retained.
 package struct ExecutionCompletionFailure: Error, Sendable, CustomStringConvertible {
   package struct Member: Sendable {
     package let process: ExecutionMember
@@ -101,18 +110,14 @@ package struct ExecutionCompletionFailure: Error, Sendable, CustomStringConverti
   package let members: [Member]
   package let reasons: [String]
   package let bestEffort: Bool
-  /// Set only when this deadline ended confirmation, rather than an ownership failure.
-  package let expiredDeadline: ContinuousClock.Instant?
 
   package init(
-    ownership: any ExecutionOwnership, members: [Member], reasons: [String], bestEffort: Bool,
-    expiredDeadline: ContinuousClock.Instant? = nil
+    ownership: any ExecutionOwnership, members: [Member], reasons: [String], bestEffort: Bool
   ) {
     self.ownership = ownership
     self.members = members
     self.reasons = reasons
     self.bestEffort = bestEffort
-    self.expiredDeadline = expiredDeadline
   }
 
   package var description: String {
@@ -127,8 +132,8 @@ package struct ExecutionCompletionFailure: Error, Sendable, CustomStringConverti
 
 /// Retains execution resources through confirmed completion. Full access membership is a
 /// best-effort observation of the execution's process group and known descendant identities.
-/// Concurrent callers share confirmation: the earliest deadline fails all current waiters and
-/// retains resources while the ownership handle continues background cleanup and observation.
+/// Each caller's deadline ends only its own wait. Ownership failures reach all pending waiters;
+/// resources remain retained while background cleanup and observation continue.
 package protocol ExecutionOwnership: Sendable {
   func recoveryState() throws -> ExecutionRecoveryState
   /// Installed during bindOwnership; invoked before the target can execute.
@@ -148,13 +153,15 @@ package protocol ExecutionOwnership: Sendable {
   /// TERM, a 500 ms grace interval, then identity-checked KILL rounds. Full access can complete
   /// during grace once its known PIDs have exited and the group is empty. Sandbox completion
   /// requires a fully classified snapshot.
-  /// The independent deadline covers the attempt. Failure retains resources for background cleanup.
+  /// The deadline bounds this caller's wait, independently of the backend's termination budget.
   func cancel(until deadline: ContinuousClock.Instant) async throws -> ExecutionExit
   /// A confirmed failed launch returns its collected exit here; the start operation
   /// reports the launch error separately. Only unconfirmed completion may throw.
   /// Cancelling a waiter requests bounded cancellation. A timeout throws
-  /// ExecutionCompletionFailure; callers must retain execution resources and may retry.
+  /// ExecutionWaitExpired; callers must retain execution resources and may retry.
   func wait(until deadline: ContinuousClock.Instant) async throws -> ExecutionExit
+  /// Waits without a caller deadline. Ownership failures still propagate.
+  func wait() async throws -> ExecutionExit
 }
 
 extension ExecutionOwnership {
@@ -170,7 +177,11 @@ extension ExecutionOwnership {
   }
 
   package func wait() async throws -> ExecutionExit {
-    try await wait(until: .now.advanced(by: .seconds(120)))
+    while true {
+      do {
+        return try await wait(until: .now.advanced(by: .seconds(120)))
+      } catch is ExecutionWaitExpired { continue }
+    }
   }
 }
 

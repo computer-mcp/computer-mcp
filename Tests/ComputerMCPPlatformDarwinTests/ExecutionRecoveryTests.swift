@@ -127,14 +127,14 @@ extension UnsafeMutablePointer<CChar> {
     }
     let owner = DarwinExecutionOwnership(marker: marker, table: table, recoveryRoot: root)
     try owner.recover([root])
-    await #expect(throws: ExecutionCompletionFailure.self) {
+    await #expect(throws: ExecutionWaitExpired.self) {
       try await owner.cancel(until: .now.advanced(by: .milliseconds(750)))
     }
     #expect(processes.state.signals.contains { $0.0 == leaf && $0.1 == SIGKILL })
     #expect(!processes.state.signals.contains { $0.0.pid == unrelated })
     processes.mutate { $0.continuousChurn = false }
     if newZombie {
-      await #expect(throws: ExecutionCompletionFailure.self) {
+      await #expect(throws: ExecutionWaitExpired.self) {
         try await owner.wait(until: .now.advanced(by: .milliseconds(100)))
       }
       processes.mutate { $0.entries[unrelated] = nil }

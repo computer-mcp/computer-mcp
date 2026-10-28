@@ -190,6 +190,106 @@ struct WorktreeRemovalTests {
     }
   }
 
+  @Test func privateIndexReadPreservesStagedPathsAndConflictStages() throws {
+    try fixture { directory in
+      let f = try WorktreeFixture(directory)
+      let service = try f.service()
+      let created = try service.create(name: "stages")
+      let topology = try service.topology(projectID: created.projectID)
+      let git = PrivateWorktreeGit(f: f, topology: topology)
+      let staged = "staged\tpath\n"
+      try Data("staged".utf8).write(to: created.path.appendingPathComponent(staged))
+      try git.run(["add", staged])
+      try Data().write(to: created.path.appendingPathComponent("intent"))
+      try git.run(["add", "--intent-to-add", "intent"])
+      let oid = try git.run(["rev-parse", "HEAD:file.txt"])
+      let stages =
+        "0 " + String(repeating: "0", count: oid.count) + "\tfile.txt\0"
+        + (1...3).map { "100644 \(oid) \($0)\tfile.txt\0" }.joined()
+      try git.run(["update-index", "-z", "--index-info"], input: Data(stages.utf8))
+      let entries = try git.run(["ls-files", "--stage", "-z"])
+      let original = try Data(contentsOf: topology.gitDirectory.url.appendingPathComponent("index"))
+      try service.withPrivateRead(topology) { view in
+        let captured = try service.git.run(
+          ["ls-files", "--stage", "-z"], at: created.path, gitDirectory: view.url
+        ).output
+        #expect(String(decoding: captured, as: UTF8.self) == entries)
+      }
+      #expect(
+        try Data(contentsOf: topology.gitDirectory.url.appendingPathComponent("index")) == original)
+      #expect(try !service.status(topology).isEmpty)
+    }
+  }
+
+  @Test(arguments: [
+    "assume-unchanged", "skip-worktree", "fsmonitor-valid", "untracked-cache", "fsmonitor",
+  ])
+  func indexHintsCannotHideChangesFromInventoryOrRemoval(hint: String) async throws {
+    try await removalFixture { f in
+      let service = try f.service()
+      let created = try service.create(name: "index-hints")
+      let tip = try f.privateCommit(service, projectID: created.projectID)
+      let topology = try service.topology(projectID: created.projectID)
+      let git = PrivateWorktreeGit(f: f, topology: topology)
+      let hook = f.directory.appendingPathComponent("fsmonitor")
+      try Data("#!/bin/sh\nprintf 'token\\0'\n".utf8).write(to: hook)
+      try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: hook.path)
+      let monitor = ["-c", "core.fsmonitor=" + hook.path, "-c", "core.fsmonitorHookVersion=2"]
+      if hint.hasPrefix("fsmonitor") {
+        try git.run(monitor + ["update-index", "--fsmonitor"])
+        if hint == "fsmonitor-valid" {
+          try git.run(monitor + ["update-index", "--fsmonitor-valid", "file.txt"])
+        } else {
+          try git.run(monitor + ["status", "--porcelain"])
+        }
+        #expect(try git.run(monitor + ["ls-files", "-f"]).hasPrefix("h "))
+      } else if hint == "untracked-cache" {
+        try git.run(["update-index", "--untracked-cache"])
+        try git.run(["-c", "core.untrackedCache=true", "status", "--porcelain"])
+      } else {
+        try git.run(["update-index", "--" + hint, "file.txt"])
+      }
+      let indexURL = topology.gitDirectory.url.appendingPathComponent("index")
+      let captured = try Data(contentsOf: indexURL)
+      if hint.hasPrefix("fsmonitor") { #expect(captured.range(of: Data("FSMN".utf8)) != nil) }
+      if hint == "untracked-cache" { #expect(captured.range(of: Data("UNTR".utf8)) != nil) }
+      let changed = hint == "untracked-cache" ? "untracked" : "file.txt"
+      try Data("uncommitted\n".utf8).write(to: created.path.appendingPathComponent(changed))
+      try service.withPrivateRead(topology) { view in
+        let index = try Data(contentsOf: view.url.appendingPathComponent("index"))
+        #expect(index.range(of: Data("FSMN".utf8)) == nil)
+        #expect(index.range(of: Data("UNTR".utf8)) == nil)
+        let flags = try service.git.run(
+          ["ls-files", "-v"], at: created.path, gitDirectory: view.url
+        ).output
+        #expect(String(decoding: flags, as: UTF8.self) == "H file.txt\n")
+      }
+      let item = try #require(
+        try service.inventory { _ in true }.first {
+          $0.projectID == created.projectID
+        })
+      #expect(item.dirty == true)
+      await #expect(throws: WorktreeError.self) {
+        try await service.remove(
+          projectID: created.projectID, terminate: { _, _ in }, authorize: { _, _ in })
+      }
+      #expect(try Data(contentsOf: indexURL) == captured)
+      #expect(
+        try String(contentsOf: created.path.appendingPathComponent(changed), encoding: .utf8)
+          == "uncommitted\n")
+      let gate = try service.admission(projectID: created.projectID)
+      let use = try gate.reserve(ownerID: UUID(), executionID: UUID())
+      try gate.acknowledge(use)
+      let removed = try await service.remove(
+        projectID: created.projectID, force: true,
+        terminate: { _, _ in }, authorize: { _, _ in })
+      #expect(removed.oid == tip)
+      #expect(!FileManager.default.fileExists(atPath: created.path.path))
+      #expect(try f.raw(["show", "worktree/index-hints:file.txt"]) == "private")
+      #expect(try f.store.protectedBranches().count == 1)
+    }
+  }
+
   @Test func terminationFailureAndForeignOwnerNeverDestroy() async throws {
     try await removalFixture { f in
       let service = try f.service()

@@ -313,7 +313,18 @@ extension WorktreeRepository {
     try io.write(
       Data((metadata.head + "\n").utf8), name: "HEAD", in: stage,
       replacing: io.read("HEAD", in: stage, limit: 1024))
-    if let index = metadata.index { try io.write(index, name: "index", in: stage, replacing: nil) }
+    if let index = metadata.index {
+      // Only entry identities cross the trust boundary. Stat data, validity bits
+      // and cache extensions can conceal changes and never authorize a clean tree.
+      try io.write(index, name: "captured-index", in: stage, replacing: nil)
+      let entries = try git.run(
+        ["ls-files", "--stage", "-z"], at: topology.root.url, gitDirectory: stage.url,
+        index: stage.url.appendingPathComponent("captured-index")
+      ).output
+      _ = try git.run(
+        ["update-index", "-z", "--index-info"], at: topology.root.url, gitDirectory: stage.url,
+        input: entries)
+    }
     try budget.check()
     return try body(stage)
   }

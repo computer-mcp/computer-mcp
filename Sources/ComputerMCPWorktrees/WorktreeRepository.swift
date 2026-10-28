@@ -75,6 +75,8 @@ package final class WorktreeRepository: Sendable {
   let identity: WorktreeRepositoryIdentity
   let projectRoots: [URL]
   let io: WorktreeJournalIO
+  let creationLimits: WorktreePromotionLimits
+  let cloneCreationObjects: Bool
   let lockTimeout: Duration
   let owner: RepositoryLock.Owner
   let checkAuthority: @Sendable () throws -> Void
@@ -85,6 +87,7 @@ package final class WorktreeRepository: Sendable {
     executor: any WorktreeGitExecuting, registeredProjectRoots: [URL],
     timeoutMilliseconds: Int, maxOutputBytes: Int, lockTimeout: Duration,
     owner: RepositoryLock.Owner = .init(), journalIO: WorktreeJournalIO = .init(),
+    creationLimits: WorktreePromotionLimits = .init(), cloneCreationObjects: Bool = true,
     checkAuthority: @escaping @Sendable () throws -> Void = {},
     authorizeCreationPath: @escaping @Sendable (URL) throws -> Void = { _ in }
   ) throws {
@@ -96,6 +99,9 @@ package final class WorktreeRepository: Sendable {
     self.storage = storage
     self.projectRoots = registeredProjectRoots
     self.io = journalIO
+    try creationLimits.validate()
+    self.creationLimits = creationLimits
+    self.cloneCreationObjects = cloneCreationObjects
     self.lockTimeout = lockTimeout
     self.owner = owner
     guard timeoutMilliseconds > 0, maxOutputBytes > 0, maxOutputBytes < Int.max / 8 else {
@@ -260,8 +266,10 @@ struct WorktreeGit: Sendable {
     let overrides = try HostGitConfiguration.overrides(for: names)
     var environment = HostGitConfiguration.environment(home: home)
     if let index { environment["GIT_INDEX_FILE"] = index.path }
-    if let objects, let sharedObjects {
+    if let objects {
       environment["GIT_OBJECT_DIRECTORY"] = objects.path
+    }
+    if let sharedObjects {
       environment["GIT_ALTERNATE_OBJECT_DIRECTORIES"] =
         "\""
         + sharedObjects.path

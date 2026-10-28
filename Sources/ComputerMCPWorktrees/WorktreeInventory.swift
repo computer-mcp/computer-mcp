@@ -68,9 +68,16 @@ extension WorktreeRepository {
   /// path, project or branch metadata; foreign checkouts never acquire host authority.
   package func inventory(mayInspect: (URL) throws -> Bool) throws -> [WorktreeInventoryItem] {
     try withLock { _ in
-      let entries = try WorktreeInventoryEntry.parse(
+      var entries = try WorktreeInventoryEntry.parse(
         command(["worktree", "list", "--porcelain", "-z"]).output)
       let records = try store.records()
+      for record in records where record.source == source && record.state == .active {
+        guard case .host = record.provenance else { continue }
+        entries.append(
+          .init(
+            path: record.root, head: nil, branch: nil, detached: false, bare: false, prunable: false
+          ))
+      }
       return try entries.map { entry in
         let root = URL(fileURLWithPath: entry.path)
         guard try mayInspect(root) else {
@@ -91,7 +98,7 @@ extension WorktreeRepository {
         do {
           if let record, case .host = record.provenance {
             guard let journal = try readJournal(record.projectID), journal.phase == .active,
-              try activeRecord(journal) == record
+              try matchesActiveRecord(journal, record)
             else { throw WorktreeError.recoveryRequired("Active journal is unavailable.") }
             let topology = try verifyTopology(journal, repository: identity, source: source)
             projectID = record.projectID
@@ -101,11 +108,14 @@ extension WorktreeRepository {
             guard let baseOID = try revision(journal.base) else {
               throw WorktreeError.recoveryRequired("Recorded base branch is unavailable.")
             }
-            let counts = try git.run(
-              ["rev-list", "--left-right", "--count", baseOID + "...HEAD"],
-              at: root, gitDirectory: topology.gitDirectory.url, objects: topology.objects.url,
-              sharedObjects: topology.sharedObjects.url
-            ).output
+            let counts = try withPrivateRead(topology) { view in
+              try git.run(
+                ["rev-list", "--left-right", "--count", baseOID + "...HEAD"],
+                at: root, gitDirectory: view.url,
+                objects: view.url.appendingPathComponent("objects"),
+                sharedObjects: URL(fileURLWithPath: identity.objects.path)
+              ).output
+            }
             let parts = String(decoding: counts, as: UTF8.self).split(whereSeparator: {
               $0.isWhitespace
             })
@@ -123,7 +133,7 @@ extension WorktreeRepository {
             if entry.path == identity.main.path {
               administrative = URL(fileURLWithPath: identity.common.path)
             } else {
-              administrative = try administrativeDirectory(root: root, repository: identity).url
+              administrative = try foreignGitDirectory(root: root, repository: identity).url
             }
             if let record, case .plugin = record.provenance { projectID = record.projectID }
             dirty = try !git.run(

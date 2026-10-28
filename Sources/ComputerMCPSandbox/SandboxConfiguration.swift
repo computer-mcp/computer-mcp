@@ -59,26 +59,20 @@ package struct SandboxReadRegion: Sendable, Equatable {
 
 package struct SandboxGitConfiguration: Sendable, Equatable {
   package let sharedDirectory: SandboxPath
-  package let administrativeDirectory: SandboxPath
-  package let privateObjects: SandboxPath
-  package let sharedObjects: SandboxPath
+  package let repository: SandboxPath
 
-  /// The host creates and verifies a detached HEAD before launching. Branch publication is host-owned.
-  package init(
-    sharedDirectory: SandboxPath, administrativeDirectory: SandboxPath,
-    privateObjects: SandboxPath, sharedObjects: SandboxPath
-  ) throws {
-    guard sharedDirectory.contains(sharedObjects), !sharedDirectory.contains(privateObjects),
-      administrativeDirectory != sharedDirectory,
-      !privateObjects.contains(sharedDirectory), !administrativeDirectory.contains(sharedDirectory)
-    else {
+  package static let immutableFiles = [
+    "config", "commondir", "config.worktree", "info/grafts", "shallow",
+    "objects/info/alternates", "objects/info/http-alternates",
+  ]
+
+  package init(sharedDirectory: SandboxPath, repository: SandboxPath) throws {
+    guard !sharedDirectory.contains(repository), !repository.contains(sharedDirectory) else {
       throw ExecutionEnvironmentError.invalidConfiguration(
-        "Git requires an isolated object store and administration directory")
+        "Private Git must be separate from the source repository")
     }
     self.sharedDirectory = sharedDirectory
-    self.administrativeDirectory = administrativeDirectory
-    self.privateObjects = privateObjects
-    self.sharedObjects = sharedObjects
+    self.repository = repository
   }
 }
 

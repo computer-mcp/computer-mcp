@@ -221,7 +221,7 @@ struct WorktreeRemovalTests {
   }
 
   @Test(arguments: [false, true])
-  func rewriteRootsArePreservedAndUnprovenCommitsRetainStorage(unproven: Bool) async throws {
+  func retentionFollowsReflogRootsRatherThanDanglingObjects(unproven: Bool) async throws {
     try await removalFixture { f in
       let service = try f.service()
       let created = try service.create(name: "rewrite")
@@ -233,13 +233,10 @@ struct WorktreeRemovalTests {
       if unproven {
         try FileManager.default.removeItem(
           at: topology.gitDirectory.url.appendingPathComponent("logs/HEAD"))
-        await #expect(throws: WorktreeError.self) {
-          try await service.remove(
-            projectID: created.projectID, force: true,
-            terminate: { _, _ in }, authorize: { _, _ in })
-        }
-        #expect(FileManager.default.fileExists(atPath: topology.objects.url.path))
-        #expect(try f.store.records().first?.state == .active)
+        _ = try await service.remove(
+          projectID: created.projectID, force: true,
+          terminate: { _, _ in }, authorize: { _, _ in })
+        #expect(try f.store.records().isEmpty)
       } else {
         _ = try await service.remove(
           projectID: created.projectID,
@@ -254,7 +251,7 @@ struct WorktreeRemovalTests {
   }
 
   @Test(arguments: [
-    "preserved", "content", "administration", "objects", "runtime", "unregistering", "finished",
+    "preserved", "content", "repository", "runtime", "unregistering", "finished",
   ])
   func interruptedCleanupResumesOnlyOwnedSteps(phase: String) async throws {
     try await removalFixture { f in

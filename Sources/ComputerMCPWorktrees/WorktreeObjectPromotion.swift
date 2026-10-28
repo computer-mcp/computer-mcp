@@ -23,7 +23,7 @@ extension WorktreeRepository {
 
   func publishLocked(
     projectID: String, preserving roots: [String], limits: WorktreePromotionLimits,
-    lock: RepositoryLock, removalAcknowledgements: [String]? = nil,
+    lock: RepositoryLock,
     authorize: (DerivedProjectRecord) throws -> Void
   ) throws -> WorktreePublication {
     if var pending = try readPublication(projectID),
@@ -44,20 +44,9 @@ extension WorktreeRepository {
     try requireDirectRef(registration.branch, oid: expected)
     // This is the publication's only read of live HEAD. No later operation
     // resolves a mutable private ref or asks Git to open private objects.
-    let bytes: Data
-    do {
-      guard let head = try io.read("HEAD", in: topology.gitDirectory, limit: 128),
-        head.count == identity.format.hexCount + 1, head.last == 10
-      else {
-        throw WorktreeError.busy("Cannot capture a detached worktree HEAD.")
-      }
-      bytes = head
-    } catch {
+    let captured: String
+    do { captured = try privateMetadata(topology).head } catch {
       throw WorktreeError.busy("Worktree HEAD changed or cannot be captured; retry publication.")
-    }
-    let captured = String(decoding: bytes.dropLast(), as: UTF8.self)
-    guard identity.format.contains(captured) else {
-      throw WorktreeError.busy("Worktree HEAD is not a direct object ID.")
     }
     var journal = WorktreePublicationJournal(
       version: 1, operationID: UUID(), repository: identity, record: record,
@@ -84,8 +73,7 @@ extension WorktreeRepository {
       journal.phase = .copied
       try savePublication(journal, replacing: uncopied)
       try snapshot.validateRaw(files, in: objects, budget: &budget)
-      try verifyPublication(
-        &journal, budget: &budget, removalAcknowledgements: removalAcknowledgements)
+      try verifyPublication(&journal, budget: &budget)
     } catch {
       // A rejected attempt cannot install objects. Retain the input worktree;
       // a retry captures a fresh HEAD instead of trusting a partial snapshot.
@@ -115,8 +103,7 @@ extension WorktreeRepository {
   }
 
   private func verifyPublication(
-    _ journal: inout WorktreePublicationJournal, budget: inout WorktreeObjectBudget,
-    removalAcknowledgements: [String]?
+    _ journal: inout WorktreePublicationJournal, budget: inout WorktreeObjectBudget
   ) throws {
     let staging = try publicationStaging(journal)
     let objects = try staging.child("objects")
@@ -132,7 +119,7 @@ extension WorktreeRepository {
     {
       try git.run(
         args, at: staging.url, gitDirectory: repository.url,
-        objects: objects.url, sharedObjects: URL(fileURLWithPath: identity.objects.path),
+        objects: objects.url,
         input: input, accepting: accepting)
     }
     // Validate indexes against the copied packs; indexes never authorize an OID.
@@ -140,16 +127,8 @@ extension WorktreeRepository {
       try budget.check()
       _ = try run(["verify-pack", objects.url.appendingPathComponent(file.name).path])
     }
-    for root in journal.roots {
-      let type = try run(["cat-file", "-t", root]).output
-      guard type == Data("commit\n".utf8) else {
-        throw WorktreeError.busy("Publication root is not a commit.")
-      }
-      let tree = try run(["ls-tree", "-rz", root]).output
-      guard !tree.split(separator: 0).contains(where: { $0.starts(with: Data("160000 ".utf8)) })
-      else {
-        throw WorktreeError.busy("Submodule publication requires separate confinement support.")
-      }
+    guard try run(["cat-file", "-t", journal.capturedOID]).output == Data("commit\n".utf8) else {
+      throw WorktreeError.busy("Published HEAD must name a commit.")
     }
     guard
       try run(
@@ -167,12 +146,7 @@ extension WorktreeRepository {
     guard !manifest.isEmpty, manifest.count <= budget.limits.objectCount,
       Set(manifest).count == manifest.count, manifest.allSatisfy(identity.format.contains)
     else { throw WorktreeError.busy("Invalid or excessive reachable object manifest.") }
-    if let removalAcknowledgements {
-      try requirePrivateCommitCoverage(
-        journal, manifest: Set(manifest), acknowledgements: removalAcknowledgements,
-        run: { try run($0, input: $1).output })
-    }
-    // Include shared dependencies in the limits and in the self-contained pack.
+    // Verify the complete closure; only the expected managed branch may supply omitted objects.
     let sizes = try run(
       ["cat-file", "--batch-check=%(objectname) %(objecttype) %(objectsize)"],
       input: Data((manifest.joined(separator: "\n") + "\n").utf8)
@@ -191,12 +165,23 @@ extension WorktreeRepository {
     }
     try budget.check()
     _ = try run(["fsck", "--full", "--strict", "--no-reflogs", "--no-dangling"] + journal.roots)
+    let omittedOutput = try command([
+      "rev-list", "--objects", "--no-object-names", journal.expectedOID,
+    ]).output
+    let omitted = Set(
+      String(decoding: omittedOutput, as: UTF8.self).split(separator: "\n").map(String.init))
+    guard omitted.allSatisfy(identity.format.contains) else {
+      throw WorktreeError.busy("Invalid expected branch closure.")
+    }
+    let installedManifest = manifest.filter { !omitted.contains($0) }
     let output = try staging.child("verified", create: true, exclusive: true)
     let packHash = try run(
       [
         "pack-objects", "--no-reuse-object", "--no-reuse-delta", "--window=0", "--threads=1",
         output.url.appendingPathComponent("pack").path,
-      ], input: Data((manifest.joined(separator: "\n") + "\n").utf8)
+      ],
+      input: Data(
+        (installedManifest.joined(separator: "\n") + (installedManifest.isEmpty ? "" : "\n")).utf8)
     ).output
     let hash = String(decoding: packHash, as: UTF8.self).trimmingCharacters(in: .newlines)
     guard identity.format.contains(hash) else {
@@ -221,7 +206,7 @@ extension WorktreeRepository {
     let installed = String(decoding: inventory, as: UTF8.self).split(separator: "\n").map {
       $0.split(separator: " ").dropFirst().first.map(String.init) ?? ""
     }.sorted()
-    guard installed == manifest else {
+    guard installed == installedManifest else {
       throw WorktreeError.busy("Pack contains unexpected objects.")
     }
     try budget.check()
@@ -256,10 +241,10 @@ extension WorktreeRepository {
       var protectionsBefore: [String: String] = [:]
       for oid in protections {
         let ref = preservationRef(journal.record, oid: oid)
-        if try revision(ref) == nil {
+        if try objectRevision(ref) == nil {
           preservation += "create \(ref) \(oid)\n"
         } else {
-          try requireDirectRef(ref, oid: oid)
+          try requireObjectRef(ref, oid: oid)
           protectionsBefore[ref] = oid
           preservation += "verify \(ref) \(oid)\n"
         }
@@ -282,7 +267,7 @@ extension WorktreeRepository {
         try requireDirectRef(journal.branch, oid: journal.expectedOID)
         for oid in protections {
           let ref = preservationRef(journal.record, oid: oid)
-          if try revision(ref) != nil { try requireDirectRef(ref, oid: oid) }
+          if try objectRevision(ref) != nil { try requireObjectRef(ref, oid: oid) }
         }
       }
       try requirePublicationRoots(journal)
@@ -378,7 +363,7 @@ extension WorktreeRepository {
     }
     if journal.phase == .publishing {
       let branch = try revision(journal.branch)
-      let preserved = try revision(journal.preservationRef)
+      let preserved = try objectRevision(journal.preservationRef)
       if journal.expectedOID == journal.capturedOID {
         // Git writes no branch reflog entry for an unchanged OID. Accept only
         // a complete before/after protection set, then replay the transaction
@@ -391,8 +376,8 @@ extension WorktreeRepository {
         var matchesAfter = true
         for oid in Set(journal.roots + [journal.expectedOID]) {
           let ref = preservationRef(journal.record, oid: oid)
-          let current = try revision(ref)
-          if let current { try requireDirectRef(ref, oid: current) }
+          let current = try objectRevision(ref)
+          if let current { try requireObjectRef(ref, oid: current) }
           matchesBefore = matchesBefore && current == before[ref]
           matchesAfter = matchesAfter && current == oid
         }
@@ -416,7 +401,7 @@ extension WorktreeRepository {
         }
         for oid in Set(journal.roots + [journal.expectedOID]) {
           let ref = preservationRef(journal.record, oid: oid)
-          guard try revision(ref) == before[ref] else {
+          guard try objectRevision(ref) == before[ref] else {
             throw WorktreeError.recoveryRequired(
               "Publication refs have a mixed transaction outcome.")
           }
@@ -429,7 +414,7 @@ extension WorktreeRepository {
   private func requirePublicationRoots(_ journal: WorktreePublicationJournal) throws {
     try requireDirectRef(journal.branch, oid: journal.capturedOID)
     for oid in Set(journal.roots + [journal.expectedOID]) {
-      try requireDirectRef(preservationRef(journal.record, oid: oid), oid: oid)
+      try requireObjectRef(preservationRef(journal.record, oid: oid), oid: oid)
     }
   }
 
@@ -468,12 +453,12 @@ extension WorktreeRepository {
       try authorize(record)
       let ref = preservationRef(record, oid: replacedOID)
       try requireDirectRef(registration.branch, oid: expectedPublishedOID)
-      if try revision(ref) == nil,
+      if try objectRevision(ref) == nil,
         journal.replacementAcknowledgements?.contains(replacedOID) == true
       {
         return
       }
-      try requireDirectRef(ref, oid: replacedOID)
+      try requireObjectRef(ref, oid: replacedOID)
       if journal.replacementAcknowledgements?.contains(replacedOID) != true {
         let previous = try publicationBytes(journal)
         journal.replacementAcknowledgements =
@@ -492,7 +477,7 @@ extension WorktreeRepository {
           throw DerivedProjectStoreError.revisionConflict
         }
         try requireDirectRef(registration.branch, oid: expectedPublishedOID)
-        try requireDirectRef(ref, oid: replacedOID)
+        try requireObjectRef(ref, oid: replacedOID)
       }
     }
   }

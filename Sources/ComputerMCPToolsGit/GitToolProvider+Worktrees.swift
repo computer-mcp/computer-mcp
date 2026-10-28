@@ -60,7 +60,7 @@ extension GitToolProvider {
     return [
       definition(
         "git.worktree_add",
-        "Create a persistent detached worktree and a new managed branch from the source project. Returns project_id, path, branch and base.",
+        "Create a persistent detached worktree and a new managed branch from the source project. Returns project_id, path, branch, base and submodule/LFS warnings.",
         properties: [
           "name": .object([
             "type": .string("string"),

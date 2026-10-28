@@ -13,7 +13,7 @@ package struct WorktreeRegistration: Codable, Equatable, Sendable {
   let gitDirectory: WorktreeDirectoryIdentity
   let contentParent: WorktreeDirectoryIdentity
   let objects: WorktreeDirectoryIdentity
-  let objectParent: WorktreeDirectoryIdentity
+  let repositoryParent: WorktreeDirectoryIdentity
   let runtime: WorktreeDirectoryIdentity
   var publishedOID: String?
   var mergedOID: String?
@@ -28,7 +28,7 @@ package struct WorktreeRegistration: Codable, Equatable, Sendable {
   init(_ journal: WorktreeCreationJournal) throws {
     guard let root = journal.root, let gitDirectory = journal.gitDirectory,
       let contentParent = journal.contentParent, let objects = journal.objects,
-      let objectParent = journal.objectParent, let runtime = journal.runtime
+      let repositoryParent = journal.repositoryParent, let runtime = journal.runtime
     else {
       throw WorktreeError.recoveryRequired("Cannot activate incomplete worktree topology.")
     }
@@ -42,7 +42,7 @@ package struct WorktreeRegistration: Codable, Equatable, Sendable {
     self.gitDirectory = gitDirectory
     self.contentParent = contentParent
     self.objects = objects
-    self.objectParent = objectParent
+    self.repositoryParent = repositoryParent
     self.runtime = runtime
   }
 

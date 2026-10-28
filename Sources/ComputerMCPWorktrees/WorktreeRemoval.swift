@@ -9,7 +9,7 @@ package struct WorktreeRemovalResult: Sendable {
 
 struct WorktreeRemovalJournal: Codable {
   enum Phase: String, Codable {
-    case closing, preserved, content, administration, objects, runtime, unregistering, finished,
+    case closing, preserved, content, repository, runtime, unregistering, finished,
       abandoned
   }
   let operationID: UUID
@@ -85,15 +85,13 @@ extension WorktreeRepository {
         try journal.admission.reopen(operationID: journal.operationID)
         throw WorktreeError.busy("Worktree contains tracked, staged, untracked or ignored changes.")
       }
-      let acknowledgements = try readPublication(projectID)?.replacementAcknowledgements ?? []
-      let roots = try removalRoots(topology).filter { !acknowledgements.contains($0) }
+      let roots = try removalRoots(topology)
       let publication = try publishLocked(
         projectID: projectID, preserving: roots, limits: limits, lock: lock,
-        removalAcknowledgements: acknowledgements, authorize: { try authorize($0, []) })
+        authorize: { try authorize($0, []) })
       guard let published = try store.records().first(where: { $0.projectID == projectID }),
         published.worktree?.lastPublishedOID == publication.oid,
-        try io.read("HEAD", in: topology.gitDirectory, limit: 128)
-          == Data((publication.oid + "\n").utf8)
+        try privateMetadata(topology).head == publication.oid
       else { throw WorktreeError.recoveryRequired("Worktree changed after removal capture.") }
       try authorize(published, [])
       try topology.verifyDirectories()
@@ -144,11 +142,11 @@ extension WorktreeRepository {
         ?? true
     else { throw WorktreeError.recoveryRequired("A lifecycle journal still needs this worktree.") }
     for root in Set(publication.roots + [publication.expectedOID]) {
-      try requireDirectRef(preservationRef(journal.record, oid: root), oid: root)
+      try requireObjectRef(preservationRef(journal.record, oid: root), oid: root)
     }
     if journal.phase == .preserved {
       let topology = try verifyTopology(creation, repository: identity, source: source)
-      guard try io.read("HEAD", in: topology.gitDirectory, limit: 128) == Data((oid + "\n").utf8),
+      guard try privateMetadata(topology).head == oid,
         try journal.force || status(topology).isEmpty
       else { throw WorktreeError.busy("Worktree changed before destruction.") }
       var removing = journal.record
@@ -166,9 +164,8 @@ extension WorktreeRepository {
     }
     let steps:
       [(WorktreeRemovalJournal.Phase, WorktreeDirectoryIdentity, WorktreeRemovalJournal.Phase)] = [
-        (.content, registration.contentParent, .administration),
-        (.administration, registration.gitDirectory, .objects),
-        (.objects, registration.objectParent, .runtime),
+        (.content, registration.contentParent, .repository),
+        (.repository, registration.repositoryParent, .runtime),
         (.runtime, registration.runtime, .unregistering),
       ]
     for (phase, directory, next) in steps where journal.phase == phase {
@@ -176,7 +173,7 @@ extension WorktreeRepository {
       try journal.admission.requireDrained(operationID: journal.operationID)
       try authorize(journal.record, [])
       if phase == .content { try requireRemovalChild(registration.root) }
-      if phase == .objects { try requireRemovalChild(registration.objects) }
+      if phase == .repository { try requireRemovalChild(registration.gitDirectory) }
       let parent = try WorktreeDirectory(
         URL(fileURLWithPath: directory.path).deletingLastPathComponent())
       try parent.removeOwnedTree(directory, io: io) { path in
@@ -190,14 +187,6 @@ extension WorktreeRepository {
       try advanceRemoval(&journal, to: next)
     }
     if journal.phase == .unregistering {
-      guard
-        try !WorktreeInventoryEntry.parse(
-          command(["worktree", "list", "--porcelain", "-z"]).output
-        )
-        .contains(where: { $0.path == journal.record.root })
-      else {
-        throw WorktreeError.recoveryRequired("Git registration still names the removed worktree.")
-      }
       if let record = try store.records().first(where: { $0.projectID == journal.record.projectID })
       {
         var removing = journal.record

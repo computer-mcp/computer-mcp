@@ -1,7 +1,3 @@
-// Port-restricted network rules adapted from anthropics/sandbox-runtime, Apache-2.0.
-// Revision aceba124fd725f4a43d7016ed3f5651d61f83115, src/sandbox/macos-sandbox-utils.ts.
-// Modified for TCP-only per-execution listeners and host-supplied read boundaries.
-// See THIRD_PARTY_NOTICES.md and Licenses/sandbox-runtime-Apache-2.0.txt.
 import ComputerMCPSandbox
 import Foundation
 
@@ -47,7 +43,7 @@ package enum SeatbeltProfile {
     let reads =
       configuration.readableRoots + configuration.writableDirectories
       + (configuration.git.map {
-        [$0.sharedDirectory, $0.administrativeDirectory, $0.privateObjects]
+        [$0.sharedDirectory, $0.repository]
       } ?? [])
     for path in Set(reads).sorted(by: { $0.value < $1.value }) {
       rules.append(
@@ -65,7 +61,8 @@ package enum SeatbeltProfile {
     }
     if let git = configuration.git {
       writeExclusions.append(subpath(git.sharedDirectory))
-      writeExclusions.append(subpath(git.administrativeDirectory))
+      writeExclusions.append(subpath(git.repository))
+      writeExclusions.append("(literal \(quote(configuration.worktree.value)))")
       // A worktree's .git indirection is owned by the host.
       writeExclusions.append("(literal \(quote(configuration.worktree.value + "/.git")))")
     }
@@ -75,21 +72,38 @@ package enum SeatbeltProfile {
       )
     }
     if let git = configuration.git {
-      let exclusions = configuration.forbiddenReads.map { "(require-not \(subpath($0)))" }
-      rules.append("(allow file-write* \(all([subpath(git.privateObjects)] + exclusions)))")
-      for relative in [
-        "HEAD", "HEAD.lock", "index", "index.lock", "ORIG_HEAD", "ORIG_HEAD.lock", "FETCH_HEAD",
-        "FETCH_HEAD.lock", "logs/HEAD", "logs/HEAD.lock",
-      ] {
-        rules.append(
-          "(allow file-write* \(all(["(literal \(quote(git.administrativeDirectory.value + "/" + relative)))"] + exclusions)))"
-        )
-      }
-      for relative in ["rebase-merge", "rebase-apply"] {
-        rules.append(
-          "(allow file-write* \(all(["(subpath \(quote(git.administrativeDirectory.value + "/" + relative)))"] + exclusions)))"
-        )
-      }
+      let protected = ["", "info", "hooks", "objects", "objects/info"]
+      let exclusions =
+        configuration.forbiddenReads.map { "(require-not \(subpath($0)))" }
+        + configuration.deniedWriteRegions.map { region in
+          "(require-not \(all([subpath(region.path)] + region.exceptions.map { "(require-not \(subpath($0)))" })))"
+        }
+        + ["(require-not (subpath \(quote(git.repository.value + "/hooks"))))"]
+        + (protected + SandboxGitConfiguration.immutableFiles).map {
+          let value = git.repository.value + ($0.isEmpty ? "" : "/" + $0)
+          return "(require-not (literal \(quote(value))))"
+        }
+      let directories = [
+        "objects", "info", "refs", "logs", "rebase-merge", "rebase-apply", "sequencer", "rr-cache",
+        "lost-found",
+      ]
+      let files = [
+        "HEAD", "index", "packed-refs", "packed-refs.new",
+        "ORIG_HEAD", "FETCH_HEAD", "MERGE_HEAD", "MERGE_MSG",
+        "MERGE_MODE", "MERGE_RR", "MERGE_AUTOSTASH", "AUTO_MERGE",
+        "CHERRY_PICK_HEAD", "REVERT_HEAD", "REBASE_HEAD", "COMMIT_EDITMSG", "SQUASH_MSG",
+        "BISECT_HEAD", "BISECT_LOG", "BISECT_NAMES", "BISECT_EXPECTED_REV", "BISECT_START",
+        "BISECT_TERMS", "BISECT_ANCESTORS_OK", "gc.pid", "gc.log",
+        "description",
+      ]
+      let root = NSRegularExpression.escapedPattern(for: git.repository.value)
+      let names = files.map { NSRegularExpression.escapedPattern(for: $0) }.joined(separator: "|")
+      let directoryNames = directories.joined(separator: "|")
+      let pattern =
+        "^" + root + "/((" + names + ")(\\.lock)?|(" + directoryNames
+        + ")(/.*)?|index\\.stash\\.[0-9]+(\\.lock)?|next-index-[0-9]+(\\.lock)?)$"
+      let allowed = "(regex \(quote(pattern)))"
+      rules.append("(allow file-write* \(all([allowed] + exclusions)))")
     }
     if configuration.hostNetwork {
       rules.append("(allow network-outbound)")

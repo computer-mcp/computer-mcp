@@ -61,8 +61,10 @@ struct ProtectedBranchTests {
     }
   }
 
-  @Test(arguments: [false, true])
-  func obsoleteRecoveryRootRequiresExplicitReplacementAcknowledgement(acknowledge: Bool)
+  @Test(arguments: [false, true], [false, true])
+  func publishedReplacementAndPrivateReflogHaveIndependentRetention(
+    acknowledge: Bool, retainsReflog: Bool
+  )
     async throws
   {
     try await removalFixture { f in
@@ -80,9 +82,10 @@ struct ProtectedBranchTests {
           projectID: created.projectID, replacedOID: old, expectedPublishedOID: tip
         ) { _ in }
       }
+      if !retainsReflog { try git.run(["reflog", "expire", "--expire=now", "--all"]) }
       _ = try await service.remove(
         projectID: created.projectID, terminate: { _, _ in }, authorize: { _, _ in })
-      if acknowledge {
+      if acknowledge && !retainsReflog {
         #expect(
           try service.deleteBranch(
             created.branch, authority: .sandbox, dryRun: false, confirm: true

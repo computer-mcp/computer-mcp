@@ -47,12 +47,11 @@ import Testing
     try fixture.write("shared/config", "protected")
     try fixture.write("shared/objects/existing", "object")
     try fixture.write("shared/refs/heads/main", "ref")
-    try fixture.write("shared/worktrees/task/HEAD", "0123456789012345678901234567890123456789\n")
+    try fixture.write("private.git/objects/info/packs", "")
+    try fixture.write("private.git/HEAD", "0123456789012345678901234567890123456789\n")
     let git = try SandboxGitConfiguration(
       sharedDirectory: fixture.path("shared"),
-      administrativeDirectory: fixture.path("shared/worktrees/task"),
-      privateObjects: fixture.path("worktree/objects"),
-      sharedObjects: fixture.path("shared/objects"))
+      repository: fixture.path("private.git"))
     let configuration = try fixture.configuration(git: git)
     let cases: [(String, Bool)] = [
       ("echo yes > worktree/file", true),
@@ -66,8 +65,10 @@ import Testing
       ("echo no > shared/objects/existing", false),
       ("echo no > shared/refs/heads/main", false),
       ("cat shared/objects/existing", true),
-      ("echo object > worktree/objects/new", true),
-      ("echo detached > shared/worktrees/task/HEAD", true),
+      ("mkdir -p private.git/objects; echo object > private.git/objects/new", true),
+      ("echo forbidden > private.git/config", false),
+      ("echo forbidden > private.git/commondir", false),
+      ("echo detached > private.git/HEAD", true),
     ]
     for (script, expected) in cases {
       let result = try fixture.run(script, configuration: configuration)
@@ -76,6 +77,53 @@ import Testing
     #expect(
       try String(contentsOf: fixture.root.appendingPathComponent("shared/config"), encoding: .utf8)
         == "protected")
+  }
+
+  @Test func privateGitControlEntriesCannotBeReplaced() throws {
+    let fixture = try SeatbeltFixture()
+    defer { fixture.remove() }
+    for name in [
+      "private.git/config", "private.git/HEAD", "private.git/objects/info/packs", "worktree/.git",
+    ] {
+      try fixture.write(name, "original")
+    }
+    for name in ["private.git/info", "private.git/hooks", "tmp"] {
+      try FileManager.default.createDirectory(
+        at: fixture.root.appendingPathComponent(name), withIntermediateDirectories: true)
+    }
+    let configuration = try SandboxConfiguration(
+      worktree: fixture.path("worktree"), temporaryDirectory: fixture.path("tmp"),
+      homeDirectory: fixture.path("tmp"), cacheDirectory: fixture.path("tmp"),
+      readableRoots: fixture.systemReads, listableAncestors: fixture.ancestors,
+      git: .init(sharedDirectory: fixture.path("shared"), repository: fixture.path("private.git")))
+    #expect(try fixture.run("echo writable > tmp/positive", configuration: configuration) == 0)
+    for entry in [
+      "private.git", "private.git/info", "private.git/hooks", "private.git/objects",
+      "private.git/objects/info", "worktree",
+    ] {
+      #expect(try fixture.run("mv " + entry + " tmp/moved", configuration: configuration) != 0)
+    }
+    for command in [
+      "rmdir private.git/info && mv tmp private.git/info",
+      "echo planted > private.git/Config", "echo planted > private.git/COMMONDIR",
+      "echo planted > private.git/info/Grafts",
+      "echo planted > private.git/objects/info/Alternates",
+      "echo planted > private.git/unknown", "echo planted > private.git/café",
+      "ln private.git/config tmp/config-alias",
+      "ln -s ../config private.git/commondir",
+      "echo planted > worktree/.git",
+    ] { #expect(try fixture.run(command, configuration: configuration) != 0, "\(command)") }
+    for name in [
+      "HEAD", "objects/info/packs", "objects/info/commit-graph", "index.stash.123.lock",
+      "BISECT_HEAD.lock",
+    ] {
+      #expect(
+        try fixture.run("echo state > private.git/" + name, configuration: configuration) == 0)
+    }
+    #expect(
+      try String(
+        contentsOf: fixture.root.appendingPathComponent("private.git/config"), encoding: .utf8)
+        == "original")
   }
 
   @Test func escapedPathsAreLiteral() throws {

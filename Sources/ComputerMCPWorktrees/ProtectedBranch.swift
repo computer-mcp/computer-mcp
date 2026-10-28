@@ -178,7 +178,9 @@ extension WorktreeRepository {
       else { throw WorktreeError.recoveryRequired("Branch or base registration proof changed.") }
       try requireRefHistory(journal.base, history: history, expectedOID: baseOID)
       for oid in journal.roots.values {
-        guard try isAncestor(oid, of: baseOID) else {
+        guard try command(["cat-file", "-t", oid]).output == Data("commit\n".utf8),
+          try isAncestor(oid, of: baseOID)
+        else {
           throw WorktreeError.invalidRequest(
             "An unmerged recovery commit still protects this branch.")
         }
@@ -194,7 +196,11 @@ extension WorktreeRepository {
       if try revision(journal.receipt) == journal.oid {
         try requireDirectRef(journal.receipt, oid: journal.oid)
         try requireBranchValue(journal.branch, oid: nil)
-        for ref in journal.roots.keys { try requireBranchValue(ref, oid: nil) }
+        for ref in journal.roots.keys {
+          guard try objectRevision(ref) == nil else {
+            throw WorktreeError.recoveryRequired("Recovery root survived deletion.")
+          }
+        }
       } else {
         guard try revision(journal.receipt) == nil else {
           throw WorktreeError.recoveryRequired("Deletion receipt was replaced.")

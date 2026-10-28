@@ -208,9 +208,12 @@ form; the host's path resolver owns filesystem identity and symlink resolution.
   directories. Reads cover configured roots, subtract denied regions, reopen
   their explicit exceptions and always exclude forbidden paths. Ancestors can
   be listed without opening their other files.
-- Shared Git administration and existing objects remain read-only. The host
-  prepares a detached HEAD and private object store; publication belongs to the
-  worktree owner. The environment selects the private and alternate object stores.
+- The source repository stays read-only. A host worktree has an independent
+  private repository with cloned objects, references and operation state. Git
+  uses its host-owned `.git` indirection and configuration. Control paths and
+  their containing directory entries are immutable; only Git state names are
+  admitted at the private root. Publication verifies a host-owned object copy.
+  The layout and trust boundary are defined in [Coding Harness](../Decisions/CodingHarness.md#worktrees).
 - Network access is limited to the execution's leased IPv4/IPv6 loopback proxy
   ports. Direct connections, UDP and child-side DNS are excluded.
 - Screen capture and Accessibility have two independent switches. Screen capture

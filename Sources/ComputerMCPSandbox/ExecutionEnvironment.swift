@@ -93,15 +93,6 @@ package struct ExecutionEnvironment: Sendable, Equatable {
         result[key] = "socks5h://127.0.0.1:\(proxy.socks)"
       }
     }
-    if let git = sandbox?.git {
-      result["GIT_OBJECT_DIRECTORY"] = git.privateObjects.value
-      // Git's alternate path syntax uses C quoting when the value starts with a quote.
-      result["GIT_ALTERNATE_OBJECT_DIRECTORIES"] =
-        "\""
-        + git.sharedObjects.value
-        .replacingOccurrences(of: "\\", with: "\\\\")
-        .replacingOccurrences(of: "\"", with: "\\\"") + "\""
-    }
     return result
   }
 

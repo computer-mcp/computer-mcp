@@ -38,8 +38,11 @@ struct PrivateWorktreeGit {
 
   @discardableResult func run(_ args: [String], input: Data = Data()) throws -> String {
     var environment = HostGitConfiguration.environment(home: f.directory)
-    environment["GIT_OBJECT_DIRECTORY"] = topology.objects.url.path
-    environment["GIT_ALTERNATE_OBJECT_DIRECTORIES"] = topology.sharedObjects.url.path
+    environment["GIT_ALLOW_PROTOCOL"] = "file"
+    environment["GIT_AUTHOR_NAME"] = "Fixture"
+    environment["GIT_AUTHOR_EMAIL"] = "fixture@example.invalid"
+    environment["GIT_COMMITTER_NAME"] = "Fixture"
+    environment["GIT_COMMITTER_EMAIL"] = "fixture@example.invalid"
     let result = try f.executor.execute(
       .init(
         arguments: HostGitConfiguration.arguments + [
@@ -98,7 +101,9 @@ extension WorktreeObjectPromotionTests {
       case "shadow":
         let folder = topology.objects.url.appendingPathComponent(String(base.prefix(2)))
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
-        try original.write(to: folder.appendingPathComponent(String(base.dropFirst(2))))
+        let shadow = folder.appendingPathComponent(String(base.dropFirst(2)))
+        try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: shadow.path)
+        try original.write(to: shadow)
       case "head-symlink":
         let head = topology.gitDirectory.url.appendingPathComponent("HEAD")
         let outside = directory.appendingPathComponent("head")
@@ -184,7 +189,8 @@ extension WorktreeObjectPromotionTests {
         try privateGit.run(["commit", "--amend", "--allow-empty", "-m", "replacement"])
       } else {
         try f.raw(["commit", "--allow-empty", "-m", "advance main"])
-        try privateGit.run(["rebase", "refs/heads/main"])
+        try privateGit.run(["fetch", "origin"])
+        try privateGit.run(["rebase", "origin/main"])
       }
       let second = try service.publish(projectID: created.projectID) { _ in }
       #expect(first != second.oid)

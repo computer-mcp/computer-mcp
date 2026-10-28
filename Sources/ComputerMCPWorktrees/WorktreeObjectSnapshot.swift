@@ -101,7 +101,7 @@ struct WorktreeObjectSnapshot {
 
   func copy(
     from source: WorktreeDirectory, to destination: WorktreeDirectory,
-    budget: inout WorktreeObjectBudget
+    budget: inout WorktreeObjectBudget, clone: Bool = false
   ) throws -> [WorktreeCopiedObjectFile] {
     var result: [WorktreeCopiedObjectFile] = []
     for name in try source.entries(limit: 258) {
@@ -141,7 +141,8 @@ struct WorktreeObjectSnapshot {
           }
         }
         let file = try copyFile(
-          entry, from: input, to: output, relative: name + "/" + entry, budget: &budget)
+          entry, from: input, to: output, relative: name + "/" + entry, budget: &budget,
+          clone: clone)
         result.append(file)
       }
     }
@@ -150,7 +151,7 @@ struct WorktreeObjectSnapshot {
 
   private func copyFile(
     _ name: String, from source: WorktreeDirectory, to destination: WorktreeDirectory,
-    relative: String, budget: inout WorktreeObjectBudget
+    relative: String, budget: inout WorktreeObjectBudget, clone: Bool
   ) throws -> WorktreeCopiedObjectFile {
     try source.verify()
     let fd = openat(source.descriptor, name, O_RDONLY | O_NOFOLLOW | O_NONBLOCK | O_CLOEXEC)
@@ -159,7 +160,7 @@ struct WorktreeObjectSnapshot {
     defer { try? handle.close() }
     var before = stat()
     guard fstat(fd, &before) == 0, before.st_mode & S_IFMT == S_IFREG,
-      before.st_nlink == 1, before.st_size >= 0,
+      clone || before.st_nlink == 1, before.st_size >= 0,
       before.st_size <= budget.limits.inputBytes - budget.input
     else {
       throw WorktreeError.busy("Private object is linked, special or exceeds its byte bound.")
@@ -171,12 +172,28 @@ struct WorktreeObjectSnapshot {
       fstatat(source.descriptor, name, &named, AT_SYMLINK_NOFOLLOW) == 0,
       after.st_dev == before.st_dev, after.st_ino == before.st_ino,
       named.st_dev == before.st_dev, named.st_ino == before.st_ino,
-      named.st_mode & S_IFMT == S_IFREG, after.st_nlink == 1,
+      named.st_mode & S_IFMT == S_IFREG, clone || after.st_nlink == 1,
       after.st_size == before.st_size
     else { throw WorktreeError.busy("Private object changed during capture.") }
     // Same-length writes are detected by content verification of this copy.
     budget.input += data.count
-    try io.write(data, name: name, in: destination, replacing: nil)
+    var cloned = false
+    #if canImport(Darwin)
+      if clone {
+        try destination.verify()
+        if fclonefileat(fd, destination.descriptor, name, 0) == 0 {
+          cloned = true
+          guard try io.read(name, in: destination, limit: data.count, synchronize: true) == data
+          else {
+            throw WorktreeError.busy("Source changed during object clone.")
+          }
+          try destination.synchronize()
+        } else if ![EXDEV, ENOTSUP, EINVAL, ENOSYS].contains(errno) {
+          throw WorktreeError.busy("Object clone failed.")
+        }
+      }
+    #endif
+    if !cloned { try io.write(data, name: name, in: destination, replacing: nil) }
     try source.verify()
     return .init(
       name: relative, device: Int64(before.st_dev), inode: UInt64(before.st_ino),

@@ -167,6 +167,10 @@ struct WorktreeFixture {
     -> String
   {
     var env = HostGitConfiguration.environment(home: directory)
+    env["GIT_AUTHOR_NAME"] = "Fixture"
+    env["GIT_AUTHOR_EMAIL"] = "fixture@example.invalid"
+    env["GIT_COMMITTER_NAME"] = "Fixture"
+    env["GIT_COMMITTER_EMAIL"] = "fixture@example.invalid"
     env.merge(environment) { _, new in new }
     let result = try executor.execute(
       .init(
@@ -186,10 +190,7 @@ struct WorktreeFixture {
     let arguments = [
       "--git-dir=" + topology.gitDirectory.url.path, "--work-tree=" + topology.root.url.path,
     ]
-    let env = [
-      "GIT_OBJECT_DIRECTORY": topology.objects.url.path,
-      "GIT_ALTERNATE_OBJECT_DIRECTORIES": topology.sharedObjects.url.path,
-    ]
+    let env: [String: String] = [:]
     try raw(arguments + ["add", "file.txt"], root: topology.root.url, environment: env)
     try raw(arguments + ["commit", "-m", "private"], root: topology.root.url, environment: env)
     return try raw(arguments + ["rev-parse", "HEAD"], root: topology.root.url, environment: env)

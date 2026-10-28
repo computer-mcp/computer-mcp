@@ -20408,7 +20408,7 @@
       "risk" : "project-write",
       "usesNetwork" : false
     },
-    "description" : "Create a persistent detached worktree and a new managed branch from the source project. Returns project_id, path, branch and base.",
+    "description" : "Create a persistent detached worktree and a new managed branch from the source project. Returns project_id, path, branch, base and submodule/LFS warnings.",
     "inputSchema" : {
       "additionalProperties" : false,
       "properties" : {

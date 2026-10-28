@@ -265,7 +265,7 @@ inherited by the project's worktrees.
 | --- | --- |
 | Filesystem write | the worktree, its temporary directory and its home and cache directory |
 | Filesystem read | the operating system and applications; in user data areas (home directories and external and network volumes) only the principal's readable projects and their worktrees, the Files and Folders categories it may read, and the developer locations the host maintains, with the directories above them readable as directories only; never the host's data or credentials; minus locations the owner denies |
-| Git | recording commits on the worktree's own branch through a private object store; never the repository's configuration, hooks, other branches or existing objects |
+| Git | recording commits, private branches, tags and stash in the worktree's private repository; never changing host-owned control files or the source repository |
 | Network access | `none` (default), `trusted` (a host-maintained list of package registries, GitHub and toolchain downloads), `full` (any host) or `custom` (the owner's host list, optionally with the trusted list) |
 | System services | screen capture is blocked unless the principal has Screen, and accessibility unless it has Desktop control, because macOS gives a program that reaches accessibility both reading and acting; sandboxed programs thus never use the App's own privacy permissions beyond the principal's; Apple events are always blocked, as macOS blocks them for sandboxed apps; a principal whose programs control other apps needs Full access, where macOS asks for Automation under each program's own identity |
 
@@ -563,31 +563,77 @@ The tools follow Git's commands:
 
 | Tool | Git | Behavior |
 | --- | --- | --- |
-| `git.worktree_add` | `git worktree add` | In a project whose root is a non-bare repository's top level. Inputs: `name` (`[a-z0-9]+(-[a-z0-9]+)*`, at most 48 characters), optional `branch` (default `worktree/<name>`), optional `base` branch (default: the branch checked out in the main checkout; required when it is detached). Returns the worktree's `project_id`, path, branch and base. |
-| `git.worktree_list` | `git worktree list` | Every worktree of the repository, with its `project_id` if derived, branch, base, commits ahead of and behind the base, and uncommitted changes. |
-| `git.worktree_remove` | `git worktree remove` | Called in the worktree. Publishes the worktree's commits to its branch, then removes the worktree and its registration; uncommitted changes stop it unless `force` is true, which discards them but never commits. The branch is kept. |
+| `git.worktree_add` | Private repository and checkout | In a project whose root is a non-bare repository's top level. Inputs: `name` (`[a-z0-9]+(-[a-z0-9]+)*`, at most 48 characters), optional `branch` (default `worktree/<name>`), optional `base` branch (default: the branch checked out in the main checkout; required when it is detached). Returns the worktree's `project_id`, path, branch, base and any submodule/LFS warnings. |
+| `git.worktree_list` | Host ledger plus `git worktree list` | Host worktrees and foreign checkouts of the repository, with its `project_id` if derived, branch, base, commits ahead of and behind the base, and uncommitted changes. |
+| `git.worktree_remove` | Identity-verified removal | Called in the worktree. Publishes HEAD to the managed branch and preserves every private reference and reflog root under host recovery references, then removes the checkout, private repository and registration; uncommitted changes stop it unless `force` is true, which discards them but never commits. The branch is kept. |
 | `git.merge` | `git merge --ff-only` | Merges a branch into the main checkout's current branch. A sandboxed principal may merge only a worktree branch into that worktree's base and only as a fast-forward; local changes the merge would overwrite stop it. Never creates merge commits, forces or pushes. |
 | `git.branch_delete` | `git branch -d` | A sandboxed principal never forces, cannot delete the branch of a worktree that still exists, and cannot delete a worktree branch whose tip is not reachable from its base. |
 
 Work in a worktree is the ordinary flow: edit, build, test, `git commit`,
-`git rebase` onto the base when it has advanced, then `git.merge`,
+`git fetch origin` and `git rebase origin/<base>` when the source base has advanced, then `git.merge`,
 `git.worktree_remove` and `git.branch_delete`.
 
-Inside the sandbox, the repository's shared object store and references are
-read-only. Git in the worktree writes new objects to a private object store
-for that worktree and keeps its position on a detached `HEAD`; the host
-maintains the named branch. When the host updates the branch (on `git.merge`,
-on `git.worktree_remove`, or when asked to publish the worktree's commits), it
-reads the detached `HEAD` once, copies its reachable private objects into an
-exclusive host-owned staging area, and verifies that copy (`git fsck`, then
-`git index-pack --strict` on a pack containing exactly the validated closure).
-Programs continue running; later commits are outside that publication. Missing,
-torn or substituted input fails verification with a retryable busy result. Only
-the verified staging objects enter the shared store, followed by a reference
-transaction that verifies the branch's previous value. Previously published
-unmerged tips retain host-owned recovery references until an explicit replacement
-acknowledgement or verified integration releases them. Recovery,
-locking and journaling follow the worktree rules below.
+Each host worktree has its own private Git repository, object store, references,
+index and operation state. Its checkout's `.git` file names that repository and
+`core.worktree` names the checkout. The source repository does not register it:
+the owner's `git worktree list` omits host worktrees, while the host's list combines
+its ledger with Git's foreign checkouts. Unpublished work cannot disrupt the
+source repository's `log --all`, `gc` or `fsck`.
+
+Creation copies the source object store using copy-on-write filesystem clones,
+with a bounded full-copy fallback, and verifies the complete closure of the base
+and initialized references before activation. A concurrent source repack that
+leaves an incomplete copy gives a retryable busy result and discards that attempt.
+The private store has no alternates and survives source history rewrites and
+`gc --prune=now`. The initial local fetch populates private remote-tracking refs;
+remote `origin` names the source top level. Later `git fetch origin` copies new
+objects without writing the source. HEAD starts detached; private branches, tags
+and stash are available and stay private.
+
+The sandbox permits writes to the checkout and private repository, except the
+host-owned `.git` indirection, generated `config`, empty `hooks/`, and the absence
+of `commondir`, `config.worktree`, `info/grafts`, `shallow`,
+`objects/info/alternates` and `objects/info/http-alternates`. The checkout root and
+private repository root, `info`, `hooks`, `objects` and `objects/info` entries cannot
+be created, removed or renamed by sandboxed programs. Other entries inside those
+directories remain writable except hooks and the control paths. The repository
+root admits only Git's per-repository state names. These boundaries cover case
+and Unicode-normalization aliases as well as links, clones and swaps. The entire
+source repository stays read-only. Normal file tools cannot write Git metadata. Host
+operations verify these control files, disable replacement objects and executable
+Git configuration, and capture HEAD, refs, packed refs, reflogs and index through
+descriptors without following links. Program-written repository state is data,
+never host authority; lifecycle operations never write that repository after
+creation. Submodules remain uninitialized and submodule update is unavailable;
+LFS files remain pointers without an LFS filter. Creation reports these conditions.
+
+Full access programs run unconfined. Worktree content, including a rebase todo
+list or build instructions, can be written by any principal with worktree access.
+A Full access program that builds it or continues that rebase runs it with the
+user's authority. Immutable Git control files prevent sandboxed programs from
+planting configuration or hooks; they do not make worktree content trusted.
+
+For publication the host captures HEAD once, detached or on a private branch,
+copies objects into exclusive host-owned staging and verifies their complete
+reachable closure (`git fsck` and `git index-pack --strict`). The installed pack
+contains exactly that closure minus objects reachable from the managed branch's
+verified expected old value. Only the host writes that managed branch; its
+expected-value transaction rejects external changes, except an exact restoration
+of the old value, which is outside this guarantee. A missing managed branch
+requires recovery. Every other required object is installed from the private
+copy, including base objects no longer present in the source. Input, inflation,
+object count, time and temporary disk use remain bounded.
+
+Programs continue running during publication. Later commits are outside the
+capture; missing, torn or substituted input yields a retryable busy result. Only
+verified staging objects enter shared storage. Removal closes admission and
+terminates writers, publishes HEAD, then preserves the closures of every private
+reference and reflog entry, of any object type, under host recovery references.
+Dangling objects copied at creation are not private work; retention follows roots.
+`force` discards only uncommitted content. Previously published unmerged tips keep
+recovery references until explicit replacement acknowledgement or verified
+integration releases them. Private references and reflogs independently retain
+any old tips they still name. Recovery, locking and journaling follow the rules below.
 
 Fast-forward integration holds a prepared expected-value update through
 dereferenced `HEAD`, verifies its symbolic target is the recorded base, and keeps

@@ -5,6 +5,7 @@ package struct CreatedWorktree: Sendable {
   package let path: URL
   package let branch: String
   package let base: String
+  package let warnings: [String]
 }
 
 struct WorktreeCreationJournal: Codable {
@@ -22,18 +23,19 @@ struct WorktreeCreationJournal: Codable {
   var phase: Phase
   var contentParent: WorktreeDirectoryIdentity?
   var root: WorktreeDirectoryIdentity?
-  var objectParent: WorktreeDirectoryIdentity?
+  var repositoryParent: WorktreeDirectoryIdentity?
   var objects: WorktreeDirectoryIdentity?
   var runtime: WorktreeDirectoryIdentity?
   var gitDirectory: WorktreeDirectoryIdentity?
   var baseHistory: WorktreeRefHistory?
+  var warnings: [String] = []
 
   var id: String { record.projectID }
   var result: CreatedWorktree {
     .init(
       projectID: id, path: URL(fileURLWithPath: record.root),
       branch: String(branch.dropFirst("refs/heads/".count)),
-      base: String(base.dropFirst("refs/heads/".count)))
+      base: String(base.dropFirst("refs/heads/".count)), warnings: warnings)
   }
 }
 
@@ -79,12 +81,6 @@ extension WorktreeRepository {
       else {
         throw WorktreeError.invalidRequest("Base must be an existing direct branch with a commit.")
       }
-      let tree = try command(["ls-tree", "-rz", oid]).output
-      guard !tree.split(separator: 0).contains(where: { $0.starts(with: Data("160000 ".utf8)) })
-      else {
-        throw WorktreeError.unsupportedRepository(
-          "Submodule checkouts require separate confinement support.")
-      }
       let worktreeID = UUID()
       let component = worktreeID.uuidString.lowercased()
       let repositoryName = URL(fileURLWithPath: identity.main.path).lastPathComponent
@@ -99,9 +95,24 @@ extension WorktreeRepository {
         ).path,
         provenance: .host(worktreeID: worktreeID, storageGeneration: UUID()), state: .creating)
       var journal = WorktreeCreationJournal(
-        version: 1, operationID: worktreeID,
+        version: 2, operationID: worktreeID,
         repository: identity, record: record, branchID: UUID(), branch: branchRef,
         base: baseRef, baseOID: oid, phase: .reserved)
+      let tree = try command(["ls-tree", "-rz", oid]).output
+      if tree.split(separator: 0).contains(where: { $0.starts(with: Data("160000 ".utf8)) }) {
+        journal.warnings.append(
+          "Submodules are not initialized; submodule update is unavailable in this worktree.")
+      }
+      let paths = try command(["ls-tree", "-rz", "--name-only", oid]).output
+      let attributes = try command(
+        ["check-attr", "-z", "--source=" + oid, "--stdin", "filter"], input: paths
+      ).output
+      if attributes.split(separator: 0).enumerated().contains(where: {
+        $0.offset % 3 == 2 && $0.element == Data("lfs".utf8)
+      }) {
+        journal.warnings.append(
+          "Git LFS content remains as pointer files; no LFS filter is configured.")
+      }
       journal.baseHistory = try captureRefHistory(baseRef, expectedOID: oid)
       try lock.verify()
       try storage.prepare()
@@ -112,19 +123,22 @@ extension WorktreeRepository {
       let content = try WorktreeDirectory(storage.content).child(
         component, create: true, exclusive: true)
       let root = try content.child(repositoryName, create: true, exclusive: true)
-      let objectParent = try WorktreeDirectory(storage.objects).child(
+      let repositoryParent = try WorktreeDirectory(storage.repositories).child(
         component, create: true, exclusive: true)
-      let objects = try objectParent.child("objects", create: true, exclusive: true)
+      let privateRepository = try repositoryParent.child(
+        "repository", create: true, exclusive: true)
+      let objects = try privateRepository.child("objects", create: true, exclusive: true)
       let runtime = try WorktreeDirectory(storage.runtime).child(
         component, create: true, exclusive: true)
-      for parent in [content, objectParent, runtime] {
+      for parent in [content, repositoryParent, runtime] {
         try io.write(ownerMarker(journal), name: "owner.json", in: parent, replacing: nil)
       }
       let previous = try encoded(journal)
       journal.contentParent = content.identity
       journal.root = root.identity
-      journal.objectParent = objectParent.identity
+      journal.repositoryParent = repositoryParent.identity
       journal.objects = objects.identity
+      journal.gitDirectory = privateRepository.identity
       journal.runtime = runtime.identity
       journal.phase = .directories
       try saveJournal(journal, replacing: previous)
@@ -187,28 +201,8 @@ extension WorktreeRepository {
       throw WorktreeError.recoveryRequired("The captured base branch changed during creation.")
     }
     if journal.phase == .directories {
-      let root = URL(fileURLWithPath: journal.record.root)
-      if try FileManager.default.contentsOfDirectory(atPath: root.path).isEmpty {
-        _ = try command([
-          "worktree", "add", "--no-checkout", "--detach", "--", root.path, journal.baseOID,
-        ])
-      }
-      let administrative = try administrativeDirectory(root: root, repository: identity)
-      guard
-        try directHead(
-          root: root, administrative: administrative.url,
-          objects: URL(fileURLWithPath: journal.objects!.path), repository: identity)
-          == journal.baseOID
-      else {
-        throw WorktreeError.recoveryRequired("New worktree HEAD differs from the captured base.")
-      }
+      try initializePrivateRepository(journal)
       let previous = try encoded(journal)
-      journal.gitDirectory = administrative.identity
-      // No checkout has run before this phase. If a crash left a populated root,
-      // retain it instead of overwriting content whose writer cannot be proved.
-      guard try FileManager.default.contentsOfDirectory(atPath: root.path) == [".git"] else {
-        throw WorktreeError.recoveryRequired("Unrecorded checkout content is retained.")
-      }
       journal.phase = .checkout
       try saveJournal(journal, replacing: previous)
     }
@@ -220,13 +214,10 @@ extension WorktreeRepository {
         try lock.verify()
         _ = try git.run(
           ["read-tree", "--reset", "-u", journal.baseOID], at: root,
-          gitDirectory: topology.gitDirectory.url, objects: topology.objects.url,
-          sharedObjects: topology.sharedObjects.url)
+          gitDirectory: topology.gitDirectory.url)
       }
       guard try status(topology).isEmpty,
-        try directHead(
-          root: root, administrative: topology.gitDirectory.url, objects: topology.objects.url,
-          repository: identity)
+        try privateMetadata(topology).head
           == journal.baseOID
       else {
         throw WorktreeError.recoveryRequired("Interrupted checkout is not the captured clean tree.")
@@ -322,7 +313,7 @@ extension WorktreeRepository {
         $0.hasPrefix("refs/heads/") && $0.utf8.count <= 1035
           && !$0.unicodeScalars.contains(where: { $0.value <= 32 || $0.value == 127 })
       }),
-      journal.version == 1, journal.id == "worktree-" + id,
+      journal.version == 2, journal.id == "worktree-" + id,
       case .host(let worktreeID, _) = journal.record.provenance, worktreeID == journal.operationID,
       journal.record.state == .creating, journal.record.revision == 1,
       journal.repository.format.contains(journal.baseOID),
@@ -346,7 +337,8 @@ extension WorktreeRepository {
   ) throws {
     guard journal.repository == repository, journal.record.source == source,
       let content = journal.contentParent, let root = journal.root,
-      let objectParent = journal.objectParent, let objects = journal.objects,
+      let repositoryParent = journal.repositoryParent, let objects = journal.objects,
+      let privateRepository = journal.gitDirectory,
       let runtime = journal.runtime
     else {
       throw WorktreeError.recoveryRequired("Directory ownership evidence is incomplete.")
@@ -354,20 +346,23 @@ extension WorktreeRepository {
     let component = journal.operationID.uuidString.lowercased()
     guard content.path == storage.content.appendingPathComponent(component).path,
       root.path == journal.record.root,
-      objectParent.path == storage.objects.appendingPathComponent(component).path,
+      repositoryParent.path == storage.repositories.appendingPathComponent(component).path,
+      privateRepository.path
+        == URL(fileURLWithPath: repositoryParent.path).appendingPathComponent("repository").path,
       objects.path
-        == URL(fileURLWithPath: objectParent.path).appendingPathComponent("objects").path,
+        == URL(fileURLWithPath: repositoryParent.path).appendingPathComponent("repository/objects")
+        .path,
       runtime.path == storage.runtime.appendingPathComponent(component).path
     else {
       throw WorktreeError.recoveryRequired("Owned directories differ from configured storage.")
     }
     try repository.verify()
-    for expected in [content, root, objectParent, objects, runtime] {
+    for expected in [content, root, repositoryParent, privateRepository, objects, runtime] {
       guard try WorktreeDirectory(URL(fileURLWithPath: expected.path)).identity == expected else {
         throw WorktreeError.identityChanged("Worktree directory was moved or replaced.")
       }
     }
-    for parent in [content, objectParent, runtime] {
+    for parent in [content, repositoryParent, runtime] {
       guard
         try io.read(
           "owner.json", in: WorktreeDirectory(URL(fileURLWithPath: parent.path)), limit: 1024)

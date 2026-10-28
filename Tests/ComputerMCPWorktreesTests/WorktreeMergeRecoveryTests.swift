@@ -33,6 +33,7 @@ struct WorktreeMergeRecoveryTests {
       let ownerTip = try f.raw(["rev-parse", "HEAD"])
       let git = PrivateWorktreeGit(
         f: f, topology: try original.topology(projectID: created.projectID))
+      try git.run(["fetch", "origin"])
       try git.run(["rebase", "-X", "theirs", "--onto", ownerTip, old])
       let rebased = try git.run(["rev-parse", "HEAD"])
       if interruption == "prepared" {

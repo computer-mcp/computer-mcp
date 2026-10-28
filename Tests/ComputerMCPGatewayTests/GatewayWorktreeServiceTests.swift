@@ -28,12 +28,9 @@ struct GatewayWorktreeServiceTests {
     #expect(created.objectValue?["base"] == .string("main"))
     let record = try #require(try fixture.database.derivedProjects().first { $0.projectID == id })
     let repository = try fixture.repository()
-    let topology = try repository.topology(projectID: id)
+    _ = try repository.topology(projectID: id)
     try Data("private change".utf8).write(to: root.appendingPathComponent("value"))
-    let view = [
-      "GIT_OBJECT_DIRECTORY": topology.objects.url.path,
-      "GIT_ALTERNATE_OBJECT_DIRECTORIES": topology.sharedObjects.url.path,
-    ]
+    let view: [String: String] = [:]
     _ = try fixture.git(["add", "value"], at: root, environment: view)
     _ = try fixture.git(
       [

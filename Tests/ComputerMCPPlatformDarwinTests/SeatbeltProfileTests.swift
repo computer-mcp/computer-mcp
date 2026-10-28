@@ -56,12 +56,11 @@ import Testing
   @Test func gitRules() throws {
     let git = try SandboxGitConfiguration(
       sharedDirectory: .init("/repo/.git"),
-      administrativeDirectory: .init("/repo/.git/worktrees/task"),
-      privateObjects: .init("/test/objects"), sharedObjects: .init("/repo/.git/objects"))
+      repository: .init("/test/private.git"))
     let profile = SeatbeltProfile.generate(try configuration(git: git))
     #expect(profile.contains("(require-not (subpath \"/repo/.git\"))"))
-    #expect(profile.contains("(allow file-write* (subpath \"/test/objects\"))"))
-    #expect(profile.contains("(allow file-write* (literal \"/repo/.git/worktrees/task/HEAD\"))"))
+
+    #expect(profile.contains("(require-not (literal \"/test/private.git/config\"))"))
     #expect(!profile.contains("(allow file-write* (subpath \"/repo/.git\"))"))
   }
 

@@ -2,7 +2,7 @@ import Foundation
 
 package struct WorktreeStorage: Sendable {
   package let content: URL
-  package let objects: URL
+  package let repositories: URL
   package let runtime: URL
   package let journals: URL
   let base: URL
@@ -15,14 +15,15 @@ package struct WorktreeStorage: Sendable {
       .standardizedFileURL.resolvingSymlinksInPath()
     let app = applicationSupportRoot != nil
     content = base.appendingPathComponent(app ? "Worktrees" : "worktrees")
-    objects = base.appendingPathComponent(app ? "WorktreeObjects" : "worktree-objects")
+    repositories = base.appendingPathComponent(
+      app ? "WorktreeRepositories" : "worktree-repositories")
     runtime = base.appendingPathComponent(app ? "WorktreeRuntime" : "worktree-runtime")
     journals = base.appendingPathComponent(app ? "WorktreeJournals" : "worktree-journals")
   }
 
   func prepare() throws {
     let parent = try WorktreeDirectory(base)
-    for url in [content, objects, runtime, journals] {
+    for url in [content, repositories, runtime, journals] {
       _ = try parent.child(url.lastPathComponent, create: true)
     }
   }
@@ -30,7 +31,7 @@ package struct WorktreeStorage: Sendable {
   func validate(projectRoots: [URL], ownedRoots: Set<String>) throws {
     for project in projectRoots.map({ $0.standardizedFileURL.resolvingSymlinksInPath().path }) {
       if ownedRoots.contains(project) { continue }
-      for storage in [content, objects, runtime, journals] {
+      for storage in [content, repositories, runtime, journals] {
         let path = storage.path
         guard !Self.contains(project, path), !Self.contains(path, project) else {
           throw WorktreeError.unsafeConfiguration("Worktree storage overlaps a registered project.")

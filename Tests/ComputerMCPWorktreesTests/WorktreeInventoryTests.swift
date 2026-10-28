@@ -13,7 +13,8 @@ struct WorktreeInventoryTests {
       let foreignObjects = directory.appendingPathComponent("foreign-objects")
       try FileManager.default.createDirectory(
         at: foreignObjects, withIntermediateDirectories: false)
-      let alternate = topology.sharedObjects.url.appendingPathComponent("info/alternates")
+      let alternate = URL(fileURLWithPath: service.identity.objects.path).appendingPathComponent(
+        "info/alternates")
       try Data((foreignObjects.path + "\n").utf8).write(to: alternate)
       #expect(throws: WorktreeError.self) { try service.topology(projectID: created.projectID) }
       #expect(throws: WorktreeError.self) { try service.inventory { _ in true } }
@@ -52,7 +53,7 @@ struct WorktreeInventoryTests {
     }
   }
 
-  @Test(arguments: ["missing", "moved", "backlink", "head", "indirection", "alternate"])
+  @Test(arguments: ["missing", "moved", "config", "head", "indirection", "alternate"])
   func invalidTopologyIsUnavailableAndRetained(fault: String) throws {
     try fixture { directory in
       let f = try WorktreeFixture(directory)
@@ -67,13 +68,13 @@ struct WorktreeInventoryTests {
         let old = topology.gitDirectory.url
         try FileManager.default.moveItem(at: old, to: old.appendingPathExtension("moved"))
         try FileManager.default.createDirectory(at: old, withIntermediateDirectories: false)
-      case "backlink":
+      case "config":
         try Data((f.repository.path + "/.git\n").utf8).write(
-          to: topology.gitDirectory.url.appendingPathComponent("gitdir"))
+          to: topology.gitDirectory.url.appendingPathComponent("config"))
       case "alternate":
         let info = topology.objects.url.appendingPathComponent("info")
-        try FileManager.default.createDirectory(at: info, withIntermediateDirectories: false)
-        try Data((topology.sharedObjects.url.path + "\n").utf8).write(
+        try FileManager.default.createDirectory(at: info, withIntermediateDirectories: true)
+        try Data((URL(fileURLWithPath: service.identity.objects.path).path + "\n").utf8).write(
           to: info.appendingPathComponent("alternates"))
       case "head":
         try Data("ref: refs/heads/main\n".utf8).write(
@@ -85,15 +86,9 @@ struct WorktreeInventoryTests {
         try FileManager.default.createSymbolicLink(at: pointer, withDestinationURL: retained)
       }
       #expect(throws: (any Error).self) { try service.topology(projectID: created.projectID) }
-      if fault == "backlink" {
-        // A backlink aimed at main produces duplicate paths in Git's inventory.
-        // Refuse the ambiguous inventory instead of attaching either registration.
-        #expect(throws: WorktreeError.self) { try service.inventory { _ in true } }
-      } else {
-        let items = try service.inventory { _ in true }
-        for item in items where item.path == created.path.path {
-          #expect(item.projectID == nil && item.unavailable != nil)
-        }
+      let items = try service.inventory { _ in true }
+      for item in items where item.path == created.path.path {
+        #expect(item.unavailable != nil)
       }
       #expect(
         FileManager.default.fileExists(atPath: created.path.appendingPathComponent("file.txt").path)

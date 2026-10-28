@@ -76,6 +76,7 @@ struct GatewayWorktreeService: GitWorktreeServing {
       return .object([
         "project_id": .string(result.projectID), "path": .string(result.path.path),
         "branch": .string(result.branch), "base": .string(result.base),
+        "warnings": .array(result.warnings.map(JSONValue.string)),
       ])
     case .list:
       let result = try repository.inventory { path in

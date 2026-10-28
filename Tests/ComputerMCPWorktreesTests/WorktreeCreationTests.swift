@@ -80,11 +80,41 @@ struct WorktreeCreationTests {
       let restarted = try f.service(store: reopened)
       let topology = try restarted.topology(projectID: created.projectID)
       #expect(
-        try restarted.directHead(
-          root: topology.root.url, administrative: topology.gitDirectory.url,
-          objects: topology.objects.url, repository: restarted.identity) == privateHead)
+        try restarted.privateMetadata(topology).head == privateHead)
       #expect(
         try FileManager.default.contentsOfDirectory(atPath: topology.objects.url.path).count > 0)
+    }
+  }
+
+  @Test func submoduleAndLFSConditionsAreReportedWithoutSourceConfiguration() throws {
+    try fixture { directory in
+      let f = try WorktreeFixture(directory)
+      let base = try f.raw(["rev-parse", "HEAD"])
+      try Data("asset filter=lfs\n".utf8).write(
+        to: f.repository.appendingPathComponent(".gitattributes"))
+      let pointer =
+        "version https://git-lfs.github.com/spec/v1\noid sha256:"
+        + String(repeating: "a", count: 64) + "\nsize 1\n"
+      try Data(pointer.utf8).write(to: f.repository.appendingPathComponent("asset"))
+      try f.raw(["add", "."])
+      try f.raw(["update-index", "--add", "--cacheinfo", "160000," + base + ",submodule"])
+      try f.raw(["commit", "-m", "special content"])
+      try f.raw(["config", "custom.owner", "not copied"])
+      let service = try f.service()
+      let created = try service.create(name: "content")
+      #expect(created.warnings.count == 2)
+      #expect(
+        try String(contentsOf: created.path.appendingPathComponent("asset"), encoding: .utf8)
+          == pointer)
+      let topology = try service.topology(projectID: created.projectID)
+      #expect(
+        try !String(
+          contentsOf: topology.gitDirectory.url.appendingPathComponent("config"), encoding: .utf8
+        ).contains("custom"))
+      #expect(
+        try FileManager.default.contentsOfDirectory(
+          atPath: created.path.appendingPathComponent("submodule").path
+        ).isEmpty)
     }
   }
 
@@ -154,7 +184,7 @@ struct WorktreeCreationTests {
         f.storage.content.path
           == f.database.deletingLastPathComponent().appendingPathComponent("worktrees").path)
       for root in [
-        directory, f.storage.content, f.storage.objects.appendingPathComponent("nested"),
+        directory, f.storage.content, f.storage.repositories.appendingPathComponent("nested"),
       ] {
         #expect(throws: WorktreeError.self) { try f.service(roots: [f.repository, root]) }
       }

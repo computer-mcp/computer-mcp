@@ -127,6 +127,7 @@ package struct RegisteredCommands: Sendable {
         let identity = try run(
           executable: invocation.executable,
           arguments: invocation.arguments + HostGitConfiguration.arguments
+            + (prepared?.worktreeGit.map { ["--git-dir", $0.sharedDirectory.value] } ?? [])
             + ["config", "--null", "--get", key],
           workingDirectory: directory,
           environment: HostGitConfiguration.identityEnvironment(sourceEnvironment),
@@ -164,7 +165,20 @@ package struct RegisteredCommands: Sendable {
       mutating = true
     default: mutating = false
     }
-    if fixed?.allowsWrites == true || mutating {
+    if prepared?.worktreeGit != nil {
+      guard
+        !mutating
+          || !["branch", "tag", "stash", "switch", "worktree", "update-ref"].contains(
+            operation ?? "")
+      else {
+        throw GatewayToolError.invalidArguments(
+          "Shared Git mutations must run in the source project.")
+      }
+      // The private profile cannot write shared refs. A writer lease must never
+      // wait for the repository lock held by removal while it drains that lease.
+      common = nil
+      lock = nil
+    } else if fixed?.allowsWrites == true || mutating {
       let located = try run(
         executable: invocation.executable,
         arguments: HostGitConfiguration.arguments + [

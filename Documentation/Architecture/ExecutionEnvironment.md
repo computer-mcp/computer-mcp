@@ -19,8 +19,11 @@ path resolver and saves the resulting evidence on the invocation. Project
 precedence, projected nested projects, Files and Folders, developer locations,
 directory-only ancestors and host-data exclusions share the host-tool resolver.
 A complete classified path environment is required. The host supplies canonical
-working paths and private scratch storage; missing worktree/private Git or plugin
-execution contexts are refused.
+working paths and private scratch storage. Sandbox project programs require a
+current host-worktree identity and private Git context. Full access project
+programs run unconfined after permission admission and local consent. Local stdio
+MCP and plugin program launches remain unavailable until their owner supplies
+the supported execution context.
 
 Screen opens capture and Desktop control opens accessibility independently.
 Egress uses the effective project network and managed ceilings; a scoped Local
@@ -68,7 +71,14 @@ bind the host executable, argument vector, directory and isolated environment;
 they remain sandboxed even for a Full access principal. Write helpers open only
 the admitted project and verified Git directory, preserve nested denials and
 serialize repository writes. Caller arguments and decoded capability metadata
-cannot select this strategy. Verified host-worktree writes require their use lease.
+cannot select this strategy. Every host-worktree execution holds the same
+worktree-use lease, including unconfined Full access programs. Preparation,
+launch and in-process writes revalidate the pinned checkout, repository and
+host-owned controls. Removal closes admission, drains synchronous mutations and
+terminates writers across principals and generations. Sandboxed writers require
+confirmed termination; Full access writers are terminated best-effort with
+reported ownership limitations. Private Git writers do not acquire the shared
+repository lock while holding this lease.
 See [execution admission](SecurityAndPrivacy.md#execution-admission)
 for the current Sandbox and Full access availability matrix.
 
@@ -84,8 +94,9 @@ The snapshot exposes applied limits and a limit termination reason.
 Principal execution installs this context at its admitted call boundary. Trusted
 host administration runs outside that boundary with an explicit host policy.
 Registered CLI help, host Git, descriptor-backed file helpers and shell/process
-adapters all reach the same launcher. Plugin/stdio helpers launched within an
-admitted context inherit it; unavailable project/plugin contexts remain refused.
+adapters all reach the same launcher. Local plugin/stdio process preparation
+remains gated; neither a plugin receipt nor Full access consent creates a host
+worktree context.
 Housekeeping retains the original ownership handle for cleanup and cannot obtain
 new launch authority by dropping the context.
 
@@ -110,7 +121,7 @@ Callers select these sets at their operation boundary:
 | Caller | Selected variables |
 | --- | --- |
 | Host Git operations, project Git layout checks and delivery Git | Private `HOME` and `XDG_CONFIG_HOME`, `LC_ALL=C`; `GIT_CONFIG_NOSYSTEM=1`, `GIT_CONFIG_GLOBAL=/dev/null`, `GIT_TERMINAL_PROMPT=0`, `GIT_NO_LAZY_FETCH=1`, `GIT_ALLOW_PROTOCOL=`, `GIT_CONFIG_COUNT=0`, `GIT_CONFIG_PARAMETERS=`, `GIT_EXTERNAL_DIFF=/dev/null`, `GIT_ATTR_NOSYSTEM=1`, `GIT_PAGER=`, and `/dev/null` for `GIT_EDITOR`, `GIT_SEQUENCE_EDITOR`, `GIT_ASKPASS`, `GIT_SSH_COMMAND` |
-| Git author identity lookup | Only selected configuration locations `HOME`, `XDG_CONFIG_HOME`, `GIT_CONFIG_GLOBAL`, `GIT_CONFIG_SYSTEM`, plus `LC_ALL=C`; author values are subsequently passed as explicit Git options |
+| Git author identity lookup | A verified worktree reads the source repository’s author fields as data, without copying its configuration. Only selected configuration locations `HOME`, `XDG_CONFIG_HOME`, `GIT_CONFIG_GLOBAL`, `GIT_CONFIG_SYSTEM`, plus `LC_ALL=C`; author values are subsequently passed as explicit Git options |
 | Registered SQLite inspection | Private `HOME`; arguments retain `-init /dev/null -safe` |
 | File archive extraction | `LC_ALL=C` |
 | File archive creation and download | Empty set |

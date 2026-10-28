@@ -9,10 +9,15 @@ import Foundation
 package struct GatewayPathAccess: HostPathAccessChecking {
   private let store: SQLitePermissionStore
   private let authorizationID: UUID
+  private let validateWorktree: (@Sendable () throws -> Void)?
 
-  package init(store: SQLitePermissionStore, authorizationID: UUID) {
+  package init(
+    store: SQLitePermissionStore, authorizationID: UUID,
+    validateWorktree: (@Sendable () throws -> Void)? = nil
+  ) {
     self.store = store
     self.authorizationID = authorizationID
+    self.validateWorktree = validateWorktree
   }
 
   package func isAccessible(_ path: URL, operation: HostPathOperation) -> Bool {
@@ -24,6 +29,7 @@ package struct GatewayPathAccess: HostPathAccessChecking {
   }
 
   private func check(_ path: URL, operation: HostPathOperation, requestMissing: Bool) throws {
+    if operation == .write { try validateWorktree?() }
     let canonical = try ProjectPathResolver.resolve(
       path.path, relativeTo: URL(fileURLWithPath: "/"))
     let operation: PathOperation =

@@ -64,8 +64,8 @@ struct GatewayNativeLaunchAdmissionTests {
     #expect(receipt.objectValue?["write_refused"] == .bool(true))
   }
 
-  @Test
-  func grantedNativeServerDiscoveryRefusesSandboxLaunchBeforeTheMarker() async throws {
+  @Test(arguments: [false, true])
+  func grantedNativeServerDiscoveryRequiresPluginContext(fullAccess: Bool) async throws {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
     try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
     defer { try? FileManager.default.removeItem(at: root) }
@@ -78,7 +78,7 @@ struct GatewayNativeLaunchAdmissionTests {
       id: .chatGPTOperate,
       permissions: fixturePermissions([
         .project("fixture"): .granted(.read), .mcpServer("owned"): .granted(.read),
-      ]), allowedCallers: [.localMCP])
+      ]), fullAccess: fullAccess, allowedCallers: [.localMCP])
     try database.saveProfile(grant)
     try database.bootstrapPermissionProfiles([grant])
     let project = ComputerMCPCore.RegisteredProject(
@@ -90,6 +90,7 @@ struct GatewayNativeLaunchAdmissionTests {
       principalID: "verified-native-discovery", profileID: grant.id, caller: .localMCP,
       database: database, profile: .init(grant: grant, persisted: true),
       permissionService: try database.permissionRuntime(platform: platform).service)
+    if fullAccess { _ = try session.approveFullAccess(expectedRevision: session.revision) }
     var context = ExecutionContext(
       caller: .localMCP, profileID: grant.id, projectID: project.id,
       trustedPrincipalID: session.principalID)
@@ -118,14 +119,14 @@ struct GatewayNativeLaunchAdmissionTests {
       #expect(error["code"] == .string("execution.unavailable"))
       #expect(error["request_ids"] == nil)
       #expect(
-        error["message"]?.stringValue?.contains("verified worktree and private Git context") == true
+        error["message"]?.stringValue?.contains("plugin owner's verified execution context") == true
       )
       #expect(
         !FileManager.default.fileExists(atPath: root.appendingPathComponent("native-started").path))
       #expect(
         !FileManager.default.fileExists(
           atPath: root.appendingPathComponent("write-dispatched").path))
-      #expect(session.snapshot.fullAccessConsent == nil)
+      #expect((session.snapshot.fullAccessConsent == nil) == !fullAccess)
       await runtime.shutdown()
     } catch {
       await runtime.shutdown()

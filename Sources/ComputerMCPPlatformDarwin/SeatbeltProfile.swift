@@ -55,6 +55,25 @@ package enum SeatbeltProfile {
           + configuration.forbiddenReads.map { "(require-not \(subpath($0)))" })
       rules.append("(allow file-read* \(filter))")
     }
+    // Private storage requires metadata traversal, not directory enumeration,
+    // through host-owned parents that are otherwise unreadable.
+    var ancestors = Set<SandboxPath>()
+    let traversed =
+      configuration.writableDirectories
+      + (configuration.git.map { [$0.repository, $0.sharedDirectory] } ?? [])
+    for path in traversed {
+      var current = URL(fileURLWithPath: path.value).deletingLastPathComponent()
+      while true {
+        if let value = try? SandboxPath(current.path) { ancestors.insert(value) }
+        if current.path == "/" { break }
+        current.deleteLastPathComponent()
+      }
+    }
+    for path in ancestors.sorted(by: { $0.value < $1.value }) {
+      rules.append(
+        "(allow file-read-metadata \(all(["(literal \(quote(path.value)))"] + configuration.forbiddenReads.map { "(require-not \(subpath($0)))" })))"
+      )
+    }
     var writeExclusions = configuration.forbiddenReads.map(subpath)
     writeExclusions += configuration.deniedWriteRegions.map { region in
       all([subpath(region.path)] + region.exceptions.map { "(require-not \(subpath($0)))" })
@@ -71,7 +90,7 @@ package enum SeatbeltProfile {
         "(allow file-write* \(all([subpath(path)] + writeExclusions.map { "(require-not \($0))" })))"
       )
     }
-    if let git = configuration.git {
+    if let git = configuration.git, !configuration.readOnly {
       let protected = ["", "info", "hooks", "objects", "objects/info"]
       let exclusions =
         configuration.forbiddenReads.map { "(require-not \(subpath($0)))" }

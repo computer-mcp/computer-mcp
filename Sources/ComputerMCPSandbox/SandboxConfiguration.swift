@@ -157,7 +157,7 @@ package struct SandboxConfiguration: Sendable, Equatable {
     guard
       !readOnly
         || (temporaryDirectory.contains(homeDirectory)
-          && temporaryDirectory.contains(cacheDirectory) && git == nil)
+          && temporaryDirectory.contains(cacheDirectory))
     else {
       throw ExecutionEnvironmentError.invalidConfiguration(
         "Read-only executions keep home and caches inside temporary storage")

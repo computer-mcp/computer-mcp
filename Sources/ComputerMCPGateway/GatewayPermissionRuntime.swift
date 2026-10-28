@@ -23,8 +23,12 @@ package final class GatewayPermissionRuntime: @unchecked Sendable {
   package let coordinator: ExecutionRevocationCoordinator
   private let directory: URL
   private let gitExecutable: String
+  private let database: GatewayDatabase
+  private let platform: PlatformServices
 
   package init(database: GatewayDatabase, platform: PlatformServices) throws {
+    self.database = database
+    self.platform = platform
     store = try database.configuredPermissionStore()
     directory = database.permissionExecutionRoot
     gitExecutable = platform.gitExecutable
@@ -88,7 +92,11 @@ package final class GatewayPermissionRuntime: @unchecked Sendable {
         ].contains(descriptor.id)
       else { throw PermissionModelError.invalidAuthorization }
       try service.validateAuthorization(authorization.id)
-      return GatewayWorktreeInvocation(authorization: authorization)
+      let prepared: Result<InvocationAuthorization, any Error> = try store.transactionWithDatabase {
+        _, ledger in
+        Result { try ledger.prepareWorktreePermissions(authorization.id) }
+      }
+      return GatewayWorktreeInvocation(authorization: try prepared.get())
     }
     let requirement = descriptor.requirement
     let writes =
@@ -102,14 +110,6 @@ package final class GatewayPermissionRuntime: @unchecked Sendable {
       else {
         throw ExecutionEnvironmentError.unavailable(
           "The host operation requires its lifecycle service and fixed Git executable")
-      }
-      if writes,
-        try await store.read().environment.paths?.registeredProjects.contains(where: {
-          $0.id == authorization.invocation.projectID && $0.hostContentIdentity != nil
-        }) == true
-      {
-        throw ExecutionEnvironmentError.unavailable(
-          "Writable worktree tools require a bound worktree admission lease")
       }
       fixed = try .init(
         operation: operation, gitExecutable: SandboxPath(gitExecutable),
@@ -130,14 +130,13 @@ package final class GatewayPermissionRuntime: @unchecked Sendable {
     } else {
       purpose = .readOnlyHelper
     }
-    if purpose == .projectProgram || purpose == .pluginProgram,
-      try await store.read().environment.paths?.registeredProjects.contains(where: {
-        $0.id == authorization.invocation.projectID && $0.hostContentIdentity != nil
-      }) == true
-    {
+    if purpose == .pluginProgram {
       throw ExecutionEnvironmentError.unavailable(
-        "Worktree programs require a bound worktree admission lease")
+        "Local plugin programs require the plugin owner's verified execution context")
     }
+    let worktree = try database.executionWorktree(
+      projectID: authorization.invocation.projectID, directory: workingDirectory, platform: platform
+    )
     let temporary = directory.appendingPathComponent(authorization.id.uuidString, isDirectory: true)
     guard temporary.path.withCString({ mkdir($0, mode_t(0o700)) }) == 0 else {
       throw ExecutionEnvironmentError.unavailable(
@@ -153,9 +152,9 @@ package final class GatewayPermissionRuntime: @unchecked Sendable {
             ).path),
           temporaryDirectory: SandboxPath(try ProjectPathResolver.canonicalProject(temporary).path),
           purpose: purpose, privateWorkingDirectory: remoteService || workingDirectory == nil,
-          fixedHostOperation: fixed),
+          fixedHostOperation: fixed, worktree: worktree),
         fullAccessEnvironment: ProcessInfo.processInfo.environment, connectionID: connectionID,
-        auditContext: auditContext)
+        auditContext: auditContext, worktreeAdmission: worktree?.binding.admission)
     } catch {
       try? FileManager.default.removeItem(at: temporary)
       throw error

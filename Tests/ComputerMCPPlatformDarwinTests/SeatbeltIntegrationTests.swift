@@ -5,6 +5,71 @@ import Foundation
 import Testing
 
 @Suite struct SeatbeltIntegrationTests {
+  @Test func readableSourceCannotBeHardlinkedIntoWritableWorktree() throws {
+    let fixture = try SeatbeltFixture()
+    defer { fixture.remove() }
+    try fixture.write("source/value", "original")
+    let base = try fixture.configuration()
+    let configuration = try SandboxConfiguration(
+      worktree: base.worktree, temporaryDirectory: base.temporaryDirectory,
+      homeDirectory: base.homeDirectory, cacheDirectory: base.cacheDirectory,
+      readableRoots: base.readableRoots + [fixture.path("source")],
+      listableAncestors: base.listableAncestors)
+    #expect(try fixture.run("cat source/value > worktree/read", configuration: configuration) == 0)
+    #expect(
+      try fixture.run(
+        "ln source/value worktree/link && echo changed > worktree/link",
+        configuration: configuration) != 0)
+    #expect(
+      try String(contentsOf: fixture.root.appendingPathComponent("source/value"), encoding: .utf8)
+        == "original")
+  }
+
+  @Test(arguments: [false, true])
+  func privateGitRespectsReadOnlyModeAndLiteralPaths(readOnly: Bool) throws {
+    let f = try SeatbeltFixture()
+    defer { f.remove() }
+    let repository = "private-a\"b\\[café]"
+    try f.write(repository + "/HEAD", "detached")
+    try f.write(repository + "/commondir", "../..")
+    try f.write(repository + "/refs/protected", "protected")
+    let base = try f.configuration()
+    let configuration = try SandboxConfiguration(
+      readOnly: readOnly, worktree: base.worktree, temporaryDirectory: base.temporaryDirectory,
+      homeDirectory: base.temporaryDirectory, cacheDirectory: base.temporaryDirectory,
+      readableRoots: base.readableRoots, listableAncestors: base.listableAncestors,
+      git: .init(
+        sharedDirectory: f.path("shared"), repository: f.path(repository)))
+    for (name, writable) in [
+      ("HEAD", true), ("COMMIT_EDITMSG", true), ("next-index-42.lock", true),
+      ("next-index-42", true), ("next-index-evil.lock", false), ("commondir", false),
+      ("refs/next-index-42.lock", true), ("refs/protected", true),
+    ] {
+      let command = "printf changed > '" + repository + "/" + name + "'"
+      #expect(
+        (try f.run(command, configuration: configuration) == 0) == (writable && !readOnly),
+        "\(name)")
+    }
+  }
+
+  @Test func privateStorageCanCreateChildrenWithoutReadingItsParents() throws {
+    let f = try SeatbeltFixture()
+    defer { f.remove() }
+    try f.write("host/executions/owned/seed", "private")
+    try f.write("host/executions/secret", "secret")
+    let owned = try f.path("host/executions/owned")
+    let configuration = try SandboxConfiguration(
+      worktree: f.path("worktree"), temporaryDirectory: owned,
+      homeDirectory: owned, cacheDirectory: owned, readableRoots: f.systemReads,
+      deniedReadRegions: [.init(path: f.path("host"), exceptions: [owned])],
+      listableAncestors: f.ancestors)
+    #expect(
+      try f.run("mkdir -p '" + owned.value + "/cache/nested'", configuration: configuration) == 0)
+    #expect(try f.run("ls host/executions", configuration: configuration) != 0)
+    #expect(try f.run("cat host/executions/secret", configuration: configuration) != 0)
+    #expect(try f.run("echo escaped > host/executions/escape", configuration: configuration) != 0)
+  }
+
   @Test func fixedGitWritesRespectNestedReadOnlyRegions() throws {
     let fixture = try SeatbeltFixture()
     defer { fixture.remove() }

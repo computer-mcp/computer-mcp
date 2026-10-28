@@ -117,7 +117,10 @@ struct FixedHostFixture {
   let runtime: GatewayRuntime
   let observations = ExecutionObservations()
 
-  init(fullAccess: Bool = true, lifecycle: Bool = false, callback: Bool = false) throws {
+  init(
+    fullAccess: Bool = true, lifecycle: Bool = false, callback: Bool = false,
+    nestedAccess: PermissionValue? = nil
+  ) throws {
     let location = FileManager.default.temporaryDirectory.appendingPathComponent(
       "cm-fixed-\(UUID())")
     try FileManager.default.createDirectory(at: location, withIntermediateDirectories: true)
@@ -126,15 +129,27 @@ struct FixedHostFixture {
     try FileManager.default.createDirectory(at: project, withIntermediateDirectories: false)
     try Data("original".utf8).write(to: project.appendingPathComponent("value.txt"))
     database = try fixturePermissionDatabase(path: root.appendingPathComponent("state.sqlite").path)
+    var permissions = fixturePermissions([.project("fixture"): .granted(.write)])
+    if let nestedAccess { try permissions.set(.granted(nestedAccess), for: .project("nested")) }
     let grant = ProfileGrant(
       id: .chatGPTOperate,
-      permissions: fixturePermissions([.project("fixture"): .granted(.write)]),
+      permissions: permissions,
       fullAccess: fullAccess, allowedCallers: [.localMCP])
     try database.saveProfile(grant)
     try database.bootstrapPermissionProfiles([grant])
     let registered = ComputerMCPCore.RegisteredProject(
       id: "fixture", displayName: "Fixture", rootPath: project.path)
     try database.saveProject(registered)
+    var registeredProjects = [registered]
+    if nestedAccess != nil {
+      let nested = project.appendingPathComponent("nested")
+      try FileManager.default.createDirectory(at: nested, withIntermediateDirectories: false)
+      try Data("nested".utf8).write(to: nested.appendingPathComponent("value.txt"))
+      let child = ComputerMCPCore.RegisteredProject(
+        id: "nested", displayName: "Nested", rootPath: nested.path)
+      try database.saveProject(child)
+      registeredProjects.append(child)
+    }
     var services = MacOSPlatform.services(
       launcher: testExecutionLauncher(observations: observations))
     services.permissionPolicyReader = TestManagedPolicyReader()
@@ -175,10 +190,10 @@ struct FixedHostFixture {
             + (lifecycle
               ? [
                 "git.worktree_add", "git.worktree_list", "git.worktree_remove", "git.merge",
-                "git.branch_delete",
+                "git.branch_delete", "git.status", "git.log", "git.show", "git.staged_file",
               ] : [])),
         projectDirectory: project), context: context, database: database,
-      registeredProjects: [registered], platform: services,
+      registeredProjects: registeredProjects, platform: services,
       mcpClient: CatalogDiscoveryStub(),
       bundledPlugins: .init(packages: [], issues: []))
   }

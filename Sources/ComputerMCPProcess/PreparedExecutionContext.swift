@@ -102,6 +102,8 @@ package final class PreparedExecutionContext: ExecutionAccessChecking, Sendable 
   package let pathAccess: (any HostPathAccessChecking)?
   package let fixedHostOperation: FixedHostOperation?
   private let fixedCommand: FixedCommand?
+  package let worktreeGit: SandboxGitConfiguration?
+  private let validateWorktree: (@Sendable () throws -> Void)?
   private struct State: Sendable {
     var limits: EffectiveExecutionLimits
     var endReason: ExecutionLimitEndReason?
@@ -113,7 +115,9 @@ package final class PreparedExecutionContext: ExecutionAccessChecking, Sendable 
     authority: any ExecutionAuthorizing, mode: ComputerMCPSandbox.ExecutionMode,
     environment: ExecutionEnvironment,
     limits: EffectiveExecutionLimits, pathAccess: (any HostPathAccessChecking)? = nil,
-    permitsProgramLaunch: Bool = true, fixedHostOperation: FixedHostOperation? = nil
+    permitsProgramLaunch: Bool = true, fixedHostOperation: FixedHostOperation? = nil,
+    worktreeGit: SandboxGitConfiguration? = nil,
+    validateWorktree: (@Sendable () throws -> Void)? = nil
   ) {
     self.authority = authority
     self.mode = mode
@@ -122,6 +126,8 @@ package final class PreparedExecutionContext: ExecutionAccessChecking, Sendable 
     self.permitsProgramLaunch = permitsProgramLaunch
     self.fixedHostOperation = fixedHostOperation
     self.fixedCommand = nil
+    self.worktreeGit = worktreeGit
+    self.validateWorktree = validateWorktree
     state = .init(State(limits: limits))
   }
 
@@ -135,6 +141,8 @@ package final class PreparedExecutionContext: ExecutionAccessChecking, Sendable 
     permitsProgramLaunch = true
     fixedHostOperation = parent.fixedHostOperation
     fixedCommand = command
+    worktreeGit = parent.worktreeGit
+    validateWorktree = parent.validateWorktree
     state = parent.state
   }
 
@@ -149,7 +157,12 @@ package final class PreparedExecutionContext: ExecutionAccessChecking, Sendable 
     else { throw ExecutionEnvironmentError.unavailable("No fixed host Git authority is installed") }
     _ = try authority.access(executionID, operation: .readResult)
     let sandbox: SandboxConfiguration
+    try validateWorktree?()
     if let commonDirectory {
+      guard worktreeGit == nil else {
+        throw ExecutionEnvironmentError.unavailable(
+          "Shared Git mutations must run in the source project")
+      }
       guard fixed.operation == .git, fixed.allowsWrites else {
         throw ExecutionEnvironmentError.unavailable("This host operation cannot write Git state")
       }
@@ -176,6 +189,7 @@ package final class PreparedExecutionContext: ExecutionAccessChecking, Sendable 
     executable: SandboxPath, arguments: [String], directory: SandboxPath,
     directoryDescriptor: Int32?, inheritedDescriptors: [Int32: Int32]
   ) throws {
+    try validateWorktree?()
     guard let fixed = fixedHostOperation else { return }
     guard let command = fixedCommand, executable == fixed.gitExecutable,
       arguments == command.arguments, directory == fixed.directory,
@@ -216,7 +230,8 @@ package final class PreparedExecutionContext: ExecutionAccessChecking, Sendable 
   package func accessExecution(_ id: UUID, operation: ExecutionOperation) throws
     -> EffectiveExecutionLimits
   {
-    try authority.access(id, operation: operation)
+    if operation == .writeInput { try validateWorktree?() }
+    return try authority.access(id, operation: operation)
   }
 
   package func finishAdmission() throws { try authority.finishAdmission() }

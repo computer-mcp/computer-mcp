@@ -153,7 +153,7 @@ struct GatewayWorktreeServiceTests {
 
 private enum WorktreeServiceTestFailure: Error { case unexpected }
 
-private struct WorktreeServiceFixture {
+struct WorktreeServiceFixture {
   let root: URL
   let source: URL
   let database: GatewayDatabase

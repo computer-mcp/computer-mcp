@@ -198,6 +198,12 @@ package final class ExecutionRevocationCoordinator: ExecutionRecoveryAuthorizing
       authorizationIDs: execution.authorizationIDs, principal: execution.owner,
       connectionID: connectionID)
     do {
+      if let worktree = context.worktree {
+        guard worktreeAdmission == worktree.binding.admission else {
+          throw PermissionModelError.invalidAuthorization
+        }
+        try worktree.binding.verify()
+      }
       if let worktreeAdmission {
         let use = try worktreeAdmission.reserve(
           ownerID: ownerID, executionID: execution.id,
@@ -240,13 +246,21 @@ package final class ExecutionRevocationCoordinator: ExecutionRecoveryAuthorizing
       } else {
         environment = try ExecutionEnvironment(fullAccessVariables: fullAccessEnvironment)
       }
+      let validateWorktree: (@Sendable () throws -> Void)?
+      if let worktree = context.worktree {
+        validateWorktree = { try worktree.binding.verify() }
+      } else {
+        validateWorktree = nil
+      }
       let prepared = PreparedExecutionContext(
         authority: authority,
         mode: sandbox.map { .sandbox($0) } ?? .fullAccess, environment: environment,
         limits: execution.limits,
-        pathAccess: GatewayPathAccess(store: store, authorizationID: authorizationID),
+        pathAccess: GatewayPathAccess(
+          store: store, authorizationID: authorizationID, validateWorktree: validateWorktree),
         permitsProgramLaunch: configuration.permitsProgramLaunch,
-        fixedHostOperation: context.fixedHostOperation)
+        fixedHostOperation: context.fixedHostOperation, worktreeGit: context.worktree?.git,
+        validateWorktree: validateWorktree)
       _ = try authority.access(execution.id, operation: .readResult)
       lock.withLock { contexts[execution.id] = WeakExecutionContext(prepared) }
       return prepared

@@ -1099,6 +1099,63 @@ package struct PermissionLedger: Equatable, Sendable, Codable {
     throw PermissionModelError.invalidAuthorization
   }
 
+  /// Pins available nested-project grants before worktree operations or programs
+  /// start using paths. Effects still check live paths and ceilings, and cannot
+  /// import grants obtained after preparation.
+  package mutating func prepareWorktreePermissions(_ id: UUID) throws
+    -> InvocationAuthorization
+  {
+    let proof = try invocationAccess(id)
+    guard proof.executionID == nil, let catalog = environment.paths?.projects,
+      let selectedID = proof.invocation.projectID,
+      let sourceID = catalog.sourceID(for: selectedID),
+      let source = catalog.projects.first(where: { $0.id == sourceID })
+    else { throw PermissionModelError.invalidAuthorization }
+    let requests = evidenceRequests(proof.basis, authorizationID: id)
+    var basis = proof.basis
+    let values: [PermissionValue] =
+      proof.requirements.actions.contains {
+        $0.requirement.permission == .project(sourceID) && $0.requirement.value == .write
+      } ? [.write, .read] : [.read]
+    for project in catalog.projects
+    where project.sourceID == nil && project.id != sourceID && source.root.contains(project.root) {
+      for value in values {
+        let requirements = InvocationRequirements(
+          actions: [
+            PermissionAction(
+              requirement: try PermissionRequirement(.project(project.id), value),
+              scope: .project(project.id))
+          ], mode: proof.mode, sandboxProjectID: proof.sandboxProjectID)
+        let result = evaluate(
+          requirements, principal: proof.invocation.principal,
+          oneTimeRequests: requests, basis: proof.basis)
+        guard result.isAllowed else { continue }
+        let ceilingsAllow = proof.basis.allSatisfy { element in
+          guard case .connection(let connectionID, _) = element else { return true }
+          guard let connection = environment.connections[connectionID] else { return false }
+          return evaluateCeiling(
+            connection.attenuation, requirements: requirements,
+            principal: proof.invocation.principal, requests: requests
+          ).isAllowed
+        }
+        guard ceilingsAllow else { continue }
+        // Registration and path evidence is checked at use, so unregistering a
+        // derived checkout does not invalidate journaled cleanup authority.
+        basis.formUnion(
+          result.basis.filter {
+            if case .permission = $0 { return true }
+            return false
+          })
+        break
+      }
+    }
+    authorizations[id]!.basis = basis
+    for requestID in proof.requestIDs where self.requests[requestID]?.status == .consumed(id) {
+      self.requests[requestID]!.basis.formUnion(basis.requestEvidence)
+    }
+    return authorizations[id]!
+  }
+
   /// A lifecycle service owns the filesystem effect. Read admission still checks every
   /// path denial; write authority comes from the admitted project's grant rather than
   /// granting a sandbox program write access to the source checkout.

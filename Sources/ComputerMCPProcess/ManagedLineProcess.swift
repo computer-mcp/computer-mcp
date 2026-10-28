@@ -499,6 +499,9 @@ package final class ManagedLineProcess: @unchecked Sendable {
 
       "$@" <&0 >&1 2>&2 \(configuration.ownershipHandle == nil ? "" : "9>&-") &
       child=$!
+      # Only the command needs a separate group. Supervision helpers must stay
+      # in the supervisor's owned group so cancellation also joins the watchdog.
+      set +m
       exec 0<&-
       \(configuration.inheritedDescriptors.keys.sorted().map { "exec \($0)>&-" }.joined(separator: "\n"))
       if ! printf '%s\n' "$child" > "$pid_file"; then exit 1; fi

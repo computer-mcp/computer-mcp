@@ -81,7 +81,7 @@ struct GitHubPluginReleasesTests {
     let artifact = pluginArtifactFixture(
       bytes: bytes, assetID: 20, manifest: PreparationFixture.manifest)
     await http.setAssets([releaseAssetFixture(id: 20, artifact: artifact)], page: 1)
-    let database = try GatewayDatabase(
+    let database = try fixturePermissionDatabase(
       path: fixture.files.root.appendingPathComponent("cancel.sqlite").path)
     let store = PluginStore(
       database: database, platform: MacOSPlatform.services(launcher: testExecutionLauncher()))
@@ -130,7 +130,7 @@ struct GitHubPluginReleasesTests {
     defer { server.stop() }
     let http = ReleaseHTTPFake(manifest: PreparationFixture.manifest, artifactBytes: bytes)
     let artifact = pluginArtifactFixture(bytes: bytes, manifest: PreparationFixture.manifest)
-    let database = try GatewayDatabase(
+    let database = try fixturePermissionDatabase(
       path: fixture.files.root.appendingPathComponent("download.sqlite").path)
     let store = PluginStore(
       database: database, platform: MacOSPlatform.services(launcher: testExecutionLauncher()))
@@ -159,7 +159,7 @@ struct GitHubPluginReleasesTests {
           .path))
     #expect(await http.assetPages == ["1", "1"])
     let reopened = PluginStore(
-      database: try GatewayDatabase(
+      database: try fixturePermissionDatabase(
         path: fixture.files.root.appendingPathComponent("download.sqlite").path),
       platform: MacOSPlatform.services(launcher: testExecutionLauncher()))
     #expect(try await reopened.snapshot() == result.snapshot)
@@ -185,7 +185,7 @@ struct GitHubPluginReleasesTests {
     if fault == "release" { await http.changeAfterFirstValidation() }
     let server = try await CatalogHTTPFixture.start(script: pluginDownloadHTTPFixture(bytes: bytes))
     defer { server.stop() }
-    let database = try GatewayDatabase(
+    let database = try fixturePermissionDatabase(
       path: fixture.files.root.appendingPathComponent("failure.sqlite").path)
     let store = PluginStore(
       database: database, platform: MacOSPlatform.services(launcher: testExecutionLauncher()))

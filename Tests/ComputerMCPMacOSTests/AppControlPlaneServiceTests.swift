@@ -1057,18 +1057,19 @@ final class AppControlPlaneServiceTests {
       let current = try #require(await operations.controlSessions().first { $0.id == session.id })
       _ = try await operations.approveControlSession(
         id: current.id, expectedRevision: current.revision)
-      let unavailable = try await client.call(
+      try Data().write(to: fixture.root.appendingPathComponent("release"))
+      let admitted = try await client.call(
         toolName: "mcp.tools.list",
         arguments: .object([
           "project_id": .string("fixture"), "server": .string("fixture"),
         ]))
-      let unavailableError = try #require(
-        unavailable.result.objectValue?["structuredContent"]?.objectValue?["error"]?.objectValue)
-      #expect(unavailableError["code"] == .string("execution.unavailable"), "\(unavailable.result)")
-      #expect(unavailableError["request_ids"] == nil)
+      #expect(admitted.result.objectValue?["isError"] != .bool(true), "\(admitted.result)")
       #expect(
-        try FileManager.default.contentsOfDirectory(atPath: fixture.root.path).allSatisfy {
-          !$0.hasPrefix("pid-")
+        admitted.result.objectValue?["structuredContent"]?.objectValue?["result"]?.arrayValue?
+          .compactMap { $0.objectValue?["name"]?.stringValue } == ["inspect"], "\(admitted.result)")
+      #expect(
+        try FileManager.default.contentsOfDirectory(atPath: fixture.root.path).contains {
+          $0.hasPrefix("pid-")
         })
       await client.disconnect()
       await service.stop()

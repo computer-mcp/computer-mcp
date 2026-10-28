@@ -416,7 +416,7 @@ struct GatewayRemoteManagementTests {
             "project_id": .string("fixture"), "mode": .string("argv"),
             "executable": .string(fixture.root.appendingPathComponent("retained.py").path),
             "cwd": .string(fixture.root.path), "argv": .array([]),
-          ], fails: addsProject)
+          ], fails: nested)
       }
       work = running
       let deadline = ContinuousClock.now + .seconds(5)
@@ -456,36 +456,26 @@ struct GatewayRemoteManagementTests {
         let boundary = try CanonicalPath(ProjectPathResolver.canonicalProject(project).path)
         let originalRoot = try ProjectPathResolver.canonicalProject(fixture.root)
         #expect(boundary.string.hasPrefix(originalRoot.path + "/") == nested)
-        let coveringCandidates = proof.basis.compactMap { element -> PathAccessBasis? in
-          guard case .path(let basis) = element,
-            basis.path.contains(boundary),
-            basis.operation == (nested ? .write : .read),
-            nested || basis.path.string == "/",
-            basis.excludedSubtrees?.contains(where: { $0.contains(boundary) }) == false
-          else { return nil }
-          return basis
-        }
-        let covering = try #require(coveringCandidates.first)
         if nested {
+          let coveringCandidates = proof.basis.compactMap { element -> PathAccessBasis? in
+            guard case .path(let basis) = element, basis.path.contains(boundary),
+              basis.operation == .write,
+              basis.excludedSubtrees?.contains(where: { $0.contains(boundary) }) == false
+            else { return nil }
+            return basis
+          }
+          let covering = try #require(coveringCandidates.first)
           #expect(covering.path.string == originalRoot.path)
+          coveringBasis = covering
         } else {
-          #expect(covering.location == .outsideUserData)
+          // Unconfined programs pin declared requirements, not implicit sandbox read openings.
+          #expect(
+            !proof.basis.contains { element in
+              guard case .path(let basis) = element else { return false }
+              return basis.path.contains(boundary)
+            })
         }
-        let paths = try #require(admitted.environment.paths)
-        var limits = admitted.environment.limits[proof.invocation.principal] ?? .init()
-        let connection = try #require(admitted.environment.connections[approved.id])
-        limits.sources[.connection] = .available(connection.attenuation)
-        let sandbox =
-          covering.sandboxProjectID.flatMap {
-            admitted.settings.entries[
-              SandboxSettingsKey(principal: proof.invocation.principal, projectID: $0)]
-          } ?? .init()
-        #expect(
-          PathPermissions(environment: paths).validate(
-            covering, principal: proof.invocation.principal, permissions: admitted.permissions,
-            mode: proof.mode, limits: limits, sandbox: sandbox))
         introducedBoundary = boundary
-        coveringBasis = covering
         _ = try await call(client, "project.add", ["path": .string(project.path)])
       } else {
         let changed = try await call(
@@ -512,7 +502,7 @@ struct GatewayRemoteManagementTests {
       #expect(afterPublication.fullAccessConsent == approved.fullAccessConsent)
       try authority.store.readWithDatabase { _, ledger in
         var copy = ledger
-        if addsProject {
+        if nested {
           let boundary = try #require(introducedBoundary)
           let covering = try #require(coveringBasis)
           let paths = try #require(copy.environment.paths)
@@ -540,8 +530,13 @@ struct GatewayRemoteManagementTests {
               connectionID: approved.id, now: Date()) == .denied(.authorizationRevoked))
         } else {
           #expect(copy.authorizationEpochID == admitted.epoch)
-          #expect(copy.environment == admitted.environment)
-          #expect(copy.environment.paths == admitted.environment.paths)
+          if !addsProject {
+            #expect(copy.environment == admitted.environment)
+            #expect(copy.environment.paths == admitted.environment.paths)
+          } else {
+            let boundary = try #require(introducedBoundary)
+            #expect(copy.environment.paths?.projects.location(at: boundary) != nil)
+          }
           #expect(copy.permissions(for: proof.invocation.principal) == admitted.permissions)
           #expect(copy.sandboxSettings == admitted.settings)
           let currentProof = try copy.invocationAccess(proof.id)
@@ -552,7 +547,7 @@ struct GatewayRemoteManagementTests {
               connectionID: approved.id, now: Date()) == .allowed)
         }
       }
-      if addsProject {
+      if nested {
         let refusal = try await running.value
         #expect(refusal.objectValue?["code"] == .string("permission.invalid_authorization"))
         try await authority.coordinator.reconcile()
@@ -567,7 +562,7 @@ struct GatewayRemoteManagementTests {
             atPath: fixture.root.appendingPathComponent("finished").path))
       }
       try Data().write(to: fixture.root.appendingPathComponent("release"))
-      if addsProject {
+      if nested {
         try authority.store.readWithDatabase { _, ledger in
           var copy = ledger
           #expect(throws: PermissionModelError.invalidAuthorization) {

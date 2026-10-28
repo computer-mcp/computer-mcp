@@ -65,7 +65,7 @@ struct GatewayNativeLaunchAdmissionTests {
   }
 
   @Test(arguments: [false, true])
-  func grantedNativeServerDiscoveryRequiresPluginContext(fullAccess: Bool) async throws {
+  func ordinaryNativeServerDiscoveryHonorsExecutionMode(fullAccess: Bool) async throws {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
     try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
     defer { try? FileManager.default.removeItem(at: root) }
@@ -113,16 +113,24 @@ struct GatewayNativeLaunchAdmissionTests {
       #expect(ExecutionAdministration.current == nil)
       let report = try await runtime.callToolForMCPAsync(
         name: "mcp.tools.list", arguments: .object(["server": .string("owned")]), context: .empty)
-      let error = try #require(
-        report.objectValue?["structuredContent"]?.objectValue?["error"]?.objectValue)
-      #expect(report.objectValue?["isError"] == .bool(true))
-      #expect(error["code"] == .string("execution.unavailable"))
-      #expect(error["request_ids"] == nil)
+      if fullAccess {
+        #expect(report.objectValue?["isError"] == .bool(false), "\(report)")
+        #expect(
+          report.objectValue?["structuredContent"]?.objectValue?["result"]?.arrayValue?
+            .compactMap { $0.objectValue?["name"]?.stringValue } == ["write"])
+      } else {
+        let error = try #require(
+          report.objectValue?["structuredContent"]?.objectValue?["error"]?.objectValue)
+        #expect(report.objectValue?["isError"] == .bool(true))
+        #expect(error["code"] == .string("execution.unavailable"))
+        #expect(error["request_ids"] == nil)
+        #expect(
+          error["message"]?.stringValue?.contains("verified worktree and private Git context")
+            == true)
+      }
       #expect(
-        error["message"]?.stringValue?.contains("plugin owner's verified execution context") == true
-      )
-      #expect(
-        !FileManager.default.fileExists(atPath: root.appendingPathComponent("native-started").path))
+        FileManager.default.fileExists(atPath: root.appendingPathComponent("native-started").path)
+          == fullAccess)
       #expect(
         !FileManager.default.fileExists(
           atPath: root.appendingPathComponent("write-dispatched").path))

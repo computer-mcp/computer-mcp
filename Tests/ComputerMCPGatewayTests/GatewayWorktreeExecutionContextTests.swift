@@ -147,6 +147,86 @@ struct GatewayWorktreeExecutionContextTests {
     try admission.requireDrained(operationID: operation)
   }
 
+  @Test(arguments: ["adapter.fixture.run", "mcp.tools.call"])
+  func ordinaryPluginPreparationReachesPlatformAdmission(tool: String) async throws {
+    let f = try WorktreeServiceFixture()
+    defer { f.remove() }
+    var profile = try #require(try f.database.profiles().first { $0.id == .chatGPTOperate })
+    profile.fullAccess = true
+    try f.database.saveProfile(profile)
+    let session = GatewayControlSession(
+      principalID: "plugin", profileID: profile.id, caller: .secureTunnel,
+      database: f.database, permissionService: f.runtime.service)
+    defer { session.end() }
+    _ = try session.approveFullAccess(expectedRevision: session.revision)
+    let decision = try f.runtime.service.admit(
+      subject: .init(
+        context: .init(
+          caller: .secureTunnel, profileID: profile.id, trustedPrincipalID: "plugin")),
+      tool: tool, projectID: "source", argumentsDigest: UUID().uuidString,
+      requirements: .init(
+        actions: [.init(requirement: .init(.project("source"), .write), scope: .project("source"))],
+        mode: .fullAccess(.connection(session.id)), sandboxProjectID: "source"),
+      connectionID: session.id)
+    guard case .allowed(let proof) = decision else {
+      Issue.record("Ordinary plugin invocation was refused: \(decision)")
+      return
+    }
+    let descriptor = CapabilityDescriptor(
+      id: tool, risk: .projectWrite,
+      requirement: .init(access: .projectWrite), projectRequirement: .required,
+      localOnly: false, usesNetwork: false,
+      mcpReference: tool.hasPrefix("mcp.") ? nil : .init(serverID: "fixture", toolName: "run"))
+    if !f.platform.launcher.supportsBestEffortOwnership,
+      !f.platform.launcher.supportsDurableOwnership(sandboxed: false)
+    {
+      do {
+        _ = try await f.runtime.prepare(
+          authorization: proof, descriptor: descriptor, directory: f.source,
+          connectionID: session.id)
+        Issue.record("An unsupported execution backend admitted a program")
+      } catch ExecutionEnvironmentError.unavailable(let message) {
+        #expect(
+          message == "This backend cannot enforce durable ownership in the requested execution mode"
+        )
+      }
+      return
+    }
+    let prepared = try #require(
+      try await f.runtime.prepare(
+        authorization: proof, descriptor: descriptor, directory: f.source,
+        connectionID: session.id) as? PreparedExecutionContext)
+    #expect(prepared.worktreeGit == nil)
+    try prepared.finishAdmission()
+    try await f.runtime.coordinator.reconcile()
+  }
+
+  @Test(arguments: ["adapter.fixture.run", "mcp.tools.call"])
+  func pluginPreparationRefusesHostWorktrees(tool: String) async throws {
+    let f = try WorktreeServiceFixture()
+    defer { f.remove() }
+    let made = try f.call(.add(name: "plugin", branch: nil, base: nil))
+    let id = try #require(made.objectValue?["project_id"]?.stringValue)
+    let directory = URL(fileURLWithPath: try #require(made.objectValue?["path"]?.stringValue))
+    let worktree = try #require(
+      try f.database.executionWorktree(projectID: id, directory: directory, platform: f.platform))
+    let proof = try admit(f, projectID: id, directory: worktree.directory)
+    let descriptor = CapabilityDescriptor(
+      id: tool, risk: .readOnly,
+      requirement: .init(access: .projectWrite), projectRequirement: .required,
+      localOnly: false, usesNetwork: false,
+      mcpReference: tool.hasPrefix("mcp.") ? nil : .init(serverID: "fixture", toolName: "run"))
+    do {
+      _ = try await f.runtime.prepare(
+        authorization: proof, descriptor: descriptor, directory: directory, connectionID: nil)
+      Issue.record("A plugin program acquired a host worktree context")
+    } catch ExecutionEnvironmentError.unavailable(let message) {
+      #expect(
+        message == "Local plugin programs require the plugin owner's verified execution context")
+    }
+    #expect(try f.repository().admission(projectID: id).close(operationID: UUID()).isEmpty)
+  }
+
   private func admit(_ f: WorktreeServiceFixture, projectID: String, directory: SandboxPath) throws
     -> InvocationAuthorization
   {

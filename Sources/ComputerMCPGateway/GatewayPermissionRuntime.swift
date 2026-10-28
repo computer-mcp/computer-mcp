@@ -130,7 +130,11 @@ package final class GatewayPermissionRuntime: @unchecked Sendable {
     } else {
       purpose = .readOnlyHelper
     }
-    if purpose == .pluginProgram {
+    if purpose == .pluginProgram,
+      try await store.read().environment.paths?.registeredProjects.contains(where: {
+        $0.id == authorization.invocation.projectID && $0.hostContentIdentity != nil
+      }) == true
+    {
       throw ExecutionEnvironmentError.unavailable(
         "Local plugin programs require the plugin owner's verified execution context")
     }

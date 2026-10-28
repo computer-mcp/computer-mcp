@@ -94,9 +94,11 @@ The snapshot exposes applied limits and a limit termination reason.
 Principal execution installs this context at its admitted call boundary. Trusted
 host administration runs outside that boundary with an explicit host policy.
 Registered CLI help, host Git, descriptor-backed file helpers and shell/process
-adapters all reach the same launcher. Local plugin/stdio process preparation
-remains gated; neither a plugin receipt nor Full access consent creates a host
-worktree context.
+adapters all reach the same launcher. Within host worktrees, local plugin/stdio
+process preparation requires the plugin owner's verified execution context and
+remains unavailable until that context is supplied. Ordinary projects retain
+their admitted plugin invocation path. Neither a plugin receipt nor Full access
+consent creates a host worktree context.
 Housekeeping retains the original ownership handle for cleanup and cannot obtain
 new launch authority by dropping the context.
 

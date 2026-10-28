@@ -31,6 +31,7 @@ package struct PermissionMigrationReport: Equatable, Sendable {
   }
   package let dropped: [DroppedGrant]
   package let omittedCount: Int
+  package var removedBuiltinIDs: [String] = []
 }
 
 package struct PermissionMigrationPlan: Sendable {

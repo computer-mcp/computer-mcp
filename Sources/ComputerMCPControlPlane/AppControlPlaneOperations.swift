@@ -328,7 +328,8 @@ package struct AppControlPlaneOperations: Sendable {
     guard let revision = try controlPlane.database.configurationRevision(id: revisionID) else {
       throw AtomicManifestStoreError.unknownRevision(revisionID)
     }
-    let manifest = try ProjectManifestUpgrade.upgraded(revision.manifest) ?? revision.manifest
+    let manifest =
+      try ProjectManifestUpgrade.upgraded(revision.manifest)?.manifest ?? revision.manifest
     return try await gatewayService.changeManifest(
       manifest, reason: .rolledBack, expectedDigest: digest)
   }

@@ -27,7 +27,7 @@ package enum PermissionManifestUpgrade {
     manifest: String,
     baseURL: URL = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
   ) throws -> (configuration: GatewayConfiguration, profiles: [LegacyProfileGrant]) {
-    let normalized = try ProjectManifestUpgrade.upgraded(manifest) ?? manifest
+    let normalized = try ProjectManifestUpgrade.upgraded(manifest)?.manifest ?? manifest
     let decoder = TOMLDecoder()
     let shape = try decoder.decode(ConfigurationNode.self, from: normalized)
     let document = try decoder.decode(MigrationDocument.self, from: normalized)

@@ -99,18 +99,28 @@ package final class GatewayDatabase: OAuthStore, @unchecked Sendable {
   ) throws -> PermissionMigrationReport? {
     let migration = PermissionMigrationStore(
       connection: connection, store: try configuredPermissionStore())
+    let schemaUpgrade = try ProjectManifestUpgrade.upgraded(manifest)
+    func reporting(_ report: PermissionMigrationReport? = nil) -> PermissionMigrationReport? {
+      guard report != nil || schemaUpgrade?.removedBuiltinIDs.isEmpty == false else { return nil }
+      var result = report ?? PermissionMigrationReport(dropped: [], omittedCount: 0)
+      result.removedBuiltinIDs = schemaUpgrade?.removedBuiltinIDs ?? []
+      return result
+    }
     let requiresUpgrade = try PermissionManifestUpgrade.isRequired(manifest: manifest)
     if try migration.isActivated() {
       if requiresUpgrade { try validatePermissionMigrationManifest(manifest) }
-      return nil
+      return reporting()
     }
     let hasLegacy = try writer.read { try LegacyProfileRecord.fetchCount($0) > 0 }
-    guard requiresUpgrade || hasLegacy else { return nil }
+    guard requiresUpgrade || hasLegacy else { return reporting() }
     let source: (configuration: GatewayConfiguration, profiles: [LegacyProfileGrant])
     if requiresUpgrade {
       source = try PermissionManifestUpgrade.source(manifest: manifest, baseURL: baseURL)
     } else {
-      source = (try GatewayConfiguration.load(text: manifest, baseURL: baseURL), [])
+      source = (
+        try GatewayConfiguration.load(text: schemaUpgrade?.manifest ?? manifest, baseURL: baseURL),
+        []
+      )
     }
     let digest = Self.manifestDigest(manifest)
     let sourceProjects = source.configuration.manifestProjects
@@ -125,7 +135,7 @@ package final class GatewayDatabase: OAuthStore, @unchecked Sendable {
     let (plan, state) = try migration.prepare(catalog: preparedCatalog)
     _ = try migration.apply(
       plan, expectedState: state, currentCatalog: catalog(), sourceManifestDigest: digest)
-    return plan.report
+    return reporting(plan.report)
   }
 
   package func validatePermissionMigrationManifest(_ manifest: String) throws {

@@ -350,6 +350,49 @@ import Testing
         == 999)
   }
 
+  @Test(arguments: ["git.worktrees", "delivery.apply", "delivery.scopes.list"])
+  func installedBuiltinUpgradeActivatesAndReportsRetirement(id: String) throws {
+    let database = try GatewayDatabase(inMemory: ())
+    _ = database.permissionStore(counter: TestAuthorizationEpochCounter())
+    let manifest = """
+      schema_version=1
+      [builtin]
+      enabled=["\(id)"]
+      [[workspaces]]
+      id="project"
+      path="/fixture/project"
+      [[profiles]]
+      id="chatgpt-operate"
+      mode="workspace-operations"
+      capabilities=["\(id)"]
+      workspaces=["project"]
+      allowed_callers=["secure-tunnel"]
+      """
+    let report = try #require(
+      try database.activatePermissionMigration(
+        manifest: manifest, baseURL: URL(fileURLWithPath: "/fixture"),
+        applications: TestApplicationBundleLocator(),
+        bundledPlugins: .init(packages: [], issues: [])))
+    try database.validatePermissionMigrationManifest(manifest)
+    let upgraded = try PermissionManifestUpgrade.upgraded(
+      manifest: manifest, profiles: database.profiles())
+    #expect(upgraded.builtin.enabled == (id == "git.worktrees" ? ["git.worktree_list"] : []))
+    #expect(report.removedBuiltinIDs == (id == "git.worktrees" ? [] : [id]))
+    if id == "git.worktrees" {
+      #expect(report.dropped.isEmpty)
+      #expect(
+        try database.profiles().first?.permissions.state(for: .project("project"))
+          == .granted(.read))
+    } else {
+      #expect(report.dropped.contains { $0.grant == id })
+    }
+    let saved = try database.profiles()
+    _ = try database.activatePermissionMigration(
+      manifest: manifest, baseURL: URL(fileURLWithPath: "/fixture"),
+      applications: TestApplicationBundleLocator(), bundledPlugins: .init(packages: [], issues: []))
+    #expect(try database.profiles() == saved)
+  }
+
   @Test func currentStandaloneManifestActivatesLegacyDatabaseWithoutChangingSourceBytes() throws {
     let database = try GatewayDatabase(inMemory: ())
     _ = database.permissionStore(counter: TestAuthorizationEpochCounter())

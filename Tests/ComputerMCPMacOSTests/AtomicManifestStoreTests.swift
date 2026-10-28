@@ -21,6 +21,44 @@ import Testing
 
 final class AtomicManifestStoreTests {
   @Test(arguments: [false, true])
+  func installedBuiltinUpgradePublishesCurrentManifestAndPreservesHistory(legacyProfiles: Bool)
+    throws
+  {
+    let fixture = try ManifestStoreFixture(persistent: true)
+    defer { fixture.cleanup() }
+    let profiles =
+      legacyProfiles
+      ? "[[profiles]]\nid='local-admin'\nmode='read-only'\ncapabilities=['git.worktrees']\n"
+      : "[[profiles]]\nid='local-admin'\nallowed_callers=['local-cli']\n"
+    let text =
+      "schema_version=1\n[builtin]\nenabled=['git.worktrees','delivery.apply','delivery.scopes.list']\n"
+      + profiles
+    try Data(text.utf8).write(to: fixture.manifestURL)
+    let historical = ConfigurationRevision(
+      digest: try AtomicManifestStore.digest(of: Data(text.utf8)), manifest: text)
+    try fixture.database.saveConfigurationRevision(historical)
+    let platform = MacOSPlatform.services(launcher: testExecutionLauncher())
+    let report = try #require(
+      try AtomicManifestStore.activatePermissionMigration(
+        manifestURL: fixture.manifestURL, database: fixture.database,
+        applications: platform.applications,
+        bundledPlugins: .init(packages: [], issues: [])))
+    #expect(report.removedBuiltinIDs == ["delivery.apply", "delivery.scopes.list"])
+    let reopened = try AtomicManifestStore(
+      manifestURL: fixture.manifestURL, database: fixture.database,
+      loader: GatewayManifestConfigurationLoader(
+        database: fixture.database, applications: platform.applications))
+    #expect(try reopened.activeConfiguration().builtin.enabled == ["git.worktree_list"])
+    #expect(try fixture.database.configurationRevision(id: historical.id)?.manifest == text)
+    let current = try Data(contentsOf: fixture.manifestURL)
+    _ = try AtomicManifestStore(
+      manifestURL: fixture.manifestURL, database: fixture.database,
+      loader: GatewayManifestConfigurationLoader(
+        database: fixture.database, applications: platform.applications))
+    #expect(try Data(contentsOf: fixture.manifestURL) == current)
+  }
+
+  @Test(arguments: [false, true])
   func startupReconcilesEditedProfileSourceWithoutRewritingItsBytes(unconfirmed: Bool) throws {
     let fixture = try ManifestStoreFixture(persistent: true)
     defer { fixture.cleanup() }

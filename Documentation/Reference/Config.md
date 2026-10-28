@@ -504,10 +504,15 @@ and effective sandbox settings apply to derived projects on every call. Shell
 execution also requires `[policy].shell_enabled = true` and its declared limits
 and permissions. See [Worktrees](Worktrees.md).
 
-Legacy `delivery` configuration and its two builtin tool IDs are rejected with
-worktree replacement guidance. Reconcile unfinished work with its existing owner
-before replacing that configuration; historical stored revisions and journals
-are not deleted by configuration loading.
+New manifests reject `git.worktrees` and the two retired delivery builtin IDs.
+During installed-manifest upgrade, `git.worktrees` becomes `git.worktree_list`;
+`delivery.apply` and `delivery.scopes.list` are removed from the enabled builtin
+list and reported in the upgrade result. The frozen permission migration catalog
+retains its historical classifications. Stored configuration revisions are unchanged.
+
+A `delivery` configuration section still fails with worktree replacement guidance:
+it represents work state, so reconcile unfinished work with its existing owner
+before replacing it. Configuration loading does not delete historical journals.
 
 ## Permission store activation
 

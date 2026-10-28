@@ -10,6 +10,7 @@ import Foundation
 internal enum ManifestChangeReason: String, Codable, Equatable, Sendable {
   case activated
   case projectTerminology = "project-terminology"
+  case builtinCapabilities = "builtin-capabilities"
   case permissionProfiles = "permission-profiles"
   case rolledBack = "rolled-back"
   case externalReload = "external-reload"
@@ -129,7 +130,7 @@ package final class AtomicManifestStore: @unchecked Sendable {
         throw AtomicManifestStoreError.invalidManifestEncoding
       }
       let renamed = try ProjectManifestUpgrade.upgraded(text)
-      let manifest = renamed ?? text
+      let manifest = renamed?.manifest ?? text
       if try PermissionManifestUpgrade.isRequired(manifest: manifest) {
         try database.validatePermissionMigrationManifest(text)
         let upgraded = try PermissionManifestUpgrade.upgraded(
@@ -140,7 +141,10 @@ package final class AtomicManifestStore: @unchecked Sendable {
           expectedDigest: Self.digest(of: data))
       } else if let renamed {
         _ = try write(
-          manifest: renamed, reason: .projectTerminology, expectedDigest: Self.digest(of: data))
+          manifest: renamed.manifest,
+          reason: renamed.removedBuiltinIDs.isEmpty && renamed.renamedBuiltinIDs.isEmpty
+            ? .projectTerminology : .builtinCapabilities,
+          expectedDigest: Self.digest(of: data))
       }
       try reconcileInitialProfileSource()
     }
@@ -257,7 +261,8 @@ package final class AtomicManifestStore: @unchecked Sendable {
     else {
       throw AtomicManifestStoreError.unknownRevision(revisionID)
     }
-    let manifest = try ProjectManifestUpgrade.upgraded(revision.manifest) ?? revision.manifest
+    let manifest =
+      try ProjectManifestUpgrade.upgraded(revision.manifest)?.manifest ?? revision.manifest
     return try write(
       manifest: manifest, reason: .rolledBack, expectedDigest: expectedDigest)
   }

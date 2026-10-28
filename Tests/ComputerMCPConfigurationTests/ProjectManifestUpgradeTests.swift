@@ -5,6 +5,24 @@ import Testing
 @testable import ComputerMCPConfiguration
 
 struct ProjectManifestUpgradeTests {
+  @Test(arguments: ["git.worktrees", "delivery.apply", "delivery.scopes.list"])
+  func historicalBuiltinsTranslateOnlyDuringUpgrade(id: String) throws {
+    let text = "schema_version=1\n[builtin]\nenabled=['system.info', '\(id)']\n"
+    #expect(throws: ConfigurationError.self) { try GatewayConfiguration.load(text: text) }
+    let result = try #require(try ProjectManifestUpgrade.upgraded(text))
+    let configuration = try GatewayConfiguration.load(text: result.manifest)
+    if id == "git.worktrees" {
+      #expect(configuration.builtin.enabled == ["system.info", "git.worktree_list"])
+      #expect(result.renamedBuiltinIDs == [id: "git.worktree_list"])
+      #expect(result.removedBuiltinIDs.isEmpty)
+    } else {
+      #expect(configuration.builtin.enabled == ["system.info"])
+      #expect(result.removedBuiltinIDs == [id])
+      #expect(result.renamedBuiltinIDs.isEmpty)
+    }
+    #expect(try ProjectManifestUpgrade.upgraded(result.manifest) == nil)
+  }
+
   @Test(
     arguments: [
       "[[workspaces]]\nid='x'\ndisplay_name='X'\npath='/tmp'",
@@ -95,7 +113,7 @@ struct ProjectManifestUpgradeTests {
       cwd='workspace'
       risk='workspace-write-capable'
       """
-    let upgraded = try #require(try ProjectManifestUpgrade.upgraded(text))
+    let upgraded = try #require(try ProjectManifestUpgrade.upgraded(text)?.manifest)
     #expect(upgraded.contains("workspace.id"))
     #expect(upgraded.contains("/tmp/workspace"))
     #expect(upgraded.contains("mcp.workspace.list"))

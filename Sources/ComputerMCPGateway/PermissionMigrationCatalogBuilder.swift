@@ -136,7 +136,9 @@ extension PermissionMigrationCatalog {
           #endif
         default:
           return tool.id == "project.list" || tool.id == "project.describe"
-            || configuration.builtin.enabled.contains(tool.id)
+            || ProjectManifestUpgrade.currentBuiltinID(for: tool.id).map {
+              configuration.builtin.enabled.contains($0)
+            } == true
         }
       }.map(\.id))
     var downstream: [CapabilityDescriptor] = []

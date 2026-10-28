@@ -50,7 +50,7 @@ final class DarwinExecutionOwnership: ExecutionOwnership, @unchecked Sendable {
   }
 
   /// Recovered identities are revalidated before signalling; old numeric PIDs alone confer no ownership.
-  func recover(_ identities: [DarwinProcessIdentity]) throws {
+  func recover(_ identities: [DarwinProcessIdentity], processGroup: pid_t? = nil) throws {
     var anchor: DarwinProcessSnapshot?
     for identity in identities {
       if let snapshot = try table.read(identity.pid), snapshot.identity == identity,
@@ -64,7 +64,7 @@ final class DarwinExecutionOwnership: ExecutionOwnership, @unchecked Sendable {
     lock.withLock {
       root = identities.first
       state.known.formUnion(identities)
-      state.group = anchor.flatMap { $0.group > 0 ? $0.group : nil }
+      state.group = processGroup ?? anchor.flatMap { $0.group > 0 ? $0.group : nil }
       rootExit = .success(ExecutionExit(status: 128 + SIGTERM, signal: SIGTERM))
       startMonitor()
     }

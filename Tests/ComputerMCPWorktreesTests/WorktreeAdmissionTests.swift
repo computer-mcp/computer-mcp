@@ -4,6 +4,44 @@ import Testing
 @testable import ComputerMCPWorktrees
 
 struct WorktreeAdmissionTests {
+  @Test func bestEffortReleaseRequiresItsRecordedKindAndRetainsWarnings() throws {
+    try fixture { directory in
+      let f = try WorktreeFixture(directory)
+      let service = try f.service()
+      let admission = try service.admission(
+        projectID: service.create(name: "full-access").projectID)
+      let sandbox = try admission.reserve(ownerID: UUID(), executionID: UUID())
+      let program = try admission.reserve(ownerID: UUID(), executionID: UUID(), unconfined: true)
+      let operation = UUID()
+      _ = try admission.close(operationID: operation)
+      #expect(throws: WorktreeError.self) {
+        try admission.acknowledgeUnconfined(
+          sandbox, operationID: operation, unconfirmedTermination: "not stopped")
+      }
+      #expect(throws: WorktreeError.self) {
+        try admission.acknowledgeUnconfined(
+          program, operationID: UUID(), unconfirmedTermination: nil)
+      }
+      try admission.acknowledgeUnconfined(
+        program, operationID: operation, unconfirmedTermination: "PID 42 exit unconfirmed")
+      #expect(throws: WorktreeError.self) { try admission.requireDrained(operationID: operation) }
+      try admission.acknowledge(sandbox)
+      try admission.requireDrained(operationID: operation)
+      let restored = try JSONDecoder().decode(
+        WorktreeAdmission.self, from: JSONEncoder().encode(admission))
+      let warnings = try restored.terminationWarnings(operationID: operation)
+      #expect(warnings.contains { $0.contains("outside process-group observation") })
+      #expect(
+        warnings.contains { $0.contains("PID 42") && $0.contains(program.executionID.uuidString) })
+      try restored.reopen(operationID: operation)
+      let completed = try restored.reserve(ownerID: UUID(), executionID: UUID(), unconfined: true)
+      try restored.acknowledge(completed)
+      let retry = UUID()
+      _ = try restored.close(operationID: retry)
+      #expect(try restored.terminationWarnings(operationID: retry) == warnings)
+    }
+  }
+
   @Test func closureSurvivesReopenAndRequiresEveryOwnersAcknowledgement() throws {
     try fixture { directory in
       let f = try WorktreeFixture(directory)

@@ -5,6 +5,29 @@ import Testing
 @testable import ComputerMCPWorktrees
 
 struct WorktreeRemovalTests {
+  @Test func unconfinedTerminationWarningsSurviveRemovalAndRetry() async throws {
+    try await removalFixture { f in
+      let service = try f.service()
+      let created = try service.create(name: "unconfined")
+      let admission = try service.admission(projectID: created.projectID)
+      let use = try admission.reserve(ownerID: UUID(), executionID: UUID(), unconfined: true)
+      let result = try await service.remove(
+        projectID: created.projectID,
+        terminate: { gate, operation in
+          try gate.acknowledgeUnconfined(
+            use, operationID: operation,
+            unconfirmedTermination: "PID 42 exit unconfirmed")
+        }, authorize: { _, _ in })
+      #expect(!FileManager.default.fileExists(atPath: created.path.path))
+      #expect(result.terminationWarnings.contains { $0.contains("PID 42") })
+      let retry = try await f.service().remove(
+        projectID: created.projectID,
+        terminate: { _, _ in Issue.record("Finished removal terminated writers again") },
+        authorize: { _, _ in })
+      #expect(retry.terminationWarnings == result.terminationWarnings)
+    }
+  }
+
   @Test func interruptedDirtyRefusalReopensBeforeFreshCapture() async throws {
     try await removalFixture { f in
       let service = try f.service()

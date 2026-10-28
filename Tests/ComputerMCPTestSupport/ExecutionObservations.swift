@@ -34,6 +34,7 @@ package struct ObservedExecutionPlatform: ExecutionPlatform {
   }
 
   package var supportsRecovery: Bool { base.supportsRecovery }
+  package var supportsBestEffortOwnership: Bool { base.supportsBestEffortOwnership }
   package func supportsDurableOwnership(sandboxed: Bool) -> Bool {
     base.supportsDurableOwnership(sandboxed: sandboxed)
   }

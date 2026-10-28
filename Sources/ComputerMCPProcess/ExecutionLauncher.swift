@@ -13,6 +13,7 @@ import Foundation
 /// Callers supply authorization separately; a mode is a launch instruction, not a permission grant.
 package struct ExecutionLauncher: Sendable {
   package var supportsRecovery: Bool { platform.supportsRecovery }
+  package var supportsBestEffortOwnership: Bool { platform.supportsBestEffortOwnership }
   package var bootSessionID: String? { platform.bootSessionID }
   package var hostSystemReadPaths: [SandboxPath] { platform.hostSystemReadPaths }
 
@@ -92,7 +93,9 @@ package struct ExecutionLauncher: Sendable {
     try prepared?.validateFixedCommand(
       executable: executable, arguments: arguments, directory: launchDirectory,
       directoryDescriptor: directoryDescriptor, inheritedDescriptors: inheritedDescriptors)
-    if prepared != nil, !platform.supportsDurableOwnership(sandboxed: sandbox != nil) {
+    if prepared != nil, !platform.supportsDurableOwnership(sandboxed: sandbox != nil),
+      !(sandbox == nil && platform.supportsBestEffortOwnership)
+    {
       throw ExecutionEnvironmentError.unavailable(
         "This backend cannot enforce durable execution ownership in the requested mode")
     }

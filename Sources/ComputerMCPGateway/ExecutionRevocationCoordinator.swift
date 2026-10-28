@@ -158,6 +158,7 @@ package final class ExecutionRevocationCoordinator: ExecutionRecoveryAuthorizing
           guard
             !configuration.permitsProgramLaunch
               || launcher.supportsDurableOwnership(sandboxed: configuration.sandbox != nil)
+              || (configuration.sandbox == nil && launcher.supportsBestEffortOwnership)
           else {
             throw ExecutionEnvironmentError.unavailable(
               "This backend cannot enforce durable ownership in the requested execution mode")
@@ -198,7 +199,9 @@ package final class ExecutionRevocationCoordinator: ExecutionRecoveryAuthorizing
       connectionID: connectionID)
     do {
       if let worktreeAdmission {
-        let use = try worktreeAdmission.reserve(ownerID: ownerID, executionID: execution.id)
+        let use = try worktreeAdmission.reserve(
+          ownerID: ownerID, executionID: execution.id,
+          unconfined: configuration.sandbox == nil && configuration.permitsProgramLaunch)
         do {
           try store.transactionWithDatabase { database, _ in
             guard var record = try ExecutionRuntimeRecord.load(execution.id, database),
@@ -357,15 +360,17 @@ package final class ExecutionRevocationCoordinator: ExecutionRecoveryAuthorizing
         return record
       }
     }
-    // Best-effort Full access ownership cannot authorize destruction of a
-    // writable tree. Its later adapter must retain this distinction.
-    guard
-      records.allSatisfy({ record in
-        record.worktreeDurable == true
-          && record.children.values.allSatisfy { $0.recovery?.sandboxed != false }
-      })
+    guard records.allSatisfy({ $0.worktreeDurable != nil }) else {
+      throw WorktreeError.busy("Writer ownership mode is unavailable.")
+    }
+    if records.contains(where: { $0.worktreeDurable == false }) {
+      try await terminateMixedWorktreeWriters(
+        records, admission: admission, operationID: operationID, until: deadline)
+      return
+    }
+    guard records.allSatisfy({ $0.children.values.allSatisfy { $0.recovery?.sandboxed != false } })
     else {
-      throw WorktreeError.busy("Unconfined writer completion cannot be proved.")
+      throw WorktreeError.busy("A sandbox writer has unconfined children.")
     }
     try Task.checkCancellation()
     guard ContinuousClock.now < deadline else {
@@ -385,6 +390,138 @@ package final class ExecutionRevocationCoordinator: ExecutionRecoveryAuthorizing
         try admission.requireDrained(operationID: operationID)
         return
       } catch WorktreeError.busy {
+        try await Task.sleep(
+          until: min(deadline, ContinuousClock.now.advanced(by: .milliseconds(10))),
+          clock: .continuous)
+      }
+    }
+  }
+
+  /// Full access releases only the worktree barrier after an attempted stop. Its
+  /// execution receipts, physical cleanup and host admission failure policy remain owned.
+  private func terminateMixedWorktreeWriters(
+    _ records: [ExecutionRuntimeRecord], admission: WorktreeAdmission, operationID: UUID,
+    until deadline: ContinuousClock.Instant
+  ) async throws {
+    try Task.checkCancellation()
+    let unconfined = records.filter { $0.worktreeDurable == false }
+    let durable = records.filter { $0.worktreeDurable == true }
+    let unconfinedRoots = Set(
+      unconfined.flatMap { $0.children.values.compactMap { $0.recovery?.root } })
+    // Confirm sandboxed owners first; unrelated unconfined completion cannot
+    // replace the sandbox receipt checks below.
+    if !durable.isEmpty {
+      do { try await stopExecutions(Set(durable.map(\.id)), until: deadline) } catch let failure
+        as ExecutionCompletionFailure
+      {
+        guard unconfinedRoots.contains(try failure.ownership.recoveryState().root) else {
+          throw failure
+        }
+      }
+    }
+    let ids = Set(unconfined.map(\.id))
+    let resources = publication.withLock {
+      lock.withLock {
+        closedAdmissions.formUnion(ids)
+        pendingOwnerStops.formUnion(ids)
+        return (
+          children: unconfined.flatMap { record in
+            record.children.compactMap { child, entry in
+              !entry.completed
+                ? children[child].map { (record.id, child, entry.recovery?.sandboxed == false, $0) }
+                : nil
+            }
+          },
+          cancellations: logicalWork.values.filter { ids.contains($0.executionID) }.compactMap {
+            $0.takeCancellation()
+          }
+        )
+      }
+    }
+    try persistOwnerStops(ids)
+    defer { notify() }
+    for cancellation in resources.cancellations { Task.detached { await cancellation() } }
+    var attempts: Set<UUID> = []
+    var warnings: [UUID: [String]] = [:]
+    var failure: (any Error)?
+    await withTaskGroup(of: Result<(UUID, UUID, String?), any Error>.self) { group in
+      for (executionID, child, bestEffort, ownership) in resources.children {
+        group.addTask { [self] in
+          do {
+            do {
+              _ = try await ownership.cancel(until: deadline)
+              try confirmChild(child, executionID: executionID)
+              return .success((executionID, child, nil))
+            } catch is ExecutionWaitExpired where bestEffort {
+              let root = try ownership.recoveryState().root
+              return .success(
+                (
+                  executionID, child,
+                  "PID \(root.processID) (identity \(root.identity)): completion unconfirmed at the caller deadline."
+                ))
+            } catch let error as ExecutionCompletionFailure where bestEffort {
+              // A best-effort removal does not turn infrastructure failure into successful
+              // execution completion or reopen global admission.
+              lock.withLock { ready = false }
+              Task.detached { [self] in await failClosedResources() }
+              let members = error.members.map {
+                "PID \($0.process.processID) (identity \($0.process.identity)): \($0.reason)"
+              }
+              return .success(
+                (executionID, child, (members + error.reasons).joined(separator: "; ")))
+            }
+          } catch { return .failure(error) }
+        }
+      }
+      for await result in group {
+        switch result {
+        case .success(let (executionID, child, warning)):
+          attempts.insert(child)
+          if let warning { warnings[executionID, default: []].append(warning) }
+        case .failure(let error): failure = failure ?? error
+        }
+      }
+    }
+    if let failure { throw failure }
+    while true {
+      try Task.checkCancellation()
+      let receipts = try journal.all()
+      let current = try store.readWithDatabase { database, _ in
+        try records.map { original in
+          guard let record = try ExecutionRuntimeRecord.load(original.id, database),
+            record.ownerID == ownerID, record.worktreeUse == original.worktreeUse
+          else { throw WorktreeError.busy("Writer ownership changed during termination.") }
+          return record
+        }
+      }
+      for record in current {
+        guard record.admissionFinished, record.invocationInFlight != true,
+          record.workIDs?.isEmpty ?? true, let use = record.worktreeUse
+        else { continue }
+        if record.worktreeDurable == true {
+          guard record.children.values.allSatisfy(\.completed),
+            receipts.filter({ $0.execution == record.id }).allSatisfy(\.completed)
+          else { continue }
+          try admission.acknowledge(use)
+        } else {
+          guard
+            record.children.allSatisfy({ child, entry in
+              entry.completed || (entry.recovery?.sandboxed == false && attempts.contains(child))
+            })
+          else { continue }
+          try admission.acknowledgeUnconfined(
+            use, operationID: operationID,
+            unconfirmedTermination: warnings[record.id].map { $0.joined(separator: "; ") })
+        }
+      }
+      do {
+        try admission.requireDrained(operationID: operationID)
+        return
+      } catch WorktreeError.busy {
+        guard ContinuousClock.now < deadline else {
+          throw WorktreeError.busy(
+            "Host invocations or sandboxed writer receipts are still pending.")
+        }
         try await Task.sleep(
           until: min(deadline, ContinuousClock.now.advanced(by: .milliseconds(10))),
           clock: .continuous)
@@ -440,25 +577,23 @@ package final class ExecutionRevocationCoordinator: ExecutionRecoveryAuthorizing
         try await reconcileResources()
         try resumeAfterReconciliationIfDrained()
       } catch {
-        lock.withLock { ready = false }
-        let resources = lock.withLock {
-          (
-            Array(children.values), Array(proxies.values),
-            logicalWork.values.compactMap { $0.takeCancellation() }
-          )
-        }
-        for cancellation in resources.2 { Task.detached { await cancellation() } }
-        // Expiry bounds the caller's wait, but must not skip fail-closed
-        // cancellation of resources whose admission was just sealed.
-        for proxy in resources.1 {
-          try? await proxy.revoke()
-        }
-        for ownership in resources.0 {
-          try? await cancelOwnedExecution(ownership)
-        }
+        await failClosedResources()
         throw error
       }
     }
+  }
+
+  private func failClosedResources() async {
+    let resources = lock.withLock {
+      ready = false
+      return (
+        Array(children.values), Array(proxies.values),
+        logicalWork.values.compactMap { $0.takeCancellation() }
+      )
+    }
+    for cancellation in resources.2 { Task.detached { await cancellation() } }
+    for proxy in resources.1 { try? await proxy.revoke() }
+    for ownership in resources.0 { try? await cancelOwnedExecution(ownership) }
   }
 
   /// An infrastructure failure closes admission until every previously owned

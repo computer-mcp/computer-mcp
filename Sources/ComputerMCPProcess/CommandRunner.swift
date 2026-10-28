@@ -44,7 +44,7 @@ package final class ProcessCommandRunner: CommandRunning, Sendable {
       stdout: result.stdoutString,
       stderr: result.stderrString,
       stdoutTruncated: result.stdoutTruncated,
-      stderrTruncated: result.stderrTruncated
+      stderrTruncated: result.stderrTruncated, ownership: result.ownership
     )
   }
 

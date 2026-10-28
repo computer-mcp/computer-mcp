@@ -47,7 +47,7 @@ ownership journal survives restoring a permission database backup. Keep that
 journal outside the database backup/restore transaction: its active receipts and
 same-boot completion receipts are recovery evidence, not permission state. A single
 lifetime lease excludes simultaneous coordinators. On restart, recovery interrupts
-running work, closes proxies, confirms all owned processes have ended, and only then
+running work without replay, closes proxies, confirms tracked processes have ended, and only then
 releases marker files and port leases. Cleanup acknowledgements are idempotent.
 Authorization epoch recovery is acknowledged after physical cleanup; suspended
 permissions still require owner confirmation. Missing or unreadable ownership
@@ -57,7 +57,19 @@ Darwin durable ownership requires the sandbox's inherited marker. After host dea
 recovery scans the entire process table in a quiet identity-probe round, validates
 each identity across classification, and retains ambiguous zombies or incomplete
 snapshots as pending. The root birth identity excludes older processes but never
-cuts off enumeration. See [execution admission](SecurityAndPrivacy.md#execution-admission)
+cuts off enumeration. Full access records the root's stable identity and isolated
+process group; recovery terminates surviving members only when a stable identity
+anchors that group. Unobserved detached descendants are outside ownership and
+may survive. Shell/process snapshots and command results report
+`process_group_best_effort`; sandboxed results report `durable_sandbox`.
+
+Fixed host file mutations use live path authority in-process. Fixed Git helpers
+bind the host executable, argument vector, directory and isolated environment;
+they remain sandboxed even for a Full access principal. Write helpers open only
+the admitted project and verified Git directory, preserve nested denials and
+serialize repository writes. Caller arguments and decoded capability metadata
+cannot select this strategy. Verified host-worktree writes require their use lease.
+See [execution admission](SecurityAndPrivacy.md#execution-admission)
 for the current Sandbox and Full access availability matrix.
 
 Permission edits and periodic reconciliation revoke running descendants and proxy

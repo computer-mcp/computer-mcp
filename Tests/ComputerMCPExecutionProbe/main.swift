@@ -10,7 +10,7 @@ import System
 @main struct ExecutionResponsibilityProbe {
   static func main() async throws {
     let arguments = CommandLine.arguments
-    if arguments.count == 4, arguments[1] == "recovery-host",
+    if arguments.count == 4, ["recovery-host", "recovery-host-full"].contains(arguments[1]),
       let method = ExecutionLaunchMethod(rawValue: arguments[3])
     {
       let directory = URL(fileURLWithPath: arguments[2])
@@ -21,16 +21,19 @@ import System
       let environment = try ExecutionEnvironment(
         searchPath: [.init("/usr/bin"), .init("/bin")], home: root, temporary: root, cache: root)
       let launcher = ExecutionLauncher(platform: DarwinExecutionPlatform())
+      let sandboxed = arguments[1] == "recovery-host"
+      let mode: ExecutionMode = sandboxed ? .sandbox(sandbox) : .fullAccess
+      let detach = sandboxed ? "Process.setsid; " : ""
       let owner = try await ExecutionAdministration.$current.withValue(
-        .init(mode: .sandbox(sandbox), environment: environment)
+        .init(mode: mode, environment: environment)
       ) {
         try await launcher.start(
           executable: .init("/usr/bin/ruby"),
           arguments: [
             "-e",
-            "fork { Process.setsid; File.write('leaf', Process.pid.to_s); exec('/bin/sleep', '60') }; sleep 60",
+            "File.open('launches', 'a') { |f| f.write('x') }; fork { \(detach)File.write('leaf', Process.pid.to_s); exec('/bin/sleep', '60') }; sleep 60",
           ],
-          directory: root, environment: environment, mode: .sandbox(sandbox), method: method,
+          directory: root, environment: environment, mode: mode, method: method,
           bindOwnership: { ownership in
             ownership.beforeStart { _ in
               try JSONEncoder().encode(ownership.recoveryState()).write(

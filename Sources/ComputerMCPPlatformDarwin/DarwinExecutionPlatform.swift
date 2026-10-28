@@ -7,6 +7,7 @@ import System
 
 package struct DarwinExecutionPlatform: ExecutionPlatform {
   package var supportsRecovery: Bool { true }
+  package var supportsBestEffortOwnership: Bool { true }
   package func supportsDurableOwnership(sandboxed: Bool) -> Bool { sandboxed }
   package var bootSessionID: String? {
     var buffer = [CChar](repeating: 0, count: 128)
@@ -59,12 +60,22 @@ package struct DarwinExecutionPlatform: ExecutionPlatform {
   }
 
   package func recover(_ state: ExecutionRecoveryState) async throws -> any ExecutionOwnership {
-    guard state.sandboxed, state.backend == "darwin", state.root.processID > 0,
+    guard state.backend == "darwin", state.root.processID > 0,
       state.root.identity > 0
     else {
       throw ExecutionEnvironmentError.unavailable("Invalid Darwin execution recovery")
     }
     let root = DarwinProcessIdentity(pid: state.root.processID, uniqueID: state.root.identity)
+    if !state.sandboxed {
+      guard state.payload == nil else {
+        throw ExecutionEnvironmentError.unavailable("Invalid process-group recovery evidence")
+      }
+      let ownership = DarwinExecutionOwnership(marker: nil, table: table)
+      // The bootstrap creates a session and process group whose ID is the recorded root PID.
+      // Membership still needs a stable identity anchor; the numeric group never grants ownership.
+      try ownership.recover([root], processGroup: root.pid)
+      return ownership
+    }
     guard let payload = state.payload, payload.count <= 65_536 else {
       throw ExecutionEnvironmentError.unavailable("Sandbox recovery evidence is unavailable")
     }

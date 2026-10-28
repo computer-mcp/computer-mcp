@@ -668,8 +668,19 @@ standing permissions continues when the client disconnects, and its output
 stays available for its retention period. One started under a grant limited to
 a connection (Full access for that connection) or to the execution (Only this
 time) ends when that grant ends or is revoked. When the host restarts, running
-executions end and are reported as interrupted; cancelling ends the execution
-and everything it started.
+executions end and are reported as interrupted, and are never replayed. Sandboxed
+executions retain durable ownership of every descendant through termination and
+reaping. Full access uses best-effort process-group ownership: cancellation,
+revocation, tightened limits and connection end terminate observed members;
+descendants that detach before observation or delegate work to another service
+are outside ownership and may survive. Execution results state this boundary.
+
+Before destructive worktree operations, the host closes admission and confirms
+termination and reaping of every sandboxed writer. It terminates Full access
+writers best-effort, waits for in-process host invocations to drain, and proceeds
+with reported unconfirmed members and the possibility of detached survivors.
+These warnings survive operation recovery. Unknown execution owners still require
+reconciliation; no deadline transfers another host's ownership.
 
 Execution limits follow Claude Code's defaults unless managed limits set
 others: a call that waits for its program has a time limit of 2 minutes by

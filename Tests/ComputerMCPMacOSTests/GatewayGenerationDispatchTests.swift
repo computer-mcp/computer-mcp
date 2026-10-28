@@ -238,7 +238,7 @@ struct GatewayGenerationDispatchTests {
   }
 
   @Test(.timeLimit(.minutes(1)))
-  func nativeFullAccessBackendRefusesDownstreamLaunchBeforeAnyProcessStarts() async throws {
+  func nativeFullAccessBackendAdmitsConsentedDownstreamAndEndsItsGroup() async throws {
     let fixture = try GenerationFixture(executionLauncher: testExecutionLauncher())
     defer { fixture.removeFiles() }
     try await fixture.activate(version: 1)
@@ -247,17 +247,14 @@ struct GatewayGenerationDispatchTests {
     do {
       let session = try #require(await fixture.service.controlSessions().first)
       _ = try await fixture.consent(session)
-      let refused = try await client.call(
+      let allowed = try await client.call(
         toolName: "mcp.tools.list",
         arguments: .object(["project_id": .string("fixture"), "server": .string("fixture")]))
-      #expect(refused.result.objectValue?["isError"] == .bool(true))
-      #expect(value(refused, "error")?.objectValue?["code"] == .string("execution.unavailable"))
-      #expect(
-        value(refused, "error")?.objectValue?["message"]?.stringValue?.contains("durable ownership")
-          == true)
-      #expect(try fixture.pids().isEmpty)
+      #expect(allowed.result.objectValue?["isError"] != .bool(true), "\(allowed.result)")
+      #expect(try !fixture.pids().isEmpty)
       await client.disconnect()
       await fixture.service.stop()
+      #expect(try fixture.pids().allSatisfy { !alive($0) })
     } catch {
       await client.disconnect()
       await fixture.service.stop()

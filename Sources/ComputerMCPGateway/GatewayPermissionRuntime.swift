@@ -119,6 +119,14 @@ package final class GatewayPermissionRuntime: @unchecked Sendable {
     } else {
       purpose = .readOnlyHelper
     }
+    if purpose == .projectProgram || purpose == .pluginProgram,
+      try await store.read().environment.paths?.registeredProjects.contains(where: {
+        $0.id == authorization.invocation.projectID && $0.hostContentIdentity != nil
+      }) == true
+    {
+      throw ExecutionEnvironmentError.unavailable(
+        "Worktree programs require a bound worktree admission lease")
+    }
     let temporary = directory.appendingPathComponent(authorization.id.uuidString, isDirectory: true)
     guard temporary.path.withCString({ mkdir($0, mode_t(0o700)) }) == 0 else {
       throw ExecutionEnvironmentError.unavailable(

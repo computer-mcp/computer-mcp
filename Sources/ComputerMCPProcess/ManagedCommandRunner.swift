@@ -28,7 +28,8 @@ package struct ManagedCommandRunner: CommandRunning {
       executable: executable, arguments: arguments, exitCode: value.exitCode,
       timedOut: value.timedOut,
       stdout: value.stdoutString, stderr: value.stderrString,
-      stdoutTruncated: value.stdoutTruncated, stderrTruncated: value.stderrTruncated)
+      stdoutTruncated: value.stdoutTruncated, stderrTruncated: value.stderrTruncated,
+      ownership: value.ownership)
   }
 
   package func runIsolated(
@@ -110,6 +111,7 @@ package struct ManagedCommandRunner: CommandRunning {
       exitCode: value.exitCode ?? value.signal,
       timedOut: value.timedOut, stdout: stdout, stderr: stderr,
       stdoutTruncated: value.stdout.truncated || value.stdout.missedBytes,
-      stderrTruncated: value.stderr.truncated || value.stderr.missedBytes)
+      stderrTruncated: value.stderr.truncated || value.stderr.missedBytes,
+      ownership: value.ownership)
   }
 }

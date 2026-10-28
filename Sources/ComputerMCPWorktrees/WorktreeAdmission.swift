@@ -21,6 +21,10 @@ package struct WorktreeAdmission: Codable, Equatable, Sendable {
     let generation: UUID
     var closedBy: UUID?
     var writers: [UUID: UUID] = [:]
+    var unconfinedWriters: Set<UUID>?
+    // A completed Full access program may have left an unobserved descendant.
+    var hadUnconfinedWriters: Bool?
+    var unconfirmedTerminations: [UUID: String]?
   }
 
   init(topology: VerifiedWorktreeTopology) throws {
@@ -88,7 +92,9 @@ package struct WorktreeAdmission: Codable, Equatable, Sendable {
   }
 
   /// Called before a prepared context can execute any mutation or launch.
-  package func reserve(ownerID: UUID, executionID: UUID) throws -> WorktreeWriterUse {
+  package func reserve(
+    ownerID: UUID, executionID: UUID, unconfined: Bool = false
+  ) throws -> WorktreeWriterUse {
     try transaction { state in
       guard state.closedBy == nil else {
         throw WorktreeError.busy("Worktree admission is closed for removal or recovery.")
@@ -97,6 +103,10 @@ package struct WorktreeAdmission: Codable, Equatable, Sendable {
         throw WorktreeError.recoveryRequired("Writer reservation already exists.")
       }
       state.writers[executionID] = ownerID
+      if unconfined {
+        state.unconfinedWriters = (state.unconfinedWriters ?? []).union([executionID])
+        state.hadUnconfinedWriters = true
+      }
     }
     return .init(admission: self, ownerID: ownerID, executionID: executionID)
   }
@@ -121,7 +131,47 @@ package struct WorktreeAdmission: Codable, Equatable, Sendable {
           throw WorktreeError.identityChanged("Writer ownership changed.")
         }
         state.writers[use.executionID] = nil
+        state.unconfinedWriters?.remove(use.executionID)
       }
+    }
+  }
+
+  /// A destructive operation may release an unconfined writer after its in-process
+  /// invocation drains. The execution owner retains physical cleanup and reports uncertainty.
+  package func acknowledgeUnconfined(
+    _ use: WorktreeWriterUse, operationID: UUID, unconfirmedTermination: String?
+  ) throws {
+    try transaction { state in
+      guard use.admission == self, state.closedBy == operationID else {
+        throw WorktreeError.identityChanged("Unconfined writer does not belong to this operation.")
+      }
+      guard let owner = state.writers[use.executionID] else { return }
+      guard owner == use.ownerID, state.unconfinedWriters?.contains(use.executionID) == true else {
+        throw WorktreeError.identityChanged("Writer does not have best-effort ownership.")
+      }
+      if let unconfirmedTermination {
+        var outcomes = state.unconfirmedTerminations ?? [:]
+        outcomes[use.executionID] = unconfirmedTermination
+        state.unconfirmedTerminations = outcomes
+      }
+      state.writers[use.executionID] = nil
+      state.unconfinedWriters?.remove(use.executionID)
+    }
+  }
+
+  package func terminationWarnings(operationID: UUID) throws -> [String] {
+    try transaction { state in
+      guard state.closedBy == operationID else {
+        throw WorktreeError.identityChanged("Termination report belongs to another operation.")
+      }
+      guard state.hadUnconfinedWriters == true else { return [] }
+      return [
+        "Full access execution was admitted for this worktree. Descendants outside process-group observation may survive termination and still change its files."
+      ]
+        + (state.unconfirmedTerminations ?? [:]).sorted { $0.key.uuidString < $1.key.uuidString }
+        .map {
+          "Full access termination was not confirmed for execution \($0.key): \($0.value)"
+        }
     }
   }
 
@@ -142,7 +192,7 @@ package struct WorktreeAdmission: Codable, Equatable, Sendable {
   package func requireDrained(operationID: UUID) throws {
     try transaction { state in
       guard state.closedBy == operationID, state.writers.isEmpty else {
-        throw WorktreeError.busy("Worktree writers have not all confirmed termination.")
+        throw WorktreeError.busy("Worktree writers have not completed their termination barriers.")
       }
     }
   }

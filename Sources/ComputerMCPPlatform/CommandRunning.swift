@@ -1,3 +1,4 @@
+import ComputerMCPCore
 import Foundation
 
 package struct CommandResult: Codable, Equatable, Sendable {
@@ -9,6 +10,7 @@ package struct CommandResult: Codable, Equatable, Sendable {
   package var stderr: String
   package var stdoutTruncated: Bool
   package var stderrTruncated: Bool
+  package var ownership: ExecutionOwnershipReport?
 
   private enum CodingKeys: String, CodingKey {
     case executable
@@ -19,6 +21,7 @@ package struct CommandResult: Codable, Equatable, Sendable {
     case stderr
     case stdoutTruncated = "stdout_truncated"
     case stderrTruncated = "stderr_truncated"
+    case ownership
   }
 
   package init(
@@ -29,7 +32,7 @@ package struct CommandResult: Codable, Equatable, Sendable {
     stdout: String,
     stderr: String,
     stdoutTruncated: Bool,
-    stderrTruncated: Bool
+    stderrTruncated: Bool, ownership: ExecutionOwnershipReport? = nil
   ) {
     self.executable = executable
     self.arguments = arguments
@@ -39,6 +42,7 @@ package struct CommandResult: Codable, Equatable, Sendable {
     self.stderr = stderr
     self.stdoutTruncated = stdoutTruncated
     self.stderrTruncated = stderrTruncated
+    self.ownership = ownership
   }
 
 }
@@ -52,6 +56,7 @@ package struct CommandDataResult: Equatable, Sendable {
   package var stderr: Data
   package var stdoutTruncated: Bool
   package var stderrTruncated: Bool
+  package var ownership: ExecutionOwnershipReport?
 
   package init(
     executable: String,
@@ -61,7 +66,7 @@ package struct CommandDataResult: Equatable, Sendable {
     stdout: Data,
     stderr: Data,
     stdoutTruncated: Bool,
-    stderrTruncated: Bool
+    stderrTruncated: Bool, ownership: ExecutionOwnershipReport? = nil
   ) {
     self.executable = executable
     self.arguments = arguments
@@ -71,6 +76,7 @@ package struct CommandDataResult: Equatable, Sendable {
     self.stderr = stderr
     self.stdoutTruncated = stdoutTruncated
     self.stderrTruncated = stderrTruncated
+    self.ownership = ownership
   }
 
   package var stdoutString: String {

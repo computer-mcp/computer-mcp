@@ -184,6 +184,7 @@ package struct ShellSessionSnapshot: Codable, Equatable, Sendable {
   package var permissionLimits: EffectiveExecutionLimits?
   package var permissionLimitEndReason: ExecutionLimitEndReason?
   package var members: [ExecutionMember] = []
+  package var ownership: ExecutionOwnershipReport?
   package var limits: ExecutionLimits
   package var endReason: ExecutionEndReason?
   package var droppedBytes: Int64
@@ -206,6 +207,7 @@ package struct ShellSessionSnapshot: Codable, Equatable, Sendable {
     case permissionRequestIDs = "permission_request_ids"
     case permissionLimits = "permission_limits"
     case permissionLimitEndReason = "permission_limit_end_reason"
+    case ownership
     case limits
     case endReason = "end_reason"
     case droppedBytes = "dropped_bytes"
@@ -246,12 +248,14 @@ package struct ShellSessionSnapshot: Codable, Equatable, Sendable {
       timeoutMilliseconds: nil, outputBytes: ExecutionLimits.defaultOutputBytes),
     endReason: ExecutionEndReason? = nil, droppedBytes: Int64 = 0, members: [ExecutionMember] = [],
     executionID: UUID? = nil, permissionLimits: EffectiveExecutionLimits? = nil,
-    permissionLimitEndReason: ExecutionLimitEndReason? = nil
+    permissionLimitEndReason: ExecutionLimitEndReason? = nil,
+    ownership: ExecutionOwnershipReport? = nil
   ) {
     self.executionID = executionID
     self.permissionLimits = permissionLimits
     self.permissionLimitEndReason = permissionLimitEndReason
     self.members = members
+    self.ownership = ownership
     self.limits = limits
     self.endReason = endReason
     self.droppedBytes = droppedBytes
@@ -1090,6 +1094,7 @@ private final class ShellSession: @unchecked Sendable {
   private let prepared: PreparedExecutionContext?
   private var permissionLimits: EffectiveExecutionLimits?
   private var restoredLimitEndReason: ExecutionLimitEndReason?
+  private let ownership: ExecutionOwnershipReport?
   private var execution: (any ExecutionOwnership)?
   let input: ChildProcessInput
   private var limits: ExecutionLimits
@@ -1117,6 +1122,12 @@ private final class ShellSession: @unchecked Sendable {
     self.prepared = prepared
     executionID = prepared?.executionID
     permissionLimits = prepared?.limits
+    ownership = prepared.map {
+      switch $0.mode {
+      case .sandbox: return .init(scope: .sandbox)
+      case .fullAccess: return .init(scope: .processGroup)
+      }
+    }
     self.startedAt = Date()
     self.limits = .init(timeoutMilliseconds: timeoutMilliseconds, outputBytes: maxOutputBytes)
     self.id = id
@@ -1130,6 +1141,7 @@ private final class ShellSession: @unchecked Sendable {
     prepared = nil
     executionID = snapshot.executionID
     permissionLimits = snapshot.permissionLimits
+    ownership = snapshot.ownership
     restoredLimitEndReason = snapshot.permissionLimitEndReason
     id = snapshot.sessionID
     limits = snapshot.limits
@@ -1492,7 +1504,8 @@ private final class ShellSession: @unchecked Sendable {
                 : signal != nil ? .signalled : exitCode != nil ? .exited : .executionFailed) : nil),
       droppedBytes: stdout.startCursor + stderr.startCursor, members: finished ? [] : members,
       executionID: executionID, permissionLimits: permissionLimits,
-      permissionLimitEndReason: prepared?.limitEndReason ?? restoredLimitEndReason
+      permissionLimitEndReason: prepared?.limitEndReason ?? restoredLimitEndReason,
+      ownership: ownership
     )
     return snapshot
   }

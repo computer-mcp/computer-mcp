@@ -62,13 +62,14 @@ struct GatewayFixedHostOperationTests {
       #expect(audits.contains { $0.capabilityID == "git.commit" && $0.decision == .allowed })
       try await fixture.requireNoScratch()
       let arbitrary = try await fixture.call(
-        "shell.run", ["command": .string("touch arbitrary-started")])
-      #expect(arbitrary.objectValue?["isError"] == .bool(true))
+        "shell.run", ["command": .string("touch arbitrary-started"), "shell": .string("/bin/sh")])
+      #expect(arbitrary.objectValue?["isError"] != .bool(true), "\(arbitrary)")
       #expect(
-        arbitrary.objectValue?["structuredContent"]?.objectValue?["error"]?.objectValue?["code"]
-          == .string("execution.unavailable"))
+        arbitrary.objectValue?["structuredContent"]?.objectValue?["result"]?.objectValue?[
+          "ownership"]?.objectValue?[
+            "scope"] == .string("process_group_best_effort"))
       #expect(
-        !FileManager.default.fileExists(
+        FileManager.default.fileExists(
           atPath: fixture.project.appendingPathComponent("arbitrary-started").path))
     }
   }
@@ -107,7 +108,7 @@ struct GatewayFixedHostOperationTests {
   }
 }
 
-private struct FixedHostFixture {
+struct FixedHostFixture {
   let root: URL
   let project: URL
   let database: GatewayDatabase
@@ -155,9 +156,14 @@ private struct FixedHostFixture {
         runtime: .init(caller: .localMCP, profileID: grant.id), policy: .init(shellEnabled: true),
         profiles: [.init(grant: grant)],
         cli: .init(commands: [
-          .init(id: "git", executable: configured.path, cwd: root.path, env: ["GIT_DIR": root.path])
+          .init(
+            id: "git", executable: configured.path, cwd: root.path, env: ["GIT_DIR": root.path]),
+          .init(id: "fixture", executable: "/bin/sh", allowAnyArgs: true),
         ]),
-        builtin: .init(enabled: ["file.write", "git.add", "git.commit", "shell.run"]),
+        builtin: .init(enabled: [
+          "file.write", "git.add", "git.commit", "shell.run", "shell.spawn", "shell.read",
+          "shell.cancel", "process.spawn", "process.read", "process.cancel", "cli.exec",
+        ]),
         projectDirectory: project), context: context, database: database,
       registeredProjects: [registered], platform: services,
       bundledPlugins: .init(packages: [], issues: []))

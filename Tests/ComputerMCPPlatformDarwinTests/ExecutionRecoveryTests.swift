@@ -8,16 +8,19 @@ import Testing
 @testable import ComputerMCPPlatformDarwin
 
 @Suite(.nativeIntegration, .serialized) struct ExecutionRecoveryTests {
-  @Test(.timeLimit(.minutes(1)), arguments: ExecutionLaunchMethod.allCases)
-  func abruptHostExitRetainsDetachedDescendantOwnership(method: ExecutionLaunchMethod) async throws
-  {
+  @Test(.timeLimit(.minutes(1)), arguments: ExecutionLaunchMethod.allCases, [false, true])
+  func abruptHostExitRecoversOwnedSurvivorsWithoutReplay(
+    method: ExecutionLaunchMethod, sandboxed: Bool
+  ) async throws {
     let temporary = try ScopedTemporaryDirectory()
     let root = URL(
       fileURLWithPath: try #require(realpath(temporary.url.path, nil)).withCStringCopy())
     let host = Process()
     host.executableURL = try SeatbeltFixture.executionBootstrap.deletingLastPathComponent()
       .appendingPathComponent("ComputerMCPExecutionProbe")
-    host.arguments = ["recovery-host", root.path, method.rawValue]
+    host.arguments = [
+      sandboxed ? "recovery-host" : "recovery-host-full", root.path, method.rawValue,
+    ]
     try host.run()
     host.waitUntilExit()
     #expect(host.terminationStatus == 0)
@@ -44,6 +47,8 @@ import Testing
     _ = try await owner.cancel(until: .now.advanced(by: .seconds(20)))
     #expect(DarwinProcessIdentity.current(pid: leafPID)?.identity != leaf.identity)
     #expect(try await owner.members().isEmpty)
+    #expect(receipt.sandboxed == sandboxed)
+    #expect(try String(contentsOf: root.appendingPathComponent("launches"), encoding: .utf8) == "x")
     try launcher.releaseRecovery(receipt)
     try launcher.releaseRecovery(receipt)
   }
@@ -79,6 +84,7 @@ import Testing
     let platform = DarwinExecutionPlatform()
     #expect(platform.supportsDurableOwnership(sandboxed: true))
     #expect(!platform.supportsDurableOwnership(sandboxed: false))
+    #expect(platform.supportsBestEffortOwnership)
   }
 
   @Test func markerRecoveryRejectsReplacedInodes() throws {
@@ -101,6 +107,34 @@ extension UnsafeMutablePointer<CChar> {
 }
 
 @Suite struct ExecutionRecoverySnapshotTests {
+  @Test func fullAccessRecoveryFindsAnchoredChildrenAfterRootReaping() async throws {
+    let processes = SimulatedProcessTable()
+    let root = DarwinProcessIdentity(pid: 1_000_001, uniqueID: 100)
+    let leaf = DarwinProcessIdentity(pid: 1_000_002, uniqueID: 101)
+    let unrelated = DarwinProcessIdentity(pid: 1_000_003, uniqueID: 102)
+    processes.mutate {
+      $0.entries = [
+        leaf.pid: .init(
+          identity: leaf, parentUniqueID: root.uniqueID,
+          group: root.pid, session: root.pid, state: .running),
+        unrelated.pid: .init(
+          identity: unrelated, parentUniqueID: 999,
+          group: unrelated.pid, session: unrelated.pid, state: .running),
+      ]
+    }
+    let platform = DarwinExecutionPlatform(table: processes.table)
+    let receipt = ExecutionRecoveryState(
+      root: .init(processID: root.pid, identity: root.uniqueID), sandboxed: false, backend: "darwin"
+    )
+    let owner = try await platform.recover(receipt)
+    _ = try await owner.cancel(until: .now.advanced(by: .seconds(3)))
+    #expect(processes.state.signals.contains { $0.0 == leaf })
+    #expect(processes.state.entries[leaf.pid] == nil)
+    #expect(processes.state.entries[unrelated.pid] != nil)
+    #expect(!processes.state.signals.contains { $0.0 == unrelated })
+    try platform.releaseRecovery(receipt)
+  }
+
   @Test(arguments: [false, true])
   func recoveryScansPastOlderRecordsAndRequiresCompleteEvidence(newZombie: Bool) async throws {
     let processes = SimulatedProcessTable()

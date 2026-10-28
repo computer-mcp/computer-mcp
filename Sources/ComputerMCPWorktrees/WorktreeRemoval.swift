@@ -4,6 +4,7 @@ package struct WorktreeRemovalResult: Sendable {
   package let projectID: String
   package let branch: String
   package let oid: String
+  package let terminationWarnings: [String]
 }
 
 struct WorktreeRemovalJournal: Codable {
@@ -18,6 +19,7 @@ struct WorktreeRemovalJournal: Codable {
   let force: Bool
   var phase: Phase
   var oid: String?
+  var terminationWarnings: [String]?
 }
 
 extension WorktreeRepository {
@@ -64,6 +66,12 @@ extension WorktreeRepository {
     _ = try journal.admission.close(operationID: journal.operationID)
     try await terminate(journal.admission, journal.operationID)
     try journal.admission.requireDrained(operationID: journal.operationID)
+    let warnings = try journal.admission.terminationWarnings(operationID: journal.operationID)
+    if journal.terminationWarnings != warnings {
+      let previous = try removalBytes(journal)
+      journal.terminationWarnings = warnings
+      try saveRemoval(journal, replacing: previous)
+    }
     try lock.verify()
     if journal.phase == .closing {
       try reconcileRemovalDependencies(projectID, lock: lock, limits: limits, authorize: authorize)
@@ -217,7 +225,9 @@ extension WorktreeRepository {
     else {
       throw WorktreeError.recoveryRequired("Removal has no terminal outcome.")
     }
-    return .init(projectID: journal.record.projectID, branch: branch, oid: oid)
+    return .init(
+      projectID: journal.record.projectID, branch: branch, oid: oid,
+      terminationWarnings: journal.terminationWarnings ?? [])
   }
 
   func removalDirectory() throws -> WorktreeDirectory {

@@ -189,6 +189,9 @@ extension ExecutionOwnership {
 /// bindOwnership installs nonblocking lifecycle callbacks before spawning any process.
 package protocol ExecutionPlatform: Sendable {
   var supportsRecovery: Bool { get }
+  /// Unconfined process groups, stable identity checks and restart interruption.
+  /// This does not promise ownership of descendants that escape observation.
+  var supportsBestEffortOwnership: Bool { get }
   func supportsDurableOwnership(sandboxed: Bool) -> Bool
   var bootSessionID: String? { get }
   var hostSystemReadPaths: [SandboxPath] { get }
@@ -209,6 +212,7 @@ extension ExecutionPlatform {
   }
   package func supportsDurableOwnership(sandboxed: Bool) -> Bool { false }
   package var supportsRecovery: Bool { false }
+  package var supportsBestEffortOwnership: Bool { false }
   package var bootSessionID: String? { nil }
   package var hostSystemReadPaths: [SandboxPath] { [] }
   package func interrupt(_ members: [ExecutionMember]) async throws {

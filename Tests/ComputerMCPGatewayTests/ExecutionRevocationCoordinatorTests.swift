@@ -131,6 +131,83 @@ import Testing
     try await coordinator.stopExecutions([context.executionID, next.executionID])
   }
 
+  @Test(arguments: [false, true], [false, true])
+  func unconfinedWorktreeTerminationReportsUnconfirmedMembers(
+    ownershipFailure: Bool, mixed: Bool
+  ) async throws {
+    let f = try ExecutionFixture()
+    let admission = try f.worktreeAdmission()
+    let coordinator = try f.coordinator()
+    try await coordinator.recover()
+    if mixed {
+      let id = try f.paths.authorize(f.paths.project, operation: .read, once: false)
+      let prepared = try await coordinator.prepare(
+        authorizationID: id, context: f.context, worktreeAdmission: admission)
+      _ = try await f.start(prepared)
+      try prepared.finishAdmission()
+    }
+    let id = try f.paths.authorize(f.paths.project, operation: .read, once: false, fullAccess: true)
+    let prepared = try await coordinator.prepare(
+      authorizationID: id, context: f.programContext, worktreeAdmission: admission)
+    let owner = try #require(try await f.start(prepared) as? DurableTestOwnership)
+    try prepared.finishAdmission()
+    owner.setCancellation { deadline in
+      if ownershipFailure {
+        throw ExecutionCompletionFailure(
+          ownership: owner,
+          members: [.init(process: owner.member, reason: "Synthetic surviving writer")],
+          reasons: ["Kill confirmation failed"], bestEffort: true)
+      }
+      try await Task.sleep(
+        until: min(deadline, ContinuousClock.now.advanced(by: .milliseconds(300))),
+        clock: .continuous)
+      throw ExecutionWaitExpired(ownership: owner)
+    }
+    defer {
+      owner.setCancellation(nil)
+      owner.complete()
+    }
+    let operation = UUID()
+    try await coordinator.terminateWorktreeWriters(
+      admission, operationID: operation,
+      until: .now.advanced(by: .milliseconds(250)))
+    try admission.requireDrained(operationID: operation)
+    let warnings = try admission.terminationWarnings(operationID: operation)
+    #expect(warnings.contains { $0.contains("outside process-group observation") })
+    #expect(warnings.contains { $0.contains("PID \(owner.member.processID)") })
+    #expect(!owner.ended)
+    if ownershipFailure {
+      let next = try f.paths.authorize(f.paths.project, operation: .read, once: false)
+      await #expect(throws: ExecutionEnvironmentError.self) {
+        _ = try await coordinator.prepare(authorizationID: next, context: f.context)
+      }
+    }
+    owner.setCancellation(nil)
+    owner.complete()
+    try? await coordinator.reconcile()
+  }
+
+  @Test func unconfinedTerminationStillWaitsForTheHostInvocation() async throws {
+    let f = try ExecutionFixture()
+    let admission = try f.worktreeAdmission()
+    let coordinator = try f.coordinator()
+    try await coordinator.recover()
+    let id = try f.paths.authorize(f.paths.project, operation: .read, once: false, fullAccess: true)
+    let prepared = try await coordinator.prepare(
+      authorizationID: id, context: f.programContext, worktreeAdmission: admission)
+    let operation = UUID()
+    await #expect(throws: WorktreeError.self) {
+      try await coordinator.terminateWorktreeWriters(
+        admission, operationID: operation, until: .now.advanced(by: .milliseconds(50)))
+    }
+    #expect(throws: WorktreeError.self) { try admission.requireDrained(operationID: operation) }
+    try prepared.finishAdmission()
+    try await coordinator.terminateWorktreeWriters(
+      admission, operationID: operation, until: .now.advanced(by: .seconds(1)))
+    try admission.requireDrained(operationID: operation)
+    try await coordinator.reconcile()
+  }
+
   @Test(arguments: [false, true])
   func worktreeTerminationDeadlineBoundsCallerWhileCleanupContinues(expire: Bool) async throws {
     let f = try ExecutionFixture()
@@ -1172,25 +1249,29 @@ import Testing
     }
   }
 
-  @Test(arguments: [
-    "reserve", "child", "bind", "finish", "release", "ack", "epoch", "database-rollback",
-  ])
-  func crashBoundariesRecoverWithoutRestoringPermission(stage: String) async throws {
+  @Test(
+    arguments: [
+      "reserve", "child", "bind", "finish", "release", "ack", "epoch", "database-rollback",
+    ], [false, true])
+  func crashBoundariesRecoverWithoutRestoringPermission(stage: String, sandboxed: Bool) async throws
+  {
     let f = try ExecutionFixture()
-    let id = try f.paths.authorize(f.paths.project, operation: .read, once: true)
+    let id = try f.paths.authorize(
+      f.paths.project, operation: .read, once: true, fullAccess: !sandboxed)
     let execution = try f.paths.store.transactionWithDatabase { _, ledger in
       try ledger.startExecution(owner: f.paths.principal, authorizationIDs: [id])
     }
     let child = UUID()
-    let owner = f.platform.makeOwner()
+    let owner = f.platform.makeOwner(sandboxed: sandboxed)
     let recovery = try owner.recoveryState()
     var record = ExecutionRuntimeRecord(id: execution.id, ownerID: UUID(), boot: "boot")
     let admission = try f.worktreeAdmission()
-    let use = try admission.reserve(ownerID: record.ownerID, executionID: execution.id)
+    let use = try admission.reserve(
+      ownerID: record.ownerID, executionID: execution.id, unconfined: !sandboxed)
     let operation = UUID()
     _ = try admission.close(operationID: operation)
     record.worktreeUse = use
-    record.worktreeDurable = true
+    record.worktreeDurable = sandboxed
     record.invocationInFlight = stage != "ack"
     if stage != "reserve" {
       record.children[child] = .init(
@@ -1221,6 +1302,7 @@ import Testing
     }
     let coordinator = try f.coordinator()
     try await coordinator.recover()
+    #expect(f.platform.owners.count == 1)
     try admission.requireDrained(operationID: operation)
     #expect(throws: WorktreeError.self) {
       try admission.reserve(ownerID: UUID(), executionID: UUID())
@@ -1389,10 +1471,11 @@ private final class DurableTestPlatform: ExecutionPlatform, @unchecked Sendable 
   var supportsRecovery: Bool { true }
   var bootSessionID: String? { "boot" }
   func supportsDurableOwnership(sandboxed: Bool) -> Bool { true }
-  func makeOwner() -> DurableTestOwnership {
+  func makeOwner(sandboxed: Bool = true) -> DurableTestOwnership {
     lock.withLock {
       let owner = DurableTestOwnership(
-        member: .init(processID: Int32(values.count + 100), identity: UInt64(values.count + 100)))
+        member: .init(processID: Int32(values.count + 100), identity: UInt64(values.count + 100)),
+        sandboxed: sandboxed)
       values.append(owner)
       return owner
     }
@@ -1403,7 +1486,7 @@ private final class DurableTestPlatform: ExecutionPlatform, @unchecked Sendable 
     bindOwnership: @Sendable (any ExecutionOwnership) -> Void
   ) async throws -> any ExecutionOwnership {
     if fail == .beforeBinding { throw CancellationError() }
-    let owner = makeOwner()
+    let owner = makeOwner(sandboxed: sandbox != nil)
     bindOwnership(owner)
     do {
       try owner.admit()
@@ -1421,6 +1504,7 @@ private final class DurableTestPlatform: ExecutionPlatform, @unchecked Sendable 
 
 private final class DurableTestOwnership: ExecutionOwnership, @unchecked Sendable {
   let member: ExecutionMember
+  let sandboxed: Bool
   private let lock = NSLock()
   private var handlers: [@Sendable (ExecutionMember) throws -> Void] = []
   private var cancellations: [@Sendable () -> Void] = []
@@ -1433,9 +1517,12 @@ private final class DurableTestOwnership: ExecutionOwnership, @unchecked Sendabl
     lock.withLock { cancellation = action }
   }
   var ended: Bool { lock.withLock { finished } }
-  init(member: ExecutionMember) { self.member = member }
+  init(member: ExecutionMember, sandboxed: Bool = true) {
+    self.member = member
+    self.sandboxed = sandboxed
+  }
   func recoveryState() throws -> ExecutionRecoveryState {
-    .init(root: member, sandboxed: true, backend: "test")
+    .init(root: member, sandboxed: sandboxed, backend: "test")
   }
   func beforeStart(_ handler: @escaping @Sendable (ExecutionMember) throws -> Void) {
     lock.withLock { handlers.append(handler) }
@@ -1830,18 +1917,25 @@ private struct ExecutionTestObservation: EgressRouteObservation {
       await runtime.shutdown()
     }
 
-    @Test func unsupportedFullAccessIsRefusedBeforeReservation() async throws {
+    @Test func fullAccessReservationUsesBestEffortOwnership() async throws {
       let f = try ExecutionFixture()
       let id = try f.paths.authorize(
         f.paths.project, operation: .read, once: false, fullAccess: true)
-      let coordinator = try f.coordinator(launcher: testExecutionLauncher())
+      let launcher = testExecutionLauncher()
+      #expect(!launcher.supportsDurableOwnership(sandboxed: false))
+      #expect(launcher.supportsBestEffortOwnership)
+      let coordinator = try f.coordinator(launcher: launcher)
       try await coordinator.recover()
-      await #expect(throws: ExecutionEnvironmentError.self) {
-        try await coordinator.prepare(authorizationID: id, context: f.programContext)
+      let prepared = try await coordinator.prepare(authorizationID: id, context: f.programContext)
+      guard case .fullAccess = prepared.mode else {
+        Issue.record("Full access reservation changed execution mode")
+        return
       }
       #expect(
         try f.paths.store.readWithDatabase { _, ledger in ledger.authorizations[id]?.executionID }
-          == nil)
+          == prepared.executionID)
+      try prepared.finishAdmission()
+      try await f.untilFinished(prepared.executionID, coordinator)
     }
   }
 #endif

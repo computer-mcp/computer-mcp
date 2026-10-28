@@ -5,6 +5,37 @@ import Foundation
 import Testing
 
 @Suite struct SeatbeltIntegrationTests {
+  @Test func fixedGitWritesRespectNestedReadOnlyRegions() throws {
+    let fixture = try SeatbeltFixture()
+    defer { fixture.remove() }
+    try fixture.write("worktree/readonly/value", "original")
+    try fixture.write("worktree/readonly/reopened/value", "original")
+    try fixture.write("shared/refs/main", "original")
+    let base = try fixture.configuration()
+    let configuration = try SandboxConfiguration(
+      worktree: base.worktree, temporaryDirectory: base.temporaryDirectory,
+      homeDirectory: base.homeDirectory, cacheDirectory: base.cacheDirectory,
+      readableRoots: base.readableRoots,
+      deniedWriteRegions: [
+        .init(
+          path: fixture.path("worktree/readonly"),
+          exceptions: [fixture.path("worktree/readonly/reopened")])
+      ],
+      listableAncestors: base.listableAncestors, hostGitDirectory: fixture.path("shared"))
+    for (script, allowed) in [
+      ("echo changed > worktree/allowed", true),
+      ("echo changed > worktree/readonly/value", false),
+      ("echo changed > worktree/readonly/reopened/value", true),
+      ("echo changed > shared/refs/main", true),
+    ] {
+      #expect((try fixture.run(script, configuration: configuration) == 0) == allowed, "\(script)")
+    }
+    #expect(
+      try String(
+        contentsOf: fixture.root.appendingPathComponent("worktree/readonly/value"),
+        encoding: .utf8) == "original")
+  }
+
   @Test func filesystemBoundaries() throws {
     let fixture = try SeatbeltFixture()
     defer { fixture.remove() }

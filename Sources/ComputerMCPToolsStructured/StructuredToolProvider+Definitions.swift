@@ -395,7 +395,7 @@ extension StructuredToolProvider {
           id: "json.write", risk: .destructive,
           requirement: .init(access: .projectWrite, paths: [.init("path", .write)]),
           projectRequirement: .optional,
-          localOnly: false, usesNetwork: false
+          localOnly: false, usesNetwork: false, hostOperation: .fileMutation
         )
       ),
       ToolDefinition(
@@ -598,7 +598,7 @@ extension StructuredToolProvider {
           id: "plist.write", risk: .destructive,
           requirement: .init(access: .projectWrite, paths: [.init("path", .write)]),
           projectRequirement: .optional,
-          localOnly: false, usesNetwork: false
+          localOnly: false, usesNetwork: false, hostOperation: .fileMutation
         )
       ),
       ToolDefinition(

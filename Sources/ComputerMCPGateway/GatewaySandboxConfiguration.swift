@@ -1,5 +1,6 @@
 import ComputerMCPEgress
 import ComputerMCPPermissions
+import ComputerMCPProcess
 import ComputerMCPSandbox
 import Foundation
 
@@ -17,15 +18,18 @@ package struct GatewaySandboxContext: Sendable {
   package let temporaryDirectory: SandboxPath
   package let purpose: GatewayExecutionPurpose
   package let privateWorkingDirectory: Bool
+  package let fixedHostOperation: PreparedExecutionContext.FixedHostOperation?
 
   package init(
     directory: SandboxPath, temporaryDirectory: SandboxPath,
-    purpose: GatewayExecutionPurpose = .readOnlyHelper, privateWorkingDirectory: Bool = false
+    purpose: GatewayExecutionPurpose = .readOnlyHelper, privateWorkingDirectory: Bool = false,
+    fixedHostOperation: PreparedExecutionContext.FixedHostOperation? = nil
   ) {
     self.directory = directory
     self.temporaryDirectory = temporaryDirectory
     self.purpose = purpose
     self.privateWorkingDirectory = privateWorkingDirectory
+    self.fixedHostOperation = fixedHostOperation
   }
 }
 
@@ -45,6 +49,14 @@ package enum GatewaySandboxCompiler {
   ) throws -> GatewayExecutionConfiguration {
     guard let authorization = ledger.authorizations[authorizationID] else {
       throw PermissionModelError.unknownAuthorization
+    }
+    if let fixed = context.fixedHostOperation {
+      guard fixed.directory == context.directory, context.purpose == .readOnlyHelper,
+        authorization.mode != .sandbox || !fixed.allowsWrites
+      else {
+        throw ExecutionEnvironmentError.unavailable(
+          "Writable host operations require their verified execution context")
+      }
     }
     if authorization.mode == .sandbox,
       context.purpose == .projectProgram || context.purpose == .pluginProgram
@@ -72,8 +84,9 @@ package enum GatewaySandboxCompiler {
         includeTrusted: false)
     }
     let egress = try EgressPolicy(
-      access: network, localNetwork: projection.localNetwork,
-      localNetworkHosts: projection.localNetworkHosts)
+      access: context.fixedHostOperation == nil ? network : .none,
+      localNetwork: context.fixedHostOperation == nil && projection.localNetwork,
+      localNetworkHosts: context.fixedHostOperation == nil ? projection.localNetworkHosts : [])
     let sandbox: SandboxConfiguration?
     if sandboxed {
       let reads = Set(projection.readablePaths.map(\.path))
@@ -148,6 +161,28 @@ package enum GatewaySandboxCompiler {
               && !($0.excludedSubtrees ?? []).contains(where: { $0.contains(workingPath) })
           })
       else { throw PermissionModelError.invalidAuthorization }
+      var deniedWrites: [CanonicalPath] = []
+      var allowedWrites: [CanonicalPath] = []
+      if context.fixedHostOperation?.operation == .git,
+        context.fixedHostOperation?.allowsWrites == true
+      {
+        for boundary in projection.boundaries.union([workingPath])
+          .filter({ workingPath.contains($0) }).sorted(by: { $0.string < $1.string })
+        {
+          do {
+            try ledger.authorizePathUse(authorizationID, path: boundary, operation: .write)
+            allowedWrites.append(boundary)
+          } catch {
+            deniedWrites.append(boundary)
+          }
+        }
+      }
+      let writeRegions = try deniedWrites.map { denied in
+        try SandboxReadRegion(
+          path: SandboxPath(denied.string),
+          exceptions: allowedWrites.filter { denied != $0 && denied.contains($0) }
+            .map { try SandboxPath($0.string) })
+      }
       sandbox = try SandboxConfiguration(
         readOnly: true, worktree: context.directory,
         temporaryDirectory: context.temporaryDirectory,
@@ -156,6 +191,7 @@ package enum GatewaySandboxCompiler {
           try SandboxPath($0.string)
         },
         deniedReadRegions: regions,
+        deniedWriteRegions: writeRegions,
         forbiddenReads: forbidden.sorted(by: { $0.string < $1.string })
           .map { try SandboxPath($0.string) },
         listableAncestors: projection.directoryPaths.map { try SandboxPath($0.path.string) },
@@ -166,7 +202,8 @@ package enum GatewaySandboxCompiler {
       sandbox = nil
     }
     return GatewayExecutionConfiguration(
-      authorization: projection.authorization, sandbox: sandbox, egress: egress,
-      limits: projection.limits, permitsProgramLaunch: context.purpose != .remoteService)
+      authorization: ledger.authorizations[authorizationID]!, sandbox: sandbox, egress: egress,
+      limits: projection.limits,
+      permitsProgramLaunch: context.purpose != .remoteService && context.fixedHostOperation == nil)
   }
 }

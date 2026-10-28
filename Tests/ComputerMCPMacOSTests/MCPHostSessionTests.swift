@@ -397,7 +397,9 @@ private final class HostFixture: Sendable {
       let backend = try HostCallbackGitBackend(
         directory: first, scratch: root.appendingPathComponent("git-scratch"))
       gitBackend = backend
-      platform = MacOSPlatform.services(launcher: ExecutionLauncher(platform: backend))
+      platform = fixturePlatformWithGit(
+        MacOSPlatform.services(launcher: ExecutionLauncher(platform: backend)),
+        executable: backend.executable.value)
       gitCommand = .init(id: "git", executable: backend.executable.value)
     } else {
       gitBackend = nil
@@ -578,6 +580,7 @@ private struct HostCallbackGitBackend: ExecutionPlatform {
     }.joined(separator: "\0")
     let fixedOverrides = try HostGitConfiguration.overrides(for: fixedNames)
     let queries = [
+      HostGitConfiguration.arguments + ["rev-parse", "--path-format=absolute", "--git-common-dir"],
       HostGitConfiguration.arguments + [
         "config", "--null", "--name-only", "--list", "--no-includes",
       ],

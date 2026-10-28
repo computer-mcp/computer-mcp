@@ -22,10 +22,12 @@ package final class GatewayPermissionRuntime: @unchecked Sendable {
   package let service: GatewayPermissionService
   package let coordinator: ExecutionRevocationCoordinator
   private let directory: URL
+  private let gitExecutable: String
 
   package init(database: GatewayDatabase, platform: PlatformServices) throws {
     store = try database.configuredPermissionStore()
     directory = database.permissionExecutionRoot
+    gitExecutable = platform.gitExecutable
     let notifications = GatewayExecutionNotifications()
     let service = GatewayPermissionService(
       store: store, policyReader: platform.permissionPolicyReader,
@@ -81,8 +83,34 @@ package final class GatewayPermissionRuntime: @unchecked Sendable {
     let writes =
       requirement.access == .projectWrite || requirement.access == .sourceProjectWrite
       || requirement.paths.contains { $0.operation == .write }
+    let fixed: PreparedExecutionContext.FixedHostOperation?
+    if let operation = descriptor.hostOperation {
+      guard !remoteService, descriptor.mcpReference == nil,
+        requirement.execution == .none, requirement.access != .sourceProjectWrite,
+        let workingDirectory
+      else {
+        throw ExecutionEnvironmentError.unavailable(
+          "The host operation requires its lifecycle service and fixed Git executable")
+      }
+      if writes,
+        try await store.read().environment.paths?.registeredProjects.contains(where: {
+          $0.id == authorization.invocation.projectID && $0.hostContentIdentity != nil
+        }) == true
+      {
+        throw ExecutionEnvironmentError.unavailable(
+          "Writable worktree tools require a bound worktree admission lease")
+      }
+      fixed = try .init(
+        operation: operation, gitExecutable: SandboxPath(gitExecutable),
+        directory: SandboxPath(ProjectPathResolver.canonicalProject(workingDirectory).path),
+        allowsWrites: writes)
+    } else {
+      fixed = nil
+    }
     let purpose: GatewayExecutionPurpose
-    if remoteService {
+    if fixed != nil {
+      purpose = .readOnlyHelper
+    } else if remoteService {
       purpose = .remoteService
     } else if descriptor.mcpReference != nil || descriptor.id.hasPrefix("mcp.") {
       purpose = .pluginProgram
@@ -105,7 +133,8 @@ package final class GatewayPermissionRuntime: @unchecked Sendable {
               remoteService ? temporary : (workingDirectory ?? temporary)
             ).path),
           temporaryDirectory: SandboxPath(try ProjectPathResolver.canonicalProject(temporary).path),
-          purpose: purpose, privateWorkingDirectory: remoteService || workingDirectory == nil),
+          purpose: purpose, privateWorkingDirectory: remoteService || workingDirectory == nil,
+          fixedHostOperation: fixed),
         fullAccessEnvironment: ProcessInfo.processInfo.environment, connectionID: connectionID,
         auditContext: auditContext)
     } catch {

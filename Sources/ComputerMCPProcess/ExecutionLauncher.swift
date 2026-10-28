@@ -89,6 +89,9 @@ package struct ExecutionLauncher: Sendable {
     case .fullAccess:
       sandbox = nil
     }
+    try prepared?.validateFixedCommand(
+      executable: executable, arguments: arguments, directory: launchDirectory,
+      directoryDescriptor: directoryDescriptor, inheritedDescriptors: inheritedDescriptors)
     if prepared != nil, !platform.supportsDurableOwnership(sandboxed: sandbox != nil) {
       throw ExecutionEnvironmentError.unavailable(
         "This backend cannot enforce durable execution ownership in the requested mode")

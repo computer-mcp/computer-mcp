@@ -98,6 +98,11 @@ package enum ProjectRequirement: String, Codable, Sendable {
   case required
 }
 
+/// Trusted provider implementation, never conveyed by a serialized descriptor.
+package enum HostOperation: Equatable, Sendable {
+  case fileMutation, git
+}
+
 package struct CapabilityDescriptor: Codable, Equatable, Sendable {
   package var id: String
   package var risk: CapabilityRisk
@@ -109,6 +114,12 @@ package struct CapabilityDescriptor: Codable, Equatable, Sendable {
   package var mcpReference: MCPToolReference?
   package var equivalentCapabilityIDs: [String]?
   package var hostServiceAction: MCPHostServiceAction?
+  package var hostOperation: HostOperation? = nil
+
+  private enum CodingKeys: String, CodingKey {
+    case id, risk, requirement, projectRequirement, localOnly, usesNetwork, tccServices
+    case mcpReference, equivalentCapabilityIDs, hostServiceAction
+  }
 
   package init(
     id: String,
@@ -120,7 +131,8 @@ package struct CapabilityDescriptor: Codable, Equatable, Sendable {
     tccServices: [String] = [],
     mcpReference: MCPToolReference? = nil,
     equivalentCapabilityIDs: [String]? = nil,
-    hostServiceAction: MCPHostServiceAction? = nil
+    hostServiceAction: MCPHostServiceAction? = nil,
+    hostOperation: HostOperation? = nil
   ) {
     self.id = id
     self.risk = risk
@@ -132,6 +144,7 @@ package struct CapabilityDescriptor: Codable, Equatable, Sendable {
     self.mcpReference = mcpReference
     self.equivalentCapabilityIDs = equivalentCapabilityIDs
     self.hostServiceAction = hostServiceAction
+    self.hostOperation = hostOperation
   }
 }
 

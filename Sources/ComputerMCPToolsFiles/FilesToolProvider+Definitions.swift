@@ -153,7 +153,7 @@ extension FilesToolProvider {
           id: "file.chmod", risk: .destructive,
           requirement: .init(access: .projectWrite, paths: [.init("path", .write)]),
           projectRequirement: .required,
-          localOnly: false, usesNetwork: false
+          localOnly: false, usesNetwork: false, hostOperation: .fileMutation
         )
       ),
       ToolDefinition(
@@ -634,7 +634,7 @@ extension FilesToolProvider {
           id: "file.remove_xattr", risk: .destructive,
           requirement: .init(access: .projectWrite, paths: [.init("path", .write)]),
           projectRequirement: .required,
-          localOnly: false, usesNetwork: false
+          localOnly: false, usesNetwork: false, hostOperation: .fileMutation
         )
       ),
       ToolDefinition(
@@ -1060,7 +1060,7 @@ extension FilesToolProvider {
           id: "file.write", risk: .destructive,
           requirement: .init(access: .projectWrite, paths: [.init("path", .write)]),
           projectRequirement: .required,
-          localOnly: false, usesNetwork: false
+          localOnly: false, usesNetwork: false, hostOperation: .fileMutation
         )
       ),
       ToolDefinition(
@@ -1110,7 +1110,7 @@ extension FilesToolProvider {
           requirement: .init(
             access: .projectWrite, paths: [.init("files[].path", .write)]),
           projectRequirement: .required,
-          localOnly: false, usesNetwork: false
+          localOnly: false, usesNetwork: false, hostOperation: .fileMutation
         )
       ),
       ToolDefinition(
@@ -1147,7 +1147,7 @@ extension FilesToolProvider {
           id: "file.append", risk: .projectWrite,
           requirement: .init(access: .projectWrite, paths: [.init("path", .write)]),
           projectRequirement: .required,
-          localOnly: false, usesNetwork: false
+          localOnly: false, usesNetwork: false, hostOperation: .fileMutation
         )
       ),
       ToolDefinition(
@@ -1185,7 +1185,7 @@ extension FilesToolProvider {
           id: "file.replace_text", risk: .destructive,
           requirement: .init(access: .projectWrite, paths: [.init("path", .write)]),
           projectRequirement: .required,
-          localOnly: false, usesNetwork: false
+          localOnly: false, usesNetwork: false, hostOperation: .fileMutation
         )
       ),
       ToolDefinition(
@@ -1224,7 +1224,7 @@ extension FilesToolProvider {
           id: "file.insert_text", risk: .destructive,
           requirement: .init(access: .projectWrite, paths: [.init("path", .write)]),
           projectRequirement: .required,
-          localOnly: false, usesNetwork: false
+          localOnly: false, usesNetwork: false, hostOperation: .fileMutation
         )
       ),
       ToolDefinition(
@@ -1264,7 +1264,7 @@ extension FilesToolProvider {
           id: "file.replace_lines", risk: .destructive,
           requirement: .init(access: .projectWrite, paths: [.init("path", .write)]),
           projectRequirement: .required,
-          localOnly: false, usesNetwork: false
+          localOnly: false, usesNetwork: false, hostOperation: .fileMutation
         )
       ),
       ToolDefinition(
@@ -1293,7 +1293,7 @@ extension FilesToolProvider {
           id: "file.touch", risk: .destructive,
           requirement: .init(access: .projectWrite, paths: [.init("path", .write)]),
           projectRequirement: .required,
-          localOnly: false, usesNetwork: false
+          localOnly: false, usesNetwork: false, hostOperation: .fileMutation
         )
       ),
       ToolDefinition(
@@ -1321,7 +1321,7 @@ extension FilesToolProvider {
           id: "file.mkdir", risk: .projectWrite,
           requirement: .init(access: .projectWrite, paths: [.init("path", .write)]),
           projectRequirement: .required,
-          localOnly: false, usesNetwork: false
+          localOnly: false, usesNetwork: false, hostOperation: .fileMutation
         )
       ),
       ToolDefinition(
@@ -1354,7 +1354,7 @@ extension FilesToolProvider {
           requirement: .init(
             access: .projectWrite, paths: [.init("source", .read), .init("destination", .write)]),
           projectRequirement: .required,
-          localOnly: false, usesNetwork: false
+          localOnly: false, usesNetwork: false, hostOperation: .fileMutation
         )
       ),
       ToolDefinition(
@@ -1387,7 +1387,7 @@ extension FilesToolProvider {
           requirement: .init(
             access: .projectWrite, paths: [.init("source", .write), .init("destination", .write)]),
           projectRequirement: .required,
-          localOnly: false, usesNetwork: false
+          localOnly: false, usesNetwork: false, hostOperation: .fileMutation
         )
       ),
       ToolDefinition(
@@ -1430,7 +1430,7 @@ extension FilesToolProvider {
               .init("destination", .read, relativeBase: .linkParent(argument: "path")),
             ]),
           projectRequirement: .required,
-          localOnly: false, usesNetwork: false
+          localOnly: false, usesNetwork: false, hostOperation: .fileMutation
         )
       ),
       ToolDefinition(
@@ -1456,7 +1456,7 @@ extension FilesToolProvider {
           id: "file.trash", risk: .destructive,
           requirement: .init(access: .projectWrite, paths: [.init("path", .write)]),
           projectRequirement: .required,
-          localOnly: false, usesNetwork: false
+          localOnly: false, usesNetwork: false, hostOperation: .fileMutation
         )
       ),
     ]

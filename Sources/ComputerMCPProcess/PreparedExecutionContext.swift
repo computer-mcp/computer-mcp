@@ -73,11 +73,35 @@ package protocol ExecutionRecoveryAuthorizing: Sendable {
 /// One logical execution may start several host helpers or background children.
 /// Its immutable launch policy takes precedence over provider risk classifications.
 package final class PreparedExecutionContext: ExecutionAccessChecking, Sendable {
+  package struct FixedHostOperation: Sendable {
+    package let operation: HostOperation
+    package let gitExecutable: SandboxPath
+    package let directory: SandboxPath
+    package let allowsWrites: Bool
+
+    package init(
+      operation: HostOperation, gitExecutable: SandboxPath, directory: SandboxPath,
+      allowsWrites: Bool
+    ) {
+      self.operation = operation
+      self.gitExecutable = gitExecutable
+      self.directory = directory
+      self.allowsWrites = allowsWrites
+    }
+  }
+
+  private struct FixedCommand: Sendable {
+    let arguments: [String]
+    let environment: [String: String]
+  }
+
   package let authority: any ExecutionAuthorizing
   package let mode: ComputerMCPSandbox.ExecutionMode
   package let environment: ExecutionEnvironment
   package let permitsProgramLaunch: Bool
   package let pathAccess: (any HostPathAccessChecking)?
+  package let fixedHostOperation: FixedHostOperation?
+  private let fixedCommand: FixedCommand?
   private struct State: Sendable {
     var limits: EffectiveExecutionLimits
     var endReason: ExecutionLimitEndReason?
@@ -89,14 +113,77 @@ package final class PreparedExecutionContext: ExecutionAccessChecking, Sendable 
     authority: any ExecutionAuthorizing, mode: ComputerMCPSandbox.ExecutionMode,
     environment: ExecutionEnvironment,
     limits: EffectiveExecutionLimits, pathAccess: (any HostPathAccessChecking)? = nil,
-    permitsProgramLaunch: Bool = true
+    permitsProgramLaunch: Bool = true, fixedHostOperation: FixedHostOperation? = nil
   ) {
     self.authority = authority
     self.mode = mode
     self.environment = environment
     self.pathAccess = pathAccess
     self.permitsProgramLaunch = permitsProgramLaunch
+    self.fixedHostOperation = fixedHostOperation
+    self.fixedCommand = nil
     state = .init(State(limits: limits))
+  }
+
+  private init(
+    parent: PreparedExecutionContext, sandbox: SandboxConfiguration, command: FixedCommand
+  ) {
+    authority = parent.authority
+    mode = .sandbox(sandbox)
+    environment = parent.environment
+    pathAccess = parent.pathAccess
+    permitsProgramLaunch = true
+    fixedHostOperation = parent.fixedHostOperation
+    fixedCommand = command
+    state = parent.state
+  }
+
+  /// A trusted helper binds the complete invocation; provider CLI input cannot enter this scope.
+  package func withHostGitCommand<Value>(
+    arguments: [String], directory: SandboxPath, environment: [String: String],
+    writing commonDirectory: SandboxPath? = nil, _ body: () throws -> Value
+  ) throws -> Value {
+    guard let fixed = fixedHostOperation, fixed.directory == directory,
+      case .sandbox(let initial) = mode, fixedCommand == nil,
+      initial.worktree == directory
+    else { throw ExecutionEnvironmentError.unavailable("No fixed host Git authority is installed") }
+    _ = try authority.access(executionID, operation: .readResult)
+    let sandbox: SandboxConfiguration
+    if let commonDirectory {
+      guard fixed.operation == .git, fixed.allowsWrites else {
+        throw ExecutionEnvironmentError.unavailable("This host operation cannot write Git state")
+      }
+      try pathAccess?.check(URL(fileURLWithPath: directory.value), operation: .write)
+      try pathAccess?.check(URL(fileURLWithPath: commonDirectory.value), operation: .write)
+      sandbox = try SandboxConfiguration(
+        readOnly: false, worktree: initial.worktree,
+        temporaryDirectory: initial.temporaryDirectory, homeDirectory: initial.homeDirectory,
+        cacheDirectory: initial.cacheDirectory, readableRoots: initial.readableRoots,
+        deniedReadRegions: initial.deniedReadRegions,
+        deniedWriteRegions: initial.deniedWriteRegions,
+        forbiddenReads: initial.forbiddenReads,
+        listableAncestors: initial.listableAncestors, hostGitDirectory: commonDirectory)
+    } else {
+      sandbox = initial
+    }
+    let scoped = PreparedExecutionContext(
+      parent: self, sandbox: sandbox,
+      command: FixedCommand(arguments: arguments, environment: environment))
+    return try scoped.withValue(body)
+  }
+
+  func validateFixedCommand(
+    executable: SandboxPath, arguments: [String], directory: SandboxPath,
+    directoryDescriptor: Int32?, inheritedDescriptors: [Int32: Int32]
+  ) throws {
+    guard let fixed = fixedHostOperation else { return }
+    guard let command = fixedCommand, executable == fixed.gitExecutable,
+      arguments == command.arguments, directory == fixed.directory,
+      HostCommandEnvironment.current == command.environment,
+      directoryDescriptor == nil, inheritedDescriptors.isEmpty
+    else {
+      throw ExecutionEnvironmentError.unavailable("The command is outside its fixed host operation")
+    }
   }
 
   package var executionID: UUID { authority.executionID }

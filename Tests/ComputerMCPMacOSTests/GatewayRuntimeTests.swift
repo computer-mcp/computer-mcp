@@ -625,16 +625,10 @@ final class GatewayRuntimeTests {
   private func programFixture(root: URL, program: String) throws -> (
     platform: PlatformServices, script: URL
   ) {
-    let nonGit = try fixtureNonGitProject(root: root)
     let script = root.appendingPathComponent("program.py")
     try program.write(to: script, atomically: true, encoding: .utf8)
-    let gitProgram = try String(contentsOfFile: nonGit.git.executable, encoding: .utf8)
-    let gitArguments =
-      HostGitConfiguration.arguments + [
-        "rev-parse", "--path-format=absolute", "--git-dir", "--git-common-dir",
-      ]
     let launcher = fixtureProtocolExecutionLauncher(
-      root: root, scripts: [program, gitProgram], arguments: [[], gitArguments])
+      root: root, scripts: [program], arguments: [[]])
     var platform = MacOSPlatform.services(launcher: launcher)
     platform.permissionPolicyReader = TestManagedPolicyReader()
     return (platform, script)

@@ -62,24 +62,49 @@ package struct RegisteredCommands: Sendable {
   }
 
   package func validateProjectGitLayout(at project: URL) throws {
+    let fixed = try PreparedExecutionContext.current()?.fixedHostOperation
     let command = configuration.cli.commands.first { $0.id == "git" }
     try ProjectGitLayout.validate(
       project: project, launcher: launcher,
       environment: environment.merging(command?.env ?? [:]) { _, value in value },
-      invocation: command.map { try resolveHostInvocation($0) })
+      invocation: try fixed.map { ($0.gitExecutable.value, [String]()) }
+        ?? command.map { try resolveHostInvocation($0) })
   }
 
   package func runHostGit(
     command: CLICommandConfig, args: [String], timeout: Int?, maxOutputBytes: Int? = nil
   ) throws -> CommandResult {
-    let invocation = try resolveHostInvocation(command)
+    let prepared = try PreparedExecutionContext.current()
+    let fixed = prepared?.fixedHostOperation
+    let invocation =
+      try fixed.map { (executable: $0.gitExecutable.value, arguments: [String]()) }
+      ?? resolveHostInvocation(command)
     let home = try PrivateProcessHome()
     defer { withExtendedLifetime(home) {} }
-    let sourceEnvironment = self.environment.merging(command.env) { _, value in value }
+    let sourceEnvironment =
+      fixed == nil ? self.environment.merging(command.env) { _, value in value } : self.environment
     let environment = HostGitConfiguration.environment(home: home.url)
-    let directory = command.resolvedWorkingDirectory(base: configuration.projectDirectory)
+    let directory =
+      fixed.map { URL(fileURLWithPath: $0.directory.value) }
+      ?? command.resolvedWorkingDirectory(base: configuration.projectDirectory)
     let limit = timeout ?? command.defaultTimeoutMs ?? configuration.policy.defaultTimeoutMs
-    let keys = try commandRunner.runIsolated(
+    func run(
+      executable: String, arguments: [String], workingDirectory: URL?,
+      environment: [String: String], timeoutMilliseconds: Int, maxOutputBytes: Int,
+      writing common: URL? = nil
+    ) throws -> CommandResult {
+      let body = {
+        try commandRunner.runIsolated(
+          executable: executable, arguments: arguments, workingDirectory: workingDirectory,
+          environment: environment, timeoutMilliseconds: timeoutMilliseconds,
+          maxOutputBytes: maxOutputBytes)
+      }
+      guard let prepared, let fixed else { return try body() }
+      return try prepared.withHostGitCommand(
+        arguments: arguments, directory: fixed.directory, environment: environment,
+        writing: common.map { try .init($0.path) }, body)
+    }
+    let keys = try run(
       executable: invocation.executable,
       arguments: invocation.arguments + HostGitConfiguration.arguments + [
         "config", "--null", "--name-only", "--list", "--no-includes",
@@ -99,7 +124,7 @@ package struct RegisteredCommands: Sendable {
       ["commit", "merge", "rebase", "tag", "stash", "cherry-pick", "revert"].contains(operation)
     {
       for key in ["user.name", "user.email"] {
-        let identity = try commandRunner.runIsolated(
+        let identity = try run(
           executable: invocation.executable,
           arguments: invocation.arguments + HostGitConfiguration.arguments
             + ["config", "--null", "--get", key],
@@ -124,13 +149,45 @@ package struct RegisteredCommands: Sendable {
       } ?? false
     let stashPaths = args.starts(with: ["stash", "push"]) || args.starts(with: ["stash", "show"])
     let pathspecOptions = takesPathspecs || stashPaths ? ["--literal-pathspecs"] : []
-    return try commandRunner.runIsolated(
+    let lock: RepositoryLock?
+    let common: URL?
+    if fixed?.operation == .git, fixed?.allowsWrites == true {
+      let located = try run(
+        executable: invocation.executable,
+        arguments: HostGitConfiguration.arguments + [
+          "rev-parse", "--path-format=absolute", "--git-common-dir",
+        ], workingDirectory: directory, environment: environment,
+        timeoutMilliseconds: limit, maxOutputBytes: 65_536)
+      guard located.exitCode == 0, !located.timedOut, !located.stdoutTruncated,
+        located.stdout.last == "\n", !located.stdout.dropLast().contains("\n")
+      else {
+        throw GatewayToolError.executionFailed("Cannot identify the Git coordination directory.")
+      }
+      common = try ProjectPathResolver.canonicalProject(
+        URL(fileURLWithPath: String(located.stdout.dropLast())))
+      try prepared?.pathAccess?.check(common!, operation: .write)
+      lock = try RepositoryLock(
+        commonDirectory: common!, owner: .init(bootSessionID: launcher.bootSessionID),
+        timeout: .milliseconds(limit),
+        checkCancellation: {
+          if let prepared {
+            _ = try prepared.authority.access(prepared.executionID, operation: .readResult)
+          }
+          try Task.checkCancellation()
+        })
+    } else {
+      common = nil
+      lock = nil
+    }
+    defer { lock?.release() }
+    try lock?.verify()
+    return try run(
       executable: invocation.executable,
       arguments: invocation.arguments + HostGitConfiguration.arguments
         + options + pathspecOptions + args,
       workingDirectory: directory, environment: environment,
       timeoutMilliseconds: limit,
-      maxOutputBytes: maxOutputBytes ?? configuration.policy.maxOutputBytes)
+      maxOutputBytes: maxOutputBytes ?? configuration.policy.maxOutputBytes, writing: common)
   }
 
   package func runSQLite(
@@ -213,6 +270,9 @@ package struct RegisteredCommands: Sendable {
   }
 
   package func gitCLICommand() throws -> CLICommandConfig {
+    if let fixed = try PreparedExecutionContext.current()?.fixedHostOperation {
+      return CLICommandConfig(id: "git", executable: fixed.gitExecutable.value)
+    }
     guard let command = configuration.cli.commands.first(where: { $0.id == "git" }) else {
       throw GatewayToolError.disabled(
         "git.* tools require a registered CLI provider with id 'git'.")

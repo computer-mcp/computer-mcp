@@ -242,7 +242,8 @@ package final class ExecutionRevocationCoordinator: ExecutionRecoveryAuthorizing
         mode: sandbox.map { .sandbox($0) } ?? .fullAccess, environment: environment,
         limits: execution.limits,
         pathAccess: GatewayPathAccess(store: store, authorizationID: authorizationID),
-        permitsProgramLaunch: configuration.permitsProgramLaunch)
+        permitsProgramLaunch: configuration.permitsProgramLaunch,
+        fixedHostOperation: context.fixedHostOperation)
       _ = try authority.access(execution.id, operation: .readResult)
       lock.withLock { contexts[execution.id] = WeakExecutionContext(prepared) }
       return prepared

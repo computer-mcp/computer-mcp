@@ -60,6 +60,9 @@ package enum SeatbeltProfile {
       rules.append("(allow file-read* \(filter))")
     }
     var writeExclusions = configuration.forbiddenReads.map(subpath)
+    writeExclusions += configuration.deniedWriteRegions.map { region in
+      all([subpath(region.path)] + region.exceptions.map { "(require-not \(subpath($0)))" })
+    }
     if let git = configuration.git {
       writeExclusions.append(subpath(git.sharedDirectory))
       writeExclusions.append(subpath(git.administrativeDirectory))

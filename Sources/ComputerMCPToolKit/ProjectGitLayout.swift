@@ -31,7 +31,9 @@ enum ProjectGitLayout {
     defer { withExtendedLifetime(home) {} }
     let isolated = HostGitConfiguration.environment(home: home.url)
     let invocation: (executable: String, arguments: [String])
-    if let configured = configuredInvocation {
+    if let fixed = try PreparedExecutionContext.current()?.fixedHostOperation {
+      invocation = (fixed.gitExecutable.value, [])
+    } else if let configured = configuredInvocation {
       invocation = configured
     } else {
       let git = ExecutableInspection.inspect(
@@ -43,16 +45,27 @@ enum ProjectGitLayout {
     func run(
       _ arguments: [String], allowNonRepository: Bool = false, allowMissing: Bool = false
     ) throws -> String? {
-      let result = try runner.runIsolated(
-        executable: invocation.executable,
-        arguments: invocation.arguments + HostGitConfiguration.arguments + arguments,
-        workingDirectory: project, environment: isolated, timeoutMilliseconds: 10_000,
-        maxOutputBytes: 65_536)
+      let argv = invocation.arguments + HostGitConfiguration.arguments + arguments
+      let body = {
+        try runner.runIsolated(
+          executable: invocation.executable, arguments: argv,
+          workingDirectory: project, environment: isolated, timeoutMilliseconds: 10_000,
+          maxOutputBytes: 65_536)
+      }
+      let result: CommandResult
+      if let prepared = try PreparedExecutionContext.current(),
+        let fixed = prepared.fixedHostOperation
+      {
+        result = try prepared.withHostGitCommand(
+          arguments: argv, directory: fixed.directory, environment: isolated, body)
+      } else {
+        result = try body()
+      }
       guard !result.timedOut, !result.stdoutTruncated else { throw invalid() }
       guard result.exitCode == 0 else {
         if allowMissing, result.exitCode == 1 { return nil }
         if allowNonRepository, result.exitCode == 128,
-          result.stderr.hasPrefix("fatal: not a git repository (or any")
+          isNonRepository(result)
         {
           return nil
         }
@@ -90,6 +103,15 @@ enum ProjectGitLayout {
       }
       _ = try resolve(worktree)
     }
+  }
+
+  /// Launcher warnings may precede Git's diagnostic. Another fatal error, including
+  /// one containing a forged newline in a path, cannot establish a non-repository.
+  static func isNonRepository(_ result: CommandResult) -> Bool {
+    result.exitCode == 128 && result.stdout.isEmpty
+      && result.stderr.split(whereSeparator: \.isNewline).filter { $0.hasPrefix("fatal:") } == [
+        "fatal: not a git repository (or any of the parent directories): .git"
+      ]
   }
 
   private static func resolve(_ path: String) throws -> URL {

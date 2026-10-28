@@ -62,35 +62,23 @@ func fixturePermissionControl(
 /// Runs only the non-repository Git-layout probe; the host performs actual file writes.
 func fixtureNonGitProject(root: URL) throws -> (platform: PlatformServices, git: CLICommandConfig) {
   let root = try ProjectPathResolver.canonicalProject(root)
-  let arguments =
-    HostGitConfiguration.arguments + [
-      "rev-parse", "--path-format=absolute", "--git-dir", "--git-common-dir",
-    ]
-  let encoder = JSONEncoder()
-  encoder.outputFormatting = [.withoutEscapingSlashes]
-  let expected = String(decoding: try encoder.encode(arguments), as: UTF8.self)
-  let directory = String(decoding: try encoder.encode(root.path), as: UTF8.self)
-  let program = """
-    #!/usr/bin/python3
-    import os, sys
-    if sys.argv[1:] != \(expected) or os.path.realpath(os.getcwd()) != \(directory):
-        raise SystemExit(64)
-    if os.path.lexists(".git"):
-        raise SystemExit(65)
-    sys.stderr.write("fatal: not a git repository (or any of the parent directories): .git\\n")
-    raise SystemExit(128)
-    """
-  let executable = root.appendingPathComponent("fixture-git.py")
-  try program.write(to: executable, atomically: true, encoding: .utf8)
-  try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: executable.path)
-  let launcher = fixtureProtocolExecutionLauncher(
-    root: root, scripts: [program], arguments: [arguments])
-  var platform = MacOSPlatform.services(launcher: launcher)
+  var platform = MacOSPlatform.services(launcher: testExecutionLauncher())
   platform.permissionPolicyReader = TestManagedPolicyReader()
   return (
     platform,
-    CLICommandConfig(id: "git", executable: executable.path, cwd: root.path, allowAnyArgs: false)
+    CLICommandConfig(
+      id: "git", executable: platform.gitExecutable, cwd: root.path, allowAnyArgs: false)
   )
+}
+
+func fixturePlatformWithGit(_ platform: PlatformServices, executable: String) -> PlatformServices {
+  PlatformServices(
+    launcher: platform.launcher, projectGrants: platform.projectGrants,
+    pluginDirectories: platform.pluginDirectories, applications: platform.applications,
+    toolProviders: platform.toolProviders, managementToolNames: platform.managementToolNames,
+    executableSearchDirectories: platform.executableSearchDirectories, gitExecutable: executable,
+    fileChanges: platform.fileChanges, permissionPolicyReader: platform.permissionPolicyReader,
+    executionProxy: platform.executionProxy, hostDataPaths: platform.hostDataPaths)
 }
 
 func fixtureHostedPlatform() -> PlatformServices {

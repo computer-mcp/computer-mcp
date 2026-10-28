@@ -116,9 +116,12 @@ package struct SandboxConfiguration: Sendable, Equatable {
   package let cacheDirectory: SandboxPath
   package let readableRoots: [SandboxPath]
   package let deniedReadRegions: [SandboxReadRegion]
+  package let deniedWriteRegions: [SandboxReadRegion]
   package let forbiddenReads: [SandboxPath]
   package let listableAncestors: [SandboxPath]
   package let git: SandboxGitConfiguration?
+  /// Only a fixed host Git command may write this verified repository directory.
+  package let hostGitDirectory: SandboxPath?
   package let proxy: SandboxProxyPorts?
   package let services: SandboxSystemServices
 
@@ -128,25 +131,35 @@ package struct SandboxConfiguration: Sendable, Equatable {
       temporaryDirectory: temporaryDirectory, homeDirectory: homeDirectory,
       cacheDirectory: cacheDirectory,
       readableRoots: readableRoots, deniedReadRegions: deniedReadRegions,
+      deniedWriteRegions: deniedWriteRegions,
       forbiddenReads: forbiddenReads,
-      listableAncestors: listableAncestors, git: git, proxy: ports, services: services)
+      listableAncestors: listableAncestors, git: git, hostGitDirectory: hostGitDirectory,
+      proxy: ports, services: services)
   }
 
   package init(
     readOnly: Bool = false, hostNetwork: Bool = false,
     worktree: SandboxPath, temporaryDirectory: SandboxPath, homeDirectory: SandboxPath,
     cacheDirectory: SandboxPath, readableRoots: [SandboxPath],
-    deniedReadRegions: [SandboxReadRegion] = [], forbiddenReads: [SandboxPath] = [],
+    deniedReadRegions: [SandboxReadRegion] = [], deniedWriteRegions: [SandboxReadRegion] = [],
+    forbiddenReads: [SandboxPath] = [],
     listableAncestors: [SandboxPath] = [], git: SandboxGitConfiguration? = nil,
+    hostGitDirectory: SandboxPath? = nil,
     proxy: SandboxProxyPorts? = nil, services: SandboxSystemServices = .init()
   ) throws {
+    guard hostGitDirectory == nil || (!readOnly && git == nil) else {
+      throw ExecutionEnvironmentError.invalidConfiguration(
+        "Host Git writes require a fixed writable helper profile")
+    }
     guard !hostNetwork || (readOnly && proxy == nil) else {
       throw ExecutionEnvironmentError.invalidConfiguration(
         "Host network diagnostics require read-only execution without a proxy")
     }
     let writable =
       readOnly
-      ? [temporaryDirectory] : [worktree, temporaryDirectory, homeDirectory, cacheDirectory]
+      ? [temporaryDirectory]
+      : [worktree, temporaryDirectory, homeDirectory, cacheDirectory]
+        + [hostGitDirectory].compactMap { $0 }
     guard
       !readOnly
         || (temporaryDirectory.contains(homeDirectory)
@@ -170,14 +183,19 @@ package struct SandboxConfiguration: Sendable, Equatable {
     self.cacheDirectory = cacheDirectory
     self.readableRoots = readableRoots
     self.deniedReadRegions = deniedReadRegions
+    self.deniedWriteRegions = deniedWriteRegions
     self.forbiddenReads = forbiddenReads
     self.listableAncestors = listableAncestors
     self.git = git
+    self.hostGitDirectory = hostGitDirectory
     self.proxy = proxy
     self.services = services
   }
 
   package var writableDirectories: [SandboxPath] {
-    readOnly ? [temporaryDirectory] : [worktree, temporaryDirectory, homeDirectory, cacheDirectory]
+    readOnly
+      ? [temporaryDirectory]
+      : [worktree, temporaryDirectory, homeDirectory, cacheDirectory]
+        + [hostGitDirectory].compactMap { $0 }
   }
 }

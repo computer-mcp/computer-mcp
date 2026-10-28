@@ -105,6 +105,48 @@ struct GatewayWorktreeExecutionContextTests {
     #expect(try worktree.binding.admission.close(operationID: UUID()).isEmpty)
   }
 
+  @Test func programPreparationBindsItsLeaseAndRefusesMissingOrDifferentDirectory() async throws {
+    let f = try WorktreeServiceFixture()
+    defer { f.remove() }
+    let made = try f.call(.add(name: "program", branch: nil, base: nil))
+    let id = try #require(made.objectValue?["project_id"]?.stringValue)
+    let directory = URL(fileURLWithPath: try #require(made.objectValue?["path"]?.stringValue))
+    let worktree = try #require(
+      try f.database.executionWorktree(projectID: id, directory: directory, platform: f.platform))
+    let path = worktree.directory
+    let descriptor = CapabilityDescriptor(
+      id: "shell.run", risk: .fullShell,
+      requirement: .init(access: .projectWrite, execution: .start), projectRequirement: .required,
+      localOnly: false, usesNetwork: false)
+    for invalid in [nil, f.source] as [URL?] {
+      let proof = try admit(f, projectID: id, directory: path)
+      await #expect(throws: (any Error).self) {
+        try await f.runtime.prepare(
+          authorization: proof, descriptor: descriptor, directory: invalid, connectionID: nil)
+      }
+    }
+    let proof = try admit(f, projectID: id, directory: path)
+    if !f.platform.launcher.supportsDurableOwnership(sandboxed: true) {
+      await #expect(throws: ExecutionEnvironmentError.self) {
+        try await f.runtime.prepare(
+          authorization: proof, descriptor: descriptor, directory: directory, connectionID: nil)
+      }
+      return
+    }
+    let prepared = try #require(
+      try await f.runtime.prepare(
+        authorization: proof, descriptor: descriptor, directory: directory, connectionID: nil)
+        as? PreparedExecutionContext)
+    #expect(prepared.worktreeGit != nil)
+    let admission = try f.repository().admission(projectID: id)
+    let operation = UUID()
+    let uses = try admission.close(operationID: operation)
+    #expect(uses.count == 1 && uses.first?.executionID == prepared.executionID)
+    try prepared.finishAdmission()
+    try await f.runtime.coordinator.reconcile()
+    try admission.requireDrained(operationID: operation)
+  }
+
   private func admit(_ f: WorktreeServiceFixture, projectID: String, directory: SandboxPath) throws
     -> InvocationAuthorization
   {

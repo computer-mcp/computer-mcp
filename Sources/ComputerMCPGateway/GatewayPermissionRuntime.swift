@@ -134,9 +134,14 @@ package final class GatewayPermissionRuntime: @unchecked Sendable {
       throw ExecutionEnvironmentError.unavailable(
         "Local plugin programs require the plugin owner's verified execution context")
     }
-    let worktree = try database.executionWorktree(
-      projectID: authorization.invocation.projectID, directory: workingDirectory, platform: platform
-    )
+    let worktree: GatewayWorktreeExecution?
+    if !remoteService, let workingDirectory {
+      worktree = try database.executionWorktree(
+        projectID: authorization.invocation.projectID, directory: workingDirectory,
+        platform: platform)
+    } else {
+      worktree = nil
+    }
     let temporary = directory.appendingPathComponent(authorization.id.uuidString, isDirectory: true)
     guard temporary.path.withCString({ mkdir($0, mode_t(0o700)) }) == 0 else {
       throw ExecutionEnvironmentError.unavailable(

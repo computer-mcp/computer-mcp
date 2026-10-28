@@ -12,10 +12,6 @@ package struct ManagedCommandRunner: CommandRunning {
     execution = CLIProcessExecution(launcher: launcher, inheritsEnvironment: false)
   }
 
-  package init(launcher: ExecutionLauncher, policy _: HostExecutionPolicy) {
-    self.init(launcher: launcher)
-  }
-
   package func run(
     executable: String, arguments: [String], workingDirectory: URL?, environment: [String: String],
     timeoutMilliseconds: Int, maxOutputBytes: Int

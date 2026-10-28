@@ -300,9 +300,6 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
       lifetime.onShutdown { access.close() }
       var projectConfiguration = configuration
       projectConfiguration.projectDirectory = access.rootURL.standardizedFileURL
-      projectConfiguration.delivery.scopes = configuration.delivery.scopes.filter {
-        $0.project == project.id
-      }
       let shellManager = ShellSessionRuntime(
         launcher: platform.launcher,
         ownedWork: ownedWork, projectID: project.id, sessions: terminalSessions,

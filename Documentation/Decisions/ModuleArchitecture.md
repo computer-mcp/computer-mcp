@@ -17,7 +17,7 @@ bundled. Swift targets keep `package` access; no declaration is `public`.
 | Front ends | `ComputerMCPApp`, `computer-mcp`; test executable `ComputerMCPExecutionProbe` | macOS |
 | Composition root | `ComputerMCPMacOS` | macOS |
 | Composition | `ComputerMCPControlPlane`, `ComputerMCPGateway` | neutral |
-| Capabilities | `ComputerMCPToolKit`; tool domains `ComputerMCPToolsMCP`, `ComputerMCPToolsCLI`, `ComputerMCPToolsFiles`, `ComputerMCPToolsProject`, `ComputerMCPToolsStructured`, `ComputerMCPToolsGit`, `ComputerMCPToolsShell`, `ComputerMCPToolsSkills`, `ComputerMCPToolsSystem`; `ComputerMCPPlugins`, `ComputerMCPDelivery`, `ComputerMCPAuthorization`; `ComputerMCPComputerUse` | neutral; ComputerUse macOS |
+| Capabilities | `ComputerMCPToolKit`; tool domains `ComputerMCPToolsMCP`, `ComputerMCPToolsCLI`, `ComputerMCPToolsFiles`, `ComputerMCPToolsProject`, `ComputerMCPToolsStructured`, `ComputerMCPToolsGit`, `ComputerMCPToolsShell`, `ComputerMCPToolsSkills`, `ComputerMCPToolsSystem`; `ComputerMCPPlugins`, `ComputerMCPAuthorization`; `ComputerMCPComputerUse` | neutral; ComputerUse macOS |
 | Services | `ComputerMCPEgress`, `ComputerMCPConfiguration`, `ComputerMCPPersistence`, `ComputerMCPProcess`, `ComputerMCPTransport`, `ComputerMCPDownstream`, `ComputerMCPTunnels`, `ComputerMCPWorktrees` | neutral |
 | Platform | `ComputerMCPPlatform` (protocols and values), `ComputerMCPPlatformPOSIX`, `CSystemPOSIX`, `CSystemZlib`, `ComputerMCPPlatformDarwin`, `CSystemArchive`, `CDarwinExecution`, `computer-mcp-execution-bootstrap` | neutral; POSIX; macOS |
 | Base | `ComputerMCPCore`, `ComputerMCPSandbox`; lower `ComputerMCPPermissions` (Foundation only) | neutral |
@@ -30,7 +30,7 @@ Dependencies inside a layer are limited to these:
 - Services: `Process`, `Transport`, `Downstream` and `Tunnels` may use
   `Configuration`; `Downstream` and `Tunnels` may use `Process`; `Downstream` may use
   `Transport`; `Persistence` may implement the derived-project store in `Worktrees`.
-- Capabilities: tool domains and `Delivery` may use `ToolKit`; `ToolsProject`,
+- Capabilities: tool domains may use `ToolKit`; `ToolsProject`,
   `ToolsStructured`, `ToolsSkills` and `ToolsSystem` may use `ToolsFiles`;
   `ToolsSkills` may use `ToolsStructured`; `Plugins` composes contributions and
   may use `ToolsCLI`.
@@ -69,8 +69,6 @@ Dependencies inside a layer are limited to these:
 - `Plugins`: package manifests, catalogs, installation, resolution of plugin
   contributions into ordinary registrations, and archive preparation through the
   archive extractor interface.
-- `Delivery`: governed edits in isolated worktrees that land on the default
-  branch, within host-declared path scopes.
 - `Authorization`: the OAuth authorization surface for remote clients, with
   grants approved locally.
 - `ComputerUse`: the native Accessibility provider; macOS only, registered by

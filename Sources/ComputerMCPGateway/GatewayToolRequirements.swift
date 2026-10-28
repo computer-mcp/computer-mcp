@@ -88,16 +88,6 @@ struct GatewayToolRequirementResolver {
         let base: URL
         switch path.relativeBase {
         case .project: base = root
-        case .deliveryScope(let argument):
-          guard let id = arguments[argument]?.stringValue,
-            let scope = configuration.delivery.scopes.first(where: {
-              $0.id == id && $0.project == projectID
-            })
-          else {
-            throw GatewayToolError.invalidArguments(
-              "[permission.invalid_scope] The delivery scope is unavailable.")
-          }
-          base = try ProjectPathResolver.resolve(scope.repository, relativeTo: root)
         case .linkParent(let argument):
           guard let link = arguments[argument]?.stringValue else {
             throw GatewayToolError.invalidArguments(

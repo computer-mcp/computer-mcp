@@ -542,3 +542,12 @@ Health check:
 ```sh
 curl http://127.0.0.1:8765/health
 ```
+
+## Worktree calls on an existing session
+
+The worktree lifecycle uses ordinary `tools/call`. `git.worktree_add` returns a
+new `project_id` that is available to the next call on that session; it creates no
+permission grant. Source permissions and limits are re-evaluated for each call.
+Tool-list change notifications continue across runtime generations. Background
+execution IDs retain their original owners; reconnect does not authorize another
+principal to read them. See [Worktrees](Worktrees.md).

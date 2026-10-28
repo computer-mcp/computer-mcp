@@ -18,11 +18,11 @@ tool providers. The control plane supplies management through
 and audit. Proxy authentication uses the injected `SecretStore` with noninteractive
 MCP HTTP reads, and bound host services use the injected Git executable.
 
-`ComputerMCPDelivery` supplies the `delivery` provider for host-declared isolated
-repository edits. Project composition filters `delivery.scopes` by project ID.
-The provider owns the shared Git-directory lock, atomic file journals, execution
-and recovery; the gateway owns permission admission. See
-[Isolated delivery](../Reference/Delivery.md).
+`ComputerMCPWorktrees` owns repository coordination, private repository topology,
+publication, merge and removal journals. Gateway adapters authorize every touched
+path, bind execution use leases and publish derived project generations without
+restarting the connection. See [Worktrees](Worktrees.md) and the
+[operating flow](../Reference/Worktrees.md).
 
 ## App-owned Topology
 

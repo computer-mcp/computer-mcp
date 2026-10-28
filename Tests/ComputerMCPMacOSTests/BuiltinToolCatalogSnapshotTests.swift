@@ -1,4 +1,3 @@
-import ComputerMCPDelivery
 import ComputerMCPDownstream
 import ComputerMCPMacOS
 import ComputerMCPPermissions
@@ -71,7 +70,6 @@ struct BuiltinToolCatalogSnapshotTests {
         builtin: .init(enabled: DefaultGatewayConfiguration.enabledBuiltinCapabilities),
         skills: .init(enabled: true)))
     let providers: [any GatewayToolProvider] = [
-      DeliveryToolProvider(environment: environment),
       ProjectToolProvider(environment: environment), FilesToolProvider(environment: environment),
       SkillsToolProvider(environment: environment),
       StructuredToolProvider(environment: environment),
@@ -96,7 +94,7 @@ struct BuiltinToolCatalogSnapshotTests {
       }
     }
 
-    #expect(definitions.count == 240)
+    #expect(definitions.count == 238)
     for name in [
       "git.worktree_add", "git.worktree_list", "git.worktree_remove", "git.merge",
       "git.branch_delete", "git.worktrees",
@@ -122,7 +120,7 @@ struct BuiltinToolCatalogSnapshotTests {
       toolEnvironment: environment, mcpClient: CatalogDiscoveryStub())
     do {
       let providers = try registry.providers().filter { $0.id != "computer-use" }
-      #expect(providers.count == 13)
+      #expect(providers.count == 12)
       var namespaces: Set<String> = []
       for provider in providers {
         #expect(!provider.namespaces.isEmpty, "Provider: \(provider.id)")

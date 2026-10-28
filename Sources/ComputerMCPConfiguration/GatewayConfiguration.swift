@@ -98,7 +98,6 @@ package struct GatewayConfiguration: Equatable, Sendable {
   package var tools: [ToolConfig]
   package var builtin: BuiltinConfig
   package var skills: SkillsConfig
-  package var delivery: DeliveryConfig
   package var projectDirectory: URL
   /// Host-owned configuration and credential files are never project content.
   package var hostDataPaths: Set<URL> = []
@@ -118,7 +117,6 @@ package struct GatewayConfiguration: Equatable, Sendable {
     tools: [ToolConfig] = [],
     builtin: BuiltinConfig = BuiltinConfig(),
     skills: SkillsConfig = SkillsConfig(),
-    delivery: DeliveryConfig = DeliveryConfig(),
     projectDirectory: URL = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
   ) {
     self.schemaVersion = schemaVersion
@@ -133,7 +131,6 @@ package struct GatewayConfiguration: Equatable, Sendable {
     self.tools = tools
     self.builtin = builtin
     self.skills = skills
-    self.delivery = delivery
     self.projectDirectory = projectDirectory
   }
 
@@ -181,7 +178,14 @@ package struct GatewayConfiguration: Equatable, Sendable {
     return configuration
   }
 
+  static let retiredDeliveryMessage =
+    "Delivery configuration and tools are retired. Use git.worktree_add, git.worktree_list, git.worktree_remove and git.merge for the worktree flow."
+
   package func validate() throws {
+    if builtin.enabled.contains(where: { ["delivery.apply", "delivery.scopes.list"].contains($0) })
+    {
+      throw ConfigurationError.invalid(Self.retiredDeliveryMessage)
+    }
     guard schemaVersion == 1 else {
       throw ConfigurationError.invalid("schema_version must be 1.")
     }
@@ -189,7 +193,6 @@ package struct GatewayConfiguration: Equatable, Sendable {
     try runtime.validate()
     try policy.validate()
     try skills.validate()
-    try delivery.validate(projects: projects)
     try validateUniqueIDs(projects.map(\.id), label: "project")
     try validateUniqueIDs(profiles.map { $0.id.rawValue }, label: "profile")
     try validateUniqueIDs(transports.openAI.map(\.id), label: "OpenAI transport")
@@ -459,8 +462,6 @@ package struct GatewayConfiguration: Equatable, Sendable {
       "file.trash",
       "project.open",
       "project.reveal",
-      "delivery.scopes.list",
-      "delivery.apply",
       "git.root",
       "git.config",
       "git.remotes",
@@ -688,8 +689,6 @@ package struct GatewayConfiguration: Equatable, Sendable {
       "file.trash",
       "project.open",
       "project.reveal",
-      "delivery.scopes.list",
-      "delivery.apply",
       "git.root",
       "git.config",
       "git.remotes",
@@ -848,6 +847,9 @@ extension GatewayConfiguration: Codable {
 
   init(from decoder: any Decoder, profileOverride: [ProfileGrantConfig]?) throws {
     let container = try decoder.container(keyedBy: CodingKeys.self)
+    if container.contains(.delivery) {
+      throw ConfigurationError.invalid(Self.retiredDeliveryMessage)
+    }
     self.schemaVersion = try container.decode(Int.self, forKey: .schemaVersion)
     self.server =
       try container.decodeIfPresent(ServerConfig.self, forKey: .server) ?? ServerConfig()
@@ -877,8 +879,6 @@ extension GatewayConfiguration: Codable {
     self.skills =
       try container.decodeIfPresent(SkillsConfig.self, forKey: .skills)
       ?? SkillsConfig()
-    self.delivery =
-      try container.decodeIfPresent(DeliveryConfig.self, forKey: .delivery) ?? DeliveryConfig()
     self.projectDirectory = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
     migrateImplicitMCPApprovals(from: try ConfigurationNode(from: decoder))
     dropRetiredBuiltins()
@@ -921,7 +921,6 @@ extension GatewayConfiguration: Codable {
     try container.encode(tools, forKey: .tools)
     try container.encode(builtin, forKey: .builtin)
     try container.encode(skills, forKey: .skills)
-    try container.encode(delivery, forKey: .delivery)
   }
 }
 

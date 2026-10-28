@@ -204,21 +204,6 @@ let neutralTargets: [Target] =
         .product(name: "NIOPosix", package: "swift-nio"),
       ]),
     .target(
-      name: "ComputerMCPDelivery",
-      dependencies: [
-        "ComputerMCPWorktrees",
-        "ComputerMCPCore", "ComputerMCPConfiguration", "ComputerMCPProcess",
-        "ComputerMCPPlatformPOSIX", "ComputerMCPToolKit",
-      ]),
-    .testTarget(
-      name: "ComputerMCPDeliveryTests",
-      dependencies: [
-        "ComputerMCPWorktrees",
-        "ComputerMCPDelivery", "ComputerMCPCore", "ComputerMCPConfiguration",
-        "ComputerMCPProcess", "ComputerMCPPlatformPOSIX", "ComputerMCPToolKit",
-        "ComputerMCPTestSupport",
-      ]),
-    .target(
       name: "ComputerMCPToolsGit",
       dependencies: [
         "ComputerMCPToolKit", "ComputerMCPCore", "ComputerMCPConfiguration", "ComputerMCPPlatform",
@@ -539,7 +524,6 @@ let neutralTargets: [Target] =
           "ComputerMCPToolsShell",
           "ComputerMCPToolsCLI",
           "ComputerMCPToolsGit",
-          "ComputerMCPDelivery",
           "ComputerMCPToolsStructured",
           "ComputerMCPToolsSkills",
           "ComputerMCPToolsFiles",
@@ -616,7 +600,6 @@ let neutralTargets: [Target] =
           "ComputerMCPToolsFiles",
           "ComputerMCPToolsSystem",
           "ComputerMCPToolsGit",
-          "ComputerMCPDelivery",
           "ComputerMCPToolsMCP",
           "ComputerMCPToolsShell",
           "ComputerMCPToolsSkills",

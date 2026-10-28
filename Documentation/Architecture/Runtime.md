@@ -513,3 +513,12 @@ Remote transports are separate App-owned lifecycles:
 
 They may run concurrently and have independent profile, health, log, restart,
 and audit provenance.
+
+## Worktree publication
+
+Source and derived projects share live source permission authority. A lifecycle
+mutation publishes a fresh project/provider generation for later calls on the
+same session. App-managed and standalone composition retain the originating
+execution owner so output IDs and cursors continue to resolve. Source removal
+retains derived storage as inaccessible recovery state; reusing a path or ID does
+not adopt it. See [Worktrees](Worktrees.md).

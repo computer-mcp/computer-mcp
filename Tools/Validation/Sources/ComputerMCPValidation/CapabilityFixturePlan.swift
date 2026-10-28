@@ -66,8 +66,6 @@ public struct CapabilityFixturePlan: Sendable {
       return invocation([:], marker: projectID)
     case "project.describe":
       return primary([:], marker: projectID)
-    case "delivery.scopes.list":
-      return primary([:], marker: "scopes")
     case "policy.probe":
       return invocation(
         ["capability_id": .string("project.list")],
@@ -872,7 +870,7 @@ public struct CapabilityFixturePlan: Sendable {
       return repository([:], marker: "v0.1.0")
     case "git.tracking_status":
       return repository([:], marker: "upstream")
-    case "git.worktrees":
+    case "git.worktree_list":
       return repository([:], marker: "main")
     case "git.branch_create":
       return repository(

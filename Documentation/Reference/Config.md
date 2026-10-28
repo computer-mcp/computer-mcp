@@ -494,13 +494,20 @@ health_path = "/health"
 access_token_env = "COMPUTER_MCP_HTTP_ACCESS_TOKEN"
 ```
 
-## Delivery scopes
+## Worktree availability
 
-`[[delivery.scopes]]` declares isolated repository edits for one registered project.
-It is part of both the App-managed and standalone manifests, with unique IDs,
-relative repository/worktree paths, path globs, a default branch, optional sparse
-checkout and `land` or `commit-only` mode. See [Isolated delivery](Delivery.md#configuration)
-for the complete shape, defaults and validation.
+Worktree lifecycle tools use durable host storage: App distribution storage or
+regions beside a standalone database. Memory-only hosts omit the routes. Enable
+`git.worktree_add`, `git.worktree_list`, `git.worktree_remove` and `git.merge` in
+`[builtin].enabled`; the defaults already include them. The source Project grant
+and effective sandbox settings apply to derived projects on every call. Shell
+execution also requires `[policy].shell_enabled = true` and its declared limits
+and permissions. See [Worktrees](Worktrees.md).
+
+Legacy `delivery` configuration and its two builtin tool IDs are rejected with
+worktree replacement guidance. Reconcile unfinished work with its existing owner
+before replacing that configuration; historical stored revisions and journals
+are not deleted by configuration loading.
 
 ## Permission store activation
 

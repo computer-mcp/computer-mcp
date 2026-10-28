@@ -94,7 +94,6 @@ package product and does not install or bundle vendor binaries.
 | `Sources/ComputerMCPToolsMCP/` | Platform-neutral MCP builtin and configured providers, downstream discovery, validated catalogs, host risk descriptors and context-preserving calls |
 | `Sources/ComputerMCPToolsGit/` | Platform-neutral Git provider with explicit definitions, annotations, descriptors and registered-command dispatch |
 | `Sources/ComputerMCPWorktrees/` | Neutral repository coordination, durable creation recovery, detached worktree topology and inventory, private object storage, Git safety policy, derived-project/provenance records and injected command/store contracts |
-| `Sources/ComputerMCPDelivery/` | Platform-neutral delivery provider, scoped worktree edits, repository locks, atomic file journals, landing and recovery |
 | `Sources/ComputerMCPAuthorization/` | Platform-neutral OAuth state machine, discovery metadata, injected CIMD identification, rate limits and transactional grant/token store contract; macOS URLSession CIMD transport |
 | `Sources/ComputerMCPToolKit/` | Platform-neutral argument and result helpers, project path scope and file metadata, shared filesystem/outline/HTTP helpers, configured command resolution and execution, and project-owned tool environments |
 | `Sources/ComputerMCPPlugins/` | Platform-neutral plugin manifests, bundled inventory and distribution, catalogs, installation/recovery, contribution resolution, archive preparation and the injected plugin state store contract |
@@ -163,14 +162,7 @@ services across providers; the host owns shutdown. The gateway also uses
 ToolKit's `AuthorizedFileReader` for operation-state digests, sharing descriptor
 and live permission checks with tool readers.
 
-`ComputerMCPDelivery` is a neutral capabilities target using Core, Configuration,
-Process, PlatformPOSIX and ToolKit. It owns scoped edit/commit/land execution,
-repository locks and durable file journals in the Git common directory. Its
-registered Git executable is injected through the project environment. Neutral
-`ComputerMCPDeliveryTests` uses real Git in temporary repositories and exercises
-execution, fault injection, concurrent calls and interrupted-state recovery.
-
-`DeliveryToolProvider`, `GitToolProvider`, `CLIToolProvider`, `ShellToolProvider`, `ProcessToolProvider`,
+`GitToolProvider`, `CLIToolProvider`, `ShellToolProvider`, `ProcessToolProvider`,
 `StructuredToolProvider`, `SkillsToolProvider`, `FilesToolProvider`,
 `ProjectToolProvider`, `SystemToolProvider`, `NetworkToolProvider` and
 `MCPToolProvider` own explicit builtin definitions, annotations, descriptors and
@@ -652,11 +644,11 @@ roots cannot overlap these regions. Existing host content is recognized only
 through matching active ledger, journal, storage generation and directory evidence.
 
 Creation reserves a generic derived record, creates owned directories, verifies
-Git's detached checkout and backlinks, creates an absent branch in a reference
+the detached checkout and its independent private repository, creates an absent branch in a reference
 transaction, then atomically activates topology and branch protection. Recovery
 reconciles the recorded phases; changed or unproved state is retained for the
 owner. The active ledger binds the topology and base captured by the journal.
-Inventory reads private HEAD with the host-selected shared alternate and reports
+Inventory verifies a host-owned copy of private HEAD and index entries and reports
 unknown base or unavailable state explicitly. Foreign checkouts and plugin receipts
 do not mint verified host topology. Topology evidence alone grants no execution
 lease or sandbox authority; lifecycle tools are not registered by this service.
@@ -673,7 +665,7 @@ Fast-forward integration prepares an expected-value update through dereferenced
 HEAD, verifies its recorded base target under Git's reference locks, and reserves
 the main index until reference commit. Two-tree checkout uses a host-owned index
 copy; tracked, staged, untracked and ignored collisions are refused, and unrelated
-dirty state is preserved. `HostGitCheckout` shares filter refusal with delivery.
+dirty state is preserved. `HostGitCheckout` refuses attributes that select filters.
 The adapter revalidates current permission for every destination, including nested
 projects. Durable before/after fingerprints and an operation-specific reflog
 receipt reconcile checkout, refs and the protected-branch ledger. Unknown partial

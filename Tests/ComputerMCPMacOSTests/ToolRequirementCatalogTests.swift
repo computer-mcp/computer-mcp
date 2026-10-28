@@ -38,7 +38,7 @@ struct ToolRequirementCatalogTests {
         }
         for path in requirement.paths {
           switch path.relativeBase {
-          case .deliveryScope(let key), .linkParent(let key): #expect(properties[key] != nil)
+          case .linkParent(let key): #expect(properties[key] != nil)
           case .project: break
           }
           guard case .argument(let selector) = path.source else { continue }
@@ -56,9 +56,6 @@ struct ToolRequirementCatalogTests {
           "file.diff": [.init("source", .read), .init("target", .read)],
           "file.write_files": [.init("files[].path", .write)],
           "json.read": [.init("path", .read)],
-          "delivery.apply": [
-            .init("edits[].path", .write, relativeBase: .deliveryScope(argument: "scope"))
-          ],
         ]
         if let expected = exactPaths[name] { #expect(requirement.paths == expected) }
         func check(_ object: ToolRequirement.Object) {
@@ -148,7 +145,7 @@ struct ToolRequirementCatalogTests {
     (
       .read,
       """
-      archive.list archive.read_file csv.read delivery.scopes.list file.compare_trees file.count
+      archive.list archive.read_file csv.read file.compare_trees file.count
       file.diff file.disk_usage file.duplicates file.exists file.find file.hash file.head
       file.hexdump file.list file.metadata file.outline file.permissions file.read
       file.read_context file.read_files file.read_lines file.read_window file.readlink
@@ -175,7 +172,7 @@ struct ToolRequirementCatalogTests {
     (
       .projectWrite,
       """
-      archive.create archive.extract cli.exec delivery.apply file.append file.chmod file.copy
+      archive.create archive.extract cli.exec file.append file.chmod file.copy
       file.download file.insert_text file.mkdir file.move file.remove_xattr file.replace_lines
       file.replace_text file.symlink file.touch file.trash file.write file.write_files git.worktree_remove git.add
       git.branch_create git.branch_rename git.branch_switch git.clean git.commit

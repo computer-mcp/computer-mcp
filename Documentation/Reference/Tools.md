@@ -128,8 +128,6 @@ Catalog selections filter entries under their corresponding permissions.
 | `computer.verify` | Screen `allow` | No | None |
 | `computer.windows` | Screen `allow` | No | None |
 | `csv.read` | Project `read`; Resolved paths (read) | No | None |
-| `delivery.apply` | Project `write`; Resolved paths (write) | No | None |
-| `delivery.scopes.list` | Project `read`; Resolved paths (read) | No | None |
 | `env.describe` | Machine information `allow` | No | None |
 | `file.append` | Project `write`; Resolved paths (write) | No | None |
 | `file.chmod` | Project `write`; Resolved paths (write) | No | None |
@@ -410,13 +408,15 @@ can use the project.
 Registering a folder does not execute its instruction files, skills or project
 configuration. Direct project registration and removal remain owner operations.
 
-## `delivery.scopes.list` and `delivery.apply`
+## Worktree workflow
 
-The `delivery` provider lists host-declared scopes (read-only) and applies ordered
-UTF-8 edits in an isolated Git worktree (project write). Both require a project
-and declare no network use. Apply commits and fast-forwards onto the default branch
-or retains its branch, with durable recovery and bounded file snippets. See
-[Isolated delivery](Delivery.md) for schemas, reason codes and recovery.
+Use `git.worktree_add` in the source project, then use its returned `project_id`
+for file tools, sandbox programs and commits. Fetch and rebase explicitly when the
+base advances; `git.merge` fast-forwards committed work into the source checkout.
+Remove the worktree and then delete its merged branch. Standing source Project
+write permission applies throughout; no new grant or reconnect is needed.
+See [Worktrees](Worktrees.md) for the sequence and recovery, and the
+[Git lifecycle schemas](#git-worktree-lifecycle) for arguments and results.
 
 ## Execution owners
 

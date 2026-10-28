@@ -178,7 +178,7 @@ explicit `paths`, preserving other staged changes.
 
 Downloads stream into host-opened descriptors and recheck the destination before
 publication. Recursive operations apply the same path
-checks to each member. Delivery refuses merges when attributes assign filters.
+checks to each member. Host worktree merges refuse attributes that assign filters.
 These operation checks apply within each tool's existing authorization policy.
 
 ## Tool requirements

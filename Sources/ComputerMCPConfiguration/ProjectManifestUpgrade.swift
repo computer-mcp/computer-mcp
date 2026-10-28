@@ -26,7 +26,7 @@ package enum ProjectManifestUpgrade {
       throw ConfigurationError.invalid(
         "Use projects instead of workspaces, project_id instead of workspace_id, "
           + "project.* tool IDs instead of workspace.*. "
-          + "Delivery scopes use project; cwd uses project; risks use project-write or project-write-capable."
+          + "cwd uses project; risks use project-write or project-write-capable."
       )
     }
   }
@@ -34,13 +34,15 @@ package enum ProjectManifestUpgrade {
   private static func transform(_ value: JSONValue, path: [String]) throws -> JSONValue {
     switch value {
     case .object(let object):
+      if path.isEmpty, object["delivery"] != nil {
+        throw ConfigurationError.invalid(GatewayConfiguration.retiredDeliveryMessage)
+      }
       var result: [String: JSONValue] = [:]
       for (key, value) in object {
         let renamed: String
         switch (path.joined(separator: "."), key) {
         case ("", "workspaces"), ("profiles", "workspaces"): renamed = "projects"
         case ("runtime", "workspace_id"): renamed = "project_id"
-        case ("delivery.scopes", "workspace"): renamed = "project"
         default: renamed = key
         }
         guard renamed == key || object[renamed] == nil else {

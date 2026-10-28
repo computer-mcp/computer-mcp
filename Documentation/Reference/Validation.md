@@ -80,6 +80,21 @@ state and invokes no vendor model or user App Server. This test validates the
 unchanged consumer/host-service contract. It does not establish plugin enablement,
 delegated-principal launches or installed-App TCC acceptance.
 
+## Native catalog fixture acceptance
+
+The Validation catalog fixture test requires an explicit native CLI path. Run it
+against the candidate built in this checkout:
+
+```sh
+COMPUTER_MCP_EXECUTABLE="$PWD/.build/debug/computer-mcp" \
+  /usr/bin/swift test --package-path Tools/Validation --build-system native \
+  --filter CapabilityFixturePlanTests
+```
+
+Without that opt-in, only the portable fixture tests run. A skip is not catalog
+acceptance. Independent read probes require both a read-only capability and its
+read-only annotation; a permission request is not an unattended read probe.
+
 ## Builtin catalog snapshot
 
 `BuiltinToolCatalogSnapshotTests` compares the complete host-owned MCP catalog

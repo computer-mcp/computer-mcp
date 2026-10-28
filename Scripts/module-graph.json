@@ -48,7 +48,6 @@
         "ComputerMCPToolsShell",
         "ComputerMCPToolsSkills",
         "ComputerMCPToolsSystem",
-        "ComputerMCPDelivery",
         "ComputerMCPAuthorization",
         "ComputerMCPPlugins",
         "ComputerMCPComputerUse"
@@ -97,7 +96,6 @@
     "ComputerMCPToolsProject->ComputerMCPToolKit",
     "ComputerMCPToolsStructured->ComputerMCPToolKit",
     "ComputerMCPToolsGit->ComputerMCPToolKit",
-    "ComputerMCPDelivery->ComputerMCPToolKit",
     "ComputerMCPToolsShell->ComputerMCPToolKit",
     "ComputerMCPToolsSkills->ComputerMCPToolKit",
     "ComputerMCPToolsSystem->ComputerMCPToolKit",

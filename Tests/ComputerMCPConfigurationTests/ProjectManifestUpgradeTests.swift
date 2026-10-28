@@ -33,6 +33,49 @@ struct ProjectManifestUpgradeTests {
     }
   }
 
+  @Test(
+    arguments: [
+      "[delivery]",
+      "[[delivery.scopes]]\nid='notes'\nworkspace='source'",
+      "[[delivery.scopes]]\nid='notes'\nproject='source'",
+      "[builtin]\nenabled=['delivery.apply']",
+      "[builtin]\nenabled=['delivery.scopes.list']",
+    ], [false, true])
+  func retiredDeliveryInputRequiresWorktreeReplacement(fragment: String, fromFile: Bool) throws {
+    let text = "schema_version=1\n" + fragment
+    let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: directory) }
+    do {
+      if fromFile {
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let file = directory.appendingPathComponent("computer-mcp.toml")
+        try text.write(to: file, atomically: true, encoding: .utf8)
+        _ = try GatewayConfiguration.load(path: file.path)
+      } else {
+        _ = try GatewayConfiguration.load(text: text)
+      }
+      Issue.record("Retired delivery input was accepted")
+    } catch {
+      #expect(error.localizedDescription.contains("Delivery configuration and tools are retired"))
+      #expect(error.localizedDescription.contains("git.worktree_add"))
+      #expect(error.localizedDescription.contains("git.merge"))
+    }
+    if fragment.hasPrefix("[delivery") || fragment.hasPrefix("[[delivery") {
+      #expect(throws: ConfigurationError.self) { try ProjectManifestUpgrade.upgraded(text) }
+    }
+  }
+
+  @Test func retiredDeliveryCannotEnterThroughDirectDecoding() throws {
+    #expect(throws: ConfigurationError.self) {
+      try JSONDecoder().decode(
+        GatewayConfiguration.self, from: Data(#"{"schema_version":1,"delivery":{}}"#.utf8))
+    }
+    let current = GatewayConfiguration()
+    let encoded = try JSONEncoder().encode(current)
+    let object = try #require(JSONSerialization.jsonObject(with: encoded) as? [String: Any])
+    #expect(object["delivery"] == nil)
+  }
+
   @Test func upgradePreservesOpaqueValuesAndRejectsConflicts() throws {
     let text = """
       schema_version=1

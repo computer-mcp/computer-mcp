@@ -1043,8 +1043,8 @@ folder requests are best effort. These remain:
   [Configuration](../Reference/Config.md),
   [Plugin Packages](../Reference/PluginPackages.md),
   [Scoped host services](../Reference/HostServices.md),
-  [CLI](../Reference/CLI.md) and [Isolated delivery](../Reference/Delivery.md),
-  which it retires.
+  [CLI](../Reference/CLI.md) and the former isolated-delivery reference,
+  replaced by [Worktrees](../Reference/Worktrees.md).
 - [Plugin API Version](../Decisions/PluginAPI.md) for plugin API 1, which gains
   permission declarations.
 - [Remote OAuth Authorization](../Decisions/RemoteOAuth.md) for the identities

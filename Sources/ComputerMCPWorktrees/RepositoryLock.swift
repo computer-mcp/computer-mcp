@@ -1,7 +1,7 @@
 import ComputerMCPPlatformPOSIX
 import Foundation
 
-/// All host mutations of shared Git state use this lock, including delivery.
+/// All host mutations of shared Git state use this lock.
 /// Lock order is repository, worktree admission, then a short database transaction.
 /// The descriptor owns exclusion; diagnostic metadata never establishes ownership.
 package final class RepositoryLock {

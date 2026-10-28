@@ -128,8 +128,8 @@ common directory before adding registration authority. Its
 verified principal, profile and project snapshot. Caller records remain
 provenance: the same principal can reconnect through another authorized channel.
 Receipts without a verified principal remain historical records and cannot be
-adopted or removed through a new caller. Project registration, canonical-path ownership
-and the added profile grant commit in one transaction. Existing identities,
+adopted or removed through a new caller. Project registration and canonical-path ownership commit with source inheritance
+in the generic ledger; no derived profile grant is copied. Existing identities,
 pre-existing grants or independent path registrations are not adopted.
 
 Removal requires the exact live call record and an in-process request lease. The
@@ -138,10 +138,11 @@ revisions before dispatch, and checks current authorization after Git verificati
 for both removal authorization and unregister. A saved record or invocation ID
 alone cannot convey authority; completed records and lost leases cannot be reused.
 The host refuses independent edits, aliases or grants held by another profile. It removes only
-its own unchanged registration and grant; filesystem removal remains with the
-plugin. A child lease is released through a child-project connection after
-that registration is available; an existing immutable Gateway runtime does not
-silently acquire a new project router.
+its own unchanged registration; filesystem removal remains with the plugin.
+A child lease is released through a child-project connection after that registration
+is available. Runtime publication makes registered projects available on the next
+call while retaining the original execution owners. Plugin receipts retain their
+wire format and cannot mint the private Git context used by host worktrees.
 
 If Git removal succeeds but host metadata cleanup fails, the domain receipt
 remains `removing`, not `active`. Review it again with `remove.plan`, then use

@@ -96,10 +96,10 @@ verified command projection and structured-coverage limits.
   implementation work to Codex.
 - Run a registered formatter, inspect a Git diff, or process files through
   authorized local commands, then use the result in the next step.
-- Deliver scoped text edits through `delivery.scopes.list` and `delivery.apply`,
-  using isolated Git worktrees and recoverable commit/land operations. Configure
-  `[[delivery.scopes]]` in the App-managed or standalone manifest; see
-  [Isolated delivery](Documentation/Reference/Delivery.md).
+- Create a host worktree with `git.worktree_add`, edit and run builds there, then
+  fast-forward committed work with `git.merge`. The returned project inherits its
+  source permissions and is usable immediately on the same connection. See
+  [Worktrees](Documentation/Reference/Worktrees.md).
 - Combine CLI commands, downstream MCP services and reusable Skills around a
   task through one gateway.
 - Connect from ChatGPT through Secure MCP Tunnel or from a reviewed remote

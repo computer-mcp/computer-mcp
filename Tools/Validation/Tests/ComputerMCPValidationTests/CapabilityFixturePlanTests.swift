@@ -6,7 +6,11 @@ import Testing
 @Suite
 
 final class CapabilityFixturePlanTests {
-  @Test(arguments: [GatewayProfileID.chatGPTObserve, .cloudflareObserve])
+  @Test(
+    .enabled(
+      if: ProcessInfo.processInfo.environment["COMPUTER_MCP_EXECUTABLE"] != nil,
+      "Set COMPUTER_MCP_EXECUTABLE to the native host CLI for catalog acceptance."),
+    arguments: [GatewayProfileID.chatGPTObserve, .cloudflareObserve])
   func testPublicCatalogHasRequirementsAndBoundedIndependentReadFixtures(profile: GatewayProfileID)
     throws
   {
@@ -35,9 +39,9 @@ final class CapabilityFixturePlanTests {
     }
 
     #expect(!readCapabilities.isEmpty)
-    #expect(readCapabilities.contains("delivery.scopes.list"))
-    #expect(tools.contains { $0.name == "delivery.apply" })
-    #expect(!readCapabilities.contains("delivery.apply"))
+    #expect(!tools.contains { $0.name.hasPrefix("delivery.") })
+    #expect(tools.contains { $0.name == "project.request" })
+    #expect(!readCapabilities.contains("project.request"))
     #expect(!readCapabilities.contains("process.read"))
     #expect(readCapabilities.contains("runtime.owners.list"))
     for tool in tools {

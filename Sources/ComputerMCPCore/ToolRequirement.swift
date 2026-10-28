@@ -18,7 +18,6 @@ package struct ToolRequirement: Codable, Equatable, Sendable {
     }
     package enum RelativeBase: Codable, Equatable, Sendable {
       case project
-      case deliveryScope(argument: String)
       case linkParent(argument: String)
     }
     package let source: Source

@@ -1,10 +1,5 @@
 import ComputerMCPSandbox
 
-/// Delivery initializer label; launch authority comes from the installed context.
-package enum HostExecutionPolicy: Sendable {
-  case fullAccess
-}
-
 internal struct HostExecutionSetup: Sendable {
   let mode: ExecutionMode
   let environment: ExecutionEnvironment

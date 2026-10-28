@@ -120,7 +120,7 @@ Callers select these sets at their operation boundary:
 
 | Caller | Selected variables |
 | --- | --- |
-| Host Git operations, project Git layout checks and delivery Git | Private `HOME` and `XDG_CONFIG_HOME`, `LC_ALL=C`; `GIT_CONFIG_NOSYSTEM=1`, `GIT_CONFIG_GLOBAL=/dev/null`, `GIT_TERMINAL_PROMPT=0`, `GIT_NO_LAZY_FETCH=1`, `GIT_ALLOW_PROTOCOL=`, `GIT_CONFIG_COUNT=0`, `GIT_CONFIG_PARAMETERS=`, `GIT_EXTERNAL_DIFF=/dev/null`, `GIT_ATTR_NOSYSTEM=1`, `GIT_PAGER=`, and `/dev/null` for `GIT_EDITOR`, `GIT_SEQUENCE_EDITOR`, `GIT_ASKPASS`, `GIT_SSH_COMMAND` |
+| Host Git operations and project Git layout checks | Private `HOME` and `XDG_CONFIG_HOME`, `LC_ALL=C`; `GIT_CONFIG_NOSYSTEM=1`, `GIT_CONFIG_GLOBAL=/dev/null`, `GIT_TERMINAL_PROMPT=0`, `GIT_NO_LAZY_FETCH=1`, `GIT_ALLOW_PROTOCOL=`, `GIT_CONFIG_COUNT=0`, `GIT_CONFIG_PARAMETERS=`, `GIT_EXTERNAL_DIFF=/dev/null`, `GIT_ATTR_NOSYSTEM=1`, `GIT_PAGER=`, and `/dev/null` for `GIT_EDITOR`, `GIT_SEQUENCE_EDITOR`, `GIT_ASKPASS`, `GIT_SSH_COMMAND` |
 | Git author identity lookup | A verified worktree reads the source repository’s author fields as data, without copying its configuration. Only selected configuration locations `HOME`, `XDG_CONFIG_HOME`, `GIT_CONFIG_GLOBAL`, `GIT_CONFIG_SYSTEM`, plus `LC_ALL=C`; author values are subsequently passed as explicit Git options |
 | Registered SQLite inspection | Private `HOME`; arguments retain `-init /dev/null -safe` |
 | File archive extraction | `LC_ALL=C` |

@@ -22,6 +22,7 @@ public struct ValidationToolContract: Codable, Equatable, Sendable {
   /// Selects bounded read probes; catalog visibility is not an authorization decision.
   public var isIndependentReadProbe: Bool {
     guard capability.risk == "read-only",
+      annotations?.objectValue?["readOnlyHint"] == .bool(true),
       let requirements = meta?.objectValue?["computer_mcp"]?.objectValue?["requirements"]?
         .objectValue,
       requirements["target"]?.objectValue?["forwarded"] == nil,

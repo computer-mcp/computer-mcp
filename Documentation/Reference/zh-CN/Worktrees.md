@@ -1,0 +1,60 @@
+# 工作树操作
+
+宿主工作树是继承源项目权限的隔离编码项目。已有源项目的持续 Project 写权限时，
+可以在同一连接中创建、编辑、构建、提交、合并和清理，无需为派生项目另行批准。
+
+## 准备
+
+源项目必须是已注册、完整的非裸 Git 仓库，宿主必须使用持久化存储；仅内存运行时
+不提供生命周期工具。默认 base 是源主检出当前分支；主检出处于 detached HEAD
+时必须明确指定 base。创建使用新分支，不复用已有分支。
+
+Shell 工具还需启用并满足自身权限和限额。Full access 不会授予 Project 写权限。
+完整可用范围以[执行准入表](../../Architecture/SecurityAndPrivacy.md#execution-admission)
+为准，本地 stdio MCP 和插件程序仍需其所属模块提供支持的执行上下文。
+
+宿主在注册项目之外选择路径，并建立独立私有仓库：HEAD 初始为 detached，
+对象与引用私有，`origin` 指向源仓库。使用返回的 `project_id`，不要再次注册路径，
+也不要改动 `.git` 或私有 Git 控制文件。
+
+## 同一连接中的流程
+
+1. 在源项目调用 `git.worktree_add`，提供小写短名称 `name`，可选新 `branch` 和
+   `base`。保存返回的 `project_id`、`path`、`branch`、`base`。
+   `git.worktree_list` 可查看宿主和外部工作树；无法获取的外部指标为 null。
+2. 后续调用立即使用新的 `project_id`。用 `project.describe` 查看项目，
+   `file.write` 编辑，`git.add` 暂存，`git.commit` 提交。`paths` 只提交所选路径，
+   保留其他暂存内容。获准的沙箱程序中直接运行 Git 也使用该私有仓库。
+3. 在工作树中构建和测试。Swift 包使用原生 SwiftPM 构建系统。后台 shell/process
+   返回执行 ID 后，可用对应 read 工具和游标续读，同时进行其他调用。
+   源权限变化和执行限额继续生效，详见[执行工具](Executions.md)。
+4. 源分支推进后，在获准的 shell 中运行 `git fetch origin` 和
+   `git rebase origin/<base>`。发生冲突时明确解决后 continue，或 abort；
+   宿主不会自动 rebase。发布前，私有提交不会推进源仓库中的受管分支。
+5. 在源项目调用 `git.merge`，传入返回的 `branch`。宿主验证提交对象并快进合并到
+   记录的 base。分叉历史、主检出分支不匹配和会覆盖本地修改的情况均被拒绝；
+   无关本地修改保留。
+6. 在工作树项目调用 `git.worktree_remove`。宿主停止获准写入者，保留已提交历史，
+   删除所属存储，最后注销项目。检查 `terminationWarnings`：未受限进程可能无法
+   确认退出，脱离进程组的后代也可能存活。
+7. 在源项目调用 `git.branch_delete`，提供 `name`、`dry_run: false` 和
+   `confirm_delete: true`。这是同一次调用的参数。仍在使用的分支和保留的未合并
+   提交受保护，沙箱调用方不能强制删除。
+
+精确参数和结果见英文[生命周期 Schema](../Tools.md#git-worktree-lifecycle)及
+[分支删除](../Tools.md#gitbranch_delete)。
+
+## 脏状态与恢复
+
+未指定 `force` 的删除会拒绝未提交的已跟踪、暂存、未跟踪和 ignored 内容。
+`force: true` 只允许丢弃这些未提交内容，不丢弃提交、私有引用、reflog 或受保护历史。
+assume-unchanged、skip-worktree 等索引标记不会绕过宿主脏状态判断。
+
+操作忙碌或中断时，日志与存储可能保留。先处理返回的干扰原因，再通过生命周期工具
+重试；不要手动删除日志、保护引用或锁文件。恢复会校验预期值，无法证明安全的状态
+保留待核对。工作树注册跨重启保留；程序遵循执行中断规则，不会自动重放。
+重新连接不会让其他主体获得现有执行 ID 的访问权。
+
+插件工作树仍由插件负责其 Git 生命周期，并保留原有 receipt 与宿主服务协议；
+宿主工作树工具不接管插件的删除流程。旧 delivery 配置会明确拒绝并提示此替代流程。
+替换前先由原负责人处理未完成工作；配置加载不会删除历史日志、配置修订或用户分支。

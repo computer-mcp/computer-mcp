@@ -31,13 +31,17 @@ struct WorktreeHTTPRestartHostTests {
     let spec = try JSONDecoder().decode(
       WorktreeRestartSpec.self, from: Data(contentsOf: URL(fileURLWithPath: path)))
     let root = URL(fileURLWithPath: spec.root)
-    let location = root.appendingPathComponent("state.sqlite")
+    let directories = spec.managed ? GatewayManagedHostFixture.directories(root: root) : nil
+    try directories?.prepare()
+    let location = directories?.database ?? root.appendingPathComponent("state.sqlite")
     let fresh = !FileManager.default.fileExists(atPath: location.path)
-    let database = try GatewayDatabase(path: location.path)
+    let database = try GatewayDatabase(
+      path: location.path, applicationSupportRoot: directories?.applicationSupport)
     _ = database.permissionStore(counter: WorktreeAcceptanceCounter(directory: root))
     var platform = MacOSPlatform.services(launcher: testExecutionLauncher())
     platform = fixturePlatformWithGit(platform, executable: spec.gitExecutable)
     platform.permissionPolicyReader = TestManagedPolicyReader()
+    if let directories { platform.hostDataPaths.formUnion(directories.hostDataPaths) }
     let profile = ProfileGrant(
       id: .chatGPTOperate,
       permissions: fixturePermissions([.project("fixture"): .granted(.write)]),

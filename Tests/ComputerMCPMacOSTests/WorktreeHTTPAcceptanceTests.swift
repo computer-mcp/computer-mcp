@@ -1,6 +1,11 @@
 import ComputerMCPPermissions
+import ComputerMCPPersistence
+import ComputerMCPPlatform
+import ComputerMCPPlatformPOSIX
 import ComputerMCPTestSupport
 import Foundation
+import GRDB
+import Logging
 import Testing
 
 @testable import ComputerMCPConfiguration
@@ -21,7 +26,8 @@ struct WorktreeHTTPAcceptanceTests {
   @Test(arguments: [false, true])
   func oneAuthenticatedSessionCompletesTheWorktreeFlow(managed: Bool) async throws {
     let f = try FixedHostFixture(
-      fullAccess: false, lifecycle: true, caller: .cloudflareTunnel, gitExecutable: gitExecutable)
+      fullAccess: false, lifecycle: true, caller: .cloudflareTunnel, gitExecutable: gitExecutable,
+      managed: managed)
     try await f.run { f in
       try await preparePackage(f)
       let initial = try await f.ownerGit(["rev-parse", "HEAD"])
@@ -38,14 +44,18 @@ struct WorktreeHTTPAcceptanceTests {
       } else {
         source = .registry(f.runtime)
       }
+      let logs = WorktreeAcceptanceLogs()
+      let accessToken = "worktree-acceptance-" + UUID().uuidString
+      let privateContent = "private-content-" + UUID().uuidString
+      let privateOutput = "private-output-" + UUID().uuidString
       let http = GatewayHTTPRuntime(
         configuration: f.configuration, source: source, host: "127.0.0.1", port: 0,
         publicBaseURL: nil,
-        accessToken: "worktree-acceptance-fixture")
+        accessToken: accessToken, logger: logs.logger)
       try await http.startListening()
       let endpoint = URL(string: "http://127.0.0.1:\(try #require(await http.boundPort()))/mcp")!
       let client = try await GatewayClientSession.connectHTTP(
-        endpoint: endpoint, accessToken: "worktree-acceptance-fixture")
+        endpoint: endpoint, accessToken: accessToken)
       do {
         let session = try #require(await http.controlSessions().only)
         let made = try await call(client, "git.worktree_add", "fixture", ["name": .string("http")])
@@ -53,6 +63,21 @@ struct WorktreeHTTPAcceptanceTests {
         let path = try #require(made["path"]?.stringValue)
         let branch = try #require(made["branch"]?.stringValue)
         let base = try #require(made["base"]?.stringValue)
+        if managed {
+          let directories = GatewayManagedHostFixture.directories(root: f.root)
+          #expect(
+            path.hasPrefix(
+              directories.applicationSupport.appendingPathComponent("Worktrees").path + "/"))
+          #expect(
+            Set(
+              try f.platform.hostDataPaths.map {
+                try ProjectPathResolver.resolve($0.path, relativeTo: URL(fileURLWithPath: "/")).path
+              }
+            ).isSuperset(
+              of: try directories.hostDataPaths.map {
+                try ProjectPathResolver.resolve($0.path, relativeTo: URL(fileURLWithPath: "/")).path
+              }))
+        }
         let binding = try #require(
           try f.database.executionWorktree(
             projectID: id, directory: URL(fileURLWithPath: path), platform: f.platform))
@@ -61,11 +86,20 @@ struct WorktreeHTTPAcceptanceTests {
         _ = try await call(client, "git.worktree_list", "fixture")
         _ = try await call(client, "project.describe", id)
         _ = try await call(
-          client, "file.write", id, ["path": .string("value.txt"), "content": .string("edited")])
+          client, "file.write", id,
+          ["path": .string("value.txt"), "content": .string(privateContent)])
         _ = try await call(client, "git.add", id, ["paths": .array([.string("value.txt")])])
         _ = try await call(
           client, "git.commit", id,
           ["message": .string("edit"), "paths": .array([.string("value.txt")])])
+        let secretOutput = try await shell(client, id, "printf '%s' '" + privateOutput + "'")
+        #expect(secretOutput["stdout"]?.objectValue?["text"]?.stringValue == privateOutput)
+        if managed {
+          let hostDatabase = try #require(f.database.fileURL).path
+          let denied = try await shell(
+            client, id, "if cat '" + hostDatabase + "' >/dev/null 2>&1; then exit 1; fi")
+          #expect(denied["exit_code"] == .integer(0))
+        }
         let detached = try await shell(client, id, "git symbolic-ref -q HEAD; test $? = 1")
         #expect(detached["exit_code"] == .integer(0))
         let build = try await call(
@@ -134,9 +168,25 @@ struct WorktreeHTTPAcceptanceTests {
         _ = try await f.ownerGit(["fsck", "--full", "--strict", "--no-dangling"])
         #expect(await http.controlSessions().map(\.id) == [session.id])
         #expect(try f.database.profiles() == profiles)
-        let audit = try f.database.auditEvents(limit: 200)
+        let audit = try await f.database.connection.writer.read { db in
+          try AuditEventRecord.fetchAll(db).map { try $0.value() }
+        }
         #expect(!audit.isEmpty)
         #expect(!audit.contains { $0.decision == .failed })
+        let principal = try #require(AuditEvent.verifiedPrincipalDigest(session.principalID))
+        #expect(audit.allSatisfy { $0.principalDigest == principal })
+        let ledger = try await f.database.configuredPermissionStore().read()
+        #expect(ledger.requests.isEmpty)
+        #expect(await http.controlSessions().allSatisfy { $0.fullAccessConsent == nil })
+        #expect(try f.database.clientTrusts().isEmpty)
+        #expect(!audit.contains { $0.capabilityID.hasPrefix("control.full-access.") })
+        let encodedAudit = String(decoding: try JSONEncoder().encode(audit), as: UTF8.self)
+        #expect(!logs.entries.isEmpty)
+        for secret in [accessToken, privateContent, privateOutput] {
+          #expect(!encodedAudit.contains(secret), "Audit rows must omit fixture secrets")
+          #expect(
+            !logs.entries.contains { $0.contains(secret) }, "HTTP logs must omit fixture secrets")
+        }
         print(
           "WORKTREE_HTTP managed=\(managed) session=1 approvals=0 lifecycle=complete build=passed")
         await client.disconnect()
@@ -154,7 +204,8 @@ struct WorktreeHTTPAcceptanceTests {
   @Test(arguments: [false, true])
   func backgroundBuildSurvivesAuthenticatedReconnect(managed: Bool) async throws {
     let f = try FixedHostFixture(
-      fullAccess: false, lifecycle: true, caller: .cloudflareTunnel, gitExecutable: gitExecutable)
+      fullAccess: false, lifecycle: true, caller: .cloudflareTunnel, gitExecutable: gitExecutable,
+      managed: managed)
     try await f.run { f in
       try await preparePackage(f)
       let app = managed ? try await GatewayManagedHostFixture(f) : nil
@@ -182,22 +233,55 @@ struct WorktreeHTTPAcceptanceTests {
           client, "shell.spawn", id,
           [
             "command": .string(
-              "set -e; echo BUILD_STARTED; sleep 5; /usr/bin/swift build --build-system native --disable-sandbox --scratch-path \"$TMPDIR/build\"; /usr/bin/swift test --build-system native --disable-sandbox --scratch-path \"$TMPDIR/build\"; echo BUILD_FINISHED"
+              "set -e; echo BUILD_STARTED; echo STDERR_STARTED >&2; sleep 5; /usr/bin/swift build --build-system native --disable-sandbox --scratch-path \"$TMPDIR/build\"; /usr/bin/swift test --build-system native --disable-sandbox --scratch-path \"$TMPDIR/build\"; echo BUILD_FINISHED"
             ),
             "shell": .string("/bin/sh"), "timeout_ms": .integer(180_000),
           ])
         let sessionID = try #require(started["session_id"]?.stringValue)
-        let initial = try await call(client, "shell.read", id, ["session_id": .string(sessionID)])
+        var initial = try await call(client, "shell.read", id, ["session_id": .string(sessionID)])
+        let deadline = ContinuousClock.now + .seconds(10)
+        while initial["stdout"]?.objectValue?["text"]?.stringValue?.contains("BUILD_STARTED")
+          != true
+          || initial["stderr"]?.objectValue?["text"]?.stringValue?.contains("STDERR_STARTED")
+            != true
+        {
+          try #require(ContinuousClock.now < deadline)
+          try await Task.sleep(for: .milliseconds(20))
+          initial = try await call(client, "shell.read", id, ["session_id": .string(sessionID)])
+        }
         #expect(initial["is_running"] == .bool(true))
+        let stdout = try #require(initial["stdout"]?.objectValue?["next_cursor"]?.intValue)
+        let stderr = try #require(initial["stderr"]?.objectValue?["next_cursor"]?.intValue)
+        #expect(stdout > 0 && stderr > 0)
         let executionID = try #require(initial["execution_id"]?.stringValue)
         await client.disconnect()
         client = try await GatewayClientSession.connectHTTP(
           endpoint: endpoint, accessToken: "reconnect-fixture")
         let second = try #require(await http.controlSessions().only)
         #expect(first.id != second.id && first.principalID == second.principalID)
-        let resumed = try await call(client, "shell.read", id, ["session_id": .string(sessionID)])
+        let resumed = try await call(
+          client, "shell.read", id,
+          [
+            "session_id": .string(sessionID), "stdout_cursor": .integer(Int64(stdout)),
+            "stderr_cursor": .integer(Int64(stderr)),
+          ])
         #expect(resumed["execution_id"]?.stringValue == executionID)
-        try await readBuild(client, projectID: id, sessionID: sessionID)
+        var output = ""
+        for (key, cursor) in [("stdout", stdout), ("stderr", stderr)] {
+          let stream = try #require(resumed[key]?.objectValue)
+          #expect(stream["requested_cursor"] == .integer(Int64(cursor)))
+          #expect(stream["start_cursor"] == .integer(Int64(cursor)))
+          #expect(stream["missed_bytes"] == .bool(false))
+          output += initial[key]?.objectValue?["text"]?.stringValue ?? ""
+          output += stream["text"]?.stringValue ?? ""
+        }
+        try await readBuild(
+          client, projectID: id, sessionID: sessionID,
+          stdoutCursor: Int64(
+            try #require(resumed["stdout"]?.objectValue?["next_cursor"]?.intValue)),
+          stderrCursor: Int64(
+            try #require(resumed["stderr"]?.objectValue?["next_cursor"]?.intValue)),
+          priorOutput: output)
         _ = try await call(client, "git.worktree_remove", id)
         print("WORKTREE_HTTP managed=\(managed) reconnect=true same_execution=true completed=true")
         await client.disconnect()
@@ -253,12 +337,13 @@ struct WorktreeHTTPAcceptanceTests {
     return result
   }
 
-  private func readBuild(_ client: GatewayClientSession, projectID: String, sessionID: String)
-    async throws
-  {
-    var stdout: Int64 = 0
-    var stderr: Int64 = 0
-    var output = ""
+  private func readBuild(
+    _ client: GatewayClientSession, projectID: String, sessionID: String,
+    stdoutCursor: Int64 = 0, stderrCursor: Int64 = 0, priorOutput: String = ""
+  ) async throws {
+    var stdout = stdoutCursor
+    var stderr = stderrCursor
+    var output = priorOutput
     var reads = 0
     var sawRunning = false
     let deadline = ContinuousClock.now + .seconds(180)
@@ -279,7 +364,8 @@ struct WorktreeHTTPAcceptanceTests {
       }
       if value["is_running"] == .bool(false) {
         try #require(value["exit_code"] == .integer(0), "\(value)\n\(output)")
-        #expect(output.contains("BUILD_STARTED") && output.contains("BUILD_FINISHED"))
+        #expect(output.components(separatedBy: "BUILD_STARTED").count == 2)
+        #expect(output.components(separatedBy: "BUILD_FINISHED").count == 2)
         #expect(sawRunning && reads > 1)
         return
       }
@@ -292,4 +378,28 @@ struct WorktreeHTTPAcceptanceTests {
 
 extension Array {
   fileprivate var only: Element? { count == 1 ? first : nil }
+}
+
+private final class WorktreeAcceptanceLogs: @unchecked Sendable {
+  private let lock = NSLock()
+  private var messages: [String] = []
+  var entries: [String] { lock.withLock { messages } }
+  var logger: Logger { Logger(label: "worktree-acceptance", factory: { _ in Handler(logs: self) }) }
+  private func append(_ message: String) { lock.withLock { messages.append(message) } }
+
+  private struct Handler: LogHandler {
+    let logs: WorktreeAcceptanceLogs
+    var metadata: Logger.Metadata = [:]
+    var logLevel: Logger.Level = .trace
+    subscript(metadataKey key: String) -> Logger.Metadata.Value? {
+      get { metadata[key] }
+      set { metadata[key] = newValue }
+    }
+    func log(
+      level: Logger.Level, message: Logger.Message, metadata: Logger.Metadata?,
+      source: String, file: String, function: String, line: UInt
+    ) {
+      logs.append("\(message) \(self.metadata) \(metadata ?? [:])")
+    }
+  }
 }

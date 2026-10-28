@@ -8,6 +8,7 @@ import ComputerMCPPlatformDarwin
 import ComputerMCPTestSupport
 import ComputerMCPTunnels
 import Foundation
+import Testing
 
 @testable import ComputerMCPConfiguration
 @testable import ComputerMCPControlPlane
@@ -16,6 +17,12 @@ import Foundation
 struct GatewayManagedHostFixture {
   let control: AppControlPlaneService
   let service: AppGatewayService
+
+  static func directories(root: URL) -> AppControlPlaneServiceDirectories {
+    AppControlPlaneServiceDirectories(
+      applicationSupport: root.appendingPathComponent("app"),
+      logs: root.appendingPathComponent("logs"))
+  }
 
   init(_ fixture: FixedHostFixture, database reopenedDatabase: GatewayDatabase? = nil) async throws
   {
@@ -28,10 +35,13 @@ struct GatewayManagedHostFixture {
     root: URL, configuration: GatewayConfiguration, database: GatewayDatabase,
     platform: PlatformServices
   ) async throws {
-    let directories = AppControlPlaneServiceDirectories(
-      applicationSupport: root.appendingPathComponent("app"),
-      logs: root.appendingPathComponent("logs"))
+    let directories = Self.directories(root: root)
     try directories.prepare()
+    #expect(
+      database.fileURL?.resolvingSymlinksInPath().path
+        == directories.database.resolvingSymlinksInPath().path)
+    var platform = platform
+    platform.hostDataPaths.formUnion(directories.hostDataPaths)
     let secrets = try KeychainSecretStore(adapter: MemoryKeychainAdapter())
     let permissions = try database.permissionRuntime(platform: platform)
     let owner = try GatewayPermissionOwner(

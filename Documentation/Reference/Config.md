@@ -498,7 +498,8 @@ access_token_env = "COMPUTER_MCP_HTTP_ACCESS_TOKEN"
 
 Worktree lifecycle tools use durable host storage: App distribution storage or
 regions beside a standalone database. Memory-only hosts omit the routes. Enable
-`git.worktree_add`, `git.worktree_list`, `git.worktree_remove` and `git.merge` in
+`git.worktree_add`, `git.worktree_list`, `git.worktree_remove`, `git.merge` and
+`git.branch_delete` in
 `[builtin].enabled`; the defaults already include them. The source Project grant
 and effective sandbox settings apply to derived projects on every call. Shell
 execution also requires `[policy].shell_enabled = true` and its declared limits
@@ -507,7 +508,9 @@ and permissions. See [Worktrees](Worktrees.md).
 New manifests reject `git.worktrees` and the two retired delivery builtin IDs.
 During installed-manifest upgrade, `git.worktrees` becomes `git.worktree_list`;
 `delivery.apply` and `delivery.scopes.list` are removed from the enabled builtin
-list and reported in the upgrade result. The frozen permission migration catalog
+list. The startup report identifies removed IDs; see
+[Permission store activation](#permission-store-activation) for diagnostic channels.
+The frozen permission migration catalog
 retains its historical classifications. Stored configuration revisions are unchanged.
 
 A `delivery` configuration section still fails with worktree replacement guidance:
@@ -522,7 +525,11 @@ aliases and plugin origins; it does not launch providers. The transaction binds
 converted authority to the external epoch, advances revisions, clears saved
 connection consent and removes the obsolete ticket table. Derived-project source
 relationships preserve ownership and receipt provenance. A completed activation
-is idempotent, including after later profile edits.
+is idempotent, including after later profile edits. A non-empty upgrade report
+appears once at activation: in the App's `computer-mcp.jsonl` log
+(`permissions.upgrade`), or on standalone CLI stderr. It lists removed builtin
+IDs and the total number of dropped grants; grant payloads and profile details
+are omitted. Subsequent startup without an upgrade emits no notice.
 Project network access starts at `none`, including when the old profile enabled
 `file.download`. A destination that needs access produces a request; an Always
 answer adds that host to the project's `custom` list.

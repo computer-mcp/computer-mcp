@@ -121,7 +121,8 @@ struct FixedHostFixture {
   init(
     fullAccess: Bool = true, lifecycle: Bool = false, callback: Bool = false,
     nestedAccess: PermissionValue? = nil, caller: GatewayCallerKind = .localMCP,
-    gitExecutable: String? = nil, allowedCallers: Set<GatewayCallerKind>? = nil
+    gitExecutable: String? = nil, managed: Bool = false,
+    allowedCallers: Set<GatewayCallerKind>? = nil
   ) throws {
     let location = URL(fileURLWithPath: "/private/tmp/cm-fixed-\(UUID())")
     try FileManager.default.createDirectory(at: location, withIntermediateDirectories: true)
@@ -129,7 +130,13 @@ struct FixedHostFixture {
     project = root.appendingPathComponent("project")
     try FileManager.default.createDirectory(at: project, withIntermediateDirectories: false)
     try Data("original".utf8).write(to: project.appendingPathComponent("value.txt"))
-    database = try fixturePermissionDatabase(path: root.appendingPathComponent("state.sqlite").path)
+    let directories = managed ? GatewayManagedHostFixture.directories(root: root) : nil
+    try directories?.prepare()
+    let databasePath = directories?.database ?? root.appendingPathComponent("state.sqlite")
+    database = try GatewayDatabase(
+      path: databasePath.path, applicationSupportRoot: directories?.applicationSupport)
+    _ = database.permissionStore(
+      counter: TestAuthorizationEpochCounter.shared(forDatabasePath: databasePath.path))
     var permissions = fixturePermissions([.project("fixture"): .granted(.write)])
     if let nestedAccess { try permissions.set(.granted(nestedAccess), for: .project("nested")) }
     let grant = ProfileGrant(
@@ -155,6 +162,7 @@ struct FixedHostFixture {
       launcher: testExecutionLauncher(observations: observations))
     services.permissionPolicyReader = TestManagedPolicyReader()
     if let gitExecutable { services = fixturePlatformWithGit(services, executable: gitExecutable) }
+    if let directories { services.hostDataPaths.formUnion(directories.hostDataPaths) }
     platform = services
     session = GatewayControlSession(
       principalID: "fixed-client", profileID: grant.id, caller: caller, database: database,

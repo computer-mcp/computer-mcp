@@ -76,17 +76,21 @@ struct StandaloneRuntimeOptions: ParsableArguments {
     return platform
   }
 
-  func loadConfiguration(database: GatewayDatabase, platform: PlatformServices) async throws
-    -> GatewayConfiguration
-  {
+  func loadConfiguration(
+    database: GatewayDatabase, platform: PlatformServices,
+    diagnosticOutput: FileHandle = .standardError
+  ) async throws -> GatewayConfiguration {
     let manifestURL = URL(fileURLWithPath: config).standardizedFileURL
     let configuration = try GatewayConfiguration.load(
       path: manifestURL.path,
       knownPluginMCPServerIDs: database.pluginStoreSnapshot().knownMCPRegistrationIDs)
     guard database.fileURL != nil else { return configuration }
-    _ = try database.activatePermissionMigration(
+    let report = try database.activatePermissionMigration(
       manifest: String(contentsOf: manifestURL, encoding: .utf8),
       baseURL: manifestURL.deletingLastPathComponent(), applications: platform.applications)
+    if let message = report?.startupDiagnostic {
+      try? diagnosticOutput.write(contentsOf: Data((message + "\n").utf8))
+    }
     let ids = Set(GatewayProfileID.builtIns + configuration.profiles.map(\.id))
     let seeds = ids.sorted { $0.rawValue < $1.rawValue }.map { configuration.profileGrant(for: $0) }
     try database.bootstrapPermissionProfiles(

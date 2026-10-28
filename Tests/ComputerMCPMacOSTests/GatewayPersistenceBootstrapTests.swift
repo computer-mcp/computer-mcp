@@ -22,7 +22,7 @@ struct GatewayPersistenceBootstrapTests {
     composition: Composition, fullAccess: Bool
   ) async throws {
     let f = try FixedHostFixture(
-      fullAccess: fullAccess, lifecycle: true, caller: .cloudflareTunnel,
+      fullAccess: fullAccess, lifecycle: true, caller: .cloudflareTunnel, managed: true,
       allowedCallers: [.cloudflareTunnel, .localMCP, .localCLI])
     try await f.run { f in
       try await f.initializeRepository()
@@ -31,7 +31,8 @@ struct GatewayPersistenceBootstrapTests {
 
       let reopened = f.database
       let manifest = f.root.appendingPathComponent("standalone.toml").path
-      let destination = journalDirectory(composition, root: f.root, manifest: manifest)
+      let destination = journalDirectory(
+        composition, root: f.root, manifest: manifest, database: try #require(f.database.fileURL))
       try FileManager.default.createDirectory(at: destination, withIntermediateDirectories: true)
       let restoredFile = destination.appendingPathComponent(sessionID + ".json")
       try bytes.write(to: restoredFile)
@@ -195,7 +196,9 @@ struct GatewayPersistenceBootstrapTests {
       value.objectValue?["structuredContent"]?.objectValue?["result"]?.objectValue)
   }
 
-  private func journalDirectory(_ composition: Composition, root: URL, manifest: String) -> URL {
+  private func journalDirectory(
+    _ composition: Composition, root: URL, manifest: String, database: URL
+  ) -> URL {
     switch composition {
     case .appSocket: return root.appendingPathComponent("app/Executions/Socket")
     case .administration: return root.appendingPathComponent("app/Executions/Administration")
@@ -206,9 +209,9 @@ struct GatewayPersistenceBootstrapTests {
         directory = root.appendingPathComponent("app/Executions/HTTP")
         owner = "http:bootstrap"
       } else {
-        directory = root.appendingPathComponent("Executions")
+        directory = database.deletingLastPathComponent().appendingPathComponent("Executions")
         owner =
-          root.appendingPathComponent("state.sqlite").standardizedFileURL.path
+          database.standardizedFileURL.path
           + (composition == .stdio ? ":stdio:" : ":http:")
           + URL(fileURLWithPath: manifest).standardizedFileURL.path
           + (composition == .stdio ? "" : ":0")

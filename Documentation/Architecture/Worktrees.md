@@ -74,6 +74,6 @@ references and their completed deletion-journal records retain stable UUID
 identities after branch protection is released, including pre-rebase commits and
 tags pointing at integrated commits. Reusing a branch name does not acquire or
 discard those records. Discarding a generation's unmerged recovery records
-requires explicit Full access `force` deletion or later owner cleanup; sandboxed
-deletion cannot force. External Git does not honor the host's advisory lock, so
+requires explicit Full access `force` deletion; sandboxed deletion cannot force.
+External Git does not honor the host's advisory lock, so
 identity and expected-value checks remain necessary.

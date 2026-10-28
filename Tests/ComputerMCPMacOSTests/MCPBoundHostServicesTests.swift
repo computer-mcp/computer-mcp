@@ -4,6 +4,7 @@ import ComputerMCPPermissions
 import ComputerMCPPersistence
 import ComputerMCPTestSupport
 import ComputerMCPTransport
+import ComputerMCPWorktrees
 import CryptoKit
 import Darwin
 import Foundation
@@ -1266,19 +1267,30 @@ private final class HostAuthorityFixture: @unchecked Sendable {
     worktrees: Bool = false, additionalProject: Bool = false,
     requiresControlSession: Bool = false, multiplexed: Bool = false,
     verificationBarrier: HostVerificationBarrier? = nil,
-    worktreeStorage: WorktreeStorage = .project, callbackTimeout: TimeInterval = 10
+    worktreeStorage: WorktreeStorage = .project, callbackTimeout: TimeInterval = 10,
+    storageDirectory: URL? = nil
   ) throws {
     peer = HostServiceProbe(multiplexed: multiplexed, callbackTimeout: callbackTimeout)
-    storageRoot = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    storageRoot =
+      storageDirectory
+      ?? FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
     root = storageRoot.appendingPathComponent("scope")
     managedProjectRoot =
       (worktreeStorage == .project ? root : storageRoot)
       .appendingPathComponent("managed").standardizedFileURL
     try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
-    connection = try GatewayDatabaseConnection(inMemory: ())
-    database = GatewayDatabase(connection: connection)
-    let project = RegisteredProject(id: "scope", displayName: "Fixture", rootPath: root.path)
-    try database.saveProject(project)
+    if storageDirectory != nil {
+      database = try GatewayDatabase(path: storageRoot.appendingPathComponent("host.sqlite").path)
+      _ = database.permissionStore(counter: WorktreeAcceptanceCounter(directory: storageRoot))
+      connection = database.connection
+    } else {
+      connection = try GatewayDatabaseConnection(inMemory: ())
+      database = GatewayDatabase(connection: connection)
+    }
+    let project =
+      try database.project(id: "scope")
+      ?? RegisteredProject(id: "scope", displayName: "Fixture", rootPath: root.path)
+    if try database.project(id: "scope") == nil { try database.saveProject(project) }
     var projects = [project]
     if additionalProject {
       let otherRoot = storageRoot.appendingPathComponent("other")
@@ -1287,14 +1299,18 @@ private final class HostAuthorityFixture: @unchecked Sendable {
       try database.saveProject(other)
       projects.append(other)
     }
-    let profile = ProfileGrant(
-      id: .chatGPTOperate,
-      permissions: fixturePermissions([
-        .project("scope"): .granted(.write),
-        .plugin("*"): .granted(.use), .mcpServer("probe"): .granted(.all),
-      ]),
-      fullAccess: true, allowedCallers: [.secureTunnel])
-    try database.saveProfile(profile)
+    let profile =
+      try database.profiles().first { $0.id == .chatGPTOperate }
+      ?? ProfileGrant(
+        id: .chatGPTOperate,
+        permissions: fixturePermissions([
+          .project("scope"): .granted(.write),
+          .plugin("*"): .granted(.use), .mcpServer("probe"): .granted(.all),
+        ]),
+        fullAccess: true, allowedCallers: [.secureTunnel])
+    if try database.profiles().allSatisfy({ $0.id != profile.id }) {
+      try database.saveProfile(profile)
+    }
     let trace = GatewayTransportTrace(transport: "gateway_socket", socketConnectionID: "connection")
     let context =
       !requiresControlSession
@@ -1630,80 +1646,95 @@ private final class HostVerificationBarrier: @unchecked Sendable {
     "Build the companion fixture in an isolated plugin checkout to run consumer acceptance."))
 struct PluginWorktreeConsumerTests {
   @Test(arguments: [false, true])
-  func unchangedConsumerRemovesRealWorktreeThroughLiveHost(generic: Bool) async throws {
-    let fixture = try HostAuthorityFixture(callbackTimeout: PluginConsumerTiming.invocationSeconds)
-    defer { fixture.remove() }
-    let source = fixture.root.resolvingSymlinksInPath()
-    let managed = source.deletingLastPathComponent().appendingPathComponent("managed")
-    try FileManager.default.createDirectory(at: managed, withIntermediateDirectories: false)
-    let git = PluginWorktreeConsumerNativeGit(home: source)
-    _ = try git.setup(["init", "-q"], at: source)
-    _ = try git.setup(
-      [
-        "-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid",
-        "-c", "commit.gpgsign=false", "commit", "--allow-empty", "-qm", "test: baseline",
-      ], at: source)
-    let id = UUID().uuidString.lowercased()
-    let component = SHA256.hash(data: Data("scope".utf8)).prefix(12).map {
-      String(format: "%02x", $0)
-    }.joined()
-    let target = managed.appendingPathComponent(component).appendingPathComponent(id)
-    try FileManager.default.createDirectory(
-      at: target.deletingLastPathComponent(), withIntermediateDirectories: true)
-    _ = try git.setup(["worktree", "add", "-q", "-b", "fixture-" + id, target.path], at: source)
-    let head = try git.setup(["rev-parse", "HEAD"], at: target)
-      .stdout.trimmingCharacters(in: .whitespacesAndNewlines)
-    let captured = try #require(fixture.peer.context(for: "scope"))
-    let scoped = MCPHostContext(
-      runtimeID: captured.launchMetadata.runtimeID,
-      context: .init(
-        caller: captured.launchMetadata.caller, profileID: captured.launchMetadata.profileID,
-        transportTrace: captured.launchMetadata.transportTrace,
-        trustedPrincipalID: captured.launchMetadata.principalID),
-      projectID: "scope", rootURL: source, readOnly: false, tools: captured.tools,
-      managedProjectRoot: managed)
-    let service = MCPBoundHostServices(
-      database: fixture.database, directory: try #require(captured.tools), context: scoped,
-      origin: "probe", gitExecutable: "/usr/bin/git", commandRunner: git)
-    let now = Date().timeIntervalSinceReferenceDate
-    let record: [String: JSONValue] = [
-      "id": .string(id), "source_workspace_id": .string("scope"),
-      "workspace_id": .string("codex-worktree-" + id),
-      "source_repository_root": .string(source.path),
-      "git_common_directory": .string(source.appendingPathComponent(".git").path),
-      "path": .string(target.path), "branch": .string("fixture-" + id),
-      "start_point": .string("HEAD"), "head_oid": .string(head), "agent_id": .string("fixture"),
-      "parent_lease_id": .string("fixture-parent"), "profile_id": .string("chatgpt-operate"),
-      "principal_id": .string("fixture-principal"), "caller": .string("secure-tunnel"),
-      "ttl_seconds": .integer(600), "state": .string("provisioning"), "revision": .integer(2),
-      "created_at": .number(now), "updated_at": .number(now),
-    ]
-    let owner: JSONValue = .object([
-      "workspace_id": .string("scope"), "profile_id": .string("chatgpt-operate"),
-      "principal_id": .string("fixture-principal"), "caller": .string("secure-tunnel"),
-      "transport": .string("gateway_socket"), "socket_connection_id": .string("connection"),
-    ])
-    let bridge = PluginWorktreeConsumerHostBridge(
-      root: source, managed: managed, service: service, database: fixture.database, owner: owner)
-    do {
-      let registered = try await fixture.duringInvocation(
+  func unchangedConsumerProvisionsAndRemovesAfterLedgerUpgrade(generic: Bool) async throws {
+    let storage = URL(fileURLWithPath: "/private/tmp/cm-consumer-\(UUID())")
+    defer { try? FileManager.default.removeItem(at: storage) }
+    try FileManager.default.createDirectory(at: storage, withIntermediateDirectories: false)
+    try await runHostPhase("provision", storage: storage, generic: generic)
+    let provisioned = try JSONDecoder().decode(
+      Provisioned.self, from: Data(contentsOf: storage.appendingPathComponent("provisioned.json")))
+    // Encode the real receipt in the historical ledger after its host process exits.
+    try prepareHistoricalLedger(storage: storage, receipt: provisioned.receipt)
+    try await runHostPhase("remove", storage: storage, generic: generic)
+  }
+
+  private struct Provisioned: Codable {
+    let record: [String: JSONValue]
+    let receipt: Data
+  }
+
+  private struct HostPhase: Codable {
+    let mode: String
+    let storage: URL
+    let generic: Bool
+  }
+
+  @Test(
+    .enabled(
+      if: ProcessInfo.processInfo.environment["COMPUTER_MCP_TEST_CONSUMER_HOST_PHASE"] != nil))
+  func consumerHostPhase() async throws {
+    let input = try #require(
+      ProcessInfo.processInfo.environment["COMPUTER_MCP_TEST_CONSUMER_HOST_PHASE"])
+    let phase = try JSONDecoder().decode(
+      HostPhase.self, from: Data(contentsOf: URL(fileURLWithPath: input)))
+    if phase.mode == "provision" {
+      let value = try await provision(storage: phase.storage, generic: phase.generic)
+      try JSONEncoder().encode(value).write(
+        to: phase.storage.appendingPathComponent("provisioned.json"))
+    } else {
+      try #require(phase.mode == "remove")
+      let value = try JSONDecoder().decode(
+        Provisioned.self,
+        from: Data(contentsOf: phase.storage.appendingPathComponent("provisioned.json")))
+      try await remove(storage: phase.storage, generic: phase.generic, provisioned: value)
+    }
+  }
+
+  private func provision(storage: URL, generic: Bool) async throws -> Provisioned {
+    return try await withHost(storage) { fixture, bridge in
+      let plan = try #require(try await bridge.run(mode: "plan", invocation: nil))
+      let id = try #require(plan["id"]?.stringValue)
+      let result = try await fixture.duringInvocation(
         "fixture.provision",
         [
           "plan_id": .string(id), "expected_revision": .integer(1),
           "confirm_provision": .bool(true),
-        ],
-        generic: generic
+        ], generic: generic
       ) { _, invocation in
-        try await bridge.run(mode: "register", record: record, invocation: invocation)
+        _ = try await bridge.run(mode: "provision", record: plan, invocation: invocation)
         return .object(["isError": .bool(false)])
       }
-      #expect(registered.objectValue?["isError"] != .bool(true))
-      #expect(try fixture.database.derivedProjectRegistration(id: "codex-worktree-" + id) != nil)
-      var removal = record
-      removal["state"] = .string("removal_planned")
-      removal["revision"] = .integer(4)
-      removal["plan_expires_at"] = .number(now + 600)
-      let planned = removal
+      try #require(result.objectValue?["isError"] != .bool(true), "\(result)")
+      let record = try #require(
+        try JSONDecoder().decode(
+          JSONValue.self, from: Data(contentsOf: bridge.outputURL(mode: "provision"))
+        ).objectValue)
+      let projectID = try #require(record["workspace_id"]?.stringValue)
+      let derived = try #require(
+        try fixture.database.derivedProjects().first { $0.projectID == projectID })
+      guard case .plugin(let receipt) = derived.provenance else {
+        throw CocoaError(.coderInvalidValue)
+      }
+      return Provisioned(record: record, receipt: receipt)
+    }
+  }
+
+  private func remove(storage: URL, generic: Bool, provisioned: Provisioned) async throws {
+    try await withHost(storage) { fixture, bridge in
+      let record = provisioned.record
+      let projectID = try #require(record["workspace_id"]?.stringValue)
+      let derived = try #require(
+        try fixture.database.derivedProjects().first { $0.projectID == projectID })
+      #expect(derived.provenance == .plugin(receipt: provisioned.receipt))
+      let registration = try #require(
+        try fixture.database.derivedProjectRegistration(id: projectID))
+      #expect(
+        try registration
+          == JSONDecoder().decode(MCPDerivedProjectRegistration.self, from: provisioned.receipt))
+      let plan = try #require(
+        try await bridge.run(mode: "planRemoval", record: record, invocation: nil))
+      _ = try await bridge.run(mode: "stale", record: plan, invocation: nil)
+      let id = try #require(record["id"]?.stringValue)
       let removed = try await fixture.duringInvocation(
         "fixture.remove",
         [
@@ -1717,18 +1748,153 @@ struct PluginWorktreeConsumerTests {
         #expect(
           call.admission.upstreamName == (generic ? "mcp.tools.call" : "adapter.fixture.remove"))
         #expect(call.admission.authorizationID != nil && !call.requestLeaseIDs.isEmpty)
-        try await bridge.run(mode: "remove", record: planned, invocation: invocation)
+        _ = try await bridge.run(mode: "remove", record: plan, invocation: invocation)
         return .object(["isError": .bool(false)])
       }
-      #expect(removed.objectValue?["isError"] != .bool(true))
-      #expect(!FileManager.default.fileExists(atPath: target.path))
-      #expect(try fixture.database.derivedProjectRegistration(id: "codex-worktree-" + id) == nil)
-      #expect(try fixture.database.project(id: "codex-worktree-" + id) == nil)
-      let inventory = try git.setup(["worktree", "list", "--porcelain", "-z"], at: source).stdout
-      #expect(!inventory.contains("worktree " + target.path))
-      try await bridge.run(mode: "replay", record: planned, invocation: nil)
+      try #require(removed.objectValue?["isError"] != .bool(true), "\(removed)")
+      let path = try #require(record["path"]?.stringValue)
+      #expect(!FileManager.default.fileExists(atPath: path))
+      #expect(try fixture.database.derivedProjectRegistration(id: projectID) == nil)
+      #expect(try fixture.database.project(id: projectID) == nil)
+      let git = PluginWorktreeConsumerNativeGit(home: fixture.root)
+      #expect(
+        try !git.setup(["worktree", "list", "--porcelain", "-z"], at: fixture.root).stdout.contains(
+          "worktree " + path))
+      _ = try await bridge.run(mode: "replay", record: plan, invocation: nil)
+      print(
+        "PLUGIN_CONSUMER generic=\(generic) real_provision=true ledger_reopened=true historical_upgrade=true exact_receipt=true removal=true stale_denied=true replay_denied=true"
+      )
+    }
+  }
+
+  private func runHostPhase(_ mode: String, storage: URL, generic: Bool) async throws {
+    let spec = storage.appendingPathComponent(mode + "-host.json")
+    try JSONEncoder().encode(HostPhase(mode: mode, storage: storage, generic: generic)).write(
+      to: spec)
+    let log = storage.appendingPathComponent(mode + "-host.log")
+    FileManager.default.createFile(atPath: log.path, contents: nil)
+    let output = try FileHandle(forWritingTo: log)
+    defer { try? output.close() }
+    let process = Process()
+    process.executableURL = try #require(Bundle.main.executableURL)
+    let bundle = try #require(Bundle(for: ConsumerHostBundleMarker.self).executableURL)
+    process.arguments = [
+      "--test-bundle-path", bundle.path, bundle.path, "--testing-library", "swift-testing",
+      "--filter", "PluginWorktreeConsumerTests/consumerHostPhase",
+    ]
+    var environment = ProcessInfo.processInfo.environment
+    environment["COMPUTER_MCP_TEST_CONSUMER_HOST_PHASE"] = spec.path
+    process.environment = environment
+    process.standardInput = FileHandle.nullDevice
+    process.standardOutput = output
+    process.standardError = output
+    try process.run()
+    defer {
+      if process.isRunning { Darwin.kill(process.processIdentifier, SIGKILL) }
+      process.waitUntilExit()
+    }
+    let deadline = ContinuousClock.now + .seconds(180)
+    while process.isRunning && ContinuousClock.now < deadline {
+      try await Task.sleep(for: .milliseconds(20))
+    }
+    try #require(!process.isRunning, "Consumer host phase exceeded its deadline")
+    let text = try String(contentsOf: log, encoding: .utf8)
+    print("CONSUMER_HOST \(mode):\n\(text)")
+    try #require(process.terminationStatus == 0, "\(text)")
+  }
+
+  @Test func unchangedConsumerRollsBackAfterHostRegistrationFailure() async throws {
+    let storage = URL(fileURLWithPath: "/private/tmp/cm-consumer-\(UUID())")
+    defer { try? FileManager.default.removeItem(at: storage) }
+    try await withHost(storage) { fixture, bridge in
+      let plan = try #require(try await bridge.run(mode: "plan", invocation: nil))
+      let id = try #require(plan["id"]?.stringValue)
+      let result = try await fixture.duringInvocation(
+        "fixture.provision",
+        [
+          "plan_id": .string(id), "expected_revision": .integer(1),
+          "confirm_provision": .bool(true),
+        ]
+      ) { _, invocation in
+        _ = try await bridge.run(mode: "rollback", record: plan, invocation: invocation)
+        return .object(["isError": .bool(false)])
+      }
+      try #require(result.objectValue?["isError"] != .bool(true), "\(result)")
+      #expect(try fixture.database.derivedProjects().isEmpty)
+      #expect(!FileManager.default.fileExists(atPath: try #require(plan["path"]?.stringValue)))
+      let branch = try #require(plan["branch"]?.stringValue)
+      let git = PluginWorktreeConsumerNativeGit(home: fixture.root)
+      #expect(
+        try git.setup(["for-each-ref", "refs/heads/" + branch], at: fixture.root).stdout.isEmpty)
+      print(
+        "PLUGIN_CONSUMER rollback=true registration_removed=true worktree_removed=true exact_branch_removed=true"
+      )
+    }
+  }
+
+  private func prepareHistoricalLedger(storage: URL, receipt: Data) throws {
+    let registration = try JSONDecoder().decode(MCPDerivedProjectRegistration.self, from: receipt)
+    let writer = try DatabaseQueue(path: storage.appendingPathComponent("host.sqlite").path)
+    defer { try? writer.close() }
+    try writer.write { sql in
+      try #require(try Int.fetchOne(sql, sql: "SELECT count(*) FROM derivedProjects") == 1)
+      try #require(
+        try Int.fetchOne(sql, sql: "SELECT count(*) FROM protectedWorktreeBranches") == 0)
+      try sql.execute(
+        sql: """
+          DROP TABLE derivedProjects;
+          DROP TABLE protectedWorktreeBranches;
+          CREATE TABLE permissionDerivedProjects (projectID TEXT PRIMARY KEY, sourceProjectID TEXT NOT NULL, payload BLOB NOT NULL);
+          DELETE FROM grdb_migrations WHERE identifier = 'derived-project-ledger';
+          """)
+      try sql.execute(
+        sql: "INSERT INTO permissionDerivedProjects VALUES (?, ?, ?)",
+        arguments: [registration.project.id, registration.sourceProjectID, receipt])
+    }
+  }
+
+  private func withHost<Result: Sendable>(
+    _ storage: URL,
+    _ body: (HostAuthorityFixture, PluginWorktreeConsumerHostBridge) async throws -> Result
+  ) async throws -> Result {
+    let fixture = try HostAuthorityFixture(
+      callbackTimeout: PluginConsumerTiming.invocationSeconds, storageDirectory: storage)
+    let source = fixture.root.resolvingSymlinksInPath()
+    let managed = source.deletingLastPathComponent().appendingPathComponent("managed")
+    try FileManager.default.createDirectory(at: managed, withIntermediateDirectories: true)
+    let git = PluginWorktreeConsumerNativeGit(home: source)
+    if !FileManager.default.fileExists(atPath: source.appendingPathComponent(".git").path) {
+      _ = try git.setup(["init", "-q"], at: source)
+      _ = try git.setup(
+        [
+          "-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid", "-c",
+          "commit.gpgsign=false", "commit", "--allow-empty", "-qm", "test: baseline",
+        ], at: source)
+    }
+    let captured = try #require(fixture.peer.context(for: "scope"))
+    let scoped = MCPHostContext(
+      runtimeID: captured.launchMetadata.runtimeID,
+      context: .init(
+        caller: captured.launchMetadata.caller, profileID: captured.launchMetadata.profileID,
+        transportTrace: captured.launchMetadata.transportTrace,
+        trustedPrincipalID: captured.launchMetadata.principalID),
+      projectID: "scope", rootURL: source, readOnly: false, tools: captured.tools,
+      managedProjectRoot: managed)
+    let service = MCPBoundHostServices(
+      database: fixture.database, directory: try #require(captured.tools), context: scoped,
+      origin: "probe", gitExecutable: "/usr/bin/git", commandRunner: git)
+    let owner: JSONValue = .object([
+      "workspace_id": .string("scope"), "profile_id": .string("chatgpt-operate"),
+      "principal_id": .string("fixture-principal"), "caller": .string("secure-tunnel"),
+      "transport": .string("gateway_socket"), "socket_connection_id": .string("connection"),
+    ])
+    let bridge = PluginWorktreeConsumerHostBridge(
+      root: source, managed: managed, service: service, database: fixture.database, owner: owner)
+    do {
+      let result = try await body(fixture, bridge)
       await service.close()
       await fixture.close()
+      return result
     } catch {
       await service.close()
       await fixture.close()
@@ -1737,6 +1903,8 @@ struct PluginWorktreeConsumerTests {
   }
 }
 
+private final class ConsumerHostBundleMarker: NSObject {}
+
 private struct PluginWorktreeConsumerHostBridge: Sendable {
   let root: URL
   let managed: URL
@@ -1744,7 +1912,13 @@ private struct PluginWorktreeConsumerHostBridge: Sendable {
   let database: GatewayDatabase
   let owner: JSONValue
 
-  func run(mode: String, record: [String: JSONValue], invocation: InvocationContext?) async throws {
+  func outputURL(mode: String) -> URL {
+    root.deletingLastPathComponent().appendingPathComponent("consumer-" + mode + "-output.json")
+  }
+
+  func run(mode: String, record: [String: JSONValue] = [:], invocation: InvocationContext?)
+    async throws -> [String: JSONValue]?
+  {
     let consumer = try #require(
       ProcessInfo.processInfo.environment["COMPUTER_MCP_TEST_PLUGIN_CONSUMER_WORKTREE"])
     let socketPath = root.deletingLastPathComponent().appendingPathComponent("c.sock").path
@@ -1757,7 +1931,11 @@ private struct PluginWorktreeConsumerHostBridge: Sendable {
     try JSONEncoder().encode(
       JSONValue.object([
         "socket_path": .string(socketPath), "mode": .string(mode), "owner": owner,
-        "worktree": .object(record), "managed_root": .string(managed.path),
+        "worktree": record.isEmpty ? .null : .object(record), "managed_root": .string(managed.path),
+        "source": .string(root.path),
+        "database_path": .string(
+          root.deletingLastPathComponent().appendingPathComponent("consumer.sqlite").path),
+        "output_path": .string(outputURL(mode: mode).path),
       ])
     ).write(to: input)
     let log = root.appendingPathComponent("consumer-" + mode + ".log")
@@ -1800,7 +1978,14 @@ private struct PluginWorktreeConsumerHostBridge: Sendable {
         try #require(call.lifecycle == .running)
         try #require(call.admission.authorizationID != nil && !call.requestLeaseIDs.isEmpty)
       }
-      let result = try await service.call(name: params.name, arguments: args)
+      var result = try await service.call(name: params.name, arguments: args)
+      if mode == "rollback" && params.name == "host.workspaces.register" && result.isError != true {
+        result = .init(
+          content: [
+            .text(text: "fixture failure after registration", annotations: nil, _meta: nil)
+          ],
+          isError: true)
+      }
       await seen.append(params.name, arguments: args, isError: result.isError == true)
       return result
     }
@@ -1818,13 +2003,19 @@ private struct PluginWorktreeConsumerHostBridge: Sendable {
       try #require(process.terminationStatus == 0, "\(mode): \(text)")
       let calls = await seen.calls
       let expected =
-        mode == "register"
+        mode == "provision"
         ? ["host.workspaces.register"]
-        : mode == "remove"
-          ? ["host.workspaces.authorize_removal", "host.workspaces.unregister"]
-          : ["host.workspaces.authorize_removal"]
+        : mode == "rollback"
+          ? ["host.workspaces.register", "host.workspaces.unregister"]
+          : mode == "remove"
+            ? ["host.workspaces.authorize_removal", "host.workspaces.unregister"]
+            : mode == "replay" ? ["host.workspaces.authorize_removal"] : []
       #expect(calls.map(\.name) == expected)
-      #expect(calls.allSatisfy { $0.isError == (mode == "replay") })
+      #expect(
+        calls.allSatisfy {
+          $0.isError
+            == (mode == "replay" || mode == "rollback" && $0.name == "host.workspaces.register")
+        })
       if mode == "remove" {
         #expect(
           calls.map { $0.arguments["worktree"]?.objectValue?["revision"]?.intValue } == [4, 5])
@@ -1834,6 +2025,12 @@ private struct PluginWorktreeConsumerHostBridge: Sendable {
       }
       await transport.disconnect()
       await server.stop()
+      if FileManager.default.fileExists(atPath: outputURL(mode: mode).path) {
+        return try JSONDecoder().decode(
+          JSONValue.self, from: Data(contentsOf: outputURL(mode: mode))
+        ).objectValue
+      }
+      return nil
     } catch {
       await transport.disconnect()
       await server.stop()

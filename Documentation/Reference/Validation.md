@@ -56,13 +56,20 @@ path.
 
 ## Plugin worktree consumer
 
-`PluginWorktreeConsumerTests` runs the unchanged Codex plugin's typed host client
-and removal manager against the current host over standard MCP. It creates a
-private Git repository, registers a derived worktree, removes it through
-`host.workspaces.authorize_removal` and `host.workspaces.unregister`, and refuses
-a callback after its admitted invocation ends. Both alias and generic MCP routes
-must retain live execution-record proof. Git worktree and host registration
-absence are checked independently.
+`PluginWorktreeConsumerTests` runs the unchanged Codex plugin's provision and
+removal managers against the current host over standard MCP. It persists the real
+provisioning receipt, reopens the host ledger from its historical representation,
+checks exact receipt preservation, and removes through
+`host.workspaces.authorize_removal` and `host.workspaces.unregister`. Both alias
+and generic MCP routes must retain live execution-record proof. Separate cases
+cover registration-failure rollback, stale revisions and replay after the live
+invocation ends. Git worktree, branch and host registration cleanup are checked
+independently.
+
+Provision and removal run in separate host test processes. The provisioning host
+exits and is reaped before its receipt is encoded in the historical ledger table;
+the removal host opens and upgrades that database. This uses a real consumer
+receipt in a historical schema fixture, rather than executing a historical host.
 
 In an isolated checkout of the consumer revision under review, copy
 `Tests/ComputerMCPMacOSTests/Fixtures/HostWorktreeConsumerBridgeTests.swift.txt`
@@ -79,6 +86,50 @@ after the run. The consumer process uses private HOME, TMPDIR and database
 state and invokes no vendor model or user App Server. This test validates the
 unchanged consumer/host-service contract. It does not establish plugin enablement,
 delegated-principal launches or installed-App TCC acceptance.
+
+## Host worktree native acceptance
+
+The named **Host worktree HTTP acceptance** invocation is mandatory when accepting
+changes to the worktree lifecycle. It uses isolated repositories and file-backed
+hosts with production permission admission, Darwin execution and HTTP transport.
+Run it for each supported Git binary, recording the host revision, Git version,
+command and result:
+
+```sh
+COMPUTER_MCP_TEST_WORKTREE_HTTP_ACCEPTANCE=1 \
+COMPUTER_MCP_TEST_WORKTREE_GIT=/absolute/path/to/git \
+  /usr/bin/swift test --build-system native --no-parallel \
+  --filter 'WorktreeHTTPAcceptanceTests|WorktreeHTTPAdmissionTests|WorktreeHTTPRestartTests'
+```
+
+The primary create/edit/build/commit/rebase/merge/remove/delete sequence uses one
+session without approval or reconnect, in standalone and App-managed hosts.
+Separate cases cover standing-authority reconnect, foreign principals, expired
+connection consent, and a killed host reopening persisted state. Restart marks
+lost executions interrupted without replay and checks retained commit, tag, tree
+and blob objects after branch deletion and garbage collection. The restart child
+fixture is started only by its parent test.
+
+The named **Host worktree cold build acceptance** runs
+`GatewayWorktreeBuildTests/coldNativePackageBuildAndFilteredTests` with
+`COMPUTER_MCP_WORKTREE_BUILD_SPEC` naming a JSON object containing `source`,
+`mirrors`, `locations`, `swift`, `sdk`, `filter` and `evidence`. `source` is a
+fresh disposable source archive; `mirrors` contains independent local Git mirrors;
+`locations` maps dependency URLs to mirror names. The test copies these into an
+isolated host worktree, launches a native build and the selected tests through
+production execution admission, and uses private home and SwiftPM caches. Run it
+on both the host candidate and a pinned representative plugin. Record dependency
+pins, durations and storage sizes; remove all disposable inputs afterward.
+
+The named **Owner database upgrade acceptance** invocation is
+`OwnerDatabaseUpgradeAcceptanceTests` with `COMPUTER_MCP_TEST_OWNER_DB_COPY` naming
+an explicitly authorized, disposable copy directory containing `gateway.sqlite`,
+`computer-mcp.toml` and `source-base.txt` (the original manifest's base URL).
+Acquire the source files read-only and never open the installed database with
+SQLite. The test opens a second scratch copy, activates its upgraded manifest,
+compares identities, stored rows and permission migration, and checks retry.
+Verify the originals remain unchanged and delete both copies after the run.
+These opt-in cases being skipped does not constitute acceptance.
 
 ## Native catalog fixture acceptance
 

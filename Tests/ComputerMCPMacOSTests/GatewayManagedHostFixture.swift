@@ -1,7 +1,9 @@
+import ComputerMCPCore
 import ComputerMCPDarwinTestSupport
 import ComputerMCPMacOS
 import ComputerMCPPermissions
 import ComputerMCPPersistence
+import ComputerMCPPlatform
 import ComputerMCPPlatformDarwin
 import ComputerMCPTestSupport
 import ComputerMCPTunnels
@@ -17,39 +19,53 @@ struct GatewayManagedHostFixture {
 
   init(_ fixture: FixedHostFixture, database reopenedDatabase: GatewayDatabase? = nil) async throws
   {
-    let database = reopenedDatabase ?? fixture.database
+    try await self.init(
+      root: fixture.root, configuration: fixture.configuration,
+      database: reopenedDatabase ?? fixture.database, platform: fixture.platform)
+  }
+
+  init(
+    root: URL, configuration: GatewayConfiguration, database: GatewayDatabase,
+    platform: PlatformServices
+  ) async throws {
     let directories = AppControlPlaneServiceDirectories(
-      applicationSupport: fixture.root.appendingPathComponent("app"),
-      logs: fixture.root.appendingPathComponent("logs"))
+      applicationSupport: root.appendingPathComponent("app"),
+      logs: root.appendingPathComponent("logs"))
     try directories.prepare()
     let secrets = try KeychainSecretStore(adapter: MemoryKeychainAdapter())
-    let permissions = try database.permissionRuntime(platform: fixture.platform)
+    let permissions = try database.permissionRuntime(platform: platform)
     let owner = try GatewayPermissionOwner(
       context: .init(
         caller: .localApp, profileID: .localAdmin,
         trustedPrincipalID: "worktree-acceptance-owner"), validate: {})
+    let manifestStore = try AtomicManifestStore(
+      manifestURL: directories.manifest, database: database,
+      loader: GatewayManifestConfigurationLoader(
+        database: database, applications: platform.applications))
+    if !FileManager.default.fileExists(atPath: directories.manifest.path) {
+      _ = try manifestStore.activate(manifest: configuration.exportedTOML())
+    }
+    // AppControlPlaneService.live completes this bootstrap before accepting sessions.
+    let loaded = try manifestStore.activeConfiguration()
+    let ids = Set(GatewayProfileID.builtIns + loaded.profiles.map(\.id))
+    try database.bootstrapPermissionProfiles(
+      ids.sorted { $0.rawValue < $1.rawValue }.map { loaded.profileGrant(for: $0) },
+      declarations: loaded.profiles.map(\.grant))
     control = AppControlPlaneService(
       directories: directories, database: database,
       permissionControl: PermissionControlService(service: permissions.service, owner: { owner }),
-      manifestStore: try AtomicManifestStore(
-        manifestURL: directories.manifest, database: database,
-        loader: GatewayManifestConfigurationLoader(
-          database: database, applications: fixture.platform.applications)),
+      manifestStore: manifestStore,
       defaultManifest: DefaultGatewayConfiguration.manifest, secretStore: secrets,
       openAITunnelSupervisor: OpenAITunnelSupervisor(
-        launcher: fixture.platform.launcher, secretStore: secrets,
-        executableSearchDirectories: fixture.platform.executableSearchDirectories,
+        launcher: platform.launcher, secretStore: secrets,
+        executableSearchDirectories: platform.executableSearchDirectories,
         proxyResolver: FixedOpenAITunnelHTTPProxyResolver()),
       gatewayExecutablePath: try nativeGatewayTestExecutable().path,
       launchAtLoginController: SMAppServiceLaunchAtLoginController(),
       computerUsePermissionReader: FixedComputerUsePermissionReader(),
-      platform: fixture.platform, bundledPlugins: .init(packages: [], issues: []))
+      platform: platform, bundledPlugins: .init(packages: [], issues: []))
     service = AppGatewayService(
       controlPlane: control,
-      socketConfiguration: .init(socketURL: fixture.root.appendingPathComponent("gateway.sock")))
-    if !FileManager.default.fileExists(atPath: directories.manifest.path) {
-      _ = try await control.activateManifest(
-        fixture.configuration.exportedTOML(), expectedDigest: nil)
-    }
+      socketConfiguration: .init(socketURL: root.appendingPathComponent("gateway.sock")))
   }
 }

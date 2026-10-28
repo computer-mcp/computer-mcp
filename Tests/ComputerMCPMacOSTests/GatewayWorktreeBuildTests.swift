@@ -39,6 +39,7 @@ struct GatewayWorktreeBuildTests {
       _ = try await f.ownerGit(["add", "--all"])
       _ = try await f.ownerGit(["commit", "--allow-empty", "-m", "source fixture"])
       let sourceHEAD = try await f.ownerGit(["rev-parse", "HEAD"])
+      let sourceObjects = try await f.ownerGit(["count-objects", "-v"])
       let calls = GatewayStandaloneGenerations(f.runtime)
       do {
         let made = try await call(calls, f, "git.worktree_add", ["name": .string("cold-build")])
@@ -88,7 +89,7 @@ struct GatewayWorktreeBuildTests {
           export SWIFTPM_MIRROR_CONFIG="$HOME/configuration/mirrors.json"
           \(gitEnvironment)
           set +e
-          { \(quoted(input.swift)) build --build-tests \(options) && \(quoted(input.swift)) test --skip-build --no-parallel --filter \(quoted(input.filter)) \(options); } > .worktree-build/output.log 2>&1
+          { \(quoted(input.swift)) build --build-tests \(options) && \(quoted(input.swift)) test --skip-build --no-parallel --filter \(quoted(input.filter)) \(options) && printf '\\nAllocated KiB (build, private home, mirrors):\\n' && /usr/bin/du -sk .build "$HOME" .worktree-build/mirrors && git count-objects -v; } > .worktree-build/output.log 2>&1
           code=$?
           printf '%s' "$code" > .worktree-build/exit
           exit "$code"
@@ -114,8 +115,9 @@ struct GatewayWorktreeBuildTests {
         let log =
           (try? String(contentsOf: probe.appendingPathComponent("output.log"), encoding: .utf8))
           ?? "No build output"
-        try ("Elapsed: \(started.duration(to: .now))\n" + log).write(
-          toFile: input.evidence, atomically: true, encoding: .utf8)
+        try ("Source objects:\n\(sourceObjects)\nElapsed: \(started.duration(to: .now))\n" + log)
+          .write(
+            toFile: input.evidence, atomically: true, encoding: .utf8)
         #expect(snapshot["is_running"] == .bool(false), "Cold build exceeded its bounded interval")
         #expect(snapshot["exit_code"] == .integer(0), "\(snapshot)\n\(log.suffix(12_000))")
         let home = try String(contentsOf: probe.appendingPathComponent("home"), encoding: .utf8)

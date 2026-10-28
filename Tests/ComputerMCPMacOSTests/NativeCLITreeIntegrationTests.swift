@@ -135,14 +135,11 @@ struct NativeCLITreeIntegrationTests {
         throw error
       }
       await observe.shutdown()
-      await #expect(throws: ExecutionEnvironmentError.self) {
-        try await runtime.callToolAsync(name: format.name, arguments: arguments, context: .empty)
-      }
-      #expect(
-        try database.auditEvents().contains {
-          $0.capabilityID == format.name && $0.errorCode == "execution.unavailable"
-            && $0.errorDetails?.objectValue?["authorization_id"]?.stringValue != nil
-        })
+      let admitted = try await runtime.callToolAsync(
+        name: format.name, arguments: arguments, context: .empty)
+      #expect(admitted.objectValue?["isError"] == .bool(false))
+      #expect(Self.result(admitted)?["stdout"]?.objectValue?["data"] == .string("let value = 1\n"))
+      #expect(Self.result(admitted)?["exit_code"] == .integer(0))
       let formatted = try await Self.callOwnedProvider(
         registration: direct.cli.commands[0], tree: tree, project: root,
         name: format.name, arguments: arguments, executableDigest: executableBefore)

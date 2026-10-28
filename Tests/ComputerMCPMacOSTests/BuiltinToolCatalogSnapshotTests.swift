@@ -96,7 +96,13 @@ struct BuiltinToolCatalogSnapshotTests {
       }
     }
 
-    #expect(definitions.count == 242)
+    #expect(definitions.count == 240)
+    for name in [
+      "git.worktree_add", "git.worktree_list", "git.worktree_remove", "git.merge",
+      "git.branch_delete", "git.worktrees",
+    ] {
+      #expect(snapshot.routes[name] == nil)
+    }
     #expect(Set(definitions.map(\.tool.name)).count == definitions.count)
     for definition in definitions {
       #expect(definition.capability.id == definition.tool.name)
@@ -141,6 +147,7 @@ struct BuiltinToolCatalogSnapshotTests {
   @Test
   func completeHostCatalogMatchesReviewedSnapshot() async throws {
     let project = try ScopedTemporaryDirectory()
+    let state = try ScopedTemporaryDirectory()
     let configuration = GatewayConfiguration(
       runtime: .init(caller: .localMCP, profileID: .localAdmin),
       policy: .init(shellEnabled: true),
@@ -168,7 +175,8 @@ struct BuiltinToolCatalogSnapshotTests {
       configuration: configuration,
       context: .init(
         caller: .localMCP, profileID: .localAdmin, trustedPrincipalID: "catalog-fixture"),
-      database: GatewayDatabase(inMemory: ()),
+      database: fixturePermissionDatabase(
+        path: state.url.appendingPathComponent("state.sqlite").path),
       registeredProjects: [
         .init(id: "catalog", displayName: "Catalog", rootPath: project.url.path)
       ],
@@ -224,6 +232,20 @@ struct BuiltinToolCatalogSnapshotTests {
 
   @Test func documentedToolRequirementsMatchCatalogSnapshot() throws {
     let (document, expected) = try Self.requirementReference()
+    if ProcessInfo.processInfo.environment["COMPUTER_MCP_UPDATE_CATALOG_SNAPSHOT"] == "1" {
+      let start = try #require(document.range(of: Self.requirementStart))
+      let end = try #require(document.range(of: Self.requirementEnd))
+      let table =
+        "\n" + Self.requirementHeader + "\n| --- | --- | --- | --- |\n"
+        + expected.keys.sorted().compactMap { expected[$0] }.joined(separator: "\n") + "\n"
+      let updated = document.replacingCharacters(in: start.upperBound..<end.lowerBound, with: table)
+      let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
+        .deletingLastPathComponent().deletingLastPathComponent()
+      try updated.write(
+        to: root.appendingPathComponent("Documentation/Reference/Tools.md"), atomically: true,
+        encoding: .utf8)
+      return
+    }
     let differences = Self.requirementDifferences(document: document, expected: expected)
     #expect(
       differences.isEmpty,
@@ -424,7 +446,7 @@ struct BuiltinToolCatalogSnapshotTests {
   }
 }
 
-private struct CatalogDiscoveryStub: DownstreamMCPClient {
+struct CatalogDiscoveryStub: DownstreamMCPClient {
   func cachedTools(server: MCPServerConfig, context: InvocationContext) -> [MCPTool]? {
     try? listTools(server: server, context: context)
   }

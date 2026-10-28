@@ -70,7 +70,12 @@ struct GatewayToolRequirementResolver {
     for path in declaration.paths {
       let values: [JSONValue]
       switch path.source {
-      case .project: values = [.string(root.path)]
+      case .project:
+        let lifecycleRoot =
+          descriptor.hostOperation == .worktreeLifecycle
+          ? sourceID.flatMap { id in paths.registeredProjects.first { $0.id == id }?.root.string }
+          : nil
+        values = [.string(lifecycleRoot ?? root.path)]
       case .argument(let selector):
         values = try selected(selector, in: .object(arguments))
       }

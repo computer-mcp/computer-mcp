@@ -14308,7 +14308,7 @@
       "risk" : "destructive",
       "usesNetwork" : false
     },
-    "description" : "Delete one local Git branch through the fixed host Git helper using fixed git branch -d/-D <name> argv. This does not checkout, fetch, push, delete remotes, or change working-tree files. It refuses to delete the current branch, defaults to dry-run, and requires confirm_delete=true when dry_run is false.",
+    "description" : "Delete a local branch with expected-value checks. Live worktree branches are protected; Sandbox cannot force or discard retained unmerged commits. Defaults to dry-run; mutation requires confirm_delete=true in this call.",
     "inputSchema" : {
       "additionalProperties" : false,
       "properties" : {
@@ -14330,7 +14330,7 @@
           "type" : "boolean"
         },
         "force" : {
-          "description" : "Whether to use git branch -D instead of -d. Defaults to false.",
+          "description" : "Explicitly discard otherwise protected unmerged branch history. Requires Full access. Defaults to false.",
           "type" : "boolean"
         },
         "name" : {
@@ -14340,10 +14340,6 @@
         "project_id" : {
           "description" : "Stable project id returned by project.list.",
           "type" : "string"
-        },
-        "timeout_ms" : {
-          "description" : "Optional timeout in milliseconds.",
-          "type" : "integer"
         }
       },
       "required" : [
@@ -17250,6 +17246,145 @@
       "type" : "object"
     },
     "title" : "Git Log"
+  },
+  "git.merge" : {
+    "_meta" : {
+      "computer_mcp" : {
+        "requirements" : {
+          "access" : "sourceProjectWrite",
+          "execution" : {
+            "none" : {
+
+            }
+          },
+          "paths" : [
+            {
+              "defaultToProject" : false,
+              "operation" : {
+                "read" : {
+
+                }
+              },
+              "relativeBase" : {
+                "project" : {
+
+                }
+              },
+              "source" : {
+                "project" : {
+
+                }
+              }
+            }
+          ],
+          "permissions" : [
+
+          ],
+          "requiresFullAccess" : false,
+          "target" : {
+            "none" : {
+
+            }
+          }
+        }
+      },
+      "securitySchemes" : [
+        {
+          "type" : "noauth"
+        }
+      ]
+    },
+    "annotations" : {
+      "destructiveHint" : true,
+      "idempotentHint" : false,
+      "openWorldHint" : false,
+      "readOnlyHint" : false
+    },
+    "capability" : {
+      "hostServiceAction" : null,
+      "localOnly" : false,
+      "projectRequirement" : "required",
+      "requirement" : {
+        "access" : "sourceProjectWrite",
+        "execution" : {
+          "none" : {
+
+          }
+        },
+        "paths" : [
+          {
+            "defaultToProject" : false,
+            "operation" : {
+              "read" : {
+
+              }
+            },
+            "relativeBase" : {
+              "project" : {
+
+              }
+            },
+            "source" : {
+              "project" : {
+
+              }
+            }
+          }
+        ],
+        "permissions" : [
+
+        ],
+        "requiresFullAccess" : false,
+        "target" : {
+          "none" : {
+
+          }
+        }
+      },
+      "risk" : "project-write",
+      "usesNetwork" : false
+    },
+    "description" : "Publish a host worktree branch and fast-forward the main checkout's current branch, which must be its recorded base. Call in the source project; refuses overwrites and non-fast-forward history.",
+    "inputSchema" : {
+      "additionalProperties" : false,
+      "properties" : {
+        "_permission_request_ids" : {
+          "description" : "Permission request IDs for an exact retry after the local owner answers.",
+          "items" : {
+            "format" : "uuid",
+            "type" : "string"
+          },
+          "maxItems" : 64,
+          "type" : "array"
+        },
+        "branch" : {
+          "description" : "Source host worktree branch to merge.",
+          "type" : "string"
+        },
+        "project_id" : {
+          "description" : "Stable project id returned by project.list.",
+          "type" : "string"
+        }
+      },
+      "required" : [
+        "branch"
+      ],
+      "type" : "object"
+    },
+    "name" : "git.merge",
+    "outputSchema" : {
+      "additionalProperties" : false,
+      "properties" : {
+        "result" : {
+
+        }
+      },
+      "required" : [
+        "result"
+      ],
+      "type" : "object"
+    },
+    "title" : "Git Merge"
   },
   "git.merge_base" : {
     "_meta" : {
@@ -20176,7 +20311,157 @@
     },
     "title" : "Git Unstage"
   },
-  "git.worktrees" : {
+  "git.worktree_add" : {
+    "_meta" : {
+      "computer_mcp" : {
+        "requirements" : {
+          "access" : "sourceProjectWrite",
+          "execution" : {
+            "none" : {
+
+            }
+          },
+          "paths" : [
+            {
+              "defaultToProject" : false,
+              "operation" : {
+                "read" : {
+
+                }
+              },
+              "relativeBase" : {
+                "project" : {
+
+                }
+              },
+              "source" : {
+                "project" : {
+
+                }
+              }
+            }
+          ],
+          "permissions" : [
+
+          ],
+          "requiresFullAccess" : false,
+          "target" : {
+            "none" : {
+
+            }
+          }
+        }
+      },
+      "securitySchemes" : [
+        {
+          "type" : "noauth"
+        }
+      ]
+    },
+    "annotations" : {
+      "destructiveHint" : true,
+      "idempotentHint" : false,
+      "openWorldHint" : false,
+      "readOnlyHint" : false
+    },
+    "capability" : {
+      "hostServiceAction" : null,
+      "localOnly" : false,
+      "projectRequirement" : "required",
+      "requirement" : {
+        "access" : "sourceProjectWrite",
+        "execution" : {
+          "none" : {
+
+          }
+        },
+        "paths" : [
+          {
+            "defaultToProject" : false,
+            "operation" : {
+              "read" : {
+
+              }
+            },
+            "relativeBase" : {
+              "project" : {
+
+              }
+            },
+            "source" : {
+              "project" : {
+
+              }
+            }
+          }
+        ],
+        "permissions" : [
+
+        ],
+        "requiresFullAccess" : false,
+        "target" : {
+          "none" : {
+
+          }
+        }
+      },
+      "risk" : "project-write",
+      "usesNetwork" : false
+    },
+    "description" : "Create a persistent detached worktree and a new managed branch from the source project. Returns project_id, path, branch and base.",
+    "inputSchema" : {
+      "additionalProperties" : false,
+      "properties" : {
+        "_permission_request_ids" : {
+          "description" : "Permission request IDs for an exact retry after the local owner answers.",
+          "items" : {
+            "format" : "uuid",
+            "type" : "string"
+          },
+          "maxItems" : 64,
+          "type" : "array"
+        },
+        "base" : {
+          "description" : "Existing base branch. Defaults to the main checkout's branch; required when detached.",
+          "type" : "string"
+        },
+        "branch" : {
+          "description" : "New branch name. Defaults to worktree/<name>; existing branches are refused.",
+          "type" : "string"
+        },
+        "name" : {
+          "description" : "Worktree name: lowercase letters, digits and single hyphens.",
+          "maxLength" : 48,
+          "minLength" : 1,
+          "pattern" : "^[a-z0-9]+(-[a-z0-9]+)*$",
+          "type" : "string"
+        },
+        "project_id" : {
+          "description" : "Stable project id returned by project.list.",
+          "type" : "string"
+        }
+      },
+      "required" : [
+        "name"
+      ],
+      "type" : "object"
+    },
+    "name" : "git.worktree_add",
+    "outputSchema" : {
+      "additionalProperties" : false,
+      "properties" : {
+        "result" : {
+
+        }
+      },
+      "required" : [
+        "result"
+      ],
+      "type" : "object"
+    },
+    "title" : "Git Worktree Add"
+  },
+  "git.worktree_list" : {
     "_meta" : {
       "computer_mcp" : {
         "requirements" : {
@@ -20225,6 +20510,7 @@
     },
     "annotations" : {
       "destructiveHint" : false,
+      "idempotentHint" : true,
       "openWorldHint" : false,
       "readOnlyHint" : true
     },
@@ -20272,7 +20558,7 @@
       "risk" : "read-only",
       "usesNetwork" : false
     },
-    "description" : "Return read-only git worktree list through the fixed host Git helper.",
+    "description" : "List permission-filtered repository worktrees. Foreign base and comparison metrics are null when unavailable; unavailable explains missing state.",
     "inputSchema" : {
       "additionalProperties" : false,
       "properties" : {
@@ -20288,15 +20574,11 @@
         "project_id" : {
           "description" : "Stable project id returned by project.list.",
           "type" : "string"
-        },
-        "timeout_ms" : {
-          "description" : "Optional timeout in milliseconds.",
-          "type" : "integer"
         }
       },
       "type" : "object"
     },
-    "name" : "git.worktrees",
+    "name" : "git.worktree_list",
     "outputSchema" : {
       "additionalProperties" : false,
       "properties" : {
@@ -20309,7 +20591,143 @@
       ],
       "type" : "object"
     },
-    "title" : "Git Worktrees"
+    "title" : "Git Worktree List"
+  },
+  "git.worktree_remove" : {
+    "_meta" : {
+      "computer_mcp" : {
+        "requirements" : {
+          "access" : "projectWrite",
+          "execution" : {
+            "none" : {
+
+            }
+          },
+          "paths" : [
+            {
+              "defaultToProject" : false,
+              "operation" : {
+                "read" : {
+
+                }
+              },
+              "relativeBase" : {
+                "project" : {
+
+                }
+              },
+              "source" : {
+                "project" : {
+
+                }
+              }
+            }
+          ],
+          "permissions" : [
+
+          ],
+          "requiresFullAccess" : false,
+          "target" : {
+            "none" : {
+
+            }
+          }
+        }
+      },
+      "securitySchemes" : [
+        {
+          "type" : "noauth"
+        }
+      ]
+    },
+    "annotations" : {
+      "destructiveHint" : true,
+      "idempotentHint" : false,
+      "openWorldHint" : false,
+      "readOnlyHint" : false
+    },
+    "capability" : {
+      "hostServiceAction" : null,
+      "localOnly" : false,
+      "projectRequirement" : "required",
+      "requirement" : {
+        "access" : "projectWrite",
+        "execution" : {
+          "none" : {
+
+          }
+        },
+        "paths" : [
+          {
+            "defaultToProject" : false,
+            "operation" : {
+              "read" : {
+
+              }
+            },
+            "relativeBase" : {
+              "project" : {
+
+              }
+            },
+            "source" : {
+              "project" : {
+
+              }
+            }
+          }
+        ],
+        "permissions" : [
+
+        ],
+        "requiresFullAccess" : false,
+        "target" : {
+          "none" : {
+
+          }
+        }
+      },
+      "risk" : "project-write",
+      "usesNetwork" : false
+    },
+    "description" : "Remove the current host worktree after terminating writers and preserving committed history. Keeps its branch. Returns project_id, branch, oid and terminationWarnings.",
+    "inputSchema" : {
+      "additionalProperties" : false,
+      "properties" : {
+        "_permission_request_ids" : {
+          "description" : "Permission request IDs for an exact retry after the local owner answers.",
+          "items" : {
+            "format" : "uuid",
+            "type" : "string"
+          },
+          "maxItems" : 64,
+          "type" : "array"
+        },
+        "force" : {
+          "description" : "Discard uncommitted content only. Defaults to false.",
+          "type" : "boolean"
+        },
+        "project_id" : {
+          "description" : "Stable project id returned by project.list.",
+          "type" : "string"
+        }
+      },
+      "type" : "object"
+    },
+    "name" : "git.worktree_remove",
+    "outputSchema" : {
+      "additionalProperties" : false,
+      "properties" : {
+        "result" : {
+
+        }
+      },
+      "required" : [
+        "result"
+      ],
+      "type" : "object"
+    },
+    "title" : "Git Worktree Remove"
   },
   "image.info" : {
     "_meta" : {

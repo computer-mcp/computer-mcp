@@ -79,6 +79,17 @@ package final class GatewayPermissionRuntime: @unchecked Sendable {
       throw ExecutionEnvironmentError.unavailable(
         "This diagnostic requires a prepared fixed-service network execution context")
     }
+    if descriptor.hostOperation == .worktreeLifecycle {
+      guard !remoteService, descriptor.mcpReference == nil,
+        descriptor.requirement.execution == .none,
+        [
+          "git.worktree_add", "git.worktree_list", "git.worktree_remove", "git.merge",
+          "git.branch_delete",
+        ].contains(descriptor.id)
+      else { throw PermissionModelError.invalidAuthorization }
+      try service.validateAuthorization(authorization.id)
+      return GatewayWorktreeInvocation(authorization: authorization)
+    }
     let requirement = descriptor.requirement
     let writes =
       requirement.access == .projectWrite || requirement.access == .sourceProjectWrite

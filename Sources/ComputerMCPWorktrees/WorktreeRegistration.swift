@@ -18,6 +18,10 @@ package struct WorktreeRegistration: Codable, Equatable, Sendable {
   var publishedOID: String?
   var mergedOID: String?
 
+  package var branchName: String { String(branch.dropFirst("refs/heads/".count)) }
+  package var baseName: String { String(base.dropFirst("refs/heads/".count)) }
+  package var mainPath: String { repository.main.path }
+
   package var lastPublishedOID: String { publishedOID ?? baseOID }
   package var lastMergedOID: String? { mergedOID }
 

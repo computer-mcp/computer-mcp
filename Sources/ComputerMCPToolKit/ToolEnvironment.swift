@@ -6,6 +6,7 @@ import Foundation
 
 /// Project-owned inputs shared by tool providers. The host owns runtime shutdown.
 package struct ToolEnvironment: Sendable {
+  package let worktrees: (any GitWorktreeServing)?
   package let launcher: ExecutionLauncher
   package let configuration: GatewayConfiguration
   package let projectScope: ProjectScope
@@ -34,8 +35,10 @@ package struct ToolEnvironment: Sendable {
     fileTrasher: (any FileTrashing)? = nil,
     projectOpener: (any ProjectOpener)? = nil,
     systemProbe: (any SystemProbe)? = nil,
-    pathAccess: (any HostPathAccessChecking)? = nil
+    pathAccess: (any HostPathAccessChecking)? = nil,
+    worktrees: (any GitWorktreeServing)? = nil
   ) {
+    self.worktrees = worktrees
     self.launcher = launcher
     self.configuration = configuration
     let toolMeta: JSONValue? =

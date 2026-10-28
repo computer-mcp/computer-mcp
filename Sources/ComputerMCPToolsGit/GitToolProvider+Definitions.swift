@@ -2,7 +2,7 @@ import ComputerMCPCore
 
 extension GitToolProvider {
   static func toolDefinitions(toolMeta: JSONValue?) -> [ToolDefinition] {
-    [
+    lifecycleDefinitions(toolMeta: toolMeta) + [
       ToolDefinition(
         tool: MCPTool(
           name: "git.root",
@@ -68,27 +68,6 @@ extension GitToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "git.remotes", risk: .readOnly,
-          requirement: .init(access: .read, paths: [.project(.read)]),
-          projectRequirement: .required,
-          localOnly: false, usesNetwork: false, hostOperation: .git
-        )
-      ),
-      ToolDefinition(
-        tool: MCPTool(
-          name: "git.worktrees",
-          description:
-            "Return read-only git worktree list through the fixed host Git helper.",
-          inputSchema: objectSchema(
-            properties: [
-              "timeout_ms": integerSchema("Optional timeout in milliseconds.")
-            ]
-          ),
-          annotations: MCPToolAnnotations(
-            readOnlyHint: true, destructiveHint: false, openWorldHint: false),
-          meta: toolMeta
-        ),
-        capability: CapabilityDescriptor(
-          id: "git.worktrees", risk: .readOnly,
           requirement: .init(access: .read, paths: [.project(.read)]),
           projectRequirement: .required,
           localOnly: false, usesNetwork: false, hostOperation: .git
@@ -969,18 +948,18 @@ extension GitToolProvider {
         tool: MCPTool(
           name: "git.branch_delete",
           description:
-            "Delete one local Git branch through the fixed host Git helper using fixed git branch -d/-D <name> argv. This does not checkout, fetch, push, delete remotes, or change working-tree files. It refuses to delete the current branch, defaults to dry-run, and requires confirm_delete=true when dry_run is false.",
+            "Delete a local branch with expected-value checks. Live worktree branches are protected; Sandbox cannot force or discard retained unmerged commits. Defaults to dry-run; mutation requires confirm_delete=true in this call.",
           inputSchema: objectSchema(
             properties: [
               "name": stringSchema("Required local branch name to delete."),
               "force": boolSchema(
-                "Whether to use git branch -D instead of -d. Defaults to false."),
+                "Explicitly discard otherwise protected unmerged branch history. Requires Full access. Defaults to false."
+              ),
               "dry_run": boolSchema(
                 "Whether to run only preflight checks without deleting the branch. Defaults to true."
               ),
               "confirm_delete": boolSchema(
                 "Required as true when dry_run is false to delete the branch."),
-              "timeout_ms": integerSchema("Optional timeout in milliseconds."),
             ],
             required: ["name"]
           ),
@@ -993,7 +972,7 @@ extension GitToolProvider {
           requirement: .init(
             access: .sourceProjectWrite, paths: [.project(.read)]),
           projectRequirement: .required,
-          localOnly: false, usesNetwork: false, hostOperation: .git
+          localOnly: false, usesNetwork: false, hostOperation: .worktreeLifecycle
         )
       ),
       ToolDefinition(
@@ -1260,7 +1239,7 @@ extension GitToolProvider {
     ]
   }
 
-  private static func objectSchema(
+  static func objectSchema(
     properties: [String: JSONValue] = [:],
     required: [String] = []
   ) -> JSONValue {
@@ -1275,7 +1254,7 @@ extension GitToolProvider {
     return .object(object)
   }
 
-  private static func stringSchema(_ description: String) -> JSONValue {
+  static func stringSchema(_ description: String) -> JSONValue {
     .object(["type": .string("string"), "description": .string(description)])
   }
 
@@ -1283,7 +1262,7 @@ extension GitToolProvider {
     .object(["type": .string("integer"), "description": .string(description)])
   }
 
-  private static func boolSchema(_ description: String) -> JSONValue {
+  static func boolSchema(_ description: String) -> JSONValue {
     .object(["type": .string("boolean"), "description": .string(description)])
   }
 

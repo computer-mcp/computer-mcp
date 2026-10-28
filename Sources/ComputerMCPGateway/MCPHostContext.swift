@@ -2,11 +2,13 @@ import ComputerMCPConfiguration
 import ComputerMCPCore
 import ComputerMCPDownstream
 import ComputerMCPPlatform
+import ComputerMCPToolKit
 import Foundation
 
 /// Project launch provenance and gateway-owned authority and lifecycle state.
 package struct MCPHostContext: MCPHostEnvironment {
   package let launchMetadata: MCPHostLaunchMetadata
+  package var worktrees: (any GitWorktreeServing)?
   package let tools: MCPHostToolDirectory?
   /// Host-local recovery storage; never serialized into downstream launch metadata.
   package var processOwnershipRoot: URL?

@@ -52,7 +52,7 @@ package struct MacOSToolProviders: GatewayToolProviderFactory {
       ],
       extendedAttributes: DarwinExtendedAttributes(), fileTrasher: DarwinFileTrasher(),
       projectOpener: DarwinProjectOpener(commandRunner: commandRunner),
-      systemProbe: DarwinSystemProbe())
+      systemProbe: DarwinSystemProbe(), worktrees: hostContext.worktrees)
     return makeProviders(
       toolEnvironment: environment, mcpClient: mcpClient, hostContext: hostContext)
   }

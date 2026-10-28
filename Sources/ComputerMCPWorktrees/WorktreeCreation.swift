@@ -164,7 +164,16 @@ extension WorktreeRepository {
   func completeCreation(_ journal: inout WorktreeCreationJournal, lock: RepositoryLock)
     throws -> CreatedWorktree
   {
+    try checkAuthority()
     try validateJournal(journal)
+    let names = try command(["ls-tree", "-rz", "--name-only", journal.baseOID]).output
+    guard let text = String(data: names, encoding: .utf8) else {
+      throw WorktreeError.unsupportedRepository("Checkout filenames must be valid UTF-8.")
+    }
+    for path in text.split(separator: "\0").map(String.init) {
+      try WorktreeCheckoutSnapshot.requirePath(path)
+      try authorizeCreationPath(URL(fileURLWithPath: source.root).appendingPathComponent(path))
+    }
     _ = try requireBranch(String(journal.branch.dropFirst("refs/heads/".count)))
     _ = try requireBranch(String(journal.base.dropFirst("refs/heads/".count)))
     guard journal.phase != .reserved else {

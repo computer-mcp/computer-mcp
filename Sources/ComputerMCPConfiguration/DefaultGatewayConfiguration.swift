@@ -81,7 +81,10 @@ package enum DefaultGatewayConfiguration {
     git.tag_show
     git.tags
     git.tracking_status
-    git.worktrees
+    git.worktree_list
+    git.worktree_add
+    git.worktree_remove
+    git.merge
     image.info
     json.read
     jsonl.read

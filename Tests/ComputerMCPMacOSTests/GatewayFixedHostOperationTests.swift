@@ -117,7 +117,7 @@ struct FixedHostFixture {
   let runtime: GatewayRuntime
   let observations = ExecutionObservations()
 
-  init() throws {
+  init(fullAccess: Bool = true, lifecycle: Bool = false, callback: Bool = false) throws {
     let location = FileManager.default.temporaryDirectory.appendingPathComponent(
       "cm-fixed-\(UUID())")
     try FileManager.default.createDirectory(at: location, withIntermediateDirectories: true)
@@ -129,7 +129,7 @@ struct FixedHostFixture {
     let grant = ProfileGrant(
       id: .chatGPTOperate,
       permissions: fixturePermissions([.project("fixture"): .granted(.write)]),
-      fullAccess: true, allowedCallers: [.localMCP])
+      fullAccess: fullAccess, allowedCallers: [.localMCP])
     try database.saveProfile(grant)
     try database.bootstrapPermissionProfiles([grant])
     let registered = ComputerMCPCore.RegisteredProject(
@@ -160,12 +160,26 @@ struct FixedHostFixture {
             id: "git", executable: configured.path, cwd: root.path, env: ["GIT_DIR": root.path]),
           .init(id: "fixture", executable: "/bin/sh", allowAnyArgs: true),
         ]),
-        builtin: .init(enabled: [
-          "file.write", "git.add", "git.commit", "shell.run", "shell.spawn", "shell.read",
-          "shell.cancel", "process.spawn", "process.read", "process.cancel", "cli.exec",
-        ]),
+        mcp: .init(
+          servers: callback
+            ? [
+              .init(
+                id: "lifecycle-callback", transport: .stdio, command: "/unused/lifecycle-callback",
+                hostServices: true)
+            ] : []),
+        builtin: .init(
+          enabled: [
+            "file.write", "git.add", "git.commit", "shell.run", "shell.spawn", "shell.read",
+            "shell.cancel", "process.spawn", "process.read", "process.cancel", "cli.exec",
+          ]
+            + (lifecycle
+              ? [
+                "git.worktree_add", "git.worktree_list", "git.worktree_remove", "git.merge",
+                "git.branch_delete",
+              ] : [])),
         projectDirectory: project), context: context, database: database,
       registeredProjects: [registered], platform: services,
+      mcpClient: CatalogDiscoveryStub(),
       bundledPlugins: .init(packages: [], issues: []))
   }
 

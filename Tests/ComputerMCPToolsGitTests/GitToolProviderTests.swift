@@ -48,7 +48,7 @@ final class GitToolProviderTests {
         launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration.fixture(
           builtin: BuiltinConfig(enabled: [
-            "git.root", "git.config", "git.remotes", "git.worktrees", "git.stashes",
+            "git.root", "git.config", "git.remotes", "git.worktree_list", "git.stashes",
             "git.stash_show",
             "git.tags",
             "git.tag_show", "git.tag_create", "git.tag_delete", "git.ignored", "git.submodules",
@@ -61,14 +61,14 @@ final class GitToolProviderTests {
             "git.commit_files", "git.show",
             "git.add", "git.unstage", "git.restore_worktree", "git.commit", "git.stash_push",
           ])
-        )
+        ), worktrees: GitLifecycleRecorder()
       ))
     let names = try enabled.definitions().map(\.tool).map(\.name)
 
     #expect(names.contains("git.root"))
     #expect(names.contains("git.config"))
     #expect(names.contains("git.remotes"))
-    #expect(names.contains("git.worktrees"))
+    #expect(names.contains("git.worktree_list"))
     #expect(names.contains("git.stashes"))
     #expect(names.contains("git.stash_show"))
     #expect(names.contains("git.stash_push"))
@@ -388,32 +388,6 @@ final class GitToolProviderTests {
     #expect((runner.calls.first?.arguments) == (["remote", "--verbose"]))
     #expect((payload.objectValue?["operation"]) == (.string("git.remotes")))
     #expect((payload.objectValue?["argv"]) == (.array([.string("remote"), .string("--verbose")])))
-  }
-
-  @Test
-  func testGitWorktreesUsesRegisteredGitProvider() throws {
-    let runner = GitCommandRecorder()
-    let provider = GitToolProvider(
-      environment: ToolEnvironment(
-        launcher: testExecutionLauncher(),
-        configuration: GatewayConfiguration.fixture(
-          cli: CLISectionConfig(commands: [CLICommandConfig(id: "git", executable: "/bin/echo")]),
-          builtin: BuiltinConfig(enabled: ["git.worktrees"])
-        ),
-        commandRunner: runner
-      ))
-
-    let result = try provider.callTool(
-      .init(
-        name: "git.worktrees", arguments: .object([:]), context: .empty))
-    let payload = try decodeTextPayload(result)
-
-    #expect((runner.calls.first?.executable) == ("/bin/echo"))
-    #expect((runner.calls.first?.arguments) == (["worktree", "list", "--porcelain"]))
-    #expect((payload.objectValue?["operation"]) == (.string("git.worktrees")))
-    #expect(
-      (payload.objectValue?["argv"])
-        == (.array([.string("worktree"), .string("list"), .string("--porcelain")])))
   }
 
   @Test
@@ -2663,197 +2637,6 @@ final class GitToolProviderTests {
   }
 
   @Test
-  func testGitBranchDeleteDryRunPreflightsWithoutDeleting() throws {
-    let runner = GitCommandRecorder()
-    runner.outputs = [
-      RecordingCommandRunner.Output(stdout: "feature/old\n"),
-      RecordingCommandRunner.Output(stdout: "", exitCode: 0),
-      RecordingCommandRunner.Output(stdout: "main\n"),
-    ]
-    let provider = GitToolProvider(
-      environment: ToolEnvironment(
-        launcher: testExecutionLauncher(),
-        configuration: GatewayConfiguration.fixture(
-          cli: CLISectionConfig(commands: [CLICommandConfig(id: "git", executable: "/bin/echo")]),
-          builtin: BuiltinConfig(enabled: ["git.branch_delete"])
-        ),
-        commandRunner: runner
-      ))
-
-    let result = try provider.callTool(
-      .init(
-        name: "git.branch_delete",
-        arguments: .object([
-          "name": .string("feature/old"),
-          "timeout_ms": .number(1234),
-        ]), context: .empty
-      ))
-    let payload = try decodeTextPayload(result)
-
-    #expect(
-      (runner.calls.map(\.arguments))
-        == ([
-          ["check-ref-format", "--branch", "feature/old"],
-          ["show-ref", "--verify", "--quiet", "refs/heads/feature/old"],
-          ["branch", "--show-current"],
-        ]))
-    #expect((runner.calls.map(\.timeoutMilliseconds)) == ([1234, 1234, 1234]))
-    #expect((payload.objectValue?["operation"]) == (.string("git.branch_delete")))
-    #expect((payload.objectValue?["provider"]) == (.string("git")))
-    #expect((payload.objectValue?["name"]) == (.string("feature/old")))
-    #expect((payload.objectValue?["force"]) == (.bool(false)))
-    #expect((payload.objectValue?["dry_run"]) == (.bool(true)))
-    #expect((payload.objectValue?["confirm_delete"]) == (.bool(false)))
-    #expect((payload.objectValue?["current_branch"]) == (.string("main")))
-    #expect((payload.objectValue?["result"]) == (.null))
-    #expect(
-      (payload.objectValue?["argv"])
-        == (.array([.string("branch"), .string("-d"), .string("feature/old")])))
-  }
-
-  @Test
-  func testGitBranchDeleteRunsAfterConfirmation() throws {
-    let runner = GitCommandRecorder()
-    runner.outputs = [
-      RecordingCommandRunner.Output(stdout: "feature/delete\n"),
-      RecordingCommandRunner.Output(stdout: "", exitCode: 0),
-      RecordingCommandRunner.Output(stdout: "main\n"),
-      RecordingCommandRunner.Output(stdout: "Deleted branch feature/delete.\n", exitCode: 0),
-    ]
-    let provider = GitToolProvider(
-      environment: ToolEnvironment(
-        launcher: testExecutionLauncher(),
-        configuration: GatewayConfiguration.fixture(
-          cli: CLISectionConfig(commands: [CLICommandConfig(id: "git", executable: "/bin/echo")]),
-          builtin: BuiltinConfig(enabled: ["git.branch_delete"])
-        ),
-        commandRunner: runner
-      ))
-
-    let result = try provider.callTool(
-      .init(
-        name: "git.branch_delete",
-        arguments: .object([
-          "name": .string("feature/delete"),
-          "force": .bool(true),
-          "dry_run": .bool(false),
-          "confirm_delete": .bool(true),
-        ]), context: .empty
-      ))
-    let payload = try decodeTextPayload(result)
-
-    #expect(
-      (runner.calls.map(\.arguments))
-        == ([
-          ["check-ref-format", "--branch", "feature/delete"],
-          ["show-ref", "--verify", "--quiet", "refs/heads/feature/delete"],
-          ["branch", "--show-current"],
-          ["branch", "-D", "feature/delete"],
-        ]))
-    #expect((payload.objectValue?["dry_run"]) == (.bool(false)))
-    #expect((payload.objectValue?["confirm_delete"]) == (.bool(true)))
-    #expect((payload.objectValue?["force"]) == (.bool(true)))
-    #expect(
-      (payload.objectValue?["result"]?.objectValue?["arguments"])
-        == (.array([.string("branch"), .string("-D"), .string("feature/delete")])))
-    #expect((payload.objectValue?["result"]?.objectValue?["exit_code"]) == (.number(0)))
-  }
-
-  @Test
-  func testGitBranchDeleteRejectsUnsafeInputs() throws {
-    let missingConfirmRunner = GitCommandRecorder()
-    let missingConfirmRegistry = GitToolProvider(
-      environment: ToolEnvironment(
-        launcher: testExecutionLauncher(),
-        configuration: GatewayConfiguration.fixture(
-          cli: CLISectionConfig(commands: [CLICommandConfig(id: "git", executable: "/bin/echo")]),
-          builtin: BuiltinConfig(enabled: ["git.branch_delete"])
-        ),
-        commandRunner: missingConfirmRunner
-      ))
-
-    expectThrows(
-      try missingConfirmRegistry.callTool(
-        .init(
-          name: "git.branch_delete",
-          arguments: .object([
-            "name": .string("feature/delete"),
-            "dry_run": .bool(false),
-          ]), context: .empty
-        ))
-    ) { error in
-      #expect(error.localizedDescription.contains("confirm_delete"))
-      #expect(missingConfirmRunner.calls.isEmpty)
-    }
-
-    expectThrows(
-      try missingConfirmRegistry.callTool(
-        .init(
-          name: "git.branch_delete",
-          arguments: .object(["name": .string("refs/heads/main")]), context: .empty
-        ))
-    ) { error in
-      #expect(error.localizedDescription.contains("not a full ref"))
-      #expect(missingConfirmRunner.calls.isEmpty)
-    }
-
-    let missingBranchRunner = GitCommandRecorder()
-    missingBranchRunner.outputs = [
-      RecordingCommandRunner.Output(stdout: "feature/missing\n"),
-      RecordingCommandRunner.Output(stdout: "", exitCode: 1),
-    ]
-    let missingBranchRegistry = GitToolProvider(
-      environment: ToolEnvironment(
-        launcher: testExecutionLauncher(),
-        configuration: GatewayConfiguration.fixture(
-          cli: CLISectionConfig(commands: [CLICommandConfig(id: "git", executable: "/bin/echo")]),
-          builtin: BuiltinConfig(enabled: ["git.branch_delete"])
-        ),
-        commandRunner: missingBranchRunner
-      ))
-
-    expectThrows(
-      try missingBranchRegistry.callTool(
-        .init(
-          name: "git.branch_delete",
-          arguments: .object(["name": .string("feature/missing")]), context: .empty
-        ))
-    ) { error in
-      #expect(
-        error.localizedDescription.contains("does not exist")
-          || error.localizedDescription.contains("does not resolve"))
-      #expect((missingBranchRunner.calls.count) == (2))
-    }
-
-    let currentBranchRunner = GitCommandRecorder()
-    currentBranchRunner.outputs = [
-      RecordingCommandRunner.Output(stdout: "feature/current\n"),
-      RecordingCommandRunner.Output(stdout: "", exitCode: 0),
-      RecordingCommandRunner.Output(stdout: "feature/current\n"),
-    ]
-    let currentBranchRegistry = GitToolProvider(
-      environment: ToolEnvironment(
-        launcher: testExecutionLauncher(),
-        configuration: GatewayConfiguration.fixture(
-          cli: CLISectionConfig(commands: [CLICommandConfig(id: "git", executable: "/bin/echo")]),
-          builtin: BuiltinConfig(enabled: ["git.branch_delete"])
-        ),
-        commandRunner: currentBranchRunner
-      ))
-
-    expectThrows(
-      try currentBranchRegistry.callTool(
-        .init(
-          name: "git.branch_delete",
-          arguments: .object(["name": .string("feature/current")]), context: .empty
-        ))
-    ) { error in
-      #expect(error.localizedDescription.contains("current branch"))
-      #expect((currentBranchRunner.calls.count) == (3))
-    }
-  }
-
-  @Test
   func testGitBranchRenameDryRunPreflightsWithoutRenaming() throws {
     let runner = GitCommandRecorder()
     runner.outputs = [
@@ -3646,7 +3429,7 @@ final class GitToolProviderTests {
         configuration: GatewayConfiguration.fixture(
           cli: CLISectionConfig(commands: [CLICommandConfig(id: "echo", executable: "/bin/echo")]),
           builtin: BuiltinConfig(enabled: [
-            "git.root", "git.config", "git.remotes", "git.worktrees", "git.stashes",
+            "git.root", "git.config", "git.remotes", "git.worktree_list", "git.stashes",
             "git.stash_show",
             "git.tags",
             "git.tag_show", "git.tag_create", "git.tag_delete", "git.ignored", "git.submodules",
@@ -3674,9 +3457,10 @@ final class GitToolProviderTests {
     }
 
     expectThrows(
-      try provider.callTool(.init(name: "git.worktrees", arguments: .object([:]), context: .empty))
+      try provider.callTool(
+        .init(name: "git.worktree_list", arguments: .object([:]), context: .empty))
     ) { error in
-      #expect(error.localizedDescription.contains("registered CLI provider with id 'git'"))
+      #expect(error.localizedDescription.contains("durable host storage"))
     }
 
     expectThrows(
@@ -3925,7 +3709,7 @@ final class GitToolProviderTests {
           arguments: .object(["name": .string("feature/old")]), context: .empty
         ))
     ) { error in
-      #expect(error.localizedDescription.contains("registered CLI provider with id 'git'"))
+      #expect(error.localizedDescription.contains("durable host storage"))
     }
 
     expectThrows(

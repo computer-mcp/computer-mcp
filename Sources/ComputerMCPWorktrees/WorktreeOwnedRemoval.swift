@@ -9,7 +9,10 @@ import Foundation
 extension WorktreeDirectory {
   /// The journal supplies the owned root; traversal never follows links or
   /// delegates a recursive delete to a path-based tool.
-  func removeOwnedTree(_ expected: WorktreeDirectoryIdentity, io: WorktreeJournalIO) throws {
+  func removeOwnedTree(
+    _ expected: WorktreeDirectoryIdentity, io: WorktreeJournalIO,
+    authorize: (URL) throws -> Void = { _ in }
+  ) throws {
     let url = URL(fileURLWithPath: expected.path)
     guard url.deletingLastPathComponent() == self.url else {
       throw WorktreeError.identityChanged("Removal root has a different parent.")
@@ -24,7 +27,7 @@ extension WorktreeDirectory {
       throw WorktreeError.identityChanged("Removal root was replaced.")
     }
     var remaining = 1_000_000
-    try child.removeContents(io: io, remaining: &remaining)
+    try child.removeContents(io: io, remaining: &remaining, authorize: authorize)
     try io.beforePublication()
     try verify()
     try child.verify()
@@ -35,7 +38,10 @@ extension WorktreeDirectory {
     try synchronize()
   }
 
-  private func removeContents(io: WorktreeJournalIO, remaining: inout Int) throws {
+  private func removeContents(
+    io: WorktreeJournalIO, remaining: inout Int,
+    authorize: (URL) throws -> Void
+  ) throws {
     for name in try entries(limit: remaining) {
       guard remaining > 0 else { throw WorktreeError.busy("Removal inventory exceeds its bound.") }
       remaining -= 1
@@ -50,9 +56,10 @@ extension WorktreeDirectory {
         else {
           throw WorktreeError.identityChanged("Removal directory changed.")
         }
-        try directory.removeContents(io: io, remaining: &remaining)
+        try directory.removeContents(io: io, remaining: &remaining, authorize: authorize)
         try directory.verify()
       }
+      try authorize(url.appendingPathComponent(name))
       try io.beforePublication()
       try verify()
       var current = stat()

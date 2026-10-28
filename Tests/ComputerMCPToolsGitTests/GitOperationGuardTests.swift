@@ -3,6 +3,7 @@ import ComputerMCPCore
 import ComputerMCPProcess
 import ComputerMCPTestSupport
 import ComputerMCPToolKit
+import ComputerMCPWorktrees
 import Foundation
 import Testing
 
@@ -14,6 +15,49 @@ import Testing
 
 @Suite(.nativeIntegration)
 struct GitOperationGuardTests {
+  @Test func sharedRefMutationHonorsTheCanonicalRepositoryLock() throws {
+    let temporary = try ScopedTemporaryDirectory()
+    try withGitAdministration(home: temporary.url) {
+      let root = temporary.url.resolvingSymlinksInPath()
+      let executable = try testExecutable("git")
+      let runner = ProcessCommandRunner(launcher: testExecutionLauncher())
+      for arguments in [
+        ["init", "--template="],
+        [
+          "-c", "user.name=Fixture",
+          "-c", "user.email=fixture@example.invalid", "commit", "--allow-empty", "-m", "Initial",
+        ],
+      ] {
+        let result = try runner.runIsolated(
+          executable: executable, arguments: arguments,
+          workingDirectory: root,
+          environment: ["GIT_CONFIG_NOSYSTEM": "1", "GIT_CONFIG_GLOBAL": "/dev/null"],
+          timeoutMilliseconds: 10_000, maxOutputBytes: 4096)
+        try #require(result.exitCode == 0)
+      }
+      let tools = ToolEnvironment(
+        launcher: testExecutionLauncher(), configuration: .init(projectDirectory: root),
+        commandRunner: runner)
+      let lock = try RepositoryLock(
+        commonDirectory: root.appendingPathComponent(".git"), owner: .init(), timeout: .seconds(1))
+      let before = ContinuousClock.now
+      #expect(throws: (any Error).self) {
+        try tools.registeredCommands.runHostGit(
+          command: .init(id: "git", executable: executable),
+          args: ["branch", "--", "coordinated", "HEAD"], timeout: 300)
+      }
+      #expect(before.duration(to: .now) >= .milliseconds(250))
+      #expect(
+        !FileManager.default.fileExists(
+          atPath: root.appendingPathComponent(".git/refs/heads/coordinated").path))
+      lock.release()
+      let result = try tools.registeredCommands.runHostGit(
+        command: .init(id: "git", executable: executable),
+        args: ["branch", "--", "coordinated", "HEAD"], timeout: 10_000)
+      #expect(result.exitCode == 0)
+    }
+  }
+
   @Test
   func ignoredUsesLiteralPathsWithRealGit() throws {
     let temporary = try ScopedTemporaryDirectory()

@@ -177,14 +177,6 @@ extension GitToolProvider {
     )
   }
 
-  internal func gitWorktrees(arguments object: [String: JSONValue]) throws -> JSONValue {
-    try gitResult(
-      operation: "git.worktrees",
-      arguments: ["worktree", "list", "--porcelain"],
-      timeout: optionalInt("timeout_ms", in: object)
-    )
-  }
-
   internal func gitStashes(arguments object: [String: JSONValue]) throws -> JSONValue {
     try gitResult(
       operation: "git.stashes",
@@ -2249,90 +2241,6 @@ extension GitToolProvider {
       ]),
       "result": result,
       "would_create": .bool(true),
-    ])
-  }
-
-  internal func gitBranchDelete(arguments object: [String: JSONValue]) throws -> JSONValue {
-    let branchName = try validatedGitBranchNameArgument("name", in: object)
-    let force = try optionalBool("force", in: object) ?? false
-    let dryRun = try optionalBool("dry_run", in: object) ?? true
-    let confirmDelete = try optionalBool("confirm_delete", in: object) ?? false
-    guard dryRun || confirmDelete else {
-      throw GatewayToolError.invalidArguments(
-        "git.branch_delete requires confirm_delete=true when dry_run is false.")
-    }
-
-    let timeout = optionalInt("timeout_ms", in: object)
-    let command = try environment.registeredCommands.gitCLICommand()
-    let checkNameArgs = ["check-ref-format", "--branch", branchName]
-    let existsArgs = ["show-ref", "--verify", "--quiet", "refs/heads/\(branchName)"]
-    let currentBranchArgs = ["branch", "--show-current"]
-
-    let checkNameResult = try environment.registeredCommands.runHostGit(
-      command: command,
-      args: checkNameArgs,
-      timeout: timeout
-    )
-    guard !checkNameResult.timedOut, checkNameResult.exitCode == 0 else {
-      throw GatewayToolError.invalidArguments(
-        "branch name is not accepted by git check-ref-format: \(branchName)")
-    }
-
-    let existsResult = try environment.registeredCommands.runHostGit(
-      command: command,
-      args: existsArgs,
-      timeout: timeout
-    )
-    guard !existsResult.timedOut else {
-      throw GatewayToolError.invalidArguments("branch existence check timed out.")
-    }
-    guard existsResult.exitCode == 0 else {
-      if existsResult.exitCode == 1 {
-        throw GatewayToolError.invalidArguments("local branch does not exist: \(branchName)")
-      }
-      throw GatewayToolError.invalidArguments("branch existence check failed for: \(branchName)")
-    }
-
-    let currentBranchResult = try environment.registeredCommands.runHostGit(
-      command: command,
-      args: currentBranchArgs,
-      timeout: timeout
-    )
-    guard !currentBranchResult.timedOut, currentBranchResult.exitCode == 0 else {
-      throw GatewayToolError.invalidArguments("current branch check failed.")
-    }
-    let currentBranch = firstNonEmptyLine(currentBranchResult.stdout) ?? ""
-    guard currentBranch != branchName else {
-      throw GatewayToolError.invalidArguments("cannot delete the current branch: \(branchName)")
-    }
-
-    let deleteArgs = ["branch", force ? "-D" : "-d", branchName]
-    var result: JSONValue = .null
-    if !dryRun {
-      let deleteResult = try environment.registeredCommands.runHostGit(
-        command: command,
-        args: deleteArgs,
-        timeout: timeout
-      )
-      result = deleteResult.json
-    }
-
-    return .object([
-      "operation": .string("git.branch_delete"),
-      "provider": .string(command.id),
-      "name": .string(branchName),
-      "force": .bool(force),
-      "argv": .array(deleteArgs.map(JSONValue.string)),
-      "dry_run": .bool(dryRun),
-      "confirm_delete": .bool(confirmDelete),
-      "current_branch": currentBranch.isEmpty ? .null : .string(currentBranch),
-      "preflight": .object([
-        "check_ref_format": gitCommandMetadata(checkNameResult),
-        "existing_branch": gitCommandMetadata(existsResult),
-        "current_branch": gitCommandMetadata(currentBranchResult),
-      ]),
-      "result": result,
-      "would_delete": .bool(true),
     ])
   }
 

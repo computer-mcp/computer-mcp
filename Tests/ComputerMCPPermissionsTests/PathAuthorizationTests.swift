@@ -4,6 +4,49 @@ import Testing
 @testable import ComputerMCPPermissions
 
 struct ComputerMCPPermissionsPathAuthorizationTests {
+  @Test func worktreeHostWritesRequireAdmittedGrantAndRespectEveryPathBoundary() throws {
+    var ledger = PermissionLedger()
+    var environment = ledger.environment
+    environment.paths = try PathEnvironmentSnapshot(
+      projects: [
+        .init(id: "project", root: path("/repo")),
+        .init(id: "nested", root: path("/repo/nested")),
+      ], rules: [.init(root: path("/repo/secret"), kind: .denied)])
+    try ledger.reconcile(environment: environment, expectedRevision: ledger.revision)
+    try ledger.setPermission(
+      .granted(.write), for: .project("project"), principal: client,
+      expectedRevision: ledger.revision)
+    let proof = try authorization(
+      from: ledger.authorize(
+        invocation: invocation(),
+        requirements: .init(
+          actions: [action(.project("project"), .write, scope: .project("project"))],
+          paths: [.init(path: path("/repo"), operation: .read)], sandboxProjectID: "project"),
+        now: instant))
+    try ledger.authorizeWorktreeHostPath(proof.id, path: path("/repo/value"), writing: true)
+    #expect(throws: PermissionModelError.self) {
+      try ledger.authorizePathUse(proof.id, path: path("/repo/value"), operation: .write)
+    }
+    for denied in ["/repo/secret", "/repo/nested/value", "/elsewhere"] {
+      #expect(throws: PermissionModelError.self) {
+        try ledger.authorizeWorktreeHostPath(proof.id, path: path(denied), writing: true)
+      }
+    }
+    try ledger.setPermission(
+      .granted(.write), for: .project("nested"), principal: client,
+      expectedRevision: ledger.revision)
+    #expect(throws: PermissionModelError.self) {
+      try ledger.authorizeWorktreeHostPath(
+        proof.id, path: path("/repo/nested/value"), writing: true)
+    }
+    try ledger.setPermission(
+      .granted(.read), for: .project("project"), principal: client,
+      expectedRevision: ledger.revision)
+    #expect(throws: PermissionModelError.self) {
+      try ledger.authorizeWorktreeHostPath(proof.id, path: path("/repo/value"), writing: true)
+    }
+  }
+
   @Test(arguments: [PathOperation.openDirectory, .listDirectory])
   func readableProjectAllowsAncestorTraversal(operation: PathOperation) throws {
     var ledger = PermissionLedger()

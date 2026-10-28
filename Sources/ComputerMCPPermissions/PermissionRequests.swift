@@ -1092,30 +1092,77 @@ package struct PermissionLedger: Equatable, Sendable, Codable {
       }
       // Traversal may use a readable descendant, but cannot import grants acquired
       // after admission. Every permission must retain its principal and purpose.
-      for element in result.basis {
-        guard case .permission(let used) = element else { continue }
-        guard
-          proof.basis.contains(where: {
-            guard case .permission(let existing) = $0,
-              existing.principal == used.principal, existing.pluginPurpose == used.pluginPurpose,
-              existing.requirement.permission == used.requirement.permission,
-              PermissionState.granted(existing.requirement.value).allows(used.requirement.value)
-            else { return false }
-            if case .standing = existing.source, existing.source == used.source { return true }
-            if existing.scope == used.scope { return true }
-            switch (existing.scope, used.scope) {
-            case (.principal, _): return true
-            case (.project(let id), .path): return used.requirement.permission == .project(id)
-            case (.path(let root), .path(let child)): return root.contains(child)
-            default: return false
-            }
-          })
-        else { continue candidate }
-      }
+      guard carriesPermissionEvidence(result.basis, from: proof.basis) else { continue candidate }
       authorizations[id]!.basis.formUnion(result.basis)
       return
     }
     throw PermissionModelError.invalidAuthorization
+  }
+
+  /// A lifecycle service owns the filesystem effect. Read admission still checks every
+  /// path denial; write authority comes from the admitted project's grant rather than
+  /// granting a sandbox program write access to the source checkout.
+  package mutating func authorizeWorktreeHostPath(
+    _ id: UUID, path: CanonicalPath, writing: Bool
+  ) throws {
+    let proof = try invocationAccess(id)
+    guard let project = environment.paths?.projects.location(at: path) else {
+      throw PermissionModelError.invalidAuthorization
+    }
+    let requests = evidenceRequests(proof.basis, authorizationID: id)
+    let requirements = InvocationRequirements(
+      actions: [
+        PermissionAction(
+          requirement: try PermissionRequirement(
+            .project(project.projectID), writing ? .write : .read),
+          scope: .project(project.projectID))
+      ],
+      paths: [.init(path: path, operation: .read)], mode: proof.mode,
+      sandboxProjectID: proof.sandboxProjectID)
+    let result = evaluate(
+      requirements, principal: proof.invocation.principal,
+      oneTimeRequests: requests, basis: proof.basis)
+    guard result.isAllowed, carriesPermissionEvidence(result.basis, from: proof.basis) else {
+      throw PermissionModelError.invalidAuthorization
+    }
+    for element in proof.basis {
+      if case .connection(let connectionID, _) = element {
+        guard let connection = environment.connections[connectionID],
+          evaluateCeiling(
+            connection.attenuation, requirements: requirements,
+            principal: proof.invocation.principal, requests: requests
+          ).isAllowed
+        else { throw PermissionModelError.invalidAuthorization }
+      }
+    }
+    // These effects consume live path checks, not a new program/path grant. Keeping
+    // the source proof lets journaled cleanup finish after unregistering its child.
+  }
+
+  private func carriesPermissionEvidence(
+    _ basis: Set<AuthorizationBasis>, from admitted: Set<AuthorizationBasis>
+  ) -> Bool {
+    for element in basis {
+      guard case .permission(let used) = element else { continue }
+      guard
+        admitted.contains(where: {
+          guard case .permission(let existing) = $0,
+            existing.principal == used.principal, existing.pluginPurpose == used.pluginPurpose,
+            existing.requirement.permission == used.requirement.permission,
+            PermissionState.granted(existing.requirement.value).allows(used.requirement.value)
+          else { return false }
+          if case .standing = existing.source, existing.source == used.source { return true }
+          if existing.scope == used.scope { return true }
+          switch (existing.scope, used.scope) {
+          case (.principal, _): return true
+          case (.project(let id), .path): return used.requirement.permission == .project(id)
+          case (.path(let root), .path(let child)): return root.contains(child)
+          default: return false
+          }
+        })
+      else { return false }
+    }
+    return true
   }
 
   /// Ends invocation work; execution consumption is independently durable.

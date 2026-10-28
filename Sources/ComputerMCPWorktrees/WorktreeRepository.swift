@@ -67,7 +67,7 @@ package struct WorktreeRepositoryIdentity: Codable, Equatable, Sendable {
 
 /// Internal lifecycle API. The adapter owns live source authorization; no tool or
 /// program execution route is installed by constructing this service.
-package final class WorktreeRepository {
+package final class WorktreeRepository: Sendable {
   let source: DerivedProjectSource
   let store: any DerivedProjectStore
   let storage: WorktreeStorage
@@ -77,13 +77,20 @@ package final class WorktreeRepository {
   let io: WorktreeJournalIO
   let lockTimeout: Duration
   let owner: RepositoryLock.Owner
+  let checkAuthority: @Sendable () throws -> Void
+  let authorizeCreationPath: @Sendable (URL) throws -> Void
 
   package init(
     source: DerivedProjectSource, store: any DerivedProjectStore, storage: WorktreeStorage,
     executor: any WorktreeGitExecuting, registeredProjectRoots: [URL],
     timeoutMilliseconds: Int, maxOutputBytes: Int, lockTimeout: Duration,
-    owner: RepositoryLock.Owner = .init(), journalIO: WorktreeJournalIO = .init()
+    owner: RepositoryLock.Owner = .init(), journalIO: WorktreeJournalIO = .init(),
+    checkAuthority: @escaping @Sendable () throws -> Void = {},
+    authorizeCreationPath: @escaping @Sendable (URL) throws -> Void = { _ in }
   ) throws {
+    try checkAuthority()
+    self.checkAuthority = checkAuthority
+    self.authorizeCreationPath = authorizeCreationPath
     self.source = source
     self.store = store
     self.storage = storage
@@ -98,7 +105,8 @@ package final class WorktreeRepository {
     // even before a private home can be created.
     git = WorktreeGit(
       executor: executor, home: storage.journals,
-      timeoutMilliseconds: timeoutMilliseconds, maxOutputBytes: maxOutputBytes)
+      timeoutMilliseconds: timeoutMilliseconds, maxOutputBytes: maxOutputBytes,
+      checkAuthority: checkAuthority)
     identity = try WorktreeRepositoryIdentity(source: source, git: git)
     try requireSupportedLayout(identity)
     try withLock { _ in }
@@ -150,6 +158,7 @@ package final class WorktreeRepository {
   }
 
   func acquireLock(validateHead: Bool = true) throws -> RepositoryLock {
+    try checkAuthority()
     let lock = try RepositoryLock(
       commonDirectory: URL(fileURLWithPath: identity.common.path),
       owner: owner, timeout: lockTimeout)
@@ -224,11 +233,12 @@ package final class WorktreeRepository {
   }
 }
 
-struct WorktreeGit {
+struct WorktreeGit: Sendable {
   let executor: any WorktreeGitExecuting
   let home: URL
   let timeoutMilliseconds: Int
   let maxOutputBytes: Int
+  var checkAuthority: @Sendable () throws -> Void = {}
 
   func configurationNames(at root: URL, gitDirectory: URL? = nil) throws -> String {
     let result = try execute(
@@ -277,6 +287,7 @@ struct WorktreeGit {
     _ arguments: [String], at root: URL, gitDirectory: URL?,
     environment: [String: String], input: Data = Data()
   ) throws -> WorktreeGitResult {
+    try checkAuthority()
     let binding = gitDirectory.map { ["--git-dir=\($0.path)", "--work-tree=\(root.path)"] } ?? []
     let result = try executor.execute(
       .init(
@@ -304,6 +315,7 @@ extension WorktreeGit {
       + HostGitConfiguration.arguments + overrides
       + ["update-ref"] + (dereference ? [] : ["--no-deref"])
       + ["--create-reflog", "-m", message, "--stdin"]
+    try checkAuthority()
     try executor.withPreparedTransaction(
       .init(
         arguments: arguments, directory: root,

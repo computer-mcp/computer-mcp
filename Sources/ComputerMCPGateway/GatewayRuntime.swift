@@ -324,6 +324,10 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
         managedProjectRoot: database?.fileURL?.deletingLastPathComponent()
           .appendingPathComponent("Managed Worktrees", isDirectory: true),
         processOwnershipRoot: database?.mcpProcessOwnershipRoot, executionDatabase: database)
+      if let database, database.worktreeStorage != nil {
+        hostContext.worktrees = GatewayWorktreeService(
+          database: database, runtime: permissionRuntime, platform: platform, projectID: project.id)
+      }
       hostContext.ownedWork = ownedWork
       for (registration, origin) in composition.origins where registration.kind == .mcp {
         if let lease = artifactLeases.first(where: {
@@ -373,12 +377,17 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
         launcher: platform.launcher, ownedWork: ownedWork, sessions: terminalSessions)
       let processes = ManagedProcessRegistry(
         shellManager: shell, maxSessions: configuration.policy.maxShellSessions)
+      var hostContext = MCPHostContext(
+        runtimeID: generationID, context: effectiveContext,
+        projectID: "unscoped", rootURL: URL(fileURLWithPath: "/"), readOnly: true)
+      if let database, database.worktreeStorage != nil {
+        hostContext.worktrees = GatewayWorktreeService(
+          database: database, runtime: permissionRuntime, platform: platform, projectID: nil)
+      }
       let registry = platform.toolProviders.makeProviders(
         configuration: unscopedConfiguration, commandRunner: commandRunner,
         processManager: processes, shellManager: shell, mcpClient: scopedMCPClient,
-        hostContext: MCPHostContext(
-          runtimeID: generationID, context: effectiveContext,
-          projectID: "unscoped", rootURL: URL(fileURLWithPath: "/"), readOnly: true))
+        hostContext: hostContext)
       let router = try GatewayProviderRouter(
         registry: registry,
         reservedToolNames: Set(
@@ -1915,7 +1924,8 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
     name: String, descriptor: CapabilityDescriptor, context: ExecutionContext
   ) throws {
     guard name != "policy.probe", let projectID = context.projectID else { return }
-    if descriptor.id.hasPrefix("runtime.owners.") {
+    if descriptor.id.hasPrefix("runtime.owners.") || descriptor.hostOperation == .worktreeLifecycle
+    {
       _ = try currentRegisteredProject(projectID)
     } else {
       let metadata = Self.coreDefinitions(

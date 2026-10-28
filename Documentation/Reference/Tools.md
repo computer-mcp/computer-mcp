@@ -103,7 +103,6 @@ use Plugin `use` in place of the directly registered MCP server permission.
 Catalog selections filter entries under their corresponding permissions.
 
 <!-- tool-requirements:start -->
-
 | Tool | Declared permissions | Full access required | Conditions |
 | --- | --- | --- | --- |
 | `archive.create` | Project `write`; Resolved paths (read, write) | No | None |
@@ -200,6 +199,7 @@ Catalog selections filter entries under their corresponding permissions.
 | `git.ignored` | Project `read`; Resolved paths (read) | No | None |
 | `git.is_ancestor` | Project `read`; Resolved paths (read) | No | None |
 | `git.log` | Project `read`; Resolved paths (read) | No | None |
+| `git.merge` | Source Project `write`; Resolved paths (read) | No | None |
 | `git.merge_base` | Project `read`; Resolved paths (read) | No | None |
 | `git.reflog` | Project `read`; Resolved paths (read) | No | None |
 | `git.refs` | Project `read`; Resolved paths (read) | No | None |
@@ -220,7 +220,9 @@ Catalog selections filter entries under their corresponding permissions.
 | `git.tags` | Project `read`; Resolved paths (read) | No | None |
 | `git.tracking_status` | Project `read`; Resolved paths (read) | No | None |
 | `git.unstage` | Project `write`; Resolved paths (write) | No | None |
-| `git.worktrees` | Project `read`; Resolved paths (read) | No | None |
+| `git.worktree_add` | Source Project `write`; Resolved paths (read) | No | None |
+| `git.worktree_list` | Project `read`; Resolved paths (read) | No | None |
+| `git.worktree_remove` | Project `write`; Resolved paths (read) | No | None |
 | `image.info` | Project `read`; Resolved paths (read) | No | None |
 | `json.read` | Project `read`; Resolved paths (read) | No | None |
 | `json.write` | Project `write`; Resolved paths (write) | No | None |
@@ -383,7 +385,6 @@ Catalog selections filter entries under their corresponding permissions.
 | `toml.read` | Project `read`; Resolved paths (read) | No | None |
 | `xml.read` | Project `read`; Resolved paths (read) | No | None |
 | `yaml.read` | Project `read`; Resolved paths (read) | No | None |
-
 <!-- tool-requirements:end -->
 
 ## `project.request`
@@ -4776,19 +4777,28 @@ Arguments:
 }
 ```
 
-### `git.worktrees`
+### Git worktree lifecycle
 
-Runs fixed read-only `git worktree list --porcelain` through the registered
-`git` CLI provider. This reads local worktree metadata and does not create,
-move, prune, or remove worktrees.
+These tools require durable host storage and use the host's pinned Git executable.
+They inherit the source Project permission and do not run configured wrappers,
+hooks, signing helpers or filters. Unavailable lifecycle services are omitted from
+the catalog.
 
-Arguments:
+| Tool | Call location and arguments | Result |
+| --- | --- | --- |
+| `git.worktree_add` | Source project. Required `name`: `[a-z0-9]+(-[a-z0-9]+)*`, at most 48 characters. Optional new `branch` defaults to `worktree/<name>`; existing branches are refused. Optional `base` defaults to the main checkout's current branch and is required when detached. | `project_id`, `path`, `branch`, `base` |
+| `git.worktree_list` | Source or derived project; no operation arguments. | `worktrees`, each with `path`, `project_id`, `branch`, `base`, `ahead`, `behind`, `dirty`, `unavailable`. Inaccessible details and unavailable foreign metrics are null. |
+| `git.merge` | Source project. Required `branch` selects a host worktree branch. Its recorded base must be checked out in the main checkout. | `project_id`, `branch`, `base`, `oid` |
+| `git.worktree_remove` | Host worktree project. Optional `force=false` discards uncommitted content only. | `project_id`, `branch`, `oid`, `terminationWarnings` |
 
-```json
-{
-  "timeout_ms": 30000
-}
-```
+Creation registers the returned project only after verifying its detached checkout
+and private object store. Merge verifies a captured copy of committed objects,
+publishes the named branch with expected-value checks, and fast-forwards the main
+checkout. It refuses non-fast-forward history and local changes it would overwrite.
+Removal closes writer admission, terminates and reaps sandboxed writers, preserves
+committed history, removes owned storage, and unregisters the project last. Full
+access writers are terminated best-effort; `terminationWarnings` reports possible
+detached survivors or unconfirmed termination. The branch remains after removal.
 
 ### `git.stashes`
 
@@ -5516,30 +5526,19 @@ Arguments:
 
 ### `git.branch_delete`
 
-Deletes one local branch ref with fixed `git branch -d <name>` or
-`git branch -D <name>` argv through the registered `git` CLI provider. This
-does not checkout or switch branches, fetch, push, delete remote branches, or
-change working-tree files. It defaults to dry-run and first runs deterministic
-preflight checks:
+Call in the source project with required `name`. The host checks the current
+worktree inventory and retained branch history, then compares the expected branch
+and base object IDs in a Git transaction. A live host or foreign worktree branch
+cannot be deleted. Sandbox cannot discard retained unmerged worktree commits.
 
-- `git check-ref-format --branch <name>`
-- `git show-ref --verify --quiet refs/heads/<name>`
-- `git branch --show-current`
-
-The tool refuses to delete the current branch. Set `confirm_delete` to true and
-`dry_run` to false to delete the branch after preflight checks pass. Set
-`force` to true to use `git branch -D`; otherwise it uses `git branch -d`.
-
-Arguments:
+`dry_run` defaults to true; deletion requires `dry_run=false` and
+`confirm_delete=true` in the same call. `force` defaults to false. Explicit Full
+access force may discard otherwise protected unmerged branch history; it does not
+bypass live-worktree, identity or expected-value checks. Results contain `name`,
+`oid`, `deleted`, `dry_run` and `force`.
 
 ```json
-{
-  "name": "feature/local-work",
-  "force": false,
-  "dry_run": true,
-  "confirm_delete": false,
-  "timeout_ms": 30000
-}
+{"name":"worktree/local-work","dry_run":false,"confirm_delete":true}
 ```
 
 ### `git.branch_rename`

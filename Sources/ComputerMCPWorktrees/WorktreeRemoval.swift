@@ -179,7 +179,14 @@ extension WorktreeRepository {
       if phase == .objects { try requireRemovalChild(registration.objects) }
       let parent = try WorktreeDirectory(
         URL(fileURLWithPath: directory.path).deletingLastPathComponent())
-      try parent.removeOwnedTree(directory, io: io)
+      try parent.removeOwnedTree(directory, io: io) { path in
+        if phase == .content {
+          let root = URL(fileURLWithPath: journal.record.root)
+          if path.path == root.path || path.path.hasPrefix(root.path + "/") {
+            try authorize(journal.record, [path])
+          }
+        }
+      }
       try advanceRemoval(&journal, to: next)
     }
     if journal.phase == .unregistering {

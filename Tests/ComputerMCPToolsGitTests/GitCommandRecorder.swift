@@ -7,6 +7,7 @@ import Foundation
 /// Supplies the host's configuration inventory separately from subcommand response fixtures.
 /// Real-repository tests exercise the configuration overrides and process side effects.
 final class GitCommandRecorder: CommandRunning, @unchecked Sendable {
+  private let coordination = try! ScopedTemporaryDirectory()
   private let recorder = RecordingCommandRunner()
   private let resolvedObjects: [String: String]
 
@@ -47,6 +48,12 @@ final class GitCommandRecorder: CommandRunning, @unchecked Sendable {
       args.removeFirst(HostGitConfiguration.arguments.count)
     }
     if args.first == "--literal-pathspecs" { args.removeFirst() }
+    if args == ["rev-parse", "--path-format=absolute", "--git-common-dir"] {
+      return CommandResult(
+        executable: executable, arguments: arguments, exitCode: 0, timedOut: false,
+        stdout: coordination.url.resolvingSymlinksInPath().path + "\n", stderr: "",
+        stdoutTruncated: false, stderrTruncated: false)
+    }
     if args == ["config", "--null", "--name-only", "--list", "--no-includes"] {
       return CommandResult(
         executable: executable, arguments: arguments, exitCode: 0, timedOut: false,

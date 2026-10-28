@@ -37,7 +37,7 @@ extension GatewayDatabase {
     // Each iteration consumes an edge. Cycles and unavailable sources never become authority.
     for _ in 0..<records.count {
       let next = records.filter { record in
-        guard record.state == .active, !available.contains(record.projectID),
+        guard [.active, .removing].contains(record.state), !available.contains(record.projectID),
           available.contains(record.source.id), let source = projects[record.source.id],
           let child = projects[record.projectID]
         else { return false }
@@ -99,9 +99,14 @@ extension GatewayDatabase {
   }
 
   static func hostContentIdentity(_ record: DerivedProjectRecord?) throws -> UUID? {
-    guard let record, record.state == .active,
+    guard let record, [.active, .removing].contains(record.state),
       case .host(_, let generation) = record.provenance, let worktree = record.worktree
     else { return nil }
+    if record.state == .removing,
+      !FileManager.default.fileExists(atPath: record.root)
+    {
+      return nil
+    }
     try worktree.verifyContent()
     return generation
   }

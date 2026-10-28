@@ -100,7 +100,7 @@ package enum ProjectRequirement: String, Codable, Sendable {
 
 /// Trusted provider implementation, never conveyed by a serialized descriptor.
 package enum HostOperation: Equatable, Sendable {
-  case fileMutation, git
+  case fileMutation, git, worktreeLifecycle
 }
 
 package struct CapabilityDescriptor: Codable, Equatable, Sendable {

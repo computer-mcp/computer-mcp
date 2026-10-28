@@ -369,7 +369,7 @@ package final class GatewayDatabase: OAuthStore, @unchecked Sendable {
             ProjectPathResolver.resolve(
               project.rootPath, relativeTo: URL(fileURLWithPath: "/")
             ).path)
-          let source = derived.first { $0.projectID == project.id && $0.state == .active }?.source
+          let source = derived.first { $0.projectID == project.id }?.source
             .id
           var current =
             prior[project.id]

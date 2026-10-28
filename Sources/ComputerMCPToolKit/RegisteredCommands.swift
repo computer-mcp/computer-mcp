@@ -151,7 +151,20 @@ package struct RegisteredCommands: Sendable {
     let pathspecOptions = takesPathspecs || stashPaths ? ["--literal-pathspecs"] : []
     let lock: RepositoryLock?
     let common: URL?
-    if fixed?.operation == .git, fixed?.allowsWrites == true {
+    let mutating: Bool
+    switch operation {
+    case "branch":
+      mutating =
+        args.contains("--") || args.contains(where: { ["-m", "-M", "-d", "-D"].contains($0) })
+    case "tag": mutating = !args.contains("--list") && !args.contains("-l")
+    case "stash": mutating = args.dropFirst().first == "push"
+    case "worktree": mutating = args.dropFirst().first != "list"
+    case "add", "switch", "checkout", "commit", "reset", "restore", "clean", "merge", "rebase",
+      "update-ref", "cherry-pick", "revert":
+      mutating = true
+    default: mutating = false
+    }
+    if fixed?.allowsWrites == true || mutating {
       let located = try run(
         executable: invocation.executable,
         arguments: HostGitConfiguration.arguments + [
@@ -165,7 +178,7 @@ package struct RegisteredCommands: Sendable {
       }
       common = try ProjectPathResolver.canonicalProject(
         URL(fileURLWithPath: String(located.stdout.dropLast())))
-      try prepared?.pathAccess?.check(common!, operation: .write)
+      if mutating { try prepared?.pathAccess?.check(common!, operation: .write) }
       lock = try RepositoryLock(
         commonDirectory: common!, owner: .init(bootSessionID: launcher.bootSessionID),
         timeout: .milliseconds(limit),

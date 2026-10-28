@@ -135,7 +135,7 @@ struct ToolRequirementCatalogTests {
       plugin.artifacts plugin.configure plugin.describe plugin.disable plugin.enable
       plugin.install plugin.list plugin.search plugin.uninstall plugin.update policy.probe
       profile.limit profile.show project.add project.describe project.grant project.list
-      project.open project.remove project.repair project.reveal runtime.owners.call service.status
+      project.open project.remove project.repair project.request project.reveal runtime.owners.call service.status
       skills.describe
       skills.files skills.frontmatter skills.link_check skills.links skills.list skills.outline
       skills.read skills.read_file skills.read_files skills.read_package skills.roots
@@ -158,7 +158,7 @@ struct ToolRequirementCatalogTests {
       git.file_at_revision git.file_history git.files git.grep git.ignored git.is_ancestor git.log
       git.merge_base git.reflog git.refs git.remotes git.resolve_ref git.root git.show
       git.staged_file git.stash_show git.stashes git.status git.submodules git.tag_show git.tags
-      git.tracking_status git.worktrees image.info json.read jsonl.read markdown.frontmatter
+      git.tracking_status git.worktree_list image.info json.read jsonl.read markdown.frontmatter
       markdown.link_check markdown.links markdown.section markdown.tables media.info pdf.info
       pdf.text plist.read process.list process.read project.agent_files project.archive_files
       project.artifact_directories project.asset_files project.ci_files project.commands
@@ -177,7 +177,7 @@ struct ToolRequirementCatalogTests {
       """
       archive.create archive.extract cli.exec delivery.apply file.append file.chmod file.copy
       file.download file.insert_text file.mkdir file.move file.remove_xattr file.replace_lines
-      file.replace_text file.symlink file.touch file.trash file.write file.write_files git.add
+      file.replace_text file.symlink file.touch file.trash file.write file.write_files git.worktree_remove git.add
       git.branch_create git.branch_rename git.branch_switch git.clean git.commit
       git.restore_worktree git.stash_push git.tag_create git.tag_delete git.unstage json.write
       plist.write process.cancel process.spawn process.write shell.cancel shell.run shell.spawn
@@ -187,7 +187,7 @@ struct ToolRequirementCatalogTests {
     (
       .sourceProjectWrite,
       """
-      git.branch_delete
+      git.branch_delete git.worktree_add git.merge
       """
     ),
   ]

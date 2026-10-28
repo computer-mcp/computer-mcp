@@ -47,12 +47,12 @@ service context and do not acquire that worktree lease.
 
 ## Publication and recovery
 
-Publication captures detached HEAD once, copies private objects into exclusive
-host storage and verifies the copy. Programs keep running. Torn or substituted
-input fails verification rather than authorizing publication. The host installs
-the verified closure and updates shared refs using expected values under canonical
-repository coordination. Captured/replaced commits and private references and
-reflogs are retained as required by branch protection.
+Publication captures HEAD once, detached or on a private branch, copies private
+objects into exclusive host storage and verifies the copy. Programs keep running.
+Torn or substituted input fails verification rather than authorizing publication.
+The host installs the verified closure and updates shared refs using expected
+values under canonical repository coordination. Captured/replaced commits and
+private references and reflogs are retained as required by branch protection.
 
 Host dirty checks reconstruct a fresh index from path, mode, object ID and stage;
 program-set stat hints, validity flags and cache extensions cannot hide edits.

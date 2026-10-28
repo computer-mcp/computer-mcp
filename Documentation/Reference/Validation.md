@@ -82,8 +82,11 @@ delegated-principal launches or installed-App TCC acceptance.
 
 ## Native catalog fixture acceptance
 
-The Validation catalog fixture test requires an explicit native CLI path. Run it
-against the candidate built in this checkout:
+The Validation catalog fixture test requires an explicit native CLI path. The
+formal `validation` stage in `Scripts/release-checks.json` builds the CLI in the
+current checkout and binds it to `COMPUTER_MCP_EXECUTABLE` before running the
+Validation tests, including both catalog profiles. To run the catalog suite
+directly against this checkout:
 
 ```sh
 COMPUTER_MCP_EXECUTABLE="$PWD/.build/debug/computer-mcp" \
@@ -91,9 +94,10 @@ COMPUTER_MCP_EXECUTABLE="$PWD/.build/debug/computer-mcp" \
   --filter CapabilityFixturePlanTests
 ```
 
-Without that opt-in, only the portable fixture tests run. A skip is not catalog
-acceptance. Independent read probes require both a read-only capability and its
-read-only annotation; a permission request is not an unattended read probe.
+Direct test invocations without that opt-in skip the catalog test. The formal
+check supplies it on every run; a skip is not catalog acceptance. Independent read
+probes require both a read-only capability and its read-only annotation; a
+permission request is not an unattended read probe.
 
 ## Builtin catalog snapshot
 

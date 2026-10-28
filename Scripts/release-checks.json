@@ -60,8 +60,9 @@
       "needs": ["dependencies"],
       "timeout_seconds": 1800,
       "commands": [
+        ["/usr/bin/swift", "build", "--build-system", "native", "--product", "computer-mcp"],
         ["/usr/bin/swift", "build", "--package-path", "Tools/Validation"],
-        ["/usr/bin/swift", "test", "--package-path", "Tools/Validation", "--no-parallel"],
+        ["/bin/sh", "-c", "COMPUTER_MCP_EXECUTABLE=\"$PWD/.build/debug/computer-mcp\" exec /usr/bin/swift test --package-path Tools/Validation --no-parallel"],
         ["/usr/bin/swift", "run", "--package-path", "Tools/Validation", "computer-mcp-validate", "test-case", "validate"]
       ],
       "access": "Local Validation fixtures and catalog"

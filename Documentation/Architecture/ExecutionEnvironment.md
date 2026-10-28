@@ -21,9 +21,10 @@ directory-only ancestors and host-data exclusions share the host-tool resolver.
 A complete classified path environment is required. The host supplies canonical
 working paths and private scratch storage. Sandbox project programs require a
 current host-worktree identity and private Git context. Full access project
-programs run unconfined after permission admission and local consent. Local stdio
-MCP and plugin program launches remain unavailable until their owner supplies
-the supported execution context.
+programs run unconfined after permission admission and local consent. Within host
+worktrees, local stdio MCP and plugin program launches remain unavailable until
+the plugin owner supplies its verified execution context. Ordinary projects retain
+their admitted invocation path.
 
 Screen opens capture and Desktop control opens accessibility independently.
 Egress uses the effective project network and managed ceilings; a scoped Local

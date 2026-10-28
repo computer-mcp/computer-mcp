@@ -4786,19 +4786,25 @@ the catalog.
 
 | Tool | Call location and arguments | Result |
 | --- | --- | --- |
-| `git.worktree_add` | Source project. Required `name`: `[a-z0-9]+(-[a-z0-9]+)*`, at most 48 characters. Optional new `branch` defaults to `worktree/<name>`; existing branches are refused. Optional `base` defaults to the main checkout's current branch and is required when detached. | `project_id`, `path`, `branch`, `base` |
+| `git.worktree_add` | Source project. Required `name`: `[a-z0-9]+(-[a-z0-9]+)*`, at most 48 characters. Optional new `branch` defaults to `worktree/<name>`; existing branches are refused. Optional `base` defaults to the main checkout's current branch and is required when detached. | `project_id`, `path`, `branch`, `base`, `warnings` (submodules stay uninitialized; LFS files stay pointers) |
 | `git.worktree_list` | Source or derived project; no operation arguments. | `worktrees`, each with `path`, `project_id`, `branch`, `base`, `ahead`, `behind`, `dirty`, `unavailable`. Inaccessible details and unavailable foreign metrics are null. |
 | `git.merge` | Source project. Required `branch` selects a host worktree branch. Its recorded base must be checked out in the main checkout. | `project_id`, `branch`, `base`, `oid` |
 | `git.worktree_remove` | Host worktree project. Optional `force=false` discards uncommitted content only. | `project_id`, `branch`, `oid`, `terminationWarnings` |
 
 Creation registers the returned project only after verifying its detached checkout
-and private object store. Merge verifies a captured copy of committed objects,
-publishes the named branch with expected-value checks, and fast-forwards the main
-checkout. It refuses non-fast-forward history and local changes it would overwrite.
-Removal closes writer admission, terminates and reaps sandboxed writers, preserves
-committed history, removes owned storage, and unregisters the project last. Full
+and private object store. Use the returned `project_id` for subsequent calls.
+Its private repository's `origin` points to the source; integration rebases onto
+`origin/<base>`. Submodules stay uninitialized and LFS files stay pointers.
+Merge verifies a captured copy of committed objects, publishes the worktree's
+committed HEAD to the managed branch with expected-value checks, and fast-forwards
+the main checkout. It refuses non-fast-forward history and local changes it would overwrite.
+Removal closes writer admission, terminates and reaps sandboxed writers, publishes
+the worktree's committed HEAD to the managed branch, preserves committed history,
+removes owned storage, and unregisters the project last. Full
 access writers are terminated best-effort; `terminationWarnings` reports possible
 detached survivors or unconfirmed termination. The branch remains after removal.
+Committing after merge and then removing advances it; branch deletion is refused
+until those new commits are merged into the recorded base.
 
 ### `git.stashes`
 

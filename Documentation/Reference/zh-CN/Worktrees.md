@@ -11,11 +11,12 @@
 
 Shell 工具还需启用并满足自身权限和限额。Full access 不会授予 Project 写权限。
 完整可用范围以[执行准入表](../../Architecture/SecurityAndPrivacy.md#execution-admission)
-为准，本地 stdio MCP 和插件程序仍需其所属模块提供支持的执行上下文。
+为准。
 
 宿主在注册项目之外选择路径，并建立独立私有仓库：HEAD 初始为 detached，
 对象与引用私有，`origin` 指向源仓库。使用返回的 `project_id`，不要再次注册路径，
 也不要改动 `.git` 或私有 Git 控制文件。
+子模块保持未初始化，LFS 文件保持指针形式；创建结果会为这些情况返回警告。
 
 ## 同一连接中的流程
 
@@ -31,16 +32,25 @@ Shell 工具还需启用并满足自身权限和限额。Full access 不会授�
 4. 源分支推进后，在获准的 shell 中运行 `git fetch origin` 和
    `git rebase origin/<base>`。发生冲突时明确解决后 continue，或 abort；
    宿主不会自动 rebase。发布前，私有提交不会推进源仓库中的受管分支。
-5. 在源项目调用 `git.merge`，传入返回的 `branch`。宿主验证提交对象并快进合并到
-   记录的 base。分叉历史、主检出分支不匹配和会覆盖本地修改的情况均被拒绝；
-   无关本地修改保留。
-6. 在工作树项目调用 `git.worktree_remove`。宿主停止获准写入者，保留已提交历史，
-   删除所属存储，最后注销项目。检查 `terminationWarnings`：未受限进程可能无法
-   确认退出，脱离进程组的后代也可能存活。
+5. 在源项目调用 `git.merge`，传入返回的 `branch`。宿主将工作树已提交的 HEAD
+   发布到受管分支，再快进合并到源检出中记录的 base。分叉历史、主检出分支不匹配
+   和会覆盖本地修改的情况均被拒绝。历史分叉时，运行 `git fetch origin`，rebase 到
+   `origin/<base>` 后重试。无关本地修改保留。
+6. 在工作树项目调用 `git.worktree_remove`。宿主停止获准写入者，将工作树已提交的
+   HEAD 发布到受管分支，保留已提交历史，删除所属存储，最后注销项目。检查
+   `terminationWarnings`：未受限进程可能无法确认退出，脱离进程组的后代也可能存活。
 7. 在源项目调用 `git.branch_delete`，提供 `name`、`dry_run: false` 和
    `confirm_delete: true`。这是同一次调用的参数。分支 tip 必须从记录的 base 可达；
    其余恢复对象（包括 rebase 前的提交）在删分支后仍独立保留。仍在使用的分支
    受保护，沙箱调用方不能强制删除。
+
+如果在 `git.merge` 后继续提交，再移除工作树，受管分支会推进到这些新提交。
+在新提交合并到记录的 base 前，`git.branch_delete` 会拒绝删除。
+
+### 放弃工作
+
+沙箱调用方不能删除未合并的工作树分支。移除工作树后，分支及其恢复记录仍保留。
+只有 Full access 下对 `git.branch_delete` 使用 `force`，才能丢弃该代剩余的恢复记录。
 
 精确参数和结果见英文[生命周期 Schema](../Tools.md#git-worktree-lifecycle)及
 [分支删除](../Tools.md#gitbranch_delete)。
@@ -57,5 +67,7 @@ assume-unchanged、skip-worktree 等索引标记不会绕过宿主脏状态判�
 重新连接不会让其他主体获得现有执行 ID 的访问权。
 
 插件工作树仍由插件负责其 Git 生命周期，并保留原有 receipt 与宿主服务协议；
-宿主工作树工具不接管插件的删除流程。旧 delivery 配置会明确拒绝并提示此替代流程。
-替换前先由原负责人处理未完成工作；配置加载不会删除历史日志、配置修订或用户分支。
+宿主工作树工具不接管插件的删除流程。
+
+已安装 manifest 的升级和旧配置处理规则，见
+[工作树可用性](../Config.md#worktree-availability)。

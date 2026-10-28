@@ -60,7 +60,7 @@ extension GitToolProvider {
     return [
       definition(
         "git.worktree_add",
-        "Create a persistent detached worktree and a new managed branch from the source project. Returns project_id, path, branch, base and submodule/LFS warnings.",
+        "Create a persistent detached worktree and a new managed branch from the source project. Use the returned project_id for subsequent calls. The worktree has a private repository whose origin is the source; before integration, fetch origin and rebase onto origin/<base>. Returns project_id, path, branch, base and warnings: submodules stay uninitialized and LFS files stay pointers.",
         properties: [
           "name": .object([
             "type": .string("string"),
@@ -79,12 +79,12 @@ extension GitToolProvider {
         properties: [:], readOnly: true),
       definition(
         "git.worktree_remove",
-        "Remove the current host worktree after terminating writers and preserving every private reference and reflog root. Keeps its branch and recovery records; force discards only uncommitted content. Returns project_id, branch, oid and terminationWarnings.",
+        "Remove the current host worktree after terminating writers, publishing its committed HEAD to the managed branch and preserving every private reference and reflog root. Keeps its branch and recovery records; force discards only uncommitted content. Commits made after git.merge advance the branch on removal and must be merged before git.branch_delete. Returns project_id, branch, oid and terminationWarnings.",
         properties: ["force": boolSchema("Discard uncommitted content only. Defaults to false.")],
         source: false),
       definition(
         "git.merge",
-        "Publish a host worktree branch and fast-forward the main checkout's current branch, which must be its recorded base. Call in the source project; refuses overwrites and non-fast-forward history.",
+        "Publish the worktree's committed HEAD to its managed branch and fast-forward the main checkout's current branch, which must be its recorded base. Call in the source project; refuses overwrites and non-fast-forward history. Commits made afterward are published by git.worktree_remove and must be merged before git.branch_delete.",
         properties: ["branch": stringSchema("Source host worktree branch to merge.")],
         required: ["branch"]),
     ]

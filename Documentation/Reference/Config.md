@@ -498,7 +498,8 @@ access_token_env = "COMPUTER_MCP_HTTP_ACCESS_TOKEN"
 
 Worktree lifecycle tools use durable host storage: App distribution storage or
 regions beside a standalone database. Memory-only hosts omit the routes. Enable
-`git.worktree_add`, `git.worktree_list`, `git.worktree_remove` and `git.merge` in
+`git.worktree_add`, `git.worktree_list`, `git.worktree_remove`, `git.merge` and
+`git.branch_delete` in
 `[builtin].enabled`; the defaults already include them. The source Project grant
 and effective sandbox settings apply to derived projects on every call. Shell
 execution also requires `[policy].shell_enabled = true` and its declared limits

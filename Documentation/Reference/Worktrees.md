@@ -19,6 +19,8 @@ The host places the checkout outside registered projects and supplies a private
 repository with detached HEAD, private objects and `origin` pointing to the
 source. Its path is selected by the host. Use the returned project ID rather than
 registering the path again. Do not edit `.git` or the private control files.
+Submodules stay uninitialized and LFS files stay pointers; creation reports these
+conditions as warnings.
 
 ## One-session sequence
 
@@ -40,19 +42,32 @@ registering the path again. Do not edit `.git` or the private control files.
    abort. The host never automatically rebases your work. Private commits do not
    advance the source's managed branch until publication.
 5. In the source project, call `git.merge` with the returned `branch`. It publishes
-   verified committed objects and fast-forwards the recorded base in the source
-   checkout. Divergence, a different checked-out branch or local overwrite
-   hazards are refused. Unrelated local edits are preserved.
+   the worktree's committed HEAD to the managed branch, then fast-forwards the
+   recorded base in the source checkout. Divergence, a different checked-out
+   branch or local overwrite hazards are refused. For divergence, run
+   `git fetch origin`, rebase onto `origin/<base>`, then retry. Unrelated local
+   edits are preserved.
 6. In the worktree project, call `git.worktree_remove`. It stops admitted writers,
-   preserves committed history, removes owned storage and unregisters the
-   project. Inspect `terminationWarnings` for unconfined processes whose exit
-   could not be confirmed or whose detached descendants may survive.
+   publishes the worktree's committed HEAD to the managed branch, preserves
+   committed history, removes owned storage and unregisters the project. Inspect
+   `terminationWarnings` for unconfined processes whose exit could not be confirmed
+   or whose detached descendants may survive.
 7. In the source project, delete the merged branch with `git.branch_delete`,
    `name`, `dry_run: false` and `confirm_delete: true`. These are fields in the
    same call. The branch tip must be reachable from its recorded base. Other
    recovery objects, including pre-rebase commits, stay retained independently
    after the branch is deleted. Live worktree branches are protected; sandbox
    callers cannot request force deletion.
+
+Committing after `git.merge` and then removing the worktree advances the managed
+branch to those new commits. `git.branch_delete` is refused until they are merged
+into the recorded base.
+
+### Abandoning work
+
+A sandboxed caller cannot delete an unmerged worktree branch. Removing the
+worktree keeps the branch and its recovery records. Only Full access `force` on
+`git.branch_delete` discards that generation's remaining recovery records.
 
 Exact arguments, bounds and result fields are in the
 [Git lifecycle schemas](Tools.md#git-worktree-lifecycle) and
@@ -77,6 +92,5 @@ Host worktrees and plugin-managed worktrees have distinct lifecycle owners.
 Plugin worktrees retain their existing receipt and host-service contract; these
 tools do not convert their layout or take over their deletion protocol.
 
-Legacy delivery manifests must be replaced with this flow. Reconcile unfinished
-delivery work with its existing owner first. Configuration rejection does not
-delete old journals, stored configuration revisions or user branches.
+For installed-manifest upgrades and legacy configuration handling, see
+[Worktree availability](Config.md#worktree-availability).

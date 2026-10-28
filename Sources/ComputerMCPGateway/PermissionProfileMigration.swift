@@ -32,6 +32,20 @@ package struct PermissionMigrationReport: Equatable, Sendable {
   package let dropped: [DroppedGrant]
   package let omittedCount: Int
   package var removedBuiltinIDs: [String] = []
+
+  /// Startup diagnostics contain counts and fixed builtin IDs, never stored grant payloads.
+  package var startupDiagnostic: String? {
+    var notices: [String] = []
+    if !removedBuiltinIDs.isEmpty {
+      notices.append(
+        "Removed builtins: " + removedBuiltinIDs.sorted().joined(separator: ", ") + ".")
+    }
+    let droppedCount = dropped.count + omittedCount
+    if droppedCount > 0 {
+      notices.append("Dropped grants: \(droppedCount) (grant details omitted).")
+    }
+    return notices.isEmpty ? nil : "Permission upgrade: " + notices.joined(separator: " ")
+  }
 }
 
 package struct PermissionMigrationPlan: Sendable {

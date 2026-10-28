@@ -31,9 +31,9 @@ extension AppControlPlaneService {
       service: keychainService + ".permissions", account: "authorization-epoch")
     try database.claimPermissionComposition(.app)
     _ = database.permissionStore(counter: counter)
-    _ = try AtomicManifestStore.activatePermissionMigration(
-      manifestURL: resolvedDirectories.manifest, database: database,
-      applications: platform.applications, bundledPlugins: bundledPlugins)
+    try activatePermissionMigration(
+      directories: resolvedDirectories, database: database,
+      platform: platform, bundledPlugins: bundledPlugins)
     let permissions = try MacOSPermissionServices(
       database: database, counter: counter, platform: platform,
       owner: {
@@ -82,4 +82,18 @@ extension AppControlPlaneService {
       bundledPlugins: bundledPlugins
     )
   }
+
+  package static func activatePermissionMigration(
+    directories: AppControlPlaneServiceDirectories, database: GatewayDatabase,
+    platform: PlatformServices, bundledPlugins: BundledPlugins
+  ) throws {
+    let report = try AtomicManifestStore.activatePermissionMigration(
+      manifestURL: directories.manifest, database: database,
+      applications: platform.applications, bundledPlugins: bundledPlugins)
+    if let message = report?.startupDiagnostic {
+      try AppFileLogger(directory: directories.logs).append(
+        .warning, event: "permissions.upgrade", fields: ["summary": message])
+    }
+  }
+
 }

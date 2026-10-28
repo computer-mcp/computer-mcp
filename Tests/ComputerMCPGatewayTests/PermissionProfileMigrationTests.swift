@@ -14,6 +14,23 @@ import Testing
 @testable import ComputerMCPPlugins
 
 @Suite struct PermissionProfileMigrationTests {
+  @Test func startupDiagnosticsOmitGrantPayloadsAndIncludeOmittedCount() throws {
+    let empty = PermissionMigrationReport(dropped: [], omittedCount: 0)
+    #expect(empty.startupDiagnostic == nil)
+    let report = PermissionMigrationReport(
+      dropped: [
+        .init(
+          profileID: try #require(GatewayProfileID(rawValue: "private-profile")),
+          grant: "private-grant",
+          reason: "private-reason")
+      ],
+      omittedCount: 256, removedBuiltinIDs: ["delivery.apply"])
+    #expect(
+      report.startupDiagnostic
+        == "Permission upgrade: Removed builtins: delivery.apply. Dropped grants: 257 (grant details omitted)."
+    )
+  }
+
   let project = ComputerMCPCore.RegisteredProject(
     id: "project", displayName: "Fixture", rootPath: "/fixture/project",
     createdAt: Date(timeIntervalSince1970: 0), updatedAt: Date(timeIntervalSince1970: 0))

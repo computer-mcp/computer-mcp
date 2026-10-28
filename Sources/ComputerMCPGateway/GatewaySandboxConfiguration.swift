@@ -103,11 +103,15 @@ package enum GatewaySandboxCompiler {
             ledger.environment.connections[id]?.attenuation.deniedReadLocations ?? [])
         }
       }
-      let hostExceptions: Set<CanonicalPath> =
-        scratch.map { scratch in
-          guard !nonHostDenials.contains(where: { $0.contains(scratch) }) else { return [] }
-          return (paths?.hostDataLocations ?? []).filter { $0.contains(scratch) }
-        } ?? []
+      let content = paths?.registeredProjects.first {
+        $0.id == authorization.invocation.projectID && $0.hostContentIdentity != nil
+      }?.root
+      let ownedOpenings = Set([scratch, content].compactMap { $0 }).filter { candidate in
+        !nonHostDenials.contains(where: { $0.contains(candidate) })
+      }
+      let hostExceptions = (paths?.hostDataLocations ?? []).filter { root in
+        ownedOpenings.contains { root.contains($0) && ($0 == scratch || root != $0) }
+      }
       let scratchAllowed =
         scratch.map { candidate in
           !nonHostDenials.contains(where: { $0.contains(candidate) })
@@ -121,13 +125,14 @@ package enum GatewaySandboxCompiler {
             .filter { path != $0 && path.contains($0) }
             .sorted(by: { $0.string < $1.string }).map { try SandboxPath($0.string) })
       }
-      if let scratch {
-        for root in hostExceptions where root != scratch {
-          regions.append(
-            try SandboxReadRegion(
-              path: SandboxPath(root.string),
-              exceptions: [SandboxPath(scratch.string)]))
-        }
+      for root in hostExceptions {
+        let exceptions = ownedOpenings.filter { root.contains($0) }
+        regions.append(
+          try SandboxReadRegion(
+            path: SandboxPath(root.string),
+            exceptions: exceptions.sorted { $0.string < $1.string }.map {
+              try SandboxPath($0.string)
+            }))
       }
       // The working directory itself must be readable; traversable ancestors do
       // not confer a recursive read opening.

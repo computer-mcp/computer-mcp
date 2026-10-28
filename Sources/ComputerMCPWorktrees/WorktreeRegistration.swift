@@ -42,6 +42,22 @@ package struct WorktreeRegistration: Codable, Equatable, Sendable {
     self.runtime = runtime
   }
 
+  /// Content classification is separate from permission and writable Git admission.
+  /// The source, exclusive parent and content directory must retain their recorded identity.
+  package func verifyContent() throws {
+    guard URL(fileURLWithPath: root.path).deletingLastPathComponent().path == contentParent.path
+    else {
+      throw DerivedProjectStoreError.invalidRecord
+    }
+    for expected in [repository.source, contentParent, root] {
+      let directory = try WorktreeDirectory(URL(fileURLWithPath: expected.path))
+      guard directory.identity == expected else {
+        throw WorktreeError.identityChanged("Worktree content registration changed.")
+      }
+      try directory.verify()
+    }
+  }
+
   func validate(record: DerivedProjectRecord) throws {
     guard case .host = record.provenance, root.path == record.root,
       repository.source.path == record.source.root,

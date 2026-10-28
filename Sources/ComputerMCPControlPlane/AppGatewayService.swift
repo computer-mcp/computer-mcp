@@ -612,7 +612,8 @@ package actor AppGatewayService {
     }
     if let pending = pendingRuntimes[key] { return try await pending.task.value }
     if let existing = runtimes[key], existing.inputs.configuration == current.configuration,
-      existing.inputs.projects == current.projects, existing.inputs.plugins == current.plugins
+      existing.inputs.projects == current.projects, existing.inputs.plugins == current.plugins,
+      existing.inputs.persisted.derivedProjects == current.persisted.derivedProjects
     {
       return existing
     }
@@ -1135,7 +1136,8 @@ package actor AppGatewayService {
         let state = GatewayDatabase.ConfigurationState(
           projects: expected.projects, projectAliases: expected.persisted.projectAliases,
           profiles: expected.profiles, plugins: proposed,
-          profileSource: expected.persisted.profileSource)
+          profileSource: expected.persisted.profileSource,
+          derivedProjects: expected.persisted.derivedProjects)
         _ = try await preparePublication(expected: expected, proposed: state, storage: storage) {
           resolution in
           let commit = {

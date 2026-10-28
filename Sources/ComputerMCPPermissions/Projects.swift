@@ -42,12 +42,20 @@ package struct RegisteredProject: Hashable, Sendable, Codable {
   package var sourceID: String? {
     didSet { if sourceID != oldValue { identity = identity.edited() } }
   }
+  /// Set only by the host adapter after checking durable content-directory ownership.
+  /// The storage generation prevents a replacement registration from inheriting this boundary.
+  package var hostContentIdentity: UUID? {
+    didSet { if hostContentIdentity != oldValue { identity = identity.edited() } }
+  }
   package internal(set) var identity = BasisIdentity()
 
-  package init(id: String, root: CanonicalPath, sourceID: String? = nil) {
+  package init(
+    id: String, root: CanonicalPath, sourceID: String? = nil, hostContentIdentity: UUID? = nil
+  ) {
     self.id = id
     self.root = root
     self.sourceID = sourceID
+    self.hostContentIdentity = hostContentIdentity
   }
 }
 

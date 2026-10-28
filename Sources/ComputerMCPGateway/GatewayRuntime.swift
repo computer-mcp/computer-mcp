@@ -44,8 +44,9 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
   private let configurationResolution: GatewayConfigurationResolution
   package let ownedWork = GatewayOwnedWork()
   package let generationID = UUID()
+  private let generationInputs: GatewayDatabase.ConfigurationState?
   private let authenticatedSessionFactory:
-    @Sendable (String, GatewayTransportTrace?, Bool) throws -> GatewayRuntime
+    @Sendable (String, GatewayTransportTrace?, Bool, Bool) throws -> GatewayRuntime
   private static let construction = BlockingOperationExecutor(
     label: "computer-mcp.gateway-construction", serial: false)
   private static let admission = BlockingOperationExecutor(
@@ -201,7 +202,7 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
     terminalSessions: GatewayTerminalSessions, lifetime: GatewayRuntimeLifetime,
     preparationState: GatewayDatabase.ConfigurationState?,
     artifactStorage: PluginInstallationStorage?, requiresControlSession: Bool,
-    remoteManagement: (any GatewayManagementProvider)?
+    remoteManagement: (any GatewayManagementProvider)?, initializeManifestProjects: Bool = true
   ) throws {
     let initializationConfiguration = configuration
     let database: GatewayDatabase? = try database ?? GatewayDatabase(inMemory: ())
@@ -211,10 +212,11 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
           configuration.profileGrant(for: $0)
         },
         declarations: configuration.profiles.map(\.grant))
-      if registeredProjects == nil {
+      if initializeManifestProjects && registeredProjects == nil {
         try database!.registerManifestProjectsForStartup(configuration.manifestProjects)
       }
     }
+    let capturedInputs = try preparationState ?? database!.configurationState()
     self.permissionRuntime = try database!.permissionRuntime(platform: platform)
     self.lifetime = lifetime
     self.requiresControlSession = requiresControlSession
@@ -245,7 +247,7 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
     let effectiveContext = context ?? configuration.executionContext()
     let configuredGrant = configuration.profiles.first { $0.id == effectiveContext.profileID }?
       .grant
-    let persistedProfiles = try preparationState?.profiles ?? database?.profiles() ?? []
+    let persistedProfiles = capturedInputs.profiles
     let persistedGrant = persistedProfiles.first(where: { $0.id == effectiveContext.profileID })
     let mcpGrant = configuredGrant ?? configuration.profileGrant(for: effectiveContext.profileID)
     let serverPlugins = Dictionary(
@@ -270,10 +272,11 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
           fullAccessConsented: session != nil && effective.fullAccess, pluginIDs: serverPlugins)
       })
 
-    let persistedProjects = try preparationState?.projects ?? database?.projects() ?? []
+    let persistedProjects = capturedInputs.projects
     let configuredProjects =
       registeredProjects
-      ?? (persistedProjects.isEmpty ? configuration.manifestProjects : persistedProjects)
+      ?? (initializeManifestProjects && persistedProjects.isEmpty
+        ? configuration.manifestProjects : persistedProjects)
 
     var projectByID: [String: ComputerMCPCore.RegisteredProject] = [:]
     var accessByID: [String: ResolvedProjectAccess] = [:]
@@ -390,19 +393,20 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
     self.configuration = configuration
     self.context = effectiveContext
     self.grant = effectiveGrant
-    self.authenticatedSessionFactory = { principalID, trace, sessionRequired in
+    self.authenticatedSessionFactory = { principalID, trace, sessionRequired, refreshDirectory in
       var bound = effectiveContext
       bound.trustedPrincipalID = principalID
       bound.transportTrace = trace
       bound.controlSession = nil
       return try GatewayRuntime(
         configuration: initializationConfiguration, context: bound, database: database,
-        registeredProjects: registeredProjects, platform: platform,
+        registeredProjects: refreshDirectory ? nil : registeredProjects, platform: platform,
         policyEvaluator: policyEvaluator, mcpClient: mcpClient, plugins: plugins,
         pluginState: pluginState,
         bundledPlugins: bundledPlugins, terminalSessions: terminalSessions,
+        lifetime: GatewayRuntimeLifetime(), preparationState: nil, artifactStorage: nil,
         requiresControlSession: requiresControlSession || sessionRequired,
-        remoteManagement: remoteManagement)
+        remoteManagement: remoteManagement, initializeManifestProjects: false)
     }
     self.requiresPersistedGrant = persistedGrant != nil
     self.persistedProjectRegistrations = Dictionary(
@@ -420,6 +424,11 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
         try? await coordinator.stopExecutions(executionIDs)
       },
       drain: { [ownedWork] in await ownedWork.joinInvocations() })
+    self.generationInputs = GatewayDatabase.ConfigurationState(
+      projects: capturedInputs.projects.map { projectByID[$0.id] ?? $0 },
+      projectAliases: capturedInputs.projectAliases, profiles: capturedInputs.profiles,
+      plugins: capturedInputs.plugins, profileSource: capturedInputs.profileSource,
+      derivedProjects: capturedInputs.derivedProjects)
     if preparationState == nil {
       publication.publish(
         revisionID: (try? database?.configurationRevisions(limit: 50))?.filter {
@@ -690,7 +699,7 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
         actingPrincipal: .plugin(
           plugin.map { .package($0.pluginID) } ?? .localServer(reference.serverID)),
         profileID: context.profileID, caller: context.caller, projectID: projectID,
-        sourceProjectID: try database?.derivedProjectRegistration(id: projectID)?.sourceProjectID
+        sourceProjectID: try database?.derivedSourceID(for: projectID)
           ?? projectID,
         upstreamName: name, reference: reference, action: descriptor.hostServiceAction,
         argumentsDigest: try MCPHostInvocation.argumentsDigest(downstream),
@@ -751,7 +760,7 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
     try hostToolDirectory.requireRecord(invocation)
     guard invocation.admission?.generationID == generationID,
       invocation.admission?.sourceProjectID
-        == (try database?.derivedProjectRegistration(id: projectID)?.sourceProjectID ?? projectID)
+        == (try database?.derivedSourceID(for: projectID) ?? projectID)
     else {
       throw Self.invalid(
         code: "policy.host_invocation_required", message: "The call belongs to another runtime.")
@@ -797,8 +806,8 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
               origin.map { .package($0.pluginID) }
                 ?? .localServer(invocation.reference.serverID)),
           admission.sourceProjectID
-            == (try self.database?.derivedProjectRegistration(
-              id: admission.projectID)?.sourceProjectID ?? admission.projectID),
+            == (try self.database?.derivedSourceID(
+              for: admission.projectID) ?? admission.projectID),
           self.policyEvaluator.evaluate(
             capability: invocation.admittedCapability,
             context: invocation.context, grant: current,
@@ -868,12 +877,42 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
     return lifetime.beginShutdown()
   }
 
+  /// Profile grants are live authority; registration revisions select provider generations.
+  package func hasCurrentProjectInputs() throws -> Bool {
+    guard let database, let generationInputs else { return true }
+    let current = try database.configurationState()
+    return current.projects.count == generationInputs.projects.count
+      && zip(current.projects, generationInputs.projects).allSatisfy(
+        GatewayDatabase.sameStoredProject)
+      && current.derivedProjects == generationInputs.derivedProjects
+  }
+
+  package func refreshedGeneration() async throws -> GatewayRuntime {
+    guard let principal = context.trustedPrincipalID else {
+      throw GatewaySocketError.notConnected
+    }
+    let runtime = try await Self.construction.perform {
+      try self.authenticatedSessionFactory(
+        principal, self.context.transportTrace, self.requiresControlSession, true)
+    }
+    do {
+      guard try runtime.hasCurrentProjectInputs() else {
+        throw GatewayDatabaseError.configurationChanged
+      }
+      return runtime
+    } catch {
+      await runtime.shutdown()
+      throw error
+    }
+  }
+
   package func authenticatedSession(
     principalID: String, transportTrace: GatewayTransportTrace?,
     requiresControlSession: Bool = false
   ) throws -> GatewayRuntime {
     try publication.requirePublished()
-    return try authenticatedSessionFactory(principalID, transportTrace, requiresControlSession)
+    return try authenticatedSessionFactory(
+      principalID, transportTrace, requiresControlSession, false)
   }
 
   package func makeControlSession() throws -> GatewayControlSession {
@@ -1592,7 +1631,11 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
         project.rootPath, relativeTo: URL(fileURLWithPath: "/"))
       return ComputerMCPPermissions.RegisteredProject(
         id: project.id, root: try CanonicalPath(root.path),
-        sourceID: try database?.derivedProjectRegistration(id: project.id)?.sourceProjectID)
+        sourceID: try database?.derivedSourceID(for: project.id),
+        hostContentIdentity: try database?.derivedProjects().first(where: {
+          $0.projectID == project.id
+        })
+        .map { try GatewayDatabase.hostContentIdentity($0) } ?? nil)
     }
     return try PathEnvironmentSnapshot(
       projects: registered,
@@ -1732,7 +1775,7 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
   private func projectAccess(id: String, context: ExecutionContext) -> String {
     do {
       let subject = try GatewayPermissionSubject(context: context)
-      let source = try database?.derivedProjectRegistration(id: id)?.sourceProjectID ?? id
+      let source = try database?.derivedSourceID(for: id) ?? id
       var missing = false
       for value in [PermissionValue.write, .read] {
         let requirement = try PermissionRequirement(.project(source), value)

@@ -33,8 +33,19 @@ package struct GatewayPathAccess: HostPathAccessChecking {
       case .openDirectory: .openDirectory
       case .listDirectory: .listDirectory
       }
-    let result: Result<Void, any Error> = try store.transactionWithDatabase { _, ledger in
+    let result: Result<Void, any Error> = try store.transactionWithDatabase { database, ledger in
       do {
+        for record in try GatewayDatabase.availableDerivedProjects(in: database) {
+          guard case .host = record.provenance else { continue }
+          let root = try ProjectPathResolver.resolve(
+            record.root, relativeTo: URL(fileURLWithPath: "/"))
+          guard ProjectPathResolver.contains(canonical, in: root) else { continue }
+          guard ledger.authorizations[authorizationID]?.invocation.projectID == record.projectID
+          else {
+            throw PermissionModelError.invalidAuthorization
+          }
+          try record.worktree?.verifyContent()
+        }
         try ledger.authorizePathUse(
           authorizationID, path: CanonicalPath(canonical.path), operation: operation)
         return .success(())

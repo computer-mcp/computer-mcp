@@ -104,6 +104,29 @@ struct ComputerMCPPermissionsPathTests {
     }
   }
 
+  @Test func verifiedHostContentOverridesOnlyItsEnclosingHostDataRegion() throws {
+    var environment = TestPathEnvironment()
+    let root = path("/people/me/private/host/worktree")
+    environment.projects = try ProjectCatalog([
+      RegisteredProject(id: "project", root: path("/people/me/Downloads/repo")),
+      RegisteredProject(
+        id: "derived", root: root, sourceID: "project", hostContentIdentity: UUID()),
+    ])
+    let rules = try granted([(.project("project"), .write)])
+    func decision(_ value: String) -> PermissionDecision {
+      PathPermissions(environment: environment).evaluate(
+        path(value), operation: .read, principal: client, permissions: rules)
+    }
+    #expect(decision(root.string + "/file") == .allowed)
+    #expect(decision("/people/me/private/host/database") == .denied(.hostData))
+    environment.hostDataLocations.insert(root)
+    #expect(decision(root.string + "/file") == .denied(.hostData))
+    environment.hostDataLocations.remove(root)
+    environment.hostDataLocations.insert(path(root.string + "/secret"))
+    #expect(decision(root.string + "/secret/file") == .denied(.hostData))
+    #expect(decision(root.string + "/file") == .allowed)
+  }
+
   @Test func explicitDenialsWinOverDirectoryTraversalAndDevelopmentLocations() throws {
     var environment = TestPathEnvironment()
     environment.deniedLocations = [path("/people/me/tasks"), path("/people/me/toolchains")]

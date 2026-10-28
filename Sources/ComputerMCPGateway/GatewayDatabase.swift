@@ -262,7 +262,7 @@ package final class GatewayDatabase: OAuthStore, @unchecked Sendable {
     return profiles.values.sorted { $0.id.rawValue < $1.id.rawValue }
   }
 
-  private func permissionTransaction<Result>(
+  func permissionTransaction<Result>(
     authorizing authority: HostCallAuthoritySnapshot? = nil,
     managementAuthorization: GatewayManagementAuthorization? = nil,
     requiresProfilePolicy: Bool = false,
@@ -319,6 +319,7 @@ package final class GatewayDatabase: OAuthStore, @unchecked Sendable {
         return .failure(error)
       }
       let value = try body(database)
+      try Self.reconcileDerivedSources(in: database)
       for row in try ProfileRecord.fetchAll(database) {
         let previous = before.first { $0.id == row.id }
         guard
@@ -362,7 +363,7 @@ package final class GatewayDatabase: OAuthStore, @unchecked Sendable {
             })
         }
         let prior = Dictionary(uniqueKeysWithValues: paths.registeredProjects.map { ($0.id, $0) })
-        let derived = try SQLiteDerivedProjectStore.records(database)
+        let derived = try Self.availableDerivedProjects(in: database)
         let projects = try Self.projects(in: database).map { project in
           let root = try CanonicalPath(
             ProjectPathResolver.resolve(
@@ -376,6 +377,8 @@ package final class GatewayDatabase: OAuthStore, @unchecked Sendable {
               id: project.id, root: root, sourceID: source)
           current.root = root
           current.sourceID = source
+          current.hostContentIdentity = try Self.hostContentIdentity(
+            derived.first { $0.projectID == project.id })
           return current
         }
         try paths.setProjects(projects)
@@ -464,16 +467,19 @@ package final class GatewayDatabase: OAuthStore, @unchecked Sendable {
     package let profiles: [ProfileGrant]
     package let plugins: PluginStoreSnapshot
     package let profileSource: Data?
+    package let derivedProjects: [DerivedProjectRecord]
 
     package init(
       projects: [ComputerMCPCore.RegisteredProject], projectAliases: [String: String],
-      profiles: [ProfileGrant], plugins: PluginStoreSnapshot, profileSource: Data? = nil
+      profiles: [ProfileGrant], plugins: PluginStoreSnapshot, profileSource: Data? = nil,
+      derivedProjects: [DerivedProjectRecord] = []
     ) {
       self.projects = projects
       self.projectAliases = projectAliases
       self.profiles = profiles
       self.plugins = plugins
       self.profileSource = profileSource
+      self.derivedProjects = derivedProjects
     }
   }
 
@@ -578,7 +584,7 @@ package final class GatewayDatabase: OAuthStore, @unchecked Sendable {
     }
   }
 
-  private static func configurationState(in database: Database) throws -> ConfigurationState {
+  static func configurationState(in database: Database) throws -> ConfigurationState {
     try ConfigurationState(
       projects: projects(in: database),
       projectAliases: Dictionary(
@@ -586,7 +592,8 @@ package final class GatewayDatabase: OAuthStore, @unchecked Sendable {
           ($0.aliasProjectID, $0.canonicalProjectID)
         }),
       profiles: profiles(in: database), plugins: pluginStoreSnapshot(in: database),
-      profileSource: publishedProfileSource(in: database))
+      profileSource: publishedProfileSource(in: database),
+      derivedProjects: SQLiteDerivedProjectStore.records(database))
   }
 
   package func pluginStoreSnapshot() throws -> PluginStoreSnapshot {
@@ -735,7 +742,16 @@ package final class GatewayDatabase: OAuthStore, @unchecked Sendable {
   private static func saveProject(
     _ project: ComputerMCPCore.RegisteredProject, in database: Database
   ) throws {
+    if let derived = try SQLiteDerivedProjectStore.record(project.id, in: database),
+      case .host = derived.provenance
+    {
+      guard derived.root == project.rootPath,
+        let old = try ProjectRecord.fetchOne(database, key: project.id),
+        old.createdAt.databaseValue == project.createdAt.databaseValue
+      else { throw DerivedProjectStoreError.invalidRecord }
+    }
     try ProjectRecord(project).save(database)
+    try reconcileDerivedSources(in: database)
     let canonicalRoot = Self.canonicalProjectRoot(project.rootPath)
     try ProjectCanonicalRootRecord
       .filter(Column("projectID") == project.id)
@@ -887,11 +903,14 @@ package final class GatewayDatabase: OAuthStore, @unchecked Sendable {
 
   static func projects(in database: Database) throws -> [ComputerMCPCore.RegisteredProject] {
     let aliasIDs = Set(try ProjectAliasRecord.fetchAll(database).map(\.aliasProjectID))
+    let derived = try SQLiteDerivedProjectStore.records(database)
+    let available = Set(try availableDerivedProjects(in: database).map(\.projectID))
+    let unavailable = Set(derived.map(\.projectID)).subtracting(available)
     return
       try ProjectRecord
       .order(Column("displayName").collating(.nocase), Column("id"))
       .fetchAll(database)
-      .filter { !aliasIDs.contains($0.id) }
+      .filter { !aliasIDs.contains($0.id) && !unavailable.contains($0.id) }
       .map(\.value)
   }
 
@@ -899,7 +918,7 @@ package final class GatewayDatabase: OAuthStore, @unchecked Sendable {
     try writer.read { database in
       let resolvedID =
         try ProjectAliasRecord.fetchOne(database, key: id)?.canonicalProjectID ?? id
-      return try ProjectRecord.fetchOne(database, key: resolvedID)?.value
+      return try Self.projects(in: database).first { $0.id == resolvedID }
     }
   }
 
@@ -912,14 +931,11 @@ package final class GatewayDatabase: OAuthStore, @unchecked Sendable {
   private static func deleteProject(id: String, in database: Database) throws {
     let canonicalID =
       try ProjectAliasRecord.fetchOne(database, key: id)?.canonicalProjectID ?? id
-    guard
-      try Int.fetchOne(
-        database,
-        sql: "SELECT count(*) FROM derivedProjects WHERE sourceProjectID = ?",
-        arguments: [canonicalID]) == 0
-    else {
-      throw GatewayDatabaseError.invalidStoredValue("Remove derived projects before their source.")
+    guard try SQLiteDerivedProjectStore.record(canonicalID, in: database) == nil else {
+      throw GatewayDatabaseError.invalidStoredValue(
+        "Derived projects require their lifecycle owner.")
     }
+    try invalidateDerivedSources([canonicalID], in: database)
     let aliasIDs =
       try ProjectAliasRecord
       .filter(Column("canonicalProjectID") == canonicalID)
@@ -1523,7 +1539,8 @@ package final class GatewayDatabase: OAuthStore, @unchecked Sendable {
       projects: expected.projects.map { resolved[$0.id] ?? $0 },
       projectAliases: expected.projectAliases,
       profiles: try Self.profiles(publishing: resolution.profileDeclarations, over: expected),
-      plugins: expected.plugins, profileSource: profileSource)
+      plugins: expected.plugins, profileSource: profileSource,
+      derivedProjects: expected.derivedProjects)
     try replaceManifest(proposed)
     let committed = try permissionTransaction(requiresProfilePolicy: sourceChanged) { database in
       guard try Self.configurationState(in: database) == expected else {
@@ -1703,7 +1720,7 @@ package final class GatewayDatabase: OAuthStore, @unchecked Sendable {
     )
   }
 
-  private static func canonicalProjectRoot(_ path: String) -> String {
+  static func canonicalProjectRoot(_ path: String) -> String {
     URL(fileURLWithPath: path, isDirectory: true)
       .standardizedFileURL.resolvingSymlinksInPath().path
   }
@@ -1759,14 +1776,21 @@ extension GatewayDatabase {
       let profile = try profileRow.value()
       try Self.requireDerivedSourceGrant(profile, registration: registration, caller: caller)
       if let old = try Self.derivedRegistration(id: registration.project.id, database: database) {
+        guard
+          try Self.availableDerivedProjects(in: database).contains(where: {
+            $0.projectID == old.project.id
+          })
+        else {
+          throw MCPHostServiceError.denied("The derived source registration is unavailable.")
+        }
         try Self.requireDerivedPrincipal(old, verifiedPrincipalID: verifiedPrincipalID)
         guard old.origin == registration.origin, old.receiptDigest == registration.receiptDigest,
           old.receiptID == registration.receiptID, old.profileID == registration.profileID,
           old.sourceProjectID == registration.sourceProjectID,
           old.sourceRoot == registration.sourceRoot,
-          Self.sameDerivedProject(old.project, registration.project),
+          Self.sameStoredProject(old.project, registration.project),
           let project = try ProjectRecord.fetchOne(database, key: old.project.id),
-          Self.sameDerivedProject(project.value, old.project)
+          Self.sameStoredProject(project.value, old.project)
         else { throw MCPHostServiceError.denied("Existing derived registration changed.") }
         return false
       }
@@ -1825,9 +1849,13 @@ extension GatewayDatabase {
         let old = try Self.derivedRegistration(id: registration.project.id, database: database)
       else { return false }
       try Self.requireDerivedPrincipal(old, verifiedPrincipalID: verifiedPrincipalID)
+      guard try SQLiteDerivedProjectStore.record(old.project.id, in: database)?.state == .active
+      else {
+        throw MCPHostServiceError.denied("The derived source registration is unavailable.")
+      }
       guard old == registration,
         let project = try ProjectRecord.fetchOne(database, key: old.project.id),
-        Self.sameDerivedProject(project.value, old.project),
+        Self.sameStoredProject(project.value, old.project),
         try ProjectAliasRecord.filter(Column("canonicalProjectID") == old.project.id)
           .fetchCount(database) == 0
       else { throw MCPHostServiceError.denied("The derived registration has independent changes.") }
@@ -1888,7 +1916,7 @@ extension GatewayDatabase {
     }
   }
 
-  private static func sameDerivedProject(
+  static func sameStoredProject(
     _ current: ComputerMCPCore.RegisteredProject, _ expected: ComputerMCPCore.RegisteredProject
   ) -> Bool {
     // Compare timestamps at the database's exact serialization precision, not a time tolerance.

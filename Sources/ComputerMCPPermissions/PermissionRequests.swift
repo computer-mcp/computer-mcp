@@ -214,6 +214,13 @@ package struct PermissionLedger: Equatable, Sendable, Codable {
   private var retiredConsents: Set<BasisIdentity> = []
   private var currentLimits: [Principal: ManagedLimits] { environment.limits }
   private var trustedHosts: Set<HostRule> { environment.trustedHosts }
+  private func permitsHostContent(_ path: CanonicalPath, projectID: String?) -> Bool {
+    guard let paths = environment.paths else { return true }
+    return !paths.registeredProjects.contains {
+      $0.hostContentIdentity != nil && $0.root.contains(path) && $0.id != projectID
+    }
+  }
+
   private var pathResolver: PathPermissions<PathEnvironmentSnapshot>? {
     environment.paths.map(PathPermissions.init)
   }
@@ -507,6 +514,11 @@ package struct PermissionLedger: Equatable, Sendable, Codable {
     retryIDs: Set<UUID> = [], connectionID: String? = nil, now: Date
   ) throws -> AuthorizationDecision {
     guard !authorityIsSuspended else { return .denied(.authoritySuspended) }
+    if requirements.paths.contains(where: {
+      !permitsHostContent($0.path, projectID: invocation.projectID)
+    }) {
+      return .denied(.hostData)
+    }
     let originalRequirements = requirements
     let expanded = try runtimeRetry(
       invocation: invocation, requirements: requirements, ids: retryIDs)
@@ -948,6 +960,7 @@ package struct PermissionLedger: Equatable, Sendable, Codable {
       return result.sorted { ($0?.libraryRoot.string ?? "") < ($1?.libraryRoot.string ?? "") }
     }
     for path in boundaries.sorted(by: { $0.string < $1.string }) {
+      guard permitsHostContent(path, projectID: proof.invocation.projectID) else { continue }
       for purpose in purposes(at: path, operation: .read) {
         let result = resolve(
           conditions(paths: [.init(path: path, operation: .read, purpose: purpose)]))
@@ -1032,7 +1045,7 @@ package struct PermissionLedger: Equatable, Sendable, Codable {
     _ id: UUID, path: CanonicalPath, operation: PathOperation
   ) throws {
     guard let proof = authorizations[id], !proof.finished, validateAuthorization(id),
-      pathResolver != nil
+      permitsHostContent(path, projectID: proof.invocation.projectID), pathResolver != nil
     else { throw PermissionModelError.invalidAuthorization }
     let requests = evidenceRequests(proof.basis, authorizationID: id)
     // Only declared, admitted path evidence can carry host library intent into

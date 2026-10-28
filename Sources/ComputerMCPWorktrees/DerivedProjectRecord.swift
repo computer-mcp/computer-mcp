@@ -23,7 +23,7 @@ package enum DerivedProjectProvenance: Codable, Equatable, Sendable {
 
 package struct DerivedProjectRecord: Codable, Equatable, Sendable {
   package enum State: String, Codable, Sendable {
-    case creating, active, removing, recoveryRequired
+    case creating, active, removing, recoveryRequired, sourceUnavailable
   }
 
   package let projectID: String
@@ -53,7 +53,9 @@ package struct DerivedProjectRecord: Codable, Equatable, Sendable {
       [root, source.root].allSatisfy({ $0.hasPrefix("/") && !$0.contains("\0") })
     else { throw DerivedProjectStoreError.invalidRecord }
     if case .plugin(let receipt) = provenance {
-      guard !receipt.isEmpty, receipt.count <= 32_768, state == .active, worktree == nil else {
+      guard !receipt.isEmpty, receipt.count <= 32_768,
+        state == .active || state == .sourceUnavailable, worktree == nil
+      else {
         throw DerivedProjectStoreError.invalidRecord
       }
     }

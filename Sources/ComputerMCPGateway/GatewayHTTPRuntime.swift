@@ -730,10 +730,15 @@ package actor GatewayHTTPApp {
         let bound = try gateway.authenticatedSession(
           principalID: principalID,
           transportTrace: GatewayTransportTrace(transport: "http"), requiresControlSession: true)
-        principalRegistries[principalID] = bound
-        admitted = bound
+        let generations = GatewayStandaloneGenerations(bound)
+        principalRegistries[principalID] = generations
+        admitted = generations
       } else {
         admitted = registry
+      }
+      if let generations = admitted as? GatewayStandaloneGenerations {
+        let scope = try await generations.makeControlSession()
+        return (GatewayControlSessionServing(base: generations, session: scope), scope)
       }
       guard let gateway = admitted as? GatewayRuntime else { return (admitted, nil) }
       let scope = try gateway.makeControlSession()

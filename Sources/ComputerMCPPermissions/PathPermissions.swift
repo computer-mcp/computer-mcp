@@ -17,6 +17,10 @@ package protocol PathEnvironment: Sendable {
 }
 
 extension PathEnvironment {
+  package var hostContentLocations: Set<CanonicalPath> {
+    Set(
+      projects.projects.filter { $0.sourceID != nil && $0.hostContentIdentity != nil }.map(\.root))
+  }
   package var hostDataLocations: Set<CanonicalPath> { locations(of: .hostData) }
   package var deniedLocations: Set<CanonicalPath> { locations(of: .denied) }
   package var developerLocations: Set<CanonicalPath> { locations(of: .developer) }
@@ -524,7 +528,14 @@ struct PathPermissions<Environment: PathEnvironment>: PathPermissionResolving {
     at path: CanonicalPath, operation: PathOperation, location: PathAccessBasis.Location,
     mode: ExecutionMode, limits: ManagedLimits, sandbox: SandboxSettings
   ) -> DenialReason? {
-    if environment.hostDataLocations.contains(where: { $0.contains(path) }) { return .hostData }
+    let hostRoots = environment.hostDataLocations.filter { $0.contains(path) }
+    if !hostRoots.isEmpty,
+      !environment.hostContentLocations.contains(where: { content in
+        content.contains(path) && hostRoots.allSatisfy { $0 != content && $0.contains(content) }
+      })
+    {
+      return .hostData
+    }
     let sources = limits.denying(path)
     if !sources.isEmpty { return .managedLimit(sources) }
     if environment.deniedLocations.contains(where: { $0.contains(path) })

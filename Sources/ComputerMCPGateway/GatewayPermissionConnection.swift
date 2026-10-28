@@ -132,9 +132,15 @@ extension GatewayPermissionService {
           })
         else { throw GatewayDatabaseError.configurationChanged }
       }
-      let sources = try SQLiteDerivedProjectStore.records(database).filter { $0.state == .active }
+      let sources = try GatewayDatabase.availableDerivedProjects(in: database)
       let sourceIDs = Dictionary(uniqueKeysWithValues: sources.map { ($0.projectID, $0.source.id) })
-      guard paths.registeredProjects.allSatisfy({ $0.sourceID == sourceIDs[$0.id] }) else {
+      guard
+        try paths.registeredProjects.allSatisfy({ project in
+          let content = try GatewayDatabase.hostContentIdentity(
+            sources.first { $0.projectID == project.id })
+          return project.sourceID == sourceIDs[project.id] && project.hostContentIdentity == content
+        })
+      else {
         throw GatewayDatabaseError.configurationChanged
       }
       try GatewayConfigurationPaths.save(
@@ -151,6 +157,7 @@ extension GatewayPermissionService {
         paths.registeredProjects.map { proposed in
           previous.first {
             $0.id == proposed.id && $0.root == proposed.root && $0.sourceID == proposed.sourceID
+              && $0.hostContentIdentity == proposed.hostContentIdentity
           } ?? proposed
         })
       merged.pathRules = Set(

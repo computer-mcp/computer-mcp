@@ -1,3 +1,4 @@
+import ComputerMCPDownstream
 import ComputerMCPMacOS
 import ComputerMCPPermissions
 import ComputerMCPPersistence
@@ -27,6 +28,149 @@ import Testing
 
 @Suite(.nativeIntegration, .serialized)
 struct GatewayGenerationDispatchTests {
+  @Test(.timeLimit(.minutes(1)))
+  func standaloneRegistrationRevisionRefreshPreservesOwnersAndRefusesFailedConstruction()
+    async throws
+  {
+    let fixture = try GenerationFixture()
+    defer { fixture.removeFiles() }
+    try await fixture.activate(version: 1, callers: [.cloudflareTunnel])
+    let child = fixture.root.appendingPathComponent("derived")
+    try FileManager.default.createDirectory(at: child, withIntermediateDirectories: false)
+    let registration = MCPDerivedProjectRegistration(
+      origin: "fixture", receiptID: "revision-receipt", sourceProjectID: "fixture",
+      sourceRoot: fixture.root.standardizedFileURL.resolvingSymlinksInPath().path,
+      receiptDigest: "revision-digest", profileID: .chatGPTOperate, principalID: "revision-client",
+      caller: .cloudflareTunnel,
+      project: .init(id: "derived", displayName: "Derived", rootPath: child.path))
+    try fixture.database.registerDerivedProject(
+      registration, verifiedPrincipalID: "revision-client", caller: .cloudflareTunnel)
+    let failing = GenerationFailureProviders(base: fixture.platform.toolProviders)
+    let platform = PlatformServices(
+      launcher: fixture.platform.launcher, projectGrants: fixture.platform.projectGrants,
+      pluginDirectories: fixture.platform.pluginDirectories,
+      applications: fixture.platform.applications,
+      toolProviders: failing, managementToolNames: fixture.platform.managementToolNames,
+      executableSearchDirectories: fixture.platform.executableSearchDirectories,
+      gitExecutable: fixture.platform.gitExecutable,
+      fileChanges: fixture.platform.fileChanges,
+      permissionPolicyReader: fixture.platform.permissionPolicyReader,
+      executionProxy: fixture.platform.executionProxy)
+    let initial = try await GatewayRuntime.make(
+      configuration: fixture.control.activeConfiguration(),
+      context: .init(
+        caller: .cloudflareTunnel, profileID: .chatGPTOperate, trustedPrincipalID: "revision-client"
+      ),
+      database: fixture.database, platform: platform,
+      bundledPlugins: .init(packages: [], issues: []), requiresControlSession: true)
+    let generations = GatewayStandaloneGenerations(initial)
+    let serving = GatewayControlSessionServing(
+      base: generations, session: try await generations.makeControlSession())
+    let lease = initial.ownedWork.retainShell(projectID: "fixture", sessionID: "retained-owner")
+    do {
+      #expect(try initial.hasCurrentProjectInputs())
+      let projects = try fixture.database.projects()
+      var record = try #require(fixture.database.derivedProjects().first)
+      let revision = record.revision
+      record.revision += 1
+      try SQLiteDerivedProjectStore(connection: fixture.database.connection).commit(
+        record, expecting: revision)
+      #expect(try fixture.database.projects() == projects)
+      #expect(try !initial.hasCurrentProjectInputs())
+      failing.fail(true)
+      await #expect(throws: GenerationFailureProviders.Failure.self) {
+        _ = try await serving.callToolAsync(
+          name: "project.describe", arguments: .object(["project_id": .string("derived")]),
+          context: .empty)
+      }
+      #expect(initial.ownedWork.snapshot.contains { $0.resourceID == "retained-owner" })
+      failing.fail(false)
+      let result = try await serving.callToolAsync(
+        name: "runtime.owners.list", arguments: .object(["project_id": .string("fixture")]),
+        context: .empty)
+      #expect(String(describing: result).contains(initial.generationID.uuidString))
+      lease.finish()
+      await serving.shutdown()
+      await generations.shutdown()
+    } catch {
+      lease.finish()
+      await serving.shutdown()
+      await generations.shutdown()
+      throw error
+    }
+  }
+
+  @Test(.timeLimit(.minutes(1)), arguments: [false, true])
+  func derivedDirectoryRefreshesOnTheSameSession(managed: Bool) async throws {
+    let fixture = try GenerationFixture()
+    defer { fixture.removeFiles() }
+    try await fixture.activate(version: 1, callers: [.cloudflareTunnel])
+    let serving: GatewayControlSessionServing
+    let shutdown: @Sendable () async -> Void
+    if managed {
+      let sessions = try await fixture.service.makeHTTPSessions(
+        profileID: .chatGPTOperate, trace: .init(transport: "http"))
+      serving = try await sessions.makeSession("derived-client")
+      shutdown = { await sessions.shutdown() }
+    } else {
+      var configuration = try await fixture.control.activeConfiguration()
+      configuration.projects = [
+        .init(id: "fixture", displayName: "Fixture", path: fixture.root.path)
+      ]
+      let initial = try await GatewayRuntime.make(
+        configuration: configuration,
+        context: .init(
+          caller: .cloudflareTunnel, profileID: .chatGPTOperate,
+          trustedPrincipalID: "derived-client"),
+        database: fixture.database, registeredProjects: try fixture.database.projects(),
+        platform: fixture.platform,
+        bundledPlugins: .init(packages: [], issues: []),
+        requiresControlSession: true)
+      let generations = GatewayStandaloneGenerations(initial)
+      serving = GatewayControlSessionServing(
+        base: generations, session: try await generations.makeControlSession())
+      shutdown = {
+        await serving.shutdown()
+        await generations.shutdown()
+      }
+    }
+    do {
+      let sessionID = serving.session.id
+      let child = fixture.root.appendingPathComponent("derived-content")
+      try FileManager.default.createDirectory(at: child, withIntermediateDirectories: false)
+      let registration = MCPDerivedProjectRegistration(
+        origin: "fixture", receiptID: "derived-receipt", sourceProjectID: "fixture",
+        sourceRoot: fixture.root.standardizedFileURL.resolvingSymlinksInPath().path,
+        receiptDigest: "derived-digest", profileID: .chatGPTOperate, principalID: "derived-client",
+        caller: .cloudflareTunnel,
+        project: .init(id: "derived", displayName: "Derived", rootPath: child.path))
+      let profiles = try fixture.database.profiles()
+      try fixture.database.registerDerivedProject(
+        registration, verifiedPrincipalID: "derived-client", caller: .cloudflareTunnel)
+      let result = try await serving.callToolAsync(
+        name: "project.describe", arguments: .object(["project_id": .string("derived")]),
+        context: .empty)
+      #expect(
+        result.objectValue?["structuredContent"]?.objectValue?["result"]?.objectValue?["root_path"]
+          == .string(registration.project.rootPath))
+      #expect(!String(describing: result).contains("project.not_found"))
+      #expect(serving.session.id == sessionID)
+      #expect(try fixture.database.profiles() == profiles)
+      try fixture.database.deleteProject(id: "fixture")
+      await #expect(throws: (any Error).self) {
+        _ = try await serving.callToolAsync(
+          name: "project.describe", arguments: .object(["project_id": .string("derived")]),
+          context: .empty)
+      }
+      #expect(FileManager.default.fileExists(atPath: child.path))
+      #expect(try fixture.database.project(id: "fixture") == nil)
+      await shutdown()
+    } catch {
+      await shutdown()
+      throw error
+    }
+  }
+
   @Test(.timeLimit(.minutes(1)), arguments: [false, true])
   func managedDispatchKeepsAnExplicitContinuation(cachedOwner: Bool) async throws {
     let fixture = try GenerationFixture()
@@ -3496,5 +3640,29 @@ private final class RepairFailureBookmarkService: ProjectBookmarkServicing, @unc
       }
     }
     return try base.resolve(project)
+  }
+}
+
+private final class GenerationFailureProviders: GatewayToolProviderFactory, @unchecked Sendable {
+  enum Failure: Error { case unavailable }
+  private let lock = NSLock()
+  private var failing = false
+  let base: any GatewayToolProviderFactory
+  init(base: any GatewayToolProviderFactory) { self.base = base }
+  func fail(_ value: Bool) { lock.withLock { failing = value } }
+  func makeProviders(
+    configuration: GatewayConfiguration, commandRunner: any CommandRunning,
+    processManager: any ProcessManaging, shellManager: any ShellManaging,
+    mcpClient: any DownstreamMCPClient, hostContext: MCPHostContext
+  ) -> GatewayToolRegistry {
+    let registry = base.makeProviders(
+      configuration: configuration, commandRunner: commandRunner,
+      processManager: processManager, shellManager: shellManager, mcpClient: mcpClient,
+      hostContext: hostContext)
+    return GatewayToolRegistry(
+      providers: { [self] in
+        if lock.withLock({ failing }) { throw Failure.unavailable }
+        return try registry.providers()
+      }, downstreamPolicy: registry.downstreamPolicy, shutdown: { await registry.shutdown() })
   }
 }

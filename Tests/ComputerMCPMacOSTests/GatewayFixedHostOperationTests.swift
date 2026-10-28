@@ -115,14 +115,15 @@ struct FixedHostFixture {
   let platform: PlatformServices
   let session: GatewayControlSession
   let runtime: GatewayRuntime
+  let configuration: GatewayConfiguration
   let observations = ExecutionObservations()
 
   init(
     fullAccess: Bool = true, lifecycle: Bool = false, callback: Bool = false,
-    nestedAccess: PermissionValue? = nil
+    nestedAccess: PermissionValue? = nil, caller: GatewayCallerKind = .localMCP,
+    gitExecutable: String? = nil, allowedCallers: Set<GatewayCallerKind>? = nil
   ) throws {
-    let location = FileManager.default.temporaryDirectory.appendingPathComponent(
-      "cm-fixed-\(UUID())")
+    let location = URL(fileURLWithPath: "/private/tmp/cm-fixed-\(UUID())")
     try FileManager.default.createDirectory(at: location, withIntermediateDirectories: true)
     root = try ProjectPathResolver.canonicalProject(location)
     project = root.appendingPathComponent("project")
@@ -134,7 +135,7 @@ struct FixedHostFixture {
     let grant = ProfileGrant(
       id: .chatGPTOperate,
       permissions: permissions,
-      fullAccess: fullAccess, allowedCallers: [.localMCP])
+      fullAccess: fullAccess, allowedCallers: allowedCallers ?? [caller])
     try database.saveProfile(grant)
     try database.bootstrapPermissionProfiles([grant])
     let registered = ComputerMCPCore.RegisteredProject(
@@ -153,46 +154,47 @@ struct FixedHostFixture {
     var services = MacOSPlatform.services(
       launcher: testExecutionLauncher(observations: observations))
     services.permissionPolicyReader = TestManagedPolicyReader()
+    if let gitExecutable { services = fixturePlatformWithGit(services, executable: gitExecutable) }
     platform = services
     session = GatewayControlSession(
-      principalID: "fixed-client", profileID: grant.id, caller: .localMCP, database: database,
+      principalID: "fixed-client", profileID: grant.id, caller: caller, database: database,
       profile: .init(grant: grant, persisted: true),
       permissionService: try database.permissionRuntime(platform: services).service)
     var context = ExecutionContext(
-      caller: .localMCP, profileID: grant.id, projectID: registered.id,
+      caller: caller, profileID: grant.id, projectID: registered.id,
       trustedPrincipalID: session.principalID)
     context.controlSession = session
     let configured = root.appendingPathComponent("configured-git")
     try "#!/bin/sh\ntouch '\(root.path)/configured-started'\nexit 99\n".write(
       to: configured, atomically: true, encoding: .utf8)
     try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: configured.path)
-    runtime = try GatewayRuntime(
-      configuration: .init(
-        runtime: .init(caller: .localMCP, profileID: grant.id), policy: .init(shellEnabled: true),
-        profiles: [.init(grant: grant)],
-        cli: .init(commands: [
-          .init(
-            id: "git", executable: configured.path, cwd: root.path, env: ["GIT_DIR": root.path]),
-          .init(id: "fixture", executable: "/bin/sh", allowAnyArgs: true),
-        ]),
-        mcp: .init(
-          servers: callback
+    configuration = GatewayConfiguration(
+      runtime: .init(caller: caller, profileID: grant.id), policy: .init(shellEnabled: true),
+      profiles: [.init(grant: grant)],
+      cli: .init(commands: [
+        .init(
+          id: "git", executable: configured.path, cwd: root.path, env: ["GIT_DIR": root.path]),
+        .init(id: "fixture", executable: "/bin/sh", allowAnyArgs: true),
+      ]),
+      mcp: .init(
+        servers: callback
+          ? [
+            .init(
+              id: "lifecycle-callback", transport: .stdio, command: "/unused/lifecycle-callback",
+              hostServices: true)
+          ] : []),
+      builtin: .init(
+        enabled: [
+          "file.write", "git.add", "git.commit",
+        ]
+          + (lifecycle
             ? [
-              .init(
-                id: "lifecycle-callback", transport: .stdio, command: "/unused/lifecycle-callback",
-                hostServices: true)
-            ] : []),
-        builtin: .init(
-          enabled: [
-            "file.write", "git.add", "git.commit", "shell.run", "shell.spawn", "shell.read",
-            "shell.cancel", "process.spawn", "process.read", "process.cancel", "cli.exec",
-          ]
-            + (lifecycle
-              ? [
-                "git.worktree_add", "git.worktree_list", "git.worktree_remove", "git.merge",
-                "git.branch_delete", "git.status", "git.log", "git.show", "git.staged_file",
-              ] : [])),
-        projectDirectory: project), context: context, database: database,
+              "git.worktree_add", "git.worktree_list", "git.worktree_remove", "git.merge",
+              "git.branch_delete", "git.status", "git.log", "git.show", "git.staged_file",
+            ] : [])),
+      projectDirectory: project)
+    runtime = try GatewayRuntime(
+      configuration: configuration, context: context, database: database,
       registeredProjects: registeredProjects, platform: services,
       mcpClient: CatalogDiscoveryStub(),
       bundledPlugins: .init(packages: [], issues: []))
@@ -210,7 +212,7 @@ struct FixedHostFixture {
         environment: try ExecutionEnvironment(fullAccessVariables: ["PATH": "/usr/bin:/bin"]))
       return try ExecutionAdministration.$current.withValue(administration) {
         let result = try ProcessCommandRunner(launcher: testExecutionLauncher()).runIsolated(
-          executable: "/usr/bin/git", arguments: arguments, workingDirectory: project,
+          executable: platform.gitExecutable, arguments: arguments, workingDirectory: project,
           environment: [
             "PATH": "/usr/bin:/bin", "GIT_CONFIG_NOSYSTEM": "1", "GIT_CONFIG_GLOBAL": "/dev/null",
           ],

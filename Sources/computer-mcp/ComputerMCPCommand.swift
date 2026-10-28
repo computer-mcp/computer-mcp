@@ -134,14 +134,7 @@ struct ServeStdio: AsyncParsableCommand {
           transport: "stdio", socketConnectionID: UUID().uuidString)
       ), surface: .stdio)
 
-    let sessions = GatewayTerminalSessions()
-    if let path = database.fileURL?.deletingLastPathComponent() {
-      try sessions.enablePersistence(
-        in: path.appendingPathComponent("Executions"),
-        ownerID: (database.fileURL?.standardizedFileURL.path ?? "") + ":stdio:"
-          + URL(fileURLWithPath: runtime.config).standardizedFileURL.path,
-        launcher: platform.launcher)
-    }
+    let sessions = try await makeTerminalSessions(database: database, platform: platform)
     let registry = try await GatewayRuntime.make(
       configuration: gateway,
       context: context,
@@ -149,6 +142,22 @@ struct ServeStdio: AsyncParsableCommand {
       platform: platform, terminalSessions: sessions
     )
     try await MCPRuntimeAdapter.runStdioGateway(configuration: gateway, registry: registry)
+  }
+
+  func makeTerminalSessions(database: GatewayDatabase, platform: PlatformServices) async throws
+    -> GatewayTerminalSessions
+  {
+    let sessions = GatewayTerminalSessions()
+    if let path = database.fileURL?.deletingLastPathComponent() {
+      let permissions = try database.permissionRuntime(platform: platform)
+      try await permissions.ready()
+      try sessions.enablePersistence(
+        in: path.appendingPathComponent("Executions"),
+        ownerID: (database.fileURL?.standardizedFileURL.path ?? "") + ":stdio:"
+          + URL(fileURLWithPath: runtime.config).standardizedFileURL.path,
+        launcher: platform.launcher, authority: permissions.coordinator)
+    }
+    return sessions
   }
 }
 
@@ -178,15 +187,8 @@ struct ServeHTTP: AsyncParsableCommand {
       platform.hostDataPaths.insert(URL(fileURLWithPath: controlSocket).standardizedFileURL)
     }
     let gateway = try await runtime.loadConfiguration(database: database, platform: platform)
-    let sessions = GatewayTerminalSessions()
-    if let path = database.fileURL?.deletingLastPathComponent() {
-      try sessions.enablePersistence(
-        in: path.appendingPathComponent("Executions"),
-        ownerID: (database.fileURL?.standardizedFileURL.path ?? "") + ":http:"
-          + URL(fileURLWithPath: runtime.config).standardizedFileURL.path + ":"
-          + String(port ?? gateway.server.http.port),
-        launcher: platform.launcher)
-    }
+    let sessions = try await makeTerminalSessions(
+      database: database, platform: platform, configuration: gateway)
     let registry = try await GatewayRuntime.make(
       configuration: gateway,
       context: gateway.executionContext(
@@ -218,6 +220,22 @@ struct ServeHTTP: AsyncParsableCommand {
           clientControl: GatewayHTTPClientControl(permissionControl: permissionControl))
       }
     )
+  }
+  func makeTerminalSessions(
+    database: GatewayDatabase, platform: PlatformServices, configuration: GatewayConfiguration
+  ) async throws -> GatewayTerminalSessions {
+    let sessions = GatewayTerminalSessions()
+    if let path = database.fileURL?.deletingLastPathComponent() {
+      let permissions = try database.permissionRuntime(platform: platform)
+      try await permissions.ready()
+      try sessions.enablePersistence(
+        in: path.appendingPathComponent("Executions"),
+        ownerID: (database.fileURL?.standardizedFileURL.path ?? "") + ":http:"
+          + URL(fileURLWithPath: runtime.config).standardizedFileURL.path + ":"
+          + String(port ?? configuration.server.http.port),
+        launcher: platform.launcher, authority: permissions.coordinator)
+    }
+    return sessions
   }
 }
 
@@ -517,4 +535,5 @@ func decodeArguments(_ text: String) throws -> JSONValue {
     throw ValidationError("--arguments-json must be a JSON object.")
   }
   return value
+
 }

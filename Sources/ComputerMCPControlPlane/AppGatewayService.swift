@@ -193,9 +193,13 @@ package actor AppGatewayService {
       return
     }
 
+    let permissions = try controlPlane.database.permissionRuntime(platform: platform)
+    try await permissions.ready()
     try terminalSessions.enablePersistence(
       at: controlPlane.directories.applicationSupport
-        .appendingPathComponent("Executions/Socket", isDirectory: true), launcher: platform.launcher
+        .appendingPathComponent("Executions/Socket", isDirectory: true),
+      launcher: platform.launcher,
+      authority: permissions.coordinator
     )
     state = .starting
     listenerEpoch = UUID()
@@ -285,10 +289,12 @@ package actor AppGatewayService {
     }
     try Task.checkCancellation()
     try await controlPlane.start()
+    let permissions = try controlPlane.database.permissionRuntime(platform: platform)
+    try await permissions.ready()
     try administrationTerminalSessions.enablePersistence(
       at: controlPlane.directories.applicationSupport
         .appendingPathComponent("Executions/Administration", isDirectory: true),
-      launcher: platform.launcher)
+      launcher: platform.launcher, authority: permissions.coordinator)
     let epoch = UUID()
     administrationEpoch = epoch
     do {
@@ -377,10 +383,13 @@ package actor AppGatewayService {
     let id = UUID()
     let sessions = GatewayTerminalSessions()
     if let origin = trace.tunnelInstanceID {
+      let permissions = try controlPlane.database.permissionRuntime(platform: platform)
+      try await permissions.ready()
       try sessions.enablePersistence(
         in: controlPlane.directories.applicationSupport
           .appendingPathComponent("Executions/HTTP", isDirectory: true),
-        ownerID: trace.transport + ":" + origin, launcher: platform.launcher)
+        ownerID: trace.transport + ":" + origin, launcher: platform.launcher,
+        authority: permissions.coordinator)
     }
     httpTerminalSessions[id] = sessions
     do {

@@ -270,7 +270,8 @@ private struct RiskFixture {
         URL(fileURLWithPath: projects[index].rootPath)
       ).path
     }
-    client = RiskCatalogClient(risk: risk, scopedHighRisk: secondProject ? second.path : nil)
+    client = RiskCatalogClient(
+      risk: risk, scopedHighRisk: secondProject ? second.standardizedFileURL.path : nil)
     var permissions = Permissions()
     try permissions.set(.granted(allAccess ? .all : .read), for: .mcpServer("vendor"))
     for project in projects { try permissions.set(.granted(.write), for: .project(project.id)) }

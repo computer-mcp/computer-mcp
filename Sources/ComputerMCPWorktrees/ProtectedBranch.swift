@@ -18,9 +18,59 @@ private struct WorktreeBranchDeletionJournal: Codable {
   let baseOID: String?
   let force: Bool
   let protection: ProtectedWorktreeBranch?
-  let roots: [String: String]
+  let releasedRoots: [String: String]
+  /// These UUID-scoped references and this journal outlive branch protection.
+  /// A later branch with the same name never acquires their ownership.
+  let retainedRoots: [String: String]
+  var roots: [String: String] { releasedRoots.merging(retainedRoots) { released, _ in released } }
   var phase: Phase
   var receipt: String { "refs/computer-mcp/deletions/" + operationID.uuidString.lowercased() }
+
+  enum CodingKeys: String, CodingKey {
+    case operationID, repository, branch, oid, base, baseOID, force, protection
+    case releasedRoots, retainedRoots, phase
+  }
+  private enum LegacyKeys: String, CodingKey { case roots }
+
+  init(
+    operationID: UUID, repository: WorktreeRepositoryIdentity, branch: String, oid: String,
+    base: String, baseOID: String?, force: Bool, protection: ProtectedWorktreeBranch?,
+    releasedRoots: [String: String], retainedRoots: [String: String], phase: Phase
+  ) {
+    self.operationID = operationID
+    self.repository = repository
+    self.branch = branch
+    self.oid = oid
+    self.base = base
+    self.baseOID = baseOID
+    self.force = force
+    self.protection = protection
+    self.releasedRoots = releasedRoots
+    self.retainedRoots = retainedRoots
+    self.phase = phase
+  }
+
+  init(from decoder: any Decoder) throws {
+    let values = try decoder.container(keyedBy: CodingKeys.self)
+    operationID = try values.decode(UUID.self, forKey: .operationID)
+    repository = try values.decode(WorktreeRepositoryIdentity.self, forKey: .repository)
+    branch = try values.decode(String.self, forKey: .branch)
+    oid = try values.decode(String.self, forKey: .oid)
+    base = try values.decode(String.self, forKey: .base)
+    baseOID = try values.decodeIfPresent(String.self, forKey: .baseOID)
+    force = try values.decode(Bool.self, forKey: .force)
+    protection = try values.decodeIfPresent(ProtectedWorktreeBranch.self, forKey: .protection)
+    phase = try values.decode(Phase.self, forKey: .phase)
+    if let released = try values.decodeIfPresent([String: String].self, forKey: .releasedRoots) {
+      releasedRoots = released
+      retainedRoots = try values.decode([String: String].self, forKey: .retainedRoots)
+    } else {
+      // The legacy journal released every root, having checked reachability or force.
+      releasedRoots = try decoder.container(keyedBy: LegacyKeys.self).decode(
+        [String: String].self, forKey: .roots)
+      retainedRoots = [:]
+    }
+  }
 }
 
 extension WorktreeRepository {
@@ -51,6 +101,8 @@ extension WorktreeRepository {
             $0.repository == identity.common && $0.branch == pending.branch
               && $0.base == pending.base
           }) ?? pending.roots.isEmpty,
+          Set(pending.releasedRoots.keys).isDisjoint(with: pending.retainedRoots.keys),
+          !pending.force || pending.retainedRoots.isEmpty,
           pending.roots.allSatisfy({
             guard let protection = pending.protection else { return false }
             return $0.key == "refs/computer-mcp/recovery/"
@@ -67,6 +119,8 @@ extension WorktreeRepository {
         }
         try authorize(pending.protection)
         if dryRun || !confirm { return .init(branch: branch, oid: pending.oid, deleted: false) }
+        let normalized = try deletionBytes(pending)
+        if normalized != bytes { try saveDeletion(pending, replacing: bytes) }
         return try finishBranchDeletion(&pending, lock: lock, authorize: authorize)
       }
       let protection = try store.protectedBranches().first {
@@ -96,10 +150,13 @@ extension WorktreeRepository {
       let baseOID = try revision(base)
       try requireBranchValue(base, oid: baseOID)
       let roots = try protection.map(protectionRoots) ?? [:]
+      let reachable = try force || roots.isEmpty ? Set<String>() : baseObjectClosure(baseOID)
+      let released = roots.filter { force || reachable.contains($0.value) }
+      let retained = roots.filter { !force && !reachable.contains($0.value) }
       var journal = WorktreeBranchDeletionJournal(
         operationID: UUID(), repository: identity,
         branch: branch, oid: oid, base: base, baseOID: baseOID, force: force,
-        protection: protection, roots: roots, phase: .prepared)
+        protection: protection, releasedRoots: released, retainedRoots: retained, phase: .prepared)
       try requireDeletionPolicy(journal)
       if dryRun || !confirm { return .init(branch: branch, oid: oid, deleted: false) }
       try saveDeletion(journal, replacing: nil)
@@ -177,15 +234,35 @@ extension WorktreeRepository {
         })
       else { throw WorktreeError.recoveryRequired("Branch or base registration proof changed.") }
       try requireRefHistory(journal.base, history: history, expectedOID: baseOID)
-      for oid in journal.roots.values {
-        guard try command(["cat-file", "-t", oid]).output == Data("commit\n".utf8),
-          try isAncestor(oid, of: baseOID)
-        else {
-          throw WorktreeError.invalidRequest(
-            "An unmerged recovery commit still protects this branch.")
-        }
+      let reachable = try baseObjectClosure(baseOID)
+      guard journal.releasedRoots.values.allSatisfy(reachable.contains),
+        journal.retainedRoots.values.allSatisfy({ !reachable.contains($0) })
+      else { throw WorktreeError.recoveryRequired("Recovery root release set changed.") }
+    }
+  }
+
+  /// Compare original objects, not peeled commits: a tag naming an integrated
+  /// commit is still an independent retention root. Git bounds this traversal.
+  private func baseObjectClosure(_ oid: String?) throws -> Set<String> {
+    guard let oid else { return [] }
+    let output = try command(["rev-list", "--objects", "--no-object-names", oid]).output
+    let objects = Set(
+      String(decoding: output, as: UTF8.self).split(separator: "\n").map(String.init))
+    guard !objects.isEmpty, objects.allSatisfy(identity.format.contains) else {
+      throw WorktreeError.recoveryRequired("Invalid base object closure.")
+    }
+    return objects
+  }
+
+  private func requireDeletionOutcome(_ journal: WorktreeBranchDeletionJournal) throws {
+    try requireBranchValue(journal.branch, oid: nil)
+    try requireBranchValue(journal.base, oid: journal.baseOID)
+    for ref in journal.releasedRoots.keys {
+      guard try objectRevision(ref) == nil else {
+        throw WorktreeError.recoveryRequired("Released recovery root survived deletion.")
       }
     }
+    for (ref, oid) in journal.retainedRoots { try requireObjectRef(ref, oid: oid) }
   }
 
   private func finishBranchDeletion(
@@ -195,12 +272,7 @@ extension WorktreeRepository {
     if journal.phase == .prepared {
       if try revision(journal.receipt) == journal.oid {
         try requireDirectRef(journal.receipt, oid: journal.oid)
-        try requireBranchValue(journal.branch, oid: nil)
-        for ref in journal.roots.keys {
-          guard try objectRevision(ref) == nil else {
-            throw WorktreeError.recoveryRequired("Recovery root survived deletion.")
-          }
-        }
+        try requireDeletionOutcome(journal)
       } else {
         guard try revision(journal.receipt) == nil else {
           throw WorktreeError.recoveryRequired("Deletion receipt was replaced.")
@@ -208,8 +280,11 @@ extension WorktreeRepository {
         let zero = String(repeating: "0", count: identity.format.hexCount)
         var input =
           "start\ndelete \(journal.branch) \(journal.oid)\nverify \(journal.base) \(journal.baseOID ?? zero)\n"
-        for (ref, oid) in journal.roots.sorted(by: { $0.key < $1.key }) {
+        for (ref, oid) in journal.releasedRoots.sorted(by: { $0.key < $1.key }) {
           input += "delete \(ref) \(oid)\n"
+        }
+        for (ref, oid) in journal.retainedRoots.sorted(by: { $0.key < $1.key }) {
+          input += "verify \(ref) \(oid)\n"
         }
         input += "create \(journal.receipt) \(journal.oid)\nprepare\n"
         try git.transaction(
@@ -226,11 +301,12 @@ extension WorktreeRepository {
     }
     if journal.phase == .committed {
       try requireDirectRef(journal.receipt, oid: journal.oid)
-      try requireBranchValue(journal.branch, oid: nil)
+      try requireDeletionOutcome(journal)
       if let protection = journal.protection { try store.releaseProtection(protection) }
       try advanceDeletion(&journal, to: .released)
     }
     if journal.phase == .released {
+      try requireDeletionOutcome(journal)
       if try revision(journal.receipt) != nil {
         try git.transaction(
           "start\ndelete \(journal.receipt) \(journal.oid)\nprepare\n",

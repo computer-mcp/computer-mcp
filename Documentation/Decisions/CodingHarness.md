@@ -565,9 +565,9 @@ The tools follow Git's commands:
 | --- | --- | --- |
 | `git.worktree_add` | Private repository and checkout | In a project whose root is a non-bare repository's top level. Inputs: `name` (`[a-z0-9]+(-[a-z0-9]+)*`, at most 48 characters), optional `branch` (default `worktree/<name>`), optional `base` branch (default: the branch checked out in the main checkout; required when it is detached). Returns the worktree's `project_id`, path, branch, base and any submodule/LFS warnings. |
 | `git.worktree_list` | Host ledger plus `git worktree list` | Host worktrees and foreign checkouts of the repository, with its `project_id` if derived, branch, base, commits ahead of and behind the base, and uncommitted changes. |
-| `git.worktree_remove` | Identity-verified removal | Called in the worktree. Publishes HEAD to the managed branch and preserves every private reference and reflog root under host recovery references, then removes the checkout, private repository and registration; uncommitted changes stop it unless `force` is true, which discards them but never commits. The branch is kept. |
+| `git.worktree_remove` | Identity-verified removal | Called in the worktree. Publishes HEAD to the managed branch and preserves every private reference and reflog root under host recovery references, then removes the checkout, private repository and registration; uncommitted changes stop it unless `force` is true, which discards them but never commits. The branch and its recovery records are kept. |
 | `git.merge` | `git merge --ff-only` | Merges a branch into the main checkout's current branch. A sandboxed principal may merge only a worktree branch into that worktree's base and only as a fast-forward; local changes the merge would overwrite stop it. Never creates merge commits, forces or pushes. |
-| `git.branch_delete` | `git branch -d` | A sandboxed principal never forces, cannot delete the branch of a worktree that still exists, and cannot delete a worktree branch whose tip is not reachable from its base. |
+| `git.branch_delete` | `git branch -d` | A sandboxed principal never forces, cannot delete the branch of a worktree that still exists, and cannot delete a worktree branch whose tip is not reachable from its base. Deletion releases only recovery references reachable from that base; other recovery records outlive the branch. Full access `force` explicitly discards this branch generation’s remaining recovery records. |
 
 Work in a worktree is the ordinary flow: edit, build, test, `git commit`,
 `git fetch origin` and `git rebase origin/<base>` when the source base has advanced, then `git.merge`,
@@ -633,7 +633,15 @@ Dangling objects copied at creation are not private work; retention follows root
 `force` discards only uncommitted content. Previously published unmerged tips keep
 recovery references until explicit replacement acknowledgement or verified
 integration releases them. Private references and reflogs independently retain
-any old tips they still name. Recovery, locking and journaling follow the rules below.
+any old tips they still name. Recovery references do not block deletion of a
+branch whose tip is reachable from its recorded base. The expected-value deletion
+transaction releases only roots reachable from that base, comparing original
+object IDs rather than peeled commits. Other roots retain their UUID-scoped
+references and durable deletion-journal records independently of the branch;
+releasing branch protection or reusing its name does not remove them. Only an
+explicit Full access `force` deletion of that generation, or later owner cleanup,
+discards them. No patch-equivalence rule releases history. Recovery, locking and
+journaling follow the rules below.
 
 Fast-forward integration holds a prepared expected-value update through
 dereferenced `HEAD`, verifies its symbolic target is the recorded base, and keeps

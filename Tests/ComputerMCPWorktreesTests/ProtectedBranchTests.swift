@@ -85,19 +85,16 @@ struct ProtectedBranchTests {
       if !retainsReflog { try git.run(["reflog", "expire", "--expire=now", "--all"]) }
       _ = try await service.remove(
         projectID: created.projectID, terminate: { _, _ in }, authorize: { _, _ in })
-      if acknowledge && !retainsReflog {
-        #expect(
-          try service.deleteBranch(
-            created.branch, authority: .sandbox, dryRun: false, confirm: true
-          ) { _ in }.deleted)
-      } else {
-        #expect(throws: WorktreeError.self) {
-          try service.deleteBranch(
-            created.branch, authority: .sandbox, dryRun: false, confirm: true
-          ) { _ in }
-        }
-        #expect(try f.store.protectedBranches().count == 1)
-      }
+      #expect(
+        try service.deleteBranch(
+          created.branch, authority: .sandbox, dryRun: false, confirm: true
+        ) { _ in }.deleted)
+      #expect(try f.store.protectedBranches().isEmpty)
+      let retained = try f.raw([
+        "for-each-ref", "--format=%(objectname)", "refs/computer-mcp/recovery/",
+      ])
+      #expect(
+        retained.split(separator: "\n").contains(Substring(old)) == (!acknowledge || retainsReflog))
     }
   }
 

@@ -38,8 +38,9 @@ Shell 工具还需启用并满足自身权限和限额。Full access 不会授�
    删除所属存储，最后注销项目。检查 `terminationWarnings`：未受限进程可能无法
    确认退出，脱离进程组的后代也可能存活。
 7. 在源项目调用 `git.branch_delete`，提供 `name`、`dry_run: false` 和
-   `confirm_delete: true`。这是同一次调用的参数。仍在使用的分支和保留的未合并
-   提交受保护，沙箱调用方不能强制删除。
+   `confirm_delete: true`。这是同一次调用的参数。分支 tip 必须从记录的 base 可达；
+   其余恢复对象（包括 rebase 前的提交）在删分支后仍独立保留。仍在使用的分支
+   受保护，沙箱调用方不能强制删除。
 
 精确参数和结果见英文[生命周期 Schema](../Tools.md#git-worktree-lifecycle)及
 [分支删除](../Tools.md#gitbranch_delete)。

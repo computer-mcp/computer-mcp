@@ -13951,7 +13951,7 @@
       "risk" : "destructive",
       "usesNetwork" : false
     },
-    "description" : "Delete a local branch with expected-value checks. Live worktree branches are protected; Sandbox cannot force or discard retained unmerged commits. Defaults to dry-run; mutation requires confirm_delete=true in this call.",
+    "description" : "Delete a local branch with expected-value checks. Sandbox requires its tip to be reachable from its recorded base and cannot force. Live worktree branches are protected. Recovery objects outside the base remain retained after deletion. Defaults to dry-run; mutation requires confirm_delete=true in this call.",
     "inputSchema" : {
       "additionalProperties" : false,
       "properties" : {
@@ -13973,7 +13973,7 @@
           "type" : "boolean"
         },
         "force" : {
-          "description" : "Explicitly discard otherwise protected unmerged branch history. Requires Full access. Defaults to false.",
+          "description" : "Explicitly discard this branch generation’s unmerged history and recovery references. Requires Full access. Defaults to false.",
           "type" : "boolean"
         },
         "name" : {
@@ -20333,7 +20333,7 @@
       "risk" : "project-write",
       "usesNetwork" : false
     },
-    "description" : "Remove the current host worktree after terminating writers and preserving committed history. Keeps its branch. Returns project_id, branch, oid and terminationWarnings.",
+    "description" : "Remove the current host worktree after terminating writers and preserving every private reference and reflog root. Keeps its branch and recovery records; force discards only uncommitted content. Returns project_id, branch, oid and terminationWarnings.",
     "inputSchema" : {
       "additionalProperties" : false,
       "properties" : {

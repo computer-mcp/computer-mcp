@@ -79,7 +79,7 @@ extension GitToolProvider {
         properties: [:], readOnly: true),
       definition(
         "git.worktree_remove",
-        "Remove the current host worktree after terminating writers and preserving committed history. Keeps its branch. Returns project_id, branch, oid and terminationWarnings.",
+        "Remove the current host worktree after terminating writers and preserving every private reference and reflog root. Keeps its branch and recovery records; force discards only uncommitted content. Returns project_id, branch, oid and terminationWarnings.",
         properties: ["force": boolSchema("Discard uncommitted content only. Defaults to false.")],
         source: false),
       definition(

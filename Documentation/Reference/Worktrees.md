@@ -49,8 +49,10 @@ registering the path again. Do not edit `.git` or the private control files.
    could not be confirmed or whose detached descendants may survive.
 7. In the source project, delete the merged branch with `git.branch_delete`,
    `name`, `dry_run: false` and `confirm_delete: true`. These are fields in the
-   same call. Live worktree branches and retained unmerged commits remain
-   protected; sandbox callers cannot request force deletion.
+   same call. The branch tip must be reachable from its recorded base. Other
+   recovery objects, including pre-rebase commits, stay retained independently
+   after the branch is deleted. Live worktree branches are protected; sandbox
+   callers cannot request force deletion.
 
 Exact arguments, bounds and result fields are in the
 [Git lifecycle schemas](Tools.md#git-worktree-lifecycle) and

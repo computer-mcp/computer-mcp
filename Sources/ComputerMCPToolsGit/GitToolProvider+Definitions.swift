@@ -948,12 +948,12 @@ extension GitToolProvider {
         tool: MCPTool(
           name: "git.branch_delete",
           description:
-            "Delete a local branch with expected-value checks. Live worktree branches are protected; Sandbox cannot force or discard retained unmerged commits. Defaults to dry-run; mutation requires confirm_delete=true in this call.",
+            "Delete a local branch with expected-value checks. Sandbox requires its tip to be reachable from its recorded base and cannot force. Live worktree branches are protected. Recovery objects outside the base remain retained after deletion. Defaults to dry-run; mutation requires confirm_delete=true in this call.",
           inputSchema: objectSchema(
             properties: [
               "name": stringSchema("Required local branch name to delete."),
               "force": boolSchema(
-                "Explicitly discard otherwise protected unmerged branch history. Requires Full access. Defaults to false."
+                "Explicitly discard this branch generation’s unmerged history and recovery references. Requires Full access. Defaults to false."
               ),
               "dry_run": boolSchema(
                 "Whether to run only preflight checks without deleting the branch. Defaults to true."

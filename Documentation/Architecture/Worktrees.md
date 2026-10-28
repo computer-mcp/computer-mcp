@@ -67,6 +67,13 @@ state. Unknown interference is retained for reconciliation, never reset blindly.
 Removal reconciles publication and merge journals, terminates writers, checks
 dirty state, preserves committed roots, deletes owned storage and unregisters
 last. `force` permits discarding uncommitted files only. Branch deletion is a
-separate expected-value operation that protects live worktrees and retained
-unmerged history. External Git does not honor the host's advisory lock, so
+separate expected-value operation that protects live worktrees and requires the
+branch tip to be reachable from its recorded base. It releases recovery
+references whose original objects are reachable from that base. Other recovery
+references and their completed deletion-journal records retain stable UUID
+identities after branch protection is released, including pre-rebase commits and
+tags pointing at integrated commits. Reusing a branch name does not acquire or
+discard those records. Discarding a generation's unmerged recovery records
+requires explicit Full access `force` deletion or later owner cleanup; sandboxed
+deletion cannot force. External Git does not honor the host's advisory lock, so
 identity and expected-value checks remain necessary.

@@ -5529,11 +5529,15 @@ Arguments:
 Call in the source project with required `name`. The host checks the current
 worktree inventory and retained branch history, then compares the expected branch
 and base object IDs in a Git transaction. A live host or foreign worktree branch
-cannot be deleted. Sandbox cannot discard retained unmerged worktree commits.
+cannot be deleted. Sandbox requires the branch tip to be reachable from its
+recorded base. Deletion releases recovery references reachable from that base;
+other recovery objects remain retained independently after the branch is gone.
+Reachability compares original objects, so a tag is not released merely because
+its target commit is integrated.
 
 `dry_run` defaults to true; deletion requires `dry_run=false` and
 `confirm_delete=true` in the same call. `force` defaults to false. Explicit Full
-access force may discard otherwise protected unmerged branch history; it does not
+access force may discard that branch generation’s unmerged history and recovery references; it does not
 bypass live-worktree, identity or expected-value checks. Results contain `name`,
 `oid`, `deleted`, `dry_run` and `force`.
 

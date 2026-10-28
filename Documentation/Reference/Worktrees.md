@@ -67,7 +67,8 @@ into the recorded base.
 
 A sandboxed caller cannot delete an unmerged worktree branch. Removing the
 worktree keeps the branch and its recovery records. Only Full access `force` on
-`git.branch_delete` discards that generation's remaining recovery records.
+`git.branch_delete` deletes the unmerged branch and discards that generation's
+remaining recovery records.
 
 Exact arguments, bounds and result fields are in the
 [Git lifecycle schemas](Tools.md#git-worktree-lifecycle) and

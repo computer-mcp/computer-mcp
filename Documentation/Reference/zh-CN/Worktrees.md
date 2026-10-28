@@ -50,7 +50,7 @@ Shell 工具还需启用并满足自身权限和限额。Full access 不会授�
 ### 放弃工作
 
 沙箱调用方不能删除未合并的工作树分支。移除工作树后，分支及其恢复记录仍保留。
-只有 Full access 下对 `git.branch_delete` 使用 `force`，才能丢弃该代剩余的恢复记录。
+只有 Full access 下对 `git.branch_delete` 使用 `force`，才能删除未合并的分支并丢弃该代剩余的恢复记录。
 
 精确参数和结果见英文[生命周期 Schema](../Tools.md#git-worktree-lifecycle)及
 [分支删除](../Tools.md#gitbranch_delete)。

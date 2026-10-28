@@ -60,7 +60,7 @@ extension GitToolProvider {
     return [
       definition(
         "git.worktree_add",
-        "Create a persistent detached worktree and a new managed branch from the source project. Use the returned project_id for subsequent calls. The worktree has a private repository whose origin is the source; before integration, fetch origin and rebase onto origin/<base>. Returns project_id, path, branch, base and warnings: submodules stay uninitialized and LFS files stay pointers.",
+        "Create a persistent detached worktree and a new managed branch from the source project. Use the returned project_id for subsequent calls. The worktree has a private repository whose origin is the source; when the base advances, fetch origin and rebase onto origin/<base> before integration. Returns project_id, path, branch, base and warnings: submodules stay uninitialized and LFS files stay pointers.",
         properties: [
           "name": .object([
             "type": .string("string"),

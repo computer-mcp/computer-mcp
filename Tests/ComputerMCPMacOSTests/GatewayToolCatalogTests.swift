@@ -23,6 +23,93 @@ import Testing
 
 @Suite(.nativeIntegration)
 struct GatewayToolCatalogTests {
+  @Test(.timeLimit(.minutes(1)), arguments: [false, true])
+  func standaloneHTTPNotificationsSurviveGenerationSwitch(profileChange: Bool) async throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let database = try GatewayDatabase(inMemory: ())
+    try database.saveProject(.init(id: "fixture", displayName: "Fixture", rootPath: root.path))
+    var profile = ProfileGrantConfig(
+      id: .chatGPTObserve, permissions: fixturePermissions([.project("fixture"): .granted(.read)]),
+      allowedCallers: [.secureTunnel])
+    try database.saveProfile(profile.grant)
+    let configuration = GatewayConfiguration(
+      runtime: .init(caller: .secureTunnel, profileID: .chatGPTObserve), profiles: [profile])
+    let providers = GenerationCatalogProviders()
+    let base = fixtureHostedPlatform()
+    let platform = PlatformServices(
+      launcher: base.launcher, projectGrants: base.projectGrants,
+      pluginDirectories: base.pluginDirectories, applications: base.applications,
+      toolProviders: providers, managementToolNames: base.managementToolNames,
+      executableSearchDirectories: base.executableSearchDirectories,
+      gitExecutable: base.gitExecutable,
+      fileChanges: base.fileChanges, permissionPolicyReader: base.permissionPolicyReader,
+      executionProxy: base.executionProxy, hostDataPaths: base.hostDataPaths)
+    let gateway = try GatewayRuntime(
+      configuration: configuration, database: database,
+      registeredProjects: try database.projects(), platform: platform)
+    let http = GatewayHTTPRuntime(
+      configuration: configuration, registry: gateway, host: "127.0.0.1", port: 0,
+      publicBaseURL: nil, accessToken: "catalog-generation-token")
+    let client = MCP.Client(name: "standalone-generations", version: "1")
+    let notifications = GatewayToolChangeBroadcaster()
+    let notices = notifications.stream()
+    await client.onNotification(ToolListChangedNotification.self) { _ in notifications.send() }
+    do {
+      try await http.startListening()
+      let port = try #require(await http.boundPort())
+      let endpoint = try #require(URL(string: "http://127.0.0.1:\(port)/mcp"))
+      let transport = MCPHTTPClientTransport(
+        endpoint: endpoint, streaming: true, bearerToken: { "catalog-generation-token" })
+      let initialized = try await client.connect(transport: transport)
+      #expect(initialized.capabilities.tools?.listChanged == true)
+      #expect(try await client.listTools().tools.contains { $0.name == "sample" })
+      let session = try #require(await http.controlSessions().first)
+      let first = try #require(providers.latest)
+      first.source.replace(names: ["sample", "before"], revision: 2)
+      if profileChange {
+        profile.grant.fullAccess = true
+        try database.saveProfile(profile.grant)
+      } else {
+        first.changes.send()
+      }
+      #expect(try await Self.nextEvent(notices))
+      #expect(try await client.listTools().tools.contains { $0.name == "before" })
+
+      var refreshedProject = try #require(try database.project(id: "fixture"))
+      refreshedProject.displayName = "Refreshed fixture"
+      try database.saveProject(refreshedProject)
+      #expect(try await !client.listTools().tools.contains { $0.name == "before" })
+      // Consume the catalog reset separately so it cannot satisfy the later change assertion.
+      #expect(try await Self.nextEvent(notices))
+      let second = try #require(providers.latest)
+      #expect(second.id != first.id)
+      #expect(await http.controlSessions().map(\.id) == [session.id])
+      second.source.replace(names: ["sample", "after"], revision: 3)
+      if profileChange {
+        profile.grant.fullAccess = false
+        try database.saveProfile(profile.grant)
+      } else {
+        second.changes.send()
+      }
+      #expect(try await Self.nextEvent(notices))
+      #expect(try await client.listTools().tools.contains { $0.name == "after" })
+      let request: RequestContext<CallTool.Result> = try await client.callTool(name: "project.list")
+      let result = try await request.value
+      #expect(result.isError != true)
+      #expect(String(describing: result.structuredContent).contains("Refreshed fixture"))
+      await client.disconnect()
+      await http.stop()
+      await gateway.shutdown()
+    } catch {
+      await client.disconnect()
+      await http.stop()
+      await gateway.shutdown()
+      throw error
+    }
+  }
+
   @Test
   func asynchronousAdmissionKeepsAnOlderCallAndCurrentCatalogIndependent() async throws {
     let gateway = AsyncCatalogGateway()
@@ -788,6 +875,31 @@ private struct CatalogSingleToolFixture: GatewayToolProvider {
     [.init(tool: tool, capability: .init(id: tool.name, risk: .externalWrite, requirement: .none))]
   }
   func callTool(_ invocation: ToolInvocation) throws -> JSONValue { .null }
+}
+
+private final class GenerationCatalogProviders: GatewayToolProviderFactory, Sendable {
+  struct Entry: Sendable {
+    let id = UUID()
+    let source = CatalogSourceFixture()
+    let changes = GatewayToolChangeBroadcaster()
+  }
+  private let entries = NIOLockedValueBox<[Entry]>([])
+  var latest: Entry? { entries.withLockedValue { $0.last } }
+
+  func makeProviders(
+    configuration: GatewayConfiguration, commandRunner: any CommandRunning,
+    processManager: any ProcessManaging, shellManager: any ShellManaging,
+    mcpClient: any DownstreamMCPClient, hostContext: MCPHostContext
+  ) -> GatewayToolRegistry {
+    let entry = Entry()
+    if hostContext.launchMetadata.project.id == "fixture" {
+      entries.withLockedValue { $0.append(entry) }
+    }
+    return GatewayToolRegistry(
+      providers: entry.source.providers, invalidations: entry.changes.stream(),
+      downstreamPolicy: { _, _ in throw CatalogTestError.invalidPrincipal },
+      shutdown: { entry.changes.finish() })
+  }
 }
 
 private final class CatalogSourceFixture: Sendable {

@@ -11,6 +11,12 @@ package actor GatewayStandaloneGenerations: GatewayAsyncToolServing {
   private var retiring: [UUID: Task<Void, Never>] = [:]
   private var pending: Task<GatewayRuntime, any Error>?
   private var closed = false
+  private struct ToolChangeSubscription {
+    let context: InvocationContext
+    let continuation: AsyncStream<Void>.Continuation
+    let forwarding: Task<Void, Never>
+  }
+  private var toolSubscriptions: [UUID: ToolChangeSubscription] = [:]
 
   package init(_ initial: GatewayRuntime) { current = initial }
 
@@ -37,6 +43,12 @@ package actor GatewayStandaloneGenerations: GatewayAsyncToolServing {
         }
         retired.append(previous)
         current = next
+        for (id, subscription) in toolSubscriptions {
+          subscription.forwarding.cancel()
+          toolSubscriptions[id] = toolSubscription(
+            id: id, context: subscription.context, continuation: subscription.continuation)
+          subscription.continuation.yield(())
+        }
         pending = nil
         reap()
         return next
@@ -68,8 +80,60 @@ package actor GatewayStandaloneGenerations: GatewayAsyncToolServing {
     return try await runtime.listToolsAsync(context: context)
   }
 
+  package nonisolated func toolChanges(context: InvocationContext) -> AsyncStream<Void> {
+    let id = UUID()
+    let (stream, continuation) = AsyncStream<Void>.makeStream(bufferingPolicy: .bufferingNewest(1))
+    let registration = Task {
+      await subscribeToToolChanges(id, context: context, continuation: continuation)
+    }
+    continuation.onTermination = { [weak self] _ in
+      registration.cancel()
+      Task { await self?.unsubscribeFromToolChanges(id) }
+    }
+    return stream
+  }
+
+  private func subscribeToToolChanges(
+    _ id: UUID, context: InvocationContext, continuation: AsyncStream<Void>.Continuation
+  ) {
+    guard !closed, !Task.isCancelled else {
+      continuation.finish()
+      return
+    }
+    toolSubscriptions[id] = toolSubscription(id: id, context: context, continuation: continuation)
+    // Registration crosses from the synchronous protocol into this actor. Recheck
+    // the catalog in case it changed before the source subscription was installed.
+    continuation.yield(())
+  }
+
+  private func toolSubscription(
+    id: UUID, context: InvocationContext, continuation: AsyncStream<Void>.Continuation
+  ) -> ToolChangeSubscription {
+    let generation = current.generationID
+    let source = current.toolChanges(context: context)
+    let forwarding = Task { [weak self] in
+      for await _ in source {
+        guard !Task.isCancelled else { break }
+        await self?.forwardToolChange(id, generation: generation)
+      }
+    }
+    return .init(context: context, continuation: continuation, forwarding: forwarding)
+  }
+
+  private func forwardToolChange(_ id: UUID, generation: UUID) {
+    guard !closed, current.generationID == generation else { return }
+    toolSubscriptions[id]?.continuation.yield(())
+  }
+
+  private func unsubscribeFromToolChanges(_ id: UUID) {
+    toolSubscriptions.removeValue(forKey: id)?.forwarding.cancel()
+  }
+
   package func refreshTools(context: InvocationContext) async throws {
-    try await admitted().refreshTools(context: context)
+    let runtime = try await admitted()
+    let use = try runtime.ownedWork.admitInvocation(projectID: nil, resourceID: "tools/refresh")
+    defer { use.finish() }
+    try await runtime.refreshTools(context: context)
   }
 
   package func callToolAsync(name: String, arguments: JSONValue?, context: InvocationContext)
@@ -185,6 +249,13 @@ package actor GatewayStandaloneGenerations: GatewayAsyncToolServing {
   package func shutdown() async {
     guard !closed else { return }
     closed = true
+    let subscriptions = toolSubscriptions.values
+    toolSubscriptions = [:]
+    for subscription in subscriptions {
+      subscription.forwarding.cancel()
+      subscription.continuation.finish()
+    }
+    for subscription in subscriptions { await subscription.forwarding.value }
     pending?.cancel()
     if let candidate = try? await pending?.value { await candidate.shutdown() }
     for runtime in [current] + retired { await runtime.shutdown() }

@@ -93,14 +93,14 @@ private struct MetadataEnvironmentProbe: MCPHostEnvironment {
 }
 
 private actor MetadataSessionProbe: MCPHostSessionHandle {
-  nonisolated let childHandle: FileHandle
+  nonisolated let childHandle: FileHandle?
   private let pipe = Pipe()
   private(set) var closed = false
 
   init() { childHandle = pipe.fileHandleForWriting }
 
   func close() {
-    try? childHandle.close()
+    try? childHandle?.close()
     try? pipe.fileHandleForReading.close()
     closed = true
   }

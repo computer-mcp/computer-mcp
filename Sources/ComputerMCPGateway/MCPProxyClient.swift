@@ -92,15 +92,21 @@ package final class MCPProxyClient: DownstreamMCPClient, @unchecked Sendable {
 
   package func cachedTools(server: MCPServerConfig, context: InvocationContext) throws -> [MCPTool]?
   {
-    catalogs.tools(for: server)
+    try catalogs.tools(for: server, source: pool.catalogIdentity(for: server))
   }
 
   package func listTools(server: MCPServerConfig, context: InvocationContext) throws -> [MCPTool] {
-    let tools = try run(server: server, notifyToolsOnConnect: false, context: context) {
+    let source = try pool.catalogIdentity(for: server)
+    let tools = try run(
+      server: server, notifyToolsOnConnect: false, context: context, discovery: true
+    ) {
       connection in
       try await connection.listTools()
     }
-    catalogs.save(tools, for: server)
+    guard try pool.catalogIdentity(for: server) == source else {
+      throw PermissionModelError.invalidAuthorization
+    }
+    catalogs.save(tools, for: server, source: source)
     changes.send()
     return tools
   }
@@ -175,7 +181,9 @@ package final class MCPProxyClient: DownstreamMCPClient, @unchecked Sendable {
     }
     let retainsResult = requestID != nil
     let continuation = context.continuationTarget
-    if continuation != nil { _ = try pool.connection(for: server, continuation: continuation) }
+    if continuation != nil {
+      _ = try pool.connection(for: server, continuation: continuation, context: context)
+    }
     let requestID = requestID ?? UUID().uuidString
     if retainsResult {
       guard !requestID.isEmpty else {
@@ -241,7 +249,9 @@ package final class MCPProxyClient: DownstreamMCPClient, @unchecked Sendable {
     }
 
     let continuation = context.continuationTarget
-    if continuation != nil { _ = try pool.connection(for: server, continuation: continuation) }
+    if continuation != nil {
+      _ = try pool.connection(for: server, continuation: continuation, context: context)
+    }
     guard let prepared = context.executionAuthority as? PreparedExecutionContext else {
       throw PermissionModelError.invalidAuthorization
     }
@@ -350,7 +360,7 @@ package final class MCPProxyClient: DownstreamMCPClient, @unchecked Sendable {
     guard server.enabled else { return .object(["state": .string("disabled")]) }
     guard
       let connection = pool.existingConnection(
-        for: server, continuation: context.continuationTarget)
+        for: server, continuation: context.continuationTarget, context: context)
     else {
       return .object([
         "state": .string(pool.inactiveState(serverID: server.id)),
@@ -385,7 +395,7 @@ package final class MCPProxyClient: DownstreamMCPClient, @unchecked Sendable {
     }
     guard
       let connection = pool.existingConnection(
-        for: server, continuation: context.continuationTarget)
+        for: server, continuation: context.continuationTarget, context: context)
     else {
       guard afterCursor == 0, sessionID == nil else {
         throw GatewayToolError.invalidArguments(
@@ -416,7 +426,7 @@ package final class MCPProxyClient: DownstreamMCPClient, @unchecked Sendable {
     let access = try executionAccess(context: context)
     guard
       let connection = pool.existingConnection(
-        for: server, continuation: context.continuationTarget)
+        for: server, continuation: context.continuationTarget, context: context)
     else {
       return .object([
         "server": .string(server.id),
@@ -435,7 +445,7 @@ package final class MCPProxyClient: DownstreamMCPClient, @unchecked Sendable {
     guard let target = context.continuationTarget, target.selectedOwnershipID != nil,
       target.reference == .init(serverID: server.id, toolName: "mcp.connections.close"),
       let connection = pool.existingConnection(
-        for: server, continuation: context.continuationTarget)
+        for: server, continuation: context.continuationTarget, context: context)
     else { throw MCPContinuationTarget.unavailable() }
     let result = try runExisting(server: server, connection: connection, context: context) {
       connection in
@@ -455,7 +465,7 @@ package final class MCPProxyClient: DownstreamMCPClient, @unchecked Sendable {
     let access = try executionAccess(context: context)
     guard
       let connection = pool.existingConnection(
-        for: server, continuation: context.continuationTarget)
+        for: server, continuation: context.continuationTarget, context: context)
     else {
       throw GatewayToolError.invalidArguments(
         "Downstream MCP server '\(server.id)' has no active session."
@@ -472,10 +482,11 @@ package final class MCPProxyClient: DownstreamMCPClient, @unchecked Sendable {
   private func run<T: Sendable>(
     server: MCPServerConfig,
     notifyToolsOnConnect: Bool = true,
-    context: InvocationContext,
+    context: InvocationContext, discovery: Bool = false,
     operation: @escaping @Sendable (MCPProxyConnection) async throws -> T
   ) throws -> T {
-    let connection = try pool.connection(for: server, continuation: context.continuationTarget)
+    let connection = try pool.connection(
+      for: server, continuation: context.continuationTarget, context: context, discovery: discovery)
     try runExisting(
       server: server, connection: connection,
       timeoutMilliseconds: server.startupTimeoutMs ?? 30_000,
@@ -556,20 +567,33 @@ package final class MCPProxyClient: DownstreamMCPClient, @unchecked Sendable {
 }
 
 private final class MCPConnectionPool: @unchecked Sendable {
+  private struct Key: Hashable {
+    let serverID: String
+    let authority: MCPProviderSessionAuthority?
+
+    func sharesDelegation(with other: Self) -> Bool {
+      guard serverID == other.serverID else { return false }
+      if let authority, let other = other.authority {
+        return authority.sharesDelegation(with: other)
+      }
+      return authority == nil && other.authority == nil
+    }
+  }
   private struct Entry {
     let configuration: MCPServerConfig
     let connection: MCPProxyConnection
+    let execution: PreparedExecutionContext?
   }
-
-  private let lock = NSLock()
-  private var entries: [String: Entry] = [:]
-  private var stopped = false
   private struct Retirement {
     let id: UUID
+    let key: Key
     let task: Task<Bool, Never>
     var failed = false
   }
-  private var retirements: [String: Retirement] = [:]
+  private let lock = NSLock()
+  private var entries: [Key: Entry] = [:]
+  private var stopped = false
+  private var retirements: [UUID: Retirement] = [:]
   private var shutdownTask: Task<Void, Never>?
   private let launcher: ExecutionLauncher
   private let workingDirectory: URL
@@ -596,103 +620,165 @@ private final class MCPConnectionPool: @unchecked Sendable {
     self.toolsChanged = toolsChanged
   }
 
-  func connection(for server: MCPServerConfig, continuation: MCPContinuationTarget?) throws
-    -> MCPProxyConnection
-  {
+  func catalogIdentity(for server: MCPServerConfig) throws -> String? {
+    guard server.transport == .stdio else { return nil }
+    return try hostContext?.providerSource?(server).digest
+  }
+
+  func connection(
+    for server: MCPServerConfig, continuation: MCPContinuationTarget?,
+    context: InvocationContext, discovery: Bool = false
+  ) throws -> MCPProxyConnection {
     if let hostContextError { throw hostContextError }
     guard server.enabled else {
       throw GatewayToolError.disabled("MCP registration '\(server.id)' is disabled.")
     }
+    let source = try server.transport == .stdio ? hostContext?.providerSource?(server) : nil
     lock.lock()
     defer { lock.unlock() }
     guard !stopped else {
       throw GatewayToolError.disabled("The downstream MCP client is stopped.")
     }
     if let continuation {
-      guard continuation.reference.serverID == server.id,
-        continuation.projectID == hostContext?.launchMetadata.project.id,
-        let entry = entries[server.id], entry.configuration == server,
-        entry.connection.connectionID == continuation.connectionID
-      else { throw MCPContinuationTarget.unavailable() }
+      guard let entry = selectedLocked(server: server, target: continuation) else {
+        throw MCPContinuationTarget.unavailable()
+      }
+      try entry.execution?.validateProviderLaunch()
       return entry.connection
     }
-    if let entry = entries[server.id], entry.configuration == server {
-      return entry.connection
+    var execution = (context.executionAuthority as? PreparedExecutionContext).flatMap {
+      $0.provider == nil ? nil : $0
     }
-    if let replaced = entries.removeValue(forKey: server.id) {
-      retireLocked(serverID: server.id, connection: replaced.connection)
+    var ownsAdmission = false
+    if discovery, let source {
+      for (key, entry) in entries where key.serverID == server.id && key.authority?.delegator == nil
+      {
+        if entry.configuration == server,
+          entry.execution?.provider?.sourceDigest == source.digest,
+          (try? entry.execution?.validateProviderLaunch()) != nil
+        {
+          return entry.connection
+        }
+        entries.removeValue(forKey: key)
+        retireLocked(key: key, connection: entry.connection)
+      }
+      execution = try source.prepareDiscovery()
+      ownsAdmission = true
+    } else if source != nil && execution == nil {
+      throw PermissionModelError.invalidAuthorization
     }
-    let connection = try MCPProxyConnection(
-      launcher: launcher, server: server, workingDirectory: workingDirectory,
-      environment: environment,
-      hostContext: hostContext, secretStore: secretStore, journal: journal,
-      predecessor: retirements[server.id]?.task,
-      onTermination: { [weak self] connection in
-        self?.invalidate(server: server, connection: connection)
-      },
-      toolsChanged: toolsChanged)
-    entries[server.id] = Entry(configuration: server, connection: connection)
-    return connection
+    do {
+      if let execution {
+        guard execution.provider?.registrationID == server.id,
+          source == nil || execution.provider?.sourceDigest == source?.digest,
+          !discovery || execution.provider?.delegatingAuthorization == nil
+        else { throw PermissionModelError.invalidAuthorization }
+        try execution.validateProviderLaunch()
+      }
+      let key = try Key(
+        serverID: server.id, authority: execution.map(MCPProviderSessionAuthority.init))
+      // A stale process is a predecessor, including one whose cleanup already failed.
+      for (oldKey, entry) in entries where oldKey.sharesDelegation(with: key) {
+        let valid =
+          entry.execution == nil || (try? entry.execution?.validateProviderLaunch()) != nil
+        if entry.configuration != server || !valid {
+          entries.removeValue(forKey: oldKey)
+          retireLocked(key: oldKey, connection: entry.connection)
+        }
+      }
+      if let entry = entries[key], entry.configuration == server {
+        if ownsAdmission { try execution?.finishAdmission() }
+        return entry.connection
+      }
+      let predecessors = retirements.values.filter { $0.key.sharesDelegation(with: key) }.map(
+        \.task)
+      let predecessor: Task<Bool, Never>? =
+        predecessors.isEmpty
+        ? nil
+        : Task {
+          var confirmed = true
+          for task in predecessors { if !(await task.value) { confirmed = false } }
+          return confirmed
+        }
+      let connection = try MCPProxyConnection(
+        launcher: launcher, server: server, workingDirectory: workingDirectory,
+        environment: environment, hostContext: hostContext, secretStore: secretStore,
+        journal: journal,
+        predecessor: predecessor, preparedExecution: execution, ownsAdmission: ownsAdmission,
+        onTermination: { [weak self] connection in
+          self?.invalidate(server: server, connection: connection)
+        }, toolsChanged: toolsChanged)
+      entries[key] = Entry(configuration: server, connection: connection, execution: execution)
+      return connection
+    } catch {
+      if ownsAdmission { try? execution?.finishAdmission() }
+      throw error
+    }
   }
 
-  func existingConnection(for server: MCPServerConfig, continuation: MCPContinuationTarget?)
-    -> MCPProxyConnection?
-  {
-    lock.lock()
-    defer { lock.unlock() }
-    guard !stopped, let entry = entries[server.id], entry.configuration == server else {
-      return nil
+  private func selectedLocked(server: MCPServerConfig, target: MCPContinuationTarget) -> Entry? {
+    guard target.reference.serverID == server.id,
+      target.projectID == hostContext?.launchMetadata.project.id
+    else { return nil }
+    return entries.values.first {
+      $0.configuration == server && $0.connection.connectionID == target.connectionID
     }
-    if let target = continuation,
-      target.connectionID != entry.connection.connectionID || target.reference.serverID != server.id
-        || target.projectID != hostContext?.launchMetadata.project.id
-    {
-      return nil
+  }
+
+  func existingConnection(
+    for server: MCPServerConfig, continuation: MCPContinuationTarget?, context: InvocationContext
+  ) -> MCPProxyConnection? {
+    lock.withLock {
+      guard !stopped else { return nil }
+      if let continuation {
+        return selectedLocked(server: server, target: continuation)?.connection
+      }
+      if let execution = context.executionAuthority as? PreparedExecutionContext,
+        let authority = try? MCPProviderSessionAuthority(execution)
+      {
+        return entries[Key(serverID: server.id, authority: authority)]?.connection
+      }
+      let matching = entries.filter { $0.key.authority == nil && $0.value.configuration == server }
+        .map(\.value)
+      return matching.count == 1 ? matching.first?.connection : nil
     }
-    return entry.connection
   }
 
   func invalidate(server: MCPServerConfig, connection: MCPProxyConnection) {
-    lock.lock()
-    guard let entry = entries[server.id],
-      entry.configuration == server,
-      entry.connection === connection
-    else {
-      lock.unlock()
-      return
+    lock.withLock {
+      guard
+        let entry = entries.first(where: {
+          $0.value.configuration == server && $0.value.connection === connection
+        })
+      else { return }
+      entries.removeValue(forKey: entry.key)
+      retireLocked(key: entry.key, connection: connection)
     }
-    entries.removeValue(forKey: server.id)
-    retireLocked(serverID: server.id, connection: connection)
-    lock.unlock()
   }
 
-  private func retireLocked(serverID: String, connection: MCPProxyConnection) {
+  private func retireLocked(key: Key, connection: MCPProxyConnection) {
     let id = UUID()
     let task = Task { [weak self] in
       let confirmed = await connection.disconnect()
-      // A failed retirement remains a barrier: a new process must not overlap it.
-      self?.finishRetirement(serverID: serverID, id: id, confirmed: confirmed)
+      self?.finishRetirement(id: id, confirmed: confirmed)
       return confirmed
     }
-    retirements[serverID] = Retirement(id: id, task: task)
+    retirements[id] = Retirement(id: id, key: key, task: task)
   }
 
-  private func finishRetirement(serverID: String, id: UUID, confirmed: Bool) {
+  private func finishRetirement(id: UUID, confirmed: Bool) {
     lock.withLock {
-      guard retirements[serverID]?.id == id else { return }
-      if confirmed {
-        retirements.removeValue(forKey: serverID)
-      } else {
-        retirements[serverID]?.failed = true
-      }
+      if confirmed { retirements.removeValue(forKey: id) } else { retirements[id]?.failed = true }
     }
   }
 
   func inactiveState(serverID: String) -> String {
     lock.withLock {
-      if let retirement = retirements[serverID] {
-        return retirement.failed ? "cleanup_failed" : "retiring"
+      let pending = retirements.values.filter { $0.key.serverID == serverID }
+      if !pending.isEmpty {
+        return pending.contains(where: \.failed) ? "cleanup_failed" : "retiring"
       }
+      if entries.keys.contains(where: { $0.serverID == serverID }) { return "selection_required" }
       return stopped ? "stopped" : "not_started"
     }
   }
@@ -701,9 +787,7 @@ private final class MCPConnectionPool: @unchecked Sendable {
     lock.withLock {
       if let shutdownTask { return shutdownTask }
       stopped = true
-      for (serverID, entry) in entries {
-        retireLocked(serverID: serverID, connection: entry.connection)
-      }
+      for (key, entry) in entries { retireLocked(key: key, connection: entry.connection) }
       let retired = retirements.values.map(\.task)
       entries.removeAll()
       let task = Task {
@@ -766,6 +850,8 @@ private actor MCPProxyConnection {
   private var terminationObserver: Task<Void, Never>?
   private var closeTask: Task<Bool, Never>?
   private let predecessor: Task<Bool, Never>?
+  private let preparedExecution: PreparedExecutionContext?
+  private let ownsAdmission: Bool
   private var observers: [MCP.ID: Task<Void, Never>] = [:]
   private var reservedRequestIDs: Set<String> = []
   private var initializeResult: Initialize.Result?
@@ -790,6 +876,7 @@ private actor MCPProxyConnection {
   private var requestOwnership: [UUID: RequestOwnership] = [:]
   private var providerWork: MCPProviderWork?
   private var unreportedWork: GatewayOwnedWork.Lease?
+  private var unreportedExecutions: [UUID: ExecutionWorkLease] = [:]
   private var workCatalogObserved = false
   private var workObservation: Task<Void, Never>?
   private var workObservationID: UUID?
@@ -805,12 +892,15 @@ private actor MCPProxyConnection {
     hostContext: MCPHostContext?,
     secretStore: (any SecretStore)?, journal: MCPExecutionJournal,
     predecessor: Task<Bool, Never>? = nil,
+    preparedExecution: PreparedExecutionContext? = nil, ownsAdmission: Bool = false,
     onTermination: @escaping @Sendable (MCPProxyConnection) -> Void,
     toolsChanged: @escaping @Sendable () -> Void
   ) throws {
     self.server = server
     self.journal = journal
     self.predecessor = predecessor
+    self.preparedExecution = preparedExecution
+    self.ownsAdmission = ownsAdmission
     self.toolsChanged = toolsChanged
     self.onTermination = onTermination
     ownedWork = hostContext?.ownedWork
@@ -823,7 +913,7 @@ private actor MCPProxyConnection {
     transport = try Self.makeTransport(
       launcher: launcher, server: server, workingDirectory: workingDirectory,
       environment: environment,
-      hostContext: hostContext, secretStore: secretStore)
+      hostContext: hostContext, secretStore: secretStore, preparedExecution: preparedExecution)
   }
 
   func listTools() async throws -> [MCPTool] {
@@ -910,7 +1000,7 @@ private actor MCPProxyConnection {
     }
     let (context, ownership) = try await dispatchTool(
       name: name, arguments: arguments, gatewayRequestID: gatewayRequestID,
-      hostInvocationID: hostInvocationID, continuation: continuation)
+      hostInvocationID: hostInvocationID, continuation: continuation, execution: execution)
     var confirmedResponse = false
     defer { settleOwnership(ownership, confirmed: confirmedResponse) }
     guard closeTask == nil else {
@@ -1017,7 +1107,7 @@ private actor MCPProxyConnection {
     }
     let (context, ownership) = try await dispatchTool(
       name: name, arguments: arguments, gatewayRequestID: gatewayRequestID,
-      hostInvocationID: hostInvocationID, continuation: continuation)
+      hostInvocationID: hostInvocationID, continuation: continuation, execution: execution)
     guard closeTask == nil else {
       try? await client.cancelRequest(context.requestID, reason: "Downstream MCP session retired.")
       throw MCPError.connectionClosed
@@ -1310,7 +1400,7 @@ private actor MCPProxyConnection {
 
   private func dispatchTool(
     name: String, arguments: [String: JSONValue], gatewayRequestID: String, hostInvocationID: UUID?,
-    continuation: MCPContinuationTarget?
+    continuation: MCPContinuationTarget?, execution: PreparedExecutionContext
   ) async throws -> (RequestContext<CallTool.Result>, RequestOwnership?) {
     if !workCatalogObserved && initializeResult?.capabilities.resources != nil {
       _ = try await listTools()
@@ -1341,8 +1431,35 @@ private actor MCPProxyConnection {
     } else {
       workContext = nil
     }
-    let providerInvocationID = try providerWork?.beginInvocation(
-      tool: name, hostContext: workContext)
+    let providerLease: ExecutionWorkLease?
+    if execution.provider != nil {
+      if providerWork != nil {
+        providerLease = try execution.retainWork { [weak self] in
+          _ = await self?.disconnect()
+        }
+      } else {
+        if unreportedExecutions[execution.executionID] == nil {
+          guard unreportedExecutions.count < MCPProviderWork.maximumResources else {
+            throw GatewayToolError.invalidArguments(
+              "[mcp.work_capacity] Unreported provider work must stop before admitting more calls.")
+          }
+          unreportedExecutions[execution.executionID] = try execution.retainWork { [weak self] in
+            _ = await self?.disconnect()
+          }
+        }
+        providerLease = nil
+      }
+    } else {
+      providerLease = nil
+    }
+    let providerInvocationID: UUID?
+    do {
+      providerInvocationID = try providerWork?.beginInvocation(
+        tool: name, hostContext: workContext, executionLease: providerLease)
+    } catch {
+      try? providerLease?.finish()
+      throw error
+    }
     // A response from a provider without lifetime reporting cannot prove background work drained.
     if providerWork == nil, unreportedWork == nil {
       unreportedWork = ownedWork?.retain(
@@ -1468,10 +1585,16 @@ private actor MCPProxyConnection {
       } else {
         processExited = true
       }
-      return predecessorExited && processExited
+      return self.finishDisconnect(
+        confirmed: predecessorExited && processExited, retainedRequests: retainedRequests)
     }
     closeTask = task
-    let confirmed = await task.value
+    return await task.value
+  }
+
+  private func finishDisconnect(confirmed initial: Bool, retainedRequests: [ActiveRequest]) -> Bool
+  {
+    var confirmed = initial
     if confirmed, transport is MCPChildProcessTransport {
       unreportedWork?.finish()
       unreportedWork = nil
@@ -1482,6 +1605,18 @@ private actor MCPProxyConnection {
       settleOwnership(
         ownership, confirmed: confirmed && transport is MCPChildProcessTransport,
         providerResponse: false)
+    }
+    if confirmed, transport is MCPChildProcessTransport {
+      do {
+        try providerWork?.confirmLocalShutdown()
+        for (id, lease) in unreportedExecutions {
+          try lease.finish()
+          unreportedExecutions.removeValue(forKey: id)
+        }
+      } catch {
+        confirmed = false
+        lastError = "Provider execution authority cleanup is unconfirmed."
+      }
     }
     for request in retainedRequests {
       do {
@@ -1494,6 +1629,7 @@ private actor MCPProxyConnection {
     self.terminationObserver = nil
     self.observers.removeAll()
     if !confirmed { lastError = "An owned downstream process has not confirmed exit." }
+    if ownsAdmission { try? preparedExecution?.finishAdmission() }
     appendEvent(kind: confirmed ? "connection.disconnected" : "connection.cleanup_failed")
     return confirmed
   }
@@ -1520,6 +1656,7 @@ private actor MCPProxyConnection {
   }
 
   func ensureConnected(notifyTools: Bool = true) async throws {
+    try preparedExecution?.validateProviderLaunch()
     try Task.checkCancellation()
     guard closeTask == nil else { throw MCPError.connectionClosed }
     if let predecessor, !(await predecessor.value) {
@@ -1564,6 +1701,8 @@ private actor MCPProxyConnection {
       let result = try await task.value
       try Task.checkCancellation()
       guard closeTask == nil else { throw MCPError.connectionClosed }
+      try preparedExecution?.validateProviderLaunch()
+      if ownsAdmission { try preparedExecution?.finishAdmission() }
       if !connected {
         initializeResult = result
         connected = true
@@ -1678,7 +1817,8 @@ private actor MCPProxyConnection {
   private static func makeTransport(
     launcher: ExecutionLauncher, server: MCPServerConfig, workingDirectory: URL,
     environment: [String: String],
-    hostContext: MCPHostContext?, secretStore: (any SecretStore)?
+    hostContext: MCPHostContext?, secretStore: (any SecretStore)?,
+    preparedExecution: PreparedExecutionContext?
   ) throws -> any MCP.Transport {
     try server.authentication?.validate(endpoint: server.url, transport: server.transport)
     switch server.transport {
@@ -1686,7 +1826,7 @@ private actor MCPProxyConnection {
       return try MCPChildProcessTransport(
         launcher: launcher, server: server, workingDirectory: workingDirectory,
         environment: environment,
-        hostContext: hostContext)
+        hostContext: hostContext, preparedExecution: preparedExecution)
 
     case .streamableHTTP, .sse, .http:
       guard let urlString = server.url, let url = URL(string: urlString) else {
@@ -1731,12 +1871,15 @@ private final class AsyncOperationBox<T: Sendable>: @unchecked Sendable {
 private final class MCPResolvedCatalogCache: @unchecked Sendable {
   private let lock = NSLock()
   private var values: [String: [MCPTool]] = [:]
-  private func key(_ server: MCPServerConfig) -> String {
-    MCPExecutionRecord.digest((try? .encoded(server)) ?? .null)
+  private func key(_ server: MCPServerConfig, source: String?) -> String {
+    MCPExecutionRecord.digest(
+      .array([(try? .encoded(server)) ?? .null, source.map(JSONValue.string) ?? .null]))
   }
-  func tools(for server: MCPServerConfig) -> [MCPTool]? { lock.withLock { values[key(server)] } }
-  func save(_ tools: [MCPTool], for server: MCPServerConfig) {
-    lock.withLock { values[key(server)] = tools }
+  func tools(for server: MCPServerConfig, source: String?) -> [MCPTool]? {
+    lock.withLock { values[key(server, source: source)] }
+  }
+  func save(_ tools: [MCPTool], for server: MCPServerConfig, source: String?) {
+    lock.withLock { values[key(server, source: source)] = tools }
   }
   func removeAll() { lock.withLock { values.removeAll() } }
 }

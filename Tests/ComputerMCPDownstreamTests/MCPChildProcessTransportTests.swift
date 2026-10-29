@@ -101,7 +101,7 @@ private struct HostEnvironmentProbe: MCPHostEnvironment {
 }
 
 private actor SessionProbe: MCPHostSessionHandle {
-  nonisolated let childHandle: FileHandle
+  nonisolated let childHandle: FileHandle?
   private let pipe = Pipe()
   private let confirmed: Bool
   private(set) var closed = false
@@ -112,7 +112,7 @@ private actor SessionProbe: MCPHostSessionHandle {
   }
 
   func close() async {
-    try? childHandle.close()
+    try? childHandle?.close()
     try? pipe.fileHandleForReading.close()
     closed = true
   }

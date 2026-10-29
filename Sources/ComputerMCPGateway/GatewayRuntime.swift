@@ -469,7 +469,7 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
 
   func callHostTool(
     name: String, arguments: [String: JSONValue], projectID: String,
-    origin: String, requestID: String
+    origin: String, requestID: String, providerExecution: PreparedExecutionContext? = nil
   ) async throws -> JSONValue {
     var bound = context
     bound.projectID = projectID
@@ -478,7 +478,9 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
     let started = ContinuousClock.now
     do {
       try validateHostOrigin(projectID: projectID, origin: origin)
-      bound = try hostCallContext(projectID: projectID, origin: origin)
+      try providerExecution?.validateProviderLaunch()
+      bound = try hostCallContext(
+        projectID: projectID, origin: origin, providerExecution: providerExecution)
       bound.requestID = requestID
       let invocationContext = InvocationContext(session: bound.controlSession)
       try validateHostTarget(
@@ -504,12 +506,15 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
     }
   }
 
-  private func hostCallContext(projectID: String, origin: String) throws -> ExecutionContext {
+  private func hostCallContext(
+    projectID: String, origin: String, providerExecution: PreparedExecutionContext? = nil
+  ) throws -> ExecutionContext {
     var bound = context
     bound.projectID = projectID
     if requiresControlSession {
       let invocations = hostToolDirectory.active(
-        projectID: projectID, origin: origin, includingRetainedWork: true)
+        projectID: projectID, origin: origin, includingRetainedWork: true,
+        provider: providerExecution)
       let sessions = invocations.compactMap { $0.context.controlSession }
       guard !sessions.isEmpty, sessions.count == invocations.count,
         Set(sessions.map(\.id)).count == 1
@@ -679,7 +684,8 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
 
   private func beginHostInvocation(
     descriptor: CapabilityDescriptor, name: String, arguments: [String: JSONValue],
-    context: ExecutionContext, authorizationID: UUID, authorizationRevision: Int64
+    context: ExecutionContext, authorizationID: UUID, authorizationRevision: Int64,
+    providerExecution: PreparedExecutionContext?
   ) throws -> MCPHostInvocation? {
     guard let reference = descriptor.mcpReference,
       hostServiceRegistrations.contains(reference.serverID)
@@ -725,7 +731,8 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
     let invocation = MCPHostInvocation(
       id: id, requestLeaseID: requestLeaseID, admission: admission,
       reference: reference, admittedCapability: descriptor, upstreamName: name,
-      arguments: downstream, context: context, authorizationRevision: authorizationRevision)
+      arguments: downstream, context: context, authorizationRevision: authorizationRevision,
+      providerExecution: providerExecution)
     do { try hostToolDirectory.begin(invocation, store: recordStore) } catch let error
       as HostCallRecordError
     {
@@ -736,28 +743,38 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
 
   func requireHostInvocation(
     projectID: String, origin: String, action: MCPHostServiceAction,
+    providerExecution: PreparedExecutionContext? = nil,
     matching: (MCPHostInvocation) -> Bool = { _ in true }
   ) throws -> MCPHostInvocation {
-    try requireHostInvocation(projectID: projectID, origin: origin) {
+    try requireHostInvocation(
+      projectID: projectID, origin: origin, providerExecution: providerExecution
+    ) {
       $0.admittedCapability.hostServiceAction == action && matching($0)
     }
   }
 
-  func requireHostInvocation(projectID: String, origin: String, id: UUID) throws
+  func requireHostInvocation(
+    projectID: String, origin: String, id: UUID, providerExecution: PreparedExecutionContext? = nil
+  ) throws
     -> MCPHostInvocation
   {
-    try requireHostInvocation(projectID: projectID, origin: origin, includingRetainedWork: true) {
+    try requireHostInvocation(
+      projectID: projectID, origin: origin, includingRetainedWork: true,
+      providerExecution: providerExecution
+    ) {
       $0.id == id
     }
   }
 
   private func requireHostInvocation(
     projectID: String, origin: String, includingRetainedWork: Bool = false,
+    providerExecution: PreparedExecutionContext? = nil,
     matching: (MCPHostInvocation) -> Bool
   ) throws -> MCPHostInvocation {
     try validateHostOrigin(projectID: projectID, origin: origin)
     let matches = hostToolDirectory.active(
-      projectID: projectID, origin: origin, includingRetainedWork: includingRetainedWork
+      projectID: projectID, origin: origin, includingRetainedWork: includingRetainedWork,
+      provider: providerExecution
     ).filter(matching)
     guard matches.count == 1, let invocation = matches.first else {
       throw Self.invalid(
@@ -1524,7 +1541,9 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
       let hostInvocation = try beginHostInvocation(
         descriptor: admitted.resolved.descriptor, name: name, arguments: routed.arguments,
         context: routed.context, authorizationID: admitted.authorization.id,
-        authorizationRevision: admitted.grant.authorizationRevision)
+        authorizationRevision: admitted.grant.authorizationRevision,
+        providerExecution: (invocationContext.executionAuthority as? PreparedExecutionContext)
+          .flatMap { $0.provider == nil ? nil : $0 })
       defer { hostToolDirectory.end(hostInvocation) }
       let providerContext = InvocationContext(
         resolvedInvocation: invocationContext.resolvedInvocation,

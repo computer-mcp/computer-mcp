@@ -266,8 +266,7 @@ struct GatewayFullAccessConsentTests {
   func failedTrustPersistenceDoesNotGrantOrAuditAccess(table: String) throws {
     let fixture = try ConsentFixture()
     defer { fixture.remove() }
-    let connection = try DatabaseQueue(path: fixture.databasePath.path)
-    try connection.write { database in
+    try fixture.database.connection.writer.write { database in
       try database.execute(
         sql: """
           CREATE TRIGGER reject_trust BEFORE INSERT ON \(table)
@@ -282,7 +281,6 @@ struct GatewayFullAccessConsentTests {
     #expect(session.snapshot.revision == 0)
     #expect(try fixture.database.clientTrusts().isEmpty)
     #expect(try fixture.database.auditEvents().isEmpty)
-    try connection.close()
   }
 
   @Test

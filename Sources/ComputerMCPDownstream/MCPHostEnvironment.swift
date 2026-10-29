@@ -1,6 +1,7 @@
 import ComputerMCPConfiguration
 import ComputerMCPCore
 import ComputerMCPPlatform
+import ComputerMCPProcess
 import Foundation
 
 /// Immutable launch provenance, not a credential or grant. The host authorizes every call.
@@ -75,11 +76,26 @@ package protocol MCPHostEnvironment: Sendable {
   var pluginArtifacts: [String: PluginDirectoryIdentity] { get }
   var providesHostServices: Bool { get }
   func makeHostSession(server: MCPServerConfig) throws -> any MCPHostSessionHandle
+  func makeHostSession(server: MCPServerConfig, execution: PreparedExecutionContext) throws
+    -> any MCPHostSessionHandle
 }
 
-/// The downstream process inherits the child handle; cleanup must precede ownership confirmation.
+extension MCPHostEnvironment {
+  package func makeHostSession(server: MCPServerConfig, execution: PreparedExecutionContext) throws
+    -> any MCPHostSessionHandle
+  {
+    throw GatewayToolError.executionFailed("The host environment cannot bind provider authority.")
+  }
+}
+
+/// Prepared providers consume the opaque channel. Cleanup precedes ownership confirmation.
 package protocol MCPHostSessionHandle: Sendable {
-  var childHandle: FileHandle { get }
+  var childHandle: FileHandle? { get }
+  var providerChannel: ProviderHostServiceChannel? { get }
   func close() async
   func shutdownConfirmed() async -> Bool
+}
+
+extension MCPHostSessionHandle {
+  package var providerChannel: ProviderHostServiceChannel? { nil }
 }

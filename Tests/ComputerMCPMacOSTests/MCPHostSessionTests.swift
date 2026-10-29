@@ -68,7 +68,8 @@ struct MCPHostSessionTests {
     defer { fixture.remove() }
     let session = try fixture.session()
     let client = MCP.Client(name: "plugin-fixture", version: "1")
-    let transport = try MCPInheritedSocketTransport(takingOwnershipOf: session.childHandle)
+    let transport = try MCPInheritedSocketTransport(
+      takingOwnershipOf: #require(session.childHandle))
     do {
       _ = try await client.connect(transport: transport)
       let request: RequestContext<MCP.CallTool.Result> = try await client.callTool(
@@ -185,7 +186,8 @@ struct MCPHostSessionTests {
     defer { fixture.remove() }
     let session = try fixture.session()
     let client = MCP.Client(name: "plugin-fixture", version: "1")
-    let transport = try MCPInheritedSocketTransport(takingOwnershipOf: session.childHandle)
+    let transport = try MCPInheritedSocketTransport(
+      takingOwnershipOf: #require(session.childHandle))
     do {
       _ = try await client.connect(transport: transport)
       let request: RequestContext<MCP.CallTool.Result> = try await client.callTool(

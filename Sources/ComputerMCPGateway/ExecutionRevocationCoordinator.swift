@@ -311,6 +311,23 @@ package final class ExecutionRevocationCoordinator: ExecutionRecoveryAuthorizing
       } else {
         validateWorktree = nil
       }
+      let provider = try provider.map { binding in
+        try store.readWithDatabase { _, ledger in
+          guard let own = ledger.authorizations[binding.providerAuthorization.id] else {
+            throw PermissionModelError.invalidAuthorization
+          }
+          let caller = try binding.delegatingAuthorization.map { original in
+            guard let current = ledger.authorizations[original.id] else {
+              throw PermissionModelError.invalidAuthorization
+            }
+            return current
+          }
+          return try ProviderExecutionBinding(
+            identity: binding.identity, registrationID: binding.registrationID,
+            sourceDigest: binding.sourceDigest, providerAuthorization: own,
+            delegatingAuthorization: caller)
+        }
+      }
       let prepared = PreparedExecutionContext(
         authority: authority,
         mode: sandbox.map { .sandbox($0) } ?? .fullAccess, environment: environment,

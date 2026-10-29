@@ -2,6 +2,7 @@ import ComputerMCPConfiguration
 import ComputerMCPCore
 import ComputerMCPDownstream
 import ComputerMCPPlatform
+import ComputerMCPProcess
 import ComputerMCPToolKit
 import Foundation
 
@@ -20,6 +21,8 @@ package struct MCPHostContext: MCPHostEnvironment {
   let executionDatabase: GatewayDatabase?
   /// Verified admission evidence for host ownership writes, never inferred from caller provenance.
   let verifiedPrincipalID: String?
+  var providerSource: (@Sendable (MCPServerConfig) throws -> MCPProviderExecutionSource)?
+  var providerExecution: PreparedExecutionContext?
 
   package var projectRoot: URL { URL(fileURLWithPath: launchMetadata.project.rootPath) }
   package var providesHostServices: Bool { tools != nil }
@@ -40,5 +43,17 @@ package struct MCPHostContext: MCPHostEnvironment {
 
   package func makeHostSession(server: MCPServerConfig) throws -> any MCPHostSessionHandle {
     try MCPHostSession(context: self, server: server)
+  }
+
+  package func makeHostSession(server: MCPServerConfig, execution: PreparedExecutionContext) throws
+    -> any MCPHostSessionHandle
+  {
+    guard execution.provider?.registrationID == server.id else {
+      throw GatewayToolError.executionFailed("Provider authority does not match the registration.")
+    }
+    try execution.validateProviderLaunch()
+    var bound = self
+    bound.providerExecution = execution
+    return try MCPHostSession(context: bound, server: server)
   }
 }

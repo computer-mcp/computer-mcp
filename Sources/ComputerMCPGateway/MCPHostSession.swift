@@ -2,6 +2,7 @@ import ComputerMCPConfiguration
 import ComputerMCPCore
 import ComputerMCPDownstream
 import ComputerMCPPersistence
+import ComputerMCPProcess
 import ComputerMCPTransport
 import Foundation
 import MCP
@@ -153,13 +154,22 @@ package final class MCPHostToolDirectory: @unchecked Sendable {
       workLeaseIDs: entry.workLeaseIDs)
   }
 
-  func active(projectID: String, origin: String, includingRetainedWork: Bool = false)
+  func active(
+    projectID: String, origin: String, includingRetainedWork: Bool = false,
+    provider: PreparedExecutionContext? = nil
+  )
     -> [MCPHostInvocation]
   {
-    lock.withLock {
+    let authority = provider.flatMap { try? MCPProviderSessionAuthority($0) }
+    guard provider == nil || authority != nil else { return [] }
+    return lock.withLock {
       invocations.values.filter { includingRetainedWork || !$0.requestLeaseIDs.isEmpty }
         .map(\.invocation).filter {
           $0.context.projectID == projectID && $0.reference.serverID == origin
+            && (authority == nil
+              || $0.providerExecution.flatMap {
+                try? MCPProviderSessionAuthority($0)
+              } == authority)
         }
     }
   }
@@ -196,7 +206,8 @@ package final class MCPHostToolDirectory: @unchecked Sendable {
 
 /// A borrowed standard MCP session. Ending it never shuts down its parent gateway.
 final class MCPHostSession: MCPHostSessionHandle {
-  let childHandle: FileHandle
+  let childHandle: FileHandle?
+  let providerChannel: ProviderHostServiceChannel?
   private let transport: MCPInheritedSocketTransport
   private let task: Task<Void, Never>
   private let services: MCPHostSessionServices
@@ -205,9 +216,22 @@ final class MCPHostSession: MCPHostSessionHandle {
     guard registration.hostServices, let directory = context.tools else {
       throw GatewayToolError.executionFailed("Host services are not available for this process.")
     }
-    let pair = try MCPInheritedSocketTransport.makePair()
-    childHandle = pair.1
-    let transport = try MCPInheritedSocketTransport(takingOwnershipOf: pair.0)
+    let host: FileHandle
+    if let execution = context.providerExecution {
+      try execution.validateProviderLaunch()
+      let metadata = String(
+        decoding: try JSONEncoder().encode(context.launchMetadata), as: UTF8.self)
+      let pair = try ProviderHostServiceChannel.make(metadata: metadata)
+      host = pair.host
+      providerChannel = pair.channel
+      childHandle = nil
+    } else {
+      let pair = try MCPInheritedSocketTransport.makePair()
+      host = pair.0
+      childHandle = pair.1
+      providerChannel = nil
+    }
+    let transport = try MCPInheritedSocketTransport(takingOwnershipOf: host)
     self.transport = transport
     let projectID = context.launchMetadata.project.id
     let origin = registration.id
@@ -220,6 +244,7 @@ final class MCPHostSession: MCPHostSessionHandle {
         name: "computer-mcp-host", version: ComputerMCPCLI.version,
         capabilities: .init(tools: .init()))
       await server.withMethodHandler(MCP.ListTools.self) { params in
+        try context.providerExecution?.validateProviderLaunch()
         guard params.cursor == nil else { throw MCPError.invalidParams("Unknown tools cursor.") }
         let tools = try directory.resolve().hostToolCatalog(
           projectID: projectID, origin: origin)
@@ -229,12 +254,19 @@ final class MCPHostSession: MCPHostSessionHandle {
         // Correlation is not authority. IDs and provenance are generated/bound by the host.
         let arguments = (params.arguments ?? [:]).mapValues(JSONValue.init(sdkValue:))
         return try await admission.perform {
+          if let execution = context.providerExecution {
+            try execution.validateProviderLaunch()
+            guard execution.provider?.delegatingAuthorization != nil else {
+              throw MCPError.invalidRequest("Discovery cannot delegate host operations.")
+            }
+          }
           if params.name.hasPrefix("host.") {
             return try await services.call(name: params.name, arguments: arguments)
           }
           let result = try await directory.resolve().callHostTool(
             name: params.name, arguments: arguments, projectID: projectID,
-            origin: origin, requestID: "host:" + sessionID + ":" + UUID().uuidString)
+            origin: origin, requestID: "host:" + sessionID + ":" + UUID().uuidString,
+            providerExecution: context.providerExecution)
           return try result.sdkCallToolResult()
         }
       }
@@ -249,7 +281,8 @@ final class MCPHostSession: MCPHostSessionHandle {
   }
 
   func close() async {
-    try? childHandle.close()
+    providerChannel?.close()
+    try? childHandle?.close()
     await transport.disconnect()
     await task.value
     await services.close()
@@ -303,6 +336,7 @@ private actor MCPHostSessionServices {
   }
   private func resolve() throws -> MCPBoundHostServices? {
     guard !closed else { throw MCPError.connectionClosed }
+    try context.providerExecution?.validateProviderLaunch()
     if let bound { return bound }
     bound = try directory.resolve().makeHostServices(context: context, origin: origin)
     return bound

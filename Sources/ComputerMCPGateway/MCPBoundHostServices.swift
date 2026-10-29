@@ -102,7 +102,10 @@ actor MCPBoundHostServices {
     guard !closed else { throw MCPError.connectionClosed }
     // Rollback/removal authority lasts only for its forwarded invocation.
     let live = Set(
-      directory.active(projectID: context.launchMetadata.project.id, origin: origin).map(\.id))
+      directory.active(
+        projectID: context.launchMetadata.project.id, origin: origin,
+        provider: context.providerExecution
+      ).map(\.id))
     registrations = registrations.filter { live.contains($0.value) }
     removalInvocations = removalInvocations.filter { live.contains($0.value) }
     let started = ContinuousClock.now
@@ -183,7 +186,7 @@ actor MCPBoundHostServices {
   ) throws -> MCPHostInvocation {
     let invocation = try directory.resolve().requireHostInvocation(
       projectID: context.launchMetadata.project.id, origin: origin,
-      action: action, matching: matching)
+      action: action, providerExecution: context.providerExecution, matching: matching)
     try requireCall(invocation)
     auditInvocation = invocation
     return invocation
@@ -240,7 +243,8 @@ actor MCPBoundHostServices {
     }
     let runtime = try directory.resolve()
     let active = try runtime.requireHostInvocation(
-      projectID: context.launchMetadata.project.id, origin: origin, id: id)
+      projectID: context.launchMetadata.project.id, origin: origin, id: id,
+      providerExecution: context.providerExecution)
     try requireCall(active)
     auditInvocation = active
     let plugin = runtime.pluginOrigins[.init(kind: .mcp, id: origin)]
@@ -341,7 +345,9 @@ actor MCPBoundHostServices {
         return .object(["unregistered": .bool(true)])
       }
     }
-    let live = directory.active(projectID: context.launchMetadata.project.id, origin: origin)
+    let live = directory.active(
+      projectID: context.launchMetadata.project.id, origin: origin,
+      provider: context.providerExecution)
     if record.state == "provisioning" {
       // Only the invocation that inserted the registration owns this rollback.
       guard let id = registrations[record.id], let active = live.first(where: { $0.id == id }),
@@ -396,6 +402,15 @@ actor MCPBoundHostServices {
   }
 
   private func requireCall(_ invocation: MCPHostInvocation) throws {
+    if let execution = context.providerExecution {
+      try execution.validateProviderLaunch()
+      guard let admitted = invocation.providerExecution,
+        try MCPProviderSessionAuthority(admitted) == MCPProviderSessionAuthority(execution)
+      else {
+        throw MCPHostServiceError.denied("The invocation belongs to another provider authority.")
+      }
+      try admitted.validateProviderLaunch()
+    }
     try directory.requireRecord(invocation)
     guard let admission = invocation.admission,
       admission.verifiedClientID == context.verifiedPrincipalID,

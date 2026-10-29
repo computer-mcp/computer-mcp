@@ -1,4 +1,5 @@
 import ComputerMCPCore
+import ComputerMCPProcess
 import Foundation
 import MCP
 
@@ -135,6 +136,7 @@ package struct MCPProviderWork {
   let connectionID: UUID
   private var invocations: [UUID: Invocation] = [:]
   private var ownership: [Key: Ownership] = [:]
+  private var executionLeases: [UUID: ExecutionWorkLease] = [:]
   private var observation: GatewayOwnedWork.Lease?
   private var report: Report?
   private var continuations: [String: MCPProviderContinuation] = [:]
@@ -168,7 +170,7 @@ package struct MCPProviderWork {
   }
 
   var needsObservation: Bool {
-    observation != nil || !ownership.isEmpty || !invocations.isEmpty
+    observation != nil || !ownership.isEmpty || !invocations.isEmpty || !executionLeases.isEmpty
   }
 
   /// Only invocations completed before the read began may be discharged by that read.
@@ -188,7 +190,8 @@ package struct MCPProviderWork {
   }
 
   mutating func beginInvocation(
-    tool: String, hostContext: MCPHostToolDirectory.InvocationLease? = nil
+    tool: String, hostContext: MCPHostToolDirectory.InvocationLease? = nil,
+    executionLease: ExecutionWorkLease? = nil
   ) throws -> UUID {
     guard invocations.count < Self.maximumResources else {
       throw GatewayToolError.executionFailed(
@@ -196,6 +199,7 @@ package struct MCPProviderWork {
     }
     let id = UUID()
     invocations[id] = Invocation(tool: tool, hostContext: hostContext)
+    executionLeases[id] = executionLease
     requireObservation()
     return id
   }
@@ -222,6 +226,17 @@ package struct MCPProviderWork {
     connected = false
     if needsObservation { observationLost() }
     publishContinuations()
+  }
+
+  /// A transport close alone cannot release authority; the local owner must
+  /// first prove that the process and host-service work have stopped.
+  /// Retained owner records still participate in explicit continuation selection.
+  mutating func confirmLocalShutdown() throws {
+    guard !connected else { throw Self.invalidReport() }
+    for (id, lease) in executionLeases {
+      try lease.finish()
+      executionLeases.removeValue(forKey: id)
+    }
   }
 
   mutating func accept(_ next: Report, covering completed: Set<UUID>) throws {
@@ -283,6 +298,11 @@ package struct MCPProviderWork {
       invocations.removeValue(forKey: id)
     }
     report = next
+    let retained = Set(ownership.values.map { $0.resource.acquiredBy }).union(invocations.keys)
+    for (id, lease) in executionLeases where !retained.contains(id) {
+      try lease.finish()
+      executionLeases.removeValue(forKey: id)
+    }
     if invocations.isEmpty {
       observation?.finish()
       observation = nil

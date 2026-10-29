@@ -246,7 +246,7 @@ package final class PreparedExecutionContext: ExecutionAccessChecking, Sendable 
 
   package var executionID: UUID { authority.executionID }
 
-  func validateProviderLaunch() throws {
+  package func validateProviderLaunch() throws {
     guard let provider else {
       guard hostServiceChannel == nil else { throw PermissionModelError.invalidAuthorization }
       return

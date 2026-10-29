@@ -1,4 +1,5 @@
 import ComputerMCPCore
+import ComputerMCPProcess
 import Crypto
 import Foundation
 
@@ -14,6 +15,25 @@ struct MCPHostInvocation: Sendable {
   let arguments: [String: JSONValue]
   let context: ExecutionContext
   let authorizationRevision: Int64
+  let providerExecution: PreparedExecutionContext?
+
+  init(
+    id: UUID, requestLeaseID: UUID, admission: HostCallAdmission?, reference: MCPToolReference,
+    admittedCapability: CapabilityDescriptor, upstreamName: String, arguments: [String: JSONValue],
+    context: ExecutionContext, authorizationRevision: Int64,
+    providerExecution: PreparedExecutionContext? = nil
+  ) {
+    self.id = id
+    self.requestLeaseID = requestLeaseID
+    self.admission = admission
+    self.reference = reference
+    self.admittedCapability = admittedCapability
+    self.upstreamName = upstreamName
+    self.arguments = arguments
+    self.context = context
+    self.authorizationRevision = authorizationRevision
+    self.providerExecution = providerExecution
+  }
 
   static let metadataKey = "io.github.computer-mcp/host-invocation"
 

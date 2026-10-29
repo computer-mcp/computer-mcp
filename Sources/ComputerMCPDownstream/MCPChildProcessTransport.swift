@@ -21,6 +21,7 @@ package actor MCPChildProcessTransport: MCP.Transport {
   private let environment: [String: String]
   private let hostProtocolMetadata: [String: String]
   private let hostContext: (any MCPHostEnvironment)?
+  private let preparedExecution: PreparedExecutionContext?
   private var hostSession: (any MCPHostSessionHandle)?
   private var process: ManagedLineProcess?
   private var ownership: MCPProcessOwnership?
@@ -34,7 +35,8 @@ package actor MCPChildProcessTransport: MCP.Transport {
   package init(
     launcher: ExecutionLauncher, server: MCPServerConfig, workingDirectory: URL,
     environment: [String: String],
-    hostContext: (any MCPHostEnvironment)? = nil, logger: Logger? = nil
+    hostContext: (any MCPHostEnvironment)? = nil, logger: Logger? = nil,
+    preparedExecution: PreparedExecutionContext? = nil
   ) throws {
     guard let command = server.command, !command.isEmpty else {
       throw GatewayToolError.executionFailed("MCP server '\(server.id)' has no command.")
@@ -46,6 +48,14 @@ package actor MCPChildProcessTransport: MCP.Transport {
     self.launcher = launcher
     self.server = server
     self.hostContext = hostContext
+    self.preparedExecution = preparedExecution
+    if let preparedExecution {
+      guard preparedExecution.provider?.registrationID == server.id else {
+        throw GatewayToolError.executionFailed(
+          "Provider authority does not match the registration.")
+      }
+      try preparedExecution.validateProviderLaunch()
+    }
     self.command = command
     self.workingDirectory =
       server.resolvedWorkingDirectory(base: workingDirectory)
@@ -66,6 +76,7 @@ package actor MCPChildProcessTransport: MCP.Transport {
     guard !closed else { throw MCPError.connectionClosed }
     try Task.checkCancellation()
     guard process == nil else { return }
+    try preparedExecution?.validateProviderLaunch()
     let inspection = ExecutableInspection.inspect(
       command, workingDirectory: workingDirectory, environment: environment)
     guard !inspection.hasKnownFailure, let executable = inspection.path else {
@@ -76,32 +87,60 @@ package actor MCPChildProcessTransport: MCP.Transport {
       root: hostContext?.processOwnershipRoot ?? MCPProcessOwnership.defaultRoot,
       project: hostContext?.projectRoot
         ?? workingDirectory,
-      registration: server.id, artifact: hostContext?.pluginArtifacts[server.id])
+      registration: server.id, artifact: hostContext?.pluginArtifacts[server.id],
+      provider: preparedExecution?.provider)
     self.ownership = ownership
-    let session =
-      try server.hostServices
-      ? hostContext.map { try $0.makeHostSession(server: server) } : nil
+    let session: (any MCPHostSessionHandle)?
+    do {
+      if server.hostServices, let hostContext {
+        if let preparedExecution {
+          session = try hostContext.makeHostSession(server: server, execution: preparedExecution)
+        } else {
+          session = try hostContext.makeHostSession(server: server)
+        }
+      } else {
+        session = nil
+      }
+    } catch {
+      try? ownership.finish(confirmed: true)
+      throw error
+    }
     var hostProtocolMetadata = hostProtocolMetadata
-    if session != nil {
+    if session?.childHandle != nil {
       hostProtocolMetadata[MCPHostLaunchMetadata.descriptorEnvironmentKey] = "3"
     }
     let process: ManagedLineProcess
     do {
-      process = try ManagedLineProcess(
-        launcher: launcher,
-        configuration: .init(
-          executable: executable, arguments: server.args, environment: environment,
-          hostProtocolMetadata: hostProtocolMetadata,
-          workingDirectory: workingDirectory,
-          maximumMessageBytes: 16 * 1_024 * 1_024,
-          inheritedDescriptors: session.map { [3: $0.childHandle] } ?? [:],
-          ownershipHandle: try ownership.supervisorHandle()))
+      let execution: PreparedExecutionContext?
+      if let preparedExecution, let session {
+        guard session.childHandle == nil, let channel = session.providerChannel else {
+          throw GatewayToolError.executionFailed(
+            "The host session did not provide a verified channel.")
+        }
+        execution = try preparedExecution.withHostServiceChannel(channel)
+      } else {
+        execution = preparedExecution
+      }
+      let configuration = ManagedLineProcess.Configuration(
+        executable: executable, arguments: server.args, environment: environment,
+        hostProtocolMetadata: hostProtocolMetadata,
+        workingDirectory: workingDirectory,
+        maximumMessageBytes: 16 * 1_024 * 1_024,
+        inheritedDescriptors: session?.childHandle.map { [3: $0] } ?? [:],
+        ownershipHandle: try ownership.supervisorHandle())
+      if let execution {
+        process = try execution.withValue {
+          try ManagedLineProcess(launcher: launcher, configuration: configuration)
+        }
+      } else {
+        process = try ManagedLineProcess(launcher: launcher, configuration: configuration)
+      }
     } catch {
       await session?.close()
       try? ownership.finish(confirmed: await session?.shutdownConfirmed() ?? true)
       throw error
     }
-    try? session?.childHandle.close()
+    try? session?.childHandle?.close()
     self.hostSession = session
     self.process = process
     reader = Task { [continuation] in

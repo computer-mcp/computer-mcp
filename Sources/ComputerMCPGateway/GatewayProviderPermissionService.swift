@@ -53,6 +53,7 @@ extension GatewayPermissionService {
       guard (previous?.revision ?? 0) < Int64.max else {
         throw PermissionMigrationError.revisionExhausted
       }
+      let trustedHosts = Set(ledger.environment.trustedHosts.map(\.host))
       var selectedSettings = sandboxSettings
       let ceiling = review.declarations.map { $0.sandbox?.network?.value ?? .none }
       selectedSettings.defaults.networkCeiling = ceiling
@@ -64,7 +65,7 @@ extension GatewayPermissionService {
             throw GatewayPermissionError.invalidBinding
           }
         }
-        if let ceiling, !settings.network.fits(within: ceiling, trustedHosts: []) {
+        if let ceiling, !settings.network.fits(within: ceiling, trustedHosts: trustedHosts) {
           throw GatewayPermissionError.invalidBinding
         }
         for source in limits.sources.values {
@@ -72,7 +73,7 @@ extension GatewayPermissionService {
           case .absent: break
           case .unreadable: throw GatewayPermissionError.managedLimit
           case .available(let policy):
-            guard settings.network.fits(within: policy.network, trustedHosts: []) else {
+            guard settings.network.fits(within: policy.network, trustedHosts: trustedHosts) else {
               throw GatewayPermissionError.managedLimit
             }
           }

@@ -221,6 +221,71 @@ struct GatewayProviderApprovalTests {
     #expect(pending.update == .widening && pending.sandboxSettings == approval.sandboxSettings)
   }
 
+  @Test(arguments: ["declaration", "policy", "both"])
+  func customNetworkApprovalRetainsDynamicTrustedCeilings(ceiling: String) throws {
+    let f = try ProviderApprovalFixture()
+    defer { f.remove() }
+    if ceiling != "declaration" {
+      f.reader.set(.machineFile, .available(Data("network = 'trusted'".utf8)))
+    }
+    try f.store.transactionWithDatabase { _, ledger in
+      var environment = ledger.environment
+      environment.paths = try .init(
+        projects: [],
+        rules: [
+          .init(root: .init("/people"), kind: .userData),
+          .init(root: .init("/host"), kind: .hostData),
+        ])
+      environment.trustedHosts = [HostRule("allowed.test"), HostRule("other.test")]
+      _ = try ledger.reconcile(environment: environment, expectedRevision: ledger.revision)
+    }
+    let requested = ceiling == "policy" ? "full" : "trusted"
+    let review = try f.install(
+      requirement: "write", sandbox: "[sandbox]\nnetwork = '\(requested)'\npurpose = 'Network'\n")
+    let selected = ProviderSandboxSettings(
+      defaults: .init(network: .custom(hosts: ["allowed.test"], includesTrusted: false)))
+    let approved = try f.approve(review, permissions: .newPrincipal, sandboxSettings: selected)
+    #expect(
+      approved.sandboxSettings?.defaults.network.configuration
+        == selected.defaults.network.configuration)
+    #expect(
+      approved.sandboxSettings?.defaults.networkCeiling?.configuration
+        == (ceiling == "policy" ? .full : .trusted))
+    try f.store.transactionWithDatabase { _, ledger in
+      func admit(_ ledger: inout PermissionLedger) throws -> InvocationAuthorization {
+        let decision = try ledger.authorize(
+          invocation: .init(
+            principal: approved.principal, tool: "discover", projectID: nil,
+            argumentsDigest: "network"), requirements: .init(), now: Date())
+        guard case .allowed(let authorization) = decision else {
+          throw GatewayPermissionError.invalidBinding
+        }
+        return authorization
+      }
+      let initial = try admit(&ledger)
+      #expect(
+        try ledger.prepareExecutionPermissions(initial.id).network
+          == .custom(hosts: ["allowed.test"], includesTrusted: false))
+      var environment = ledger.environment
+      environment.trustedHosts = [HostRule("other.test")]
+      _ = try ledger.reconcile(environment: environment, expectedRevision: ledger.revision)
+      #expect(throws: PermissionModelError.invalidAuthorization) {
+        try ledger.invocationAccess(initial.id)
+      }
+      let narrowed = try admit(&ledger)
+      #expect(try ledger.prepareExecutionPermissions(narrowed.id).network == .none)
+      #expect(
+        ledger.sandboxSettings.providers[approved.identity]?.defaults.network.configuration
+          == selected.defaults.network.configuration)
+    }
+    #expect(throws: GatewayPermissionError.self) {
+      try f.approve(
+        f.currentReview(), permissions: .newPrincipal, previous: approved.revision,
+        sandboxSettings: selected)
+    }
+    #expect(try f.view().providers == [approved])
+  }
+
   @Test func approvalBindsSourceEpochRevisionsAndNeverCreatesProfile() throws {
     let f = try ProviderApprovalFixture()
     defer { f.remove() }

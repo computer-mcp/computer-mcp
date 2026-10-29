@@ -15,13 +15,45 @@ extension GatewayProviderReview {
     replacements: [String: CanonicalPath] = [:],
     userHome: URL = FileManager.default.homeDirectoryForCurrentUser
   ) throws -> [GatewayReadExceptionReview] {
-    let requested = declarations?.sandbox?.readExceptions ?? []
-    guard Set(replacements.keys).isSubset(of: Set(requested.map(\.path))) else {
-      throw GatewayPermissionError.invalidBinding
+    try GatewayProviderReadExceptions.review(
+      declarations?.sandbox?.readExceptions ?? [], replacements: replacements, userHome: userHome)
+  }
+}
+
+package enum GatewayProviderReadExceptions {
+  static func validate(
+    _ declarations: PluginPermissionDeclarations, settings: ProviderSandboxSettings?,
+    userHome: URL = FileManager.default.homeDirectoryForCurrentUser
+  ) throws {
+    let settings = settings ?? .init()
+    for value in [settings.defaults]
+      + settings.projects.keys.map({ settings.settings(sourceProjectID: $0) })
+    {
+      var replacements: [String: CanonicalPath] = [:]
+      var paths: Set<String> = []
+      for exception in value.readExceptions {
+        guard paths.insert(exception.declaredPath).inserted else {
+          throw GatewayPermissionError.invalidBinding
+        }
+        replacements[exception.declaredPath] = exception.ownerSelectedPath
+      }
+      let requested = declarations.sandbox?.readExceptions ?? []
+      let retained = replacements.filter { path, _ in requested.contains { $0.path == path } }
+      _ = try review(requested, replacements: retained, userHome: userHome)
     }
+  }
+
+  static func review(
+    _ requested: [PluginReadExceptionDeclaration], replacements: [String: CanonicalPath],
+    userHome: URL
+  ) throws -> [GatewayReadExceptionReview] {
+    let declaredPaths = Set(requested.map(\.path))
+    guard declaredPaths.count == requested.count,
+      Set(replacements.keys).isSubset(of: declaredPaths)
+    else { throw GatewayPermissionError.invalidBinding }
     var targets: Set<CanonicalPath> = []
     return try requested.map { declaration in
-      let approval = try? GatewayProviderReadExceptions.resolve(
+      let approval = try? resolve(
         declaredPath: declaration.path, purpose: declaration.purpose,
         replacement: replacements[declaration.path], userHome: userHome)
       if let approval, !targets.insert(approval.path).inserted {
@@ -30,9 +62,7 @@ extension GatewayProviderReview {
       return .init(declaredPath: declaration.path, purpose: declaration.purpose, approval: approval)
     }
   }
-}
 
-package enum GatewayProviderReadExceptions {
   package static func resolve(
     declaredPath: String, purpose: String, replacement: CanonicalPath? = nil,
     userHome: URL = FileManager.default.homeDirectoryForCurrentUser

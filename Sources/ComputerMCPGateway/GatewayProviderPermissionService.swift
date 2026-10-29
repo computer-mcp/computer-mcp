@@ -30,6 +30,8 @@ extension GatewayPermissionService {
       }
       if let declarations = review.declarations {
         try GatewayProviderApproval.validate(permissions, declarations: declarations)
+        try GatewayProviderReadExceptions.validate(
+          declarations, settings: sandboxSettings, userHome: userHome)
         guard fullAccess == (declarations.sandbox?.fullAccess == true) else {
           throw GatewayPermissionError.invalidBinding
         }
@@ -401,6 +403,7 @@ extension GatewayPermissionService {
         try Self.retireProvider(approval.principal, ledger: &ledger)
         continue
       }
+      try GatewayProviderReadExceptions.validate(proposed, settings: approval.sandboxSettings)
       let change = try proposed.update(
         from: prior,
         conservativeEquivalent: .conservativeEquivalent(

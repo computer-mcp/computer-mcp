@@ -123,6 +123,12 @@ package struct GatewayProviderApproval: Codable, Equatable, Sendable {
 
   /// Narrowing never removes an explicit deny or promotes an unselected object.
   mutating func narrow(to declarations: PluginPermissionDeclarations) throws {
+    var requested: [String: String] = [:]
+    for exception in declarations.sandbox?.readExceptions ?? [] {
+      guard requested.updateValue(exception.purpose, forKey: exception.path) == nil else {
+        throw GatewayPermissionError.invalidBinding
+      }
+    }
     for (permission, state) in permissions.entries {
       guard case .granted(let prior) = state,
         permission != .machineInformation, permission != .skills
@@ -137,10 +143,6 @@ package struct GatewayProviderApproval: Codable, Equatable, Sendable {
     }
     if declarations.sandbox?.fullAccess != true { fullAccessConsent = nil }
     if var settings = sandboxSettings {
-      let requested = Dictionary(
-        uniqueKeysWithValues: (declarations.sandbox?.readExceptions ?? []).map {
-          ($0.path, $0.purpose)
-        })
       func retained(_ values: Set<ApprovedReadException>) -> Set<ApprovedReadException> {
         Set(
           values.compactMap { original in

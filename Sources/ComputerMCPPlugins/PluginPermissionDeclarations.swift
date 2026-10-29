@@ -173,6 +173,10 @@ package struct PluginSandboxDeclaration: Codable, Equatable, Sendable {
     purpose = try c.decodeIfPresent(String.self, forKey: .purpose).map(pluginPurpose)
     readExceptions = try c.decodeIfPresent(
       [PluginReadExceptionDeclaration].self, forKey: .readExceptions)?.sorted { $0.path < $1.path }
+    let paths = readExceptions?.map(\.path) ?? []
+    guard Set(paths).count == paths.count else {
+      throw PluginManifestError.invalid("Duplicate read exception path.")
+    }
     fullAccess = try c.decodeIfPresent(Bool.self, forKey: .fullAccess) ?? false
     guard (purpose != nil) == (network != nil || fullAccess),
       !fullAccess || (network == nil && readExceptions == nil)

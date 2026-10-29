@@ -111,6 +111,86 @@ struct GatewayProviderApprovalTests {
     }
   }
 
+  @Test func duplicateReadPathUpdatePreservesApproval() throws {
+    let f = try ProviderApprovalFixture()
+    defer { f.remove() }
+    let home = try ProjectPathResolver.canonicalProject(f.root).appendingPathComponent("home")
+    try FileManager.default.createDirectory(at: home, withIntermediateDirectories: false)
+    let config = home.appendingPathComponent("config")
+    try Data("config".utf8).write(to: config)
+    let sandbox = "[sandbox]\nread_exceptions = [{path = '~/config', purpose = 'Read'}]\n"
+    let review = try f.install(requirement: "write", sandbox: sandbox)
+    try f.store.transactionWithDatabase { _, ledger in
+      var environment = ledger.environment
+      environment.paths = try .init(
+        projects: [], rules: [.init(root: .init(home.path), kind: .userData)])
+      _ = try ledger.reconcile(environment: environment, expectedRevision: ledger.revision)
+    }
+    let exception = try #require(review.readExceptions(userHome: home).first?.approval)
+    let original = try f.approve(
+      review, permissions: .newPrincipal,
+      sandboxSettings: .init(defaults: .init(readExceptions: [exception])), userHome: home)
+    let view = try f.view()
+    #expect(throws: PluginManifestError.self) {
+      try f.install(
+        requirement: "write",
+        sandbox: sandbox.replacingOccurrences(
+          of: "purpose = 'Read'}]",
+          with: "purpose = 'Read'}, {path = '~/config', purpose = 'Again'}]"))
+    }
+    #expect(try f.view().revision == view.revision)
+    #expect(try f.view().providers == [original])
+  }
+
+  @Test func canonicalReadDuplicatesRefuseApprovalAndUpdate() throws {
+    let f = try ProviderApprovalFixture()
+    defer { f.remove() }
+    let home = try ProjectPathResolver.canonicalProject(f.root).appendingPathComponent("home")
+    try FileManager.default.createDirectory(at: home, withIntermediateDirectories: false)
+    let first = home.appendingPathComponent("first")
+    let second = home.appendingPathComponent("second")
+    let alias = home.appendingPathComponent("alias")
+    try Data("first".utf8).write(to: first)
+    try Data("second".utf8).write(to: second)
+    try FileManager.default.createSymbolicLink(at: alias, withDestinationURL: first)
+    let sandbox = """
+      [sandbox]
+      read_exceptions = [{path = '~/first', purpose = 'First'}, {path = '~/alias', purpose = 'Alias'}]
+      """
+    let review = try f.install(requirement: "write", sandbox: sandbox)
+    let initial = try f.view()
+    #expect(throws: GatewayPermissionError.invalidBinding) {
+      try f.approve(review, permissions: .newPrincipal, userHome: home)
+    }
+    #expect(try f.view().revision == initial.revision)
+    #expect(try f.view().providers.isEmpty)
+    try FileManager.default.removeItem(at: alias)
+    try FileManager.default.createSymbolicLink(at: alias, withDestinationURL: second)
+    try f.store.transactionWithDatabase { _, ledger in
+      var environment = ledger.environment
+      environment.paths = try .init(
+        projects: [], rules: [.init(root: .init(home.path), kind: .userData)])
+      _ = try ledger.reconcile(environment: environment, expectedRevision: ledger.revision)
+    }
+    let exceptions = try review.readExceptions(
+      replacements: ["~/first": .init(first.path), "~/alias": .init(alias.path)], userHome: home)
+    let original = try f.approve(
+      review, permissions: .newPrincipal,
+      sandboxSettings: .init(
+        defaults: .init(readExceptions: Set(exceptions.compactMap(\.approval)))),
+      userHome: home)
+    try FileManager.default.removeItem(at: alias)
+    try FileManager.default.createSymbolicLink(at: alias, withDestinationURL: first)
+    let view = try f.view()
+    #expect(throws: GatewayPermissionError.invalidBinding) {
+      try f.install(
+        requirement: "write",
+        sandbox: sandbox.replacingOccurrences(of: "'Alias'", with: "'Read alias'"))
+    }
+    #expect(try f.view().revision == view.revision)
+    #expect(try f.view().providers == [original])
+  }
+
   @Test func narrowingNetworkRequestsKeepsTheOwnerSelectionAndConstrainsIt() throws {
     let f = try ProviderApprovalFixture()
     defer { f.remove() }

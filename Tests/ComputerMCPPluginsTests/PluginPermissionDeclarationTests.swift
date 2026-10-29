@@ -63,6 +63,20 @@ struct PluginPermissionDeclarationTests {
     #expect(throws: (any Error).self) { try manifest("\n[sandbox]\n" + fields) }
   }
 
+  @Test func duplicateReadExceptionPathsAreRejected() {
+    #expect(throws: PluginManifestError.self) {
+      try manifest(
+        """
+
+        [sandbox]
+        read_exceptions = [
+          {path = '~/.config', purpose = 'Read configuration'},
+          {path = '~/.config', purpose = 'Read the same configuration'}
+        ]
+        """)
+    }
+  }
+
   @Test(arguments: [
     "~", "~/", "~other/config", "/tmp/config", ".config", "$HOME/config", "~/../config",
     "~/a//b", "~/./b", "~/a/", "~/a/*", "~/a/?", "~/a/[bc]", "~/${CONFIG}",

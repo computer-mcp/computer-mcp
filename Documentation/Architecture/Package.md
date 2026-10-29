@@ -216,6 +216,12 @@ tools. Portable tests inject command paths and native readings.
 The neutral domain test targets are included on macOS and Linux; `ComputerMCPToolsStructuredDarwinTests` exercises the real media
 frameworks and their native fixtures on macOS.
 
+Plugin permission and sandbox declaration parsing in `ComputerMCPPlugins` uses
+`ComputerMCPPermissions` directly for `NetworkHost` validation and normalization.
+This keeps declared network rules identical to permission and egress rules without
+maintaining another host-name parser. Declarations and their canonical review
+digest describe requested authority; parsing does not grant it.
+
 `ComputerMCPPlugins` owns `PluginStateStore`, which reads plugin snapshots, commits
 validated revisions and maintains the local directory ownership ledger.
 `GatewayPluginStateStore` in `ComputerMCPGateway` binds those commits to the expected

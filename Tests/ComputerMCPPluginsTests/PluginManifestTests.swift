@@ -17,8 +17,12 @@ struct PluginManifestTests {
     #expect(sections.count > 1)
     for section in sections.dropFirst() {
       let example = try #require(section.components(separatedBy: "```").first)
-      let manifest = try PluginManifest.parse(example)
-      #expect(!manifest.mcp.isEmpty && !manifest.cli.isEmpty && !manifest.skills.isEmpty)
+      if example.contains("id = \"invalid-") {
+        #expect(throws: (any Error).self) { try PluginManifest.parse(example) }
+      } else {
+        let manifest = try PluginManifest.parse(example)
+        #expect(!manifest.mcp.isEmpty || !manifest.cli.isEmpty || !manifest.skills.isEmpty)
+      }
     }
   }
 

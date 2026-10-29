@@ -247,6 +247,7 @@ let neutralTargets: [Target] =
     .target(
       name: "ComputerMCPPlugins",
       dependencies: [
+        "ComputerMCPPermissions",
         "ComputerMCPCore", "ComputerMCPConfiguration", "ComputerMCPPlatform",
         "ComputerMCPPlatformPOSIX", "ComputerMCPDownstream", "ComputerMCPProcess",
         "ComputerMCPSandbox",

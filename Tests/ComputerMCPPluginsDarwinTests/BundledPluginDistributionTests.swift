@@ -32,14 +32,22 @@ struct BundledPluginDistributionTests {
       try await Self.prepare(index: index, output: output, architectures: ["arm64"])
     }
     #expect(!FileManager.default.fileExists(atPath: output.path))
-    let cli = try ProcessCommandRunner(launcher: testExecutionLauncher()).run(
-      executable: Self.worker.path,
-      arguments: [
-        "_bundle-plugins", "--index", index.path, "--output", output.path, "--architectures",
-        "arm64",
-      ],
-      workingDirectory: fixture.files.root, environment: [:], timeoutMilliseconds: 30_000,
-      maxOutputBytes: 16_384)
+    let administration = ExecutionAdministration(
+      mode: .fullAccess,
+      environment: try .init(fullAccessVariables: [
+        "PATH": systemUtilityPath, "HOME": fixture.files.root.path,
+        "TMPDIR": fixture.files.root.path + "/",
+      ]))
+    let cli = try ExecutionAdministration.$current.withValue(administration) {
+      try ProcessCommandRunner(launcher: testExecutionLauncher()).run(
+        executable: Self.worker.path,
+        arguments: [
+          "_bundle-plugins", "--index", index.path, "--output", output.path, "--architectures",
+          "arm64",
+        ],
+        workingDirectory: fixture.files.root, environment: [:], timeoutMilliseconds: 30_000,
+        maxOutputBytes: 16_384)
+    }
     #expect(cli.exitCode == 1)
     let payload = try JSONDecoder().decode(JSONValue.self, from: Data(cli.stdout.utf8))
     #expect(payload.objectValue?["error"]?.objectValue?["code"] == .string(refusal.code))

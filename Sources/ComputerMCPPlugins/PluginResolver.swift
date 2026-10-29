@@ -97,6 +97,11 @@ package enum PluginResolver {
           code: .init(refusal.reason), dependencyID: nil, instructions: nil, refusal: refusal))
       return result()
     }
+    guard manifest.permissions == nil, manifest.sandbox == nil,
+      manifest.mcp.allSatisfy({
+        $0.requirements == nil && $0.toolRequirements == nil && $0.hostServiceContract == nil
+      })
+    else { throw PluginProviderAuthorityUnavailable(pluginID: manifest.id) }
     let interpreterBindings = try Self.interpreterBindings(
       package: plugin, dependencyExecutables: dependencyExecutables)
 

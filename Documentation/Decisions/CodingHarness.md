@@ -259,12 +259,14 @@ principal.
 
 Sandbox settings correspond to sandbox entitlements: what the sandbox allows
 when a principal works in a project. They are set per principal and project and
-inherited by the project's worktrees.
+inherited by the project's worktrees. A directly registered local MCP server is
+a plugin principal without a package, so the persistent provider container
+applies to it too.
 
 | Setting | Value |
 | --- | --- |
-| Filesystem write | the worktree, its temporary directory and its home and cache directory |
-| Filesystem read | the operating system and applications; in user data areas (home directories and external and network volumes) only the principal's readable projects and their worktrees, the Files and Folders categories it may read, and the developer locations the host maintains, with the directories above them readable as directories only; never the host's data or credentials; minus locations the owner denies |
+| Filesystem write | the selected worktree when Project write allows it, plus its home, cache and temporary directories: the worktree's for ordinary executions and the provider's container and scratch for plugin packages and directly registered local MCP servers, as defined by the [provider container rules](../Reference/PluginPackages.md#provider-containers-and-discovery) |
+| Filesystem read | the operating system and applications; in user data areas (home directories and external and network volumes) only the principal's readable projects and their worktrees, the Files and Folders categories it may read, approved configuration read exceptions, and the developer locations the host maintains, with the directories above them readable as directories only; a plugin may read its own private container; never the host's data or credentials; minus locations the owner denies |
 | Git | recording commits, private branches, tags and stash in the worktree's private repository; never changing host-owned control files or the source repository |
 | Network access | `none` (default), `trusted` (a host-maintained list of package registries, GitHub and toolchain downloads), `full` (any host) or `custom` (the owner's host list, optionally with the trusted list) |
 | System services | screen capture is blocked unless the principal has Screen, and accessibility unless it has Desktop control, because macOS gives a program that reaches accessibility both reading and acting; sandboxed programs thus never use the App's own privacy permissions beyond the principal's; Apple events are always blocked, as macOS blocks them for sandboxed apps; a principal whose programs control other apps needs Full access, where macOS asks for Automation under each program's own identity |
@@ -326,23 +328,28 @@ credentials, which programs in the sandbox do not have.
   the client's permission for what the tool does (Project for a project tool,
   Skills for a contributed skill). The plugin acts with its own execution mode
   and permissions, as an automated app does. A sandboxed plugin's process
-  serving a project or worktree writes only that one, so a call about project
-  A cannot change project B, and it reads by its own sandbox settings. A plugin
-  with Full access is not confined in this way, which the App states when it is
+  serving a project or worktree can write project content only in that one,
+  with private state governed by the
+  [provider container rules](../Reference/PluginPackages.md#provider-containers-and-discovery),
+  so a call about project A cannot change project B. It reads by its own sandbox
+  settings. A plugin with Full access is not confined in this way, which the App states when it is
   enabled and when a client is allowed to use it. When the owner lets a client
   use a plugin, the App states where the plugin sits (sandboxed, writing
   worktrees, with its network access, or with Full access).
-- **Path decisions.** One resolver decides every path for host tools and for
-  the sandbox profile, in this order: the host's data and credentials are
-  never readable; a location the owner or managed limits deny is denied; inside
-  a registered project, the innermost project's permission decides, whatever
-  folder category contains it, so a project in Downloads needs only its
-  Project permission and a denied project stays denied when Downloads is
-  readable; outside projects, a Files and Folders category decides for the
-  paths it covers; then the developer locations the host maintains are
-  readable; then each directory above a readable location can be opened and
-  listed, without access to anything else inside it; then the operating system
-  and applications are readable and every other user data area is denied.
+- **Path decisions.** One resolver constructs path access for host tools and
+  the sandbox profile in this order. First it applies defaults: the operating
+  system and applications are readable; inside registered projects the
+  innermost project's permission governs, regardless of folder category;
+  outside projects, granted Files and Folders categories and the host-maintained
+  developer locations are readable; other user data is denied. Next it applies
+  approved configuration read exceptions and the
+  [provider container rules](../Reference/PluginPackages.md#provider-containers-and-discovery).
+  Directories above readable locations can be opened and listed without opening
+  their other contents. Finally, explicit owner, managed and project denials
+  override these openings. Host data, credentials and other principals' private
+  containers remain protected. Thus a project in Downloads needs only its
+  Project permission, and a denied project stays denied even when Downloads
+  is readable or a read exception covers a parent directory.
 - **Derivation.** A worktree is a project derived from its source. Every
   principal's permissions and sandbox settings for it are those for the
   source, resolved at each call; creating or removing a worktree changes no
@@ -477,7 +484,7 @@ access = "write"
 purpose = "Runs Codex in a worktree of the project you choose."
 
 [sandbox]
-network = { level = "custom", hosts = ["api.openai.com", "chatgpt.com"] }
+network = { level = "custom", hosts = ["api.openai.com", "chatgpt.com"], include_trusted = false }
 purpose = "Codex contacts its model provider."
 ```
 
@@ -495,13 +502,55 @@ clients the owner allows through the Plugin permission.
 A plugin process is bound to the project or worktree it serves and to the
 plugin's permission revision at launch; when the plugin's permissions for that
 project change, the host stops the process, and the next call starts one under
-the new permissions. A plugin's tools declare their requirements like built-in
-tools, by contribution type: MCP tools declare theirs, CLI contributions are
-execution and Skills contributions need Skills. Plugins create and remove
-worktrees through the same host service as `git.worktree_add` and
-`git.worktree_remove`, so the Codex plugin's managed worktrees become ordinary
-derived projects. These declarations are part of plugin API 1, which no plugin
-has released yet.
+the new permissions. Approved sandbox settings are plugin defaults across its
+granted projects, with owner overrides for individual source projects and
+inheritance by their worktrees. Managed, owner and project limits still apply.
+Home-relative configuration declarations keep packages portable while binding
+access to the location the owner actually reviewed. Approved read exceptions
+reopen default user-data denials within the existing permission boundaries;
+the [sandbox declaration contract](../Reference/PluginPackages.md#sandbox-fields)
+owns path syntax, approval evidence, missing targets and fail-closed revalidation.
+
+The [persistent provider container](../Reference/PluginPackages.md#provider-containers-and-discovery)
+gives vendor login and configuration state a stable home without granting
+arbitrary user-directory writes or importing host credentials. Its isolation
+has the same scope as host-data protection, so the model does not promise to
+confine a Full access program. The same reference defines container ownership,
+environment paths and the restricted projectless discovery boundary.
+
+MCP contribution defaults and per-tool requirement overrides live in the
+manifest and its reviewed digest, in the same permission terms as built-in
+tools. Runtime tool metadata cannot choose or lower them. The host adds its
+minimum effects and resolves actual targets before admission. A tool without
+a manifest requirement uses the complete conservative permission set defined
+in [MCP requirements](../Reference/PluginPackages.md#mcp-requirements).
+This prevents a caller
+with Plugin use from borrowing the plugin's greater authority. Every native
+CLI invocation, including lint and introspection, needs Project write; a
+declaration cannot lower that requirement. Skills need Skills, and executing
+a script follows its execution route's requirements. Directly registered MCP
+servers retain their read/all caller permission. The caller and provider must
+both have the authority the operation needs.
+
+Plugins create and remove managed worktrees only through
+`host.projects.worktree_add` and `host.projects.worktree_remove`, and inspect
+them with `host.projects.worktree_list`. These services use the same host
+lifecycle library as the builtin Git tools. The host owns paths, Git topology,
+publication, branch protection, cleanup and durable operation IDs; plugins own
+their domain plans and leases and retain host IDs. A lost reply is reconciled
+against the recorded host operation under current authority, never by replaying
+Git or falling back to plugin-local creation or deletion.
+
+One opaque, verified host-created service channel may accompany a prepared
+provider context. Its exact descriptor mapping and close-on-exec ownership
+keep it with the adapter and out of supervisors and vendor children. This
+enables sandboxed callbacks without permitting general descriptor inheritance;
+the channel does not itself grant a permission.
+
+The manifest declarations and project host-service contract belong to API 1.
+Their exact vocabulary is defined by
+[Plugin Packages](../Reference/PluginPackages.md) and
+[Scoped host services](../Reference/HostServices.md).
 
 ### Tools
 
@@ -564,8 +613,8 @@ The tools follow Git's commands:
 | Tool | Git | Behavior |
 | --- | --- | --- |
 | `git.worktree_add` | Private repository and checkout | In a project whose root is a non-bare repository's top level. Inputs: `name` (`[a-z0-9]+(-[a-z0-9]+)*`, at most 48 characters), optional `branch` (default `worktree/<name>`), optional `base` branch (default: the branch checked out in the main checkout; required when it is detached). Returns the worktree's `project_id`, path, branch, base and any submodule/LFS warnings. |
-| `git.worktree_list` | Host ledger plus `git worktree list` | Host worktrees and foreign checkouts of the repository, with its `project_id` if derived, branch, base, commits ahead of and behind the base, and uncommitted changes. |
-| `git.worktree_remove` | Identity-verified removal | Called in the worktree. Publishes HEAD to the managed branch and preserves every private reference and reflog root under host recovery references, then removes the checkout, private repository and registration; uncommitted changes stop it unless `force` is true, which discards them but never commits. The branch and its recovery records are kept. |
+| `git.worktree_list` | Host ledger plus `git worktree list` | Host worktrees and foreign checkouts of the repository. Its entry fields, including `worktree_id` and `owner`, are identical to [host project inventory](../Reference/HostServices.md#hostprojectsworktree_list). |
+| `git.worktree_remove` | Identity-verified removal | Called in the worktree. Durably retains every private reference and reflog root with its complete closure in the host recovery store, then publishes HEAD to the managed branch with expected values, then removes the checkout, private repository and registration; uncommitted changes stop it unless `force` is true, which discards them but never commits. The branch and its recovery records are kept. |
 | `git.merge` | `git merge --ff-only` | Merges a branch into the main checkout's current branch. A sandboxed principal may merge only a worktree branch into that worktree's base and only as a fast-forward; local changes the merge would overwrite stop it. Never creates merge commits, forces or pushes. |
 | `git.branch_delete` | `git branch -d` | A sandboxed principal never forces, cannot delete the branch of a worktree that still exists, and cannot delete a worktree branch whose tip is not reachable from its base. Deletion releases only recovery references reachable from that base; other recovery records outlive the branch. Full access `force` explicitly discards this branch generation’s remaining recovery records. |
 
@@ -614,9 +663,12 @@ user's authority. Immutable Git control files prevent sandboxed programs from
 planting configuration or hooks; they do not make worktree content trusted.
 
 For publication the host captures HEAD once, detached or on a private branch,
-copies objects into exclusive host-owned staging and verifies their complete
-reachable closure (`git fsck` and `git index-pack --strict`). The installed pack
-contains exactly that closure minus objects reachable from the managed branch's
+and every private reference and reflog root. It durably retains every captured
+root with its complete closure in the host recovery store before updating any
+source reference. For source publication, it copies HEAD's objects into exclusive
+host-owned staging and verifies their complete reachable closure (`git fsck`
+and `git index-pack --strict`). The installed source pack contains exactly that
+HEAD closure minus objects reachable from the managed branch's
 verified expected old value. Only the host writes that managed branch; its
 expected-value transaction rejects external changes, except an exact restoration
 of the old value, which is outside this guarantee. A missing managed branch
@@ -627,9 +679,11 @@ object count, time and temporary disk use remain bounded.
 Programs continue running during publication. Later commits are outside the
 capture; missing, torn or substituted input yields a retryable busy result. Only
 verified staging objects enter shared storage. Removal closes admission and
-terminates writers, publishes HEAD, then preserves the closures of every private
-reference and reflog entry, of any object type, under host recovery references.
-Dangling objects copied at creation are not private work; retention follows roots.
+terminates writers, durably retains every private reference and reflog root of
+any object type with its complete closure in the host recovery store, then
+publishes HEAD with an expected-value source update, then removes owned storage
+and unregisters the project. Dangling objects copied at creation are not private
+work; retention follows roots.
 `force` discards only uncommitted content. Previously published unmerged tips keep
 recovery references until explicit replacement acknowledgement or verified
 integration releases them. Private references and reflogs independently retain
@@ -642,6 +696,31 @@ releasing branch protection or reusing its name does not remove them. Only an
 explicit Full access `force` deletion of that generation, or later owner cleanup,
 discards them. No patch-equivalence rule releases history. Recovery, locking and
 journaling follow the rules below.
+
+Recovery roots live in host-owned bare repositories, one per verified source
+repository identity and object format, with no alternates or dependency on the
+source's object store. Complete verified closures include base objects and
+non-commit roots. A durable catalog gives each retained record an ID and keeps
+its source, branch/worktree generation, root, reason and revision discoverable
+after checkout removal and branch deletion. The source repository's log,
+mirrors, pushes and garbage collection must neither expose nor own this host
+recovery state.
+
+The journal records intent before each transaction and completion after its
+durable outcome: recovery-store retention first, the expected-value source
+reference update second, and, for removal, storage deletion followed by project
+unregistration last. No later phase proceeds before the preceding outcome is
+durable. Publication and removal retain every captured private reference and
+reflog root with its complete closure; branch deletion retains its required
+roots before its source-reference transaction. Recovery reconciles each recorded
+boundary rather than treating separate stores as one atomic transaction. A
+failed source comparison may leave extra retention but cannot lose it.
+Reachability for branch deletion remains reachability from the verified source
+base, never from another host-store root.
+Owner cleanup releases only reviewed record IDs and revisions after checking
+active dependencies. Listing is read-only, and cleanup, plugin uninstall or
+branch-name reuse does not imply release. Logical release and any bytes later
+reclaimed by coordinated host maintenance are separate reported outcomes.
 
 Fast-forward integration holds a prepared expected-value update through
 dereferenced `HEAD`, verifies its symbolic target is the recorded base, and keeps
@@ -668,10 +747,12 @@ The execution sandbox applies a principal's sandbox settings to every program
 the host runs for it in a worktree: shells, processes, CLI tools, Git, plugin
 processes and local MCP servers, and whatever they start, such as hooks,
 filters and build scripts. It uses Seatbelt on macOS and bubblewrap on Linux,
-following sandbox-runtime. Programs the host runs to answer a `read` call,
-such as Git queries and format readers, and programs for calls that name no
+following sandbox-runtime. Ordinary helper programs the host runs to answer a
+`read` call, such as Git queries and format readers, or calls that name no
 project, such as skill validation, run in a read-only variant with no writable
-location except a temporary directory. Network diagnostics under Machine
+location except a temporary directory. Provider discovery follows the
+[container and discovery contract](../Reference/PluginPackages.md#provider-containers-and-discovery).
+Network diagnostics under Machine
 information are host services that run fixed programs with the network and no
 project access.
 
@@ -685,9 +766,11 @@ project. Remote MCP servers are outside the host's confinement and are trusted
 as external services.
 
 Every sandboxed program starts with an environment the host constructs: a
-fixed set of variables (`PATH`, `HOME` and `TMPDIR` pointing at the worktree's
-own directories, locale and terminal settings, and the proxy variables), and
-none of the host's tokens or credentials. Keeping credentials out of the
+fixed `PATH`, locale and terminal settings, proxy variables, and explicit
+`HOME` and `TMPDIR`, with none of the host's tokens or credentials. Ordinary
+executions use worktree-owned home, cache and temporary directories; provider
+processes use the [container environment](../Reference/PluginPackages.md#provider-containers-and-discovery).
+Keeping credentials out of the
 sandbox and attaching them in the proxy to requests for named hosts, as
 Claude Code's network secrets do, is a later decision that fits this model.
 
@@ -818,12 +901,13 @@ module graph, and move to a separate package when a second consumer exists.
 - Adapters: `ComputerMCPCore` capability descriptors declare requirements in
   permission-model terms; `ComputerMCPToolsGit` exposes the worktree tools;
   `ComputerMCPToolKit` applies operation-level path checks for in-process
-  tools; `ComputerMCPPlugins` reads manifest declarations, records enablement
-  grants, launches plugins through the sandbox and provides the worktree host
-  service; `ComputerMCPDownstream` launches local MCP servers through the
-  sandbox; `ComputerMCPGateway` and `ComputerMCPPersistence` evaluate each
-  call, store permissions, requests, managed limits, the derived-project
-  ledger, execution records and audit, and migrate existing data.
+  tools; `ComputerMCPPlugins` owns manifest declarations and contribution
+  provenance; the control plane coordinates reviewed enablement grants;
+  `ComputerMCPDownstream` owns provider connections through prepared execution;
+  `ComputerMCPGateway` evaluates each call, authenticates host-service callbacks
+  and invokes the shared worktree lifecycle; `ComputerMCPPersistence` stores
+  permissions, requests, managed limits, the derived-project ledger, execution
+  records and audit, and migrates existing data.
 - `ComputerMCPApp`: the Privacy & Security view, permission requests with
   Only this time and Always, plugin declarations, Full access consent, managed
   limit sources and worktrees under their source; the approval views are
@@ -869,6 +953,26 @@ plugins receive their declared permissions when next enabled or updated. For the
 owner's current database, `chatgpt-operate` becomes a sandboxed client with
 `write` on its seven projects and network access `none`, Screen, Desktop control,
 Machine information, Unified logs and Skills, and every MCP server at `all`.
+
+The private plugin registration receipt contract is retired in one project
+host-service cutover. Its three registration/removal methods and receipt digest
+are not compatibility APIs. Plugin-receipt derived authority is removed in one
+database transaction that also records a durable per-checkout retirement notice;
+host-owned rows and independent explicit registrations and grants remain.
+Startup reports each checkout path and source repository before provider
+activation, with stable notice IDs so a crash may duplicate a notice but cannot
+silently lose it. This migration performs no Git or filesystem mutation. Those
+linked checkouts become foreign inventory; plugin domain records remain unmanaged
+history and are never offered for managed removal or expiry cleanup.
+
+No host or plugin released this private contract, no real registration receipts
+exist, and the private recovery implementation was never installed. Therefore
+recovery writers switch directly to the host store without a source-ref
+migration. The supported host/plugin sets are the sets on either side of the
+cutover, with no mixed-version compatibility interval. A contract marker rejects
+obsolete peers before mutating dispatch; older hosts refuse the upgraded store.
+Rollback retains the store and journals for a compatible repair build rather
+than restoring retired authority.
 
 ### Retirement
 
@@ -922,15 +1026,19 @@ folder requests are best effort. These remain:
   merges it, removes it and deletes its branch, through the HTTP transport,
   without reconnecting and without any approval step; a background build is
   read through its execution ID across calls and survives a reconnection.
-- In the sandbox, writes outside the worktree, to the repository's
+- In the sandbox, writes outside the permitted worktree and execution directories
+  defined by the [container rules](../Reference/PluginPackages.md#provider-containers-and-discovery), to the repository's
   configuration, hooks, other branches or existing objects, connections to
   hosts the network access level does not admit, to local network addresses
   without Local network and to loopback addresses other than the proxy, and
   reads of user data outside readable projects, granted
-  Files and Folders categories and developer locations, and of the host's data
-  and credentials fail, while reads of the system and of readable projects
-  succeed; the directories above a readable location can be listed while
-  their other contents stay unreadable, and an explicit denial still wins over
+  Files and Folders categories, developer locations, approved read exceptions
+  and the provider's own container, and of the host's data and credentials fail.
+  Reads of the system, readable projects and approved exceptions succeed, as do
+  reads and writes in the provider's own container and allowed temporary storage;
+  other principals' containers stay inaccessible. The directories above a
+  readable location can be listed while their other contents stay unreadable,
+  and an explicit denial still wins over
   them; an operation refused for a missing host or folder permission fails
   with a permission error, a refused host and a reported folder denial that a
   permission could open produce a permission request, a dropped report

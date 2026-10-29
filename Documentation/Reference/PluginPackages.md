@@ -42,7 +42,9 @@ archive must be published, and every published installable archive must be decla
 when the list is present. All archives contain the exact same root manifest bytes
 as the tag. Targets are declarations; they do not establish binary validity or
 execution permission. Every field and runtime behavior belongs to the declared
-`plugin_api`; adding, removing or reinterpreting a field defines a new API version.
+`plugin_api`. API 1 includes the accepted
+[Coding Harness contract](../Decisions/CodingHarness.md#plugins); the
+[Plugin API decision](../Decisions/PluginAPI.md#plugin_api) defines versioning.
 Host release bounds constrain releases within that API, such as requiring a host fix.
 
 Without an artifact list, every archive inherits the release target. Local installation retains a declared archive's filename; renaming
@@ -174,6 +176,273 @@ normal JSON `error` object and exit status 1; parsing errors use CLI usage
 diagnostics. The App keeps the previous dated observation visible if a refresh
 fails, shows the failure, and cancels the read when the sheet closes.
 
+## Permissions and sandbox declarations
+
+This section defines the accepted API 1 declaration contract. Declarations are
+requests for owner review, not grants, signatures or proof that a provider can
+run. Installation alone grants nothing. The reviewed identity includes these
+declarations and the MCP requirement map.
+
+### Permission entries
+
+Each `[[permissions]]` has exactly `id`, `access`, `purpose`, and, for Files and
+Folders only, `category`. Purposes are nonempty text after trimming whitespace,
+contain no NUL, and describe the use shown to the owner. IDs are the following
+permission names, not package IDs or Swift enum case names:
+
+| `id` | `access` | Additional field / owner selection |
+| --- | --- | --- |
+| `project` | `read`, `write` | Owner selects registered projects at enablement |
+| `plugin` | `use` | Owner selects plugin identities at enablement |
+| `mcp-server` | `read`, `all` | Owner selects directly registered server identities at enablement |
+| `files-and-folders` | `read` | Required `category`: `desktop`, `documents`, `downloads`, `icloud-drive`, `network-volumes`, `removable-volumes` |
+| `screen`, `desktop-control`, `local-network`, `machine`, `unified-logs`, `skills` | `allow` | No object or category field |
+
+`allow` maps to the permission model's `access` value; `machine` maps to Machine
+information. Project write includes read, and MCP server all includes read.
+Duplicate IDs are invalid, except distinct Files and Folders categories. A
+package cannot encode object selections, `*`, denials or grants in an entry.
+Those are host-owned decisions, not portable package declarations.
+
+For Project, Plugin and MCP server selections, the owner may explicitly choose
+`*`: every object without its own entry, including objects registered later.
+It is never the target of an invocation. An explicit object entry wins over
+`*`, including a narrower value or `deny`. Files and Folders has no wildcard.
+An explicit denial produces no permission request and cannot be undone by a
+package update, a sandbox exception or a project override. Managed limits cap
+both object-specific and wildcard grants.
+
+Enablement commits the selected declaration digest, objects, permissions,
+settings and any Full access consent against current authority revisions.
+The declaration digest covers exactly the canonical form of `[[permissions]]`,
+`[sandbox]` and the contribution requirement declarations. The
+`host_service_contract` protocol marker is not authority and is excluded.
+An update that widens any declaration, including adding a requested permission,
+waits for the owner; the previous approval stays in force for the previous
+declarations. An update that only narrows declarations takes effect immediately
+and is shown to the owner. A purpose-only change keeps the approval and shows
+the new purpose to the owner because it changes no authority. An update that
+changes no declaration keeps the approval. A changed package cannot use the
+previous approval for wider authority.
+Declining a declaration does not create its grant. Partial grants remain visible
+and operations needing the missing authority are refused through the ordinary
+permission-request rules.
+
+### Sandbox fields
+
+`[sandbox]` accepts only `network`, `purpose`, `read_exceptions`, and
+`full_access`. Omission means sandbox execution, network `none` and no read
+exceptions. `full_access` defaults to false.
+
+| Field | Syntax and meaning |
+| --- | --- |
+| `network` | `"none"`, `"trusted"`, `"full"`, or `{ level = "custom", hosts = ["api.example.com"], include_trusted = false }` |
+| `purpose` | Required nonempty purpose for an explicitly declared `network` or `full_access = true`; invalid when neither is present |
+| `read_exceptions` | Array of `{ path = "~/.example/config.json", purpose = "Why this configuration must be read." }`; each entry names a file or directory relative to the user's home and has its own required purpose |
+| `full_access` | Boolean request for execution without the sandbox; true requires local owner consent at enablement |
+
+The network syntax is the same as the project's network setting. A custom table
+requires all three keys and rejects other keys. Host rules use the host's
+`NetworkHost` normalization: DNS names, IP literals, or `*.example.com` for
+subdomains only, not the apex. URLs, ports, paths, a bare `*`, malformed hosts
+and duplicate canonical rules are invalid. `include_trusted` explicitly controls
+union with the host-maintained trusted list. Network full permits any internet
+host through the egress proxy; it is not Full access. Local destinations still
+need Local network, and loopback remains restricted to the host's proxy.
+
+Read-exception declarations use `~/` followed by one or more normalized path
+components, naming either a file or a directory. Absolute paths, other relative
+forms, empty components, trailing slash, `.` or `..`, NUL, environment variables
+and globs are invalid. `~` and `~other-user/…` are not accepted. The `~/` prefix
+is a host-resolved home reference, not shell expansion.
+
+At enablement the host resolves the declaration against the current user's
+home, independently of the plugin's container HOME, and canonicalizes it,
+resolving symlinks and filesystem casing. The owner reviews the resolved
+canonical path and may replace it with another location they choose; a
+replacement is displayed as owner-chosen. Approval stores the declared
+home-relative path, the approved canonical path, its identity evidence and
+the revision. A target that does not exist is individually unavailable and is
+shown to the owner; enablement may proceed without that exception. If the path
+appears later, the exception needs review before it can apply. An unverifiable
+target cannot be approved.
+Duplicate canonical targets are rejected. The approved file, or directory and
+its descendants, is read-only; symlink traversal never expands that boundary.
+Paths in examples are illustrative declarations, not host defaults.
+
+At every launch the host re-resolves the effective location: the declared path
+against the current user's home unless the owner selected a replacement, in
+which case that chosen location is re-resolved. The declared path remains in
+the approval even when replaced. If the canonical target or its identity
+differs from the approval, including a retargeted symlink or replaced path,
+the exception is not applied and the plugin needs review again. A launch never
+silently adopts a different target or falls back to another location.
+
+The approved canonical location, including an owner-chosen replacement, must
+lie in a user-data area denied by the default configuration. An exception
+reopens only that default denial. It cannot reopen host data or credentials,
+another principal's container, an explicit owner/managed denial, or a project's permission boundary;
+it grants no writes, project access or Files and Folders permission. The owner
+reviews the actual canonical location and purpose, within policy limits.
+
+`full_access = true` cannot coexist with `network` or `read_exceptions`, even
+`network = "none"` or an empty exception array. Those settings would imply a
+sandbox boundary that does not apply. Full access does not grant Project,
+Screen or other permissions, does not include Full Disk Access, and does not
+inherit the App's privacy responsibility. Permission declarations still apply.
+Every unknown key, wrong type, missing purpose or incompatible combination
+invalidates the manifest; the total manifest remains bounded to 1 MiB.
+
+Approved settings become plugin defaults across granted projects. Owner
+per-source-project overrides replace the selected setting, then managed,
+owner and project limits constrain it; omitted overrides inherit the default.
+A read exception never cancels a denial. Worktrees inherit the source's
+resolved settings. Changes are revision-bound and invalidate dependent running
+authority rather than silently updating an existing process.
+
+### Provider containers and discovery
+
+Ordinary executions use worktree-owned home, cache and temporary directories.
+Each provider principal (a plugin package or directly registered local server)
+has one persistent host-provisioned private container. Its processes use it
+for HOME, cache and state, shared across its projects and delegating clients,
+plus a per-execution temporary directory. Host tools and sandboxed programs of
+other principals cannot read or write it. Full access programs run as the user outside that guarantee; the
+owner consents to that scope at enablement and sees it when granting Plugin use.
+Container contents never establish permissions or operation ownership.
+Projectless discovery uses the defaults and network level, writes only the
+container and private scratch, and borrows no project authority. Even a Full access
+provider must satisfy this discovery boundary or report an explicit failure.
+
+### Complete declaration examples
+
+This sandboxed package requests one project, an existing configuration file and
+a configuration directory. Both declarations resolve from the current user's
+home for owner review. Its network list is independent of Project permission:
+
+```toml
+id = "example-agent"
+name = "Example Agent"
+version = "0.1.0"
+plugin_api = 1
+
+[[permissions]]
+id = "project"
+access = "write"
+purpose = "Edit and test the project selected by the owner."
+
+[sandbox]
+network = { level = "custom", hosts = ["api.example.com"], include_trusted = false }
+purpose = "Contact the model service."
+read_exceptions = [
+  { path = "~/.example-agent/config.json", purpose = "Read the service configuration." },
+  { path = "~/Library/Application Support/Example Agent", purpose = "Read the existing vendor configuration directory." }
+]
+
+[[dependencies]]
+id = "vendor"
+commands = ["example-agent"]
+instructions = "Install the vendor executable separately."
+
+[[mcp]]
+id = "agent"
+transport = "stdio"
+executable = { dependency = "vendor" }
+requirements = { project = "write" }
+tool_requirements = { status = { project = "read", permissions = ["machine"] } }
+```
+
+A valid Full access request retains its separate permission declarations:
+
+```toml
+id = "example-native"
+name = "Example Native"
+version = "0.1.0"
+plugin_api = 1
+
+[[permissions]]
+id = "project"
+access = "write"
+purpose = "Run the selected project's native commands."
+
+[sandbox]
+full_access = true
+purpose = "The native command needs user-authorized writes outside its container."
+
+[[dependencies]]
+id = "vendor"
+commands = ["example-native"]
+instructions = "Install the native command separately."
+
+[[cli]]
+id = "commands"
+executable = { dependency = "vendor" }
+```
+
+This complete package is invalid: a permission purpose cannot be omitted.
+
+```toml
+id = "invalid-purpose"
+name = "Invalid Purpose"
+version = "0.1.0"
+plugin_api = 1
+
+[[permissions]]
+id = "screen"
+access = "allow"
+
+[[skills]]
+id = "guide"
+path = "skills"
+```
+
+This complete package is invalid: Full access and sandbox network settings
+cannot be combined, regardless of the network level.
+
+```toml
+id = "invalid-mode"
+name = "Invalid Mode"
+version = "0.1.0"
+plugin_api = 1
+
+[sandbox]
+full_access = true
+network = "none"
+purpose = "Run the native integration."
+
+[[skills]]
+id = "guide"
+path = "skills"
+```
+
+This complete package is invalid: read-exception declarations must be
+home-relative, not absolute paths.
+
+```toml
+id = "invalid-path"
+name = "Invalid Path"
+version = "0.1.0"
+plugin_api = 1
+
+[sandbox]
+read_exceptions = [{ path = "/Library/Application Support/Example Agent", purpose = "Read existing configuration." }]
+
+[[skills]]
+id = "guide"
+path = "skills"
+```
+
+Other invalid declarations include `access = "all"` for Project, `access =
+"read"` for Screen, an unknown Files and Folders category, a duplicate permission,
+`objects = ["*"]` in a permission entry, an exception without its own purpose,
+and a custom network table without `include_trusted`.
+
+Invalid read-exception paths also include `.example/config.json` (no `~/`
+prefix), `$HOME/.example` (environment variable), `~/../shared` (parent
+traversal), `~/.example/*` (glob), and `~other-user/.example` (another home).
+A syntactically valid declaration still needs owner review: resolution into
+host data, credentials or an explicitly denied location cannot be approved.
+
 ## Contributions
 
 ### MCP
@@ -189,6 +458,142 @@ embedded user/password or fragment. A `prefix` can recommend tool names, and
 The manifest does not copy MCP tool schemas. Tool selection, risk assignments,
 environment/secret bindings, and exposure decisions belong to the host;
 `allow_any_tool`, `allowed_tools`, `tool_risks`, and `env` are not manifest fields.
+
+### MCP requirements
+
+Each `[[mcp]]` may declare `requirements`, the contribution-wide default, and
+`tool_requirements`, a table keyed by exact downstream tool name. Names are
+case-sensitive and are matched before host prefixes or forwarding aliases.
+A per-tool entry replaces the entire manifest default for that tool; it does
+not merge individual fields. The host's minimum effects are always added.
+
+A requirement value has exactly these fields:
+
+| Field | Values / permission-model projection |
+| --- | --- |
+| `project` | Required: `"none"`, `"read"`, `"write"`; maps to `ToolRequirement.Access.none`, `.read`, `.projectWrite` |
+| `permissions` | Optional unique array, default `[]`: `screen`, `desktop-control`, `local-network`, `machine`, `unified-logs`, `skills`; each maps to its `ToolRequirement.Privacy` permission with value `.access` |
+| `files_and_folders` | Optional unique array, default `[]`, of the six category names above; each maps to `.filesAndFolders(category)` with value `.read` |
+
+`sourceProjectWrite` is selected by host lifecycle effects, not a way for a
+manifest to write a source checkout. `requiresFullAccess`, execution ownership,
+path selectors, target forwarding and contribution provenance remain host-owned
+`ToolRequirement` inputs; they cannot be disabled in this table. In particular,
+remote execution still needs Full access. Declared Project requirements resolve the
+actual selected project and inherited source authority; Files and Folders
+requirements name categories, not arbitrary path grants. Host path resolution
+and forwarded-target checks still apply. A tool naming a project additionally
+needs the host's named-project access, even if its manifest says `"none"`.
+
+All requirement sets are conjunctive. Project write satisfies Project read;
+a privacy permission or Plugin use does not satisfy either. Permissions the
+provider needs are requested separately with `[[permissions]]`; requirement
+maps describe what the caller needs and never grant the provider authority.
+Every call requires Plugin use for the verified package plus the resolved tool
+requirements, and checks the provider's own authority. This applies to direct,
+re-exported, generated and forwarded routes and their continuations. Directly
+registered servers retain MCP server read/all admission, independently of this
+package declaration format.
+
+An explicit default covers every tool without an override. With no default,
+an exact override covers only its named tool; every other discovered tool is
+**undeclared**. An undeclared tool requires every permission the plugin principal
+holds, at its effective level and for its concrete targets, except Machine
+information and Skills. The set is not limited to the call's project or inferred
+reachability. Plugin use of the called plugin is required in addition and cannot
+stand in for any permission in that set. If the host cannot resolve the complete
+set safely, it refuses the call. A `*` grant the plugin holds is a target
+covering every object, including objects registered later, so the caller needs
+`*` at the same level or higher, and also each of the plugin's explicit grants
+that exceeds its `*` level. The plugin's explicit `deny` entries require nothing.
+Changing provider grants changes this
+conservative requirement set. An explicit
+`{ project = "none" }` is a declared empty set, still subject to additive host
+effects; omission is not an empty set. Runtime schemas and effect metadata
+cannot supply or lower manifest requirements. A changed reviewed digest
+invalidates the cached requirement projection.
+
+For example, suppose `example-auditor` holds Project write for `alpha`, Project
+read for `beta`, Plugin use for `formatter`, MCP server all for `build`, Downloads
+read and Screen, plus the default Machine information and Skills permissions.
+Calling its undeclared `inspect` tool in `alpha` requires the caller to hold
+every one of those grants at those levels and targets, except the two defaults,
+plus Plugin use for `example-auditor`. A caller lacking access to `beta`,
+`formatter` or `build` is refused even if `inspect` advertises itself as read-only.
+
+This complete valid package declares the conjunction of Screen, Desktop control
+and a category read for one tool, with a read-only override for another:
+
+```toml
+id = "example-observer"
+name = "Example Observer"
+version = "0.1.0"
+plugin_api = 1
+
+[[permissions]]
+id = "screen"
+access = "allow"
+purpose = "Observe the owner's desktop."
+
+[[permissions]]
+id = "desktop-control"
+access = "allow"
+purpose = "Perform the requested desktop action."
+
+[[permissions]]
+id = "files-and-folders"
+category = "downloads"
+access = "read"
+purpose = "Read the selected download."
+
+[[dependencies]]
+id = "vendor"
+commands = ["example-observer"]
+instructions = "Install the observer executable separately."
+
+[[mcp]]
+id = "observer"
+transport = "stdio"
+executable = { dependency = "vendor" }
+tool_requirements = { observe = { project = "none", permissions = ["screen"] }, act = { project = "none", permissions = ["screen", "desktop-control"], files_and_folders = ["downloads"] } }
+```
+
+There is no default here. A newly discovered tool requires the conservative
+set: a caller with only Screen cannot use it to obtain Desktop control or
+Downloads access. By contrast, in `example-agent` above, `status` replaces the
+write default with Project read and Machine information, while every other
+tool inherits Project write. A [host-recognized mutating action](HostServices.md#host-actions) on `status`
+still adds Project write.
+
+This complete package is invalid: `project` accepts access levels, not a
+permission-model enum spelling, and unknown requirement keys are rejected.
+
+```toml
+id = "invalid-requirement"
+name = "Invalid Requirement"
+version = "0.1.0"
+plugin_api = 1
+
+[[mcp]]
+id = "remote"
+transport = "streamable_http"
+url = "https://example.com/mcp"
+requirements = { project = "projectWrite", full_access = false }
+```
+
+Missing `project`, an unknown or repeated privacy/category value, a non-table
+requirement, an empty tool name, or duplicate exact tool keys is invalid.
+Per-tool names are nonempty, NUL-free strings; they are downstream names, not
+contribution IDs. An absent declaration is valid and invokes the conservative
+rule. All tables remain subject to the manifest's strict decoding and 1 MiB
+bound. Requirement maps do not copy tool input/output schemas.
+
+A stdio contribution using project host services also declares
+`host_service_contract = "projects-v1"`. Other values and its use on an HTTP
+contribution are invalid. This reviewed compatibility marker grants neither a
+host channel nor lifecycle permission; host-owned settings still enable the
+channel. The matching launch, peer and action fields are specified in
+[Scoped host services](HostServices.md#contract-and-launch-context).
 
 ### CLI
 
@@ -212,12 +617,22 @@ publishes typed tools using the shared argv/stdin encoder and managed process
 runtime. Tree-bearing registrations require `allowAnyArgs` to remain false;
 generic execution cannot bypass their declared input constraints.
 
+Every native CLI invocation needs Project write, including commands described
+as lint, help, version checks or introspection. A manifest or command-tree
+annotation cannot reduce that requirement. Plugin use is also required for a
+plugin contribution. Host `cli.help` reads the stored help document and does not
+execute a command; its Machine information requirement is distinct. CLI entries
+accept neither MCP `requirements` nor `tool_requirements`.
+
 ### Skills
 
 Each `[[skills]]` entry has `id`, a package-relative directory `path`, and an
 optional `description`. Directory validation does not execute Skill scripts or
 grant their recommended tools. Skill content and resource reads retain their
-own size and containment checks.
+own size and containment checks. Reading a plugin Skill requires Skills and
+Plugin use. Guidance is data; invoking a tool or running a Skill script requires
+that route's own permissions, including Project write for native CLI execution.
+Skill entries accept neither MCP requirement field.
 
 ## Combined Declaration Example
 

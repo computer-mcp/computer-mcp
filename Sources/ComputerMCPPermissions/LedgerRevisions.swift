@@ -108,7 +108,9 @@ extension NetworkAccess {
 extension SandboxSettings {
   mutating func commit(against current: Self?, in ledger: inout PermissionLedger) throws {
     try network.commit(against: current?.network, in: &ledger)
+    try networkCeiling?.commit(against: current?.networkCeiling, in: &ledger)
     try deniedReadRules.commit(against: current?.deniedReadRules ?? [], in: &ledger)
+    try readExceptions.commit(against: current?.readExceptions ?? [], in: &ledger)
   }
 }
 

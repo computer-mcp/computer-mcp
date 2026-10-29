@@ -31,6 +31,7 @@ package struct PathAccessBasis: Hashable, Sendable, Codable {
     case developer(CanonicalPath)
     case skillLibrary(CanonicalPath)
     case systemOrApplication(CanonicalPath)
+    case approvedRead(CanonicalPath, BasisIdentity)
     case outsideUserData, userData
   }
 

@@ -58,6 +58,36 @@ import Testing
     #expect(values["GIT_NO_LAZY_FETCH"] == "1")
   }
 
+  @Test func providerEnvironmentAndReadOnlyWritesStayInsideVerifiedStorage() throws {
+    let container = try SandboxProviderContainer(
+      root: .init("/providers/one"), home: .init("/providers/one/home"),
+      cache: .init("/providers/one/cache"), state: .init("/providers/one/state"))
+    let scratch = try SandboxPath("/scratch/one")
+    let sandbox = try SandboxConfiguration(
+      readOnly: true, worktree: scratch, temporaryDirectory: scratch, homeDirectory: container.home,
+      cacheDirectory: container.cache, readableRoots: [container.root], providerContainer: container
+    )
+    let environment = try ExecutionEnvironment(
+      searchPath: [.init("/bin")], home: container.home, temporary: scratch, cache: container.cache,
+      state: container.state, hostVariables: ["XDG_STATE_HOME": "/owner/state"])
+    let values = try environment.variables(sandbox: sandbox)
+    #expect(values["XDG_STATE_HOME"] == container.state.value)
+    #expect(values["HOME"] == container.home.value)
+    #expect(Set(sandbox.writableDirectories) == [scratch, container.root])
+    #expect(throws: ExecutionEnvironmentError.self) {
+      try ExecutionEnvironment(
+        searchPath: [.init("/bin")], home: container.home, temporary: scratch,
+        cache: container.cache
+      ).variables(sandbox: sandbox)
+    }
+    #expect(throws: ExecutionEnvironmentError.self) {
+      try SandboxConfiguration(
+        readOnly: true, worktree: scratch, temporaryDirectory: container.home,
+        homeDirectory: container.home, cacheDirectory: container.cache, readableRoots: [],
+        providerContainer: container)
+    }
+  }
+
   @Test func pathBoundaries() throws {
     let root = try SandboxPath("/project")
     #expect(root.contains(try SandboxPath("/project/a")))

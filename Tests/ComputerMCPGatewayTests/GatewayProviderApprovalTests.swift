@@ -1,6 +1,8 @@
 import ComputerMCPConfiguration
 import ComputerMCPCore
 import ComputerMCPPermissions
+import ComputerMCPPlatform
+import ComputerMCPPlatformPOSIX
 import ComputerMCPPlugins
 import ComputerMCPTestSupport
 import Foundation
@@ -11,6 +13,111 @@ import Testing
 @testable import ComputerMCPPersistence
 
 struct GatewayProviderApprovalTests {
+  @Test func readReviewAndApprovalRetainOriginalPathsAndRejectReplacement() throws {
+    let f = try ProviderApprovalFixture()
+    defer { f.remove() }
+    let home = try ProjectPathResolver.canonicalProject(f.root).appendingPathComponent("home")
+    try FileManager.default.createDirectory(at: home, withIntermediateDirectories: false)
+    let config = home.appendingPathComponent("config")
+    try Data("config".utf8).write(to: config)
+    try f.store.transactionWithDatabase { _, ledger in
+      var environment = ledger.environment
+      environment.paths = try .init(
+        projects: [], rules: [.init(root: .init(home.path), kind: .userData)])
+      _ = try ledger.reconcile(environment: environment, expectedRevision: ledger.revision)
+    }
+    let review = try f.install(
+      requirement: "write",
+      sandbox: """
+        [sandbox]
+        network = 'trusted'
+        purpose = 'Contact approved services'
+        read_exceptions = [{path = '~/config', purpose = 'Read configuration'}, {path = '~/missing', purpose = 'Optional configuration'}]
+        """)
+    let entries = try review.readExceptions(userHome: home)
+    #expect(entries.count == 2)
+    #expect(entries.first { $0.declaredPath == "~/missing" }?.approval == nil)
+    let selected = try #require(entries.first { $0.declaredPath == "~/config" }?.approval)
+    let approved = try f.approve(
+      review, permissions: .newPrincipal,
+      sandboxSettings: .init(defaults: .init(network: .trusted, readExceptions: [selected])),
+      userHome: home)
+    #expect(approved.sandboxSettings?.defaults.readExceptions.first?.declaredPath == "~/config")
+    #expect(approved.sandboxSettings?.defaults.network.configuration == .trusted)
+    try Data("replacement".utf8).write(to: config, options: .atomic)
+    #expect(throws: (any Error).self) {
+      try GatewayProviderReadExceptions.verify([selected], userHome: home)
+    }
+    #expect(throws: (any Error).self) {
+      try f.approve(
+        f.currentReview(), permissions: .newPrincipal, previous: approved.revision,
+        sandboxSettings: .init(defaults: .init(readExceptions: [selected])), userHome: home)
+    }
+  }
+
+  @Test func explicitReplacementIsReresolvedAndCanonicalDuplicatesRefused() throws {
+    let f = try ProviderApprovalFixture()
+    defer { f.remove() }
+    let root = try ProjectPathResolver.canonicalProject(f.root)
+    let first = root.appendingPathComponent("first")
+    let second = root.appendingPathComponent("second")
+    let chosen = root.appendingPathComponent("chosen")
+    try Data("first".utf8).write(to: first)
+    try Data("second".utf8).write(to: second)
+    try FileManager.default.createSymbolicLink(at: chosen, withDestinationURL: first)
+    let review = try f.install(
+      requirement: "write",
+      sandbox: """
+        [sandbox]
+        read_exceptions = [{path = '~/one', purpose = 'One'}, {path = '~/two', purpose = 'Two'}]
+        """)
+    #expect(throws: GatewayPermissionError.self) {
+      try review.readExceptions(
+        replacements: ["~/one": .init(chosen.path), "~/two": .init(first.path)], userHome: f.root)
+    }
+    let entry = try #require(
+      review.readExceptions(replacements: ["~/one": .init(chosen.path)], userHome: f.root).first {
+        $0.declaredPath == "~/one"
+      }?.approval)
+    #expect(entry.ownerSelectedPath?.string == chosen.path && entry.path.string == first.path)
+    try GatewayProviderReadExceptions.verify([entry], userHome: f.root)
+    try FileManager.default.removeItem(at: chosen)
+    try FileManager.default.createSymbolicLink(at: chosen, withDestinationURL: second)
+    #expect(throws: (any Error).self) {
+      try GatewayProviderReadExceptions.verify([entry], userHome: f.root)
+    }
+  }
+
+  @Test func narrowingNetworkRequestsKeepsTheOwnerSelectionAndConstrainsIt() throws {
+    let f = try ProviderApprovalFixture()
+    defer { f.remove() }
+    let review = try f.install(
+      requirement: "write", sandbox: "[sandbox]\nnetwork = 'full'\npurpose = 'Network'\n")
+    let selected = ProviderSandboxSettings(
+      defaults: .init(network: .custom(hosts: ["one.test", "two.test"], includesTrusted: false)))
+    _ = try f.approve(review, permissions: .newPrincipal, sandboxSettings: selected)
+    _ = try f.install(
+      requirement: "write",
+      sandbox:
+        "[sandbox]\nnetwork = { level = 'custom', hosts = ['one.test'], include_trusted = false }\npurpose = 'Network'\n"
+    )
+    let approval = try #require(f.view().providers.first)
+    #expect(approval.update == .narrowing)
+    #expect(
+      approval.sandboxSettings?.defaults.network.configuration
+        == selected.defaults.network.configuration)
+    #expect(
+      approval.sandboxSettings?.defaults.networkCeiling?.configuration
+        == .custom(hosts: ["one.test"], includesTrusted: false))
+    try f.store.readWithDatabase { _, ledger in
+      #expect(ledger.sandboxSettings.providers[approval.identity] == approval.sandboxSettings)
+    }
+    _ = try f.install(
+      requirement: "write", sandbox: "[sandbox]\nnetwork = 'full'\npurpose = 'Network'\n")
+    let pending = try #require(f.view().providers.first)
+    #expect(pending.update == .widening && pending.sandboxSettings == approval.sandboxSettings)
+  }
+
   @Test func approvalBindsSourceEpochRevisionsAndNeverCreatesProfile() throws {
     let f = try ProviderApprovalFixture()
     defer { f.remove() }
@@ -319,12 +426,12 @@ private final class ProviderApprovalFixture: @unchecked Sendable {
 
   func install(
     requirement: String, access: String = "write", purpose: String = "Edit",
-    recordDeclarations: Bool = true
+    recordDeclarations: Bool = true, sandbox: String = ""
   ) throws
     -> GatewayProviderReview
   {
     let text =
-      PluginManifestFixture.header + """
+      PluginManifestFixture.header + sandbox + "\n" + """
         [[permissions]]
         id = 'project'
         access = '\(access)'
@@ -356,11 +463,14 @@ private final class ProviderApprovalFixture: @unchecked Sendable {
 
   func approve(
     _ review: GatewayProviderReview, permissions: Permissions,
-    fullAccess: Bool = false, previous: Int64? = nil
+    fullAccess: Bool = false, previous: Int64? = nil,
+    sandboxSettings: ProviderSandboxSettings = .init(),
+    userHome: URL = FileManager.default.homeDirectoryForCurrentUser
   ) throws -> GatewayProviderApproval {
     let view = try view()
     return try service.approveProvider(
-      review, permissions: permissions, fullAccess: fullAccess, owner: owner,
+      review, permissions: permissions, fullAccess: fullAccess, sandboxSettings: sandboxSettings,
+      userHome: userHome, owner: owner,
       expectedProviderRevision: previous, expectedRevision: view.revision,
       expectedEpoch: #require(view.epoch))
   }

@@ -5,6 +5,41 @@ import Foundation
 import Testing
 
 @Suite struct SeatbeltIntegrationTests {
+  @Test func providerDiscoveryCannotReadOrWriteAnotherContainerOrProject() throws {
+    let f = try SeatbeltFixture()
+    defer { f.remove() }
+    for principal in ["one", "two"] {
+      for directory in ["home", "cache", "state"] {
+        try f.write("host/providers/" + principal + "/" + directory + "/seed", "private")
+      }
+    }
+    try f.write("source/project", "source")
+    for principal in ["one", "two"] {
+      let other = principal == "one" ? "two" : "one"
+      let root = "host/providers/" + principal
+      let container = try SandboxProviderContainer(
+        root: f.path(root), home: f.path(root + "/home"), cache: f.path(root + "/cache"),
+        state: f.path(root + "/state"))
+      let configuration = try SandboxConfiguration(
+        readOnly: true, worktree: f.path("worktree"), temporaryDirectory: f.path("temporary"),
+        homeDirectory: container.home, cacheDirectory: container.cache,
+        readableRoots: f.systemReads, providerContainer: container,
+        deniedReadRegions: [.init(path: f.path("host"), exceptions: [container.root])],
+        listableAncestors: f.ancestors)
+      #expect(try f.run("cat " + root + "/state/seed", configuration: configuration) == 0)
+      #expect(try f.run("echo own > " + root + "/state/next", configuration: configuration) == 0)
+      #expect(
+        try f.run("cat host/providers/" + other + "/state/seed", configuration: configuration) != 0)
+      #expect(
+        try f.run(
+          "echo other > host/providers/" + other + "/state/next", configuration: configuration) != 0
+      )
+      #expect(try f.run("ls host/providers", configuration: configuration) != 0)
+      #expect(try f.run("cat source/project", configuration: configuration) != 0)
+      #expect(try f.run("echo changed > source/project", configuration: configuration) != 0)
+    }
+  }
+
   @Test func readableSourceCannotBeHardlinkedIntoWritableWorktree() throws {
     let fixture = try SeatbeltFixture()
     defer { fixture.remove() }

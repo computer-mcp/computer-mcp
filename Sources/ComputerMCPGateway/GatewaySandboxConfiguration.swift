@@ -20,12 +20,13 @@ package struct GatewaySandboxContext: Sendable {
   package let privateWorkingDirectory: Bool
   package let fixedHostOperation: PreparedExecutionContext.FixedHostOperation?
   package let worktree: GatewayWorktreeExecution?
+  package let providerContainer: GatewayProviderContainer?
 
   package init(
     directory: SandboxPath, temporaryDirectory: SandboxPath,
     purpose: GatewayExecutionPurpose = .readOnlyHelper, privateWorkingDirectory: Bool = false,
     fixedHostOperation: PreparedExecutionContext.FixedHostOperation? = nil,
-    worktree: GatewayWorktreeExecution? = nil
+    worktree: GatewayWorktreeExecution? = nil, providerContainer: GatewayProviderContainer? = nil
   ) {
     self.directory = directory
     self.temporaryDirectory = temporaryDirectory
@@ -33,6 +34,7 @@ package struct GatewaySandboxContext: Sendable {
     self.privateWorkingDirectory = privateWorkingDirectory
     self.fixedHostOperation = fixedHostOperation
     self.worktree = worktree
+    self.providerContainer = providerContainer
   }
 }
 
@@ -48,10 +50,27 @@ package struct GatewayExecutionConfiguration: Sendable {
 package enum GatewaySandboxCompiler {
   package static func compile(
     ledger: inout PermissionLedger, authorizationID: UUID, context: GatewaySandboxContext,
-    proxy: SandboxProxyPorts? = nil, ownedTemporaryDirectory: SandboxPath? = nil
+    proxy: SandboxProxyPorts? = nil, ownedTemporaryDirectory: SandboxPath? = nil,
+    userHome: URL = FileManager.default.homeDirectoryForCurrentUser
   ) throws -> GatewayExecutionConfiguration {
     guard let authorization = ledger.authorizations[authorizationID] else {
       throw PermissionModelError.unknownAuthorization
+    }
+    let settings = ledger.sandboxSettings.settings(
+      for: authorization.invocation.principal, sourceProjectID: authorization.sandboxProjectID)
+    try GatewayProviderReadExceptions.verify(settings.readExceptions, userHome: userHome)
+    if context.providerContainer != nil, authorization.invocation.projectID == nil,
+      context.purpose == .readOnlyHelper, authorization.mode != .sandbox
+    {
+      throw ExecutionEnvironmentError.unavailable("Provider discovery requires sandbox admission")
+    }
+    if let container = context.providerContainer {
+      guard authorization.invocation.principal == .plugin(container.identity),
+        ledger.environment.paths?.hostDataLocations.contains(where: {
+          $0.contains(container.storageRoot)
+        }) == true
+      else { throw PermissionModelError.invalidAuthorization }
+      try container.verify()
     }
     if let worktree = context.worktree {
       guard worktree.binding.projectID == authorization.invocation.projectID,
@@ -110,7 +129,7 @@ package enum GatewaySandboxCompiler {
       localNetworkHosts: context.fixedHostOperation == nil ? projection.localNetworkHosts : [])
     let sandbox: SandboxConfiguration?
     if sandboxed {
-      let reads = Set(projection.readablePaths.map(\.path))
+      var reads = Set(projection.readablePaths.map(\.path))
       let scratch = try ownedTemporaryDirectory.map { try CanonicalPath($0.value) }
       guard ownedTemporaryDirectory == nil || ownedTemporaryDirectory == context.temporaryDirectory
       else {
@@ -118,12 +137,7 @@ package enum GatewaySandboxCompiler {
       }
       let paths = ledger.environment.paths
       var nonHostDenials = paths?.deniedLocations ?? []
-      if let projectID = authorization.sandboxProjectID {
-        let settingsKey = SandboxSettingsKey(
-          principal: authorization.invocation.principal, projectID: projectID)
-        nonHostDenials.formUnion(
-          ledger.sandboxSettings.entries[settingsKey]?.deniedReadLocations ?? [])
-      }
+      nonHostDenials.formUnion(settings.deniedReadLocations)
       for source in ledger.environment.limits[authorization.invocation.principal]?.sources.values
         ?? [PolicySource: PolicyAvailability]().values
       {
@@ -143,7 +157,20 @@ package enum GatewaySandboxCompiler {
       let privateRepository = try context.worktree.map {
         try CanonicalPath($0.git.repository.value)
       }
-      let ownedOpenings = Set([scratch, content, privateRepository].compactMap { $0 }).filter {
+      let containerRoot = context.providerContainer?.root
+      if let containerRoot {
+        guard
+          !nonHostDenials.contains(where: {
+            $0.contains(containerRoot) || containerRoot.contains($0)
+          })
+        else {
+          throw PermissionModelError.invalidAuthorization
+        }
+        reads.insert(containerRoot)
+      }
+      let ownedOpenings = Set(
+        [scratch, content, privateRepository, containerRoot].compactMap { $0 }
+      ).filter {
         candidate in
         !nonHostDenials.contains(where: { $0.contains(candidate) })
       }
@@ -214,13 +241,16 @@ package enum GatewaySandboxCompiler {
         try ledger.authorizePathUse(
           authorizationID, path: workingPath, operation: writableWorktree ? .write : .read)
       }
+      let container = try context.providerContainer?.sandbox
       sandbox = try SandboxConfiguration(
         readOnly: !writableWorktree, worktree: context.directory,
         temporaryDirectory: context.temporaryDirectory,
-        homeDirectory: context.temporaryDirectory, cacheDirectory: context.temporaryDirectory,
+        homeDirectory: container?.home ?? context.temporaryDirectory,
+        cacheDirectory: container?.cache ?? context.temporaryDirectory,
         readableRoots: reads.sorted(by: { $0.string < $1.string }).map {
           try SandboxPath($0.string)
         },
+        providerContainer: container,
         deniedReadRegions: regions,
         deniedWriteRegions: writeRegions,
         forbiddenReads: forbidden.sorted(by: { $0.string < $1.string })

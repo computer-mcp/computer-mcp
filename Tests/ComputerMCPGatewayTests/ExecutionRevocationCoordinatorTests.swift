@@ -18,6 +18,49 @@ import Testing
 #endif
 
 @Suite struct ExecutionRevocationCoordinatorTests {
+  @Test func fullAccessProviderUsesItsContainerWithoutAmbientCredentials() async throws {
+    let f = try ExecutionFixture()
+    let identity = PluginIdentity.package("container-provider")
+    let principal = Principal.plugin(identity)
+    let database = try GatewayDatabase(
+      path: f.paths.root.appendingPathComponent("provider.sqlite").path)
+    let container = try database.prepareProviderContainer(identity)
+    let authorization = try f.paths.store.transactionWithDatabase { _, ledger in
+      var environment = ledger.environment
+      environment.paths?.pathRules.insert(.init(root: container.storageRoot, kind: .hostData))
+      _ = try ledger.reconcile(environment: environment, expectedRevision: ledger.revision)
+      _ = try ledger.setProviderSandboxSettings(
+        .init(), for: identity, expectedRevision: ledger.revision)
+      environment = ledger.environment
+      environment.modes[principal] = ledger.consent(for: principal, mode: .fullAccess(.standing))
+      _ = try ledger.reconcile(environment: environment, expectedRevision: ledger.revision)
+      let result = try ledger.authorize(
+        invocation: .init(
+          principal: principal, tool: "provider", projectID: "project", argumentsDigest: "provider"),
+        requirements: .init(mode: .fullAccess(.standing)), now: Date())
+      guard case .allowed(let proof) = result else {
+        throw PermissionModelError.invalidAuthorization
+      }
+      return proof.id
+    }
+    let coordinator = try f.coordinator()
+    try await coordinator.recover()
+    let context = try GatewaySandboxContext(
+      directory: .init(f.paths.project.path), temporaryDirectory: .init(f.paths.derived.path),
+      purpose: .pluginProgram, providerContainer: container)
+    let prepared = try await coordinator.prepare(
+      authorizationID: authorization, context: context,
+      fullAccessEnvironment: ["SYNTHETIC_AMBIENT_SECRET": "not-a-real-secret", "HOME": "/ambient"])
+    let environment = try prepared.environment.variables()
+    #expect(environment["HOME"] == (try container.sandbox.home.value))
+    #expect(environment["XDG_CACHE_HOME"] == (try container.sandbox.cache.value))
+    #expect(environment["XDG_STATE_HOME"] == (try container.sandbox.state.value))
+    #expect(environment["SYNTHETIC_AMBIENT_SECRET"] == nil)
+    #expect(environment["TMP"] == f.paths.derived.path)
+    try prepared.finishAdmission()
+    try await coordinator.reconcile()
+  }
+
   @Test(.timeLimit(.minutes(1)), arguments: [false, true], [false, true])
   func reconciliationFailureDuringCancellationPreservesItsCause(
     ownershipFailure: Bool, failureFirst: Bool

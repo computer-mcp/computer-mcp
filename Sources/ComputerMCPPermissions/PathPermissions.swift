@@ -191,7 +191,7 @@ struct PathPermissions<Environment: PathEnvironment>: PathPermissionResolving {
     guard valid(purpose: purpose, at: path, operation: operation) else {
       return .denied(.invalidPathRequirement)
     }
-    let location = classify(path, purpose: purpose)
+    let location = classify(path, purpose: purpose, sandbox: sandbox)
     if case .skillLibrary = location, purpose == nil { return .denied(.userData) }
     let recorded = recordedBasis.compactMap { element -> PathAccessBasis? in
       if case .path(let basis) = element, basis.path == path, basis.operation == operation,
@@ -265,9 +265,10 @@ struct PathPermissions<Environment: PathEnvironment>: PathPermissionResolving {
       let exclusions = Set(
         boundaries(limits: limits, sandbox: sandbox, mode: mode).filter {
           $0 != path && path.contains($0)
-            && (classify($0, purpose: purpose) != location
+            && (classify($0, purpose: purpose, sandbox: sandbox) != location
               || denial(
-                at: $0, operation: operation, location: classify($0, purpose: purpose), mode: mode,
+                at: $0, operation: operation,
+                location: classify($0, purpose: purpose, sandbox: sandbox), mode: mode,
                 limits: limits, sandbox: sandbox) != nil)
         })
       let excludedRoots = exclusions.filter { candidate in
@@ -290,6 +291,7 @@ struct PathPermissions<Environment: PathEnvironment>: PathPermissionResolving {
     func traversalBasis() -> Set<AuthorizationBasis>? {
       guard operation.isDirectoryTraversal else { return nil }
       var locations = environment.developerLocations
+      locations.formUnion(sandbox.readExceptions.map(\.path))
       if let purpose { locations.insert(purpose.libraryRoot) }
       locations.formUnion(environment.projects.allLocations.map(\.root))
       for category in FolderCategory.allCases {
@@ -370,7 +372,7 @@ struct PathPermissions<Environment: PathEnvironment>: PathPermissionResolving {
     limits: ManagedLimits, sandbox: SandboxSettings
   ) -> DenialReason? {
     guard valid(purpose: basis.purpose, at: basis.path, operation: basis.operation),
-      classify(basis.path, purpose: basis.purpose) == basis.location,
+      classify(basis.path, purpose: basis.purpose, sandbox: sandbox) == basis.location,
       basis.ruleIdentities.isSubset(
         of: identities(for: basis.location, at: basis.path, purpose: basis.purpose).union(
           exclusionIdentities(basis.excludedSubtrees ?? [], sandbox: sandbox))),
@@ -396,7 +398,7 @@ struct PathPermissions<Environment: PathEnvironment>: PathPermissionResolving {
       for boundary in boundaries(limits: limits, sandbox: sandbox, mode: mode)
       where basis.path.contains(boundary) && !exclusions.contains(where: { $0.contains(boundary) })
       {
-        guard classify(boundary, purpose: basis.purpose) == basis.location else {
+        guard classify(boundary, purpose: basis.purpose, sandbox: sandbox) == basis.location else {
           return .authorizationRevoked
         }
         if let reason = denial(
@@ -431,6 +433,7 @@ struct PathPermissions<Environment: PathEnvironment>: PathPermissionResolving {
       .union(limits.deniedReadLocations)
       .union(environment.projects.allLocations.map(\.root))
     if mode.isSandbox { roots.formUnion(sandbox.deniedReadLocations) }
+    roots.formUnion(sandbox.readExceptions.map(\.path))
     for category in FolderCategory.allCases { roots.formUnion(environment.locations(in: category)) }
     return roots
   }
@@ -469,6 +472,12 @@ struct PathPermissions<Environment: PathEnvironment>: PathPermissionResolving {
     case .systemOrApplication(let selected):
       kind = .systemOrApplication
       root = selected
+    case .approvedRead(_, let approval):
+      return Set(
+        environment.pathRules.filter {
+          $0.kind == .userData && $0.root.contains(path)
+        }.map(\.identity)
+      ).union([approval])
     case .userData:
       kind = .userData
       root = nil
@@ -490,7 +499,9 @@ struct PathPermissions<Environment: PathEnvironment>: PathPermissionResolving {
       && (root.contains(path) || operation.isDirectoryTraversal && path.contains(root))
   }
 
-  private func classify(_ path: CanonicalPath, purpose: PathPurpose? = nil)
+  private func classify(
+    _ path: CanonicalPath, purpose: PathPurpose? = nil, sandbox: SandboxSettings = .init()
+  )
     -> PathAccessBasis.Location
   {
     if let project = environment.projects.location(at: path) { return .project(project) }
@@ -520,8 +531,24 @@ struct PathPermissions<Environment: PathEnvironment>: PathPermissionResolving {
     {
       return .systemOrApplication(root)
     }
-    return environment.userDataLocations.contains(where: { $0.contains(path) })
-      ? .userData : .outsideUserData
+    guard environment.userDataLocations.contains(where: { $0.contains(path) }) else {
+      return .outsideUserData
+    }
+    if let approved = sandbox.readExceptions.filter({ $0.contains(path) }).sorted(by: {
+      $0.path.string.count > $1.path.string.count
+    }).first {
+      return .approvedRead(approved.path, approved.identity)
+    }
+    return .userData
+  }
+
+  func canApproveReadException(
+    at path: CanonicalPath, settings: SandboxSettings, limits: ManagedLimits
+  ) -> Bool {
+    classify(path) == .userData
+      && denial(
+        at: path, operation: .read, location: .userData,
+        mode: .sandbox, limits: limits, sandbox: settings) == nil
   }
 
   private func denial(

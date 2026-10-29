@@ -94,10 +94,12 @@ package final class PermissionControlService: Sendable {
 
   package func approveProvider(
     _ review: GatewayProviderReview, permissions: Permissions, fullAccess: Bool,
+    sandboxSettings: ProviderSandboxSettings = .init(),
     expectedProviderRevision: Int64?, expectedRevision: UInt64, expectedEpoch: UUID
   ) throws -> GatewayProviderApproval {
     try service.approveProvider(
-      review, permissions: permissions, fullAccess: fullAccess, owner: currentOwner(),
+      review, permissions: permissions, fullAccess: fullAccess, sandboxSettings: sandboxSettings,
+      owner: currentOwner(),
       expectedProviderRevision: expectedProviderRevision, expectedRevision: expectedRevision,
       expectedEpoch: expectedEpoch)
   }

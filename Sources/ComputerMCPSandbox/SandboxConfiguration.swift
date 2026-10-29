@@ -108,6 +108,7 @@ package struct SandboxConfiguration: Sendable, Equatable {
   package let temporaryDirectory: SandboxPath
   package let homeDirectory: SandboxPath
   package let cacheDirectory: SandboxPath
+  package let providerContainer: SandboxProviderContainer?
   package let readableRoots: [SandboxPath]
   package let deniedReadRegions: [SandboxReadRegion]
   package let deniedWriteRegions: [SandboxReadRegion]
@@ -123,8 +124,8 @@ package struct SandboxConfiguration: Sendable, Equatable {
     try Self(
       readOnly: readOnly, hostNetwork: hostNetwork, worktree: worktree,
       temporaryDirectory: temporaryDirectory, homeDirectory: homeDirectory,
-      cacheDirectory: cacheDirectory,
-      readableRoots: readableRoots, deniedReadRegions: deniedReadRegions,
+      cacheDirectory: cacheDirectory, readableRoots: readableRoots,
+      providerContainer: providerContainer, deniedReadRegions: deniedReadRegions,
       deniedWriteRegions: deniedWriteRegions,
       forbiddenReads: forbiddenReads,
       listableAncestors: listableAncestors, git: git, hostGitDirectory: hostGitDirectory,
@@ -135,6 +136,7 @@ package struct SandboxConfiguration: Sendable, Equatable {
     readOnly: Bool = false, hostNetwork: Bool = false,
     worktree: SandboxPath, temporaryDirectory: SandboxPath, homeDirectory: SandboxPath,
     cacheDirectory: SandboxPath, readableRoots: [SandboxPath],
+    providerContainer: SandboxProviderContainer? = nil,
     deniedReadRegions: [SandboxReadRegion] = [], deniedWriteRegions: [SandboxReadRegion] = [],
     forbiddenReads: [SandboxPath] = [],
     listableAncestors: [SandboxPath] = [], git: SandboxGitConfiguration? = nil,
@@ -149,15 +151,25 @@ package struct SandboxConfiguration: Sendable, Equatable {
       throw ExecutionEnvironmentError.invalidConfiguration(
         "Host network diagnostics require read-only execution without a proxy")
     }
+    if let container = providerContainer {
+      guard container.home == homeDirectory, container.cache == cacheDirectory,
+        !container.root.contains(temporaryDirectory), !temporaryDirectory.contains(container.root),
+        readOnly || (!container.root.contains(worktree) && !worktree.contains(container.root))
+      else {
+        throw ExecutionEnvironmentError.invalidConfiguration(
+          "Provider storage overlaps execution locations")
+      }
+    }
     let writable =
       readOnly
-      ? [temporaryDirectory]
+      ? [temporaryDirectory] + [providerContainer?.root].compactMap { $0 }
       : [worktree, temporaryDirectory, homeDirectory, cacheDirectory]
-        + [hostGitDirectory].compactMap { $0 }
+        + [hostGitDirectory, providerContainer?.root].compactMap { $0 }
     guard
       !readOnly
-        || (temporaryDirectory.contains(homeDirectory)
-          && temporaryDirectory.contains(cacheDirectory))
+        || ((providerContainer?.home == homeDirectory && providerContainer?.cache == cacheDirectory)
+          || (temporaryDirectory.contains(homeDirectory)
+            && temporaryDirectory.contains(cacheDirectory)))
     else {
       throw ExecutionEnvironmentError.invalidConfiguration(
         "Read-only executions keep home and caches inside temporary storage")
@@ -175,6 +187,7 @@ package struct SandboxConfiguration: Sendable, Equatable {
     self.temporaryDirectory = temporaryDirectory
     self.homeDirectory = homeDirectory
     self.cacheDirectory = cacheDirectory
+    self.providerContainer = providerContainer
     self.readableRoots = readableRoots
     self.deniedReadRegions = deniedReadRegions
     self.deniedWriteRegions = deniedWriteRegions
@@ -188,8 +201,34 @@ package struct SandboxConfiguration: Sendable, Equatable {
 
   package var writableDirectories: [SandboxPath] {
     readOnly
-      ? [temporaryDirectory]
+      ? [temporaryDirectory] + [providerContainer?.root].compactMap { $0 }
       : [worktree, temporaryDirectory, homeDirectory, cacheDirectory]
-        + [hostGitDirectory].compactMap { $0 }
+        + [hostGitDirectory, providerContainer?.root].compactMap { $0 }
+  }
+}
+
+/// The storage owner verifies ownership and identity before supplying these locations.
+package struct SandboxProviderContainer: Sendable, Equatable {
+  package let root: SandboxPath
+  package let home: SandboxPath
+  package let cache: SandboxPath
+  package let state: SandboxPath
+
+  package init(root: SandboxPath, home: SandboxPath, cache: SandboxPath, state: SandboxPath) throws
+  {
+    let locations = [home, cache, state]
+    guard root.value != "/", locations.allSatisfy({ root.contains($0) && root != $0 }),
+      locations.allSatisfy({ candidate in
+        locations.allSatisfy {
+          $0 == candidate || (!$0.contains(candidate) && !candidate.contains($0))
+        }
+      }), Set(locations).count == 3
+    else {
+      throw ExecutionEnvironmentError.invalidConfiguration("Invalid provider container locations")
+    }
+    self.root = root
+    self.home = home
+    self.cache = cache
+    self.state = state
   }
 }

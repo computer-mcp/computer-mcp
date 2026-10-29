@@ -1699,6 +1699,7 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
     }
     if let ownership = database?.mcpProcessOwnershipRoot { try rule(ownership.path, .hostData) }
     if let executions = database?.permissionExecutionRoot { try rule(executions.path, .hostData) }
+    if let containers = database?.providerContainerRoot { try rule(containers.path, .hostData) }
     return rules
   }
 

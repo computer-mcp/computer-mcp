@@ -33,6 +33,8 @@ final class GatewayDatabaseSchemaTests {
   @Test func activeSchemaContainsPermissionAuthorityAndNoOperationApprovalStore() throws {
     let connection = try GatewayDatabaseConnection(inMemory: ())
     try connection.writer.read { (database: Database) throws -> Void in
+      #expect(try database.tableExists("providerStorage"))
+      #expect(try database.tableExists("providerContainers"))
       #expect(try database.tableExists("permissionProfiles"))
       #expect(try database.tableExists("permissionProfilePublication"))
       #expect(try database.tableExists("permissionLedger"))

@@ -140,6 +140,23 @@ package final class GatewayDatabaseConnection: @unchecked Sendable {
           )
           """)
     }
+    migrator.registerMigration("provider-containers") { database in
+      try database.execute(
+        sql: """
+          CREATE TABLE providerStorage (
+            id INTEGER PRIMARY KEY CHECK (id = 1),
+            reservation TEXT NOT NULL,
+            payload BLOB
+          );
+          CREATE TABLE providerContainers (
+            kind TEXT NOT NULL CHECK (kind IN ('package', 'local-server')),
+            name TEXT NOT NULL,
+            reservation TEXT NOT NULL UNIQUE,
+            payload BLOB,
+            PRIMARY KEY (kind, name)
+          );
+          """)
+    }
     return migrator
   }()
 

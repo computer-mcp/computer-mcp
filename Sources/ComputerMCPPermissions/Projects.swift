@@ -273,21 +273,64 @@ package struct NetworkAccess: Hashable, Sendable, Codable {
 
 package struct SandboxSettings: Hashable, Sendable, Codable {
   package var network: NetworkAccess
+  package var readExceptions: Set<ApprovedReadException>
+  /// The approved declaration constrains owner selections, including future trusted hosts.
+  package var networkCeiling: NetworkAccess?
   package internal(set) var deniedReadRules: Set<PathRule>
   package var deniedReadLocations: Set<CanonicalPath> {
     get { Set(deniedReadRules.map(\.root)) }
     set { deniedReadRules = PathRule.replacingRoots(deniedReadRules, with: newValue) }
   }
 
-  package init(network: NetworkAccess = .none, deniedReadLocations: Set<CanonicalPath> = []) {
+  package init(
+    network: NetworkAccess = .none, deniedReadLocations: Set<CanonicalPath> = [],
+    readExceptions: Set<ApprovedReadException> = [], networkCeiling: NetworkAccess? = nil
+  ) {
     self.network = network
+    self.readExceptions = readExceptions
+    self.networkCeiling = networkCeiling
     self.deniedReadRules = Set(deniedReadLocations.map { PathRule(root: $0, kind: .denied) })
+  }
+
+  private enum CodingKeys: String, CodingKey {
+    case network, deniedReadRules, readExceptions, networkCeiling
+  }
+
+  package init(from decoder: any Decoder) throws {
+    let values = try decoder.container(keyedBy: CodingKeys.self)
+    network = try values.decode(NetworkAccess.self, forKey: .network)
+    networkCeiling = try values.decodeIfPresent(NetworkAccess.self, forKey: .networkCeiling)
+    deniedReadRules = try values.decode(Set<PathRule>.self, forKey: .deniedReadRules)
+    readExceptions =
+      try values.decodeIfPresent(Set<ApprovedReadException>.self, forKey: .readExceptions) ?? []
+  }
+
+  package func encode(to encoder: any Encoder) throws {
+    var values = encoder.container(keyedBy: CodingKeys.self)
+    try values.encode(network, forKey: .network)
+    try values.encodeIfPresent(networkCeiling, forKey: .networkCeiling)
+    try values.encode(deniedReadRules, forKey: .deniedReadRules)
+    // Preserve existing client consent digests when no provider exceptions exist.
+    if !readExceptions.isEmpty { try values.encode(readExceptions, forKey: .readExceptions) }
   }
 }
 
 extension SandboxSettings {
+  func effectiveNetwork(limits: ManagedLimits, trustedHosts: Set<String>)
+    -> NetworkAccess.Configuration
+  {
+    let selected = limits.network(applying: network, trustedHosts: trustedHosts)
+    guard let ceiling = networkCeiling?.hosts(trustedHosts: trustedHosts) else { return selected }
+    let hosts =
+      selected.hosts(trustedHosts: trustedHosts).map { NetworkHost.intersection($0, ceiling) }
+      ?? ceiling
+    return hosts.isEmpty ? .none : .custom(hosts: hosts, includesTrusted: false)
+  }
+
   func isMoreRestrictive(than previous: SandboxSettings, trustedHosts: Set<String>) -> Bool {
     network.isMoreRestrictive(than: previous.network, trustedHosts: trustedHosts)
+      || !Set(previous.readExceptions.map(\.identity)).isSubset(
+        of: Set(readExceptions.map(\.identity)))
       || deniedReadLocations.contains { path in
         !previous.deniedReadLocations.contains { $0.contains(path) }
       }
@@ -306,8 +349,41 @@ package struct SandboxSettingsKey: Hashable, Sendable, Codable {
 
 package struct ProjectSandboxSettings: Equatable, Sendable, Codable {
   package var entries: [SandboxSettingsKey: SandboxSettings]
+  package var providers: [PluginIdentity: ProviderSandboxSettings]
+  package var isEmpty: Bool { entries.isEmpty && providers.isEmpty }
 
-  package init(entries: [SandboxSettingsKey: SandboxSettings] = [:]) { self.entries = entries }
+  package init(
+    entries: [SandboxSettingsKey: SandboxSettings] = [:],
+    providers: [PluginIdentity: ProviderSandboxSettings] = [:]
+  ) {
+    self.entries = entries
+    self.providers = providers
+  }
+
+  private enum CodingKeys: String, CodingKey { case entries, providers }
+
+  package init(from decoder: any Decoder) throws {
+    let values = try decoder.container(keyedBy: CodingKeys.self)
+    entries = try values.decode([SandboxSettingsKey: SandboxSettings].self, forKey: .entries)
+    providers =
+      try values.decodeIfPresent([PluginIdentity: ProviderSandboxSettings].self, forKey: .providers)
+      ?? [:]
+  }
+
+  package func encode(to encoder: any Encoder) throws {
+    var values = encoder.container(keyedBy: CodingKeys.self)
+    try values.encode(entries, forKey: .entries)
+    if !providers.isEmpty { try values.encode(providers, forKey: .providers) }
+  }
+
+  package func settings(for principal: Principal, sourceProjectID: String?) -> SandboxSettings {
+    if case .plugin(let identity) = principal, let provider = providers[identity] {
+      return provider.settings(sourceProjectID: sourceProjectID)
+    }
+    return sourceProjectID.flatMap {
+      entries[SandboxSettingsKey(principal: principal, projectID: $0)]
+    } ?? .init()
+  }
 
   package func settings(
     for principal: Principal, projectID: String, projects: ProjectCatalog
@@ -315,7 +391,7 @@ package struct ProjectSandboxSettings: Equatable, Sendable, Codable {
     guard let source = projects.sourceID(for: projectID) else {
       throw PermissionModelError.invalidProjectGraph
     }
-    return entries[SandboxSettingsKey(principal: principal, projectID: source)] ?? SandboxSettings()
+    return settings(for: principal, sourceProjectID: source)
   }
 }
 

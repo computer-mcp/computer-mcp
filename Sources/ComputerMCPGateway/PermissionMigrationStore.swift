@@ -87,7 +87,7 @@ package final class PermissionMigrationStore: @unchecked Sendable {
       }
       if let suspended = ledger.suspendedAuthority {
         guard suspended.permissions.values.allSatisfy({ $0.entries.isEmpty }),
-          suspended.sandboxSettings.entries.isEmpty
+          suspended.sandboxSettings.isEmpty
         else {
           throw PermissionModelError.authoritySuspended
         }

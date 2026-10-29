@@ -68,6 +68,7 @@ package struct GatewayProviderApproval: Codable, Equatable, Sendable {
   package var declarationDigest: String?
   package var permissions: Permissions
   package var fullAccessConsent: ModeConsent?
+  package var sandboxSettings: ProviderSandboxSettings?
   package var pendingSourceDigest: String?
   package var pendingDeclarations: PluginPermissionDeclarations?
   package var update: PluginDeclarationUpdate
@@ -84,7 +85,25 @@ package struct GatewayProviderApproval: Codable, Equatable, Sendable {
     case .localServer:
       guard declarations == nil else { throw GatewayPermissionError.invalidBinding }
     }
-    if let declarations { try Self.validate(permissions, declarations: declarations) }
+    if let declarations {
+      try Self.validate(permissions, declarations: declarations)
+      if let settings = sandboxSettings {
+        guard
+          settings.defaults.networkCeiling?.configuration
+            == (declarations.sandbox?.network?.value ?? .none).configuration
+        else {
+          throw GatewayPermissionError.invalidBinding
+        }
+        let requested = Set(declarations.sandbox?.readExceptions?.map(\.path) ?? [])
+        for value in [settings.defaults]
+          + settings.projects.keys.map({ settings.settings(sourceProjectID: $0) })
+        {
+          guard Set(value.readExceptions.map(\.declaredPath)).isSubset(of: requested) else {
+            throw GatewayPermissionError.invalidBinding
+          }
+        }
+      }
+    }
   }
 
   static func validate(_ permissions: Permissions, declarations: PluginPermissionDeclarations)
@@ -116,6 +135,32 @@ package struct GatewayProviderApproval: Codable, Equatable, Sendable {
       }
     }
     if declarations.sandbox?.fullAccess != true { fullAccessConsent = nil }
+    if var settings = sandboxSettings {
+      let requested = Dictionary(
+        uniqueKeysWithValues: (declarations.sandbox?.readExceptions ?? []).map {
+          ($0.path, $0.purpose)
+        })
+      func retained(_ values: Set<ApprovedReadException>) -> Set<ApprovedReadException> {
+        Set(
+          values.compactMap { original in
+            guard let purpose = requested[original.declaredPath] else { return nil }
+            var value = original
+            value.purpose = purpose
+            return value
+          })
+      }
+      settings.defaults.readExceptions = retained(settings.defaults.readExceptions)
+      let ceiling = declarations.sandbox?.network?.value ?? .none
+      if settings.defaults.networkCeiling?.configuration != ceiling.configuration {
+        settings.defaults.networkCeiling = ceiling
+      }
+      for id in settings.projects.keys {
+        if let values = settings.projects[id]?.readExceptions {
+          settings.projects[id]!.readExceptions = retained(values)
+        }
+      }
+      sandboxSettings = settings
+    }
     self.declarations = declarations
     declarationDigest = try declarations.digest()
   }

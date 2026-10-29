@@ -242,7 +242,12 @@ package final class ExecutionRevocationCoordinator: ExecutionRecoveryAuthorizing
       if let sandbox {
         environment = try ExecutionEnvironment(
           searchPath: searchPath, home: sandbox.homeDirectory,
-          temporary: sandbox.temporaryDirectory, cache: sandbox.cacheDirectory)
+          temporary: sandbox.temporaryDirectory, cache: sandbox.cacheDirectory,
+          state: sandbox.providerContainer?.state)
+      } else if let container = try context.providerContainer?.sandbox {
+        environment = try ExecutionEnvironment(
+          searchPath: searchPath, home: container.home, temporary: context.temporaryDirectory,
+          cache: container.cache, state: container.state)
       } else {
         environment = try ExecutionEnvironment(fullAccessVariables: fullAccessEnvironment)
       }

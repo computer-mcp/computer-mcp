@@ -8,6 +8,8 @@ import GRDB
 extension GatewayPermissionService {
   package func approveProvider(
     _ review: GatewayProviderReview, permissions: Permissions, fullAccess: Bool,
+    sandboxSettings: ProviderSandboxSettings = .init(),
+    userHome: URL = FileManager.default.homeDirectoryForCurrentUser,
     owner: GatewayPermissionOwner, expectedProviderRevision: Int64?, expectedRevision: UInt64,
     expectedEpoch: UUID, now: Date = Date()
   ) throws -> GatewayProviderApproval {
@@ -49,19 +51,63 @@ extension GatewayPermissionService {
       guard (previous?.revision ?? 0) < Int64.max else {
         throw PermissionMigrationError.revisionExhausted
       }
+      var selectedSettings = sandboxSettings
+      let ceiling = review.declarations.map { $0.sandbox?.network?.value ?? .none }
+      selectedSettings.defaults.networkCeiling = ceiling
+      for settings in [selectedSettings.defaults]
+        + selectedSettings.projects.keys.map({ selectedSettings.settings(sourceProjectID: $0) })
+      {
+        if fullAccess {
+          guard settings.network.configuration == .none, settings.readExceptions.isEmpty else {
+            throw GatewayPermissionError.invalidBinding
+          }
+        }
+        if let ceiling, !settings.network.fits(within: ceiling, trustedHosts: []) {
+          throw GatewayPermissionError.invalidBinding
+        }
+        for source in limits.sources.values {
+          switch source {
+          case .absent: break
+          case .unreadable: throw GatewayPermissionError.managedLimit
+          case .available(let policy):
+            guard settings.network.fits(within: policy.network, trustedHosts: []) else {
+              throw GatewayPermissionError.managedLimit
+            }
+          }
+        }
+        try GatewayProviderReadExceptions.verify(settings.readExceptions, userHome: userHome)
+        for exception in settings.readExceptions {
+          if let declarations = review.declarations {
+            guard
+              declarations.sandbox?.readExceptions?.contains(where: {
+                $0.path == exception.declaredPath && $0.purpose == exception.purpose
+              }) == true
+            else { throw GatewayPermissionError.invalidBinding }
+          }
+          guard
+            ledger.canApproveReadException(
+              at: exception.path, for: review.identity, settings: settings, limits: limits)
+          else {
+            throw GatewayPermissionError.invalidBinding
+          }
+        }
+      }
       let principal = Principal.plugin(review.identity)
       var selection = Permissions()
       for (permission, state) in permissions.entries {
         try selection.set(state, for: permission)
       }
       _ = try ledger.setPermissions(selection, for: principal, expectedRevision: ledger.revision)
+      _ = try ledger.setProviderSandboxSettings(
+        selectedSettings, for: review.identity, expectedRevision: ledger.revision)
       let consent = fullAccess ? ledger.consent(for: principal, mode: .fullAccess(.standing)) : nil
       let approval = GatewayProviderApproval(
         identity: review.identity, revision: (previous?.revision ?? 0) + 1, epoch: expectedEpoch,
         enabled: true, sourceDigest: review.sourceDigest, declarations: review.declarations,
         declarationDigest: try review.declarations?.digest(),
         permissions: ledger.permissions(for: principal),
-        fullAccessConsent: consent, update: .unchanged)
+        fullAccessConsent: consent,
+        sandboxSettings: ledger.sandboxSettings.providers[review.identity], update: .unchanged)
       try approval.validate()
       record.payload = try Self.encodeProviderApproval(approval)
       try record.save(database)
@@ -170,9 +216,9 @@ extension GatewayPermissionService {
     else { return .failure(GatewayPermissionError.invalidBinding) }
     var approval = try providerApproval(record)
     guard approval.enabled, approval.epoch == ledger.authorizationEpochID,
-      case .permission(let content) = request.content
+      approval.sandboxSettings != nil
     else { return .failure(GatewayPermissionError.invalidBinding) }
-    if let declarations = approval.declarations,
+    if case .permission(let content) = request.content, let declarations = approval.declarations,
       !declarations.permissions.contains(where: {
         $0.matches(content.requirement.permission)
           && PermissionState.granted($0.value).allows(content.requirement.value)
@@ -190,6 +236,7 @@ extension GatewayPermissionService {
     if case .always = answer {
       guard approval.revision < Int64.max else { throw PermissionMigrationError.revisionExhausted }
       approval.permissions = ledger.permissions(for: approval.principal)
+      approval.sandboxSettings = ledger.sandboxSettings.providers[identity]
       approval.revision += 1
       approval.fullAccessConsent = nil
       record.payload = try Self.encodeProviderApproval(approval)
@@ -217,6 +264,10 @@ extension GatewayPermissionService {
       _ = try ledger.setPermissions(
         Permissions(), for: principal, expectedRevision: ledger.revision)
     }
+    if case .plugin(let identity) = principal, ledger.sandboxSettings.providers[identity] != nil {
+      _ = try ledger.setProviderSandboxSettings(
+        nil, for: identity, expectedRevision: ledger.revision)
+    }
     var environment = ledger.environment
     environment.modes[principal] = nil
     if environment != ledger.environment {
@@ -238,6 +289,10 @@ extension GatewayPermissionService {
     if ledger.permissions(for: approval.principal).entries != approval.permissions.entries {
       _ = try ledger.setPermissions(
         approval.permissions, for: approval.principal, expectedRevision: ledger.revision)
+    }
+    if ledger.sandboxSettings.providers[approval.identity] != approval.sandboxSettings {
+      _ = try ledger.setProviderSandboxSettings(
+        approval.sandboxSettings, for: approval.identity, expectedRevision: ledger.revision)
     }
     var environment = ledger.environment
     environment.limits[approval.principal] = limits
@@ -378,6 +433,7 @@ extension GatewayPermissionService {
         try synchronizeProvider(
           approval, ledger: &ledger,
           limits: ledger.environment.limits[approval.principal] ?? .init())
+        approval.sandboxSettings = ledger.sandboxSettings.providers[approval.identity]
       }
       record.payload = try Self.encodeProviderApproval(approval)
       try record.save(database)

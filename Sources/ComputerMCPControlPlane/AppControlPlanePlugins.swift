@@ -39,6 +39,7 @@ extension AppControlPlaneService {
 
   package func approveProvider(
     _ review: GatewayProviderReview, permissions: Permissions, fullAccess: Bool,
+    sandboxSettings: ProviderSandboxSettings = .init(),
     expectedProviderRevision: Int64?, expectedRevision: UInt64, expectedEpoch: UUID
   ) async throws -> GatewayProviderApproval {
     guard !configurationMutationInProgress else { throw PluginHostError.changeInProgress }
@@ -52,7 +53,7 @@ extension AppControlPlaneService {
       throw GatewayPermissionError.revisionConflict
     }
     return try requirePermissionControl().approveProvider(
-      review, permissions: permissions, fullAccess: fullAccess,
+      review, permissions: permissions, fullAccess: fullAccess, sandboxSettings: sandboxSettings,
       expectedProviderRevision: expectedProviderRevision, expectedRevision: expectedRevision,
       expectedEpoch: expectedEpoch)
   }

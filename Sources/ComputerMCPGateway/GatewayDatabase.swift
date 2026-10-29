@@ -22,6 +22,7 @@ import struct ComputerMCPPermissions.RegisteredProject
 package final class GatewayDatabase: OAuthStore, @unchecked Sendable {
   package let connection: GatewayDatabaseConnection
   package let worktreeStorage: WorktreeStorage?
+  package let providerContainerRoot: URL?
   private var writer: any DatabaseWriter { connection.writer }
   private let profileChangeLock = NSLock()
   private var profileChangeBroadcasters: [GatewayProfileID: GatewayToolChangeBroadcaster] = [:]
@@ -56,18 +57,28 @@ package final class GatewayDatabase: OAuthStore, @unchecked Sendable {
 
   package init(path: String, applicationSupportRoot: URL? = nil) throws {
     connection = try GatewayDatabaseConnection(path: path)
+    providerContainerRoot = Self.providerStorageLocation(connection.fileURL)
     worktreeStorage = WorktreeStorage(
       databaseURL: connection.fileURL, applicationSupportRoot: applicationSupportRoot)
   }
 
   package init(inMemory: Void) throws {
     connection = try GatewayDatabaseConnection(inMemory: ())
+    providerContainerRoot = nil
     worktreeStorage = nil
   }
 
   package init(connection: GatewayDatabaseConnection) {
     self.connection = connection
+    providerContainerRoot = Self.providerStorageLocation(connection.fileURL)
     worktreeStorage = WorktreeStorage(databaseURL: connection.fileURL)
+  }
+
+  private static func providerStorageLocation(_ databaseURL: URL?) -> URL? {
+    guard let source = databaseURL,
+      let parent = try? ProjectPathResolver.canonicalProject(source.deletingLastPathComponent())
+    else { return nil }
+    return parent.appendingPathComponent(source.lastPathComponent + ".providers")
   }
 
   /// Uses this database's writer so permission and project/profile mutations can
@@ -292,7 +303,7 @@ package final class GatewayDatabase: OAuthStore, @unchecked Sendable {
       if before.isEmpty, try LegacyProfileRecord.fetchCount(database) == 0,
         try Int.fetchOne(database, sql: "SELECT count(*) FROM permissionSubjects") == 0,
         ledger.suspendedAuthority?.permissions.values.allSatisfy({ $0.entries.isEmpty }) != false,
-        ledger.suspendedAuthority?.sandboxSettings.entries.isEmpty != false
+        ledger.suspendedAuthority?.sandboxSettings.isEmpty != false
       {
         if let recovery = ledger.pendingEpochRecovery, recovery.executionsToTerminate.isEmpty {
           try ledger.acknowledgeEpochRecovery(recovery.epochID)

@@ -238,6 +238,7 @@ package struct PermissionLedger: Equatable, Sendable, Codable {
         .union(pendingEpochRecovery?.executionsToTerminate ?? []))
     let principals = Set(rules.keys).union(environment.limits.keys)
       .union(sandboxSettings.entries.keys.map(\.principal))
+      .union(sandboxSettings.providers.keys.map { Principal.plugin($0) })
     if suspendedAuthority == nil {
       suspendedAuthority = SuspendedPermissionAuthority(
         permissions: rules,
@@ -638,6 +639,10 @@ package struct PermissionLedger: Equatable, Sendable, Codable {
     _ settings: SandboxSettings, for key: SandboxSettingsKey, expectedRevision: UInt64
   ) throws -> RevocationResult {
     guard suspendedAuthority == nil else { throw PermissionModelError.authoritySuspended }
+    guard settings.readExceptions.isEmpty else { throw PermissionModelError.invalidAuthorization }
+    if case .plugin(let identity) = key.principal, sandboxSettings.providers[identity] != nil {
+      throw PermissionModelError.invalidAuthorization
+    }
     return try commit(expectedRevision: expectedRevision) { ledger in
       var settings = settings
       try settings.commit(against: ledger.sandboxSettings.entries[key], in: &ledger)
@@ -747,11 +752,24 @@ package struct PermissionLedger: Equatable, Sendable, Codable {
         throw PermissionModelError.invalidAuthorization
       }
       if case .always = answer {
-        let key = SandboxSettingsKey(principal: content.principal, projectID: content.projectID)
-        var settings = sandboxSettings.entries[key] ?? SandboxSettings()
-        settings.network = settings.network.adding(content.host)
-        try settings.commit(against: sandboxSettings.entries[key], in: &self)
-        sandboxSettings.entries[key] = settings
+        if case .plugin(let identity) = content.principal,
+          var provider = sandboxSettings.providers[identity]
+        {
+          var override = provider.projects[content.projectID] ?? .init()
+          let network =
+            override.network
+            ?? provider.settings(sourceProjectID: content.projectID).network.freshDraft()
+          override.network = network.adding(content.host)
+          provider.projects[content.projectID] = override
+          try provider.commit(against: sandboxSettings.providers[identity], in: &self)
+          sandboxSettings.providers[identity] = provider
+        } else {
+          let key = SandboxSettingsKey(principal: content.principal, projectID: content.projectID)
+          var settings = sandboxSettings.entries[key] ?? SandboxSettings()
+          settings.network = settings.network.adding(content.host)
+          try settings.commit(against: sandboxSettings.entries[key], in: &self)
+          sandboxSettings.entries[key] = settings
+        }
       }
     case .projectRegistration: throw PermissionModelError.invalidRegistrationAnswer
     }
@@ -900,9 +918,7 @@ package struct PermissionLedger: Equatable, Sendable, Codable {
     let principal = proof.invocation.principal
     let requests = evidenceRequests(proof.basis, authorizationID: id)
     let settings =
-      proof.sandboxProjectID.flatMap {
-        sandboxSettings.entries[SandboxSettingsKey(principal: principal, projectID: $0)]
-      } ?? .init()
+      sandboxSettings.settings(for: principal, sourceProjectID: proof.sandboxProjectID)
     var limits = currentLimits[principal] ?? .init()
     for element in proof.basis {
       if case .connection(let connectionID, _) = element,
@@ -927,13 +943,21 @@ package struct PermissionLedger: Equatable, Sendable, Codable {
       .union(limits.deniedReadLocations)
     if proof.mode.isSandbox { forbidden.formUnion(settings.deniedReadLocations) }
     let boundaries = Set(paths.pathRules.map(\.root))
+      .union(settings.readExceptions.map(\.path))
       .union(paths.projects.allLocations.map(\.root)).union(forbidden)
       .union(proof.requirements.paths.map(\.path))
       .union([try CanonicalPath("/")])
     var basis = proof.basis
+    var executionPermissions = permissions(for: principal)
+    if case .plugin = principal, proof.invocation.projectID == nil {
+      try executionPermissions.set(.denied, for: .project("*"))
+      for permission in executionPermissions.entries.keys {
+        if case .project = permission { try executionPermissions.set(.denied, for: permission) }
+      }
+    }
     func resolve(_ requirements: InvocationRequirements) -> InvocationResolution {
       InvocationEvaluation.evaluate(
-        requirements, principal: principal, permissions: permissions(for: principal),
+        requirements, principal: principal, permissions: executionPermissions,
         limits: limits, trustedHosts: trustedHosts,
         settings: { _ in settings }, pathResolver: { _ in PathPermissions(environment: paths) },
         oneTimeRequests: requests, recordedBasis: proof.basis)
@@ -1016,7 +1040,7 @@ package struct PermissionLedger: Equatable, Sendable, Codable {
     }
     var network =
       proof.mode.isSandbox
-      ? limits.network(applying: settings.network, trustedHosts: Set(trustedHosts.map(\.host)))
+      ? settings.effectiveNetwork(limits: limits, trustedHosts: Set(trustedHosts.map(\.host)))
       : NetworkAccess.Configuration.none
     if proof.mode.isSandbox, let hosts = network.hosts(trustedHosts: Set(trustedHosts.map(\.host)))
     {
@@ -1709,16 +1733,12 @@ package struct PermissionLedger: Equatable, Sendable, Codable {
           return network.isValid(access: policy.network, trustedHosts: trustedHosts)
         }
         let settings =
-          sandboxSettings.entries[
-            SandboxSettingsKey(principal: principal, projectID: network.projectID)
-          ] ?? SandboxSettings()
+          sandboxSettings.settings(for: principal, sourceProjectID: network.projectID)
         return network.isValid(access: settings.network, trustedHosts: trustedHosts)
       case .path(let path):
         guard let resolver = self.pathResolver else { return false }
         let sandbox =
-          path.sandboxProjectID.flatMap {
-            sandboxSettings.entries[SandboxSettingsKey(principal: principal, projectID: $0)]
-          } ?? .init()
+          sandboxSettings.settings(for: principal, sourceProjectID: path.sandboxProjectID)
         let validate = {
           resolver.validate(
             path, principal: principal, permissions: permissions, mode: mode,
@@ -1730,9 +1750,15 @@ package struct PermissionLedger: Equatable, Sendable, Codable {
       case .sandbox(let original):
         guard mode.isSandbox else { return true }
         let current =
-          original.projectID.flatMap {
-            sandboxSettings.entries[SandboxSettingsKey(principal: principal, projectID: $0)]
-          } ?? .init()
+          sandboxSettings.settings(for: principal, sourceProjectID: original.projectID)
+        if case .plugin(let identity) = principal, sandboxSettings.providers[identity] != nil {
+          guard current.network == original.settings.network,
+            current.networkCeiling == original.settings.networkCeiling,
+            current.deniedReadRules == original.settings.deniedReadRules,
+            Set(current.readExceptions.map(\.identity))
+              == Set(original.settings.readExceptions.map(\.identity))
+          else { return false }
+        }
         return current.network.preservesUnboundedRule(of: original.settings.network)
           && Set(original.settings.deniedReadRules.map(\.identity)).isSubset(
             of: Set(current.deniedReadRules.map(\.identity)))
@@ -1741,7 +1767,7 @@ package struct PermissionLedger: Equatable, Sendable, Codable {
           && !limits.deniedReadLocations.contains { path in
             !original.managedDeniedReadLocations.contains { $0.contains(path) }
           }
-          && !limits.network(applying: current.network, trustedHosts: Set(trustedHosts.map(\.host)))
+          && !current.effectiveNetwork(limits: limits, trustedHosts: Set(trustedHosts.map(\.host)))
             .isMoreRestrictive(than: original.network, trustedHosts: Set(trustedHosts.map(\.host)))
       }
     }
@@ -2081,9 +2107,7 @@ package struct PermissionLedger: Equatable, Sendable, Codable {
       limits: ManagedLimits(sources: [.connection: .available(ceiling)]),
       trustedHosts: trustedHosts,
       settings: { projectID in
-        projectID.flatMap {
-          sandboxSettings.entries[SandboxSettingsKey(principal: principal, projectID: $0)]
-        } ?? .init()
+        sandboxSettings.settings(for: principal, sourceProjectID: projectID)
       }, pathResolver: { _ in self.pathResolver }, oneTimeRequests: requests)
   }
 
@@ -2099,9 +2123,7 @@ package struct PermissionLedger: Equatable, Sendable, Codable {
       requirements, principal: principal, permissions: permissions(for: principal),
       limits: currentLimits[principal] ?? .init(), trustedHosts: trustedHosts,
       settings: { projectID in
-        projectID.flatMap {
-          sandboxSettings.entries[SandboxSettingsKey(principal: principal, projectID: $0)]
-        } ?? .init()
+        sandboxSettings.settings(for: principal, sourceProjectID: projectID)
       }, pathResolver: { _ in self.pathResolver }, oneTimeRequests: oneTimeRequests,
       recordedBasis: basis)
     if admission {
@@ -2213,8 +2235,14 @@ package struct PermissionLedger: Equatable, Sendable, Codable {
       ProfileDigest.ordered($0.registeredProjects) + ProfileDigest.canonical($0.pathRules)
         + ProfileDigest.canonical($0.outsideUserDataIdentity)
     }
+    let providerSettings: String
+    if case .plugin(let identity) = principal, let provider = sandboxSettings.providers[identity] {
+      providerSettings = ProfileDigest.canonical(provider)
+    } else {
+      providerSettings = ""
+    }
     return ProfileDigest.hash(
-      ProfileDigest.canonical(grants)
+      providerSettings + ProfileDigest.canonical(grants)
         + ProfileDigest.canonical(settings) + ProfileDigest.canonical(paths)
         + ProfileDigest.canonical(environment.trustedHosts))
   }
@@ -2285,9 +2313,7 @@ package struct PermissionLedger: Equatable, Sendable, Codable {
     -> NetworkAccessBasis?
   {
     let network =
-      sandboxSettings.entries[
-        SandboxSettingsKey(principal: content.principal, projectID: content.projectID)
-      ]?.network ?? .none
+      sandboxSettings.settings(for: content.principal, sourceProjectID: content.projectID).network
     return InvocationEvaluation.networkBasis(content, access: network, trustedHosts: trustedHosts)
   }
 
@@ -2373,5 +2399,26 @@ package actor InMemoryPermissionStore: PermissionStore {
     try candidate.commitTransaction(replacing: ledger)
     ledger = candidate
     return result
+  }
+}
+
+extension PermissionLedger {
+  package mutating func setProviderSandboxSettings(
+    _ proposed: ProviderSandboxSettings?, for identity: PluginIdentity, expectedRevision: UInt64
+  ) throws -> RevocationResult {
+    guard suspendedAuthority == nil else { throw PermissionModelError.authoritySuspended }
+    return try commit(expectedRevision: expectedRevision) { ledger in
+      var proposed = proposed
+      try proposed?.commit(against: ledger.sandboxSettings.providers[identity], in: &ledger)
+      ledger.sandboxSettings.providers[identity] = proposed
+      return ledger.propagateRevocations()
+    }
+  }
+
+  package func canApproveReadException(
+    at path: CanonicalPath, for identity: PluginIdentity, settings: SandboxSettings,
+    limits: ManagedLimits
+  ) -> Bool {
+    pathResolver?.canApproveReadException(at: path, settings: settings, limits: limits) == true
   }
 }

@@ -291,6 +291,12 @@ enum InvocationEvaluation {
     }
     if mode.isSandbox {
       for network in requirements.networks {
+        if settings(network.projectID).networkCeiling?.allows(network.host, trustedHosts: hostNames)
+          == false
+        {
+          result.denial = .invalidNetworkRequirement
+          continue
+        }
         let sources = limits.restrictingNetwork(host: network.host, trustedHosts: hostNames)
         if !sources.isEmpty { result.denial = .managedLimit(sources) }
         let content = network.content(principal: principal)
@@ -350,7 +356,7 @@ enum InvocationEvaluation {
           } + [requirements.sandboxProjectID])
       for projectID in projects {
         let profile = settings(projectID)
-        let network = limits.network(applying: profile.network, trustedHosts: hostNames)
+        let network = profile.effectiveNetwork(limits: limits, trustedHosts: hostNames)
         result.basis.insert(
           .sandbox(
             SandboxAccessBasis(

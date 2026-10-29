@@ -9,6 +9,7 @@ package struct ExecutionEnvironment: Sendable, Equatable {
   package let home: SandboxPath
   package let temporary: SandboxPath
   package let cache: SandboxPath
+  package let state: SandboxPath?
   package let locale: String
   package let terminal: String
   package let developerDirectory: SandboxPath?
@@ -16,6 +17,7 @@ package struct ExecutionEnvironment: Sendable, Equatable {
   package init(
     searchPath: [SandboxPath], home: SandboxPath, temporary: SandboxPath,
     cache: SandboxPath, locale: String = "en_US.UTF-8", terminal: String = "dumb",
+    state: SandboxPath? = nil,
     developerDirectory: SandboxPath? = nil, codexHome: SandboxPath? = nil,
     hostVariables: [String: String] = [:]
   ) throws {
@@ -30,6 +32,7 @@ package struct ExecutionEnvironment: Sendable, Equatable {
     self.home = home
     self.temporary = temporary
     self.cache = cache
+    self.state = state
     self.locale = locale
     self.terminal = terminal
     self.developerDirectory = developerDirectory
@@ -45,6 +48,7 @@ package struct ExecutionEnvironment: Sendable, Equatable {
     home = try SandboxPath("/")
     temporary = home
     cache = home
+    state = nil
     locale = ""
     terminal = ""
     developerDirectory = nil
@@ -59,7 +63,7 @@ package struct ExecutionEnvironment: Sendable, Equatable {
     }
     if let sandbox {
       guard home == sandbox.homeDirectory, temporary == sandbox.temporaryDirectory,
-        cache == sandbox.cacheDirectory
+        cache == sandbox.cacheDirectory, state == sandbox.providerContainer?.state
       else {
         throw ExecutionEnvironmentError.invalidConfiguration(
           "Environment directories must match the sandbox")
@@ -76,14 +80,16 @@ package struct ExecutionEnvironment: Sendable, Equatable {
       "GIT_TERMINAL_PROMPT": "0", "NO_PROXY": "", "no_proxy": "",
     ]
     if let codexHome { result["CODEX_HOME"] = codexHome.value }
+    if let state { result["XDG_STATE_HOME"] = state.value }
     if let developerDirectory { result["DEVELOPER_DIR"] = developerDirectory.value }
     // Location and network values must agree with the paths and endpoints opened by the profile.
-    let protected = Set([
+    var protected = Set([
       "HOME", "TMPDIR", "TMP", "TEMP", "XDG_CACHE_HOME", "XDG_CONFIG_HOME",
       "CLANG_MODULE_CACHE_PATH", "SWIFT_MODULECACHE_PATH",
       "http_proxy", "HTTP_PROXY", "https_proxy", "HTTPS_PROXY", "all_proxy", "ALL_PROXY",
       "NO_PROXY", "no_proxy",
     ])
+    if state != nil { protected.insert("XDG_STATE_HOME") }
     result.merge(hostVariables.filter { !protected.contains($0.key) }) { _, value in value }
     if let proxy = sandbox?.proxy {
       for key in ["http_proxy", "HTTP_PROXY", "https_proxy", "HTTPS_PROXY"] {
@@ -101,7 +107,7 @@ package struct ExecutionEnvironment: Sendable, Equatable {
     if fullAccessVariables != nil { return try Self(fullAccessVariables: variables) }
     return try Self(
       searchPath: searchPath, home: home, temporary: temporary, cache: cache,
-      locale: locale, terminal: terminal, developerDirectory: developerDirectory,
+      locale: locale, terminal: terminal, state: state, developerDirectory: developerDirectory,
       codexHome: codexHome, hostVariables: variables)
   }
 

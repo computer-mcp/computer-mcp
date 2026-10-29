@@ -68,6 +68,7 @@ package struct PermissionEnvironment: Equatable, Sendable, Codable {
   package var endedConnections: Set<String> = []
   package var connections: [String: PermissionConnection] = [:]
   package var modes: [Principal: ModeConsent] = [:]
+  package var providerRequirements: [PluginIdentity: ProviderRequirementBinding]?
 
   package init() {}
 }

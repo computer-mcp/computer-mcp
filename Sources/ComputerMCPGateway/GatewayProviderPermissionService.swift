@@ -270,6 +270,7 @@ extension GatewayPermissionService {
     }
     var environment = ledger.environment
     environment.modes[principal] = nil
+    if case .plugin(let identity) = principal { environment.providerRequirements?[identity] = nil }
     if environment != ledger.environment {
       _ = try ledger.reconcile(environment: environment, expectedRevision: ledger.revision)
     }
@@ -296,6 +297,13 @@ extension GatewayPermissionService {
     }
     var environment = ledger.environment
     environment.limits[approval.principal] = limits
+    if let digest = approval.requirementDigest,
+      environment.providerRequirements?[approval.identity]?.digest != digest
+    {
+      if environment.providerRequirements == nil { environment.providerRequirements = [:] }
+      environment.providerRequirements?[approval.identity] = ProviderRequirementBinding(
+        digest: digest)
+    }
     environment.modes[approval.principal] = approval.fullAccessConsent.flatMap {
       ledger.isConsentValid($0, for: approval.principal) ? $0 : nil
     }

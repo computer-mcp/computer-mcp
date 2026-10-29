@@ -38,7 +38,7 @@ struct GatewayToolRequirementResolver {
     descriptor: CapabilityDescriptor, arguments: [String: JSONValue], projectID: String?,
     mode: ExecutionMode
   ) throws -> (InvocationRequirements, Set<PluginIdentity>, [GatewaySkillLibraryRequirement]) {
-    let declaration = descriptor.requirement
+    var declaration = descriptor.requirement
     switch declaration.execution {
     case .read, .input, .cancel, .list:
       // The retained resource checks its originating execution through executionAccess.
@@ -46,7 +46,28 @@ struct GatewayToolRequirementResolver {
       return (InvocationRequirements(mode: .sandbox), [], [])
     default: break
     }
+    var providers: [ProviderRequirement] = []
+    var declaredProject = false
+    if let reference = descriptor.mcpReference,
+      let origin = origins[.init(kind: .mcp, id: reference.serverID)],
+      let reviewed = origin.reviewedRequirements
+    {
+      guard reviewed.componentID == origin.componentID else {
+        throw GatewayPermissionError.invalidBinding
+      }
+      let requirement = reviewed.requirements(for: reference.toolName)
+      declaredProject = requirement.map { $0.project != .none } ?? false
+      declaration = reviewed.applying(to: declaration, tool: reference.toolName)
+      providers.append(
+        ProviderRequirement(
+          provider: .package(origin.pluginID), digest: reviewed.approvalDigest,
+          conservative: requirement == nil))
+    }
     let sourceID = projectID.flatMap { paths.projects.sourceID(for: $0) }
+    guard !declaredProject || sourceID != nil else {
+      throw GatewayToolError.invalidArguments(
+        "[permission.project_required] The reviewed tool requires a registered project.")
+    }
     let project = projectID.flatMap { id in paths.projects.projects.first { $0.id == id } }
     let root =
       project.map { URL(fileURLWithPath: $0.root.string) }
@@ -55,12 +76,13 @@ struct GatewayToolRequirementResolver {
     var requirements: [PathRequirement] = []
     var plugins: Set<PluginIdentity> = []
     var skillLibraries: [GatewaySkillLibraryRequirement] = []
-    let access: PermissionValue?
+    var access: PermissionValue?
     switch declaration.access {
     case .none: access = declaration.namedProjectAccess
     case .read: access = .read
     case .projectWrite, .sourceProjectWrite: access = .write
     }
+    if declaration.namedProjectAccess == .write { access = .write }
     if let access, let sourceID {
       actions.append(
         PermissionAction(
@@ -136,6 +158,15 @@ struct GatewayToolRequirementResolver {
           requirement: try PermissionRequirement(
             .mcpServer(reference.serverID), descriptor.risk == .readOnly ? .read : .all)))
     }
+    if let reference = descriptor.mcpReference,
+      let origin = origins[.init(kind: .mcp, id: reference.serverID)]
+    {
+      plugins.insert(.package(origin.pluginID))
+      let permission = try PermissionRequirement(.plugin(origin.pluginID), .use)
+      if !actions.contains(where: { $0.requirement == permission }) {
+        actions.append(PermissionAction(requirement: permission))
+      }
+    }
     if let contribution = declaration.contribution {
       let kind: IntegrationKind
       let object: ToolRequirement.Object
@@ -209,7 +240,8 @@ struct GatewayToolRequirementResolver {
     return (
       InvocationRequirements(
         actions: actions, paths: requirements,
-        mode: selectedMode, sandboxProjectID: sourceID, execution: execution), plugins,
+        mode: selectedMode, sandboxProjectID: sourceID, execution: execution, providers: providers),
+      plugins,
       skillLibraries
     )
   }
@@ -278,6 +310,6 @@ package struct GatewaySkillLibraryRequirement: Sendable {
     return InvocationRequirements(
       actions: actions, paths: paths, networks: requirements.networks,
       mode: requirements.mode, sandboxProjectID: requirements.sandboxProjectID,
-      execution: requirements.execution)
+      execution: requirements.execution, providers: requirements.providers)
   }
 }

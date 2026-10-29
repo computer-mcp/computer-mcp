@@ -13,6 +13,29 @@ import Testing
 @testable import ComputerMCPPersistence
 
 struct GatewayProviderApprovalTests {
+  @Test func pendingWideningKeepsTheApprovedRequirementBinding() throws {
+    let f = try ProviderApprovalFixture()
+    defer { f.remove() }
+    let approved = try f.approve(f.install(requirement: "write"), permissions: .newPrincipal)
+    let initial = try f.store.readWithDatabase { _, ledger in
+      try #require(ledger.environment.providerRequirements?[approved.identity])
+    }
+    #expect(initial.digest == approved.requirementDigest)
+    _ = try f.install(requirement: "read")
+    let pending = try #require(f.view().providers.first)
+    #expect(pending.update == .widening)
+    try f.store.readWithDatabase { _, ledger in
+      #expect(ledger.environment.providerRequirements?[approved.identity] == initial)
+    }
+    let replacement = try f.approve(
+      f.currentReview(), permissions: .newPrincipal, previous: pending.revision)
+    try f.store.readWithDatabase { _, ledger in
+      let current = try #require(ledger.environment.providerRequirements?[approved.identity])
+      #expect(
+        current.digest == replacement.requirementDigest && current.identity != initial.identity)
+    }
+  }
+
   @Test func readReviewAndApprovalRetainOriginalPathsAndRejectReplacement() throws {
     let f = try ProviderApprovalFixture()
     defer { f.remove() }

@@ -12,13 +12,14 @@ package struct InvocationRequirements: Hashable, Sendable, Codable {
   package let mode: ExecutionMode
   package let sandboxProjectID: String?
   package let execution: ExecutionLimitRequest
+  package let providers: [ProviderRequirement]
   let registration: ProjectRegistrationRequest?
 
   package init(
     actions: [PermissionAction] = [], paths: [PathRequirement] = [],
     networks: [NetworkRequirement] = [],
     mode: ExecutionMode = .sandbox, sandboxProjectID: String? = nil,
-    execution: ExecutionLimitRequest? = nil
+    execution: ExecutionLimitRequest? = nil, providers: [ProviderRequirement] = []
   ) {
     self.actions = Self.canonical(
       actions.map {
@@ -43,12 +44,18 @@ package struct InvocationRequirements: Hashable, Sendable, Codable {
         [$0.projectID, $0.host, String($0.isLocalNetwork)] + Self.optionalKey($0.pluginPurpose)
       })
     self.mode = mode.semanticMode
+    self.providers = Self.canonical(
+      providers,
+      by: {
+        [ProfileDigest.canonical($0.provider), $0.digest, String($0.conservative)]
+      })
     self.execution = execution ?? .foreground
     self.sandboxProjectID = sandboxProjectID
     self.registration = nil
   }
 
   init(registration: ProjectRegistrationRequest) {
+    self.providers = []
     self.actions = []
     self.paths = []
     self.networks = []
@@ -59,7 +66,7 @@ package struct InvocationRequirements: Hashable, Sendable, Codable {
   }
 
   private enum CodingKeys: String, CodingKey {
-    case actions, paths, networks, mode, sandboxProjectID, registration, execution
+    case actions, paths, networks, mode, sandboxProjectID, registration, execution, providers
   }
 
   package init(from decoder: any Decoder) throws {
@@ -75,8 +82,22 @@ package struct InvocationRequirements: Hashable, Sendable, Codable {
         networks: try container.decode([NetworkRequirement].self, forKey: .networks),
         mode: try container.decode(ExecutionMode.self, forKey: .mode),
         sandboxProjectID: try container.decodeIfPresent(String.self, forKey: .sandboxProjectID),
-        execution: try container.decodeIfPresent(ExecutionLimitRequest.self, forKey: .execution))
+        execution: try container.decodeIfPresent(ExecutionLimitRequest.self, forKey: .execution),
+        providers: try container.decodeIfPresent([ProviderRequirement].self, forKey: .providers)
+          ?? [])
     }
+  }
+
+  package func encode(to encoder: any Encoder) throws {
+    var container = encoder.container(keyedBy: CodingKeys.self)
+    try container.encode(actions, forKey: .actions)
+    try container.encode(paths, forKey: .paths)
+    try container.encode(networks, forKey: .networks)
+    try container.encode(mode, forKey: .mode)
+    try container.encodeIfPresent(sandboxProjectID, forKey: .sandboxProjectID)
+    try container.encodeIfPresent(registration, forKey: .registration)
+    try container.encode(execution, forKey: .execution)
+    if !providers.isEmpty { try container.encode(providers, forKey: .providers) }
   }
 
   private static func canonical<Value: Hashable>(_ values: [Value], by key: (Value) -> [String])

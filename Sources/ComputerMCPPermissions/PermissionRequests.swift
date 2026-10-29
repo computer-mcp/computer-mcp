@@ -270,6 +270,7 @@ package struct PermissionLedger: Equatable, Sendable, Codable {
     environment.connections = [:]
     environment.endedConnections = []
     environment.trustedHosts = []
+    environment.providerRequirements = nil
     transactionIdentity = allocateIdentity().id
   }
 
@@ -967,7 +968,8 @@ package struct PermissionLedger: Equatable, Sendable, Codable {
     {
       .init(
         actions: actions, paths: paths, mode: proof.mode,
-        sandboxProjectID: proof.sandboxProjectID, execution: proof.requirements.execution)
+        sandboxProjectID: proof.sandboxProjectID, execution: proof.requirements.execution,
+        providers: proof.requirements.providers)
     }
     var reads: [PathAccessBasis] = []
     var directories: [PathAccessBasis] = []
@@ -1098,7 +1100,8 @@ package struct PermissionLedger: Equatable, Sendable, Codable {
     candidate: for candidate in candidates {
       let requirements = InvocationRequirements(
         paths: [candidate], mode: proof.mode,
-        sandboxProjectID: proof.sandboxProjectID, execution: proof.requirements.execution)
+        sandboxProjectID: proof.sandboxProjectID, execution: proof.requirements.execution,
+        providers: proof.requirements.providers)
       let result = evaluate(
         requirements, principal: proof.invocation.principal,
         oneTimeRequests: requests, basis: proof.basis)
@@ -1652,6 +1655,8 @@ package struct PermissionLedger: Equatable, Sendable, Codable {
     let permissions = permissions(for: principal)
     return basis.allSatisfy { basis in
       switch basis {
+      case .provider(let recorded):
+        return resolution.basis.contains(.provider(recorded))
       case .permission(let grant):
         if authorizationID == nil, let now, let id = grant.source.requestID,
           requests[id].map({ now >= $0.expiresAt }) != false
@@ -1844,7 +1849,8 @@ package struct PermissionLedger: Equatable, Sendable, Codable {
     let requirements = InvocationRequirements(
       actions: proof.requirements.actions,
       paths: paths, networks: networks, mode: proof.mode,
-      sandboxProjectID: proof.sandboxProjectID, execution: proof.requirements.execution)
+      sandboxProjectID: proof.sandboxProjectID, execution: proof.requirements.execution,
+      providers: proof.requirements.providers)
     if let chain = existingChain {
       let seeds = existingIDs.union(chain.carriedIDs).compactMap { requests[$0] }
       let ids = Set(inheritedRequests(seeds).map(\.id))
@@ -2102,13 +2108,19 @@ package struct PermissionLedger: Equatable, Sendable, Codable {
     _ ceiling: ManagedPolicy, requirements: InvocationRequirements,
     principal: Principal, requests: [PermissionRequest]
   ) -> InvocationResolution {
-    InvocationEvaluation.evaluate(
-      requirements, principal: principal, permissions: permissions(for: principal),
+    guard
+      let (expanded, providerBasis) = providerRequirements(
+        requirements, principal: principal, connection: ceiling)
+    else { return InvocationResolution(denial: .authorizationRevoked) }
+    var result = InvocationEvaluation.evaluate(
+      expanded, principal: principal, permissions: permissions(for: principal),
       limits: ManagedLimits(sources: [.connection: .available(ceiling)]),
       trustedHosts: trustedHosts,
       settings: { projectID in
         sandboxSettings.settings(for: principal, sourceProjectID: projectID)
       }, pathResolver: { _ in self.pathResolver }, oneTimeRequests: requests)
+    result.basis.formUnion(providerBasis)
+    return result
   }
 
   private func evaluate(
@@ -2119,13 +2131,24 @@ package struct PermissionLedger: Equatable, Sendable, Codable {
     if admission, let connectionID, activeConnection(connectionID, principal: principal) == nil {
       return InvocationResolution(denial: .authorizationRevoked)
     }
+    let connection =
+      connectionID.flatMap { environment.connections[$0]?.attenuation }
+      ?? basis.compactMap { element -> ManagedPolicy? in
+        if case .connection(let id, _) = element { return environment.connections[id]?.attenuation }
+        return nil
+      }.first
+    guard
+      let (expanded, providerBasis) = providerRequirements(
+        requirements, principal: principal, connection: connection)
+    else { return InvocationResolution(denial: .authorizationRevoked) }
     var result = InvocationEvaluation.evaluate(
-      requirements, principal: principal, permissions: permissions(for: principal),
+      expanded, principal: principal, permissions: permissions(for: principal),
       limits: currentLimits[principal] ?? .init(), trustedHosts: trustedHosts,
       settings: { projectID in
         sandboxSettings.settings(for: principal, sourceProjectID: projectID)
       }, pathResolver: { _ in self.pathResolver }, oneTimeRequests: oneTimeRequests,
       recordedBasis: basis)
+    result.basis.formUnion(providerBasis)
     if admission {
       if !requirements.mode.isSandbox {
         guard let consent = selectedConsent(principal: principal, connectionID: connectionID),
@@ -2140,7 +2163,7 @@ package struct PermissionLedger: Equatable, Sendable, Codable {
       }
       if let connectionID, let connection = activeConnection(connectionID, principal: principal) {
         let ceiling = evaluateCeiling(
-          connection.attenuation, requirements: requirements,
+          connection.attenuation, requirements: expanded,
           principal: principal, requests: oneTimeRequests)
         if let denial = ceiling.denial { return InvocationResolution(denial: denial) }
         result.basis.insert(.connection(id: connectionID, ceiling: connection.attenuation.identity))
@@ -2151,7 +2174,7 @@ package struct PermissionLedger: Equatable, Sendable, Codable {
         if case .connection(let id, _) = element, let connection = environment.connections[id] {
           result.basis = restricting(
             result.basis, by: connection.attenuation,
-            requirements: requirements, principal: principal, requests: oneTimeRequests)
+            requirements: expanded, principal: principal, requests: oneTimeRequests)
         }
       }
     }

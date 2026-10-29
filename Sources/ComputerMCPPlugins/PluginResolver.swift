@@ -20,6 +20,18 @@ package struct PluginContributionOrigin: Codable, Equatable, Sendable {
   package let componentID: String
   package let version: PluginVersion
   package let source: PluginSource
+  package let reviewedRequirements: PluginContributionRequirements?
+
+  package init(
+    pluginID: String, componentID: String, version: PluginVersion, source: PluginSource,
+    reviewedRequirements: PluginContributionRequirements? = nil
+  ) {
+    self.pluginID = pluginID
+    self.componentID = componentID
+    self.version = version
+    self.source = source
+    self.reviewedRequirements = reviewedRequirements
+  }
 }
 
 package struct PluginResolutionDiagnostic: Codable, Equatable, Sendable {

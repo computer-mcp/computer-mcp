@@ -347,6 +347,7 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
         reservedToolNames: Set(
           Self.coreDefinitions(databaseEnabled: true, management: nil).map(\.tool.name)
         ).union(platform.managementToolNames),
+        origins: composition.origins,
         retainsContinuation: { [ownedWork, projectID = project.id] reference in
           ownedWork.continuations.retainsContinuation(
             projectID: projectID, reference: reference)
@@ -389,7 +390,7 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
         registry: registry,
         reservedToolNames: Set(
           Self.coreDefinitions(databaseEnabled: true, management: nil).map(\.tool.name)
-        ).union(platform.managementToolNames))
+        ).union(platform.managementToolNames), origins: composition.origins)
       lifetime.onShutdown { await router.shutdown() }
       unscoped = router
     }
@@ -986,7 +987,8 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
     let routedDefinitions: [ToolDefinition] =
       try firstProviderRouter.map { router in
         try router.listTools(context: invocationContext).map { tool in
-          let capability = try router.capability(named: tool.name, context: invocationContext)
+          let capability = try reviewedContribution(
+            router.capability(named: tool.name, context: invocationContext))
           return ToolDefinition(
             tool: Self.toolWithRequirements(tool, descriptor: capability), capability: capability)
         }
@@ -1977,9 +1979,18 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
       return definition.capability
     }
     if let router = projectID.flatMap({ providerRouters[$0] }) ?? firstProviderRouter {
-      return try router.capability(named: name, context: invocationContext)
+      return try reviewedContribution(router.capability(named: name, context: invocationContext))
     }
     throw GatewayToolError.unknownTool(name)
+  }
+
+  private func reviewedContribution(_ descriptor: CapabilityDescriptor) throws
+    -> CapabilityDescriptor
+  {
+    guard let reference = descriptor.mcpReference,
+      let origin = pluginOrigins[.init(kind: .mcp, id: reference.serverID)]
+    else { return descriptor }
+    return try origin.applyingRequirements(to: descriptor)
   }
 
   private func invocationDescriptor(
@@ -2030,7 +2041,7 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
       throw GatewayToolError.unknownMCPServer(reference.serverID)
     }
     descriptor.requirement = server.requirement(for: admission)
-    return descriptor
+    return try reviewedContribution(descriptor)
   }
 
   private var firstProviderRouter: GatewayProviderRouter? {

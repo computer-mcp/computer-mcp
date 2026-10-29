@@ -164,6 +164,10 @@ extension PermissionEnvironment {
       }
       self.limits[principal] = limits
     }
+    for (provider, var binding) in providerRequirements ?? [:] {
+      try binding.commit(against: current.providerRequirements?[provider], in: &ledger)
+      providerRequirements?[provider] = binding
+    }
     endedConnections.formUnion(current.endedConnections)
     for (id, connection) in current.connections where connections[id] == nil {
       connections[id] = connection

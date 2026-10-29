@@ -126,6 +126,22 @@ package struct ToolRequirement: Codable, Equatable, Sendable {
     Self(access: .none, permissions: [try! PermissionRequirement(permission.permission, .access)])
   }
 
+  /// Adds caller conditions while preserving every host-owned effect and route.
+  package func adding(access additional: Access, permissions additions: [PermissionRequirement])
+    -> Self
+  {
+    let order: [Access] = [.none, .read, .projectWrite, .sourceProjectWrite]
+    let access = order[max(order.firstIndex(of: access)!, order.firstIndex(of: additional)!)]
+    var permissions = self.permissions
+    for permission in additions where !permissions.contains(permission) {
+      permissions.append(permission)
+    }
+    return Self(
+      access: access, permissions: permissions, namedProjectAccess: namedProjectAccess,
+      requiresFullAccess: requiresFullAccess, paths: paths, execution: execution,
+      target: target, networkURL: networkURL, contribution: contribution)
+  }
+
   package func requiringPlugin(_ id: String) throws -> Self {
     var result = self
     let permission = try PermissionRequirement(.plugin(id), .use)

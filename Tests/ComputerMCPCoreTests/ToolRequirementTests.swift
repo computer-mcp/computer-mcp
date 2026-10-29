@@ -5,6 +5,27 @@ import Testing
 @testable import ComputerMCPCore
 
 struct ToolRequirementTests {
+  @Test func callerConditionsPreserveHostOwnedInputs() throws {
+    let original = ToolRequirement(
+      access: .sourceProjectWrite, permissions: [try .init(.screen, .access)],
+      namedProjectAccess: .write, requiresFullAccess: true, paths: [.project(.write)],
+      execution: .start, target: .forwarded(tool: "tool", arguments: "arguments", server: "server"),
+      networkURL: "url", contribution: .cli(registration: .registered(id: "formatter")))
+    let composed = original.adding(
+      access: .read,
+      permissions: [
+        try .init(.screen, .access), try .init(.filesAndFolders(.downloads), .read),
+      ])
+    #expect(composed.access == original.access && composed.namedProjectAccess == .write)
+    #expect(composed.requiresFullAccess && composed.paths == original.paths)
+    #expect(composed.execution == original.execution && composed.target == original.target)
+    #expect(
+      composed.networkURL == original.networkURL && composed.contribution == original.contribution)
+    #expect(composed.permissions.count == 2)
+    #expect(
+      ToolRequirement.none.adding(access: .projectWrite, permissions: []).access == .projectWrite)
+  }
+
   @Test(arguments: [true, false])
   func hostActionsAndPluginOriginsPreserveRequirements(remote: Bool) throws {
     let declaration = ToolRequirement.downstream(

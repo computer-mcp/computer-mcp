@@ -143,6 +143,7 @@ import Testing
       var arguments = curlArguments
       var host = "example.com"
       var reason: EgressDenial.Reason? = .hostNotAllowed
+      var expectsResolution = false
       let usesSOCKS = name.hasPrefix("socks-")
       if usesSOCKS { arguments += ["--proxy", "socks5h://127.0.0.1:\(ports.socks)"] }
       switch name {
@@ -157,6 +158,7 @@ import Testing
           name.replacingOccurrences(of: "address-", with: "").replacingOccurrences(
             of: "socks-", with: "") + ".test"
         reason = ["loopback.test", "mixed.test"].contains(host) ? .loopback : .localNetworkRequired
+        expectsResolution = true
         arguments += ["https://" + host]
       case "bypass-noproxy": arguments += ["--noproxy", "*", "https://github.com"]
       case "bypass-ip": arguments += ["--noproxy", "*", "https://1.1.1.1"]
@@ -195,7 +197,8 @@ import Testing
         #expect(denial.host == host)
         #expect(denial.port == 443)
         #expect(denial.reason == reason)
-        #expect(observations.hosts.contains(host) == (reason != .hostNotAllowed))
+        let expectedHosts: Set<String> = expectsResolution ? [host] : []
+        #expect(observations.hosts == expectedHosts)
       } else {
         #expect(observations.denials.isEmpty)
         #expect(observations.hosts.isEmpty, "Direct traffic must not reach any proxy resolver")

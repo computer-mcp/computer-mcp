@@ -1,11 +1,62 @@
 import ComputerMCPConfiguration
 import ComputerMCPCore
 import ComputerMCPGateway
+import ComputerMCPPermissions
 import ComputerMCPPersistence
 import ComputerMCPPlugins
 import Foundation
 
 extension AppControlPlaneService {
+  package func providerReview(_ identity: PluginIdentity) throws -> GatewayProviderReview {
+    let configuration = try database.configurationState()
+    let active = try manifestStore.activeConfiguration()
+    let pluginIDs = Set(bundledPlugins.packages.map { $0.manifest.id })
+    let serverIDs = Set(active.mcp.servers.map(\.id))
+    switch identity {
+    case .package(let id):
+      let package: PluginPackage
+      if let selected = configuration.plugins.selectedInstallations[id],
+        let record = configuration.plugins.installations.first(where: { $0.id == selected })
+      {
+        package = try PluginPackage.load(at: record.source.root)
+      } else if let bundled = bundledPlugins.packages.first(where: { $0.manifest.id == id }) {
+        package = try PluginPackage.load(at: bundled.root)
+      } else {
+        throw GatewayPermissionError.invalidBinding
+      }
+      return try GatewayProviderReview(
+        package: package, configuration: configuration,
+        knownPluginIDs: pluginIDs, knownServerIDs: serverIDs)
+    case .localServer(let id):
+      guard let server = active.mcp.servers.first(where: { $0.id == id }) else {
+        throw GatewayPermissionError.invalidBinding
+      }
+      return try GatewayProviderReview(
+        server: server, configuration: configuration,
+        knownPluginIDs: pluginIDs, knownServerIDs: serverIDs)
+    }
+  }
+
+  package func approveProvider(
+    _ review: GatewayProviderReview, permissions: Permissions, fullAccess: Bool,
+    expectedProviderRevision: Int64?, expectedRevision: UInt64, expectedEpoch: UUID
+  ) async throws -> GatewayProviderApproval {
+    guard !configurationMutationInProgress else { throw PluginHostError.changeInProgress }
+    configurationMutationInProgress = true
+    defer { configurationMutationInProgress = false }
+    await manifestStore.publicationLock.acquire()
+    defer { manifestStore.publicationLock.release() }
+    try Task.checkCancellation()
+    let current = try providerReview(review.identity)
+    guard current.sourceDigest == review.sourceDigest else {
+      throw GatewayPermissionError.revisionConflict
+    }
+    return try requirePermissionControl().approveProvider(
+      review, permissions: permissions, fullAccess: fullAccess,
+      expectedProviderRevision: expectedProviderRevision, expectedRevision: expectedRevision,
+      expectedEpoch: expectedEpoch)
+  }
+
   package func doctorPlugin(id: String) throws -> PluginDoctorReport {
     try PluginDoctorReport.inspect(
       pluginID: id, state: database.pluginStoreSnapshot(), bundled: bundledPlugins,

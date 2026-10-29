@@ -272,6 +272,7 @@ struct PluginsView: View {
             case .dependencyUnavailable: Text("Dependency unavailable")
             case .executableUnavailable: Text("Executable unavailable")
             case .executableUnverified: Text("Executable needs verification")
+            case .providerAuthorityUnavailable: EmptyView()
             case .hostUpdateRequired, .pluginUpdateRequired, .platformUnsupported:
               // Refusals are presented by the notice at the top of the details.
               EmptyView()

@@ -127,6 +127,19 @@ package final class GatewayDatabaseConnection: @unchecked Sendable {
           """)
     }
     migrator.registerMigration("derived-project-ledger", migrate: DerivedProjectMigration.migrate)
+    migrator.registerMigration("provider-authority") { database in
+      try database.execute(
+        sql: """
+          CREATE TABLE permissionProviders (
+            kind TEXT NOT NULL CHECK (kind IN ('package', 'local-server')),
+            name TEXT NOT NULL,
+            payload BLOB NOT NULL,
+            ownerPolicy BLOB,
+            policyEpoch TEXT,
+            PRIMARY KEY (kind, name)
+          )
+          """)
+    }
     return migrator
   }()
 

@@ -28,6 +28,7 @@ package struct PluginResolutionDiagnostic: Codable, Equatable, Sendable {
     case hostUpdateRequired = "plugin.host_update_required"
     case pluginUpdateRequired = "plugin.plugin_update_required"
     case platformUnsupported = "plugin.platform_unsupported"
+    case providerAuthorityUnavailable = "plugin.provider_authority_unavailable"
 
     init(_ reason: PluginCompatibilityRefusal.Reason) {
       switch reason {
@@ -101,7 +102,14 @@ package enum PluginResolver {
       manifest.mcp.allSatisfy({
         $0.requirements == nil && $0.toolRequirements == nil && $0.hostServiceContract == nil
       })
-    else { throw PluginProviderAuthorityUnavailable(pluginID: manifest.id) }
+    else {
+      diagnostics.append(
+        .init(
+          pluginID: manifest.id, componentID: nil, code: .providerAuthorityUnavailable,
+          dependencyID: nil,
+          instructions: "Update Computer MCP to use this plugin's permission declarations."))
+      return result()
+    }
     let interpreterBindings = try Self.interpreterBindings(
       package: plugin, dependencyExecutables: dependencyExecutables)
 

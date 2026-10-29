@@ -207,6 +207,18 @@ extension GatewayPermissionService {
       try owner.authorize()
       try Self.requireRevision(expectedRevision, database: database)
       guard let request = ledger.requests[id] else { throw PermissionModelError.unknownRequest }
+      if case .plugin(let provider) = request.invocation.principal {
+        guard try ProviderAuthorityRecord.load(provider, in: database) != nil else {
+          throw GatewayPermissionError.invalidBinding
+        }
+        let result = try ledger.retireRequest(id, expectedRevision: ledger.revision)
+        try Self.advanceControlRevision(database)
+        try GatewayPermissionAudit.record(
+          "deny", capabilityID: "permissions.answer", owner: owner,
+          database: database, ledger: ledger, profileIDs: [], request: request,
+          provider: provider, expectedRevision: expectedRevision, now: now)
+        return result
+      }
       let binding = try Self.binding(request.invocation.principal, database: database)
       let result = try ledger.retireRequest(id, expectedRevision: ledger.revision)
       try GatewayPermissionAudit.record(

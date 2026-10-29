@@ -174,16 +174,14 @@ struct PluginPermissionDeclarationTests {
       to: root.appendingPathComponent(PluginManifest.filename), atomically: true, encoding: .utf8)
     let package = try PluginPackage.load(at: root)
     let source = PluginSource(kind: .development, root: root)
-    do {
-      let enabled = try PluginResolver.resolve(
-        package: package, source: source, settings: .init(enabled: true),
-        hostVersion: PluginVersion("1.0.0"), architecture: PluginHost.architecture)
-      #expect(
-        enabled.mcpServers.isEmpty && enabled.cliCommands.isEmpty && enabled.skillRoots.isEmpty)
-      #expect(enabled.diagnostics.first?.code == .platformUnsupported)
-    } catch is PluginProviderAuthorityUnavailable {
-      #expect(PluginHost.platform == "macos")
-    }
+    let enabled = try PluginResolver.resolve(
+      package: package, source: source, settings: .init(enabled: true),
+      hostVersion: PluginVersion("1.0.0"), architecture: PluginHost.architecture)
+    #expect(
+      enabled.mcpServers.isEmpty && enabled.cliCommands.isEmpty && enabled.skillRoots.isEmpty)
+    #expect(
+      enabled.diagnostics.first?.code
+        == (PluginHost.platform == "macos" ? .providerAuthorityUnavailable : .platformUnsupported))
     let disabled = try PluginResolver.resolve(
       package: package, source: source, settings: .init(),
       hostVersion: PluginVersion("1.0.0"), architecture: "arm64")

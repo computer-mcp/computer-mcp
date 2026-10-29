@@ -329,6 +329,8 @@ package final class GatewayDatabase: OAuthStore, @unchecked Sendable {
         return .failure(error)
       }
       let value = try body(database)
+      try GatewayPermissionService.reconcileProviderSources(
+        database: database, ledger: &ledger, previous: beforeConfiguration.plugins)
       try Self.reconcileDerivedSources(in: database)
       for row in try ProfileRecord.fetchAll(database) {
         let previous = before.first { $0.id == row.id }
@@ -642,12 +644,6 @@ package final class GatewayDatabase: OAuthStore, @unchecked Sendable {
     else {
       throw PluginStoreError.invalidState
     }
-    let encoder = JSONEncoder()
-    encoder.outputFormatting = [.sortedKeys]
-    let data = try encoder.encode(state)
-    guard data.count <= 4_194_304, let payload = String(data: data, encoding: .utf8) else {
-      throw PluginStoreError.invalidState
-    }
     let committed = try permissionTransaction(managementAuthorization: authorization) { database in
       let current =
         try Int64.fetchOne(database, sql: "SELECT revision FROM pluginState WHERE id = 1") ?? 0
@@ -659,15 +655,26 @@ package final class GatewayDatabase: OAuthStore, @unchecked Sendable {
       {
         throw GatewayDatabaseError.configurationChanged
       }
-      try database.execute(
-        sql: """
-          INSERT INTO pluginState (id, revision, payloadJSON) VALUES (1, ?, ?)
-          ON CONFLICT(id) DO UPDATE SET revision = excluded.revision, payloadJSON = excluded.payloadJSON
-          """, arguments: [state.revision, payload])
+      try Self.writePluginSnapshot(state, database: database)
       try Self.applyRuntimeResolution(resolution, in: database)
       return try Self.configurationState(in: database)
     }
     return committed
+  }
+
+  static func writePluginSnapshot(_ state: PluginStoreSnapshot, database: Database) throws {
+    try state.validate()
+    let encoder = JSONEncoder()
+    encoder.outputFormatting = [.sortedKeys]
+    let data = try encoder.encode(state)
+    guard data.count <= 4_194_304, let payload = String(data: data, encoding: .utf8) else {
+      throw PluginStoreError.invalidState
+    }
+    try database.execute(
+      sql: """
+        INSERT INTO pluginState (id, revision, payloadJSON) VALUES (1, ?, ?)
+        ON CONFLICT(id) DO UPDATE SET revision = excluded.revision, payloadJSON = excluded.payloadJSON
+        """, arguments: [state.revision, payload])
   }
 
   private static func applyRuntimeResolution(

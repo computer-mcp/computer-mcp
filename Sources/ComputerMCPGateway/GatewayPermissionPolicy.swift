@@ -24,6 +24,13 @@ struct GatewayResolvedPolicy {
     policy.deniedReadLocations = deniedPaths
     return policy
   }
+
+  func resolvedForProvider() -> ManagedPolicy {
+    ManagedPolicy(
+      permissionCeilings: document.permissions, allowsFullAccess: document.allowsFullAccess,
+      network: document.network, deniedReadLocations: deniedPaths,
+      executionLimits: document.executionLimits)
+  }
 }
 
 struct GatewayPermissionPolicySnapshot {
@@ -35,8 +42,12 @@ struct GatewayPermissionPolicySnapshot {
   private let unavailable: [PolicySource: PolicyAvailability]
   private let machineViews: [GatewayManagedPolicyView]
   private var owners: [String: Owner]
+  private var providers: [PluginIdentity: (ProviderAuthorityRecord, GatewayResolvedPolicy?)]
 
-  init(reader: any ManagedPolicyReading, owners: [PermissionOwnerPolicyRecord]) {
+  init(
+    reader: any ManagedPolicyReading, owners: [PermissionOwnerPolicyRecord],
+    providers: [ProviderAuthorityRecord] = []
+  ) throws {
     let snapshots = reader.readSources()
     var documents: [PolicySource: GatewayResolvedPolicy] = [:]
     var unavailable: [PolicySource: PolicyAvailability] = [:]
@@ -90,6 +101,18 @@ struct GatewayPermissionPolicySnapshot {
             })
         )
       })
+    self.providers = try Dictionary(
+      uniqueKeysWithValues: providers.map { record in
+        (
+          try record.identity,
+          (
+            record,
+            record.ownerPolicy.flatMap {
+              try? GatewayResolvedPolicy(bytes: $0, reader: reader)
+            }
+          )
+        )
+      })
   }
 
   func views(epoch: UUID?, suspended: Bool) -> [GatewayManagedPolicyView] {
@@ -104,6 +127,45 @@ struct GatewayPermissionPolicySnapshot {
             ? "Owner policy requires confirmation."
             : !readable ? "Owner policy cannot be read." : nil)
       }
+      + providers.map { identity, owner in
+        .init(
+          provider: identity, source: .owner, location: "Owner policy",
+          revision: owner.0.ownerPolicy.map(Self.digest) ?? "absent",
+          failure: owner.0.ownerPolicy == nil
+            ? nil
+            : owner.0.policyEpoch != epoch?.uuidString || suspended
+              ? "Owner policy requires confirmation."
+              : owner.1 == nil ? "Owner policy cannot be read." : nil)
+      }
+  }
+
+  func providerLimits(_ identity: PluginIdentity, epoch: UUID?, previous: ManagedLimits?)
+    -> ManagedLimits
+  {
+    var sources = unavailable
+    sources[.owner] = .absent
+    if let owner = providers[identity], owner.0.ownerPolicy != nil {
+      sources[.owner] =
+        owner.0.policyEpoch == epoch?.uuidString
+        ? owner.1.map { .available($0.resolvedForProvider()) } ?? .unreadable : .unreadable
+    }
+    for (source, document) in documents {
+      sources[source] = .available(document.resolvedForProvider())
+    }
+    for (source, current) in sources {
+      if let old = previous?.sources[source] {
+        sources[source] = Self.preservingEvidence(current, previous: old)
+      }
+    }
+    return ManagedLimits(sources: sources)
+  }
+
+  func settingProvider(_ record: ProviderAuthorityRecord, document: GatewayResolvedPolicy?) throws
+    -> Self
+  {
+    var result = self
+    result.providers[try record.identity] = (record, document)
+    return result
   }
 
   func ownerPolicy(_ id: GatewayProfileID, caller: GatewayCallerKind, epoch: UUID?)

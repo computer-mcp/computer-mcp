@@ -91,6 +91,31 @@ package final class PermissionControlService: Sendable {
       owner: currentOwner(), epoch: epoch, expectedRevision: expectedRevision,
       profileEdits: profileEdits, now: now)
   }
+
+  package func approveProvider(
+    _ review: GatewayProviderReview, permissions: Permissions, fullAccess: Bool,
+    expectedProviderRevision: Int64?, expectedRevision: UInt64, expectedEpoch: UUID
+  ) throws -> GatewayProviderApproval {
+    try service.approveProvider(
+      review, permissions: permissions, fullAccess: fullAccess, owner: currentOwner(),
+      expectedProviderRevision: expectedProviderRevision, expectedRevision: expectedRevision,
+      expectedEpoch: expectedEpoch)
+  }
+
+  package func revokeProvider(
+    _ identity: PluginIdentity, expectedProviderRevision: Int64, expectedRevision: UInt64
+  ) throws -> RevocationResult {
+    try service.revokeProvider(
+      identity, owner: currentOwner(), expectedProviderRevision: expectedProviderRevision,
+      expectedRevision: expectedRevision)
+  }
+
+  package func setOwnerPolicy(
+    _ document: Data?, provider: PluginIdentity, expectedRevision: UInt64
+  ) throws -> RevocationResult {
+    try service.setOwnerPolicy(
+      document, provider: provider, owner: currentOwner(), expectedRevision: expectedRevision)
+  }
   private func currentOwner() throws -> GatewayPermissionOwner {
     let proof = try owner()
     guard let context = PermissionOwnerAuditScope.context else { return proof }

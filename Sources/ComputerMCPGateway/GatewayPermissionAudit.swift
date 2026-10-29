@@ -11,6 +11,7 @@ enum GatewayPermissionAudit {
     _ action: String, capabilityID: String, owner: GatewayPermissionOwner,
     database: Database, ledger: PermissionLedger, profileIDs: [GatewayProfileID],
     permissions: Set<Permission> = [], request: PermissionRequest? = nil,
+    provider: PluginIdentity? = nil,
     expectedRevision: UInt64, now: Date
   ) throws {
     let ids = Set(profileIDs).sorted { $0.rawValue < $1.rawValue }
@@ -24,6 +25,7 @@ enum GatewayPermissionAudit {
         database, sql: "SELECT revision FROM permissionControlRevision WHERE id = 1"
       ).map(JSONValue.integer) ?? .null
     details["profile_ids"] = .array(ids.map { .string($0.rawValue) })
+    if let provider { details["provider"] = try .encoded(provider) }
     var revisions: [String: JSONValue] = [:]
     for id in ids {
       if let profile = try ProfileRecord.fetchOne(database, key: id.rawValue) {

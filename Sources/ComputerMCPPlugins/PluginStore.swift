@@ -34,7 +34,21 @@ package struct PluginInstallationRecord: Codable, Equatable, Sendable, Identifia
   package let source: PluginSource
   /// Fingerprint of the parsed declaration; not an artifact signature or package content hash.
   package let manifestDigest: String
+  package let declarations: PluginPermissionDeclarations?
   package let registeredAt: Date
+
+  package init(
+    id: String, pluginID: String, version: PluginVersion, source: PluginSource,
+    manifestDigest: String, declarations: PluginPermissionDeclarations? = nil, registeredAt: Date
+  ) {
+    self.id = id
+    self.pluginID = pluginID
+    self.version = version
+    self.source = source
+    self.manifestDigest = manifestDigest
+    self.declarations = declarations
+    self.registeredAt = registeredAt
+  }
 }
 
 package struct PluginStoreSnapshot: Codable, Equatable, Sendable {
@@ -200,6 +214,7 @@ package actor PluginStore {
         id: UUID().uuidString,
         pluginID: plugin.manifest.id, version: plugin.manifest.version,
         source: PluginSource(kind: .development, root: plugin.root), manifestDigest: digest,
+        declarations: PluginPermissionDeclarations(plugin.manifest),
         registeredAt: .now)
     if existing == nil { state.installations.append(record) }
     state.selectedInstallations[record.pluginID] = record.id
@@ -406,7 +421,7 @@ package actor PluginStore {
     return next
   }
 
-  static func manifestDigest(_ manifest: PluginManifest) throws -> String {
+  package static func manifestDigest(_ manifest: PluginManifest) throws -> String {
     let encoder = JSONEncoder()
     encoder.outputFormatting = [.sortedKeys]
     return SHA256.hash(data: try encoder.encode(manifest)).map { String(format: "%02x", $0) }

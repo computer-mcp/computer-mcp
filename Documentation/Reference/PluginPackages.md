@@ -224,6 +224,19 @@ and is shown to the owner. A purpose-only change keeps the approval and shows
 the new purpose to the owner because it changes no authority. An update that
 changes no declaration keeps the approval. A changed package cannot use the
 previous approval for wider authority.
+
+Update classes follow the authority flowing through the plugin. Increasing the
+plugin's own permission or sandbox requests is widening; reducing them is
+narrowing. Caller requirement declarations have the opposite ordering:
+lowering or removing a requirement admits less-privileged callers and is
+widening; raising or adding a requirement is narrowing. Moving a tool from
+declared to undeclared is narrowing because the conservative undeclared rule
+applies. Moving from undeclared to declared is widening unless the declared set
+equals the complete conservative set. These comparisons use the resolved
+default and per-tool overrides. An update containing any widening part waits
+as a whole; the previous approval and requirement projection remain in force.
+Narrowing applies immediately and is shown to the owner. Purpose-only changes
+keep the approval and show the new purposes.
 Declining a declaration does not create its grant. Partial grants remain visible
 and operations needing the missing authority are refused through the ordinary
 permission-request rules.

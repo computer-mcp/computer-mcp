@@ -111,6 +111,11 @@ package final class GatewayPermissionService: @unchecked Sendable {
       guard let request = ledger.requests[id] else {
         return .failure(PermissionModelError.unknownRequest)
       }
+      if case .plugin = request.invocation.principal {
+        return try Self.answerProviderRequest(
+          request, answer: answer, owner: owner, database: database, ledger: &ledger,
+          expectedRevision: expectedRevision, now: now)
+      }
       let binding = try Self.binding(request.invocation.principal, database: database)
       var profile = try Self.profile(
         binding.profileID, database: database, epoch: ledger.authorizationEpochID)
@@ -332,7 +337,8 @@ package final class GatewayPermissionService: @unchecked Sendable {
               }
             )
           }),
-        trustedHosts: Set(ledger.environment.trustedHosts.map(\.host)))
+        trustedHosts: Set(ledger.environment.trustedHosts.map(\.host)),
+        providers: try ProviderAuthorityRecord.fetchAll(database).map(Self.providerApproval))
     }
   }
 
@@ -395,9 +401,13 @@ package final class GatewayPermissionService: @unchecked Sendable {
   ) throws -> Result {
     for _ in 0..<3 {
       let baseline = try store.readWithDatabase { database, _ in
-        (try Self.policyVersion(database), try PermissionOwnerPolicyRecord.fetchAll(database))
+        (
+          try Self.policyVersion(database), try PermissionOwnerPolicyRecord.fetchAll(database),
+          try ProviderAuthorityRecord.fetchAll(database)
+        )
       }
-      let snapshot = GatewayPermissionPolicySnapshot(reader: policyReader, owners: baseline.1)
+      let snapshot = try GatewayPermissionPolicySnapshot(
+        reader: policyReader, owners: baseline.1, providers: baseline.2)
       do {
         let result = try store.transactionWithDatabase { database, ledger in
           guard try Self.policyVersion(database) == baseline.0 else {
@@ -419,7 +429,11 @@ package final class GatewayPermissionService: @unchecked Sendable {
     let owners = try PermissionOwnerPolicyRecord.order(Column("profileID")).fetchAll(database)
     let encoder = JSONEncoder()
     encoder.outputFormatting = [.sortedKeys]
-    return try encoder.encode(projections + owners.map { try encoder.encode($0) })
+    let providers = try ProviderAuthorityRecord.order(Column("kind"), Column("name")).fetchAll(
+      database)
+    return try encoder.encode(
+      projections + owners.map { try encoder.encode($0) } + providers.map { try encoder.encode($0) }
+    )
   }
 
   func refresh(
@@ -434,7 +448,8 @@ package final class GatewayPermissionService: @unchecked Sendable {
     let incoming = try Dictionary(
       uniqueKeysWithValues: views.map { view in
         (
-          view.source.rawValue + (view.profileID.map { ":" + $0.rawValue } ?? ""),
+          view.source.rawValue + (view.profileID.map { ":" + $0.rawValue } ?? "")
+            + (try view.provider.map { try ":provider:" + GatewayProviderReview.digest($0) } ?? ""),
           try encoder.encode(view)
         )
       })
@@ -467,6 +482,14 @@ package final class GatewayPermissionService: @unchecked Sendable {
         environment: environment, expectedRevision: ledger.revision, now: now)
     } else {
       _ = ledger.reconcileExecutionLimits(now: now)
+    }
+    for record in try ProviderAuthorityRecord.fetchAll(database) {
+      let approval = try Self.providerApproval(record)
+      try Self.synchronizeProvider(
+        approval, ledger: &ledger,
+        limits: snapshot.providerLimits(
+          approval.identity, epoch: ledger.authorizationEpochID,
+          previous: ledger.environment.limits[approval.principal]))
     }
     for request in ledger.requests.values {
       switch request.status {

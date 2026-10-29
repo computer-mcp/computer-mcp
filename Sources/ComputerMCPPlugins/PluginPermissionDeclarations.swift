@@ -62,6 +62,15 @@ package struct PluginToolRequirements: Codable, Equatable, Sendable {
   package let permissions: [PluginPrivacyPermission]
   package let filesAndFolders: [PluginFolderCategory]
 
+  package init(
+    project: Project, permissions: [PluginPrivacyPermission] = [],
+    filesAndFolders: [PluginFolderCategory] = []
+  ) {
+    self.project = project
+    self.permissions = Array(Set(permissions)).sorted { $0.rawValue < $1.rawValue }
+    self.filesAndFolders = Array(Set(filesAndFolders)).sorted { $0.rawValue < $1.rawValue }
+  }
+
   private enum CodingKeys: String, CodingKey, CaseIterable {
     case project, permissions
     case filesAndFolders = "files_and_folders"
@@ -175,12 +184,12 @@ package struct PluginSandboxDeclaration: Codable, Equatable, Sendable {
 }
 
 /// The authority review identity excludes package presentation and protocol compatibility markers.
-package struct PluginPermissionDeclarations: Encodable, Equatable, Sendable {
+package struct PluginPermissionDeclarations: Codable, Equatable, Sendable {
   package let permissions: [PluginPermissionDeclaration]
   package let sandbox: PluginSandboxDeclaration?
   package let mcp: [String: Contribution]
 
-  package struct Contribution: Encodable, Equatable, Sendable {
+  package struct Contribution: Codable, Equatable, Sendable {
     package let requirements: PluginToolRequirements?
     package let toolRequirements: [String: PluginToolRequirements]
   }
@@ -224,12 +233,4 @@ where T.RawValue == String {
     throw PluginManifestError.invalid("Duplicate requirement value.")
   }
   return values.sorted { $0.rawValue < $1.rawValue }
-}
-
-/// Resolution must not publish declared providers before both authorities can be prepared.
-package struct PluginProviderAuthorityUnavailable: Error, LocalizedError, Sendable {
-  package let pluginID: String
-  package var errorDescription: String? {
-    "Plugin '\(pluginID)' requires provider permission preparation unavailable in this host."
-  }
 }

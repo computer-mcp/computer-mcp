@@ -67,6 +67,7 @@ package struct GatewayPermissionRequestView: Sendable {
 
 package struct GatewayManagedPolicyView: Equatable, Sendable, Codable {
   package var profileID: GatewayProfileID? = nil
+  package var provider: PluginIdentity? = nil
   package let source: PolicySource
   package let location: String
   package let revision: String
@@ -85,6 +86,7 @@ package struct GatewayPermissionView: Sendable {
   /// Profile editing uses every allowed caller's policies, even before a client connects.
   package var profileLimits: [GatewayProfileID: [ManagedLimits]] = [:]
   package var trustedHosts: Set<String> = []
+  package var providers: [GatewayProviderApproval] = []
 }
 
 package struct GatewayPermissionSubjectView: Sendable {

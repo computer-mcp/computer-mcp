@@ -139,14 +139,49 @@ package final class ExecutionRevocationCoordinator: ExecutionRecoveryAuthorizing
     authorizationID: UUID, context: GatewaySandboxContext,
     searchPath: [SandboxPath] = [try! SandboxPath("/usr/bin"), try! SandboxPath("/bin")],
     fullAccessEnvironment: [String: String] = [:], connectionID: String? = nil,
-    auditContext: ExecutionContext? = nil, worktreeAdmission: WorktreeAdmission? = nil
+    auditContext: ExecutionContext? = nil, worktreeAdmission: WorktreeAdmission? = nil,
+    provider: ProviderExecutionBinding? = nil,
+    validateProvider: (@Sendable () throws -> Void)? = nil
   ) async throws -> PreparedExecutionContext {
     guard lock.withLock({ ready }) else {
       throw ExecutionEnvironmentError.unavailable("Execution recovery has not completed")
     }
-    let reserved: Result<(AuthorizedExecution, GatewayExecutionConfiguration), any Error> =
-      try store.transactionWithDatabase { database, ledger in
+    try validateProvider?()
+    let compiledAuthorizationID = provider?.providerAuthorization.id ?? authorizationID
+    let providerSandboxed = provider.map {
+      $0.providerAuthorization.mode == .sandbox || $0.delegatingAuthorization == nil
+    }
+    let reserved:
+      Result<
+        (AuthorizedExecution, GatewayExecutionConfiguration?, ExecutionPermissionProjection?),
+        any Error
+      > = try store.transactionWithDatabase { database, ledger in
         let result = Result {
+          if let provider {
+            guard
+              (provider.delegatingAuthorization?.id ?? provider.providerAuthorization.id)
+                == authorizationID,
+              context.providerContainer?.identity == provider.identity
+            else { throw PermissionModelError.invalidAuthorization }
+            for id in provider.authorizationIDs { _ = try ledger.invocationAccess(id) }
+            if context.worktree != nil {
+              _ = try ledger.prepareWorktreePermissions(compiledAuthorizationID)
+            }
+            let projection = try ledger.prepareExecutionPermissions(
+              compiledAuthorizationID, sandboxed: providerSandboxed!)
+            guard
+              launcher.supportsDurableOwnership(sandboxed: providerSandboxed!)
+                || (!providerSandboxed! && launcher.supportsBestEffortOwnership)
+            else {
+              throw ExecutionEnvironmentError.unavailable(
+                "This backend cannot enforce provider execution ownership")
+            }
+            let execution = try ledger.startExecution(
+              owner: provider.owner,
+              delegatedTo: provider.delegatingAuthorization == nil ? nil : provider.identity,
+              authorizationIDs: provider.authorizationIDs)
+            return (execution, nil as GatewayExecutionConfiguration?, Optional(projection))
+          }
           let ownedRoot = try ProjectPathResolver.canonicalProject(storageDirectory)
           let expectedScratch = ownedRoot.appendingPathComponent(authorizationID.uuidString).path
           let ownedTemporary =
@@ -166,9 +201,9 @@ package final class ExecutionRevocationCoordinator: ExecutionRecoveryAuthorizing
           let execution = try ledger.startExecution(
             owner: configuration.authorization.invocation.principal,
             authorizationIDs: [authorizationID])
-          return (execution, configuration)
+          return (execution, Optional(configuration), nil as ExecutionPermissionProjection?)
         }
-        if case .success(let (execution, _)) = result {
+        if case .success(let (execution, _, _)) = result {
           guard let boot = launcher.bootSessionID else {
             throw ExecutionEnvironmentError.unavailable("Execution boot identity is unavailable")
           }
@@ -192,7 +227,7 @@ package final class ExecutionRevocationCoordinator: ExecutionRecoveryAuthorizing
         }
         return result
       }
-    let (execution, configuration) = try reserved.get()
+    let (execution, initialConfiguration, projection) = try reserved.get()
     let authority = GatewayExecutionAuthority(
       coordinator: self, executionID: execution.id,
       authorizationIDs: execution.authorizationIDs, principal: execution.owner,
@@ -207,7 +242,8 @@ package final class ExecutionRevocationCoordinator: ExecutionRecoveryAuthorizing
       if let worktreeAdmission {
         let use = try worktreeAdmission.reserve(
           ownerID: ownerID, executionID: execution.id,
-          unconfined: configuration.sandbox == nil && configuration.permitsProgramLaunch)
+          unconfined: providerSandboxed.map { !$0 }
+            ?? (initialConfiguration!.sandbox == nil && initialConfiguration!.permitsProgramLaunch))
         do {
           try store.transactionWithDatabase { database, _ in
             guard var record = try ExecutionRuntimeRecord.load(execution.id, database),
@@ -216,13 +252,31 @@ package final class ExecutionRevocationCoordinator: ExecutionRecoveryAuthorizing
             record.worktreeUse = use
             record.invocationInFlight = true
             record.worktreeDurable =
-              configuration.sandbox != nil || !configuration.permitsProgramLaunch
+              providerSandboxed
+              ?? (initialConfiguration!.sandbox != nil
+                || !initialConfiguration!.permitsProgramLaunch)
             try record.save(database)
           }
         } catch {
           // No prepared context or child has escaped this reservation yet.
           try? worktreeAdmission.acknowledge(use)
           throw error
+        }
+      }
+      let configuration: GatewayExecutionConfiguration
+      if let initialConfiguration {
+        configuration = initialConfiguration
+      } else {
+        try validateProvider?()
+        configuration = try store.transactionWithDatabase { _, ledger in
+          let ownedRoot = try ProjectPathResolver.canonicalProject(storageDirectory)
+          guard
+            context.temporaryDirectory.value
+              == ownedRoot.appendingPathComponent(authorizationID.uuidString).path
+          else { throw PermissionModelError.invalidAuthorization }
+          return try GatewaySandboxCompiler.compile(
+            ledger: &ledger, authorizationID: compiledAuthorizationID, context: context,
+            ownedTemporaryDirectory: context.temporaryDirectory, reservedProjection: projection)
         }
       }
       var sandbox = configuration.sandbox
@@ -262,10 +316,12 @@ package final class ExecutionRevocationCoordinator: ExecutionRecoveryAuthorizing
         mode: sandbox.map { .sandbox($0) } ?? .fullAccess, environment: environment,
         limits: execution.limits,
         pathAccess: GatewayPathAccess(
-          store: store, authorizationID: authorizationID, validateWorktree: validateWorktree),
+          store: store, authorizationID: compiledAuthorizationID, validateWorktree: validateWorktree
+        ),
         permitsProgramLaunch: configuration.permitsProgramLaunch,
         fixedHostOperation: context.fixedHostOperation, worktreeGit: context.worktree?.git,
-        validateWorktree: validateWorktree)
+        validateWorktree: validateWorktree, provider: provider, validateProvider: validateProvider)
+      try validateProvider?()
       _ = try authority.access(execution.id, operation: .readResult)
       lock.withLock { contexts[execution.id] = WeakExecutionContext(prepared) }
       return prepared

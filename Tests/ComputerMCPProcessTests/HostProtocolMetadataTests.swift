@@ -150,6 +150,138 @@ struct HostProtocolMetadataTests {
     #expect(platform.commands.first?.environment == ["HOME": "/selected"])
   }
 
+  @Test
+  func providerChannelIsHostCreatedSingleUseAndRejectsRawDescriptors() async throws {
+    let root = try SandboxPath(
+      ProjectPathResolver.canonicalProject(
+        FileManager.default.temporaryDirectory
+      ).path)
+    let binding = try providerBinding()
+    let authority = MetadataAuthority(authorizationIDs: binding.authorizationIDs)
+    let environment = try ExecutionEnvironment(
+      searchPath: [.init("/usr/bin")], home: root, temporary: root, cache: root)
+    let sandbox = try SandboxConfiguration(
+      readOnly: true, worktree: root, temporaryDirectory: root, homeDirectory: root,
+      cacheDirectory: root, readableRoots: [root])
+    let base = PreparedExecutionContext(
+      authority: authority, mode: .sandbox(sandbox),
+      environment: environment, limits: MetadataAuthority.limits, provider: binding)
+    let pair = try ProviderHostServiceChannel.make(metadata: "{\"scope\":\"verified\"}")
+    defer {
+      try? pair.host.close()
+      pair.channel.close()
+    }
+    let prepared = try base.withHostServiceChannel(pair.channel)
+    let platform = MetadataPlatform()
+    let pipe = Pipe()
+    for mapping in [
+      [Int32(3): pipe.fileHandleForWriting.fileDescriptor],
+      [Int32(8): pipe.fileHandleForWriting.fileDescriptor],
+    ] {
+      await #expect(throws: ExecutionEnvironmentError.self) {
+        try await prepared.withValue {
+          try await ExecutionLauncher(platform: platform).start(
+            executable: .init("/fixture/tool"), arguments: [], directory: root,
+            environment: environment, mode: .fullAccess, inheritedDescriptors: mapping)
+        }
+      }
+    }
+    #expect(authority.reservations == 0)
+    _ = try await prepared.withValue {
+      try await ExecutionLauncher(platform: platform).start(
+        executable: .init("/fixture/tool"), arguments: [], directory: root,
+        environment: environment, mode: .fullAccess,
+        hostProtocolMetadata: ["COMPUTER_MCP_HOST_CONTEXT": "forged"])
+    }
+    let command = try #require(platform.commands.first)
+    #expect(command.environment["COMPUTER_MCP_HOST_FD"] == "3")
+    #expect(command.environment["COMPUTER_MCP_HOST_CONTEXT"] == pair.channel.metadata)
+    #expect(Set(command.inheritedDescriptors.keys) == [3])
+    await #expect(throws: ExecutionEnvironmentError.self) {
+      try await prepared.withValue {
+        try await ExecutionLauncher(platform: platform).start(
+          executable: .init("/fixture/tool"), arguments: [], directory: root,
+          environment: environment, mode: .fullAccess)
+      }
+    }
+    #expect(platform.commands.count == 1)
+  }
+
+  @Test func channelAttachmentReceivesCoordinatorLimitUpdates() throws {
+    let binding = try providerBinding()
+    let authority = MetadataAuthority(authorizationIDs: binding.authorizationIDs)
+    let root = try SandboxPath(
+      ProjectPathResolver.canonicalProject(FileManager.default.temporaryDirectory).path)
+    let environment = try ExecutionEnvironment(
+      searchPath: [.init("/usr/bin")], home: root, temporary: root, cache: root)
+    let sandbox = try SandboxConfiguration(
+      readOnly: true, worktree: root, temporaryDirectory: root, homeDirectory: root,
+      cacheDirectory: root, readableRoots: [])
+    var preparation: PreparedExecutionContext? = PreparedExecutionContext(
+      authority: authority, mode: .sandbox(sandbox), environment: environment,
+      limits: MetadataAuthority.limits, provider: binding)
+    // The coordinator publishes limit updates through its weak registration.
+    weak var registered = preparation
+    let pair = try ProviderHostServiceChannel.make(metadata: "{}")
+    defer {
+      try? pair.host.close()
+      pair.channel.close()
+    }
+    let attached = try #require(preparation).withHostServiceChannel(pair.channel)
+    preparation = nil
+    let tightened = EffectiveExecutionLimits(
+      timeMilliseconds: nil, outputBytes: 512,
+      memoryBytes: nil, retentionSeconds: 60, retainedOutputBytes: 512, sources: [:])
+    registered?.applyLimits(tightened)
+    #expect(attached.limits.outputBytes == 512)
+    #expect(attached.limits.retainedOutputBytes == 512)
+  }
+
+  @Test(arguments: [1, 2, 3])
+  func providerRevisionRacePreventsPublication(validation: Int) async throws {
+    let binding = try providerBinding()
+    let authority = MetadataAuthority(authorizationIDs: binding.authorizationIDs)
+    let platform = MetadataPlatform()
+    let root = try SandboxPath(
+      ProjectPathResolver.canonicalProject(FileManager.default.temporaryDirectory).path)
+    let environment = try ExecutionEnvironment(
+      searchPath: [.init("/usr/bin")], home: root, temporary: root, cache: root)
+    let sandbox = try SandboxConfiguration(
+      readOnly: true, worktree: root, temporaryDirectory: root, homeDirectory: root,
+      cacheDirectory: root, readableRoots: [])
+    let race = ProviderValidationRace(failAt: validation)
+    let prepared = PreparedExecutionContext(
+      authority: authority, mode: .sandbox(sandbox), environment: environment,
+      limits: MetadataAuthority.limits, provider: binding,
+      validateProvider: { try race.validate() })
+    await #expect(throws: PermissionModelError.self) {
+      try await prepared.withValue {
+        try await ExecutionLauncher(platform: platform).start(
+          executable: .init("/fixture/tool"), arguments: [], directory: root,
+          environment: environment, mode: .sandbox(sandbox))
+      }
+    }
+    #expect(authority.reservations == (validation == 1 ? 0 : 1))
+    #expect(platform.commands.count == (validation == 1 ? 0 : 1))
+    #expect(platform.owner.cancellations == (validation == 3 ? 1 : 0))
+  }
+
+  private func providerBinding() throws -> ProviderExecutionBinding {
+    var ledger = PermissionLedger()
+    let identity = PluginIdentity.package("fixture")
+    let decision = try ledger.authorize(
+      invocation: .init(
+        principal: .plugin(identity), tool: "discover", projectID: nil,
+        argumentsDigest: "fixture"), requirements: .init(), now: Date())
+    guard case .allowed(let proof) = decision else {
+      throw PermissionModelError.invalidAuthorization
+    }
+    return try ProviderExecutionBinding(
+      identity: identity, registrationID: "fixture",
+      sourceDigest: String(repeating: "a", count: 64),
+      providerAuthorization: proof, delegatingAuthorization: nil)
+  }
+
   private func fullAccess(authority: MetadataAuthority) throws -> PreparedExecutionContext {
     PreparedExecutionContext(
       authority: authority, mode: .fullAccess,
@@ -163,7 +295,8 @@ private final class MetadataAuthority: ExecutionAuthorizing, @unchecked Sendable
     timeMilliseconds: nil, outputBytes: 1024, memoryBytes: nil, retentionSeconds: 60,
     retainedOutputBytes: 1024, sources: [:])
   let executionID = UUID()
-  let authorizationIDs: Set<UUID> = [UUID()]
+  let authorizationIDs: Set<UUID>
+  init(authorizationIDs: Set<UUID> = [UUID()]) { self.authorizationIDs = authorizationIDs }
   private let lock = NSLock()
   private var reserved = 0
   var reservations: Int { lock.withLock { reserved } }
@@ -179,6 +312,7 @@ private final class MetadataAuthority: ExecutionAuthorizing, @unchecked Sendable
 
 private final class MetadataPlatform: ExecutionPlatform, @unchecked Sendable {
   private let lock = NSLock()
+  let owner = MetadataOwnership()
   private var observed: [ExecutionCommand] = []
   private var observedSandbox: [Bool] = []
   var commands: [ExecutionCommand] { lock.withLock { observed } }
@@ -194,20 +328,45 @@ private final class MetadataPlatform: ExecutionPlatform, @unchecked Sendable {
       observed.append(command)
       observedSandbox.append(sandbox != nil)
     }
-    let owner = MetadataOwnership()
     bindOwnership(owner)
+    try owner.starting()
     return owner
   }
 }
 
-private struct MetadataOwnership: ExecutionOwnership {
-  func beforeStart(_ handler: @escaping @Sendable (ExecutionMember) throws -> Void) {}
+private final class MetadataOwnership: ExecutionOwnership, @unchecked Sendable {
+  private let lock = NSLock()
+  private var handlers: [@Sendable (ExecutionMember) throws -> Void] = []
+  private var cancelled = 0
+  var cancellations: Int { lock.withLock { cancelled } }
+  func beforeStart(_ handler: @escaping @Sendable (ExecutionMember) throws -> Void) {
+    lock.withLock { handlers.append(handler) }
+  }
+  func starting() throws {
+    for handler in lock.withLock({ handlers }) {
+      try handler(.init(processID: 999999, identity: 1))
+    }
+  }
   func members() async throws -> [ExecutionMember] { [] }
   func onCancellation(_ handler: @escaping @Sendable () -> Void) {}
   func cancel(until deadline: ContinuousClock.Instant) async throws -> ExecutionExit {
-    .init(status: 0)
+    lock.withLock { cancelled += 1 }
+    return .init(status: 0)
   }
   func wait(until deadline: ContinuousClock.Instant) async throws -> ExecutionExit {
     .init(status: 0)
+  }
+}
+
+private final class ProviderValidationRace: @unchecked Sendable {
+  let failAt: Int
+  private let lock = NSLock()
+  private var validations = 0
+  init(failAt: Int) { self.failAt = failAt }
+  func validate() throws {
+    try lock.withLock {
+      validations += 1
+      if validations == failAt { throw PermissionModelError.invalidAuthorization }
+    }
   }
 }

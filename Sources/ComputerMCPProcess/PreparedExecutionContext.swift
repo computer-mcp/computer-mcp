@@ -103,6 +103,11 @@ package final class PreparedExecutionContext: ExecutionAccessChecking, Sendable 
   package let fixedHostOperation: FixedHostOperation?
   private let fixedCommand: FixedCommand?
   package let worktreeGit: SandboxGitConfiguration?
+  package let provider: ProviderExecutionBinding?
+  package let hostServiceChannel: ProviderHostServiceChannel?
+  // Channel attachments share limits with the coordinator-registered preparation.
+  private let preparation: PreparedExecutionContext?
+  private let validateProvider: (@Sendable () throws -> Void)?
   private let validateWorktree: (@Sendable () throws -> Void)?
   private struct State: Sendable {
     var limits: EffectiveExecutionLimits
@@ -117,8 +122,12 @@ package final class PreparedExecutionContext: ExecutionAccessChecking, Sendable 
     limits: EffectiveExecutionLimits, pathAccess: (any HostPathAccessChecking)? = nil,
     permitsProgramLaunch: Bool = true, fixedHostOperation: FixedHostOperation? = nil,
     worktreeGit: SandboxGitConfiguration? = nil,
-    validateWorktree: (@Sendable () throws -> Void)? = nil
+    validateWorktree: (@Sendable () throws -> Void)? = nil,
+    provider: ProviderExecutionBinding? = nil,
+    hostServiceChannel: ProviderHostServiceChannel? = nil,
+    validateProvider: (@Sendable () throws -> Void)? = nil
   ) {
+    self.preparation = nil
     self.authority = authority
     self.mode = mode
     self.environment = environment
@@ -128,12 +137,16 @@ package final class PreparedExecutionContext: ExecutionAccessChecking, Sendable 
     self.fixedCommand = nil
     self.worktreeGit = worktreeGit
     self.validateWorktree = validateWorktree
+    self.provider = provider
+    self.hostServiceChannel = hostServiceChannel
+    self.validateProvider = validateProvider
     state = .init(State(limits: limits))
   }
 
   private init(
     parent: PreparedExecutionContext, sandbox: SandboxConfiguration, command: FixedCommand
   ) {
+    preparation = parent
     authority = parent.authority
     mode = .sandbox(sandbox)
     environment = parent.environment
@@ -143,7 +156,38 @@ package final class PreparedExecutionContext: ExecutionAccessChecking, Sendable 
     fixedCommand = command
     worktreeGit = parent.worktreeGit
     validateWorktree = parent.validateWorktree
+    provider = nil
+    hostServiceChannel = nil
+    validateProvider = nil
     state = parent.state
+  }
+
+  private init(parent: PreparedExecutionContext, channel: ProviderHostServiceChannel) {
+    preparation = parent
+    authority = parent.authority
+    mode = parent.mode
+    environment = parent.environment
+    pathAccess = parent.pathAccess
+    permitsProgramLaunch = parent.permitsProgramLaunch
+    fixedHostOperation = parent.fixedHostOperation
+    fixedCommand = parent.fixedCommand
+    worktreeGit = parent.worktreeGit
+    validateWorktree = parent.validateWorktree
+    provider = parent.provider
+    hostServiceChannel = channel
+    validateProvider = parent.validateProvider
+    state = parent.state
+  }
+
+  /// Attach only after durable execution reservation and worktree admission.
+  package func withHostServiceChannel(_ channel: ProviderHostServiceChannel) throws
+    -> PreparedExecutionContext
+  {
+    guard provider != nil, hostServiceChannel == nil else {
+      throw PermissionModelError.invalidAuthorization
+    }
+    try validateProviderLaunch()
+    return PreparedExecutionContext(parent: self, channel: channel)
   }
 
   /// A trusted helper binds the complete invocation; provider CLI input cannot enter this scope.
@@ -201,6 +245,22 @@ package final class PreparedExecutionContext: ExecutionAccessChecking, Sendable 
   }
 
   package var executionID: UUID { authority.executionID }
+
+  func validateProviderLaunch() throws {
+    guard let provider else {
+      guard hostServiceChannel == nil else { throw PermissionModelError.invalidAuthorization }
+      return
+    }
+    guard authority.authorizationIDs == provider.authorizationIDs,
+      fixedHostOperation == nil
+    else { throw PermissionModelError.invalidAuthorization }
+    if case .fullAccess = mode, provider.providerAuthorization.mode == .sandbox {
+      throw PermissionModelError.invalidAuthorization
+    }
+    try validateProvider?()
+    try validateWorktree?()
+    _ = try authority.access(executionID, operation: .writeInput)
+  }
   package var limits: EffectiveExecutionLimits { state.withLockedValue { $0.limits } }
   package var limitEndReason: ExecutionLimitEndReason? { state.withLockedValue { $0.endReason } }
 

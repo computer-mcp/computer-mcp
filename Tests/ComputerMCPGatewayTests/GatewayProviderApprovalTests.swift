@@ -4,6 +4,7 @@ import ComputerMCPPermissions
 import ComputerMCPPlatform
 import ComputerMCPPlatformPOSIX
 import ComputerMCPPlugins
+import ComputerMCPProcess
 import ComputerMCPTestSupport
 import Foundation
 import GRDB
@@ -13,6 +14,30 @@ import Testing
 @testable import ComputerMCPPersistence
 
 struct GatewayProviderApprovalTests {
+  @Test func providerPreparationPinsReviewedSourceAndDiscoveryMode() throws {
+    let f = try ProviderApprovalFixture()
+    defer { f.remove() }
+    let initial = try f.install(requirement: "write")
+    #expect(throws: GatewayPermissionError.self) {
+      try f.service.authorizeProviderExecution(
+        review: initial, registrationID: "fixture", caller: nil, retryIDs: [])
+    }
+    _ = try f.approve(initial, permissions: .newPrincipal)
+    let review = try f.currentReview()
+    let binding = try f.service.authorizeProviderExecution(
+      review: review, registrationID: "fixture", caller: nil, retryIDs: [])
+    #expect(binding.providerAuthorization.mode == .sandbox)
+    #expect(binding.providerAuthorization.invocation.projectID == nil)
+    #expect(binding.owner == .plugin(review.identity))
+    #expect(binding.delegatingAuthorization == nil)
+    try f.service.validateProviderExecution(binding)
+    _ = try f.install(requirement: "read")
+    #expect(throws: GatewayPermissionError.self) {
+      try f.service.authorizeProviderExecution(
+        review: review, registrationID: "fixture", caller: nil, retryIDs: [])
+    }
+  }
+
   @Test func pendingWideningKeepsTheApprovedRequirementBinding() throws {
     let f = try ProviderApprovalFixture()
     defer { f.remove() }

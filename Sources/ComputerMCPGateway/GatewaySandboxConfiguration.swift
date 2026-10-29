@@ -51,7 +51,8 @@ package enum GatewaySandboxCompiler {
   package static func compile(
     ledger: inout PermissionLedger, authorizationID: UUID, context: GatewaySandboxContext,
     proxy: SandboxProxyPorts? = nil, ownedTemporaryDirectory: SandboxPath? = nil,
-    userHome: URL = FileManager.default.homeDirectoryForCurrentUser
+    userHome: URL = FileManager.default.homeDirectoryForCurrentUser,
+    reservedProjection: ExecutionPermissionProjection? = nil
   ) throws -> GatewayExecutionConfiguration {
     guard let authorization = ledger.authorizations[authorizationID] else {
       throw PermissionModelError.unknownAuthorization
@@ -104,10 +105,20 @@ package enum GatewaySandboxCompiler {
     let writableWorktree =
       context.worktree != nil
       && (context.purpose == .projectProgram || context.fixedHostOperation?.allowsWrites == true)
-    if sandboxed && writableWorktree {
+    if sandboxed && writableWorktree && reservedProjection == nil {
       _ = try ledger.prepareWorktreePermissions(authorizationID)
     }
-    let projection = try ledger.prepareExecutionPermissions(authorizationID, sandboxed: sandboxed)
+    let projection: ExecutionPermissionProjection
+    if let reservedProjection {
+      guard reservedProjection.authorization.id == authorizationID,
+        authorization.executionID != nil,
+        reservedProjection.authorization.basis.isSubset(of: authorization.basis),
+        try ledger.invocationAccess(authorizationID).id == authorizationID
+      else { throw PermissionModelError.invalidAuthorization }
+      projection = reservedProjection
+    } else {
+      projection = try ledger.prepareExecutionPermissions(authorizationID, sandboxed: sandboxed)
+    }
     try projection.limits.requireEnforceable(by: .init())
     let network: EgressAccess
     switch projection.network {

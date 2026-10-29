@@ -59,6 +59,17 @@ package struct ExecutionLauncher: Sendable {
     try Self.validateHostProtocolMetadata(
       hostProtocolMetadata, inheritedDescriptors: inheritedDescriptors)
     let prepared = try PreparedExecutionContext.current()
+    if let prepared {
+      guard
+        prepared.provider == nil
+          || (inheritedDescriptors.isEmpty
+            && hostProtocolMetadata["COMPUTER_MCP_HOST_FD"] == nil)
+      else {
+        throw ExecutionEnvironmentError.invalidConfiguration(
+          "Prepared providers cannot accept caller-supplied descriptors")
+      }
+      try prepared.validateProviderLaunch()
+    }
     guard prepared?.permitsProgramLaunch != false else {
       throw ExecutionEnvironmentError.unavailable("This service context cannot start host programs")
     }
@@ -102,23 +113,39 @@ package struct ExecutionLauncher: Sendable {
     var variables = try environment.variables(sandbox: sandbox)
     for key in Self.reservedHostProtocolKeys { variables.removeValue(forKey: key) }
     variables.merge(hostProtocolMetadata) { _, value in value }
-    let command = ExecutionCommand(
-      executable: executable, arguments: arguments, directory: launchDirectory,
-      environment: variables,
-      directoryDescriptor: directoryDescriptor,
-      inheritedDescriptors: inheritedDescriptors
-    )
     let childID = UUID()
     try prepared?.authority.reserveChild(childID)
     do {
-      return try await platform.start(
+      let endpoint = try prepared?.hostServiceChannel?.takeEndpoint()
+      defer { try? endpoint?.close() }
+      var descriptors = inheritedDescriptors
+      if let endpoint, let channel = prepared?.hostServiceChannel {
+        descriptors = [3: endpoint.fileDescriptor]
+        variables["COMPUTER_MCP_HOST_CONTEXT"] = channel.metadata
+        variables["COMPUTER_MCP_HOST_FD"] = "3"
+      }
+      let command = ExecutionCommand(
+        executable: executable, arguments: arguments, directory: launchDirectory,
+        environment: variables, directoryDescriptor: directoryDescriptor,
+        inheritedDescriptors: descriptors)
+      let ownership = try await platform.start(
         command, sandbox: sandbox,
-        method: directoryDescriptor == nil && inheritedDescriptors.isEmpty ? method : .posixSpawn,
+        method: directoryDescriptor == nil && descriptors.isEmpty ? method : .posixSpawn,
         input: input, output: output, error: error,
         bindOwnership: { ownership in
           prepared?.authority.bindChild(childID, ownership: ownership)
+          if let prepared, prepared.provider != nil {
+            ownership.beforeStart { _ in try prepared.validateProviderLaunch() }
+          }
           bindOwnership(ownership)
         })
+      do {
+        try prepared?.validateProviderLaunch()
+      } catch {
+        _ = try await ownership.cancel()
+        throw error
+      }
+      return ownership
     } catch {
       prepared?.authority.launchFailed(childID)
       throw error

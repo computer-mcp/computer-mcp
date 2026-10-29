@@ -166,6 +166,11 @@ package final class ManagedLineProcess: @unchecked Sendable {
     // Copy while the caller still owns its descriptors. Launch and shutdown may race,
     // so asynchronous spawn must never refer to a descriptor the caller can close/reuse.
     self.prepared = try PreparedExecutionContext.current()
+    if prepared?.provider != nil {
+      guard configuration.inheritedDescriptors.isEmpty,
+        configuration.hostProtocolMetadata["COMPUTER_MCP_HOST_FD"] == nil
+      else { throw ManagedLineProcessError.invalidConfiguration }
+    }
     var configuration = configuration
     var ownedDescriptors: [Int32: FileHandle] = [:]
     for (destination, handle) in configuration.inheritedDescriptors {

@@ -54,6 +54,59 @@ package final class GatewayPermissionRuntime: @unchecked Sendable {
 
   package func ready() async throws { try await coordinator.recover() }
 
+  package func prepareProvider(
+    review: GatewayProviderReview, registrationID: String,
+    authorization caller: InvocationAuthorization?, directory workingDirectory: URL?,
+    connectionID: String?, retryIDs: Set<UUID> = [], auditContext: ExecutionContext? = nil
+  ) async throws -> PreparedExecutionContext {
+    #if os(Linux)
+      throw ExecutionEnvironmentError.unavailable("Linux provider activation is unavailable")
+    #else
+      try await ready()
+      let binding = try service.authorizeProviderExecution(
+        review: review, registrationID: registrationID, caller: caller, retryIDs: retryIDs)
+      let authorizationID = caller?.id ?? binding.providerAuthorization.id
+      let container = try database.prepareProviderContainer(binding.identity)
+      let worktree = try database.executionWorktree(
+        projectID: binding.providerAuthorization.invocation.projectID,
+        directory: workingDirectory, platform: platform)
+      let temporary = directory.appendingPathComponent(
+        authorizationID.uuidString, isDirectory: true)
+      guard temporary.path.withCString({ mkdir($0, mode_t(0o700)) }) == 0 else {
+        throw ExecutionEnvironmentError.unavailable(
+          "A private provider execution directory could not be exclusively created")
+      }
+      do {
+        let validate: @Sendable () throws -> Void = { [service] in
+          try container.verify()
+          try service.validateProviderExecution(binding)
+        }
+        return try await coordinator.prepare(
+          authorizationID: authorizationID,
+          context: GatewaySandboxContext(
+            directory: SandboxPath(
+              try ProjectPathResolver.canonicalProject(
+                caller == nil ? temporary : (workingDirectory ?? temporary)
+              ).path),
+            temporaryDirectory: SandboxPath(
+              try ProjectPathResolver.canonicalProject(temporary).path),
+            purpose: caller == nil ? .readOnlyHelper : .pluginProgram,
+            privateWorkingDirectory: caller == nil || workingDirectory == nil,
+            worktree: worktree, providerContainer: container),
+          connectionID: connectionID, auditContext: auditContext,
+          worktreeAdmission: worktree?.binding.admission, provider: binding,
+          validateProvider: validate)
+      } catch {
+        // Once reserved, durable recovery owns the scratch and its pending cleanup.
+        let reserved = try? store.readWithDatabase { _, ledger in
+          ledger.authorizations[binding.providerAuthorization.id]?.executionID != nil
+        }
+        if reserved == false { try? FileManager.default.removeItem(at: temporary) }
+        throw error
+      }
+    #endif
+  }
+
   package func prepare(
     authorization: InvocationAuthorization, descriptor: CapabilityDescriptor,
     directory workingDirectory: URL?, connectionID: String?, remoteService: Bool = false,

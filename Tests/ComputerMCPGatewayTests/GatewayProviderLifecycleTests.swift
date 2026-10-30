@@ -105,6 +105,84 @@
       }
     }
 
+    @Test func discoveryResolvesItsCommandFromTheRegistrationAndRunsInPrivateScratch()
+      async throws
+    {
+      let f = try WorktreeServiceFixture()
+      defer { f.remove() }
+      let container = try f.database.prepareProviderContainer(.localServer("relative"))
+      let registrationDirectory = URL(fileURLWithPath: try container.sandbox.home.value)
+      let marker = f.source.appendingPathComponent("discovery-write")
+      try writePythonTestExecutable(
+        #"""
+        import json, os, sys
+        if not os.path.samefile(os.getcwd(), os.environ["TMPDIR"]): sys.exit(11)
+        try:
+            with open(sys.argv[1], "w") as file: file.write("forbidden")
+            sys.exit(12)
+        except PermissionError:
+            pass
+        with open(os.path.join(os.environ["HOME"], "discovery-cwd"), "w") as file:
+            file.write(os.getcwd())
+        for line in sys.stdin:
+            message = json.loads(line)
+            if "id" not in message: continue
+            if message["method"] == "initialize":
+                result = {"protocolVersion": "2024-11-05", "capabilities": {"tools": {}}, "serverInfo": {"name": "relative", "version": "1"}}
+            elif message["method"] == "tools/list":
+                result = {"tools": [{"name": "discovered", "inputSchema": {"type": "object"}}]}
+            else:
+                result = {}
+            print(json.dumps({"jsonrpc": "2.0", "id": message["id"], "result": result}), flush=True)
+        """#, to: registrationDirectory.appendingPathComponent("provider.py"))
+      // The relative command resolves against the registration directory, while
+      // projectless discovery runs in its compiled private scratch.
+      let server = MCPServerConfig(
+        id: "relative", transport: .stdio, command: "./provider.py", args: [marker.path],
+        startupTimeoutMs: 5000, requestTimeoutMs: 5000)
+      let review = try GatewayProviderReview(
+        server: server, configuration: f.database.configurationState())
+      let owner = try GatewayPermissionOwner(
+        context: .init(caller: .localApp, profileID: .localAdmin, trustedPrincipalID: "owner"),
+        validate: {})
+      let view = try f.runtime.service.view(owner: owner)
+      _ = try f.runtime.service.approveProvider(
+        review, permissions: .newPrincipal, fullAccess: false, owner: owner,
+        expectedProviderRevision: nil, expectedRevision: view.revision,
+        expectedEpoch: #require(view.epoch))
+      let prepared = try await f.runtime.prepareProvider(
+        review: review, registrationID: server.id, authorization: nil, directory: nil,
+        connectionID: nil)
+      var host = MCPHostContext(
+        runtimeID: UUID(), context: .init(caller: .localMCP, profileID: .localAdmin),
+        projectID: "source", rootURL: f.source, readOnly: true,
+        processOwnershipRoot: f.root.appendingPathComponent("ownership"))
+      host.providerSource = { _ in
+        .init(digest: review.sourceDigest, prepareDiscovery: { prepared })
+      }
+      let client = MCPProxyClient(
+        launcher: f.platform.launcher, workingDirectory: registrationDirectory, hostContext: host)
+      do {
+        let tools = try await BlockingOperationExecutor(label: "relative-provider-discovery")
+          .perform { try client.listTools(server: server, context: .empty) }
+        #expect(tools.map(\.name) == ["discovered"])
+        let scratch = try #require(prepared.providerWorkingDirectory).value
+        let recorded = try String(
+          contentsOf: registrationDirectory.appendingPathComponent("discovery-cwd"),
+          encoding: .utf8)
+        #expect(recorded == scratch && recorded != registrationDirectory.path)
+        #expect(!FileManager.default.fileExists(atPath: marker.path))
+        await client.shutdown()
+        try prepared.finishAdmission()
+        try await f.runtime.coordinator.stopExecutions([prepared.executionID])
+      } catch {
+        await client.shutdown()
+        try? prepared.finishAdmission()
+        try? await f.runtime.coordinator.stopExecutions([prepared.executionID])
+        throw error
+      }
+    }
+
     @Test(arguments: [false, true])
     func projectBoundariesAndIndependentDelegatedRevocation(fullAccess: Bool) async throws {
       let f = try WorktreeServiceFixture()

@@ -18,6 +18,9 @@ package actor MCPChildProcessTransport: MCP.Transport {
   private let server: MCPServerConfig
   private let command: String
   private let workingDirectory: URL
+  /// A relative command and the ownership scope resolve against the registration,
+  /// even when a prepared provider launches in its private scratch.
+  private let registrationDirectory: URL
   private let environment: [String: String]
   private let hostProtocolMetadata: [String: String]
   private let hostContext: (any MCPHostEnvironment)?
@@ -62,10 +65,13 @@ package actor MCPChildProcessTransport: MCP.Transport {
       try preparedExecution.validateProviderLaunch()
     }
     self.command = command
-    self.workingDirectory =
-      (preparedExecution?.providerWorkingDirectory.map { URL(fileURLWithPath: $0.value) }
-      ?? server.resolvedWorkingDirectory(base: workingDirectory))
+    registrationDirectory =
+      server.resolvedWorkingDirectory(base: workingDirectory)
       .standardizedFileURL
+    self.workingDirectory =
+      preparedExecution?.providerWorkingDirectory.map {
+        URL(fileURLWithPath: $0.value).standardizedFileURL
+      } ?? registrationDirectory
     self.environment = try MCPHostLaunchMetadata.launchEnvironment(
       inherited: environment, overrides: server.env, context: hostContext?.launchMetadata)
     hostProtocolMetadata = try MCPHostLaunchMetadata.launchEnvironment(
@@ -84,7 +90,7 @@ package actor MCPChildProcessTransport: MCP.Transport {
     guard process == nil else { return }
     try preparedExecution?.validateProviderLaunch()
     let inspection = ExecutableInspection.inspect(
-      command, workingDirectory: workingDirectory, environment: environment)
+      command, workingDirectory: registrationDirectory, environment: environment)
     guard !inspection.hasKnownFailure, let executable = inspection.path else {
       throw GatewayToolError.executionFailed(
         "Could not start MCP server '\(server.id)': \(inspection.message)")
@@ -92,7 +98,7 @@ package actor MCPChildProcessTransport: MCP.Transport {
     let ownership = try MCPProcessOwnership.acquire(
       root: hostContext?.processOwnershipRoot ?? MCPProcessOwnership.defaultRoot,
       project: hostContext?.projectRoot
-        ?? workingDirectory,
+        ?? registrationDirectory,
       registration: server.id, artifact: hostContext?.pluginArtifacts[server.id],
       provider: preparedExecution?.provider)
     self.ownership = ownership

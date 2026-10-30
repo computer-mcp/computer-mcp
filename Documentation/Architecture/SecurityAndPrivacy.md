@@ -282,14 +282,28 @@ SwiftUI adapter or owner-only `computer-mcp` control CLI.
 
 ## Plugin execution
 
-The host authorizes plugin invocations through caller identity, profile and
-registered project. Plugin runtime permissions and vendor configuration belong
-to the plugin; see the [Codex plugin](https://github.com/computer-mcp/plugin-codex) for its execution model.
+The host admits a plugin call against two authorities for its actual effect: the
+calling client's profile and the plugin's own provider principal, each with its
+registered project grants. A missing permission on either side uses the ordinary
+request-and-explicit-retry flow and does not spend the other side's one-time
+grant. Plugin runtime permissions and vendor configuration belong to the plugin;
+see the [Codex plugin](https://github.com/computer-mcp/plugin-codex) for its
+execution model.
 
-Callbacks into host tools require current permissions and a live call record
-bound to permission-ledger admission. A plugin's native approval does not answer a
-host permission request. Raw arguments and output stay out of redacted audit;
-canonical invocation digests bind retries and private host-action validation.
+Callbacks into host tools require current permissions from both authorities and
+a live call record bound to permission-ledger admission. An Only This Time grant
+serves callbacks only within the execution it admitted. A callback cannot target
+a route that reaches a provider session: MCP registrations, plugin contributions,
+and aliases or forwarding to them are refused before admission. A plugin's native
+approval does not answer a host permission request. Raw arguments and output stay
+out of redacted audit; canonical invocation digests bind retries and private
+host-action validation.
+
+Work a callback creates carries its session's complete delegation basis.
+Revocation, disable, update or uninstall, connection or consent expiry, and an
+authority revision change end that work together with the session. Idle
+retirement, process exit and channel close do not end it; closing the channel or
+retiring the session cancels only its in-flight synchronous callbacks.
 An unconfined program retains its admitted permission requirements, connection
 consent and execution limits. Only a sandboxed launch pins the implicit file and
 system-service openings of its sandbox; host callbacks still recheck each use.

@@ -89,6 +89,10 @@ and the persistent provider container; direct exporters use the registered CLI
 cwd/environment. Both use closed stdin, a 5-second execution budget and a 4 MiB
 stdout bound. Enabling an exporter authorizes running that
 package code for discovery; it does not grant projected tool calls to a profile.
+A plugin contribution whose exporter cannot run in that context, fails or returns
+an invalid tree publishes no projected tools; `cli.list` reports the failure in
+`_meta.discovery_errors`, keyed by registration ID. A tree or failure is reused
+until the reviewed declaration, its approval or an executable identity changes.
 Exporters must return this contract. Native introspection using another format
 needs a verified package exporter; human-readable help is not parsed as a tree.
 The package manager does not run exporters while reading a manifest or installing
@@ -191,10 +195,10 @@ A self-reported read-only hint cannot remove execution requirements. `cli.exec` 
 returns declared metadata without executing help argv; executable exporters are
 not run through that read-only capability.
 
-The native macOS backend currently refuses prepared Full access CLI launches
-because it cannot enforce the required durable process ownership. Project and
-plugin grants plus local Full access consent still apply; they do not make an
-unavailable execution backend enforceable. Known projected tools remain listed
+A prepared Full access CLI launch runs with the best-effort process-group
+ownership described in [Execution Environment](../Architecture/ExecutionEnvironment.md).
+Project and plugin grants plus local Full access consent still apply; they do not
+make a backend without enforceable ownership usable. Known projected tools remain listed
 with their permission requirements when managed limits allow them to be requested.
 A refused launch returns `execution.unavailable` before executable checks or the
 target command run.

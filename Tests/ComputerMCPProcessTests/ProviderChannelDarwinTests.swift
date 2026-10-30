@@ -3,7 +3,7 @@
   @testable import ComputerMCPPermissions
   import ComputerMCPPlatform
   import ComputerMCPPlatformPOSIX
-  import ComputerMCPProcess
+  @testable import ComputerMCPProcess
   import ComputerMCPSandbox
   import ComputerMCPTestSupport
   import Darwin
@@ -21,6 +21,26 @@
       defer { Darwin.close(ambientFD) }
       let launcher = testExecutionLauncher()
       let binary = try compileProbe(in: directory.url)
+      // Outside the sandbox's readable roots, and a loopback listener it has no egress to.
+      let outside = try ScopedTemporaryDirectory()
+      let secret = outside.url.appendingPathComponent("secret")
+      try Data("outside".utf8).write(to: secret)
+      let listener = socket(AF_INET, SOCK_STREAM, 0)
+      try #require(listener >= 0)
+      defer { Darwin.close(listener) }
+      var address = sockaddr_in()
+      address.sin_len = UInt8(MemoryLayout<sockaddr_in>.size)
+      address.sin_family = sa_family_t(AF_INET)
+      address.sin_addr.s_addr = inet_addr("127.0.0.1")
+      var length = socklen_t(MemoryLayout<sockaddr_in>.size)
+      let bound = withUnsafeMutablePointer(to: &address) { pointer in
+        pointer.withMemoryRebound(to: sockaddr.self, capacity: 1) {
+          bind(listener, $0, length) == 0 && Darwin.listen(listener, 4) == 0
+            && getsockname(listener, $0, &length) == 0
+        }
+      }
+      try #require(bound)
+      let port = String(UInt16(bigEndian: address.sin_port))
       for generation in 1...2 {
         let authority = try ChannelProbeAuthority()
         let environment = try ExecutionEnvironment(
@@ -55,7 +75,8 @@
           try ManagedLineProcess(
             launcher: launcher,
             configuration: .init(
-              executable: binary.path, arguments: [String(generation), diagnostics.path],
+              executable: binary.path,
+              arguments: [String(generation), diagnostics.path, secret.path, port],
               environment: ["COMPUTER_MCP_HOST_FD": "9"], workingDirectory: directory.url))
         }
         do {
@@ -78,6 +99,12 @@
           #expect(String(decoding: message, as: UTF8.self) == "generation-\(generation)\n")
           try pair.host.write(contentsOf: Data("ack-\(generation)\n".utf8))
           #expect(try await lines.next() == "verified")
+          // A prepared provider launch has no host supervisor or watchdog; the
+          // adapter is the execution's only live process while it holds the channel.
+          #expect(await process.snapshot().supervisorProcessID == nil)
+          #expect(
+            try await #require(authority.ownership).members().map(\.processID)
+              == [member.processID])
           if generation == 1 {
             let original = try #require(authority.ownership)
             let recovery = try original.recoveryState()
@@ -116,6 +143,7 @@
     try #"""
     #include <errno.h>
     #include <fcntl.h>
+    #include <netinet/in.h>
     #include <stdio.h>
     #include <stdlib.h>
     #include <string.h>
@@ -128,7 +156,7 @@
     } } while (0)
     int main(int argc, char **argv) {
       CHECK(argc >= 2);
-      if (argc == 3) {
+      if (argc >= 3) {
         struct rlimit bound = {8192, 8192}; CHECK(setrlimit(RLIMIT_FSIZE, &bound) == 0);
         CHECK(freopen(argv[2], "w", stderr));
       }
@@ -149,6 +177,23 @@
       int flags = fcntl(3, F_GETFD);
       CHECK(flags >= 0 && fcntl(3, F_SETFD, flags | FD_CLOEXEC) == 0);
       CHECK(fcntl(3, F_GETFD) & FD_CLOEXEC);
+      if (argc == 5) {
+        // Holding the channel does not widen the sandbox's file or network access.
+        CHECK(open(argv[3], O_RDONLY) == -1 && (errno == EPERM || errno == EACCES));
+        int probe = socket(AF_INET, SOCK_STREAM, 0);
+        if (probe >= 0) {
+          struct sockaddr_in target = {0};
+          target.sin_len = sizeof(target);
+          target.sin_family = AF_INET;
+          target.sin_port = htons((unsigned short)atoi(argv[4]));
+          target.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+          CHECK(connect(probe, (struct sockaddr *)&target, sizeof(target)) == -1
+            && (errno == EPERM || errno == EACCES));
+          close(probe);
+        } else {
+          CHECK(errno == EPERM || errno == EACCES);
+        }
+      }
       pid_t child = fork(); CHECK(child >= 0);
       if (!child) { execl(argv[0], argv[0], "vendor", NULL); _exit(127); }
       int status;

@@ -69,6 +69,30 @@ struct MCPHostSessionTests {
     }
   }
 
+  @Test func callbackCatalogListsNoProviderRoute() async throws {
+    let f = try HostFixture(providerRoutes: true)
+    defer { f.remove() }
+    do {
+      let projected = try #require(
+        f.runtime.listTools(context: .empty).first {
+          $0.meta?.objectValue?["cli"]?.objectValue?["registration"] == .string("callback-cli")
+        })
+      let names = Set(
+        try f.runtime.hostToolCatalog(projectID: "first", origin: "plugin").map(\.name))
+      for route in [
+        "external.operation", "alias.external", "loop.operation", "alias.callback",
+        "mcp.tools.call", "mcp.servers.list", "mcp.resources.read", projected.name,
+      ] {
+        #expect(!names.contains(route), "\(route) in \(names.sorted())")
+      }
+      #expect(names.isSuperset(of: ["file.read", "cli.exec"]), "\(names.sorted())")
+      await f.runtime.shutdown()
+    } catch {
+      await f.runtime.shutdown()
+      throw error
+    }
+  }
+
   @Test func callbacksBorrowOnlyTheAdmittingExecutionsOneTimeGrant() async throws {
     let f = try HostFixture(fileBacked: true, missingProject: true)
     defer { f.remove() }

@@ -523,8 +523,7 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
     return try listTools(context: bound, invocationContext: invocationContext).filter { tool in
       guard
         let descriptor = try? descriptor(named: tool.name, invocationContext: invocationContext),
-        !descriptor.localOnly,
-        descriptor.mcpReference.map({ !hostServiceRegistrations.contains($0.serverID) }) ?? true
+        !descriptor.localOnly, !reachesProviderSession(descriptor, arguments: [:])
       else { return false }
       return policyEvaluator.evaluate(
         capability: descriptor, context: bound, grant: currentGrant,
@@ -724,24 +723,7 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
     let target = try descriptor(
       named: name, projectID: arguments["project_id"]?.stringValue ?? context.projectID,
       invocationContext: invocationContext)
-    guard !target.localOnly,
-      target.mcpReference == nil,
-      !(target.requirement.contribution.map { contribution in
-        switch contribution {
-        case .mcp: return true
-        case .cli(let selector):
-          let id: String?
-          switch selector {
-          case .registered(let value): id = value
-          case .argument(let key): id = arguments[key]?.stringValue
-          case .catalog, .skill: id = nil
-          }
-          return id.map { pluginOrigins[.init(kind: .cli, id: $0)] != nil } ?? false
-        case .skills: return false
-        }
-      } ?? false),
-      !(name.hasPrefix("mcp.") && arguments["server"]?.stringValue != nil)
-    else {
+    guard !target.localOnly, !reachesProviderSession(target, arguments: arguments) else {
       throw Self.invalid(
         code: "policy.host_recursion_denied",
         message:
@@ -1622,24 +1604,62 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
     case .read, .input, .cancel, .list: return nil
     default: break
     }
-    if case .cli(let selector) = descriptor.requirement.contribution {
-      let id: String?
-      switch selector {
-      case .registered(let value): id = value
-      case .argument(let name): id = arguments[name]?.stringValue
-      case .catalog, .skill: id = nil
-      }
-      if let id, pluginOrigins[.init(kind: .cli, id: id)] != nil {
-        return .init(kind: .cli, id: id)
-      }
-    }
-    guard descriptor.mcpReference != nil || descriptor.id.hasPrefix("mcp."),
+    if let registration = pluginCLI(descriptor, arguments: arguments) { return registration }
+    guard
       !["mcp.servers.list", "mcp.servers.status", "mcp.events.read", "mcp.tools.list"].contains(
         descriptor.id),
-      let id = descriptor.mcpReference?.serverID ?? arguments["server"]?.stringValue,
+      let id = Self.mcpServer(descriptor, arguments: arguments),
       configuration.mcp.servers.contains(where: { $0.id == id && $0.transport == .stdio })
     else { return nil }
     return .init(kind: .mcp, id: id)
+  }
+
+  /// Whether a call reaches a provider session: an MCP registration, through a re-exported
+  /// tool, an `mcp.*` route or forwarding, or a plugin CLI contribution. Such a call is never a
+  /// host callback target. With no arguments, a route selected only by its call's own argument
+  /// does not count, since some calls of that tool reach no provider.
+  private func reachesProviderSession(
+    _ descriptor: CapabilityDescriptor, arguments: [String: JSONValue]
+  ) -> Bool {
+    if descriptor.mcpReference != nil { return true }
+    if case .mcp = descriptor.requirement.contribution { return true }
+    if case .forwarded(_, _, .some) = descriptor.requirement.target { return true }
+    return pluginCLI(descriptor, arguments: arguments) != nil
+  }
+
+  /// The plugin CLI contribution a call selects through host registration or its own argument.
+  private func pluginCLI(
+    _ descriptor: CapabilityDescriptor, arguments: [String: JSONValue]
+  ) -> IntegrationRegistration? {
+    guard case .cli(let selector) = descriptor.requirement.contribution,
+      let id = Self.selected(selector, arguments: arguments),
+      pluginOrigins[.init(kind: .cli, id: id)] != nil
+    else { return nil }
+    return .init(kind: .cli, id: id)
+  }
+
+  /// The MCP server a call names through host provenance, its route or its forwarding target.
+  private static func mcpServer(
+    _ descriptor: CapabilityDescriptor, arguments: [String: JSONValue]
+  ) -> String? {
+    if let reference = descriptor.mcpReference { return reference.serverID }
+    if case .mcp(let server) = descriptor.requirement.contribution {
+      return selected(server, arguments: arguments)
+    }
+    if case .forwarded(_, _, let server?) = descriptor.requirement.target {
+      return arguments[server]?.stringValue
+    }
+    return nil
+  }
+
+  private static func selected(
+    _ object: ToolRequirement.Object, arguments: [String: JSONValue]
+  ) -> String? {
+    switch object {
+    case .registered(let id): return id
+    case .argument(let name): return arguments[name]?.stringValue
+    case .catalog, .skill: return nil
+    }
   }
 
   private func dispatchAdmitted(

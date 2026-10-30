@@ -128,7 +128,6 @@ private struct GatewayDerivedProjectStore: DerivedProjectStore {
     _ record: DerivedProjectRecord, expecting revision: Int64?,
     protecting branch: ProtectedWorktreeBranch?
   ) throws {
-    guard case .host = record.provenance else { throw DerivedProjectStoreError.invalidRecord }
     // Filesystem validation precedes the short write transaction. It grants no writable launch.
     if record.state == .active { try record.worktree?.verifyContent() }
     let expected = try database.configurationState()
@@ -188,7 +187,7 @@ private struct GatewayDerivedProjectStore: DerivedProjectStore {
   func remove(_ id: String, expecting revision: Int64) throws {
     try database.permissionTransaction { sql in
       guard let record = try SQLiteDerivedProjectStore.record(id, in: sql),
-        case .host = record.provenance, record.revision == revision
+        record.revision == revision
       else {
         throw DerivedProjectStoreError.revisionConflict
       }

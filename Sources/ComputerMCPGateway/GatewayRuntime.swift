@@ -11,6 +11,7 @@ import ComputerMCPProcess
 import ComputerMCPSandbox
 import ComputerMCPToolKit
 import ComputerMCPTransport
+import ComputerMCPWorktrees
 import Crypto
 import Foundation
 
@@ -766,6 +767,12 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
     else { return nil }
     let downstream =
       name == "mcp.tools.call" ? arguments["arguments"]?.objectValue ?? [:] : arguments
+    let plugin = pluginOrigins[.init(kind: .mcp, id: reference.serverID)]
+    if descriptor.hostServiceAction?.isProjectLifecycle == true, let plugin,
+      plugin.hostServiceContract != MCPHostServiceContract.identifier
+    {
+      throw MCPHostServiceContractError(observed: plugin.hostServiceContract)
+    }
     let id = UUID()
     let requestLeaseID = UUID()
     let recordStore = database?.hostCallRecordStore()
@@ -780,7 +787,6 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
     }
     let admission: HostCallAdmission?
     if let projectID = context.projectID, recordStore != nil {
-      let plugin = pluginOrigins[.init(kind: .mcp, id: reference.serverID)]
       admission = HostCallAdmission(
         id: id, generationID: generationID, verifiedClientID: context.trustedPrincipalID,
         actingPrincipal: .plugin(
@@ -802,17 +808,80 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
         code: "policy.host_invocation_required",
         message: "Host actions require a project-bound call record.")
     }
-    let invocation = MCPHostInvocation(
+    var invocation = MCPHostInvocation(
       id: id, requestLeaseID: requestLeaseID, admission: admission,
       reference: reference, admittedCapability: descriptor, upstreamName: name,
       arguments: downstream, context: context, authorizationRevision: authorizationRevision,
       providerExecution: providerExecution)
+    let reservation: HostOperationRecord?
+    if let action = descriptor.hostServiceAction, action.reservesOperation, let admission,
+      let database
+    {
+      let records = try database.derivedProjects()
+      guard let project = try database.project(id: admission.projectID),
+        let source = try database.project(id: admission.sourceProjectID)
+      else { throw WorktreeError.invalidRequest("The lifecycle project is not registered.") }
+      var arguments = try MCPHostOperations.normalizedArguments(action, downstream)
+      if action == .projectProvision, arguments["base"] == .null {
+        // Defaults are resolved once, here; the effect uses exactly the captured base.
+        guard
+          let base = try GatewayWorktreeService(
+            database: database, runtime: permissionRuntime, platform: platform, projectID: nil
+          ).mainBranch(sourceID: admission.sourceProjectID)
+        else {
+          throw WorktreeError.invalidRequest(
+            "An explicit base branch is required for a detached main checkout.")
+        }
+        arguments["base"] = .string(base)
+      }
+      reservation = HostOperationRecord(
+        id: UUID(),
+        binding: .init(
+          admission: admission, action: action, pluginID: plugin?.pluginID,
+          contributionID: plugin?.componentID, sourceRegisteredAt: source.createdAt,
+          projectRegisteredAt: project.createdAt,
+          worktreeID: action == .projectRemoval
+            ? records.first { $0.projectID == admission.projectID }?.provenance.worktreeID : nil,
+          arguments: arguments,
+          owner: permissionRuntime.coordinator.ownerIdentity))
+      invocation.operationID = reservation?.id
+    } else {
+      reservation = nil
+    }
     do { try hostToolDirectory.begin(invocation, store: recordStore) } catch let error
       as HostCallRecordError
     {
       throw Self.invalid(code: error.code, message: error.localizedDescription)
     }
+    if let reservation, let database {
+      // Durable before forwarding; reservation performs no lifecycle effect.
+      do { try HostOperationStore(connection: database.connection).reserve(reservation) } catch {
+        hostToolDirectory.end(invocation)
+        throw error
+      }
+    }
     return invocation
+  }
+
+  /// A reservation never claimed by its live invocation began no effects.
+  private func retireUnclaimedOperation(_ invocation: MCPHostInvocation?, cause: (any Error)?) {
+    guard let id = invocation?.operationID, let database else { return }
+    _ = try? HostOperationStore(connection: database.connection).finish(
+      id, from: [.reserved], to: .failed,
+      error: cause.map(MCPHostOperations.failure)
+        ?? .init(
+          code: "host.service_denied",
+          message: "The invocation ended before lifecycle effects began."))
+  }
+
+  /// Current grant for operation inspection, after the carrier invocation's rechecks.
+  func hostGrantPermits(
+    _ permission: ComputerMCPPermissions.Permission, _ value: PermissionValue,
+    _ invocation: MCPHostInvocation
+  ) throws -> Bool {
+    let grant = try currentHostGrant(context: invocation.context)
+    return grant.permissions.state(for: permission) == .granted(value)
+      && grant.allowedCallers.contains(invocation.context.caller)
   }
 
   func requireHostInvocation(
@@ -956,9 +1025,7 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
     guard let database else { return nil }
     try validateHostOrigin(projectID: context.launchMetadata.project.id, origin: origin)
     return MCPBoundHostServices(
-      database: database, directory: hostToolDirectory, context: context, origin: origin,
-      gitExecutable: platform.gitExecutable,
-      commandRunner: ManagedCommandRunner(launcher: platform.launcher))
+      database: database, directory: hostToolDirectory, context: context, origin: origin)
   }
 
   deinit {
@@ -1719,18 +1786,28 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
         authorizationRevision: admitted.grant.authorizationRevision,
         providerExecution: (invocationContext.executionAuthority as? PreparedExecutionContext)
           .flatMap { $0.provider == nil ? nil : $0 })
-      defer { hostToolDirectory.end(hostInvocation) }
+      var dispatchError: (any Error)?
+      defer {
+        retireUnclaimedOperation(hostInvocation, cause: dispatchError)
+        hostToolDirectory.end(hostInvocation)
+      }
       let providerContext = InvocationContext(
         resolvedInvocation: invocationContext.resolvedInvocation,
         admission: InvocationAdmission(
-          descriptor: admitted.resolved.descriptor, hostInvocationID: hostInvocation?.id),
+          descriptor: admitted.resolved.descriptor, hostInvocationID: hostInvocation?.id,
+          hostOperationID: hostInvocation?.operationID),
         session: invocationContext.session, continuation: invocationContext.continuation,
         executionRecoveryKey: invocationContext.executionRecoveryKey,
         executionAuthority: invocationContext.executionAuthority)
-      return try await provider.callToolAsync(
-        name: name, arguments: .object(routed.arguments),
-        expectedCapability: name == "mcp.tools.call" ? nil : admitted.resolved.descriptor,
-        context: providerContext)
+      do {
+        return try await provider.callToolAsync(
+          name: name, arguments: .object(routed.arguments),
+          expectedCapability: name == "mcp.tools.call" ? nil : admitted.resolved.descriptor,
+          context: providerContext)
+      } catch {
+        dispatchError = error
+        throw error
+      }
     }
   }
 
@@ -2404,6 +2481,9 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
     }
     if let refusal = error as? PluginCompatibilityRefusal {
       fields["refusal"] = try? ControlToolResponse.encodedPayload(refusal)
+    }
+    if let contract = error as? MCPHostServiceContractError {
+      fields.merge(contract.fields) { _, value in value }
     }
     let payload = JSONValue.object(fields)
     return .object([

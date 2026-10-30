@@ -50,7 +50,6 @@ package struct GatewayPathAccess: HostPathAccessChecking {
       var checkedAuthorizationID = authorizationID
       do {
         for record in try GatewayDatabase.availableDerivedProjects(in: database) {
-          guard case .host = record.provenance else { continue }
           let root = try ProjectPathResolver.resolve(
             record.root, relativeTo: URL(fileURLWithPath: "/"))
           guard ProjectPathResolver.contains(canonical, in: root) else { continue }

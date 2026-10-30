@@ -3,6 +3,7 @@ import ComputerMCPControlPlane
 import ComputerMCPCore
 import ComputerMCPMacOS
 import ComputerMCPPermissions
+import ComputerMCPPersistence
 import ComputerMCPPlatform
 import ComputerMCPPlugins
 import ComputerMCPProcess
@@ -151,3 +152,29 @@ private struct HostedProviderExecutionPlatform: ExecutionPlatform {
 #if os(macOS)
   import ComputerMCPDarwinTestSupport
 #endif
+
+/// A host-derived child whose removal is in progress. It carries derived authority
+/// without worktree content, so routing and publication tests need no Git fixture.
+func fixtureRemovingDerivedProject(
+  database: GatewayDatabase, id: String, sourceID: String, root: URL, displayName: String
+) throws {
+  let source = try #require(try database.project(id: sourceID))
+  try database.connection.writer.write { sql in
+    let project = ComputerMCPCore.RegisteredProject(
+      id: id, displayName: displayName, rootPath: root.path)
+    try ProjectRecord(project).insert(sql)
+    try ProjectCanonicalRootRecord(
+      canonicalRootPath: root.path, projectID: id, createdAt: project.createdAt
+    ).insert(sql)
+    try SQLiteDerivedProjectStore.commit(
+      .init(
+        projectID: id,
+        source: .init(
+          id: sourceID, root: GatewayDatabase.canonicalProjectRoot(source.rootPath),
+          registeredAt: source.createdAt),
+        // The record's root is the registered project's root, as the lifecycle writes both.
+        root: project.rootPath, provenance: .host(worktreeID: UUID(), storageGeneration: UUID()),
+        state: .removing),
+      expecting: nil, in: sql)
+  }
+}

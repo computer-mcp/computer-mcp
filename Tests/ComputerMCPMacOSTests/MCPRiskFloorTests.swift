@@ -19,8 +19,8 @@ struct MCPRiskFloorTests {
   @Test
   func hostActionsEnforceTheirOwnRiskFloorAndRejectUnknownDeclarations() throws {
     for (action, risk) in [
-      ("diagnostics.snapshot", CapabilityRisk.readOnly),
-      ("workspaces.provision", .projectWrite), ("workspaces.remove", .destructive),
+      ("diagnostics.snapshot", CapabilityRisk.readOnly), ("projects.list", .readOnly),
+      ("projects.provision", .projectWrite), ("projects.remove", .destructive),
     ] {
       let tool = MCPTool(
         name: "fixture", description: "Fixture", inputSchema: .object([:]),
@@ -30,7 +30,10 @@ struct MCPRiskFloorTests {
         ]))
       #expect(try tool.declaredRiskFloor == risk)
     }
-    for value in [JSONValue.null, .bool(true), .object([:]), .string("project.admin")] {
+    for value in [
+      JSONValue.null, .bool(true), .object([:]), .string("project.admin"),
+      .string("workspaces.provision"), .string("workspaces.remove"),
+    ] {
       let tool = MCPTool(
         name: "fixture", description: "Fixture", inputSchema: .object([:]),
         meta: .object(["io.github.computer-mcp/host-action": value]))
@@ -42,7 +45,7 @@ struct MCPRiskFloorTests {
   func sameRiskHostActionChangeCannotFollowAdmission(path: String) async throws {
     let fixture = try RiskFixture(allAccess: true, risk: .string("workspace-write"))
     defer { fixture.remove() }
-    fixture.client.setAction(.string("workspaces.provision"))
+    fixture.client.setAction(.string("projects.provision"))
     fixture.client.changeActionAfterNextDiscovery(.string("diagnostics.snapshot"))
     var args = arguments(for: "mcp.tools.call").objectValue!
     args["wait_for_result"] = .bool(path != "detached")

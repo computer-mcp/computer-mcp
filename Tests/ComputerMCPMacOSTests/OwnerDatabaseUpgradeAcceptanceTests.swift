@@ -36,7 +36,13 @@ struct OwnerDatabaseUpgradeAcceptanceTests {
     }
     let database = try GatewayDatabase(path: target.path)
     let afterSchema = try database.connection.writer.read { try rows($0, legacy: false) }
-    for (table, values) in before where table != "grdb_migrations" && table != "operationTickets" {
+    // Plugin-registration-derived rows are retired with one notice each, not preserved.
+    let legacyDerived = before["pluginDerivedProjects"]?.count ?? 0
+    #expect(afterSchema["pluginWorktreeRetirements"]?.count == legacyDerived)
+    for (table, values) in before
+    where !["grdb_migrations", "operationTickets", "pluginDerivedProjects"].contains(table)
+      && (table != "projects" || legacyDerived == 0)
+    {
       #expect(afterSchema[table] == values, "Schema conversion changed owned rows in \(table)")
     }
     #expect(before["operationTickets"]?.isEmpty != false)
@@ -66,7 +72,7 @@ struct OwnerDatabaseUpgradeAcceptanceTests {
     let afterActivation = try database.connection.writer.read { try rows($0, legacy: false) }
     for (table, values) in afterSchema
     where ![
-      "grdb_migrations", "clientControlTrust", "pluginDerivedProjects", "permissionControlRevision",
+      "grdb_migrations", "clientControlTrust", "permissionControlRevision",
       "permissionLedger", "permissionProfiles", "permissionMigration",
       "permissionProfilePublication",
     ].contains(table) {
@@ -80,7 +86,10 @@ struct OwnerDatabaseUpgradeAcceptanceTests {
     #expect(
       try database.connection.writer.read {
         try Int.fetchOne($0, sql: "SELECT count(*) FROM derivedProjects")
-      } == plan.derived.count)
+      } == 0)
+    let retired = try database.connection.writer.read {
+      try Int.fetchOne($0, sql: "SELECT count(*) FROM pluginWorktreeRetirements") ?? 0
+    }
     #expect(
       try database.activatePermissionMigration(
         manifest: manifest, baseURL: manifestBase, applications: TestApplicationBundleLocator(),
@@ -90,7 +99,7 @@ struct OwnerDatabaseUpgradeAcceptanceTests {
     let grantsDigest = try AtomicManifestStore.digest(
       of: encoded.encode(plan.profiles.sorted { $0.id.rawValue < $1.id.rawValue }))
     print(
-      "OWNER_DB_UPGRADE projects=\(projects.count) source_tables=\(before.count) preserved_row_digests=true derived=\(plan.derived.count) converted_profiles=\(plan.profiles.count) old_trusts=\(before["clientControlTrust"]?.count ?? 0) new_trusts=0 grant_digest=\(grantsDigest) input_digest=\(plan.inputDigest) catalog_digest=\(plan.catalogDigest) retry=idempotent"
+      "OWNER_DB_UPGRADE projects=\(projects.count) source_tables=\(before.count) preserved_row_digests=true retired=\(retired) converted_profiles=\(plan.profiles.count) old_trusts=\(before["clientControlTrust"]?.count ?? 0) new_trusts=0 grant_digest=\(grantsDigest) input_digest=\(plan.inputDigest) catalog_digest=\(plan.catalogDigest) retry=idempotent"
     )
     #expect(
       try AtomicManifestStore.digest(

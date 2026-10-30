@@ -14,11 +14,15 @@ package struct DerivedProjectSource: Codable, Equatable, Sendable {
   }
 }
 
+/// The host worktree lifecycle is the only owner of derived project authority.
 package enum DerivedProjectProvenance: Codable, Equatable, Sendable {
-  /// The owning adapter retains its exact versioned receipt bytes. This provenance
-  /// cannot establish a host-verified private Git execution context.
-  case plugin(receipt: Data)
   case host(worktreeID: UUID, storageGeneration: UUID)
+
+  package var worktreeID: UUID {
+    switch self {
+    case .host(let worktreeID, _): worktreeID
+    }
+  }
 }
 
 package struct DerivedProjectRecord: Codable, Equatable, Sendable {
@@ -52,16 +56,7 @@ package struct DerivedProjectRecord: Codable, Equatable, Sendable {
       revision > 0, revision < Int64.max,
       [root, source.root].allSatisfy({ $0.hasPrefix("/") && !$0.contains("\0") })
     else { throw DerivedProjectStoreError.invalidRecord }
-    if case .plugin(let receipt) = provenance {
-      guard !receipt.isEmpty, receipt.count <= 32_768,
-        state == .active || state == .sourceUnavailable, worktree == nil
-      else {
-        throw DerivedProjectStoreError.invalidRecord
-      }
-    }
-    if case .host = provenance, state == .active, worktree == nil {
-      throw DerivedProjectStoreError.invalidRecord
-    }
+    if state == .active, worktree == nil { throw DerivedProjectStoreError.invalidRecord }
     try worktree?.validate(record: self)
   }
 }

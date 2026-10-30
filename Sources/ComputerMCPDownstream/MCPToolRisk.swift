@@ -27,9 +27,11 @@ extension InvocationAdmission {
     }
   }
 
-  package func correlationID(for server: MCPServerConfig, tool: String) -> UUID? {
-    guard server.hostServices, reference == MCPToolReference(serverID: server.id, toolName: tool)
+  package func hostDispatch(for server: MCPServerConfig, tool: String) -> HostServiceDispatch? {
+    guard server.hostServices, reference == MCPToolReference(serverID: server.id, toolName: tool),
+      let hostInvocationID
     else { return nil }
-    return hostInvocationID
+    return .init(
+      invocationID: hostInvocationID, operationID: hostOperationID, action: hostServiceAction)
   }
 }

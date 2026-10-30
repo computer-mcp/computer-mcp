@@ -63,7 +63,7 @@ package struct WorktreeRegistration: Codable, Equatable, Sendable {
   }
 
   func validate(record: DerivedProjectRecord) throws {
-    guard case .host = record.provenance, root.path == record.root,
+    guard root.path == record.root,
       repository.source.path == record.source.root,
       repository.format.contains(baseOID),
       publishedOID.map(repository.format.contains) ?? true,

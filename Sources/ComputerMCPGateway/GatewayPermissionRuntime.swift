@@ -270,6 +270,8 @@ extension GatewayDatabase {
     try permissionRuntimeLock.withLock {
       if let existing = permissionRuntimeCache { return existing }
       let runtime = try GatewayPermissionRuntime(database: self, platform: platform)
+      // A new execution owner reconciles operations other owners left unfinished.
+      try reconcileHostOperations(owner: runtime.coordinator.ownerIdentity)
       permissionRuntimeCache = runtime
       return runtime
     }

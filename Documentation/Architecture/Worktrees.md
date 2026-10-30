@@ -18,8 +18,8 @@ creation with a retryable result. There is no shared object alternate. `origin`
 names the source repository so programs can fetch later source commits.
 
 The ledger and journals bind source identity, directories, storage generation,
-branch and base. A path, foreign checkout or plugin registration alone cannot
-create a verified context. Private configuration, hooks, alternate/graft/shallow
+branch and base. A path or foreign checkout alone cannot create a verified
+context. Private configuration, hooks, alternate/graft/shallow
 controls and their protected containing directory entries are immutable to
 sandboxed programs. Other private Git state remains writable for ordinary Git
 operations. The source and other worktrees stay read-only to those programs.

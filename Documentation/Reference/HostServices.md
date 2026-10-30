@@ -32,9 +32,10 @@ The prepared provider context carries one opaque, verified, host-created service
 channel, with an exact descriptor mapping. The adapter receives the connected
 Unix stream descriptor through `COMPUTER_MCP_HOST_FD`, never a control-socket
 path, credential or local-admin identity. The host replaces reserved environment
-entries after merging launch settings. The adapter marks its inherited endpoint
-close-on-exec before spawning children; the supervisor, watchdog and vendor
-subprocesses do not retain it. Arbitrary descriptor inheritance is not allowed.
+entries after merging launch settings. A prepared provider launch has no host
+supervisor or watchdog. The adapter marks its inherited endpoint close-on-exec
+before spawning children, so vendor subprocesses do not retain it. Arbitrary
+descriptor inheritance is not allowed.
 The channel does not enlarge sandbox filesystem or network permissions.
 
 The endpoint uses MCP initialization and newline-delimited JSON-RPC, including
@@ -339,7 +340,10 @@ registrations cannot become removal targets.
 
 Removal closes admission, drains host mutations and terminates/reaps sandboxed
 writers across clients and providers before capture. Full access writers are
-terminated best-effort and possible survivors are reported. It first durably
+terminated best-effort and possible survivors are reported. When the calling
+provider session is a writer of the selected worktree, it is terminated like any
+other writer; its reply is then lost, and the plugin reads the outcome with
+`host.invocations.describe` by `operation_id` from the source project. It first durably
 retains every private reference and reflog root with its complete closure in
 the host recovery store, then publishes HEAD with an expected-value source-ref
 update, then removes owned storage and unregisters the project last. The journal

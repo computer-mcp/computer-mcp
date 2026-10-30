@@ -17,21 +17,16 @@ package struct MCPHostLaunchMetadata: Encodable, Sendable {
   }
 
   package let formatVersion = 1
+  package let hostServiceContract = MCPHostServiceContract.identifier
   package let runtimeID: UUID
   package let caller: GatewayCallerKind
   package let profileID: GatewayProfileID
   package let project: Project
   package let readOnly: Bool
   package let transportTrace: GatewayTransportTrace?
+  /// Host-selected storage provenance; never permission to create, adopt or delete a checkout.
   package let managedProjectRoot: String?
   package let principalID: String
-
-  private enum CodingKeys: String, CodingKey {
-    // Launch metadata is consumed by independently installed plugins.
-    case formatVersion, runtimeID, caller, profileID, readOnly, transportTrace, principalID
-    case project = "workspace"
-    case managedProjectRoot = "managedWorkspaceRoot"
-  }
 
   package init(
     runtimeID: UUID, context: ExecutionContext, projectID: String, rootURL: URL,
@@ -75,7 +70,6 @@ package protocol MCPHostEnvironment: Sendable {
   var processOwnershipRoot: URL? { get }
   var pluginArtifacts: [String: PluginDirectoryIdentity] { get }
   var providesHostServices: Bool { get }
-  func makeHostSession(server: MCPServerConfig) throws -> any MCPHostSessionHandle
   func makeHostSession(server: MCPServerConfig, execution: PreparedExecutionContext) throws
     -> any MCPHostSessionHandle
 }
@@ -90,12 +84,7 @@ extension MCPHostEnvironment {
 
 /// Prepared providers consume the opaque channel. Cleanup precedes ownership confirmation.
 package protocol MCPHostSessionHandle: Sendable {
-  var childHandle: FileHandle? { get }
-  var providerChannel: ProviderHostServiceChannel? { get }
+  var providerChannel: ProviderHostServiceChannel { get }
   func close() async
   func shutdownConfirmed() async -> Bool
-}
-
-extension MCPHostSessionHandle {
-  package var providerChannel: ProviderHostServiceChannel? { nil }
 }

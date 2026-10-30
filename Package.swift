@@ -373,7 +373,7 @@ let neutralTargets: [Target] =
         "ComputerMCPControlPlane", "ComputerMCPGateway", "ComputerMCPCore",
         "ComputerMCPPersistence", .product(name: "GRDB", package: "GRDB.swift"),
         "ComputerMCPPlatform", "ComputerMCPPlatformPOSIX", "ComputerMCPTunnels",
-        "ComputerMCPTestSupport",
+        "ComputerMCPTestSupport", "ComputerMCPWorktrees",
       ]
     ),
     .target(

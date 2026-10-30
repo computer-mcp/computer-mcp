@@ -243,6 +243,7 @@ Admission audit is durable before dispatch. Outcomes contain input/output digest
 and bounded metadata, never clear arguments or output. Audit retention is 90 days
 and at most one million entries; pruning does not change permission authority.
 Failure to persist completion reports an unknown outcome and does not replay work.
-Private `host.workspaces.authorize_removal` and `host.workspaces.unregister` calls
-verify a live admitted call record and its exact receipt, principal, arguments and
-current authority. The plugin wire names and receipt digest fields are stable.
+Private `host.projects.worktree_add` and `host.projects.worktree_remove` calls verify
+a live admitted call record, its host-reserved operation, principal, captured
+lifecycle arguments and current authority, then run the shared worktree lifecycle.
+A durable operation record answers repeated calls and lost replies without replay.

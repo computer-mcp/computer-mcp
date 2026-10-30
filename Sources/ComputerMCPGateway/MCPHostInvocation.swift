@@ -16,6 +16,8 @@ struct MCPHostInvocation: Sendable {
   let context: ExecutionContext
   let authorizationRevision: Int64
   let providerExecution: PreparedExecutionContext?
+  /// The lifecycle operation reserved for this invocation before forwarding.
+  var operationID: UUID?
 
   init(
     id: UUID, requestLeaseID: UUID, admission: HostCallAdmission?, reference: MCPToolReference,

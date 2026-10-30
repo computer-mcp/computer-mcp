@@ -42,10 +42,6 @@ package struct MCPHostContext: MCPHostEnvironment {
     verifiedPrincipalID = context.trustedPrincipalID
   }
 
-  package func makeHostSession(server: MCPServerConfig) throws -> any MCPHostSessionHandle {
-    try MCPHostSession(context: self, server: server)
-  }
-
   package func makeHostSession(server: MCPServerConfig, execution: PreparedExecutionContext) throws
     -> any MCPHostSessionHandle
   {

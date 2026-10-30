@@ -1,6 +1,6 @@
 import Foundation
 
-package struct WorktreeRemovalResult: Sendable {
+package struct WorktreeRemovalResult: Equatable, Sendable {
   package let projectID: String
   package let branch: String
   package let oid: String
@@ -25,8 +25,11 @@ struct WorktreeRemovalJournal: Codable {
 extension WorktreeRepository {
   /// The caller supplies the execution owner's termination barrier and live
   /// authorization, including main-checkout destinations needed by recovery.
+  /// A host-reserved `operationID` names a new removal journal; an incomplete
+  /// journal of another operation is never adopted under that ID.
   package func remove(
-    projectID: String, force: Bool = false, limits: WorktreePromotionLimits = .init(),
+    projectID: String, force: Bool = false, operationID: UUID? = nil,
+    limits: WorktreePromotionLimits = .init(),
     terminate: (WorktreeAdmission, UUID) async throws -> Void,
     authorize: (DerivedProjectRecord, [URL]) throws -> Void
   ) async throws -> WorktreeRemovalResult {
@@ -34,6 +37,11 @@ extension WorktreeRepository {
     let lock = try acquireLock(validateHead: false)
     defer { lock.release() }
     var pending = try readRemoval(projectID)
+    if let operationID, let other = pending, other.operationID != operationID,
+      other.phase != .abandoned
+    {
+      throw WorktreeError.busy("Another removal operation is incomplete for this worktree.")
+    }
     if let pending, pending.phase == .finished {
       try authorize(pending.record, [])
       return try removalResult(pending)
@@ -53,7 +61,7 @@ extension WorktreeRepository {
         creation, repository: identity, source: source, validateHead: false)
       let admission = try WorktreeAdmission(topology: topology)
       let next = WorktreeRemovalJournal(
-        operationID: UUID(), repository: identity, record: record,
+        operationID: operationID ?? UUID(), repository: identity, record: record,
         admission: admission, force: force, phase: .closing)
       try saveRemoval(next, replacing: try readRemoval(projectID).map(removalBytes))
       pending = next
@@ -149,6 +157,8 @@ extension WorktreeRepository {
       guard try privateMetadata(topology).head == oid,
         try journal.force || status(topology).isEmpty
       else { throw WorktreeError.busy("Worktree changed before destruction.") }
+      // Committing teardown is itself an authority boundary.
+      try authorize(journal.record, [])
       var removing = journal.record
       removing.state = .removing
       removing.revision += 1

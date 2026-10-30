@@ -7,7 +7,6 @@ package enum PermissionMigrationError: Error, Equatable {
   case activationRequired
   case invalidCatalog
   case missingManifestProfile(String)
-  case ownershipConflict(String, reason: String)
   case stateChanged, revisionExhausted, invalidStoredState
 }
 

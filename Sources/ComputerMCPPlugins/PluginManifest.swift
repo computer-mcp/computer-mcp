@@ -274,7 +274,8 @@ package struct PluginMCPContribution: Codable, Equatable, Sendable {
       [String: PluginToolRequirements].self, forKey: .toolRequirements)
     hostServiceContract = try c.decodeIfPresent(String.self, forKey: .hostServiceContract)
     guard (toolRequirements ?? [:]).keys.allSatisfy({ !$0.isEmpty && !$0.contains("\0") }),
-      hostServiceContract == nil || (hostServiceContract == "projects-v1" && transport == .stdio)
+      hostServiceContract == nil
+        || (hostServiceContract == MCPHostServiceContract.identifier && transport == .stdio)
     else { throw PluginManifestError.invalid("Invalid tool name or host service contract.") }
     if transport == .stdio {
       guard executable != nil, url == nil else {

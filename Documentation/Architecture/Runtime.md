@@ -393,12 +393,13 @@ acquisition reference, including derived work after the response. Complete work
 observations release the context only after its final owner disappears; failed
 observations retain it. Background contexts do not consume active-call slots.
 Exact-ID context inspection rechecks the current grant. Mutation services require
-an active forwarded request; background retention does not extend that mutation window. Private services compare the durable call
-record with its in-process lease, exact action and arguments, then check current
-grants. Removal and unregister both validate this proof after Git verification.
-Only the invocation that inserted a registration may perform exact provisioning
-rollback after revocation. Binding is lazy so plugin catalog
-startup does not depend on a partially constructed Gateway runtime.
+an active forwarded request; background retention does not extend that mutation
+window. Private services compare the durable call record with its in-process lease,
+exact action and arguments, then check current grants. Before forwarding a
+lifecycle mutation the host durably reserves an operation; a callback atomically
+claims that reservation under current authority, and the operation records the
+outcome. Binding is lazy so plugin catalog startup does not depend on a partially
+constructed Gateway runtime.
 
 Callback-enabled calls require a bound project, including the generic MCP
 entry point. A sole registered project can be selected automatically;
@@ -407,12 +408,14 @@ its initialization source: configuration and builtin grants can exist without
 a profile row, while runtimes initialized with persisted authority require that
 row to remain present. Current persisted restrictions are reapplied to callbacks.
 
-`MCPBoundHostServices` owns the atomic derived-project registration ledger
-and projects bounded diagnostics. Its private namespace permits only
-invocation inspection, project registration, verified removal, and diagnostic reads for matching
-live invocations. Plugins declare their semantic actions in tool metadata;
-call records and project grants remain in the Gateway Database. Permission-ledger admission binds the live call record. A receipt or compatibility
-field cannot substitute for current ledger and invocation proof.
+`MCPBoundHostServices` serves the `projects-v1` private namespace: invocation and
+operation inspection, host worktree creation, listing and removal through
+`GatewayWorktreeService` and the worktree lifecycle library, and bounded
+diagnostics. The host and provider each advertise the contract marker; lifecycle
+dispatch requires both. Plugins declare their semantic actions in tool metadata;
+call records, operations and project grants remain in the Gateway Database.
+Permission-ledger admission binds the live call record, and nothing a plugin
+stores substitutes for current ledger and invocation proof.
 
 See [Scoped host services](../Reference/HostServices.md) for configuration,
 wire surface, scope checks, bounds and recovery behavior.

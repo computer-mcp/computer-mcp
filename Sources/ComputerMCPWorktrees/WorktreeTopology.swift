@@ -52,7 +52,7 @@ extension WorktreeRepository {
   package func topology(projectID: String) throws -> VerifiedWorktreeTopology {
     try withLock { _ in
       guard let record = try store.records().first(where: { $0.projectID == projectID }),
-        case .host = record.provenance, record.source == source, record.state == .active,
+        record.source == source, record.state == .active,
         let journal = try readJournal(projectID), journal.phase == .active,
         try matchesActiveRecord(journal, record)
       else {

@@ -217,34 +217,6 @@ import Testing
     #expect(try catalog(old, tools: [a]).digest != catalog(old, tools: [b]).digest)
   }
 
-  @Test func derivedInheritancePreservesReceiptAndRejectsIndependentGrant() throws {
-    let child = ComputerMCPCore.RegisteredProject(
-      id: "derived", displayName: "Derived", rootPath: "/fixture/derived",
-      createdAt: project.createdAt, updatedAt: project.updatedAt)
-    let row = MCPDerivedProjectRegistration(
-      origin: "plugin:fixture", receiptID: "receipt", sourceProjectID: project.id,
-      sourceRoot: project.rootPath, receiptDigest: "digest", profileID: .chatGPTOperate,
-      caller: .secureTunnel, project: child)
-    let old = profile(["file.write"], projects: [project.id, child.id])
-    let projects = PermissionMigrationProjects(registered: [project, child], derived: [row])
-    let result = try PermissionProfileMigration.plan(
-      profiles: [old], catalog: catalog(old), projects: projects)
-    #expect(result.derived == [row])
-    #expect(result.derived[0].principalID == nil)
-    #expect(result.profiles[0].permissions.entries[.project(child.id)] == nil)
-    #expect(result.profiles[0].permissions.state(for: .project(project.id)) == .granted(.write))
-    var independent = old
-    independent.id = .localAdmin
-    #expect(
-      throws: PermissionMigrationError.ownershipConflict(
-        child.id, reason: "Receipt ownership, source grant, or independent derived grant conflicts."
-      )
-    ) {
-      try PermissionProfileMigration.plan(
-        profiles: [old, independent], catalog: catalog(old), projects: projects)
-    }
-  }
-
   @Test(arguments: [false, true])
   func historicalWorkspaceAndCurrentSchema(historical: Bool) throws {
     let directory = FileManager.default.temporaryDirectory.appendingPathComponent(
@@ -598,76 +570,74 @@ import Testing
     }
   }
 
-  @Test func persistedDerivedReceiptUsesStoredPrecisionAndCanonicalRoot() throws {
+  /// Pre-activation plugin registration input is retired when the database opens, so the
+  /// later conversion has no derived row to reinsert and reports the stale grant instead.
+  @Test func preActivationPluginRowsAreRetiredBeforeConversion() throws {
     let directory = FileManager.default.temporaryDirectory.appendingPathComponent(
       "migration-" + UUID().uuidString)
     try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
     defer { try? FileManager.default.removeItem(at: directory) }
-    let root = directory.appendingPathComponent("source")
-    let alias = directory.appendingPathComponent("alias")
-    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
-    try FileManager.default.createSymbolicLink(at: alias, withDestinationURL: root)
-    var source = project
-    source.rootPath = alias.path
+    let path = directory.appendingPathComponent("gateway.sqlite").path
     let date = Date(timeIntervalSince1970: 1_750_000_000.123456)
     let child = ComputerMCPCore.RegisteredProject(
       id: "derived", displayName: "Derived",
       rootPath: directory.appendingPathComponent("derived").path, createdAt: date, updatedAt: date)
-    let row = MCPDerivedProjectRegistration(
-      origin: "plugin:fixture", receiptID: "receipt", sourceProjectID: source.id,
-      sourceRoot: root.resolvingSymlinksInPath().path, receiptDigest: "digest",
-      profileID: .chatGPTOperate, principalID: "client", caller: .secureTunnel, project: child)
-    let connection = try GatewayDatabaseConnection(inMemory: ())
     var old = profile(["file.write"])
     old.projectIDs.insert(child.id)
-    try connection.writer.write { database in
-      try ProjectRecord(source).insert(database)
-      try ProjectRecord(child).insert(database)
-      try LegacyProfileRecord(old, updatedAt: date).insert(database)
-      try ProjectCanonicalRootRecord(
-        canonicalRootPath: root.resolvingSymlinksInPath().path, projectID: source.id,
-        createdAt: date
-      ).insert(database)
-      try ProjectCanonicalRootRecord(
-        canonicalRootPath: "/fixture/previous-root", projectID: source.id, createdAt: date
-      ).insert(database)
-      try database.execute(
-        sql:
-          "INSERT INTO pluginDerivedProjects (projectID, origin, sourceProjectID, receiptID, payloadJSON) VALUES (?, ?, ?, ?, ?)",
-        arguments: [
-          child.id, row.origin, source.id, row.receiptID,
-          String(decoding: try JSONEncoder().encode(row), as: UTF8.self),
-        ])
+    /// The version-1 registration receipt written by historical hosts.
+    struct Receipt: Encodable {
+      let origin = "plugin:fixture"
+      let receiptID = "receipt"
+      let sourceWorkspaceID: String
+      let sourceRoot: String
+      let receiptDigest = "digest"
+      let profileID = "chatgpt-operate"
+      let principalID = "client"
+      let caller = "secure-tunnel"
+      let workspace: ComputerMCPCore.RegisteredProject
     }
+    let receipt = try JSONEncoder().encode(
+      Receipt(sourceWorkspaceID: project.id, sourceRoot: project.rootPath, workspace: child))
+    do {
+      let earlier = try DatabaseQueue(path: path)
+      try GatewayDatabaseConnection.migrator.migrate(earlier, upTo: "provider-containers")
+      try earlier.write { database in
+        try ProjectRecord(project).insert(database)
+        try ProjectRecord(child).insert(database)
+        try LegacyProfileRecord(old, updatedAt: date).insert(database)
+        try database.execute(
+          sql:
+            "INSERT INTO pluginDerivedProjects (projectID, origin, sourceProjectID, receiptID, payloadJSON) VALUES (?, ?, ?, ?, ?)",
+          arguments: [
+            child.id, "plugin:fixture", project.id, "receipt",
+            String(decoding: receipt, as: UTF8.self),
+          ])
+      }
+      try earlier.close()
+    }
+    let connection = try GatewayDatabaseConnection(path: path)
+    try connection.writer.read { (database: Database) throws -> Void in
+      #expect(try !database.tableExists("pluginDerivedProjects"))
+      #expect(try ProjectRecord.fetchOne(database, key: child.id) == nil)
+      #expect(try ProjectRecord.fetchOne(database, key: project.id) != nil)
+      #expect(try LegacyProfileRecord.fetchCount(database) == 1)
+    }
+    let notices = try PluginWorktreeRetirementStore(connection: connection).pending()
+    #expect(notices.map(\.checkoutPath) == [child.rootPath])
+    #expect(notices.map(\.sourceProjectID) == [project.id])
+    #expect(notices.map(\.sourceRepository) == [project.rootPath])
+    #expect(
+      notices.first?.sourceRegisteredAt?.timeIntervalSince1970
+        == project.createdAt.timeIntervalSince1970)
     let store = PermissionMigrationStore(connection: connection, counter: MigrationCounter())
     let catalog = try catalog(old)
     let (plan, state) = try store.prepare(catalog: catalog)
-    #expect(plan.derived == [row])
-    #expect(plan.profiles[0].permissions.entries[.project(child.id)] == nil)
-    let controlRevision = try connection.writer.read {
-      try Int.fetchOne($0, sql: "SELECT revision FROM permissionControlRevision WHERE id = 1")
-    }
+    #expect(plan.report.dropped.contains { $0.grant == child.id })
     try store.apply(plan, expectedState: state, currentCatalog: catalog)
-    #expect(
-      try connection.writer.read {
-        try Int.fetchOne($0, sql: "SELECT revision FROM permissionControlRevision WHERE id = 1")
-      } == controlRevision.map { $0 + 1 })
-    let saved = try connection.writer.read {
-      guard
-        case .plugin(let receipt) = try SQLiteDerivedProjectStore.record(child.id, in: $0)?
-          .provenance
-      else { return nil as Data? }
-      #expect(try !$0.tableExists("pluginDerivedProjects"))
-      return receipt
-    }
-    #expect(
-      try JSONDecoder().decode(MCPDerivedProjectRegistration.self, from: #require(saved)) == row)
-    try connection.writer.write {
-      try $0.execute(sql: "UPDATE projects SET displayName = 'Changed' WHERE id = 'derived'")
-    }
-    #expect(
-      throws: PermissionMigrationError.stateChanged
-    ) { try store.prepare(catalog: catalog) }
+    #expect(try SQLiteDerivedProjectStore(connection: connection).records().isEmpty)
+    let converted = try #require(try store.profiles().first)
+    #expect(converted.permissions.entries[.project(child.id)] == nil)
+    #expect(converted.permissions.state(for: .project(project.id)) == .granted(.write))
   }
 
   @Test(arguments: ["alias", "plugin"])

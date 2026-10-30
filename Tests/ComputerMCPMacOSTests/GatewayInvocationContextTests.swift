@@ -273,10 +273,10 @@ struct GatewayInvocationContextTests {
       #expect((observed.continuation as? MCPContinuationTarget)?.connectionID == route.connectionID)
       let invocationID = try #require(admission.hostInvocationID)
       #expect(observed.correlationID == invocationID)
-      #expect(admission.correlationID(for: fixture.server, tool: "change") == nil)
+      #expect(admission.hostDispatch(for: fixture.server, tool: "change") == nil)
       var unbound = fixture.server
       unbound.hostServices = false
-      #expect(admission.correlationID(for: unbound, tool: "inspect") == nil)
+      #expect(admission.hostDispatch(for: unbound, tool: "inspect") == nil)
       await fixture.runtime.shutdown()
     } catch {
       await fixture.runtime.shutdown()
@@ -678,7 +678,7 @@ private final class InvocationClientSpy: DownstreamMCPClient, Sendable {
       $0.append(
         .init(
           name: name, arguments: arguments, admission: admission, session: context.session,
-          correlationID: admission?.correlationID(for: server, tool: name),
+          correlationID: admission?.hostDispatch(for: server, tool: name)?.invocationID,
           continuation: context.continuation))
     }
     return result

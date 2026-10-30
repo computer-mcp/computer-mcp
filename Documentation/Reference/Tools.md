@@ -4793,6 +4793,8 @@ the catalog.
 
 Creation registers the returned project only after verifying its detached checkout
 and private object store. Use the returned `project_id` for subsequent calls.
+Callback-enabled plugins reach the same lifecycle through
+[project host services](HostServices.md#project-worktree-operations).
 Its private repository's `origin` points to the source; integration rebases onto
 `origin/<base>`. Submodules stay uninitialized and LFS files stay pointers.
 Merge verifies a captured copy of committed objects, publishes the worktree's

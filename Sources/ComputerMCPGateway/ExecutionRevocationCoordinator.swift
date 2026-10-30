@@ -22,6 +22,8 @@ package final class ExecutionRevocationCoordinator: ExecutionRecoveryAuthorizing
   private let launcher: ExecutionLauncher
   private let lease: FileLock
   private let ownerID: UUID
+  /// This process's execution owner; host operations record it at reservation.
+  package var ownerIdentity: UUID { ownerID }
   private let permissionDiscovery: ExecutionPermissionDiscovery
   private let proxyFactory: ProxyFactory?
   private let journal: ExecutionRecoveryJournal

@@ -47,6 +47,53 @@ struct ComputerMCPPermissionsPathAuthorizationTests {
     }
   }
 
+  @Test(arguments: [false, true])
+  func worktreeHostPathsOutliveANonInvalidatingEndUntilRevocation(onlyThisTime: Bool) throws {
+    var ledger = PermissionLedger()
+    var environment = ledger.environment
+    environment.paths = try PathEnvironmentSnapshot(
+      projects: [.init(id: "project", root: path("/repo"))], rules: [])
+    try ledger.reconcile(environment: environment, expectedRevision: ledger.revision)
+    let requirements = InvocationRequirements(
+      actions: [action(.project("project"), .write, scope: .project("project"))],
+      paths: [.init(path: path("/repo"), operation: .read)], sandboxProjectID: "project")
+    let proof: InvocationAuthorization
+    if onlyThisTime {
+      guard
+        case .requests(let pending) = try ledger.authorize(
+          invocation: invocation(), requirements: requirements, now: instant)
+      else {
+        Issue.record("Expected Only This Time requests")
+        return
+      }
+      for request in pending { try ledger.answer(request.id, with: .onlyThisTime, now: instant) }
+      proof = try authorization(
+        from: ledger.authorize(
+          invocation: invocation(), requirements: requirements,
+          retryIDs: Set(pending.map(\.id)), now: instant))
+      #expect(pending.allSatisfy { ledger.requests[$0.id]?.status == .consumed(proof.id) })
+    } else {
+      try ledger.setPermission(
+        .granted(.write), for: .project("project"), principal: client,
+        expectedRevision: ledger.revision)
+      proof = try authorization(
+        from: ledger.authorize(invocation: invocation(), requirements: requirements, now: instant))
+    }
+    try ledger.finishInvocation(proof.id)
+    #expect(throws: PermissionModelError.self) { try ledger.invocationAccess(proof.id) }
+    // The consumed evidence stays with the finished authorization that consumed it.
+    try ledger.authorizeWorktreeHostPath(proof.id, path: path("/repo/value"), writing: true)
+    #expect(throws: PermissionModelError.self) {
+      try ledger.authorizeWorktreeHostPath(proof.id, path: path("/elsewhere"), writing: true)
+    }
+    try ledger.setPermission(
+      .denied, for: .project("project"), principal: client, expectedRevision: ledger.revision)
+    #expect(ledger.authorizations[proof.id]?.revoked == true)
+    #expect(throws: PermissionModelError.self) {
+      try ledger.authorizeWorktreeHostPath(proof.id, path: path("/repo/value"), writing: true)
+    }
+  }
+
   @Test(arguments: [PermissionValue.read, .write], [PermissionValue.read, .write])
   func worktreePreparationPinsOnlyAvailableNestedGrantsAndRevokesThem(
     sourceAccess: PermissionValue, nestedAccess: PermissionValue

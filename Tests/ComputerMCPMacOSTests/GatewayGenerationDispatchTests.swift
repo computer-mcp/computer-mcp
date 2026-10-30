@@ -37,14 +37,9 @@ struct GatewayGenerationDispatchTests {
     try await fixture.activate(version: 1, callers: [.cloudflareTunnel])
     let child = fixture.root.appendingPathComponent("derived")
     try FileManager.default.createDirectory(at: child, withIntermediateDirectories: false)
-    let registration = MCPDerivedProjectRegistration(
-      origin: "fixture", receiptID: "revision-receipt", sourceProjectID: "fixture",
-      sourceRoot: fixture.root.standardizedFileURL.resolvingSymlinksInPath().path,
-      receiptDigest: "revision-digest", profileID: .chatGPTOperate, principalID: "revision-client",
-      caller: .cloudflareTunnel,
-      project: .init(id: "derived", displayName: "Derived", rootPath: child.path))
-    try fixture.database.registerDerivedProject(
-      registration, verifiedPrincipalID: "revision-client", caller: .cloudflareTunnel)
+    try fixtureRemovingDerivedProject(
+      database: fixture.database, id: "derived", sourceID: "fixture", root: child,
+      displayName: "Derived")
     let failing = GenerationFailureProviders(base: fixture.platform.toolProviders)
     let platform = PlatformServices(
       launcher: fixture.platform.launcher, projectGrants: fixture.platform.projectGrants,
@@ -138,21 +133,16 @@ struct GatewayGenerationDispatchTests {
       let sessionID = serving.session.id
       let child = fixture.root.appendingPathComponent("derived-content")
       try FileManager.default.createDirectory(at: child, withIntermediateDirectories: false)
-      let registration = MCPDerivedProjectRegistration(
-        origin: "fixture", receiptID: "derived-receipt", sourceProjectID: "fixture",
-        sourceRoot: fixture.root.standardizedFileURL.resolvingSymlinksInPath().path,
-        receiptDigest: "derived-digest", profileID: .chatGPTOperate, principalID: "derived-client",
-        caller: .cloudflareTunnel,
-        project: .init(id: "derived", displayName: "Derived", rootPath: child.path))
       let profiles = try fixture.database.profiles()
-      try fixture.database.registerDerivedProject(
-        registration, verifiedPrincipalID: "derived-client", caller: .cloudflareTunnel)
+      try fixtureRemovingDerivedProject(
+        database: fixture.database, id: "derived", sourceID: "fixture", root: child,
+        displayName: "Derived")
       let result = try await serving.callToolAsync(
         name: "project.describe", arguments: .object(["project_id": .string("derived")]),
         context: .empty)
       #expect(
         result.objectValue?["structuredContent"]?.objectValue?["result"]?.objectValue?["root_path"]
-          == .string(registration.project.rootPath))
+          == .string(child.standardizedFileURL.path))
       #expect(!String(describing: result).contains("project.not_found"))
       #expect(serving.session.id == sessionID)
       #expect(try fixture.database.profiles() == profiles)

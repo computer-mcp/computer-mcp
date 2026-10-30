@@ -99,8 +99,4 @@ private struct NonGatewayHostEnvironment: MCPHostEnvironment {
   let processOwnershipRoot: URL?
   let pluginArtifacts: [String: PluginDirectoryIdentity] = [:]
   let providesHostServices = false
-
-  func makeHostSession(server: MCPServerConfig) throws -> any MCPHostSessionHandle {
-    throw GatewayToolError.executionFailed("Host services are unavailable.")
-  }
 }

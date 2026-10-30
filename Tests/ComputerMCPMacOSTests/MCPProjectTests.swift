@@ -189,9 +189,9 @@ struct MCPProjectTests {
         #expect(host["caller"] == .string(context.caller.rawValue))
         #expect(host["profileID"] == .string(context.profileID.rawValue))
         #expect(host["readOnly"] == .bool(readOnly))
-        #expect(host["workspace"]?.objectValue?["id"] == .string(projectID))
+        #expect(host["project"]?.objectValue?["id"] == .string(projectID))
         let declaredRoot = URL(
-          fileURLWithPath: try #require(host["workspace"]?.objectValue?["rootPath"]?.stringValue))
+          fileURLWithPath: try #require(host["project"]?.objectValue?["rootPath"]?.stringValue))
         let actualRoot = URL(fileURLWithPath: try #require(values[index]["cwd"]?.stringValue))
         #expect(
           try ProjectPathResolver.canonicalProject(declaredRoot)

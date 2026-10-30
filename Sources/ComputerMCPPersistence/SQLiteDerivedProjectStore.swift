@@ -77,7 +77,6 @@ package final class SQLiteDerivedProjectStore: DerivedProjectStore, Sendable {
     protecting branch: ProtectedWorktreeBranch? = nil, in database: Database
   ) throws {
     try record.validate()
-    try DerivedProjectMigration.validatePluginRecord(record)
     let old = try Self.record(record.projectID, in: database)
     guard old?.revision == revision,
       record.revision == (revision.map { $0 + 1 } ?? 1)
@@ -160,7 +159,6 @@ package final class SQLiteDerivedProjectStore: DerivedProjectStore, Sendable {
     }
     let record = try JSONDecoder().decode(DerivedProjectRecord.self, from: payload)
     try record.validate()
-    try DerivedProjectMigration.validatePluginRecord(record)
     guard record.projectID == row["projectID"], record.source.id == row["sourceProjectID"],
       record.revision == row["revision"], record.state.rawValue == row["state"]
     else { throw DerivedProjectStoreError.invalidRecord }

@@ -56,22 +56,23 @@ path.
 
 ## Plugin worktree consumer
 
-`PluginWorktreeConsumerTests` runs the unchanged Codex plugin's provision and
-removal managers against the current host over standard MCP. It persists the real
-provisioning receipt, reopens the host ledger from its historical representation,
-checks exact receipt preservation, and removes through
-`host.workspaces.authorize_removal` and `host.workspaces.unregister`. Both alias
-and generic MCP routes must retain live execution-record proof. Separate cases
-cover registration-failure rollback, stale revisions and replay after the live
-invocation ends. Git worktree, branch and host registration cleanup are checked
-independently.
+`MCPBoundHostServicesTests` includes a deterministic `projects-v1` caller that
+needs no plugin checkout. It checks the host contract marker, uses the
+host-reserved invocation and operation IDs with the dispatched arguments, creates,
+lists and removes a host worktree through the shared lifecycle, recovers a lost
+reply by operation inspection, and covers repeated callbacks, changed selections,
+unclaimed reservations, revoked authority and unknown or retired methods.
+`MCPProxyClientTests` refuses lifecycle dispatch to a real stdio provider whose
+marker is missing or different, before any host invocation or `tools/call`.
 
-Provision and removal run in separate host test processes. The provisioning host
-exits and is reaped before its receipt is encoded in the historical ledger table;
-the removal host opens and upgrades that database. This uses a real consumer
-receipt in a historical schema fixture, rather than executing a historical host.
+`PluginWorktreeConsumerTests` runs a separately built consumer against the current
+host over the private socket. Creation and a deliberately dropped reply run in one
+host test process; that host exits, and a second host process opens the same
+store, answers the consumer's operation inspection and removes the worktree. A
+separate case serves a host without the contract marker and requires the consumer
+to refuse before any lifecycle call.
 
-In an isolated checkout of the consumer revision under review, copy
+In an isolated checkout of the consumer repository under review, copy
 `Tests/ComputerMCPMacOSTests/Fixtures/HostWorktreeConsumerBridgeTests.swift.txt`
 from this repository to `Tests/CodexAdapterTests/HostWorktreeConsumerBridgeTests.swift`
 and build its tests with SwiftPM's native build system. From this repository run:
@@ -82,10 +83,10 @@ COMPUTER_MCP_TEST_PLUGIN_CONSUMER_WORKTREE=/absolute/path/to/isolated/plugin-che
 ```
 
 Record both revisions and remove the copied fixture and isolated consumer checkout
-after the run. The consumer process uses private HOME, TMPDIR and database
-state and invokes no vendor model or user App Server. This test validates the
-unchanged consumer/host-service contract. It does not establish plugin enablement,
-delegated-principal launches or installed-App TCC acceptance.
+after the run. The consumer process uses private HOME, TMPDIR and database state
+and invokes no vendor model or user App Server. This test validates the private
+host-service contract; it does not establish plugin enablement, delegated-principal
+launches or installed-App TCC acceptance.
 
 ## Host worktree native acceptance
 

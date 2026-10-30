@@ -11,13 +11,11 @@ import Testing
 
 @Suite(.timeLimit(.minutes(1)))
 struct MCPHostProtocolMetadataTests {
-  @Test(arguments: [false, true])
-  func transportRebuildsHostMetadataWithoutRegistrationEnvironment(hostServices: Bool) async throws
-  {
+  @Test
+  func transportRebuildsHostMetadataWithoutRegistrationEnvironment() async throws {
     let root = try ScopedTemporaryDirectory()
     let platform = MetadataTransportPlatform()
-    let session = MetadataSessionProbe()
-    let host = MetadataEnvironmentProbe(root: root.url, session: session)
+    let host = MetadataEnvironmentProbe(root: root.url)
     let selected = ["HOME": "/prepared/home", "TMPDIR": "/prepared/tmp", "PATH": "/prepared/bin"]
     let forged = [
       "HOME": "/forged", "TMPDIR": "/forged", "PATH": "/forged",
@@ -28,8 +26,7 @@ struct MCPHostProtocolMetadataTests {
     let transport = try MCPChildProcessTransport(
       launcher: ExecutionLauncher(platform: platform),
       server: .init(
-        id: "metadata", transport: .stdio, command: "/bin/sh", env: forged,
-        hostServices: hostServices),
+        id: "metadata", transport: .stdio, command: "/bin/sh", env: forged),
       workingDirectory: root.url, environment: forged, hostContext: host)
     let administration = ExecutionAdministration(
       mode: .fullAccess, environment: try ExecutionEnvironment(fullAccessVariables: selected))
@@ -50,10 +47,8 @@ struct MCPHostProtocolMetadataTests {
         == JSONDecoder().decode(JSONValue.self, from: JSONEncoder().encode(host.launchMetadata)))
     var expected = selected
     expected[MCPHostLaunchMetadata.environmentKey] = context
-    if hostServices { expected[MCPHostLaunchMetadata.descriptorEnvironmentKey] = "3" }
     #expect(command.environment == expected)
-    #expect((command.inheritedDescriptors[3] != nil) == hostServices)
-    if hostServices { #expect(await session.closed) }
+    #expect(command.inheritedDescriptors[3] == nil)
   }
 }
 
@@ -78,32 +73,12 @@ private struct MetadataEnvironmentProbe: MCPHostEnvironment {
   let launchMetadata: MCPHostLaunchMetadata
   let pluginArtifacts: [String: PluginDirectoryIdentity] = [:]
   let providesHostServices = true
-  let session: MetadataSessionProbe
 
-  init(root: URL, session: MetadataSessionProbe) {
+  init(root: URL) {
     projectRoot = root
     processOwnershipRoot = root.appendingPathComponent("ownership")
     launchMetadata = .init(
       runtimeID: UUID(), context: .init(caller: .localMCP, profileID: .localAdmin),
       projectID: "host-selected", rootURL: root, readOnly: true)
-    self.session = session
   }
-
-  func makeHostSession(server: MCPServerConfig) -> any MCPHostSessionHandle { session }
-}
-
-private actor MetadataSessionProbe: MCPHostSessionHandle {
-  nonisolated let childHandle: FileHandle?
-  private let pipe = Pipe()
-  private(set) var closed = false
-
-  init() { childHandle = pipe.fileHandleForWriting }
-
-  func close() {
-    try? childHandle?.close()
-    try? pipe.fileHandleForReading.close()
-    closed = true
-  }
-
-  func shutdownConfirmed() -> Bool { closed }
 }

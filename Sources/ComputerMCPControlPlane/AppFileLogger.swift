@@ -49,6 +49,16 @@ package final class AppFileLogger: @unchecked Sendable {
     event: String,
     fields: [String: String] = [:]
   ) {
+    // Logging must never prevent the gateway or App from operating.
+    try? record(level, event: event, fields: fields)
+  }
+
+  /// Writes one record and reports failure, for callers that acknowledge delivery.
+  package func record(
+    _ level: AppLogLevel,
+    event: String,
+    fields: [String: String] = [:]
+  ) throws {
     lock.lock()
     defer { lock.unlock() }
 
@@ -89,8 +99,6 @@ package final class AppFileLogger: @unchecked Sendable {
         [.posixPermissions: NSNumber(value: Int16(0o600))],
         ofItemAtPath: fileURL.path
       )
-    } catch {
-      // Logging must never prevent the gateway or App from operating.
     }
   }
 

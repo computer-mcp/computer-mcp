@@ -91,6 +91,10 @@ struct StandaloneRuntimeOptions: ParsableArguments {
     if let message = report?.startupDiagnostic {
       try? diagnosticOutput.write(contentsOf: Data((message + "\n").utf8))
     }
+    // Every retired checkout is reported before any provider starts.
+    try database.drainPluginWorktreeRetirements { notice in
+      try diagnosticOutput.write(contentsOf: Data((notice.rendered + "\n").utf8))
+    }
     let ids = Set(GatewayProfileID.builtIns + configuration.profiles.map(\.id))
     let seeds = ids.sorted { $0.rawValue < $1.rawValue }.map { configuration.profileGrant(for: $0) }
     try database.bootstrapPermissionProfiles(

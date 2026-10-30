@@ -197,7 +197,7 @@ struct MCPHostSessionTests {
     let channel = try f.session(execution: parent)
     let peer = MCP.Client(name: "callback-worker", version: "1")
     let transport = try MCPInheritedSocketTransport(
-      takingOwnershipOf: #require(channel.providerChannel).takeEndpoint())
+      takingOwnershipOf: channel.providerChannel.takeEndpoint())
     do {
       _ = try await peer.connect(transport: transport)
       let request: RequestContext<MCP.CallTool.Result> = try await peer.callTool(
@@ -435,12 +435,12 @@ struct MCPHostSessionTests {
 
   @Test
   func ordinaryMCPCallsUseBoundProjectAndOriginalAuditIdentity() async throws {
-    let fixture = try HostFixture()
+    let fixture = try HostFixture(fileBacked: true)
     defer { fixture.remove() }
-    let session = try fixture.session()
+    let session = try await fixture.preparedSession()
     let client = MCP.Client(name: "plugin-fixture", version: "1")
     let transport = try MCPInheritedSocketTransport(
-      takingOwnershipOf: #require(session.childHandle))
+      takingOwnershipOf: session.providerChannel.takeEndpoint())
     do {
       _ = try await client.connect(transport: transport)
       let request: RequestContext<MCP.CallTool.Result> = try await client.callTool(
@@ -553,12 +553,12 @@ struct MCPHostSessionTests {
 
   @Test
   func destructiveCallsPreserveOriginalAuditAttribution() async throws {
-    let fixture = try HostFixture()
+    let fixture = try HostFixture(fileBacked: true)
     defer { fixture.remove() }
-    let session = try fixture.session()
+    let session = try await fixture.preparedSession()
     let client = MCP.Client(name: "plugin-fixture", version: "1")
     let transport = try MCPInheritedSocketTransport(
-      takingOwnershipOf: #require(session.childHandle))
+      takingOwnershipOf: session.providerChannel.takeEndpoint())
     do {
       _ = try await client.connect(transport: transport)
       let request: RequestContext<MCP.CallTool.Result> = try await client.callTool(
@@ -879,7 +879,7 @@ private final class HostFixture: Sendable {
     return result.stdout
   }
 
-  func session(execution: PreparedExecutionContext? = nil) throws -> MCPHostSession {
+  func session(execution: PreparedExecutionContext) throws -> MCPHostSession {
     let directory = MCPHostToolDirectory()
     directory.attach(runtime)
     var host = MCPHostContext(
@@ -888,6 +888,34 @@ private final class HostFixture: Sendable {
     host.providerExecution = execution
     return try MCPHostSession(context: host, server: registration)
   }
+  /// A host session bound to a provider execution prepared for one Full access call.
+  func preparedSession() async throws -> MCPHostSession {
+    let permissionRuntime = runtime.permissionRuntime
+    try await permissionRuntime.ready()
+    _ = try runtime.makeControlSession()
+    let control = try #require(context.controlSession as? GatewayControlSession)
+    _ = try control.approveFullAccess(expectedRevision: control.revision)
+    let review = try fixtureApproveLocalProvider(
+      registration, database: database, runtime: permissionRuntime,
+      permissions: fixturePermissions([.project("first"): .granted(.write)]), fullAccess: true)
+    let decision = try permissionRuntime.service.admit(
+      subject: GatewayPermissionSubject(context: context),
+      tool: "provider.operation", projectID: "first", argumentsDigest: "session-parent",
+      requirements: .init(
+        actions: [
+          .init(requirement: .init(.mcpServer("plugin"), .all)),
+          .init(requirement: .init(.project("first"), .write)),
+        ], mode: .fullAccess(.standing), sandboxProjectID: "first"),
+      connectionID: control.id)
+    guard case .allowed(let proof) = decision else {
+      throw PermissionModelError.invalidAuthorization
+    }
+    let parent = try await permissionRuntime.prepareProvider(
+      review: review, registrationID: "plugin",
+      authorization: proof, directory: first, connectionID: control.id)
+    return try session(execution: parent)
+  }
+
   func call(_ name: String, _ arguments: [String: JSONValue] = [:]) async throws -> JSONValue {
     try await runtime.callHostTool(
       name: name, arguments: arguments, projectID: "first", origin: "plugin",

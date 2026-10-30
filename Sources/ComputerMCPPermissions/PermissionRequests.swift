@@ -1291,10 +1291,18 @@ package struct PermissionLedger: Equatable, Sendable, Codable {
   /// A lifecycle service owns the filesystem effect. Read admission still checks every
   /// path denial; write authority comes from the admitted project's grant rather than
   /// granting a sandbox program write access to the source checkout.
+  ///
+  /// Lifecycle effects are host-owned once claimed, so an end that does not invalidate
+  /// authority (an owner stop, a provider exit or a channel close) does not end them: a
+  /// finished authorization still serves them while it is unrevoked and its basis holds.
+  /// Revocation propagation evaluates finished authorizations too, so every invalidation
+  /// fails the next check.
   package mutating func authorizeWorktreeHostPath(
     _ id: UUID, path: CanonicalPath, writing: Bool
   ) throws {
-    let proof = try invocationAccess(id)
+    guard !authorityIsSuspended, validateAuthorization(id), let proof = authorizations[id] else {
+      throw PermissionModelError.invalidAuthorization
+    }
     guard let project = environment.paths?.projects.location(at: path) else {
       throw PermissionModelError.invalidAuthorization
     }

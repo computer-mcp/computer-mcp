@@ -412,7 +412,8 @@ struct MCPHostInvocationTests {
       if hostServices {
         let bound = try #require(reportedContext["result"]?.objectValue)
         #expect(bound["registration_id"] == .string("provider"))
-        #expect(bound["workspace_id"] == .string("fixture"))
+        #expect(bound["project_id"] == .string("fixture"))
+        #expect(bound["operation"] == .null)
         #expect(bound["tool"] == .string(mode == "detached" ? "deferred" : "inspect"))
         #expect(bound["capability_id"] == .string("mcp.tools.call"))
         #expect(bound["invocation_id"]?.stringValue.flatMap(UUID.init(uuidString:)) != nil)

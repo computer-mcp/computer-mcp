@@ -3,8 +3,9 @@ import ComputerMCPWorktrees
 import Foundation
 import GRDB
 
-/// The permission converter owns pre-activation grant removal. This migration only
-/// changes the representation of already-live derived authority, atomically.
+/// Historical conversion of `permissionDerivedProjects` into the generic ledger. The
+/// permission converter owns pre-activation grant removal. The plugin-provenance rows
+/// this writes are retired by `PluginWorktreeRetirement` in the same migration pass.
 package enum DerivedProjectMigration {
   static func migrate(_ database: Database) throws {
     try database.execute(
@@ -38,6 +39,8 @@ package enum DerivedProjectMigration {
       throw DerivedProjectStoreError.activationRequired
     }
     let derivedIDs = Set(rows.map { $0["projectID"] as String })
+    let encoder = JSONEncoder()
+    encoder.outputFormatting = [.sortedKeys]
     for row in rows {
       let payload: Data = row["payload"]
       let record = try pluginRecord(payload: payload, in: database)
@@ -47,24 +50,30 @@ package enum DerivedProjectMigration {
           database, key: legacyReceipt(payload).profileID.rawValue)
       else { throw DerivedProjectStoreError.invalidRecord }
       _ = try profile.value()
-      try SQLiteDerivedProjectStore.commit(record, expecting: nil, in: database)
+      try database.execute(
+        sql:
+          "INSERT INTO derivedProjects (projectID, codecVersion, sourceProjectID, revision, state, payload) VALUES (?, 1, ?, 1, 'active', ?)",
+        arguments: [record.projectID, record.source.id, try encoder.encode(record)])
     }
     try database.execute(sql: "DROP TABLE permissionDerivedProjects")
     // With a saved activation receipt, the converter already consumed this input.
-    if activated == 1 { try retireLegacyInput(database) }
-  }
-
-  package static func retireLegacyInput(_ database: Database) throws {
-    if try database.tableExists("pluginDerivedProjects") {
+    if activated == 1, try database.tableExists("pluginDerivedProjects") {
       try database.execute(sql: "DROP TABLE pluginDerivedProjects")
     }
   }
 
-  /// The wire adapter supplies these exact bytes for new registrations too. SQL
-  /// projection is validated against registered identities before it is published.
-  package static func pluginRecord(payload: Data, in database: Database) throws
-    -> DerivedProjectRecord
-  {
+  /// Codec-version-1 ledger payload of a plugin registration, validated against the
+  /// registered identities it names.
+  private struct PluginRecord: Encodable {
+    let projectID: String
+    let source: DerivedProjectSource
+    let root: String
+    let provenance: [String: [String: Data]]
+    let state = "active"
+    let revision = 1
+  }
+
+  private static func pluginRecord(payload: Data, in database: Database) throws -> PluginRecord {
     let receipt = try legacyReceipt(payload)
     guard let source = try ProjectRecord.fetchOne(database, key: receipt.sourceWorkspaceID),
       let project = try ProjectRecord.fetchOne(database, key: receipt.workspace.id),
@@ -75,37 +84,27 @@ package enum DerivedProjectMigration {
       project.createdAt.databaseValue == receipt.workspace.createdAt.databaseValue,
       project.updatedAt.databaseValue == receipt.workspace.updatedAt.databaseValue,
       !receipt.origin.isEmpty, !receipt.receiptID.isEmpty, !receipt.receiptDigest.isEmpty,
-      !receipt.profileID.rawValue.isEmpty,
+      !receipt.profileID.rawValue.isEmpty, project.id != source.id,
+      [project.rootPath, receipt.sourceRoot].allSatisfy({
+        $0.hasPrefix("/") && !$0.contains("\0")
+      }),
       try receipt.sourceRoot == source.rootPath
         || ProjectCanonicalRootRecord.filter(Column("projectID") == source.id)
           .filter(Column("canonicalRootPath") == receipt.sourceRoot).fetchCount(database) > 0
     else { throw DerivedProjectStoreError.invalidRecord }
-    let result = DerivedProjectRecord(
+    return PluginRecord(
       projectID: project.id,
       source: .init(id: source.id, root: receipt.sourceRoot, registeredAt: source.createdAt),
-      root: project.rootPath, provenance: .plugin(receipt: payload))
-    try result.validate()
-    return result
+      root: project.rootPath, provenance: ["plugin": ["receipt": payload]])
   }
 
-  static func validatePluginRecord(_ record: DerivedProjectRecord) throws {
-    guard case .plugin(let payload) = record.provenance else { return }
-    let receipt = try legacyReceipt(payload)
-    guard receipt.workspace.id == record.projectID, receipt.workspace.rootPath == record.root,
-      receipt.sourceWorkspaceID == record.source.id, receipt.sourceRoot == record.source.root,
-      !receipt.origin.isEmpty, !receipt.receiptID.isEmpty, !receipt.receiptDigest.isEmpty,
-      !receipt.profileID.rawValue.isEmpty
-    else { throw DerivedProjectStoreError.invalidRecord }
-  }
-
-  private static func legacyReceipt(_ payload: Data) throws -> PluginReceiptV1 {
+  static func legacyReceipt(_ payload: Data) throws -> PluginReceiptV1 {
     guard payload.count <= 32_768 else { throw DerivedProjectStoreError.invalidRecord }
     return try JSONDecoder().decode(PluginReceiptV1.self, from: payload)
   }
 
-  /// Version-one receipt spelling is a durable compatibility format, independent
-  /// of the gateway's current DTO. A missing principal remains missing.
-  private struct PluginReceiptV1: Decodable {
+  /// Version-one plugin registration receipt, as stored by historical hosts.
+  struct PluginReceiptV1: Decodable {
     let origin: String
     let receiptID: String
     let sourceWorkspaceID: String

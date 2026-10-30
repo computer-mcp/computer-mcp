@@ -155,9 +155,16 @@ package struct ToolRequirement: Codable, Equatable, Sendable {
   package static func downstream(
     serverID: String, readOnly: Bool, remoteExecution: Bool, hostAction: MCPHostServiceAction?
   ) -> Self {
-    Self(
-      access: hostAction == .projectProvision || hostAction == .projectRemoval
-        ? .sourceProjectWrite : .none,
+    let access: Access
+    switch hostAction {
+    // A host worktree inherits exactly its source's authority, so removal in the
+    // selected worktree is source Project write.
+    case .projectProvision, .projectRemoval: access = .sourceProjectWrite
+    case .projectList: access = .read
+    case .diagnosticsSnapshot, nil: access = .none
+    }
+    return Self(
+      access: access,
       namedProjectAccess: readOnly ? .read : .write,
       requiresFullAccess: remoteExecution,
       target: .mcp(server: .registered(id: serverID), access: readOnly ? .read : .all),

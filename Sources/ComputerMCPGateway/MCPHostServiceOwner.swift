@@ -10,7 +10,7 @@ struct MCPHostServiceOwner: Codable, Equatable, Sendable {
   var principalID: String? = nil
 
   private enum CodingKeys: String, CodingKey {
-    case projectID = "workspace_id"
+    case projectID = "project_id"
     case profileID = "profile_id"
     case caller
     case transport

@@ -2,161 +2,173 @@ import Darwin
 import Foundation
 import Testing
 
-@testable import CodexAdapter
-
+/// A separately built `projects-v1` consumer. It speaks newline-delimited JSON-RPC on
+/// the host's private socket, checks the host's contract marker before any lifecycle
+/// callback, passes the host-supplied IDs with the dispatched arguments, and recovers a
+/// lost reply only by inspecting the recorded operation.
 @Suite(.serialized, .timeLimit(.minutes(2)))
 struct HostWorktreeConsumerBridgeTests {
   @Test
-  func existingTypedClientUsesCurrentHost() async throws {
+  func projectServiceConsumerUsesTheHostContract() throws {
     let inputPath = try #require(
       ProcessInfo.processInfo.environment["COMPUTER_MCP_TEST_PLUGIN_CONSUMER_INPUT"])
     let input = try JSONDecoder().decode(
       Input.self, from: Data(contentsOf: URL(fileURLWithPath: inputPath)))
-    let handle = try connect(to: input.socketPath)
-    defer { try? handle.close() }
-    let client = try CodexHostMCPClient(takingOwnershipOf: handle, owner: input.owner)
-    do {
-      let database = try CodexDatabase(path: input.databasePath)
-      let emptyStatus: JSONValue = .object(["runtimes": .array([])])
-      let managed = URL(fileURLWithPath: input.managedRoot, isDirectory: true)
-      var output: CodexManagedWorktree?
-      switch input.mode {
-      case .plan:
-        let parent = try CodexWorktreeLeaseManager.acquire(
-          database: database, workspaceID: input.owner.workspaceID,
-          workspaceURL: URL(fileURLWithPath: input.source), agentID: "parent",
-          threadID: nil, runID: nil, parentLeaseID: nil, branch: nil,
-          mode: .exclusive, ttlSeconds: 900, liveRuntimeStatus: emptyStatus)
-        output = try CodexManagedWorktreeManager.planProvision(
-          database: database, sourceWorkspaceID: input.owner.workspaceID,
-          sourceWorkspaceURL: URL(fileURLWithPath: input.source),
-          profileID: input.owner.profileID, caller: input.owner.caller,
-          principalID: input.owner.principalID, agentID: "child", threadID: nil, runID: nil,
-          parentLeaseID: parent.id, branch: "consumer-" + UUID().uuidString.lowercased(),
-          startPoint: "HEAD", ttlSeconds: 600, managedRoot: managed)
-      case .provision:
-        let plan = try #require(input.worktree)
-        output = try await CodexManagedWorktreeManager.performProvision(
-          database: database, sourceWorkspaceID: plan.sourceWorkspaceID, planID: plan.id,
-          expectedRevision: plan.revision, confirmProvision: true, workspaceHost: client,
-          managedRoot: managed)
-        try #require(output?.state == .active)
-      case .rollback:
-        let plan = try #require(input.worktree)
-        do {
-          _ = try await CodexManagedWorktreeManager.performProvision(
-            database: database, sourceWorkspaceID: plan.sourceWorkspaceID, planID: plan.id,
-            expectedRevision: plan.revision, confirmProvision: true, workspaceHost: client,
-            managedRoot: managed)
-          Issue.record("Injected registration failure was ignored")
-        } catch CodexToolError.executionFailed { }
-        output = try database.codexManagedWorktree(id: plan.id)
-        try #require(output?.state == .failed)
-        try #require(!FileManager.default.fileExists(atPath: plan.path))
-      case .planRemoval:
-        let active = try #require(input.worktree)
-        let leaseID = try #require(active.leaseID)
-        let lease = try #require(try database.codexWorktreeLease(id: leaseID))
-        _ = try CodexWorktreeLeaseManager.release(
-          database: database, workspaceID: active.workspaceID, leaseID: lease.id,
-          expectedRevision: lease.revision, reason: "Fixture work accepted")
-        output = try CodexManagedWorktreeManager.planRemoval(
-          database: database, sourceWorkspaceID: active.sourceWorkspaceID,
-          managedWorktreeID: active.id, liveRuntimeStatus: emptyStatus, managedRoot: managed)
-      case .remove:
-        let plan = try #require(input.worktree)
-        output = try await CodexManagedWorktreeManager.performRemoval(
-          database: database, sourceWorkspaceID: plan.sourceWorkspaceID,
-          managedWorktreeID: plan.id, expectedRevision: plan.revision, confirmRemoval: true,
-          workspaceHost: client, liveRuntimeStatus: emptyStatus, managedRoot: managed)
-        try #require(output?.state == .removed)
-        try #require(!FileManager.default.fileExists(atPath: plan.path))
-      case .stale:
-        let plan = try #require(input.worktree)
-        do {
-          _ = try await CodexManagedWorktreeManager.performRemoval(
-            database: database, sourceWorkspaceID: plan.sourceWorkspaceID,
-            managedWorktreeID: plan.id, expectedRevision: plan.revision - 1,
-            confirmRemoval: true, workspaceHost: client, liveRuntimeStatus: emptyStatus,
-            managedRoot: managed)
-          Issue.record("Stale revision was accepted")
-        } catch CodexManagedWorktreeError.revisionConflict { }
-      case .replay:
-        do {
-          let record = try #require(input.worktree)
-          try await client.authorizeRemoval(record)
-          Issue.record("The host accepted removal after the parent invocation ended.")
-        } catch CodexToolError.executionFailed(let message) {
-          try #require(message.contains("one matching live gateway invocation"))
-        }
-      }
-      if let output {
-        try #require(try database.codexManagedWorktree(id: output.id) == output)
-        try JSONEncoder().encode(output).write(to: URL(fileURLWithPath: input.outputPath))
-        print("PLUGIN_CONSUMER mode=\(input.mode) state=\(output.state) revision=\(output.revision) persisted=true")
-      } else {
-        print("PLUGIN_CONSUMER mode=\(input.mode) expected_denial=true")
-      }
-      await client.shutdown()
-    } catch {
-      await client.shutdown()
-      throw error
+    let channel = try Channel(path: input.socketPath)
+    defer { channel.close() }
+    let initialized = try channel.request(
+      "initialize",
+      [
+        "protocolVersion": "2025-06-18", "capabilities": [String: Any](),
+        "clientInfo": ["name": "consumer", "version": "1"],
+      ])
+    let capabilities = initialized["capabilities"] as? [String: Any]
+    let experimental = capabilities?["experimental"] as? [String: Any]
+    let observed = experimental?["io.github.computer-mcp/host-service-contract"] as? String
+    guard observed == "projects-v1" else {
+      try write(
+        ["refused": "host.unsupported_contract", "observed_contract": observed ?? NSNull()],
+        to: input.outputPath)
+      print("PLUGIN_CONSUMER mode=\(input.mode) refused=host.unsupported_contract")
+      return
     }
+    try channel.notify("notifications/initialized")
+    var output: [String: Any] = [:]
+    switch input.mode {
+    case "provision":
+      let invocation = try #require(input.invocationID)
+      let operation = try #require(input.operationID)
+      let described = try channel.call(
+        "host.invocations.describe", ["invocation_id": invocation])
+      let reserved = try #require(
+        (described.structured?["result"] as? [String: Any])?["operation"] as? [String: Any])
+      try #require(reserved["operation_id"] as? String == operation)
+      do {
+        let added = try channel.call(
+          "host.projects.worktree_add",
+          [
+            "invocation_id": invocation, "operation_id": operation,
+            "name": try #require(input.name),
+          ])
+        output["reply"] = added.structured ?? NSNull()
+      } catch Channel.Failure.response {
+        output["reply"] = "lost"
+      }
+    case "inspect":
+      let described = try channel.call(
+        "host.invocations.describe", ["operation_id": try #require(input.operationID)])
+      try #require(!described.isError)
+      output["envelope"] = described.structured?["result"] ?? NSNull()
+    case "remove":
+      let removed = try channel.call(
+        "host.projects.worktree_remove",
+        [
+          "invocation_id": try #require(input.invocationID),
+          "operation_id": try #require(input.operationID),
+        ])
+      output["envelope"] = removed.structured?["result"] ?? NSNull()
+    default:
+      Issue.record("A host without the contract marker accepted the consumer.")
+    }
+    try write(output, to: input.outputPath)
+    print("PLUGIN_CONSUMER mode=\(input.mode) contract=projects-v1")
   }
 
-  private func connect(to path: String) throws -> FileHandle {
-    var address = sockaddr_un()
-    let bytes = Array(path.utf8) + [0]
-    try #require(
-      !path.utf8.contains(0) && bytes.count <= MemoryLayout.size(ofValue: address.sun_path))
-    address.sun_family = sa_family_t(AF_UNIX)
-    address.sun_len = UInt8(MemoryLayout<sockaddr_un>.size)
-    withUnsafeMutableBytes(of: &address.sun_path) { $0.copyBytes(from: bytes) }
-    let descriptor = Darwin.socket(AF_UNIX, SOCK_STREAM, 0)
-    guard descriptor >= 0 else { throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO) }
-    let handle = FileHandle(fileDescriptor: descriptor, closeOnDealloc: true)
-    let connected = withUnsafePointer(to: &address) {
-      $0.withMemoryRebound(to: sockaddr.self, capacity: 1) {
-        Darwin.connect(descriptor, $0, socklen_t(MemoryLayout<sockaddr_un>.size))
-      }
-    }
-    guard connected == 0 else {
-      let failure = POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)
-      try? handle.close()
-      throw failure
-    }
-    return handle
+  private func write(_ value: [String: Any], to path: String) throws {
+    try JSONSerialization.data(withJSONObject: value).write(to: URL(fileURLWithPath: path))
   }
 
   private struct Input: Decodable {
     let socketPath: String
-    let mode: Mode
-    let owner: CodexRuntimeOwner
-    let worktree: CodexManagedWorktree?
-    let source: String
-    let databasePath: String
+    let mode: String
     let outputPath: String
-    let managedRoot: String
+    let invocationID: String?
+    let operationID: String?
+    let name: String?
 
     private enum CodingKeys: String, CodingKey {
       case socketPath = "socket_path"
       case mode
-      case owner
-      case worktree
-      case source
-      case databasePath = "database_path"
       case outputPath = "output_path"
-      case managedRoot = "managed_root"
+      case invocationID = "invocation_id"
+      case operationID = "operation_id"
+      case name
     }
   }
 
-  private enum Mode: String, Decodable {
-    case plan
-    case provision
-    case rollback
-    case planRemoval
-    case stale
-    case remove
-    case replay
+  private final class Channel {
+    enum Failure: Error { case response, closed }
+    struct Reply {
+      let structured: [String: Any]?
+      let isError: Bool
+    }
+
+    private let handle: FileHandle
+    private var buffer = Data()
+    private var nextID = 1
+
+    init(path: String) throws {
+      var address = sockaddr_un()
+      let bytes = Array(path.utf8) + [0]
+      try #require(
+        !path.utf8.contains(0) && bytes.count <= MemoryLayout.size(ofValue: address.sun_path))
+      address.sun_family = sa_family_t(AF_UNIX)
+      address.sun_len = UInt8(MemoryLayout<sockaddr_un>.size)
+      withUnsafeMutableBytes(of: &address.sun_path) { $0.copyBytes(from: bytes) }
+      let descriptor = Darwin.socket(AF_UNIX, SOCK_STREAM, 0)
+      guard descriptor >= 0 else { throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO) }
+      handle = FileHandle(fileDescriptor: descriptor, closeOnDealloc: true)
+      let connected = withUnsafePointer(to: &address) {
+        $0.withMemoryRebound(to: sockaddr.self, capacity: 1) {
+          Darwin.connect(descriptor, $0, socklen_t(MemoryLayout<sockaddr_un>.size))
+        }
+      }
+      guard connected == 0 else { throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO) }
+    }
+
+    func close() { try? handle.close() }
+
+    func notify(_ method: String) throws {
+      try send(["jsonrpc": "2.0", "method": method])
+    }
+
+    func request(_ method: String, _ params: [String: Any]) throws -> [String: Any] {
+      let id = nextID
+      nextID += 1
+      try send(["jsonrpc": "2.0", "id": id, "method": method, "params": params])
+      while true {
+        let message = try receive()
+        guard message["id"] as? Int == id else { continue }
+        guard let result = message["result"] as? [String: Any] else { throw Failure.response }
+        return result
+      }
+    }
+
+    func call(_ name: String, _ arguments: [String: Any]) throws -> Reply {
+      let result = try request("tools/call", ["name": name, "arguments": arguments])
+      return Reply(
+        structured: result["structuredContent"] as? [String: Any],
+        isError: result["isError"] as? Bool ?? false)
+    }
+
+    private func send(_ message: [String: Any]) throws {
+      var data = try JSONSerialization.data(withJSONObject: message)
+      data.append(0x0A)
+      try handle.write(contentsOf: data)
+    }
+
+    private func receive() throws -> [String: Any] {
+      while true {
+        if let newline = buffer.firstIndex(of: 0x0A) {
+          let line = buffer[buffer.startIndex..<newline]
+          buffer.removeSubrange(buffer.startIndex...newline)
+          if line.isEmpty { continue }
+          return try #require(try JSONSerialization.jsonObject(with: line) as? [String: Any])
+        }
+        let chunk = handle.availableData
+        guard !chunk.isEmpty else { throw Failure.closed }
+        buffer.append(chunk)
+      }
+    }
   }
 }

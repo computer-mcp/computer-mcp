@@ -1,6 +1,9 @@
 import Foundation
 
 package struct WorktreeInventoryItem: Sendable {
+  /// Lifecycle ownership comes from the host ledger, never from a path or name.
+  package enum Owner: String, Sendable { case host, foreign }
+
   package let path: String?
   package let projectID: String?
   package let branch: String?
@@ -9,6 +12,9 @@ package struct WorktreeInventoryItem: Sendable {
   package let behind: Int?
   package let dirty: Bool?
   package let unavailable: String?
+  /// The host lifecycle UUID; nil for foreign or inaccessible checkouts.
+  package let worktreeID: UUID?
+  package let owner: Owner
 }
 
 struct WorktreeInventoryEntry {
@@ -72,7 +78,6 @@ extension WorktreeRepository {
         command(["worktree", "list", "--porcelain", "-z"]).output)
       let records = try store.records()
       for record in records where record.source == source && record.state == .active {
-        guard case .host = record.provenance else { continue }
         entries.append(
           .init(
             path: record.root, head: nil, branch: nil, detached: false, bare: false, prunable: false
@@ -80,13 +85,15 @@ extension WorktreeRepository {
       }
       return try entries.map { entry in
         let root = URL(fileURLWithPath: entry.path)
+        let record = records.first {
+          $0.root == entry.path && $0.source == source && $0.state == .active
+        }
+        let owner: WorktreeInventoryItem.Owner = record == nil ? .foreign : .host
         guard try mayInspect(root) else {
           return .init(
             path: nil, projectID: nil, branch: nil, base: nil,
-            ahead: nil, behind: nil, dirty: nil, unavailable: "Path access denied.")
-        }
-        let record = records.first {
-          $0.root == entry.path && $0.source == source && $0.state == .active
+            ahead: nil, behind: nil, dirty: nil, unavailable: "Path access denied.",
+            worktreeID: nil, owner: owner)
         }
         var projectID: String?
         var branch = entry.branch.map { String($0.dropFirst("refs/heads/".count)) }
@@ -96,7 +103,7 @@ extension WorktreeRepository {
         var dirty: Bool?
         var unavailable: String?
         do {
-          if let record, case .host = record.provenance {
+          if let record {
             guard let journal = try readJournal(record.projectID), journal.phase == .active,
               try matchesActiveRecord(journal, record)
             else { throw WorktreeError.recoveryRequired("Active journal is unavailable.") }
@@ -135,7 +142,6 @@ extension WorktreeRepository {
             } else {
               administrative = try foreignGitDirectory(root: root, repository: identity).url
             }
-            if let record, case .plugin = record.provenance { projectID = record.projectID }
             dirty = try !git.run(
               [
                 "--no-optional-locks", "status", "--porcelain=v1", "-z", "--untracked-files=all",
@@ -151,7 +157,8 @@ extension WorktreeRepository {
         }
         return .init(
           path: entry.path, projectID: projectID, branch: branch, base: base,
-          ahead: ahead, behind: behind, dirty: dirty, unavailable: unavailable)
+          ahead: ahead, behind: behind, dirty: dirty, unavailable: unavailable,
+          worktreeID: record?.provenance.worktreeID, owner: owner)
       }
     }
   }

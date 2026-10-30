@@ -115,16 +115,6 @@ package final class PermissionMigrationStore: @unchecked Sendable {
           ])
       }
       try GatewayDatabase.savePublishedProfileDeclarations(verified.profiles, in: database)
-      for derived in verified.derived {
-        guard
-          let payload = try String.fetchOne(
-            database, sql: "SELECT payloadJSON FROM pluginDerivedProjects WHERE projectID = ?",
-            arguments: [derived.project.id])
-        else { throw PermissionMigrationError.stateChanged }
-        let record = try DerivedProjectMigration.pluginRecord(
-          payload: Data(payload.utf8), in: database)
-        try SQLiteDerivedProjectStore.commit(record, expecting: nil, in: database)
-      }
       try database.execute(
         sql: "UPDATE permissionControlRevision SET revision = revision + 1 WHERE id = 1")
       try database.execute(sql: "DELETE FROM clientControlTrust")
@@ -132,7 +122,6 @@ package final class PermissionMigrationStore: @unchecked Sendable {
         sql:
           "INSERT INTO permissionMigration (id, version, inputDigest, catalogDigest, manifestDigest) VALUES (1, 1, ?, ?, ?)",
         arguments: [verified.inputDigest, verified.catalogDigest, sourceManifestDigest])
-      try DerivedProjectMigration.retireLegacyInput(database)
       return true
     }
   }
@@ -189,24 +178,9 @@ package final class PermissionMigrationStore: @unchecked Sendable {
       uniqueKeysWithValues: ProjectAliasRecord.fetchAll(database).map {
         ($0.aliasProjectID, $0.canonicalProjectID)
       })
-    let derived = try Row.fetchAll(
-      database, sql: "SELECT * FROM pluginDerivedProjects ORDER BY projectID"
-    ).map { row in
-      let payload: String = row["payloadJSON"]
-      guard payload.utf8.count <= 32_768 else { throw PermissionMigrationError.invalidStoredState }
-      let record = try JSONDecoder().decode(
-        MCPDerivedProjectRegistration.self, from: Data(payload.utf8))
-      guard record.project.id == row["projectID"], record.sourceProjectID == row["sourceProjectID"],
-        record.origin == row["origin"], record.receiptID == row["receiptID"]
-      else {
-        throw PermissionMigrationError.invalidStoredState
-      }
-      return record
-    }
     return try PermissionProfileMigration.plan(
       profiles: profiles, catalog: catalog,
-      projects: .init(
-        registered: projects, aliases: aliases, canonicalRoots: canonicalRoots, derived: derived))
+      projects: .init(registered: projects, aliases: aliases, canonicalRoots: canonicalRoots))
   }
 
   private static func configurationMarker(_ database: Database) throws -> String {

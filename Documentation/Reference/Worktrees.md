@@ -89,9 +89,11 @@ across restart. Running programs follow execution interruption rules and are not
 automatically replayed. Reconnecting does not grant another principal access to
 an existing execution ID.
 
-Host worktrees and plugin-managed worktrees have distinct lifecycle owners.
-Plugin worktrees retain their existing receipt and host-service contract; these
-tools do not convert their layout or take over their deletion protocol.
+Plugins create and remove host worktrees through the same lifecycle with the
+[project host services](HostServices.md#project-worktree-operations). A linked
+checkout created outside the host lifecycle, including one a plugin made before
+its registration was retired at startup, is listed as foreign; these tools never
+adopt, prune or delete it.
 
 For installed-manifest upgrades and legacy configuration handling, see
 [Worktree availability](Config.md#worktree-availability).

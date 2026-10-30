@@ -206,13 +206,13 @@ package final class MCPProxyClient: DownstreamMCPClient, @unchecked Sendable {
         return try JSONDecoder().decode(JSONValue.self, from: Data(output.utf8))
       }
     }
-    let hostInvocationID = context.admission?.correlationID(for: server, tool: name)
+    let host = context.admission?.hostDispatch(for: server, tool: name)
     do {
       return try run(server: server, context: context) { connection in
         try await connection.callTool(
           name: name, arguments: object, gatewayRequestID: requestID, cancellation: cancellation,
           retainsResult: retainsResult, execution: execution,
-          hostInvocationID: hostInvocationID,
+          host: host,
           continuation: continuation,
           cancellationDeliveryFailed: {
             self.pool.invalidate(server: server, connection: connection)
@@ -262,12 +262,12 @@ package final class MCPProxyClient: DownstreamMCPClient, @unchecked Sendable {
       try requireExecutionAccess(reservation.record, operation: .readResult, context: context)
       return try reservation.record.snapshot(instance: journal.instanceID)
     }
-    let hostInvocationID = context.admission?.correlationID(for: server, tool: name)
+    let host = context.admission?.hostDispatch(for: server, tool: name)
     do {
       return try run(server: server, context: context) { connection in
         try await connection.startToolCall(
           name: name, arguments: object, gatewayRequestID: requestID,
-          hostInvocationID: hostInvocationID, continuation: continuation,
+          host: host, continuation: continuation,
           execution: prepared)
       }
     } catch {
@@ -1011,7 +1011,7 @@ private actor MCPProxyConnection {
     cancellation: MCPCallCancellation? = nil,
     retainsResult: Bool = false,
     execution: PreparedExecutionContext,
-    hostInvocationID: UUID? = nil,
+    host: HostServiceDispatch? = nil,
     continuation: MCPContinuationTarget? = nil,
     cancellationDeliveryFailed: @escaping @Sendable () -> Void = {}
   ) async throws -> JSONValue {
@@ -1043,7 +1043,7 @@ private actor MCPProxyConnection {
     }
     let (context, ownership) = try await dispatchTool(
       name: name, arguments: arguments, gatewayRequestID: gatewayRequestID,
-      hostInvocationID: hostInvocationID, continuation: continuation, execution: execution)
+      host: host, continuation: continuation, execution: execution)
     var confirmedResponse = false
     defer { settleOwnership(ownership, confirmed: confirmedResponse) }
     guard closeTask == nil else {
@@ -1121,7 +1121,7 @@ private actor MCPProxyConnection {
   func startToolCall(
     name: String,
     arguments: [String: JSONValue],
-    gatewayRequestID: String, hostInvocationID: UUID?, continuation: MCPContinuationTarget?,
+    gatewayRequestID: String, host: HostServiceDispatch?, continuation: MCPContinuationTarget?,
     execution: PreparedExecutionContext
   ) async throws -> JSONValue {
     try await ensureConnected()
@@ -1154,7 +1154,7 @@ private actor MCPProxyConnection {
     }
     let (context, ownership) = try await dispatchTool(
       name: name, arguments: arguments, gatewayRequestID: gatewayRequestID,
-      hostInvocationID: hostInvocationID, continuation: continuation, execution: execution)
+      host: host, continuation: continuation, execution: execution)
     guard closeTask == nil else {
       try? await client.cancelRequest(context.requestID, reason: "Downstream MCP session retired.")
       throw MCPError.connectionClosed
@@ -1453,13 +1453,22 @@ private actor MCPProxyConnection {
   }
 
   private func dispatchTool(
-    name: String, arguments: [String: JSONValue], gatewayRequestID: String, hostInvocationID: UUID?,
-    continuation: MCPContinuationTarget?, execution: PreparedExecutionContext
+    name: String, arguments: [String: JSONValue], gatewayRequestID: String,
+    host: HostServiceDispatch?, continuation: MCPContinuationTarget?,
+    execution: PreparedExecutionContext
   ) async throws -> (RequestContext<CallTool.Result>, RequestOwnership?) {
     if !workCatalogObserved && initializeResult?.capabilities.resources != nil {
       _ = try await listTools()
     }
     guard closeTask == nil else { throw MCPError.connectionClosed }
+    if host?.action?.isProjectLifecycle == true {
+      // The provider's observed marker gates lifecycle dispatch, before any mutation.
+      let observed = await (transport as? MCPChildProcessTransport)?.hostServiceContract
+      guard observed == MCPHostServiceContract.identifier else {
+        throw MCPHostServiceContractError(observed: observed)
+      }
+    }
+    let hostInvocationID = host?.invocationID
     if let continuation {
       try validateSelectedOwner(continuation)
       guard continuation.reference.toolName == name else {
@@ -1538,6 +1547,10 @@ private actor MCPProxyConnection {
       var fields: [String: MCP.Value] = [:]
       if let hostInvocationID {
         fields[MCPHostInvocation.metadataKey] = .string(hostInvocationID.uuidString)
+      }
+      if let operationID = host?.operationID {
+        fields[MCPHostServiceContract.operationMetadataKey] = .string(
+          operationID.uuidString.lowercased())
       }
       if let providerInvocationID {
         fields[MCPProviderWork.invocationKey] = .string(providerInvocationID.uuidString)

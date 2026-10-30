@@ -456,9 +456,16 @@ package final class GatewayDatabase: OAuthStore, @unchecked Sendable {
   func withHostAuthority<Result>(
     _ authority: HostCallAuthoritySnapshot, operation: () throws -> Result
   ) throws -> Result {
+    try withHostAuthority(authority) { _ in try operation() }
+  }
+
+  /// The operation's writes commit in the same transaction as the authority check.
+  func withHostAuthority<Result>(
+    _ authority: HostCallAuthoritySnapshot, operation: (Database) throws -> Result
+  ) throws -> Result {
     try permissionTransaction(authorizing: authority) { database in
       try Self.requireHostAuthority(authority, database: database)
-      return try operation()
+      return try operation(database)
     }
   }
 
@@ -782,9 +789,7 @@ package final class GatewayDatabase: OAuthStore, @unchecked Sendable {
   private static func saveProject(
     _ project: ComputerMCPCore.RegisteredProject, in database: Database
   ) throws {
-    if let derived = try SQLiteDerivedProjectStore.record(project.id, in: database),
-      case .host = derived.provenance
-    {
+    if let derived = try SQLiteDerivedProjectStore.record(project.id, in: database) {
       guard derived.root == project.rootPath,
         let old = try ProjectRecord.fetchOne(database, key: project.id),
         old.createdAt.databaseValue == project.createdAt.databaseValue
@@ -1782,182 +1787,6 @@ extension GatewayDatabase {
     }
   }
 
-  func derivedProjectRegistration(id: String) throws -> MCPDerivedProjectRegistration? {
-    try writer.read { try Self.derivedRegistration(id: id, database: $0) }
-  }
-
-  /// Registration and inherited source authority are committed together.
-  @discardableResult
-  func registerDerivedProject(
-    _ registration: MCPDerivedProjectRegistration, verifiedPrincipalID: String,
-    caller: GatewayCallerKind, authority: HostCallAuthoritySnapshot? = nil
-  ) throws -> Bool {
-    try Self.requireDerivedPrincipal(registration, verifiedPrincipalID: verifiedPrincipalID)
-    let payload = try JSONEncoder().encode(registration)
-    guard payload.count <= 32_768 else {
-      throw MCPHostServiceError.denied("Registration exceeds its bound.")
-    }
-    let changed = try permissionTransaction { database in
-      if let authority {
-        guard authority.context.profileID == registration.profileID,
-          authority.context.trustedPrincipalID == verifiedPrincipalID,
-          authority.context.caller == caller
-        else {
-          throw MCPHostServiceError.denied(
-            "The call authority differs from the registration owner.")
-        }
-        try Self.requireHostAuthority(authority, database: database)
-      }
-      guard
-        let source = try ProjectRecord.fetchOne(database, key: registration.sourceProjectID),
-        Self.canonicalProjectRoot(source.rootPath) == registration.sourceRoot,
-        let profileRow = try ProfileRecord.fetchOne(database, key: registration.profileID.rawValue)
-      else {
-        throw MCPHostServiceError.denied("Source registration or profile is unavailable.")
-      }
-      let profile = try profileRow.value()
-      try Self.requireDerivedSourceGrant(profile, registration: registration, caller: caller)
-      if let old = try Self.derivedRegistration(id: registration.project.id, database: database) {
-        guard
-          try Self.availableDerivedProjects(in: database).contains(where: {
-            $0.projectID == old.project.id
-          })
-        else {
-          throw MCPHostServiceError.denied("The derived source registration is unavailable.")
-        }
-        try Self.requireDerivedPrincipal(old, verifiedPrincipalID: verifiedPrincipalID)
-        guard old.origin == registration.origin, old.receiptDigest == registration.receiptDigest,
-          old.receiptID == registration.receiptID, old.profileID == registration.profileID,
-          old.sourceProjectID == registration.sourceProjectID,
-          old.sourceRoot == registration.sourceRoot,
-          Self.sameStoredProject(old.project, registration.project),
-          let project = try ProjectRecord.fetchOne(database, key: old.project.id),
-          Self.sameStoredProject(project.value, old.project)
-        else { throw MCPHostServiceError.denied("Existing derived registration changed.") }
-        return false
-      }
-      guard try ProjectRecord.fetchOne(database, key: registration.project.id) == nil,
-        try ProjectAliasRecord.fetchOne(database, key: registration.project.id) == nil
-      else {
-        throw MCPHostServiceError.denied("Derived identity or source registration is unavailable.")
-      }
-      guard
-        try !ProfileRecord.fetchAll(database).contains(where: {
-          try $0.value().permissions.entries[.project(registration.project.id)] != nil
-        })
-      else {
-        throw MCPHostServiceError.denied(
-          "The derived identity already has an independently owned grant.")
-      }
-      let root = Self.canonicalProjectRoot(registration.project.rootPath)
-      guard try ProjectCanonicalRootRecord.fetchOne(database, key: root) == nil else {
-        throw MCPHostServiceError.denied(
-          "The directory already belongs to an independent registration.")
-      }
-      try ProjectRecord(registration.project).insert(database)
-      try ProjectCanonicalRootRecord(
-        canonicalRootPath: root, projectID: registration.project.id,
-        createdAt: registration.project.createdAt
-      ).insert(database)
-      let record = try DerivedProjectMigration.pluginRecord(payload: payload, in: database)
-      try SQLiteDerivedProjectStore.commit(record, expecting: nil, in: database)
-      return true
-    }
-    if changed {
-      profileChangeLock.withLock { profileChangeBroadcasters[registration.profileID] }?.send()
-    }
-    return changed
-  }
-
-  /// Does not remove independently edited registrations, aliases, or grants.
-  func unregisterDerivedProject(
-    _ registration: MCPDerivedProjectRegistration, verifiedPrincipalID: String,
-    caller: GatewayCallerKind, allowRevokedSourceForRollback: Bool = false,
-    authority: HostCallAuthoritySnapshot? = nil
-  ) throws {
-    try Self.requireDerivedPrincipal(registration, verifiedPrincipalID: verifiedPrincipalID)
-    let changedProfile = try permissionTransaction { database -> Bool in
-      if let authority {
-        guard authority.context.profileID == registration.profileID,
-          authority.context.trustedPrincipalID == verifiedPrincipalID,
-          authority.context.caller == caller
-        else {
-          throw MCPHostServiceError.denied(
-            "The call authority differs from the registration owner.")
-        }
-        try Self.requireHostAuthority(authority, database: database)
-      }
-      guard
-        let old = try Self.derivedRegistration(id: registration.project.id, database: database)
-      else { return false }
-      try Self.requireDerivedPrincipal(old, verifiedPrincipalID: verifiedPrincipalID)
-      guard try SQLiteDerivedProjectStore.record(old.project.id, in: database)?.state == .active
-      else {
-        throw MCPHostServiceError.denied("The derived source registration is unavailable.")
-      }
-      guard old == registration,
-        let project = try ProjectRecord.fetchOne(database, key: old.project.id),
-        Self.sameStoredProject(project.value, old.project),
-        try ProjectAliasRecord.filter(Column("canonicalProjectID") == old.project.id)
-          .fetchCount(database) == 0
-      else { throw MCPHostServiceError.denied("The derived registration has independent changes.") }
-      let profiles = try ProfileRecord.fetchAll(database)
-      if !allowRevokedSourceForRollback {
-        guard let source = try ProjectRecord.fetchOne(database, key: old.sourceProjectID),
-          Self.canonicalProjectRoot(source.rootPath) == old.sourceRoot,
-          let profile = try profiles.first(where: { $0.id == old.profileID.rawValue })?.value()
-        else {
-          throw MCPHostServiceError.denied("The source profile is unavailable.")
-        }
-        try Self.requireDerivedSourceGrant(profile, registration: old, caller: caller)
-      }
-      for row in profiles where try row.value().permissions.entries[.project(old.project.id)] != nil
-      {
-        throw MCPHostServiceError.denied(
-          "The derived identity now has an independently owned permission entry.")
-      }
-      try ProjectCanonicalRootRecord.filter(Column("projectID") == old.project.id).deleteAll(
-        database)
-      _ = try ProjectRecord.deleteOne(database, key: old.project.id)
-      guard let stored = try SQLiteDerivedProjectStore.record(old.project.id, in: database) else {
-        throw DerivedProjectStoreError.revisionConflict
-      }
-      try SQLiteDerivedProjectStore.remove(old.project.id, expecting: stored.revision, in: database)
-      return true
-    }
-    if changedProfile {
-      profileChangeLock.withLock { profileChangeBroadcasters[registration.profileID] }?.send()
-    }
-  }
-
-  private static func requireDerivedPrincipal(
-    _ registration: MCPDerivedProjectRegistration, verifiedPrincipalID: String
-  ) throws {
-    guard let principal = registration.principalID, !principal.isEmpty else {
-      throw MCPHostServiceError.denied(
-        "This historical registration has no bound principal; its data is preserved for explicit management."
-      )
-    }
-    guard !verifiedPrincipalID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
-      principal == verifiedPrincipalID
-    else {
-      throw MCPHostServiceError.denied("The derived registration belongs to another principal.")
-    }
-  }
-
-  private static func requireDerivedSourceGrant(
-    _ profile: ProfileGrant, registration: MCPDerivedProjectRegistration,
-    caller: GatewayCallerKind
-  ) throws {
-    guard
-      profile.permissions.state(for: .project(registration.sourceProjectID)) == .granted(.write),
-      profile.allowedCallers.contains(caller)
-    else {
-      throw MCPHostServiceError.denied(
-        "The persisted source grant no longer permits derived registration changes.")
-    }
-  }
-
   static func sameStoredProject(
     _ current: ComputerMCPCore.RegisteredProject, _ expected: ComputerMCPCore.RegisteredProject
   ) -> Bool {
@@ -1969,20 +1798,14 @@ extension GatewayDatabase {
       && current.updatedAt.databaseValue == expected.updatedAt.databaseValue
   }
 
-  private static func derivedRegistration(id: String, database: Database) throws
-    -> MCPDerivedProjectRegistration?
-  {
-    guard let stored = try SQLiteDerivedProjectStore.record(id, in: database) else { return nil }
-    guard case .plugin(let payload) = stored.provenance else {
-      throw MCPHostServiceError.denied("This derived project belongs to the host lifecycle.")
-    }
-    let record = try JSONDecoder().decode(MCPDerivedProjectRegistration.self, from: payload)
-    guard record.project.id == id, record.sourceProjectID == stored.source.id,
-      record.sourceRoot == stored.source.root, record.project.rootPath == stored.root
-    else {
-      throw MCPHostServiceError.denied("Stored registration identity differs from its record.")
-    }
-    return record
+  /// Startup emits each pending plugin worktree retirement notice before provider
+  /// activation and acknowledges it only after `emit` returns. A failing sink leaves
+  /// that notice and later ones pending for the next startup.
+  @discardableResult
+  package func drainPluginWorktreeRetirements(
+    _ emit: (PluginWorktreeRetirementNotice) throws -> Void
+  ) throws -> Int {
+    try PluginWorktreeRetirementStore(connection: connection).drain(emit)
   }
 }
 

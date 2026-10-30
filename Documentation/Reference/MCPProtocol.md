@@ -277,9 +277,11 @@ For stdio registrations created by `GatewayRuntime`, the host supplies
 ```json
 {
   "formatVersion": 1,
+  "hostServiceContract": "projects-v1",
   "runtimeID": "ed2868d1-5a81-4b59-a84a-8618c174a648",
   "caller": "secure-tunnel",
   "profileID": "chatgpt-observe",
+  "principalID": "secure-tunnel:chatgpt-observe",
   "project": { "id": "project", "rootPath": "/absolute/project" },
   "readOnly": true,
   "transportTrace": {
@@ -320,8 +322,8 @@ host-owned.
 
 When explicitly enabled by the host, `COMPUTER_MCP_HOST_FD` separately identifies
 an inherited connected Unix socket carrying standard MCP callbacks. The
-optional `managedProjectRoot` metadata field supplies the host-selected
-managed directory. Neither value changes the northbound caller identity or
+optional `managedProjectRoot` metadata field is host-selected storage
+provenance, not permission to create or delete a checkout. Neither value changes the northbound caller identity or
 permits a plugin to connect to the administrator socket. See
 [Scoped host services](HostServices.md) for authority, private tool discovery,
 message bounds and cleanup requirements.

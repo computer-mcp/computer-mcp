@@ -2,6 +2,7 @@ import ComputerMCPConfiguration
 import ComputerMCPCore
 import ComputerMCPDownstream
 import ComputerMCPPermissions
+import ComputerMCPPersistence
 import ComputerMCPPlatform
 import ComputerMCPProcess
 import ComputerMCPSandbox
@@ -61,6 +62,111 @@ struct GatewayWorktreeServiceTests {
     let deleted = try fixture.call(
       .deleteBranch(name: record.worktree!.branchName, force: false, dryRun: false, confirm: true))
     #expect(deleted.objectValue?["deleted"] == .bool(true))
+  }
+
+  @Test func hostServiceActionsPerformOnlyTheirLifecycleOperation() throws {
+    let fixture = try WorktreeServiceFixture()
+    defer { fixture.remove() }
+    let operation = GitWorktreeOperation.add(name: "topic", branch: nil, base: nil)
+    let proof = try fixture.admit(operation, projectID: "source")
+    for action in [MCPHostServiceAction.projectList, .projectRemoval, .diagnosticsSnapshot] {
+      #expect(throws: (any Error).self) {
+        try InvocationExecution.$current.withValue(
+          GatewayWorktreeInvocation(authorization: proof, hostAction: action)
+        ) { try fixture.service("source").perform(operation) }
+      }
+    }
+    #expect(try fixture.database.derivedProjects().isEmpty)
+    let operationID = UUID()
+    let outcome = try InvocationExecution.$current.withValue(
+      GatewayWorktreeInvocation(authorization: proof, hostAction: .projectProvision)
+    ) { try fixture.service("source").perform(operation, operationID: operationID) }
+    guard case .created(let created, let worktreeID) = outcome else {
+      Issue.record("Provisioning returned another outcome.")
+      return
+    }
+    // The reserved operation is the creation journal's operation and the worktree's ID.
+    #expect(worktreeID == operationID)
+    #expect(created.projectID == "worktree-" + operationID.uuidString.lowercased())
+    let storage = try #require(fixture.database.worktreeStorage)
+    #expect(try storage.creationOutcome(operationID: operationID) == .created(created))
+    #expect(try storage.creationOutcome(operationID: UUID()) == .notStarted)
+  }
+
+  @Test func restartReconcilesLifecycleOperationsFromTheirJournals() throws {
+    let fixture = try WorktreeServiceFixture()
+    defer { fixture.remove() }
+    let repository = try fixture.repository()
+    let storage = try #require(fixture.database.worktreeStorage)
+    let completedID = UUID()
+    let created = try repository.create(name: "completed", operationID: completedID)
+    let interruptedID = UUID()
+    _ = try repository.create(name: "interrupted", operationID: interruptedID)
+    // An in-progress creation journal leaves the outcome to journal recovery.
+    let name = "worktree-" + interruptedID.uuidString.lowercased() + ".json"
+    let journals = try WorktreeDirectory(storage.journals)
+    let original = try #require(try WorktreeJournalIO().read(name, in: journals, limit: 131_072))
+    var fields = try #require(try JSONSerialization.jsonObject(with: original) as? [String: Any])
+    fields["phase"] = "checkout"
+    let interrupted = try JSONSerialization.data(withJSONObject: fields, options: [.sortedKeys])
+    let removedID = UUID()
+    let removable = try repository.create(name: "removable")
+    let removal = try GatewaySynchronousOperation.run {
+      try await repository.remove(
+        projectID: removable.projectID, operationID: removedID, terminate: { _, _ in },
+        authorize: { _, _ in })
+    }
+    try WorktreeJournalIO().write(interrupted, name: name, in: journals, replacing: original)
+    let store = HostOperationStore(connection: fixture.database.connection)
+    let source = try #require(try fixture.database.project(id: "source"))
+    func record(
+      _ id: UUID, _ action: MCPHostServiceAction, project: String = "source", running: Bool
+    ) throws {
+      let admission = HostCallAdmission(
+        id: UUID(), generationID: UUID(), verifiedClientID: "client",
+        actingPrincipal: .plugin(.localServer("probe")), profileID: .chatGPTOperate,
+        caller: .secureTunnel, projectID: project, sourceProjectID: "source",
+        upstreamName: "adapter.lifecycle",
+        reference: .init(serverID: "probe", toolName: "lifecycle"),
+        action: action, argumentsDigest: "digest", authorizationID: UUID(),
+        authorizationRevision: 1, controlSessionID: nil, controlSessionRevision: nil,
+        requestID: "request")
+      try store.reserve(
+        .init(
+          id: id,
+          binding: .init(
+            admission: admission, action: action, pluginID: nil, contributionID: nil,
+            sourceRegisteredAt: source.createdAt, projectRegisteredAt: source.createdAt,
+            worktreeID: nil, arguments: [:])))
+      if running {
+        _ = try fixture.database.connection.writer.write {
+          try HostOperationStore.claim(id, in: $0)
+        }
+      }
+    }
+    let reservedID = UUID()
+    let absentID = UUID()
+    try record(reservedID, .projectProvision, running: false)
+    try record(completedID, .projectProvision, running: true)
+    try record(interruptedID, .projectProvision, running: true)
+    try record(absentID, .projectProvision, running: true)
+    try record(removedID, .projectRemoval, project: removable.projectID, running: true)
+    try fixture.database.reconcileHostOperations(owner: UUID())
+    #expect(try store.operation(id: reservedID)?.state == .failed)
+    #expect(try store.operation(id: absentID)?.state == .failed)
+    #expect(try store.operation(id: interruptedID)?.state == .recoveryRequired)
+    let completed = try #require(try store.operation(id: completedID))
+    #expect(completed.state == .completed)
+    #expect(completed.result?.objectValue?["path"] == .string(created.path.path))
+    #expect(
+      completed.result?.objectValue?["worktree_id"]
+        == .string(completedID.uuidString.lowercased()))
+    let removed = try #require(try store.operation(id: removedID))
+    #expect(removed.state == .completed)
+    #expect(removed.result?.objectValue?["oid"] == .string(removal.oid))
+    try fixture.database.reconcileHostOperations(owner: UUID())
+    #expect(try store.operation(id: completedID) == completed)
+    #expect(try store.unfinished().map(\.id) == [interruptedID])
   }
 
   @Test func preparedGitTransactionAbortsAndBoundsTheWholeSession() throws {

@@ -6,13 +6,32 @@ package struct InvocationAdmission: Sendable {
   package let risk: CapabilityRisk
   package let hostServiceAction: MCPHostServiceAction?
   package let hostInvocationID: UUID?
+  /// Reserved durably before a lifecycle mutation is forwarded.
+  package let hostOperationID: UUID?
 
-  package init?(descriptor: CapabilityDescriptor, hostInvocationID: UUID? = nil) {
+  package init?(
+    descriptor: CapabilityDescriptor, hostInvocationID: UUID? = nil, hostOperationID: UUID? = nil
+  ) {
     guard let reference = descriptor.mcpReference else { return nil }
     self.reference = reference
     risk = descriptor.risk
     hostServiceAction = descriptor.hostServiceAction
     self.hostInvocationID = hostInvocationID
+    self.hostOperationID = hostOperationID
+  }
+}
+
+/// Host correlation forwarded to a callback-enabled registration. The IDs select
+/// host records; they are not credentials.
+package struct HostServiceDispatch: Sendable {
+  package let invocationID: UUID
+  package let operationID: UUID?
+  package let action: MCPHostServiceAction?
+
+  package init(invocationID: UUID, operationID: UUID?, action: MCPHostServiceAction?) {
+    self.invocationID = invocationID
+    self.operationID = operationID
+    self.action = action
   }
 }
 

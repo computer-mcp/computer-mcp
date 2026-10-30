@@ -132,6 +132,42 @@ final class MCPProxyClientTests {
     }
   }
 
+  @Test(arguments: [nil, "projects-v0", "projects-v1"] as [String?])
+  func lifecycleDispatchRequiresTheProviderContractMarker(marker: String?) async throws {
+    try await runBlockingTest {
+      let script = try self.fakeLineDelimitedMCPServer(contract: marker)
+      let server = MCPServerConfig(
+        id: "contract", transport: .stdio, command: script.path, requestTimeoutMs: 5_000,
+        hostServices: true)
+      let authority = try ProxyExecutionFixture(
+        server: server, root: script.deletingLastPathComponent(), hostTools: MCPHostToolDirectory())
+      defer { try? authority.close() }
+      let base = try authority.context
+      let admission = try #require(
+        InvocationAdmission(
+          descriptor: .init(
+            id: "contract.sample", risk: .projectWrite, requirement: .none,
+            mcpReference: .init(serverID: "contract", toolName: "sample"),
+            hostServiceAction: .projectProvision),
+          hostInvocationID: UUID(), hostOperationID: UUID()))
+      let context = InvocationContext(
+        admission: admission, session: base.session,
+        executionAuthority: base.executionAuthority)
+      do {
+        _ = try authority.client.callTool(
+          server: server, name: "sample", arguments: .object([:]), context: context)
+        Issue.record("A lifecycle call without a live host invocation was forwarded.")
+      } catch let error as MCPHostServiceContractError {
+        // Refused before the host retains the invocation or sends tools/call.
+        #expect(marker != "projects-v1")
+        #expect(error.observed == marker)
+      } catch {
+        #expect(marker == "projects-v1", "\(error)")
+        #expect(String(describing: error).contains("No matching active host invocation"))
+      }
+    }
+  }
+
   @Test
   func testStdioProxyUsesLineDelimitedMCPMessages() async throws {
     try await runBlockingTest {
@@ -763,7 +799,9 @@ final class MCPProxyClientTests {
     }
   }
 
-  private func fakeLineDelimitedMCPServer(paginated: Bool = false) throws -> URL {
+  private func fakeLineDelimitedMCPServer(paginated: Bool = false, contract: String? = nil)
+    throws -> URL
+  {
     let directory = FileManager.default.temporaryDirectory
       .appendingPathComponent(UUID().uuidString, isDirectory: true)
     try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
@@ -775,6 +813,7 @@ final class MCPProxyClientTests {
       import os
 
       paginated = \(paginated ? "True" : "False")
+      contract = \(contract.map { "\"" + $0 + "\"" } ?? "None")
       for line in sys.stdin:
           message = json.loads(line)
           method = message.get("method")
@@ -787,6 +826,10 @@ final class MCPProxyClientTests {
                   "capabilities": {"tools": {}},
                   "serverInfo": {"name": "fake", "version": "1"},
               }
+              if contract is not None:
+                  response["result"]["capabilities"]["experimental"] = {
+                      "io.github.computer-mcp/host-service-contract": contract
+                  }
           elif method == "tools/list":
               cursor = message.get("params", {}).get("cursor")
               if paginated and cursor is None:
@@ -1280,7 +1323,8 @@ final class ProxyExecutionFixture: @unchecked Sendable {
   init(
     server: MCPServerConfig, root: URL, ownedWork: GatewayOwnedWork? = nil,
     database suppliedDatabase: GatewayDatabase? = nil, executionScope: String? = nil,
-    additionalPermissions: [Permission: PermissionState] = [:]
+    additionalPermissions: [Permission: PermissionState] = [:],
+    hostTools: MCPHostToolDirectory? = nil
   ) throws {
     self.root = try ProjectPathResolver.canonicalProject(root)
     self.server = server
@@ -1359,7 +1403,8 @@ final class ProxyExecutionFixture: @unchecked Sendable {
     try FileManager.default.createDirectory(at: scratch, withIntermediateDirectories: true)
     var host = MCPHostContext(
       runtimeID: UUID(), context: callerContext, projectID: "fixture", rootURL: projectRoot,
-      readOnly: false, processOwnershipRoot: self.root.appendingPathComponent("ownership"),
+      readOnly: false, tools: hostTools,
+      processOwnershipRoot: self.root.appendingPathComponent("ownership"),
       executionDatabase: database)
     host.ownedWork = ownedWork
     if server.transport == .stdio {

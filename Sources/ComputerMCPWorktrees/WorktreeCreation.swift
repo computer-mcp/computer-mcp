@@ -1,6 +1,6 @@
 import Foundation
 
-package struct CreatedWorktree: Sendable {
+package struct CreatedWorktree: Equatable, Sendable {
   package let projectID: String
   package let path: URL
   package let branch: String
@@ -40,9 +40,11 @@ struct WorktreeCreationJournal: Codable {
 }
 
 extension WorktreeRepository {
-  package func create(name: String, branch: String? = nil, base: String? = nil) throws
-    -> CreatedWorktree
-  {
+  /// A host-reserved `operationID` becomes both the creation journal's operation and
+  /// the new worktree's ID, so a lost reply is recoverable from the journal.
+  package func create(
+    name: String, branch: String? = nil, base: String? = nil, operationID: UUID? = nil
+  ) throws -> CreatedWorktree {
     guard name.utf8.count <= 48,
       name.range(of: "^[a-z0-9]+(-[a-z0-9]+)*$", options: .regularExpression) == name
         .startIndex..<name.endIndex
@@ -81,7 +83,7 @@ extension WorktreeRepository {
       else {
         throw WorktreeError.invalidRequest("Base must be an existing direct branch with a commit.")
       }
-      let worktreeID = UUID()
+      let worktreeID = operationID ?? UUID()
       let component = worktreeID.uuidString.lowercased()
       let repositoryName = URL(fileURLWithPath: identity.main.path).lastPathComponent
       guard !repositoryName.isEmpty, !repositoryName.contains("\n"), !repositoryName.contains("\r")

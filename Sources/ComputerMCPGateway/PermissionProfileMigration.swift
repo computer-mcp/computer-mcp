@@ -9,17 +9,14 @@ package struct PermissionMigrationProjects: Sendable {
   package let registered: [ComputerMCPCore.RegisteredProject]
   package let aliases: [String: String]
   package let canonicalRoots: [String: Set<String>]
-  package let derived: [MCPDerivedProjectRegistration]
 
   package init(
     registered: [ComputerMCPCore.RegisteredProject], aliases: [String: String] = [:],
-    canonicalRoots: [String: Set<String>] = [:],
-    derived: [MCPDerivedProjectRegistration] = []
+    canonicalRoots: [String: Set<String>] = [:]
   ) {
     self.registered = registered
     self.aliases = aliases
     self.canonicalRoots = canonicalRoots
-    self.derived = derived
   }
 }
 
@@ -51,7 +48,6 @@ package struct PermissionMigrationReport: Equatable, Sendable {
 package struct PermissionMigrationPlan: Sendable {
   package let profiles: [ProfileGrant]
   package let projects: [ComputerMCPCore.RegisteredProject]
-  package let derived: [MCPDerivedProjectRegistration]
   package let report: PermissionMigrationReport
   package let inputDigest: String
   package let catalogDigest: String
@@ -64,12 +60,11 @@ package enum PermissionProfileMigration {
     projects: PermissionMigrationProjects
   ) throws -> PermissionMigrationPlan {
     guard Set(profiles.map(\.id)).count == profiles.count,
-      Set(projects.registered.map(\.id)).count == projects.registered.count,
-      Set(projects.derived.map { $0.project.id }).count == projects.derived.count
+      Set(projects.registered.map(\.id)).count == projects.registered.count
     else { throw PermissionMigrationError.invalidStoredState }
     let inputDigest = try fingerprint(profiles: profiles, projects: projects, catalog: catalog)
     let defaults = Dictionary(uniqueKeysWithValues: catalog.manifestProfiles.map { ($0.id, $0) })
-    var effective = try profiles.map { profile in
+    let effective = try profiles.map { profile in
       guard profile.authorizationRevision >= 0, profile.authorizationRevision < Int64.max else {
         throw PermissionMigrationError.revisionExhausted
       }
@@ -84,38 +79,6 @@ package enum PermissionProfileMigration {
       return merged
     }
     let registered = Dictionary(uniqueKeysWithValues: projects.registered.map { ($0.id, $0) })
-    // The receipt proves which profile entry the old registration injected. Another
-    // explicit holder or alias is independent authority and cannot silently become inheritance.
-    for row in projects.derived {
-      guard let child = registered[row.project.id], sameStoredProject(child, row.project) else {
-        throw PermissionMigrationError.ownershipConflict(
-          row.project.id, reason: "Derived registration metadata changed.")
-      }
-      guard let source = registered[row.sourceProjectID],
-        (projects.canonicalRoots[source.id] ?? [source.rootPath]).contains(row.sourceRoot)
-      else {
-        throw PermissionMigrationError.ownershipConflict(
-          row.project.id, reason: "Source registration or canonical root changed.")
-      }
-      guard !row.origin.isEmpty, !row.receiptID.isEmpty, !row.receiptDigest.isEmpty,
-        row.project.id != row.sourceProjectID,
-        !projects.aliases.values.contains(row.project.id),
-        let index = effective.firstIndex(where: { $0.id == row.profileID }),
-        profiles.first(where: { $0.id == row.profileID })?.projectIDs.contains(row.project.id)
-          == true,
-        effective[index].projectIDs.contains(row.sourceProjectID)
-          || effective[index].projectIDs.contains("*"),
-        !effective.contains(where: {
-          $0.id != row.profileID && $0.projectIDs.contains(row.project.id)
-        }),
-        !projects.derived.contains(where: { $0.project.id == row.sourceProjectID })
-      else {
-        throw PermissionMigrationError.ownershipConflict(
-          row.project.id,
-          reason: "Receipt ownership, source grant, or independent derived grant conflicts.")
-      }
-      effective[index].projectIDs.remove(row.project.id)
-    }
     var dropped: [PermissionMigrationReport.DroppedGrant] = []
     var omitted = 0
     func report(_ profile: LegacyProfileGrant, _ grant: String, _ reason: String) {
@@ -228,18 +191,8 @@ package enum PermissionProfileMigration {
     }
     return PermissionMigrationPlan(
       profiles: converted, projects: projects.registered.sorted { $0.id < $1.id },
-      derived: projects.derived.sorted { $0.project.id < $1.project.id },
       report: .init(dropped: dropped, omittedCount: omitted), inputDigest: inputDigest,
       catalogDigest: catalog.digest)
-  }
-
-  private static func sameStoredProject(
-    _ lhs: ComputerMCPCore.RegisteredProject, _ rhs: ComputerMCPCore.RegisteredProject
-  ) -> Bool {
-    lhs.id == rhs.id && lhs.displayName == rhs.displayName && lhs.rootPath == rhs.rootPath
-      && lhs.bookmarkData == rhs.bookmarkData && lhs.bookmarkIsStale == rhs.bookmarkIsStale
-      && lhs.createdAt.databaseValue == rhs.createdAt.databaseValue
-      && lhs.updatedAt.databaseValue == rhs.updatedAt.databaseValue
   }
 
   static func fingerprint(
@@ -251,7 +204,6 @@ package enum PermissionProfileMigration {
       let projects: [ComputerMCPCore.RegisteredProject]
       let aliases: [String: String]
       let canonicalRoots: [String: [String]]
-      let derived: [MCPDerivedProjectRegistration]
       let catalog: String
     }
     let encoder = JSONEncoder()
@@ -259,8 +211,7 @@ package enum PermissionProfileMigration {
     let snapshot = Snapshot(
       profiles: profiles.sorted { $0.id.rawValue < $1.id.rawValue }.map(LegacyProfileIdentity.init),
       projects: projects.registered.sorted { $0.id < $1.id }, aliases: projects.aliases,
-      canonicalRoots: projects.canonicalRoots.mapValues { $0.sorted() },
-      derived: projects.derived.sorted { $0.project.id < $1.project.id }, catalog: catalog.digest)
+      canonicalRoots: projects.canonicalRoots.mapValues { $0.sorted() }, catalog: catalog.digest)
     return SHA256.hash(data: try encoder.encode(snapshot)).map { String(format: "%02x", $0) }
       .joined()
   }

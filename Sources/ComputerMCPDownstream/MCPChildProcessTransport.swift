@@ -32,6 +32,8 @@ package actor MCPChildProcessTransport: MCP.Transport {
   private var reader: Task<Void, Never>?
   private var closeTask: Task<Void, Never>?
   private var closed = false
+  private var initializationObserved = false
+  private var observedHostServiceContract: String?
   private let stream: AsyncThrowingStream<Data, Swift.Error>
   private let continuation: AsyncThrowingStream<Data, Swift.Error>.Continuation
 
@@ -47,6 +49,11 @@ package actor MCPChildProcessTransport: MCP.Transport {
     guard !server.hostServices || hostContext?.providesHostServices == true else {
       throw GatewayToolError.executionFailed(
         "The stdio registration requires scoped host services.")
+    }
+    // Host services bind to the provider's verified channel, never an inherited descriptor.
+    guard !server.hostServices || preparedExecution != nil else {
+      throw GatewayToolError.executionFailed(
+        "Host services require a prepared provider execution.")
     }
     self.launcher = launcher
     self.server = server
@@ -110,12 +117,8 @@ package actor MCPChildProcessTransport: MCP.Transport {
     self.ownership = ownership
     let session: (any MCPHostSessionHandle)?
     do {
-      if server.hostServices, let hostContext {
-        if let preparedExecution {
-          session = try hostContext.makeHostSession(server: server, execution: preparedExecution)
-        } else {
-          session = try hostContext.makeHostSession(server: server)
-        }
+      if server.hostServices, let hostContext, let preparedExecution {
+        session = try hostContext.makeHostSession(server: server, execution: preparedExecution)
       } else {
         session = nil
       }
@@ -123,19 +126,11 @@ package actor MCPChildProcessTransport: MCP.Transport {
       try? ownership.finish(confirmed: true)
       throw error
     }
-    var hostProtocolMetadata = hostProtocolMetadata
-    if session?.childHandle != nil {
-      hostProtocolMetadata[MCPHostLaunchMetadata.descriptorEnvironmentKey] = "3"
-    }
     let process: ManagedLineProcess
     do {
       let execution: PreparedExecutionContext?
       if let preparedExecution, let session {
-        guard session.childHandle == nil, let channel = session.providerChannel else {
-          throw GatewayToolError.executionFailed(
-            "The host session did not provide a verified channel.")
-        }
-        execution = try preparedExecution.withHostServiceChannel(channel)
+        execution = try preparedExecution.withHostServiceChannel(session.providerChannel)
       } else {
         execution = preparedExecution
       }
@@ -144,7 +139,6 @@ package actor MCPChildProcessTransport: MCP.Transport {
         hostProtocolMetadata: hostProtocolMetadata,
         workingDirectory: workingDirectory,
         maximumMessageBytes: 16 * 1_024 * 1_024,
-        inheritedDescriptors: session?.childHandle.map { [3: $0] } ?? [:],
         ownershipHandle: try ownership.supervisorHandle())
       if let execution {
         process = try execution.withValue {
@@ -158,7 +152,6 @@ package actor MCPChildProcessTransport: MCP.Transport {
       try? ownership.finish(confirmed: await session?.shutdownConfirmed() ?? true)
       throw error
     }
-    try? session?.childHandle?.close()
     self.hostSession = session
     self.process = process
     reader = Task { [continuation] in
@@ -166,6 +159,7 @@ package actor MCPChildProcessTransport: MCP.Transport {
         for try await line in process.inboundLines {
           try Task.checkCancellation()
           if line.isEmpty { continue }
+          await self.observeInitialization(line)
           switch continuation.yield(Data(line.utf8)) {
           case .enqueued: break
           case .dropped: throw ManagedLineProcessError.bufferOverflow
@@ -226,4 +220,20 @@ package actor MCPChildProcessTransport: MCP.Transport {
   }
 
   package func receive() -> AsyncThrowingStream<Data, Swift.Error> { stream }
+
+  /// The provider's advertised project service contract, from its initialization result.
+  /// Nil before initialization or when the provider omits the marker.
+  package var hostServiceContract: String? { observedHostServiceContract }
+
+  private func observeInitialization(_ line: String) {
+    guard !initializationObserved,
+      let message = try? JSONDecoder().decode(JSONValue.self, from: Data(line.utf8)).objectValue,
+      let result = message["result"]?.objectValue, result["protocolVersion"] != nil,
+      let capabilities = result["capabilities"]?.objectValue
+    else { return }
+    initializationObserved = true
+    observedHostServiceContract =
+      capabilities["experimental"]?.objectValue?[MCPHostServiceContract.capabilityKey]?
+      .stringValue
+  }
 }

@@ -21,16 +21,20 @@ package struct PluginContributionOrigin: Codable, Equatable, Sendable {
   package let version: PluginVersion
   package let source: PluginSource
   package let reviewedRequirements: PluginContributionRequirements?
+  /// The reviewed stdio contribution's `host_service_contract` marker, if declared.
+  package let hostServiceContract: String?
 
   package init(
     pluginID: String, componentID: String, version: PluginVersion, source: PluginSource,
-    reviewedRequirements: PluginContributionRequirements? = nil
+    reviewedRequirements: PluginContributionRequirements? = nil,
+    hostServiceContract: String? = nil
   ) {
     self.pluginID = pluginID
     self.componentID = componentID
     self.version = version
     self.source = source
     self.reviewedRequirements = reviewedRequirements
+    self.hostServiceContract = hostServiceContract
   }
 }
 
@@ -132,7 +136,9 @@ package enum PluginResolver {
         version: manifest.version, source: source,
         reviewedRequirements: try PluginContributionRequirements(
           sourceDigest: PluginStore.manifestDigest(manifest),
-          declarations: PluginPermissionDeclarations(manifest), componentID: component))
+          declarations: PluginPermissionDeclarations(manifest), componentID: component),
+        hostServiceContract: kind == .mcp
+          ? manifest.mcp.first { $0.id == component }?.hostServiceContract : nil)
     }
 
     func path(_ relative: String?) throws -> String? {

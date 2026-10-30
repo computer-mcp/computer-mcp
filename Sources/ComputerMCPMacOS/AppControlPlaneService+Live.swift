@@ -90,9 +90,15 @@ extension AppControlPlaneService {
     let report = try AtomicManifestStore.activatePermissionMigration(
       manifestURL: directories.manifest, database: database,
       applications: platform.applications, bundledPlugins: bundledPlugins)
+    let logger = try AppFileLogger(directory: directories.logs)
     if let message = report?.startupDiagnostic {
-      try AppFileLogger(directory: directories.logs).append(
-        .warning, event: "permissions.upgrade", fields: ["summary": message])
+      logger.append(.warning, event: "permissions.upgrade", fields: ["summary": message])
+    }
+    // Every retired checkout is reported before any provider starts.
+    try database.drainPluginWorktreeRetirements { notice in
+      try logger.record(
+        .warning, event: PluginWorktreeRetirementNotice.code,
+        fields: notice.fields.compactMapValues { $0.stringValue })
     }
   }
 

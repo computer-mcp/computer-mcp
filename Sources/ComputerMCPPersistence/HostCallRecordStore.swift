@@ -48,6 +48,7 @@ package final class HostCallRecordStore: Sendable {
             """, arguments: [count - maximumRecords + 1])
         count -= database.changesCount
       }
+      try HostOperationStore.prune(in: database)
       guard count < maximumRecords else {
         throw HostCallRecordError.capacity
       }

@@ -9,6 +9,7 @@ import ComputerMCPPlugins
 import ComputerMCPProcess
 import ComputerMCPTestSupport
 import ComputerMCPTunnels
+import ComputerMCPWorktrees
 import Foundation
 import GRDB
 import MCP
@@ -278,26 +279,29 @@ struct OAuthControlPlaneTests {
         id: .cloudflareOperate,
         permissions: try oauthPermissions([.project("source"): .granted(.write)]),
         allowedCallers: [.cloudflareTunnel]))
-    let registration = MCPDerivedProjectRegistration(
-      origin: "fixture", receiptID: "derived-receipt", sourceProjectID: "source",
-      sourceRoot: source.path, receiptDigest: "fixture-digest", profileID: .cloudflareOperate,
-      principalID: "existing-client", caller: .cloudflareTunnel,
-      project: .init(id: "child", displayName: "Child", rootPath: child.path))
+    let registered = try #require(try fixture.database.project(id: "source"))
+    let record = DerivedProjectRecord(
+      projectID: "child",
+      source: .init(
+        id: "source", root: GatewayDatabase.canonicalProjectRoot(registered.rootPath),
+        registeredAt: registered.createdAt),
+      // The project row standardizes its root; the record carries the same value.
+      root: ComputerMCPCore.RegisteredProject(displayName: "Child", rootPath: child.path).rootPath,
+      provenance: .host(worktreeID: UUID(), storageGeneration: UUID()), state: .creating)
     if removing {
-      try fixture.database.registerDerivedProject(
-        registration, verifiedPrincipalID: "existing-client", caller: .cloudflareTunnel)
+      try fixture.database.derivedProjectStore(inspectNesting: { _ in [] }).commit(
+        record, expecting: nil, protecting: nil)
     }
     let connection = try GatewayDatabaseConnection(
       path: try #require(fixture.database.fileURL).path)
     let writer = GatewayDatabase(connection: connection)
     _ = writer.permissionStore(counter: fixture.permissionCounter)
     func changeProject() throws {
+      let store = writer.derivedProjectStore(inspectNesting: { _ in [] })
       if removing {
-        try writer.unregisterDerivedProject(
-          registration, verifiedPrincipalID: "existing-client", caller: .cloudflareTunnel)
+        try store.remove("child", expecting: 1)
       } else {
-        try writer.registerDerivedProject(
-          registration, verifiedPrincipalID: "existing-client", caller: .cloudflareTunnel)
+        try store.commit(record, expecting: nil, protecting: nil)
       }
     }
     let flow = fixture.server()
@@ -353,7 +357,11 @@ struct OAuthControlPlaneTests {
       try await fixture.service.oauthApprovalProfiles().first { $0.grant.id == reviewed.grant.id })
     #expect(current.authorizationDigest == reviewed.authorizationDigest)
     #expect(current.grant.permissions.entries[.project("child")] == nil)
-    #expect((try fixture.database.project(id: "child") != nil) == !removing)
+    // The derived registration change committed after the approval; a creating
+    // registration publishes no project.
+    #expect(
+      try fixture.database.derivedProjects().contains { $0.projectID == "child" } == !removing)
+    #expect(try fixture.database.project(id: "child") == nil)
   }
 
   // These integration cases publish manifests through the macOS exclusive-rename

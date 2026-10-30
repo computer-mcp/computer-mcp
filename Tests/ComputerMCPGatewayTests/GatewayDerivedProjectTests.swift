@@ -13,12 +13,10 @@ import Testing
 @testable import ComputerMCPGateway
 
 @Suite struct GatewayDerivedProjectTests {
-  @Test(arguments: [false, true])
-  func sourceRemovalRetainsDataAndCannotReattachToAReusedID(host: Bool) throws {
+  @Test func sourceRemovalRetainsDataAndCannotReattachToAReusedID() throws {
     let f = try DerivedAuthorityFixture()
     defer { f.remove() }
-    let id: String
-    if host { id = try f.create("retained").projectID } else { id = try f.plugin().project.id }
+    let id = try f.create("retained").projectID
     let record = try #require(f.database.derivedProjects().first { $0.projectID == id })
     let original = try #require(try f.database.project(id: "source"))
     let originalProfiles = try f.database.profiles()
@@ -38,16 +36,10 @@ import Testing
     try f.database.saveProject(replacement)
     #expect(try f.database.project(id: id) == nil)
     #expect(throws: (any Error).self) { _ = try f.database.derivedSourceID(for: id) }
-    // A new child may use the new source registration; retained siblings stay unavailable.
-    let fresh = try f.plugin(id: "fresh")
-    #expect(try f.database.project(id: fresh.project.id) != nil)
-    if host {
-      #expect(throws: (any Error).self) { _ = try f.create("fresh-host") }
-    }
+    // The retained child requires reconciliation before the new source registration
+    // can create another worktree, and it never reattaches.
+    #expect(throws: (any Error).self) { _ = try f.create("fresh-host") }
     #expect(try f.database.project(id: id) == nil)
-    #expect(
-      try f.store.readWithDatabase { _, ledger in ledger.environment.paths?.registeredProjects.count
-      } == 2)
   }
 
   @Test(arguments: ["content", "parent", "source"])
@@ -230,18 +222,6 @@ private struct DerivedAuthorityFixture {
       timeoutMilliseconds: 20_000, maxOutputBytes: 1_048_576, lockTimeout: .seconds(1))
   }
   func create(_ name: String) throws -> CreatedWorktree { try repository().create(name: name) }
-  func plugin(id: String = "plugin") throws -> MCPDerivedProjectRegistration {
-    let child = root.appendingPathComponent(id)
-    try FileManager.default.createDirectory(at: child, withIntermediateDirectories: false)
-    let registration = MCPDerivedProjectRegistration(
-      origin: "fixture", receiptID: "receipt", sourceProjectID: "source", sourceRoot: source.path,
-      receiptDigest: "digest", profileID: .chatGPTOperate, principalID: "owner",
-      caller: .secureTunnel,
-      project: .init(id: id, displayName: "Plugin", rootPath: child.path))
-    try database.registerDerivedProject(
-      registration, verifiedPrincipalID: "owner", caller: .secureTunnel)
-    return registration
-  }
   func admit(project: String, path: URL, profile: GatewayProfileID, principal: String) throws
     -> InvocationAuthorization
   {

@@ -31,7 +31,6 @@ extension GatewayDatabase {
     guard let projectID,
       let record = try derivedProjects().first(where: { $0.projectID == projectID })
     else { return nil }
-    guard case .host = record.provenance else { return nil }
     guard let storage = worktreeStorage, let directory,
       let source = try project(id: record.source.id),
       source.createdAt == record.source.registeredAt,

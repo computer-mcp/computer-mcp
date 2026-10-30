@@ -132,8 +132,7 @@ package final class WorktreeRepository: Sendable {
         owned.insert(record.root)
         continue
       }
-      guard case .host = record.provenance,
-        record.state == .active, let journal = try readJournal(record.projectID),
+      guard record.state == .active, let journal = try readJournal(record.projectID),
         [.branch, .active].contains(journal.phase), try matchesActiveRecord(journal, record)
       else { continue }
       do {

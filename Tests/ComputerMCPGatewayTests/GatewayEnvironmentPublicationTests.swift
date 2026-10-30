@@ -6,6 +6,7 @@ import ComputerMCPPersistence
 import ComputerMCPPlatform
 import ComputerMCPPlatformPOSIX
 import ComputerMCPTestSupport
+import ComputerMCPWorktrees
 import Foundation
 import GRDB
 import Testing
@@ -75,18 +76,25 @@ import Testing
     try service.configureEnvironment(
       sourcePaths, trustedHosts: [], expectedProjects: database.projects(),
       expectedConfigurationRevision: nil)
-    let registration = MCPDerivedProjectRegistration(
-      origin: "fixture", receiptID: "fixture-receipt", sourceProjectID: "source",
-      sourceRoot: source.standardizedFileURL.resolvingSymlinksInPath().path,
-      receiptDigest: "fixture-digest", profileID: .chatGPTOperate,
-      principalID: "owner", caller: .secureTunnel,
-      project: .init(id: "child", displayName: "Child", rootPath: child.path))
-    try database.registerDerivedProject(
-      registration, verifiedPrincipalID: "owner", caller: .secureTunnel)
-    try database.connection.writer.write {
-      try $0.execute(
-        sql: "INSERT INTO pluginDerivedProjects VALUES (?, ?, ?, ?, ?)",
-        arguments: ["child", "historical", "child", "old-receipt", "{}"])
+    let sourceProject = try #require(try database.project(id: "source"))
+    try database.connection.writer.write { sql in
+      let project = ComputerMCPCore.RegisteredProject(
+        id: "child", displayName: "Child", rootPath: child.path)
+      try ProjectRecord(project).insert(sql)
+      try ProjectCanonicalRootRecord(
+        canonicalRootPath: child.path, projectID: "child", createdAt: project.createdAt
+      ).insert(sql)
+      // A removal in progress keeps derived authority without worktree content. The
+      // record's root is the registered project's root, as the lifecycle writes both.
+      try SQLiteDerivedProjectStore.commit(
+        .init(
+          projectID: "child",
+          source: .init(
+            id: "source", root: GatewayDatabase.canonicalProjectRoot(sourceProject.rootPath),
+            registeredAt: sourceProject.createdAt),
+          root: project.rootPath,
+          provenance: .host(worktreeID: UUID(), storageGeneration: UUID()), state: .removing),
+        expecting: nil, in: sql)
     }
     let paths = try PathEnvironmentSnapshot(
       projects: sourcePaths.registeredProjects + [
@@ -121,14 +129,9 @@ import Testing
     }
     #expect(try store.readWithDatabase { _, ledger in ledger } == missing)
     try FileManager.default.removeItem(at: child)
-    try database.unregisterDerivedProject(
-      registration, verifiedPrincipalID: "owner", caller: .secureTunnel)
+    try database.derivedProjectStore(inspectNesting: { _ in [] }).remove("child", expecting: 1)
     #expect(try database.project(id: "child") == nil)
     #expect(try database.profiles().first?.permissions.entries[.project("child")] == nil)
-    #expect(
-      try database.connection.writer.read {
-        try String.fetchOne($0, sql: "SELECT payloadJSON FROM pluginDerivedProjects")
-      } == "{}")
   }
 
   @Test func unchangedCapturedPathsDoNotAdvanceTheAuthorityCounter() throws {

@@ -88,7 +88,7 @@ struct GatewayWorktreeLifecycleTests {
       let channel = try MCPHostSession(context: host, server: registration)
       let peer = MCP.Client(name: "sandboxed-callback", version: "1")
       let transport = try MCPInheritedSocketTransport(
-        takingOwnershipOf: #require(channel.providerChannel).takeEndpoint())
+        takingOwnershipOf: channel.providerChannel.takeEndpoint())
       do {
         _ = try await peer.connect(transport: transport)
         let escape = fixture.root.appendingPathComponent("escape")

@@ -157,18 +157,32 @@ package final class GatewayDatabaseConnection: @unchecked Sendable {
           );
           """)
     }
+    migrator.registerMigration("host-operations") { database in
+      try database.execute(
+        sql: """
+          CREATE TABLE hostOperations (
+            id TEXT PRIMARY KEY,
+            invocationID TEXT NOT NULL UNIQUE,
+            state TEXT NOT NULL,
+            payload BLOB NOT NULL
+          );
+          CREATE INDEX hostOperationStates ON hostOperations(state);
+          """)
+    }
+    migrator.registerMigration(
+      "plugin-worktree-retirement", migrate: PluginWorktreeRetirement.migrate)
     return migrator
   }()
 
   private static func open(_ writer: any DatabaseWriter) throws {
-    try writer.read(checkSchema)
+    try writer.read { try checkSchema($0) }
     try migrator.migrate(writer)
   }
 
   /// Throws `UnsupportedDatabaseSchema` unless `database` is empty or has only migrations
-  /// this version registers.
-  static func checkSchema(_ database: Database) throws {
-    let unknown = try migrator.appliedIdentifiers(database).subtracting(migrator.migrations)
+  /// in `known`, which defaults to the migrations this version registers.
+  static func checkSchema(_ database: Database, known: [String] = migrator.migrations) throws {
+    let unknown = try migrator.appliedIdentifiers(database).subtracting(known)
     guard unknown.isEmpty else {
       throw UnsupportedDatabaseSchema(identifiers: unknown.sorted())
     }

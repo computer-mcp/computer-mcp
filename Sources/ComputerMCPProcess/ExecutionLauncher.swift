@@ -146,7 +146,7 @@ package struct ExecutionLauncher: Sendable {
         input: input, output: output, error: error,
         bindOwnership: { ownership in
           prepared?.authority.bindChild(childID, ownership: ownership)
-          if let prepared, prepared.provider != nil {
+          if let prepared, prepared.validatesProviderLaunch {
             ownership.beforeStart { _ in try prepared.validateProviderLaunch() }
           }
           bindOwnership(ownership)

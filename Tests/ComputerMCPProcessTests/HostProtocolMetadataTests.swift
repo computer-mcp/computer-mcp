@@ -237,10 +237,13 @@ struct HostProtocolMetadataTests {
     #expect(attached.limits.retainedOutputBytes == 512)
   }
 
-  @Test(arguments: [1, 2, 3])
-  func providerRevisionRacePreventsPublication(validation: Int) async throws {
+  /// A callback-created program has no provider binding but carries the provider's compiled
+  /// read exceptions, so its bootstrap repeats the recheck too.
+  @Test(arguments: [1, 2, 3], [true, false])
+  func providerRevisionRacePreventsPublication(validation: Int, bound: Bool) async throws {
     let binding = try providerBinding()
-    let authority = MetadataAuthority(authorizationIDs: binding.authorizationIDs)
+    let authority = MetadataAuthority(
+      authorizationIDs: bound ? binding.authorizationIDs : [UUID()])
     let platform = MetadataPlatform()
     let root = try SandboxPath(
       ProjectPathResolver.canonicalProject(FileManager.default.temporaryDirectory).path)
@@ -252,7 +255,7 @@ struct HostProtocolMetadataTests {
     let race = ProviderValidationRace(failAt: validation)
     let prepared = PreparedExecutionContext(
       authority: authority, mode: .sandbox(sandbox), environment: environment,
-      limits: MetadataAuthority.limits, provider: binding,
+      limits: MetadataAuthority.limits, provider: bound ? binding : nil,
       validateProvider: { try race.validate() })
     await #expect(throws: PermissionModelError.self) {
       try await prepared.withValue {

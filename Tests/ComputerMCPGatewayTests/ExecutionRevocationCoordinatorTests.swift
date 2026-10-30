@@ -51,6 +51,22 @@ import Testing
     #expect(f.platform.owners.allSatisfy { $0.ended })
   }
 
+  @Test func sealedRevocationRefusesContinuedWorkBeforeStorageConfirmsIt() async throws {
+    let f = try ExecutionFixture()
+    let coordinator = try f.coordinator()
+    try await coordinator.recover()
+    let id = try f.paths.authorize(f.paths.project, operation: .read, once: false)
+    let prepared = try await coordinator.prepare(authorizationID: id, context: f.context)
+    let work = try prepared.retainWork {}
+    try prepared.finishAdmission()
+    try prepared.authority.retainContinuation {}.finish()
+    coordinator.revokeInvocations([id])
+    #expect(throws: (any Error).self) { try prepared.authority.retainContinuation {} }
+    try work.finish()
+    try await coordinator.reconcile()
+    try await f.untilFinished(prepared.executionID, coordinator)
+  }
+
   @Test(arguments: [ExecutionOperation.readResult, .writeInput, .cancel, .requestCancellation])
   func continuationRechecksItsAdditionalProofAtEveryUse(operation: ExecutionOperation) async throws
   {

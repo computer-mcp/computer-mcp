@@ -953,11 +953,13 @@ package final class ExecutionRevocationCoordinator: ExecutionRecoveryAuthorizing
     authority: GatewayExecutionAuthority, continuation: Bool = false,
     cancellation: @escaping @Sendable () async -> Void
   ) throws -> ExecutionWorkLease {
+    // A locally sealed revocation refuses new work before storage confirms it.
+    try persistAuthorizationRevocations()
     let workID = UUID()
     try publication.withLock {
       try requireWorktreeAdmission(authority.executionID)
       try store.transactionWithDatabase { database, ledger in
-        guard lock.withLock({ ready }),
+        guard lock.withLock({ ready && !pendingOwnerStops.contains(authority.executionID) }),
           var record = try ExecutionRuntimeRecord.load(authority.executionID, database),
           record.ownerID == ownerID, !record.completed,
           continuation

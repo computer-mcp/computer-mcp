@@ -42,7 +42,7 @@ extension GatewayPermissionService {
       sandboxProjectID: required?.sandboxProjectID, execution: required?.execution,
       providers: [
         ProviderRequirement(
-          provider: approval.identity, digest: approval.requirementDigest!, conservative: false)
+          provider: approval.identity, digest: approval.requirementDigest, conservative: false)
       ])
   }
 

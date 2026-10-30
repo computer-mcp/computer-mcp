@@ -301,12 +301,10 @@ extension GatewayPermissionService {
     }
     var environment = ledger.environment
     environment.limits[approval.principal] = limits
-    if let digest = approval.requirementDigest,
-      environment.providerRequirements?[approval.identity]?.digest != digest
-    {
+    if environment.providerRequirements?[approval.identity]?.digest != approval.requirementDigest {
       if environment.providerRequirements == nil { environment.providerRequirements = [:] }
       environment.providerRequirements?[approval.identity] = ProviderRequirementBinding(
-        digest: digest)
+        digest: approval.requirementDigest)
     }
     environment.modes[approval.principal] = approval.fullAccessConsent.flatMap {
       ledger.isConsentValid($0, for: approval.principal) ? $0 : nil

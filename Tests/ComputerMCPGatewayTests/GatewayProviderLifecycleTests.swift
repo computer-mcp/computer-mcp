@@ -13,6 +13,98 @@
 
   @Suite(.nativeIntegration, .serialized, .timeLimit(.minutes(2)))
   struct GatewayProviderLifecycleTests {
+    @Test(arguments: [false, true], [false, true])
+    func readExceptionIdentityIsRecheckedAfterPreparation(
+      projectOverride: Bool, replaceTarget: Bool
+    ) async throws {
+      let f = try WorktreeServiceFixture()
+      defer { f.remove() }
+      let defaultTarget = f.root.appendingPathComponent("default-config")
+      let target = projectOverride ? f.root.appendingPathComponent("project-config") : defaultTarget
+      for file in Set([defaultTarget, target]) { try Data("approved".utf8).write(to: file) }
+      let defaultException = try GatewayProviderReadExceptions.resolve(
+        declaredPath: "~/fixture-config", purpose: "Read provider configuration",
+        replacement: .init(defaultTarget.path))
+      let selectedException = try GatewayProviderReadExceptions.resolve(
+        declaredPath: "~/fixture-config", purpose: "Read provider configuration",
+        replacement: .init(target.path))
+      let worktree =
+        try projectOverride ? f.call(.add(name: "exception", branch: nil, base: nil)) : nil
+      let projectID = worktree?.objectValue?["project_id"]?.stringValue
+      let worktreeDirectory = worktree?.objectValue?["path"]?.stringValue
+      let server = MCPServerConfig(id: "read-exception", transport: .stdio, command: "/bin/cat")
+      let owner = try GatewayPermissionOwner(
+        context: .init(caller: .localApp, profileID: .localAdmin, trustedPrincipalID: "owner"),
+        validate: {})
+      let view = try f.runtime.service.view(owner: owner)
+      let review = try GatewayProviderReview(
+        server: server, configuration: f.database.configurationState())
+      var permissions = Permissions.newPrincipal
+      try permissions.set(.granted(.write), for: .project("source"))
+      _ = try f.runtime.service.approveProvider(
+        review, permissions: permissions, fullAccess: false,
+        sandboxSettings: .init(
+          defaults: .init(readExceptions: [defaultException]),
+          projects: projectOverride ? ["source": .init(readExceptions: [selectedException])] : [:]),
+        owner: owner,
+        expectedProviderRevision: nil, expectedRevision: view.revision,
+        expectedEpoch: #require(view.epoch))
+      let current = try GatewayProviderReview(
+        server: server, configuration: f.database.configurationState())
+      let proof: InvocationAuthorization? = try projectID.map { projectID in
+        try f.runtime.store.transactionWithDatabase { _, ledger in
+          let principal = Principal.client("read-exception")
+          var grants = permissions
+          try grants.set(.granted(.all), for: .mcpServer(server.id))
+          _ = try ledger.setPermissions(grants, for: principal, expectedRevision: ledger.revision)
+          let decision = try ledger.authorize(
+            invocation: .init(
+              principal: principal, tool: "read-config", projectID: projectID,
+              argumentsDigest: "config"),
+            requirements: .init(
+              actions: [
+                .init(requirement: .init(.mcpServer(server.id), .all)),
+                .init(requirement: .init(.project("source"), .write), scope: .project("source")),
+              ], sandboxProjectID: "source"), now: Date())
+          guard case .allowed(let proof) = decision else {
+            throw PermissionModelError.invalidAuthorization
+          }
+          return proof
+        }
+      }
+      let prepared = try await f.runtime.prepareProvider(
+        review: current, registrationID: server.id, authorization: proof,
+        directory: worktreeDirectory.map { URL(fileURLWithPath: $0) }, connectionID: nil)
+      if projectOverride {
+        // An overridden default is not part of this launch's compiled opening.
+        try Data("unused replacement".utf8).write(to: defaultTarget, options: .atomic)
+      }
+      if replaceTarget { try Data("replacement".utf8).write(to: target, options: .atomic) }
+      let directory = URL(fileURLWithPath: try #require(prepared.providerWorkingDirectory).value)
+      let run = {
+        try prepared.withValue {
+          try ProcessCommandRunner(launcher: f.platform.launcher).run(
+            executable: "/bin/cat", arguments: [target.path],
+            workingDirectory: directory,
+            environment: [:], timeoutMilliseconds: 2000, maxOutputBytes: 1024)
+        }
+      }
+      do {
+        if replaceTarget {
+          #expect(throws: (any Error).self) { try run() }
+        } else {
+          let result = try run()
+          #expect(result.exitCode == 0 && result.stdout == "approved")
+        }
+        try prepared.finishAdmission()
+        try await f.runtime.coordinator.stopExecutions([prepared.executionID])
+      } catch {
+        try? prepared.finishAdmission()
+        try? await f.runtime.coordinator.stopExecutions([prepared.executionID])
+        throw error
+      }
+    }
+
     @Test(arguments: [false, true])
     func projectBoundariesAndIndependentDelegatedRevocation(fullAccess: Bool) async throws {
       let f = try WorktreeServiceFixture()

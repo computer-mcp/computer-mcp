@@ -355,6 +355,10 @@ package final class ExecutionRevocationCoordinator: ExecutionRecoveryAuthorizing
             delegatingAuthorization: caller)
         }
       }
+      let validateLaunch: @Sendable () throws -> Void = {
+        try validateProvider?()
+        try GatewayProviderReadExceptions.verify(configuration.readExceptions)
+      }
       let prepared = PreparedExecutionContext(
         authority: authority,
         mode: sandbox.map { .sandbox($0) } ?? .fullAccess, environment: environment,
@@ -362,13 +366,13 @@ package final class ExecutionRevocationCoordinator: ExecutionRecoveryAuthorizing
         pathAccess: GatewayPathAccess(
           store: store, authorizationID: compiledAuthorizationID,
           additionalAuthorizationIDs: callback?.authorizationIDs ?? [],
-          validateWorktree: validateWorktree, validateInvocation: validateProvider
+          validateWorktree: validateWorktree, validateInvocation: validateLaunch
         ),
         permitsProgramLaunch: configuration.permitsProgramLaunch,
         fixedHostOperation: context.fixedHostOperation, worktreeGit: context.worktree?.git,
         validateWorktree: validateWorktree, provider: provider,
-        providerWorkingDirectory: providerWorkingDirectory, validateProvider: validateProvider)
-      try validateProvider?()
+        providerWorkingDirectory: providerWorkingDirectory, validateProvider: validateLaunch)
+      try validateLaunch()
       _ = try authority.access(execution.id, operation: .readResult)
       lock.withLock { contexts[execution.id] = WeakExecutionContext(prepared) }
       return prepared

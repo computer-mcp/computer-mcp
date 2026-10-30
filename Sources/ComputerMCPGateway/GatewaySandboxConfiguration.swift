@@ -48,6 +48,7 @@ package struct GatewayExecutionConfiguration: Sendable {
   package let egress: EgressPolicy
   package let limits: EffectiveExecutionLimits
   package let permitsProgramLaunch: Bool
+  let readExceptions: Set<ApprovedReadException>
 }
 
 /// Composition only: neither the sandbox nor the proxy reads permission storage.
@@ -316,6 +317,7 @@ package enum GatewaySandboxCompiler {
     return GatewayExecutionConfiguration(
       authorization: ledger.authorizations[authorizationID]!, sandbox: sandbox, egress: egress,
       limits: projection.limits,
-      permitsProgramLaunch: context.purpose != .remoteService && context.fixedHostOperation == nil)
+      permitsProgramLaunch: context.purpose != .remoteService && context.fixedHostOperation == nil,
+      readExceptions: settings.readExceptions)
   }
 }

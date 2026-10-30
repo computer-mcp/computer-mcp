@@ -170,6 +170,10 @@ final class MCPProxyClientTests {
       #expect(
         (result.objectValue?["structuredContent"]) == (.object(["answer": .string("called")])))
       #expect((result.objectValue?["_meta"]?.objectValue?["provider"]) == (.string("fake")))
+      #expect(try client.cachedTools(server: server, context: authority.context) == tools)
+      _ = try client.callTool(
+        server: server, name: "sample", arguments: .object([:]), context: authority.context)
+      #expect(try client.cachedTools(server: server, context: authority.context) == tools)
     }
   }
 
@@ -222,6 +226,8 @@ final class MCPProxyClientTests {
         (prompt.objectValue?["messages"]?.arrayValue?.first?.objectValue?["role"])
           == (.string("user")))
 
+      _ = try client.callTool(
+        server: server, name: "sample", arguments: .object([:]), context: authority.context)
       for _ in 0..<20 {
         let events = try client.readEvents(
           server: server, afterCursor: 0, maxResults: 100, context: authority.context)
@@ -243,8 +249,9 @@ final class MCPProxyClientTests {
       #expect((status.objectValue?["state"]) == (.string("connected")))
       #expect((status.objectValue?["persistent_session"]) == (.bool(true)))
 
-      let starts = try String(contentsOf: fixture.startMarker, encoding: .utf8)
-      #expect((starts) == ("started\n"))
+      let starts = try String(
+        contentsOf: authority.providerMarker(fixture.startMarker), encoding: .utf8)
+      #expect((starts) == ("started\nstarted\n"))
     }
   }
 
@@ -274,16 +281,18 @@ final class MCPProxyClientTests {
       }
 
       #expect(
-        !(try self.waitForNonemptyFile(at: fixture.cancelMarker)
+        !(try self.waitForNonemptyFile(at: authority.providerMarker(fixture.cancelMarker))
           .trimmingCharacters(in: .whitespacesAndNewlines)
           .isEmpty))
 
       var recoveryServer = server
       recoveryServer.requestTimeoutMs = 5_000
+      try authority.reconfigure(recoveryServer)
       #expect(
         (try client.listTools(server: recoveryServer, context: authority.context).map(\.name))
           == (["sample", "hang"]))
-      let starts = try String(contentsOf: fixture.startMarker, encoding: .utf8)
+      let starts = try String(
+        contentsOf: authority.providerMarker(fixture.startMarker), encoding: .utf8)
       #expect((starts) == ("started\nstarted\n"))
     }
   }
@@ -337,7 +346,7 @@ final class MCPProxyClientTests {
       }
 
       #expect(
-        !(try self.waitForNonemptyFile(at: fixture.cancelMarker)
+        !(try self.waitForNonemptyFile(at: authority.providerMarker(fixture.cancelMarker))
           .trimmingCharacters(in: .whitespacesAndNewlines)
           .isEmpty))
 
@@ -357,7 +366,9 @@ final class MCPProxyClientTests {
       #expect(
         (try client.listTools(server: server, context: authority.context).map(\.name))
           == (["sample", "hang"]))
-      #expect((try String(contentsOf: fixture.startMarker, encoding: .utf8)) == ("started\n"))
+      #expect(
+        (try String(contentsOf: authority.providerMarker(fixture.startMarker), encoding: .utf8))
+          == ("started\nstarted\n"))
     }
   }
 
@@ -431,9 +442,12 @@ final class MCPProxyClientTests {
             "requests"]
             == .array([]))
         #expect(
-          try String(contentsOf: fixture.cancelMarker, encoding: .utf8).split(separator: "\n").count
+          try String(contentsOf: authority.providerMarker(fixture.cancelMarker), encoding: .utf8)
+            .split(separator: "\n").count
             == 1)
-        #expect(try String(contentsOf: fixture.startMarker, encoding: .utf8) == "started\n")
+        #expect(
+          try String(contentsOf: authority.providerMarker(fixture.startMarker), encoding: .utf8)
+            == "started\nstarted\n")
       }
     } catch {
       await client.shutdown()
@@ -519,7 +533,9 @@ final class MCPProxyClientTests {
       let state = try client.connectionStatus(server: server, context: authority.context)
         .objectValue?["state"]
       #expect(state == .string("retiring") || state == .string("not_started"))
-      #expect(!FileManager.default.fileExists(atPath: fixture.cancelMarker.path))
+      #expect(
+        !FileManager.default.fileExists(
+          atPath: try authority.providerMarker(fixture.cancelMarker).path))
     }
   }
 
@@ -591,7 +607,9 @@ final class MCPProxyClientTests {
           try restored.connectionStatus(server: server, context: authority.context).objectValue?[
             "state"]
             == .string("not_started"))
-        #expect(try String(contentsOf: fixture.startMarker, encoding: .utf8) == "started\n")
+        #expect(
+          try String(contentsOf: authority.providerMarker(fixture.startMarker), encoding: .utf8)
+            == "started\n")
       }
     } catch {
       await restored.shutdown()
@@ -718,7 +736,8 @@ final class MCPProxyClientTests {
         }
         let reconnectedCatalog = try client.listTools(server: server, context: authority.context)
           .map(\.name)
-        let starts = try String(contentsOf: fixture.startMarker, encoding: .utf8)
+        let starts = try String(
+          contentsOf: authority.providerMarker(fixture.startMarker), encoding: .utf8)
         return (initialCatalog, response, state, reconnectedCatalog, starts)
       }
       #expect(evidence.0 == ["crash"])
@@ -753,6 +772,7 @@ final class MCPProxyClientTests {
       #!/usr/bin/env python3
       import json
       import sys
+      import os
 
       paginated = \(paginated ? "True" : "False")
       for line in sys.stdin:
@@ -834,10 +854,11 @@ final class MCPProxyClientTests {
       #!/usr/bin/env python3
       import json
       import sys
+      import os
       import time
 
-      start_marker = sys.argv[1]
-      cancel_marker = sys.argv[2]
+      start_marker = os.path.join(os.environ["HOME"], os.path.basename(sys.argv[1]))
+      cancel_marker = os.path.join(os.environ["HOME"], os.path.basename(sys.argv[2]))
       with open(start_marker, "a", encoding="utf-8") as marker:
           marker.write("started\\n")
       pending = []
@@ -1057,6 +1078,7 @@ final class MCPProxyClientTests {
       #!/usr/bin/env python3
       import json
       import sys
+      import os
       import pathlib
       import time
       from http.server import BaseHTTPRequestHandler
@@ -1196,8 +1218,9 @@ final class MCPProxyClientTests {
       #!/usr/bin/env python3
       import json
       import sys
+      import os
 
-      with open(sys.argv[1], "a", encoding="utf-8") as marker:
+      with open(os.path.join(os.environ["HOME"], os.path.basename(sys.argv[1])), "a", encoding="utf-8") as marker:
           marker.write("started\\n")
 
       for line in sys.stdin:
@@ -1248,7 +1271,8 @@ final class ProxyExecutionFixture: @unchecked Sendable {
   private let runtime: GatewayPermissionRuntime
   let callerContext: ExecutionContext
   private let root: URL
-  private let server: MCPServerConfig
+  private let projectRoot: URL
+  private var server: MCPServerConfig
   private let scratch: URL
   private let lock = NSLock()
   private var preparedContexts: [PreparedExecutionContext] = []
@@ -1260,6 +1284,8 @@ final class ProxyExecutionFixture: @unchecked Sendable {
   ) throws {
     self.root = try ProjectPathResolver.canonicalProject(root)
     self.server = server
+    projectRoot = self.root.appendingPathComponent("project")
+    try FileManager.default.createDirectory(at: projectRoot, withIntermediateDirectories: true)
     let platform: PlatformServices
     if server.transport == .stdio, let command = server.command {
       let script: String
@@ -1283,7 +1309,9 @@ final class ProxyExecutionFixture: @unchecked Sendable {
       platform = hosted
       launcher = hosted.launcher
     }
-    database = try suppliedDatabase ?? GatewayDatabase(inMemory: ())
+    database =
+      try suppliedDatabase
+      ?? fixturePermissionDatabase(path: self.root.appendingPathComponent("proxy.sqlite").path)
     var permissions: [Permission: PermissionState] = [
       .project("fixture"): .granted(.write), .mcpServer(server.id): .granted(.all),
     ]
@@ -1293,15 +1321,18 @@ final class ProxyExecutionFixture: @unchecked Sendable {
       fullAccess: true, allowedCallers: [.localMCP])
     try database.saveProfile(profile)
     let project = ComputerMCPCore.RegisteredProject(
-      id: "fixture", displayName: "Fixture", rootPath: self.root.path)
+      id: "fixture", displayName: "Fixture", rootPath: projectRoot.path)
     try database.saveProject(project)
     runtime = try database.permissionRuntime(platform: platform)
     var pathRules: Set<PathRule> = [
-      .init(root: try CanonicalPath(self.root.path), kind: .userData),
+      .init(root: try CanonicalPath(projectRoot.path), kind: .userData),
       .init(
         root: try CanonicalPath(self.root.appendingPathComponent("ownership").path), kind: .hostData
       ),
     ]
+    if let containers = database.providerContainerRoot {
+      pathRules.insert(.init(root: try CanonicalPath(containers.path), kind: .hostData))
+    }
     if let ownership = database.mcpProcessOwnershipRoot {
       pathRules.insert(
         .init(root: try CanonicalPath(ownership.resolvingSymlinksInPath().path), kind: .hostData))
@@ -1314,18 +1345,40 @@ final class ProxyExecutionFixture: @unchecked Sendable {
     }
     try runtime.service.configureEnvironment(
       PathEnvironmentSnapshot(
-        projects: [.init(id: project.id, root: CanonicalPath(self.root.path))], rules: pathRules),
+        projects: [.init(id: project.id, root: CanonicalPath(projectRoot.path))], rules: pathRules),
       trustedHosts: [], expectedProjects: database.projects(), expectedConfigurationRevision: nil)
+    if server.transport == .stdio {
+      try fixtureApproveLocalProvider(
+        server, database: database, runtime: runtime,
+        permissions: fixturePermissions(permissions), fullAccess: true)
+    }
     callerContext = try fixtureConsentedContext(
       database: database, grant: profile, caller: .localMCP, principalID: "verified-proxy-fixture",
       projectID: "fixture", platform: platform)
     scratch = self.root.appendingPathComponent("execution-scratch")
     try FileManager.default.createDirectory(at: scratch, withIntermediateDirectories: true)
     var host = MCPHostContext(
-      runtimeID: UUID(), context: callerContext, projectID: "fixture", rootURL: self.root,
+      runtimeID: UUID(), context: callerContext, projectID: "fixture", rootURL: projectRoot,
       readOnly: false, processOwnershipRoot: self.root.appendingPathComponent("ownership"),
       executionDatabase: database)
     host.ownedWork = ownedWork
+    if server.transport == .stdio {
+      let database = database
+      let runtime = runtime
+      host.providerSource = { selected in
+        let review = try GatewayProviderReview(
+          server: selected, configuration: database.configurationState())
+        return MCPProviderExecutionSource(
+          digest: review.sourceDigest,
+          prepareDiscovery: {
+            try GatewaySynchronousOperation.run {
+              try await runtime.prepareProvider(
+                review: review, registrationID: selected.id,
+                authorization: nil, directory: nil, connectionID: nil)
+            }
+          })
+      }
+    }
     hostContext = host
     client = MCPProxyClient(
       launcher: launcher, workingDirectory: self.root, hostContext: host,
@@ -1348,24 +1401,45 @@ final class ProxyExecutionFixture: @unchecked Sendable {
         guard case .allowed(let authorization) = admission else {
           throw PermissionModelError.invalidAuthorization
         }
+        if server.transport == .stdio {
+          return try await runtime.prepareProvider(
+            review: GatewayProviderReview(
+              server: server, configuration: database.configurationState()),
+            registrationID: server.id, authorization: authorization, directory: projectRoot,
+            connectionID: callerContext.controlSession?.id)
+        }
         return try await runtime.coordinator.prepare(
           authorizationID: authorization.id,
           context: .init(
-            directory: SandboxPath(root.path), temporaryDirectory: SandboxPath(scratch.path),
-            purpose: .pluginProgram),
-          fullAccessEnvironment: ProcessInfo.processInfo.environment,
-          connectionID: callerContext.controlSession?.id)
+            directory: SandboxPath(projectRoot.path), temporaryDirectory: SandboxPath(scratch.path),
+            purpose: .remoteService), connectionID: callerContext.controlSession?.id)
       }
       lock.withLock { preparedContexts.append(prepared) }
       return InvocationContext(session: callerContext.controlSession, executionAuthority: prepared)
     }
   }
 
+  func reconfigure(_ server: MCPServerConfig) throws {
+    try fixtureApproveLocalProvider(
+      server, database: database, runtime: runtime,
+      permissions: fixturePermissions([
+        .project("fixture"): .granted(.write), .mcpServer(server.id): .granted(.all),
+      ]), fullAccess: true)
+    self.server = server
+  }
+
+  func providerMarker(_ original: URL) throws -> URL {
+    let container = try database.prepareProviderContainer(.localServer(server.id))
+    return URL(fileURLWithPath: try container.sandbox.home.value).appendingPathComponent(
+      original.lastPathComponent)
+  }
+
   func continuing(_ target: MCPContinuationTarget) throws -> InvocationContext {
     let admitted = try context
+    let retained = try hostContext.ownedWork?.continuations.execution(for: target)
     return InvocationContext(
       session: admitted.session, continuation: target,
-      executionAuthority: admitted.executionAuthority)
+      executionAuthority: retained ?? admitted.executionAuthority)
   }
 
   func close() throws {

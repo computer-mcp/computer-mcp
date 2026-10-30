@@ -4,6 +4,7 @@ import ComputerMCPCore
 import ComputerMCPMacOS
 import ComputerMCPPermissions
 import ComputerMCPPlatform
+import ComputerMCPPlugins
 import ComputerMCPProcess
 import ComputerMCPSandbox
 import ComputerMCPTestSupport
@@ -18,6 +19,53 @@ func fixturePermissions(_ entries: [Permission: PermissionState]) -> Permissions
   var permissions = Permissions()
   for (permission, state) in entries { try! permissions.set(state, for: permission) }
   return permissions
+}
+
+@discardableResult
+func fixtureApproveLocalProvider(
+  _ server: MCPServerConfig, database: GatewayDatabase,
+  runtime: GatewayPermissionRuntime, permissions: Permissions, fullAccess: Bool
+) throws -> GatewayProviderReview {
+  let owner = try GatewayPermissionOwner(
+    context: .init(
+      caller: .localApp, profileID: .localAdmin, trustedPrincipalID: "provider-fixture-owner"),
+    validate: {})
+  let review = try GatewayProviderReview(
+    server: server, configuration: database.configurationState())
+  let view = try runtime.service.view(owner: owner)
+  let previous = view.providers.first { $0.identity == review.identity }
+  let consentIsCurrent = try runtime.store.readWithDatabase { _, ledger in
+    previous?.fullAccessConsent.map { ledger.isConsentValid($0, for: .plugin(review.identity)) }
+      ?? !fullAccess
+  }
+  if previous?.enabled != true || previous?.sourceDigest != review.sourceDigest || !consentIsCurrent
+  {
+    _ = try runtime.service.approveProvider(
+      review, permissions: permissions, fullAccess: fullAccess, owner: owner,
+      expectedProviderRevision: previous?.revision, expectedRevision: view.revision,
+      expectedEpoch: #require(view.epoch))
+  }
+  _ = try database.prepareProviderContainer(review.identity)
+  return try GatewayProviderReview(server: server, configuration: database.configurationState())
+}
+
+func fixtureApprovePlugin(
+  _ package: PluginPackage, database: GatewayDatabase, runtime: GatewayPermissionRuntime,
+  permissions: Permissions, fullAccess: Bool = false
+) throws {
+  let owner = try GatewayPermissionOwner(
+    context: .init(
+      caller: .localApp, profileID: .localAdmin,
+      trustedPrincipalID: "plugin-fixture-owner"), validate: {})
+  let view = try runtime.service.view(owner: owner)
+  let review = try GatewayProviderReview(
+    package: package, configuration: database.configurationState())
+  _ = try runtime.service.approveProvider(
+    review, permissions: permissions, fullAccess: fullAccess,
+    owner: owner,
+    expectedProviderRevision: view.providers.first { $0.identity == review.identity }?.revision,
+    expectedRevision: view.revision, expectedEpoch: #require(view.epoch))
+  _ = try database.prepareProviderContainer(review.identity)
 }
 
 func fixtureConsentedContext(

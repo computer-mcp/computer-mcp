@@ -1,7 +1,8 @@
 import Foundation
 
 /// A fixed-point revocation pass cannot edit path authority or connection ceilings.
-/// Request and consent decisions remain live; only identical path checks are reused.
+/// Request, consent and execution dependencies remain live. Identical path checks
+/// and request-free invocation resolutions can be reused within this pass.
 private final class PathValidationMemo {
   private struct Key: Hashable {
     let path: PathAccessBasis
@@ -11,6 +12,24 @@ private final class PathValidationMemo {
     let ceiling: BasisIdentity?
   }
   private var results: [Key: Bool] = [:]
+
+  private struct ResolutionKey: Hashable {
+    let requirements: InvocationRequirements
+    let principal: Principal
+    let basis: Set<AuthorizationBasis>
+  }
+  private var resolutions: [ResolutionKey: InvocationResolution] = [:]
+
+  func resolve(
+    _ requirements: InvocationRequirements, principal: Principal,
+    basis: Set<AuthorizationBasis>, operation: () -> InvocationResolution
+  ) -> InvocationResolution {
+    let key = ResolutionKey(requirements: requirements, principal: principal, basis: basis)
+    if let result = resolutions[key] { return result }
+    let result = operation()
+    resolutions[key] = result
+    return result
+  }
 
   func validate(
     _ path: PathAccessBasis, principal: Principal, mode: ExecutionMode,
@@ -148,6 +167,8 @@ package enum AuthorizationDecision: Equatable, Sendable {
 
 package enum ExecutionOperation: Sendable {
   case readResult, writeInput, cancel
+  /// Authorize a protocol stop request without claiming or forcing native termination.
+  case requestCancellation
 }
 
 package struct AuthorizedExecution: Equatable, Sendable, Codable {
@@ -349,6 +370,7 @@ package struct PermissionLedger: Equatable, Sendable, Codable {
     func validBasis(_ basis: Set<AuthorizationBasis>) -> Bool {
       basis.allSatisfy { element in
         switch element {
+        case .execution(let id): return executions[id] != nil
         case .request(let identity): return requests[identity.id]?.identity == identity
         case .permit(let request, let permit):
           return requests[request.id]?.identity == request
@@ -513,7 +535,8 @@ package struct PermissionLedger: Equatable, Sendable, Codable {
   /// IDs for different requirements supply no authority and the call is evaluated afresh.
   package mutating func authorize(
     invocation: InvocationIdentity, requirements: InvocationRequirements,
-    retryIDs: Set<UUID> = [], connectionID: String? = nil, now: Date
+    retryIDs: Set<UUID> = [], connectionID: String? = nil,
+    callbackExecutionID: UUID? = nil, now: Date
   ) throws -> AuthorizationDecision {
     guard !authorityIsSuspended else { return .denied(.authoritySuspended) }
     if requirements.paths.contains(where: {
@@ -545,11 +568,29 @@ package struct PermissionLedger: Equatable, Sendable, Codable {
     let retries = try matchingRetries(
       retryIDs, invocation: invocation, requirements: requirements, now: now)
     defer { propagateRevocations() }
-    let inherited = inheritedBasis(retries)
+    var inherited = inheritedBasis(retries)
+    guard
+      inherited.allSatisfy({
+        if case .execution(let id) = $0 { return id == callbackExecutionID }
+        return true
+      })
+    else { throw PermissionModelError.invalidAuthorization }
+    if let callbackExecutionID {
+      guard let execution = executions[callbackExecutionID], execution.delegatedTo != nil,
+        executionIsLive(callbackExecutionID),
+        execution.authorizationIDs.contains(where: {
+          authorizations[$0]?.invocation.principal == invocation.principal
+            && authorizations[$0]?.invocation.projectID == invocation.projectID
+        })
+      else { throw PermissionModelError.invalidAuthorization }
+      inherited.insert(.execution(callbackExecutionID))
+    }
+    let borrowed = callbackRequests(inherited, principal: invocation.principal)
+    let admittedRequests = retries + borrowed
     let resolution = evaluate(
       requirements,
       principal: invocation.principal,
-      oneTimeRequests: retries,
+      oneTimeRequests: admittedRequests,
       basis: inherited, connectionID: connectionID, admission: true)
     let retriesValid = validateRetries(
       retries,
@@ -618,7 +659,7 @@ package struct PermissionLedger: Equatable, Sendable, Codable {
     {
       basis = restricting(
         basis, by: connection.attenuation, requirements: requirements,
-        principal: invocation.principal, requests: retries)
+        principal: invocation.principal, requests: admittedRequests)
     }
     let identity = allocateIdentity()
     let id = identity.id
@@ -707,6 +748,26 @@ package struct PermissionLedger: Equatable, Sendable, Codable {
         ledger.retiredConsents.insert(consent.identity)
       }
       ledger.issuedConsents[principal] = nil
+      return ledger.propagateRevocations()
+    }
+  }
+
+  /// A source replacement ends work admitted to that source without withdrawing
+  /// the owner's standing permission selection or Full access consent.
+  package mutating func retireProviderExecutions(
+    _ identity: PluginIdentity, expectedRevision: UInt64
+  ) throws -> RevocationResult {
+    try commit(expectedRevision: expectedRevision) { ledger in
+      let principal = Principal.plugin(identity)
+      for execution in ledger.executions.values
+      where execution.authorizationIDs.contains(where: {
+        ledger.authorizations[$0]?.invocation.principal == principal
+      }) {
+        for id in execution.authorizationIDs {
+          ledger.authorizations[id]?.revoked = true
+          ledger.authorizations[id]?.revokesRetries = true
+        }
+      }
       return ledger.propagateRevocations()
     }
   }
@@ -1059,9 +1120,53 @@ package struct PermissionLedger: Equatable, Sendable, Codable {
   }
 
   package mutating func invocationAccess(_ id: UUID) throws -> InvocationAuthorization {
-    guard !authorityIsSuspended, validateAuthorization(id), let proof = authorizations[id],
-      !proof.finished
+    guard !authorityIsSuspended, let proof = authorizations[id], !proof.revoked, !proof.finished,
+      validateAuthorization(id)
     else { throw PermissionModelError.invalidAuthorization }
+    return proof
+  }
+
+  /// A host-verified resource can continue only within the authority that acquired it.
+  /// Consumed request evidence is usable here without admitting a second execution.
+  package mutating func continuationAuthorization(
+    _ id: UUID, principal: Principal, projectID: String?, requirements: InvocationRequirements,
+    connectionID: String? = nil, now: Date = Date()
+  ) throws -> InvocationAuthorization {
+    guard validateAuthorization(id), let proof = authorizations[id],
+      proof.invocation.principal == principal, proof.invocation.projectID == projectID,
+      let executionID = proof.executionID, let execution = executions[executionID],
+      execution.isRunning, !execution.revoked, execution.interruptedAt == nil,
+      !pendingExecutionTerminations.contains(executionID),
+      requirements.mode == proof.mode,
+      requirements.sandboxProjectID == proof.sandboxProjectID
+    else {
+      throw PermissionModelError.invalidAuthorization
+    }
+    let requests = evidenceRequests(proof.basis, authorizationID: id)
+    let result = evaluate(
+      requirements, principal: principal, oneTimeRequests: requests, basis: proof.basis)
+    guard result.isAllowed, carriesPermissionEvidence(result.basis, from: proof.basis) else {
+      throw PermissionModelError.invalidAuthorization
+    }
+    for element in proof.basis {
+      if case .connection(let originalID, _) = element {
+        guard let connection = environment.connections[originalID],
+          connection.principal == principal,
+          evaluateCeiling(
+            connection.attenuation, requirements: requirements, principal: principal,
+            requests: requests
+          ).isAllowed
+        else { throw PermissionModelError.invalidAuthorization }
+      }
+    }
+    if let connectionID {
+      guard let connection = activeConnection(connectionID, principal: principal),
+        evaluateCeiling(
+          connection.attenuation, requirements: requirements, principal: principal,
+          requests: requests
+        ).isAllowed
+      else { throw PermissionModelError.invalidAuthorization }
+    }
     return proof
   }
 
@@ -1359,6 +1464,7 @@ package struct PermissionLedger: Equatable, Sendable, Codable {
     executions[id]!.retainUntil = min(
       executions[id]!.retainUntil ?? retainUntil, retainUntil,
       end.addingTimeInterval(TimeInterval(executions[id]!.limits.retentionSeconds)))
+    propagateRevocations(now: now)
   }
 
   /// Failed revalidation revokes dependent executions and queues termination atomically.
@@ -1484,7 +1590,7 @@ package struct PermissionLedger: Equatable, Sendable, Codable {
         .union(environment.connections.values.compactMap { $0.consent?.identity })
       ledger.retiredConsents.formUnion(previous.subtracting(current))
       ledger.environment = environment
-      ledger.reconcileExecutionLimits(now: now ?? Date())
+      ledger.tightenExecutionLimits(now: now ?? Date())
       return ledger.propagateRevocations(now: now)
     }
   }
@@ -1517,14 +1623,21 @@ package struct PermissionLedger: Equatable, Sendable, Codable {
   ) -> RevocationResult {
     // Revoking proofs and requests does not change profile authority. Reuse its
     // digest within this fixed-point pass without caching across state edits.
+    let standingPrincipals = issuedConsents.compactMap { principal, consents in
+      consents.contains {
+        $0.mode == .fullAccess(.standing) && !retiredConsents.contains($0.identity)
+      }
+        ? principal : nil
+    }
+    let environmentDigest = standingPrincipals.isEmpty ? "" : profileEnvironmentDigest()
     let profileDigests = Dictionary(
-      uniqueKeysWithValues: issuedConsents.compactMap { principal, consents in
-        consents.contains(where: { $0.mode == .fullAccess(.standing) })
-          ? (principal, profileDigest(for: principal)) : nil
+      uniqueKeysWithValues: standingPrincipals.map {
+        ($0, profileDigest(for: $0, environmentDigest: environmentDigest))
       })
     let paths = PathValidationMemo()
     for (principal, consents) in issuedConsents {
-      for consent in consents where !consent.mode.isSandbox {
+      for consent in consents
+      where !consent.mode.isSandbox && !retiredConsents.contains(consent.identity) {
         if (consent.mode == .fullAccess(.standing)
           && consent.profileDigest != profileDigests[principal])
           || {
@@ -1590,7 +1703,13 @@ package struct PermissionLedger: Equatable, Sendable, Codable {
 
   private mutating func validateAuthorization(_ id: UUID) -> Bool {
     propagateRevocations()
-    return authorizations[id]?.revoked == false
+    guard let proof = authorizations[id], !proof.revoked else { return false }
+    return proof.basis.allSatisfy {
+      if case .execution(let id) = $0 {
+        return proof.executionID == nil ? executionIsLive(id) : executionAuthorityIsValid(id)
+      }
+      return true
+    }
   }
 
   private func isValid(
@@ -1621,7 +1740,43 @@ package struct PermissionLedger: Equatable, Sendable, Codable {
       var grant = request
       if let authorizationID, grant.status == .consumed(authorizationID) {
         grant.status = .onlyThisTime
+      } else if callbackRequestOwner(request.id, basis: basis) != nil {
+        grant.status = .onlyThisTime
       }
+      return grant
+    }
+  }
+
+  private func executionIsLive(_ id: UUID) -> Bool {
+    guard let execution = executions[id] else { return false }
+    return execution.isRunning && executionAuthorityIsValid(id) && execution.interruptedAt == nil
+      && !pendingExecutionTerminations.contains(id)
+  }
+
+  private func executionAuthorityIsValid(_ id: UUID) -> Bool {
+    guard let execution = executions[id], !execution.revoked else { return false }
+    return execution.authorizationIDs.allSatisfy { authorizations[$0]?.revoked == false }
+  }
+
+  private func callbackRequestOwner(_ id: UUID, basis: Set<AuthorizationBasis>) -> UUID? {
+    guard let request = requests[id], case .consumed(let owner) = request.status else { return nil }
+    return basis.contains(where: {
+      guard case .execution(let executionID) = $0, executionAuthorityIsValid(executionID)
+      else { return false }
+      return executions[executionID]?.authorizationIDs.contains(owner) == true
+        && authorizations[owner]?.requestIDs.contains(id) == true
+    }) ? owner : nil
+  }
+
+  private func callbackRequests(_ basis: Set<AuthorizationBasis>, principal: Principal)
+    -> [PermissionRequest]
+  {
+    requests.values.compactMap { request in
+      guard request.content.principal == principal,
+        callbackRequestOwner(request.id, basis: basis) != nil
+      else { return nil }
+      var grant = request
+      grant.status = .onlyThisTime
       return grant
     }
   }
@@ -1643,18 +1798,23 @@ package struct PermissionLedger: Equatable, Sendable, Codable {
     let connectionCeiling = connection?.1
     if let connectionCeiling { limits.sources[.connection] = .available(connectionCeiling) }
     let mode = requirements.mode
-    let evidenceRequests = evidenceRequests(basis, authorizationID: authorizationID)
-    let resolution = evaluate(
-      requirements,
-      principal: principal,
-      oneTimeRequests: evidenceRequests,
-      basis: basis)
+    let admittedRequests = evidenceRequests(basis, authorizationID: authorizationID)
+    let resolve = {
+      evaluate(requirements, principal: principal, oneTimeRequests: admittedRequests, basis: basis)
+    }
+    let resolution =
+      admittedRequests.isEmpty
+      ? (paths?.resolve(requirements, principal: principal, basis: basis, operation: resolve)
+        ?? resolve())
+      : resolve()
     guard resolution.denial == nil, authorizationID == nil || resolution.isAllowed else {
       return false
     }
     let permissions = permissions(for: principal)
-    return basis.allSatisfy { basis in
-      switch basis {
+    return basis.allSatisfy { element in
+      switch element {
+      case .execution(let id):
+        return executionAuthorityIsValid(id) && (authorizationID != nil || executionIsLive(id))
       case .provider(let recorded):
         return resolution.basis.contains(.provider(recorded))
       case .permission(let grant):
@@ -1669,7 +1829,9 @@ package struct PermissionLedger: Equatable, Sendable, Codable {
             requirement: grant.requirement, scope: grant.scope, pluginPurpose: grant.pluginPurpose),
           permissions: permissions, mode: mode, limits: limits,
           oneTimeRequests: grant.source.requestID.flatMap { requests[$0] }.map { [$0] } ?? [],
-          recordedGrant: grant, authorizationID: authorizationID
+          recordedGrant: grant,
+          authorizationID: grant.source.requestID.flatMap { callbackRequestOwner($0, basis: basis) }
+            ?? authorizationID
         ).decision == .allowed
       case .traversal(let requirement):
         return PermissionEvaluation.denial(
@@ -2035,6 +2197,11 @@ package struct PermissionLedger: Equatable, Sendable, Codable {
   /// memory controls; termination IDs remain queued until explicitly acknowledged.
   @discardableResult
   package mutating func reconcileExecutionLimits(now: Date) -> RevocationResult {
+    tightenExecutionLimits(now: now)
+    return propagateRevocations()
+  }
+
+  private mutating func tightenExecutionLimits(now: Date) {
     for (id, var execution) in executions where !execution.revoked {
       let proofs = execution.authorizationIDs.compactMap { authorizations[$0] }
       guard
@@ -2069,7 +2236,6 @@ package struct PermissionLedger: Equatable, Sendable, Codable {
       }
       executions[id] = execution
     }
-    return propagateRevocations()
   }
 
   private func selectedConsent(principal: Principal, connectionID: String?) -> ModeConsent? {
@@ -2245,7 +2411,7 @@ package struct PermissionLedger: Equatable, Sendable, Codable {
       })
   }
 
-  private func profileDigest(for principal: Principal) -> String {
+  private func profileDigest(for principal: Principal, environmentDigest: String? = nil) -> String {
     let permissions = permissions(for: principal)
     let grants = permissions.entries.map { permission, state in
       ProfileDigest.canonical(permission) + ":" + ProfileDigest.canonical(state)
@@ -2254,10 +2420,6 @@ package struct PermissionLedger: Equatable, Sendable, Codable {
     let settings = sandboxSettings.entries.filter { $0.key.principal == principal }.map {
       $0.key.projectID + ":" + ProfileDigest.canonical($0.value)
     }.sorted()
-    let paths = environment.paths.map {
-      ProfileDigest.ordered($0.registeredProjects) + ProfileDigest.canonical($0.pathRules)
-        + ProfileDigest.canonical($0.outsideUserDataIdentity)
-    }
     let providerSettings: String
     if case .plugin(let identity) = principal, let provider = sandboxSettings.providers[identity] {
       providerSettings = ProfileDigest.canonical(provider)
@@ -2266,8 +2428,18 @@ package struct PermissionLedger: Equatable, Sendable, Codable {
     }
     return ProfileDigest.hash(
       providerSettings + ProfileDigest.canonical(grants)
-        + ProfileDigest.canonical(settings) + ProfileDigest.canonical(paths)
-        + ProfileDigest.canonical(environment.trustedHosts))
+        + ProfileDigest.canonical(settings) + (environmentDigest ?? profileEnvironmentDigest()))
+  }
+
+  private func profileEnvironmentDigest() -> String {
+    let paths = environment.paths.map {
+      // sourceID is projected from the host's durable derived-project records.
+      // Derived registrations inherit source authority and do not enlarge saved consent.
+      ProfileDigest.ordered($0.registeredProjects.filter { $0.sourceID == nil })
+        + ProfileDigest.canonical($0.pathRules)
+        + ProfileDigest.canonical($0.outsideUserDataIdentity)
+    }
+    return ProfileDigest.canonical(paths) + ProfileDigest.canonical(environment.trustedHosts)
   }
 
   private func inheritedRequests(_ retries: [PermissionRequest]) -> [PermissionRequest] {
@@ -2314,6 +2486,7 @@ package struct PermissionLedger: Equatable, Sendable, Codable {
       switch request.status {
       case .always: break
       case .onlyThisTime where retryIDs.contains(id): break
+      case .consumed where callbackRequestOwner(id, basis: basis) != nil: break
       default: throw PermissionModelError.invalidAuthorization
       }
     }

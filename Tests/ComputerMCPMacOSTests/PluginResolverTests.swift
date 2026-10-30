@@ -485,7 +485,8 @@ struct PluginResolverTests {
       mcp: .init(servers: [
         .init(id: "private", transport: .stdio, command: "/bin/cat", allowAnyTool: true)
       ]))
-    let database = try GatewayDatabase(inMemory: ())
+    let database = try fixturePermissionDatabase(
+      path: fixture.root.appendingPathComponent("host.db").path)
     let project = RegisteredProject(
       id: "fixture", displayName: "Fixture", rootPath: fixture.root.path)
     try database.saveProject(project)
@@ -500,6 +501,9 @@ struct PluginResolverTests {
         trustedPrincipalID: "plugin-resolver-fixture"),
       database: database, registeredProjects: [project], platform: platform,
       mcpClient: client, plugins: [plugin])
+    try fixtureApprovePlugin(
+      fixture.package, database: database, runtime: runtime.permissionRuntime,
+      permissions: .newPrincipal)
     do {
       let listed = try runtime.listTools(context: .empty)
       let tools = listed.map(\.name)

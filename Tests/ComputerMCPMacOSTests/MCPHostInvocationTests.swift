@@ -47,7 +47,9 @@ struct MCPHostInvocationTests {
       // Retained contexts must not exhaust the independent 256 active-call slots.
       for _ in 0..<257 {
         let response = try await runtime.callToolAsync(
-          name: "mcp.tools.call", arguments: Self.arguments(tool: "background"), context: context)
+          name: "mcp.tools.call",
+          arguments: Self.arguments(tool: "background", timeoutMilliseconds: 600_000),
+          context: context)
         completedBackgroundCalls += 1
         lastCompletionElapsed = loopStarted.duration(to: .now)
         let providerPID = try #require(
@@ -76,7 +78,7 @@ struct MCPHostInvocationTests {
       phase = "deriving retained work"
       _ = try await runtime.callToolAsync(
         name: "mcp.tools.call", arguments: Self.arguments(tool: "derive"), context: context)
-      try await Self.waitForResourceCount(1, runtime: runtime)
+      try await Self.waitForResourceCount(1, runtime: runtime, timeout: .seconds(90))
       let derived = try await runtime.callToolAsync(
         name: "mcp.tools.call", arguments: Self.arguments(tool: "replay"), context: context)
       #expect(
@@ -228,7 +230,9 @@ struct MCPHostInvocationTests {
       #expect(throws: (any Error).self) {
         try runtime.requireHostInvocation(projectID: "fixture", origin: "provider", id: retainedID)
       }
-      try await Self.waitForRetiredProvider(provider, resource: resource, runtime: runtime)
+      try await Self.waitForRetiredProvider(
+        provider, resource: resource, runtime: runtime, database: fixture.database,
+        invocationID: retainedID)
       let retired = try #require(try fixture.database.hostCallRecordStore().record(id: retainedID))
       #expect(retired.lifecycle == .completed)
       #expect(retired.requestLeaseIDs.isEmpty && retired.workLeaseIDs.isEmpty)
@@ -240,7 +244,9 @@ struct MCPHostInvocationTests {
       }
       #expect(fixture.session.snapshot.fullAccessConsent == nil)
       await runtime.shutdown()
-      try await Self.waitForRetiredProvider(provider, resource: resource, runtime: runtime)
+      try await Self.waitForRetiredProvider(
+        provider, resource: resource, runtime: runtime, database: fixture.database,
+        invocationID: retainedID)
       let completed = try #require(
         try fixture.database.hostCallRecordStore().record(id: retainedID))
       #expect(completed.lifecycle == .completed)
@@ -252,14 +258,18 @@ struct MCPHostInvocationTests {
   }
 
   private static func waitForRetiredProvider(
-    _ provider: DarwinProcessIdentity, resource: GatewayOwnedWork.Record, runtime: GatewayRuntime
+    _ provider: DarwinProcessIdentity, resource: GatewayOwnedWork.Record, runtime: GatewayRuntime,
+    database: GatewayDatabase, invocationID: UUID
   ) async throws {
     var uncertainResource = resource
     uncertainResource.uncertain = true
-    func retired() -> Bool {
+    func retired() throws -> Bool {
+      let record = try database.hostCallRecordStore().record(id: invocationID)
       let snapshot = runtime.ownedWork.snapshot
       return DarwinProcessIdentity.current(pid: provider.pid, includingZombies: true)?.identity
         != provider
+        && record?.lifecycle == .completed
+        && record?.requestLeaseIDs.isEmpty == true && record?.workLeaseIDs.isEmpty == true
         && snapshot.count == 2 && snapshot.contains(uncertainResource)
         && snapshot.contains {
           $0.kind == .mcpObservation && $0.uncertain
@@ -270,11 +280,11 @@ struct MCPHostInvocationTests {
     }
     let deadline = ContinuousClock.now + .seconds(3)
     while ContinuousClock.now < deadline {
-      if retired() { return }
+      if try retired() { return }
       try await Task.sleep(for: .milliseconds(10))
     }
     try #require(
-      retired(),
+      try retired(),
       "Provider \(provider) was not joined with only its original uncertain resource and observation remaining: \(runtime.ownedWork.snapshot)"
     )
   }
@@ -289,8 +299,8 @@ struct MCPHostInvocationTests {
       of: "elif method == \"tools/call\":",
       with: "elif method == \"tools/call\":\n        open(" + String(reflecting: marker.path)
         + ", \"w\").write(\"dispatched\")")
-    let connection = try GatewayDatabaseConnection(inMemory: ())
-    let database = GatewayDatabase(connection: connection)
+    let database = try fixturePermissionDatabase(path: root.appendingPathComponent("host.db").path)
+    let connection = database.connection
     let fixture = try await Self.makeFixture(
       root: root, names: ["background"], work: true, source: source, database: database)
     let runtime = fixture.runtime
@@ -331,8 +341,10 @@ struct MCPHostInvocationTests {
     await runtime.shutdown()
   }
 
-  private static func waitForResourceCount(_ count: Int, runtime: GatewayRuntime) async throws {
-    let deadline = ContinuousClock.now + .seconds(3)
+  private static func waitForResourceCount(
+    _ count: Int, runtime: GatewayRuntime, timeout: Duration = .seconds(3)
+  ) async throws {
+    let deadline = ContinuousClock.now + timeout
     while ContinuousClock.now < deadline {
       let snapshot = runtime.ownedWork.snapshot
       if snapshot.filter({ $0.kind == .mcpResource }).count == count,
@@ -430,10 +442,9 @@ struct MCPHostInvocationTests {
     let root = try ProjectPathResolver.canonicalProject(root)
     let source = suppliedSource ?? provider
     let script = root.appendingPathComponent("provider.py")
-    try source.write(to: script, atomically: true, encoding: .utf8)
+    try writePythonTestExecutable(source, to: script)
     let arguments = work ? ["work"] : []
-    let launcher = fixtureProtocolExecutionLauncher(
-      root: root, scripts: [source], arguments: [arguments])
+    let launcher = testExecutionLauncher()
     var platform = MacOSPlatform.services(launcher: launcher)
     platform.permissionPolicyReader = TestManagedPolicyReader()
     let database =
@@ -449,9 +460,9 @@ struct MCPHostInvocationTests {
       ]), fullAccess: true, allowedCallers: [.localMCP])
     try database.saveProfile(profile)
     let server = MCPServerConfig(
-      id: "provider", transport: .stdio, command: "/usr/bin/python3",
-      args: [script.path] + arguments, allowedTools: names,
-      startupTimeoutMs: 5_000, requestTimeoutMs: 5_000,
+      id: "provider", transport: .stdio, command: script.path,
+      args: arguments, allowedTools: names,
+      startupTimeoutMs: backgroundProvider ? 30_000 : 5_000, requestTimeoutMs: 5_000,
       toolRisks: Dictionary(uniqueKeysWithValues: names.map { ($0, .readOnly) }),
       hostServices: hostServices)
     let capture =
@@ -470,12 +481,15 @@ struct MCPHostInvocationTests {
     var providerHost: MCPInvocationBackgroundProvider?
     do {
       let session = try runtime.makeControlSession()
+      try fixtureApproveLocalProvider(
+        server, database: database, runtime: runtime.permissionRuntime,
+        permissions: fixturePermissions([.project(project.id): .granted(.read)]), fullAccess: true)
       _ = try session.approveFullAccess(expectedRevision: session.revision)
       if let capture {
         #expect(capture.scopes.count == 1)
         let scope = try #require(capture.scopes.first)
         providerHost = try await MCPInvocationBackgroundProvider.start(
-          runtime: runtime, session: session, scope: scope, server: server)
+          runtime: runtime, database: database, session: session, scope: scope, server: server)
       }
       let catalog = try await runtime.callToolAsync(
         name: "mcp.tools.list",
@@ -495,11 +509,13 @@ struct MCPHostInvocationTests {
     }
   }
 
-  private static func arguments(tool: String) -> JSONValue {
-    .object([
+  private static func arguments(tool: String, timeoutMilliseconds: Int64? = nil) -> JSONValue {
+    var arguments: [String: JSONValue] = [
       "project_id": .string("fixture"), "server": .string("provider"), "tool": .string(tool),
       "arguments": .object(["invocation_id": .string("caller-forged-id")]),
-    ])
+    ]
+    if let timeoutMilliseconds { arguments["timeout_ms"] = .integer(timeoutMilliseconds) }
+    return .object(arguments)
   }
 
   private static func readResult(

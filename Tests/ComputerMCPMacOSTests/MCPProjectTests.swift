@@ -342,12 +342,10 @@ private struct MCPProjectFixture: Sendable {
   func runtime(
     configuration: GatewayConfiguration, context: ExecutionContext, readOnly: Bool
   ) async throws -> (GatewayRuntime, ExecutionContext, InvocationContext) {
-    let launcher = fixtureProtocolExecutionLauncher(
-      root: root, scripts: [Self.server], arguments: [[]])
+    let launcher = testExecutionLauncher()
     var platform = MacOSPlatform.services(launcher: launcher)
     platform.permissionPolicyReader = TestManagedPolicyReader()
-    let database = try GatewayDatabase(inMemory: ())
-    _ = database.permissionStore(counter: TestAuthorizationEpochCounter())
+    let database = try fixturePermissionDatabase(path: root.appendingPathComponent("host.db").path)
     let grant = ProfileGrant(
       id: context.profileID,
       permissions: fixturePermissions([
@@ -360,6 +358,10 @@ private struct MCPProjectFixture: Sendable {
     }
     try database.bootstrapPermissionProfiles([grant])
     var configuration = configuration
+    let nativeScript = root.appendingPathComponent("runtime.py")
+    try writePythonTestExecutable(Self.server, to: nativeScript)
+    configuration.mcp.servers[0].command = nativeScript.path
+    configuration.mcp.servers[0].args = []
     configuration.profiles = [.init(grant: grant)]
     let runtime = try await GatewayRuntime.make(
       configuration: configuration, context: context, database: database,
@@ -367,6 +369,12 @@ private struct MCPProjectFixture: Sendable {
       mcpClient: MCPProxyClient(launcher: launcher), plugins: [])
     do {
       let session = try runtime.makeControlSession()
+      try fixtureApproveLocalProvider(
+        configuration.mcp.servers[0], database: database, runtime: runtime.permissionRuntime,
+        permissions: fixturePermissions([
+          .project("first"): .granted(readOnly ? .read : .write),
+          .project("second"): .granted(readOnly ? .read : .write),
+        ]), fullAccess: true)
       _ = try session.approveFullAccess(expectedRevision: session.revision)
       var context = context
       context.controlSession = session

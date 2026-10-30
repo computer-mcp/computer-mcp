@@ -979,6 +979,11 @@ final class AppControlPlaneServiceTests {
     let fixture = try AppControlPlaneServiceFixture()
     defer { fixture.cleanup() }
     let profileID = try #require(GatewayProfileID(rawValue: profileName))
+    let project = fixture.root.appendingPathComponent("project")
+    try FileManager.default.createDirectory(at: project, withIntermediateDirectories: false)
+    let providerHome = URL(
+      fileURLWithPath: try fixture.database.prepareProviderContainer(.localServer("fixture"))
+        .sandbox.home.value)
     let script = fixture.root.appendingPathComponent("catalog.py")
     try Data(Self.gatedCatalogScript.utf8).write(to: script)
     let configuration = GatewayConfiguration(
@@ -988,12 +993,12 @@ final class AppControlPlaneServiceTests {
           id: "fixture", transport: .stdio, command: "/usr/bin/python3",
           args: [script.path, fixture.root.path, "catalog"], exposure: .reexport, prefix: "fixture",
           allowAnyTool: true)
-      ]), builtin: .init(enabled: ["file.write"]), projectDirectory: fixture.root)
+      ]), builtin: .init(enabled: ["file.write"]), projectDirectory: project)
     _ = try await fixture.controlPlane.activateManifest(
       configuration.exportedTOML(),
       expectedDigest: try? await fixture.controlPlane.configurationDigest())
     try fixture.database.saveProject(
-      .init(id: "fixture", displayName: "Fixture", rootPath: fixture.root.path))
+      .init(id: "fixture", displayName: "Fixture", rootPath: project.path))
     try await fixture.controlPlane.saveOpenAITunnelConfiguration(
       .init(
         id: "catalog", tunnelClientProfile: "catalog", tunnelID: "tunnel_catalog",
@@ -1015,6 +1020,7 @@ final class AppControlPlaneServiceTests {
     let client = try await GatewayClientSession.connectSocket(configuration: authenticated)
     do {
       let tools = try await client.listTools()
+      try fixture.approveProvider(configuration.mcp.servers[0])
       let write = try #require(tools.first { $0.name == "file.write" })
       #expect(write.readOnlyHint == false)
       let metadata = try #require(
@@ -1039,7 +1045,7 @@ final class AppControlPlaneServiceTests {
       #expect(requested["request_ids"]?.arrayValue?.isEmpty == false)
       #expect(
         !FileManager.default.fileExists(
-          atPath: fixture.root.appendingPathComponent("requested.txt").path))
+          atPath: project.appendingPathComponent("requested.txt").path))
       _ = try fixture.editProfile(profileID) {
         try $0.permissions.set(.denied, for: .project("fixture"))
       }
@@ -1049,7 +1055,7 @@ final class AppControlPlaneServiceTests {
           == .string("permission.denied"), "\(denied.result)")
       #expect(
         !FileManager.default.fileExists(
-          atPath: fixture.root.appendingPathComponent("requested.txt").path))
+          atPath: project.appendingPathComponent("requested.txt").path))
       _ = try fixture.editProfile(profileID) {
         try $0.permissions.set(.granted(.write), for: .project("fixture"))
         try $0.permissions.set(.granted(.read), for: .mcpServer("fixture"))
@@ -1057,7 +1063,7 @@ final class AppControlPlaneServiceTests {
       let current = try #require(await operations.controlSessions().first { $0.id == session.id })
       _ = try await operations.approveControlSession(
         id: current.id, expectedRevision: current.revision)
-      try Data().write(to: fixture.root.appendingPathComponent("release"))
+      try Data().write(to: providerHome.appendingPathComponent("release"))
       let admitted = try await client.call(
         toolName: "mcp.tools.list",
         arguments: .object([
@@ -1068,7 +1074,7 @@ final class AppControlPlaneServiceTests {
         admitted.result.objectValue?["structuredContent"]?.objectValue?["result"]?.arrayValue?
           .compactMap { $0.objectValue?["name"]?.stringValue } == ["inspect"], "\(admitted.result)")
       #expect(
-        try FileManager.default.contentsOfDirectory(atPath: fixture.root.path).contains {
+        try FileManager.default.contentsOfDirectory(atPath: providerHome.path).contains {
           $0.hasPrefix("pid-")
         })
       await client.disconnect()
@@ -1087,10 +1093,15 @@ final class AppControlPlaneServiceTests {
         root: root, scripts: [Self.gatedCatalogScript], arguments: [[root.path, "admitted"]])
     })
     defer { fixture.cleanup() }
+    let project = fixture.root.appendingPathComponent("project")
+    try FileManager.default.createDirectory(at: project, withIntermediateDirectories: false)
+    let providerHome = URL(
+      fileURLWithPath: try fixture.database.prepareProviderContainer(.localServer("fixture"))
+        .sandbox.home.value)
     let script = fixture.root.appendingPathComponent("catalog.py")
     try Data(Self.gatedCatalogScript.utf8).write(to: script)
-    let waiting = fixture.root.appendingPathComponent("waiting")
-    let release = fixture.root.appendingPathComponent("release")
+    let waiting = providerHome.appendingPathComponent("waiting")
+    let release = providerHome.appendingPathComponent("release")
     let configuration = GatewayConfiguration(
       profiles: [
         .init(
@@ -1104,12 +1115,12 @@ final class AppControlPlaneServiceTests {
           id: "fixture", transport: .stdio, command: "/usr/bin/python3",
           args: [script.path, fixture.root.path, "admitted"], exposure: .reexport,
           prefix: "fixture", allowAnyTool: true, startupTimeoutMs: 5000, requestTimeoutMs: 5000)
-      ]), projectDirectory: fixture.root)
+      ]), projectDirectory: project)
     _ = try await fixture.controlPlane.activateManifest(
       configuration.exportedTOML(),
       expectedDigest: try? await fixture.controlPlane.configurationDigest())
     try fixture.database.saveProject(
-      .init(id: "fixture", displayName: "Fixture", rootPath: fixture.root.path))
+      .init(id: "fixture", displayName: "Fixture", rootPath: project.path))
     let service = AppGatewayService(
       controlPlane: fixture.controlPlane,
       socketConfiguration: .init(socketURL: fixture.root.appendingPathComponent("gateway.sock")))
@@ -1118,6 +1129,8 @@ final class AppControlPlaneServiceTests {
     try await service.start(profile: .chatGPTOperate)
     let client = try await GatewayClientSession.connectSocket(
       socketURL: service.socketConfiguration.socketURL)
+    _ = try await client.listTools()
+    try fixture.approveProvider(configuration.mcp.servers[0])
     let session = try #require(await operations.controlSessions().first)
     _ = try await operations.approveControlSession(
       id: session.id, expectedRevision: session.revision)
@@ -1138,7 +1151,7 @@ final class AppControlPlaneServiceTests {
       #expect(
         try await fixture.controlPlane.activeConfiguration().mcp.servers.first?.id == "fixture")
       #expect(
-        !FileManager.default.fileExists(atPath: fixture.root.appendingPathComponent("expired").path)
+        !FileManager.default.fileExists(atPath: providerHome.appendingPathComponent("expired").path)
       )
       if ownerStop { await service.stop() } else { try Data().write(to: release) }
       switch await pending.result {
@@ -1151,14 +1164,14 @@ final class AppControlPlaneServiceTests {
       }
       await client.disconnect()
       await service.stop()
-      let pids = try FileManager.default.contentsOfDirectory(atPath: fixture.root.path)
+      let pids = try FileManager.default.contentsOfDirectory(atPath: providerHome.path)
         .filter { $0.hasPrefix("pid-") }.compactMap { Int32($0.dropFirst(4)) }
       #expect(!pids.isEmpty)
       for pid in pids {
         #expect(kill(pid, 0) == -1 && errno == ESRCH, "Owned catalog process \(pid) must be joined")
       }
       #expect(
-        !FileManager.default.fileExists(atPath: fixture.root.appendingPathComponent("expired").path)
+        !FileManager.default.fileExists(atPath: providerHome.appendingPathComponent("expired").path)
       )
     } catch {
       pending.cancel()
@@ -1172,7 +1185,7 @@ final class AppControlPlaneServiceTests {
 
   private static let gatedCatalogScript = #"""
     import json, os, pathlib, sys, time
-    root = pathlib.Path(sys.argv[1])
+    root = pathlib.Path(os.environ["HOME"] if sys.argv[-1] in ("catalog", "admitted") else sys.argv[1])
     (root / ("pid-" + str(os.getpid()))).touch()
     for line in sys.stdin:
         request = json.loads(line)
@@ -3215,6 +3228,20 @@ private final class AppControlPlaneServiceFixture: @unchecked Sendable {
       platform: platform,
       pluginCatalog: pluginCatalog
     )
+  }
+
+  func approveProvider(_ server: MCPServerConfig) throws {
+    let owner = try GatewayPermissionOwner(
+      context: .init(
+        caller: .localApp, profileID: .localAdmin, trustedPrincipalID: "provider-owner"),
+      validate: {})
+    let review = try GatewayProviderReview(
+      server: server, configuration: database.configurationState())
+    let view = try permissionGateway.view(owner: owner)
+    _ = try permissionGateway.approveProvider(
+      review, permissions: .newPrincipal, fullAccess: false, owner: owner,
+      expectedProviderRevision: nil, expectedRevision: view.revision,
+      expectedEpoch: #require(view.epoch))
   }
 
   func runCLI(

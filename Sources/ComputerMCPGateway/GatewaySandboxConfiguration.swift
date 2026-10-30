@@ -1,5 +1,6 @@
 import ComputerMCPEgress
 import ComputerMCPPermissions
+import ComputerMCPPlatformPOSIX
 import ComputerMCPProcess
 import ComputerMCPSandbox
 import Foundation
@@ -21,12 +22,14 @@ package struct GatewaySandboxContext: Sendable {
   package let fixedHostOperation: PreparedExecutionContext.FixedHostOperation?
   package let worktree: GatewayWorktreeExecution?
   package let providerContainer: GatewayProviderContainer?
+  let providerResources: [VerifiedFileIdentity]
 
   package init(
     directory: SandboxPath, temporaryDirectory: SandboxPath,
     purpose: GatewayExecutionPurpose = .readOnlyHelper, privateWorkingDirectory: Bool = false,
     fixedHostOperation: PreparedExecutionContext.FixedHostOperation? = nil,
-    worktree: GatewayWorktreeExecution? = nil, providerContainer: GatewayProviderContainer? = nil
+    worktree: GatewayWorktreeExecution? = nil, providerContainer: GatewayProviderContainer? = nil,
+    providerResources: [VerifiedFileIdentity] = []
   ) {
     self.directory = directory
     self.temporaryDirectory = temporaryDirectory
@@ -35,6 +38,7 @@ package struct GatewaySandboxContext: Sendable {
     self.fixedHostOperation = fixedHostOperation
     self.worktree = worktree
     self.providerContainer = providerContainer
+    self.providerResources = providerResources
   }
 }
 
@@ -52,10 +56,20 @@ package enum GatewaySandboxCompiler {
     ledger: inout PermissionLedger, authorizationID: UUID, context: GatewaySandboxContext,
     proxy: SandboxProxyPorts? = nil, ownedTemporaryDirectory: SandboxPath? = nil,
     userHome: URL = FileManager.default.homeDirectoryForCurrentUser,
-    reservedProjection: ExecutionPermissionProjection? = nil
+    reservedProjection: ExecutionPermissionProjection? = nil,
+    provider: ProviderExecutionBinding? = nil, providerWorkingDirectory: SandboxPath? = nil
   ) throws -> GatewayExecutionConfiguration {
     guard let authorization = ledger.authorizations[authorizationID] else {
       throw PermissionModelError.unknownAuthorization
+    }
+    if context.purpose == .pluginProgram || !context.providerResources.isEmpty {
+      guard let provider, provider.providerAuthorization.id == authorizationID,
+        provider.identity == context.providerContainer?.identity
+      else { throw PermissionModelError.invalidAuthorization }
+      for id in provider.authorizationIDs { _ = try ledger.invocationAccess(id) }
+    }
+    for resource in context.providerResources {
+      try resource.verify(URL(fileURLWithPath: resource.path))
     }
     let settings = ledger.sandboxSettings.settings(
       for: authorization.invocation.principal, sourceProjectID: authorization.sandboxProjectID)
@@ -92,9 +106,14 @@ package enum GatewaySandboxCompiler {
           "Writable host operations require their verified execution context")
       }
     }
+    let providerWrites =
+      context.purpose == .pluginProgram
+      && authorization.actions.contains {
+        $0.requirement.permission == authorization.sandboxProjectID.map(Permission.project)
+          && $0.requirement.value == .write
+      }
     if authorization.mode == .sandbox,
-      (context.purpose == .projectProgram && context.worktree == nil)
-        || context.purpose == .pluginProgram
+      (context.purpose == .projectProgram || providerWrites) && context.worktree == nil
     {
       throw ExecutionEnvironmentError.unavailable(
         "Execution requires a verified worktree and private Git context")
@@ -104,7 +123,8 @@ package enum GatewaySandboxCompiler {
       || context.purpose == .remoteService
     let writableWorktree =
       context.worktree != nil
-      && (context.purpose == .projectProgram || context.fixedHostOperation?.allowsWrites == true)
+      && (context.purpose == .projectProgram || providerWrites
+        || context.fixedHostOperation?.allowsWrites == true)
     if sandboxed && writableWorktree && reservedProjection == nil {
       _ = try ledger.prepareWorktreePermissions(authorizationID)
     }
@@ -169,6 +189,23 @@ package enum GatewaySandboxCompiler {
         try CanonicalPath($0.git.repository.value)
       }
       let containerRoot = context.providerContainer?.root
+      let resources = try Set(context.providerResources.map { try CanonicalPath($0.path) })
+      guard
+        !resources.contains(where: { resource in
+          nonHostDenials.contains { $0.contains(resource) || resource.contains($0) }
+        })
+      else { throw PermissionModelError.invalidAuthorization }
+      reads.formUnion(resources)
+      if let directory = providerWorkingDirectory, directory != context.directory {
+        let path = try CanonicalPath(directory.value)
+        guard
+          resources.contains(where: { $0.contains(path) })
+            || projection.readablePaths.contains(where: {
+              $0.path.contains(path)
+                && !($0.excludedSubtrees ?? []).contains(where: { $0.contains(path) })
+            })
+        else { throw PermissionModelError.invalidAuthorization }
+      }
       if let containerRoot {
         guard
           !nonHostDenials.contains(where: {
@@ -181,6 +218,7 @@ package enum GatewaySandboxCompiler {
       }
       let ownedOpenings = Set(
         [scratch, content, privateRepository, containerRoot].compactMap { $0 }
+          + Array(resources)
       ).filter {
         candidate in
         !nonHostDenials.contains(where: { $0.contains(candidate) })
@@ -215,7 +253,8 @@ package enum GatewaySandboxCompiler {
       let workingPath = try CanonicalPath(context.directory.value)
       let privateDirectory =
         context.privateWorkingDirectory
-        && (context.purpose == .readOnlyHelper || context.purpose == .remoteService)
+        && (context.purpose == .readOnlyHelper || context.purpose == .remoteService
+          || context.purpose == .pluginProgram && provider != nil)
         && context.directory == context.temporaryDirectory
       guard
         privateDirectory

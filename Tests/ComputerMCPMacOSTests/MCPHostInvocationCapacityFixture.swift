@@ -110,7 +110,7 @@ final class MCPInvocationBackgroundProvider: Sendable {
   }
 
   static func start(
-    runtime: GatewayRuntime, session: GatewayControlSession,
+    runtime: GatewayRuntime, database: GatewayDatabase, session: GatewayControlSession,
     scope: MCPInvocationScopedClientCapture.Scope, server: MCPServerConfig
   ) async throws -> MCPInvocationBackgroundProvider {
     let metadata = scope.host.launchMetadata
@@ -124,7 +124,9 @@ final class MCPInvocationBackgroundProvider: Sendable {
     let subject = try GatewayPermissionSubject(context: caller)
     let requirements = try InvocationRequirements(
       actions: [
-        .init(requirement: .init(.project(metadata.project.id), .read)),
+        .init(
+          requirement: .init(.project(metadata.project.id), .read),
+          scope: .project(metadata.project.id)),
         .init(requirement: .init(.mcpServer(server.id), .read)),
       ], mode: .fullAccess(.standing), sandboxProjectID: metadata.project.id,
       execution: .init(background: true, timeMilliseconds: 900_000))
@@ -138,14 +140,12 @@ final class MCPInvocationBackgroundProvider: Sendable {
     }
     let authority: any InvocationExecutionAuthority
     do {
-      authority = try await runtime.permissionRuntime.prepare(
-        authorization: authorization,
-        descriptor: .init(
-          id: "mcp.fixture.provider-host", risk: .readOnly,
-          requirement: .downstream(
-            serverID: server.id, readOnly: true, remoteExecution: true, hostAction: nil),
-          projectRequirement: .required),
-        directory: scope.host.projectRoot, connectionID: session.id, auditContext: caller)
+      authority = try await runtime.permissionRuntime.prepareProvider(
+        review: GatewayProviderReview(
+          server: server, configuration: database.configurationState()),
+        registrationID: server.id, authorization: authorization,
+        directory: scope.host.projectRoot, connectionID: session.id,
+        auditContext: caller)
     } catch {
       try? runtime.permissionRuntime.service.finishInvocation(authorization.id)
       throw error
@@ -157,8 +157,9 @@ final class MCPInvocationBackgroundProvider: Sendable {
     do {
       _ = try await BlockingOperationExecutor(label: "test.host-invocation.prime").perform {
         try prepared.withValue {
-          try scope.client.listTools(
-            server: server, context: .init(session: session, executionAuthority: prepared))
+          try scope.client.callTool(
+            server: server, name: "replay", arguments: .object([:]),
+            context: .init(session: session, executionAuthority: prepared))
         }
       }
       let receipt = try runtime.permissionRuntime.store.readWithDatabase { database, ledger in
@@ -177,7 +178,8 @@ final class MCPInvocationBackgroundProvider: Sendable {
         #expect(proof.invocation == authorization.invocation)
         #expect(proof.requirements == requirements && proof.executionID == prepared.executionID)
         #expect(execution.owner == subject.principal)
-        #expect(execution.authorizationIDs == [authorization.id])
+        #expect(execution.authorizationIDs == prepared.provider?.authorizationIDs)
+        #expect(execution.authorizationIDs.contains(authorization.id))
         #expect(execution.limitRequest.background)
         #expect(execution.limitRequest.timeMilliseconds == 900_000)
         #expect(execution.limits.timeMilliseconds == 900_000)
@@ -233,7 +235,7 @@ final class MCPInvocationBackgroundProvider: Sendable {
         #expect(proof.invocation.principal == authorization.invocation.principal)
         #expect(proof.basis.contains(.consent(consent.identity)))
         #expect(!proof.requirements.execution.background)
-        #expect(proof.requirements.execution.timeMilliseconds == nil)
+        #expect(proof.requirements.execution.timeMilliseconds == 600_000)
       }
       let record = try #require(try ExecutionRuntimeRecord.load(prepared.executionID, database))
       #expect(record.children.count == 1)

@@ -38,6 +38,10 @@ struct MCPProviderWorkNativeTests {
         registeredProjects: authority.database.projects(),
         platform: MacOSPlatform.services(launcher: authority.launcher), plugins: [],
         bundledPlugins: .init(packages: [], issues: []))
+      _ = try runtime.makeControlSession()
+      try fixtureApproveLocalProvider(
+        server, database: authority.database, runtime: runtime.permissionRuntime,
+        permissions: fixturePermissions([.project("fixture"): .granted(.write)]), fullAccess: true)
       do {
         let discovered = try await runtime.callToolAsync(
           name: "mcp.tools.list", arguments: .object(["server": .string(server.id)]),
@@ -214,6 +218,7 @@ struct MCPProviderWorkNativeTests {
         environment: environment.environment,
         hostContext: authority.hostContext)
       let provider = ConfiguredMCPToolProvider(environment: environment, mcpClient: scopedClient)
+      try authority.reconfigure(server)
       let discoveryServer = server
       let selected = MCPContinuationTarget(
         projectID: "fixture", reference: .init(serverID: server.id, toolName: "inspect"),
@@ -225,9 +230,12 @@ struct MCPProviderWorkNativeTests {
           try scopedClient.listTools(server: discoveryServer, context: authority.context)
         }
         _ = try await blocking.perform { try provider.definitions() }
-        let starts = try String(contentsOf: root.appendingPathComponent("starts"), encoding: .utf8)
+        let starts = try String(
+          contentsOf: authority.providerMarker(root.appendingPathComponent("starts")),
+          encoding: .utf8)
         let discoveries = try String(
-          contentsOf: root.appendingPathComponent("discoveries"), encoding: .utf8)
+          contentsOf: authority.providerMarker(root.appendingPathComponent("discoveries")),
+          encoding: .utf8)
         do {
           if asynchronous {
             _ = try await provider.callToolAsync(
@@ -246,12 +254,21 @@ struct MCPProviderWorkNativeTests {
         }
         #expect(starts == "started\n")
         #expect(
-          try String(contentsOf: root.appendingPathComponent("starts"), encoding: .utf8) == starts)
+          try String(
+            contentsOf: authority.providerMarker(root.appendingPathComponent("starts")),
+            encoding: .utf8) == starts)
         #expect(
-          try String(contentsOf: root.appendingPathComponent("discoveries"), encoding: .utf8)
+          try String(
+            contentsOf: authority.providerMarker(root.appendingPathComponent("discoveries")),
+            encoding: .utf8)
             == discoveries)
+        let source = try #require(try authority.hostContext.providerSource?(server))
+        let discovery = try source.prepareDiscovery()
+        defer { try? discovery.finishAdmission() }
         #expect(
-          try scopedClient.connectionStatus(server: server, context: .empty).objectValue?[
+          try scopedClient.connectionStatus(
+            server: server, context: .init(executionAuthority: discovery)
+          ).objectValue?[
             "state"]
             == .string("connected"))
         await scopedClient.shutdown()
@@ -287,6 +304,7 @@ struct MCPProviderWorkNativeTests {
         environment: environment.environment,
         hostContext: hostContext)
       let provider = ConfiguredMCPToolProvider(environment: environment, mcpClient: scopedClient)
+      try authority.reconfigure(server)
       let discoveryServer = server
       do {
         let blocking = BlockingOperationExecutor(label: "configured-reexport-test")
@@ -302,9 +320,12 @@ struct MCPProviderWorkNativeTests {
         let target = try await continuationTarget(work, server: server, arguments: arguments)
         let context = try authority.continuing(target)
         let name = prefix.isEmpty ? "inspect" : "\(prefix).inspect"
-        let starts = try String(contentsOf: root.appendingPathComponent("starts"), encoding: .utf8)
+        let starts = try String(
+          contentsOf: authority.providerMarker(root.appendingPathComponent("starts")),
+          encoding: .utf8)
         let discoveries = try String(
-          contentsOf: root.appendingPathComponent("discoveries"), encoding: .utf8)
+          contentsOf: authority.providerMarker(root.appendingPathComponent("discoveries")),
+          encoding: .utf8)
         let result: JSONValue
         if asynchronous {
           result = try await provider.callToolAsync(
@@ -322,11 +343,15 @@ struct MCPProviderWorkNativeTests {
         #expect(
           try scopedClient.connectionStatus(server: other, context: .empty).objectValue?[
             "state"] == .string("not_started"))
-        #expect(starts == "started\n")
+        #expect(starts == "started\nstarted\n")
         #expect(
-          try String(contentsOf: root.appendingPathComponent("starts"), encoding: .utf8) == starts)
+          try String(
+            contentsOf: authority.providerMarker(root.appendingPathComponent("starts")),
+            encoding: .utf8) == starts)
         #expect(
-          try String(contentsOf: root.appendingPathComponent("discoveries"), encoding: .utf8)
+          try String(
+            contentsOf: authority.providerMarker(root.appendingPathComponent("discoveries")),
+            encoding: .utf8)
             == discoveries)
         _ = try await scopedClient.callToolAsync(
           server: server, name: "finish", arguments: .object([:]), requestID: nil,
@@ -372,11 +397,10 @@ struct MCPProviderWorkNativeTests {
           }
         }
         let script = try #require(otherServer.args.first)
+        let marker = try otherAuthority.providerMarker(
+          URL(fileURLWithPath: script).deletingLastPathComponent().appendingPathComponent("starts"))
         #expect(
-          !FileManager.default.fileExists(
-            atPath: URL(fileURLWithPath: script).deletingLastPathComponent().appendingPathComponent(
-              "starts"
-            ).path))
+          !FileManager.default.fileExists(atPath: marker.path))
       }
       _ = try await call(client, server, "finish", authority: authority)
       try await wait { work.snapshot.isEmpty }
@@ -509,7 +533,7 @@ struct MCPProviderWorkNativeTests {
 
   private static let provider = #"""
     import json, os, sys, uuid
-    with open(os.path.join(os.path.dirname(__file__), "starts"), "a") as marker:
+    with open(os.path.join(os.environ["HOME"], "starts"), "a") as marker:
         marker.write("started\n")
     uri = "computer-mcp://runtime/work/v1"
     instance = str(uuid.uuid4())
@@ -536,7 +560,7 @@ struct MCPProviderWorkNativeTests {
         if method == "initialize":
             result = {"protocolVersion": "2025-11-25", "capabilities": {"tools": {}, "resources": {}}, "serverInfo": {"name": "work-fixture", "version": "1"}}
         elif method == "tools/list":
-            with open(os.path.join(os.path.dirname(__file__), "discoveries"), "a") as marker:
+            with open(os.path.join(os.environ["HOME"], "discoveries"), "a") as marker:
                 marker.write("listed\n")
             result = {"tools": [{"name": name, "inputSchema": {"type": "object"}, "_meta": {"io.github.computer-mcp/work": {"format_version": 1, "uri": uri}}} for name in names]}
             for tool in result["tools"]:

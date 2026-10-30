@@ -1,3 +1,4 @@
+import ComputerMCPDownstream
 import ComputerMCPMacOS
 import ComputerMCPPermissions
 import ComputerMCPPlatform
@@ -33,7 +34,7 @@ struct GatewayRetainedContinuationTests {
       let launched = try prepared.withValue {
         try ManagedLineProcess(
           launcher: fixture.launcher,
-          configuration: .init(executable: "/bin/cat", workingDirectory: fixture.root))
+          configuration: .init(executable: "/bin/cat", workingDirectory: fixture.projectRoot))
       }
       process = launched
       var lines = launched.inboundLines.makeAsyncIterator()
@@ -241,13 +242,15 @@ struct GatewayRetainedContinuationTests {
         ])
       #expect(try fixture.payload(cancelled)["cancellation_requested"] == .bool(true))
       #expect(try fixture.permissionControl.view().requests.count == pendingCount)
-      _ = try fixture.payload(
-        await fixture.call(
-          client, "mcp.tools.call",
-          [
-            "server": .string("fixture"), "tool": .string("complete"),
-            "arguments": .object([:]),
-          ]))
+      _ = try await fixture.call(client, "mcp.tools.list", ["server": .string("fixture")])
+      let secondUse = try await fixture.call(
+        client, "mcp.tools.call",
+        [
+          "server": .string("fixture"), "tool": .string("wait"), "arguments": .object([:]),
+          "request_id": .string("second-use"), "wait_for_result": .bool(false),
+        ])
+      #expect(secondUse.objectValue?["isError"] == .bool(true))
+      #expect(String(describing: secondUse).contains("permission.required"), "\(secondUse)")
       let receipt = try await fixture.waitForResult {
         let read = try await fixture.call(
           client, "mcp.requests.read",
@@ -259,7 +262,7 @@ struct GatewayRetainedContinuationTests {
         $0["state"] == .string("succeeded")
       }
       #expect(receipt["cancellation"] == .string("sent"))
-      #expect(try fixture.starts() == 1)
+      #expect(try fixture.starts() == 2)
 
       _ = try await fixture.startOneTime(client, requestID: "revoked")
       try fixture.revoke(.mcpServer("fixture"))
@@ -274,7 +277,7 @@ struct GatewayRetainedContinuationTests {
       let revokedList = try await fixture.call(
         client, "mcp.requests.list", ["server": .string("fixture")])
       #expect(try fixture.payload(revokedList)["requests"] == .array([]))
-      #expect(try fixture.starts() == 1)
+      #expect(try fixture.starts() == 3)
       await source.shutdown()
       await fixture.service.stop()
     } catch {
@@ -283,6 +286,68 @@ struct GatewayRetainedContinuationTests {
       throw error
     }
   }
+  @Test func reconnectAndUnconfirmedCleanupDoNotReplayRetainedCalls() async throws {
+    let fixture = try RetainedContinuationFixture()
+    defer { fixture.removeFiles() }
+    try await fixture.activate(version: 1)
+    let first = try await fixture.sessions()
+    let client = try await fixture.connect(first, principal: "restart-owner")
+    let started = try await fixture.startOneTime(client, requestID: "before-restart")
+    _ = try fixture.payload(started)
+    let starts = try fixture.starts()
+    await first.shutdown()
+    await fixture.service.stop()
+    let replacement = AppGatewayService(
+      controlPlane: fixture.control,
+      socketConfiguration: .init(socketURL: fixture.root.appendingPathComponent("replacement.sock"))
+    )
+    let next = try await replacement.makeHTTPSessions(
+      profileID: .chatGPTOperate,
+      trace: .init(transport: "http"))
+    do {
+      let reconnected = try await fixture.connect(
+        next, principal: "restart-owner", service: replacement)
+      let stale = try await fixture.call(
+        reconnected, "mcp.requests.read",
+        ["server": .string("fixture"), "request_id": .string("before-restart")])
+      #expect(stale.objectValue?["isError"] == .bool(true), "\(stale)")
+      #expect(try fixture.starts() == starts)
+      let fresh = try await fixture.startOneTime(reconnected, requestID: "after-restart")
+      _ = try fixture.payload(fresh)
+      #expect(try fixture.starts() == starts + 2)
+      await next.shutdown()
+      await replacement.stop()
+      let uncertain = try MCPProcessOwnership.acquire(
+        root: #require(fixture.database.mcpProcessOwnershipRoot),
+        project: fixture.projectRoot, registration: "fixture")
+      try uncertain.finish(confirmed: false)
+      let blockedService = AppGatewayService(
+        controlPlane: fixture.control,
+        socketConfiguration: .init(socketURL: fixture.root.appendingPathComponent("blocked.sock")))
+      let blockedSource = try await blockedService.makeHTTPSessions(
+        profileID: .chatGPTOperate,
+        trace: .init(transport: "http"))
+      do {
+        let blocked = try await fixture.connect(
+          blockedSource, principal: "restart-owner", service: blockedService)
+        let result = try await fixture.call(
+          blocked, "mcp.tools.list", ["server": .string("fixture")])
+        #expect(result.objectValue?["isError"] == .bool(true), "\(result)")
+        #expect(try fixture.starts() == starts + 2)
+      } catch {
+        await blockedSource.shutdown()
+        await blockedService.stop()
+        throw error
+      }
+      await blockedSource.shutdown()
+      await blockedService.stop()
+    } catch {
+      await next.shutdown()
+      await replacement.stop()
+      throw error
+    }
+  }
+
 }
 
 private struct LinePathOnlyAuthority: InvocationExecutionAuthority {
@@ -291,6 +356,7 @@ private struct LinePathOnlyAuthority: InvocationExecutionAuthority {
 
 private struct RetainedContinuationFixture {
   let root: URL
+  let projectRoot: URL
   let database: GatewayDatabase
   let control: AppControlPlaneService
   let service: AppGatewayService
@@ -301,6 +367,8 @@ private struct RetainedContinuationFixture {
   init() throws {
     root = URL(fileURLWithPath: "/private/tmp/cm-receipt-\(UUID().uuidString.prefix(8))")
     try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    projectRoot = root.appendingPathComponent("project")
+    try FileManager.default.createDirectory(at: projectRoot, withIntermediateDirectories: false)
     let directories = AppControlPlaneServiceDirectories(
       applicationSupport: root.appendingPathComponent("state"),
       logs: root.appendingPathComponent("logs"))
@@ -330,7 +398,8 @@ private struct RetainedContinuationFixture {
     service = AppGatewayService(
       controlPlane: control,
       socketConfiguration: .init(socketURL: root.appendingPathComponent("gateway.sock")))
-    try database.saveProject(.init(id: "fixture", displayName: "Fixture", rootPath: root.path))
+    try database.saveProject(
+      .init(id: "fixture", displayName: "Fixture", rootPath: projectRoot.path))
     try database.saveProfile(
       .init(
         id: .chatGPTOperate,
@@ -340,6 +409,15 @@ private struct RetainedContinuationFixture {
     try Data(Self.provider.utf8).write(to: root.appendingPathComponent("provider.py"))
   }
 
+  var registration: MCPServerConfig {
+    .init(
+      id: "fixture", transport: .stdio, command: "/usr/bin/python3",
+      args: [root.appendingPathComponent("provider.py").path, root.path],
+      exposure: .reexport, prefix: "fixture", allowAnyTool: true,
+      startupTimeoutMs: 5_000, requestTimeoutMs: 10_000,
+      toolRisks: ["wait": .destructive, "complete": .readOnly])
+  }
+
   func activate(version: Int) async throws {
     let configuration = GatewayConfiguration(
       server: .init(name: "retained-\(version)"),
@@ -347,15 +425,16 @@ private struct RetainedContinuationFixture {
       profiles: [.init(grant: try currentGrant())],
       cli: .init(commands: [.init(id: "cat", executable: "/bin/cat", allowAnyArgs: true)]),
       mcp: .init(servers: [
-        .init(
-          id: "fixture", transport: .stdio, command: "/usr/bin/python3",
-          args: [root.appendingPathComponent("provider.py").path, root.path],
-          exposure: .reexport, prefix: "fixture", allowAnyTool: true,
-          startupTimeoutMs: 5_000, requestTimeoutMs: 10_000,
-          toolRisks: ["wait": .destructive, "complete": .readOnly])
+        registration
       ]), projectDirectory: root)
     _ = try await control.activateManifest(
       configuration.exportedTOML(), expectedDigest: try? await control.configurationDigest())
+    try fixtureApproveLocalProvider(
+      configuration.mcp.servers[0], database: database,
+      runtime: database.permissionRuntime(platform: platform),
+      permissions: fixturePermissions([
+        .project("fixture"): .granted(.write), .mcpServer("fixture"): .granted(.all),
+      ]), fullAccess: true)
   }
 
   func sessions() async throws -> GatewayHTTPManagedSessions {
@@ -390,16 +469,26 @@ private struct RetainedContinuationFixture {
       localOnly: false, usesNetwork: false)
     return try #require(
       await runtime.prepare(
-        authorization: authorization, descriptor: descriptor, directory: root,
+        authorization: authorization, descriptor: descriptor, directory: projectRoot,
         connectionID: client.session.id, auditContext: context) as? PreparedExecutionContext)
   }
 
-  func connect(_ source: GatewayHTTPManagedSessions, principal: String) async throws
+  func connect(
+    _ source: GatewayHTTPManagedSessions, principal: String,
+    service selectedService: AppGatewayService? = nil
+  ) async throws
     -> GatewayControlSessionServing
   {
     let client = try await source.makeSession(principal)
-    _ = try await service.approveControlSession(
+    _ = try await (selectedService ?? service).approveControlSession(
       id: client.session.id, lifetime: .thisSession, expectedRevision: client.session.revision)
+    _ = try payload(await call(client, "project.list"))
+    try fixtureApproveLocalProvider(
+      registration, database: database,
+      runtime: database.permissionRuntime(platform: platform),
+      permissions: fixturePermissions([
+        .project("fixture"): .granted(.write), .mcpServer("fixture"): .granted(.all),
+      ]), fullAccess: true)
     return client
   }
 
@@ -439,6 +528,8 @@ private struct RetainedContinuationFixture {
   func startOneTime(_ client: GatewayControlSessionServing, requestID: String) async throws
     -> JSONValue
   {
+    let catalog = try await call(client, "mcp.tools.list", ["server": .string("fixture")])
+    try #require(catalog.objectValue?["isError"] != .bool(true), "\(catalog)")
     var arguments: [String: JSONValue] = [
       "server": .string("fixture"), "tool": .string("wait"), "arguments": .object([:]),
       "request_id": .string(requestID), "wait_for_result": .bool(false),
@@ -473,7 +564,11 @@ private struct RetainedContinuationFixture {
   }
 
   func starts() throws -> Int {
-    try String(contentsOf: root.appendingPathComponent("starts"), encoding: .utf8).split(
+    let container = try database.prepareProviderContainer(.localServer("fixture"))
+    return try String(
+      contentsOf: URL(fileURLWithPath: container.sandbox.home.value).appendingPathComponent(
+        "starts"), encoding: .utf8
+    ).split(
       separator: "\n"
     ).count
   }
@@ -494,8 +589,8 @@ private struct RetainedContinuationFixture {
   func removeFiles() { try? FileManager.default.removeItem(at: root) }
 
   private static let provider = #"""
-    import json, pathlib, sys
-    root = pathlib.Path(sys.argv[1])
+    import json, os, pathlib, sys
+    root = pathlib.Path(os.environ["HOME"])
     with (root / "starts").open("a") as log:
         log.write("start\n")
     pending = []
@@ -511,6 +606,11 @@ private struct RetainedContinuationFixture {
             reply(request_id, {"protocolVersion": "2025-03-26", "capabilities": {"tools": {}}, "serverInfo": {"name": "retained-fixture", "version": "1"}})
         elif method == "tools/list":
             reply(request_id, {"tools": [{"name": name, "inputSchema": {"type": "object"}} for name in ("wait", "complete")]})
+        elif method == "notifications/cancelled":
+            original = message.get("params", {}).get("requestId")
+            if original in pending:
+                reply(original, result("completed retained work"))
+                pending.remove(original)
         elif method == "tools/call":
             if message["params"]["name"] == "wait":
                 pending.append(request_id)

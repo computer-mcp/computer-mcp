@@ -50,8 +50,13 @@ The App gateway and standalone HTTP gateway bind admitted MCP sessions to a
 host-created live authority object. Full access consent defaults to This Session;
 Always Allow this Client is a separate local choice bound to the verified
 principal, caller and reviewed profile. Consent never widens the permission table.
-A changed reviewed profile or permission environment permanently invalidates saved
-consent. Session limits may only narrow the profile and managed ceilings.
+Saved consent binds the principal’s grants and sandbox settings, provider settings,
+trusted hosts, owner-registered projects and path rules, and outside-user-data identity.
+A change to that reviewed authority permanently invalidates saved consent.
+Host-created derived worktrees inherit their registered source’s authority and do not
+change this binding when created or removed; their source project remains bound.
+A stored digest that differs from this binding requires fresh local approval.
+Session limits may only narrow the profile and managed ceilings.
 Disconnecting ends connection-scoped authority; saved consent and its standing
 execution authority survive disconnect and reconnect only while their ledger
 binding remains valid. Reconnect cannot replace a missing or invalidated binding:
@@ -77,7 +82,7 @@ does not supply an unsupported backend. On the current Darwin backend:
 | --- | --- |
 | Sandboxed read helpers | Available to Sandbox and Full access principals, subject to the tool's permissions, canonical paths and resource limits. They retain their read-only sandbox in either mode. |
 | Sandboxed project programs | Available with admitted permissions in verified host worktrees. Writes open only the checkout and private repository, with immutable Git controls and nested path denials. Durable sandbox ownership and a worktree-use lease cover the complete execution. |
-| Local stdio MCP and plugin programs | Ordinary projects admit invocations with the required permissions and local Full access consent. Sandbox launch requires the plugin owner's supported execution context. In host worktrees, preparation is unavailable in either mode until the plugin owner supplies its verified context; a plugin receipt or Full access consent cannot create it. |
+| Local stdio MCP and plugin programs | Invocations require the verified provider source, owner approval and both the client's and provider's admitted permissions. Discovery uses only the provider's approval in a projectless sandbox. Sandboxed writes require the selected host worktree and its use lease; each provider also has its own persistent container and private execution scratch. Independently revocable delegations have separate process ownership. Full access requires local consent and retains best-effort process-group ownership. Linux explicitly refuses provider activation. |
 | Prepared unconfined project programs | Available with admitted permissions, local Full access consent and effective limits. Process-group ownership is best effort; unobserved detached descendants may survive. Host-worktree launches still require the verified worktree use lease. |
 | Bounded host file/structured mutations and fixed Git helpers | Available in verified host worktrees with Project `write`, or on admitted source paths with Full access consent. In-process mutations recheck live paths and worktree identity; fixed Git helpers remain sandboxed with precise write authority. Host-worktree operations hold their use lease. Shared-ref tools retain their Full access requirements and source-project routing. General archive/download implementations remain on the program preparation path. |
 | Remote HTTP MCP services | Use a prepared service context that cannot launch host programs. The server permission, named-project permission and host-classified execution requirement still apply. They use a private temporary directory and do not bind a worktree execution lease. |

@@ -308,6 +308,13 @@ struct MCPHTTPAuthenticationTests {
         if plugin {
           _ = try await fixture.gateway.changePlugins(
             .enabled(pluginID: "http-fixture", true), expectedRevision: pluginBefore.revision)
+          let review = try await fixture.host.providerReview(.package("http-fixture"))
+          let view = try await fixture.host.permissionRequests()
+          _ = try await fixture.host.approveProvider(
+            review, permissions: .newPrincipal, fullAccess: false,
+            expectedProviderRevision: view.providers.first { $0.identity == review.identity }?
+              .revision,
+            expectedRevision: view.revision, expectedEpoch: #require(view.epoch))
           pluginBefore = try fixture.database.pluginStoreSnapshot()
         }
         let missing = try await fixture.host.doctorMCPRegistration(

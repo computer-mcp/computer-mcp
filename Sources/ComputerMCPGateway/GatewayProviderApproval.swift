@@ -74,7 +74,9 @@ package struct GatewayProviderApproval: Codable, Equatable, Sendable {
   package var update: PluginDeclarationUpdate
 
   package var principal: Principal { .plugin(identity) }
-  var requirementDigest: String? { declarationDigest.map { sourceDigest + ":" + $0 } }
+  var requirementDigest: String? {
+    declarationDigest.map { sourceDigest + ":" + $0 } ?? sourceDigest
+  }
 
   func validate() throws {
     guard revision > 0, sourceDigest.count == 64,

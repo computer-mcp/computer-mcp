@@ -59,7 +59,7 @@ package enum SeatbeltProfile {
     // through host-owned parents that are otherwise unreadable.
     var ancestors = Set<SandboxPath>()
     let traversed =
-      configuration.writableDirectories
+      configuration.writableDirectories + configuration.readableRoots
       + (configuration.git.map { [$0.repository, $0.sharedDirectory] } ?? [])
     for path in traversed {
       var current = URL(fileURLWithPath: path.value).deletingLastPathComponent()

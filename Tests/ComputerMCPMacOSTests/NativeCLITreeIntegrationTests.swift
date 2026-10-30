@@ -62,31 +62,37 @@ struct NativeCLITreeIntegrationTests {
       dependencyExecutables: ["formatter": URL(fileURLWithPath: executable)],
       hostVersion: PluginVersion("1.0.29"), architecture: "arm64")
     try #require(plugin.diagnostics.isEmpty && plugin.cliCommands.count == 1)
-    let projects = [
-      RegisteredProject(id: "native-fixture", displayName: "Native fixture", rootPath: root.path)
-    ]
+    let fixture = try FixedHostFixture(fullAccess: false, lifecycle: true)
+    defer { try? FileManager.default.removeItem(at: fixture.root) }
+    try await fixture.initializeRepository()
+    let made = try await fixture.call("git.worktree_add", ["name": .string("formatter")])
+    let projectID = try #require(
+      made.objectValue?["structuredContent"]?.objectValue?["result"]?.objectValue?["project_id"]?
+        .stringValue)
     let configuration = GatewayConfiguration(
       runtime: .init(caller: .localCLI, profileID: .localAdmin),
       profiles: [
         .init(
           id: .localAdmin,
           permissions: fixturePermissions([
-            .project("native-fixture"): .granted(.write),
+            .project("fixture"): .granted(.write),
             .plugin(package.manifest.id): .granted(.use),
-          ]), fullAccess: true, allowedCallers: [.localCLI])
+          ]), allowedCallers: [.localCLI])
       ])
-    let database = try GatewayDatabase(inMemory: ())
+    let database = fixture.database
     let profile = configuration.profiles[0].grant
     try database.saveProfile(profile)
-    for project in projects { try database.saveProject(project) }
     let registeredProjects = try database.projects()
-    let context = try fixtureConsentedContext(
-      database: database, grant: profile, caller: .localCLI,
-      principalID: "formatter-owner", projectID: "native-fixture")
+    let context = ExecutionContext(
+      caller: .localCLI, profileID: .localAdmin,
+      projectID: projectID, trustedPrincipalID: "formatter-owner")
     let runtime = try GatewayRuntime(
       configuration: configuration, context: context, database: database,
-      registeredProjects: registeredProjects,
-      platform: MacOSPlatform.services(launcher: testExecutionLauncher()), plugins: [plugin])
+      registeredProjects: registeredProjects, platform: fixture.platform, plugins: [plugin])
+    _ = try runtime.makeControlSession()
+    try fixtureApprovePlugin(
+      package, database: database, runtime: runtime.permissionRuntime,
+      permissions: fixturePermissions([.project("fixture"): .granted(.write)]))
     do {
       let tools = try runtime.listTools(context: .empty).filter { $0.name.hasPrefix("cli_") }
       #expect(tools.count == 5)
@@ -119,7 +125,7 @@ struct NativeCLITreeIntegrationTests {
       let observe = try GatewayRuntime(
         configuration: direct,
         context: .init(
-          caller: .secureTunnel, profileID: .chatGPTObserve, projectID: "native-fixture",
+          caller: .secureTunnel, profileID: .chatGPTObserve, projectID: "fixture",
           trustedPrincipalID: "formatter-observer"),
         database: observerDatabase, registeredProjects: observerDatabase.projects(),
         platform: MacOSPlatform.services(launcher: testExecutionLauncher()), plugins: [])
@@ -182,9 +188,11 @@ struct NativeCLITreeIntegrationTests {
       }
     } catch {
       await runtime.shutdown()
+      await fixture.runtime.shutdown()
       throw error
     }
     await runtime.shutdown()
+    await fixture.runtime.shutdown()
     #expect(
       try Data(contentsOf: package.root.appendingPathComponent(PluginManifest.filename))
         == manifestBefore)

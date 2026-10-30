@@ -14,11 +14,18 @@ package protocol ExecutionAuthorizing: Sendable {
   func launchFailed(_ id: UUID)
   func finishAdmission() throws
   func retainWork(cancellation: @escaping @Sendable () async -> Void) throws -> ExecutionWorkLease
+  func retainContinuation(cancellation: @escaping @Sendable () async -> Void) throws
+    -> ExecutionWorkLease
   func access(_ executionID: UUID, operation: ExecutionOperation) throws -> EffectiveExecutionLimits
   func permissionRequests(_ executionID: UUID) throws -> [PermissionRequest]
 }
 
 extension ExecutionAuthorizing {
+  package func retainContinuation(cancellation: @escaping @Sendable () async -> Void) throws
+    -> ExecutionWorkLease
+  {
+    throw PermissionModelError.invalidAuthorization
+  }
   package func permissionRequests(_ executionID: UUID) throws -> [PermissionRequest] { [] }
   package func retainWork(cancellation: @escaping @Sendable () async -> Void) throws
     -> ExecutionWorkLease
@@ -104,6 +111,7 @@ package final class PreparedExecutionContext: ExecutionAccessChecking, Sendable 
   private let fixedCommand: FixedCommand?
   package let worktreeGit: SandboxGitConfiguration?
   package let provider: ProviderExecutionBinding?
+  package let providerWorkingDirectory: SandboxPath?
   package let hostServiceChannel: ProviderHostServiceChannel?
   // Channel attachments share limits with the coordinator-registered preparation.
   private let preparation: PreparedExecutionContext?
@@ -124,6 +132,7 @@ package final class PreparedExecutionContext: ExecutionAccessChecking, Sendable 
     worktreeGit: SandboxGitConfiguration? = nil,
     validateWorktree: (@Sendable () throws -> Void)? = nil,
     provider: ProviderExecutionBinding? = nil,
+    providerWorkingDirectory: SandboxPath? = nil,
     hostServiceChannel: ProviderHostServiceChannel? = nil,
     validateProvider: (@Sendable () throws -> Void)? = nil
   ) {
@@ -138,6 +147,7 @@ package final class PreparedExecutionContext: ExecutionAccessChecking, Sendable 
     self.worktreeGit = worktreeGit
     self.validateWorktree = validateWorktree
     self.provider = provider
+    self.providerWorkingDirectory = providerWorkingDirectory
     self.hostServiceChannel = hostServiceChannel
     self.validateProvider = validateProvider
     state = .init(State(limits: limits))
@@ -157,8 +167,9 @@ package final class PreparedExecutionContext: ExecutionAccessChecking, Sendable 
     worktreeGit = parent.worktreeGit
     validateWorktree = parent.validateWorktree
     provider = nil
+    providerWorkingDirectory = nil
     hostServiceChannel = nil
-    validateProvider = nil
+    validateProvider = parent.validateProvider
     state = parent.state
   }
 
@@ -174,6 +185,7 @@ package final class PreparedExecutionContext: ExecutionAccessChecking, Sendable 
     worktreeGit = parent.worktreeGit
     validateWorktree = parent.validateWorktree
     provider = parent.provider
+    providerWorkingDirectory = parent.providerWorkingDirectory
     hostServiceChannel = channel
     validateProvider = parent.validateProvider
     state = parent.state
@@ -247,6 +259,7 @@ package final class PreparedExecutionContext: ExecutionAccessChecking, Sendable 
   package var executionID: UUID { authority.executionID }
 
   package func validateProviderLaunch() throws {
+    try validateProvider?()
     guard let provider else {
       guard hostServiceChannel == nil else { throw PermissionModelError.invalidAuthorization }
       return
@@ -257,7 +270,6 @@ package final class PreparedExecutionContext: ExecutionAccessChecking, Sendable 
     if case .fullAccess = mode, provider.providerAuthorization.mode == .sandbox {
       throw PermissionModelError.invalidAuthorization
     }
-    try validateProvider?()
     try validateWorktree?()
     _ = try authority.access(executionID, operation: .writeInput)
   }

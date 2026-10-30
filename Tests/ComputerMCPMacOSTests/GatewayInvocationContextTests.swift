@@ -109,6 +109,11 @@ struct GatewayInvocationContextTests {
       .mcpObservation, projectID: "fixture", registrationID: "fixture",
       resourceID: "observation", connectionID: connectionID)
     defer { lease.finish() }
+    fixture.runtime.ownedWork.continuations.update(
+      connectionID: connectionID,
+      entry: .init(
+        projectID: "fixture", registrationID: "fixture", instanceID: nil,
+        declarations: [:], resources: [], observationPending: true, connected: true))
     let owner = GatewayOwnerSelection(
       runtimeID: fixture.runtime.generationID, projectID: "fixture", ownershipID: lease.id)
     func call(_ tool: String) async throws -> JSONValue {
@@ -237,6 +242,11 @@ struct GatewayInvocationContextTests {
       projectID: "fixture", reference: .init(serverID: "fixture", toolName: "inspect"),
       connectionID: UUID(), instanceID: UUID(), resources: [:])
     let runtime = fixture.runtime
+    runtime.ownedWork.continuations.update(
+      connectionID: route.connectionID,
+      entry: .init(
+        projectID: "fixture", registrationID: "fixture", instanceID: route.instanceID,
+        declarations: [:], resources: [], observationPending: true, connected: true))
     do {
       var arguments = fixture.arguments(tool: "inspect")
       if path == "background" {
@@ -570,13 +580,14 @@ private struct InvocationFixture {
     result: JSONValue = .object(["content": .array([]), "isError": .bool(false)])
   ) throws {
     server = MCPServerConfig(
-      id: "fixture", transport: .stdio, command: "/unused/context-provider",
+      id: "fixture", transport: .stdio, command: "/usr/bin/true",
       exposure: reexportTools ? .reexport : .gateway, prefix: reexportTools ? "fixture" : nil,
       allowedTools: ["inspect", "change"],
       toolRisks: ["inspect": .readOnly, "change": .projectWrite], hostServices: true)
     project = try ScopedTemporaryDirectory()
     let root = try ProjectPathResolver.canonicalProject(project.url)
-    database = try GatewayDatabase(inMemory: ())
+    database = try fixturePermissionDatabase(
+      path: project.url.appendingPathComponent("host.sqlite").path)
     try database.saveProject(
       .init(id: "fixture", displayName: "Fixture", rootPath: root.path))
     client = InvocationClientSpy(result: result)
@@ -611,6 +622,12 @@ private struct InvocationFixture {
       plugins: [],
       bundledPlugins: .init(packages: [], issues: []),
       requiresControlSession: requiresControlSession)
+    _ = try runtime.makeControlSession()
+    try fixtureApproveLocalProvider(
+      server, database: database,
+      runtime: database.permissionRuntime(platform: fixtureHostedPlatform()),
+      permissions: fixturePermissions([.project("fixture"): .granted(.write)]), fullAccess: true)
+    _ = try session.approveFullAccess(expectedRevision: session.revision)
   }
 
   func arguments(tool: String) -> [String: JSONValue] {

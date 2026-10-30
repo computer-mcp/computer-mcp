@@ -148,7 +148,7 @@ struct GatewayWorktreeExecutionContextTests {
   }
 
   @Test(arguments: ["adapter.fixture.run", "mcp.tools.call"])
-  func ordinaryPluginPreparationReachesPlatformAdmission(tool: String) async throws {
+  func ordinaryPluginPreparationRequiresVerifiedProvider(tool: String) async throws {
     let f = try WorktreeServiceFixture()
     defer { f.remove() }
     var profile = try #require(try f.database.profiles().first { $0.id == .chatGPTOperate })
@@ -177,32 +177,19 @@ struct GatewayWorktreeExecutionContextTests {
       requirement: .init(access: .projectWrite), projectRequirement: .required,
       localOnly: false, usesNetwork: false,
       mcpReference: tool.hasPrefix("mcp.") ? nil : .init(serverID: "fixture", toolName: "run"))
-    if !f.platform.launcher.supportsBestEffortOwnership,
-      !f.platform.launcher.supportsDurableOwnership(sandboxed: false)
-    {
-      do {
-        _ = try await f.runtime.prepare(
-          authorization: proof, descriptor: descriptor, directory: f.source,
-          connectionID: session.id)
-        Issue.record("An unsupported execution backend admitted a program")
-      } catch ExecutionEnvironmentError.unavailable(let message) {
-        #expect(
-          message == "This backend cannot enforce durable ownership in the requested execution mode"
-        )
-      }
-      return
-    }
-    let prepared = try #require(
-      try await f.runtime.prepare(
+    do {
+      _ = try await f.runtime.prepare(
         authorization: proof, descriptor: descriptor, directory: f.source,
-        connectionID: session.id) as? PreparedExecutionContext)
-    #expect(prepared.worktreeGit == nil)
-    try prepared.finishAdmission()
-    try await f.runtime.coordinator.reconcile()
+        connectionID: session.id)
+      Issue.record("A plugin program was admitted without a verified provider")
+    } catch ExecutionEnvironmentError.unavailable(let message) {
+      #expect(
+        message == "Local plugin programs require the plugin owner's verified execution context")
+    }
   }
 
   @Test(arguments: ["adapter.fixture.run", "mcp.tools.call"])
-  func pluginPreparationRefusesHostWorktrees(tool: String) async throws {
+  func worktreePluginPreparationRequiresVerifiedProvider(tool: String) async throws {
     let f = try WorktreeServiceFixture()
     defer { f.remove() }
     let made = try f.call(.add(name: "plugin", branch: nil, base: nil))

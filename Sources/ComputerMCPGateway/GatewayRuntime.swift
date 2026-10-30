@@ -55,9 +55,16 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
     _ operation: @escaping @Sendable () throws -> Value
   ) async throws -> Value {
     let owner = GatewayOwnerRouting.selection
+    let callback = GatewayHostToolScope.execution
+    let callbackLifetime = GatewayHostToolScope.lifetime
+    let projectID = GatewayHostToolScope.projectID
     return try await admission.perform {
       try GatewayOwnerRouting.$selection.withValue(owner) {
-        try operation()
+        try GatewayHostToolScope.$execution.withValue(callback) {
+          try GatewayHostToolScope.$lifetime.withValue(callbackLifetime) {
+            try GatewayHostToolScope.$projectID.withValue(projectID, operation: operation)
+          }
+        }
       }
     }
   }
@@ -218,6 +225,7 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
     }
     let capturedInputs = try preparationState ?? database!.configurationState()
     self.permissionRuntime = try database!.permissionRuntime(platform: platform)
+    let permissionRuntime = self.permissionRuntime
     self.lifetime = lifetime
     self.requiresControlSession = requiresControlSession
     self.remoteManagement = remoteManagement
@@ -241,6 +249,57 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
     let composition = try GatewayPluginComposition(
       configuration: sourceConfiguration, plugins: plugins ?? resolved?.plugins ?? [])
     let configuration = composition.runtimeConfiguration
+    if preparationState == nil {
+      try database!.permissionTransaction(localProviders: sourceConfiguration.mcp.servers) { _ in }
+    }
+    let providerSource: @Sendable (MCPServerConfig) throws -> MCPProviderExecutionSource = {
+      [configuration, origins = composition.origins, database = database!, permissionRuntime] server
+      in
+      guard configuration.mcp.servers.first(where: { $0.id == server.id }) == server else {
+        throw GatewayPermissionError.invalidBinding
+      }
+      let registration = IntegrationRegistration(kind: .mcp, id: server.id)
+      let digest =
+        try origins[registration]?.reviewedRequirements?.sourceDigest
+        ?? GatewayProviderReview.digest(server)
+      return MCPProviderExecutionSource(
+        digest: digest,
+        prepareDiscovery: {
+          let source = try GatewayProviderSource.resolve(
+            registration: registration, configuration: configuration,
+            origins: origins, database: database)
+          return try GatewaySynchronousOperation.run {
+            try await permissionRuntime.prepareProvider(
+              review: source.review, registrationID: server.id, authorization: nil,
+              directory: nil, connectionID: nil, source: source,
+              platformRules: Self.permissionPlatformRules(platform: platform, database: database))
+          }
+        })
+    }
+    let cliDiscovery: @Sendable (CLICommandConfig) throws -> CLIProviderDiscovery? = {
+      [configuration, origins = composition.origins, database = database!, permissionRuntime]
+      command in
+      let registration = IntegrationRegistration(kind: .cli, id: command.id)
+      guard origins[registration] != nil else { return nil }
+      let source = try GatewayProviderSource.resolve(
+        registration: registration, configuration: configuration, origins: origins,
+        database: database)
+      let approval = try permissionRuntime.store.readWithDatabase { database, ledger in
+        try GatewayPermissionService.executionApproval(
+          review: source.review, database: database, ledger: ledger)
+      }
+      return CLIProviderDiscovery(
+        identity: "\(approval.sourceDigest):\(approval.revision):\(approval.epoch)",
+        prepare: {
+          try GatewaySynchronousOperation.run {
+            try await permissionRuntime.prepareProvider(
+              review: source.review, registrationID: command.id, authorization: nil,
+              directory: nil, connectionID: nil, source: source,
+              platformRules: Self.permissionPlatformRules(platform: platform, database: database),
+              discoveryInScratch: true)
+          }
+        })
+    }
     pluginOrigins = composition.origins
     pluginDiagnostics = composition.diagnostics
     pluginIssues = resolved?.issues ?? []
@@ -283,7 +342,7 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
     var errorByID: [String: ProjectBookmarkError] = [:]
     var providerRouterByID: [String: GatewayProviderRouter] = [:]
     let commandRunner = ProcessCommandRunner(launcher: platform.launcher)
-    var resolution = GatewayConfigurationResolution()
+    var resolution = GatewayConfigurationResolution(localProviders: sourceConfiguration.mcp.servers)
 
     for project in configuredProjects {
       guard projectByID[project.id] == nil else {
@@ -326,6 +385,8 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
           database: database, runtime: permissionRuntime, platform: platform, projectID: project.id)
       }
       hostContext.ownedWork = ownedWork
+      hostContext.providerSource = providerSource
+      hostContext.cliDiscovery = cliDiscovery
       for (registration, origin) in composition.origins where registration.kind == .mcp {
         if let lease = artifactLeases.first(where: {
           $0.identity.url.appendingPathComponent("package").path == origin.source.root.path
@@ -377,7 +438,12 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
         shellManager: shell, maxSessions: configuration.policy.maxShellSessions)
       var hostContext = MCPHostContext(
         runtimeID: generationID, context: effectiveContext,
-        projectID: "unscoped", rootURL: URL(fileURLWithPath: "/"), readOnly: true)
+        projectID: "unscoped", rootURL: URL(fileURLWithPath: "/"), readOnly: true,
+        tools: hostToolDirectory, processOwnershipRoot: database?.mcpProcessOwnershipRoot,
+        executionDatabase: database)
+      hostContext.ownedWork = ownedWork
+      hostContext.providerSource = providerSource
+      hostContext.cliDiscovery = cliDiscovery
       if let database, database.worktreeStorage != nil {
         hostContext.worktrees = GatewayWorktreeService(
           database: database, runtime: permissionRuntime, platform: platform, projectID: nil)
@@ -487,10 +553,23 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
         name: name, arguments: arguments, context: bound, depth: 0,
         invocationContext: invocationContext)
       dispatched = true
-      return try await GatewayHostToolScope.$projectID.withValue(projectID) {
-        try await callToolAsync(
-          name: name, arguments: .object(arguments), context: bound,
-          invocationContext: invocationContext)
+      let callbackLifetime = GatewayHostCallbackLifetime { [permissionRuntime] ids in
+        permissionRuntime.coordinator.revokeInvocations(ids)
+      }
+      defer { callbackLifetime.finish() }
+      return try await withTaskCancellationHandler {
+        try Task.checkCancellation()
+        return try await GatewayHostToolScope.$projectID.withValue(projectID) {
+          try await GatewayHostToolScope.$execution.withValue(providerExecution) {
+            try await GatewayHostToolScope.$lifetime.withValue(callbackLifetime) {
+              try await callToolAsync(
+                name: name, arguments: .object(arguments), context: bound,
+                invocationContext: invocationContext)
+            }
+          }
+        }
+      } onCancel: {
+        callbackLifetime.cancel()
       }
     } catch {
       let result = Self.executionErrorEnvelope(error, context: bound, capabilityID: name)
@@ -646,14 +725,27 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
       named: name, projectID: arguments["project_id"]?.stringValue ?? context.projectID,
       invocationContext: invocationContext)
     guard !target.localOnly,
-      target.mcpReference.map({ !hostServiceRegistrations.contains($0.serverID) }) ?? true,
-      !(name.hasPrefix("mcp.")
-        && arguments["server"]?.stringValue.map(hostServiceRegistrations.contains) == true)
+      target.mcpReference == nil,
+      !(target.requirement.contribution.map { contribution in
+        switch contribution {
+        case .mcp: return true
+        case .cli(let selector):
+          let id: String?
+          switch selector {
+          case .registered(let value): id = value
+          case .argument(let key): id = arguments[key]?.stringValue
+          case .catalog, .skill: id = nil
+          }
+          return id.map { pluginOrigins[.init(kind: .cli, id: $0)] != nil } ?? false
+        case .skills: return false
+        }
+      } ?? false),
+      !(name.hasPrefix("mcp.") && arguments["server"]?.stringValue != nil)
     else {
       throw Self.invalid(
         code: "policy.host_recursion_denied",
         message:
-          "Host administration and callback-enabled MCP registrations are not callback targets.")
+          "Host administration and provider routes are not callback targets.")
     }
     let descriptor = try invocationDescriptor(
       named: name, arguments: arguments, context: context, invocationContext: invocationContext)
@@ -820,6 +912,7 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
         guard let admission = invocation.admission, let authorizationID = admission.authorizationID
         else { throw HostCallRecordError.mismatch }
         try self.permissionRuntime.service.validateAuthorization(authorizationID)
+        try invocation.providerExecution?.validateProviderLaunch()
         try self.validateHostOrigin(
           projectID: admission.projectID,
           origin: invocation.reference.serverID)
@@ -846,7 +939,9 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
           .init(
             context: invocation.context,
             profileRevision: current.authorizationRevision, consent: consent,
-            authorizationID: authorizationID))
+            authorizationID: authorizationID,
+            providerAuthorizationIDs: invocation.providerExecution?.provider?.authorizationIDs ?? []
+          ))
       }
     }
     for attempt in 0..<2 {
@@ -1372,6 +1467,7 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
     var auditContext = originalContext
     var digest = try? Self.inputDigest(tool: name, arguments: arguments)
     var authorization: InvocationAuthorization?
+    var authorizationIDs: Set<UUID> = []
     var auditEvidence: GatewayPermissionAuditEvidence?
     var prepared: PreparedExecutionContext?
     var executionAccess: (any ExecutionAccessChecking)?
@@ -1384,9 +1480,12 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
         try self.admitInvocation(
           name: name, input: input, context: originalContext, invocationContext: invocationContext)
       }
+      try GatewayHostToolScope.lifetime?.register(
+        admitted.providerBinding?.authorizationIDs ?? [admitted.authorization.id])
       auditContext = admitted.route.context
       digest = admitted.resolved.identity.argumentsDigest
       authorization = admitted.authorization
+      authorizationIDs = admitted.providerBinding?.authorizationIDs ?? [admitted.authorization.id]
       auditEvidence = admitted.evidence
       // The admission record must exist before a provider can make an effect.
       try recordAudit(
@@ -1395,12 +1494,39 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
         authorization: admitted.authorization, evidence: admitted.evidence)
       try validateAdmittedProject(
         name: name, descriptor: admitted.resolved.descriptor, context: auditContext)
-      let execution = try await permissionRuntime.prepare(
-        authorization: admitted.authorization, descriptor: admitted.resolved.descriptor,
-        directory: admitted.directory, connectionID: admitted.route.context.controlSession?.id,
-        remoteService: admitted.remoteService,
-        hostManagement: remoteManagement?.containsTool(named: name) == true,
-        auditContext: auditContext)
+      let execution: any InvocationExecutionAuthority
+      if let callback = admitted.callbackExecution {
+        try callback.validateProviderLaunch()
+        let callbackLifetime = GatewayHostToolScope.lifetime
+        execution = try await permissionRuntime.prepare(
+          authorization: admitted.authorization, descriptor: admitted.resolved.descriptor,
+          directory: admitted.directory, connectionID: admitted.route.context.controlSession?.id,
+          auditContext: auditContext, callback: admitted.providerBinding,
+          validateCallback: {
+            if let callbackLifetime {
+              try callbackLifetime.validateActive { try callback.validateProviderLaunch() }
+            } else {
+              try callback.validateProviderLaunch()
+            }
+          })
+      } else if let retained = admitted.retainedExecution {
+        try retained.validateProviderLaunch()
+        execution = retained
+      } else if let source = admitted.providerSource {
+        execution = try await permissionRuntime.prepareProvider(
+          review: source.review, registrationID: source.registrationID,
+          authorization: admitted.authorization, directory: admitted.directory,
+          connectionID: admitted.route.context.controlSession?.id, retryIDs: admitted.retryIDs,
+          auditContext: auditContext, source: source,
+          platformRules: permissionPlatformRules(), admittedProvider: admitted.providerBinding)
+      } else {
+        execution = try await permissionRuntime.prepare(
+          authorization: admitted.authorization, descriptor: admitted.resolved.descriptor,
+          directory: admitted.directory, connectionID: admitted.route.context.controlSession?.id,
+          remoteService: admitted.remoteService,
+          hostManagement: remoteManagement?.containsTool(named: name) == true,
+          auditContext: auditContext)
+      }
       prepared = execution as? PreparedExecutionContext
       executionAccess = execution as? any ExecutionAccessChecking
       if let prepared, !lifetime.registerExecution(prepared.executionID) {
@@ -1435,7 +1561,7 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
         if let prepared {
           try prepared.finishAdmission()
         } else {
-          try permissionRuntime.service.finishInvocation(admitted.authorization.id)
+          for id in authorizationIDs { try permissionRuntime.service.finishInvocation(id) }
         }
       } catch { throw GatewayAuditCompletionError() }
       let envelope = GatewayExecutionPermissionMetadata.attach(
@@ -1463,8 +1589,8 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
       }
       if let prepared {
         try? prepared.finishAdmission()
-      } else if let authorization {
-        try? permissionRuntime.service.finishInvocation(authorization.id)
+      } else {
+        for id in authorizationIDs { try? permissionRuntime.service.finishInvocation(id) }
       }
       let result = Self.executionErrorEnvelope(
         reportedError, context: auditContext, capabilityID: name)
@@ -1485,6 +1611,35 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
       }
       throw reportedError
     }
+  }
+
+  private func providerRegistration(
+    descriptor: CapabilityDescriptor, arguments: [String: JSONValue]
+  )
+    -> IntegrationRegistration?
+  {
+    switch descriptor.requirement.execution {
+    case .read, .input, .cancel, .list: return nil
+    default: break
+    }
+    if case .cli(let selector) = descriptor.requirement.contribution {
+      let id: String?
+      switch selector {
+      case .registered(let value): id = value
+      case .argument(let name): id = arguments[name]?.stringValue
+      case .catalog, .skill: id = nil
+      }
+      if let id, pluginOrigins[.init(kind: .cli, id: id)] != nil {
+        return .init(kind: .cli, id: id)
+      }
+    }
+    guard descriptor.mcpReference != nil || descriptor.id.hasPrefix("mcp."),
+      !["mcp.servers.list", "mcp.servers.status", "mcp.events.read", "mcp.tools.list"].contains(
+        descriptor.id),
+      let id = descriptor.mcpReference?.serverID ?? arguments["server"]?.stringValue,
+      configuration.mcp.servers.contains(where: { $0.id == id && $0.transport == .stdio })
+    else { return nil }
+    return .init(kind: .mcp, id: id)
   }
 
   private func dispatchAdmitted(
@@ -1590,12 +1745,13 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
     }
     let mode: ComputerMCPPermissions.ExecutionMode =
       grant.fullAccess && routed.context.controlSession != nil ? .fullAccess(.standing) : .sandbox
-    let (requirements, origins, skillLibraries) = try GatewayToolRequirementResolver(
+    let (resolvedRequirements, origins, skillLibraries) = try GatewayToolRequirementResolver(
       configuration: configuration,
       origins: pluginOrigins, paths: paths
     ).resolve(
       descriptor: descriptor,
       arguments: routed.arguments, projectID: routed.context.projectID, mode: mode)
+    var requirements = resolvedRequirements
     let digest = try invocationDigest(descriptor: descriptor, arguments: routed.arguments)
     let forwarded: Bool
     if case .forwarded(_, _, nil) = descriptor.requirement.target {
@@ -1603,12 +1759,48 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
     } else {
       forwarded = false
     }
+    let retained = try invocationContext.continuationTarget.flatMap {
+      try ownedWork.continuations.execution(for: $0)
+    }
+    let callback = GatewayHostToolScope.execution
+    let source: GatewayProviderSource?
+    if let callback, let provider = callback.provider, let database {
+      try callback.validateProviderLaunch()
+      guard provider.delegatingAuthorization?.invocation.principal == subject.principal,
+        provider.delegatingAuthorization?.invocation.projectID == routed.context.projectID
+      else { throw PermissionModelError.invalidAuthorization }
+      source = try GatewayProviderSource.resolve(
+        registration: .init(kind: .mcp, id: provider.registrationID),
+        configuration: configuration, origins: pluginOrigins, database: database)
+      let permission: Permission =
+        switch provider.identity {
+        case .package(let id): .plugin(id)
+        case .localServer(let id): .mcpServer(id)
+        }
+      requirements = InvocationRequirements(
+        actions: requirements.actions
+          + (provider.delegatingAuthorization?.actions.filter {
+            $0.requirement.permission == permission
+          } ?? []), paths: requirements.paths, networks: requirements.networks,
+        mode: requirements.mode, sandboxProjectID: requirements.sandboxProjectID,
+        execution: requirements.execution, providers: requirements.providers)
+    } else if retained == nil,
+      let registration = providerRegistration(
+        descriptor: descriptor, arguments: routed.arguments), let database
+    {
+      source = try GatewayProviderSource.resolve(
+        registration: registration,
+        configuration: configuration, origins: pluginOrigins, database: database)
+    } else {
+      source = nil
+    }
     let evaluated = try permissionRuntime.service.evaluate(
       subject: subject, tool: name,
       projectID: routed.context.projectID, argumentsDigest: digest, requirements: requirements,
       retryIDs: forwarded || name == "project.request" ? [] : input.requestIDs,
       connectionID: routed.context.controlSession?.id,
-      skillLibraries: skillLibraries)
+      skillLibraries: skillLibraries, continuation: retained?.provider, providerSource: source,
+      callbackExecutionID: callback?.executionID)
     let authorization: InvocationAuthorization
     switch evaluated.decision {
     case .allowed(let allowed): authorization = allowed
@@ -1645,11 +1837,16 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
     return GatewayAdmittedInvocation(
       route: dispatchRoute, grant: grant, resolved: resolved,
       authorization: authorization, evidence: evaluated.evidence, directory: directory,
-      remoteService: remoteService, retryIDs: input.requestIDs)
+      remoteService: remoteService, retryIDs: input.requestIDs, retainedExecution: retained,
+      providerSource: source, providerBinding: evaluated.provider, callbackExecution: callback)
   }
 
   private func permissionPaths() throws -> PathEnvironmentSnapshot {
-    let current = try database?.projects() ?? []
+    let snapshot = try database?.connection.writer.read { sql in
+      (try GatewayDatabase.projects(in: sql), try GatewayDatabase.availableDerivedProjects(in: sql))
+    }
+    let current = snapshot?.0 ?? []
+    let derived = Dictionary(uniqueKeysWithValues: (snapshot?.1 ?? []).map { ($0.projectID, $0) })
     let registrations =
       !persistedProjectRegistrations.isEmpty
       ? current : (current.isEmpty ? projectOrder.compactMap { projects[$0] } : current)
@@ -1658,11 +1855,8 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
         project.rootPath, relativeTo: URL(fileURLWithPath: "/"))
       return ComputerMCPPermissions.RegisteredProject(
         id: project.id, root: try CanonicalPath(root.path),
-        sourceID: try database?.derivedSourceID(for: project.id),
-        hostContentIdentity: try database?.derivedProjects().first(where: {
-          $0.projectID == project.id
-        })
-        .map { try GatewayDatabase.hostContentIdentity($0) } ?? nil)
+        sourceID: derived[project.id]?.source.id,
+        hostContentIdentity: try GatewayDatabase.hostContentIdentity(derived[project.id]))
     }
     return try PathEnvironmentSnapshot(
       projects: registered,
@@ -1682,6 +1876,12 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
   }
 
   private func permissionPlatformRules() throws -> Set<PathRule> {
+    try Self.permissionPlatformRules(platform: platform, database: database)
+  }
+
+  private static func permissionPlatformRules(
+    platform: PlatformServices, database: GatewayDatabase?
+  ) throws -> Set<PathRule> {
     var rules: Set<PathRule> = []
     func rule(_ path: String, _ kind: PathRule.Kind) throws {
       let resolved = try ProjectPathResolver.resolve(path, relativeTo: URL(fileURLWithPath: "/"))
@@ -1704,9 +1904,6 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
       try rule(home.appendingPathComponent(path).path, .hostData)
     }
     for path in platform.hostDataPaths { try rule(path.path, .hostData) }
-    for transport in configuration.transports.openAI {
-      if let directory = transport.profileDirectory { try rule(directory, .hostData) }
-    }
     for source in platform.permissionPolicyReader.readSources() where source.location.hasPrefix("/")
     {
       try rule(source.location, .hostData)
@@ -2573,6 +2770,10 @@ private struct GatewayAdmittedInvocation: Sendable {
   let directory: URL?
   let remoteService: Bool
   let retryIDs: Set<UUID>
+  let retainedExecution: PreparedExecutionContext?
+  let providerSource: GatewayProviderSource?
+  let providerBinding: ProviderExecutionBinding?
+  let callbackExecution: PreparedExecutionContext?
 }
 
 private struct RoutedCall: Sendable {
@@ -2648,8 +2849,10 @@ private final class GatewayRuntimeLifetime: @unchecked Sendable {
   }
 }
 
-private enum GatewayHostToolScope {
+enum GatewayHostToolScope {
   @TaskLocal static var projectID: String?
+  @TaskLocal static var execution: PreparedExecutionContext?
+  @TaskLocal static var lifetime: GatewayHostCallbackLifetime?
 }
 
 package enum GatewayRuntimeError: Error, LocalizedError, Equatable {

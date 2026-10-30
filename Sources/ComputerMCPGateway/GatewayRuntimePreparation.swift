@@ -15,17 +15,25 @@ package struct GatewayConfigurationResolution: Equatable, Sendable {
   /// The complete explicit manifest source. An empty array removes its declarations.
   var profileDeclarations: [ProfileGrant]?
   var configurationPaths: Set<PathRule>?
+  var localProviders: [MCPServerConfig]?
 
   package init(
     projects: [Project] = [], profileDeclarations: [ProfileGrant]? = nil,
-    configurationPaths: Set<PathRule>? = nil
+    configurationPaths: Set<PathRule>? = nil, localProviders: [MCPServerConfig]? = nil
   ) {
     self.projects = projects
     self.profileDeclarations = profileDeclarations
     self.configurationPaths = configurationPaths
+    self.localProviders = localProviders
   }
 
   package mutating func merge(_ other: Self) throws {
+    if let incoming = other.localProviders {
+      guard localProviders == nil || localProviders == incoming else {
+        throw GatewayDatabaseError.configurationChanged
+      }
+      localProviders = incoming
+    }
     if let incoming = other.configurationPaths {
       guard configurationPaths == nil || configurationPaths == incoming else {
         throw GatewayDatabaseError.configurationChanged

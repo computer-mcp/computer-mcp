@@ -3,6 +3,97 @@ import Foundation
 import Testing
 
 struct ComputerMCPPermissionsEnvironmentIdentityTests {
+  @Test(
+    arguments: [client, Principal.plugin(.package("worker"))],
+    ["register", "remove", "pathRule", "source", "grant", "revoke", "settings", "trustedHost"])
+  func standingConsentBindsOwnerAuthority(principal: Principal, mutation: String) throws {
+    var ledger = PermissionLedger()
+    var environment = ledger.environment
+    environment.paths = try PathEnvironmentSnapshot(
+      projects: [
+        RegisteredProject(id: "project", root: path("/source")),
+        RegisteredProject(id: "other", root: path("/other")),
+      ], rules: [PathRule(root: path("/private"), kind: .hostData)])
+    try ledger.reconcile(environment: environment, expectedRevision: ledger.revision)
+    try ledger.setPermission(
+      .granted(.write), for: .project("project"), principal: principal,
+      expectedRevision: ledger.revision)
+    let consent = ledger.consent(for: principal, mode: .fullAccess(.standing))
+    environment = ledger.environment
+    environment.modes[principal] = consent
+    try ledger.reconcile(environment: environment, expectedRevision: ledger.revision)
+    let sourceProof = try authorization(
+      from: ledger.authorize(
+        invocation: invocation(principal: principal),
+        actions: [action(.project("project"), .write)], now: instant))
+    let execution = try ledger.startExecution(owner: principal, authorizationIDs: [sourceProof.id])
+    environment = ledger.environment
+    let ownerProjects = try #require(environment.paths?.registeredProjects)
+    let derived = RegisteredProject(
+      id: "job", root: path("/jobs/checkout"), sourceID: "project",
+      hostContentIdentity: UUID())
+    try environment.paths!.setProjects(ownerProjects + [derived])
+    try ledger.reconcile(environment: environment, expectedRevision: ledger.revision)
+    #expect(ledger.isConsentValid(consent, for: principal))
+    let worktreeProof = try authorization(
+      from: ledger.authorize(
+        invocation: invocation(principal: principal, project: "job", digest: "derived"),
+        requirements: .init(
+          paths: [PathRequirement(path: path("/jobs/checkout/file"), operation: .write)],
+          mode: .fullAccess(.standing)),
+        now: instant))
+    #expect(worktreeProof.mode == .fullAccess(.standing))
+    environment = ledger.environment
+    try environment.paths!.setProjects(ownerProjects)
+    try ledger.reconcile(environment: environment, expectedRevision: ledger.revision)
+    ledger = try restore(ledger, when: true)
+    #expect(ledger.isConsentValid(consent, for: principal))
+    #expect(
+      ledger.executionAccess(
+        execution.id, principal: principal, operation: .writeInput,
+        now: instant) == .allowed)
+    _ = try authorization(
+      from: ledger.authorize(
+        invocation: invocation(principal: principal, digest: "later"),
+        actions: [action(.project("project"), .write)], now: instant))
+    environment = ledger.environment
+    switch mutation {
+    case "register":
+      try environment.paths!.setProjects(
+        ownerProjects + [RegisteredProject(id: "new", root: path("/new"))])
+    case "remove": try environment.paths!.setProjects(ownerProjects.filter { $0.id != "other" })
+    case "pathRule":
+      environment.paths!.pathRules.insert(PathRule(root: path("/secret"), kind: .denied))
+    case "source":
+      var changed = ownerProjects
+      changed[0].root = path("/replacement")
+      try environment.paths!.setProjects(changed)
+    case "grant":
+      try ledger.setPermission(
+        .granted(.access), for: .screen, principal: principal,
+        expectedRevision: ledger.revision)
+    case "revoke":
+      _ = try ledger.revoke(
+        principal: principal, permission: .project("project"), expectedRevision: ledger.revision)
+    case "settings":
+      _ = try ledger.setSandboxSettings(
+        SandboxSettings(network: .trusted),
+        for: SandboxSettingsKey(principal: principal, projectID: "project"),
+        expectedRevision: ledger.revision)
+    default: environment.trustedHosts.insert(HostRule("new.example"))
+    }
+    try ledger.reconcile(environment: environment, expectedRevision: ledger.revision)
+    #expect(!ledger.isConsentValid(consent, for: principal))
+    #expect(
+      ledger.executionAccess(
+        execution.id, principal: principal, operation: .writeInput,
+        now: instant) == .denied(.authorizationRevoked))
+    #expect(
+      try ledger.authorize(
+        invocation: invocation(principal: principal, digest: "after-change"),
+        actions: [action(.skills)], now: instant) == .denied(.authorizationRevoked))
+  }
+
   private func restore(_ ledger: PermissionLedger, when enabled: Bool) throws -> PermissionLedger {
     enabled
       ? try JSONDecoder().decode(PermissionLedger.self, from: JSONEncoder().encode(ledger)) : ledger
@@ -90,10 +181,8 @@ struct ComputerMCPPermissionsEnvironmentIdentityTests {
         expectedRevision: ledger.revision)
     default:
       var reordered = environment.paths!.registeredProjects
-      reordered.swapAt(4, 5)
-      #expect(environment.paths!.projects.location(at: path("/d/x/y"))?.projectID == "C")
+      reordered.swapAt(0, 2)
       try environment.paths!.setProjects(reordered)
-      #expect(environment.paths!.projects.location(at: path("/d/x/y"))?.projectID == "E")
     }
     #expect(
       try ledger.reconcile(environment: environment, expectedRevision: ledger.revision)

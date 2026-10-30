@@ -187,6 +187,7 @@ struct GatewayGenerationDispatchTests {
         arguments: .object(["project_id": .string("fixture"), "server": .string("fixture")]),
         context: .empty)
       try #require(discovery.objectValue?["isError"] != .bool(true), "\(discovery)")
+      _ = try await serving.listToolsAsync(context: .empty)
       let handle = JSONValue.string("selected")
       _ = try await serving.callToolAsync(
         name: cachedOwner ? "fixture.start" : "fixture.identity",
@@ -349,7 +350,7 @@ struct GatewayGenerationDispatchTests {
       #expect(alive(pid))
       let retained = try await call(
         client, owner: owner, tool: "fixture.inspect", arguments: ["handle": .string("retained")])
-      #expect(value(retained, "pid") == .integer(Int64(pid)))
+      #expect(value(retained, "pid") == .integer(Int64(pid)), "\(retained.result)")
       await client.disconnect()
       await origin?.stop()
       await fixture.service.stop()
@@ -427,7 +428,7 @@ struct GatewayGenerationDispatchTests {
         #expect(scope.fullAccessConsent?.lifetime == .alwaysAllowClient)
         let retained = try await call(
           next, owner: owner, tool: "fixture.inspect", arguments: ["handle": .string("retained")])
-        #expect(value(retained, "pid") == .integer(Int64(process)))
+        #expect(value(retained, "pid") == .integer(Int64(process)), "\(retained.result)")
         await next.disconnect()
         #expect(alive(process))
       }
@@ -443,7 +444,8 @@ struct GatewayGenerationDispatchTests {
   }
 
   @Test(.timeLimit(.minutes(1)))
-  func managedHTTPPublicationPreservesOwnedWorkAndIndependentListenerConsent() async throws {
+  func managedHTTPProviderUpdateRevokesOldWorkAndPreservesIndependentListenerConsent() async throws
+  {
     let fixture = try GenerationFixture()
     defer { fixture.removeFiles() }
     try await fixture.activate(
@@ -531,27 +533,21 @@ struct GatewayGenerationDispatchTests {
       #expect(value(secondCurrent, "version") == .integer(2))
       let firstCurrentPID = try pid(firstCurrent)
       let secondCurrentPID = try pid(secondCurrent)
-      #expect(alive(firstPID) && alive(secondPID))
+      try await wait { !alive(firstPID) && !alive(secondPID) }
       #expect(await firstOrigin.controlSessions().first?.fullAccessConsent != nil)
-      phase = "inspect first original owner"
-      let retained = try await call(
-        firstClient, owner: firstOwner, tool: "fixture.inspect",
-        arguments: ["handle": .string("first")])
-      try #require(retained.result.objectValue?["isError"] != .bool(true), "\(retained.result)")
-      #expect(value(retained, "version") == .integer(1))
-      phase = "finish first original owner"
-      let finished = try await call(
-        firstClient, owner: firstOwner, tool: "fixture.finish",
-        arguments: ["handle": .string("first")])
-      try #require(finished.result.objectValue?["isError"] != .bool(true), "\(finished.result)")
-      #expect(value(finished, "version") == .integer(1))
-      phase = "join first original provider"
-      try await wait { !alive(firstPID) }
+      phase = "reject first original owner"
+      let callsBefore = try fixture.calls()
+      for tool in ["fixture.inspect", "fixture.finish"] {
+        let retired = try await call(
+          firstClient, owner: firstOwner, tool: tool, arguments: ["handle": .string("first")])
+        #expect(retired.result.objectValue?["isError"] == .bool(true))
+      }
+      #expect(try fixture.calls() == callsBefore)
       phase = "stop first listener"
       await firstOrigin.stop()
       await firstClient.disconnect()
       #expect(!alive(firstCurrentPID))
-      #expect(alive(secondPID) && alive(secondCurrentPID))
+      #expect(!alive(secondPID) && alive(secondCurrentPID))
       #expect(await operations.controlSessions().map(\.id) == [secondScope.id])
       phase = "end second listener session"
       try await operations.endControlSession(
@@ -726,7 +722,7 @@ struct GatewayGenerationDispatchTests {
   }
 
   @Test(.timeLimit(.minutes(1)))
-  func bridgePluginPublicationRetainsOwnersAndRechecksRemovedProject() async throws {
+  func bridgePluginUpdateRevokesOldOwnersAndRechecksRemovedProject() async throws {
     let fixture = try GenerationFixture()
     defer { fixture.removeFiles() }
     let archives = try ArchiveFixture()
@@ -770,15 +766,18 @@ struct GatewayGenerationDispatchTests {
       )
       _ = try await fixture.installPlugin(version: 2, managed: true, archives: archives)
       #expect(try pid(await fixture.identity(client)) != oldPID)
-      #expect(
-        try pid(await call(client, owner: owner, tool: "fixture.inspect", arguments: arguments))
-          == oldPID)
+      try await wait { !alive(oldPID) }
+      let callsBefore = try fixture.calls()
+      let retired = try await call(
+        client, owner: owner, tool: "fixture.inspect", arguments: arguments)
+      #expect(retired.result.objectValue?["isError"] == .bool(true))
+      #expect(try fixture.calls() == callsBefore)
       let state = try fixture.database.configurationState()
       await #expect(throws: (any Error).self) {
         _ = try await fixture.installPlugin(version: 3, managed: true, archives: archives)
       }
       #expect(try fixture.database.configurationState() == state)
-      #expect(alive(oldPID))
+      #expect(!alive(oldPID))
       _ = try await fixture.service.changeProjects(.remove("fixture"))
       let before = try fixture.calls()
       let denied = try await call(
@@ -850,7 +849,8 @@ struct GatewayGenerationDispatchTests {
       #expect(alive(original))
       let continued = try await call("fixture.inspect")
       #expect(continued.objectValue?["pid"] == .integer(Int64(original)))
-      #expect(try fixture.pids().count == 1)
+      #expect(try fixture.pids().count == 2)
+      #expect(try fixture.invocationPIDs() == [original])
       let firstRequest = try #require(
         first.objectValue?["gateway_execution"]?.objectValue?["request_id"]?.stringValue)
       let secondRequest = try #require(
@@ -892,11 +892,9 @@ struct GatewayGenerationDispatchTests {
       #expect(firstAudit.transport == "http" && secondAudit.transport == "http")
       #expect(firstAudit.caller == .cloudflareTunnel && secondAudit.caller == .cloudflareTunnel)
       phase = "publish version 2"
-      _ = try await fixture.service.changeManifest(
-        fixture.externalManifest(version: 2),
-        expectedDigest: try await fixture.control.configurationDigest())
+      try await fixture.publishMetadata(version: 2)
       let current = try await call("fixture.identity")
-      try #require(current.objectValue?["version"] == .integer(2), "\(current)")
+      try #require(current.objectValue?["version"] == .integer(1), "\(current)")
       #expect(current.objectValue?["pid"] != first.objectValue?["pid"])
       #expect(try await call("fixture.inspect").objectValue?["pid"] == .integer(Int64(original)))
       phase = "stop local listener"
@@ -905,11 +903,13 @@ struct GatewayGenerationDispatchTests {
       #expect(await fixture.service.snapshot().state == .stopped)
       #expect(try await call("fixture.inspect").objectValue?["pid"] == .integer(Int64(original)))
       phase = "publish external version 3"
-      try fixture.writeManifest(try await fixture.externalManifest(version: 3), atomic: false)
+      var metadata = try await fixture.control.activeConfiguration()
+      metadata.server.name = "version-3"
+      try fixture.writeManifest(try metadata.exportedTOML(), atomic: false)
       try await waitUntil {
         try await fixture.control.activeConfiguration().server.name == "version-3"
       }
-      #expect(try await call("fixture.identity").objectValue?["version"] == .integer(3))
+      #expect(try await call("fixture.identity").objectValue?["version"] == .integer(1))
       phase = "start local listener"
       try await fixture.service.start(profile: .chatGPTOperate)
       phase = "restart local listener"
@@ -1032,11 +1032,9 @@ struct GatewayGenerationDispatchTests {
           "server": .string("fixture"), "tool": .string("wait"), "arguments": .object([:]),
           "request_id": .string("background"), "wait_for_result": .bool(false),
         ])
-      _ = try await fixture.service.changeManifest(
-        fixture.externalManifest(version: 2, skillRoot: skillRoot),
-        expectedDigest: try await fixture.control.configurationDigest())
+      try await fixture.publishMetadata(version: 2)
       let native = try await call("fixture.identity")
-      #expect(native.objectValue?["version"] == .integer(2))
+      #expect(native.objectValue?["version"] == .integer(1))
       let permissions = try fixture.database.permissionRuntime(platform: fixture.platform)
       let published = try #require(try await permissions.store.read().environment.paths)
       #expect(
@@ -1076,7 +1074,9 @@ struct GatewayGenerationDispatchTests {
   }
 
   @Test(.timeLimit(.minutes(1)), arguments: [false, true])
-  func externalManifestChangesPreserveConnectionWorkAndEditorBytes(atomic: Bool) async throws {
+  func externalProviderChangesRevokeOldWorkAndPreserveConnectionAndEditorBytes(atomic: Bool)
+    async throws
+  {
     let bookmarks = RepairFailureBookmarkService()
     let fixture = try GenerationFixture(bookmarkService: bookmarks)
     defer { fixture.removeFiles() }
@@ -1102,10 +1102,14 @@ struct GatewayGenerationDispatchTests {
       let currentPID = try pid(await fixture.identity(client))
       #expect(currentPID != oldPID)
       #expect(try await client.listTools().contains { $0.name == "fixture.generation_2" })
-      #expect(
-        try pid(
-          await client.call(
-            toolName: "fixture.inspect", arguments: .object(["handle": .string("old")]))) == oldPID)
+      try await wait { !alive(oldPID) }
+      do {
+        let before = try fixture.calls()
+        let retired = try await client.call(
+          toolName: "fixture.inspect", arguments: .object(["handle": .string("old")]))
+        #expect(retired.result.objectValue?["isError"] == .bool(true))
+        #expect(try fixture.calls() == before)
+      }
       let history = try fixture.database.configurationRevisions()
       var rejected = try await fixture.control.activeConfiguration()
       rejected.server.name = "recoverable"
@@ -1139,10 +1143,14 @@ struct GatewayGenerationDispatchTests {
       #expect(await fixture.service.snapshot().lastError == nil)
       #expect(await fixture.service.snapshot().startedAt == startedAt)
       #expect(await fixture.service.snapshot().connectionCount == 1)
-      #expect(
-        try pid(
-          await client.call(
-            toolName: "fixture.finish", arguments: .object(["handle": .string("old")]))) == oldPID)
+      try await wait { !alive(oldPID) }
+      do {
+        let before = try fixture.calls()
+        let retired = try await client.call(
+          toolName: "fixture.finish", arguments: .object(["handle": .string("old")]))
+        #expect(retired.result.objectValue?["isError"] == .bool(true))
+        #expect(try fixture.calls() == before)
+      }
       try await wait { !alive(oldPID) && !alive(currentPID) }
       await client.disconnect()
       await fixture.service.stop()
@@ -1189,13 +1197,17 @@ struct GatewayGenerationDispatchTests {
       }
       #expect(try fixture.database.pluginStoreSnapshot().revision == 0)
       #expect(try fixture.database.configurationRevisions().count == 2)
-      #expect(try fixture.pids().count <= 3)
+      #expect(try fixture.invocationPIDs().count <= 3)
       try await fixture.discover(client)
       #expect(try await client.listTools().contains { $0.name == "fixture.generation_8" })
-      #expect(
-        try pid(
-          await client.call(
-            toolName: "fixture.finish", arguments: .object(["handle": .string("old")]))) == oldPID)
+      try await wait { !alive(oldPID) }
+      do {
+        let before = try fixture.calls()
+        let retired = try await client.call(
+          toolName: "fixture.finish", arguments: .object(["handle": .string("old")]))
+        #expect(retired.result.objectValue?["isError"] == .bool(true))
+        #expect(try fixture.calls() == before)
+      }
       await client.disconnect()
       await fixture.service.stop()
       #expect(try fixture.pids().allSatisfy { !alive($0) })
@@ -1259,7 +1271,7 @@ struct GatewayGenerationDispatchTests {
   }
 
   @Test(.timeLimit(.minutes(1)))
-  func managedManifestAndRollbackPublishWithoutDisconnectingOrLosingOldWork() async throws {
+  func managedProviderUpdateAndRollbackPreserveConnectionAndRetireOldWork() async throws {
     let fixture = try GenerationFixture()
     defer { fixture.removeFiles() }
     try await fixture.activate(version: 1)
@@ -1281,11 +1293,14 @@ struct GatewayGenerationDispatchTests {
       let currentPID = try pid(await fixture.identity(client))
       #expect(currentPID != oldPID)
       #expect(try await client.listTools().contains { $0.name == "fixture.generation_2" })
-      #expect(
-        try pid(
-          await client.call(
-            toolName: "fixture.inspect", arguments: .object(["handle": .string("old")])))
-          == oldPID)
+      try await wait { !alive(oldPID) }
+      do {
+        let before = try fixture.calls()
+        let retired = try await client.call(
+          toolName: "fixture.inspect", arguments: .object(["handle": .string("old")]))
+        #expect(retired.result.objectValue?["isError"] == .bool(true))
+        #expect(try fixture.calls() == before)
+      }
       let before = try fixture.database.configurationState()
       let history = try fixture.database.configurationRevisions()
       var rejected = proposed
@@ -1304,11 +1319,14 @@ struct GatewayGenerationDispatchTests {
       #expect(try await client.listTools().contains { $0.name == "fixture.generation_1" })
       #expect(await fixture.service.snapshot().connectionCount == 1)
       #expect(await fixture.service.snapshot().startedAt == startedAt)
-      #expect(
-        try pid(
-          await client.call(
-            toolName: "fixture.finish", arguments: .object(["handle": .string("old")])))
-          == oldPID)
+      try await wait { !alive(oldPID) }
+      do {
+        let before = try fixture.calls()
+        let retired = try await client.call(
+          toolName: "fixture.finish", arguments: .object(["handle": .string("old")]))
+        #expect(retired.result.objectValue?["isError"] == .bool(true))
+        #expect(try fixture.calls() == before)
+      }
       try await wait { !alive(oldPID) && !alive(currentPID) }
       await client.disconnect()
       await fixture.service.stop()
@@ -1723,7 +1741,7 @@ struct GatewayGenerationDispatchTests {
   }
 
   @Test(.timeLimit(.minutes(1)), arguments: [false, true])
-  func connectedPluginPublicationPreservesNativeWorkAndRejectsFailedCandidates(managed: Bool)
+  func connectedPluginInvalidationRetiresNativeWorkAndRejectsFailedCandidates(managed: Bool)
     async throws
   {
     let fixture = try GenerationFixture()
@@ -1753,7 +1771,8 @@ struct GatewayGenerationDispatchTests {
             args: [fixture.root.path, "unused", "yes"])
         ])
       snapshot = try await fixture.service.changePlugins(
-        .settings(pluginID: "live-fixture", settings), expectedRevision: snapshot.state.revision)
+        .settings(pluginID: "live-fixture", settings),
+        expectedRevision: try await fixture.control.pluginSnapshot().state.revision)
       var configuration = try await fixture.control.activeConfiguration()
       configuration.mcp.servers = []
       _ = try await fixture.control.activateManifest(
@@ -1764,7 +1783,8 @@ struct GatewayGenerationDispatchTests {
       let events = changes.stream()
       await observer.onNotification(ToolListChangedNotification.self) { _ in changes.send() }
       snapshot = try await fixture.service.changePlugins(
-        .enabled(pluginID: "live-fixture", true), expectedRevision: snapshot.state.revision)
+        .enabled(pluginID: "live-fixture", true),
+        expectedRevision: try await fixture.control.pluginSnapshot().state.revision)
       try await fixture.discover(client)
       let announced = try await withThrowingTaskGroup(of: Bool.self) { group in
         group.addTask {
@@ -1791,15 +1811,20 @@ struct GatewayGenerationDispatchTests {
           toolName: "fixture.start", arguments: .object(["handle": .string("old-plugin")])))
       let oldRecord = try #require(snapshot.state.installations.first)
       snapshot = try await fixture.service.changePlugins(
-        .enabled(pluginID: "live-fixture", false), expectedRevision: snapshot.state.revision)
+        .enabled(pluginID: "live-fixture", false),
+        expectedRevision: try await fixture.control.pluginSnapshot().state.revision)
       #expect(try await !client.listTools().contains { $0.name == "fixture.identity" })
-      #expect(
-        try pid(
-          await client.call(
-            toolName: "fixture.inspect", arguments: .object(["handle": .string("old-plugin")])))
-          == oldPID)
+      try await wait { !alive(oldPID) }
+      do {
+        let before = try fixture.calls()
+        let retired = try await client.call(
+          toolName: "fixture.inspect", arguments: .object(["handle": .string("old-plugin")]))
+        #expect(retired.result.objectValue?["isError"] == .bool(true))
+        #expect(try fixture.calls() == before)
+      }
       snapshot = try await fixture.service.changePlugins(
-        .enabled(pluginID: "live-fixture", true), expectedRevision: snapshot.state.revision)
+        .enabled(pluginID: "live-fixture", true),
+        expectedRevision: try await fixture.control.pluginSnapshot().state.revision)
       snapshot = try await fixture.installPlugin(version: 2, managed: managed, archives: archives)
       let fresh = try await fixture.identity(client)
       let newPID = try pid(fresh)
@@ -1809,13 +1834,16 @@ struct GatewayGenerationDispatchTests {
       let audit = try #require(try fixture.database.auditEvent(requestID: requestID))
       #expect(audit.mcpRequestID == fresh.requestID)
       #expect(audit.socketConnectionID != nil)
-      #expect(oldPID != newPID && alive(oldPID))
+      #expect(oldPID != newPID && !alive(oldPID))
       #expect(try await client.listTools().contains { $0.name == "fixture.generation_2" })
-      #expect(
-        try pid(
-          await client.call(
-            toolName: "fixture.inspect", arguments: .object(["handle": .string("old-plugin")])))
-          == oldPID)
+      try await wait { !alive(oldPID) }
+      do {
+        let before = try fixture.calls()
+        let retired = try await client.call(
+          toolName: "fixture.inspect", arguments: .object(["handle": .string("old-plugin")]))
+        #expect(retired.result.objectValue?["isError"] == .bool(true))
+        #expect(try fixture.calls() == before)
+      }
       let beforeFailure = try fixture.database.configurationState()
       let directoriesBeforeFailure = try fixture.database.pluginOwnedDirectories()
       await #expect(throws: (any Error).self) {
@@ -1824,34 +1852,28 @@ struct GatewayGenerationDispatchTests {
       #expect(try fixture.database.configurationState() == beforeFailure)
       #expect(try fixture.database.pluginOwnedDirectories() == directoriesBeforeFailure)
       #expect(try pid(await fixture.identity(client)) == newPID)
-      #expect(alive(oldPID))
+      #expect(!alive(oldPID))
       snapshot = try await fixture.service.changePlugins(
         managed
           ? .uninstallArtifact(installationID: oldRecord.id)
           : .removeDevelopment(installationID: oldRecord.id),
-        expectedRevision: snapshot.state.revision)
-      #expect(FileManager.default.fileExists(atPath: oldRecord.source.root.path))
-      #expect(
-        try pid(
-          await client.call(
-            toolName: "fixture.inspect", arguments: .object(["handle": .string("old-plugin")])))
-          == oldPID)
+        expectedRevision: try await fixture.control.pluginSnapshot().state.revision)
+      if !managed { #expect(FileManager.default.fileExists(atPath: oldRecord.source.root.path)) }
+      try await wait { !alive(oldPID) }
+      do {
+        let before = try fixture.calls()
+        let retired = try await client.call(
+          toolName: "fixture.inspect", arguments: .object(["handle": .string("old-plugin")]))
+        #expect(retired.result.objectValue?["isError"] == .bool(true))
+        #expect(try fixture.calls() == before)
+      }
       _ = try await client.call(
         toolName: "fixture.finish", arguments: .object(["handle": .string("old-plugin")]))
       try await wait { !alive(oldPID) }
       snapshot = try await fixture.service.changePlugins(
-        .recover, expectedRevision: snapshot.state.revision)
-      if managed {
-        let deadline = ContinuousClock.now + .seconds(5)
-        while FileManager.default.fileExists(atPath: oldRecord.source.root.path),
-          ContinuousClock.now < deadline
-        {
-          try await Task.sleep(for: .milliseconds(10))
-          snapshot = try await fixture.service.changePlugins(
-            .recover, expectedRevision: snapshot.state.revision)
-        }
-      }
-      #expect(FileManager.default.fileExists(atPath: oldRecord.source.root.path) == !managed)
+        .recover, expectedRevision: try await fixture.control.pluginSnapshot().state.revision)
+      // Uncertain retained work keeps its runtime's shared artifact lease until shutdown.
+      #expect(FileManager.default.fileExists(atPath: oldRecord.source.root.path))
       try await fixture.discover(client)
       let retainedPID = try pid(
         await client.call(
@@ -1860,22 +1882,29 @@ struct GatewayGenerationDispatchTests {
       snapshot = try await fixture.service.changePlugins(
         managed
           ? .uninstallArtifact(installationID: selected)
-          : .removeDevelopment(installationID: selected), expectedRevision: snapshot.state.revision)
+          : .removeDevelopment(installationID: selected),
+        expectedRevision: try await fixture.control.pluginSnapshot().state.revision)
       let removedCall = try await client.call(toolName: "fixture.identity")
       #expect(removedCall.result.objectValue?["isError"] == .bool(true))
-      #expect(
-        try pid(
-          await client.call(
-            toolName: "fixture.inspect", arguments: .object(["handle": .string("removed-plugin")])))
-          == retainedPID)
+      try await wait { !alive(retainedPID) }
+      do {
+        let before = try fixture.calls()
+        let retired = try await client.call(
+          toolName: "fixture.inspect", arguments: .object(["handle": .string("removed-plugin")]))
+        #expect(retired.result.objectValue?["isError"] == .bool(true))
+        #expect(try fixture.calls() == before)
+      }
       _ = try await client.call(
         toolName: "fixture.finish", arguments: .object(["handle": .string("removed-plugin")]))
       try await wait { !alive(retainedPID) }
       _ = try await fixture.service.changePlugins(
-        .recover, expectedRevision: snapshot.state.revision)
+        .recover, expectedRevision: try await fixture.control.pluginSnapshot().state.revision)
       await observer.disconnect()
       await client.disconnect()
       await fixture.service.stop()
+      _ = try await fixture.service.changePlugins(
+        .recover, expectedRevision: try await fixture.control.pluginSnapshot().state.revision)
+      #expect(FileManager.default.fileExists(atPath: oldRecord.source.root.path) == !managed)
       #expect(try fixture.pids().allSatisfy { !alive($0) })
     } catch {
       await observer.disconnect()
@@ -2018,7 +2047,7 @@ struct GatewayGenerationDispatchTests {
     let bookmark = GatedBookmarkService()
     let fixture = try GenerationFixture(bookmarkService: bookmark)
     defer { fixture.removeFiles() }
-    try await fixture.activate(version: 1)
+    try await fixture.activate(version: 1, shellEnabled: true)
     let future = try #require(GatewayProfileID(rawValue: "future-client"))
     var configuration = try await fixture.control.activeConfiguration()
     let original = try #require(configuration.profiles.first)
@@ -2118,19 +2147,51 @@ struct GatewayGenerationDispatchTests {
         #expect(sessions.first?.fullAccessConsent == nil)
         let metadata = try await third.call(toolName: "project.list")
         try #require(metadata.result.objectValue?["isError"] != .bool(true), "\(metadata.result)")
-        let pids = try fixture.pids()
+        let invoked = try fixture.invocationPIDs()
         let calls = try fixture.calls()
-        let refused = try await third.call(
+        let discovered = try await third.call(
           toolName: "mcp.tools.list",
           arguments: .object(["project_id": .string("fixture"), "server": .string("fixture")]))
+        #expect(discovered.result.objectValue?["isError"] == .bool(false), "\(discovered.result)")
+        #expect(try fixture.invocationPIDs() == invoked)
+        let pids = try fixture.pids()
+        let marker = fixture.root.appendingPathComponent("unconsented-command")
+        let refused = try await third.call(
+          toolName: "shell.run",
+          arguments: .object([
+            "project_id": .string("fixture"), "mode": .string("argv"),
+            "executable": .string("/usr/bin/touch"), "argv": .array([.string(marker.path)]),
+          ]))
         #expect(refused.result.objectValue?["isError"] == .bool(true), "\(refused.result)")
+        #expect(!FileManager.default.fileExists(atPath: marker.path))
         #expect(try fixture.pids() == pids)
         #expect(try fixture.calls() == calls)
+        // The provider uses its own approved mode; the client's native commands need its consent.
+        let providerCall = try await third.call(
+          toolName: "mcp.tools.call",
+          arguments: .object([
+            "project_id": .string("fixture"), "server": .string("fixture"),
+            "tool": .string("identity"), "arguments": .object([:]),
+          ]))
+        #expect(
+          providerCall.result.objectValue?["isError"] == .bool(false), "\(providerCall.result)")
+        #expect(try fixture.invocationPIDs().count == invoked.count + 1)
+        #expect(
+          await fixture.service.controlSessions().first(where: { $0.profileID == future })?
+            .fullAccessConsent == nil)
         #expect(try fixture.database.configurationState() == before)
         #expect(try Data(contentsOf: manifestURL) == unadmittedManifest)
         // A new consent waits for the owner to restore admitted manifest bytes.
         try admittedManifest.write(to: manifestURL, options: .atomic)
         try await approveConnectedSession(fixture, profileID: future)
+        let admitted = try await third.call(
+          toolName: "shell.run",
+          arguments: .object([
+            "project_id": .string("fixture"), "mode": .string("argv"),
+            "executable": .string("/usr/bin/touch"), "argv": .array([.string(marker.path)]),
+          ]))
+        #expect(admitted.result.objectValue?["isError"] != .bool(true), "\(admitted.result)")
+        #expect(FileManager.default.fileExists(atPath: marker.path))
         try await fixture.discover(third)
       }
       _ = try pid(
@@ -2205,32 +2266,36 @@ struct GatewayGenerationDispatchTests {
   }
 
   @Test(.timeLimit(.minutes(1)))
-  func connectedClientUsesNewConfigurationWhileOldNativeWorkKeepsItsOwner() async throws {
+  func connectedProviderUpdateRetiresOldWorkAndRegrantDoesNotReviveIt() async throws {
     let fixture = try GenerationFixture()
     defer { fixture.removeFiles() }
     try await fixture.activate(version: 1)
     try await fixture.service.start(profile: .chatGPTOperate)
     let client = try await fixture.connect()
+    var phase = "start original work"
     do {
       let started = try await client.call(
         toolName: "fixture.start", arguments: .object(["handle": .string("old")]))
       let oldPID = try pid(started)
+      phase = "activate provider version 2"
       try await fixture.activate(version: 2)
+      phase = "invoke provider version 2"
       let fresh = try await fixture.identity(client)
       let currentPID = try pid(fresh)
       #expect(value(fresh, "version") == .integer(2))
-      #expect(currentPID != oldPID && alive(oldPID))
+      #expect(currentPID != oldPID)
+      try await wait { !alive(oldPID) }
       #expect(try await client.listTools().contains { $0.name == "fixture.generation_2" })
       let inspected = try await client.call(
         toolName: "fixture.inspect", arguments: .object(["handle": .string("old")]))
-      #expect(try pid(inspected) == oldPID)
-      #expect(value(inspected, "version") == .integer(1))
+      #expect(inspected.result.objectValue?["isError"] == .bool(true))
 
       let finished = try await client.call(
         toolName: "fixture.finish", arguments: .object(["handle": .string("old")]))
-      #expect(try pid(finished) == oldPID)
+      #expect(finished.result.objectValue?["isError"] == .bool(true))
       try await wait { !alive(oldPID) }
       #expect(alive(currentPID))
+      phase = "revoke caller permission"
       var grant = try #require(try fixture.database.profiles().first { $0.id == .chatGPTOperate })
       let permissions = grant.permissions
       grant.permissions.removeEntry(for: .mcpServer("fixture"))
@@ -2238,16 +2303,20 @@ struct GatewayGenerationDispatchTests {
       let denied = try await client.call(toolName: "fixture.identity")
       #expect(denied.result.objectValue?["isError"] == .bool(true))
       try await wait { !alive(currentPID) }
+      phase = "regrant caller permission"
       grant = try #require(try fixture.database.profiles().first { $0.id == .chatGPTOperate })
       grant.permissions = permissions
       try fixture.database.saveProfile(grant, expectedRevision: grant.authorizationRevision)
+      phase = "renew caller consent"
       try await fixture.consentSessions()
       let resumedPID = try pid(await fixture.identity(client))
       #expect(resumedPID != currentPID)
 
       var previous = resumedPID
       for version in 3...8 {
+        phase = "activate provider version \(version)"
         try await fixture.activate(version: version)
+        phase = "invoke provider version \(version)"
         let next = try await fixture.identity(client)
         #expect(value(next, "version") == .integer(Int64(version)))
         let obsolete = previous
@@ -2257,11 +2326,13 @@ struct GatewayGenerationDispatchTests {
       }
       let pids = try fixture.pids()
       #expect(pids.count >= 8)
-      #expect(pids.filter(alive) == [previous])
+      #expect(try fixture.invocationPIDs().filter(alive) == [previous])
+      #expect(pids.filter(alive).count == 2)
       await client.disconnect()
       await fixture.service.stop()
       #expect(pids.allSatisfy { !alive($0) })
     } catch {
+      Issue.record("Provider fixture failed during \(phase): \(error)")
       await client.disconnect()
       await fixture.service.stop()
       throw error
@@ -2279,7 +2350,7 @@ struct GatewayGenerationDispatchTests {
       let firstPID = try pid(
         await client.call(
           toolName: "fixture.start", arguments: .object(["handle": .string("same")])))
-      try await fixture.activate(version: 2)
+      try await fixture.publishMetadata(version: 2)
       try await fixture.discover(client)
       let secondPID = try pid(
         await client.call(
@@ -2362,7 +2433,7 @@ struct GatewayGenerationDispatchTests {
     let client = try await fixture.connect()
     do {
       let previous = try pid(await fixture.identity(client))
-      try await fixture.activate(version: 2)
+      try await fixture.publishMetadata(version: 2)
       let current = try pid(await fixture.identity(client))
       #expect(previous != current)
       #expect(alive(previous))
@@ -2457,7 +2528,7 @@ struct GatewayGenerationDispatchTests {
     do {
       let originalPID = try pid(await fixture.identity(client))
       let owner = try #require(try await owners(client, kind: "mcpUnreportedWork").first)
-      try await fixture.activate(version: 2)
+      try await fixture.publishMetadata(version: 2)
       let currentPID = try pid(await fixture.identity(client))
       let arguments: [String: JSONValue] = ["server": .string("fixture")]
       let unbound = try await client.call(
@@ -2486,7 +2557,7 @@ struct GatewayGenerationDispatchTests {
         client, owner: owner, tool: "mcp.connections.close", arguments: arguments,
         retryIDs: requests)
       #expect(repeated.result.objectValue?["isError"] == .bool(true))
-      #expect(try fixture.pids() == [originalPID, currentPID])
+      #expect(try fixture.invocationPIDs() == [originalPID, currentPID])
       #expect(try await owners(client, kind: "mcpUnreportedWork").count == 1)
       let currentOwner = try #require(try await owners(client, kind: "mcpUnreportedWork").first)
       let currentPending = try await call(
@@ -2502,7 +2573,7 @@ struct GatewayGenerationDispatchTests {
       let results = try await [firstClose, secondClose]
       #expect(results.filter { $0.result.objectValue?["isError"] != .bool(true) }.count == 1)
       #expect(!alive(currentPID))
-      #expect(try fixture.pids() == [originalPID, currentPID])
+      #expect(try fixture.invocationPIDs() == [originalPID, currentPID])
       await client.disconnect()
       await fixture.service.stop()
     } catch {
@@ -2538,7 +2609,7 @@ struct GatewayGenerationDispatchTests {
         client, owner: owner, tool: "mcp.connections.close",
         arguments: ["server": .string("fixture")])
       #expect(repeated.result.objectValue?["isError"] == .bool(true))
-      #expect(try fixture.pids() == [originalPID])
+      #expect(try fixture.invocationPIDs() == [originalPID])
       await client.disconnect()
       await fixture.service.stop()
     } catch {
@@ -2549,7 +2620,7 @@ struct GatewayGenerationDispatchTests {
   }
 
   @Test(.timeLimit(.minutes(1)))
-  func physicalRootReplacementDeniesOldOwnerWithoutTerminatingItsWork() async throws {
+  func physicalRootReplacementDeniesOldOwnerUntilRepairRetiresIt() async throws {
     let fixture = try GenerationFixture()
     defer { fixture.removeFiles() }
     let root = fixture.root.appendingPathComponent("project")
@@ -2580,10 +2651,13 @@ struct GatewayGenerationDispatchTests {
       #expect(try fixture.calls() == before)
       #expect(alive(originalPID))
 
+      _ = try await fixture.service.changeProjects(
+        .repair(id: "fixture", root: root, displayName: nil))
+      try await wait { !alive(originalPID) }
       try await fixture.activate(version: 2)
       let currentPID = try pid(await fixture.identity(client))
       #expect(currentPID != originalPID)
-      #expect(alive(originalPID))
+      #expect(!alive(originalPID))
       #expect(await fixture.service.snapshot().startedAt == startedAt)
       let stillDenied = try await call(
         client, owner: owner, tool: "fixture.inspect", arguments: arguments)
@@ -2591,9 +2665,12 @@ struct GatewayGenerationDispatchTests {
 
       try FileManager.default.removeItem(at: root)
       try FileManager.default.moveItem(at: moved, to: root)
-      #expect(
-        try pid(await call(client, owner: owner, tool: "fixture.finish", arguments: arguments))
-          == originalPID)
+      let beforeRestoreCall = try fixture.calls()
+      let restored = try await call(
+        client, owner: owner, tool: "fixture.finish", arguments: arguments)
+      #expect(restored.result.objectValue?["isError"] == .bool(true))
+      #expect(try fixture.calls() == beforeRestoreCall)
+      #expect(!alive(originalPID))
       await client.disconnect()
       await fixture.service.stop()
       #expect(try fixture.pids().allSatisfy { !alive($0) })
@@ -2656,7 +2733,7 @@ struct GatewayGenerationDispatchTests {
         "Scope mutation: \(change)")
       #expect(try fixture.calls() == before)
       try await wait { !alive(originalPID) }
-      #expect(try fixture.pids() == [originalPID])
+      #expect(try fixture.invocationPIDs() == [originalPID])
 
       try fixture.database.saveProject(original)
       let restored = try await call(
@@ -2683,7 +2760,7 @@ struct GatewayGenerationDispatchTests {
           await call(
             client, owner: freshOwner, tool: "fixture.finish", arguments: freshArguments))
           == freshPID)
-      #expect(try fixture.pids() == [originalPID, freshPID])
+      #expect(try fixture.invocationPIDs() == [originalPID, freshPID])
       await client.disconnect()
       await fixture.service.stop()
       #expect(try fixture.pids().allSatisfy { !alive($0) })
@@ -2709,9 +2786,9 @@ struct GatewayGenerationDispatchTests {
           "request_id": .string("original"), "wait_for_result": .bool(false),
         ]))
       #expect(started.result.objectValue?["isError"] != .bool(true))
-      let originalPID = try #require(try fixture.pids().first)
+      let originalPID = try #require(try fixture.invocationPIDs().first)
       let owner = try #require(try await owners(client, kind: "mcpRequest").first)
-      try await fixture.activate(version: 2)
+      try await fixture.publishMetadata(version: 2)
       let currentPID = try pid(await fixture.identity(client))
       #expect(currentPID != originalPID)
       let receiptArguments: [String: JSONValue] = [
@@ -2737,8 +2814,8 @@ struct GatewayGenerationDispatchTests {
         try await Task.sleep(for: .milliseconds(10))
       }
       #expect(try await owners(client, kind: "mcpRequest").isEmpty)
-      #expect(try fixture.calls() == "1:wait\n2:identity\n")
-      #expect(try fixture.pids() == [originalPID, currentPID])
+      #expect(try fixture.calls() == "1:wait\n1:identity\n")
+      #expect(try fixture.invocationPIDs() == [originalPID, currentPID])
       await client.disconnect()
       await fixture.service.stop()
     } catch {
@@ -2778,7 +2855,7 @@ struct GatewayGenerationDispatchTests {
       #expect(
         try pid(await call(client, owner: fresh, tool: "fixture.inspect", arguments: arguments))
           == originalPID)
-      #expect(try fixture.pids() == [originalPID])
+      #expect(try fixture.invocationPIDs() == [originalPID])
       _ = try await client.call(
         toolName: "fixture.start", arguments: .object(["handle": .string("other")]))
       let wrongResource = try await call(
@@ -2954,12 +3031,13 @@ struct GatewayGenerationDispatchTests {
     do {
       let first = try await spawn()
       children.append(first.pid)
-      let previousProvider = try #require(try fixture.pids().first)
+      let previousProvider = try pid(await fixture.identity(client))
       _ = try await fixture.service.changeManifest(
         fixture.externalManifest(version: 2, skillRoot: skillRoot),
         expectedDigest: try await fixture.control.configurationDigest())
       #expect(value(try await fixture.identity(client), "version") == .integer(2))
-      #expect(alive(first.pid) && alive(previousProvider))
+      #expect(alive(first.pid))
+      try await wait { !alive(previousProvider) }
       let permissions = try fixture.database.permissionRuntime(platform: fixture.platform)
       let published = try #require(try await permissions.store.read().environment.paths)
       #expect(
@@ -3007,6 +3085,7 @@ struct GatewayGenerationDispatchTests {
     let client = try await fixture.connect()
     var child: Int32?
     defer { if let child, alive(child) { _ = kill(-child, SIGKILL) } }
+    var phase = "start original work"
     do {
       let started = try await client.call(
         toolName: "shell.spawn",
@@ -3018,11 +3097,15 @@ struct GatewayGenerationDispatchTests {
       try #require((1...Int64(Int32.max)).contains(pid))
       child = Int32(pid)
       let owner = try #require(try await owners(client, kind: "shell").first)
+      phase = "activate provider version 2"
       try await fixture.activate(version: 2, shellEnabled: true)
+      phase = "invoke provider version 2"
       #expect(value(try await fixture.identity(client), "version") == .integer(2))
       let permissions = try fixture.database.permissionRuntime(platform: fixture.platform)
+      phase = "apply \(restriction) restriction"
       switch restriction {
       case "profile":
+        phase = "revoke caller permission"
         var grant = try #require(try fixture.database.profiles().first { $0.id == .chatGPTOperate })
         try grant.permissions.set(.denied, for: .project("fixture"))
         try fixture.database.saveProfile(grant, expectedRevision: grant.authorizationRevision)
@@ -3056,6 +3139,7 @@ struct GatewayGenerationDispatchTests {
       await fixture.service.stop()
       #expect(try fixture.pids().allSatisfy { !alive($0) })
     } catch {
+      Issue.record("Provider fixture failed during \(phase): \(error)")
       await client.disconnect()
       await fixture.service.stop()
       throw error
@@ -3136,6 +3220,13 @@ private struct GenerationFixture: Sendable {
   let reportWork: Bool
   let platform: PlatformServices
 
+  func publishMetadata(version: Int) async throws {
+    var configuration = try await control.activeConfiguration()
+    configuration.server.name = "catalog-\(version)"
+    _ = try await control.activateManifest(
+      configuration.exportedTOML(), expectedDigest: try await control.configurationDigest())
+  }
+
   func externalManifest(version: Int, skillRoot: URL? = nil) async throws -> String {
     var configuration = try await control.activeConfiguration()
     if let skillRoot {
@@ -3174,19 +3265,12 @@ private struct GenerationFixture: Sendable {
     root = URL(fileURLWithPath: "/private/tmp/cm-gen-\(UUID().uuidString.prefix(8))")
     try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
     let directories = AppControlPlaneServiceDirectories(
-      applicationSupport: root.appendingPathComponent("state"),
-      logs: root.appendingPathComponent("logs"))
+      applicationSupport: root.appendingPathExtension("host"),
+      logs: root.appendingPathExtension("host").appendingPathComponent("logs"))
     try directories.prepare()
     database = try fixturePermissionDatabase(path: directories.database.path)
     let secrets = try KeychainSecretStore(adapter: MemoryKeychainAdapter())
-    let rootPath = root.path
-    let launcher =
-      executionLauncher
-      ?? fixtureProtocolExecutionLauncher(
-        root: root,
-        scripts: [Self.provider, Self.pluginProvider(version: 1), Self.pluginProvider(version: 2)],
-        arguments: (1...8).map { [rootPath, String($0), reportWork ? "yes" : "no"] }
-          + [[root.path, "unused", "yes"]], allowCat: true)
+    let launcher = executionLauncher ?? testExecutionLauncher()
     let native = MacOSPlatform.services(launcher: launcher)
     platform = PlatformServices(
       launcher: launcher, projectGrants: bookmarkService,
@@ -3227,7 +3311,7 @@ private struct GenerationFixture: Sendable {
       controlPlane: control,
       socketConfiguration: .init(socketURL: root.appendingPathComponent("gateway.sock")))
     try database.saveProject(.init(id: "fixture", displayName: "Fixture", rootPath: root.path))
-    try Data(Self.provider.utf8).write(to: root.appendingPathComponent("provider.py"))
+    try writePythonTestExecutable(Self.provider, to: root.appendingPathExtension("py"))
   }
 
   func activate(
@@ -3253,9 +3337,9 @@ private struct GenerationFixture: Sendable {
       policy: .init(shellEnabled: shellEnabled), profiles: [profile],
       mcp: .init(servers: [
         .init(
-          id: "fixture", transport: .stdio, command: "/usr/bin/python3",
+          id: "fixture", transport: .stdio, command: try providerInterpreter(),
           args: [
-            root.appendingPathComponent("provider.py").path, root.path, String(version),
+            root.appendingPathExtension("py").path, root.path, String(version),
             reportWork ? "yes" : "no",
           ],
           exposure: .reexport, prefix: "fixture", allowAnyTool: true,
@@ -3269,12 +3353,17 @@ private struct GenerationFixture: Sendable {
             }))
       ]), projectDirectory: root)
     if existing == nil { try database.saveProfile(profile.grant) }
-    _ = try await control.activateManifest(
-      configuration.exportedTOML(), expectedDigest: try? await control.configurationDigest())
+    if FileManager.default.fileExists(atPath: control.directories.manifest.path) {
+      _ = try await service.changeManifest(
+        configuration.exportedTOML(), expectedDigest: try await control.configurationDigest())
+    } else {
+      _ = try await control.activateManifest(configuration.exportedTOML())
+    }
     try database.bootstrapPermissionProfiles(
       Set(GatewayProfileID.builtIns + configuration.profiles.map(\.id)).map {
         configuration.profileGrant(for: $0)
       }, declarations: configuration.profiles.map(\.grant))
+    try await approveProviders()
   }
 
   func installPlugin(version: Int, managed: Bool, archives: ArchiveFixture) async throws
@@ -3285,6 +3374,13 @@ private struct GenerationFixture: Sendable {
       name = 'Live Fixture'
       version = '\(version).0.0'
       plugin_api = \(version == 3 ? 999 : 1)
+      [sandbox]
+      full_access = true
+      purpose = 'Run the fixture native provider'
+      [[permissions]]
+      id = 'project'
+      access = 'write'
+      purpose = 'Operate the fixture project'
       [compatibility]
       minimum_host = '0.1.0'
       architectures = ['arm64', 'x86_64']
@@ -3293,7 +3389,7 @@ private struct GenerationFixture: Sendable {
       transport = 'stdio'
       executable = { path = 'provider' }
       """
-    let provider = Self.pluginProvider(version: version)
+    let provider = try pluginProvider(version: version)
     let revision = try database.pluginStoreSnapshot().revision
     if managed {
       let archive = try await BlockingOperationExecutor(label: "live-plugin-archive").perform {
@@ -3305,11 +3401,13 @@ private struct GenerationFixture: Sendable {
       let digest = SHA256.hash(data: try Data(contentsOf: archive)).map {
         String(format: "%02x", $0)
       }.joined()
-      return try await service.changePlugins(
+      _ = try await service.changePlugins(
         .installArchive(
           archive: archive, sha256: digest, pluginID: "live-fixture",
           version: PluginVersion("\(version).0.0")),
         expectedRevision: revision)
+      try await approveProviders()
+      return try await control.pluginSnapshot()
     }
     let package = root.appendingPathComponent("plugin-\(version)")
     try FileManager.default.createDirectory(at: package, withIntermediateDirectories: true)
@@ -3319,8 +3417,10 @@ private struct GenerationFixture: Sendable {
     let executable = package.appendingPathComponent("provider")
     try provider.write(to: executable, atomically: true, encoding: .utf8)
     try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: executable.path)
-    return try await service.changePlugins(
+    _ = try await service.changePlugins(
       .registerDevelopment(package), expectedRevision: revision)
+    try await approveProviders()
+    return try await control.pluginSnapshot()
   }
 
   func connect(consent: Bool = true) async throws -> GatewayClientSession {
@@ -3348,6 +3448,7 @@ private struct GenerationFixture: Sendable {
     _ session: GatewayControlSessionSnapshot,
     lifetime: GatewayFullAccessLifetime = .alwaysAllowClient
   ) async throws -> GatewayControlSessionSnapshot {
+    try await approveProviders()
     if session.fullAccessConsent != nil { return session }
     let trust = try database.clientTrust(
       principalID: session.principalID, profileID: session.profileID, caller: session.caller)
@@ -3363,6 +3464,9 @@ private struct GenerationFixture: Sendable {
   }
 
   func discover(_ client: GatewayClientSession, projectID: String = "fixture") async throws {
+    let projects = try await client.call(toolName: "project.list")
+    try #require(projects.result.objectValue?["isError"] != .bool(true), "\(projects.result)")
+    try await approveProviders()
     let discovered = try await client.call(
       toolName: "mcp.tools.list",
       arguments: .object(["project_id": .string(projectID), "server": .string("fixture")]))
@@ -3396,31 +3500,97 @@ private struct GenerationFixture: Sendable {
         trustedPrincipalID: "verified-generation-owner"), validate: {})
   }
 
+  func approveProviders() async throws {
+    let configuration = try await control.activeConfiguration()
+    let runtime = try database.permissionRuntime(platform: platform)
+    let grants = fixturePermissions(
+      Dictionary(
+        uniqueKeysWithValues:
+          try database.projects().filter { try database.derivedSourceID(for: $0.id) == nil }
+          .map { (Permission.project($0.id), PermissionState.granted(.write)) }))
+    for server in configuration.mcp.servers where server.transport == .stdio {
+      try fixtureApproveLocalProvider(
+        server, database: database, runtime: runtime, permissions: grants, fullAccess: true)
+    }
+    let snapshot = try database.pluginStoreSnapshot()
+    if let id = snapshot.selectedInstallations["live-fixture"],
+      let installation = snapshot.installations.first(where: { $0.id == id })
+    {
+      let package = try PluginPackage.load(at: installation.source.root)
+      let owner = try permissionOwner()
+      let view = try runtime.service.view(owner: owner)
+      let previous = view.providers.first { $0.identity == .package("live-fixture") }
+      let current = try runtime.store.readWithDatabase { _, ledger in
+        previous?.fullAccessConsent.map {
+          ledger.isConsentValid($0, for: .plugin(.package("live-fixture")))
+        } ?? false
+      }
+      if previous?.enabled != true || previous?.sourceDigest != installation.manifestDigest
+        || !current
+      {
+        try fixtureApprovePlugin(
+          package, database: database, runtime: runtime, permissions: grants, fullAccess: true)
+      }
+    }
+  }
+
+  private func providerHomes() throws -> [URL] {
+    try [PluginIdentity.localServer("fixture"), .package("live-fixture")].map {
+      URL(fileURLWithPath: try database.prepareProviderContainer($0).sandbox.home.value)
+    }
+  }
+
   func pids() throws -> [Int32] {
-    let path = root.appendingPathComponent("pids")
-    guard FileManager.default.fileExists(atPath: path.path) else { return [] }
-    return try String(contentsOf: path, encoding: .utf8).split(separator: "\n").compactMap {
-      Int32($0)
+    try providerHomes().flatMap { home -> [Int32] in
+      let path = home.appendingPathComponent("pids")
+      guard FileManager.default.fileExists(atPath: path.path) else { return [] }
+      return try String(contentsOf: path, encoding: .utf8).split(separator: "\n").compactMap {
+        Int32($0)
+      }
+    }
+  }
+
+  func invocationPIDs() throws -> [Int32] {
+    try providerHomes().flatMap { home -> [Int32] in
+      let path = home.appendingPathComponent("invocation-pids")
+      guard FileManager.default.fileExists(atPath: path.path) else { return [] }
+      return try String(contentsOf: path, encoding: .utf8).split(separator: "\n").compactMap {
+        Int32($0)
+      }
     }
   }
 
   func calls() throws -> String {
-    try String(contentsOf: root.appendingPathComponent("calls"), encoding: .utf8)
+    try providerHomes().map { home in
+      let path = home.appendingPathComponent("calls")
+      return FileManager.default.fileExists(atPath: path.path)
+        ? try String(contentsOf: path, encoding: .utf8) : ""
+    }.joined()
   }
 
-  func removeFiles() { try? FileManager.default.removeItem(at: root) }
+  func removeFiles() {
+    try? FileManager.default.removeItem(at: root)
+    try? FileManager.default.removeItem(at: root.appendingPathExtension("py"))
+    try? FileManager.default.removeItem(at: root.appendingPathExtension("host"))
+  }
 
-  private static func pluginProvider(version: Int) -> String {
-    "#!/usr/bin/python3\n"
-      + provider.replacingOccurrences(of: "int(sys.argv[2])", with: String(version))
+  private func providerInterpreter() throws -> String {
+    let script = try String(contentsOf: root.appendingPathExtension("py"), encoding: .utf8)
+    return String(try #require(script.split(separator: "\n").first).dropFirst(2))
+  }
+
+  private func pluginProvider(version: Int) throws -> String {
+    "#!\(try providerInterpreter())\n"
+      + Self.provider.replacingOccurrences(of: "int(sys.argv[2])", with: String(version))
   }
 
   private static let provider = #"""
     import json, os, sys, time, uuid
     from pathlib import Path
-    root, version, reporting = Path(sys.argv[1]), int(sys.argv[2]), sys.argv[3] == "yes"
+    root, version, reporting = Path(os.environ["HOME"]), int(sys.argv[2]), sys.argv[3] == "yes"
     with (root / "pids").open("a") as f: f.write(str(os.getpid()) + "\n")
     uri, instance, revision, resources = "computer-mcp://runtime/work/v1", str(uuid.uuid4()), 0, []
+    invoked = False
     names = ["start", "inspect", "finish", "identity", "change", "wait", "generation_" + str(version)]
     for line in sys.stdin:
         message = json.loads(line)
@@ -3441,6 +3611,9 @@ private struct GenerationFixture: Sendable {
             body = {"format_version": 1, "instance_id": instance, "revision": revision, "resources": resources}
             result = {"contents": [{"uri": uri, "mimeType": "application/json", "text": json.dumps(body)}]}
         elif method == "tools/call":
+            if not invoked:
+                with (root / "invocation-pids").open("a") as f: f.write(str(os.getpid()) + "\n")
+                invoked = True
             name, arguments = params["name"], params.get("arguments", {})
             with (root / "calls").open("a") as f: f.write(str(version) + ":" + name + "\n")
             handle = arguments.get("handle")
@@ -3453,7 +3626,7 @@ private struct GenerationFixture: Sendable {
                 resources = [r for r in resources if r["id"] != handle]
                 revision += 1
             elif name == "wait":
-                while not (root / "release").exists(): time.sleep(0.01)
+                while not (Path(sys.argv[1]) / "release").exists(): time.sleep(0.01)
             result = {"content": [], "structuredContent": {"pid": os.getpid(), "version": version, "arguments": arguments}}
         else:
             result = {}

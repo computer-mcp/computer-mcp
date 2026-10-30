@@ -55,15 +55,19 @@ final class ExecutionPermissionDiscovery: @unchecked Sendable {
   }
 
   func requests(
-    _ executionID: UUID, principal: Principal, connectionID: String?, authorizationID: UUID? = nil
+    _ executionID: UUID, principal: Principal, connectionID: String?, authorizationID: UUID? = nil,
+    additionalAuthorizationIDs: Set<UUID> = []
   ) throws -> [PermissionRequest] {
     try refreshPolicy?()
     let outcome: Result<[PermissionRequest], any Error> = try store.transactionWithDatabase {
       database, ledger in
-      switch ledger.executionAccess(
+      for id in additionalAuthorizationIDs {
+        do { _ = try ledger.invocationAccess(id) } catch { return .failure(error) }
+      }
+      let decision = ledger.executionAccess(
         executionID, principal: principal, operation: .readResult, connectionID: connectionID,
         authorizingInvocation: authorizationID, now: Date())
-      {
+      switch decision {
       case .allowed: break
       case .denied(.resultExpired): return .success([])
       default: return .failure(PermissionModelError.invalidAuthorization)

@@ -23,6 +23,7 @@ package struct MCPHostContext: MCPHostEnvironment {
   let verifiedPrincipalID: String?
   var providerSource: (@Sendable (MCPServerConfig) throws -> MCPProviderExecutionSource)?
   var providerExecution: PreparedExecutionContext?
+  package var cliDiscovery: (@Sendable (CLICommandConfig) throws -> CLIProviderDiscovery?)?
 
   package var projectRoot: URL { URL(fileURLWithPath: launchMetadata.project.rootPath) }
   package var providesHostServices: Bool { tools != nil }

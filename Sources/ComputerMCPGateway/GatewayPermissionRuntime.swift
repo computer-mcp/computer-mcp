@@ -57,14 +57,28 @@ package final class GatewayPermissionRuntime: @unchecked Sendable {
   package func prepareProvider(
     review: GatewayProviderReview, registrationID: String,
     authorization caller: InvocationAuthorization?, directory workingDirectory: URL?,
-    connectionID: String?, retryIDs: Set<UUID> = [], auditContext: ExecutionContext? = nil
+    connectionID: String?, retryIDs: Set<UUID> = [], auditContext: ExecutionContext? = nil,
+    source: GatewayProviderSource? = nil, platformRules: Set<PathRule>? = nil,
+    admittedProvider: ProviderExecutionBinding? = nil, discoveryInScratch: Bool = false
   ) async throws -> PreparedExecutionContext {
     #if os(Linux)
       throw ExecutionEnvironmentError.unavailable("Linux provider activation is unavailable")
     #else
       try await ready()
-      let binding = try service.authorizeProviderExecution(
-        review: review, registrationID: registrationID, caller: caller, retryIDs: retryIDs)
+      if let platformRules {
+        try database.permissionTransaction { database in
+          try GatewayConfigurationPaths.save(
+            platformRules, key: GatewayConfigurationPaths.platformKey, database: database)
+        }
+      }
+      let binding =
+        try admittedProvider
+        ?? service.authorizeProviderExecution(
+          review: review, registrationID: registrationID, caller: caller, retryIDs: retryIDs)
+      guard binding.identity == review.identity, binding.registrationID == registrationID,
+        binding.sourceDigest == review.sourceDigest,
+        binding.delegatingAuthorization?.id == caller?.id
+      else { throw PermissionModelError.invalidAuthorization }
       let authorizationID = caller?.id ?? binding.providerAuthorization.id
       let container = try database.prepareProviderContainer(binding.identity)
       let worktree = try database.executionWorktree(
@@ -77,8 +91,16 @@ package final class GatewayPermissionRuntime: @unchecked Sendable {
           "A private provider execution directory could not be exclusively created")
       }
       do {
+        let root = caller == nil ? temporary : (workingDirectory ?? temporary)
+        let launchDirectory = try ProjectPathResolver.canonicalProject(
+          (discoveryInScratch && caller == nil ? nil : source?.workingDirectory).map {
+            $0.hasPrefix("/") ? URL(fileURLWithPath: $0) : root.appendingPathComponent($0)
+          } ?? root)
+        let launchIdentity = try VerifiedFileIdentity.capture(launchDirectory)
         let validate: @Sendable () throws -> Void = { [service] in
           try container.verify()
+          try source?.validate()
+          try launchIdentity.verify(launchDirectory)
           try service.validateProviderExecution(binding)
         }
         return try await coordinator.prepare(
@@ -86,15 +108,17 @@ package final class GatewayPermissionRuntime: @unchecked Sendable {
           context: GatewaySandboxContext(
             directory: SandboxPath(
               try ProjectPathResolver.canonicalProject(
-                caller == nil ? temporary : (workingDirectory ?? temporary)
+                root
               ).path),
             temporaryDirectory: SandboxPath(
               try ProjectPathResolver.canonicalProject(temporary).path),
             purpose: caller == nil ? .readOnlyHelper : .pluginProgram,
             privateWorkingDirectory: caller == nil || workingDirectory == nil,
-            worktree: worktree, providerContainer: container),
+            worktree: worktree, providerContainer: container,
+            providerResources: source?.resources ?? []),
           connectionID: connectionID, auditContext: auditContext,
           worktreeAdmission: worktree?.binding.admission, provider: binding,
+          providerWorkingDirectory: SandboxPath(launchDirectory.path),
           validateProvider: validate)
       } catch {
         // Once reserved, durable recovery owns the scratch and its pending cleanup.
@@ -111,26 +135,37 @@ package final class GatewayPermissionRuntime: @unchecked Sendable {
     authorization: InvocationAuthorization, descriptor: CapabilityDescriptor,
     directory workingDirectory: URL?, connectionID: String?, remoteService: Bool = false,
     hostManagement: Bool = false,
-    auditContext: ExecutionContext? = nil
+    auditContext: ExecutionContext? = nil, callback: ProviderExecutionBinding? = nil,
+    validateCallback: (@Sendable () throws -> Void)? = nil
   ) async throws -> any InvocationExecutionAuthority {
     try await ready()
+    try validateCallback?()
+    let initiatingAuthorization = authorization
+    let authorization = callback?.providerAuthorization ?? authorization
+    let callbackIDs = callback?.authorizationIDs ?? []
     switch descriptor.requirement.execution {
     case .read, .input, .cancel, .list:
       return try coordinator.continuation(
-        authorizationID: authorization.id, connectionID: connectionID)
+        authorizationID: initiatingAuthorization.id, connectionID: connectionID,
+        additionalAuthorizationIDs: callbackIDs)
     default: break
     }
     if hostManagement {
       return GatewayManagementInvocation(
         authorization: authorization,
-        pathAccess: GatewayPathAccess(store: store, authorizationID: authorization.id))
+        pathAccess: GatewayPathAccess(
+          store: store, authorizationID: authorization.id,
+          additionalAuthorizationIDs: callbackIDs, validateInvocation: validateCallback))
     }
     if [
       "project.list", "project.describe", "project.request", "policy.probe", "runtime.owners.list",
       "runtime.owners.call", "mcp.servers.list", "mcp.servers.status", "mcp.events.read",
+      "mcp.tools.list",
     ].contains(descriptor.id) {
       return GatewayInvocationPathScope(
-        pathAccess: GatewayPathAccess(store: store, authorizationID: authorization.id))
+        pathAccess: GatewayPathAccess(
+          store: store, authorizationID: authorization.id,
+          additionalAuthorizationIDs: callbackIDs, validateInvocation: validateCallback))
     }
     if ["network.ping", "network.tcp_check", "network.http_check"].contains(descriptor.id) {
       throw ExecutionEnvironmentError.unavailable(
@@ -147,9 +182,13 @@ package final class GatewayPermissionRuntime: @unchecked Sendable {
       try service.validateAuthorization(authorization.id)
       let prepared: Result<InvocationAuthorization, any Error> = try store.transactionWithDatabase {
         _, ledger in
-        Result { try ledger.prepareWorktreePermissions(authorization.id) }
+        Result {
+          for id in callbackIDs { _ = try ledger.prepareWorktreePermissions(id) }
+          return try ledger.prepareWorktreePermissions(authorization.id)
+        }
       }
-      return GatewayWorktreeInvocation(authorization: try prepared.get())
+      return GatewayWorktreeInvocation(
+        authorization: try prepared.get(), additionalAuthorizationIDs: callbackIDs)
     }
     let requirement = descriptor.requirement
     let writes =
@@ -183,11 +222,7 @@ package final class GatewayPermissionRuntime: @unchecked Sendable {
     } else {
       purpose = .readOnlyHelper
     }
-    if purpose == .pluginProgram,
-      try await store.read().environment.paths?.registeredProjects.contains(where: {
-        $0.id == authorization.invocation.projectID && $0.hostContentIdentity != nil
-      }) == true
-    {
+    if purpose == .pluginProgram {
       throw ExecutionEnvironmentError.unavailable(
         "Local plugin programs require the plugin owner's verified execution context")
     }
@@ -199,14 +234,15 @@ package final class GatewayPermissionRuntime: @unchecked Sendable {
     } else {
       worktree = nil
     }
-    let temporary = directory.appendingPathComponent(authorization.id.uuidString, isDirectory: true)
+    let temporary = directory.appendingPathComponent(
+      initiatingAuthorization.id.uuidString, isDirectory: true)
     guard temporary.path.withCString({ mkdir($0, mode_t(0o700)) }) == 0 else {
       throw ExecutionEnvironmentError.unavailable(
         "A private execution directory could not be exclusively created")
     }
     do {
       return try await coordinator.prepare(
-        authorizationID: authorization.id,
+        authorizationID: initiatingAuthorization.id,
         context: GatewaySandboxContext(
           directory: SandboxPath(
             try ProjectPathResolver.canonicalProject(
@@ -214,9 +250,13 @@ package final class GatewayPermissionRuntime: @unchecked Sendable {
             ).path),
           temporaryDirectory: SandboxPath(try ProjectPathResolver.canonicalProject(temporary).path),
           purpose: purpose, privateWorkingDirectory: remoteService || workingDirectory == nil,
-          fixedHostOperation: fixed, worktree: worktree),
-        fullAccessEnvironment: ProcessInfo.processInfo.environment, connectionID: connectionID,
-        auditContext: auditContext, worktreeAdmission: worktree?.binding.admission)
+          fixedHostOperation: fixed, worktree: worktree,
+          providerContainer: try callback.map { try database.prepareProviderContainer($0.identity) }
+        ),
+        fullAccessEnvironment: callback == nil ? ProcessInfo.processInfo.environment : [:],
+        connectionID: connectionID,
+        auditContext: auditContext, worktreeAdmission: worktree?.binding.admission,
+        validateProvider: validateCallback, callback: callback)
     } catch {
       try? FileManager.default.removeItem(at: temporary)
       throw error

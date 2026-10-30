@@ -54,11 +54,17 @@ package actor MCPChildProcessTransport: MCP.Transport {
         throw GatewayToolError.executionFailed(
           "Provider authority does not match the registration.")
       }
+      if let project = preparedExecution.provider?.delegatingAuthorization?.invocation.projectID {
+        guard hostContext?.launchMetadata.project.id == project else {
+          throw GatewayToolError.executionFailed("Provider project does not match its host scope.")
+        }
+      }
       try preparedExecution.validateProviderLaunch()
     }
     self.command = command
     self.workingDirectory =
-      server.resolvedWorkingDirectory(base: workingDirectory)
+      (preparedExecution?.providerWorkingDirectory.map { URL(fileURLWithPath: $0.value) }
+      ?? server.resolvedWorkingDirectory(base: workingDirectory))
       .standardizedFileURL
     self.environment = try MCPHostLaunchMetadata.launchEnvironment(
       inherited: environment, overrides: server.env, context: hostContext?.launchMetadata)

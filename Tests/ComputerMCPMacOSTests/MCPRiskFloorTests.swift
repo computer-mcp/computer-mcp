@@ -256,7 +256,7 @@ private struct RiskFixture {
     let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
     try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
     root = try ProjectPathResolver.canonicalProject(directory)
-    database = try GatewayDatabase(inMemory: ())
+    database = try fixturePermissionDatabase(path: root.appendingPathComponent("host.db").path)
     let second = root.appendingPathComponent("second")
     var projects: [ComputerMCPCore.RegisteredProject] = [
       .init(id: "fixture", displayName: "Fixture", rootPath: root.path)
@@ -282,6 +282,9 @@ private struct RiskFixture {
     try database.saveProfile(grant)
     let context = try fixtureConsentedContext(
       database: database, grant: grant, caller: .secureTunnel, platform: fixtureHostedPlatform())
+    let server = MCPServerConfig(
+      id: "vendor", transport: .stdio, command: "/bin/cat", exposure: .reexport,
+      prefix: "vendor", allowAnyTool: true, toolRisks: ["inspect": .readOnly])
     runtime = try GatewayRuntime(
       configuration: .init(
         runtime: .init(caller: .secureTunnel, profileID: .chatGPTOperate),
@@ -289,15 +292,19 @@ private struct RiskFixture {
           .init(
             grant: grant)
         ],
-        mcp: .init(servers: [
-          .init(
-            id: "vendor", transport: .stdio, command: "/bin/cat", exposure: .reexport,
-            prefix: "vendor", allowAnyTool: true, toolRisks: ["inspect": .readOnly])
-        ]),
+        mcp: .init(servers: [server]),
         tools: [.init(name: "review.inspect", adapter: .mcp, source: "vendor", tool: "inspect")]),
       context: context, database: database,
       registeredProjects: projects,
       platform: fixtureHostedPlatform(), mcpClient: client)
+    _ = try runtime.makeControlSession()
+    try fixtureApproveLocalProvider(
+      server, database: database, runtime: runtime.permissionRuntime,
+      permissions: fixturePermissions(
+        Dictionary(
+          uniqueKeysWithValues:
+            projects.map { (Permission.project($0.id), PermissionState.granted(.write)) })),
+      fullAccess: true)
   }
 
   func remove() { try? FileManager.default.removeItem(at: root) }

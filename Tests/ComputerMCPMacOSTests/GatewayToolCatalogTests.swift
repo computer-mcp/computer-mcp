@@ -475,7 +475,8 @@ struct GatewayToolCatalogTests {
       ]), allowedCallers: [.localMCP])
     var platform = fixtureHostedPlatform()
     platform.permissionPolicyReader = TestManagedPolicyReader()
-    let database = try GatewayDatabase(inMemory: ())
+    let database = try fixturePermissionDatabase(
+      path: fixture.root.appendingPathComponent("host.sqlite").path)
     try database.saveProject(
       .init(id: "fixture", displayName: "Fixture", rootPath: fixture.root.path))
     try database.saveProfile(profile.grant)
@@ -488,6 +489,9 @@ struct GatewayToolCatalogTests {
       database: database, registeredProjects: try database.projects(),
       platform: platform, mcpClient: MutableCatalogClient(),
       bundledPlugins: .init(packages: [], issues: []))
+    try fixtureApproveLocalProvider(
+      fixture.server, database: database, runtime: database.permissionRuntime(platform: platform),
+      permissions: fixturePermissions([.project("fixture"): .granted(.write)]), fullAccess: false)
     do {
       let tool = try #require(
         try runtime.listTools(context: .empty).first { $0.name == "native.sample" })
@@ -550,7 +554,7 @@ struct GatewayToolCatalogTests {
       #expect(refused.isError == true)
       #expect(
         refused.structuredContent?.objectValue?["error"]?.objectValue?["code"]
-          == .string(granted ? "execution.unavailable" : "permission.required"))
+          == .string(granted ? "permission.unavailable" : "permission.required"))
       #expect(try await client.listTools().tools.allSatisfy { !$0.name.hasPrefix("native.") })
       await client.disconnect()
       #expect(await transport.shutdownConfirmed())
@@ -992,9 +996,13 @@ private struct DynamicMCPProcessFixture: Sendable {
   private static let program = """
     import json
     import sys
+    import os
+    from pathlib import Path
     mixed = json.loads(r'''\(catalogMultimodalJSON)''')
-    revision = 1
+    state = Path(os.environ["HOME"]) / "catalog-revision"
+    if not state.exists(): state.write_text("1")
     for line in sys.stdin:
+        revision = int(state.read_text())
         message = json.loads(line)
         method = message.get("method", "")
         if method.startswith("notifications/"):
@@ -1008,6 +1016,7 @@ private struct DynamicMCPProcessFixture: Sendable {
         elif method == "tools/call":
             if message["params"]["name"] == "advance":
                 revision = 2
+                state.write_text("2")
                 print(json.dumps({"jsonrpc": "2.0", "method": "notifications/tools/list_changed"}), flush=True)
             response["result"] = {"content": [{"type": "text", "text": "called"}], "isError": False}
             if message["params"]["name"] == "added":
@@ -1023,9 +1032,9 @@ private struct DynamicMCPProcessFixture: Sendable {
     try FileManager.default.createDirectory(
       at: root, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
     let script = root.appendingPathComponent("dynamic-mcp.py")
-    try Self.program.write(to: script, atomically: true, encoding: .utf8)
+    try writePythonTestExecutable(Self.program, to: script)
     server = .init(
-      id: "native", transport: .stdio, command: "/usr/bin/python3", args: [script.path],
+      id: "native", transport: .stdio, command: script.path,
       exposure: .reexport, prefix: "native", allowAnyTool: true, requestTimeoutMs: 5_000)
   }
 
@@ -1033,24 +1042,37 @@ private struct DynamicMCPProcessFixture: Sendable {
     async throws -> GatewayRuntime
   {
     try await BlockingOperationExecutor(label: "catalog-test-runtime").perform {
-      let database = try GatewayDatabase(inMemory: ())
+      let database = try fixturePermissionDatabase(
+        path: root.appendingPathComponent(UUID().uuidString + ".sqlite").path)
+      let projectRoot = root.appendingPathComponent("project")
+      try FileManager.default.createDirectory(at: projectRoot, withIntermediateDirectories: true)
       let project = ComputerMCPCore.RegisteredProject(
-        id: "fixture", displayName: "Fixture", rootPath: root.path)
+        id: "fixture", displayName: "Fixture", rootPath: projectRoot.path)
       try database.saveProject(project)
       let grant = configuration.profileGrant(for: .localAdmin)
       try database.saveProfile(grant)
-      let launcher = fixtureProtocolExecutionLauncher(
-        root: root, scripts: [Self.program], arguments: [[]])
+      let launcher = testExecutionLauncher()
       var platform = MacOSPlatform.services(launcher: launcher)
       platform.permissionPolicyReader = TestManagedPolicyReader()
       let context = try fixtureConsentedContext(
         database: database, grant: grant, caller: .localMCP,
         principalID: "catalog-fixture", projectID: project.id, platform: platform)
-      return try GatewayRuntime(
+      let runtime = try GatewayRuntime(
         configuration: configuration, context: context, database: database,
         registeredProjects: [project], platform: platform,
         mcpClient: MCPProxyClient(launcher: launcher, secretStore: secretStore),
         bundledPlugins: .init(packages: [], issues: []))
+      _ = try runtime.makeControlSession()
+      for server in configuration.mcp.servers where server.transport == .stdio {
+        try fixtureApproveLocalProvider(
+          server, database: database, runtime: database.permissionRuntime(platform: platform),
+          permissions: fixturePermissions([.project("fixture"): .granted(.write)]), fullAccess: true
+        )
+      }
+      if let session = context.controlSession as? GatewayControlSession {
+        _ = try session.approveFullAccess(expectedRevision: session.revision)
+      }
+      return runtime
     }
   }
 

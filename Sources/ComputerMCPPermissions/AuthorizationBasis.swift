@@ -59,6 +59,8 @@ package struct PathAccessBasis: Hashable, Sendable, Codable {
 /// validates. Every element must remain valid for the lifetime of the invocation.
 /// Every identity and modification generation survives serialization.
 package enum AuthorizationBasis: Hashable, Sendable, Codable {
+  /// Host callback work remains dependent on the complete creating execution.
+  case execution(UUID)
   case provider(ProviderRequirementBasis)
   case mode(ExecutionMode)
   case managed(source: PolicySource, identity: BasisIdentity)
@@ -84,7 +86,8 @@ package enum AuthorizationBasis: Hashable, Sendable, Codable {
     case .permission(let grant):
       return grant.source.requestID
     case .request(let identity), .permit(let identity, _): return identity.id
-    case .provider, .mode, .consent, .retryOrigin, .connection, .managed, .managedPermission, .path,
+    case .execution, .provider, .mode, .consent, .retryOrigin, .connection, .managed,
+      .managedPermission, .path,
       .traversal, .network,
       .sandbox:
       return nil

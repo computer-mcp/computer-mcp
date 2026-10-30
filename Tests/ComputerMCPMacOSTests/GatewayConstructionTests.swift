@@ -83,13 +83,15 @@ struct GatewayConstructionTests {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
     try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
     defer { try? FileManager.default.removeItem(at: root) }
+    let project = root.appendingPathComponent("project")
+    try FileManager.default.createDirectory(at: project, withIntermediateDirectories: false)
     let script = root.appendingPathComponent("server.py")
     try Data(Self.script.utf8).write(to: script)
     let launcher = fixtureProtocolExecutionLauncher(
       root: root, scripts: [Self.script], arguments: [[root.path, "inspect"]])
     var platform = MacOSPlatform.services(launcher: launcher)
     platform.permissionPolicyReader = TestManagedPolicyReader()
-    let first = RegisteredProject(id: "first", displayName: "First", rootPath: root.path)
+    let first = RegisteredProject(id: "first", displayName: "First", rootPath: project.path)
     let grant = ProfileGrant(
       id: .localAdmin,
       permissions: fixturePermissions([
@@ -103,19 +105,29 @@ struct GatewayConstructionTests {
           args: [script.path, root.path, "inspect"], exposure: .reexport, prefix: "",
           allowAnyTool: true, startupTimeoutMs: 5000, requestTimeoutMs: 5000,
           toolRisks: ["inspect": .readOnly])
-      ]), projectDirectory: root)
+      ]), projectDirectory: project)
+    try FileManager.default.createDirectory(
+      at: root.appendingPathComponent("host"), withIntermediateDirectories: false)
+    let database = try fixturePermissionDatabase(
+      path: root.appendingPathComponent("host/state.sqlite").path)
+    try database.saveProject(first)
+    try database.saveProfile(grant)
     for attempt in 0..<3 {
-      let database = try GatewayDatabase(inMemory: ())
-      try database.saveProject(first)
-      try database.saveProfile(grant)
       let context = try fixtureConsentedContext(
         database: database, grant: grant, caller: .localMCP,
         principalID: "construction-native-fixture", platform: platform)
       let runtime = try await GatewayRuntime.make(
         configuration: configuration, context: context, database: database,
         registeredProjects: [first], platform: platform)
+      let permissionRuntime = try database.permissionRuntime(platform: platform)
+      try fixtureApproveLocalProvider(
+        configuration.mcp.servers[0], database: database, runtime: permissionRuntime,
+        permissions: .newPrincipal, fullAccess: false)
+      let home = URL(
+        fileURLWithPath: try database.prepareProviderContainer(.localServer("fixture")).sandbox.home
+          .value)
       do {
-        #expect(try pids(root).count == attempt)
+        #expect(try pids(home).count == attempt)
         let discovered = try await runtime.callToolAsync(
           name: "mcp.tools.list",
           arguments: .object([
@@ -125,10 +137,10 @@ struct GatewayConstructionTests {
         try await runtime.refreshTools(context: .empty)
         #expect(try runtime.listTools(context: .empty).contains { $0.name == "inspect" })
         await runtime.shutdown()
-        try expectProcessesExited(root)
-        #expect(try pids(root).count == attempt + 1)
+        try expectProcessesExited(home)
+        #expect(try pids(home).count == attempt + 1)
         #expect(
-          !FileManager.default.fileExists(atPath: root.appendingPathComponent("overlap").path))
+          !FileManager.default.fileExists(atPath: home.appendingPathComponent("overlap").path))
       } catch {
         await runtime.shutdown()
         throw error
@@ -231,7 +243,7 @@ struct GatewayConstructionTests {
 
   private static let script = #"""
     import json, os, pathlib, signal, sys, time
-    root = pathlib.Path(sys.argv[1])
+    root = pathlib.Path(os.environ["HOME"])
     for path in root.glob("pid-*"):
         try:
             os.kill(int(path.name[4:]), 0)

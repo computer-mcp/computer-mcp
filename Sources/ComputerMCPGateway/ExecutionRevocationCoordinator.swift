@@ -42,6 +42,7 @@ package final class ExecutionRevocationCoordinator: ExecutionRecoveryAuthorizing
   private var closedAdmissions: Set<UUID> = []
   private var pendingAdmissionClosures: Set<UUID> = []
   private var pendingOwnerStops: Set<UUID> = []
+  private var pendingAuthorizationRevocations: Set<UUID> = []
   private var contexts: [UUID: WeakExecutionContext] = [:]
   private var proxies: [UUID: EgressProxy] = [:]
   private var monitoring: Task<Void, Never>?
@@ -141,13 +142,18 @@ package final class ExecutionRevocationCoordinator: ExecutionRecoveryAuthorizing
     fullAccessEnvironment: [String: String] = [:], connectionID: String? = nil,
     auditContext: ExecutionContext? = nil, worktreeAdmission: WorktreeAdmission? = nil,
     provider: ProviderExecutionBinding? = nil,
-    validateProvider: (@Sendable () throws -> Void)? = nil
+    providerWorkingDirectory: SandboxPath? = nil,
+    validateProvider: (@Sendable () throws -> Void)? = nil,
+    callback: ProviderExecutionBinding? = nil
   ) async throws -> PreparedExecutionContext {
     guard lock.withLock({ ready }) else {
       throw ExecutionEnvironmentError.unavailable("Execution recovery has not completed")
     }
+    try persistAuthorizationRevocations()
     try validateProvider?()
-    let compiledAuthorizationID = provider?.providerAuthorization.id ?? authorizationID
+    let compiledAuthorizationID =
+      provider?.providerAuthorization.id
+      ?? callback?.providerAuthorization.id ?? authorizationID
     let providerSandboxed = provider.map {
       $0.providerAuthorization.mode == .sandbox || $0.delegatingAuthorization == nil
     }
@@ -188,7 +194,7 @@ package final class ExecutionRevocationCoordinator: ExecutionRecoveryAuthorizing
             context.temporaryDirectory.value == expectedScratch
             ? context.temporaryDirectory : nil
           let configuration = try GatewaySandboxCompiler.compile(
-            ledger: &ledger, authorizationID: authorizationID, context: context,
+            ledger: &ledger, authorizationID: compiledAuthorizationID, context: context,
             ownedTemporaryDirectory: ownedTemporary)
           guard
             !configuration.permitsProgramLaunch
@@ -199,8 +205,9 @@ package final class ExecutionRevocationCoordinator: ExecutionRecoveryAuthorizing
               "This backend cannot enforce durable ownership in the requested execution mode")
           }
           let execution = try ledger.startExecution(
-            owner: configuration.authorization.invocation.principal,
-            authorizationIDs: [authorizationID])
+            owner: callback?.owner ?? configuration.authorization.invocation.principal,
+            delegatedTo: callback?.identity,
+            authorizationIDs: callback?.authorizationIDs ?? [authorizationID])
           return (execution, Optional(configuration), nil as ExecutionPermissionProjection?)
         }
         if case .success(let (execution, _, _)) = result {
@@ -228,10 +235,29 @@ package final class ExecutionRevocationCoordinator: ExecutionRecoveryAuthorizing
         return result
       }
     let (execution, initialConfiguration, projection) = try reserved.get()
+    // A provider session follows its recorded authority dependencies. Standing
+    // consent does not bind it to the transport that happened to start it.
+    let executionConnectionID = try store.readWithDatabase { _, ledger -> String? in
+      guard provider != nil || callback != nil, let connectionID else { return connectionID }
+      let proofs = execution.authorizationIDs.compactMap { ledger.authorizations[$0] }
+      let bound = proofs.contains { proof in
+        proof.basis.contains { element in
+          switch element {
+          case .consent(let identity):
+            guard let consent = ledger.environment.connections[connectionID]?.consent,
+              consent.identity == identity, case .fullAccess(.connection) = consent.mode
+            else { return false }
+            return true
+          default: return false
+          }
+        }
+      }
+      return bound ? connectionID : nil
+    }
     let authority = GatewayExecutionAuthority(
       coordinator: self, executionID: execution.id,
       authorizationIDs: execution.authorizationIDs, principal: execution.owner,
-      connectionID: connectionID)
+      connectionID: executionConnectionID)
     do {
       if let worktree = context.worktree {
         guard worktreeAdmission == worktree.binding.admission else {
@@ -276,7 +302,8 @@ package final class ExecutionRevocationCoordinator: ExecutionRecoveryAuthorizing
           else { throw PermissionModelError.invalidAuthorization }
           return try GatewaySandboxCompiler.compile(
             ledger: &ledger, authorizationID: compiledAuthorizationID, context: context,
-            ownedTemporaryDirectory: context.temporaryDirectory, reservedProjection: projection)
+            ownedTemporaryDirectory: context.temporaryDirectory, reservedProjection: projection,
+            provider: provider, providerWorkingDirectory: providerWorkingDirectory)
         }
       }
       var sandbox = configuration.sandbox
@@ -333,11 +360,14 @@ package final class ExecutionRevocationCoordinator: ExecutionRecoveryAuthorizing
         mode: sandbox.map { .sandbox($0) } ?? .fullAccess, environment: environment,
         limits: execution.limits,
         pathAccess: GatewayPathAccess(
-          store: store, authorizationID: compiledAuthorizationID, validateWorktree: validateWorktree
+          store: store, authorizationID: compiledAuthorizationID,
+          additionalAuthorizationIDs: callback?.authorizationIDs ?? [],
+          validateWorktree: validateWorktree, validateInvocation: validateProvider
         ),
         permitsProgramLaunch: configuration.permitsProgramLaunch,
         fixedHostOperation: context.fixedHostOperation, worktreeGit: context.worktree?.git,
-        validateWorktree: validateWorktree, provider: provider, validateProvider: validateProvider)
+        validateWorktree: validateWorktree, provider: provider,
+        providerWorkingDirectory: providerWorkingDirectory, validateProvider: validateProvider)
       try validateProvider?()
       _ = try authority.access(execution.id, operation: .readResult)
       lock.withLock { contexts[execution.id] = WeakExecutionContext(prepared) }
@@ -349,16 +379,55 @@ package final class ExecutionRevocationCoordinator: ExecutionRecoveryAuthorizing
     }
   }
 
-  package func continuation(authorizationID: UUID, connectionID: String? = nil) throws
-    -> any ExecutionAccessChecking
-  {
+  package func continuation(
+    authorizationID: UUID, connectionID: String? = nil,
+    additionalAuthorizationIDs: Set<UUID> = []
+  ) throws -> any ExecutionAccessChecking {
+    try persistAuthorizationRevocations()
     let result: Result<Principal, any Error> = try store.transactionWithDatabase { _, ledger in
-      Result { try ledger.invocationAccess(authorizationID).invocation.principal }
+      Result {
+        for id in additionalAuthorizationIDs { _ = try ledger.invocationAccess(id) }
+        return try ledger.invocationAccess(authorizationID).invocation.principal
+      }
     }
     return GatewayExecutionAccessScope(
       coordinator: self, principal: try result.get(), connectionID: connectionID,
-      authorizationID: authorizationID,
-      pathAccess: GatewayPathAccess(store: store, authorizationID: authorizationID))
+      authorizationID: authorizationID, additionalAuthorizationIDs: additionalAuthorizationIDs,
+      pathAccess: GatewayPathAccess(
+        store: store, authorizationID: authorizationID,
+        additionalAuthorizationIDs: additionalAuthorizationIDs))
+  }
+
+  /// Seals locally before attempting storage. Failed writes remain queued until
+  /// reconciliation commits them; recovery retires all work from a lost host.
+  package func revokeInvocations(_ ids: Set<UUID>) {
+    let executions = publication.withLock {
+      lock.withLock {
+        pendingAuthorizationRevocations.formUnion(ids)
+        let executions = Set(
+          contexts.compactMap { id, context in
+            context.value?.authority.authorizationIDs.isDisjoint(with: ids) == false ? id : nil
+          })
+        closedAdmissions.formUnion(executions)
+        pendingOwnerStops.formUnion(executions)
+        return executions
+      }
+    }
+    Task { [self] in
+      do { try await stopExecutionResources(executions) } catch { notify() }
+    }
+    notify()
+  }
+
+  private func persistAuthorizationRevocations() throws {
+    let ids = lock.withLock { pendingAuthorizationRevocations }
+    guard !ids.isEmpty else { return }
+    try store.transactionWithDatabase { _, ledger in
+      for id in ids where ledger.authorizations[id] != nil {
+        _ = try ledger.revokeAuthorization(id)
+      }
+    }
+    lock.withLock { pendingAuthorizationRevocations.subtract(ids) }
   }
 
   package func recoveredExecution(_ id: UUID) throws -> EffectiveExecutionLimits? {
@@ -724,14 +793,16 @@ package final class ExecutionRevocationCoordinator: ExecutionRecoveryAuthorizing
 
   fileprivate func access(
     _ id: UUID, principal: Principal, connectionID: String?, operation: ExecutionOperation,
-    authorizationID: UUID? = nil
+    authorizationID: UUID? = nil, additionalAuthorizationIDs: Set<UUID> = []
   )
     throws -> EffectiveExecutionLimits
   {
+    try persistAuthorizationRevocations()
     if operation == .writeInput { try requireWorktreeAdmission(id) }
     let outcome: (Result<EffectiveExecutionLimits, any Error>, Bool) =
       try store.transactionWithDatabase {
         _, ledger in
+        for id in additionalAuthorizationIDs { _ = try ledger.invocationAccess(id) }
         let executions = ledger.executions
         let terminations = ledger.pendingExecutionTerminations
         let decision: PermissionDecision
@@ -762,10 +833,13 @@ package final class ExecutionRevocationCoordinator: ExecutionRecoveryAuthorizing
   }
 
   fileprivate func permissionRequests(
-    _ id: UUID, principal: Principal, connectionID: String?, authorizationID: UUID? = nil
+    _ id: UUID, principal: Principal, connectionID: String?, authorizationID: UUID? = nil,
+    additionalAuthorizationIDs: Set<UUID> = []
   ) throws -> [PermissionRequest] {
-    try permissionDiscovery.requests(
-      id, principal: principal, connectionID: connectionID, authorizationID: authorizationID)
+    try persistAuthorizationRevocations()
+    return try permissionDiscovery.requests(
+      id, principal: principal, connectionID: connectionID, authorizationID: authorizationID,
+      additionalAuthorizationIDs: additionalAuthorizationIDs)
   }
 
   fileprivate func reserveChild(_ child: UUID, authority: GatewayExecutionAuthority) throws {
@@ -871,15 +945,20 @@ package final class ExecutionRevocationCoordinator: ExecutionRecoveryAuthorizing
   }
 
   fileprivate func retainWork(
-    authority: GatewayExecutionAuthority, cancellation: @escaping @Sendable () async -> Void
+    authority: GatewayExecutionAuthority, continuation: Bool = false,
+    cancellation: @escaping @Sendable () async -> Void
   ) throws -> ExecutionWorkLease {
     let workID = UUID()
     try publication.withLock {
       try requireWorktreeAdmission(authority.executionID)
       try store.transactionWithDatabase { database, ledger in
-        guard lock.withLock({ ready && !closedAdmissions.contains(authority.executionID) }),
+        guard lock.withLock({ ready }),
           var record = try ExecutionRuntimeRecord.load(authority.executionID, database),
-          record.ownerID == ownerID, !record.admissionFinished, !record.completed,
+          record.ownerID == ownerID, !record.completed,
+          continuation
+            ? !(record.workIDs ?? []).isEmpty
+            : (!record.admissionFinished
+              && !lock.withLock({ closedAdmissions.contains(authority.executionID) })),
           ledger.executions[authority.executionID]?.isRunning == true,
           ledger.executionAccess(
             authority.executionID, principal: authority.principal,
@@ -965,6 +1044,7 @@ package final class ExecutionRevocationCoordinator: ExecutionRecoveryAuthorizing
   }
 
   private func reconcileResources() async throws {
+    try persistAuthorizationRevocations()
     try persistOwnerStops(lock.withLock { pendingOwnerStops })
     try refreshPolicy?()
     let pending = lock.withLock {
@@ -1291,6 +1371,11 @@ private final class GatewayExecutionAuthority: ExecutionAuthorizing, Sendable {
   func retainWork(cancellation: @escaping @Sendable () async -> Void) throws -> ExecutionWorkLease {
     try coordinator.retainWork(authority: self, cancellation: cancellation)
   }
+  func retainContinuation(cancellation: @escaping @Sendable () async -> Void) throws
+    -> ExecutionWorkLease
+  {
+    try coordinator.retainWork(authority: self, continuation: true, cancellation: cancellation)
+  }
   func access(_ id: UUID, operation: ExecutionOperation) throws -> EffectiveExecutionLimits {
     try coordinator.access(
       id, principal: principal, connectionID: connectionID, operation: operation)
@@ -1389,6 +1474,7 @@ private final class GatewayExecutionAccessScope: ExecutionAccessChecking, @unche
   let coordinator: ExecutionRevocationCoordinator
   let principal: Principal
   let connectionID: String?
+  let additionalAuthorizationIDs: Set<UUID>
   let authorizationID: UUID
   let pathAccess: (any HostPathAccessChecking)?
   private let lock = NSLock()
@@ -1396,26 +1482,29 @@ private final class GatewayExecutionAccessScope: ExecutionAccessChecking, @unche
 
   init(
     coordinator: ExecutionRevocationCoordinator, principal: Principal, connectionID: String?,
-    authorizationID: UUID, pathAccess: (any HostPathAccessChecking)?
+    authorizationID: UUID, additionalAuthorizationIDs: Set<UUID>,
+    pathAccess: (any HostPathAccessChecking)?
   ) {
     self.coordinator = coordinator
     self.principal = principal
     self.connectionID = connectionID
     self.authorizationID = authorizationID
+    self.additionalAuthorizationIDs = additionalAuthorizationIDs
     self.pathAccess = pathAccess
   }
   func accessExecution(_ id: UUID, operation: ExecutionOperation) throws -> EffectiveExecutionLimits
   {
     let limits = try coordinator.access(
       id, principal: principal, connectionID: connectionID, operation: operation,
-      authorizationID: authorizationID)
+      authorizationID: authorizationID, additionalAuthorizationIDs: additionalAuthorizationIDs)
     lock.withLock { _ = observed.insert(id) }
     return limits
   }
 
   func permissionRequests(_ id: UUID) throws -> [PermissionRequest] {
     try coordinator.permissionRequests(
-      id, principal: principal, connectionID: connectionID, authorizationID: authorizationID)
+      id, principal: principal, connectionID: connectionID, authorizationID: authorizationID,
+      additionalAuthorizationIDs: additionalAuthorizationIDs)
   }
 
   func currentPermissionRequestGroups() throws -> [ExecutionPermissionRequestGroup] {

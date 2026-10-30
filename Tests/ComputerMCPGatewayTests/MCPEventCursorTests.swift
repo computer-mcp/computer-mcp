@@ -56,9 +56,11 @@ struct MCPEventCursorTests {
       let fixture = try EventFixture()
       defer { fixture.remove() }
       let execution = try await EventExecutionFixture(fixture: fixture)
-      let client = MCPProxyClient(launcher: execution.launcher, workingDirectory: fixture.root)
+      let client = MCPProxyClient(
+        launcher: execution.launcher, workingDirectory: fixture.root,
+        hostContext: execution.hostContext)
       do {
-        let context = try await execution.discover(client)
+        let context = try await execution.connect(client)
         // Responses drain each burst below the transport queue bound before sending more events.
         for _ in 0..<100 {
           _ = try await execution.stream(client)
@@ -124,11 +126,14 @@ struct MCPEventCursorTests {
       let fixture = try EventFixture()
       defer { fixture.remove() }
       let execution = try await EventExecutionFixture(fixture: fixture)
-      let first = MCPProxyClient(launcher: execution.launcher, workingDirectory: fixture.root)
+      let first = MCPProxyClient(
+        launcher: execution.launcher, workingDirectory: fixture.root,
+        hostContext: execution.hostContext)
       let replacement = MCPProxyClient(
-        launcher: execution.launcher, workingDirectory: fixture.root)
+        launcher: execution.launcher, workingDirectory: fixture.root,
+        hostContext: execution.hostContext)
       do {
-        let firstContext = try await execution.discover(first)
+        let firstContext = try await execution.connect(first)
         let original = try first.readEvents(
           server: fixture.server, afterCursor: 0, maxResults: 10, context: firstContext)
         let oldSession = try #require(original.objectValue?["session_id"]?.stringValue)
@@ -140,7 +145,7 @@ struct MCPEventCursorTests {
             context: .empty)
         }
         #expect(try String(contentsOf: fixture.starts, encoding: .utf8) == "started\n")
-        let replacementContext = try await execution.discover(replacement)
+        let replacementContext = try await execution.connect(replacement)
         let authorized: any DownstreamMCPClient = AuthorizedMCPClient(
           base: replacement,
           policy: .init(
@@ -231,6 +236,7 @@ private func eventPermissions(_ server: String) throws -> Permissions {
 #if canImport(Darwin)
   private final class EventExecutionFixture: @unchecked Sendable {
     let launcher: ExecutionLauncher
+    let hostContext: MCPHostContext
     private let fixture: EventFixture
     private let database: GatewayDatabase
     private let service: GatewayPermissionService
@@ -246,7 +252,8 @@ private func eventPermissions(_ server: String) throws -> Permissions {
       self.fixture = fixture
       let launcher = try fixture.executionLauncher()
       self.launcher = launcher
-      let database = try GatewayDatabase(inMemory: ())
+      let database = try GatewayDatabase(
+        path: fixture.root.appendingPathComponent("authority.sqlite").path)
       self.database = database
       let store = database.permissionStore(counter: TestAuthorizationEpochCounter())
       let project = ComputerMCPCore.RegisteredProject(
@@ -273,6 +280,9 @@ private func eventPermissions(_ server: String) throws -> Permissions {
         .init(root: CanonicalPath(directory.path), kind: .hostData),
         .init(root: CanonicalPath(ownership.path), kind: .hostData),
       ]
+      rules.insert(
+        .init(
+          root: try CanonicalPath(#require(database.providerContainerRoot).path), kind: .hostData))
       for path in ["/System", "/Library", "/usr", "/bin", "/sbin", "/Applications"] {
         rules.insert(try .init(root: CanonicalPath(path), kind: .systemOrApplication))
       }
@@ -288,16 +298,35 @@ private func eventPermissions(_ server: String) throws -> Permissions {
         database: database, profile: .init(grant: grant, persisted: true),
         permissionService: service)
       self.session = session
+      let review = try GatewayProviderReview(
+        server: fixture.server, configuration: database.configurationState())
+      let owner = try GatewayPermissionOwner(
+        context: .init(
+          caller: .localApp, profileID: .localAdmin, trustedPrincipalID: "event-owner"),
+        validate: {})
+      let view = try service.view(owner: owner)
+      _ = try service.approveProvider(
+        review, permissions: permissions, fullAccess: true, owner: owner,
+        expectedProviderRevision: nil, expectedRevision: view.revision,
+        expectedEpoch: #require(view.epoch))
       _ = try session.approveFullAccess(expectedRevision: session.revision)
       context.controlSession = session
       subject = try GatewayPermissionSubject(context: context)
+      hostContext = MCPHostContext(
+        runtimeID: UUID(), context: context, projectID: project.id,
+        rootURL: fixture.root, readOnly: false, processOwnershipRoot: ownership,
+        executionDatabase: database)
     }
 
-    func discover(_ client: MCPProxyClient) async throws -> InvocationContext {
+    func connect(_ client: MCPProxyClient) async throws -> InvocationContext {
       let context = try await invocation(
-        tool: "mcp.tools.list", arguments: .object(["server": .string(fixture.server.id)]))
+        tool: "mcp.tools.call",
+        arguments: .object(["server": .string(fixture.server.id), "tool": .string("stream")]))
       let server = fixture.server
-      _ = try await calls.perform { try client.listTools(server: server, context: context) }
+      _ = try await calls.perform {
+        try client.callTool(
+          server: server, name: "stream", arguments: .object([:]), context: context)
+      }
       return context
     }
 
@@ -334,12 +363,19 @@ private func eventPermissions(_ server: String) throws -> Permissions {
       let scratch = directory.appendingPathComponent(authorization.id.uuidString)
       try FileManager.default.createDirectory(
         at: scratch, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700])
+      let binding = try service.authorizeProviderExecution(
+        review: GatewayProviderReview(
+          server: fixture.server, configuration: database.configurationState()),
+        registrationID: fixture.server.id, caller: authorization, retryIDs: [])
       let prepared = try await coordinator.prepare(
         authorizationID: authorization.id,
         context: .init(
           directory: SandboxPath(fixture.root.path), temporaryDirectory: SandboxPath(scratch.path),
-          purpose: .pluginProgram),
-        fullAccessEnvironment: ["PATH": "/usr/bin:/bin"], connectionID: session.id)
+          purpose: .pluginProgram,
+          providerContainer: database.prepareProviderContainer(binding.identity)),
+        connectionID: session.id, provider: binding,
+        providerWorkingDirectory: SandboxPath(fixture.root.path),
+        validateProvider: { [service] in try service.validateProviderExecution(binding) })
       lock.withLock { contexts.append(prepared) }
       return InvocationContext(session: session, executionAuthority: prepared)
     }

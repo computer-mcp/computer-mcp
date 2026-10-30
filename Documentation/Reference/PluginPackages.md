@@ -630,7 +630,10 @@ publishes typed tools using the shared argv/stdin encoder and managed process
 runtime. Tree-bearing registrations require `allowAnyArgs` to remain false;
 generic execution cannot bypass their declared input constraints.
 
-Every native CLI invocation needs Project write, including commands described
+A plugin tree exporter runs as provider discovery in the provider’s projectless
+read-only sandbox; this grants no caller invocation.
+
+Every caller-run native CLI invocation needs Project write, including commands described
 as lint, help, version checks or introspection. A manifest or command-tree
 annotation cannot reduce that requirement. Plugin use is also required for a
 plugin contribution. Host `cli.help` reads the stored help document and does not

@@ -65,15 +65,21 @@ struct GatewayNativeLaunchAdmissionTests {
   }
 
   @Test(arguments: [false, true])
-  func ordinaryNativeServerDiscoveryHonorsExecutionMode(fullAccess: Bool) async throws {
+  func providerDiscoveryUsesSandboxRegardlessOfCallerExecutionMode(fullAccess: Bool) async throws {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
     try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
     defer { try? FileManager.default.removeItem(at: root) }
-    let fixture = try #require(
+    let projectRoot = root.appendingPathComponent("project")
+    try FileManager.default.createDirectory(at: projectRoot, withIntermediateDirectories: false)
+    let bundledFixture = try #require(
       Bundle.module.url(
         forResource: "mcp_native_launch", withExtension: "py", subdirectory: "Fixtures"))
+    let fixture = root.appendingPathComponent("provider.py")
+    try writePythonTestExecutable(String(contentsOf: bundledFixture, encoding: .utf8), to: fixture)
     let database = try fixturePermissionDatabase(
       path: root.appendingPathComponent("gateway.sqlite").path)
+    let container = try database.prepareProviderContainer(.localServer("owned"))
+    let providerHome = URL(fileURLWithPath: try container.sandbox.home.value)
     let grant = ProfileGrant(
       id: .chatGPTOperate,
       permissions: fixturePermissions([
@@ -82,7 +88,7 @@ struct GatewayNativeLaunchAdmissionTests {
     try database.saveProfile(grant)
     try database.bootstrapPermissionProfiles([grant])
     let project = ComputerMCPCore.RegisteredProject(
-      id: "fixture", displayName: "Fixture", rootPath: root.path)
+      id: "fixture", displayName: "Fixture", rootPath: projectRoot.path)
     try database.saveProject(project)
     var platform = MacOSPlatform.services(launcher: testExecutionLauncher())
     platform.permissionPolicyReader = TestManagedPolicyReader()
@@ -95,45 +101,40 @@ struct GatewayNativeLaunchAdmissionTests {
       caller: .localMCP, profileID: grant.id, projectID: project.id,
       trustedPrincipalID: session.principalID)
     context.controlSession = session
+    let server = MCPServerConfig(
+      id: "owned", transport: .stdio, command: fixture.path,
+      args: ["server", providerHome.path], exposure: .reexport, prefix: "owned",
+      allowedTools: ["write"], toolRisks: ["write": .destructive])
     let runtime = try GatewayRuntime(
       configuration: GatewayConfiguration(
         runtime: .init(caller: .localMCP, profileID: grant.id), profiles: [.init(grant: grant)],
         mcp: .init(servers: [
-          .init(
-            id: "owned", transport: .stdio, command: "/usr/bin/python3",
-            args: [fixture.path, "server", root.path], exposure: .reexport, prefix: "owned",
-            allowedTools: ["write"], toolRisks: ["write": .destructive])
+          server
         ]),
-        projectDirectory: root),
+        projectDirectory: projectRoot),
       context: context, database: database, registeredProjects: [project], platform: platform,
       bundledPlugins: .init(packages: [], issues: []))
+    try fixtureApproveLocalProvider(
+      server, database: database,
+      runtime: database.permissionRuntime(platform: platform), permissions: .newPrincipal,
+      fullAccess: false)
     do {
       #expect(
-        !FileManager.default.fileExists(atPath: root.appendingPathComponent("native-started").path))
+        !FileManager.default.fileExists(
+          atPath: providerHome.appendingPathComponent("native-started").path))
       #expect(ExecutionAdministration.current == nil)
       let report = try await runtime.callToolForMCPAsync(
         name: "mcp.tools.list", arguments: .object(["server": .string("owned")]), context: .empty)
-      if fullAccess {
-        #expect(report.objectValue?["isError"] == .bool(false), "\(report)")
-        #expect(
-          report.objectValue?["structuredContent"]?.objectValue?["result"]?.arrayValue?
-            .compactMap { $0.objectValue?["name"]?.stringValue } == ["write"])
-      } else {
-        let error = try #require(
-          report.objectValue?["structuredContent"]?.objectValue?["error"]?.objectValue)
-        #expect(report.objectValue?["isError"] == .bool(true))
-        #expect(error["code"] == .string("execution.unavailable"))
-        #expect(error["request_ids"] == nil)
-        #expect(
-          error["message"]?.stringValue?.contains("verified worktree and private Git context")
-            == true)
-      }
+      #expect(report.objectValue?["isError"] == .bool(false), "\(report)")
       #expect(
-        FileManager.default.fileExists(atPath: root.appendingPathComponent("native-started").path)
-          == fullAccess)
+        report.objectValue?["structuredContent"]?.objectValue?["result"]?.arrayValue?
+          .compactMap { $0.objectValue?["name"]?.stringValue } == ["write"])
+      #expect(
+        FileManager.default.fileExists(
+          atPath: providerHome.appendingPathComponent("native-started").path))
       #expect(
         !FileManager.default.fileExists(
-          atPath: root.appendingPathComponent("write-dispatched").path))
+          atPath: providerHome.appendingPathComponent("write-dispatched").path))
       #expect((session.snapshot.fullAccessConsent == nil) == !fullAccess)
       await runtime.shutdown()
     } catch {

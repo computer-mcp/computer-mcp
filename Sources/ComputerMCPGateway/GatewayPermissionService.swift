@@ -3,6 +3,7 @@ import ComputerMCPCore
 import ComputerMCPPermissions
 import ComputerMCPPersistence
 import ComputerMCPPlatform
+import ComputerMCPProcess
 import Foundation
 import GRDB
 
@@ -47,56 +48,93 @@ package final class GatewayPermissionService: @unchecked Sendable {
     subject: GatewayPermissionSubject, tool: String, projectID: String?,
     argumentsDigest: String, requirements: InvocationRequirements, retryIDs: Set<UUID> = [],
     connectionID: String? = nil, now: Date = Date(),
-    skillLibraries: [GatewaySkillLibraryRequirement] = []
+    skillLibraries: [GatewaySkillLibraryRequirement] = [],
+    continuation: ProviderExecutionBinding? = nil, providerSource: GatewayProviderSource? = nil,
+    callbackExecutionID: UUID? = nil
   ) throws -> GatewayPermissionEvaluation {
-    let evaluated: (Result<AuthorizationDecision, any Error>, GatewayPermissionAuditEvidence) =
-      try transactionWithPolicy {
-        database, ledger, policies in
-        let result: Result<AuthorizationDecision, any Error> = try {
-          () throws -> Result<AuthorizationDecision, any Error> in
-          let binding = try Self.bind(subject, database: database)
-          _ = try refresh(database, ledger: &ledger, snapshot: policies, now: now)
-          guard ledger.suspendedAuthority == nil, ledger.pendingEpochRecovery == nil else {
-            return .success(.denied(.authoritySuspended))
-          }
-          let profile: ProfileGrant
-          do {
-            profile = try Self.profile(
-              binding.profileID, database: database, epoch: ledger.authorizationEpochID)
-          } catch GatewayPermissionError.profileUnavailable {
-            return .success(.denied(.authoritySuspended))
-          }
-          guard profile.allowedCallers.contains(subject.caller) else {
-            throw GatewayPermissionError.invalidBinding
-          }
-          try Self.synchronize(
-            profile, principal: subject.principal,
-            requestedProject: requirements.sandboxProjectID
-              ?? projectID.flatMap { ledger.environment.paths?.projects.sourceID(for: $0) }
-              ?? projectID,
-            ledger: &ledger)
-          if requirements.mode != .sandbox && !profile.fullAccess {
-            return .success(.denied(.fullAccessRequired))
-          }
-          let invocation = InvocationIdentity(
-            principal: subject.principal, tool: tool, projectID: projectID,
-            argumentsDigest: argumentsDigest)
-          let selected = GatewaySkillLibraryRequirement.selecting(
-            skillLibraries, requirements: requirements, ledger: ledger,
-            principal: subject.principal, connectionID: connectionID)
-          return Result {
-            try ledger.authorize(
-              invocation: invocation, requirements: selected, retryIDs: retryIDs,
-              connectionID: connectionID, now: now)
-          }
-        }()
-        return (
-          result,
-          try GatewayPermissionAuditEvidence(
-            database: database, ledger: ledger, profileID: subject.profileID)
-        )
-      }
-    return GatewayPermissionEvaluation(decision: try evaluated.0.get(), evidence: evaluated.1)
+    let evaluated:
+      (
+        Result<AuthorizationDecision, any Error>, GatewayPermissionAuditEvidence,
+        ProviderExecutionBinding?
+      ) =
+        try transactionWithPolicy {
+          database, ledger, policies in
+          var providerBinding: ProviderExecutionBinding?
+          let result: Result<AuthorizationDecision, any Error> = try {
+            () throws -> Result<AuthorizationDecision, any Error> in
+            let binding = try Self.bind(subject, database: database)
+            _ = try refresh(database, ledger: &ledger, snapshot: policies, now: now)
+            guard ledger.suspendedAuthority == nil, ledger.pendingEpochRecovery == nil else {
+              return .success(.denied(.authoritySuspended))
+            }
+            let profile: ProfileGrant
+            do {
+              profile = try Self.profile(
+                binding.profileID, database: database, epoch: ledger.authorizationEpochID)
+            } catch GatewayPermissionError.profileUnavailable {
+              return .success(.denied(.authoritySuspended))
+            }
+            guard profile.allowedCallers.contains(subject.caller) else {
+              throw GatewayPermissionError.invalidBinding
+            }
+            try Self.synchronize(
+              profile, principal: subject.principal,
+              requestedProject: requirements.sandboxProjectID
+                ?? projectID.flatMap { ledger.environment.paths?.projects.sourceID(for: $0) }
+                ?? projectID,
+              ledger: &ledger)
+            if requirements.mode != .sandbox && !profile.fullAccess {
+              return .success(.denied(.fullAccessRequired))
+            }
+            let invocation = InvocationIdentity(
+              principal: subject.principal, tool: tool, projectID: projectID,
+              argumentsDigest: argumentsDigest)
+            let selected = GatewaySkillLibraryRequirement.selecting(
+              skillLibraries, requirements: requirements, ledger: ledger,
+              principal: subject.principal, connectionID: connectionID)
+            return Result {
+              if let continuation, let caller = continuation.delegatingAuthorization {
+                let proof = try ledger.continuationAuthorization(
+                  caller.id, principal: subject.principal, projectID: projectID,
+                  requirements: selected, connectionID: connectionID, now: now)
+                let provider = continuation.providerAuthorization
+                let permission: Permission =
+                  switch continuation.identity {
+                  case .package(let id): .plugin(id)
+                  case .localServer(let id): .mcpServer(id)
+                  }
+                let ownRequirements = InvocationRequirements(
+                  actions: selected.actions.filter { $0.requirement.permission != permission },
+                  paths: selected.paths, networks: selected.networks, mode: provider.mode,
+                  sandboxProjectID: selected.sandboxProjectID, execution: selected.execution,
+                  providers: provider.requirements.providers)
+                _ = try ledger.continuationAuthorization(
+                  provider.id, principal: provider.invocation.principal, projectID: projectID,
+                  requirements: ownRequirements, now: now)
+                return .allowed(proof)
+              }
+              if let providerSource {
+                let (decision, provider) = try Self.admitProviderCall(
+                  source: providerSource, invocation: invocation, requirements: selected,
+                  retryIDs: retryIDs, connectionID: connectionID, now: now, database: database,
+                  ledger: &ledger, callbackExecutionID: callbackExecutionID)
+                providerBinding = provider
+                return decision
+              }
+              return try ledger.authorize(
+                invocation: invocation, requirements: selected, retryIDs: retryIDs,
+                connectionID: connectionID, now: now)
+            }
+          }()
+          return (
+            result,
+            try GatewayPermissionAuditEvidence(
+              database: database, ledger: ledger, profileID: subject.profileID), providerBinding
+          )
+        }
+    return GatewayPermissionEvaluation(
+      decision: try evaluated.0.get(), evidence: evaluated.1,
+      provider: evaluated.2)
   }
 
   package func answerRequest(

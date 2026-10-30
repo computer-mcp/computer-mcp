@@ -3,6 +3,295 @@ import Foundation
 import Testing
 
 struct ComputerMCPPermissionsLedgerAuthorityTests {
+  @Test(arguments: ["delegator", "provider", "source", "interrupt", "stop", "exit"])
+  func callbackWorkInheritsOnlyItsCreatingDelegation(cause: String) throws {
+    var ledger = PermissionLedger()
+    let provider = PluginIdentity.package("worker")
+    let own = Principal.plugin(provider)
+    for principal in [client, otherClient] {
+      try ledger.setPermission(
+        .granted(.use), for: .plugin("worker"), principal: principal,
+        expectedRevision: ledger.revision)
+    }
+    try ledger.setPermission(
+      .granted(.access), for: .screen, principal: own, expectedRevision: ledger.revision)
+    var parents: [AuthorizedExecution] = []
+    var children: [AuthorizedExecution] = []
+    for principal in [client, otherClient] {
+      let caller = try authorization(
+        from: ledger.authorize(
+          invocation: invocation(principal: principal), actions: [action(.plugin("worker"), .use)],
+          now: instant))
+      let actor = try authorization(
+        from: ledger.authorize(
+          invocation: invocation(principal: own), actions: [action(.screen)], now: instant))
+      let parent = try ledger.startExecution(
+        owner: principal, delegatedTo: provider, authorizationIDs: [caller.id, actor.id])
+      parents.append(parent)
+      let callback = try authorization(
+        from: ledger.authorize(
+          invocation: invocation(principal: principal, digest: "callback"),
+          requirements: .init(actions: [action(.plugin("worker"), .use)]),
+          callbackExecutionID: parent.id, now: instant))
+      let callbackActor = try authorization(
+        from: ledger.authorize(
+          invocation: invocation(principal: own, digest: "callback"),
+          requirements: .init(actions: [action(.skills)]),
+          callbackExecutionID: parent.id, now: instant))
+      children.append(
+        try ledger.startExecution(
+          owner: principal, delegatedTo: provider,
+          authorizationIDs: [callback.id, callbackActor.id]))
+    }
+    ledger = try restore(ledger)
+    switch cause {
+    case "delegator":
+      try ledger.setPermission(
+        .notGranted, for: .plugin("worker"), principal: client,
+        expectedRevision: ledger.revision)
+    case "provider":
+      try ledger.setPermission(
+        .notGranted, for: .screen, principal: own,
+        expectedRevision: ledger.revision)
+    case "source":
+      try ledger.retireProviderExecutions(provider, expectedRevision: ledger.revision)
+    case "interrupt": try ledger.interruptExecution(parents[0].id, now: instant)
+    case "exit":
+      try ledger.finishExecution(
+        parents[0].id, retainUntil: instant.addingTimeInterval(600), now: instant)
+    default: try ledger.terminateExecution(parents[0].id, now: instant)
+    }
+    let affected = cause == "provider" || cause == "source" ? [0, 1] : [0]
+    #expect(
+      ledger.pendingExecutionTerminations
+        == (cause == "exit"
+          ? []
+          : Set(
+            affected.flatMap {
+              cause == "interrupt" || cause == "stop"
+                ? [parents[$0].id] : [parents[$0].id, children[$0].id]
+            })))
+    try ledger.setPermission(
+      .granted(.use), for: .plugin("worker"), principal: client,
+      expectedRevision: ledger.revision)
+    if cause == "interrupt" || cause == "stop" || cause == "exit" {
+      #expect(ledger.executions[children[0].id]?.isRunning == true)
+      #expect(
+        ledger.executionAccess(
+          children[0].id, principal: client,
+          operation: .writeInput, now: instant) == .allowed)
+    } else {
+      #expect(ledger.executions[children[0].id]?.revoked == true)
+    }
+    if affected == [0] {
+      #expect(
+        ledger.executionAccess(
+          children[1].id, principal: otherClient,
+          operation: .writeInput, now: instant) == .allowed)
+    }
+  }
+
+  @Test func callbackCanBorrowOnlyItsExecutionsConsumedGrant() throws {
+    var ledger = PermissionLedger()
+    let provider = PluginIdentity.package("worker")
+    try ledger.setPermission(
+      .granted(.use), for: .plugin("worker"), principal: client,
+      expectedRevision: ledger.revision)
+    let requirements = InvocationRequirements(actions: [action(.plugin("worker"), .use), action()])
+    let pending = try request(
+      from: ledger.authorize(
+        invocation: invocation(), requirements: requirements, now: instant))
+    try ledger.answer(pending.id, with: .onlyThisTime, now: instant)
+    let caller = try authorization(
+      from: ledger.authorize(
+        invocation: invocation(), requirements: requirements, retryIDs: [pending.id], now: instant))
+    let own = try authorization(
+      from: ledger.authorize(
+        invocation: invocation(principal: .plugin(provider)), actions: [action(.skills)],
+        now: instant))
+    let parent = try ledger.startExecution(
+      owner: client, delegatedTo: provider, authorizationIDs: [caller.id, own.id])
+    try ledger.finishInvocation(caller.id)
+    let callbackRequirements = InvocationRequirements(actions: [action()])
+    let callback = try authorization(
+      from: ledger.authorize(
+        invocation: invocation(digest: "callback"), requirements: callbackRequirements,
+        callbackExecutionID: parent.id, now: instant))
+    #expect(ledger.requests[pending.id]?.status == .consumed(caller.id))
+    #expect(callback.basis.contains(.execution(parent.id)))
+    let second = try ledger.authorize(
+      invocation: invocation(digest: "outside"), requirements: callbackRequirements, now: instant)
+    guard case .requests = second else {
+      Issue.record("Grant escaped the execution")
+      return
+    }
+    let missing = try ledger.authorize(
+      invocation: invocation(digest: "additional"),
+      requirements: .init(actions: [action(.desktopControl)]),
+      callbackExecutionID: parent.id, now: instant)
+    guard case .requests(let requests) = missing else {
+      Issue.record("Missing permission bypassed")
+      return
+    }
+    try ledger.answer(requests[0].id, with: .onlyThisTime, now: instant)
+    #expect(throws: PermissionModelError.invalidAuthorization) {
+      try ledger.authorize(
+        invocation: invocation(digest: "additional"),
+        requirements: .init(actions: [action(.desktopControl)]), retryIDs: [requests[0].id],
+        now: instant)
+    }
+    try ledger.interruptExecution(parent.id, now: instant)
+    #expect(throws: PermissionModelError.invalidAuthorization) {
+      try ledger.invocationAccess(callback.id)
+    }
+  }
+
+  @Test func consumedGrantContinuesOnlyTheOriginalLiveExecution() throws {
+    var ledger = PermissionLedger()
+    let requirements = InvocationRequirements(actions: [action()])
+    let pending = try request(
+      from: ledger.authorize(invocation: invocation(), requirements: requirements, now: instant))
+    try ledger.answer(pending.id, with: .onlyThisTime, now: instant)
+    let proof = try authorization(
+      from: ledger.authorize(
+        invocation: invocation(), requirements: requirements, retryIDs: [pending.id], now: instant))
+    let execution = try ledger.startExecution(owner: client, authorizationIDs: [proof.id])
+    try ledger.finishInvocation(proof.id)
+    ledger = try restore(ledger)
+    #expect(
+      try ledger.continuationAuthorization(
+        proof.id, principal: client, projectID: "project", requirements: requirements,
+        now: instant
+      ).id == proof.id)
+    #expect(throws: PermissionModelError.invalidAuthorization) {
+      try ledger.continuationAuthorization(
+        proof.id, principal: otherClient, projectID: "project", requirements: requirements,
+        now: instant)
+    }
+    try ledger.setPermission(
+      .granted(.access), for: .desktopControl, principal: client, expectedRevision: ledger.revision)
+    #expect(throws: PermissionModelError.invalidAuthorization) {
+      try ledger.continuationAuthorization(
+        proof.id, principal: client, projectID: "project",
+        requirements: .init(actions: [action(.desktopControl)]), now: instant)
+    }
+    let second = try ledger.authorize(
+      invocation: invocation(digest: "second"), requirements: requirements, now: instant)
+    guard case .requests = second else {
+      Issue.record("A consumed grant admitted another call")
+      return
+    }
+    try ledger.interruptExecution(execution.id, now: instant)
+    #expect(throws: PermissionModelError.invalidAuthorization) {
+      try ledger.continuationAuthorization(
+        proof.id, principal: client, projectID: "project", requirements: requirements,
+        now: instant)
+    }
+    #expect(
+      ledger.executionAccess(execution.id, principal: client, operation: .readResult, now: instant)
+        == .allowed)
+    _ = try ledger.revokeAuthorization(proof.id)
+    #expect(
+      ledger.executionAccess(execution.id, principal: client, operation: .readResult, now: instant)
+        == .denied(.authorizationRevoked))
+  }
+
+  @Test func continuationKeepsOriginalCeilingAndChecksTheReconnectedClient() throws {
+    var ledger = PermissionLedger()
+    var denied = Permissions()
+    try denied.set(.denied, for: .screen)
+    var environment = ledger.environment
+    environment.connections["original"] = PermissionConnection(principal: client)
+    environment.connections["replacement"] = PermissionConnection(principal: client)
+    environment.connections["restricted"] = PermissionConnection(
+      principal: client, attenuation: .init(permissionCeilings: denied))
+    try ledger.reconcile(environment: environment, expectedRevision: ledger.revision, now: instant)
+    let requirements = InvocationRequirements(actions: [action()])
+    let pending = try request(
+      from: ledger.authorize(
+        invocation: invocation(), requirements: requirements, connectionID: "original", now: instant
+      ))
+    try ledger.answer(pending.id, with: .onlyThisTime, now: instant)
+    let proof = try authorization(
+      from: ledger.authorize(
+        invocation: invocation(), requirements: requirements, retryIDs: [pending.id],
+        connectionID: "original", now: instant))
+    _ = try ledger.startExecution(owner: client, authorizationIDs: [proof.id], now: instant)
+    try ledger.finishInvocation(proof.id)
+    environment = ledger.environment
+    environment.endedConnections.insert("original")
+    try ledger.reconcile(environment: environment, expectedRevision: ledger.revision, now: instant)
+    #expect(
+      try ledger.continuationAuthorization(
+        proof.id, principal: client, projectID: "project", requirements: requirements,
+        connectionID: "replacement", now: instant
+      ).id == proof.id)
+    for connection in ["original", "restricted", "missing"] {
+      #expect(throws: PermissionModelError.invalidAuthorization) {
+        try ledger.continuationAuthorization(
+          proof.id, principal: client, projectID: "project", requirements: requirements,
+          connectionID: connection, now: instant)
+      }
+    }
+    environment = ledger.environment
+    environment.connections["original"]!.attenuation.permissionCeilings = denied
+    try ledger.reconcile(environment: environment, expectedRevision: ledger.revision, now: instant)
+    #expect(throws: PermissionModelError.invalidAuthorization) {
+      try ledger.continuationAuthorization(
+        proof.id, principal: client, projectID: "project", requirements: requirements,
+        connectionID: "replacement", now: instant)
+    }
+  }
+
+  @Test func sourceReplacementRetiresExecutionsAndPreservesOwnerApproval() throws {
+    var ledger = PermissionLedger()
+    let provider = PluginIdentity.package("worker")
+    let principal = Principal.plugin(provider)
+    var environment = ledger.environment
+    let consent = ledger.consent(for: principal, mode: .fullAccess(.standing))
+    environment.modes[principal] = consent
+    try ledger.reconcile(environment: environment, expectedRevision: ledger.revision)
+    var executions: Set<UUID> = []
+    for caller in [client, otherClient] {
+      try ledger.setPermission(
+        .granted(.use), for: .plugin("worker"), principal: caller,
+        expectedRevision: ledger.revision)
+      let delegator = try authorization(
+        from: ledger.authorize(
+          invocation: invocation(principal: caller), actions: [action(.plugin("worker"), .use)],
+          now: instant))
+      let worker = try authorization(
+        from: ledger.authorize(
+          invocation: invocation(principal: principal), actions: [action(.skills)], now: instant))
+      executions.insert(
+        try ledger.startExecution(
+          owner: caller, delegatedTo: provider, authorizationIDs: [delegator.id, worker.id]
+        ).id)
+    }
+    let unused = try authorization(
+      from: ledger.authorize(
+        invocation: invocation(principal: principal), actions: [action(.skills)], now: instant))
+    let independent = try authorization(
+      from: ledger.authorize(
+        invocation: invocation(principal: .plugin(.package("independent"))),
+        actions: [action(.skills)], now: instant))
+    let other = try ledger.startExecution(
+      owner: independent.invocation.principal, authorizationIDs: [independent.id])
+    let permissions = ledger.permissions(for: principal)
+    #expect(
+      try ledger.retireProviderExecutions(provider, expectedRevision: ledger.revision)
+        .executionsToTerminate == executions)
+    #expect(ledger.permissions(for: principal) == permissions)
+    #expect(ledger.isConsentValid(consent, for: principal))
+    #expect(try ledger.invocationAccess(unused.id).id == unused.id)
+    #expect(ledger.executions[other.id]?.revoked == false)
+    ledger = try restore(ledger)
+    #expect(ledger.pendingExecutionTerminations == executions)
+    for id in executions {
+      #expect(ledger.executions[id]?.revoked == true)
+    }
+  }
+
   private func restore(_ ledger: PermissionLedger) throws -> PermissionLedger {
     try JSONDecoder().decode(PermissionLedger.self, from: JSONEncoder().encode(ledger))
   }

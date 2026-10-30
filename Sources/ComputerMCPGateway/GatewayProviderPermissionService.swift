@@ -1,3 +1,4 @@
+import ComputerMCPConfiguration
 import ComputerMCPCore
 import ComputerMCPPermissions
 import ComputerMCPPersistence
@@ -357,6 +358,12 @@ extension GatewayPermissionService {
     for var record in try ProviderAuthorityRecord.fetchAll(database) {
       var approval = try providerApproval(record)
       guard case .package(let id) = approval.identity else { continue }
+      if previous.settings[id] != state.settings[id]
+        || previous.selectedInstallations[id] != state.selectedInstallations[id]
+      {
+        _ = try ledger.retireProviderExecutions(
+          approval.identity, expectedRevision: ledger.revision)
+      }
       if state.settings[id]?.enabled != true
         || (state.selectedInstallations[id] == nil && previous.selectedInstallations[id] != nil)
       {
@@ -449,6 +456,28 @@ extension GatewayPermissionService {
       }
       record.payload = try Self.encodeProviderApproval(approval)
       try record.save(database)
+    }
+  }
+
+  static func reconcileLocalProviderSources(
+    _ servers: [MCPServerConfig], database: Database, ledger: inout PermissionLedger
+  ) throws {
+    for var record in try ProviderAuthorityRecord.fetchAll(database) {
+      var approval = try providerApproval(record)
+      guard case .localServer(let id) = approval.identity, approval.enabled else { continue }
+      if let server = servers.first(where: { $0.id == id }), server.enabled,
+        server.transport == .stdio,
+        try GatewayProviderReview.digest(server) == approval.sourceDigest
+      {
+        continue
+      }
+      guard approval.revision < Int64.max else { throw PermissionMigrationError.revisionExhausted }
+      approval.enabled = false
+      approval.revision += 1
+      approval.fullAccessConsent = nil
+      record.payload = try encodeProviderApproval(approval)
+      try record.save(database)
+      try retireProvider(approval.principal, ledger: &ledger)
     }
   }
 }

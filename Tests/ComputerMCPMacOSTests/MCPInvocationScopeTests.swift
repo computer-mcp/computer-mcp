@@ -22,7 +22,7 @@ struct MCPInvocationScopeTests {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
     try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
     defer { try? FileManager.default.removeItem(at: root) }
-    let database = try GatewayDatabase(inMemory: ())
+    let database = try fixturePermissionDatabase(path: root.appendingPathComponent("host.db").path)
     let project = ComputerMCPCore.RegisteredProject(
       id: "fixture", displayName: "Fixture", rootPath: root.path)
     try database.saveProject(project)
@@ -52,6 +52,10 @@ struct MCPInvocationScopeTests {
       database: database,
       registeredProjects: [project],
       platform: fixtureHostedPlatform(), mcpClient: client)
+    _ = try runtime.makeControlSession()
+    try fixtureApproveLocalProvider(
+      server, database: database, runtime: runtime.permissionRuntime,
+      permissions: fixturePermissions([.project("fixture"): .granted(.write)]), fullAccess: false)
     let input: JSONValue =
       tool == "file.write"
       ? .object(["path": .string("/remote/target"), "dry_run": .bool(true)]) : .object([:])

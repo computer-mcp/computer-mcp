@@ -184,7 +184,7 @@ struct MCPRegistrationControlPlaneTests {
       ? "#!/nonexistent/computer-mcp-test-interpreter\n"
       : #"""
       import json, os, sys, time
-      with open(sys.argv[2], "w") as f:
+      with open(os.path.join(os.environ["HOME"], os.path.basename(sys.argv[2])), "w") as f:
           f.write(str(os.getpid()))
       for line in sys.stdin:
           request = json.loads(line)
@@ -199,12 +199,16 @@ struct MCPRegistrationControlPlaneTests {
               result = {"tools": "not-a-catalog"}
           print(json.dumps({"jsonrpc": "2.0", "id": request["id"], "result": result}), flush=True)
       """#
-    try Data(source.utf8).write(to: script)
-    try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: script.path)
+    if mode == "interpreter" {
+      try Data(source.utf8).write(to: script)
+      try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: script.path)
+    } else {
+      try writePythonTestExecutable(source, to: script)
+    }
     let server = MCPServerConfig(
       id: "failure", transport: .stdio,
-      command: mode == "interpreter" ? script.path : "/usr/bin/python3",
-      args: mode == "interpreter" ? [] : [script.path, mode, receipt.path],
+      command: script.path,
+      args: mode == "interpreter" ? [] : [mode, receipt.path],
       env: ["FIXTURE_SECRET": "must-not-appear-in-report"], allowAnyTool: true,
       startupTimeoutMs: 300, requestTimeoutMs: 300)
     try await fixture.socket.start()
@@ -227,11 +231,14 @@ struct MCPRegistrationControlPlaneTests {
         #expect(report.objectValue?["stage"] == .string("execution"))
         #expect(report.objectValue?["error_code"] == .string("execution.unavailable"))
         #expect(!FileManager.default.fileExists(atPath: receipt.path))
-        try await MCPRegistrationAdmissionFixture.withFixture(server: server, root: fixture.root) {
+        let receipt = try await MCPRegistrationAdmissionFixture.withFixture(
+          server: server, root: fixture.root
+        ) {
           admitted in
           await #expect(throws: (any Error).self) {
             try await admitted.validateConnection()
           }
+          return try admitted.providerMarker(receipt)
         }
         let pids = try fixture.processIDs(at: receipt)
         #expect(pids.count == 1 && pids.allSatisfy { Darwin.kill($0, 0) == -1 && errno == ESRCH })
@@ -250,7 +257,7 @@ struct MCPRegistrationControlPlaneTests {
     defer { fixture.remove() }
     let script = fixture.root.appendingPathComponent("doctor.py")
     let receipt = fixture.root.appendingPathComponent("doctor-receipt")
-    try Data(
+    try writePythonTestExecutable(
       #"""
       import json, os, socket, sys
       context = json.loads(os.environ["COMPUTER_MCP_HOST_CONTEXT"])
@@ -261,9 +268,7 @@ struct MCPRegistrationControlPlaneTests {
       import glob
       records = glob.glob(os.path.join(sys.argv[2], "*", "*"))
       records = [p for p in records if os.path.basename(p) != "scope.lock"]
-      assert len(records) == 1, records
-      with open(records[0]) as f:
-          assert json.load(f)["cleanupFailed"] is False
+      assert records == [], records
       host = socket.socket(fileno=int(os.environ["COMPUTER_MCP_HOST_FD"]))
       host.settimeout(2)
       channel = host.makefile("rwb")
@@ -283,12 +288,13 @@ struct MCPRegistrationControlPlaneTests {
       assert "error" in denied or denied["result"].get("isError") is True
       persistence = callback(4, "tools/call", {"name": "host.diagnostics.snapshot", "arguments": {}})
       assert "error" in persistence or persistence["result"].get("isError") is True
-      with open(sys.argv[1], "a") as f:
+      receipt = os.path.join(os.environ["HOME"], os.path.basename(sys.argv[1]))
+      with open(receipt, "a") as f:
           f.write(str(os.getpid()) + "\n")
       for line in sys.stdin:
           request = json.loads(line)
           method = request.get("method", "")
-          with open(sys.argv[1] + ".methods", "a") as f:
+          with open(receipt + ".methods", "a") as f:
               f.write(method + "\n")
           if "id" not in request:
               continue
@@ -301,16 +307,15 @@ struct MCPRegistrationControlPlaneTests {
           else:
               raise RuntimeError("Unexpected probe operation")
           print(json.dumps({"jsonrpc": "2.0", "id": request["id"], "result": result}), flush=True)
-      """#.utf8
-    ).write(to: script)
+      """#, to: script)
     try fixture.registerProject()
     try await fixture.socket.start()
     do {
       for id in ["selected", "unrelated", "disabled"] {
         let server = MCPServerConfig(
-          id: id, transport: .stdio, command: "/usr/bin/python3",
+          id: id, transport: .stdio, command: script.path,
           args: [
-            script.path, id == "selected" ? receipt.path : receipt.path + "." + id,
+            id == "selected" ? receipt.path : receipt.path + "." + id,
             try #require(fixture.database.mcpProcessOwnershipRoot).path,
           ],
           exposure: .reexport, prefix: id, allowAnyTool: true,
@@ -327,8 +332,8 @@ struct MCPRegistrationControlPlaneTests {
         path: fixture.root.appendingPathComponent("admitted.sqlite").path)
       var selected = try #require(
         fixture.configuration().mcp.servers.first { $0.id == "selected" })
-      selected.args[2] = try #require(authorityDatabase.mcpProcessOwnershipRoot).path
-      try await MCPRegistrationAdmissionFixture.withFixture(
+      selected.args[1] = try #require(authorityDatabase.mcpProcessOwnershipRoot).path
+      let admittedReceipt = try await MCPRegistrationAdmissionFixture.withFixture(
         server: selected, root: fixture.root, database: authorityDatabase
       ) { admitted in
         let tools = try await admitted.discover()
@@ -336,11 +341,13 @@ struct MCPRegistrationControlPlaneTests {
         let initialized = try await admitted.initializeResult()
         #expect(initialized.objectValue?["serverInfo"]?.objectValue?["version"] == .string("1.2.3"))
         #expect(initialized.objectValue?["protocolVersion"]?.stringValue != nil)
+        try admitted.checkProviderOwnership()
+        return try admitted.providerMarker(receipt)
       }
-      let pids = try fixture.processIDs(at: receipt)
+      let pids = try fixture.processIDs(at: admittedReceipt)
       #expect(pids.count == 1)
       #expect(pids.allSatisfy { Darwin.kill($0, 0) == -1 && errno == ESRCH })
-      let methods = try String(contentsOfFile: receipt.path + ".methods", encoding: .utf8)
+      let methods = try String(contentsOfFile: admittedReceipt.path + ".methods", encoding: .utf8)
       #expect(methods.contains("initialize\n") && methods.contains("tools/list\n"))
       #expect(!methods.contains("tools/call"))
       #expect(!FileManager.default.fileExists(atPath: receipt.path + ".unrelated"))
@@ -366,7 +373,8 @@ struct MCPRegistrationControlPlaneTests {
     let source =
       #"""
       import json, os, sys, time
-      name, starts = sys.argv[1:]
+      name, requested = sys.argv[1:]
+      starts = os.path.join(os.environ["HOME"], os.path.basename(requested))
       with open(starts, "a") as f:
           f.write(str(os.getpid()) + "\n")
       with open(starts + ".versions", "a") as f:
@@ -397,23 +405,20 @@ struct MCPRegistrationControlPlaneTests {
               result = {}
           print(json.dumps({"jsonrpc": "2.0", "id": request["id"], "result": result}), flush=True)
       """#
-    let fixture = try MCPRegistrationControlFixture { root in
-      fixtureProtocolExecutionLauncher(
-        root: root, scripts: [source],
-        arguments: [
-          ["first", root.appendingPathComponent("starts").path],
-          ["second", root.appendingPathComponent("starts").path],
-        ])
-    }
+    let fixture = try MCPRegistrationControlFixture()
     defer { fixture.remove() }
     let script = fixture.root.appendingPathComponent("server.py")
-    let starts = fixture.root.appendingPathComponent("starts")
-    try Data(source.utf8).write(to: script)
+    let starts = URL(
+      fileURLWithPath: try fixture.database.prepareProviderContainer(.localServer("manual")).sandbox
+        .home.value
+    ).appendingPathComponent("starts")
+    try writePythonTestExecutable(source, to: script)
     try fixture.registerProject()
     let input = fixture.root.appendingPathComponent("registration.json")
     var server = MCPServerConfig(
-      id: "manual", transport: .stdio, command: "/usr/bin/python3",
-      args: [script.path, "first", starts.path], exposure: .reexport, prefix: "manual",
+      id: "manual", transport: .stdio, command: script.path,
+      args: ["first", fixture.root.appendingPathComponent("starts").path],
+      exposure: .reexport, prefix: "manual",
       allowAnyTool: true, startupTimeoutMs: 3000, requestTimeoutMs: 10000,
       toolRisks: ["first": .readOnly, "second": .readOnly, "hold": .readOnly])
     try JSONEncoder().encode(server).write(to: input)
@@ -448,8 +453,10 @@ struct MCPRegistrationControlPlaneTests {
       #expect(Darwin.kill(firstPIDs[0], 0) == 0)
       let firstCall = try await first.call(toolName: "manual.first", arguments: .object([:]))
       #expect(firstCall.result.objectValue?["isError"]?.boolValue != true)
+      let firstDelegationPIDs = try fixture.processIDs(at: starts)
+      #expect(firstDelegationPIDs.count == 2)
 
-      server.args[1] = "second"
+      server.args[0] = "second"
       try JSONEncoder().encode(server).write(to: input)
       let preview = try await fixture.json(["configure", "--registration-file", input.path])
       #expect(preview.objectValue?["transport_will_restart"] == .bool(false))
@@ -458,7 +465,7 @@ struct MCPRegistrationControlPlaneTests {
         "configure", "--registration-file", input.path, "--apply", "--expected-current-digest",
         digest,
       ])
-      #expect(Darwin.kill(firstPIDs[0], 0) == 0)
+      try await fixture.waitForExit(firstDelegationPIDs)
       #expect(await fixture.gateway.snapshot().connectionCount == 1)
       let second = first
       try await fixture.discover(second, server: "manual")
@@ -484,14 +491,13 @@ struct MCPRegistrationControlPlaneTests {
       try #require(FileManager.default.fileExists(atPath: calls.path))
       try await fixture.apply(["disable", "manual"])
       let allPIDs = try fixture.processIDs(at: starts)
-      #expect(allPIDs.count == 2)
+      #expect(allPIDs.count == 4)
       let versions = try String(contentsOfFile: starts.path + ".versions", encoding: .utf8)
         .split(separator: "\n").map(String.init)
-      #expect(versions == ["first", "second"])
-      #expect(allPIDs.allSatisfy { Darwin.kill($0, 0) == 0 })
+      #expect(versions == ["first", "first", "second", "second"])
+      try await fixture.waitForExit(allPIDs)
       #expect(try await !second.listTools().contains { $0.name.hasPrefix("manual.") })
-      try Data().write(to: URL(fileURLWithPath: starts.path + ".release"))
-      #expect(await heldCall.value == false)
+      #expect(await heldCall.value == true)
 
       let disabled = first
       #expect(try await !disabled.listTools().contains { $0.name.hasPrefix("manual.") })
@@ -589,6 +595,7 @@ struct MCPRegistrationControlPlaneTests {
 /// selected registration and an owner-consented read-only project profile.
 private struct MCPRegistrationAdmissionFixture: Sendable {
   let configuration: GatewayConfiguration
+  let database: GatewayDatabase
   let platform: PlatformServices
   let runtime: GatewayRuntime
   let session: GatewayControlSession
@@ -601,16 +608,7 @@ private struct MCPRegistrationAdmissionFixture: Sendable {
     let database =
       try supplied
       ?? fixturePermissionDatabase(path: root.appendingPathComponent("admitted.sqlite").path)
-    let platform: PlatformServices
-    if server.transport == .stdio {
-      let script = try #require(server.args.first)
-      platform = MacOSPlatform.services(
-        launcher: fixtureProtocolExecutionLauncher(
-          root: root, scripts: [try String(contentsOfFile: script, encoding: .utf8)],
-          arguments: [Array(server.args.dropFirst())]))
-    } else {
-      platform = fixtureHostedPlatform()
-    }
+    let platform = MacOSPlatform.services(launcher: testExecutionLauncher())
     let grant = ProfileGrant(
       id: .chatGPTObserve,
       permissions: fixturePermissions([
@@ -634,6 +632,11 @@ private struct MCPRegistrationAdmissionFixture: Sendable {
     do {
       try await runtime.permissionRuntime.ready()
       let created = try runtime.makeControlSession()
+      if server.transport == .stdio {
+        try fixtureApproveLocalProvider(
+          server, database: database, runtime: runtime.permissionRuntime,
+          permissions: fixturePermissions([.project("fixture"): .granted(.read)]), fullAccess: true)
+      }
       do {
         _ = try created.approveFullAccess(expectedRevision: created.revision)
         session = created
@@ -648,6 +651,7 @@ private struct MCPRegistrationAdmissionFixture: Sendable {
     var admitted = context
     admitted.controlSession = session
     self.configuration = configuration
+    self.database = database
     self.platform = platform
     self.runtime = runtime
     self.session = session
@@ -682,33 +686,23 @@ private struct MCPRegistrationAdmissionFixture: Sendable {
 
   func validateConnection() async throws -> JSONValue {
     let permissions = runtime.permissionRuntime
-    let requirements = try InvocationRequirements(
-      actions: [
-        .init(requirement: .init(.project("fixture"), .read)),
-        .init(requirement: .init(.mcpServer(server.id), .read)),
-      ], mode: .fullAccess(.standing), sandboxProjectID: "fixture")
-    let decision = try permissions.service.admit(
-      subject: GatewayPermissionSubject(context: caller), tool: "mcp.tools.list",
-      projectID: "fixture", argumentsDigest: MCPExecutionRecord.digest(try .encoded(server)),
-      requirements: requirements, connectionID: session.id)
-    guard case .allowed(let authorization) = decision else {
-      throw GatewayToolError.executionFailed("Protocol fixture admission failed: \(decision)")
-    }
-    let descriptor = CapabilityDescriptor(
-      id: "mcp.tools.list", risk: .readOnly,
-      requirement: .init(
-        access: .none, target: .mcp(server: .argument(name: "server"), access: .read),
-        contribution: .mcp(server: .argument(name: "server"))),
-      projectRequirement: .none, localOnly: false, usesNetwork: true)
-    let prepared = try #require(
-      await permissions.prepare(
-        authorization: authorization, descriptor: descriptor,
-        directory: configuration.projectDirectory, connectionID: session.id,
-        auditContext: caller) as? PreparedExecutionContext)
+    let source = try GatewayProviderSource.resolve(
+      registration: .init(kind: .mcp, id: server.id), configuration: configuration,
+      origins: [:], database: database)
+    let prepared = try await permissions.prepareProvider(
+      review: source.review,
+      registrationID: server.id, authorization: nil, directory: nil, connectionID: nil,
+      source: source)
+    let discovery: GatewayConfiguration = try {
+      var value = configuration
+      value.projectDirectory = URL(
+        fileURLWithPath: try #require(prepared.providerWorkingDirectory).value)
+      return value
+    }()
     do {
       let value = try await prepared.withValue {
         try await ComputerMCPProductContracts.validateMCPConnections(
-          configuration: configuration, platform: platform)
+          configuration: discovery, platform: platform)
       }
       try prepared.finishAdmission()
       try await permissions.coordinator.reconcile()
@@ -718,6 +712,29 @@ private struct MCPRegistrationAdmissionFixture: Sendable {
       try? await permissions.coordinator.reconcile()
       throw error
     }
+  }
+
+  func providerMarker(_ original: URL) throws -> URL {
+    URL(
+      fileURLWithPath: try database.prepareProviderContainer(.localServer(server.id)).sandbox.home
+        .value
+    )
+    .appendingPathComponent(original.lastPathComponent)
+  }
+
+  func checkProviderOwnership() throws {
+    let root = try #require(database.mcpProcessOwnershipRoot)
+    let records = try FileManager.default.contentsOfDirectory(
+      at: root, includingPropertiesForKeys: nil
+    )
+    .flatMap {
+      try FileManager.default.contentsOfDirectory(at: $0, includingPropertiesForKeys: nil)
+    }
+    .filter { $0.lastPathComponent != "scope.lock" }
+    try #require(records.count == 1)
+    let record = try JSONDecoder().decode(
+      JSONValue.self, from: Data(contentsOf: #require(records.first)))
+    #expect(record.objectValue?["cleanupFailed"] == .bool(false))
   }
 
   private func call(_ tool: String) async throws -> JSONValue {
@@ -830,6 +847,16 @@ struct MCPRegistrationControlFixture: Sendable {
   }
 
   func discover(_ client: GatewayClientSession, server: String) async throws {
+    let project = try await client.call(toolName: "project.list")
+    try #require(project.result.objectValue?["isError"] != .bool(true))
+    let review = try await host.providerReview(.localServer(server))
+    let view = try await host.permissionRequests()
+    _ = try await host.approveProvider(
+      review, permissions: fixturePermissions([.project("fixture"): .granted(.write)]),
+      fullAccess: true,
+      expectedProviderRevision: view.providers.first { $0.identity == .localServer(server) }?
+        .revision,
+      expectedRevision: view.revision, expectedEpoch: #require(view.epoch))
     let report = try await client.call(
       toolName: "mcp.tools.list",
       arguments: .object(["project_id": .string("fixture"), "server": .string(server)]))
@@ -864,6 +891,14 @@ struct MCPRegistrationControlFixture: Sendable {
     try String(contentsOf: url, encoding: .utf8).split(separator: "\n").map {
       try #require(Int32($0))
     }
+  }
+
+  func waitForExit(_ pids: [Int32]) async throws {
+    let deadline = ContinuousClock.now + .seconds(5)
+    while pids.contains(where: { Darwin.kill($0, 0) == 0 }), ContinuousClock.now < deadline {
+      try await Task.sleep(for: .milliseconds(10))
+    }
+    #expect(pids.allSatisfy { Darwin.kill($0, 0) == -1 && errno == ESRCH })
   }
 
   func remove() { try? FileManager.default.removeItem(at: root) }

@@ -31,7 +31,7 @@ import Testing
       ledger: &f.ledger, authorizationID: proof.id,
       context: .init(
         directory: SandboxPath("/people/me/Downloads/repo"),
-        temporaryDirectory: SandboxPath("/tmp/execution"), purpose: .pluginProgram))
+        temporaryDirectory: SandboxPath("/tmp/execution"), purpose: .projectProgram))
     #expect(compiled.sandbox == nil && compiled.permitsProgramLaunch)
     #expect(compiled.authorization.basis == proof.basis)
     let execution = try f.ledger.startExecution(owner: f.principal, authorizationIDs: [proof.id])
@@ -195,7 +195,9 @@ import Testing
     #expect(!readable("/people/me/secrets", in: try #require(compiled.sandbox)))
     #expect(!compiled.egress.admits(host: "registry.test"))
     #expect(throws: ExecutionEnvironmentError.self) { try f.compile(purpose: .projectProgram) }
-    #expect(throws: ExecutionEnvironmentError.self) { try f.compile(purpose: .pluginProgram) }
+    #expect(throws: PermissionModelError.invalidAuthorization) {
+      try f.compile(purpose: .pluginProgram)
+    }
     var environment = f.ledger.environment
     environment.paths = nil
     _ = try f.ledger.reconcile(environment: environment, expectedRevision: f.ledger.revision)

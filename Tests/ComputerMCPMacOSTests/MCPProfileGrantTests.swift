@@ -39,7 +39,8 @@ struct MCPProfileGrantTests {
             prefix: prefix, allowAnyTool: true, toolRisks: ["inspect": .readOnly])
         }),
       tools: [.init(name: "review.inspect", adapter: .mcp, source: "alpha", tool: "inspect")])
-    let database = try GatewayDatabase(inMemory: ())
+    let database = try fixturePermissionDatabase(
+      path: fixture.root.appendingPathComponent("host.db").path)
     var profile = configuration.profiles[0].grant
     profile.fullAccess = true
     configuration.profiles[0] = .init(grant: profile)
@@ -53,6 +54,12 @@ struct MCPProfileGrantTests {
       configuration: configuration, context: context, database: database,
       registeredProjects: [project],
       platform: fixtureHostedPlatform(), mcpClient: client)
+    _ = try runtime.makeControlSession()
+    for server in configuration.mcp.servers {
+      try fixtureApproveLocalProvider(
+        server, database: database, runtime: runtime.permissionRuntime,
+        permissions: fixturePermissions([.project(project.id): .granted(.read)]), fullAccess: true)
+    }
     do {
       #expect(try runtime.listTools(context: .empty).contains { $0.name == publicName })
       _ = try runtime.callTool(name: publicName, arguments: .object([:]), context: .empty)
@@ -104,7 +111,10 @@ struct MCPProfileGrantTests {
 
   @Test
   func cachedToolsStayRequestableWhileTheServerCatalogStaysPrivate() async throws {
-    let database = try GatewayDatabase(inMemory: ())
+    let fixture = try ProfileRuntimeFixture()
+    defer { fixture.cleanup() }
+    let database = try fixturePermissionDatabase(
+      path: fixture.root.appendingPathComponent("host.db").path)
     let client = ProfileCatalogClient()
     var configuration = Self.configuration()
     configuration.profiles = [.init(grant: Self.grant([:]))]
@@ -114,6 +124,12 @@ struct MCPProfileGrantTests {
         caller: .secureTunnel, profileID: .chatGPTOperate, trustedPrincipalID: "verified-fixture"),
       database: database, registeredProjects: [], platform: fixtureHostedPlatform(),
       mcpClient: client)
+    _ = try runtime.makeControlSession()
+    for server in configuration.mcp.servers {
+      try fixtureApproveLocalProvider(
+        server, database: database, runtime: runtime.permissionRuntime,
+        permissions: .newPrincipal, fullAccess: false)
+    }
     do {
       #expect(try runtime.listTools(context: .empty).contains { $0.name == "alpha.inspect" })
       do {

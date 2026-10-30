@@ -3,6 +3,16 @@ import Testing
 @testable import ComputerMCPPermissions
 
 struct ComputerMCPPermissionsProfileDigestTests {
+  @Test func canonicalEncodingPreservesPersistedArrayOrdering() {
+    #expect(ProfileDigest.canonical([2, 10, 1, 2]) == "[1,10,2,2]")
+    #expect(
+      ProfileDigest.canonical(["z": [[3, 1], [2]], "a": [[], [10, 2]]])
+        == #"{"a":[[10,2],[]],"z":[[1,3],[2]]}"#)
+    #expect(
+      ProfileDigest.canonical([["b": "two", "a": "one"], ["a": "zero"]])
+        == #"[{"a":"one","b":"two"},{"a":"zero"}]"#)
+  }
+
   @Test func standardSHA256Vectors() {
     #expect(
       ProfileDigest.hash("") == "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855")

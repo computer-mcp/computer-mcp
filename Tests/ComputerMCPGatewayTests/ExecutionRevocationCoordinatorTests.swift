@@ -1,6 +1,5 @@
 import ComputerMCPConfiguration
 import ComputerMCPCore
-import ComputerMCPPermissions
 import ComputerMCPPersistence
 import ComputerMCPSandbox
 import ComputerMCPWorktrees
@@ -10,6 +9,7 @@ import Testing
 
 @testable import ComputerMCPEgress
 @testable import ComputerMCPGateway
+@testable import ComputerMCPPermissions
 @testable import ComputerMCPPlugins
 @testable import ComputerMCPProcess
 
@@ -18,6 +18,62 @@ import Testing
 #endif
 
 @Suite struct ExecutionRevocationCoordinatorTests {
+  @Test func callbackCancellationRetriesARejectedPermissionStoreWrite() async throws {
+    let f = try ExecutionFixture()
+    let coordinator = try f.coordinator()
+    try await coordinator.recover()
+    let id = try f.paths.authorize(f.paths.project, operation: .read, once: false)
+    let prepared = try await coordinator.prepare(authorizationID: id, context: f.context)
+    _ = try await f.start(prepared)
+    try f.paths.store.transactionWithDatabase { database, _ in
+      try database.execute(
+        sql:
+          "CREATE TRIGGER reject_callback_revocation BEFORE UPDATE ON permissionLedger BEGIN SELECT RAISE(ABORT, 'fixture permission write failure'); END"
+      )
+    }
+    coordinator.revokeInvocations([id])
+    await #expect(throws: (any Error).self) { try await coordinator.reconcile() }
+    #expect(throws: (any Error).self) { try prepared.authority.reserveChild(UUID()) }
+    #expect(throws: (any Error).self) {
+      try prepared.accessExecution(prepared.executionID, operation: .writeInput)
+    }
+    try f.paths.store.readWithDatabase { _, ledger in
+      #expect(ledger.authorizations[id]?.revoked == false)
+    }
+    try f.paths.store.transactionWithDatabase { database, _ in
+      try database.execute(sql: "DROP TRIGGER reject_callback_revocation")
+    }
+    try await coordinator.reconcile()
+    try f.paths.store.readWithDatabase { _, ledger in
+      #expect(ledger.authorizations[id]?.revoked == true)
+    }
+    try await f.untilFinished(prepared.executionID, coordinator)
+    #expect(f.platform.owners.allSatisfy { $0.ended })
+  }
+
+  @Test(arguments: [ExecutionOperation.readResult, .writeInput, .cancel, .requestCancellation])
+  func continuationRechecksItsAdditionalProofAtEveryUse(operation: ExecutionOperation) async throws
+  {
+    let f = try ExecutionFixture()
+    let coordinator = try f.coordinator()
+    try await coordinator.recover()
+    let id = try f.paths.authorize(f.paths.project, operation: .read, once: false)
+    let prepared = try await coordinator.prepare(authorizationID: id, context: f.context)
+    let other = try f.paths.authorize(f.paths.project, operation: .read, once: false)
+    let scope = try coordinator.continuation(
+      authorizationID: id, additionalAuthorizationIDs: [other])
+    _ = try scope.accessExecution(prepared.executionID, operation: .readResult)
+    try f.paths.store.transactionWithDatabase { _, ledger in
+      _ = try ledger.revokeAuthorization(other)
+    }
+    #expect(throws: (any Error).self) {
+      try scope.accessExecution(prepared.executionID, operation: operation)
+    }
+    #expect(throws: (any Error).self) { try scope.permissionRequests(prepared.executionID) }
+    #expect(try f.execution(prepared.executionID).isRunning)
+    try await coordinator.stopExecutions([prepared.executionID])
+  }
+
   @Test func fullAccessProviderUsesItsContainerWithoutAmbientCredentials() async throws {
     let f = try ExecutionFixture()
     let identity = PluginIdentity.package("container-provider")
@@ -25,14 +81,19 @@ import Testing
     let database = try GatewayDatabase(
       path: f.paths.root.appendingPathComponent("provider.sqlite").path)
     let container = try database.prepareProviderContainer(identity)
-    let authorization = try f.paths.store.transactionWithDatabase { _, ledger in
+    let binding = try f.paths.store.transactionWithDatabase { _, ledger in
+      let caller = Principal.client("provider-client")
       var environment = ledger.environment
       environment.paths?.pathRules.insert(.init(root: container.storageRoot, kind: .hostData))
       _ = try ledger.reconcile(environment: environment, expectedRevision: ledger.revision)
       _ = try ledger.setProviderSandboxSettings(
         .init(), for: identity, expectedRevision: ledger.revision)
+      try ledger.setPermission(
+        .granted(.use), for: .plugin("container-provider"), principal: caller,
+        expectedRevision: ledger.revision)
       environment = ledger.environment
       environment.modes[principal] = ledger.consent(for: principal, mode: .fullAccess(.standing))
+      environment.modes[caller] = ledger.consent(for: caller, mode: .fullAccess(.standing))
       _ = try ledger.reconcile(environment: environment, expectedRevision: ledger.revision)
       let result = try ledger.authorize(
         invocation: .init(
@@ -41,22 +102,38 @@ import Testing
       guard case .allowed(let proof) = result else {
         throw PermissionModelError.invalidAuthorization
       }
-      return proof.id
+      let delegation = try ledger.authorize(
+        invocation: .init(
+          principal: caller, tool: "provider", projectID: "project", argumentsDigest: "provider"),
+        requirements: .init(
+          actions: [.init(requirement: .init(.plugin("container-provider"), .use))],
+          mode: .fullAccess(.standing)), now: Date())
+      guard case .allowed(let callerProof) = delegation else {
+        throw PermissionModelError.invalidAuthorization
+      }
+      return try ProviderExecutionBinding(
+        identity: identity, registrationID: "container-provider",
+        sourceDigest: String(repeating: "a", count: 64),
+        providerAuthorization: proof, delegatingAuthorization: callerProof)
     }
     let coordinator = try f.coordinator()
     try await coordinator.recover()
+    let scratch = f.directory.appendingPathComponent(
+      try #require(binding.delegatingAuthorization?.id).uuidString)
+    try FileManager.default.createDirectory(at: scratch, withIntermediateDirectories: false)
     let context = try GatewaySandboxContext(
-      directory: .init(f.paths.project.path), temporaryDirectory: .init(f.paths.derived.path),
+      directory: .init(f.paths.project.path), temporaryDirectory: .init(scratch.path),
       purpose: .pluginProgram, providerContainer: container)
     let prepared = try await coordinator.prepare(
-      authorizationID: authorization, context: context,
-      fullAccessEnvironment: ["SYNTHETIC_AMBIENT_SECRET": "not-a-real-secret", "HOME": "/ambient"])
+      authorizationID: #require(binding.delegatingAuthorization?.id), context: context,
+      fullAccessEnvironment: ["SYNTHETIC_AMBIENT_SECRET": "not-a-real-secret", "HOME": "/ambient"],
+      provider: binding)
     let environment = try prepared.environment.variables()
     #expect(environment["HOME"] == (try container.sandbox.home.value))
     #expect(environment["XDG_CACHE_HOME"] == (try container.sandbox.cache.value))
     #expect(environment["XDG_STATE_HOME"] == (try container.sandbox.state.value))
     #expect(environment["SYNTHETIC_AMBIENT_SECRET"] == nil)
-    #expect(environment["TMP"] == f.paths.derived.path)
+    #expect(environment["TMP"] == scratch.path)
     try prepared.finishAdmission()
     try await coordinator.reconcile()
   }

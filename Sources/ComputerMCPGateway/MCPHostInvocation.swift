@@ -52,15 +52,18 @@ struct HostCallAuthoritySnapshot {
   let profileRevision: Int64
   let consent: GatewayFullAccessConsent?
   let authorizationID: UUID?
+  let providerAuthorizationIDs: Set<UUID>
 
   init(
     context: ExecutionContext, profileRevision: Int64,
-    consent: GatewayFullAccessConsent?, authorizationID: UUID? = nil
+    consent: GatewayFullAccessConsent?, authorizationID: UUID? = nil,
+    providerAuthorizationIDs: Set<UUID> = []
   ) {
     self.context = context
     self.profileRevision = profileRevision
     self.consent = consent
     self.authorizationID = authorizationID
+    self.providerAuthorizationIDs = providerAuthorizationIDs
   }
 }
 

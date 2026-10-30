@@ -1284,8 +1284,9 @@ private final class HostAuthorityFixture: @unchecked Sendable {
       _ = database.permissionStore(counter: WorktreeAcceptanceCounter(directory: storageRoot))
       connection = database.connection
     } else {
-      connection = try GatewayDatabaseConnection(inMemory: ())
-      database = GatewayDatabase(connection: connection)
+      database = try fixturePermissionDatabase(
+        path: storageRoot.appendingPathComponent("host.sqlite").path)
+      connection = database.connection
     }
     let project =
       try database.project(id: "scope")
@@ -1320,23 +1321,30 @@ private final class HostAuthorityFixture: @unchecked Sendable {
       : ExecutionContext(
         caller: .secureTunnel, profileID: .chatGPTOperate, transportTrace: trace,
         trustedPrincipalID: "fixture-principal")
+    let registration = MCPServerConfig(
+      id: "probe", transport: .stdio, command: "/bin/cat", exposure: .reexport,
+      prefix: "adapter", allowedTools: HostServiceProbe.methods,
+      toolRisks: Dictionary(
+        uniqueKeysWithValues: HostServiceProbe.methods.map { ($0, .projectWrite) }),
+      hostServices: true)
     runtime = try GatewayRuntime(
       configuration: .init(
         runtime: .init(caller: .secureTunnel, profileID: .chatGPTOperate),
         profiles: [.init(grant: profile)],
-        mcp: .init(servers: [
-          .init(
-            id: "probe", transport: .stdio, command: "/bin/cat", exposure: .reexport,
-            prefix: "adapter", allowedTools: HostServiceProbe.methods,
-            toolRisks: Dictionary(
-              uniqueKeysWithValues: HostServiceProbe.methods.map { ($0, .projectWrite) }),
-            hostServices: true)
-        ])),
+        mcp: .init(servers: [registration])),
       context: context,
       database: database, registeredProjects: projects,
       platform: fixtureHostedPlatform(),
       mcpClient: peer,
       requiresControlSession: requiresControlSession)
+    _ = try runtime.makeControlSession()
+    try fixtureApproveLocalProvider(
+      registration, database: database,
+      runtime: database.permissionRuntime(platform: fixtureHostedPlatform()),
+      permissions: profile.permissions, fullAccess: true)
+    if let session = context.controlSession as? GatewayControlSession {
+      _ = try session.approveFullAccess(expectedRevision: session.revision)
+    }
     let captured = try #require(peer.context(for: "scope"))
     if worktrees {
       try FileManager.default.createDirectory(

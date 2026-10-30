@@ -1,0 +1,182 @@
+#if os(macOS)
+  import ComputerMCPConfiguration
+  import ComputerMCPCore
+  import ComputerMCPPermissions
+  import ComputerMCPPlatform
+  import ComputerMCPPlatformPOSIX
+  @testable import ComputerMCPProcess
+  import ComputerMCPTestSupport
+  import Foundation
+  import Testing
+
+  @testable import ComputerMCPGateway
+
+  @Suite(.nativeIntegration, .serialized, .timeLimit(.minutes(2)))
+  struct GatewayProviderLifecycleTests {
+    @Test(arguments: [false, true])
+    func projectBoundariesAndIndependentDelegatedRevocation(fullAccess: Bool) async throws {
+      let f = try WorktreeServiceFixture()
+      defer { f.remove() }
+      let first = try f.call(.add(name: "provider-a", branch: nil, base: nil))
+      let second = try f.call(.add(name: "provider-b", branch: nil, base: nil))
+      let projectID = try #require(first.objectValue?["project_id"]?.stringValue)
+      let directory = try ProjectPathResolver.canonicalProject(
+        URL(fileURLWithPath: #require(first.objectValue?["path"]?.stringValue)))
+      let other = try #require(second.objectValue?["path"]?.stringValue)
+      let foreign = try f.database.prepareProviderContainer(.package("foreign"))
+      let foreignFile = URL(fileURLWithPath: try foreign.sandbox.state.value)
+        .appendingPathComponent("secret")
+      try Data("foreign state".utf8).write(to: foreignFile)
+      let binary = try compileProviderProbe(in: f.root)
+      let server = MCPServerConfig(id: "local-provider", transport: .stdio, command: binary.path)
+      let owner = try GatewayPermissionOwner(
+        context: .init(caller: .localApp, profileID: .localAdmin, trustedPrincipalID: "owner"),
+        validate: {})
+      let review = try GatewayProviderReview(
+        server: server, configuration: f.database.configurationState())
+      var permissions = Permissions.newPrincipal
+      try permissions.set(.granted(.write), for: .project("source"))
+      let view = try f.runtime.service.view(owner: owner)
+      let approval = try f.runtime.service.approveProvider(
+        review, permissions: permissions, fullAccess: fullAccess, owner: owner,
+        expectedProviderRevision: nil, expectedRevision: view.revision,
+        expectedEpoch: #require(view.epoch))
+      let currentReview = try GatewayProviderReview(
+        server: server, configuration: f.database.configurationState())
+      let clients = [Principal.client("a"), .client("b")]
+      var prepared: [PreparedExecutionContext] = []
+      var processes: [ManagedLineProcess] = []
+      do {
+        for client in clients {
+          let proof = try f.runtime.store.transactionWithDatabase { _, ledger in
+            var grants = permissions
+            try grants.set(.granted(.all), for: .mcpServer(server.id))
+            try ledger.setPermissions(grants, for: client, expectedRevision: ledger.revision)
+            if fullAccess {
+              var environment = ledger.environment
+              environment.modes[client] = ledger.consent(for: client, mode: .fullAccess(.standing))
+              try ledger.reconcile(environment: environment, expectedRevision: ledger.revision)
+            }
+            let result = try ledger.authorize(
+              invocation: .init(
+                principal: client, tool: "probe", projectID: projectID,
+                argumentsDigest: UUID().uuidString),
+              requirements: .init(
+                actions: [
+                  .init(requirement: .init(.mcpServer(server.id), .all)),
+                  .init(requirement: .init(.project("source"), .write), scope: .project("source")),
+                ], paths: [.init(path: .init(directory.path), operation: .write)],
+                mode: fullAccess ? .fullAccess(.standing) : .sandbox,
+                sandboxProjectID: "source"), now: Date())
+            guard case .allowed(let authorization) = result else {
+              Issue.record("Caller preparation failed: \(result)")
+              throw PermissionModelError.invalidAuthorization
+            }
+            return authorization
+          }
+          let execution = try await f.runtime.prepareProvider(
+            review: currentReview, registrationID: server.id, authorization: proof,
+            directory: directory, connectionID: nil)
+          prepared.append(execution)
+          let process = try execution.withValue {
+            try ManagedLineProcess(
+              launcher: f.platform.launcher,
+              configuration: .init(
+                executable: binary.path,
+                arguments: [
+                  other, f.source.path, f.root.appendingPathComponent("host/state.sqlite").path,
+                  foreignFile.path, fullAccess ? "full" : "sandbox",
+                ],
+                workingDirectory: directory))
+          }
+          processes.append(process)
+          var lines = process.inboundLines.makeAsyncIterator()
+          #expect(try await lines.next() == "boundaries verified")
+          try execution.finishAdmission()
+        }
+        #expect(prepared[0].executionID != prepared[1].executionID)
+        if case .sandbox(let a) = prepared[0].mode,
+          case .sandbox(let b) = prepared[1].mode
+        {
+          #expect(a.homeDirectory == b.homeDirectory)
+          #expect(a.temporaryDirectory != b.temporaryDirectory)
+        } else {
+          #expect(fullAccess)
+          for (execution, process) in zip(prepared, processes) {
+            guard case .fullAccess = execution.mode else {
+              Issue.record("Provider Full access mode was lost")
+              continue
+            }
+            #expect(await process.snapshot().supervisorProcessID == nil)
+          }
+        }
+        try f.runtime.store.transactionWithDatabase { _, ledger in
+          _ = try ledger.setPermission(
+            .notGranted, for: .mcpServer(server.id), principal: clients[0],
+            expectedRevision: ledger.revision)
+        }
+        try await f.runtime.coordinator.reconcile()
+        #expect(await processes[0].snapshot().hasExited)
+        #expect(!(await processes[1].snapshot().hasExited))
+        let latest = try f.runtime.service.view(owner: owner)
+        _ = try f.runtime.service.revokeProvider(
+          approval.identity, owner: owner,
+          expectedProviderRevision: approval.revision, expectedRevision: latest.revision)
+        try await f.runtime.coordinator.reconcile()
+        #expect(await processes[1].snapshot().hasExited)
+      } catch {
+        for process in processes { await process.close() }
+        try? await f.runtime.coordinator.stopExecutions(Set(prepared.map(\.executionID)))
+        throw error
+      }
+      for process in processes { await process.close() }
+      try await f.runtime.coordinator.stopExecutions(Set(prepared.map(\.executionID)))
+    }
+  }
+
+  private func compileProviderProbe(in directory: URL) throws -> URL {
+    let source = directory.appendingPathComponent("provider-probe.c")
+    let binary = directory.appendingPathComponent("provider-probe")
+    try #"""
+    #include <fcntl.h>
+    #include <stdio.h>
+    #include <stdlib.h>
+    #include <string.h>
+    #include <unistd.h>
+    int main(int argc, char **argv) {
+      if (argc != 6) return 1;
+      int full = strcmp(argv[5], "full") == 0;
+      int fd = open("own-write", O_CREAT | O_WRONLY, 0600);
+      if (fd < 0) return 2;
+      close(fd);
+      char path[4096];
+      for (int i = 1; i <= 2; i++) {
+        snprintf(path, sizeof(path), "%s/forbidden-write", argv[i]);
+        fd = open(path, O_CREAT | O_WRONLY, 0600);
+        if ((fd >= 0) != full) return 3;
+        if (fd >= 0) close(fd);
+      }
+      fd = open(argv[3], O_RDONLY);
+      if ((fd >= 0) != full) return 4;
+      if (fd >= 0) close(fd);
+      fd = open(argv[4], O_RDWR);
+      if ((fd >= 0) != full) return 6;
+      if (fd >= 0) { if (write(fd, "unconfined", 10) != 10) return 7; close(fd); }
+      snprintf(path, sizeof(path), "%s/state", getenv("HOME"));
+      fd = open(path, O_CREAT | O_WRONLY, 0600);
+      if (fd < 0) return 5;
+      close(fd);
+      puts("boundaries verified"); fflush(stdout);
+      for (;;) pause();
+    }
+    """#.write(to: source, atomically: true, encoding: .utf8)
+    let compiler = Process()
+    compiler.executableURL = URL(fileURLWithPath: "/usr/bin/cc")
+    compiler.arguments = ["-Wall", "-Werror", source.path, "-o", binary.path]
+    compiler.environment = ["PATH": "/usr/bin:/bin", "TMPDIR": directory.path]
+    try compiler.run()
+    compiler.waitUntilExit()
+    try #require(compiler.terminationStatus == 0)
+    return binary
+  }
+#endif

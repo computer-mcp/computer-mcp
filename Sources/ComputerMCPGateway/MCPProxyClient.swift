@@ -424,19 +424,24 @@ package final class MCPProxyClient: DownstreamMCPClient, @unchecked Sendable {
     -> JSONValue
   {
     let access = try executionAccess(context: context)
-    guard
-      let connection = pool.existingConnection(
-        for: server, continuation: context.continuationTarget, context: context)
-    else {
-      return .object([
-        "server": .string(server.id),
-        "requests": .array([]),
-        "persistent_session": .bool(true),
-      ])
+    let connections = pool.existingConnections(
+      for: server, continuation: context.continuationTarget)
+    var requests: [JSONValue] = []
+    for connection in connections {
+      let value = try runExisting(server: server, connection: connection, context: context) {
+        connection in
+        await connection.activeRequestsJSON(access: access)
+      }
+      requests += value.objectValue?["requests"]?.arrayValue ?? []
     }
-    return try runExisting(server: server, connection: connection, context: context) { connection in
-      await connection.activeRequestsJSON(access: access)
-    }
+    return .object([
+      "server": .string(server.id),
+      "requests": .array(
+        requests.sorted {
+          ($0.objectValue?["request_id"]?.stringValue ?? "")
+            < ($1.objectValue?["request_id"]?.stringValue ?? "")
+        }), "persistent_session": .bool(true),
+    ])
   }
 
   package func closeConnection(server: MCPServerConfig, context: InvocationContext) throws
@@ -463,13 +468,29 @@ package final class MCPProxyClient: DownstreamMCPClient, @unchecked Sendable {
     reason: String?, context: InvocationContext
   ) throws -> JSONValue {
     let access = try executionAccess(context: context)
-    guard
-      let connection = pool.existingConnection(
-        for: server, continuation: context.continuationTarget, context: context)
-    else {
-      throw GatewayToolError.invalidArguments(
-        "Downstream MCP server '\(server.id)' has no active session."
-      )
+    if let target = context.continuationTarget {
+      guard
+        let connection = pool.existingConnection(
+          for: server, continuation: target, context: context)
+      else { throw MCPContinuationTarget.unavailable() }
+      return try runExisting(server: server, connection: connection, context: context) {
+        connection in
+        try await connection.cancelRequest(
+          gatewayRequestID: requestID,
+          reason: reason ?? "Cancelled by computer-mcp caller.", access: access)
+      }
+    }
+    let record = try journal.read(serverID: server.id, requestID: requestID)
+    try requireExecutionAccess(record, operation: .requestCancellation, context: context)
+    let connections = pool.existingConnections(
+      for: server, continuation: context.continuationTarget)
+    let matching = try connections.filter { connection in
+      try runExisting(server: server, connection: connection, context: context) { connection in
+        await connection.ownsRequest(requestID, executionID: record.executionID)
+      }
+    }
+    guard matching.count == 1, let connection = matching.first else {
+      throw PermissionModelError.invalidAuthorization
     }
     return try runExisting(server: server, connection: connection, context: context) { connection in
       try await connection.cancelRequest(
@@ -487,15 +508,18 @@ package final class MCPProxyClient: DownstreamMCPClient, @unchecked Sendable {
   ) throws -> T {
     let connection = try pool.connection(
       for: server, continuation: context.continuationTarget, context: context, discovery: discovery)
+    let operationContext =
+      discovery && connection.preparedExecution != nil
+      ? InvocationContext(executionAuthority: connection.preparedExecution) : context
     try runExisting(
       server: server, connection: connection,
       timeoutMilliseconds: server.startupTimeoutMs ?? 30_000,
-      phase: "startup", context: context
+      phase: "startup", context: operationContext
     ) { connection in
       try await connection.ensureConnected(notifyTools: notifyToolsOnConnect)
     }
     return try runExisting(
-      server: server, connection: connection, context: context, operation: operation)
+      server: server, connection: connection, context: operationContext, operation: operation)
   }
 
   private func runExisting<T: Sendable>(
@@ -725,6 +749,18 @@ private final class MCPConnectionPool: @unchecked Sendable {
     }
   }
 
+  func existingConnections(for server: MCPServerConfig, continuation: MCPContinuationTarget?)
+    -> [MCPProxyConnection]
+  {
+    lock.withLock {
+      guard !stopped else { return [] }
+      if let continuation {
+        return selectedLocked(server: server, target: continuation).map { [$0.connection] } ?? []
+      }
+      return entries.values.filter { $0.configuration == server }.map(\.connection)
+    }
+  }
+
   func existingConnection(
     for server: MCPServerConfig, continuation: MCPContinuationTarget?, context: InvocationContext
   ) -> MCPProxyConnection? {
@@ -738,8 +774,11 @@ private final class MCPConnectionPool: @unchecked Sendable {
       {
         return entries[Key(serverID: server.id, authority: authority)]?.connection
       }
-      let matching = entries.filter { $0.key.authority == nil && $0.value.configuration == server }
-        .map(\.value)
+      let matching = entries.filter {
+        $0.value.configuration == server
+          && ($0.key.authority == nil || $0.key.authority?.delegator == nil)
+      }
+      .map(\.value)
       return matching.count == 1 ? matching.first?.connection : nil
     }
   }
@@ -850,7 +889,7 @@ private actor MCPProxyConnection {
   private var terminationObserver: Task<Void, Never>?
   private var closeTask: Task<Bool, Never>?
   private let predecessor: Task<Bool, Never>?
-  private let preparedExecution: PreparedExecutionContext?
+  nonisolated let preparedExecution: PreparedExecutionContext?
   private let ownsAdmission: Bool
   private var observers: [MCP.ID: Task<Void, Never>] = [:]
   private var reservedRequestIDs: Set<String> = []
@@ -989,9 +1028,13 @@ private actor MCPProxyConnection {
     }
     defer { reservedRequestIDs.remove(gatewayRequestID) }
 
-    let work = try execution.retainWork { [weak self] in
+    let cancel: @Sendable () async -> Void = { [weak self] in
       await self?.cancelRetainedWork(gatewayRequestID: gatewayRequestID)
     }
+    let work =
+      try execution.provider != nil && continuation?.resources.isEmpty == false
+      ? execution.authority.retainContinuation(cancellation: cancel)
+      : execution.retainWork(cancellation: cancel)
     logicalRequestIDs.insert(gatewayRequestID)
     defer {
       logicalRequestIDs.remove(gatewayRequestID)
@@ -1093,9 +1136,13 @@ private actor MCPProxyConnection {
     }
     defer { reservedRequestIDs.remove(gatewayRequestID) }
 
-    let work = try execution.retainWork { [weak self] in
+    let cancel: @Sendable () async -> Void = { [weak self] in
       await self?.cancelRetainedWork(gatewayRequestID: gatewayRequestID)
     }
+    let work =
+      try execution.provider != nil && continuation?.resources.isEmpty == false
+      ? execution.authority.retainContinuation(cancellation: cancel)
+      : execution.retainWork(cancellation: cancel)
     logicalRequestIDs.insert(gatewayRequestID)
     var observing = false
     defer {
@@ -1268,6 +1315,11 @@ private actor MCPProxyConnection {
     ])
   }
 
+  func ownsRequest(_ requestID: String, executionID: UUID?) -> Bool {
+    guard let executionID else { return false }
+    return activeRequests[requestID]?.executionID == executionID
+  }
+
   func activeRequestsJSON(access: any ExecutionAccessChecking) -> JSONValue {
     .object([
       "server": .string(server.id),
@@ -1284,10 +1336,12 @@ private actor MCPProxyConnection {
   func cancelRequest(
     gatewayRequestID: String, reason: String, access: any ExecutionAccessChecking
   ) async throws -> JSONValue {
-    guard let active = activeRequests[gatewayRequestID], let executionID = active.executionID else {
+    guard let active = activeRequests[gatewayRequestID], !active.cancellationRequested,
+      let executionID = active.executionID
+    else {
       throw PermissionModelError.invalidAuthorization
     }
-    _ = try access.accessExecution(executionID, operation: .cancel)
+    _ = try access.accessExecution(executionID, operation: .requestCancellation)
     return try await requestCancellation(gatewayRequestID: gatewayRequestID, reason: reason)
   }
 
@@ -1434,9 +1488,13 @@ private actor MCPProxyConnection {
     let providerLease: ExecutionWorkLease?
     if execution.provider != nil {
       if providerWork != nil {
-        providerLease = try execution.retainWork { [weak self] in
+        let cancel: @Sendable () async -> Void = { [weak self] in
           _ = await self?.disconnect()
         }
+        providerLease =
+          try continuation?.resources.isEmpty == false
+          ? execution.authority.retainContinuation(cancellation: cancel)
+          : execution.retainWork(cancellation: cancel)
       } else {
         if unreportedExecutions[execution.executionID] == nil {
           guard unreportedExecutions.count < MCPProviderWork.maximumResources else {
@@ -1455,7 +1513,8 @@ private actor MCPProxyConnection {
     let providerInvocationID: UUID?
     do {
       providerInvocationID = try providerWork?.beginInvocation(
-        tool: name, hostContext: workContext, executionLease: providerLease)
+        tool: name, hostContext: workContext, executionLease: providerLease,
+        execution: execution.provider == nil ? nil : execution)
     } catch {
       try? providerLease?.finish()
       throw error
@@ -1708,7 +1767,9 @@ private actor MCPProxyConnection {
         connected = true
         lastError = nil
         appendEvent(kind: "connection.connected")
-        if notifyTools { toolsChanged() }
+        // A delegated connection shares the reviewed discovery catalog. Opening
+        // its separate kill domain does not change the provider's tool schema.
+        if notifyTools && preparedExecution?.provider == nil { toolsChanged() }
       }
     } catch {
       connected = false

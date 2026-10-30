@@ -11,6 +11,7 @@ import Testing
 @testable import ComputerMCPConfiguration
 @testable import ComputerMCPControlPlane
 @testable import ComputerMCPCore
+@testable import ComputerMCPGateway
 @testable import ComputerMCPPlatformDarwin
 @testable import ComputerMCPPlugins
 @testable import ComputerMCPProcess
@@ -26,9 +27,12 @@ struct CombinedPluginWorkflowTests {
     let tree = try String(
       contentsOf: Self.repository.appendingPathComponent("Examples/printf-cli-tree.json"),
       encoding: .utf8)
+    let resolvedServer = files.root.appendingPathComponent("resolved-server")
+    try writePythonTestExecutable(Self.server, to: resolvedServer)
+    let serverProgram = try String(contentsOf: resolvedServer, encoding: .utf8)
     let entries: [ArchiveFixture.Entry] = [
       .init(name: PluginManifest.filename, content: Self.manifest),
-      .init(name: "bin/server", content: Self.server, mode: 0o700),
+      .init(name: "bin/server", content: serverProgram, mode: 0o700),
       .init(name: "tree.json", content: tree),
       .init(name: "skills/combined-guide/SKILL.md", content: Self.guide),
       .init(
@@ -43,8 +47,8 @@ struct CombinedPluginWorkflowTests {
     let digest = Self.digest(try Data(contentsOf: archive))
     let worker = try nativeGatewayTestExecutable()
     let serverPrograms = [
-      Self.server,
-      Self.server.replacingOccurrences(of: "combined MCP reply", with: "updated MCP reply"),
+      serverProgram,
+      serverProgram.replacingOccurrences(of: "combined MCP reply", with: "updated MCP reply"),
     ]
     let fixture = try PluginControlFixture(
       worker: worker.path,
@@ -60,12 +64,18 @@ struct CombinedPluginWorkflowTests {
     try Data(Self.guide.replacingOccurrences(of: "combined-guide", with: "manual-guide").utf8)
       .write(to: manualSkills.appendingPathComponent("SKILL.md"))
     let vendor = fixture.root.appendingPathComponent("external-server")
-    try Data(Self.server.utf8).write(to: vendor)
+    try Data(serverProgram.utf8).write(to: vendor)
     try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: vendor.path)
     let manualTree = fixture.root.appendingPathComponent("manual-tree.json")
     try Data(tree.utf8).write(to: manualTree)
-    let starts = fixture.root.appendingPathComponent("plugin-pids")
-    var configuration = GatewayConfiguration(projectDirectory: fixture.root)
+    let project = fixture.root.appendingPathComponent("project")
+    try FileManager.default.createDirectory(at: project, withIntermediateDirectories: false)
+    let providerHome = URL(
+      fileURLWithPath: try fixture.database.prepareProviderContainer(.package("combined")).sandbox
+        .home.value)
+    _ = try fixture.database.prepareProviderContainer(.localServer("manual"))
+    let starts = providerHome.appendingPathComponent("plugin-pids")
+    var configuration = GatewayConfiguration(projectDirectory: project)
     configuration.policy.shellEnabled = true
     configuration.profiles = [
       .init(
@@ -97,7 +107,7 @@ struct CombinedPluginWorkflowTests {
     _ = try await fixture.host.activateManifest(
       configuration.exportedTOML(), expectedDigest: try? await fixture.host.configurationDigest())
     try fixture.database.saveProject(
-      .init(id: "fixture", displayName: "Fixture", rootPath: fixture.root.path))
+      .init(id: "fixture", displayName: "Fixture", rootPath: project.path))
     let grant = try #require(fixture.database.profiles().first { $0.id == .chatGPTOperate })
     let initialManifest = try Data(contentsOf: fixture.directories.manifest)
     let initialVendor = try Data(contentsOf: vendor)
@@ -129,6 +139,8 @@ struct CombinedPluginWorkflowTests {
         dependencyExecutables: ["printf": "/usr/bin/printf"])
       let settingsURL = fixture.root.appendingPathComponent("settings.json")
       try JSONEncoder().encode(settings).write(to: settingsURL)
+      try await Self.approve(fixture, identity: .package("combined"))
+      snapshot = try await fixture.host.pluginSnapshot()
       snapshot = try await Self.run(
         fixture, ["configure", "combined", "--settings-file", settingsURL.path],
         revision: snapshot.state.revision)
@@ -136,17 +148,19 @@ struct CombinedPluginWorkflowTests {
       try await fixture.gateway.start(profile: .chatGPTOperate)
       let active = try await Self.connect(fixture)
       client = active
-      let projectedName = try await Self.checkActive(active)
+      let projectedName = try await Self.checkActive(active, fixture: fixture)
+      snapshot = try await fixture.host.pluginSnapshot()
       snapshot = try await Self.run(
         fixture, ["disable", "combined"], revision: snapshot.state.revision)
-      try await Self.checkIndependent(active, removedCLI: projectedName)
+      try await Self.checkIndependent(active, fixture: fixture, removedCLI: projectedName)
       snapshot = try await Self.run(
         fixture, ["enable", "combined"], revision: snapshot.state.revision)
-      #expect(try await Self.checkActive(active) == projectedName)
+      #expect(try await Self.checkActive(active, fixture: fixture) == projectedName)
       await active.disconnect()
       client = nil
       await fixture.gateway.stop()
-      try Self.checkExited(starts, count: 2)
+      snapshot = try await fixture.host.pluginSnapshot()
+      try Self.checkExited(starts, count: 4)
       var rejectedEntries = entries
       rejectedEntries[0].content =
         Self.manifest
@@ -163,16 +177,18 @@ struct CombinedPluginWorkflowTests {
       try await fixture.gateway.start(profile: .chatGPTOperate)
       let retained = try await Self.connect(fixture)
       client = retained
-      #expect(try await Self.checkActive(retained) == projectedName)
+      #expect(try await Self.checkActive(retained, fixture: fixture) == projectedName)
       await retained.disconnect()
       client = nil
       await fixture.gateway.stop()
-      try Self.checkExited(starts, count: 3)
+      try Self.checkExited(starts, count: 6)
 
+      snapshot = try await fixture.host.pluginSnapshot()
       var updatedEntries = entries
       updatedEntries[0].content = Self.manifest
         .replacingOccurrences(of: "version = '1.0.0'", with: "version = '1.1.0'")
-      updatedEntries[1].content = Self.server
+      updatedEntries[1].content =
+        serverProgram
         .replacingOccurrences(of: "combined MCP reply", with: "updated MCP reply")
       let updateArchive = try files.archive(updatedEntries, format: "zip")
       snapshot = try await Self.run(
@@ -189,11 +205,14 @@ struct CombinedPluginWorkflowTests {
       try await fixture.gateway.start(profile: .chatGPTOperate)
       let updated = try await Self.connect(fixture)
       client = updated
-      #expect(try await Self.checkActive(updated, reply: "updated MCP reply") == projectedName)
+      #expect(
+        try await Self.checkActive(updated, fixture: fixture, reply: "updated MCP reply")
+          == projectedName)
       await updated.disconnect()
       client = nil
       await fixture.gateway.stop()
-      try Self.checkExited(starts, count: 4)
+      try Self.checkExited(starts, count: 8)
+      snapshot = try await fixture.host.pluginSnapshot()
 
       let selection = installation.map { ["--installation-id", $0.id] } ?? ["--bundled"]
       snapshot = try await Self.run(
@@ -202,22 +221,24 @@ struct CombinedPluginWorkflowTests {
       try await fixture.gateway.start(profile: .chatGPTOperate)
       let restored = try await Self.connect(fixture)
       client = restored
-      #expect(try await Self.checkActive(restored) == projectedName)
+      #expect(try await Self.checkActive(restored, fixture: fixture) == projectedName)
       await restored.disconnect()
       client = nil
       await fixture.gateway.stop()
-      try Self.checkExited(starts, count: 5)
+      try Self.checkExited(starts, count: 10)
+      snapshot = try await fixture.host.pluginSnapshot()
       snapshot = try await Self.run(
         fixture, ["uninstall", updateID], revision: snapshot.state.revision)
       #expect(!FileManager.default.fileExists(atPath: updateRoot.path))
       #expect(snapshot.contributions.count == 3)
+      snapshot = try await fixture.host.pluginSnapshot()
       snapshot = try await Self.run(
         fixture, ["disable", "combined"], revision: snapshot.state.revision)
       #expect(snapshot.contributions.isEmpty)
       try await fixture.gateway.start(profile: .chatGPTOperate)
       let disabled = try await Self.connect(fixture)
       client = disabled
-      try await Self.checkIndependent(disabled, removedCLI: projectedName)
+      try await Self.checkIndependent(disabled, fixture: fixture, removedCLI: projectedName)
       await disabled.disconnect()
       client = nil
       await fixture.gateway.stop()
@@ -236,11 +257,11 @@ struct CombinedPluginWorkflowTests {
       try await fixture.gateway.start(profile: .chatGPTOperate)
       let removed = try await Self.connect(fixture)
       client = removed
-      try await Self.checkIndependent(removed, removedCLI: projectedName)
+      try await Self.checkIndependent(removed, fixture: fixture, removedCLI: projectedName)
       await removed.disconnect()
       client = nil
       await fixture.gateway.stop()
-      try Self.checkExited(starts, count: 5)
+      try Self.checkExited(starts, count: 10)
       #expect(try Data(contentsOf: fixture.directories.manifest) == initialManifest)
       #expect(try Data(contentsOf: vendor) == initialVendor)
       #expect(try Self.digest(Data(contentsOf: archive)) == digest)
@@ -264,9 +285,15 @@ struct CombinedPluginWorkflowTests {
     }
   }
 
-  private static func checkActive(_ client: Client, reply: String = "combined MCP reply")
+  private static func checkActive(
+    _ client: Client, fixture: PluginControlFixture, reply: String = "combined MCP reply"
+  )
     async throws -> String
   {
+    let projects = try await call(client, "project.list")
+    try #require(projects.isError != true, "\(projects)")
+    try await approve(fixture, identity: .package("combined"))
+    try await approve(fixture, identity: .localServer("manual"))
     try await discover(client, server: "combined-mcp")
     try await discover(client, server: "manual")
     let tools = try await allTools(client)
@@ -274,12 +301,12 @@ struct CombinedPluginWorkflowTests {
     let projected = try #require(
       tools.first { $0.title == "combined-cli" }, "Catalog: \(tools.map(\.name))")
     let mcp = try await call(client, "combined.inspect")
-    #expect(mcp.isError != true)
+    #expect(mcp.isError != true, "\(mcp)")
     #expect(
       try JSONValue.encoded(mcp.content).arrayValue?.first?.objectValue?["text"] == .string(reply))
     let cli = try await call(
       client, projected.name, ["values": .array([.string("含 空格"), .string("-1"), .string("")])])
-    #expect(cli.isError != true)
+    #expect(cli.isError != true, "\(cli)")
     #expect(
       cli.structuredContent?.objectValue?["result"]?.objectValue?["stdout"]?.objectValue?["data"]
         == .string("含 空格\n-1\n\n"))
@@ -294,7 +321,36 @@ struct CombinedPluginWorkflowTests {
     return projected.name
   }
 
-  private static func checkIndependent(_ client: Client, removedCLI: String) async throws {
+  private static func approve(_ fixture: PluginControlFixture, identity: PluginIdentity)
+    async throws
+  {
+    let review = try await fixture.host.providerReview(identity)
+    let view = try await fixture.host.permissionRequests()
+    var permissions = Permissions.newPrincipal
+    try permissions.set(.granted(.write), for: .project("fixture"))
+    if let previous = view.providers.first(where: { $0.identity == identity }),
+      previous.enabled, previous.sourceDigest == review.sourceDigest,
+      previous.permissions.entries == permissions.entries, let consent = previous.fullAccessConsent
+    {
+      let runtime = try fixture.database.permissionRuntime(platform: fixture.host.platform)
+      if try runtime.store.readWithDatabase({ _, ledger in
+        ledger.isConsentValid(consent, for: .plugin(identity))
+      }) {
+        return
+      }
+    }
+    _ = try await fixture.host.approveProvider(
+      review, permissions: permissions, fullAccess: true,
+      expectedProviderRevision: view.providers.first { $0.identity == identity }?.revision,
+      expectedRevision: view.revision, expectedEpoch: #require(view.epoch))
+  }
+
+  private static func checkIndependent(
+    _ client: Client, fixture: PluginControlFixture, removedCLI: String
+  ) async throws {
+    let projects = try await call(client, "project.list")
+    try #require(projects.isError != true, "\(projects)")
+    try await approve(fixture, identity: .localServer("manual"))
     try await discover(client, server: "manual")
     let tools = try await allTools(client)
     #expect(!tools.contains { $0.name == "combined.inspect" || $0.name == removedCLI })
@@ -382,7 +438,7 @@ struct CombinedPluginWorkflowTests {
     async throws -> PluginHostSnapshot
   {
     let result = try await fixture.cli(arguments + ["--expected-revision", String(revision)])
-    try #require(result.exitCode == 0, "\(result.stdout)\n\(result.stderr)")
+    try #require(result.exitCode == 0, "\(arguments): \(result.stdout)\n\(result.stderr)")
     return try CanonicalJSONCoding.decoder().decode(
       PluginHostSnapshot.self, from: Data(result.stdout.utf8))
   }
@@ -401,6 +457,13 @@ struct CombinedPluginWorkflowTests {
     name = 'Combined integration fixture'
     version = '1.0.0'
     plugin_api = 1
+    [sandbox]
+    full_access = true
+    purpose = 'Run the fixture native commands'
+    [[permissions]]
+    id = 'project'
+    access = 'write'
+    purpose = 'Run the fixture commands'
     [[dependencies]]
     id = 'printf'
     commands = ['printf']
@@ -421,7 +484,7 @@ struct CombinedPluginWorkflowTests {
     #!/usr/bin/python3
     import json, os, sys
     if len(sys.argv) > 1:
-        with open(sys.argv[1], "a") as f: f.write(str(os.getpid()) + "\n")
+        with open(os.path.join(os.environ["HOME"], "plugin-pids"), "a") as f: f.write(str(os.getpid()) + "\n")
     for line in sys.stdin:
         req = json.loads(line)
         if "id" not in req: continue
@@ -468,8 +531,14 @@ private struct CombinedWorkflowExecutionPlatform: ExecutionPlatform {
         command, sandbox: sandbox, method: method, input: input, output: output, error: error,
         bindOwnership: bindOwnership)
     }
-    guard sandbox == nil, case .fullAccess = prepared.mode,
-      canonical(command.directory.value) == root.resolvingSymlinksInPath().path,
+    if sandbox != nil {
+      return try await base.start(
+        command, sandbox: sandbox, method: method, input: input, output: output, error: error,
+        bindOwnership: bindOwnership)
+    }
+    guard case .fullAccess = prepared.mode,
+      canonical(command.directory.value)
+        == root.appendingPathComponent("project").resolvingSymlinksInPath().path,
       command.inheritedDescriptors.isEmpty
     else { throw unavailable(command) }
 
@@ -481,7 +550,11 @@ private struct CombinedWorkflowExecutionPlatform: ExecutionPlatform {
           ["--", "%s\n", "retained"],
         ].contains(command.arguments)
       else { throw unavailable(command) }
-      controlled = command
+      controlled = ExecutionCommand(
+        executable: command.executable, arguments: Array(command.arguments.dropFirst()),
+        directory: command.directory, environment: command.environment,
+        directoryDescriptor: command.directoryDescriptor,
+        inheritedDescriptors: command.inheritedDescriptors)
     } else {
       let script: String
       let arguments: [String]
@@ -499,7 +572,7 @@ private struct CombinedWorkflowExecutionPlatform: ExecutionPlatform {
         }),
         let contents = try? String(contentsOfFile: path, encoding: .utf8),
         scripts.contains(contents),
-        arguments.isEmpty || arguments == [root.appendingPathComponent("plugin-pids").path]
+        arguments.isEmpty || arguments.count == 1 && arguments[0].hasSuffix("/plugin-pids")
       else { throw unavailable(command) }
       controlled = ExecutionCommand(
         executable: try SandboxPath("/usr/bin/python3"), arguments: ["-I", path] + arguments,
@@ -541,6 +614,7 @@ private struct CombinedWorkflowExecutionPlatform: ExecutionPlatform {
   }
 
   func recover(_ state: ExecutionRecoveryState) async throws -> any ExecutionOwnership {
+    if state.sandboxed { return try await base.recover(state) }
     guard state.backend == CombinedWorkflowOwnership.backend, !state.sandboxed,
       state.root.processID > 0, state.root.identity > 0
     else {
@@ -553,6 +627,7 @@ private struct CombinedWorkflowExecutionPlatform: ExecutionPlatform {
   func interrupt(_ members: [ExecutionMember]) async throws { try await base.interrupt(members) }
 
   func releaseRecovery(_ state: ExecutionRecoveryState) throws {
+    if state.sandboxed { return try base.releaseRecovery(state) }
     guard state.backend == CombinedWorkflowOwnership.backend, !state.sandboxed else {
       throw ExecutionEnvironmentError.unavailable("Invalid combined workflow fixture recovery")
     }

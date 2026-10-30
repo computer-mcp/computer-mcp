@@ -287,6 +287,7 @@ package final class GatewayDatabase: OAuthStore, @unchecked Sendable {
     authorizing authority: HostCallAuthoritySnapshot? = nil,
     managementAuthorization: GatewayManagementAuthorization? = nil,
     requiresProfilePolicy: Bool = false,
+    localProviders: [MCPServerConfig]? = nil,
     _ body: (Database) throws -> Result
   ) throws -> Result {
     let store = try configuredPermissionStore()
@@ -321,15 +322,22 @@ package final class GatewayDatabase: OAuthStore, @unchecked Sendable {
         _ = try service.refresh(database, ledger: &ledger, snapshot: policies, now: Date())
       }
       if let authority {
+        try Task.checkCancellation()
+        try GatewayHostToolScope.lifetime?.check()
         guard let id = authority.authorizationID else {
           throw PermissionModelError.invalidAuthorization
         }
-        do { _ = try ledger.invocationAccess(id) } catch {
-          guard let proof = ledger.authorizations[id], let executionID = proof.executionID,
-            ledger.executionAccess(
-              executionID, principal: proof.invocation.principal,
-              operation: .readResult, now: Date()) == .allowed
-          else { throw error }
+        for id in authority.providerAuthorizationIDs.union([id]) {
+          do { _ = try ledger.invocationAccess(id) } catch {
+            guard let proof = ledger.authorizations[id], let executionID = proof.executionID,
+              let execution = ledger.executions[executionID], execution.isRunning,
+              execution.interruptedAt == nil,
+              !ledger.pendingExecutionTerminations.contains(executionID),
+              ledger.executionAccess(
+                executionID, principal: execution.owner,
+                operation: .readResult, now: Date()) == .allowed
+            else { throw error }
+          }
         }
       }
       do {
@@ -342,6 +350,10 @@ package final class GatewayDatabase: OAuthStore, @unchecked Sendable {
       let value = try body(database)
       try GatewayPermissionService.reconcileProviderSources(
         database: database, ledger: &ledger, previous: beforeConfiguration.plugins)
+      if let localProviders {
+        try GatewayPermissionService.reconcileLocalProviderSources(
+          localProviders, database: database, ledger: &ledger)
+      }
       try Self.reconcileDerivedSources(in: database)
       for row in try ProfileRecord.fetchAll(database) {
         let previous = before.first { $0.id == row.id }
@@ -1570,7 +1582,9 @@ package final class GatewayDatabase: OAuthStore, @unchecked Sendable {
       plugins: expected.plugins, profileSource: profileSource,
       derivedProjects: expected.derivedProjects)
     try replaceManifest(proposed)
-    let committed = try permissionTransaction(requiresProfilePolicy: sourceChanged) { database in
+    let committed = try permissionTransaction(
+      requiresProfilePolicy: sourceChanged, localProviders: resolution.localProviders
+    ) { database in
       guard try Self.configurationState(in: database) == expected else {
         throw GatewayDatabaseError.configurationChanged
       }

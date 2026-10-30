@@ -27,6 +27,347 @@ import Testing
 
 @Suite(.nativeIntegration, .timeLimit(.minutes(1)))
 struct MCPHostSessionTests {
+  @Test(arguments: [
+    "external.operation", "alias.external", "mcp.tools.call", "cli.exec", "projected-cli",
+    "forwarded-cli",
+  ])
+  func providerRoutesAreRefusedBeforeAdmission(route: String) async throws {
+    let f = try HostFixture(providerRoutes: true)
+    defer { f.remove() }
+    do {
+      let cli = try #require(
+        f.runtime.listTools(context: .empty).first {
+          $0.meta?.objectValue?["cli"]?.objectValue?["registration"] == .string("callback-cli")
+        })
+      var name = route
+      var arguments: [String: JSONValue] = [:]
+      switch route {
+      case "mcp.tools.call":
+        arguments = ["server": .string("external"), "tool": .string("operation")]
+      case "cli.exec": arguments = ["id": .string("callback-cli"), "args": .array([])]
+      case "projected-cli": name = cli.name
+      case "forwarded-cli":
+        name = "policy.probe"
+        arguments = ["capability_id": .string(cli.name), "arguments": .object([:])]
+      default: break
+      }
+      let before = try f.runtime.permissionRuntime.store.readWithDatabase { _, ledger in
+        (Set(ledger.requests.keys), Set(ledger.authorizations.keys))
+      }
+      let result = try await f.call(name, arguments)
+      #expect(result.objectValue?["isError"] == .bool(true))
+      #expect(String(describing: result).contains("policy.host_recursion_denied"), "\(result)")
+      let after = try f.runtime.permissionRuntime.store.readWithDatabase { _, ledger in
+        (Set(ledger.requests.keys), Set(ledger.authorizations.keys))
+      }
+      #expect(before.0 == after.0 && before.1 == after.1)
+      #expect(f.downstream.invocations == 0)
+      await f.runtime.shutdown()
+    } catch {
+      await f.runtime.shutdown()
+      throw error
+    }
+  }
+
+  @Test func callbacksBorrowOnlyTheAdmittingExecutionsOneTimeGrant() async throws {
+    let f = try HostFixture(fileBacked: true, missingProject: true)
+    defer { f.remove() }
+    _ = try f.runtime.makeControlSession()
+    let session = try #require(f.context.controlSession as? GatewayControlSession)
+    _ = try session.approveFullAccess(expectedRevision: session.revision)
+    let runtime = f.runtime.permissionRuntime
+    let review = try fixtureApproveLocalProvider(
+      f.registration, database: f.database, runtime: runtime,
+      permissions: fixturePermissions([.project("first"): .granted(.read)]), fullAccess: true)
+    let owner = try GatewayPermissionOwner(
+      context: .init(
+        caller: .localApp,
+        profileID: .localAdmin, trustedPrincipalID: "callback-owner"), validate: {})
+    let requirements = try InvocationRequirements(
+      actions: [
+        .init(requirement: .init(.mcpServer("plugin"), .all)),
+        .init(requirement: .init(.project("first"), .read)),
+      ], mode: .fullAccess(.standing), sandboxProjectID: "first")
+    func admit(_ retries: Set<UUID> = []) throws -> AuthorizationDecision {
+      try runtime.service.admit(
+        subject: GatewayPermissionSubject(context: f.context),
+        tool: "provider.operation", projectID: "first", argumentsDigest: "once-parent",
+        requirements: requirements, retryIDs: retries, connectionID: session.id)
+    }
+    guard case .requests(let requests) = try admit() else {
+      Issue.record("Parent did not require Project read")
+      await f.runtime.shutdown()
+      return
+    }
+    for request in requests {
+      _ = try runtime.service.answerRequest(
+        request.id, answer: .onlyThisTime, owner: owner,
+        expectedRevision: runtime.service.view(owner: owner).revision)
+    }
+    guard case .allowed(let proof) = try admit(Set(requests.map(\.id))) else {
+      Issue.record("Explicit parent retry failed")
+      await f.runtime.shutdown()
+      return
+    }
+    let parent = try await runtime.prepareProvider(
+      review: review, registrationID: "plugin",
+      authorization: proof, directory: f.first, connectionID: session.id)
+    do {
+      for index in 0..<2 {
+        let result = try await f.runtime.callHostTool(
+          name: "file.read", arguments: ["path": .string("value.txt")],
+          projectID: "first", origin: "plugin", requestID: "borrow-\(index)",
+          providerExecution: parent)
+        #expect(result.objectValue?["isError"] != .bool(true), "\(result)")
+        #expect(f.payload(result)["content"] == .string("first"))
+      }
+      guard case .requests = try admit() else {
+        Issue.record("Consumed grant admitted a second execution")
+        throw PermissionModelError.invalidAuthorization
+      }
+      try await runtime.coordinator.stopExecutions([parent.executionID])
+      let refused = try await f.runtime.callHostTool(
+        name: "file.read", arguments: ["path": .string("value.txt")],
+        projectID: "first", origin: "plugin", requestID: "retired", providerExecution: parent)
+      #expect(refused.objectValue?["isError"] == .bool(true))
+      await f.runtime.shutdown()
+    } catch {
+      try? await runtime.coordinator.stopExecutions([parent.executionID])
+      await f.runtime.shutdown()
+      throw error
+    }
+  }
+
+  @Test(arguments: [
+    "delegator", "provider", "disable", "connection", "consent", "revision", "update", "uninstall",
+    "idle", "exit", "channel", "inflight", "standing-disconnect",
+  ])
+  func callbackCreatedProcessTracksAuthorityInvalidation(cause: String) async throws {
+    let f = try HostFixture(fileBacked: true)
+    defer { f.remove() }
+    try await f.runtime.permissionRuntime.ready()
+    _ = try f.runtime.makeControlSession()
+    let session = try #require(f.context.controlSession as? GatewayControlSession)
+    _ = try session.approveFullAccess(
+      lifetime: cause == "standing-disconnect" ? .alwaysAllowClient : .thisSession,
+      expectedRevision: session.revision)
+    let runtime = f.runtime.permissionRuntime
+    let review = try fixtureApproveLocalProvider(
+      f.registration, database: f.database, runtime: runtime,
+      permissions: fixturePermissions([.project("first"): .granted(.write)]), fullAccess: true)
+    let decision = try runtime.service.admit(
+      subject: GatewayPermissionSubject(context: f.context),
+      tool: "provider.operation", projectID: "first", argumentsDigest: "background-parent",
+      requirements: .init(
+        actions: [
+          .init(requirement: .init(.mcpServer("plugin"), .all)),
+          .init(requirement: .init(.project("first"), .write)),
+        ], mode: .fullAccess(.standing), sandboxProjectID: "first"),
+      connectionID: session.id)
+    guard case .allowed(let proof) = decision else {
+      throw PermissionModelError.invalidAuthorization
+    }
+    let parent = try await runtime.prepareProvider(
+      review: review, registrationID: "plugin",
+      authorization: proof, directory: f.first, connectionID: session.id)
+    let channel = try f.session(execution: parent)
+    let peer = MCP.Client(name: "callback-worker", version: "1")
+    let transport = try MCPInheritedSocketTransport(
+      takingOwnershipOf: #require(channel.providerChannel).takeEndpoint())
+    do {
+      _ = try await peer.connect(transport: transport)
+      let request: RequestContext<MCP.CallTool.Result> = try await peer.callTool(
+        name: "process.spawn",
+        arguments: ["id": .string("callback-cat"), "argv": .array([])])
+      let response = try await request.value
+      let result = try JSONValue.sdkToolResult(
+        content: response.content, structuredContent: response.structuredContent,
+        isError: response.isError, meta: response._meta)
+      try #require(result.objectValue?["isError"] != .bool(true), "\(result)")
+      let processID = try #require(f.payload(result)["process_id"]?.stringValue)
+      let child = try runtime.store.readWithDatabase { _, ledger in
+        try #require(
+          ledger.executions.values.first { execution in
+            execution.id != parent.executionID
+              && execution.authorizationIDs.contains { id in
+                ledger.authorizations[id]?.basis.contains(.execution(parent.executionID)) == true
+              }
+          })
+      }
+      var continuationContext = InvocationContext.empty
+      switch cause {
+      case "channel": await channel.close()
+      case "inflight":
+        let pending = Task {
+          let request: RequestContext<MCP.CallTool.Result> = try await peer.callTool(
+            name: "cli.exec",
+            arguments: ["id": .string("callback-sleep"), "args": .array([.string("30")])])
+          return try await request.value
+        }
+        let deadline = ContinuousClock.now + .seconds(5)
+        var synchronous: UUID?
+        while synchronous == nil, ContinuousClock.now < deadline {
+          synchronous = try runtime.store.readWithDatabase { _, ledger in
+            ledger.executions.values.first { execution in
+              execution.id != child.id && execution.id != parent.executionID && execution.isRunning
+                && execution.authorizationIDs.contains {
+                  ledger.authorizations[$0]?.basis.contains(.execution(parent.executionID)) == true
+                }
+            }?.id
+          }
+          if synchronous == nil { try await Task.sleep(for: .milliseconds(10)) }
+        }
+        let synchronousID = try #require(synchronous)
+        await channel.close()
+        await peer.disconnect()
+        do { #expect(try await pending.value.isError == true) } catch {}
+        try await runtime.coordinator.reconcile()
+        #expect(
+          try runtime.store.readWithDatabase { _, ledger in
+            ledger.executions[synchronousID]?.revoked == true
+          })
+      case "update", "uninstall":
+        var changed = f.registration
+        changed.args = ["updated"]
+        try f.database.permissionTransaction(localProviders: cause == "update" ? [changed] : []) {
+          _ in
+        }
+      case "idle": try await runtime.coordinator.stopExecutions([parent.executionID])
+      case "exit": try parent.finishAdmission()
+      case "standing-disconnect":
+        session.end()
+        continuationContext = .init(session: try f.runtime.makeControlSession())
+      case "connection": session.end()
+      case "consent": _ = try session.approveFullAccess(expectedRevision: session.revision)
+      case "disable":
+        let owner = try GatewayPermissionOwner(
+          context: .init(
+            caller: .localApp,
+            profileID: .localAdmin, trustedPrincipalID: "callback-owner"), validate: {})
+        let view = try runtime.service.view(owner: owner)
+        let approval = try #require(view.providers.first { $0.identity == .localServer("plugin") })
+        _ = try runtime.service.revokeProvider(
+          approval.identity, owner: owner,
+          expectedProviderRevision: approval.revision, expectedRevision: view.revision)
+      default:
+        try runtime.store.transactionWithDatabase { _, ledger in
+          if cause == "revision" {
+            var environment = ledger.environment
+            environment.paths!.pathRules.insert(
+              .init(root: try .init(f.first.appendingPathComponent("secret").path), kind: .denied))
+            try ledger.reconcile(environment: environment, expectedRevision: ledger.revision)
+          } else {
+            let principal: Principal =
+              cause == "provider" ? .plugin(.localServer("plugin")) : proof.invocation.principal
+            let permission: Permission =
+              cause == "provider" ? .project("first") : .mcpServer("plugin")
+            try ledger.setPermission(
+              .notGranted, for: permission, principal: principal, expectedRevision: ledger.revision)
+          }
+        }
+      }
+      try await runtime.coordinator.reconcile()
+      let survives = ["idle", "exit", "channel", "inflight", "standing-disconnect"].contains(cause)
+      let state = try runtime.store.readWithDatabase { _, ledger in
+        try #require(ledger.executions[child.id])
+      }
+      #expect(state.isRunning == survives)
+      #expect(state.revoked == !survives)
+      if survives {
+        let write = try await f.runtime.callToolForMCPAsync(
+          name: "process.write",
+          arguments: .object([
+            "project_id": .string("first"), "process_id": .string(processID),
+            "text": .string("still-running"),
+          ]), context: continuationContext)
+        #expect(write.objectValue?["isError"] != .bool(true), "\(write)")
+        #expect(f.payload(write)["bytes_written"] == .integer(13))
+      }
+      await peer.disconnect()
+      await channel.close()
+      await f.runtime.shutdown()
+    } catch {
+      await peer.disconnect()
+      await channel.close()
+      await f.runtime.shutdown()
+      throw error
+    }
+  }
+
+  @Test(arguments: [false, true])
+  func verifiedProviderCallbacksRequestTheMissingAuthorityAndRetry(missingProvider: Bool)
+    async throws
+  {
+    let f = try HostFixture(fileBacked: true, missingProject: !missingProvider)
+    defer { f.remove() }
+    _ = try f.runtime.makeControlSession()
+    if let session = f.context.controlSession as? GatewayControlSession {
+      _ = try session.approveFullAccess(expectedRevision: session.revision)
+    }
+    let runtime = f.runtime.permissionRuntime
+    let owner = try GatewayPermissionOwner(
+      context: .init(
+        caller: .localApp, profileID: .localAdmin, trustedPrincipalID: "callback-owner"),
+      validate: {})
+    let review = try fixtureApproveLocalProvider(
+      f.registration, database: f.database, runtime: runtime,
+      permissions: fixturePermissions([
+        .project("first"): missingProvider ? .notGranted : .granted(.read)
+      ]), fullAccess: true)
+    let decision = try runtime.service.admit(
+      subject: GatewayPermissionSubject(context: f.context), tool: "provider.operation",
+      projectID: "first", argumentsDigest: "callback-parent",
+      requirements: .init(
+        actions: [.init(requirement: .init(.mcpServer("plugin"), .all))],
+        mode: .fullAccess(.standing), sandboxProjectID: "first"),
+      connectionID: f.context.controlSession?.id)
+    guard case .allowed(let caller) = decision else {
+      Issue.record("Parent admission failed: \(decision)")
+      await f.runtime.shutdown()
+      return
+    }
+    let execution = try await runtime.prepareProvider(
+      review: review, registrationID: "plugin", authorization: caller,
+      directory: f.first, connectionID: f.context.controlSession?.id)
+    do {
+      let denied = try await f.runtime.callHostTool(
+        name: "file.read", arguments: ["path": .string("value.txt")], projectID: "first",
+        origin: "plugin", requestID: "callback-missing", providerExecution: execution)
+      #expect(String(describing: denied).contains("permission.required"), "\(denied)")
+      let pending = try runtime.store.readWithDatabase { _, ledger in
+        ledger.requests.values.filter { $0.status == .pending }
+      }
+      try #require(!pending.isEmpty)
+      for request in pending {
+        #expect(
+          request.invocation.principal
+            == (missingProvider ? .plugin(.localServer("plugin")) : caller.invocation.principal))
+        _ = try runtime.service.answerRequest(
+          request.id, answer: .onlyThisTime, owner: owner,
+          expectedRevision: runtime.service.view(owner: owner).revision)
+      }
+      let retried = try await f.runtime.callHostTool(
+        name: "file.read",
+        arguments: [
+          "path": .string("value.txt"),
+          GatewayPermissionRetryInput.field: .array(pending.map { .string($0.id.uuidString) }),
+        ], projectID: "first", origin: "plugin", requestID: "callback-retry",
+        providerExecution: execution)
+      #expect(retried.objectValue?["isError"] != .bool(true), "\(retried)")
+      #expect(f.payload(retried)["content"] == .string("first"))
+      try await runtime.coordinator.stopExecutions([execution.executionID])
+      let retired = try await f.runtime.callHostTool(
+        name: "file.read", arguments: ["path": .string("value.txt")], projectID: "first",
+        origin: "plugin", requestID: "callback-retired", providerExecution: execution)
+      #expect(retired.objectValue?["isError"] == .bool(true))
+      await f.runtime.shutdown()
+    } catch {
+      try? await runtime.coordinator.stopExecutions([execution.executionID])
+      await f.runtime.shutdown()
+      throw error
+    }
+  }
+
   @Test(arguments: [false, true])
   func manifestProjectsBecomeDurableBeforeHostCallbacks(fileBacked: Bool)
     async throws
@@ -311,8 +652,7 @@ struct MCPHostSessionTests {
   }
 
   @Test
-  func inheritedDescriptorReachesOnlyTheOwnedCommandAndParentCopyCanCloseImmediately() async throws
-  {
+  func providerExecutionRefusesGenericInheritedDescriptors() async throws {
     let pair = try MCPInheritedSocketTransport.makePair()
     let transport = try MCPInheritedSocketTransport(takingOwnershipOf: pair.0)
     let source =
@@ -328,30 +668,19 @@ struct MCPHostSessionTests {
     let authority = try ProxyExecutionFixture(server: command, root: root)
     defer { try? authority.close() }
     let execution = try #require(try authority.context.executionAuthority)
-    let process = try InvocationExecution.$current.withValue(execution) {
-      try ManagedLineProcess(
-        launcher: authority.launcher,
-        configuration: .init(
-          executable: "/usr/bin/python3", arguments: [script.path], environment: [:],
-          workingDirectory: root, inheritedDescriptors: [3: pair.1]))
+    do {
+      try InvocationExecution.$current.withValue(execution) {
+        try ManagedLineProcess(
+          launcher: authority.launcher,
+          configuration: .init(
+            executable: "/usr/bin/python3", arguments: [script.path], environment: [:],
+            workingDirectory: root, inheritedDescriptors: [3: pair.1]))
+      }
+      Issue.record("A prepared provider accepted a generic inherited descriptor")
+    } catch ManagedLineProcessError.invalidConfiguration {
     }
     try pair.1.close()
-    do {
-      try await transport.connect()
-      var received = await transport.receive().makeAsyncIterator()
-      #expect(try await received.next() == Data("owned-child".utf8))
-      // EOF requires every host copy of the child endpoint to be closed.
-      #expect(try await received.next() == nil)
-      var lines = process.inboundLines.makeAsyncIterator()
-      #expect(try await lines.next() == "completed")
-      await process.close()
-      #expect(await process.snapshot().hasExited)
-      await transport.disconnect()
-    } catch {
-      await transport.disconnect()
-      await process.close()
-      throw error
-    }
+    await transport.disconnect()
   }
 }
 
@@ -368,7 +697,7 @@ private final class HostFixture: Sendable {
 
   init(
     observe: Bool = false, fileBacked: Bool = false, persistProjects: Bool = true,
-    git: Bool = false
+    git: Bool = false, missingProject: Bool = false, providerRoutes: Bool = false
   ) throws {
     let directory = FileManager.default.temporaryDirectory.appendingPathComponent(
       "host-fixture-" + UUID().uuidString)
@@ -411,13 +740,16 @@ private final class HostFixture: Sendable {
     }
     platform.permissionPolicyReader = TestManagedPolicyReader()
     let profile: GatewayProfileID = observe ? .chatGPTObserve : .chatGPTOperate
+    var permissions = fixturePermissions([
+      .project("second"): .granted(observe ? .read : .write),
+      .mcpServer("plugin"): .granted(.all),
+    ])
+    if !missingProject {
+      try permissions.set(.granted(observe ? .read : .write), for: .project("first"))
+    }
     grant = ProfileGrant(
       id: profile,
-      permissions: fixturePermissions([
-        .project("first"): .granted(observe ? .read : .write),
-        .project("second"): .granted(observe ? .read : .write),
-        .mcpServer("plugin"): .granted(.all),
-      ]), fullAccess: !observe, allowedCallers: [.secureTunnel])
+      permissions: permissions, fullAccess: !observe, allowedCallers: [.secureTunnel])
     try database.saveProfile(grant)
     let trace = GatewayTransportTrace(
       transport: "gateway_socket", socketConnectionID: "original-socket")
@@ -433,6 +765,50 @@ private final class HostFixture: Sendable {
       id: "plugin", transport: .stdio, command: "/bin/cat", exposure: .reexport,
       prefix: "loop", allowedTools: ["operation"], toolRisks: ["operation": .readOnly],
       hostServices: true)
+    var extraServers: [MCPServerConfig] = []
+    var extraTools: [ToolConfig] = []
+    var plugins: [ResolvedPlugin] = []
+    if providerRoutes {
+      extraServers = [
+        .init(
+          id: "external", transport: .stdio, command: "/bin/cat",
+          exposure: .reexport, prefix: "external", allowedTools: ["operation"], hostServices: false)
+      ]
+      extraTools = [
+        .init(name: "alias.external", adapter: .mcp, source: "external", tool: "operation")
+      ]
+      let packageRoot = root.appendingPathComponent("callback-plugin")
+      try FileManager.default.createDirectory(at: packageRoot, withIntermediateDirectories: false)
+      try """
+      id = 'callback-plugin'
+      name = 'Callback fixture'
+      version = '1.0.0'
+      plugin_api = 1
+      [[dependencies]]
+      id = 'cat'
+      commands = ['cat']
+      instructions = 'Use system cat.'
+      [[cli]]
+      id = 'native'
+      executable = { dependency = 'cat' }
+      tree = { kind = 'file', path = 'tree.json' }
+      """.write(
+        to: packageRoot.appendingPathComponent(PluginManifest.filename), atomically: true,
+        encoding: .utf8)
+      try
+        #"{"format_version":1,"source":"fixture","executable_version":"1","coverage":"complete","omissions":[],"commands":[{"id":"run","path":[],"description":"Run fixture","executable":true,"parameters":[],"argv":[],"stdout":"text"}]}"#
+        .write(
+          to: packageRoot.appendingPathComponent("tree.json"), atomically: true, encoding: .utf8)
+      let package = try PluginPackage.load(at: packageRoot)
+      plugins = [
+        try PluginResolver.resolve(
+          package: package,
+          source: .init(kind: .development, root: packageRoot),
+          settings: .init(enabled: true, cli: ["native": .init(registrationID: "callback-cli")]),
+          dependencyExecutables: ["cat": URL(fileURLWithPath: "/bin/cat")],
+          hostVersion: PluginVersion("1.0.29"), architecture: "arm64")
+      ]
+    }
     runtime = try GatewayRuntime(
       configuration: .init(
         runtime: .init(caller: .secureTunnel, profileID: profile),
@@ -442,14 +818,18 @@ private final class HostFixture: Sendable {
         profiles: [
           .init(grant: grant)
         ],
-        cli: .init(commands: [gitCommand]),
-        mcp: .init(servers: [registration]),
-        tools: [.init(name: "alias.callback", adapter: .mcp, source: "plugin", tool: "operation")],
+        cli: .init(commands: [
+          gitCommand, .init(id: "callback-cat", executable: "/bin/cat", allowAnyArgs: true),
+          .init(id: "callback-sleep", executable: "/bin/sleep", allowAnyArgs: true),
+        ]),
+        mcp: .init(servers: [registration] + extraServers),
+        tools: [.init(name: "alias.callback", adapter: .mcp, source: "plugin", tool: "operation")]
+          + extraTools,
         builtin: .init(enabled: ["file.read", "file.replace_text"] + (git ? ["git.add"] : []))),
       context: context, database: database,
       registeredProjects: persistProjects ? projects : nil,
       platform: platform,
-      mcpClient: downstream)
+      mcpClient: downstream, plugins: plugins)
   }
 
   func ownerGit(_ arguments: [String]) throws -> String {
@@ -469,13 +849,14 @@ private final class HostFixture: Sendable {
     return result.stdout
   }
 
-  func session() throws -> MCPHostSession {
+  func session(execution: PreparedExecutionContext? = nil) throws -> MCPHostSession {
     let directory = MCPHostToolDirectory()
     directory.attach(runtime)
-    return try MCPHostSession(
-      context: .init(
-        runtimeID: UUID(), context: context, projectID: "first", rootURL: first,
-        readOnly: false, tools: directory), server: registration)
+    var host = MCPHostContext(
+      runtimeID: UUID(), context: context, projectID: "first", rootURL: first,
+      readOnly: false, tools: directory)
+    host.providerExecution = execution
+    return try MCPHostSession(context: host, server: registration)
   }
   func call(_ name: String, _ arguments: [String: JSONValue] = [:]) async throws -> JSONValue {
     try await runtime.callHostTool(

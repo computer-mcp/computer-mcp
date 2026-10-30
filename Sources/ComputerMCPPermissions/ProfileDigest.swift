@@ -16,7 +16,10 @@ enum ProfileDigest {
     let object = try! JSONSerialization.jsonObject(with: data, options: .fragmentsAllowed)
     func normalized(_ value: Any) -> Any {
       if let values = value as? [Any] {
-        return values.map(normalized).sorted { serialized($0) < serialized($1) }
+        return values.map { value in
+          let normalizedValue = normalized(value)
+          return (value: normalizedValue, key: serialized(normalizedValue))
+        }.sorted { $0.key < $1.key }.map(\.value)
       }
       if let values = value as? [String: Any] { return values.mapValues(normalized) }
       return value

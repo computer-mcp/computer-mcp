@@ -106,6 +106,13 @@ struct CLITreeGatewayTests {
       name = 'Tree test'
       version = '1.0.0'
       plugin_api = 1
+      [sandbox]
+      full_access = true
+      purpose = 'Exercise the fixed native printf invocation'
+      [[permissions]]
+      id = 'project'
+      access = 'write'
+      purpose = 'Run the fixed native printf command'
       [[dependencies]]
       id = 'printf'
       commands = ['printf']
@@ -142,7 +149,12 @@ struct CLITreeGatewayTests {
             .plugin("*"): .granted(.use),
           ]), fullAccess: true, allowedCallers: [.localCLI])
       ])
-    let database = try GatewayDatabase(inMemory: ())
+    let state = fixture.root.deletingLastPathComponent().appendingPathComponent(
+      "cli-state-\(UUID())")
+    try FileManager.default.createDirectory(at: state, withIntermediateDirectories: false)
+    defer { try? FileManager.default.removeItem(at: state) }
+    let database = try fixturePermissionDatabase(
+      path: state.appendingPathComponent("state.sqlite").path)
     for project in projects { try database.saveProject(project) }
     let profile = configuration.profiles[0].grant
     try database.saveProfile(profile)
@@ -155,6 +167,11 @@ struct CLITreeGatewayTests {
       configuration: configuration, context: context, database: database,
       registeredProjects: projects,
       platform: platform, plugins: [plugin])
+    let session = try runtime.makeControlSession()
+    try fixtureApprovePlugin(
+      package, database: database, runtime: runtime.permissionRuntime,
+      permissions: fixturePermissions([.project("fixture"): .granted(.write)]), fullAccess: true)
+    _ = try session.approveFullAccess(expectedRevision: session.revision)
     let tool = try #require(runtime.listTools(context: .empty).first { $0.name.hasPrefix("cli_") })
     let result = try await runtime.callToolAsync(
       name: tool.name, arguments: .object(["values": .array([.string("plugin value")])]),

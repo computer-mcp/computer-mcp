@@ -79,6 +79,14 @@ package struct ExecutionLauncher: Sendable {
     let mode = prepared?.mode ?? ExecutionAdministration.current!.mode
     let environment = try HostCommandEnvironment.applying(
       to: prepared?.environment ?? ExecutionAdministration.current!.environment)
+    if let expected = prepared?.providerWorkingDirectory {
+      guard prepared?.provider != nil, directoryDescriptor == nil,
+        try ProjectPathResolver.canonicalProject(URL(fileURLWithPath: directory.value)).path
+          == expected.value
+      else {
+        throw ExecutionEnvironmentError.invalidConfiguration("Provider working directory changed")
+      }
+    }
     var launchDirectory = directory
     let sandbox: SandboxConfiguration?
     switch mode {
@@ -89,7 +97,11 @@ package struct ExecutionLauncher: Sendable {
       }
       launchDirectory = try SandboxPath(
         ProjectPathResolver.canonicalProject(URL(fileURLWithPath: directory.value)).path)
-      guard launchDirectory == configuration.worktree else {
+      guard
+        launchDirectory == configuration.worktree
+          || (prepared?.provider != nil && prepared?.providerWorkingDirectory == launchDirectory
+            && directoryDescriptor == nil)
+      else {
         throw ExecutionEnvironmentError.invalidConfiguration(
           "Sandbox working directory must be its worktree")
       }

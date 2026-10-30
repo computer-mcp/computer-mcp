@@ -34,6 +34,8 @@ struct MCPUpstreamCancellationTests {
       server: nativeServer, root: root,
       additionalPermissions: [.localNetwork: .granted(.access)])
     defer { try? authority.close() }
+    let providerRoot = try authority.providerMarker(root.appendingPathComponent("pid"))
+      .deletingLastPathComponent()
     let profile = try #require(try authority.database.profiles().first { $0.id == .chatGPTOperate })
     let session = try #require(authority.callerContext.controlSession as? GatewayControlSession)
     var configuration = GatewayConfiguration(
@@ -46,6 +48,10 @@ struct MCPUpstreamCancellationTests {
       configuration: configuration, context: authority.callerContext,
       database: authority.database, registeredProjects: projects,
       platform: MacOSPlatform.services(launcher: authority.launcher))
+    _ = try native.makeControlSession()
+    try fixtureApproveLocalProvider(
+      nativeServer, database: authority.database, runtime: native.permissionRuntime,
+      permissions: fixturePermissions([.project("fixture"): .granted(.write)]), fullAccess: true)
     do { try await discover(native) } catch {
       await native.shutdown()
       throw error
@@ -58,6 +64,8 @@ struct MCPUpstreamCancellationTests {
         publicBaseURL: nil) : nil
     let runtime: GatewayRuntime
     let downstreamWait: String
+    var forwardingAuthority: ProxyExecutionFixture?
+    defer { try? forwardingAuthority?.close() }
     do {
       if let origin {
         try await origin.startListening()
@@ -71,10 +79,17 @@ struct MCPUpstreamCancellationTests {
         configuration.tools = [
           .init(name: "wait_alias", adapter: .mcp, source: "native", tool: downstreamWait)
         ]
+        let forwardingRoot = root.appendingPathComponent("forwarding")
+        try FileManager.default.createDirectory(
+          at: forwardingRoot, withIntermediateDirectories: false)
+        let forwarding = try ProxyExecutionFixture(
+          server: #require(configuration.mcp.servers.first), root: forwardingRoot,
+          additionalPermissions: [.localNetwork: .granted(.access)])
+        forwardingAuthority = forwarding
         runtime = try await GatewayRuntime.make(
-          configuration: configuration, context: authority.callerContext,
-          database: authority.database, registeredProjects: projects,
-          platform: MacOSPlatform.services(launcher: authority.launcher))
+          configuration: configuration, context: forwarding.callerContext,
+          database: forwarding.database, registeredProjects: forwarding.database.projects(),
+          platform: MacOSPlatform.services(launcher: forwarding.launcher))
         try await discover(runtime)
       } else {
         downstreamWait = "wait"
@@ -85,7 +100,10 @@ struct MCPUpstreamCancellationTests {
       await native.shutdown()
       throw error
     }
-    let serving = GatewayControlSessionServing(base: runtime, session: session)
+    let servingSession = try #require(
+      (forwardingAuthority?.callerContext ?? authority.callerContext).controlSession
+        as? GatewayControlSession)
+    let serving = GatewayControlSessionServing(base: runtime, session: servingSession)
     let server = await MCPRuntimeAdapter.makeGatewayServer(
       configuration: configuration, registry: serving)
     let pair = await InMemoryTransport.createConnectedPair()
@@ -120,14 +138,14 @@ struct MCPUpstreamCancellationTests {
         name: name, arguments: firstArguments)
       let sibling: RequestContext<CallTool.Result> = try await client.callTool(
         name: "native.wait", arguments: ["label": .string("sibling")])
-      try await wait(root: root, for: "started:sibling")
-      try await wait(root: root, for: "started:first")
+      try await wait(root: providerRoot, for: "started:sibling")
+      try await wait(root: providerRoot, for: "started:first")
       try await client.cancelRequest(first.requestID, reason: "Cancel the first fixture call.")
       await #expect(throws: CancellationError.self) { _ = try await first.value }
-      try await wait(root: root, for: "cancelled:first")
-      let afterCancellation = try events(root)
+      try await wait(root: providerRoot, for: "cancelled:first")
+      let afterCancellation = try events(providerRoot)
       let cancellationTrace = try String(
-        contentsOf: root.appendingPathComponent("trace"), encoding: .utf8)
+        contentsOf: providerRoot.appendingPathComponent("trace"), encoding: .utf8)
       try #require(
         !afterCancellation.contains("cancelled:sibling"),
         "Unexpected sibling cancellation: \(cancellationTrace)"
@@ -137,7 +155,7 @@ struct MCPUpstreamCancellationTests {
       let released = try await release.value
       try #require(released.isError != true, "Sibling release failed: \(released.content)")
       #expect(try await sibling.value.isError != true)
-      let receipt = try events(root)
+      let receipt = try events(providerRoot)
       #expect(receipt.filter { $0 == "started:first" }.count == 1)
       #expect(receipt.filter { $0 == "cancelled:first" }.count == 1)
       #expect(receipt.contains("completed:sibling"))
@@ -149,7 +167,7 @@ struct MCPUpstreamCancellationTests {
       await origin?.stop()
       await native.shutdown()
       let pid = try #require(
-        Int32(String(contentsOf: root.appendingPathComponent("pid"), encoding: .utf8)))
+        Int32(String(contentsOf: providerRoot.appendingPathComponent("pid"), encoding: .utf8)))
       #expect(kill(pid, 0) == -1 && errno == ESRCH)
     } catch {
       await client.disconnect()
@@ -190,7 +208,7 @@ struct MCPUpstreamCancellationTests {
 
   private static let script = #"""
     import json, os, pathlib, sys
-    root = pathlib.Path(sys.argv[1])
+    root = pathlib.Path(os.environ["HOME"])
     (root / "pid").write_text(str(os.getpid()))
     waiting = {}
     def record(event):

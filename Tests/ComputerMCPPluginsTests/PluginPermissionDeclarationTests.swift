@@ -174,7 +174,7 @@ struct PluginPermissionDeclarationTests {
   }
 
   @Test
-  func declarationsDoNotPublishContributionsOrChangeLegacyEncoding() throws {
+  func declarationsRetainReviewedProvenanceAndLegacyEncoding() throws {
     let root = try pluginPackageFixture()
     defer { try? FileManager.default.removeItem(at: root) }
     let legacy = try manifest("")
@@ -191,11 +191,15 @@ struct PluginPermissionDeclarationTests {
     let enabled = try PluginResolver.resolve(
       package: package, source: source, settings: .init(enabled: true),
       hostVersion: PluginVersion("1.0.0"), architecture: PluginHost.architecture)
-    #expect(
-      enabled.mcpServers.isEmpty && enabled.cliCommands.isEmpty && enabled.skillRoots.isEmpty)
-    #expect(
-      enabled.diagnostics.first?.code
-        == (PluginHost.platform == "macos" ? .providerAuthorityUnavailable : .platformUnsupported))
+    if PluginHost.platform == "macos" {
+      #expect(enabled.skillRoots.count == 1 && enabled.diagnostics.isEmpty)
+      #expect(
+        enabled.origins.values.first?.reviewedRequirements?.sourceDigest
+          == (try PluginStore.manifestDigest(package.manifest)))
+    } else {
+      #expect(enabled.skillRoots.isEmpty)
+      #expect(enabled.diagnostics.first?.code == .platformUnsupported)
+    }
     let disabled = try PluginResolver.resolve(
       package: package, source: source, settings: .init(),
       hostVersion: PluginVersion("1.0.0"), architecture: "arm64")

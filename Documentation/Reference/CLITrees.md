@@ -83,8 +83,11 @@ interface. Existing registrations without a tree retain their raw CLI contract.
 | `introspection` | `args` | Run the registered executable with the exact declared argv and validate its JSON tree. |
 | `helper` | `helper`, `args` | Run the resolved exporter and validate its JSON tree. Direct helpers use absolute executable paths; Plugin helpers use package/dependency references. |
 
-Exporters run in the CLI's cwd/environment with closed stdin, a 5-second execution
-budget and a 4 MiB stdout bound. Enabling an exporter authorizes running that
+Plugin exporters run in the provider's projectless read-only discovery sandbox,
+with private scratch as the working directory and writes limited to that scratch
+and the persistent provider container; direct exporters use the registered CLI
+cwd/environment. Both use closed stdin, a 5-second execution budget and a 4 MiB
+stdout bound. Enabling an exporter authorizes running that
 package code for discovery; it does not grant projected tool calls to a profile.
 Exporters must return this contract. Native introspection using another format
 needs a verified package exporter; human-readable help is not parsed as a tree.

@@ -9,15 +9,21 @@ import Foundation
 package struct GatewayPathAccess: HostPathAccessChecking {
   private let store: SQLitePermissionStore
   private let authorizationID: UUID
+  private let additionalAuthorizationIDs: Set<UUID>
+  private let validateInvocation: (@Sendable () throws -> Void)?
   private let validateWorktree: (@Sendable () throws -> Void)?
 
   package init(
     store: SQLitePermissionStore, authorizationID: UUID,
-    validateWorktree: (@Sendable () throws -> Void)? = nil
+    additionalAuthorizationIDs: Set<UUID> = [],
+    validateWorktree: (@Sendable () throws -> Void)? = nil,
+    validateInvocation: (@Sendable () throws -> Void)? = nil
   ) {
     self.store = store
     self.authorizationID = authorizationID
+    self.additionalAuthorizationIDs = additionalAuthorizationIDs
     self.validateWorktree = validateWorktree
+    self.validateInvocation = validateInvocation
   }
 
   package func isAccessible(_ path: URL, operation: HostPathOperation) -> Bool {
@@ -29,6 +35,7 @@ package struct GatewayPathAccess: HostPathAccessChecking {
   }
 
   private func check(_ path: URL, operation: HostPathOperation, requestMissing: Bool) throws {
+    try validateInvocation?()
     if operation == .write { try validateWorktree?() }
     let canonical = try ProjectPathResolver.resolve(
       path.path, relativeTo: URL(fileURLWithPath: "/"))
@@ -40,6 +47,7 @@ package struct GatewayPathAccess: HostPathAccessChecking {
       case .listDirectory: .listDirectory
       }
     let result: Result<Void, any Error> = try store.transactionWithDatabase { database, ledger in
+      var checkedAuthorizationID = authorizationID
       do {
         for record in try GatewayDatabase.availableDerivedProjects(in: database) {
           guard case .host = record.provenance else { continue }
@@ -52,15 +60,18 @@ package struct GatewayPathAccess: HostPathAccessChecking {
           }
           try record.worktree?.verifyContent()
         }
-        try ledger.authorizePathUse(
-          authorizationID, path: CanonicalPath(canonical.path), operation: operation)
+        for id in additionalAuthorizationIDs.union([authorizationID]) {
+          checkedAuthorizationID = id
+          try ledger.authorizePathUse(
+            id, path: CanonicalPath(canonical.path), operation: operation)
+        }
         return .success(())
       } catch {
         let original = error
         guard requestMissing else { return .failure(original) }
         do {
           let decision = try ledger.recordHostPathNeed(
-            authorizationID: authorizationID,
+            authorizationID: checkedAuthorizationID,
             path: .init(path: CanonicalPath(canonical.path), operation: operation), now: Date())
           switch decision {
           case .requests(let requests):

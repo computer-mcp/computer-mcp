@@ -99,6 +99,7 @@ actor MCPBoundHostServices {
   }()
 
   func call(name: String, arguments: [String: JSONValue]) throws -> MCP.CallTool.Result {
+    try Task.checkCancellation()
     guard !closed else { throw MCPError.connectionClosed }
     // Rollback/removal authority lasts only for its forwarded invocation.
     let live = Set(

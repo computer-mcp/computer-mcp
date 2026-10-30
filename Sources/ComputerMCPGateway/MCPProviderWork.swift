@@ -137,6 +137,7 @@ package struct MCPProviderWork {
   private var invocations: [UUID: Invocation] = [:]
   private var ownership: [Key: Ownership] = [:]
   private var executionLeases: [UUID: ExecutionWorkLease] = [:]
+  private var executions: [UUID: PreparedExecutionContext] = [:]
   private var observation: GatewayOwnedWork.Lease?
   private var report: Report?
   private var continuations: [String: MCPProviderContinuation] = [:]
@@ -191,7 +192,7 @@ package struct MCPProviderWork {
 
   mutating func beginInvocation(
     tool: String, hostContext: MCPHostToolDirectory.InvocationLease? = nil,
-    executionLease: ExecutionWorkLease? = nil
+    executionLease: ExecutionWorkLease? = nil, execution: PreparedExecutionContext? = nil
   ) throws -> UUID {
     guard invocations.count < Self.maximumResources else {
       throw GatewayToolError.executionFailed(
@@ -200,6 +201,7 @@ package struct MCPProviderWork {
     let id = UUID()
     invocations[id] = Invocation(tool: tool, hostContext: hostContext)
     executionLeases[id] = executionLease
+    executions[id] = execution
     requireObservation()
     return id
   }
@@ -233,9 +235,12 @@ package struct MCPProviderWork {
   /// Retained owner records still participate in explicit continuation selection.
   mutating func confirmLocalShutdown() throws {
     guard !connected else { throw Self.invalidReport() }
+    for invocation in invocations.values { invocation.hostContext?.finish() }
+    for item in ownership.values { item.hostContext?.finish() }
     for (id, lease) in executionLeases {
       try lease.finish()
       executionLeases.removeValue(forKey: id)
+      executions.removeValue(forKey: id)
     }
   }
 
@@ -302,6 +307,7 @@ package struct MCPProviderWork {
     for (id, lease) in executionLeases where !retained.contains(id) {
       try lease.finish()
       executionLeases.removeValue(forKey: id)
+      executions.removeValue(forKey: id)
     }
     if invocations.isEmpty {
       observation?.finish()
@@ -367,7 +373,7 @@ package struct MCPProviderWork {
         projectID: projectID, registrationID: registrationID,
         instanceID: report?.instanceID, declarations: continuations,
         resources: ownership.values.map(\.resource), observationPending: observation != nil,
-        connected: connected))
+        connected: connected, executions: executions))
   }
 
   private mutating func requireObservation() {

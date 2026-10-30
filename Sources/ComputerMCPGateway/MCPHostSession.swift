@@ -211,6 +211,7 @@ final class MCPHostSession: MCPHostSessionHandle {
   private let transport: MCPInheritedSocketTransport
   private let task: Task<Void, Never>
   private let services: MCPHostSessionServices
+  private let admission: MCPHostRequestAdmission
 
   init(context: MCPHostContext, server registration: MCPServerConfig) throws {
     guard registration.hostServices, let directory = context.tools else {
@@ -239,6 +240,7 @@ final class MCPHostSession: MCPHostSessionHandle {
     let services = MCPHostSessionServices(directory: directory, context: context, origin: origin)
     self.services = services
     let admission = MCPHostRequestAdmission()
+    self.admission = admission
     task = Task {
       let server = MCP.Server(
         name: "computer-mcp-host", version: ComputerMCPCLI.version,
@@ -274,6 +276,7 @@ final class MCPHostSession: MCPHostSessionHandle {
         try await server.start(transport: transport)
         await server.waitUntilCompleted()
       } catch {}
+      await admission.close()
       await server.stop()
       await services.close()
       await transport.disconnect()
@@ -281,6 +284,7 @@ final class MCPHostSession: MCPHostSessionHandle {
   }
 
   func close() async {
+    await admission.close()
     providerChannel?.close()
     try? childHandle?.close()
     await transport.disconnect()
@@ -292,15 +296,35 @@ final class MCPHostSession: MCPHostSessionHandle {
 }
 
 /// The SDK may dispatch requests concurrently; do not turn a bounded stream into an unbounded queue.
-private actor MCPHostRequestAdmission {
-  private var active = 0
-  func perform<T: Sendable>(_ operation: @Sendable () async throws -> T) async throws -> T {
-    guard active < 16 else {
+actor MCPHostRequestAdmission {
+  private struct ActiveRequest {
+    let cancel: @Sendable () -> Void
+    let join: @Sendable () async -> Void
+  }
+  private var closed = false
+  private var active: [UUID: ActiveRequest] = [:]
+  func perform<T: Sendable>(_ operation: @escaping @Sendable () async throws -> T) async throws -> T
+  {
+    guard !closed else { throw MCPError.connectionClosed }
+    guard active.count < 16 else {
       throw MCPError.serverError(code: -32000, message: "Host callback capacity reached.")
     }
-    active += 1
-    defer { active -= 1 }
-    return try await operation()
+    let id = UUID()
+    let task = Task { try await operation() }
+    active[id] = ActiveRequest(cancel: { task.cancel() }, join: { _ = await task.result })
+    defer { active[id] = nil }
+    return try await withTaskCancellationHandler {
+      try await task.value
+    } onCancel: {
+      task.cancel()
+    }
+  }
+
+  func close() async {
+    closed = true
+    let requests = Array(active.values)
+    for request in requests { request.cancel() }
+    for request in requests { await request.join() }
   }
 }
 

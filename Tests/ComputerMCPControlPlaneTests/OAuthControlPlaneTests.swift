@@ -5,6 +5,7 @@ import ComputerMCPDownstream
 import ComputerMCPPermissions
 import ComputerMCPPersistence
 import ComputerMCPPlatform
+import ComputerMCPPlugins
 import ComputerMCPProcess
 import ComputerMCPTestSupport
 import ComputerMCPTunnels
@@ -486,8 +487,24 @@ struct OAuthControlPlaneTests {
         await #expect(throws: OAuthError.invalidGrant) {
           try await flow.token(fixture.refreshFields(tokens.refreshToken), address: "tokens")
         }
-        _ = try await owner.activateManifest(
-          original, expectedDigest: try? await owner.configurationDigest())
+        // Reload publishes configuration before releasing its mutation scope.
+        // A refused overlapping write is retried from a fresh admitted digest.
+        let restoreDeadline = ContinuousClock.now + .seconds(5)
+        while true {
+          do {
+            _ = try await owner.activateManifest(
+              original, expectedDigest: try await owner.configurationDigest())
+            break
+          } catch PluginHostError.changeInProgress
+            where path == "reload" && ContinuousClock.now < restoreDeadline
+          {
+            await Task.yield()
+          } catch AtomicManifestStoreError.changeInProgress
+            where path == "reload" && ContinuousClock.now < restoreDeadline
+          {
+            await Task.yield()
+          }
+        }
         #expect(try await owner.cloudflareTunnelConfigurations().first?.id == profile.id)
         #expect(
           try await owner.cloudflareTunnelConfigurations().first?.publicHostname

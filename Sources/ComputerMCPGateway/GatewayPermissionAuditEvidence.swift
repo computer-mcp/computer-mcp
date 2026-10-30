@@ -1,6 +1,7 @@
 import ComputerMCPCore
 import ComputerMCPPermissions
 import ComputerMCPPersistence
+import ComputerMCPProcess
 import Foundation
 import GRDB
 
@@ -18,14 +19,17 @@ package struct GatewayPermissionAuditEvidence: Codable, Sendable {
     profileRevision = try ProfileRecord.fetchOne(database, key: profileID.rawValue)?
       .authorizationRevision
     let decoder = JSONDecoder()
-    let views = try Data.fetchAll(database, sql: "SELECT payload FROM permissionPolicySources").map
-    {
-      try decoder.decode(GatewayManagedPolicyView.self, from: $0)
-    }
-    policyRevisions = Dictionary(
-      uniqueKeysWithValues: views.filter {
-        $0.profileID == nil || $0.profileID == profileID
-      }.map { ($0.source.rawValue, $0.revision) })
+    let sources = try Row.fetchAll(
+      database, sql: "SELECT source, payload FROM permissionPolicySources")
+    policyRevisions = try Dictionary(
+      uniqueKeysWithValues: sources.compactMap { row -> (String, String)? in
+        let view = try decoder.decode(GatewayManagedPolicyView.self, from: row["payload"] as Data)
+        guard view.profileID == nil || view.profileID == profileID else { return nil }
+        // Provider policies have distinct persisted source identities even when
+        // their policy category is the same as the client's owner policy.
+        let key = view.provider == nil ? view.source.rawValue : row["source"] as String
+        return (key, view.revision)
+      })
   }
 
   var fields: [String: JSONValue] {
@@ -41,6 +45,7 @@ package struct GatewayPermissionAuditEvidence: Codable, Sendable {
 struct GatewayPermissionEvaluation: Sendable {
   let decision: AuthorizationDecision
   let evidence: GatewayPermissionAuditEvidence
+  var provider: ProviderExecutionBinding? = nil
 }
 
 /// Lifecycle rows have their own request IDs and link to the originating call.

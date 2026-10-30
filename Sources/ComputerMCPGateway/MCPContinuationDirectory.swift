@@ -1,4 +1,5 @@
 import ComputerMCPCore
+import ComputerMCPProcess
 import Foundation
 import NIOConcurrencyHelpers
 
@@ -12,6 +13,7 @@ package final class MCPContinuationDirectory: Sendable {
     let resources: [MCPProviderWork.Resource]
     let observationPending: Bool
     let connected: Bool
+    var executions: [UUID: PreparedExecutionContext] = [:]
   }
 
   package struct Match: Hashable, Sendable {
@@ -73,6 +75,29 @@ package final class MCPContinuationDirectory: Sendable {
   }
 
   func entry(connectionID: UUID) -> Entry? { entries.withLockedValue { $0[connectionID] } }
+
+  func execution(for target: MCPContinuationTarget) throws -> PreparedExecutionContext? {
+    guard !target.resources.isEmpty else { return nil }
+    let result = try entries.withLockedValue { entries -> PreparedExecutionContext? in
+      guard let entry = entries[target.connectionID], entry.connected,
+        entry.projectID == target.projectID, entry.registrationID == target.reference.serverID,
+        entry.instanceID == target.instanceID
+      else { throw MCPContinuationTarget.unavailable() }
+      let ids = Set(target.resources.values)
+      for (key, acquisition) in target.resources {
+        guard entry.resources.contains(where: { $0.key == key && $0.acquiredBy == acquisition })
+        else { throw MCPContinuationTarget.unavailable() }
+      }
+      let contexts = ids.compactMap { entry.executions[$0] }
+      if contexts.isEmpty { return nil }
+      guard contexts.count == ids.count,
+        Set(contexts.map(\.executionID)).count == 1, let context = contexts.first
+      else { throw MCPContinuationTarget.unavailable() }
+      return context
+    }
+    try result?.validateProviderLaunch()
+    return result
+  }
 
   /// A match is a locator, not call admission. Pending observations cannot prove absence.
   func lookup(

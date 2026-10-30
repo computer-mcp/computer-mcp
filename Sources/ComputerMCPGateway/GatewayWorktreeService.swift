@@ -11,6 +11,7 @@ import Foundation
 /// Lifecycle authority is distinct from program admission and cannot launch a program.
 struct GatewayWorktreeInvocation: InvocationExecutionAuthority {
   let authorization: InvocationAuthorization
+  var additionalAuthorizationIDs: Set<UUID> = []
   var pathAccess: (any HostPathAccessChecking)? { nil }
 }
 
@@ -53,7 +54,8 @@ struct GatewayWorktreeService: GitWorktreeServing {
     }
     let access = GatewayWorktreeAccess(
       database: database, runtime: runtime, authorizationID: authorizationID, source: source,
-      writing: operation.isWriting)
+      writing: operation.isWriting,
+      additionalAuthorizationIDs: invocation.additionalAuthorizationIDs)
     try access.checkSource()
     let repository = try WorktreeRepository(
       source: source,
@@ -154,6 +156,7 @@ private struct GatewayWorktreeAccess: Sendable {
   let authorizationID: UUID
   let source: DerivedProjectSource
   let writing: Bool
+  let additionalAuthorizationIDs: Set<UUID>
 
   func checkSource() throws {
     guard let current = try database.project(id: source.id),
@@ -172,8 +175,10 @@ private struct GatewayWorktreeAccess: Sendable {
       )
       .appendingPathComponent(path.lastPathComponent)
     try runtime.store.transactionWithDatabase { _, ledger in
-      try ledger.authorizeWorktreeHostPath(
-        authorizationID, path: CanonicalPath(canonical.path), writing: writing)
+      for id in additionalAuthorizationIDs.union([authorizationID]) {
+        try ledger.authorizeWorktreeHostPath(
+          id, path: CanonicalPath(canonical.path), writing: writing)
+      }
     }
   }
 

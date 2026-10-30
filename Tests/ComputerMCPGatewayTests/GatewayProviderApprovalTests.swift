@@ -14,6 +14,196 @@ import Testing
 @testable import ComputerMCPPersistence
 
 struct GatewayProviderApprovalTests {
+  @Test func admissionAuditKeepsDistinctProviderPolicyRevisions() throws {
+    let f = try ProviderApprovalFixture()
+    defer { f.remove() }
+    for name in ["one", "two"] {
+      let server = MCPServerConfig(id: name, transport: .stdio, command: "/bin/false")
+      _ = try f.approve(
+        .init(server: server, configuration: f.database.configurationState()),
+        permissions: .newPrincipal)
+    }
+    _ = try f.view()
+    try f.store.readWithDatabase { database, ledger in
+      let evidence = try GatewayPermissionAuditEvidence(
+        database: database, ledger: ledger, profileID: .localAdmin)
+      let rows = try Row.fetchAll(
+        database, sql: "SELECT source, payload FROM permissionPolicySources")
+      var providers = 0
+      for row in rows {
+        let view = try JSONDecoder().decode(
+          GatewayManagedPolicyView.self, from: row["payload"] as Data)
+        if view.provider != nil {
+          providers += 1
+          #expect(evidence.policyRevisions[row["source"] as String] == view.revision)
+        }
+      }
+      #expect(providers == 2)
+    }
+  }
+
+  #if os(Linux)
+    @Test func linuxExplicitlyRefusesProviderActivation() throws {
+      let f = try ProviderApprovalFixture()
+      defer { f.remove() }
+      let server = MCPServerConfig(id: "linux", transport: .stdio, command: "/bin/false")
+      _ = try f.approve(
+        .init(server: server, configuration: f.database.configurationState()),
+        permissions: .newPrincipal)
+      do {
+        _ = try GatewayProviderSource.resolve(
+          registration: .init(kind: .mcp, id: server.id),
+          configuration: .init(mcp: .init(servers: [server])), origins: [:], database: f.database)
+        Issue.record("Linux activated a local provider")
+      } catch {
+        #expect(error.localizedDescription.contains("Linux provider activation is unavailable"))
+      }
+    }
+  #endif
+
+  @Test(arguments: [true, false])
+  func callbackEffectsRequireBothAuthoritiesAndExplicitRetry(missingProvider: Bool) throws {
+    let f = try ProviderApprovalFixture()
+    defer { f.remove() }
+    let server = MCPServerConfig(id: "callbacks", transport: .stdio, command: "/bin/false")
+    var permissions = Permissions.newPrincipal
+    if !missingProvider { try permissions.set(.granted(.access), for: .screen) }
+    _ = try f.approve(
+      .init(server: server, configuration: f.database.configurationState()),
+      permissions: permissions)
+    let source = GatewayProviderSource(
+      review: try .init(server: server, configuration: f.database.configurationState()),
+      registrationID: server.id, workingDirectory: nil, resources: [], validate: {})
+    let caller = Principal.client("callback-caller")
+    let delegation = PermissionAction(requirement: try .init(.mcpServer(server.id), .all))
+    let parent = try f.store.transactionWithDatabase { database, ledger in
+      try ledger.setPermission(
+        .granted(.all), for: .mcpServer(server.id), principal: caller,
+        expectedRevision: ledger.revision)
+      if missingProvider {
+        try ledger.setPermission(
+          .granted(.access), for: .screen, principal: caller,
+          expectedRevision: ledger.revision)
+      }
+      let (_, optionalAdmission) = try GatewayPermissionService.admitProviderCall(
+        source: source,
+        invocation: .init(
+          principal: caller, tool: "run", projectID: nil,
+          argumentsDigest: "parent"), requirements: .init(actions: [delegation]),
+        retryIDs: [], connectionID: nil, now: Date(), database: database, ledger: &ledger)
+      let admitted = try #require(optionalAdmission)
+      return try ledger.startExecution(
+        owner: caller, delegatedTo: admitted.identity,
+        authorizationIDs: admitted.authorizationIDs)
+    }
+    let requestID = try f.store.transactionWithDatabase { database, ledger in
+      let (decision, admitted) = try GatewayPermissionService.admitProviderCall(
+        source: source,
+        invocation: .init(
+          principal: caller, tool: "screen.capture", projectID: nil,
+          argumentsDigest: "callback"),
+        requirements: .init(actions: [delegation, .init(requirement: .init(.screen, .access))]),
+        retryIDs: [], connectionID: nil, now: Date(), database: database, ledger: &ledger,
+        callbackExecutionID: parent.id)
+      #expect(admitted == nil)
+      guard case .requests(let requests) = decision else {
+        throw PermissionModelError.invalidAuthorization
+      }
+      let request = try #require(requests.first)
+      #expect(
+        request.invocation.principal
+          == (missingProvider ? .plugin(.localServer(server.id)) : caller))
+      try ledger.answer(request.id, with: .onlyThisTime, now: Date())
+      return request.id
+    }
+    try f.store.transactionWithDatabase { database, ledger in
+      let (_, optionalBinding) = try GatewayPermissionService.admitProviderCall(
+        source: source,
+        invocation: .init(
+          principal: caller, tool: "screen.capture", projectID: nil,
+          argumentsDigest: "callback"),
+        requirements: .init(actions: [delegation, .init(requirement: .init(.screen, .access))]),
+        retryIDs: [requestID], connectionID: nil, now: Date(), database: database, ledger: &ledger,
+        callbackExecutionID: parent.id)
+      let binding = try #require(optionalBinding)
+      #expect(binding.providerAuthorization.basis.contains(.execution(parent.id)))
+      #expect(binding.delegatingAuthorization?.basis.contains(.execution(parent.id)) == true)
+      let child = try ledger.startExecution(
+        owner: caller, delegatedTo: binding.identity,
+        authorizationIDs: binding.authorizationIDs)
+      try ledger.interruptExecution(parent.id)
+      #expect(!ledger.pendingExecutionTerminations.contains(child.id))
+      #expect(ledger.executions[child.id]?.isRunning == true)
+    }
+  }
+
+  @Test func providerRequestDoesNotConsumeTheDelegatorsOneTimeGrant() throws {
+    let f = try ProviderApprovalFixture()
+    defer { f.remove() }
+    let server = MCPServerConfig(id: "atomic", transport: .stdio, command: "/bin/false")
+    let initial = try GatewayProviderReview(
+      server: server, configuration: f.database.configurationState())
+    _ = try f.approve(initial, permissions: .newPrincipal)
+    let source = GatewayProviderSource(
+      review: try .init(server: server, configuration: f.database.configurationState()),
+      registrationID: server.id, workingDirectory: nil, resources: [], validate: {})
+    let principal = Principal.client("atomic-caller")
+    let invocation = InvocationIdentity(
+      principal: principal, tool: "screen", projectID: nil,
+      argumentsDigest: "atomic")
+    let requirements = InvocationRequirements(actions: [
+      .init(requirement: try .init(.mcpServer(server.id), .all)),
+      .init(requirement: try .init(.screen, .access)),
+    ])
+    let clientRequest = try f.store.transactionWithDatabase { _, ledger in
+      try ledger.setPermission(
+        .granted(.access), for: .screen, principal: principal,
+        expectedRevision: ledger.revision)
+      guard
+        case .requests(let requests) = try ledger.authorize(
+          invocation: invocation,
+          requirements: requirements, now: Date()), let request = requests.first
+      else {
+        throw PermissionModelError.invalidAuthorization
+      }
+      try ledger.answer(request.id, with: .onlyThisTime, now: Date())
+      return request.id
+    }
+    let providerRequest = try f.store.transactionWithDatabase { database, ledger in
+      let (decision, binding) = try GatewayPermissionService.admitProviderCall(
+        source: source, invocation: invocation, requirements: requirements,
+        retryIDs: [clientRequest], connectionID: nil, now: Date(), database: database,
+        ledger: &ledger)
+      #expect(binding == nil)
+      #expect(ledger.requests[clientRequest]?.status == .onlyThisTime)
+      guard case .requests(let requests) = decision, let request = requests.first else {
+        throw PermissionModelError.invalidAuthorization
+      }
+      #expect(request.invocation.principal == .plugin(.localServer(server.id)))
+      return request.id
+    }
+    _ = try f.service.answerRequest(
+      providerRequest, answer: .onlyThisTime, owner: f.owner,
+      expectedRevision: f.view().revision)
+    try f.store.transactionWithDatabase { database, ledger in
+      let (decision, binding) = try GatewayPermissionService.admitProviderCall(
+        source: source, invocation: invocation, requirements: requirements,
+        retryIDs: [clientRequest, providerRequest], connectionID: nil, now: Date(),
+        database: database, ledger: &ledger)
+      let provider = try #require(binding)
+      guard case .allowed(let caller) = decision else {
+        throw PermissionModelError.invalidAuthorization
+      }
+      #expect(ledger.requests[clientRequest]?.status == .consumed(caller.id))
+      #expect(
+        ledger.requests[providerRequest]?.status == .consumed(provider.providerAuthorization.id))
+      let execution = try ledger.startExecution(
+        owner: principal, delegatedTo: provider.identity,
+        authorizationIDs: provider.authorizationIDs)
+      #expect(execution.authorizationIDs.count == 2)
+    }
+  }
+
   @Test func providerPreparationPinsReviewedSourceAndDiscoveryMode() throws {
     let f = try ProviderApprovalFixture()
     defer { f.remove() }
@@ -342,8 +532,13 @@ struct GatewayProviderApprovalTests {
       package: PluginPackage.load(at: f.root), source: .init(kind: .development, root: f.root),
       settings: .init(enabled: true), hostVersion: PluginVersion("1.0.0"),
       architecture: PluginHost.architecture)
-    #expect(
-      resolved.mcpServers.isEmpty && resolved.cliCommands.isEmpty && resolved.skillRoots.isEmpty)
+    #if os(macOS)
+      #expect(resolved.mcpServers.count == 1)
+      #expect(resolved.origins.values.allSatisfy { $0.reviewedRequirements != nil })
+    #else
+      #expect(resolved.mcpServers.isEmpty)
+    #endif
+    #expect(resolved.cliCommands.isEmpty && resolved.skillRoots.isEmpty)
   }
 
   @Test func widerUpdateRetainsEntireApprovalAndNarrowingPreservesDenies() throws {

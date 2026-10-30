@@ -24,13 +24,20 @@ struct MCPAuthorizationTests {
       prefix: "remote", allowedTools: ["inspect"], toolRisks: ["inspect": .destructive])
     var permissions = Permissions()
     try permissions.set(.granted(.all), for: .mcpServer("remote"))
+    try permissions.set(.granted(.write), for: .project("fixture"))
     let client = CatalogClient()
-    let database = try GatewayDatabase(inMemory: ())
+    let root = try ScopedTemporaryDirectory()
+    let project = root.url.appendingPathComponent("project")
+    try FileManager.default.createDirectory(at: project, withIntermediateDirectories: false)
+    let database = try fixturePermissionDatabase(
+      path: root.url.appendingPathComponent("host.sqlite").path)
+    try database.saveProject(.init(id: "fixture", displayName: "Fixture", rootPath: project.path))
     let grant = ProfileGrant(
       id: .localAdmin, permissions: permissions, fullAccess: true, allowedCallers: [.localMCP])
     try database.saveProfile(grant)
     let context = try fixtureConsentedContext(
-      database: database, grant: grant, caller: .localMCP, platform: fixtureHostedPlatform())
+      database: database, grant: grant, caller: .localMCP, projectID: "fixture",
+      platform: fixtureHostedPlatform())
     let runtime = try GatewayRuntime(
       configuration: .init(
         runtime: .init(caller: .localMCP, profileID: .localAdmin),
@@ -38,8 +45,16 @@ struct MCPAuthorizationTests {
           .init(
             grant: grant)
         ],
-        mcp: .init(servers: [server])), context: context, database: database,
-      platform: fixtureHostedPlatform(), mcpClient: client)
+        mcp: .init(servers: [server]), projectDirectory: project), context: context,
+      database: database,
+      registeredProjects: database.projects(), platform: fixtureHostedPlatform(), mcpClient: client)
+    _ = try runtime.makeControlSession()
+    try fixtureApproveLocalProvider(
+      server, database: database,
+      runtime: database.permissionRuntime(platform: fixtureHostedPlatform()),
+      permissions: fixturePermissions([.project("fixture"): .granted(.write)]), fullAccess: true)
+    let session = try #require(context.controlSession as? GatewayControlSession)
+    _ = try session.approveFullAccess(expectedRevision: session.revision)
     do {
       for name in ["mcp.tools.call", "remote.inspect"] {
         let arguments: JSONValue =

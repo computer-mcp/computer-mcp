@@ -239,16 +239,25 @@ struct MCPHostSessionTests {
         continuationContext = .init(session: try f.runtime.makeControlSession())
       case "connection": session.end()
       case "consent": _ = try session.approveFullAccess(expectedRevision: session.revision)
-      case "disable":
+      case "disable", "provider":
+        // The approval owns provider permissions; policy refresh restores the
+        // ledger from it, so the owner narrows them through the approval.
         let owner = try GatewayPermissionOwner(
           context: .init(
             caller: .localApp,
             profileID: .localAdmin, trustedPrincipalID: "callback-owner"), validate: {})
         let view = try runtime.service.view(owner: owner)
         let approval = try #require(view.providers.first { $0.identity == .localServer("plugin") })
-        _ = try runtime.service.revokeProvider(
-          approval.identity, owner: owner,
-          expectedProviderRevision: approval.revision, expectedRevision: view.revision)
+        if cause == "disable" {
+          _ = try runtime.service.revokeProvider(
+            approval.identity, owner: owner,
+            expectedProviderRevision: approval.revision, expectedRevision: view.revision)
+        } else {
+          _ = try runtime.service.approveProvider(
+            review, permissions: fixturePermissions([:]), fullAccess: true, owner: owner,
+            expectedProviderRevision: approval.revision, expectedRevision: view.revision,
+            expectedEpoch: #require(view.epoch))
+        }
       default:
         try runtime.store.transactionWithDatabase { _, ledger in
           if cause == "revision" {
@@ -257,12 +266,9 @@ struct MCPHostSessionTests {
               .init(root: try .init(f.first.appendingPathComponent("secret").path), kind: .denied))
             try ledger.reconcile(environment: environment, expectedRevision: ledger.revision)
           } else {
-            let principal: Principal =
-              cause == "provider" ? .plugin(.localServer("plugin")) : proof.invocation.principal
-            let permission: Permission =
-              cause == "provider" ? .project("first") : .mcpServer("plugin")
             try ledger.setPermission(
-              .notGranted, for: permission, principal: principal, expectedRevision: ledger.revision)
+              .notGranted, for: .mcpServer("plugin"), principal: proof.invocation.principal,
+              expectedRevision: ledger.revision)
           }
         }
       }

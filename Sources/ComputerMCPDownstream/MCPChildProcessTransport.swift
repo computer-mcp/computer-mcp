@@ -18,7 +18,7 @@ package actor MCPChildProcessTransport: MCP.Transport {
   private let server: MCPServerConfig
   private let command: String
   private let workingDirectory: URL
-  /// A relative command and the ownership scope resolve against the registration,
+  /// The base of an unprepared launch's relative command and of the ownership scope,
   /// even when a prepared provider launches in its private scratch.
   private let registrationDirectory: URL
   private let environment: [String: String]
@@ -89,11 +89,17 @@ package actor MCPChildProcessTransport: MCP.Transport {
     try Task.checkCancellation()
     guard process == nil else { return }
     try preparedExecution?.validateProviderLaunch()
-    let inspection = ExecutableInspection.inspect(
-      command, workingDirectory: registrationDirectory, environment: environment)
-    guard !inspection.hasKnownFailure, let executable = inspection.path else {
-      throw GatewayToolError.executionFailed(
-        "Could not start MCP server '\(server.id)': \(inspection.message)")
+    let executable: String
+    if let verified = preparedExecution?.providerExecutable {
+      executable = verified.value
+    } else {
+      let inspection = ExecutableInspection.inspect(
+        command, workingDirectory: registrationDirectory, environment: environment)
+      guard !inspection.hasKnownFailure, let path = inspection.path else {
+        throw GatewayToolError.executionFailed(
+          "Could not start MCP server '\(server.id)': \(inspection.message)")
+      }
+      executable = path
     }
     let ownership = try MCPProcessOwnership.acquire(
       root: hostContext?.processOwnershipRoot ?? MCPProcessOwnership.defaultRoot,

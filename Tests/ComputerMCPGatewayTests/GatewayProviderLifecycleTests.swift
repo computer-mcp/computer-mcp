@@ -2,6 +2,7 @@
   import ComputerMCPConfiguration
   import ComputerMCPCore
   import ComputerMCPPermissions
+  import ComputerMCPPlugins
   import ComputerMCPPlatform
   import ComputerMCPPlatformPOSIX
   @testable import ComputerMCPProcess
@@ -181,6 +182,159 @@
         try? await f.runtime.coordinator.stopExecutions([prepared.executionID])
         throw error
       }
+    }
+
+    @Test func pluginDependencyExecutableIsVerifiedReadableAndLaunched() async throws {
+      let f = try WorktreeServiceFixture()
+      defer { f.remove() }
+      let packageRoot = f.root.appendingPathComponent("dependency-plugin")
+      try FileManager.default.createDirectory(at: packageRoot, withIntermediateDirectories: false)
+      try """
+      id = 'dependency-plugin'
+      name = 'Dependency fixture'
+      version = '1.0.0'
+      plugin_api = 1
+      [[dependencies]]
+      id = 'vendor'
+      commands = ['vendor-mcp']
+      instructions = 'Use the fixture vendor.'
+      [[mcp]]
+      id = 'server'
+      transport = 'stdio'
+      executable = { dependency = 'vendor' }
+      """.write(
+        to: packageRoot.appendingPathComponent(PluginManifest.filename), atomically: true,
+        encoding: .utf8)
+      // Outside the package and the system read roots, as an installed vendor tool is.
+      let vendorDirectory = f.root.appendingPathComponent("vendor")
+      try FileManager.default.createDirectory(
+        at: vendorDirectory, withIntermediateDirectories: false)
+      let vendor = vendorDirectory.appendingPathComponent("vendor-mcp")
+      try writePythonTestExecutable(Self.responder(tool: "vendor"), to: vendor)
+      let package = try PluginPackage.load(at: packageRoot)
+      let plugin = try PluginResolver.resolve(
+        package: package, source: .init(kind: .development, root: packageRoot),
+        settings: .init(enabled: true), dependencyExecutables: ["vendor": vendor],
+        hostVersion: PluginVersion("1.0.0"), architecture: PluginHost.architecture)
+      let composition = try GatewayPluginComposition(
+        configuration: GatewayConfiguration(), plugins: [plugin])
+      let server = try #require(composition.runtimeConfiguration.mcp.servers.first)
+      let owner = try GatewayPermissionOwner(
+        context: .init(caller: .localApp, profileID: .localAdmin, trustedPrincipalID: "owner"),
+        validate: {})
+      let view = try f.runtime.service.view(owner: owner)
+      _ = try f.runtime.service.approveProvider(
+        GatewayProviderReview(package: package, configuration: f.database.configurationState()),
+        permissions: .newPrincipal, fullAccess: false, owner: owner,
+        expectedProviderRevision: nil, expectedRevision: view.revision,
+        expectedEpoch: #require(view.epoch))
+      let source = try GatewayProviderSource.resolve(
+        registration: .init(kind: .mcp, id: server.id),
+        configuration: composition.runtimeConfiguration, origins: composition.origins,
+        database: f.database)
+      let prepared = try await f.runtime.prepareProvider(
+        review: source.review, registrationID: server.id, authorization: nil, directory: nil,
+        connectionID: nil, source: source)
+      let client = Self.client(f, prepared: prepared, digest: source.review.sourceDigest)
+      do {
+        let tools = try await BlockingOperationExecutor(label: "dependency-provider-discovery")
+          .perform { try client.listTools(server: server, context: .empty) }
+        #expect(tools.map(\.name) == ["vendor"])
+        await client.shutdown()
+        // A replaced dependency fails the launch recheck rather than running.
+        try Data("#!/bin/sh\nexit 0\n".utf8).write(to: vendor, options: .atomic)
+        #expect(throws: (any Error).self) { try prepared.validateProviderLaunch() }
+        try prepared.finishAdmission()
+        try await f.runtime.coordinator.stopExecutions([prepared.executionID])
+      } catch {
+        await client.shutdown()
+        try? prepared.finishAdmission()
+        try? await f.runtime.coordinator.stopExecutions([prepared.executionID])
+        throw error
+      }
+    }
+
+    @Test func localServerLaunchesTheExecutableItsSourceVerified() async throws {
+      let f = try WorktreeServiceFixture()
+      defer { f.remove() }
+      var executables: [String: URL] = [:]
+      for name in ["verified", "other"] {
+        let directory = f.root.appendingPathComponent(name)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: false)
+        try writePythonTestExecutable(
+          Self.responder(tool: name), to: directory.appendingPathComponent("provider-tool"))
+        executables[name] = directory
+      }
+      // The source resolves the relative command from its configuration; the client's
+      // own base would find a different file.
+      var configuration = GatewayConfiguration()
+      configuration.projectDirectory = try #require(executables["verified"])
+      let server = MCPServerConfig(
+        id: "verified-path", transport: .stdio, command: "./provider-tool",
+        startupTimeoutMs: 5000, requestTimeoutMs: 5000)
+      configuration.mcp.servers = [server]
+      let review = try GatewayProviderReview(
+        server: server, configuration: f.database.configurationState())
+      let owner = try GatewayPermissionOwner(
+        context: .init(caller: .localApp, profileID: .localAdmin, trustedPrincipalID: "owner"),
+        validate: {})
+      let view = try f.runtime.service.view(owner: owner)
+      _ = try f.runtime.service.approveProvider(
+        review, permissions: .newPrincipal, fullAccess: false, owner: owner,
+        expectedProviderRevision: nil, expectedRevision: view.revision,
+        expectedEpoch: #require(view.epoch))
+      let source = try GatewayProviderSource.resolve(
+        registration: .init(kind: .mcp, id: server.id), configuration: configuration,
+        origins: [:], database: f.database)
+      let prepared = try await f.runtime.prepareProvider(
+        review: source.review, registrationID: server.id, authorization: nil, directory: nil,
+        connectionID: nil, source: source)
+      let client = Self.client(
+        f, prepared: prepared, digest: review.sourceDigest,
+        workingDirectory: try #require(executables["other"]))
+      do {
+        let tools = try await BlockingOperationExecutor(label: "verified-provider-discovery")
+          .perform { try client.listTools(server: server, context: .empty) }
+        #expect(tools.map(\.name) == ["verified"])
+        await client.shutdown()
+        try prepared.finishAdmission()
+        try await f.runtime.coordinator.stopExecutions([prepared.executionID])
+      } catch {
+        await client.shutdown()
+        try? prepared.finishAdmission()
+        try? await f.runtime.coordinator.stopExecutions([prepared.executionID])
+        throw error
+      }
+    }
+
+    private static func client(
+      _ f: WorktreeServiceFixture, prepared: PreparedExecutionContext, digest: String,
+      workingDirectory: URL? = nil
+    ) -> MCPProxyClient {
+      var host = MCPHostContext(
+        runtimeID: UUID(), context: .init(caller: .localMCP, profileID: .localAdmin),
+        projectID: "source", rootURL: f.source, readOnly: true,
+        processOwnershipRoot: f.root.appendingPathComponent("ownership"))
+      host.providerSource = { _ in .init(digest: digest, prepareDiscovery: { prepared }) }
+      return MCPProxyClient(
+        launcher: f.platform.launcher, workingDirectory: workingDirectory ?? f.root,
+        hostContext: host)
+    }
+
+    private static func responder(tool: String) -> String {
+      #"""
+      import json, sys
+      for line in sys.stdin:
+          message = json.loads(line)
+          if "id" not in message: continue
+          if message["method"] == "initialize":
+              result = {"protocolVersion": "2024-11-05", "capabilities": {"tools": {}}, "serverInfo": {"name": "fixture", "version": "1"}}
+          elif message["method"] == "tools/list":
+              result = {"tools": [{"name": "TOOL", "inputSchema": {"type": "object"}}]}
+          else:
+              result = {}
+          print(json.dumps({"jsonrpc": "2.0", "id": message["id"], "result": result}), flush=True)
+      """#.replacingOccurrences(of: "TOOL", with: tool)
     }
 
     @Test(arguments: [false, true])

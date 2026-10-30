@@ -119,6 +119,7 @@ package final class GatewayPermissionRuntime: @unchecked Sendable {
           connectionID: connectionID, auditContext: auditContext,
           worktreeAdmission: worktree?.binding.admission, provider: binding,
           providerWorkingDirectory: SandboxPath(launchDirectory.path),
+          providerExecutable: try source?.executable.map(SandboxPath.init),
           validateProvider: validate)
       } catch {
         // Once reserved, durable recovery owns the scratch and its pending cleanup.

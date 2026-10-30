@@ -142,7 +142,7 @@ package final class ExecutionRevocationCoordinator: ExecutionRecoveryAuthorizing
     fullAccessEnvironment: [String: String] = [:], connectionID: String? = nil,
     auditContext: ExecutionContext? = nil, worktreeAdmission: WorktreeAdmission? = nil,
     provider: ProviderExecutionBinding? = nil,
-    providerWorkingDirectory: SandboxPath? = nil,
+    providerWorkingDirectory: SandboxPath? = nil, providerExecutable: SandboxPath? = nil,
     validateProvider: (@Sendable () throws -> Void)? = nil,
     callback: ProviderExecutionBinding? = nil
   ) async throws -> PreparedExecutionContext {
@@ -371,7 +371,8 @@ package final class ExecutionRevocationCoordinator: ExecutionRecoveryAuthorizing
         permitsProgramLaunch: configuration.permitsProgramLaunch,
         fixedHostOperation: context.fixedHostOperation, worktreeGit: context.worktree?.git,
         validateWorktree: validateWorktree, provider: provider,
-        providerWorkingDirectory: providerWorkingDirectory, validateProvider: validateLaunch)
+        providerWorkingDirectory: providerWorkingDirectory, providerExecutable: providerExecutable,
+        validateProvider: validateLaunch)
       try validateLaunch()
       _ = try authority.access(execution.id, operation: .readResult)
       lock.withLock { contexts[execution.id] = WeakExecutionContext(prepared) }

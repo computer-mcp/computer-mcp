@@ -112,6 +112,8 @@ package final class PreparedExecutionContext: ExecutionAccessChecking, Sendable 
   package let worktreeGit: SandboxGitConfiguration?
   package let provider: ProviderExecutionBinding?
   package let providerWorkingDirectory: SandboxPath?
+  /// The provider source's verified launch path; a launch must not resolve another one.
+  package let providerExecutable: SandboxPath?
   package let hostServiceChannel: ProviderHostServiceChannel?
   // Channel attachments share limits with the coordinator-registered preparation.
   private let preparation: PreparedExecutionContext?
@@ -132,7 +134,7 @@ package final class PreparedExecutionContext: ExecutionAccessChecking, Sendable 
     worktreeGit: SandboxGitConfiguration? = nil,
     validateWorktree: (@Sendable () throws -> Void)? = nil,
     provider: ProviderExecutionBinding? = nil,
-    providerWorkingDirectory: SandboxPath? = nil,
+    providerWorkingDirectory: SandboxPath? = nil, providerExecutable: SandboxPath? = nil,
     hostServiceChannel: ProviderHostServiceChannel? = nil,
     validateProvider: (@Sendable () throws -> Void)? = nil
   ) {
@@ -148,6 +150,7 @@ package final class PreparedExecutionContext: ExecutionAccessChecking, Sendable 
     self.validateWorktree = validateWorktree
     self.provider = provider
     self.providerWorkingDirectory = providerWorkingDirectory
+    self.providerExecutable = providerExecutable
     self.hostServiceChannel = hostServiceChannel
     self.validateProvider = validateProvider
     state = .init(State(limits: limits))
@@ -168,6 +171,7 @@ package final class PreparedExecutionContext: ExecutionAccessChecking, Sendable 
     validateWorktree = parent.validateWorktree
     provider = nil
     providerWorkingDirectory = nil
+    providerExecutable = nil
     hostServiceChannel = nil
     validateProvider = parent.validateProvider
     state = parent.state
@@ -186,6 +190,7 @@ package final class PreparedExecutionContext: ExecutionAccessChecking, Sendable 
     validateWorktree = parent.validateWorktree
     provider = parent.provider
     providerWorkingDirectory = parent.providerWorkingDirectory
+    providerExecutable = parent.providerExecutable
     hostServiceChannel = channel
     validateProvider = parent.validateProvider
     state = parent.state

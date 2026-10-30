@@ -73,7 +73,8 @@ struct GatewayProviderApprovalTests {
       permissions: permissions)
     let source = GatewayProviderSource(
       review: try .init(server: server, configuration: f.database.configurationState()),
-      registrationID: server.id, workingDirectory: nil, resources: [], validate: {})
+      registrationID: server.id, workingDirectory: nil, executable: nil, resources: [],
+      validate: {})
     let caller = Principal.client("callback-caller")
     let delegation = PermissionAction(requirement: try .init(.mcpServer(server.id), .all))
     let parent = try f.store.transactionWithDatabase { database, ledger in
@@ -146,7 +147,8 @@ struct GatewayProviderApprovalTests {
     _ = try f.approve(initial, permissions: .newPrincipal)
     let source = GatewayProviderSource(
       review: try .init(server: server, configuration: f.database.configurationState()),
-      registrationID: server.id, workingDirectory: nil, resources: [], validate: {})
+      registrationID: server.id, workingDirectory: nil, executable: nil, resources: [],
+      validate: {})
     let principal = Principal.client("atomic-caller")
     let invocation = InvocationIdentity(
       principal: principal, tool: "screen", projectID: nil,

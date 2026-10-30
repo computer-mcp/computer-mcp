@@ -204,6 +204,30 @@ final class CLIToolProviderTests {
   }
 
   @Test
+  func pluginTreeWithoutProviderDiscoveryRunsNoExporterAndReportsTheFailure() async throws {
+    let temporary = try ScopedTemporaryDirectory()
+    let script = temporary.url.appendingPathComponent("exporter")
+    let marker = temporary.url.appendingPathComponent("started")
+    try "#!/bin/sh\nprintf started > '\(marker.path)'\n".write(
+      to: script, atomically: true, encoding: .utf8)
+    try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: script.path)
+    var tree = CLITreeSource(kind: .introspection, args: ["--tree"])
+    tree.packageRoot = temporary.url
+    var configuration = GatewayConfiguration.fixture(
+      cli: .init(commands: [.init(id: "plugin-cli", executable: script.path, tree: tree)]))
+    configuration.projectDirectory = temporary.url
+    let provider = CLIToolProvider(
+      environment: .init(launcher: testExecutionLauncher(), configuration: configuration))
+    let trees = try await withCLIProcessScope(directory: temporary.url) {
+      try provider.treeProviders()
+    }
+    #expect(trees.isEmpty)
+    #expect(!FileManager.default.fileExists(atPath: marker.path))
+    let list = try #require(try provider.definitions().first { $0.tool.name == "cli.list" })
+    #expect(list.tool.meta?.objectValue?["discovery_errors"]?.objectValue?["plugin-cli"] != nil)
+  }
+
+  @Test
   func execWithoutExecutionContextDoesNotStartTheRegisteredCommand() throws {
     let temporary = try ScopedTemporaryDirectory()
     let script = temporary.url.appendingPathComponent("command")

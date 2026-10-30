@@ -83,6 +83,8 @@ package struct MacOSToolProviders: GatewayToolProviderFactory {
       providers: {
         let configured = try ConfiguredMCPToolProvider(environment: environment, mcpClient: client)
           .snapshot()
+        // Trees load before any definition is read, so `cli.list` reports this refresh's
+        // discovery failures.
         let trees = try cli.treeProviders()
         return try configured.listed(among: providers) + trees + [computerUse]
       },

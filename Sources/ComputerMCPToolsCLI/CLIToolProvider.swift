@@ -84,9 +84,17 @@ package struct CLIToolProvider: GatewayToolProvider {
         discoveryCache.failed(command.id, error: error)
         return nil
       }
-      // Direct registrations retain caller-bound executable inspection.
-      guard discovery != nil || source.kind == .file || InvocationExecution.current != nil else {
-        return nil
+      if discovery == nil, source.kind != .file {
+        // A plugin exporter runs only as provider discovery, never under the caller's execution.
+        guard source.packageRoot == nil else {
+          discoveryCache.failed(
+            command.id,
+            error: GatewayToolError.executionFailed(
+              "Plugin CLI tree discovery is unavailable in this context."))
+          return nil
+        }
+        // Direct registrations retain caller-bound executable inspection.
+        guard InvocationExecution.current != nil else { return nil }
       }
       var command = command
       command.env = environment.environment.merging(command.env) { _, value in value }

@@ -153,7 +153,7 @@ struct ComputerMCPPermissionsEnvironmentIdentityTests {
       RegisteredProject(id: "B", root: path("/b")),
       RegisteredProject(id: "E", root: path("/b/y")),
       RegisteredProject(id: "DA", root: path("/d"), sourceID: "A"),
-      RegisteredProject(id: "DB", root: path("/d/x"), sourceID: "B"),
+      RegisteredProject(id: "DB", root: path("/e"), sourceID: "B"),
     ]
     environment.paths = try PathEnvironmentSnapshot(projects: projects)
     try ledger.reconcile(environment: environment, expectedRevision: ledger.revision)

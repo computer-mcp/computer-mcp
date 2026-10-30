@@ -284,5 +284,13 @@ struct ComputerMCPPermissionsPathTests {
         RegisteredProject(id: "b", root: path("/b"), sourceID: "a"),
       ])
     }
+    #expect(throws: PermissionModelError.invalidProjectGraph) {
+      try ProjectCatalog([
+        RegisteredProject(id: "a", root: path("/a")),
+        RegisteredProject(id: "b", root: path("/b")),
+        RegisteredProject(id: "da", root: path("/d"), sourceID: "a"),
+        RegisteredProject(id: "db", root: path("/d/x"), sourceID: "b"),
+      ])
+    }
   }
 }

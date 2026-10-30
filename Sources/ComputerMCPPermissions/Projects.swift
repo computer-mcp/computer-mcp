@@ -87,6 +87,14 @@ package struct ProjectCatalog: Sendable {
       Set(projects.map(\.root)).count == projects.count,
       projects.allSatisfy({ !$0.id.isEmpty && $0.id != "*" })
     else { throw PermissionModelError.invalidProjectGraph }
+    // Derived roots never contain one another, so a path's owner never depends on the order of
+    // derived projects; owner-consent digests omit derived projects on that basis.
+    let derived = projects.filter { $0.sourceID != nil }
+    guard
+      !derived.contains(where: { outer in
+        derived.contains { $0.id != outer.id && outer.root.contains($0.root) }
+      })
+    else { throw PermissionModelError.invalidProjectGraph }
     let byID = Dictionary(uniqueKeysWithValues: projects.map { ($0.id, $0) })
     var sources: [String: String] = [:]
     for project in projects {

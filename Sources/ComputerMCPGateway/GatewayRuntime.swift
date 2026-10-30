@@ -1616,8 +1616,8 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
 
   /// Whether a call reaches a provider session: an MCP registration, through a re-exported
   /// tool, an `mcp.*` route or forwarding, or a plugin CLI contribution. Such a call is never a
-  /// host callback target. With no arguments, a route selected only by its call's own argument
-  /// does not count, since some calls of that tool reach no provider.
+  /// host callback target. With no arguments, a plugin CLI contribution selected only by the
+  /// call's own argument does not count, since other calls of that tool select a direct one.
   private func reachesProviderSession(
     _ descriptor: CapabilityDescriptor, arguments: [String: JSONValue]
   ) -> Bool {

@@ -263,8 +263,9 @@ package final class PreparedExecutionContext: ExecutionAccessChecking, Sendable 
 
   package var executionID: UUID { authority.executionID }
 
-  /// Whether a launch rechecks a provider binding or provider-compiled read exceptions; the
-  /// child's bootstrap then repeats the recheck before the program runs.
+  /// Whether a launch rechecks its prepared authority: a provider binding, or the compiled
+  /// validation that coordinator-prepared executions carry, such as read exception identities.
+  /// The child's bootstrap then repeats the recheck before the program runs.
   package var validatesProviderLaunch: Bool { provider != nil || validateProvider != nil }
 
   package func validateProviderLaunch() throws {

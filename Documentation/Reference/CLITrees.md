@@ -90,9 +90,10 @@ cwd/environment. Both use closed stdin, a 5-second execution budget and a 4 MiB
 stdout bound. Enabling an exporter authorizes running that
 package code for discovery; it does not grant projected tool calls to a profile.
 A plugin contribution whose exporter cannot run in that context, fails or returns
-an invalid tree publishes no projected tools; `cli.list` reports the failure in
-`_meta.discovery_errors`, keyed by registration ID. A tree or failure is reused
-until the reviewed declaration, its approval or an executable identity changes.
+an invalid tree publishes no projected tools. `tools/list` then reports the failure
+in the `cli.list` entry's `_meta.discovery_errors`, keyed by registration ID. A
+tree or failure is reused until the reviewed declaration, its approval or an
+executable identity changes.
 Exporters must return this contract. Native introspection using another format
 needs a verified package exporter; human-readable help is not parsed as a tree.
 The package manager does not run exporters while reading a manifest or installing

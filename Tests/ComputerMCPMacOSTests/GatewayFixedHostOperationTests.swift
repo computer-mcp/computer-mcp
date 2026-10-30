@@ -139,6 +139,7 @@ struct FixedHostFixture {
       counter: TestAuthorizationEpochCounter.shared(forDatabasePath: databasePath.path))
     var permissions = fixturePermissions([.project("fixture"): .granted(.write)])
     if let nestedAccess { try permissions.set(.granted(nestedAccess), for: .project("nested")) }
+    if callback { try permissions.set(.granted(.all), for: .mcpServer("lifecycle-callback")) }
     let grant = ProfileGrant(
       id: .chatGPTOperate,
       permissions: permissions,
@@ -188,7 +189,7 @@ struct FixedHostFixture {
         servers: callback
           ? [
             .init(
-              id: "lifecycle-callback", transport: .stdio, command: "/unused/lifecycle-callback",
+              id: "lifecycle-callback", transport: .stdio, command: "/bin/cat",
               hostServices: true)
           ] : []),
       builtin: .init(

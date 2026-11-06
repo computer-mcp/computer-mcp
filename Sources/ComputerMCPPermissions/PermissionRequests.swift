@@ -1180,6 +1180,31 @@ package struct PermissionLedger: Equatable, Sendable, Codable {
     return proof
   }
 
+  /// Checks project write against current standing authority and this proof's exact
+  /// consumed evidence, without admitting work or transferring its grant ownership.
+  package mutating func checkProjectWriteAuthority(
+    _ id: UUID, projectID: String, connectionID: String? = nil, now: Date = Date()
+  ) throws {
+    _ = reconcileExecutionLimits(now: now)
+    guard !authorityIsSuspended, validateAuthorization(id), let proof = authorizations[id],
+      let executionID = proof.executionID,
+      executions[executionID]?.authorizationIDs.contains(id) == true,
+      executionIsLive(executionID)
+    else { throw PermissionModelError.invalidAuthorization }
+    let requirements = InvocationRequirements(
+      actions: [
+        .init(
+          requirement: try PermissionRequirement(.project(projectID), .write),
+          scope: .project(projectID))
+      ], mode: proof.mode, sandboxProjectID: proof.sandboxProjectID,
+      providers: proof.requirements.providers)
+    let result = evaluate(
+      requirements, principal: proof.invocation.principal,
+      oneTimeRequests: evidenceRequests(proof.basis, authorizationID: id), basis: proof.basis,
+      connectionID: connectionID, admission: true)
+    guard result.isAllowed else { throw PermissionModelError.invalidAuthorization }
+  }
+
   /// Rechecks an actual host file use, including recursive descendants. New access
   /// can only be drawn from this invocation's existing grant evidence.
   package mutating func authorizePathUse(

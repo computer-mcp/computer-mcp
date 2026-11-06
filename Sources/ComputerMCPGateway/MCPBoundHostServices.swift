@@ -384,20 +384,11 @@ actor MCPBoundHostServices {
       // Inspection acquires no authority and cannot consume a retry or create a request.
       var evaluation = ledger
       for id in [clientID, provider.providerAuthorization.id] {
-        guard let proof = evaluation.authorizations[id] else { return false }
-        let decision = try evaluation.authorize(
-          invocation: .init(
-            principal: proof.invocation.principal, tool: "host.invocations.describe",
-            projectID: admission.sourceProjectID, argumentsDigest: operation.id.uuidString),
-          requirements: .init(
-            actions: [
-              .init(
-                requirement: .init(.project(admission.sourceProjectID), .write),
-                scope: .project(admission.sourceProjectID))
-            ], mode: proof.mode, sandboxProjectID: proof.sandboxProjectID,
-            providers: proof.requirements.providers),
-          connectionID: id == clientID ? current.context.controlSession?.id : nil, now: Date())
-        guard case .allowed = decision else { return false }
+        do {
+          try evaluation.checkProjectWriteAuthority(
+            id, projectID: admission.sourceProjectID,
+            connectionID: id == clientID ? current.context.controlSession?.id : nil, now: Date())
+        } catch { return false }
       }
       return true
     }

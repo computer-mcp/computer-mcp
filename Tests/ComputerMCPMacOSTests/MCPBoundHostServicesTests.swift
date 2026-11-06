@@ -859,6 +859,78 @@ struct MCPBoundHostServicesTests {
     await fixture.close()
   }
 
+  @Test(.timeLimit(.minutes(2)), arguments: ["client", "provider"])
+  func operationInspectionPreservesCurrentConsumedOnceEvidence(principal: String) async throws {
+    let fixture = try HostAuthorityFixture(lifecycle: true)
+    defer { fixture.remove() }
+    _ = try await fixture.during("fixture.provision", ["name": .string("topic")]) {
+      service, context in
+      let added = try await ProjectServiceCaller.add(service, context, name: "topic")
+      #expect(!added.isError)
+      return .object([:])
+    }
+    let projectID = try #require(try fixture.database.derivedProjects().first?.projectID)
+    try await fixture.useSandboxedProvider()
+    if principal == "client" {
+      try fixture.setClientProjectAccess(.notGranted)
+    } else {
+      try fixture.setProviderProjectAccess(.notGranted)
+    }
+    let replies = HostReplies()
+    _ = try await fixture.duringAdmitted(
+      "fixture.remove", project: projectID, onlyThisTime: true
+    ) { service, context in
+      let execution = try #require(context.executionAuthority as? PreparedExecutionContext)
+      let binding = try #require(execution.provider)
+      let selectedProofID: UUID? =
+        principal == "client"
+        ? binding.delegatingAuthorization?.id : binding.providerAuthorization.id
+      let proofID = try #require(selectedProofID)
+      let operationID = try #require(context.admission?.hostOperationID)
+      replies.setID("operation", operationID)
+      let invocationID = try #require(context.admission?.hostInvocationID)
+      // Keep the reservation live: executing removal would drain this provider.
+      let before = try fixture.runtime.permissionRuntime.store.readWithDatabase { _, ledger in
+        let proof = try #require(ledger.authorizations[proofID])
+        #expect(proof.executionID == execution.executionID)
+        #expect(!proof.requestIDs.isEmpty)
+        for id in proof.requestIDs {
+          #expect(ledger.requests[id]?.status == .consumed(proofID))
+        }
+        return (ledger.requests, Set(ledger.authorizations.keys))
+      }
+      let byInvocation = try await ProjectServiceCaller.describe(service, invocation: invocationID)
+      let byOperation = try await ProjectServiceCaller.describe(
+        service, operation: operationID.uuidString)
+      #expect(!byInvocation.isError && !byOperation.isError)
+      #expect(byOperation.result == byInvocation.result?["operation"]?.objectValue)
+      #expect(byOperation.result?["state"] == .string("reserved"))
+      let after = try fixture.runtime.permissionRuntime.store.readWithDatabase { _, ledger in
+        (ledger.requests, Set(ledger.authorizations.keys))
+      }
+      #expect(before.0 == after.0 && before.1 == after.1)
+      return .object([:])
+    }
+    let operationID = try #require(replies.id("operation"))
+    _ = try await fixture.duringAdmitted(
+      "fixture.list", project: projectID, onlyThisTime: true
+    ) { service, _ in
+      let before = try fixture.runtime.permissionRuntime.store.readWithDatabase { _, ledger in
+        (ledger.requests, Set(ledger.authorizations.keys))
+      }
+      let unrelated = try await ProjectServiceCaller.describe(
+        service, operation: operationID.uuidString)
+      #expect(unrelated.isError && unrelated.code == "host.operation_not_found")
+      let after = try fixture.runtime.permissionRuntime.store.readWithDatabase { _, ledger in
+        (ledger.requests, Set(ledger.authorizations.keys))
+      }
+      #expect(before.0 == after.0 && before.1 == after.1)
+      return .object([:])
+    }
+    #expect(try fixture.database.derivedProjects().count == 1)
+    await fixture.close()
+  }
+
   @Test(
     .timeLimit(.minutes(1)),
     arguments: ["name", "branch", "base", "unknown-operation", "wrong-action", "revoked"])
@@ -1603,12 +1675,13 @@ private final class HostAuthorityFixture: @unchecked Sendable {
   /// requests it raises, followed by its explicit retry.
   func duringAdmitted(
     _ method: String, project: String, onlyThisTime: Bool,
+    arguments: [String: JSONValue] = [:],
     _ body: @escaping @Sendable (MCPBoundHostServices, InvocationContext) async throws -> JSONValue
   ) async throws -> JSONValue {
-    guard onlyThisTime else { return try await during(method, project: project, body) }
+    guard onlyThisTime else { return try await during(method, arguments, project: project, body) }
     let requests: [PermissionRequest]
     do {
-      _ = try await during(method, project: project, body)
+      _ = try await during(method, arguments, project: project, body)
       Issue.record("The call did not require a permission answer.")
       return .null
     } catch GatewayPermissionCallError.required(let raised, _, _) {
@@ -1626,7 +1699,9 @@ private final class HostAuthorityFixture: @unchecked Sendable {
     }
     return try await during(
       method,
-      [GatewayPermissionRetryInput.field: .array(requests.map { .string($0.id.uuidString) })],
+      arguments.merging([
+        GatewayPermissionRetryInput.field: .array(requests.map { .string($0.id.uuidString) })
+      ]) { _, retry in retry },
       project: project, body)
   }
 

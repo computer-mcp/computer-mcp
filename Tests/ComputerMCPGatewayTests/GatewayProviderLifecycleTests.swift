@@ -14,6 +14,386 @@
 
   @Suite(.nativeIntegration, .serialized, .timeLimit(.minutes(2)))
   struct GatewayProviderLifecycleTests {
+    @Test
+    func replacementAdmissionUsesLedgerBeforeLimitNotification() async throws {
+      let reader = DiscoveryPolicyBarrier()
+      let f = try WorktreeServiceFixture(policyReader: reader)
+      defer {
+        reader.release()
+        f.remove()
+      }
+      try await f.runtime.ready()
+      let server = MCPServerConfig(id: "discovery-lag", transport: .stdio, command: "/bin/cat")
+      let owner = try GatewayPermissionOwner(
+        context: .init(caller: .localApp, profileID: .localAdmin, trustedPrincipalID: "owner"),
+        validate: {})
+      let initial = try GatewayProviderReview(
+        server: server, configuration: f.database.configurationState())
+      let view = try f.runtime.service.view(owner: owner)
+      _ = try f.runtime.service.approveProvider(
+        initial, permissions: .newPrincipal, fullAccess: false, owner: owner,
+        expectedProviderRevision: nil, expectedRevision: view.revision,
+        expectedEpoch: #require(view.epoch))
+      let review = try GatewayProviderReview(
+        server: server, configuration: f.database.configurationState())
+      let old = try await f.runtime.prepareProvider(
+        review: review, registrationID: server.id, authorization: nil, directory: nil,
+        connectionID: nil, mcpDiscovery: true)
+      let binding = try #require(old.provider)
+      let selection = try #require(
+        GatewayDiscoverySelection(executionID: old.executionID, binding: binding))
+      reader.arm()
+      let reconciliation = Task { try await f.runtime.coordinator.reconcile() }
+      do {
+        let deadline = ContinuousClock.now + .seconds(5)
+        while !reader.entered {
+          guard ContinuousClock.now < deadline else {
+            throw GatewayToolError.executionFailed("Policy reconciliation did not reach barrier")
+          }
+          try await Task.sleep(for: .milliseconds(10))
+        }
+        try f.runtime.store.transactionWithDatabase { _, ledger in
+          let execution = try #require(ledger.executions[old.executionID])
+          let limit = try #require(execution.limits.timeMilliseconds)
+          _ = ledger.reconcileExecutionLimits(
+            now: execution.startedAt.addingTimeInterval(Double(limit) / 1000 + 0.001))
+          #expect(ledger.executions[old.executionID]?.limitEndReason == .timeLimit)
+          #expect(ledger.executions[old.executionID]?.isRunning == false)
+        }
+        #expect(old.limitEndReason == nil)
+        let before = try f.runtime.store.readWithDatabase { _, ledger in
+          Set(ledger.authorizations.keys)
+        }
+        let replacement = GatewayDiscoveryReplacement(
+          selected: selection, reuse: nil, caller: GatewayDiscoveryCaller(context: .empty))
+        let fresh = try f.runtime.service.authorizeProviderExecution(
+          review: review, registrationID: server.id, caller: nil, retryIDs: [],
+          replacement: replacement)
+        #expect(old.limitEndReason == nil, "Admission must precede the held notification")
+        #expect(fresh.providerAuthorization.id != binding.providerAuthorization.id)
+        let after = try f.runtime.store.readWithDatabase { _, ledger in
+          Set(ledger.authorizations.keys)
+        }
+        #expect(after.subtracting(before) == [fresh.providerAuthorization.id])
+        reader.release()
+        try await reconciliation.value
+        try f.runtime.service.finishInvocation(fresh.providerAuthorization.id)
+        try old.finishAdmission()
+        try await f.runtime.coordinator.stopExecutions([old.executionID])
+      } catch {
+        reader.release()
+        _ = await reconciliation.result
+        try? old.finishAdmission()
+        try? await f.runtime.coordinator.stopExecutions([old.executionID])
+        throw error
+      }
+    }
+
+    @Test
+    func discoveryExpiryMarkerRequiresTheActualTimedOutWriteInput() async throws {
+      let f = try WorktreeServiceFixture()
+      defer { f.remove() }
+      let server = MCPServerConfig(id: "discovery-marker", transport: .stdio, command: "/bin/cat")
+      let owner = try GatewayPermissionOwner(
+        context: .init(caller: .localApp, profileID: .localAdmin, trustedPrincipalID: "owner"),
+        validate: {})
+      let review = try GatewayProviderReview(
+        server: server, configuration: f.database.configurationState())
+      let view = try f.runtime.service.view(owner: owner)
+      _ = try f.runtime.service.approveProvider(
+        review, permissions: .newPrincipal, fullAccess: false, owner: owner,
+        expectedProviderRevision: nil, expectedRevision: view.revision,
+        expectedEpoch: #require(view.epoch))
+      let currentReview = try GatewayProviderReview(
+        server: server, configuration: f.database.configurationState())
+      for scenario in [
+        "expired", "read", "cancel", "wrongID", "terminated", "interrupted", "revoked",
+        "ownerStop", "expiredRevoked", "expiredInterrupted", "expiredOwnerStop",
+      ] {
+        let prepared = try await f.runtime.prepareProvider(
+          review: currentReview, registrationID: server.id, authorization: nil, directory: nil,
+          connectionID: nil, mcpDiscovery: true)
+        let binding = try #require(prepared.provider)
+        do {
+          if [
+            "expired", "read", "cancel", "wrongID", "expiredRevoked", "expiredInterrupted",
+            "expiredOwnerStop",
+          ].contains(scenario) {
+            try f.runtime.store.transactionWithDatabase { _, ledger in
+              let execution = try #require(ledger.executions[prepared.executionID])
+              let duration = try #require(execution.limits.timeMilliseconds)
+              _ = ledger.reconcileExecutionLimits(
+                now: execution.startedAt.addingTimeInterval(Double(duration) / 1000 + 0.001))
+              #expect(ledger.executions[execution.id]?.limitEndReason == .timeLimit)
+              if scenario == "expiredInterrupted" { try ledger.interruptExecution(execution.id) }
+            }
+            if scenario == "expiredRevoked" {
+              f.runtime.coordinator.revokeInvocations(binding.authorizationIDs)
+            } else if scenario == "expiredOwnerStop" {
+              try await f.runtime.coordinator.stopExecutions([prepared.executionID])
+            }
+          } else if scenario == "terminated" || scenario == "interrupted" {
+            try f.runtime.store.transactionWithDatabase { _, ledger in
+              if scenario == "terminated" {
+                try ledger.terminateExecution(prepared.executionID)
+              } else {
+                try ledger.interruptExecution(prepared.executionID)
+              }
+            }
+          } else if scenario == "revoked" {
+            f.runtime.coordinator.revokeInvocations(binding.authorizationIDs)
+          } else {
+            try await f.runtime.coordinator.stopExecutions([prepared.executionID])
+          }
+          if scenario == "read" {
+            _ = try prepared.accessExecution(prepared.executionID, operation: .readResult)
+          } else if scenario == "expired" || scenario == "expiredOwnerStop" {
+            do {
+              _ = try prepared.accessExecution(prepared.executionID, operation: .writeInput)
+              Issue.record("\(scenario) unexpectedly allowed input")
+            } catch let marker as GatewayDiscoveryExpired {
+              #expect(marker.selection.executionID == prepared.executionID, "\(scenario)")
+              #expect(marker.selection.authorization == binding.providerAuthorization.identity)
+              #expect(marker.selection.authorizationIDs == binding.authorizationIDs)
+            }
+          } else {
+            let id = scenario == "wrongID" ? UUID() : prepared.executionID
+            do {
+              _ = try prepared.accessExecution(
+                id, operation: scenario == "cancel" ? .cancel : .writeInput)
+              Issue.record("\(scenario) unexpectedly allowed discovery input")
+            } catch {
+              #expect(!(error is GatewayDiscoveryExpired), "\(scenario) produced an expiry marker")
+              #expect(error as? PermissionModelError == .invalidAuthorization)
+            }
+          }
+          try prepared.finishAdmission()
+          try await f.runtime.coordinator.stopExecutions([prepared.executionID])
+        } catch {
+          try? prepared.finishAdmission()
+          try? await f.runtime.coordinator.stopExecutions([prepared.executionID])
+          throw error
+        }
+      }
+    }
+
+    @Test
+    func replacementReuseRequiresBothLiveNewAndEligibleOldAuthority() async throws {
+      let f = try WorktreeServiceFixture()
+      defer { f.remove() }
+      let server = MCPServerConfig(id: "discovery-reuse", transport: .stdio, command: "/bin/cat")
+      let owner = try GatewayPermissionOwner(
+        context: .init(caller: .localApp, profileID: .localAdmin, trustedPrincipalID: "owner"),
+        validate: {})
+      let initial = try GatewayProviderReview(
+        server: server, configuration: f.database.configurationState())
+      let view = try f.runtime.service.view(owner: owner)
+      _ = try f.runtime.service.approveProvider(
+        initial, permissions: .newPrincipal, fullAccess: false, owner: owner,
+        expectedProviderRevision: nil, expectedRevision: view.revision,
+        expectedEpoch: #require(view.epoch))
+      let review = try GatewayProviderReview(
+        server: server, configuration: f.database.configurationState())
+      for scenario in ["live", "newEnded", "newRevoked", "oldRevoked", "oldStopped", "revokeAfter"]
+      {
+        let old = try await f.runtime.prepareProvider(
+          review: review, registrationID: server.id, authorization: nil, directory: nil,
+          connectionID: nil, mcpDiscovery: true)
+        let new: PreparedExecutionContext
+        do {
+          new = try await f.runtime.prepareProvider(
+            review: review, registrationID: server.id, authorization: nil, directory: nil,
+            connectionID: nil, mcpDiscovery: true)
+        } catch {
+          try? old.finishAdmission()
+          try? await f.runtime.coordinator.stopExecutions([old.executionID])
+          throw error
+        }
+        do {
+          let oldBinding = try #require(old.provider)
+          let selected = try #require(
+            GatewayDiscoverySelection(executionID: old.executionID, binding: oldBinding))
+          try f.runtime.store.transactionWithDatabase { _, ledger in
+            let oldExecution = try #require(ledger.executions[old.executionID])
+            let milliseconds = try #require(oldExecution.limits.timeMilliseconds)
+            _ = ledger.reconcileExecutionLimits(
+              now: oldExecution.startedAt.addingTimeInterval(Double(milliseconds) / 1000))
+            #expect(ledger.executions[old.executionID]?.limitEndReason == .timeLimit)
+            #expect(old.limitEndReason == nil, "The ledger transition precedes limit notification")
+            #expect(ledger.executions[new.executionID]?.isRunning == true)
+            if scenario == "newEnded" { try ledger.terminateExecution(new.executionID) }
+          }
+          if scenario == "oldRevoked" {
+            f.runtime.coordinator.revokeInvocations(oldBinding.authorizationIDs)
+          } else if scenario == "newRevoked" {
+            f.runtime.coordinator.revokeInvocations(new.authority.authorizationIDs)
+          } else if scenario == "oldStopped" {
+            try await f.runtime.coordinator.stopExecutions([old.executionID])
+          }
+          let caller = GatewayDiscoveryCaller(context: .empty)
+          let replacement = GatewayDiscoveryReplacement(
+            selected: selected, reuse: new, caller: caller)
+          let newAuthorizationIDs = new.authority.authorizationIDs
+          let before = try f.runtime.store.readWithDatabase { _, ledger in
+            Set(ledger.authorizations.keys)
+          }
+          if scenario == "live" || scenario == "revokeAfter" || scenario == "oldStopped" {
+            let reused = try await f.runtime.prepareProvider(
+              review: review, registrationID: server.id, authorization: nil, directory: nil,
+              connectionID: nil, mcpDiscovery: true, discoveryReplacement: replacement)
+            #expect(reused === new, "\(scenario)")
+            #expect(
+              reused.authority.authorizationIDs == newAuthorizationIDs, "\(scenario)")
+            if scenario == "oldStopped" {
+              try f.runtime.store.readWithDatabase { _, ledger in
+                let oldExecution = try #require(ledger.executions[old.executionID])
+                #expect(!oldExecution.isRunning && oldExecution.limitEndReason == .timeLimit)
+                #expect(oldExecution.authorizationIDs == oldBinding.authorizationIDs)
+                #expect(
+                  ledger.authorizations[oldBinding.providerAuthorization.id]?.executionID
+                    == old.executionID)
+              }
+            }
+            if scenario == "revokeAfter" {
+              f.runtime.coordinator.revokeInvocations(oldBinding.authorizationIDs)
+            }
+            _ = try new.accessExecution(new.executionID, operation: .writeInput)
+          } else {
+            do {
+              _ = try await f.runtime.prepareProvider(
+                review: review, registrationID: server.id, authorization: nil, directory: nil,
+                connectionID: nil, mcpDiscovery: true, discoveryReplacement: replacement)
+              Issue.record("\(scenario) unexpectedly reused discovery")
+            } catch {
+              #expect(
+                error as? PermissionModelError == .invalidAuthorization, "\(scenario): \(error)")
+            }
+          }
+          let after = try f.runtime.store.readWithDatabase { _, ledger in
+            Set(ledger.authorizations.keys)
+          }
+          #expect(after == before)
+          try old.finishAdmission()
+          try new.finishAdmission()
+          try await f.runtime.coordinator.stopExecutions([old.executionID, new.executionID])
+        } catch {
+          try? old.finishAdmission()
+          try? new.finishAdmission()
+          try? await f.runtime.coordinator.stopExecutions([old.executionID, new.executionID])
+          throw error
+        }
+      }
+    }
+
+    @Test
+    func pendingOwnerStopRejectsDiscoveryRenewalUntilReservationSettles() async throws {
+      let f = try WorktreeServiceFixture()
+      defer { f.remove() }
+      let server = MCPServerConfig(
+        id: "discovery-pending-stop", transport: .stdio, command: "/bin/cat")
+      let owner = try GatewayPermissionOwner(
+        context: .init(caller: .localApp, profileID: .localAdmin, trustedPrincipalID: "owner"),
+        validate: {})
+      let initial = try GatewayProviderReview(
+        server: server, configuration: f.database.configurationState())
+      let view = try f.runtime.service.view(owner: owner)
+      _ = try f.runtime.service.approveProvider(
+        initial, permissions: .newPrincipal, fullAccess: false, owner: owner,
+        expectedProviderRevision: nil, expectedRevision: view.revision,
+        expectedEpoch: #require(view.epoch))
+      let review = try GatewayProviderReview(
+        server: server, configuration: f.database.configurationState())
+      let old = try await f.runtime.prepareProvider(
+        review: review, registrationID: server.id, authorization: nil, directory: nil,
+        connectionID: nil, mcpDiscovery: true)
+      let new: PreparedExecutionContext
+      do {
+        new = try await f.runtime.prepareProvider(
+          review: review, registrationID: server.id, authorization: nil, directory: nil,
+          connectionID: nil, mcpDiscovery: true)
+      } catch {
+        try? old.finishAdmission()
+        try? await f.runtime.coordinator.stopExecutions([old.executionID])
+        throw error
+      }
+      let child = UUID()
+      var reserved = false
+      do {
+        let binding = try #require(old.provider)
+        let selected = try #require(
+          GatewayDiscoverySelection(executionID: old.executionID, binding: binding))
+        try old.authority.reserveChild(child)
+        reserved = true
+        try f.runtime.store.transactionWithDatabase { _, ledger in
+          let execution = try #require(ledger.executions[old.executionID])
+          let duration = try #require(execution.limits.timeMilliseconds)
+          _ = ledger.reconcileExecutionLimits(
+            now: execution.startedAt.addingTimeInterval(Double(duration) / 1000))
+          #expect(ledger.executions[old.executionID]?.limitEndReason == .timeLimit)
+          #expect(ledger.executions[new.executionID]?.isRunning == true)
+        }
+        try await f.runtime.coordinator.stopExecutions([old.executionID])
+        try f.runtime.store.readWithDatabase { database, ledger in
+          let record = try #require(try ExecutionRuntimeRecord.load(old.executionID, database))
+          #expect(record.admissionFinished && !record.completed)
+          #expect(record.children[child]?.completed == false)
+          #expect(ledger.pendingExecutionTerminations.contains(old.executionID))
+        }
+        do {
+          _ = try old.accessExecution(old.executionID, operation: .writeInput)
+          Issue.record("Pending owner stop unexpectedly allowed expired discovery input")
+        } catch {
+          #expect(error as? PermissionModelError == .invalidAuthorization)
+          #expect(!(error is GatewayDiscoveryExpired))
+        }
+        let caller = GatewayDiscoveryCaller(context: .empty)
+        let before = try f.runtime.store.readWithDatabase { _, ledger in
+          Set(ledger.authorizations.keys)
+        }
+        for reuse in [false, true] {
+          let replacement = GatewayDiscoveryReplacement(
+            selected: selected, reuse: reuse ? new : nil, caller: caller)
+          do {
+            _ = try await f.runtime.prepareProvider(
+              review: review, registrationID: server.id, authorization: nil, directory: nil,
+              connectionID: nil, mcpDiscovery: true, discoveryReplacement: replacement)
+            Issue.record("Pending owner stop admitted discovery, reuse=\(reuse)")
+          } catch {
+            #expect(
+              error as? PermissionModelError == .invalidAuthorization, "reuse=\(reuse): \(error)")
+          }
+        }
+        let after = try f.runtime.store.readWithDatabase { _, ledger in
+          Set(ledger.authorizations.keys)
+        }
+        #expect(after == before)
+        old.authority.launchFailed(child)
+        reserved = false
+        let deadline = ContinuousClock.now + .seconds(5)
+        while true {
+          try await f.runtime.coordinator.reconcile()
+          let complete = try f.runtime.store.readWithDatabase { database, ledger in
+            let record = try #require(try ExecutionRuntimeRecord.load(old.executionID, database))
+            return record.completed && record.children[child]?.completed == true
+              && !ledger.pendingExecutionTerminations.contains(old.executionID)
+          }
+          if complete { break }
+          guard ContinuousClock.now < deadline else {
+            throw GatewayToolError.executionFailed("Pending discovery reservation did not settle")
+          }
+          try await Task.sleep(for: .milliseconds(10))
+        }
+        try new.finishAdmission()
+        try await f.runtime.coordinator.stopExecutions([old.executionID, new.executionID])
+      } catch {
+        if reserved { old.authority.launchFailed(child) }
+        try? old.finishAdmission()
+        try? new.finishAdmission()
+        try? await f.runtime.coordinator.stopExecutions([old.executionID, new.executionID])
+        throw error
+      }
+    }
+
     @Test(arguments: [false, true], [false, true])
     func readExceptionIdentityIsRecheckedAfterPreparation(
       projectOverride: Bool, replaceTarget: Bool
@@ -159,7 +539,7 @@
         projectID: "source", rootURL: f.source, readOnly: true,
         processOwnershipRoot: f.root.appendingPathComponent("ownership"))
       host.providerSource = { _ in
-        .init(digest: review.sourceDigest, prepareDiscovery: { prepared })
+        .init(digest: review.sourceDigest, prepareDiscovery: { _, _ in prepared })
       }
       let client = MCPProxyClient(
         launcher: f.platform.launcher, workingDirectory: registrationDirectory, hostContext: host)
@@ -315,7 +695,7 @@
         runtimeID: UUID(), context: .init(caller: .localMCP, profileID: .localAdmin),
         projectID: "source", rootURL: f.source, readOnly: true,
         processOwnershipRoot: f.root.appendingPathComponent("ownership"))
-      host.providerSource = { _ in .init(digest: digest, prepareDiscovery: { prepared }) }
+      host.providerSource = { _ in .init(digest: digest, prepareDiscovery: { _, _ in prepared }) }
       return MCPProxyClient(
         launcher: f.platform.launcher, workingDirectory: workingDirectory ?? f.root,
         hostContext: host)
@@ -502,5 +882,34 @@
     compiler.waitUntilExit()
     try #require(compiler.terminationStatus == 0)
     return binary
+  }
+  private final class DiscoveryPolicyBarrier: ManagedPolicyReading, @unchecked Sendable {
+    private let underlying = TestManagedPolicyReader()
+    private let condition = NSCondition()
+    private var armed = false
+    private var reached = false
+    private var released = false
+
+    func arm() { condition.withLock { armed = true } }
+    var entered: Bool { condition.withLock { reached } }
+    func release() {
+      condition.lock()
+      released = true
+      condition.broadcast()
+      condition.unlock()
+    }
+    func canonicalPolicyPath(_ path: String) throws -> String {
+      try underlying.canonicalPolicyPath(path)
+    }
+    func readSources() -> [ManagedPolicySourceSnapshot] {
+      condition.lock()
+      if armed {
+        armed = false
+        reached = true
+        while !released { condition.wait() }
+      }
+      condition.unlock()
+      return underlying.readSources()
+    }
   }
 #endif

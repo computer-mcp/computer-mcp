@@ -46,6 +46,9 @@ package struct InvocationContext: Sendable {
   package let continuation: (any ContinuationRoute)?
   package let executionAuthority: (any InvocationExecutionAuthority)?
 
+  /// Host-local waiter cancellation; never part of a provider request.
+  package let isDiscoveryCancelled: (@Sendable () -> Bool)?
+
   /// Host-selected durable authorization identity; nil permits only live result continuation.
   package let executionRecoveryKey: String?
 
@@ -57,7 +60,8 @@ package struct InvocationContext: Sendable {
     session: (any GatewaySessionAuthority)? = nil,
     continuation: (any ContinuationRoute)? = nil,
     executionRecoveryKey: String? = nil,
-    executionAuthority: (any InvocationExecutionAuthority)? = nil
+    executionAuthority: (any InvocationExecutionAuthority)? = nil,
+    isDiscoveryCancelled: (@Sendable () -> Bool)? = nil
   ) {
     self.resolvedInvocation = resolvedInvocation
     self.admission = admission
@@ -65,6 +69,7 @@ package struct InvocationContext: Sendable {
     self.continuation = continuation
     self.executionRecoveryKey = executionRecoveryKey
     self.executionAuthority = executionAuthority
+    self.isDiscoveryCancelled = isDiscoveryCancelled
   }
 }
 

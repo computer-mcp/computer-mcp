@@ -1,6 +1,5 @@
 import ComputerMCPDownstream
 import ComputerMCPMacOS
-import ComputerMCPPermissions
 import ComputerMCPPersistence
 import ComputerMCPSandbox
 import ComputerMCPTestSupport
@@ -16,6 +15,7 @@ import Testing
 @testable import ComputerMCPConfiguration
 @testable import ComputerMCPCore
 @testable import ComputerMCPGateway
+@testable import ComputerMCPPermissions
 @testable import ComputerMCPPlatform
 @testable import ComputerMCPProcess
 
@@ -550,11 +550,15 @@ struct MCPBoundHostServicesTests {
   /// authorizations, and the source project reads the outcome by operation ID. Every
   /// boundary through the commit into teardown checks both authorities. The provider's
   /// authority ends with the worktree's teardown, which continues under the client's.
-  @Test(.timeLimit(.minutes(5)), arguments: ["complete", "once", "client", "provider"])
+  @Test(
+    .timeLimit(.minutes(5)),
+    arguments: ["complete", "once", "client", "provider", "teardown-client", "unregister-client"])
   func providerInitiatedRemovalOutlivesTheDrainOfItsProvider(cause: String) async throws {
     let trigger = HostCommandTrigger()
+    let journal = HostJournalTrigger()
     let fixture = try HostAuthorityFixture(
-      lifecycle: true, stoppableProvider: true, beforeHostCommand: { try trigger.observe($0) })
+      lifecycle: true, stoppableProvider: true, beforeHostCommand: { try trigger.observe($0) },
+      journalIO: .init(beforeDirectorySync: { try journal.observe() }))
     defer { fixture.remove() }
     let replies = HostReplies()
     // A sandboxed provider cannot write the source checkout, so the Full access provider
@@ -580,6 +584,16 @@ struct MCPBoundHostServicesTests {
     trigger.arm(cause == "client" || cause == "provider", at: cause == "client" ? 1 : 2) {
       if cause == "client" { try fixture.setClientProjectAccess(.denied) }
       if cause == "provider" { try fixture.withdrawProviderApproval() }
+    }
+    if cause == "teardown-client" || cause == "unregister-client" {
+      let storage = try #require(fixture.database.worktreeStorage)
+      journal.arm(
+        path: storage.journals.appendingPathComponent("removals/" + projectID + ".json"),
+        phase: cause == "teardown-client" ? "content" : "unregistering"
+      ) {
+        #expect(try fixture.database.derivedProjects().first?.state == .removing)
+        try fixture.setClientProjectAccess(.denied)
+      }
     }
     let ended = await #expect(throws: (any Error).self) {
       try await fixture.duringAdmitted(
@@ -622,6 +636,12 @@ struct MCPBoundHostServicesTests {
       let inspected = try #require(replies.get("inspect")?.result)
       #expect(inspected == MCPHostOperations.envelope(removal).objectValue)
       #expect(inspected["state"] == .string("completed"))
+    case "teardown-client", "unregister-client":
+      #expect(journal.fired)
+      #expect(removal.state == .recoveryRequired)
+      #expect(removal.error != nil)
+      #expect(try fixture.database.derivedProjects().first?.state == .removing)
+      #expect(FileManager.default.fileExists(atPath: path) == (cause == "teardown-client"))
     default:
       // The invalidation fails the next boundary; the record settles from the journal.
       #expect(trigger.fired)
@@ -630,6 +650,212 @@ struct MCPBoundHostServicesTests {
       #expect(FileManager.default.fileExists(atPath: path))
       #expect(try fixture.database.derivedProjects().first?.state == .active)
     }
+    await fixture.close()
+  }
+
+  @Test(
+    .timeLimit(.minutes(5)),
+    arguments: [
+      "complete", "once", "client-before", "provider-before", "client-teardown",
+      "client-unregister", "provider-after", "provider-retired-after",
+    ])
+  func ordinaryBuiltinLifecycleCallbackOwnsCleanupWithoutParentLifecycleMetadata(cause: String)
+    async throws
+  {
+    let command = HostCommandTrigger()
+    let journal = HostJournalTrigger()
+    let proofIDs = HostReplies()
+    let fixture = try HostAuthorityFixture(
+      lifecycle: true, builtinLifecycle: true, stoppableProvider: true,
+      beforeHostCommand: { try command.observe($0) },
+      journalIO: .init(beforeDirectorySync: { try journal.observe() }))
+    defer { fixture.remove() }
+    _ = try await fixture.during("fixture.read") { _, context in
+      #expect(context.admission?.hostOperationID == nil)
+      let invocation = try fixture.runtime.requireHostInvocation(
+        projectID: "scope", origin: "probe", id: #require(context.admission?.hostInvocationID))
+      #expect(invocation.admittedCapability.hostServiceAction == nil)
+      let reply = try await fixture.providerCallback(
+        context, project: "scope", "git.worktree_add", ["name": .string("builtin")],
+        closeAfterClaim: true)
+      #expect(reply == nil)
+      return .object([:])
+    }
+    try await fixture.waitForBuiltin("git.worktree_add")
+    let record = try #require(try fixture.database.derivedProjects().first)
+    let projectID = record.projectID
+    try await fixture.useSandboxedProvider()
+    if cause == "once" { try fixture.setClientProjectAccess(.notGranted) }
+    if cause == "client-before" || cause == "provider-before" {
+      command.arm(true, at: 2) {
+        if cause == "client-before" {
+          try fixture.setClientProjectAccess(.denied)
+        } else {
+          try fixture.withdrawProviderApproval()
+        }
+      }
+    }
+    if ["client-teardown", "client-unregister", "provider-after", "provider-retired-after"]
+      .contains(cause)
+    {
+      let storage = try #require(fixture.database.worktreeStorage)
+      journal.arm(
+        path: storage.journals.appendingPathComponent("removals/" + projectID + ".json"),
+        phase: cause == "client-unregister" ? "unregistering" : "content"
+      ) {
+        #expect(try fixture.database.derivedProjects().first?.state == .removing)
+        let clientID = try #require(proofIDs.id("client"))
+        let providerID = try #require(proofIDs.id("provider"))
+        let before = try fixture.builtinCallbackAuthorities(
+          projectID: projectID, clientID: clientID, providerID: providerID)
+        #expect(!before.originalClient.revoked && !before.client.revoked)
+        #expect(before.clientCanWrite)
+        if cause == "provider-retired-after" {
+          try fixture.retireProviderSource()
+        } else if cause == "provider-after" {
+          try fixture.withdrawProviderApproval()
+        } else {
+          try fixture.setClientProjectAccess(.denied)
+        }
+        let after = try fixture.builtinCallbackAuthorities(
+          projectID: projectID, clientID: clientID, providerID: providerID)
+        #expect(after.client.id == before.client.id && after.provider.id == before.provider.id)
+        #expect(!before.originalProvider.revoked || after.originalProvider.revoked)
+        #expect(!before.provider.revoked || after.provider.revoked)
+        let clientRevoked = cause != "provider-after"
+        #expect(after.originalClient.revoked == clientRevoked)
+        #expect(after.client.revoked == clientRevoked)
+        #expect(after.clientCanWrite == !clientRevoked)
+        if cause == "provider-after" || cause == "provider-retired-after" {
+          #expect(after.originalProvider.revoked)
+          #expect(after.provider.revoked)
+        }
+      }
+    }
+    let ended = await #expect(throws: (any Error).self) {
+      try await fixture.duringAdmitted(
+        "fixture.read", project: projectID, onlyThisTime: cause == "once"
+      ) { _, context in
+        #expect(context.admission?.hostOperationID == nil)
+        let invocation = try fixture.runtime.requireHostInvocation(
+          projectID: projectID, origin: "probe", id: #require(context.admission?.hostInvocationID))
+        #expect(invocation.admittedCapability.hostServiceAction == nil)
+        let execution = try #require(context.executionAuthority as? PreparedExecutionContext)
+        let provider = try #require(execution.provider)
+        proofIDs.setID("client", try #require(provider.delegatingAuthorization).id)
+        proofIDs.setID("provider", provider.providerAuthorization.id)
+        let reply = try await fixture.providerCallback(
+          context, project: projectID, "git.worktree_remove")
+        #expect(reply == nil)
+        return .object([:])
+      }
+    }
+    #expect(ended?.localizedDescription.hasSuffix("The fixture provider was stopped.") == true)
+    try await fixture.waitForBuiltin("git.worktree_remove")
+    try fixture.runtime.permissionRuntime.store.readWithDatabase { _, ledger in
+      let callbacks = ledger.authorizations.values.filter {
+        $0.invocation.tool == "git.worktree_remove" && $0.invocation.projectID == projectID
+      }
+      #expect(callbacks.count == 2)
+      let allCallbacksFinished = callbacks.allSatisfy { $0.finished }
+      #expect(allCallbacksFinished)
+      #expect(
+        callbacks.allSatisfy { proof in
+          proof.basis.contains {
+            if case .worktreeAuthority = $0 { return true }
+            return false
+          }
+        })
+    }
+    let remaining = try fixture.database.derivedProjects().first
+    if cause == "complete" || cause == "once" || cause == "provider-after" {
+      #expect(remaining == nil)
+      #expect(!FileManager.default.fileExists(atPath: record.root))
+      #expect(try fixture.database.project(id: projectID) == nil)
+      if cause == "provider-after" { #expect(journal.fired) }
+    } else {
+      #expect(remaining?.state == (cause.hasSuffix("before") ? .active : .removing))
+      #expect(FileManager.default.fileExists(atPath: record.root) == (cause != "client-unregister"))
+      #expect(cause.hasSuffix("before") ? command.fired : journal.fired)
+      if cause == "provider-retired-after" {
+        let storage = try #require(fixture.database.worktreeStorage)
+        let data = try Data(
+          contentsOf: storage.journals.appendingPathComponent("removals/" + projectID + ".json"))
+        let removal = try #require(try JSONSerialization.jsonObject(with: data) as? [String: Any])
+        #expect(removal["phase"] as? String == "content")
+        #expect(try fixture.database.project(id: projectID) != nil)
+      }
+    }
+    let privateOperationCount = try await fixture.connection.writer.read {
+      try Int.fetchOne($0, sql: "SELECT COUNT(*) FROM hostOperations")
+    }
+    #expect(privateOperationCount == 0)
+    await fixture.close()
+    #expect(!fixture.runtime.ownedWork.snapshot.contains { $0.kind == .invocation })
+  }
+
+  @Test(.timeLimit(.minutes(2)), arguments: [false, true])
+  func creationCallbackUsesCapturedCustomBranchWhenOmitted(mismatch: Bool) async throws {
+    let fixture = try HostAuthorityFixture(lifecycle: true)
+    defer { fixture.remove() }
+    let replies = HostReplies()
+    _ = try await fixture.during(
+      "fixture.provision", ["name": .string("topic"), "branch": .string("feature/topic")]
+    ) { service, context in
+      replies.set(
+        "add",
+        try await ProjectServiceCaller.add(
+          service, context, name: "topic", branch: mismatch ? "feature/other" : nil))
+      return .object([:])
+    }
+    let reply = try #require(replies.get("add"))
+    if mismatch {
+      #expect(reply.code == "host.operation_conflict")
+      #expect(try fixture.database.derivedProjects().isEmpty)
+    } else {
+      #expect(!reply.isError)
+      #expect(reply.result?["result"]?.objectValue?["branch"] == .string("feature/topic"))
+      #expect(try fixture.database.derivedProjects().first?.worktree?.branchName == "feature/topic")
+    }
+    await fixture.close()
+  }
+
+  @Test(.timeLimit(.minutes(2)), arguments: ["unchanged", "client", "provider"])
+  func operationInspectionRequiresBothPrincipalsCurrentOriginalWriteEffect(downgrade: String)
+    async throws
+  {
+    let fixture = try HostAuthorityFixture(lifecycle: true)
+    defer { fixture.remove() }
+    let replies = HostReplies()
+    _ = try await fixture.during("fixture.provision", ["name": .string("topic")]) {
+      service, context in
+      replies.setID("operation", try #require(context.admission?.hostOperationID))
+      replies.set("add", try await ProjectServiceCaller.add(service, context, name: "topic"))
+      return .object([:])
+    }
+    #expect(replies.get("add")?.isError == false)
+    try await fixture.useSandboxedProvider()
+    if downgrade == "provider" { try fixture.setProviderProjectAccess(.granted(.read)) }
+    if downgrade == "client" { try fixture.setClientProjectAccess(.granted(.read)) }
+    let operation = try #require(replies.id("operation"))
+    _ = try await fixture.during("fixture.list") { service, _ in
+      let before = try fixture.runtime.permissionRuntime.store.readWithDatabase { _, ledger in
+        (Set(ledger.authorizations.keys), Set(ledger.requests.keys))
+      }
+      replies.set(
+        "inspect", try await ProjectServiceCaller.describe(service, operation: operation.uuidString)
+      )
+      let after = try fixture.runtime.permissionRuntime.store.readWithDatabase { _, ledger in
+        (Set(ledger.authorizations.keys), Set(ledger.requests.keys))
+      }
+      #expect(before.0 == after.0 && before.1 == after.1)
+      return .object([:])
+    }
+    #expect(replies.get("inspect")?.isError == (downgrade != "unchanged"))
+    if downgrade != "unchanged" {
+      #expect(replies.get("inspect")?.code == "host.operation_not_found")
+    }
+    #expect(try fixture.database.derivedProjects().count == 1)
     await fixture.close()
   }
 
@@ -1050,6 +1276,37 @@ private func checkedInvocationResult(
   }
 }
 
+/// The native registry receives the same concrete worktree service as the provider
+/// peer, with journal observation installed before either captures that service.
+private struct HostWorktreeJournalProviders: GatewayToolProviderFactory {
+  let base: any GatewayToolProviderFactory
+  let journalIO: WorktreeJournalIO
+
+  func makeProviders(
+    configuration: GatewayConfiguration, commandRunner: any CommandRunning,
+    processManager: any ProcessManaging, shellManager: any ShellManaging,
+    mcpClient: any DownstreamMCPClient, hostContext: MCPHostContext
+  ) -> GatewayToolRegistry {
+    var hostContext = hostContext
+    if var worktrees = hostContext.worktrees as? GatewayWorktreeService {
+      worktrees.journalIO = journalIO
+      hostContext.worktrees = worktrees
+    }
+    return base.makeProviders(
+      configuration: configuration, commandRunner: commandRunner,
+      processManager: processManager, shellManager: shellManager, mcpClient: mcpClient,
+      hostContext: hostContext)
+  }
+}
+
+private struct HostBuiltinCallbackAuthorities: Sendable {
+  let client: InvocationAuthorization
+  let provider: InvocationAuthorization
+  let originalClient: InvocationAuthorization
+  let originalProvider: InvocationAuthorization
+  let clientCanWrite: Bool
+}
+
 private final class HostAuthorityFixture: @unchecked Sendable {
   let root: URL
   let connection: GatewayDatabaseConnection
@@ -1069,16 +1326,18 @@ private final class HostAuthorityFixture: @unchecked Sendable {
   /// `stoppableProvider` ends a call whose provider execution the host stops, and
   /// `beforeHostCommand` observes every host-launched command before it starts.
   init(
-    lifecycle: Bool = false, additionalProject: Bool = false,
+    lifecycle: Bool = false, builtinLifecycle: Bool = false, additionalProject: Bool = false,
     requiresControlSession: Bool = false, multiplexed: Bool = false,
     callbackTimeout: TimeInterval = 10, storageDirectory: URL? = nil,
     stoppableProvider: Bool = false,
-    beforeHostCommand: (@Sendable (ExecutionCommand) throws -> Void)? = nil
+    beforeHostCommand: (@Sendable (ExecutionCommand) throws -> Void)? = nil,
+    journalIO: WorktreeJournalIO = .init()
   ) throws {
     // Host Git lifecycle work runs inside the probe's callback window.
     peer = HostServiceProbe(
       multiplexed: multiplexed,
-      callbackTimeout: lifecycle ? max(callbackTimeout, 120) : callbackTimeout)
+      callbackTimeout: lifecycle ? max(callbackTimeout, 120) : callbackTimeout, journalIO: journalIO
+    )
     let requested =
       storageDirectory
       ?? FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
@@ -1131,12 +1390,25 @@ private final class HostAuthorityFixture: @unchecked Sendable {
     if try database.profiles().allSatisfy({ $0.id != profile.id }) {
       try database.saveProfile(profile)
     }
-    let platform =
+    let basePlatform =
       lifecycle
       ? MacOSPlatform.services(
         launcher: testExecutionLauncher(
           observations: beforeHostCommand.map { ExecutionObservations(beforeStart: $0) }))
       : fixtureHostedPlatform()
+    let platform =
+      builtinLifecycle
+      ? PlatformServices(
+        launcher: basePlatform.launcher, projectGrants: basePlatform.projectGrants,
+        pluginDirectories: basePlatform.pluginDirectories, applications: basePlatform.applications,
+        toolProviders: HostWorktreeJournalProviders(
+          base: basePlatform.toolProviders, journalIO: journalIO),
+        managementToolNames: basePlatform.managementToolNames,
+        executableSearchDirectories: basePlatform.executableSearchDirectories,
+        gitExecutable: basePlatform.gitExecutable, fileChanges: basePlatform.fileChanges,
+        permissionPolicyReader: basePlatform.permissionPolicyReader,
+        executionProxy: basePlatform.executionProxy, hostDataPaths: basePlatform.hostDataPaths)
+      : basePlatform
     let trace = GatewayTransportTrace(transport: "gateway_socket", socketConnectionID: "connection")
     let context =
       !requiresControlSession
@@ -1163,7 +1435,9 @@ private final class HostAuthorityFixture: @unchecked Sendable {
         configuration: .init(
           runtime: .init(caller: .secureTunnel, profileID: .chatGPTOperate),
           profiles: [.init(grant: profile)],
-          mcp: .init(servers: [registration])),
+          mcp: .init(servers: [registration]),
+          builtin: .init(
+            enabled: builtinLifecycle ? ["git.worktree_add", "git.worktree_remove"] : [])),
         context: context,
         database: database, registeredProjects: try database.projects(),
         platform: platform,
@@ -1230,6 +1504,19 @@ private final class HostAuthorityFixture: @unchecked Sendable {
     return try #require(try store.operation(id: id))
   }
 
+  func waitForBuiltin(_ name: String) async throws {
+    let deadline = ContinuousClock.now.advanced(by: .seconds(120))
+    while runtime.ownedWork.snapshot.contains(where: {
+      $0.kind == .invocation && $0.resourceID == name
+    }),
+      ContinuousClock.now < deadline
+    {
+      try await Task.sleep(for: .milliseconds(10))
+    }
+    #expect(
+      !runtime.ownedWork.snapshot.contains { $0.kind == .invocation && $0.resourceID == name })
+  }
+
   func setClientProjectAccess(_ state: PermissionState) throws {
     var grant = try #require(database.profiles().first { $0.id == .chatGPTOperate })
     try grant.permissions.set(state, for: .project("scope"))
@@ -1246,6 +1533,53 @@ private final class HostAuthorityFixture: @unchecked Sendable {
   }
 
   func withdrawProviderApproval() throws { try approveProvider(fixturePermissions([:])) }
+
+  /// A source retirement uses the ledger operation that ends all original proofs
+  /// carried by that provider execution, including its delegating client's proof.
+  func retireProviderSource() throws {
+    try runtime.permissionRuntime.store.transactionWithDatabase { _, ledger in
+      _ = try ledger.retireProviderExecutions(
+        .localServer(registration.id), expectedRevision: ledger.revision)
+    }
+  }
+
+  func builtinCallbackAuthorities(projectID: String, clientID: UUID, providerID: UUID) throws
+    -> HostBuiltinCallbackAuthorities
+  {
+    try runtime.permissionRuntime.store.readWithDatabase { _, ledger in
+      let originalClient = try #require(ledger.authorizations[clientID])
+      let originalProvider = try #require(ledger.authorizations[providerID])
+      #expect(originalClient.executionID != nil)
+      #expect(originalClient.executionID == originalProvider.executionID)
+      let callbacks = ledger.authorizations.values.filter {
+        $0.invocation.tool == "git.worktree_remove" && $0.invocation.projectID == projectID
+      }
+      try #require(callbacks.count == 2)
+      let client = try #require(
+        callbacks.first { $0.invocation.principal == originalClient.invocation.principal })
+      let provider = try #require(
+        callbacks.first { $0.invocation.principal == originalProvider.invocation.principal })
+      #expect(client.basis.contains(.worktreeAuthority(clientID)))
+      #expect(provider.basis.contains(.worktreeAuthority(providerID)))
+      var validation = ledger
+      let clientCanWrite: Bool
+      do {
+        try validation.authorizeWorktreeHostPath(
+          client.id, path: CanonicalPath(root.appendingPathComponent("value").path), writing: true)
+        clientCanWrite = true
+      } catch { clientCanWrite = false }
+      return HostBuiltinCallbackAuthorities(
+        client: client, provider: provider, originalClient: originalClient,
+        originalProvider: originalProvider, clientCanWrite: clientCanWrite)
+    }
+  }
+
+  func setProviderProjectAccess(_ state: PermissionState) throws {
+    var permissions = try #require(database.profiles().first { $0.id == .chatGPTOperate })
+      .permissions
+    try permissions.set(state, for: .project("scope"))
+    try approveProvider(permissions)
+  }
 
   private func approveProvider(_ permissions: Permissions) throws {
     let service = runtime.permissionRuntime.service
@@ -1307,11 +1641,13 @@ private final class HostAuthorityFixture: @unchecked Sendable {
     let execution = try #require(context.executionAuthority as? PreparedExecutionContext)
     let host = try #require(peer.context(for: project))
     let session = try host.makeHostSession(server: registration, execution: execution)
-    let operationID = try #require(context.admission?.hostOperationID)
+    let operationID = context.admission?.hostOperationID
     var values = arguments
-    values["invocation_id"] = .string(
-      try #require(context.admission?.hostInvocationID).uuidString)
-    values["operation_id"] = .string(operationID.uuidString.lowercased())
+    if name.hasPrefix("host.") {
+      values["invocation_id"] = .string(
+        try #require(context.admission?.hostInvocationID).uuidString)
+      values["operation_id"] = .string(try #require(operationID).uuidString.lowercased())
+    }
     let client = MCP.Client(name: "fixture-provider", version: "1")
     let outcome = HostCallbackOutcome()
     do {
@@ -1328,11 +1664,25 @@ private final class HostAuthorityFixture: @unchecked Sendable {
       let store = HostOperationStore(connection: connection)
       let deadline = ContinuousClock.now.advanced(by: .seconds(120))
       while outcome.value == nil, ContinuousClock.now < deadline {
-        let claimed = try store.operation(id: operationID).map { $0.state != .reserved } ?? false
+        let claimed: Bool
+        if let operationID {
+          claimed = try store.operation(id: operationID).map { $0.state != .reserved } ?? false
+        } else {
+          claimed = try runtime.permissionRuntime.store.readWithDatabase { _, ledger in
+            ledger.authorizations.values.contains { proof in
+              proof.invocation.tool == name && proof.invocation.projectID == project
+                && proof.basis.contains {
+                  guard case .worktreeAuthority(let parentID) = $0 else { return false }
+                  return execution.provider?.authorizationIDs.contains(parentID) == true
+                }
+            }
+          }
+        }
         if providerStopped(execution.executionID) || (closeAfterClaim && claimed) {
           await client.disconnect()
           await session.close()
           pending.cancel()
+          await pending.value
           return nil
         }
         try await Task.sleep(for: .milliseconds(10))
@@ -1569,6 +1919,7 @@ private final class HostServiceProbe: DownstreamMCPClient, @unchecked Sendable {
     var activeCalls = 0
     let multiplexed: Bool
     let callbackTimeout: TimeInterval
+    var journalIO = WorktreeJournalIO()
     var providerStopped: (@Sendable (UUID) -> Bool)?
     init(multiplexed: Bool, callbackTimeout: TimeInterval) {
       self.multiplexed = multiplexed
@@ -1578,8 +1929,12 @@ private final class HostServiceProbe: DownstreamMCPClient, @unchecked Sendable {
   private let state: State
   private let hostContext: MCPHostContext?
 
-  init(multiplexed: Bool = false, callbackTimeout: TimeInterval = 10) {
+  init(
+    multiplexed: Bool = false, callbackTimeout: TimeInterval = 10,
+    journalIO: WorktreeJournalIO = .init()
+  ) {
     state = State(multiplexed: multiplexed, callbackTimeout: callbackTimeout)
+    state.journalIO = journalIO
     hostContext = nil
   }
   private init(state: State, hostContext: MCPHostContext?) {
@@ -1601,7 +1956,11 @@ private final class HostServiceProbe: DownstreamMCPClient, @unchecked Sendable {
   func makeScopedClient(
     workingDirectory: URL, environment: [String: String], hostContext: (any MCPHostEnvironment)?
   ) -> any DownstreamMCPClient {
-    let scoped = hostContext as? MCPHostContext
+    var scoped = hostContext as? MCPHostContext
+    if var worktrees = scoped?.worktrees as? GatewayWorktreeService {
+      worktrees.journalIO = state.journalIO
+      scoped?.worktrees = worktrees
+    }
     if let scoped {
       state.lock.withLock { state.contexts[scoped.launchMetadata.project.id] = scoped }
     }
@@ -1701,6 +2060,30 @@ private final class HostCommandTrigger: @unchecked Sendable {
       defer { self.action = nil }
       didFire = true
       return self.action
+    }
+    try action?()
+  }
+}
+
+private final class HostJournalTrigger: @unchecked Sendable {
+  private let lock = NSLock()
+  private var target: (URL, String, @Sendable () throws -> Void)?
+  private var didFire = false
+  var fired: Bool { lock.withLock { didFire } }
+
+  func arm(path: URL, phase: String, action: @escaping @Sendable () throws -> Void) {
+    lock.withLock { target = (path, phase, action) }
+  }
+
+  func observe() throws {
+    let action = try lock.withLock { () -> (@Sendable () throws -> Void)? in
+      guard let target, let data = try? Data(contentsOf: target.0),
+        let value = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+        value["phase"] as? String == target.1
+      else { return nil }
+      self.target = nil
+      didFire = true
+      return target.2
     }
     try action?()
   }

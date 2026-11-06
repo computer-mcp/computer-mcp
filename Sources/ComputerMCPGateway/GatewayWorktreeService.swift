@@ -31,6 +31,7 @@ struct GatewayWorktreeService: GitWorktreeServing {
   let runtime: GatewayPermissionRuntime
   let platform: PlatformServices
   let projectID: String?
+  var journalIO = WorktreeJournalIO()
 
   func call(_ operation: GitWorktreeOperation) throws -> JSONValue {
     switch try perform(operation) {
@@ -136,7 +137,11 @@ struct GatewayWorktreeService: GitWorktreeServing {
       registeredProjectRoots: try database.projects().map { URL(fileURLWithPath: $0.rootPath) },
       timeoutMilliseconds: 30_000, maxOutputBytes: 16_777_216, lockTimeout: .seconds(30),
       owner: .init(bootSessionID: platform.launcher.bootSessionID),
-      journalIO: .init(beforePublication: { try access.checkSource() }),
+      journalIO: .init(
+        beforePublication: {
+          try journalIO.beforePublication()
+          try access.checkSource()
+        }, beforeDirectorySync: journalIO.beforeDirectorySync),
       checkAuthority: { try access.checkSource() },
       authorizeCreationPath: { try access.check($0, writing: false, followLeaf: false) })
     switch operation {

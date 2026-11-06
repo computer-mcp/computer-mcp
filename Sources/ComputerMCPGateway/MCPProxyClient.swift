@@ -17,6 +17,7 @@ package final class MCPProxyClient: DownstreamMCPClient, @unchecked Sendable {
   private let processOwnershipRoot: URL?
   private let journal: MCPExecutionJournal
   private let catalogs: MCPResolvedCatalogCache
+  private let onDiscoverySelection: (@Sendable (String, UUID, UUID) throws -> Void)?
   private let calls = BlockingOperationExecutor(label: "computer-mcp.mcp-calls", serial: false)
 
   package init(
@@ -26,11 +27,13 @@ package final class MCPProxyClient: DownstreamMCPClient, @unchecked Sendable {
     hostContext: (any MCPHostEnvironment)? = nil,
     secretStore: (any SecretStore)? = nil,
     processOwnershipRoot: URL? = nil,
-    executionDatabase: GatewayDatabase? = nil, executionScope: String? = nil
+    executionDatabase: GatewayDatabase? = nil, executionScope: String? = nil,
+    onDiscoverySelection: (@Sendable (String, UUID, UUID) throws -> Void)? = nil
   ) {
     // Gateway connections need journal, retained-work and host-tool authority.
     // The nonthrowing factory defers unsupported host environments to connection admission.
     self.launcher = launcher
+    self.onDiscoverySelection = onDiscoverySelection
     let gatewayContext = hostContext as? MCPHostContext
     let hostContextError: GatewayToolError? =
       hostContext != nil && gatewayContext == nil
@@ -75,7 +78,8 @@ package final class MCPProxyClient: DownstreamMCPClient, @unchecked Sendable {
     MCPProxyClient(
       launcher: launcher, workingDirectory: workingDirectory, environment: environment,
       hostContext: hostContext,
-      secretStore: secretStore, processOwnershipRoot: processOwnershipRoot)
+      secretStore: secretStore, processOwnershipRoot: processOwnershipRoot,
+      onDiscoverySelection: onDiscoverySelection)
   }
 
   package func toolChanges() -> AsyncStream<Void> { changes.stream() }
@@ -97,18 +101,41 @@ package final class MCPProxyClient: DownstreamMCPClient, @unchecked Sendable {
 
   package func listTools(server: MCPServerConfig, context: InvocationContext) throws -> [MCPTool] {
     let source = try pool.catalogIdentity(for: server)
-    let tools = try run(
-      server: server, notifyToolsOnConnect: false, context: context, discovery: true
-    ) {
-      connection in
-      try await connection.listTools()
-    }
-    guard try pool.catalogIdentity(for: server) == source else {
+    let caller = GatewayDiscoveryCaller(context: context)
+    do {
+      var replacement: GatewayDiscoverySelection?
+      var acquired: [MCPTool]?
+      for attempt in 0..<2 {
+        try caller.check()
+        do {
+          acquired = try run(
+            server: server, notifyToolsOnConnect: false, context: context, discovery: true,
+            discoveryReplacement: replacement, discoveryCaller: caller
+          ) { connection in
+            try await connection.listTools(caller: caller)
+          }
+          break
+        } catch let expired as GatewayDiscoveryExpired {
+          try caller.check()
+          guard attempt == 0 else { throw PermissionModelError.invalidAuthorization }
+          replacement = expired.selection
+        }
+      }
+      guard let tools = acquired, try pool.catalogIdentity(for: server) == source else {
+        throw PermissionModelError.invalidAuthorization
+      }
+      try caller.check()
+      catalogs.save(tools, for: server, source: source)
+      changes.send()
+      return tools
+    } catch let stopped as GatewayDiscoveryCallerStopped {
+      if stopped.underlying is GatewayDiscoveryExpired {
+        throw PermissionModelError.invalidAuthorization
+      }
+      throw stopped.underlying
+    } catch is GatewayDiscoveryExpired {
       throw PermissionModelError.invalidAuthorization
     }
-    catalogs.save(tools, for: server, source: source)
-    changes.send()
-    return tools
   }
 
   package func callTool(
@@ -504,22 +531,61 @@ package final class MCPProxyClient: DownstreamMCPClient, @unchecked Sendable {
     server: MCPServerConfig,
     notifyToolsOnConnect: Bool = true,
     context: InvocationContext, discovery: Bool = false,
+    discoveryReplacement: GatewayDiscoverySelection? = nil,
+    discoveryCaller: GatewayDiscoveryCaller? = nil,
     operation: @escaping @Sendable (MCPProxyConnection) async throws -> T
   ) throws -> T {
-    let connection = try pool.connection(
-      for: server, continuation: context.continuationTarget, context: context, discovery: discovery)
+    try discoveryCaller?.check()
+    let connection: MCPProxyConnection
+    do {
+      connection = try pool.connection(
+        for: server, continuation: context.continuationTarget, context: context,
+        discovery: discovery, discoveryCaller: discoveryCaller,
+        replacement: try discoveryReplacement.map {
+          guard let discoveryCaller else { throw PermissionModelError.invalidAuthorization }
+          return GatewayDiscoveryReplacement(selected: $0, reuse: nil, caller: discoveryCaller)
+        })
+    } catch is GatewayDiscoveryExpired {
+      throw PermissionModelError.invalidAuthorization
+    }
+    if discovery, context.continuationTarget == nil,
+      let execution = connection.preparedExecution,
+      let provider = execution.provider, provider.delegatingAuthorization == nil
+    {
+      do {
+        try onDiscoverySelection?(server.id, connection.connectionID, execution.executionID)
+      } catch is GatewayDiscoveryExpired {
+        throw PermissionModelError.invalidAuthorization
+      }
+    }
     let operationContext =
       discovery && connection.preparedExecution != nil
       ? InvocationContext(executionAuthority: connection.preparedExecution) : context
-    try runExisting(
-      server: server, connection: connection,
-      timeoutMilliseconds: server.startupTimeoutMs ?? 30_000,
-      phase: "startup", context: operationContext
-    ) { connection in
-      try await connection.ensureConnected(notifyTools: notifyToolsOnConnect)
+    do {
+      try discoveryCaller?.check()
+      try runExisting(
+        server: server, connection: connection,
+        timeoutMilliseconds: server.startupTimeoutMs ?? 30_000,
+        phase: "startup", context: operationContext, discoveryCaller: discoveryCaller
+      ) { connection in
+        try await connection.ensureConnected(
+          notifyTools: notifyToolsOnConnect, caller: discoveryCaller)
+      }
+      try discoveryCaller?.check()
+      return try runExisting(
+        server: server, connection: connection, context: operationContext,
+        discoveryCaller: discoveryCaller, operation: operation)
+    } catch let expired as GatewayDiscoveryExpired {
+      try discoveryCaller?.check()
+      guard discovery, server.transport == .stdio, context.continuationTarget == nil,
+        let execution = connection.preparedExecution, let binding = execution.provider,
+        execution.authority.authorizationIDs == binding.authorizationIDs,
+        GatewayDiscoverySelection(executionID: execution.executionID, binding: binding)
+          == expired.selection
+      else { throw PermissionModelError.invalidAuthorization }
+      pool.invalidate(server: server, connection: connection)
+      throw expired
     }
-    return try runExisting(
-      server: server, connection: connection, context: operationContext, operation: operation)
   }
 
   private func runExisting<T: Sendable>(
@@ -528,8 +594,10 @@ package final class MCPProxyClient: DownstreamMCPClient, @unchecked Sendable {
     timeoutMilliseconds: Int? = nil,
     phase: String = "request",
     context: InvocationContext,
+    discoveryCaller: GatewayDiscoveryCaller? = nil,
     operation: @escaping @Sendable (MCPProxyConnection) async throws -> T
   ) throws -> T {
+    try discoveryCaller?.check()
     let timeout = timeoutMilliseconds ?? server.requestTimeoutMs ?? 30_000
     let box = AsyncOperationBox<T>()
     let selected = context.continuationTarget
@@ -538,6 +606,7 @@ package final class MCPProxyClient: DownstreamMCPClient, @unchecked Sendable {
     let task = Task.detached {
       do {
         try Task.checkCancellation()
+        try discoveryCaller?.check()
         let result = try await InvocationExecution.$current.withValue(execution) {
           try await HostPathAccess.$current.withValue(access) {
             if let selected { try await connection.validateSelectedOwner(selected) }
@@ -551,6 +620,7 @@ package final class MCPProxyClient: DownstreamMCPClient, @unchecked Sendable {
     }
 
     guard box.wait(timeoutMilliseconds: timeout) else {
+      try discoveryCaller?.check()
       // Retirement owns cancellation delivery and joins it after closing the transport.
       // Cancelling only this bridge would leave an SDK request or a startup task alive.
       pool.invalidate(server: server, connection: connection)
@@ -563,8 +633,13 @@ package final class MCPProxyClient: DownstreamMCPClient, @unchecked Sendable {
     do {
       return try box.get()
     } catch {
+      if error is GatewayDiscoveryCallerStopped { throw error }
       if phase == "startup" || Self.requiresRetirement(error) {
         pool.invalidate(server: server, connection: connection)
+      }
+      try discoveryCaller?.check()
+      if error is GatewayDiscoveryExpired, discoveryCaller == nil {
+        throw PermissionModelError.invalidAuthorization
       }
       throw error
     }
@@ -646,12 +721,31 @@ private final class MCPConnectionPool: @unchecked Sendable {
 
   func catalogIdentity(for server: MCPServerConfig) throws -> String? {
     guard server.transport == .stdio else { return nil }
-    return try hostContext?.providerSource?(server).digest
+    do {
+      return try hostContext?.providerSource?(server).digest
+    } catch is GatewayDiscoveryExpired {
+      throw PermissionModelError.invalidAuthorization
+    }
   }
 
   func connection(
     for server: MCPServerConfig, continuation: MCPContinuationTarget?,
-    context: InvocationContext, discovery: Bool = false
+    context: InvocationContext, discovery: Bool = false,
+    discoveryCaller: GatewayDiscoveryCaller? = nil, replacement: GatewayDiscoveryReplacement? = nil
+  ) throws -> MCPProxyConnection {
+    do {
+      return try selectConnection(
+        for: server, continuation: continuation, context: context, discovery: discovery,
+        discoveryCaller: discoveryCaller, replacement: replacement)
+    } catch is GatewayDiscoveryExpired {
+      throw PermissionModelError.invalidAuthorization
+    }
+  }
+
+  private func selectConnection(
+    for server: MCPServerConfig, continuation: MCPContinuationTarget?,
+    context: InvocationContext, discovery: Bool, discoveryCaller: GatewayDiscoveryCaller?,
+    replacement: GatewayDiscoveryReplacement?
   ) throws -> MCPProxyConnection {
     if let hostContextError { throw hostContextError }
     guard server.enabled else {
@@ -678,15 +772,23 @@ private final class MCPConnectionPool: @unchecked Sendable {
       for (key, entry) in entries where key.serverID == server.id && key.authority?.delegator == nil
       {
         if entry.configuration == server,
-          entry.execution?.provider?.sourceDigest == source.digest,
-          (try? entry.execution?.validateProviderLaunch()) != nil
+          entry.execution?.provider?.sourceDigest == source.digest
         {
-          return entry.connection
+          if let replacement, let existing = entry.execution {
+            let validated = try source.prepareDiscovery(
+              GatewayDiscoveryReplacement(
+                selected: replacement.selected, reuse: existing, caller: replacement.caller),
+              discoveryCaller)
+            guard validated === existing else { throw PermissionModelError.invalidAuthorization }
+            return entry.connection
+          }
+          if (try? entry.execution?.validateProviderLaunch()) != nil { return entry.connection }
         }
         entries.removeValue(forKey: key)
         retireLocked(key: key, connection: entry.connection)
       }
-      execution = try source.prepareDiscovery()
+      try replacement?.caller.check()
+      execution = try source.prepareDiscovery(replacement, discoveryCaller)
       ownsAdmission = true
     } else if source != nil && execution == nil {
       throw PermissionModelError.invalidAuthorization
@@ -955,8 +1057,9 @@ private actor MCPProxyConnection {
       hostContext: hostContext, secretStore: secretStore, preparedExecution: preparedExecution)
   }
 
-  func listTools() async throws -> [MCPTool] {
-    try await ensureConnected(notifyTools: false)
+  func listTools(caller: GatewayDiscoveryCaller? = nil) async throws -> [MCPTool] {
+    try caller?.check()
+    try await ensureConnected(notifyTools: false, caller: caller)
     let tools = try await MCPToolCatalogLoader.load { [client] cursor in
       try await client.listTools(cursor: cursor)
     }
@@ -1727,14 +1830,19 @@ private actor MCPProxyConnection {
     return delivered
   }
 
-  func ensureConnected(notifyTools: Bool = true) async throws {
+  func ensureConnected(
+    notifyTools: Bool = true, caller: GatewayDiscoveryCaller? = nil
+  ) async throws {
+    try caller?.check()
     try preparedExecution?.validateProviderLaunch()
     try Task.checkCancellation()
     guard closeTask == nil else { throw MCPError.connectionClosed }
     if let predecessor, !(await predecessor.value) {
+      try caller?.check()
       throw GatewayToolError.executionFailed(
         "Previous MCP process has not confirmed exit; reconnect is blocked.")
     }
+    try caller?.check()
     try Task.checkCancellation()
     guard closeTask == nil else { throw MCPError.connectionClosed }
     if connected {
@@ -1771,6 +1879,7 @@ private actor MCPProxyConnection {
 
     do {
       let result = try await task.value
+      try caller?.check()
       try Task.checkCancellation()
       guard closeTask == nil else { throw MCPError.connectionClosed }
       try preparedExecution?.validateProviderLaunch()
@@ -1785,9 +1894,12 @@ private actor MCPProxyConnection {
         if notifyTools && preparedExecution?.provider == nil { toolsChanged() }
       }
     } catch {
+      if error is GatewayDiscoveryCallerStopped { throw error }
       connected = false
       lastError = String(describing: error)
       appendEvent(kind: "connection.failed")
+      // Shared startup can fail after a stopped waiter has left its blocking bridge.
+      onTermination(self)
       throw error
     }
   }

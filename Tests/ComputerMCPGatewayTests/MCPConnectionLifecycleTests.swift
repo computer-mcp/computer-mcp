@@ -462,6 +462,7 @@ struct MCPConnectionLifecycleTests {
         _ = try await blocking(fixture, server: server) { context in
           try client.listTools(server: server, context: context)
         }
+        #expect(try fixture.calls() == [.string("hang"), .string("first")])
         #expect(try fixture.starts().count == 1)
         #expect(try fixture.cancellations().isEmpty)
         await client.shutdown()
@@ -607,6 +608,117 @@ struct MCPConnectionLifecycleTests {
       #expect(try fixture.starts().count == 1)
     }
 
+    @Test(arguments: [false, true])
+    func asyncCallCancellationStopsDiscoveryBeforeToolForwarding(inheritedStop: Bool) async throws {
+      let fixture = try LifecycleFixture()
+      defer { fixture.remove() }
+      let base = MCPProxyClient(
+        launcher: testExecutionLauncher(), workingDirectory: fixture.directory,
+        environment: fixture.environment)
+      var server = fixture.server(version: "first")
+      server.allowedTools = ["first"]
+      server.toolRisks = ["first": .readOnly]
+      let configured = server
+      var permissions = Permissions.newPrincipal
+      try permissions.set(.granted(.read), for: .mcpServer(server.id))
+      let client = AuthorizedMCPClient(
+        base: base,
+        policy: .init(
+          configuration: .init(mcp: .init(servers: [server])),
+          grant: .init(id: .localAdmin, permissions: permissions, allowedCallers: [.localMCP])))
+      let flag = DiscoveryStopFlag()
+      let changes = base.toolChanges()
+      let notifications = Task { () -> Int in
+        var count = 0
+        for await _ in changes { count += 1 }
+        return count
+      }
+      let hold = fixture.directory.appendingPathComponent("hold-list")
+      try Data().write(to: hold)
+      let prepared = try fixture.scope.prepared(variables: server.env)
+      let request = Task {
+        try await client.callToolAsync(
+          server: configured, name: "first", arguments: .object([:]), requestID: nil,
+          context: .init(executionAuthority: prepared, isDiscoveryCancelled: { flag.stopped }))
+      }
+      do {
+        try await fixture.waitForHeldList()
+        if inheritedStop { flag.stop() } else { request.cancel() }
+        try FileManager.default.removeItem(at: hold)
+        do {
+          _ = try await request.value
+          Issue.record("Stopped async discovery forwarded the actual tool")
+        } catch { #expect(error is CancellationError) }
+        #expect(try fixture.calls().isEmpty)
+        #expect(try base.cachedTools(server: server, context: .empty) == nil)
+        await base.shutdown()
+        #expect(await notifications.value == 0)
+        try await fixture.finish()
+        try await fixture.expectAllExited()
+      } catch {
+        flag.stop()
+        request.cancel()
+        try? FileManager.default.removeItem(at: hold)
+        _ = await request.result
+        await base.shutdown()
+        _ = await notifications.value
+        try await fixture.finish()
+        throw error
+      }
+    }
+
+    @Test
+    func stoppedDiscoveryDoesNotPublishTheInFlightCatalog() async throws {
+      let fixture = try LifecycleFixture()
+      defer { fixture.remove() }
+      let client = MCPProxyClient(
+        launcher: testExecutionLauncher(), workingDirectory: fixture.directory,
+        environment: fixture.environment)
+      let server = fixture.server(version: "first")
+      let flag = DiscoveryStopFlag()
+      let changes = client.toolChanges()
+      let notifications = Task { () -> Int in
+        var count = 0
+        for await _ in changes { count += 1 }
+        return count
+      }
+      let hold = fixture.directory.appendingPathComponent("hold-list")
+      try Data().write(to: hold)
+      let request = Task {
+        try await blocking(fixture, server: server) { context in
+          try client.listTools(
+            server: server,
+            context: .init(
+              executionAuthority: context.executionAuthority,
+              isDiscoveryCancelled: { flag.stopped }))
+        }
+      }
+      do {
+        try await fixture.waitForHeldList()
+        flag.stop()
+        try FileManager.default.removeItem(at: hold)
+        do {
+          _ = try await request.value
+          Issue.record("A stopped waiter published an in-flight catalog")
+        } catch { #expect(error is CancellationError) }
+        #expect(try client.cachedTools(server: server, context: .empty) == nil)
+        #expect(try fixture.calls().isEmpty)
+        await client.shutdown()
+        let count = await notifications.value
+        #expect(count == 0)
+        try await fixture.finish()
+        try await fixture.expectAllExited()
+      } catch {
+        flag.stop()
+        try? FileManager.default.removeItem(at: hold)
+        _ = await request.result
+        await client.shutdown()
+        _ = await notifications.value
+        try await fixture.finish()
+        throw error
+      }
+    }
+
     @Test
     func timeoutReconnectRefreshesTheCatalogAfterConfirmedRetirement() async throws {
       let fixture = try LifecycleFixture()
@@ -746,6 +858,13 @@ private func blocking<T: Sendable>(
   }
 }
 
+private final class DiscoveryStopFlag: @unchecked Sendable {
+  private let lock = NSLock()
+  private var value = false
+  var stopped: Bool { lock.withLock { value } }
+  func stop() { lock.withLock { value = true } }
+}
+
 private struct LifecycleFixture: Sendable {
   let directory: URL
   let script: URL
@@ -801,6 +920,10 @@ private struct LifecycleFixture: Sendable {
                   "protocolVersion": "2025-11-25", "capabilities": {"tools": {}},
                   "serverInfo": {"name": "owned-lifecycle-fixture", "version": "1"}}
           elif method == "tools/list":
+              if (root / "hold-list").exists():
+                  append("held-lists", os.getpid())
+                  while (root / "hold-list").exists():
+                      time.sleep(0.01)
               version = ((root / "version").read_text() if (root / "version").exists()
                          else os.environ["CATALOG_VERSION"])
               result = {"tools": [
@@ -861,6 +984,10 @@ private struct LifecycleFixture: Sendable {
 
   func waitForStarts(_ count: Int) async throws {
     try await wait { try starts().count >= count }
+  }
+
+  func waitForHeldList() async throws {
+    try await wait { try records("held-lists").count == 1 }
   }
 
   func waitForCalls(_ count: Int) async throws {

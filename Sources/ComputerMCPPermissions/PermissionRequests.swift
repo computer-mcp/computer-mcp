@@ -371,6 +371,7 @@ package struct PermissionLedger: Equatable, Sendable, Codable {
       basis.allSatisfy { element in
         switch element {
         case .execution(let id): return executions[id] != nil
+        case .worktreeAuthority(let id): return authorizations[id] != nil
         case .request(let identity): return requests[identity.id]?.identity == identity
         case .permit(let request, let permit):
           return requests[request.id]?.identity == request
@@ -404,7 +405,16 @@ package struct PermissionLedger: Equatable, Sendable, Codable {
         }
       }),
       authorizations.allSatisfy({ id, proof in
-        guard id == proof.id, valid(proof.identity), validBasis(proof.basis) else { return false }
+        guard id == proof.id, valid(proof.identity), validBasis(proof.basis),
+          proof.basis.allSatisfy({ element in
+            guard case .worktreeAuthority(let parentID) = element else { return true }
+            guard let parent = authorizations[parentID] else { return false }
+            return proof.executionID == nil && parentID != id && parent.executionID != nil
+              && parent.invocation.principal == proof.invocation.principal
+              && parent.invocation.projectID == proof.invocation.projectID
+              && parent.sandboxProjectID == proof.sandboxProjectID
+          })
+        else { return false }
         return proof.executionID.map { executions[$0]?.authorizationIDs.contains(id) == true }
           ?? true
       }),
@@ -1231,6 +1241,50 @@ package struct PermissionLedger: Equatable, Sendable, Codable {
     throw PermissionModelError.invalidAuthorization
   }
 
+  /// Converts fresh callback proofs to same-principal lifecycle dependencies while
+  /// the complete parent execution is still live. Owned consumed requests change in
+  /// the same transaction; borrowed parent grants keep their exact consumption owner.
+  package mutating func prepareWorktreeCallback(
+    _ ids: Set<UUID>, parentExecutionID: UUID
+  ) throws -> [UUID: InvocationAuthorization] {
+    var candidate = self
+    guard !ids.isEmpty, candidate.executionIsLive(parentExecutionID),
+      let execution = candidate.executions[parentExecutionID], execution.delegatedTo != nil
+    else { throw PermissionModelError.invalidAuthorization }
+    for id in ids {
+      let proof = try candidate.invocationAccess(id)
+      guard proof.executionID == nil, proof.basis.contains(.execution(parentExecutionID)),
+        proof.basis.allSatisfy({
+          switch $0 {
+          case .execution(let parent): parent == parentExecutionID
+          case .worktreeAuthority: false
+          default: true
+          }
+        })
+      else { throw PermissionModelError.invalidAuthorization }
+      let parents = execution.authorizationIDs.compactMap { candidate.authorizations[$0] }.filter {
+        $0.invocation.principal == proof.invocation.principal
+          && $0.invocation.projectID == proof.invocation.projectID
+          && $0.sandboxProjectID == proof.sandboxProjectID && !$0.revoked
+      }
+      guard parents.count == 1, let parent = parents.first, parent.id != id else {
+        throw PermissionModelError.invalidAuthorization
+      }
+      candidate.authorizations[id]!.basis.remove(.execution(parentExecutionID))
+      candidate.authorizations[id]!.basis.insert(.worktreeAuthority(parent.id))
+      for requestID in proof.requestIDs
+      where candidate.requests[requestID]?.status == .consumed(id) {
+        if candidate.requests[requestID]!.basis.remove(.execution(parentExecutionID)) != nil {
+          candidate.requests[requestID]!.basis.insert(.worktreeAuthority(parent.id))
+        }
+      }
+    }
+    var prepared: [UUID: InvocationAuthorization] = [:]
+    for id in ids { prepared[id] = try candidate.prepareWorktreePermissions(id) }
+    self = candidate
+    return prepared
+  }
+
   /// Pins available nested-project grants before worktree operations or programs
   /// start using paths. Effects still check live paths and ceilings, and cannot
   /// import grants obtained after preparation.
@@ -1386,6 +1440,10 @@ package struct PermissionLedger: Equatable, Sendable, Codable {
         throw PermissionModelError.unknownAuthorization
       }
       guard !authorization.finished, authorization.executionID == nil,
+        !authorization.basis.contains(where: {
+          if case .worktreeAuthority = $0 { return true }
+          return false
+        }),
         authorization.invocation.principal == owner
           || delegatedTo.map({ authorization.invocation.principal == .plugin($0) }) == true
       else { throw PermissionModelError.invalidAuthorization }
@@ -1769,10 +1827,18 @@ package struct PermissionLedger: Equatable, Sendable, Codable {
   private func callbackRequestOwner(_ id: UUID, basis: Set<AuthorizationBasis>) -> UUID? {
     guard let request = requests[id], case .consumed(let owner) = request.status else { return nil }
     return basis.contains(where: {
-      guard case .execution(let executionID) = $0, executionAuthorityIsValid(executionID)
-      else { return false }
-      return executions[executionID]?.authorizationIDs.contains(owner) == true
-        && authorizations[owner]?.requestIDs.contains(id) == true
+      switch $0 {
+      case .execution(let executionID):
+        return executionAuthorityIsValid(executionID)
+          && executions[executionID]?.authorizationIDs.contains(owner) == true
+          && authorizations[owner]?.requestIDs.contains(id) == true
+      case .worktreeAuthority(let parentID):
+        guard parentID == owner, let parent = authorizations[parentID], !parent.revoked,
+          parent.invocation.principal == request.content.principal
+        else { return false }
+        return parent.requestIDs.contains(id)
+      default: return false
+      }
     }) ? owner : nil
   }
 
@@ -1823,6 +1889,16 @@ package struct PermissionLedger: Equatable, Sendable, Codable {
       switch element {
       case .execution(let id):
         return executionAuthorityIsValid(id) && (authorizationID != nil || executionIsLive(id))
+      case .worktreeAuthority(let parentID):
+        guard let authorizationID, let proof = authorizations[authorizationID],
+          let parent = authorizations[parentID], proof.executionID == nil,
+          parentID != authorizationID,
+          parent.executionID != nil, !parent.revoked,
+          parent.invocation.principal == principal,
+          parent.invocation.projectID == proof.invocation.projectID,
+          parent.sandboxProjectID == requirements.sandboxProjectID
+        else { return false }
+        return true
       case .provider(let recorded):
         return resolution.basis.contains(.provider(recorded))
       case .permission(let grant):

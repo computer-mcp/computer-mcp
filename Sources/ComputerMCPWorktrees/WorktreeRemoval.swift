@@ -197,6 +197,7 @@ extension WorktreeRepository {
       try advanceRemoval(&journal, to: next)
     }
     if journal.phase == .unregistering {
+      try authorize(journal.record, [])
       if let record = try store.records().first(where: { $0.projectID == journal.record.projectID })
       {
         var removing = journal.record

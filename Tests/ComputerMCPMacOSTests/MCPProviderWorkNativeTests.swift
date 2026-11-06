@@ -263,7 +263,7 @@ struct MCPProviderWorkNativeTests {
             encoding: .utf8)
             == discoveries)
         let source = try #require(try authority.hostContext.providerSource?(server))
-        let discovery = try source.prepareDiscovery()
+        let discovery = try source.prepareDiscovery(nil, nil)
         defer { try? discovery.finishAdmission() }
         #expect(
           try scopedClient.connectionStatus(

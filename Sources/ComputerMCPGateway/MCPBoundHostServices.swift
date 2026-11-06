@@ -375,10 +375,33 @@ actor MCPBoundHostServices {
       projectID: projectID, origin: origin, id: carrier.id,
       providerExecution: context.providerExecution)
     try requireCall(current)
+    try current.providerExecution?.validateProviderLaunch()
     scope.invocation = current
-    guard try runtime.hostGrantPermits(.project(admission.sourceProjectID), .write, current) else {
-      throw MCPHostOperationError.notFound
+    guard let clientID = current.admission?.authorizationID,
+      let provider = current.providerExecution?.provider
+    else { throw MCPHostOperationError.notFound }
+    let permitted = try runtime.permissionRuntime.store.transactionWithDatabase { _, ledger in
+      // Inspection acquires no authority and cannot consume a retry or create a request.
+      var evaluation = ledger
+      for id in [clientID, provider.providerAuthorization.id] {
+        guard let proof = evaluation.authorizations[id] else { return false }
+        let decision = try evaluation.authorize(
+          invocation: .init(
+            principal: proof.invocation.principal, tool: "host.invocations.describe",
+            projectID: admission.sourceProjectID, argumentsDigest: operation.id.uuidString),
+          requirements: .init(
+            actions: [
+              .init(
+                requirement: .init(.project(admission.sourceProjectID), .write),
+                scope: .project(admission.sourceProjectID))
+            ], mode: proof.mode, sandboxProjectID: proof.sandboxProjectID,
+            providers: proof.requirements.providers),
+          connectionID: id == clientID ? current.context.controlSession?.id : nil, now: Date())
+        guard case .allowed = decision else { return false }
+      }
+      return true
     }
+    guard permitted else { throw MCPHostOperationError.notFound }
     return operation
   }
 
@@ -398,9 +421,10 @@ actor MCPBoundHostServices {
     guard let operation = try operations.operation(id: operationID) else {
       throw MCPHostOperationError.notFound
     }
-    // An omitted base means the captured default; a named one must equal it.
-    if action == .projectProvision, requested["base"] == .null {
-      requested["base"] = operation.binding.arguments["base"]
+    if action == .projectProvision {
+      for field in ["branch", "base"] where lifecycle[field] == nil || lifecycle[field] == .null {
+        requested[field] = operation.binding.arguments[field]
+      }
     }
     // The admission binds the full dispatched argument digest; the normalized fields
     // are the captured selection the callback must repeat exactly.

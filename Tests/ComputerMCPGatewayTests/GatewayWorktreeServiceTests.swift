@@ -266,7 +266,7 @@ struct WorktreeServiceFixture {
   let runtime: GatewayPermissionRuntime
   let platform: PlatformServices
   let executor: GatewayWorktreeGit
-  init() throws {
+  init(policyReader: any ManagedPolicyReading = TestManagedPolicyReader()) throws {
     let temporary = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
     try FileManager.default.createDirectory(at: temporary, withIntermediateDirectories: true)
     root = try ProjectPathResolver.canonicalProject(temporary)
@@ -290,7 +290,7 @@ struct WorktreeServiceFixture {
       managementToolNames: [], executableSearchDirectories: [],
       gitExecutable: try testExecutable("git"),
       fileChanges: { _ in throw WorktreeServiceTestFailure.unexpected },
-      permissionPolicyReader: TestManagedPolicyReader())
+      permissionPolicyReader: policyReader)
     runtime = try database.permissionRuntime(platform: platform)
     try runtime.service.configureEnvironment(
       .init(

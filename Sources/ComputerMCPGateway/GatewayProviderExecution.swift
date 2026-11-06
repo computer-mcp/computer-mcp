@@ -1,3 +1,4 @@
+import ComputerMCPCore
 import ComputerMCPPermissions
 import ComputerMCPPersistence
 import ComputerMCPProcess
@@ -8,9 +9,14 @@ extension GatewayPermissionService {
   static func executionApproval(
     review: GatewayProviderReview, database: Database, ledger: PermissionLedger
   ) throws -> GatewayProviderApproval {
-    guard try GatewayDatabase.configurationState(in: database) == review.configuration,
-      let record = try ProviderAuthorityRecord.load(review.identity, in: database)
-    else { throw GatewayPermissionError.invalidBinding }
+    guard try GatewayDatabase.configurationState(in: database) == review.configuration else {
+      throw GatewayPermissionError.invalidBinding
+    }
+    guard let record = try ProviderAuthorityRecord.load(review.identity, in: database) else {
+      throw GatewayToolError.disabled(
+        "[provider.approval_required] This provider requires owner approval before discovery or execution. "
+          + "Approve the provider in Privacy & Security on the host, then retry through that host.")
+    }
     let approval = try providerApproval(record)
     guard approval.enabled, approval.sourceDigest == review.sourceDigest,
       approval.epoch == ledger.authorizationEpochID
@@ -103,20 +109,44 @@ extension GatewayPermissionService {
 
   func authorizeProviderExecution(
     review: GatewayProviderReview, registrationID: String,
-    caller: InvocationAuthorization?, retryIDs: Set<UUID>
+    caller: InvocationAuthorization?, retryIDs: Set<UUID>,
+    replacement: GatewayDiscoveryReplacement? = nil, discoveryCaller: GatewayDiscoveryCaller? = nil
   ) throws -> ProviderExecutionBinding {
     let result: Result<ProviderExecutionBinding, any Error> = try transactionWithPolicy {
       database, ledger, policies in
       _ = try refresh(database, ledger: &ledger, snapshot: policies, now: Date())
       return Result {
+        if let replacement {
+          let selected = replacement.selected
+          guard caller == nil, retryIDs.isEmpty, selected.provider == review.identity,
+            selected.registrationID == registrationID, selected.sourceDigest == review.sourceDigest
+          else { throw PermissionModelError.invalidAuthorization }
+          try selected.validate(in: &ledger, operation: .readResult, now: Date())
+          guard ledger.executions[selected.executionID]?.limitEndReason == .timeLimit,
+            ledger.executions[selected.executionID]?.isRunning == false
+          else { throw PermissionModelError.invalidAuthorization }
+          try replacement.caller.checkLedger(&ledger, Date())
+        }
         let approval = try Self.executionApproval(
           review: review, database: database, ledger: ledger)
+        if let reuse = replacement?.reuse {
+          guard let binding = reuse.provider,
+            let selected = GatewayDiscoverySelection(
+              executionID: reuse.executionID, binding: binding),
+            selected.provider == review.identity, selected.registrationID == registrationID,
+            selected.sourceDigest == review.sourceDigest,
+            selected.authorizationIDs == reuse.authority.authorizationIDs
+          else { throw PermissionModelError.invalidAuthorization }
+          try selected.validate(in: &ledger, operation: .writeInput, now: Date())
+          return binding
+        }
         if let caller {
           guard try ledger.invocationAccess(caller.id) == caller else {
             throw PermissionModelError.invalidAuthorization
           }
         }
         let requirements = Self.providerRequirements(approval: approval, caller: caller)
+        try (replacement?.caller ?? discoveryCaller)?.checkLedger(&ledger, Date())
         let decision = try ledger.authorize(
           invocation: InvocationIdentity(
             principal: approval.principal, tool: caller?.invocation.tool ?? "provider.discovery",

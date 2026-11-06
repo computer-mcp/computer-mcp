@@ -59,7 +59,9 @@ package final class GatewayPermissionRuntime: @unchecked Sendable {
     authorization caller: InvocationAuthorization?, directory workingDirectory: URL?,
     connectionID: String?, retryIDs: Set<UUID> = [], auditContext: ExecutionContext? = nil,
     source: GatewayProviderSource? = nil, platformRules: Set<PathRule>? = nil,
-    admittedProvider: ProviderExecutionBinding? = nil, discoveryInScratch: Bool = false
+    admittedProvider: ProviderExecutionBinding? = nil, discoveryInScratch: Bool = false,
+    mcpDiscovery: Bool = false, discoveryReplacement: GatewayDiscoveryReplacement? = nil,
+    discoveryCaller: GatewayDiscoveryCaller? = nil
   ) async throws -> PreparedExecutionContext {
     #if os(Linux)
       throw ExecutionEnvironmentError.unavailable("Linux provider activation is unavailable")
@@ -71,10 +73,29 @@ package final class GatewayPermissionRuntime: @unchecked Sendable {
             platformRules, key: GatewayConfigurationPaths.platformKey, database: database)
         }
       }
-      let binding =
-        try admittedProvider
-        ?? service.authorizeProviderExecution(
-          review: review, registrationID: registrationID, caller: caller, retryIDs: retryIDs)
+      let binding: ProviderExecutionBinding
+      if mcpDiscovery {
+        guard admittedProvider == nil, caller == nil, connectionID == nil else {
+          throw PermissionModelError.invalidAuthorization
+        }
+        try (discoveryReplacement?.caller ?? discoveryCaller)?.check()
+        binding = try coordinator.withDiscoveryAdmission(
+          discoveryReplacement, caller: discoveryCaller
+        ) {
+          try service.authorizeProviderExecution(
+            review: review, registrationID: registrationID, caller: nil, retryIDs: retryIDs,
+            replacement: discoveryReplacement, discoveryCaller: discoveryCaller)
+        }
+        if let reuse = discoveryReplacement?.reuse { return reuse }
+      } else {
+        guard discoveryReplacement == nil, discoveryCaller == nil else {
+          throw PermissionModelError.invalidAuthorization
+        }
+        binding =
+          try admittedProvider
+          ?? service.authorizeProviderExecution(
+            review: review, registrationID: registrationID, caller: caller, retryIDs: retryIDs)
+      }
       guard binding.identity == review.identity, binding.registrationID == registrationID,
         binding.sourceDigest == review.sourceDigest,
         binding.delegatingAuthorization?.id == caller?.id
@@ -118,6 +139,7 @@ package final class GatewayPermissionRuntime: @unchecked Sendable {
             providerResources: source?.resources ?? []),
           connectionID: connectionID, auditContext: auditContext,
           worktreeAdmission: worktree?.binding.admission, provider: binding,
+          mcpDiscovery: mcpDiscovery,
           providerWorkingDirectory: SandboxPath(launchDirectory.path),
           providerExecutable: try source?.executable.map(SandboxPath.init),
           validateProvider: validate)
@@ -137,6 +159,7 @@ package final class GatewayPermissionRuntime: @unchecked Sendable {
     directory workingDirectory: URL?, connectionID: String?, remoteService: Bool = false,
     hostManagement: Bool = false,
     auditContext: ExecutionContext? = nil, callback: ProviderExecutionBinding? = nil,
+    callbackParentExecutionID: UUID? = nil,
     validateCallback: (@Sendable () throws -> Void)? = nil
   ) async throws -> any InvocationExecutionAuthority {
     try await ready()
@@ -180,6 +203,23 @@ package final class GatewayPermissionRuntime: @unchecked Sendable {
           "git.branch_delete",
         ].contains(descriptor.id)
       else { throw PermissionModelError.invalidAuthorization }
+      if let callback, ["git.worktree_add", "git.worktree_remove"].contains(descriptor.id) {
+        guard let parentID = callbackParentExecutionID,
+          let lifetime = GatewayHostToolScope.lifetime
+        else { throw PermissionModelError.invalidAuthorization }
+        return try lifetime.claim(callback.authorizationIDs) {
+          let prepared = try store.transactionWithDatabase { _, ledger in
+            try ledger.prepareWorktreeCallback(
+              callback.authorizationIDs, parentExecutionID: parentID)
+          }
+          guard let client = prepared[initiatingAuthorization.id] else {
+            throw PermissionModelError.invalidAuthorization
+          }
+          return GatewayWorktreeInvocation(
+            authorization: client,
+            additionalAuthorizationIDs: callback.authorizationIDs.subtracting([client.id]))
+        }
+      }
       try service.validateAuthorization(authorization.id)
       let prepared: Result<InvocationAuthorization, any Error> = try store.transactionWithDatabase {
         _, ledger in

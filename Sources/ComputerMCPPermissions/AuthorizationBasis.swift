@@ -61,6 +61,8 @@ package struct PathAccessBasis: Hashable, Sendable, Codable {
 package enum AuthorizationBasis: Hashable, Sendable, Codable {
   /// Host callback work remains dependent on the complete creating execution.
   case execution(UUID)
+  /// Claimed host worktree cleanup follows only its same-principal parent proof.
+  case worktreeAuthority(UUID)
   case provider(ProviderRequirementBasis)
   case mode(ExecutionMode)
   case managed(source: PolicySource, identity: BasisIdentity)
@@ -86,7 +88,8 @@ package enum AuthorizationBasis: Hashable, Sendable, Codable {
     case .permission(let grant):
       return grant.source.requestID
     case .request(let identity), .permit(let identity, _): return identity.id
-    case .execution, .provider, .mode, .consent, .retryOrigin, .connection, .managed,
+    case .execution, .worktreeAuthority, .provider, .mode, .consent, .retryOrigin, .connection,
+      .managed,
       .managedPermission, .path,
       .traversal, .network,
       .sandbox:

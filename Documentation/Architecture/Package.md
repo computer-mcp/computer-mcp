@@ -48,7 +48,7 @@ owns dependency verification and the combinations exercised by release checks.
 | swift-subprocess | `.upToNextMinor(from: "1.0.2")` | Darwin execution launcher backend |
 | GRDB | `from: "7.11.1"` | Transactional App metadata and redacted audit; system SQLite on Linux |
 | swift-log | `from: "1.14.0"` | Runtime logging integration |
-| swift-crypto | `.upToNextMinor(from: "4.5.2")` | SHA-256 in the platform-neutral `ComputerMCPCore`, `ComputerMCPToolsCLI`, `ComputerMCPPlugins`, `ComputerMCPGateway`, `ComputerMCPControlPlane` and `ComputerMCPWorktrees` targets on macOS and Linux |
+| swift-crypto | `.upToNextMinor(from: "4.5.2")` | SHA-256 in the platform-neutral `ComputerMCPPermissions`, `ComputerMCPCore`, `ComputerMCPToolsCLI`, `ComputerMCPPlugins`, `ComputerMCPGateway`, `ComputerMCPControlPlane` and `ComputerMCPWorktrees` targets on macOS and Linux |
 | System zlib | OS-provided | Bounded streaming decompression for private Git object validation through `CSystemZlib` |
 | macOS system `libarchive.2` | OS-provided | ZIP/TAR/gzip decoding for plugin staging; no downloaded library or decompressor process |
 
@@ -460,9 +460,10 @@ admitted permission evidence. A declaration alone does not grant authority.
 
 ### Permission admission and execution evidence
 
-`ComputerMCPPermissions` is a Foundation-only value model. `PermissionConnection`
-selects host-issued consent and a connection ceiling alongside the stable
-`Principal`. Full access consent never supplies a missing permission. Requests
+`ComputerMCPPermissions` is a platform-neutral value model using Foundation and
+Swift Crypto for SHA-256 profile digests. `PermissionConnection` selects
+host-issued consent and a connection ceiling alongside the stable `Principal`.
+Full access consent never supplies a missing permission. Requests
 keep stable permission and path evidence; each retry checks its calling
 connection, while an admitted execution retains its exact consent and ceiling.
 Closing a connection retires its connection-scoped Full access authority;

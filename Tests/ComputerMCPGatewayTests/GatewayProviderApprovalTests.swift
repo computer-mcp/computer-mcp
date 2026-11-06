@@ -1,6 +1,5 @@
 import ComputerMCPConfiguration
 import ComputerMCPCore
-import ComputerMCPPermissions
 import ComputerMCPPlatform
 import ComputerMCPPlatformPOSIX
 import ComputerMCPPlugins
@@ -11,9 +10,29 @@ import GRDB
 import Testing
 
 @testable import ComputerMCPGateway
+@testable import ComputerMCPPermissions
 @testable import ComputerMCPPersistence
 
 struct GatewayProviderApprovalTests {
+  @Test func missingProviderApprovalReportsTheRequiredOwnerAction() throws {
+    let f = try ProviderApprovalFixture()
+    defer { f.remove() }
+    let server = MCPServerConfig(id: "unapproved", transport: .stdio, command: "/bin/false")
+    let review = try GatewayProviderReview(
+      server: server, configuration: f.database.configurationState())
+    try f.store.readWithDatabase { database, ledger in
+      do {
+        _ = try GatewayPermissionService.executionApproval(
+          review: review, database: database, ledger: ledger)
+        Issue.record("An unapproved provider was admitted")
+      } catch let error as GatewayToolError {
+        #expect(error.localizedDescription.contains("[provider.approval_required]"))
+        #expect(error.localizedDescription.contains("owner approval"))
+      }
+      #expect(try ProviderAuthorityRecord.fetchCount(database) == 0)
+    }
+  }
+
   @Test func admissionAuditKeepsDistinctProviderPolicyRevisions() throws {
     let f = try ProviderApprovalFixture()
     defer { f.remove() }
@@ -206,13 +225,238 @@ struct GatewayProviderApprovalTests {
     }
   }
 
+  @Test(arguments: [
+    "expired", "finished", "active", "terminated", "interrupted", "revoked", "registration",
+    "source", "callerStopped", "wrongExecution", "wrongProof", "retryIDs", "wrongGeneration",
+    "wrongAuthorizationSet", "unavailablePolicy", "suspended",
+  ])
+  func discoveryReplacementRequiresCurrentSelectedAuthority(scenario: String) throws {
+    let f = try ProviderApprovalFixture()
+    defer { f.remove() }
+    let server = MCPServerConfig(id: "discovery", transport: .stdio, command: "/bin/false")
+    let initial = try GatewayProviderReview(
+      server: server, configuration: f.database.configurationState())
+    let approval = try f.approve(initial, permissions: .newPrincipal)
+    let review = try GatewayProviderReview(
+      server: server, configuration: f.database.configurationState())
+    let binding = try f.service.authorizeProviderExecution(
+      review: review, registrationID: server.id, caller: nil, retryIDs: [])
+    let additional =
+      scenario == "wrongAuthorizationSet"
+      ? try f.service.authorizeProviderExecution(
+        review: review, registrationID: server.id, caller: nil, retryIDs: []) : nil
+    let execution = try f.store.transactionWithDatabase { _, ledger in
+      let start =
+        scenario == "active" || scenario == "terminated" || scenario == "interrupted"
+        ? Date() : Date().addingTimeInterval(-121)
+      let execution = try ledger.startExecution(
+        owner: .plugin(review.identity),
+        authorizationIDs: binding.authorizationIDs.union(additional?.authorizationIDs ?? []),
+        now: start)
+      if scenario == "finished" { try ledger.finishInvocation(binding.providerAuthorization.id) }
+      if scenario == "terminated" { try ledger.terminateExecution(execution.id) }
+      if scenario == "interrupted" { try ledger.interruptExecution(execution.id) }
+      if scenario != "active" && scenario != "terminated" && scenario != "interrupted" {
+        _ = ledger.reconcileExecutionLimits(now: Date())
+      }
+      return execution
+    }
+    let selectedBinding: ProviderExecutionBinding
+    if scenario == "wrongProof" {
+      selectedBinding = try f.service.authorizeProviderExecution(
+        review: review, registrationID: server.id, caller: nil, retryIDs: [])
+    } else if scenario == "wrongGeneration" {
+      let proof = binding.providerAuthorization
+      let stale = InvocationAuthorization(
+        identity: .init(id: proof.id, generation: proof.identity.generation + 1),
+        invocation: proof.invocation, requirements: proof.requirements, basis: proof.basis)
+      selectedBinding = try ProviderExecutionBinding(
+        identity: binding.identity, registrationID: binding.registrationID,
+        sourceDigest: binding.sourceDigest, providerAuthorization: stale,
+        delegatingAuthorization: nil)
+    } else {
+      selectedBinding = binding
+    }
+    let selectedID = scenario == "wrongExecution" ? UUID() : execution.id
+    let selection = try #require(
+      GatewayDiscoverySelection(executionID: selectedID, binding: selectedBinding))
+    if scenario == "revoked" {
+      _ = try f.service.revokeProvider(
+        approval.identity, owner: f.owner, expectedProviderRevision: approval.revision,
+        expectedRevision: f.view().revision)
+    }
+    if scenario == "unavailablePolicy" {
+      f.reader.set(.machineFile, .unreadable("Unavailable fixture policy"))
+    } else if scenario == "suspended" {
+      f.counter.forget()
+      try f.store.readWithDatabase { _, ledger in
+        #expect(ledger.suspendedAuthority != nil)
+        #expect(ledger.pendingEpochRecovery != nil)
+      }
+    }
+    let caller = GatewayDiscoveryCaller(
+      executionID: nil, authorizationIDs: [], check: {},
+      checkLedger: { _, _ in
+        if scenario == "callerStopped" { throw CancellationError() }
+      })
+    let replacement = GatewayDiscoveryReplacement(selected: selection, reuse: nil, caller: caller)
+    let candidate =
+      scenario == "source"
+      ? try GatewayProviderReview(
+        server: .init(id: server.id, transport: .stdio, command: "/bin/true"),
+        configuration: f.database.configurationState()) : review
+    let registration = scenario == "registration" ? "other" : server.id
+    let before = try f.store.readWithDatabase { _, ledger in Set(ledger.authorizations.keys) }
+    if scenario == "expired" || scenario == "finished" {
+      let fresh = try f.service.authorizeProviderExecution(
+        review: candidate, registrationID: registration, caller: nil, retryIDs: [],
+        replacement: replacement)
+      #expect(fresh.providerAuthorization.id != binding.providerAuthorization.id)
+      #expect(fresh.providerAuthorization.requestIDs.isEmpty)
+      let after = try f.store.readWithDatabase { _, ledger in Set(ledger.authorizations.keys) }
+      #expect(after.subtracting(before) == [fresh.providerAuthorization.id])
+    } else {
+      #expect(throws: (any Error).self) {
+        try f.service.authorizeProviderExecution(
+          review: candidate, registrationID: registration, caller: nil,
+          retryIDs: scenario == "retryIDs" ? [UUID()] : [], replacement: replacement)
+      }
+      let after = try f.store.readWithDatabase { _, ledger in Set(ledger.authorizations.keys) }
+      #expect(after == before)
+    }
+  }
+
+  @Test(arguments: [false, true])
+  func delegatedProviderAuthorityCannotBecomeProjectlessDiscovery(projectBound: Bool) throws {
+    let f = try ProviderApprovalFixture()
+    defer { f.remove() }
+    let server = MCPServerConfig(
+      id: "delegated-discovery", transport: .stdio, command: "/bin/false")
+    let initial = try GatewayProviderReview(
+      server: server, configuration: f.database.configurationState())
+    _ = try f.approve(initial, permissions: .newPrincipal)
+    let review = try GatewayProviderReview(
+      server: server, configuration: f.database.configurationState())
+    let source = GatewayProviderSource(
+      review: review, registrationID: server.id, workingDirectory: nil, executable: nil,
+      resources: [], validate: {})
+    let owner = Principal.client("delegating-client")
+    let project = projectBound ? "fixture-project" : nil
+    let requirements = InvocationRequirements(actions: [
+      .init(requirement: try .init(.mcpServer(server.id), .all))
+    ])
+    let (binding, execution) = try f.store.transactionWithDatabase { database, ledger in
+      try ledger.setPermission(
+        .granted(.all), for: .mcpServer(server.id), principal: owner,
+        expectedRevision: ledger.revision)
+      let (_, binding) = try GatewayPermissionService.admitProviderCall(
+        source: source,
+        invocation: .init(
+          principal: owner, tool: "provider.discovery", projectID: project,
+          argumentsDigest: review.sourceDigest),
+        requirements: requirements, retryIDs: [], connectionID: nil, now: Date(),
+        database: database, ledger: &ledger)
+      let admitted = try #require(binding)
+      let execution = try ledger.startExecution(
+        owner: owner, delegatedTo: admitted.identity, authorizationIDs: admitted.authorizationIDs,
+        now: Date().addingTimeInterval(-121))
+      _ = ledger.reconcileExecutionLimits(now: Date())
+      return (admitted, execution)
+    }
+    #expect(execution.owner == owner && execution.delegatedTo == binding.identity)
+    #expect(binding.providerAuthorization.invocation.projectID == project)
+    #expect(GatewayDiscoverySelection(executionID: execution.id, binding: binding) == nil)
+    if projectBound {
+      #expect(throws: PermissionModelError.invalidAuthorization) {
+        try ProviderExecutionBinding(
+          identity: binding.identity, registrationID: binding.registrationID,
+          sourceDigest: binding.sourceDigest, providerAuthorization: binding.providerAuthorization,
+          delegatingAuthorization: nil)
+      }
+    } else {
+      let providerOnly = try ProviderExecutionBinding(
+        identity: binding.identity, registrationID: binding.registrationID,
+        sourceDigest: binding.sourceDigest, providerAuthorization: binding.providerAuthorization,
+        delegatingAuthorization: nil)
+      let selected = try #require(
+        GatewayDiscoverySelection(executionID: execution.id, binding: providerOnly))
+      let caller = GatewayDiscoveryCaller(context: .empty)
+      let before = try f.store.readWithDatabase { _, ledger in Set(ledger.authorizations.keys) }
+      #expect(throws: (any Error).self) {
+        try f.service.authorizeProviderExecution(
+          review: review, registrationID: server.id, caller: nil, retryIDs: [],
+          replacement: .init(selected: selected, reuse: nil, caller: caller))
+      }
+      let after = try f.store.readWithDatabase { _, ledger in Set(ledger.authorizations.keys) }
+      #expect(after == before)
+    }
+  }
+
+  @Test func discoveryRenewalDoesNotTransferConsumedOnceEvidence() throws {
+    let f = try ProviderApprovalFixture()
+    defer { f.remove() }
+    let server = MCPServerConfig(id: "once-discovery", transport: .stdio, command: "/bin/false")
+    let initial = try GatewayProviderReview(
+      server: server, configuration: f.database.configurationState())
+    let approval = try f.approve(initial, permissions: .newPrincipal)
+    let review = try GatewayProviderReview(
+      server: server, configuration: f.database.configurationState())
+    let invocation = InvocationIdentity(
+      principal: approval.principal, tool: "provider.discovery", projectID: nil,
+      argumentsDigest: review.sourceDigest)
+    let requirements = InvocationRequirements(actions: [
+      .init(requirement: try .init(.screen, .access))
+    ])
+    let (requestID, proof, execution) = try f.store.transactionWithDatabase { _, ledger in
+      guard
+        case .requests(let requests) = try ledger.authorize(
+          invocation: invocation, requirements: requirements, now: Date()),
+        let request = requests.first
+      else { throw PermissionModelError.invalidAuthorization }
+      try ledger.answer(request.id, with: .onlyThisTime, now: Date())
+      guard
+        case .allowed(let proof) = try ledger.authorize(
+          invocation: invocation, requirements: requirements, retryIDs: [request.id], now: Date())
+      else { throw PermissionModelError.invalidAuthorization }
+      let execution = try ledger.startExecution(
+        owner: approval.principal, authorizationIDs: [proof.id],
+        now: Date().addingTimeInterval(-121))
+      _ = ledger.reconcileExecutionLimits(now: Date())
+      return (request.id, proof, execution)
+    }
+    #expect(proof.requestIDs == [requestID])
+    let binding = try ProviderExecutionBinding(
+      identity: review.identity, registrationID: server.id, sourceDigest: review.sourceDigest,
+      providerAuthorization: proof, delegatingAuthorization: nil)
+    let selected = try #require(
+      GatewayDiscoverySelection(executionID: execution.id, binding: binding))
+    let caller = GatewayDiscoveryCaller(
+      executionID: nil, authorizationIDs: [], check: {}, checkLedger: { _, _ in })
+    let fresh = try f.service.authorizeProviderExecution(
+      review: review, registrationID: server.id, caller: nil, retryIDs: [],
+      replacement: .init(selected: selected, reuse: nil, caller: caller))
+    #expect(fresh.providerAuthorization.id != proof.id)
+    #expect(fresh.providerAuthorization.requestIDs.isEmpty)
+    try f.store.readWithDatabase { _, ledger in
+      #expect(ledger.requests[requestID]?.status == .consumed(proof.id))
+      #expect(ledger.authorizations[fresh.providerAuthorization.id]?.requestIDs.isEmpty == true)
+    }
+  }
+
   @Test func providerPreparationPinsReviewedSourceAndDiscoveryMode() throws {
     let f = try ProviderApprovalFixture()
     defer { f.remove() }
     let initial = try f.install(requirement: "write")
-    #expect(throws: GatewayPermissionError.self) {
-      try f.service.authorizeProviderExecution(
+    do {
+      _ = try f.service.authorizeProviderExecution(
         review: initial, registrationID: "fixture", caller: nil, retryIDs: [])
+      Issue.record("An unapproved provider received discovery authority")
+    } catch let error as GatewayToolError {
+      #expect(error.localizedDescription.contains("[provider.approval_required]"))
+      #expect(error.localizedDescription.contains("owner approval"))
+    }
+    try f.store.readWithDatabase { _, ledger in
+      #expect(ledger.authorizations.isEmpty && ledger.executions.isEmpty)
     }
     _ = try f.approve(initial, permissions: .newPrincipal)
     let review = try f.currentReview()

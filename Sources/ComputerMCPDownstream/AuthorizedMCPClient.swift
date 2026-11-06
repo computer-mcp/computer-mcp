@@ -106,8 +106,20 @@ package struct AuthorizedMCPClient: DownstreamMCPClient {
     async throws -> JSONValue
   {
     try Task.checkCancellation()
-    try await Self.discovery.perform {
-      try requireTool(name, server: server, context: context)
+    let cancellation = DiscoveryCancellation()
+    let discoveryContext = InvocationContext(
+      resolvedInvocation: context.resolvedInvocation, admission: context.admission,
+      session: context.session, continuation: context.continuation,
+      executionRecoveryKey: context.executionRecoveryKey,
+      executionAuthority: context.executionAuthority,
+      isDiscoveryCancelled: { cancellation.isCancelled || context.isDiscoveryCancelled?() == true })
+    try await withTaskCancellationHandler {
+      try Task.checkCancellation()
+      try await Self.discovery.perform {
+        try requireTool(name, server: server, context: discoveryContext)
+      }
+    } onCancel: {
+      cancellation.cancel()
     }
     try Task.checkCancellation()
     return try await base.callToolAsync(
@@ -275,4 +287,11 @@ package struct AuthorizedMCPClient: DownstreamMCPClient {
     }
   }
 
+}
+
+private final class DiscoveryCancellation: @unchecked Sendable {
+  private let lock = NSLock()
+  private var cancelled = false
+  var isCancelled: Bool { lock.withLock { cancelled } }
+  func cancel() { lock.withLock { cancelled = true } }
 }

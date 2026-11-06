@@ -96,9 +96,7 @@ extension AppControlPlaneService {
     }
     // Every retired checkout is reported before any provider starts.
     try database.drainPluginWorktreeRetirements { notice in
-      try logger.record(
-        .warning, event: PluginWorktreeRetirementNotice.code,
-        fields: notice.fields.compactMapValues { $0.stringValue })
+      try logger.recordPluginWorktreeRetirement(notice)
     }
   }
 

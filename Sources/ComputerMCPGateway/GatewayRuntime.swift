@@ -265,7 +265,7 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
         ?? GatewayProviderReview.digest(server)
       return MCPProviderExecutionSource(
         digest: digest,
-        prepareDiscovery: {
+        prepareDiscovery: { replacement, caller in
           let source = try GatewayProviderSource.resolve(
             registration: registration, configuration: configuration,
             origins: origins, database: database)
@@ -273,7 +273,8 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
             try await permissionRuntime.prepareProvider(
               review: source.review, registrationID: server.id, authorization: nil,
               directory: nil, connectionID: nil, source: source,
-              platformRules: Self.permissionPlatformRules(platform: platform, database: database))
+              platformRules: Self.permissionPlatformRules(platform: platform, database: database),
+              mcpDiscovery: true, discoveryReplacement: replacement, discoveryCaller: caller)
           }
         })
     }
@@ -556,20 +557,17 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
       let callbackLifetime = GatewayHostCallbackLifetime { [permissionRuntime] ids in
         permissionRuntime.coordinator.revokeInvocations(ids)
       }
-      defer { callbackLifetime.finish() }
-      return try await withTaskCancellationHandler {
-        try Task.checkCancellation()
-        return try await GatewayHostToolScope.$projectID.withValue(projectID) {
+      let callbackContext = bound
+      return try await callbackLifetime.run {
+        try await GatewayHostToolScope.$projectID.withValue(projectID) {
           try await GatewayHostToolScope.$execution.withValue(providerExecution) {
             try await GatewayHostToolScope.$lifetime.withValue(callbackLifetime) {
-              try await callToolAsync(
-                name: name, arguments: .object(arguments), context: bound,
+              try await self.callToolAsync(
+                name: name, arguments: .object(arguments), context: callbackContext,
                 invocationContext: invocationContext)
             }
           }
         }
-      } onCancel: {
-        callbackLifetime.cancel()
       }
     } catch {
       let result = Self.executionErrorEnvelope(error, context: bound, capabilityID: name)
@@ -872,16 +870,6 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
         ?? .init(
           code: "host.service_denied",
           message: "The invocation ended before lifecycle effects began."))
-  }
-
-  /// Current grant for operation inspection, after the carrier invocation's rechecks.
-  func hostGrantPermits(
-    _ permission: ComputerMCPPermissions.Permission, _ value: PermissionValue,
-    _ invocation: MCPHostInvocation
-  ) throws -> Bool {
-    let grant = try currentHostGrant(context: invocation.context)
-    return grant.permissions.state(for: permission) == .granted(value)
-      && grant.allowedCallers.contains(invocation.context.caller)
   }
 
   func requireHostInvocation(
@@ -1551,6 +1539,7 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
           authorization: admitted.authorization, descriptor: admitted.resolved.descriptor,
           directory: admitted.directory, connectionID: admitted.route.context.controlSession?.id,
           auditContext: auditContext, callback: admitted.providerBinding,
+          callbackParentExecutionID: callback.executionID,
           validateCallback: {
             if let callbackLifetime {
               try callbackLifetime.validateActive { try callback.validateProviderLaunch() }

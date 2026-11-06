@@ -1415,11 +1415,12 @@ final class ProxyExecutionFixture: @unchecked Sendable {
           server: selected, configuration: database.configurationState())
         return MCPProviderExecutionSource(
           digest: review.sourceDigest,
-          prepareDiscovery: {
+          prepareDiscovery: { replacement, caller in
             try GatewaySynchronousOperation.run {
               try await runtime.prepareProvider(
                 review: review, registrationID: selected.id,
-                authorization: nil, directory: nil, connectionID: nil)
+                authorization: nil, directory: nil, connectionID: nil,
+                mcpDiscovery: true, discoveryReplacement: replacement, discoveryCaller: caller)
             }
           })
       }

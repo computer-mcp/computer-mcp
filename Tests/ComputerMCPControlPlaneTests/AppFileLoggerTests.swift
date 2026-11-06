@@ -16,6 +16,7 @@ final class AppFileLoggerTests {
       event: "tunnel.started",
       fields: [
         "profile_id": "chatgpt",
+        "long": String(repeating: "x", count: 3_000),
         "api_key": "must-not-appear",
         "authorization_header": "must-not-appear",
       ]
@@ -31,6 +32,7 @@ final class AppFileLoggerTests {
 
     #expect((object["event"] as? String) == ("tunnel.started"))
     #expect((fields["profile_id"]) == ("chatgpt"))
+    #expect(fields["long"]?.utf8.count == 2_048)
     #expect((fields["api_key"]) == ("[REDACTED]"))
     #expect((fields["authorization_header"]) == ("[REDACTED]"))
     #expect(!(text.contains("must-not-appear")))

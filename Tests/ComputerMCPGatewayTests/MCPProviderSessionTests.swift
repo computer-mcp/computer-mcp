@@ -134,11 +134,379 @@ struct MCPProviderSessionTests {
       }
     }
 
+    @Test(.nativeIntegration, arguments: [false, true])
+    func stoppedWaiterDoesNotRetireSharedDiscoveryStartup(atTimeout: Bool) async throws {
+      let f = try SessionFixture(holdStartup: true)
+      defer { f.remove() }
+      let source = SessionSource(root: f.root, hostVariables: f.server.env)
+      let state = SessionDiscoveryWaiters()
+      let client = f.client(source: source) { _, connectionID, _ in state.selected(connectionID) }
+      let executor = BlockingOperationExecutor(label: "shared-discovery-start", serial: false)
+      let first = Task {
+        try await executor.perform {
+          try client.listTools(
+            server: f.server, context: .init(isDiscoveryCancelled: { state.stopped }))
+        }
+      }
+      var second: Task<[MCPTool], any Error>?
+      let release = f.root.appendingPathComponent("startup-release")
+      do {
+        let entered = f.root.appendingPathComponent("startup-entered")
+        let deadline = ContinuousClock.now + .seconds(5)
+        while !FileManager.default.fileExists(atPath: entered.path) {
+          guard ContinuousClock.now < deadline else {
+            throw GatewayToolError.executionFailed("Discovery startup did not enter the barrier")
+          }
+          try await Task.sleep(for: .milliseconds(10))
+        }
+        if atTimeout { try await Task.sleep(for: .seconds(1)) }
+        second = Task {
+          try await executor.perform { try client.listTools(server: f.server, context: .empty) }
+        }
+        while state.connections.count < 2 {
+          guard ContinuousClock.now < deadline else {
+            throw GatewayToolError.executionFailed("The sibling did not select discovery")
+          }
+          try await Task.sleep(for: .milliseconds(10))
+        }
+        #expect(Set(state.connections).count == 1)
+        state.stop()
+        if !atTimeout { try Data().write(to: release) }
+        do {
+          _ = try await first.value
+          Issue.record("Stopped startup waiter returned a catalog")
+        } catch { #expect(error is CancellationError) }
+        if atTimeout { try Data().write(to: release) }
+        let sibling = try await #require(second).value
+        #expect(sibling.map(\.name) == ["pid"])
+        #expect(source.preparations == 1 && source.starts == 1)
+        let status = try client.connectionStatus(server: f.server, context: .empty)
+        #expect(status.objectValue?["state"] == .string("connected"))
+        #expect(status.objectValue?["last_error"] == .null)
+        let events = try client.readEvents(
+          server: f.server, afterCursor: 0, maxResults: 100, context: .empty)
+        #expect(
+          events.objectValue?["events"]?.arrayValue?.contains {
+            $0.objectValue?["kind"] == .string("connection.failed")
+          } == false)
+        await client.shutdown()
+      } catch {
+        state.stop()
+        try? Data().write(to: release)
+        _ = await first.result
+        if let second { _ = await second.result }
+        await client.shutdown()
+        throw error
+      }
+    }
+
+    @Test(.nativeIntegration, arguments: [false, true])
+    func sharedInitializationFailureRetiresEvenWhenWaiterStops(stopOnFailure: Bool) async throws {
+      let f = try SessionFixture(holdStartup: true, failStartupOnce: true)
+      defer { f.remove() }
+      let source = SessionSource(root: f.root, hostVariables: f.server.env)
+      let state = SessionDiscoveryWaiters()
+      let client = f.client(source: source) { _, connectionID, _ in state.selected(connectionID) }
+      let executor = BlockingOperationExecutor(label: "failed-discovery-start", serial: false)
+      let failed = f.root.appendingPathComponent("startup-failed")
+      let release = f.root.appendingPathComponent("startup-release")
+      let first = Task {
+        try await executor.perform {
+          try client.listTools(
+            server: f.server,
+            context: .init(isDiscoveryCancelled: {
+              stopOnFailure && FileManager.default.fileExists(atPath: failed.path)
+            }))
+        }
+      }
+      do {
+        let entered = f.root.appendingPathComponent("startup-entered")
+        let deadline = ContinuousClock.now + .seconds(5)
+        while !FileManager.default.fileExists(atPath: entered.path) {
+          guard ContinuousClock.now < deadline else {
+            throw GatewayToolError.executionFailed(
+              "Failed-start fixture did not enter initialization")
+          }
+          try await Task.sleep(for: .milliseconds(10))
+        }
+        let pid = try #require(
+          Int32(
+            String(contentsOf: entered, encoding: .utf8).trimmingCharacters(
+              in: .whitespacesAndNewlines)))
+        #expect(kill(pid, 0) == 0)
+        try Data().write(to: release)
+        do {
+          _ = try await first.value
+          Issue.record("The deliberately invalid initialization unexpectedly succeeded")
+        } catch {
+          if stopOnFailure {
+            #expect(error is CancellationError)
+          } else {
+            #expect(!(error is CancellationError))
+          }
+        }
+        #expect(FileManager.default.fileExists(atPath: failed.path))
+        let status = try client.connectionStatus(server: f.server, context: .empty)
+        #expect(status.objectValue?["state"] != .string("connecting"))
+        let next = try await executor.perform {
+          try client.listTools(server: f.server, context: .empty)
+        }
+        #expect(next.map(\.name) == ["pid"])
+        #expect(source.preparations == 2 && source.starts == 2)
+        #expect(state.connections.count == 2 && Set(state.connections).count == 2)
+        await client.shutdown()
+        #expect(kill(pid, 0) == -1 && errno == ESRCH)
+      } catch {
+        try? Data().write(to: release)
+        _ = await first.result
+        await client.shutdown()
+        throw error
+      }
+    }
+
+    @Test(.nativeIntegration)
+    func startupAndMetadataRequestHaveIndependentTimeoutBudgets() async throws {
+      let f = try SessionFixture(holdList: true, holdStartup: true)
+      defer { f.remove() }
+      let source = SessionSource(root: f.root, hostVariables: f.server.env)
+      let client = f.client(source: source)
+      let executor = BlockingOperationExecutor(label: "discovery-phase-budgets", serial: false)
+      let started = ContinuousClock.now
+      let request = Task {
+        try await executor.perform { try client.listTools(server: f.server, context: .empty) }
+      }
+      let startupRelease = f.root.appendingPathComponent("startup-release")
+      let listRelease = f.root.appendingPathComponent("list-release")
+      do {
+        let startup = f.root.appendingPathComponent("startup-entered")
+        let enteredList = f.root.appendingPathComponent("list-entered")
+        let deadline = ContinuousClock.now + .seconds(5)
+        while !FileManager.default.fileExists(atPath: startup.path) {
+          guard ContinuousClock.now < deadline else {
+            throw GatewayToolError.executionFailed(
+              "Startup budget fixture did not enter initialization")
+          }
+          try await Task.sleep(for: .milliseconds(10))
+        }
+        try await Task.sleep(for: .seconds(2))
+        try Data().write(to: startupRelease)
+        while !FileManager.default.fileExists(atPath: enteredList.path) {
+          guard ContinuousClock.now < deadline else {
+            throw GatewayToolError.executionFailed(
+              "Startup budget fixture did not enter tools/list")
+          }
+          try await Task.sleep(for: .milliseconds(10))
+        }
+        try await Task.sleep(for: .seconds(4))
+        try Data().write(to: listRelease)
+        let tools = try await request.value
+        #expect(tools.map(\.name) == ["pid"])
+        #expect(started.duration(to: .now) > .seconds(5))
+        #expect(source.preparations == 1 && source.starts == 1)
+        await client.shutdown()
+      } catch {
+        try? Data().write(to: startupRelease)
+        try? Data().write(to: listRelease)
+        _ = await request.result
+        await client.shutdown()
+        throw error
+      }
+    }
+
+    @Test(.nativeIntegration)
+    func expiredRealCallerCannotPublishAfterMetadataHasReturned() async throws {
+      let owner = try WorktreeServiceFixture()
+      defer { owner.remove() }
+      try await owner.runtime.ready()
+      let proof = try owner.runtime.store.transactionWithDatabase { _, ledger in
+        let decision = try ledger.authorize(
+          invocation: .init(
+            principal: .client("discovery-publication-caller"), tool: "fixture.call",
+            projectID: nil, argumentsDigest: "publication"),
+          requirements: .init(execution: try .init(timeMilliseconds: 600_000)), now: Date())
+        guard case .allowed(let proof) = decision else {
+          throw PermissionModelError.invalidAuthorization
+        }
+        return proof
+      }
+      let temp = owner.root.appendingPathComponent("publication-caller")
+      try FileManager.default.createDirectory(at: temp, withIntermediateDirectories: false)
+      let prepared = try await owner.runtime.coordinator.prepare(
+        authorizationID: proof.id,
+        context: .init(
+          directory: .init(temp.path), temporaryDirectory: .init(temp.path),
+          privateWorkingDirectory: true))
+      let f: SessionFixture
+      do { f = try SessionFixture(observePublication: true) } catch {
+        try? prepared.finishAdmission()
+        try? await owner.runtime.coordinator.stopExecutions([prepared.executionID])
+        throw error
+      }
+      defer { f.remove() }
+      let gate = SessionPublicationGate()
+      let source = SessionSource(root: f.root, hostVariables: f.server.env, publicationGate: gate)
+      let client = f.client(source: source)
+      let changes = client.toolChanges()
+      let notifications = Task { () -> Int in
+        var count = 0
+        for await _ in changes { count += 1 }
+        return count
+      }
+      let executor = BlockingOperationExecutor(
+        label: "expired-discovery-publication", serial: false)
+      let request = Task {
+        try await executor.perform {
+          try client.listTools(server: f.server, context: .init(executionAuthority: prepared))
+        }
+      }
+      do {
+        let deadline = ContinuousClock.now + .seconds(5)
+        while !gate.entered {
+          guard ContinuousClock.now < deadline else {
+            throw GatewayToolError.executionFailed(
+              "Discovery did not reach the publication boundary")
+          }
+          try await Task.sleep(for: .milliseconds(10))
+        }
+        let before = try owner.runtime.store.transactionWithDatabase { _, ledger in
+          let execution = try #require(ledger.executions[prepared.executionID])
+          #expect(execution.isRunning && execution.limits.timeMilliseconds == 600_000)
+          _ = ledger.reconcileExecutionLimits(
+            now: execution.startedAt.addingTimeInterval(600.001))
+          #expect(ledger.executions[execution.id]?.limitEndReason == .timeLimit)
+          return execution
+        }
+        gate.release()
+        do {
+          _ = try await request.value
+          Issue.record("Expired caller published metadata")
+        } catch { #expect(error as? PermissionModelError == .invalidAuthorization) }
+        #expect(try client.cachedTools(server: f.server, context: .empty) == nil)
+        try owner.runtime.store.readWithDatabase { _, ledger in
+          let after = try #require(ledger.executions[prepared.executionID])
+          #expect(after.id == before.id && after.owner == before.owner)
+          #expect(after.startedAt == before.startedAt)
+          #expect(after.limits.timeMilliseconds == before.limits.timeMilliseconds)
+          #expect(after.authorizationIDs == before.authorizationIDs)
+          #expect(!after.isRunning && after.limitEndReason == .timeLimit)
+        }
+        await client.shutdown()
+        #expect(await notifications.value == 0)
+        try prepared.finishAdmission()
+        try await owner.runtime.coordinator.stopExecutions([prepared.executionID])
+      } catch {
+        gate.release()
+        _ = await request.result
+        await client.shutdown()
+        _ = await notifications.value
+        try? prepared.finishAdmission()
+        try? await owner.runtime.coordinator.stopExecutions([prepared.executionID])
+        throw error
+      }
+    }
+
+    @Test(.nativeIntegration)
+    func stoppedCallerCannotPublishAfterMetadataHasReturned() async throws {
+      let f = try SessionFixture(observePublication: true)
+      defer { f.remove() }
+      let gate = SessionPublicationGate()
+      let source = SessionSource(root: f.root, hostVariables: f.server.env, publicationGate: gate)
+      let state = SessionDiscoveryWaiters()
+      let client = f.client(source: source)
+      let changes = client.toolChanges()
+      let notifications = Task { () -> Int in
+        var count = 0
+        for await _ in changes { count += 1 }
+        return count
+      }
+      let executor = BlockingOperationExecutor(label: "discovery-publication", serial: false)
+      let request = Task {
+        try await executor.perform {
+          try client.listTools(
+            server: f.server, context: .init(isDiscoveryCancelled: { state.stopped }))
+        }
+      }
+      do {
+        let deadline = ContinuousClock.now + .seconds(5)
+        while !gate.entered {
+          guard ContinuousClock.now < deadline else {
+            throw GatewayToolError.executionFailed(
+              "Discovery did not reach the publication boundary")
+          }
+          try await Task.sleep(for: .milliseconds(10))
+        }
+        #expect(
+          FileManager.default.fileExists(
+            atPath: f.root.appendingPathComponent("list-produced").path))
+        state.stop()
+        gate.release()
+        do {
+          _ = try await request.value
+          Issue.record("Stopped caller published metadata after returning from the provider")
+        } catch { #expect(error is CancellationError) }
+        #expect(try client.cachedTools(server: f.server, context: .empty) == nil)
+        #expect(source.preparations == 1 && source.starts == 1)
+        await client.shutdown()
+        #expect(await notifications.value == 0)
+      } catch {
+        state.stop()
+        gate.release()
+        _ = await request.result
+        await client.shutdown()
+        _ = await notifications.value
+        throw error
+      }
+    }
+
+    @Test(.nativeIntegration)
+    func sourceChangeDuringDiscoveryDoesNotPublishTheOldCatalog() async throws {
+      let f = try SessionFixture(holdList: true)
+      defer { f.remove() }
+      let source = SessionSource(root: f.root, hostVariables: f.server.env)
+      let client = f.client(source: source)
+      let changes = client.toolChanges()
+      let notifications = Task { () -> Int in
+        var count = 0
+        for await _ in changes { count += 1 }
+        return count
+      }
+      let executor = BlockingOperationExecutor(label: "provider-source-race", serial: false)
+      let request = Task {
+        try await executor.perform { try client.listTools(server: f.server, context: .empty) }
+      }
+      let release = f.root.appendingPathComponent("list-release")
+      do {
+        let entered = f.root.appendingPathComponent("list-entered")
+        let deadline = ContinuousClock.now + .seconds(5)
+        while !FileManager.default.fileExists(atPath: entered.path) {
+          guard ContinuousClock.now < deadline else {
+            throw GatewayToolError.executionFailed("Discovery did not reach the list barrier")
+          }
+          try await Task.sleep(for: .milliseconds(10))
+        }
+        source.replace()
+        try Data().write(to: release)
+        do {
+          _ = try await request.value
+          Issue.record("A catalog from a superseded source was published")
+        } catch { #expect(error as? PermissionModelError == .invalidAuthorization) }
+        #expect(try client.cachedTools(server: f.server, context: .empty) == nil)
+        await client.shutdown()
+        #expect(await notifications.value == 0)
+      } catch {
+        try? Data().write(to: release)
+        _ = await request.result
+        await client.shutdown()
+        _ = await notifications.value
+        throw error
+      }
+    }
+
     @Test(.nativeIntegration)
     func discoveryUsesItsOwnProofAndChangedSourceCannotReturnTheCachedCatalog() async throws {
       let f = try SessionFixture()
       defer { f.remove() }
-      let source = SessionSource(root: f.root)
+      let source = SessionSource(root: f.root, hostVariables: f.server.env)
       let client = f.client(source: source)
       let calls = BlockingOperationExecutor(label: "provider-discovery", serial: false)
       do {
@@ -217,7 +585,9 @@ private final class SessionAuthority: ExecutionAuthorizing, @unchecked Sendable 
       providerAuthorization: provider, delegatingAuthorization: caller)
   }
 
-  func prepared(_ directory: URL) throws -> PreparedExecutionContext {
+  func prepared(_ directory: URL, hostVariables: [String: String] = [:]) throws
+    -> PreparedExecutionContext
+  {
     let root = try SandboxPath(ProjectPathResolver.canonicalProject(directory).path)
     #if os(macOS)
       let reads = testExecutionLauncher().hostSystemReadPaths
@@ -230,7 +600,8 @@ private final class SessionAuthority: ExecutionAuthorizing, @unchecked Sendable 
     return try PreparedExecutionContext(
       authority: self, mode: .sandbox(sandbox),
       environment: .init(
-        searchPath: [.init("/usr/bin"), .init("/bin")], home: root, temporary: root, cache: root),
+        searchPath: [.init("/usr/bin"), .init("/bin")], home: root, temporary: root, cache: root,
+        hostVariables: hostVariables),
       limits: Self.limits, provider: binding)
   }
 
@@ -256,10 +627,17 @@ private final class SessionAuthority: ExecutionAuthorizing, @unchecked Sendable 
 #if os(macOS)
   private final class SessionSource: @unchecked Sendable {
     let root: URL
+    let hostVariables: [String: String]
+    let publicationGate: SessionPublicationGate?
     private let lock = NSLock()
     private var revision = "a"
     private var authorities: [SessionAuthority] = []
-    init(root: URL) { self.root = root }
+    init(root: URL, hostVariables: [String: String], publicationGate: SessionPublicationGate? = nil)
+    {
+      self.root = root
+      self.hostVariables = hostVariables
+      self.publicationGate = publicationGate
+    }
     var preparations: Int { lock.withLock { authorities.count } }
     var starts: Int { lock.withLock { authorities.reduce(0) { $0 + $1.starts } } }
     func replace() {
@@ -269,21 +647,62 @@ private final class SessionAuthority: ExecutionAuthorizing, @unchecked Sendable 
       }
     }
     func source() -> MCPProviderExecutionSource {
+      publicationGate?.waitAfterMetadata(root: root)
       let digest = lock.withLock { String(repeating: revision, count: 64) }
       return .init(
         digest: digest,
-        prepareDiscovery: { [self] in
+        prepareDiscovery: { [self] _, _ in
           let authority = try SessionAuthority(digest: digest)
           lock.withLock { authorities.append(authority) }
-          return try authority.prepared(root)
+          let prepared = try authority.prepared(root, hostVariables: hostVariables)
+          let variables = try prepared.environment.variables()
+          for (key, value) in hostVariables {
+            #expect(variables[key] == value, "Prepared discovery omitted fixture variable \(key)")
+          }
+          return prepared
         })
     }
+  }
+
+  private final class SessionPublicationGate: @unchecked Sendable {
+    private let condition = NSCondition()
+    private var reached = false
+    private var released = false
+    var entered: Bool { condition.withLock { reached } }
+    func waitAfterMetadata(root: URL) {
+      guard
+        FileManager.default.fileExists(atPath: root.appendingPathComponent("list-produced").path)
+      else { return }
+      condition.lock()
+      reached = true
+      while !released { condition.wait() }
+      condition.unlock()
+    }
+    func release() {
+      condition.lock()
+      released = true
+      condition.broadcast()
+      condition.unlock()
+    }
+  }
+
+  private final class SessionDiscoveryWaiters: @unchecked Sendable {
+    private let lock = NSLock()
+    private var ids: [UUID] = []
+    private var stoppedValue = false
+    var connections: [UUID] { lock.withLock { ids } }
+    var stopped: Bool { lock.withLock { stoppedValue } }
+    func selected(_ id: UUID) { lock.withLock { ids.append(id) } }
+    func stop() { lock.withLock { stoppedValue = true } }
   }
 
   private struct SessionFixture: Sendable {
     let root: URL
     let server: MCPServerConfig
-    init() throws {
+    init(
+      holdList: Bool = false, holdStartup: Bool = false, failStartupOnce: Bool = false,
+      observePublication: Bool = false
+    ) throws {
       root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         .resolvingSymlinksInPath()
       try FileManager.default.createDirectory(at: root, withIntermediateDirectories: false)
@@ -309,10 +728,48 @@ private final class SessionAuthority: ExecutionAuthorizing, @unchecked Sendable 
           char *end = id; if (*end == '"') { end++; while (*end && *end != '"') end++; end++; }
           else { while (*end && *end != ',' && *end != '}') end++; }
           printf("{\"jsonrpc\":\"2.0\",\"id\":%.*s,\"result\":", (int)(end-id), id);
-          if (strstr(line, "\"initialize\""))
-            printf("{\"protocolVersion\":\"2025-03-26\",\"capabilities\":{\"tools\":{}},\"serverInfo\":{\"name\":\"peer\",\"version\":\"1\"}}");
-          else if (strstr(line, "tools/list") || strstr(line, "tools\\/list"))
+          if (strstr(line, "\"initialize\"")) {
+            const char *root = getenv("DISCOVERY_START_BARRIER");
+            if (root) {
+              char entered[4096], temporary[4096], release[4096];
+              snprintf(entered, sizeof(entered), "%s/startup-entered", root);
+              snprintf(temporary, sizeof(temporary), "%s/startup-entered.tmp", root);
+              snprintf(release, sizeof(release), "%s/startup-release", root);
+              FILE *marker = fopen(temporary, "w"); if (!marker) return 15;
+              fprintf(marker, "%d", getpid()); fclose(marker);
+              if (rename(temporary, entered)) return 17;
+              while (access(release, F_OK) != 0) usleep(10000);
+            }
+            const char *failRoot = getenv("DISCOVERY_FAIL_START");
+            char failed[4096] = {0};
+            if (failRoot) snprintf(failed, sizeof(failed), "%s/startup-failed", failRoot);
+            if (failRoot && access(failed, F_OK) != 0) {
+              FILE *marker = fopen(failed, "w"); if (!marker) return 16;
+              fclose(marker);
+              printf("{}");
+            } else {
+              printf("{\"protocolVersion\":\"2025-03-26\",\"capabilities\":{\"tools\":{}},\"serverInfo\":{\"name\":\"peer\",\"version\":\"1\"}}");
+            }
+          }
+          else if (strstr(line, "tools/list") || strstr(line, "tools\\/list")) {
+            const char *root = getenv("DISCOVERY_BARRIER");
+            if (root) {
+              char entered[4096], release[4096];
+              snprintf(entered, sizeof(entered), "%s/list-entered", root);
+              snprintf(release, sizeof(release), "%s/list-release", root);
+              FILE *marker = fopen(entered, "w"); if (!marker) return 14;
+              fclose(marker);
+              while (access(release, F_OK) != 0) usleep(10000);
+            }
+            const char *publicationRoot = getenv("DISCOVERY_PUBLICATION");
+            if (publicationRoot) {
+              char produced[4096];
+              snprintf(produced, sizeof(produced), "%s/list-produced", publicationRoot);
+              FILE *marker = fopen(produced, "w"); if (!marker) return 18;
+              fclose(marker);
+            }
             printf("{\"tools\":[{\"name\":\"pid\",\"inputSchema\":{\"type\":\"object\"}}]}");
+          }
           else printf("{\"content\":[{\"type\":\"text\",\"text\":\"%d\"}]}", getpid());
           puts("}"); fflush(stdout);
         }
@@ -326,19 +783,28 @@ private final class SessionAuthority: ExecutionAuthorizing, @unchecked Sendable 
       try compiler.run()
       compiler.waitUntilExit()
       try #require(compiler.terminationStatus == 0)
+      var variables: [String: String] = [:]
+      if observePublication { variables["DISCOVERY_PUBLICATION"] = root.path }
+      if holdList { variables["DISCOVERY_BARRIER"] = root.path }
+      if holdStartup { variables["DISCOVERY_START_BARRIER"] = root.path }
+      if failStartupOnce { variables["DISCOVERY_FAIL_START"] = root.path }
       server = .init(
-        id: "provider", transport: .stdio, command: binary.path,
-        startupTimeoutMs: 5000, requestTimeoutMs: 5000, hostServices: true)
+        id: "provider", transport: .stdio, command: binary.path, env: variables,
+        startupTimeoutMs: holdStartup ? 3000 : 5000, requestTimeoutMs: 5000, hostServices: true)
     }
     func remove() { try? FileManager.default.removeItem(at: root) }
-    func client(source: SessionSource? = nil) -> MCPProxyClient {
+    func client(
+      source: SessionSource? = nil,
+      onSelection: (@Sendable (String, UUID, UUID) throws -> Void)? = nil
+    ) -> MCPProxyClient {
       var host = MCPHostContext(
         runtimeID: UUID(), context: .init(caller: .localMCP, profileID: .localAdmin),
         projectID: "project", rootURL: root, readOnly: true, tools: MCPHostToolDirectory(),
         processOwnershipRoot: root.appendingPathComponent("ownership"))
       if let source { host.providerSource = { _ in source.source() } }
       return MCPProxyClient(
-        launcher: testExecutionLauncher(), workingDirectory: root, hostContext: host)
+        launcher: testExecutionLauncher(), workingDirectory: root, hostContext: host,
+        onDiscoverySelection: onSelection)
     }
     func call(_ client: MCPProxyClient, authority: SessionAuthority) async throws -> Int32 {
       let execution = try authority.prepared(root)

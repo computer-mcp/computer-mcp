@@ -143,7 +143,7 @@ package final class ExecutionRevocationCoordinator: ExecutionRecoveryAuthorizing
     searchPath: [SandboxPath] = [try! SandboxPath("/usr/bin"), try! SandboxPath("/bin")],
     fullAccessEnvironment: [String: String] = [:], connectionID: String? = nil,
     auditContext: ExecutionContext? = nil, worktreeAdmission: WorktreeAdmission? = nil,
-    provider: ProviderExecutionBinding? = nil,
+    provider: ProviderExecutionBinding? = nil, mcpDiscovery: Bool = false,
     providerWorkingDirectory: SandboxPath? = nil, providerExecutable: SandboxPath? = nil,
     validateProvider: (@Sendable () throws -> Void)? = nil,
     callback: ProviderExecutionBinding? = nil
@@ -259,7 +259,10 @@ package final class ExecutionRevocationCoordinator: ExecutionRecoveryAuthorizing
     let authority = GatewayExecutionAuthority(
       coordinator: self, executionID: execution.id,
       authorizationIDs: execution.authorizationIDs, principal: execution.owner,
-      connectionID: executionConnectionID)
+      connectionID: executionConnectionID,
+      discovery: mcpDiscovery && executionConnectionID == nil
+        ? provider.flatMap { GatewayDiscoverySelection(executionID: execution.id, binding: $0) }
+        : nil)
     do {
       if let worktree = context.worktree {
         guard worktreeAdmission == worktree.binding.admission else {
@@ -800,7 +803,8 @@ package final class ExecutionRevocationCoordinator: ExecutionRecoveryAuthorizing
 
   fileprivate func access(
     _ id: UUID, principal: Principal, connectionID: String?, operation: ExecutionOperation,
-    authorizationID: UUID? = nil, additionalAuthorizationIDs: Set<UUID> = []
+    authorizationID: UUID? = nil, additionalAuthorizationIDs: Set<UUID> = [],
+    discovery: GatewayDiscoverySelection? = nil
   )
     throws -> EffectiveExecutionLimits
   {
@@ -827,7 +831,20 @@ package final class ExecutionRevocationCoordinator: ExecutionRecoveryAuthorizing
           if operation == .cancel { try ledger.terminateExecution(id) }
           result = .success(execution.limits)
         } else {
-          result = .failure(PermissionModelError.invalidAuthorization)
+          let localStop = lock.withLock {
+            pendingOwnerStops.contains(id)
+              || !pendingAuthorizationRevocations.isDisjoint(
+                with: discovery?.authorizationIDs ?? [])
+          }
+          if operation == .writeInput, decision == .denied(.executionEnded),
+            let discovery, discovery.executionID == id, !localStop,
+            ledger.executions[id]?.limitEndReason == .timeLimit,
+            (try? discovery.validate(in: &ledger, operation: .readResult, now: Date())) != nil
+          {
+            result = .failure(GatewayDiscoveryExpired(selection: discovery))
+          } else {
+            result = .failure(PermissionModelError.invalidAuthorization)
+          }
         }
         return (
           result,
@@ -837,6 +854,31 @@ package final class ExecutionRevocationCoordinator: ExecutionRecoveryAuthorizing
       }
     if outcome.1 { notify() }
     return try outcome.0.get()
+  }
+
+  /// Local stop publication precedes the policy transaction, never the reverse.
+  func withDiscoveryAdmission<T>(
+    _ replacement: GatewayDiscoveryReplacement?, caller: GatewayDiscoveryCaller?,
+    _ body: () throws -> T
+  ) throws -> T {
+    try publication.withLock {
+      try persistAuthorizationRevocations()
+      let caller = replacement?.caller ?? caller
+      let ids = (replacement?.selected.authorizationIDs ?? []).union(
+        replacement?.reuse?.authority.authorizationIDs ?? []
+      ).union(caller?.authorizationIDs ?? [])
+      let executions = Set(
+        [
+          replacement?.selected.executionID, replacement?.reuse?.executionID, caller?.executionID,
+        ].compactMap { $0 })
+      guard
+        lock.withLock({
+          ready && pendingOwnerStops.isDisjoint(with: executions)
+            && pendingAuthorizationRevocations.isDisjoint(with: ids)
+        })
+      else { throw PermissionModelError.invalidAuthorization }
+      return try body()
+    }
   }
 
   fileprivate func permissionRequests(
@@ -1361,15 +1403,17 @@ private final class GatewayExecutionAuthority: ExecutionAuthorizing, Sendable {
   let authorizationIDs: Set<UUID>
   let principal: Principal
   let connectionID: String?
+  let discovery: GatewayDiscoverySelection?
   init(
     coordinator: ExecutionRevocationCoordinator, executionID: UUID, authorizationIDs: Set<UUID>,
-    principal: Principal, connectionID: String?
+    principal: Principal, connectionID: String?, discovery: GatewayDiscoverySelection?
   ) {
     self.coordinator = coordinator
     self.executionID = executionID
     self.authorizationIDs = authorizationIDs
     self.principal = principal
     self.connectionID = connectionID
+    self.discovery = discovery
   }
   func reserveChild(_ id: UUID) throws { try coordinator.reserveChild(id, authority: self) }
   func bindChild(_ id: UUID, ownership: any ExecutionOwnership) {
@@ -1387,7 +1431,8 @@ private final class GatewayExecutionAuthority: ExecutionAuthorizing, Sendable {
   }
   func access(_ id: UUID, operation: ExecutionOperation) throws -> EffectiveExecutionLimits {
     try coordinator.access(
-      id, principal: principal, connectionID: connectionID, operation: operation)
+      id, principal: principal, connectionID: connectionID, operation: operation,
+      discovery: discovery)
   }
   func permissionRequests(_ id: UUID) throws -> [PermissionRequest] {
     try coordinator.permissionRequests(id, principal: principal, connectionID: connectionID)
@@ -1545,6 +1590,38 @@ private final class ExecutionLogicalWork: @unchecked Sendable {
       let result = cancellation
       cancellation = nil
       return result
+    }
+  }
+}
+
+extension GatewayDiscoveryCaller {
+  init(context: InvocationContext) {
+    let prepared =
+      (context.executionAuthority ?? InvocationExecution.current) as? PreparedExecutionContext
+    let authority = prepared?.authority as? GatewayExecutionAuthority
+    let cancelled = context.isDiscoveryCancelled
+    executionID = prepared?.executionID
+    authorizationIDs = prepared?.authority.authorizationIDs ?? []
+    check = {
+      do {
+        if cancelled?() == true { throw CancellationError() }
+        if let prepared {
+          _ = try prepared.accessExecution(prepared.executionID, operation: .writeInput)
+        }
+      } catch { throw GatewayDiscoveryCallerStopped(underlying: error) }
+    }
+    checkLedger = { ledger, now in
+      do {
+        if cancelled?() == true { throw CancellationError() }
+        if let prepared {
+          guard let authority,
+            ledger.executionAccess(
+              prepared.executionID, principal: authority.principal, operation: .writeInput,
+              connectionID: authority.connectionID, authorizingInvocation: nil, now: now)
+              == .allowed
+          else { throw PermissionModelError.invalidAuthorization }
+        }
+      } catch { throw GatewayDiscoveryCallerStopped(underlying: error) }
     }
   }
 }

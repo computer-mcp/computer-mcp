@@ -68,7 +68,8 @@ struct StandaloneToolCommandTests {
       #expect(result.exitCode == 1)
       #expect(result.stdout.isEmpty)
       #expect(
-        result.stderr.contains("Execution requires a verified worktree and private Git context"),
+        result.stderr.contains("[provider.approval_required]")
+          && result.stderr.contains("owner approval"),
         "\(result.stderr)")
       #expect(!result.stderr.contains("permission.required"))
       #expect(!result.stderr.contains("Unknown tool"))

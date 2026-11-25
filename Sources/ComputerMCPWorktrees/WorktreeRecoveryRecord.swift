@@ -75,6 +75,14 @@ package struct WorktreeRecoveryRecord: Codable, Equatable, Sendable {
 
   package var selection: Selection { .init(recordID: id, revision: revision, oid: oid) }
 
+  func admittingRelease(_ operationID: UUID) -> Self {
+    var admitted = self
+    admitted.state = .releasing
+    admitted.revision += 1
+    admitted.dependencies = [operationID]
+    return admitted
+  }
+
   func validate(repository: WorktreeRepositoryIdentity, generation: UUID) throws {
     try owner.validate(repository: repository)
     try requireRecoveryBranch(base.ref)

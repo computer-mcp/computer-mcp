@@ -389,16 +389,29 @@ package struct WorktreeRecoveryOwnerService: Sendable {
         return
       }
       let receipts = try review.release.receipts(for: handle)
-      let admitted = try dependencies.validateRecoveryEvidence(
-        evidence, for: repository, sources: sources
-      ) {
-        try store.prepareRelease(receipts)
+      var admission: WorktreeRecoveryStore.Locked.ReleaseAdmission?
+      let matched: Bool
+      do {
+        matched = try dependencies.validateRecoveryEvidence(
+          evidence, for: repository, sources: sources
+        ) {
+          admission = try store.admitRelease(receipts)
+        }
+      } catch {
+        // The catalog rename can be visible even when synchronization or the
+        // enclosing SQL validation throws. Only the durable intent authorizes replay.
+        if case .pending = try classifyAndReplay(active, in: store) { throw error }
+        return
       }
-      if admitted {
-        _ = try classifyAndReplay(active, in: store)
-      } else {
+      guard case .pending = try classifyAndReplay(active, in: store) else { return }
+      switch admission {
+      case .capacityRefused(let reason):
+        try recordOutcome(.busy(reason), entry: active, in: store)
+      case nil where !matched:
         try recordOutcome(
           .busy("Recovery dependency evidence changed during admission."), entry: active, in: store)
+      default:
+        throw invalidRecoveryMetadata()
       }
     }
   }
@@ -440,6 +453,7 @@ package struct WorktreeRecoveryOwnerService: Sendable {
     let deletions = try reader(repository, firstOwner.source).pendingRecoveryDeletions()
     let live = Dictionary(uniqueKeysWithValues: admissions)
     let records = Dictionary(uniqueKeysWithValues: evidence.derived.map { ($0.projectID, $0) })
+    var fallbackBudget = try WorktreeObjectBudget(limits)
     for (owner, selected) in owners {
       let reader = reader(repository, owner.source)
       guard !deletions.contains(where: owner.matches),
@@ -448,13 +462,11 @@ package struct WorktreeRecoveryOwnerService: Sendable {
       if let topology = live[owner],
         let expected = records[owner.projectID]?.worktree?.lastPublishedOID
       {
-        if selected.contains(where: { $0.oid == expected && $0.objectType == .commit }) {
-          let budget = try WorktreeObjectBudget(limits)
-          let pool = WorktreeStagedObjects(
-            directory: topology.objects, repository: topology.gitDirectory, git: git,
-            format: repository.format, deadline: budget.deadline, limits: limits)
-          guard try pool.manifest(roots: [expected])?.entries[expected]?.type == .commit
-          else { throw WorktreeError.busy("The worktree needs its retained expected commit.") }
+        if selected.contains(where: { $0.oid == expected && $0.objectType == .commit }),
+          try !reader.hasVerifiedPrivateExpectedCommit(
+            expected, topology: topology, budget: &fallbackBudget)
+        {
+          throw WorktreeError.busy("The worktree needs its retained expected commit.")
         }
       } else {
         let final = try reader.recoveryFinalCapture(owner, generation: generation)
@@ -629,6 +641,12 @@ extension WorktreeRecoveryStore.Locked {
         }
         continue
       }
+      if admission != nil {
+        guard current == before.admittingRelease(first.operationID),
+          receipt.map({ $0 == expected }) ?? true
+        else { throw invalidRecoveryMetadata() }
+        continue
+      }
       var identity = current
       identity.revision = before.revision
       identity.state = before.state
@@ -638,12 +656,7 @@ extension WorktreeRecoveryStore.Locked {
       guard identity == before, current.revision >= before.revision else {
         throw invalidRecoveryMetadata()
       }
-      if admission != nil {
-        guard current.state == .releasing, current.dependencies == [first.operationID],
-          current.revision == before.revision + 1,
-          receipt.map({ $0 == expected }) ?? true
-        else { throw invalidRecoveryMetadata() }
-      } else if current.state == .releasing, let foreign = current.dependencies.first {
+      if current.state == .releasing, let foreign = current.dependencies.first {
         guard foreign != first.operationID, let intent = intents[foreign], intent.kind == .release
         else { throw invalidRecoveryMetadata() }
         if let receipt {

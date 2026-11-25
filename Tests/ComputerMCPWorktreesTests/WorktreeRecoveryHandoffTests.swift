@@ -61,7 +61,8 @@ private struct HandoffJournal {
   }
 
   func read() throws -> WorktreeRecoveryHandoff {
-    let bytes = try #require(io.read(name, in: directory, limit: WorktreeRecoveryCatalog.byteLimit))
+    let stored = try io.read(name, in: directory, limit: WorktreeRecoveryCatalog.byteLimit)
+    let bytes = try #require(stored)
     return try JSONDecoder().decode(WorktreeRecoveryHandoff.self, from: bytes)
   }
 }
@@ -163,7 +164,7 @@ struct WorktreeRecoveryHandoffTests {
         let lock = try interrupted.acquireLock()
         defer { lock.release() }
         var budget = try WorktreeObjectBudget(.init())
-        try recovery.withExclusive(repository: interrupted.identity) { store in
+        try recovery.withExclusive(repository: interrupted.identity) { store -> Void in
           #expect(throws: HandoffTestFailure.self) {
             try interrupted.beginRecoveryHandoff(
               operationID: operation, kind: .publication, record: record, topology: topology,

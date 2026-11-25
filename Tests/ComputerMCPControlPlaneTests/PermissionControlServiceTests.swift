@@ -116,11 +116,12 @@ enum OwnerAuditAction: String, CaseIterable, Sendable {
   case confirmAuthority = "confirm_authority"
 }
 
-private struct OwnerAuditFixture {
+struct OwnerAuditFixture {
   let connection: GatewayDatabaseConnection
   let store: SQLitePermissionStore
   let counter: TestAuthorizationEpochCounter
   let gateway: GatewayPermissionService
+  let policyReader = TestManagedPolicyReader()
   let control: PermissionControlService
   let client: GatewayPermissionSubject
   let now = Date(timeIntervalSince1970: 1_750_000_000)
@@ -129,7 +130,7 @@ private struct OwnerAuditFixture {
     connection = try GatewayDatabaseConnection(inMemory: ())
     counter = TestAuthorizationEpochCounter()
     store = SQLitePermissionStore(connection: connection, counter: counter)
-    gateway = GatewayPermissionService(store: store, policyReader: TestManagedPolicyReader())
+    gateway = GatewayPermissionService(store: store, policyReader: policyReader)
     let proof = try GatewayPermissionOwner(
       context: .init(caller: .localApp, profileID: .localAdmin, trustedPrincipalID: "app-owner"),
       validate: {})

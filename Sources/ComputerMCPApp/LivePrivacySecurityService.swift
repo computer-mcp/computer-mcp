@@ -18,6 +18,10 @@ final class LivePrivacySecurityService: PrivacySecurityService {
     self.controlPlane = controlPlane
   }
 
+  func ownerPolicyEditorService() async throws -> OwnerPolicyEditorService {
+    try await controlPlane.ownerPolicyEditorService()
+  }
+
   func privacySnapshot() async throws -> PrivacySnapshot {
     let inventory = try await controlPlane.fetchPrivacyPermissionInventory()
     let view = inventory.permissions

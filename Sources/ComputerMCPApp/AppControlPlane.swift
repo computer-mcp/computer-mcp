@@ -424,6 +424,7 @@ protocol AppControlPlane: PluginManaging, MCPRegistrationManaging, ClientAccessM
   func fetchOpenAITunnels() async throws -> [OpenAITunnelSummary]
   func fetchCloudflareTunnels() async throws -> [CloudflareTunnelSummary]
   func fetchPermissions() async throws -> [PermissionSummary]
+  func ownerPolicyEditorService() async throws -> OwnerPolicyEditorService
   func fetchPrivacyPermissionInventory() async throws -> PrivacyPermissionInventory
   func saveProviderPermissions(
     reviewed: ProviderPermissionOptions, permissions: Permissions, fullAccess: Bool,
@@ -565,6 +566,9 @@ final class UnavailableControlPlane: AppControlPlane {
   func fetchOpenAITunnels() async throws -> [OpenAITunnelSummary] { throw unavailable() }
   func fetchCloudflareTunnels() async throws -> [CloudflareTunnelSummary] { throw unavailable() }
   func fetchPermissions() async throws -> [PermissionSummary] { throw unavailable() }
+  func ownerPolicyEditorService() async throws -> OwnerPolicyEditorService {
+    throw unavailable()
+  }
   func fetchPrivacyPermissionInventory() async throws -> PrivacyPermissionInventory {
     throw unavailable()
   }

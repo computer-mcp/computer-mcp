@@ -161,7 +161,7 @@ Managed limits cap permissions; they never grant them. The sources are:
 | --- | --- |
 | Machine file | `/Library/Application Support/Computer MCP/policy.toml`; a protected administrator-owned regular file. The entire parent chain must resist replacement; symlinks and writable parents, including mutation grants in ACLs, are rejected. |
 | Managed preferences | Forced `Policy` key in the `com.showxu.computer-mcp` preferences domain, containing a UTF-8 TOML string in the same format. Ordinary user preferences do not supply this source. |
-| Owner policy | Per-profile policy stored in the permission database. It currently has no owner-facing setting: neither the App nor the public CLI can set it. Profile permissions and connection limits are separate controls. |
+| Owner policy | TOML stored in the permission database for a client profile, plugin package, or direct local MCP server with a saved approval. Privacy & Security uses the local owner authority to edit this source. Profile permissions and connection limits are separate controls. |
 | Connection limits | `clients limit` or `profile.limit`, using [ManagedPolicy JSON](#managedpolicy-json); can only narrow the existing connection ceiling. |
 
 Each TOML document is bounded to 1 MiB. Its top-level fields are:
@@ -205,10 +205,20 @@ must allow, denied paths accumulate, and each network destination must satisfy
 every source. Absent sources impose no ceiling. An existing unreadable, malformed
 or unprotected source fails closed for every dimension it can limit; an unknown
 field is malformed. Nonblocking file checks also handle FIFO locations safely.
-Local owner diagnostics and revocation remain available. The owner projection
-shows source identity, revision and bounded failure diagnostics without exposing
-policy contents. Unchanged meaning preserves authority evidence; tightening
-resource ceilings also affects running work and retained output.
+Local owner diagnostics and revocation remain available.
+
+Privacy & Security keeps the saved owner TOML and its limits alongside the
+effective managed ceilings for the selected target. Machine file and managed
+preferences are read-only in the App. Their diagnostics show identity, revision
+and availability, including read failures. Administrators can maintain the
+machine file directly at the path above for standalone deployments.
+
+Saves and clears apply to the selected owner source at the reviewed permission
+revision and authorization epoch. Invalid TOML and stale authority leave the
+draft available for correction or review against a current snapshot. The
+gateway reconciles the change with running work. Unchanged meaning preserves
+authority evidence, and tighter resource ceilings also affect running work and
+retained output.
 
 ### ManagedPolicy JSON
 

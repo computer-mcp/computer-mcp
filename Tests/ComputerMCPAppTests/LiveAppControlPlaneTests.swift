@@ -375,6 +375,25 @@ final class LiveAppControlPlaneTests {
   }
 
   @Test
+  func privacySettingsUsesLiveOwnerPolicyEditor() async throws {
+    try await withAppControlPlaneFixture { fixture in
+      let privacy = LivePrivacySecurityService(controlPlane: fixture.app)
+      let model = PrivacySecurityModel(service: privacy)
+      let service = try await model.ownerPolicyEditorService()
+      var editor = try await service.load(.profile(.chatGPTOperate))
+      editor.draft = "[permissions]\nscreen = 'deny'"
+      _ = try await service.save(editor)
+      let snapshot = try await privacy.privacySnapshot()
+      #expect(snapshot.managedSources.contains { $0.profileID == .chatGPTOperate })
+      let screen = try #require(
+        snapshot.grants.first {
+          $0.principalID == GatewayProfileID.chatGPTOperate.rawValue && $0.permission == .screen
+        })
+      #expect(screen.effectiveValue == .denied)
+    }
+  }
+
+  @Test
   func h12PrivacyProjectsAndEditsDirectProviderAuthority() async throws {
     try await withAppControlPlaneFixture { fixture in
       let host = fixture.controlPlane

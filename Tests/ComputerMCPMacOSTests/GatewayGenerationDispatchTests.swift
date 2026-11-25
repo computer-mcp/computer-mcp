@@ -63,7 +63,7 @@ struct GatewayGenerationDispatchTests {
       base: generations, session: try await generations.makeControlSession())
     let lease = initial.ownedWork.retainShell(projectID: "fixture", sessionID: "retained-owner")
     do {
-      #expect(try initial.hasCurrentProjectInputs())
+      #expect(try initial.hasCurrentDirectoryInputs())
       let projects = try fixture.database.projects()
       var record = try #require(fixture.database.derivedProjects().first)
       let revision = record.revision
@@ -71,7 +71,7 @@ struct GatewayGenerationDispatchTests {
       try SQLiteDerivedProjectStore(connection: fixture.database.connection).commit(
         record, expecting: revision)
       #expect(try fixture.database.projects() == projects)
-      #expect(try !initial.hasCurrentProjectInputs())
+      #expect(try !initial.hasCurrentDirectoryInputs())
       failing.fail(true)
       await #expect(throws: GenerationFailureProviders.Failure.self) {
         _ = try await serving.callToolAsync(

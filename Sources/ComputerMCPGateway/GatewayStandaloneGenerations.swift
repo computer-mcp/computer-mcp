@@ -20,15 +20,16 @@ package actor GatewayStandaloneGenerations: GatewayAsyncToolServing {
 
   package init(_ initial: GatewayRuntime) { current = initial }
 
-  package func makeControlSession() throws -> GatewayControlSession {
+  package func makeControlSession() async throws -> GatewayControlSession {
+    let runtime = try await admitted()
     guard !closed else { throw GatewaySocketError.notConnected }
-    return try current.makeControlSession()
+    return try runtime.makeControlSession()
   }
 
   private func admitted() async throws -> GatewayRuntime {
     guard !closed else { throw GatewaySocketError.notConnected }
     if let pending { return try await pending.value }
-    if try current.hasCurrentProjectInputs() { return current }
+    if try current.hasCurrentDirectoryInputs() { return current }
     reap()
     guard retired.count + retiring.count < 127 else {
       throw GatewayToolError.disabled("The gateway has reached its owned runtime capacity.")

@@ -115,7 +115,7 @@ struct GatewayWorktreeService: GitWorktreeServing {
       source: source,
       store: database.derivedProjectStore(inspectNesting: { projects in
         try GatewayTrackedProjectNesting.inspect(
-          projects,
+          projects, gitExecutable: platform.gitExecutable,
           runner: GatewayWorktreeGit(
             launcher: platform.launcher, executable: platform.gitExecutable))
       }), storage: storage,

@@ -13,7 +13,7 @@ struct ProjectGitLayoutTests {
       ("fatal: detected dubious ownership in repository at /project\n", false),
     ] {
       let result = CommandResult(
-        executable: "/usr/bin/git", arguments: [], exitCode: 128,
+        executable: "git", arguments: [], exitCode: 128,
         timedOut: false, stdout: "", stderr: stderr, stdoutTruncated: false, stderrTruncated: false)
       #expect(ProjectGitLayout.isNonRepository(result) == expected)
     }

@@ -14,7 +14,12 @@ import Testing
 
 #if os(macOS)
   import ComputerMCPDarwinTestSupport
+#endif
+
+#if canImport(Darwin)
   import Darwin
+#elseif canImport(Glibc)
+  import Glibc
 #endif
 
 @Suite(.serialized, .timeLimit(.minutes(1)))
@@ -895,7 +900,7 @@ private final class SessionAuthority: ExecutionAuthorizing, @unchecked Sendable 
       }
       """#.write(to: source, atomically: true, encoding: .utf8)
       let compiler = Process()
-      compiler.executableURL = URL(fileURLWithPath: "/usr/bin/cc")
+      compiler.executableURL = URL(fileURLWithPath: try testExecutable("cc"))
       compiler.arguments = ["-Wall", "-Werror", source.path, "-o", binary.path]
       compiler.environment = ["PATH": "/usr/bin:/bin", "TMPDIR": root.path]
       try compiler.run()

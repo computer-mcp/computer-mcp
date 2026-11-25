@@ -377,7 +377,8 @@ extension GatewayPermissionService {
 /// Git's index is queried as data using fixed arguments and disabled executable configuration.
 package enum GatewayTrackedProjectNesting {
   package static func inspect(
-    _ projects: [ComputerMCPCore.RegisteredProject], runner: any CommandRunning
+    _ projects: [ComputerMCPCore.RegisteredProject], gitExecutable: String,
+    runner: any CommandRunning
   ) throws -> [TrackedProjectNesting] {
     var result: [TrackedProjectNesting] = []
     let roots = try Dictionary(
@@ -390,7 +391,7 @@ package enum GatewayTrackedProjectNesting {
       }
       guard !nested.isEmpty, try hasGitAncestor(root) else { continue }
       let discovery = try runner.runIsolated(
-        executable: "/usr/bin/git",
+        executable: gitExecutable,
         arguments: HostGitConfiguration.arguments + ["rev-parse", "--is-inside-work-tree"],
         workingDirectory: root, environment: HostGitConfiguration.environment(home: root),
         timeoutMilliseconds: 5_000, maxOutputBytes: 16_384)
@@ -406,7 +407,7 @@ package enum GatewayTrackedProjectNesting {
         let path = roots[inner.id]!.path
         let relative = String(path.dropFirst(prefix.count))
         let command = try runner.runIsolated(
-          executable: "/usr/bin/git",
+          executable: gitExecutable,
           arguments: HostGitConfiguration.arguments + [
             "ls-files", "-z", "--", ":(literal)" + relative,
           ],

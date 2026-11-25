@@ -35,7 +35,7 @@
       if program == "git" {
         let lookup = Process()
         let output = Pipe()
-        lookup.executableURL = URL(fileURLWithPath: "/usr/bin/xcrun")
+        lookup.executableURL = URL(fileURLWithPath: try testExecutable("xcrun"))
         lookup.arguments = ["--find", "git"]
         lookup.standardOutput = output
         lookup.standardError = FileHandle.nullDevice

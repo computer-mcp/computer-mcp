@@ -875,7 +875,7 @@
     }
     """#.write(to: source, atomically: true, encoding: .utf8)
     let compiler = Process()
-    compiler.executableURL = URL(fileURLWithPath: "/usr/bin/cc")
+    compiler.executableURL = URL(fileURLWithPath: try testExecutable("cc"))
     compiler.arguments = ["-Wall", "-Werror", source.path, "-o", binary.path]
     compiler.environment = ["PATH": "/usr/bin:/bin", "TMPDIR": directory.path]
     try compiler.run()

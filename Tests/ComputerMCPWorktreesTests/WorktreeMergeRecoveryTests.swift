@@ -1,3 +1,4 @@
+import ComputerMCPTestSupport
 import Foundation
 import Testing
 
@@ -229,7 +230,7 @@ struct WorktreeMergeRecoveryTests {
         try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: file.path)
       }
       try f.raw(["config", "merge.sentinel.driver", "touch " + marker.path])
-      try f.raw(["config", "gpg.program", "/usr/bin/false"])
+      try f.raw(["config", "gpg.program", testExecutable("false")])
       try f.raw(["config", "commit.gpgSign", "true"])
       #expect(try service.merge(projectID: created.projectID) { _, _ in }.oid == tip)
       #expect(!FileManager.default.fileExists(atPath: marker.path))

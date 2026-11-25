@@ -15,7 +15,12 @@ import Testing
 #if os(macOS)
   import ComputerMCPDarwinTestSupport
   import ComputerMCPPlatformDarwin
+#endif
+
+#if canImport(Darwin)
   import Darwin
+#elseif canImport(Glibc)
+  import Glibc
 #endif
 
 @Suite(.nativeIntegration)

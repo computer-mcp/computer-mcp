@@ -2148,7 +2148,7 @@ private struct ExecutionTestObservation: EgressRouteObservation {
       await #expect(throws: (any Error).self) {
         try await prepared.withValue {
           try await launcher.start(
-            executable: .init("/usr/bin/true"), arguments: [],
+            executable: .init(testExecutable("true")), arguments: [],
             directory: .init(f.paths.project.path),
             environment: prepared.environment, mode: prepared.mode, method: method,
             bindOwnership: { owner in
@@ -2187,7 +2187,8 @@ private struct ExecutionTestObservation: EgressRouteObservation {
       let next = try await coordinator.prepare(authorizationID: nextID, context: f.context)
       let nextOwner = try await next.withValue {
         try await launcher.start(
-          executable: .init("/usr/bin/true"), arguments: [], directory: .init(f.paths.project.path),
+          executable: .init(testExecutable("true")), arguments: [],
+          directory: .init(f.paths.project.path),
           environment: next.environment, mode: next.mode, method: method)
       }
       try next.finishAdmission()
@@ -2269,7 +2270,7 @@ private struct ExecutionTestObservation: EgressRouteObservation {
       let cli = CLIProcessExecution(launcher: launcher)
       let result = try await prepared.withValue {
         try await cli.launchAsync(
-          executable: "/usr/bin/printf",
+          executable: testExecutable("printf"),
           invocation: .init(arguments: ["12345678"], standardInput: Data()), cwd: f.paths.project,
           environment: [:], timeoutMilliseconds: 2000, maxOutputBytes: 1024)
       }

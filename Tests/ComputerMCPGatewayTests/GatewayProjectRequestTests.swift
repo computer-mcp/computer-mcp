@@ -41,7 +41,8 @@ import Testing
   @Test func unrelatedUnavailableProjectDoesNotBlockRegistration() throws {
     let runner = RecordingCommandRunner()
     let f = try ProjectRequestFixture(nestingInspector: {
-      try GatewayTrackedProjectNesting.inspect($0, runner: runner)
+      try GatewayTrackedProjectNesting.inspect(
+        $0, gitExecutable: "/fixture/tools/git", runner: runner)
     })
     defer { f.remove() }
     let stale = ComputerMCPCore.RegisteredProject(
@@ -256,7 +257,8 @@ import Testing
       [
         .init(id: "outer", displayName: "Outer", rootPath: outer.path),
         .init(id: "inner", displayName: "Inner", rootPath: inner.path),
-      ], runner: runner)
+      ], gitExecutable: "/fixture/tools/git", runner: runner)
+    #expect(runner.calls.map(\.executable) == ["/fixture/tools/git", "/fixture/tools/git"])
     #expect(nesting.count == 1)
     #expect(nesting.first?.outerID == "outer")
     #expect(nesting.first?.innerID == "inner")
@@ -274,7 +276,7 @@ import Testing
         [
           .init(id: "outer", displayName: "Outer", rootPath: outer.path),
           .init(id: "inner", displayName: "Inner", rootPath: inner.path),
-        ], runner: failed)
+        ], gitExecutable: "/fixture/tools/git", runner: failed)
     }
   }
 
@@ -384,7 +386,8 @@ import Testing
       }
     }
     let f = try ProjectRequestFixture(nestingInspector: {
-      try GatewayTrackedProjectNesting.inspect($0, runner: runner)
+      try GatewayTrackedProjectNesting.inspect(
+        $0, gitExecutable: "/fixture/tools/git", runner: runner)
     })
     defer { f.remove() }
     try FileManager.default.createDirectory(

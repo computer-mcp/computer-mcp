@@ -295,7 +295,7 @@ private final class ProfilePublicationFixture {
         projectGrants: unused, pluginDirectories: unused,
         applications: TestApplicationBundleLocator(),
         toolProviders: unused, managementToolNames: [], executableSearchDirectories: [],
-        gitExecutable: "/usr/bin/false",
+        gitExecutable: testExecutable("false"),
         fileChanges: { _ in throw ProfilePublicationFailure.unexpected },
         permissionPolicyReader: reader))
     owner = try GatewayPermissionOwner(

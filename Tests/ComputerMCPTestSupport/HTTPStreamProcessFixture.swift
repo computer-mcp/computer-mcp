@@ -60,10 +60,9 @@ package struct HTTPStreamProcessFixture {
   private static func startServer(
     launcher: ExecutionLauncher, script: URL, root: URL
   ) throws -> ManagedLineProcess {
-    let executable = "/usr/bin/python3"
+    let executable = try testExecutable("python3")
     let arguments = ["-I", script.path, root.path]
     guard InvocationExecution.current == nil,
-      FileManager.default.isExecutableFile(atPath: executable),
       script.resolvingSymlinksInPath()
         == root.resolvingSymlinksInPath().appendingPathComponent("server.py"),
       try String(contentsOf: script, encoding: .utf8) == Self.script

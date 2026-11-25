@@ -1091,7 +1091,8 @@ struct GatewayProviderApprovalTests {
     try f.service.configureEnvironment(
       .init(projects: [.init(id: "project", root: .init(project.path))], rules: []),
       trustedHosts: [], expectedProjects: f.database.projects(), expectedConfigurationRevision: nil)
-    let server = MCPServerConfig(id: "edit-scope", transport: .stdio, command: "/usr/bin/true")
+    let server = MCPServerConfig(
+      id: "edit-scope", transport: .stdio, command: try testExecutable("true"))
     let review = try GatewayProviderReview(
       server: server, configuration: f.database.configurationState())
     var selection = Permissions()
@@ -1152,7 +1153,8 @@ struct GatewayProviderApprovalTests {
   @Test func h12DefaultProviderGrantIdentitiesSurviveAdmissionAndNetworkEdit() throws {
     let f = try ProviderApprovalFixture()
     defer { f.remove() }
-    let server = MCPServerConfig(id: "default-grants", transport: .stdio, command: "/usr/bin/true")
+    let server = MCPServerConfig(
+      id: "default-grants", transport: .stdio, command: try testExecutable("true"))
     let review = try GatewayProviderReview(
       server: server, configuration: f.database.configurationState())
     let defaults = Permissions.newPrincipal

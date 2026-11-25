@@ -52,7 +52,7 @@ struct FixedHostOperationTests {
     let context = GatewaySandboxContext(
       directory: directory, temporaryDirectory: try SandboxPath("/tmp/execution"),
       fixedHostOperation: .init(
-        operation: operation, gitExecutable: try SandboxPath("/usr/bin/git"),
+        operation: operation, gitExecutable: try SandboxPath("/fixture/tools/git"),
         directory: directory, allowsWrites: true))
     if fullAccess {
       let configuration = try GatewaySandboxCompiler.compile(
@@ -94,7 +94,7 @@ struct FixedHostOperationTests {
       context: .init(
         directory: directory, temporaryDirectory: try SandboxPath("/tmp/execution"),
         fixedHostOperation: .init(
-          operation: operation, gitExecutable: try SandboxPath("/usr/bin/git"),
+          operation: operation, gitExecutable: try SandboxPath("/fixture/tools/git"),
           directory: directory, allowsWrites: false)))
     #expect(compiled.sandbox?.readOnly == true)
     #expect(!compiled.permitsProgramLaunch)
@@ -116,13 +116,13 @@ struct FixedHostOperationTests {
         cache: temporary),
       limits: authority.limits, pathAccess: paths, permitsProgramLaunch: false,
       fixedHostOperation: .init(
-        operation: .git, gitExecutable: try SandboxPath("/usr/bin/git"), directory: directory,
+        operation: .git, gitExecutable: try SandboxPath("/fixture/tools/git"), directory: directory,
         allowsWrites: true))
     let arguments = ["--no-pager", "status"]
     let environment = ["GIT_CONFIG_GLOBAL": "/dev/null"]
     #expect(throws: ExecutionEnvironmentError.self) {
       try context.validateFixedCommand(
-        executable: .init("/usr/bin/git"), arguments: arguments,
+        executable: .init("/fixture/tools/git"), arguments: arguments,
         directory: directory, directoryDescriptor: nil, inheritedDescriptors: [:])
     }
     try context.withHostGitCommand(
@@ -132,7 +132,7 @@ struct FixedHostOperationTests {
       let scoped = try #require(try PreparedExecutionContext.current())
       try HostCommandEnvironment.$current.withValue(environment) {
         try scoped.validateFixedCommand(
-          executable: .init("/usr/bin/git"), arguments: arguments,
+          executable: .init("/fixture/tools/git"), arguments: arguments,
           directory: directory, directoryDescriptor: nil, inheritedDescriptors: [:])
         for executable in ["/bin/sh", "/project/git"] {
           #expect(throws: ExecutionEnvironmentError.self) {
@@ -143,13 +143,13 @@ struct FixedHostOperationTests {
         }
         #expect(throws: ExecutionEnvironmentError.self) {
           try scoped.validateFixedCommand(
-            executable: .init("/usr/bin/git"), arguments: ["shell"],
+            executable: .init("/fixture/tools/git"), arguments: ["shell"],
             directory: directory, directoryDescriptor: nil, inheritedDescriptors: [:])
         }
       }
       #expect(throws: ExecutionEnvironmentError.self) {
         try scoped.validateFixedCommand(
-          executable: .init("/usr/bin/git"), arguments: arguments,
+          executable: .init("/fixture/tools/git"), arguments: arguments,
           directory: directory, directoryDescriptor: nil, inheritedDescriptors: [:])
       }
       guard case .sandbox(let policy) = scoped.mode else {

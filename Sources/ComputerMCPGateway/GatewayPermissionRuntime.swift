@@ -39,7 +39,8 @@ package final class GatewayPermissionRuntime: @unchecked Sendable {
       projectBookmarks: platform.projectGrants,
       projectNesting: { projects in
         try GatewayTrackedProjectNesting.inspect(
-          projects, runner: ProcessCommandRunner(launcher: platform.launcher))
+          projects, gitExecutable: platform.gitExecutable,
+          runner: ProcessCommandRunner(launcher: platform.launcher))
       })
     self.service = service
     let coordinator = try ExecutionRevocationCoordinator(

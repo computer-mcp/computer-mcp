@@ -291,10 +291,12 @@ final class MCPProxyClientTests {
     }
   }
 
-  @Test
-  func testTimedOutToolCallSendsDownstreamCancellation() async throws {
+  @Test(arguments: [false, true])
+  func testTimedOutToolCallSendsDownstreamCancellation(slowCancellation: Bool) async throws {
     try await runBlockingTest {
-      let fixture = try self.fakePersistentMCPServer(startupDelaySeconds: 2.5)
+      let fixture = try self.fakePersistentMCPServer(startupDelaySeconds: 2.5, recordWire: true)
+      let root = fixture.script.deletingLastPathComponent()
+      defer { try? FileManager.default.removeItem(at: root) }
       let server = MCPServerConfig(
         id: "cancel",
         transport: .stdio,
@@ -303,38 +305,43 @@ final class MCPProxyClientTests {
         startupTimeoutMs: 15_000,
         requestTimeoutMs: 2_000
       )
-      let authority = try ProxyExecutionFixture(
-        server: server, root: fixture.script.deletingLastPathComponent())
+      let authority = try ProxyExecutionFixture(server: server, root: root)
       defer { try? authority.close() }
       let client = authority.client
       let context = try authority.context
+      let prepared = try #require(context.executionAuthority as? PreparedExecutionContext)
+      let cancellationAccess = slowCancellation ? SlowCancellationAccess(base: prepared) : nil
 
       #expect(throws: GatewayToolError.executionFailed("MCP server 'cancel' request timed out.")) {
-        try client.callTool(
-          server: server,
-          name: "hang",
-          arguments: .object([:]),
-          requestID: "cancel-me", context: context)
+        try InvocationExecution.$current.withValue(cancellationAccess) {
+          try client.callTool(
+            server: server,
+            name: "hang",
+            arguments: .object([:]),
+            requestID: "cancel-me", context: context)
+        }
+      }
+
+      let recovered = try client.callTool(
+        server: server, name: "sample", arguments: .object([:]), context: context)
+      #expect(recovered.objectValue?["isError"] == .bool(false))
+      if let cancellationAccess {
+        #expect(cancellationAccess.checked.wait(timeout: .now()) == .success)
       }
 
       let receipt = try client.readRequest(
         server: server, requestID: "cancel-me", offset: 0, maxBytes: 1024, context: context)
       let downstreamID = try #require(receipt.objectValue?["downstream_request_id"]?.stringValue)
-      let cancelledID = try self.waitForNonemptyFile(
-        at: authority.providerMarker(fixture.cancelMarker)
-      )
-      .trimmingCharacters(in: .whitespacesAndNewlines)
-      #expect(cancelledID == downstreamID)
-
-      var recoveryServer = server
-      recoveryServer.requestTimeoutMs = 5_000
-      try authority.reconfigure(recoveryServer)
+      #expect(receipt.objectValue?["state"] == .string("outcome_unknown"))
+      #expect(receipt.objectValue?["cleanup"] == .string("confirmed"))
+      let wireMarker = try authority.providerMarker(root.appendingPathComponent("wire.txt"))
+      let wire = try String(contentsOf: wireMarker, encoding: .utf8)
       #expect(
-        (try client.listTools(server: recoveryServer, context: authority.context).map(\.name))
-          == (["sample", "hang"]))
-      let starts = try String(
-        contentsOf: authority.providerMarker(fixture.startMarker), encoding: .utf8)
-      #expect((starts) == ("started\nstarted\n"))
+        wire.split(separator: "\n")
+          == [
+            "started", "call \(downstreamID)",
+            "cancel \(downstreamID) Downstream MCP session disconnected.", "eof", "started",
+          ])
     }
   }
 
@@ -887,11 +894,13 @@ final class MCPProxyClientTests {
     return script
   }
 
-  private func fakePersistentMCPServer(startupDelaySeconds: Double = 0) throws -> (
-    script: URL,
-    startMarker: URL,
-    cancelMarker: URL
-  ) {
+  private func fakePersistentMCPServer(startupDelaySeconds: Double = 0, recordWire: Bool = false)
+    throws -> (
+      script: URL,
+      startMarker: URL,
+      cancelMarker: URL
+    )
+  {
     let directory = FileManager.default.temporaryDirectory
       .appendingPathComponent(UUID().uuidString, isDirectory: true)
     try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
@@ -907,8 +916,13 @@ final class MCPProxyClientTests {
 
       start_marker = os.path.join(os.environ["HOME"], os.path.basename(sys.argv[1]))
       cancel_marker = os.path.join(os.environ["HOME"], os.path.basename(sys.argv[2]))
+      def record_wire(event):
+          if \(recordWire ? "True" : "False"):
+              with open(os.path.join(os.environ["HOME"], "wire.txt"), "a", encoding="utf-8") as wire:
+                  wire.write(event + "\\n")
       with open(start_marker, "a", encoding="utf-8") as marker:
           marker.write("started\\n")
+      record_wire("started")
       pending = []
       dispatches = 0
 
@@ -918,6 +932,8 @@ final class MCPProxyClientTests {
           if method == "notifications/initialized":
               continue
           if method == "notifications/cancelled":
+              params = message["params"]
+              record_wire("cancel " + str(params["requestId"]) + " " + params.get("reason", ""))
               with open(cancel_marker, "a", encoding="utf-8") as marker:
                   marker.write(str(message.get("params", {}).get("requestId")) + "\\n")
               continue
@@ -944,6 +960,7 @@ final class MCPProxyClientTests {
           elif method == "tools/call":
               dispatches += 1
               if message.get("params", {}).get("name") == "hang":
+                  record_wire("call " + str(message["id"]))
                   pending.append(message["id"])
                   continue
               if message.get("params", {}).get("arguments", {}).get("complete_pending"):
@@ -1013,6 +1030,7 @@ final class MCPProxyClientTests {
                   ),
                   flush=True,
               )
+      record_wire("eof")
       """
     try text.write(to: script, atomically: true, encoding: .utf8)
     try FileManager.default.setAttributes(
@@ -1500,6 +1518,23 @@ final class ProxyExecutionFixture: @unchecked Sendable {
       try await runtime.coordinator.reconcile()
       (callerContext.controlSession as? GatewayControlSession)?.end()
     }
+  }
+}
+
+private struct SlowCancellationAccess: ExecutionAccessChecking {
+  let base: PreparedExecutionContext
+  let checked = DispatchSemaphore(value: 0)
+  var pathAccess: (any HostPathAccessChecking)? { base.pathAccess }
+
+  func accessExecution(_ id: UUID, operation: ExecutionOperation) throws -> EffectiveExecutionLimits
+  {
+    // The invocation's request uses its explicit context. Retirement inherits
+    // this scope, so only the cancellation's input check incurs the delay.
+    if operation == .writeInput {
+      checked.signal()
+      Thread.sleep(forTimeInterval: 0.5)
+    }
+    return try base.accessExecution(id, operation: operation)
   }
 }
 

@@ -1114,7 +1114,11 @@ private actor MCPProxyConnection {
   private let eventSessionID = UUID().uuidString
   private var nextEventCursor = 1
   private var activeRequests: [String: ActiveRequest] = [:]
-  private var stdioCalls: [String: MCPStdioCall] = [:]
+  private struct StdioSubmission: Sendable {
+    let call: MCPStdioCall
+    let retainsResult: Bool
+  }
+  private var stdioCalls: [String: StdioSubmission] = [:]
   private var logicalRequestIDs: Set<String> = []
   private var pendingWorkCancellation: Set<String> = []
   private let ownedWork: GatewayOwnedWork?
@@ -1299,7 +1303,7 @@ private actor MCPProxyConnection {
     let (context, ownership, resourceRetry) = try await dispatchTool(
       name: name, arguments: arguments, gatewayRequestID: gatewayRequestID,
       host: host, continuation: continuation, execution: execution, managedRequest: managedRequest,
-      stdioCall: stdioCall, cancellation: cancellation)
+      stdioCall: stdioCall, retainsResult: retainsResult, cancellation: cancellation)
     var confirmedResponse = false
     defer { settleOwnership(ownership, confirmed: confirmedResponse) }
     if stdioCall != nil { await onStdioSubmission?(gatewayRequestID) }
@@ -1459,7 +1463,7 @@ private actor MCPProxyConnection {
     let (context, ownership, resourceRetry) = try await dispatchTool(
       name: name, arguments: arguments, gatewayRequestID: gatewayRequestID,
       host: host, continuation: continuation, execution: execution, managedRequest: managedRequest,
-      stdioCall: stdioCall)
+      stdioCall: stdioCall, retainsResult: true)
     if Task.isCancelled, let managedRequest {
       settleOwnership(ownership, confirmed: false)
       Self.cancelAfterDeadline(
@@ -1709,7 +1713,7 @@ private actor MCPProxyConnection {
           }
         }
         let sent: Bool
-        if let call = stdioCalls[gatewayRequestID] {
+        if let call = stdioCalls[gatewayRequestID]?.call {
           sent = try await call.stop(
             client: client, reason: reason, observesResponse: observesResponse)
         } else if let vendorExecution, let vendorInvocationID = active.vendorInvocationID {
@@ -1792,7 +1796,7 @@ private actor MCPProxyConnection {
   }
 
   private func forgetStdioCall(_ id: String, matching previous: MCPStdioCall? = nil) {
-    guard let call = stdioCalls[id], previous == nil || previous === call else { return }
+    guard let call = stdioCalls[id]?.call, previous == nil || previous === call else { return }
     if call.deferRemovalWhileStopping({ [weak self, weak call] in
       guard let call else { return }
       Task { await self?.forgetStdioCall(id, matching: call) }
@@ -1817,7 +1821,7 @@ private actor MCPProxyConnection {
     name: String, arguments: [String: JSONValue], gatewayRequestID: String,
     host: HostServiceDispatch?, continuation: MCPContinuationTarget?,
     execution: PreparedExecutionContext, managedRequest: ManagedMCPRequest? = nil,
-    stdioCall: MCPStdioCall? = nil,
+    stdioCall: MCPStdioCall?, retainsResult: Bool,
     cancellation: MCPCallCancellation? = nil
   ) async throws -> (RequestContext<CallTool.Result>, RequestOwnership?, MCPSelectedResourceRetry?)
   {
@@ -1961,7 +1965,10 @@ private actor MCPProxyConnection {
       guard closeTask == nil else { throw MCPError.connectionClosed }
       if managedRequest != nil || stdioCall != nil { try Task.checkCancellation() }
       // SDK submission can write before the request enters the public active map.
-      stdioCalls[gatewayRequestID] = stdioCall
+      if let stdioCall {
+        stdioCalls[gatewayRequestID] = StdioSubmission(
+          call: stdioCall, retainsResult: retainsResult)
+      }
       forwarding = true
       let request: RequestContext<CallTool.Result> = try await MCPStdioCall.$current.withValue(
         stdioCall
@@ -2061,16 +2068,17 @@ private actor MCPProxyConnection {
     startup?.cancel()
     let requests = Array(activeRequests.values)
     let ordinaryStdio = transport is MCPChildProcessTransport && vendorExecution == nil
-    let pendingCalls = stdioCalls.values.filter { $0 !== timedOutCall }
+    let retainedStdioCalls = stdioCalls.filter { $0.value.retainsResult }.mapValues(\.call)
+    let pendingCalls = stdioCalls.values.map(\.call).filter { $0 !== timedOutCall }
     let ordinaryCalls = (timedOutCall.map { [$0] } ?? []) + pendingCalls
     for call in ordinaryCalls { call.refuseBeforeAdmission() }
     stdioCalls.removeAll()
     let observers = Array(observers.values)
-    let retainedRequests = requests.filter(\.retainsResult)
+    let retainedRequestIDs = Set(requests.lazy.filter(\.retainsResult).map(\.gatewayRequestID))
     connected = false
-    for request in retainedRequests {
+    for id in retainedRequestIDs {
       do {
-        try journal.update(serverID: server.id, requestID: request.gatewayRequestID) {
+        try journal.update(serverID: server.id, requestID: id) {
           $0.state = .outcomeUnknown
           $0.completedAt = Date()
           $0.cleanup = "pending"
@@ -2128,14 +2136,17 @@ private actor MCPProxyConnection {
         processExited = true
       }
       return self.finishDisconnect(
-        confirmed: predecessorExited && processExited, retainedRequests: retainedRequests)
+        confirmed: predecessorExited && processExited, retainedRequestIDs: retainedRequestIDs,
+        retainedStdioCalls: retainedStdioCalls)
     }
     closeTask = task
     return await task.value
   }
 
-  private func finishDisconnect(confirmed initial: Bool, retainedRequests: [ActiveRequest]) -> Bool
-  {
+  private func finishDisconnect(
+    confirmed initial: Bool, retainedRequestIDs: Set<String>,
+    retainedStdioCalls: [String: MCPStdioCall]
+  ) -> Bool {
     var confirmed = initial
     if confirmed, transport is MCPChildProcessTransport {
       unreportedWork?.finish()
@@ -2166,10 +2177,20 @@ private actor MCPProxyConnection {
         lastError = "Provider execution authority cleanup is unconfirmed."
       }
     }
-    for request in retainedRequests {
+    // Sample after teardown so frames completed during the flush can settle their receipts.
+    let writtenIDs = retainedStdioCalls.compactMapValues(\.writtenRequestID)
+    let cleanup = transport is MCPChildProcessTransport && confirmed ? "confirmed" : "unknown"
+    for id in retainedRequestIDs.union(writtenIDs.keys) {
       do {
-        try journal.update(serverID: server.id, requestID: request.gatewayRequestID) {
-          $0.cleanup = transport is MCPChildProcessTransport && confirmed ? "confirmed" : "unknown"
+        try journal.update(serverID: server.id, requestID: id) {
+          if let writtenID = writtenIDs[id] {
+            $0.downstreamRequestID = $0.downstreamRequestID ?? writtenID.description
+            if !$0.isTerminal {
+              $0.state = .outcomeUnknown
+              $0.completedAt = Date()
+            }
+          }
+          $0.cleanup = cleanup
         }
       } catch { lastError = "Execution cleanup could not be persisted." }
     }

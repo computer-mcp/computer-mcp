@@ -470,10 +470,12 @@ final class MCPProxyClientTests {
     try await withDeadlinePeer(requestTimeoutMs: 10_000, onStdioSubmission: holdSubmission) {
       authority, server, context, wire in
       let client = authority.client
-      let calls = ["unpublished-a", "unpublished-b"].map { id in
+      let requestIDs = ["unpublished-a", "unpublished-b"]
+      let calls = requestIDs.map { id in
         Task {
           try await client.callToolAsync(
-            server: server, name: "hang", arguments: .object([:]), requestID: id, context: context)
+            server: server, name: "hang", arguments: .object(["receipt_key": .string(id)]),
+            requestID: id, context: context)
         }
       }
       defer { try? GatewaySynchronousOperation.run { await gate.release() } }
@@ -484,6 +486,10 @@ final class MCPProxyClientTests {
         callsOnWire = try Self.wireLines(wire).filter { $0.hasPrefix("call ") }
       }
       try #require(callsOnWire.count == 2)
+      let downstreamIDs = try requestIDs.map { id in
+        let line = try #require(callsOnWire.first { $0.hasSuffix(" \(id)") })
+        return String(line.split(separator: " ")[1])
+      }
       let active = try client.activeRequests(server: server, context: context)
       #expect(active.objectValue?["requests"] == .array([]))
 
@@ -495,13 +501,18 @@ final class MCPProxyClientTests {
       #expect(Array(lines.dropFirst().prefix(2)) == callsOnWire)
       #expect(
         Set(lines.dropFirst(3).dropLast().map(String.init))
-          == Set(
-            callsOnWire.map {
-              "cancel \($0.dropFirst(5)) Downstream MCP session disconnected."
-            }))
+          == Set(downstreamIDs.map { "cancel \($0) Downstream MCP session disconnected." }))
       try GatewaySynchronousOperation.run {
         await gate.release()
         for call in calls { _ = await call.result }
+      }
+      for (id, downstreamID) in zip(requestIDs, downstreamIDs) {
+        let receipt = try client.readRequest(
+          server: server, requestID: id, offset: 0, maxBytes: 1024, context: context)
+        #expect(receipt.objectValue?["state"] == .string("outcome_unknown"))
+        #expect(receipt.objectValue?["downstream_request_id"] == .string(downstreamID))
+        #expect(receipt.objectValue?["cleanup"] == .string("confirmed"))
+        #expect(receipt.objectValue?["cancellation"] == .string("not_requested"))
       }
     }
   }
@@ -1151,7 +1162,8 @@ final class MCPProxyClientTests {
           elif method == "tools/call":
               dispatches += 1
               if message.get("params", {}).get("name") == "hang":
-                  record_wire("call " + str(message["id"]))
+                  key = message["params"].get("arguments", {}).get("receipt_key")
+                  record_wire("call " + str(message["id"]) + (" " + key if key else ""))
                   pending.append(message["id"])
                   continue
               if message.get("params", {}).get("arguments", {}).get("complete_pending"):

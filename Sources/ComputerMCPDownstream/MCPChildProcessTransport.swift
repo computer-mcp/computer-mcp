@@ -82,6 +82,8 @@ package final class MCPStdioCall: @unchecked Sendable {
     lock.withLock { requestID = id }
   }
 
+  package var writtenRequestID: MCP.ID? { lock.withLock { forwardedID } }
+
   /// Returns whether a cancellation frame was written. Concurrent stops share
   /// the attempt, and a failed delivery leaves the request available for retry.
   package func stop(
@@ -153,7 +155,7 @@ package final class MCPStdioCall: @unchecked Sendable {
       for await _ in written {}
     }
     try Task.checkCancellation()
-    if let id = lock.withLock({ forwardedID }) {
+    if let id = writtenRequestID {
       let authorized: @Sendable () -> Void = { self.writeAuthorized() }
       try await MCPChildProcessTransport.$onCancellationWriteAuthorized.withValue(authorized) {
         if observesResponse {

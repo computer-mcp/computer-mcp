@@ -294,32 +294,37 @@ final class MCPProxyClientTests {
   @Test
   func testTimedOutToolCallSendsDownstreamCancellation() async throws {
     try await runBlockingTest {
-      let fixture = try self.fakePersistentMCPServer(startupDelaySeconds: 0.3)
+      let fixture = try self.fakePersistentMCPServer(startupDelaySeconds: 2.5)
       let server = MCPServerConfig(
         id: "cancel",
         transport: .stdio,
         command: fixture.script.path,
         args: [fixture.startMarker.path, fixture.cancelMarker.path],
-        startupTimeoutMs: 5_000,
-        requestTimeoutMs: 150
+        startupTimeoutMs: 15_000,
+        requestTimeoutMs: 2_000
       )
       let authority = try ProxyExecutionFixture(
         server: server, root: fixture.script.deletingLastPathComponent())
       defer { try? authority.close() }
       let client = authority.client
+      let context = try authority.context
 
       #expect(throws: GatewayToolError.executionFailed("MCP server 'cancel' request timed out.")) {
         try client.callTool(
           server: server,
           name: "hang",
           arguments: .object([:]),
-          requestID: "cancel-me", context: authority.context)
+          requestID: "cancel-me", context: context)
       }
 
-      #expect(
-        !(try self.waitForNonemptyFile(at: authority.providerMarker(fixture.cancelMarker))
-          .trimmingCharacters(in: .whitespacesAndNewlines)
-          .isEmpty))
+      let receipt = try client.readRequest(
+        server: server, requestID: "cancel-me", offset: 0, maxBytes: 1024, context: context)
+      let downstreamID = try #require(receipt.objectValue?["downstream_request_id"]?.stringValue)
+      let cancelledID = try self.waitForNonemptyFile(
+        at: authority.providerMarker(fixture.cancelMarker)
+      )
+      .trimmingCharacters(in: .whitespacesAndNewlines)
+      #expect(cancelledID == downstreamID)
 
       var recoveryServer = server
       recoveryServer.requestTimeoutMs = 5_000

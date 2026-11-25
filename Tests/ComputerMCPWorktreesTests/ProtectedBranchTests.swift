@@ -76,9 +76,28 @@ struct ProtectedBranchTests {
           created.branch, authority: .sandbox, dryRun: false, confirm: true
         ) { _ in }.deleted)
       #expect(try f.store.protectedBranches().isEmpty)
-      let retained = try f.recoveryRecords()
-      #expect(retained.contains { $0.oid == old } == (!acknowledge || retainsReflog))
-      #expect(try f.raw(["for-each-ref", "refs/computer-mcp/recovery/"]).isEmpty)
+      let records = try lifecycleRecoveryRecords(f, identity: service.identity)
+      let oldRecords = records.filter { $0.oid == old }
+      #expect(!oldRecords.isEmpty == (!acknowledge || retainsReflog))
+      if !acknowledge {
+        #expect(
+          oldRecords.contains { record in
+            record.claims.contains { $0.reason == .publishedReplacement && $0.rootOID == old }
+          })
+      }
+      if retainsReflog {
+        #expect(
+          oldRecords.contains { record in
+            record.claims.contains { $0.reason == .privateReflog && $0.rootOID == old }
+          })
+      }
+      for record in oldRecords {
+        #expect(record.owner.source == f.source)
+        #expect(record.owner.branch == "refs/heads/" + created.branch)
+        #expect(record.objectType == .commit)
+        try expectRecoveryObject(f, identity: service.identity, record: record)
+      }
+      try expectNoSourceRecoveryRefs(f)
     }
   }
 

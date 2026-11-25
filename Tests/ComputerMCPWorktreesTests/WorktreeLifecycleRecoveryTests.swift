@@ -33,6 +33,68 @@ func expectRecoveryObject(
 }
 
 struct WorktreeLifecycleRecoveryTests {
+  @Test func retainedPrivateCommitIsNotExportedBySourceMirrors() async throws {
+    try await removalFixture { f in
+      let service = try f.service()
+      let created = try service.create(name: "export-visibility")
+      let git = PrivateWorktreeGit(
+        f: f, topology: try service.topology(projectID: created.projectID))
+      let marker = "private-recovery-export-marker"
+      try Data((marker + "\n").utf8).write(to: created.path.appendingPathComponent("private.txt"))
+      try git.run(["add", "private.txt"])
+      try git.run(["commit", "-m", marker])
+      let privateOID = try git.run(["rev-parse", "HEAD"])
+      try git.run(["branch", "private-retained"])
+      try git.run(["reset", "--hard", "HEAD^"])
+      _ = try await service.remove(
+        projectID: created.projectID, terminate: { _, _ in }, authorize: { _, _ in })
+      #expect(
+        try service.deleteBranch(
+          created.branch, authority: .sandbox, dryRun: false, confirm: true
+        ) { _ in }.deleted)
+
+      let record = try #require(
+        try lifecycleRecoveryRecords(f, identity: service.identity).first {
+          $0.oid == privateOID && $0.state == .retained
+            && $0.claims.contains { $0.reason == .privateReference && $0.rootOID == privateOID }
+        })
+      try expectRecoveryObject(f, identity: service.identity, record: record)
+      let recovery = try f.recoveryGitDirectory()
+      #expect(
+        try f.raw(["--git-dir=" + recovery.path, "cat-file", "-p", privateOID])
+          .contains(marker))
+
+      let mainOID = try f.raw(["rev-parse", "refs/heads/main"])
+      let refArgs = ["for-each-ref", "--format=%(refname) %(objectname)"]
+      let sourceRefs = try f.raw(refArgs)
+      #expect(sourceRefs == "refs/heads/main " + mainOID)
+      let sourceHistory = try f.raw(["log", "--all", "--format=%H %s"])
+      #expect(sourceHistory.contains(mainOID + " initial"))
+      #expect(!sourceHistory.contains(privateOID))
+      #expect(!sourceHistory.contains(marker))
+
+      let clone = f.directory.appendingPathComponent("clone.git")
+      let pushed = f.directory.appendingPathComponent("pushed.git")
+      try f.raw(
+        ["clone", "--mirror", "--no-local", f.repository.path, clone.path],
+        environment: ["GIT_ALLOW_PROTOCOL": "file"])
+      try f.raw(["init", "--bare", pushed.path])
+      try f.raw(["push", "--mirror", pushed.path], environment: ["GIT_ALLOW_PROTOCOL": "file"])
+      for destination in [clone, pushed] {
+        let prefix = ["--git-dir=" + destination.path]
+        #expect(try f.raw(prefix + refArgs) == sourceRefs)
+        #expect(try f.raw(prefix + ["cat-file", "-t", mainOID]) == "commit")
+        let history = try f.raw(prefix + ["log", "--all", "--format=%H %s"])
+        #expect(history.contains(mainOID + " initial"))
+        #expect(!history.contains(privateOID))
+        #expect(!history.contains(marker))
+        #expect(throws: WorktreeError.self) {
+          try f.raw(prefix + ["cat-file", "-e", privateOID])
+        }
+      }
+    }
+  }
+
   @Test func removalJournalsTerminalDischargeWithinItsBoundBeforeTeardown() async throws {
     try await removalFixture { f in
       let service = try f.service()

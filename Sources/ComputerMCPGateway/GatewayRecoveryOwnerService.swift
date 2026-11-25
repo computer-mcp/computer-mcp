@@ -1,5 +1,6 @@
 import ComputerMCPCore
 import ComputerMCPPersistence
+import ComputerMCPPlatform
 import ComputerMCPWorktrees
 import Foundation
 import GRDB
@@ -13,12 +14,22 @@ package typealias RecoveryMaintenanceReview = ComputerMCPWorktrees.RecoveryMaint
 package typealias RecoveryMaintenancePreparation = ComputerMCPWorktrees
   .RecoveryMaintenancePreparation
 package typealias RecoveryOperationLookup = ComputerMCPWorktrees.RecoveryOperationLookup
+package typealias RecoveryRecordView = ComputerMCPWorktrees.WorktreeRecoveryRecord
+package typealias RecoverySource = ComputerMCPWorktrees.DerivedProjectSource
+package typealias RecoveryOwnerError = ComputerMCPWorktrees.WorktreeRecoveryOwnerError
+package typealias WorktreeCleanupError = ComputerMCPWorktrees.WorktreeError
+package typealias ManagedWorktreeRemovalTarget = ComputerMCPWorktrees.ManagedWorktreeRemovalTarget
+package typealias ManagedWorktreeRemovalReview = ComputerMCPWorktrees.ManagedWorktreeRemovalReview
+package typealias ManagedWorktreeRemovalOutcome = ComputerMCPWorktrees.WorktreeOperationOutcome
 
 /// In-process authority for the trusted App owner. Creating this service
 /// installs no commands in the gateway, CLI, or control socket.
 package struct GatewayRecoveryOwnerService: Sendable {
   private let owner: ExecutionContext
   private let worktrees: WorktreeRecoveryOwnerService
+  private let database: GatewayDatabase
+  private let platform: PlatformServices
+  private let storage: WorktreeStorage
 
   package init(
     database: GatewayDatabase, platform: PlatformServices, owner: ExecutionContext,
@@ -28,6 +39,9 @@ package struct GatewayRecoveryOwnerService: Sendable {
       throw WorktreeRecoveryOwnerError.unavailable
     }
     self.owner = owner
+    self.database = database
+    self.platform = platform
+    self.storage = storage
     worktrees = try WorktreeRecoveryOwnerService(
       storage: storage, derived: database.derivedProjectStore(inspectNesting: { _ in [] }),
       dependencies: GatewayRecoveryDependencyReader(database: database),
@@ -36,8 +50,7 @@ package struct GatewayRecoveryOwnerService: Sendable {
   }
 
   package func list() throws -> [RecoveryStoreView] {
-    _ = try principal()
-    return try worktrees.list()
+    try worktrees.list(principal: principal())
   }
 
   package func reviewRelease(
@@ -67,6 +80,89 @@ package struct GatewayRecoveryOwnerService: Sendable {
 
   package func resume(handle: RecoveryOperationHandle) throws -> RecoveryOperationStatus {
     try worktrees.resume(handle, principal: principal())
+  }
+
+  package func reviewRemoval(
+    _ target: ManagedWorktreeRemovalTarget, validate: @escaping @Sendable () throws -> Void
+  ) throws -> ManagedWorktreeRemovalReview {
+    let (repository, access) = try removalRepository(source: target.source, validate: validate)
+    defer { access.close() }
+    return try repository.reviewRemoval(target)
+  }
+
+  package func remove(
+    _ review: ManagedWorktreeRemovalReview, discard: Bool,
+    validate: @escaping @Sendable () throws -> Void
+  ) async throws {
+    let (repository, access) = try removalRepository(
+      source: review.target.source, validate: validate)
+    defer { access.close() }
+    let coordinator = try database.permissionRuntime(platform: platform).coordinator
+    _ = try await repository.remove(
+      projectID: review.target.projectID, force: discard, operationID: review.operationID,
+      review: review,
+      terminate: { admission, operationID in
+        try await coordinator.terminateWorktreeWriters(
+          admission, operationID: operationID, until: .now.advanced(by: .seconds(30)))
+      },
+      authorize: { record, paths in
+        if paths.isEmpty { try validate() }
+        guard record.source == review.target.source,
+          record.provenance
+            == .host(
+              worktreeID: review.target.worktreeID, storageGeneration: review.target.generation)
+        else { throw WorktreeError.identityChanged("Worktree ownership changed.") }
+      })
+  }
+
+  package func removalOutcome(_ review: ManagedWorktreeRemovalReview) throws
+    -> ManagedWorktreeRemovalOutcome
+  {
+    _ = try principal()
+    let outcome = try storage.removalOutcome(
+      projectID: review.target.projectID, operationID: review.operationID
+    ) {
+      try !database.derivedProjects().contains { $0.projectID == review.target.projectID }
+    }
+    if case .removed(let result) = outcome, result.oid != review.head {
+      throw WorktreeError.identityChanged("Removal readback refers to a different commit.")
+    }
+    return outcome
+  }
+
+  private func removalRepository(
+    source: DerivedProjectSource, validate: @escaping @Sendable () throws -> Void
+  ) throws -> (WorktreeRepository, ResolvedProjectAccess) {
+    _ = try principal()
+    try validate()
+    guard let project = try database.project(id: source.id) else {
+      throw WorktreeError.identityChanged("The source project is unavailable.")
+    }
+    let access = try platform.projectGrants.resolve(project)
+    let root = URL(fileURLWithPath: source.root, isDirectory: true)
+    @Sendable func checkSource() throws {
+      try validate()
+      guard access.isActive, let current = try database.project(id: source.id),
+        current.createdAt == source.registeredAt,
+        GatewayDatabase.canonicalProjectRoot(current.rootPath) == source.root,
+        try ProjectRootIdentity(root) == access.rootIdentity
+      else { throw WorktreeError.identityChanged("The registered source project changed.") }
+    }
+    do {
+      let repository = try WorktreeRepository(
+        source: source, store: database.derivedProjectStore(inspectNesting: { _ in [] }),
+        storage: storage,
+        executor: GatewayWorktreeGit(
+          launcher: platform.launcher, executable: platform.gitExecutable),
+        registeredProjectRoots: try database.projects().map { URL(fileURLWithPath: $0.rootPath) },
+        timeoutMilliseconds: 30_000, maxOutputBytes: 16_777_216, lockTimeout: .seconds(30),
+        owner: .init(bootSessionID: platform.launcher.bootSessionID),
+        journalIO: .init(beforePublication: checkSource), checkAuthority: checkSource)
+      return (repository, access)
+    } catch {
+      access.close()
+      throw error
+    }
   }
 
   private func principal() throws -> String {

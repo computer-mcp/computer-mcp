@@ -28,29 +28,42 @@ package struct WorktreeRecoveryOwnerService: Sendable {
       timeoutMilliseconds: 30_000, maxOutputBytes: 1_048_576)
   }
 
-  package func list() throws -> [RecoveryStoreView] {
-    try stores.list().map { snapshot in
+  package func list(principal: String? = nil) throws -> [RecoveryStoreView] {
+    if let principal { try requirePrincipal(principal) }
+    return try stores.list().map { snapshot in
       let records = snapshot.catalog.records
-      let known = try dependenciesForListing(
+      let (known, removedWorktreeIDs) = try evidenceForListing(
         records: records, repository: snapshot.repository, generation: snapshot.catalog.generation)
+      var operation: RecoveryOperationStatus?
+      if let principal {
+        operation = try stores.withExisting(
+          key: snapshot.key, generation: snapshot.catalog.generation, exclusive: false
+        ) { store in
+          guard let entry = try store.ownerEntry(RecoveryOwnerJournal.activeName),
+            entry.record.principal == principal
+          else { return nil }
+          return entry.record.status
+        }
+      }
       return .init(
         key: snapshot.key, generation: snapshot.catalog.generation,
         repository: snapshot.repository, format: snapshot.repository.format, records: records,
-        dependencies: known)
+        dependencies: known, removedWorktreeIDs: removedWorktreeIDs, activeOperation: operation)
     }
   }
 
-  private func dependenciesForListing(
+  private func evidenceForListing(
     records: [WorktreeRecoveryRecord], repository: WorktreeRepositoryIdentity, generation: UUID
-  ) throws -> [UUID: [RecoveryStoreView.Dependency]] {
+  ) throws -> ([UUID: [RecoveryStoreView.Dependency]], Set<UUID>) {
     let owners = Dictionary(grouping: records, by: \.owner)
-    guard let first = owners.keys.first else { return [:] }
+    guard let first = owners.keys.first else { return ([:], []) }
     let evidence = try dependencies.recoveryEvidence(
       for: repository, sources: Set(owners.keys.map(\.source)))
     let derived = Dictionary(uniqueKeysWithValues: evidence.derived.map { ($0.projectID, $0) })
     let deletions = try reader(repository, first.source).pendingRecoveryDeletions()
     let protectedIDs = Set(evidence.protections.map(\.branchID))
     var known: [UUID: [RecoveryStoreView.Dependency]] = [:]
+    var removed: Set<UUID> = []
     for (owner, rows) in owners {
       let reader = reader(repository, owner.source)
       var common: [RecoveryStoreView.Dependency] = []
@@ -63,6 +76,7 @@ package struct WorktreeRecoveryOwnerService: Sendable {
       }
       let final =
         active == nil ? try? reader.recoveryFinalCapture(owner, generation: generation) : nil
+      if final != nil { removed.insert(owner.worktreeID) }
       if active == nil && final == nil { common.append(.unresolvedOwner) }
       for record in rows {
         var dependencies = record.dependencies.map(RecoveryStoreView.Dependency.catalog) + common
@@ -78,7 +92,7 @@ package struct WorktreeRecoveryOwnerService: Sendable {
         if !dependencies.isEmpty { known[record.id] = dependencies }
       }
     }
-    return known
+    return (known, removed)
   }
 
   package func reviewRelease(

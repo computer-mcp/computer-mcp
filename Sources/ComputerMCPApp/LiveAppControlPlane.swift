@@ -204,7 +204,7 @@ final class LiveAppControlPlane: AppControlPlane {
           permissionState: grant.permissions.state(for: .project(project.id))),
         profileRevision: grant.authorizationRevision, permissionRevision: view.revision,
         lastResolvedAt: report.error == nil ? Date() : nil,
-        healthDetail: report.error?.localizedDescription
+        healthDetail: report.error?.localizedDescription, registeredAt: project.createdAt
       )
     }
   }
@@ -713,39 +713,62 @@ final class LiveAppControlPlane: AppControlPlane {
     try await controlPlane.recoveryStores()
   }
 
+  func worktreeRecoveryEpoch() async throws -> UUID {
+    try await controlPlane.worktreeRecoveryEpoch()
+  }
+
+  func reviewWorktreeRemoval(_ target: ManagedWorktreeRemovalTarget, epoch: UUID) async throws
+    -> ManagedWorktreeRemovalReview
+  {
+    try await controlPlane.reviewWorktreeRemoval(target, epoch: epoch)
+  }
+
+  func confirmWorktreeRemoval(
+    _ review: ManagedWorktreeRemovalReview, discard: Bool, epoch: UUID
+  ) async throws {
+    try await controlPlane.confirmWorktreeRemoval(review, discard: discard, epoch: epoch)
+  }
+
+  func worktreeRemovalOutcome(_ review: ManagedWorktreeRemovalReview) async throws
+    -> ManagedWorktreeRemovalOutcome
+  {
+    try await controlPlane.worktreeRemovalOutcome(review)
+  }
+
   func reviewRecoveryRelease(
-    storeKey: String, generation: UUID, selections: [RecoveryRecordSelection]
+    storeKey: String, generation: UUID, selections: [RecoveryRecordSelection], epoch: UUID
   ) async throws -> RecoveryReleaseReview {
     try await controlPlane.reviewRecoveryRelease(
-      storeKey: storeKey, generation: generation, selections: selections)
+      storeKey: storeKey, generation: generation, selections: selections, epoch: epoch)
   }
 
-  func confirmRecoveryRelease(_ review: RecoveryReleaseReview) async throws
+  func confirmRecoveryRelease(_ review: RecoveryReleaseReview, epoch: UUID) async throws
     -> RecoveryOperationStatus
   {
-    try await controlPlane.confirmRecoveryRelease(review)
+    try await controlPlane.confirmRecoveryRelease(review, epoch: epoch)
   }
 
-  func prepareRecoveryMaintenance(storeKey: String, generation: UUID) async throws
+  func prepareRecoveryMaintenance(storeKey: String, generation: UUID, epoch: UUID) async throws
     -> RecoveryMaintenancePreparation
   {
-    try await controlPlane.prepareRecoveryMaintenance(storeKey: storeKey, generation: generation)
+    try await controlPlane.prepareRecoveryMaintenance(
+      storeKey: storeKey, generation: generation, epoch: epoch)
   }
 
-  func runRecoveryMaintenance(_ review: RecoveryMaintenanceReview) async throws
+  func runRecoveryMaintenance(_ review: RecoveryMaintenanceReview, epoch: UUID) async throws
     -> RecoveryOperationStatus
   {
-    try await controlPlane.runRecoveryMaintenance(review)
+    try await controlPlane.runRecoveryMaintenance(review, epoch: epoch)
   }
 
   func recoveryOperation(handle: RecoveryOperationHandle) async throws -> RecoveryOperationLookup {
     try await controlPlane.recoveryOperation(handle: handle)
   }
 
-  func resumeRecoveryOperation(handle: RecoveryOperationHandle) async throws
+  func resumeRecoveryOperation(handle: RecoveryOperationHandle, epoch: UUID) async throws
     -> RecoveryOperationStatus
   {
-    try await controlPlane.resumeRecoveryOperation(handle: handle)
+    try await controlPlane.resumeRecoveryOperation(handle: handle, epoch: epoch)
   }
 
   func fetchPermissionRequests() async throws -> GatewayPermissionView {

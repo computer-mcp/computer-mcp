@@ -430,6 +430,11 @@ func render<V: View>(
     host.layoutSubtreeIfNeeded()
   }
   window.display()
+  return try captureAppView(host, size: size, name: name)
+}
+
+@MainActor
+func captureAppView(_ host: NSView, size: NSSize, name: String) throws -> Data {
   host.displayIfNeeded()
   CATransaction.flush()
   try #require(host.bounds.size == size)

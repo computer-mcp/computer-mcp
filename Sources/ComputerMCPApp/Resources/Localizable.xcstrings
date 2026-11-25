@@ -1,8 +1,1344 @@
 {
   "sourceLanguage" : "en",
   "strings" : {
-    "Edit permissions on the source project to change access for its worktrees." : {"localizations": {"en": {"stringUnit": {"state": "translated", "value": "Edit permissions on the source project to change access for its worktrees."}}, "zh-Hans": {"stringUnit": {"state": "translated", "value": "请编辑源项目的权限，以更改其工作树的访问权限。"}}}},
-    "Edit the shared client profile to change its permissions." : {"localizations": {"en": {"stringUnit": {"state": "translated", "value": "Edit the shared client profile to change its permissions."}}, "zh-Hans": {"stringUnit": {"state": "translated", "value": "请编辑共享的客户端配置档案以更改权限。"}}}},
+    "commits.action.review": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Review Selected…"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "查看所选…"
+          }
+        }
+      }
+    },
+    "commits.dialog.release.confirm": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Release Selected"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "释放所选"
+          }
+        }
+      }
+    },
+    "commits.dialog.release.title": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Release selected records (%lld)?"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "释放所选的 %lld 条记录？"
+          }
+        }
+      }
+    },
+    "commits.empty.message": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The host has no records retained for recovery."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "主机当前没有保留用于恢复的记录。"
+          }
+        }
+      }
+    },
+    "commits.empty.title": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "No Retained Commits"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "无保留的提交"
+          }
+        }
+      }
+    },
+    "commits.section.title": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Retained Commits"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "保留的提交"
+          }
+        }
+      }
+    },
+    "commits.selection.count": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%lld selected"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "已选择 %lld 项"
+          }
+        }
+      }
+    },
+    "commits.selection.none": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Select records to review or release"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "选择记录以查看或释放"
+          }
+        }
+      }
+    },
+    "commits.standalone.footer": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Retained commits remain available for review and release even after their branch or project is removed."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "即使分支或项目已被移除，保留的提交仍可在此处查看与释放。"
+          }
+        }
+      }
+    },
+    "commits.standalone.title": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Retained Commits & Storage"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "保留的提交与存储"
+          }
+        }
+      }
+    },
+    "commits.tag.project_removed": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Project removed"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "项目已移除"
+          }
+        }
+      }
+    },
+    "common.cancel": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Cancel"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "取消"
+          }
+        }
+      }
+    },
+    "common.clear_selection": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Clear"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "清除选择"
+          }
+        }
+      }
+    },
+    "common.refresh": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Refresh"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "刷新"
+          }
+        }
+      }
+    },
+    "common.resume": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Resume"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "继续"
+          }
+        }
+      }
+    },
+    "common.select_all": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Select All"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "全选"
+          }
+        }
+      }
+    },
+    "entry.privacy.row_subtitle": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Review retained commits and reclaim released storage"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "查看保留的提交并回收已释放的存储空间"
+          }
+        }
+      }
+    },
+    "entry.privacy.row_title": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Retained Commits & Storage"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "保留的提交与存储"
+          }
+        }
+      }
+    },
+    "entry.projects.section_title": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Worktrees & Recovery"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "工作树与恢复"
+          }
+        }
+      }
+    },
+    "operation.kind.reclaiming_storage": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Reclaiming storage"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "正在回收存储空间"
+          }
+        }
+      }
+    },
+    "operation.kind.releasing_commits": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Releasing retained commits"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "正在释放保留的提交"
+          }
+        }
+      }
+    },
+    "operation.kind.removing_worktree": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Removing worktree"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "正在移除工作树"
+          }
+        }
+      }
+    },
+    "recovery.gate_identity_changed": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Writer admission now belongs to a different generation."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "写入准入现已属于另一代工作树。"
+          }
+        }
+      }
+    },
+    "recovery.gate_pending": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Writer admission is still being reopened."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "写入准入仍在重新开放。"
+          }
+        }
+      }
+    },
+    "recovery.last_branch": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Recorded branch: %@"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "记录的分支：%@"
+          }
+        }
+      }
+    },
+    "recovery.object.blob": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Blob"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "数据对象"
+          }
+        }
+      }
+    },
+    "recovery.object.commit": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Commit"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "提交"
+          }
+        }
+      }
+    },
+    "recovery.object.tag": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Tag"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "标签"
+          }
+        }
+      }
+    },
+    "recovery.object.tree": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Tree"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "目录树"
+          }
+        }
+      }
+    },
+    "recovery.operation_failed": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The operation could not be completed."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "无法完成此操作。"
+          }
+        }
+      }
+    },
+    "recovery.operation_interrupted": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Recovery operation interrupted"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "恢复操作已中断"
+          }
+        }
+      }
+    },
+    "recovery.record_in_use": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Required by another operation or protected history"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "其他操作或受保护的历史记录仍需要此记录"
+          }
+        }
+      }
+    },
+    "recovery.record_pending": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Operation pending"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "操作待完成"
+          }
+        }
+      }
+    },
+    "recovery.release_completed": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Released records: %lld"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "已释放记录：%lld 条"
+          }
+        }
+      }
+    },
+    "recovery.release_completed_detail": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Run storage reclamation separately to measure reclaimed space."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "请单独运行存储空间回收以测量回收的空间。"
+          }
+        }
+      }
+    },
+    "recovery.release_review_detail": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Review the exact records to release. Storage reclamation can run separately afterward."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "请核对要释放的具体记录。随后可以单独运行存储空间回收。"
+          }
+        }
+      }
+    },
+    "recovery.requires_attention": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Recovery needs attention"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "恢复操作需要处理"
+          }
+        }
+      }
+    },
+    "recovery.restore_review": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Review restored permissions in Privacy & Security before making changes."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "请先在“隐私与安全性”中检查恢复的权限，再进行更改。"
+          }
+        }
+      }
+    },
+    "recovery.review_changed": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The reviewed selection changed. Refresh and review it again."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "已审阅的选择发生变化，请刷新后重新审阅。"
+          }
+        }
+      }
+    },
+    "recovery.store_generation": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Store generation"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "存储实例"
+          }
+        }
+      }
+    },
+    "recovery.store_identity": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Recovery store"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "恢复存储"
+          }
+        }
+      }
+    },
+    "storage.action.reclaim": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Reclaim Storage…"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "回收存储空间…"
+          }
+        }
+      }
+    },
+    "storage.allocation": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Allocated before: %@ · After: %@"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "回收前分配：%@ · 回收后：%@"
+          }
+        }
+      }
+    },
+    "storage.description": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Logical release removes recovery records without immediately freeing disk space. Run reclamation when you want to reclaim storage."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "逻辑释放仅移除恢复记录，不会立即腾出磁盘空间。需要时请单独执行存储空间回收。"
+          }
+        }
+      }
+    },
+    "storage.dialog.reclaim.confirm": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Reclaim Storage"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "回收存储空间"
+          }
+        }
+      }
+    },
+    "storage.dialog.reclaim.message": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Runs storage reclamation for logically released records and reports measured reclaimed space after completion."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "对已逻辑释放的记录执行存储空间回收，并在完成后报告实测回收的空间大小。"
+          }
+        }
+      }
+    },
+    "storage.dialog.reclaim.title": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Reclaim released storage?"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "回收已释放的存储空间？"
+          }
+        }
+      }
+    },
+    "storage.reclamation_deferred": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Recovery store is busy"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "恢复存储正忙"
+          }
+        }
+      }
+    },
+    "storage.result.measured": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Measured %@ reclaimed on %@."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "实测已回收 %@（%@）。"
+          }
+        }
+      }
+    },
+    "storage.result.none_reclaimed": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Reclamation checked on %@. No disk space was reclaimed."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "已于 %@ 检查回收。未回收额外磁盘空间。"
+          }
+        }
+      }
+    },
+    "storage.review.allocated": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Current allocated space"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "当前已分配空间"
+          }
+        }
+      }
+    },
+    "storage.review.pack": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Pack identity"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "包文件标识"
+          }
+        }
+      }
+    },
+    "storage.section.title": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Storage Reclamation"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "存储空间回收"
+          }
+        }
+      }
+    },
+    "worktree.action.remove": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Remove…"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "移除…"
+          }
+        }
+      }
+    },
+    "worktree.action.review_discard": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Review Discard…"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "审阅放弃操作…"
+          }
+        }
+      }
+    },
+    "worktree.dialog.discard.title": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Discard uncommitted changes in “%@”?"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "放弃“%@”中的未提交更改？"
+          }
+        }
+      }
+    },
+    "worktree.dialog.discard_remove.confirm": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Discard Changes and Remove"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "放弃更改并移除"
+          }
+        }
+      }
+    },
+    "worktree.dialog.discard_remove.message": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Removing this checkout permanently discards all of its uncommitted changes, including staged, untracked, and ignored files."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "移除此检出目录会永久放弃其中所有未提交的更改，包括已暂存、未跟踪和已忽略的文件。"
+          }
+        }
+      }
+    },
+    "worktree.dialog.remove.confirm": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Remove Worktree"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "移除工作树"
+          }
+        }
+      }
+    },
+    "worktree.dialog.remove.title": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Remove worktree “%@”?"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "移除工作树“%@”？"
+          }
+        }
+      }
+    },
+    "worktree.empty.message": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "No managed or detected worktrees are recorded for this project."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "此项目暂无托管或检测到的工作树记录。"
+          }
+        }
+      }
+    },
+    "worktree.empty.title": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "No Worktrees"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "无工作树"
+          }
+        }
+      }
+    },
+    "worktree.inventory.unavailable": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The source checkout is unavailable."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "无法访问源检出目录。"
+          }
+        }
+      }
+    },
+    "worktree.removal.pending": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Worktree removal awaiting confirmation"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "正在等待确认工作树移除结果"
+          }
+        }
+      }
+    },
+    "worktree.removal.refused": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Worktree removal was refused"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "工作树移除已被拒绝"
+          }
+        }
+      }
+    },
+    "worktree.removal.review_detail": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Stops writers and removes this managed checkout. Committed recovery records remain available."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "停止写入进程并移除此托管检出目录。已提交内容的恢复记录仍可使用。"
+          }
+        }
+      }
+    },
+    "worktree.removal.verified": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Worktree removal verified"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "已确认工作树移除"
+          }
+        }
+      }
+    },
+    "worktree.review.head": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Current commit"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "当前提交"
+          }
+        }
+      }
+    },
+    "worktree.section.title": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Worktrees"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "工作树"
+          }
+        }
+      }
+    },
+    "worktree.state.external": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "External"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "外部"
+          }
+        }
+      }
+    },
+    "worktree.state.managed": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Managed"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "托管"
+          }
+        }
+      }
+    },
+    "worktree.state.removed": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Removed"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "已移除"
+          }
+        }
+      }
+    },
+    "worktree.state.unavailable": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Unavailable"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "暂不可用"
+          }
+        }
+      }
+    },
+    "worktree.status.clean": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Clean"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "无未提交更改"
+          }
+        }
+      }
+    },
+    "worktree.status.uncommitted": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Uncommitted changes"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "有未提交更改"
+          }
+        }
+      }
+    },
+    "worktree.writers.drained": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Admitted writers stopped and removal was confirmed."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "获准写入的进程已停止，工作树移除已确认。"
+          }
+        }
+      }
+    },
+    "Use Sandbox" : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Use Sandbox"}},"zh-Hans":{"stringUnit":{"state":"translated","value":"使用沙盒"}}}},
+    "No approval" : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"No approval"}},"zh-Hans":{"stringUnit":{"state":"translated","value":"未批准"}}}},
+    "Default setting" : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Default setting"}},"zh-Hans":{"stringUnit":{"state":"translated","value":"默认设置"}}}},
+    "Always adds this host to the project’s saved network access." : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Always adds this host to the project’s saved network access."}},"zh-Hans":{"stringUnit":{"state":"translated","value":"“始终允许”会将此主机添加到项目已保存的网络访问设置中。"}}}},
+    "grant.choice.allow" : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Allow"}},"zh-Hans":{"stringUnit":{"state":"translated","value":"允许"}}}},
+    "grant.choice.askEveryTime" : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Ask Every Time"}},"zh-Hans":{"stringUnit":{"state":"translated","value":"每次询问"}}}},
+    "grant.choice.dontAllow" : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Don't Allow"}},"zh-Hans":{"stringUnit":{"state":"translated","value":"不允许"}}}},
+    "grant.status.limited" : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Limited"}},"zh-Hans":{"stringUnit":{"state":"translated","value":"受限"}}}},
+    "grant.status.unavailable" : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Unavailable"}},"zh-Hans":{"stringUnit":{"state":"translated","value":"不可用"}}}},
+    "grant.status.inherited" : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Inherited"}},"zh-Hans":{"stringUnit":{"state":"translated","value":"继承"}}}},
+    "grant.saved.format" : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Saved: %@"}},"zh-Hans":{"stringUnit":{"state":"translated","value":"已保存：%@"}}}},
+    "grant.effective.format" : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Effective: %@"}},"zh-Hans":{"stringUnit":{"state":"translated","value":"实际生效：%@"}}}},
+    "grant.source.editAction" : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Edit Source"}},"zh-Hans":{"stringUnit":{"state":"translated","value":"编辑来源"}}}},
+    "grant.oneTime.retryClarification" : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"After approval, the requester must explicitly retry the same action."}},"zh-Hans":{"stringUnit":{"state":"translated","value":"批准后，请求方必须显式重试同一操作。"}}}},
+    "grant.projectRegistration.title" : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Project Registration"}},"zh-Hans":{"stringUnit":{"state":"translated","value":"项目注册"}}}},
+    "grant.a11y.savedAndEffective" : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Saved %1$@, effective %2$@"}},"zh-Hans":{"stringUnit":{"state":"translated","value":"已保存为%1$@，实际生效为%2$@"}}}},
+    "grant.a11y.openSourceHint" : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Opens the source setting where this permission can be edited."}},"zh-Hans":{"stringUnit":{"state":"translated","value":"打开可编辑此权限的来源设置。"}}}},
+    "principal.action.revoke" : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Revoke…"}},"zh-Hans":{"stringUnit":{"state":"translated","value":"撤销…"}}}},
+    "principal.a11y.revoke" : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Revoke access for %@"}},"zh-Hans":{"stringUnit":{"state":"translated","value":"撤销%@的访问权限"}}}},
+    "revocation.dialog.scopedTitle" : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Revoke “%1$@” for “%2$@”?"}},"zh-Hans":{"stringUnit":{"state":"translated","value":"要撤销“%2$@”的“%1$@”权限吗？"}}}},
+    "revocation.dialog.message" : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"This denies this permission and ends running programs that depend on it."}},"zh-Hans":{"stringUnit":{"state":"translated","value":"此操作会拒绝这项权限，并结束依赖该权限的程序。"}}}},
+    "revocation.dialog.confirm" : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Revoke Access"}},"zh-Hans":{"stringUnit":{"state":"translated","value":"撤销访问权限"}}}},
+    "revocation.dialog.cancel" : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Cancel"}},"zh-Hans":{"stringUnit":{"state":"translated","value":"取消"}}}},
+    "Clients, Plugins, and Local Servers" : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Clients, Plugins, and Local Servers"}},"zh-Hans":{"stringUnit":{"state":"translated","value":"客户端、插件和本地服务器"}}}},
+    "No clients, plugins, or local servers are available." : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"No clients, plugins, or local servers are available."}},"zh-Hans":{"stringUnit":{"state":"translated","value":"没有可用的客户端、插件或本地服务器。"}}}},
+    "This principal is no longer available." : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"This principal is no longer available."}},"zh-Hans":{"stringUnit":{"state":"translated","value":"此客户端、插件或本地服务器已不可用。"}}}},
+    "Provider source unavailable" : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Provider source unavailable"}},"zh-Hans":{"stringUnit":{"state":"translated","value":"提供方来源不可用"}}}},
+    "Approval required" : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Approval required"}},"zh-Hans":{"stringUnit":{"state":"translated","value":"需要批准"}}}},
+    "Source review required" : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Source review required"}},"zh-Hans":{"stringUnit":{"state":"translated","value":"需要审查来源"}}}},
+    "Permission review required" : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Permission review required"}},"zh-Hans":{"stringUnit":{"state":"translated","value":"需要审查权限"}}}},
+    "Client profile unavailable" : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Client profile unavailable"}},"zh-Hans":{"stringUnit":{"state":"translated","value":"客户端配置不可用"}}}},
+    "Connection type restricted" : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Connection type restricted"}},"zh-Hans":{"stringUnit":{"state":"translated","value":"连接类型受限"}}}},
+    "Inherited from project %@" : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Inherited from project %@"}},"zh-Hans":{"stringUnit":{"state":"translated","value":"继承自项目%@"}}}},
+    "Shared profile: %@" : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Shared profile: %@"}},"zh-Hans":{"stringUnit":{"state":"translated","value":"共享配置：%@"}}}},
+    "Saved by the owner" : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Saved by the owner"}},"zh-Hans":{"stringUnit":{"state":"translated","value":"由所有者保存"}}}},
+    "Plugin declaration allows at most %@" : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Plugin declaration allows at most %@"}},"zh-Hans":{"stringUnit":{"state":"translated","value":"插件声明最多允许%@"}}}},
+    "Permission outside plugin declarations" : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Permission outside plugin declarations"}},"zh-Hans":{"stringUnit":{"state":"translated","value":"此权限不在插件声明范围内"}}}},
+    "Plugin Declaration" : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Plugin Declaration"}},"zh-Hans":{"stringUnit":{"state":"translated","value":"插件声明"}}}},
+    "Permission Source" : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Permission Source"}},"zh-Hans":{"stringUnit":{"state":"translated","value":"权限来源"}}}},
+    "Permission source unavailable" : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Permission source unavailable"}},"zh-Hans":{"stringUnit":{"state":"translated","value":"权限来源不可用"}}}},
+    "Plugin execution mode is set when you review its declarations." : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Plugin execution mode is set when you review its declarations."}},"zh-Hans":{"stringUnit":{"state":"translated","value":"插件的执行模式在审查其声明时设置。"}}}},
+    "Sandboxed local servers use a private container for their state." : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Sandboxed local servers use a private container for their state."}},"zh-Hans":{"stringUnit":{"state":"translated","value":"沙盒中的本地服务器将其状态保存在专用容器中。"}}}},
+    "Requires connection approval" : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Requires connection approval"}},"zh-Hans":{"stringUnit":{"state":"translated","value":"需要批准连接"}}}},
+    "Uses the default project network setting" : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Uses the default project network setting"}},"zh-Hans":{"stringUnit":{"state":"translated","value":"使用默认项目网络设置"}}}},
+    "Switching to Full Access clears this server’s saved sandbox settings." : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Switching to Full Access clears this server’s saved sandbox settings."}},"zh-Hans":{"stringUnit":{"state":"translated","value":"切换到完全访问会清除该服务器已保存的沙盒设置。"}}}},
+    "Saved permissions are revoked and running programs that depend on them end." : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Saved permissions are revoked and running programs that depend on them end."}},"zh-Hans":{"stringUnit":{"state":"translated","value":"已保存的授权将被撤销，依赖这些授权的程序将结束。"}}}},
     "%@ bytes" : {"localizations": {"en": {"stringUnit": {"state": "translated", "value": "%@ bytes"}}, "zh-Hans": {"stringUnit": {"state": "translated", "value": "%@ 字节"}}}},
     "%@ ms" : {"localizations": {"en": {"stringUnit": {"state": "translated", "value": "%@ ms"}}, "zh-Hans": {"stringUnit": {"state": "translated", "value": "%@ 毫秒"}}}},
     "%@ seconds" : {"localizations": {"en": {"stringUnit": {"state": "translated", "value": "%@ seconds"}}, "zh-Hans": {"stringUnit": {"state": "translated", "value": "%@ 秒"}}}},

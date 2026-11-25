@@ -9,6 +9,7 @@ package struct ProjectWorktreeInventory: Sendable {
   /// The registration generation continues to identify children after source removal or ID reuse.
   package let source: DerivedProjectSource
   package let projectName: String?
+  package let repository: WorktreeRepositoryIdentity?
   package let worktrees: [ProjectWorktreeView]
   package let isInventoryAvailable: Bool
 }
@@ -58,6 +59,7 @@ extension GatewayDatabase {
       try Task.checkCancellation()
       let children = records.filter { $0.source == source }
       let inventory: [WorktreeInventoryItem]?
+      var liveRepository: WorktreeRepositoryIdentity?
       if let project = sources[source], let storage = worktreeStorage,
         let access = try? platform.projectGrants.resolve(project)
       {
@@ -69,16 +71,18 @@ extension GatewayDatabase {
           }
         }
         do {
-          let items = try WorktreeRepository(
+          let repository = try WorktreeRepository(
             source: source, store: derivedProjectStore(inspectNesting: { _ in [] }),
             storage: storage, executor: executor,
             registeredProjectRoots: projects.map { URL(fileURLWithPath: $0.rootPath) },
             timeoutMilliseconds: 30_000, maxOutputBytes: 16_777_216, lockTimeout: .seconds(30),
             owner: .init(bootSessionID: platform.launcher.bootSessionID),
             checkAuthority: checkSource
-          ).inventory { _ in true }
+          )
+          let items = try repository.inventory { _ in true }
           try checkSource()
           inventory = items
+          liveRepository = repository.repositoryIdentity
         } catch {
           try Task.checkCancellation()
           inventory = nil
@@ -109,7 +113,8 @@ extension GatewayDatabase {
           isInspectable: $0.dirty != nil)
       }
       return ProjectWorktreeInventory(
-        source: source, projectName: sources[source]?.displayName, worktrees: managed + foreign,
+        source: source, projectName: sources[source]?.displayName, repository: liveRepository,
+        worktrees: managed + foreign,
         isInventoryAvailable: inventory != nil)
     }
   }

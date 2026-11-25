@@ -74,6 +74,27 @@ Exact arguments, bounds and result fields are in the
 [Git lifecycle schemas](Tools.md#git-worktree-lifecycle) and
 [branch deletion](Tools.md#gitbranch_delete).
 
+## Worktrees and recovery in the App
+
+In **Settings → Projects**, open the source project to see its worktrees and
+retained records. Each checkout shows its ownership and availability. Host
+worktree removal stops admitted sandbox writers and verifies the checkout
+teardown before reporting success. If the checkout contains uncommitted
+changes, removing it requires a separate **Discard Changes and Remove**
+confirmation. The review identifies the checkout and its current commit.
+
+In **Settings → Privacy & Security → Retained Commits & Storage**, open the host
+recovery inventory even after the branch, checkout, or source registration is
+gone. Select records within a recovery store, review their object IDs, and
+choose **Release Selected**. A release changes which objects the host retains.
+Other live or protected records can still hold the same objects.
+
+Choose **Reclaim Storage** separately for a recovery store. The App shows the
+measured change in allocated bytes when maintenance completes. The measurement
+reports host recovery storage only. If an operation is interrupted, use
+**Resume** where shown to continue its recorded operation. If the review has
+expired, refresh and review the current selection.
+
 ## Dirty state, interruption and ownership
 
 Removal without `force` refuses uncommitted tracked, staged, untracked or ignored

@@ -346,6 +346,119 @@ final class MCPProxyClientTests {
   }
 
   @Test
+  func testDeadlineReconnectsWhileCancellationAuthorizationIsHeld() async throws {
+    try await withDeadlinePeer { authority, server, context, wire in
+      let client = authority.client
+      let prepared = try #require(context.executionAuthority as? PreparedExecutionContext)
+      let gate = ProxyInputGate()
+      defer { gate.release.signal() }
+      let access = GatedProxyInput(base: prepared, target: prepared.executionID, gate: gate)
+      #expect(throws: GatewayToolError.executionFailed("MCP server 'cancel' request timed out.")) {
+        try InvocationExecution.$current.withValue(access) {
+          try client.callTool(
+            server: server, name: "hang", arguments: .object([:]), requestID: "held-cancel",
+            context: context)
+        }
+      }
+      try #require(gate.entered.wait(timeout: .now() + .seconds(3)) == .success)
+      let recovered = try client.callTool(
+        server: server, name: "sample", arguments: .object([:]), context: context)
+      #expect(recovered.objectValue?["isError"] == .bool(false))
+      #expect(gate.finished.wait(timeout: .now()) == .timedOut)
+      let receipt = try client.readRequest(
+        server: server, requestID: "held-cancel", offset: 0, maxBytes: 1024, context: context)
+      let id = try #require(receipt.objectValue?["downstream_request_id"]?.stringValue)
+      #expect(receipt.objectValue?["cleanup"] == .string("confirmed"))
+      gate.release.signal()
+      try #require(gate.finished.wait(timeout: .now() + .seconds(3)) == .success)
+      #expect(try Self.wireLines(wire) == ["started", "call \(id)", "eof", "started"])
+    }
+  }
+
+  @Test
+  func testDeadlineRefusesUnforwardedCallWhileSiblingCancellationFlushes() async throws {
+    try await withDeadlinePeer { authority, server, context, wire in
+      let client = authority.client
+      let running = try #require(context.executionAuthority as? PreparedExecutionContext)
+      let active = try client.startToolCall(
+        server: server, name: "hang", arguments: .object([:]), requestID: "sibling",
+        context: context)
+      let siblingID = try #require(active.objectValue?["downstream_request_id"]?.stringValue)
+      _ = try self.waitForNonemptyFile(at: wire, containing: "call \(siblingID)\n")
+
+      let invocation = try authority.context
+      let prepared = try #require(invocation.executionAuthority as? PreparedExecutionContext)
+      try #require(prepared.executionID != running.executionID)
+      let original = ProxyInputGate()
+      let cancellation = ProxyInputGate()
+      defer {
+        original.release.signal()
+        cancellation.release.signal()
+      }
+      // The second admission shares the process. Its launch checks name its own
+      // execution, while its protocol write addresses the running execution.
+      let input = GatedProxyInput(base: prepared, target: running.executionID, gate: original)
+      let guarded = PreparedExecutionContext(
+        authority: input, mode: prepared.mode, environment: prepared.environment,
+        limits: prepared.limits, pathAccess: prepared.pathAccess, provider: prepared.provider,
+        providerProject: prepared.providerProject,
+        providerWorkingDirectory: prepared.providerWorkingDirectory,
+        providerExecutable: prepared.providerExecutable)
+      let guardedContext = InvocationContext(
+        session: invocation.session, executionAuthority: guarded)
+      let flush = GatedProxyInput(base: running, target: running.executionID, gate: cancellation)
+      #expect(throws: GatewayToolError.executionFailed("MCP server 'cancel' request timed out.")) {
+        try InvocationExecution.$current.withValue(flush) {
+          try client.callTool(
+            server: server, name: "hang", arguments: .object([:]), requestID: "unforwarded",
+            context: guardedContext)
+        }
+      }
+      try #require(original.entered.wait(timeout: .now()) == .success)
+      try #require(cancellation.entered.wait(timeout: .now() + .seconds(3)) == .success)
+      original.release.signal()
+      try #require(original.finished.wait(timeout: .now() + .seconds(3)) == .success)
+      cancellation.release.signal()
+
+      let recovered = try client.callTool(
+        server: server, name: "sample", arguments: .object([:]), context: context)
+      #expect(recovered.objectValue?["isError"] == .bool(false))
+      #expect(
+        try Self.wireLines(wire) == [
+          "started", "call \(siblingID)",
+          "cancel \(siblingID) Downstream MCP session disconnected.", "eof", "started",
+        ])
+    }
+  }
+
+  private func withDeadlinePeer(
+    _ test:
+      @escaping (ProxyExecutionFixture, MCPServerConfig, InvocationContext, URL) throws -> Void
+  ) async throws {
+    try await runBlockingTest {
+      let fixture = try self.fakePersistentMCPServer(recordWire: true)
+      let root = fixture.script.deletingLastPathComponent()
+      defer { try? FileManager.default.removeItem(at: root) }
+      let server = MCPServerConfig(
+        id: "cancel", transport: .stdio, command: fixture.script.path,
+        args: [fixture.startMarker.path, fixture.cancelMarker.path], startupTimeoutMs: 8_000,
+        requestTimeoutMs: 2_000)
+      let authority = try ProxyExecutionFixture(server: server, root: root)
+      defer { try? authority.close() }
+      let context = try authority.context
+      _ = try authority.client.callTool(
+        server: server, name: "sample", arguments: .object([:]), context: context)
+      try test(
+        authority, server, context,
+        authority.providerMarker(root.appendingPathComponent("wire.txt")))
+    }
+  }
+
+  private static func wireLines(_ url: URL) throws -> [Substring] {
+    try String(contentsOf: url, encoding: .utf8).split(separator: "\n")
+  }
+
+  @Test
   func testStartedToolCallCanBeListedCancelledAndConnectionReused() async throws {
     try await runBlockingTest {
       let fixture = try self.fakePersistentMCPServer()
@@ -1042,18 +1155,24 @@ final class MCPProxyClientTests {
 
   private func waitForNonemptyFile(
     at url: URL,
-    timeout: TimeInterval = 1
+    timeout: TimeInterval = 1,
+    containing expected: String? = nil
   ) throws -> String {
     let deadline = Date().addingTimeInterval(timeout)
     while Date() < deadline {
       if let contents = try? String(contentsOf: url, encoding: .utf8),
-        !contents.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        expected.map(contents.contains) ?? !contents.trimmingCharacters(in: .whitespacesAndNewlines)
+          .isEmpty
       {
         return contents
       }
       Thread.sleep(forTimeInterval: 0.01)
     }
-    return try String(contentsOf: url, encoding: .utf8)
+    let contents = try String(contentsOf: url, encoding: .utf8)
+    if let expected, !contents.contains(expected) {
+      throw GatewayToolError.executionFailed("The fixture did not observe the expected frame.")
+    }
+    return contents
   }
 
   @Test
@@ -1535,6 +1654,53 @@ private struct SlowCancellationAccess: ExecutionAccessChecking {
       Thread.sleep(forTimeInterval: 0.5)
     }
     return try base.accessExecution(id, operation: operation)
+  }
+}
+
+private final class ProxyInputGate: Sendable {
+  let entered = DispatchSemaphore(value: 0)
+  let release = DispatchSemaphore(value: 0)
+  let finished = DispatchSemaphore(value: 0)
+}
+
+private struct GatedProxyInput: ExecutionAuthorizing, ExecutionAccessChecking {
+  let base: PreparedExecutionContext
+  let target: UUID
+  let gate: ProxyInputGate
+
+  var executionID: UUID { base.executionID }
+  var authorizationIDs: Set<UUID> { base.authority.authorizationIDs }
+  var pathAccess: (any HostPathAccessChecking)? { base.pathAccess }
+
+  func access(_ id: UUID, operation: ExecutionOperation) throws -> EffectiveExecutionLimits {
+    try accessExecution(id, operation: operation)
+  }
+
+  func accessExecution(_ id: UUID, operation: ExecutionOperation) throws -> EffectiveExecutionLimits
+  {
+    guard id == target, operation == .writeInput else {
+      return try base.accessExecution(id, operation: operation)
+    }
+    gate.entered.signal()
+    defer { gate.finished.signal() }
+    guard gate.release.wait(timeout: .now() + .seconds(15)) == .success else {
+      throw GatewayToolError.executionFailed("The fixture input gate was not released.")
+    }
+    return try base.accessExecution(id, operation: operation)
+  }
+
+  func reserveChild(_ id: UUID) throws { try base.authority.reserveChild(id) }
+  func bindChild(_ id: UUID, ownership: any ExecutionOwnership) {
+    base.authority.bindChild(id, ownership: ownership)
+  }
+  func launchFailed(_ id: UUID) { base.authority.launchFailed(id) }
+  func finishAdmission() throws { try base.finishAdmission() }
+  func retainWork(cancellation: @escaping @Sendable () async -> Void) throws -> ExecutionWorkLease {
+    try base.retainWork(cancellation: cancellation)
+  }
+
+  func permissionRequests(_ id: UUID) throws -> [PermissionRequest] {
+    try base.permissionRequests(id)
   }
 }
 

@@ -276,10 +276,13 @@ struct GatewayWorktreeServiceTests {
       Issue.record("The builtin behind count must use an integer value.")
     }
     let foreign = try #require(
-      entries.first { $0.objectValue?["path"] == .string(fixture.source.path) }?.objectValue)
+      entries.first { $0.objectValue?["owner"] == .string("foreign") }?.objectValue)
+    let foreignPath = try #require(foreign["path"]?.stringValue)
+    let sourceURL = try ProjectPathResolver.canonicalProject(URL(fileURLWithPath: foreignPath))
+    #expect(sourceURL.path == fixture.source.path)
     #expect(
       foreign == [
-        "path": .string(fixture.source.path), "project_id": .null, "branch": .string("main"),
+        "path": .string(foreignPath), "project_id": .null, "branch": .string("main"),
         "base": .null, "ahead": .null, "behind": .null, "dirty": .bool(false),
         "unavailable": .string("No host-recorded base for this checkout."),
         "worktree_id": .null, "owner": .string("foreign"),

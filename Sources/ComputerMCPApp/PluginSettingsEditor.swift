@@ -6,6 +6,7 @@ struct PluginSettingsEditor: View {
   @ObservedObject var model: PluginManagementModel
   @Environment(\.dismiss) private var dismiss
   @State private var draft: PluginSettingsDraft
+  @State private var enablement: ProviderEnablementReview?
 
   init(model: PluginManagementModel, initial: PluginSettingsDraft) {
     self.model = model
@@ -13,6 +14,17 @@ struct PluginSettingsEditor: View {
   }
 
   var body: some View {
+    if let enablement {
+      PluginEnablementReviewForm(model: model, review: enablement) { approved in
+        self.enablement = nil
+        if approved { dismiss() }
+      }
+    } else {
+      settingsForm
+    }
+  }
+
+  private var settingsForm: some View {
     VStack(spacing: 0) {
       Form {
         Section {
@@ -129,6 +141,8 @@ struct PluginSettingsEditor: View {
                 .settings(pluginID: draft.id, settings), expectedRevision: draft.revision)
               {
                 dismiss()
+              } else {
+                enablement = model.enablementReview
               }
             } catch { model.report(error) }
           }

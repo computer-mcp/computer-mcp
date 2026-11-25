@@ -1,3 +1,4 @@
+import AppKit
 import ComputerMCPMacOS
 import ComputerMCPPermissions
 import ComputerMCPProcess
@@ -8,6 +9,7 @@ import ComputerMCPTunnels
 import Darwin
 import Foundation
 import GRDB
+import SwiftUI
 import Testing
 
 @testable import ComputerMCPApp
@@ -994,6 +996,10 @@ final class LiveAppControlPlaneTests {
       id = 'project'
       access = 'read'
       purpose = 'Read selected projects'
+      [sandbox]
+      network = 'trusted'
+      purpose = 'Look up metadata on trusted hosts'
+      read_exceptions = [{ path = '~/.screen-helper/metadata', purpose = 'Read saved metadata' }]
       [[skills]]
       id = 'guide'
       path = 'skills'
@@ -1018,12 +1024,36 @@ final class LiveAppControlPlaneTests {
       #expect(declined.provider.declarations?.permissions.count == 3)
       #expect(declined.names.projects["first"] == "First")
       #expect(declined.requestedMode == .sandbox)
+      #expect(declined.provider.declarations?.sandbox?.network == .trusted)
+      #expect(try declined.readExceptions().map(\.purpose) == ["Read saved metadata"])
+      if ProcessInfo.processInfo.environment["COMPUTER_MCP_UI_SNAPSHOT_DIR"] != nil {
+        try renderEnablement(
+          PluginEnablementReviewForm(model: model, review: declined) { _ in },
+          name: "plugin-enablement")
+        try renderEnablement(
+          PluginEnablementReviewForm(model: model, review: declined) { _ in },
+          name: "plugin-enablement-details", scrollToBottom: true)
+      }
       model.cancelEnablement(reviewID: declined.id)
       #expect(!(await model.confirmEnablement(reviewID: declined.id, selection: .init())))
       #expect(try await fixture.app.fetchPlugins().state == registered.state)
 
       var activating = draft
       activating.enabled = true
+      if ProcessInfo.processInfo.environment["COMPUTER_MCP_UI_SNAPSHOT_DIR"] != nil {
+        let window = enablementWindow(PluginSettingsEditor(model: model, initial: activating))
+        defer { window.close() }
+        // Save, decline, and save again from the same retained editor draft.
+        for _ in 0..<2 {
+          try pressEnablementShortcut(.approve, in: window)
+          try await waitForEnablementPresentation {
+            model.enablementReview != nil && !model.isSaving
+          }
+          try pressEnablementShortcut(.decline, in: window)
+          try await waitForEnablementPresentation { model.enablementReview == nil }
+        }
+        #expect(try await fixture.app.fetchPlugins().state == registered.state)
+      }
       let save = PluginHostChange.settings(pluginID: activating.id, try activating.settings())
       await #expect(throws: ProviderEnablementError.reviewRequired) {
         try await fixture.app.changePlugins(save, expectedRevision: 1)
@@ -1088,6 +1118,16 @@ final class LiveAppControlPlaneTests {
       #expect(declined.names.mcpServers[server.id] == server.id)
       #expect(declined.allowsModeSelection)
       #expect(declined.sandboxContainer == .localServer("manual"))
+      if ProcessInfo.processInfo.environment["COMPUTER_MCP_UI_SNAPSHOT_DIR"] != nil {
+        try renderEnablement(
+          MCPRegistrationsView(model: model) { _ in }, name: "mcp-enablement-preview",
+          size: NSSize(width: 780, height: 620))
+        try renderEnablement(
+          ProviderEnablementReviewView(review: declined, isBusy: false) { _ in
+          } onDecline: {
+          },
+          name: "mcp-enablement")
+      }
       await model.apply()
       await #expect(throws: ProviderEnablementError.reviewRequired) {
         try await fixture.app.changeMCPRegistration(
@@ -1096,6 +1136,21 @@ final class LiveAppControlPlaneTests {
       model.cancelReview()
       await model.confirmEnablement(reviewID: declined.id, selection: .init())
       #expect(try await fixture.app.fetchMCPRegistrations() == initial)
+
+      if ProcessInfo.processInfo.environment["COMPUTER_MCP_UI_SNAPSHOT_DIR"] != nil {
+        #expect(await model.review(add))
+        let window = enablementWindow(MCPRegistrationsView(model: model) { _ in })
+        defer { window.close() }
+        try await waitForEnablementPresentation { !model.isBusy }
+        try pressEnablementShortcut(.approve, in: window)
+        try await waitForEnablementPresentation { window.attachedSheet != nil }
+        let sheet = try #require(window.attachedSheet)
+        try pressEnablementShortcut(.decline, in: sheet)
+        try await waitForEnablementPresentation {
+          model.enablementReview == nil && model.preview == nil && window.attachedSheet == nil
+        }
+        #expect(try await fixture.app.fetchMCPRegistrations() == initial)
+      }
 
       #expect(await model.review(add))
       let rejected = try #require(model.enablementReview)
@@ -1491,4 +1546,58 @@ private func appPermissions(_ entries: [Permission: ComputerMCPPermissions.Permi
   var result = Permissions()
   for (permission, state) in entries { try! result.set(state, for: permission) }
   return result
+}
+
+@MainActor
+private func renderEnablement(
+  _ view: some View, name: String, size: NSSize = NSSize(width: 680, height: 720),
+  scrollToBottom: Bool = false
+) throws {
+  for language in ["en", "zh-Hans"] {
+    for dark in [false, true] {
+      try render(
+        view.environment(\.locale, Locale(identifier: language))
+          .environment(\.colorScheme, dark ? .dark : .light),
+        size: size, appearance: try #require(NSAppearance(named: dark ? .darkAqua : .aqua)),
+        name: "\(name)-\(language)-\(dark ? "dark" : "light")",
+        scrollToBottom: scrollToBottom)
+    }
+  }
+}
+
+private enum EnablementShortcut {
+  case approve, decline
+}
+
+@MainActor
+private func enablementWindow(_ view: some View) -> NSWindow {
+  let application = NSApplication.shared
+  let window = NSWindow(contentViewController: NSHostingController(rootView: view))
+  window.isReleasedWhenClosed = false
+  window.orderBack(nil)
+  window.makeKey()
+  application.updateWindows()
+  return window
+}
+
+@MainActor
+private func pressEnablementShortcut(_ shortcut: EnablementShortcut, in window: NSWindow) throws {
+  window.contentView?.layoutSubtreeIfNeeded()
+  let character = shortcut == .approve ? "\r" : "\u{1b}"
+  let event = try #require(
+    NSEvent.keyEvent(
+      with: .keyDown, location: .zero, modifierFlags: [], timestamp: 0,
+      windowNumber: window.windowNumber, context: nil, characters: character,
+      charactersIgnoringModifiers: character, isARepeat: false,
+      keyCode: shortcut == .approve ? 36 : 53))
+  try #require(window.performKeyEquivalent(with: event))
+}
+
+@MainActor
+private func waitForEnablementPresentation(_ ready: () -> Bool) async throws {
+  for _ in 0..<100 {
+    if ready() { return }
+    try await Task.sleep(for: .milliseconds(20))
+  }
+  try #require(ready())
 }

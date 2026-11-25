@@ -365,6 +365,60 @@ import Testing
     ]
   }
 
+  @Test func clientPluginUseDescribesExactAndWildcardExecution() throws {
+    let client = PrivacyPrincipal(
+      id: "client", name: "Client", kind: .client(connection: "Secure Tunnel"), execution: .sandbox)
+    let sandbox = PrivacyPrincipal(
+      id: "plugin/sandbox", name: "Sandbox Fixture", kind: .plugin(version: "1"),
+      execution: .fullAccessAllowed, providerAvailability: .active, effectiveExecution: .sandbox)
+    let fullAccess = PrivacyPrincipal(
+      id: "plugin/full", name: "Full Access Fixture", kind: .plugin(version: "1"),
+      execution: .sandbox, providerAvailability: .active, effectiveExecution: .fullAccessAllowed)
+    let snapshot = PrivacySnapshot(principals: [client, sandbox, fullAccess])
+    func request(for objectID: String, from principal: PrivacyPrincipal = client) -> PrivacyRequest
+    {
+      PrivacyRequest(
+        id: "plugin-use", principal: principal, permission: .plugins,
+        object: PrivacyObject(id: objectID, name: "Plugin contribution", detail: nil),
+        level: .use, purpose: nil, tool: "example.tool", expires: .distantFuture)
+    }
+
+    let english = PrivacyText(locale: Locale(identifier: "en"))
+    let exact = PrivacySecurityView.pluginExecutionTargets(
+      for: request(for: "sandbox"), in: snapshot)
+    #expect(exact == [sandbox])
+    #expect(
+      PrivacyGrantRow.pluginExecutionSummary(for: exact, using: english) == "Execution: Sandbox")
+    let wildcard = request(for: "*")
+    let matches = PrivacySecurityView.pluginExecutionTargets(for: wildcard, in: snapshot)
+    #expect(matches == [sandbox, fullAccess])
+    #expect(
+      PrivacyGrantRow.pluginExecutionSummary(for: matches, using: english)?.contains(
+        fullAccess.name) == true)
+    #expect(
+      PrivacySecurityView.pluginExecutionTargets(for: request(for: "missing"), in: snapshot).isEmpty
+    )
+    #expect(
+      PrivacySecurityView.pluginExecutionTargets(
+        for: request(for: "*", from: sandbox), in: snapshot
+      ).isEmpty)
+
+    if ProcessInfo.processInfo.environment["COMPUTER_MCP_UI_SNAPSHOT_DIR"] != nil {
+      let resources = try Self.compiledCatalog()
+      defer { try? FileManager.default.removeItem(at: resources.bundleURL) }
+      for language in ["en", "zh-Hans"] {
+        for dark in [false, true] {
+          try render(
+            PrivacyRequestPrompt(request: wildcard, pluginExecutionTargets: matches) { _ in }
+              .styled(language, dark, resources),
+            size: NSSize(width: 340, height: 460),
+            appearance: try #require(NSAppearance(named: dark ? .darkAqua : .aqua)),
+            name: "privacy-plugin-use-\(language)-\(dark ? "dark" : "light")")
+        }
+      }
+    }
+  }
+
   @Test func rendersInBothLanguagesAndAppearances() async throws {
     let model = PrivacySecurityModel(service: PrivacySecurityFake())
     await model.refresh()

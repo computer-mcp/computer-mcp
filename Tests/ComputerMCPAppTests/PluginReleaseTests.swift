@@ -225,6 +225,11 @@ struct PluginReleaseTests {
     #expect(service.installed == [selection])
     #expect(service.revisions == [0])
     #expect(management.snapshot?.state.revision == 1)
+    let host = try #require(management.snapshot)
+    let activation = try #require(
+      InstalledPluginActivation(afterInstalling: selection.declaration.pluginID, in: host))
+    #expect(activation.id == selection.declaration.pluginID)
+    #expect(activation.revision == 1)
   }
 
   @Test

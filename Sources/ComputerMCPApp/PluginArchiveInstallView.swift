@@ -8,12 +8,21 @@ struct PluginArchiveInstallView: View {
   let revision: Int64
   @Environment(\.dismiss) private var dismiss
   @State private var archive: URL?
+  @State private var installed: InstalledPluginActivation?
   @State private var importing = false
   @State private var pluginID = ""
   @State private var version = ""
   @State private var sha256 = ""
 
   var body: some View {
+    if let installed {
+      InstalledPluginActivationView(model: model, installed: installed)
+    } else {
+      archiveForm
+    }
+  }
+
+  private var archiveForm: some View {
     VStack(spacing: 0) {
       Form {
         Section {
@@ -88,13 +97,86 @@ struct PluginArchiveInstallView: View {
   private func install() {
     guard let archive else { return }
     do {
+      let pluginID = pluginID
       let change = PluginHostChange.installArchive(
         archive: archive, sha256: sha256, pluginID: pluginID, version: try PluginVersion(version))
       Task {
         let accessing = archive.startAccessingSecurityScopedResource()
         defer { if accessing { archive.stopAccessingSecurityScopedResource() } }
-        if await model.apply(change, expectedRevision: revision) { dismiss() }
+        if await model.apply(change, expectedRevision: revision) {
+          if let snapshot = model.snapshot {
+            installed = InstalledPluginActivation(afterInstalling: pluginID, in: snapshot)
+          }
+          if installed == nil { dismiss() }
+        }
       }
     } catch { model.report(error) }
+  }
+}
+
+/// The activation action uses the revision returned by the successful install.
+struct InstalledPluginActivation {
+  let id: String
+  let revision: Int64
+
+  init?(afterInstalling id: String, in snapshot: PluginHostSnapshot) {
+    guard !snapshot.settings(for: id).enabled else { return nil }
+    self.id = id
+    revision = snapshot.state.revision
+  }
+}
+
+struct InstalledPluginActivationView: View {
+  @Environment(\.dismiss) private var dismiss
+  @ObservedObject var model: PluginManagementModel
+  let installed: InstalledPluginActivation
+  @State private var enablement: ProviderEnablementReview?
+
+  var body: some View {
+    if let enablement {
+      PluginEnablementReviewForm(model: model, review: enablement) { approved in
+        self.enablement = nil
+        if approved { dismiss() }
+      }
+    } else {
+      VStack(alignment: .leading, spacing: 16) {
+        Text("Plugin installed", bundle: AppLocalization.resourceBundle).font(.headline)
+        Text(verbatim: installed.id)
+        if let refusal = model.refusal {
+          PluginRefusalNotice(refusal: refusal)
+        } else if let error = model.errorMessage {
+          Text(verbatim: error).foregroundStyle(.red).textSelection(.enabled)
+        }
+        HStack {
+          if model.isSaving { ProgressView().controlSize(.small) }
+          Spacer()
+          Button {
+            dismiss()
+          } label: {
+            Text("Close", bundle: AppLocalization.resourceBundle)
+          }
+          .keyboardShortcut(.cancelAction)
+          Button {
+            Task {
+              if await model.apply(
+                .enabled(pluginID: installed.id, true), expectedRevision: installed.revision)
+              {
+                dismiss()
+              } else {
+                enablement = model.enablementReview
+              }
+            }
+          } label: {
+            Text("Enable…", bundle: AppLocalization.resourceBundle)
+          }
+          .keyboardShortcut(.defaultAction)
+          .accessibilityIdentifier("plugin.install.enable")
+        }
+        .disabled(model.isSaving)
+      }
+      .padding(24)
+      .frame(minWidth: 440)
+      .interactiveDismissDisabled(model.isSaving)
+    }
   }
 }

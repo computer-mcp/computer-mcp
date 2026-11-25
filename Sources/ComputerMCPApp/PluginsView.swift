@@ -29,6 +29,7 @@ struct PluginsView: View {
         } label: {
           Label("Search official plugins", systemImage: "magnifyingglass")
         }
+        .disabled(model.isSaving)
         Button("Install archive") {
           sheet = .install(revision: model.snapshot?.state.revision ?? 0)
         }
@@ -110,6 +111,8 @@ struct PluginsView: View {
       case .search: PluginCatalogView(management: model)
       case .install(let revision): PluginArchiveInstallView(model: model, revision: revision)
       case .doctor(let doctor): PluginDoctorView(model: doctor)
+      case .enablement(let review):
+        PluginEnablementReviewForm(model: model, review: review) { _ in self.sheet = nil }
       }
     }
     .alert(item: $removal) { pending in
@@ -155,6 +158,7 @@ struct PluginsView: View {
               await model.apply(
                 .enabled(pluginID: id, snapshot.state.settings[id]?.enabled != true),
                 expectedRevision: snapshot.state.revision)
+              if let review = model.enablementReview { sheet = .enablement(review) }
             }
           }
         }
@@ -323,6 +327,7 @@ private enum PluginSheet: Identifiable {
   case search
   case install(revision: Int64)
   case doctor(PluginDoctorModel)
+  case enablement(ProviderEnablementReview)
 
   var id: String {
     switch self {
@@ -330,6 +335,7 @@ private enum PluginSheet: Identifiable {
     case .search: "search"
     case .install: "install"
     case .doctor(let doctor): "doctor-\(doctor.pluginID)"
+    case .enablement(let review): review.id.uuidString
     }
   }
 }

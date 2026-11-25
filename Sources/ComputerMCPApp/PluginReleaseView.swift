@@ -7,6 +7,7 @@ struct PluginReleaseView: View {
   let selection: PluginReleaseSelection
   @StateObject private var model: PluginReleaseModel
   @State private var selectedID: String?
+  @State private var installed: InstalledPluginActivation?
   @Environment(\.dismiss) private var dismiss
   @Environment(\.locale) private var locale
 
@@ -19,6 +20,14 @@ struct PluginReleaseView: View {
   }
 
   var body: some View {
+    if let installed {
+      InstalledPluginActivationView(model: management, installed: installed)
+    } else {
+      releasePicker
+    }
+  }
+
+  private var releasePicker: some View {
     VStack(alignment: .leading, spacing: 16) {
       Text("Choose release archive", bundle: AppLocalization.resourceBundle).font(.title2.bold())
       Text(verbatim: selection.entry.repository).foregroundStyle(.secondary)
@@ -234,7 +243,11 @@ struct PluginReleaseView: View {
     guard let artifact = selectedArtifact, model.canInstall, !stale else { return }
     Task {
       if await management.apply(.installRelease(artifact), expectedRevision: selection.revision) {
-        dismiss()
+        if let snapshot = management.snapshot {
+          installed = InstalledPluginActivation(
+            afterInstalling: artifact.declaration.pluginID, in: snapshot)
+        }
+        if installed == nil { dismiss() }
       }
     }
   }

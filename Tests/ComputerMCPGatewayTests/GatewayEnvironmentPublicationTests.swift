@@ -14,6 +14,85 @@ import Testing
 @testable import ComputerMCPGateway
 
 @Suite struct GatewayEnvironmentPublicationTests {
+  @Test(arguments: [true, false])
+  func stalePluginPublicationPreservesLiveProviderAuthority(revokeSourceGrant: Bool) throws {
+    let root = try environmentFixtureDirectory()
+    defer { try? FileManager.default.removeItem(at: root) }
+    let database = try GatewayDatabase(inMemory: ())
+    let store = try database.configuredPermissionStore()
+    let source = root.appendingPathComponent("source")
+    try FileManager.default.createDirectory(at: source, withIntermediateDirectories: false)
+    let project = ComputerMCPCore.RegisteredProject(
+      id: "source", displayName: "Source", rootPath: source.path)
+    try database.saveProject(project)
+    let projectRoot = try CanonicalPath(ProjectPathResolver.canonicalProject(source).path)
+    let service = GatewayPermissionService(store: store, policyReader: TestManagedPolicyReader())
+    let registered = try database.projects()
+    let projects = [ComputerMCPPermissions.RegisteredProject(id: project.id, root: projectRoot)]
+    let platform: Set<PathRule> = [
+      .init(root: try .init(root.appendingPathComponent("user").path), kind: .userData),
+      .init(root: try .init(root.appendingPathComponent("host").path), kind: .hostData),
+    ]
+    let skill = PathRule(
+      root: try .init(root.appendingPathComponent("plugin/skills").path), kind: .skillLibrary)
+    var plugins = try database.pluginStoreSnapshot()
+    plugins.revision += 1
+    _ = try database.savePluginStoreSnapshot(plugins, expectedRevision: 0)
+    try service.configureEnvironment(
+      .init(projects: projects, rules: platform.union([skill])), trustedHosts: [],
+      expectedProjects: registered, expectedConfigurationRevision: nil,
+      expectedPluginRevision: plugins.revision, platformRules: platform, configurationRules: [skill]
+    )
+    let principal = Principal.plugin(.package("provider"))
+    let execution = try store.transactionWithDatabase { _, ledger in
+      try ledger.setPermission(
+        .granted(.read), for: .project(project.id), principal: principal,
+        expectedRevision: ledger.revision)
+      let decision = try ledger.authorize(
+        invocation: .init(
+          principal: principal, tool: "read", projectID: project.id, argumentsDigest: "source"),
+        requirements: .init(
+          paths: [.init(path: projectRoot, operation: .read)], sandboxProjectID: project.id),
+        now: Date())
+      guard case .allowed(let proof) = decision else {
+        Issue.record("Provider admission failed: \(decision)")
+        throw PermissionModelError.invalidAuthorization
+      }
+      let projection = try ledger.prepareExecutionPermissions(proof.id)
+      #expect(
+        projection.readablePaths.contains { $0.excludedSubtrees?.contains(skill.root) == true })
+      return try ledger.startExecution(owner: principal, authorizationIDs: [proof.id])
+    }
+    #expect(throws: GatewayDatabaseError.configurationChanged) {
+      try service.configureEnvironment(
+        .init(projects: projects, rules: platform), trustedHosts: [],
+        expectedProjects: registered, expectedConfigurationRevision: nil,
+        expectedPluginRevision: 0, platformRules: platform, configurationRules: [])
+    }
+    try store.transactionWithDatabase { sql, ledger in
+      #expect(
+        try GatewayConfigurationPaths.read(
+          GatewayConfigurationPaths.configurationKey, database: sql) == [skill])
+      #expect(
+        ledger.executionAccess(
+          execution.id, principal: principal, operation: .writeInput, now: Date())
+          == .allowed)
+      let result: RevocationResult
+      if revokeSourceGrant {
+        result = try ledger.revoke(
+          principal: principal, permission: .project(project.id), expectedRevision: ledger.revision)
+      } else {
+        var environment = ledger.environment
+        environment.limits[principal] = .init(sources: [
+          .owner: .available(ManagedPolicy(deniedReadLocations: [projectRoot]))
+        ])
+        result = try ledger.reconcile(environment: environment, expectedRevision: ledger.revision)
+      }
+      #expect(result.executionsToTerminate == [execution.id])
+      #expect(ledger.executions[execution.id]?.revoked == true)
+    }
+  }
+
   @Test func currentProjectSetExcludesRetainedAliasRowsAfterOwnerDeduplication() throws {
     let root = try environmentFixtureDirectory()
     defer { try? FileManager.default.removeItem(at: root) }

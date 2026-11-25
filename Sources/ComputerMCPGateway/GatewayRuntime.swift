@@ -235,7 +235,7 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
     defer { if !initialized { _ = lifetime.beginShutdown() } }
     var sourceConfiguration = configuration
     try pluginState?.validate()
-    let pluginState = try (pluginState ?? database?.pluginStoreSnapshot() ?? PluginStoreSnapshot())
+    let pluginState = (pluginState ?? capturedInputs.plugins)
       .includingBundledDefaults(bundledPlugins.packages.map(\.manifest))
     resolvedPluginSettings = pluginState
     let artifactLeases = try Self.retainPluginArtifacts(
@@ -483,11 +483,13 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
       bound.trustedPrincipalID = principalID
       bound.transportTrace = trace
       bound.controlSession = nil
+      let currentPluginState = refreshDirectory ? try database?.pluginStoreSnapshot() : nil
+      let pluginsChanged = currentPluginState.map { $0.revision != pluginState.revision } ?? false
       return try GatewayRuntime(
         configuration: initializationConfiguration, context: bound, database: database,
         registeredProjects: refreshDirectory ? nil : registeredProjects, platform: platform,
-        policyEvaluator: policyEvaluator, mcpClient: mcpClient, plugins: plugins,
-        pluginState: pluginState,
+        policyEvaluator: policyEvaluator, mcpClient: mcpClient,
+        plugins: pluginsChanged ? nil : plugins, pluginState: currentPluginState ?? pluginState,
         bundledPlugins: bundledPlugins, terminalSessions: terminalSessions,
         lifetime: GatewayRuntimeLifetime(), preparationState: nil, artifactStorage: nil,
         requiresControlSession: requiresControlSession || sessionRequired,
@@ -1061,11 +1063,12 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
     return lifetime.beginShutdown()
   }
 
-  /// Profile grants are live authority; registration revisions select provider generations.
-  package func hasCurrentProjectInputs() throws -> Bool {
+  /// Profile grants are live authority; project and plugin registrations select routing generations.
+  package func hasCurrentDirectoryInputs() throws -> Bool {
     guard let database, let generationInputs else { return true }
     let current = try database.configurationState()
-    return current.projects.count == generationInputs.projects.count
+    return current.plugins.revision == resolvedPluginSettings.revision
+      && current.projects.count == generationInputs.projects.count
       && zip(current.projects, generationInputs.projects).allSatisfy(
         GatewayDatabase.sameStoredProject)
       && current.derivedProjects == generationInputs.derivedProjects
@@ -1080,7 +1083,7 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
         principal, self.context.transportTrace, self.requiresControlSession, true)
     }
     do {
-      guard try runtime.hasCurrentProjectInputs() else {
+      guard try runtime.hasCurrentDirectoryInputs() else {
         throw GatewayDatabaseError.configurationChanged
       }
       return runtime
@@ -2046,6 +2049,7 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
       trustedHosts: Set(EgressPolicy.trustedHosts.map(HostRule.init)),
       expectedProjects: database?.projects() ?? [],
       expectedConfigurationRevision: publication.configurationRevisionID,
+      expectedPluginRevision: resolvedPluginSettings.revision,
       platformRules: permissionPlatformRules(),
       configurationRules: GatewayConfigurationPaths.capture(configuration))
     return paths

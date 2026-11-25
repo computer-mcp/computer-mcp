@@ -106,6 +106,7 @@ extension GatewayPermissionService {
   package func configureEnvironment(
     _ paths: PathEnvironmentSnapshot, trustedHosts: Set<HostRule>,
     expectedProjects: [ComputerMCPCore.RegisteredProject], expectedConfigurationRevision: String?,
+    expectedPluginRevision: Int64 = 0,
     platformRules: Set<PathRule>? = nil, configurationRules: Set<PathRule>? = nil
   ) throws {
     try store.transactionWithDatabase { database, ledger in
@@ -115,8 +116,10 @@ extension GatewayPermissionService {
         sql:
           "SELECT id FROM configurationRevisions WHERE activatedAt IS NOT NULL AND activationError IS NULL ORDER BY activatedAt DESC, createdAt DESC, id DESC LIMIT 1"
       )
+      let pluginRevision =
+        try Int64.fetchOne(database, sql: "SELECT revision FROM pluginState WHERE id = 1") ?? 0
       guard current == expectedProjects.sorted(by: { $0.id < $1.id }),
-        revision == expectedConfigurationRevision
+        revision == expectedConfigurationRevision, pluginRevision == expectedPluginRevision
       else {
         throw GatewayDatabaseError.configurationChanged
       }

@@ -75,9 +75,11 @@ struct WorktreeLifecycleRecoveryTests {
 
       let clone = f.directory.appendingPathComponent("clone.git")
       let pushed = f.directory.appendingPathComponent("pushed.git")
-      try f.raw(["clone", "--mirror", "--no-local", f.repository.path, clone.path])
+      try f.raw(
+        ["clone", "--mirror", "--no-local", f.repository.path, clone.path],
+        environment: ["GIT_ALLOW_PROTOCOL": "file"])
       try f.raw(["init", "--bare", pushed.path])
-      try f.raw(["push", "--mirror", pushed.path])
+      try f.raw(["push", "--mirror", pushed.path], environment: ["GIT_ALLOW_PROTOCOL": "file"])
       for destination in [clone, pushed] {
         let prefix = ["--git-dir=" + destination.path]
         #expect(try f.raw(prefix + refArgs) == sourceRefs)

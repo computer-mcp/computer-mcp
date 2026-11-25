@@ -146,14 +146,16 @@ package final class AtomicManifestStore: @unchecked Sendable {
             ? .projectTerminology : .builtinCapabilities,
           expectedDigest: Self.digest(of: data))
       }
-      try reconcileInitialProfileSource()
+      try reconcileInitialManifest()
     }
   }
 
-  private func reconcileInitialProfileSource() throws {
-    let loaded = try activeConfiguration()
-    let source = Data(try PermissionProfileManifest.encode(loaded.profiles.map(\.grant)).utf8)
-    guard try database.configurationState().profileSource != source else { return }
+  private func reconcileInitialManifest() throws {
+    let admitted = try activeSnapshot()
+    let source = Data(
+      try PermissionProfileManifest.encode(admitted.configuration.profiles.map(\.grant)).utf8)
+    guard try admitted.revisionID == nil || database.configurationState().profileSource != source
+    else { return }
     let data = try Data(contentsOf: manifestURL)
     guard let manifest = String(data: data, encoding: .utf8) else {
       throw AtomicManifestStoreError.invalidManifestEncoding
@@ -247,8 +249,12 @@ package final class AtomicManifestStore: @unchecked Sendable {
     guard try Data(contentsOf: manifestURL) == data else {
       throw AtomicManifestStoreError.staleDigest
     }
-    let admitted = (loaded, try database.activeConfigurationRevisionID())
-    setKnownDigest(try Self.digest(of: data))
+    let digest = try Self.digest(of: data)
+    let revisionID = try database.activeConfigurationRevisionID()
+    let matches =
+      try revisionID.flatMap { try database.configurationRevision(id: $0)?.digest } == digest
+    let admitted = (loaded, matches ? revisionID : nil)
+    setKnownDigest(digest)
     snapshot = admitted
     return admitted
   }

@@ -257,7 +257,7 @@ struct WorktreeSourceMetadataTests {
         persist: { _ in })
       let committer = try service.sourceMergeCommitter()
       let message = "computer-mcp worktree merge " + ownership.operationID.uuidString.lowercased()
-      let suffix = Data((base + " " + target + " " + committer + "\t" + message + "\n").utf8)
+      let suffix = Data("\(base) \(target) \(committer)\t\(message)\n".utf8)
       var merge = try WorktreeSourceMerge(
         base: branches[0], managed: branches[1], expected: base, target: target,
         message: message, committer: committer, guards: guards)

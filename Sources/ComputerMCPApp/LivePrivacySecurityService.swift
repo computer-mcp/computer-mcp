@@ -502,7 +502,7 @@ final class LivePrivacySecurityService: PrivacySecurityService {
     sources.map(sourceName).sorted()
   }
 
-  private static func sourceName(_ source: PolicySource) -> String {
+  static func sourceName(_ source: PolicySource) -> String {
     switch source {
     case .owner: "Owner Policy"
     case .machine: "Machine Policy"
@@ -599,7 +599,7 @@ final class LivePrivacySecurityService: PrivacySecurityService {
     }
   }
 
-  private static func source(_ source: GatewayManagedPolicyView) -> PrivacyManagedSource {
+  static func source(_ source: GatewayManagedPolicyView) -> PrivacyManagedSource {
     let name =
       switch source.source {
       case .owner: "Owner Policy"
@@ -613,8 +613,10 @@ final class LivePrivacySecurityService: PrivacySecurityService {
         source.provider.map { invocationPrincipal(.plugin($0), names: .init()).id },
       ]
       .compactMap { $0 }.joined(separator: "/"),
-      name: name, location: source.location, state: source.failure == nil ? .active : .unreadable,
-      profileID: source.profileID, provider: source.provider, revision: source.revision)
+      name: name, location: source.location,
+      state: source.failure != nil ? .unreadable : source.revision == "absent" ? .absent : .active,
+      profileID: source.profileID, provider: source.provider, revision: source.revision,
+      failure: source.failure)
   }
 
   private static func systemPermission(_ summary: PermissionSummary) -> PrivacySystemPermission? {
@@ -633,7 +635,7 @@ final class LivePrivacySecurityService: PrivacySecurityService {
     return PrivacySystemPermission(kind: kind, state: state)
   }
 
-  private static func classify(_ permission: Permission, names: PermissionObjectNames)
+  static func classify(_ permission: Permission, names: PermissionObjectNames)
     -> (PrivacyPermissionKind, PrivacyObject?)?
   {
     switch permission {
@@ -685,7 +687,7 @@ final class LivePrivacySecurityService: PrivacySecurityService {
     }
   }
 
-  private static func value(_ state: ComputerMCPPermissions.PermissionState) -> PrivacyGrantValue {
+  static func value(_ state: ComputerMCPPermissions.PermissionState) -> PrivacyGrantValue {
     switch state {
     case .notGranted: .ask
     case .denied: .denied
@@ -693,7 +695,7 @@ final class LivePrivacySecurityService: PrivacySecurityService {
     }
   }
 
-  private static func state(_ value: PrivacyGrantValue) -> ComputerMCPPermissions.PermissionState {
+  static func state(_ value: PrivacyGrantValue) -> ComputerMCPPermissions.PermissionState {
     switch value {
     case .ask: .notGranted
     case .denied: .denied

@@ -32,6 +32,7 @@ package struct GatewayOwnerPolicySnapshot: Sendable {
   package let ownerSource: GatewayManagedPolicyView?
   package let readOnlySources: [GatewayManagedPolicyView]
   package let limits: [Limits]
+  package let trustedHosts: Set<String>
 }
 
 extension GatewayPermissionService {
@@ -83,7 +84,8 @@ extension GatewayPermissionService {
       return .init(
         target: target, revision: try Self.controlRevision(database), epoch: epoch,
         canEdit: canEdit, savedText: policies.ownerText(for: target), ownerSource: ownerSource,
-        readOnlySources: sources.filter { $0.source != .owner }, limits: limits)
+        readOnlySources: sources.filter { $0.source != .owner }, limits: limits,
+        trustedHosts: Set(ledger.environment.trustedHosts.map(\.host)))
     }
   }
 

@@ -26,7 +26,7 @@ struct PrivacyText {
   }
 }
 
-private struct PrivacySymbol: View {
+struct PrivacySymbol: View {
   let name: String
 
   var body: some View {
@@ -46,6 +46,7 @@ struct PrivacySecurityView: View {
   @Environment(\.localizationResources) private var resources
   private var l: PrivacyText { PrivacyText(locale: locale, resources: resources) }
   @ObservedObject var model: PrivacySecurityModel
+  @State private var policyTarget: PrivacyOwnerPolicyTarget?
   @State private var prompted: PrivacyRequest?
   @State private var promptedSnapshot = PrivacySnapshot()
 
@@ -56,7 +57,7 @@ struct PrivacySecurityView: View {
         if !model.snapshot.requests.isEmpty { requestsSection }
         permissionsSection
         principalsSection
-        if !model.snapshot.managedSources.isEmpty { managedSection }
+        PrivacyPolicySourcesSection(snapshot: model.snapshot) { policyTarget = $0 }
         systemSection
       }
       .formStyle(.grouped)
@@ -66,6 +67,13 @@ struct PrivacySecurityView: View {
         case .permission(let kind): PrivacyPermissionDetailView(model: model, permission: kind)
         case .principal(let id): PrivacyPrincipalDetailView(model: model, principalID: id)
         }
+      }
+    }
+    .sheet(item: $policyTarget) { target in
+      OwnerPolicyEditorView(
+        model: OwnerPolicyEditorModel(target: target, privacy: model)
+      ) {
+        policyTarget = nil
       }
     }
     .sheet(item: $prompted) { request in
@@ -184,39 +192,6 @@ struct PrivacySecurityView: View {
         }
         .accessibilityIdentifier("privacy.principal.\(principal.id)")
       }
-    }
-  }
-
-  private var managedSection: some View {
-    Section {
-      ForEach(model.snapshot.managedSources) { source in
-        LabeledContent {
-          Text(
-            verbatim: l(source.state == .active ? "Applied" : "Can't Be Read")
-          )
-          .foregroundStyle(source.state == .active ? Color.secondary : Color.red)
-        } label: {
-          Label {
-            VStack(alignment: .leading, spacing: 2) {
-              Text(verbatim: l(source.name))
-              Text(verbatim: source.location)
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                .textSelection(.enabled)
-            }
-          } icon: {
-            PrivacySymbol(name: "building.columns.fill")
-          }
-        }
-      }
-    } header: {
-      Text(verbatim: l("Managed Limits"))
-    } footer: {
-      Text(
-        verbatim: l(
-          "Managed limits cap what can be granted here. A source that can't be read limits everything it could limit until it can be read."
-        )
-      )
     }
   }
 

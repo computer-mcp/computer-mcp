@@ -336,7 +336,7 @@ extension PrivacyRequest {
 }
 
 struct PrivacyManagedSource: Identifiable, Hashable, Sendable {
-  enum State: Hashable, Sendable { case active, unreadable }
+  enum State: Hashable, Sendable { case active, unreadable, absent }
 
   let id: String
   let name: String
@@ -345,6 +345,7 @@ struct PrivacyManagedSource: Identifiable, Hashable, Sendable {
   var profileID: GatewayProfileID?
   var provider: PluginIdentity?
   var revision: String?
+  var failure: String?
 }
 
 struct PrivacySystemPermission: Identifiable, Hashable, Sendable {

@@ -143,9 +143,11 @@ struct ComputerMCPPermissionsModelTests {
     let limits = ManagedLimits(owner: .available(owner), machine: .available(machine))
     #expect(limits.restrictingSources(for: requirement(.project("p"), .write)) == [.machine])
     #expect(limits.restrictingSources(for: requirement(.project("p"), .read)).isEmpty)
-    #expect(
-      limits.network(applying: .full, trustedHosts: ["packages.example", "tools.example"])
-        == .custom(hosts: ["packages.example"], includesTrusted: false))
+    let trustedHosts: Set<String> = ["packages.example", "tools.example"]
+    let outbound = limits.networkCeiling(trustedHosts: trustedHosts)
+    #expect(outbound.configuration == .custom(hosts: ["packages.example"], includesTrusted: false))
+    #expect(outbound.configuration == limits.network(applying: .full, trustedHosts: trustedHosts))
+    #expect(outbound.sources == [.owner, .machine])
     #expect(
       PermissionEvaluation.evaluate(
         principal: client, action: action(.project("p"), .write),
@@ -155,6 +157,87 @@ struct ComputerMCPPermissionsModelTests {
       PermissionEvaluation.evaluate(
         principal: client, action: action(.skills), permissions: .newPrincipal,
         mode: .fullAccess(.standing), limits: limits) == .denied(.managedLimit([.machine])))
+  }
+
+  @Test func permissionCeilingAttributesOnlyTheFirstBlockedGrantLevel() throws {
+    let project = Permission.project("reviewed")
+    let owner = try granted([(.project("*"), .read)])
+    var machine = Permissions()
+    try machine.set(.denied, for: project)
+    let denied = ManagedLimits(
+      owner: .available(.init(permissionCeilings: owner)),
+      machine: .available(.init(permissionCeilings: machine)))
+
+    #expect(denied.permissionCeiling(for: project).value == nil)
+    #expect(denied.permissionCeiling(for: project).sources == [.machine])
+    #expect(denied.permissionCeiling(for: .project("*")).value == .read)
+    #expect(denied.permissionCeiling(for: .project("*")).sources == [.owner])
+    #expect(denied.permissionCeiling(for: .screen).value == .access)
+    #expect(denied.permissionCeiling(for: .screen).sources.isEmpty)
+
+    try machine.set(.granted(.read), for: project)
+    let tied = ManagedLimits(
+      owner: .available(.init(permissionCeilings: owner)),
+      machine: .available(.init(permissionCeilings: machine)))
+    #expect(tied.permissionCeiling(for: project).value == .read)
+    #expect(tied.permissionCeiling(for: project).sources == [.owner, .machine])
+  }
+
+  @Test func networkCeilingAttributesSemanticallyTiedRulesAndExcludesBroaderRules() {
+    let limits = ManagedLimits(sources: [
+      .owner: .available(.init(network: .custom(hosts: ["*.example"], includesTrusted: false))),
+      .machine: .available(
+        .init(
+          network: .custom(hosts: ["*.build.example"], includesTrusted: false))),
+      .managedPreferences: .available(
+        .init(
+          network: .custom(hosts: ["*.build.example", "ci.build.example"], includesTrusted: false))),
+      .connection: .absent,
+    ])
+    let trustedHosts: Set<String> = []
+    let result = limits.networkCeiling(trustedHosts: trustedHosts)
+    #expect(result.configuration == limits.network(applying: .full, trustedHosts: trustedHosts))
+    #expect(result.sources == [.machine, .managedPreferences])
+  }
+
+  @Test(arguments: [false, true], [false, true])
+  func networkCeilingAttributesCombinedRules(overlap: Bool, tied: Bool) {
+    let other = overlap ? "ci.build.example" : "release.example"
+    let preferenceHosts: Set<String> =
+      tied
+      ? ["*.build.example", "sdk.example", "ci.build.example"]
+      : ["*.build.example", "sdk.example", "release.example", "mirror.example"]
+    let limits = ManagedLimits(sources: [
+      .owner: .available(
+        .init(
+          network: .custom(hosts: ["*.build.example", "sdk.example"], includesTrusted: false))),
+      .machine: .available(
+        .init(
+          network: .custom(hosts: [other, "mirror.example"], includesTrusted: false))),
+      .managedPreferences: .available(
+        .init(
+          network: .custom(hosts: preferenceHosts, includesTrusted: false))),
+    ])
+    let result = limits.networkCeiling(trustedHosts: [])
+    #expect(result.configuration == limits.network(applying: .full, trustedHosts: []))
+    #expect(
+      result.configuration == (overlap ? .custom(hosts: [other], includesTrusted: false) : .none))
+    #expect(
+      result.sources == (tied ? [.owner, .machine, .managedPreferences] : [.owner, .machine]))
+  }
+
+  @Test func networkCeilingAttributesUnreadableSourcesAndTiedDenials() {
+    let open = ManagedLimits().networkCeiling(trustedHosts: [])
+    #expect(open.configuration == .full)
+    #expect(open.sources.isEmpty)
+    let limits = ManagedLimits(sources: [
+      .owner: .available(.init(network: .custom(hosts: ["sdk.example"], includesTrusted: false))),
+      .machine: .unreadable,
+      .managedPreferences: .available(.init(network: .none)),
+    ])
+    let result = limits.networkCeiling(trustedHosts: [])
+    #expect(result.configuration == .none)
+    #expect(result.sources == [.machine, .managedPreferences])
   }
 
   @Test(arguments: PolicySource.allCases)

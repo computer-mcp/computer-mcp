@@ -467,21 +467,39 @@ final class LiveAppControlPlaneTests {
   @Test
   func ownerPolicyRendersWithLiveSourcesAcrossLocalesAndAppearances() async throws {
     try await withAppControlPlaneFixture { fixture in
-      fixture.policyReader.set(
-        .machineFile, .available(Data("[execution]\ntime_ms = 1000".utf8)))
+      let machine = """
+        network = { level = "custom", hosts = ["ci.build.example"], include_trusted = false }
+        [projects]
+        "*" = "deny"
+        [execution]
+        time_ms = 1000
+        """
+      fixture.policyReader.set(.machineFile, .available(Data(machine.utf8)))
       let privacy = PrivacySecurityModel(
         service: LivePrivacySecurityService(controlPlane: fixture.app))
       await privacy.refresh()
       let target = PrivacyOwnerPolicyTarget(id: .profile(.chatGPTOperate), title: "ChatGPT")
       let model = OwnerPolicyEditorModel(target: target, privacy: privacy)
       await model.load()
-      model.draft = "# Owner policy\n[permissions]\nscreen = 'deny'\n[execution]\ntime_ms = 5000"
+      model.draft = """
+        network = { level = "custom", hosts = ["*.build.example"], include_trusted = false }
+        [projects]
+        "*" = "read"
+        [execution]
+        time_ms = 5000
+        """
       await model.save()
       await model.reload()
       let snapshot = try #require(model.editor?.reviewed)
       let context = try #require(snapshot.limits.first)
       #expect(try context.executionLimits(for: .foreground).timeMilliseconds == 1000)
-      #expect(context.effective.sources[.machine] != nil)
+      let project = context.effective.permissionCeiling(for: .project("*"))
+      #expect(project.value == nil)
+      #expect(project.sources == [.machine])
+      let outbound = context.effective.networkCeiling(trustedHosts: snapshot.trustedHosts)
+      #expect(
+        outbound.configuration == .custom(hosts: ["ci.build.example"], includesTrusted: false))
+      #expect(outbound.sources == [.machine])
       #expect(model.editor?.savedText?.contains("5000") == true)
 
       let resources = try PrivacySecurityViewTests.compiledCatalog()

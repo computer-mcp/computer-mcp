@@ -121,33 +121,17 @@ struct OwnerPolicyLimitsView: View {
     } else {
       let permissions = Set(sources.values.flatMap { $0.permissionCeilings.entries.keys })
       ForEach(ordered(permissions), id: \.self) { permission in
-        if let (kind, object) = LivePrivacySecurityService.classify(permission, names: .init()) {
-          let denied = kind.grantedValues.compactMap {
-            level -> (PrivacyGrantValue.Level, Set<PolicySource>)? in
-            guard case .granted(let value) = LivePrivacySecurityService.state(.granted(level))
-            else { return nil }
-            return (
-              level,
-              restrictions(
-                in: limits, permission: permission, value: value, fallback: object?.id == "*")
-            )
-          }
-          let maximum = denied.last { $0.1.isEmpty }?.0
-          let contributors = denied.reduce(into: Set<PolicySource>()) { $0.formUnion($1.1) }
-          limit(heading(permission), l(maximum?.title ?? "Don't Allow"), from: contributors)
-        }
+        let ceiling = limits.permissionCeiling(for: permission)
+        let value = ceiling.value.map { LivePrivacySecurityService.value(.granted($0)).title }
+        limit(heading(permission), l(value ?? "Don't Allow"), from: ceiling.sources)
       }
 
       let fullAccess = Set(sources.compactMap { $0.value.allowsFullAccess ? nil : $0.key })
       limit(
         l("Full Access"), l(fullAccess.isEmpty ? "No Policy Ceiling" : "Don't Allow"),
         from: fullAccess)
-      let outbound = limits.network(applying: .full, trustedHosts: snapshot.trustedHosts)
-      let networkSources = Set(
-        sources.compactMap {
-          $0.value.network.configuration == .full ? nil : $0.key
-        })
-      limit(l("Outbound Network"), network(outbound), from: networkSources)
+      let outbound = limits.networkCeiling(trustedHosts: snapshot.trustedHosts)
+      limit(l("Outbound Network"), network(outbound.configuration), from: outbound.sources)
       let paths = Set(sources.values.flatMap(\.deniedReadLocations))
       ForEach(paths.map(\.string).sorted(), id: \.self) { path in
         if let canonical = try? CanonicalPath(path) {
@@ -176,14 +160,6 @@ struct OwnerPolicyLimitsView: View {
         }
       }
     }
-  }
-
-  private func restrictions(
-    in limits: ManagedLimits, permission: Permission, value: PermissionValue, fallback: Bool
-  ) -> Set<PolicySource> {
-    if fallback { return limits.restrictingSources(forDefault: permission, value: value) }
-    guard let requirement = try? PermissionRequirement(permission, value) else { return [] }
-    return limits.restrictingSources(for: requirement)
   }
 
   private var dimensions:

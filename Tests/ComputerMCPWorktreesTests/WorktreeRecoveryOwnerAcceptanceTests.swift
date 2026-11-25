@@ -4,6 +4,12 @@ import Testing
 
 @testable import ComputerMCPWorktrees
 
+#if canImport(Darwin)
+  import Darwin
+#elseif canImport(Glibc)
+  import Glibc
+#endif
+
 struct WorktreeRecoveryOwnerAcceptanceTests {
   @Test func readOnlyReviewAndUnsubmittedLookupDoNotCreateFiles() throws {
     try fixture { directory in
@@ -85,7 +91,7 @@ struct WorktreeRecoveryOwnerAcceptanceTests {
       let result = try reopened.resume(review.handle, principal: owner.principal)
       #expect(result.request == .release(review))
       #expect(result.outcome == .released)
-      #expect(!result.gateCleanup.contains(.pending))
+      #expect(!result.gates.contains { $0.cleanup == .pending })
       #expect(try reopened.resume(review.handle, principal: owner.principal) == result)
       #expect(try !f.recoveryRecords().contains { $0.id == record.id })
       let receiptURL = owner.storeDirectory(view.key).appendingPathComponent(
@@ -96,6 +102,190 @@ struct WorktreeRecoveryOwnerAcceptanceTests {
       #expect(receipt.selection == record.selection)
       #expect(receipt.owner == record.owner)
       #expect(receipt.requestDigest == review.handle.requestDigest)
+    }
+  }
+
+  @Test func confirmationInterruptedInAnotherProcessResumesFromFileBackedState() throws {
+    try fixture { directory in
+      let f = try WorktreeFixture(directory)
+      let fixture = try OwnerAcceptanceFixture(f)
+      let record = try fixture.captureBlob()
+      let owner = try fixture.service()
+      let view = try #require(try owner.list().first)
+      let review = try owner.reviewRelease(
+        key: view.key, generation: view.generation, selections: [record.selection],
+        principal: fixture.principal)
+      let active = fixture.storeDirectory(view.key).appendingPathComponent("owner-operation.json")
+      let child = fork()
+      guard child >= 0 else { throw POSIXError(.EAGAIN) }
+      if child == 0 {
+        do {
+          let store = try SQLiteDerivedProjectStore(
+            connection: GatewayDatabaseConnection(path: f.database.path))
+          let interruption = OwnerConfirmationInterruption(active: active)
+          let service = try WorktreeRecoveryOwnerService(
+            storage: f.storage, derived: store,
+            dependencies: OwnerAcceptanceEvidence(source: f.source, store: store),
+            executor: WorktreeTestGit(),
+            journalIO: .init(beforeDirectorySync: { try interruption.check() }))
+          do {
+            _ = try service.confirm(review, principal: fixture.principal)
+            _exit(2)
+          } catch is OwnerConfirmationInterruption.Failure {
+            _exit(interruption.fired ? 0 : 3)
+          } catch {
+            _exit(4)
+          }
+        } catch {
+          _exit(5)
+        }
+      }
+      var status: Int32 = 0
+      let deadline = ContinuousClock.now.advanced(by: .seconds(30))
+      var waited: pid_t = 0
+      while waited == 0 && ContinuousClock.now < deadline {
+        waited = waitpid(child, &status, WNOHANG)
+        if waited == 0 { Thread.sleep(forTimeInterval: 0.01) }
+      }
+      if waited == 0 {
+        _ = kill(child, SIGKILL)
+        _ = waitpid(child, &status, 0)
+        Issue.record("Child confirmation exceeded its deadline")
+        return
+      }
+      guard waited == child, status == 0 else {
+        Issue.record("Child confirmation failed, wait status: \(status)")
+        return
+      }
+      guard
+        case .submitted(let pending) = try owner.operation(
+          review.handle, principal: fixture.principal)
+      else {
+        Issue.record("Child did not publish confirmation")
+        return
+      }
+      #expect(pending.outcome == .pending)
+      let result = try owner.resume(review.handle, principal: fixture.principal)
+      #expect(result.outcome == .released)
+      #expect(result.request == .release(review))
+      #expect(try !f.recoveryRecords().contains { $0.id == record.id })
+      let receipt = fixture.storeDirectory(view.key).appendingPathComponent(
+        "released/" + record.id.uuidString.lowercased() + ".json")
+      let decoded = try JSONDecoder().decode(
+        WorktreeRecoveryReleaseReceipt.self, from: Data(contentsOf: receipt))
+      #expect(decoded.operationID == review.handle.id)
+      #expect(decoded.selection == record.selection)
+    }
+  }
+
+  @Test(arguments: [false, true])
+  func deletionReceiptMustMatchItsFrozenSelection(contradictory: Bool) async throws {
+    try await removalFixture { f in
+      let fixture = try OwnerAcceptanceFixture(f)
+      let worktrees = try f.service()
+      let created = try worktrees.create(name: "foreign-deletion")
+      let git = PrivateWorktreeGit(
+        f: f, topology: try worktrees.topology(projectID: created.projectID))
+      let blob = try f.raw(["rev-parse", "HEAD:file.txt"])
+      try git.run(["update-ref", "refs/tags/base-blob", blob])
+      try git.run(["tag", "-a", "independent", "-m", "independent root"])
+      let tag = try git.run(["rev-parse", "refs/tags/independent"])
+      _ = try await worktrees.remove(
+        projectID: created.projectID, terminate: { _, _ in }, authorize: { _, _ in })
+      let owner = try fixture.service()
+      let view = try #require(try owner.list().first)
+      let retired = try #require(view.records.first { $0.oid == blob })
+      let survivor = try #require(view.records.first { $0.oid == tag })
+      let review = try owner.reviewRelease(
+        key: view.key, generation: view.generation,
+        selections: [retired.selection, survivor.selection], principal: fixture.principal)
+      #expect(
+        try worktrees.deleteBranch(
+          created.branch, authority: .sandbox, dryRun: false, confirm: true
+        ) { _ in }.deleted)
+      let receiptURL = fixture.storeDirectory(view.key).appendingPathComponent(
+        "released/" + retired.id.uuidString.lowercased() + ".json")
+      let original = try Data(contentsOf: receiptURL)
+      if contradictory {
+        var receipt = try #require(JSONSerialization.jsonObject(with: original) as? [String: Any])
+        receipt["requestDigest"] = String(repeating: "f", count: 64)
+        try JSONSerialization.data(withJSONObject: receipt, options: [.sortedKeys]).write(
+          to: receiptURL)
+      }
+      let expectedReceipt = try Data(contentsOf: receiptURL)
+      let anchor = fixture.storeDirectory(view.key).appendingPathComponent(
+        "repository.git/refs/recovery/" + survivor.id.uuidString.lowercased())
+      let anchorBytes = try Data(contentsOf: anchor)
+      let status = try owner.confirm(review, principal: fixture.principal)
+      if contradictory {
+        guard case .recoveryRequired = status.outcome else {
+          Issue.record("Contradictory D5 receipt was accepted: \(status.outcome)")
+          return
+        }
+      } else {
+        #expect(status.outcome == .stale)
+      }
+      #expect(status.request == .release(review))
+      #expect(try Data(contentsOf: receiptURL) == expectedReceipt)
+      #expect(try Data(contentsOf: anchor) == anchorBytes)
+      #expect(try f.recoveryRecords().contains { $0.id == survivor.id })
+      #expect(
+        !FileManager.default.fileExists(
+          atPath: fixture.storeDirectory(view.key)
+            .appendingPathComponent("released/" + survivor.id.uuidString.lowercased() + ".json")
+            .path))
+    }
+  }
+
+  @Test(arguments: ["sha1", "sha256"])
+  func maintenanceMeasuresOneRedundantPairAndKeepsRealObjects(format: String) throws {
+    try fixture { directory in
+      let f = try WorktreeFixture(directory, format: format)
+      let fixture = try OwnerAcceptanceFixture(f)
+      let worktrees = try f.service()
+      let created = try worktrees.create(name: "measured-packs")
+      _ = try f.privateCommit(worktrees, projectID: created.projectID)
+      _ = try worktrees.publish(projectID: created.projectID) { _ in }
+      let git = PrivateWorktreeGit(
+        f: f, topology: try worktrees.topology(projectID: created.projectID))
+      try git.run(["commit", "--allow-empty", "-m", "shared history"])
+      _ = try worktrees.publish(projectID: created.projectID) { _ in }
+      let owner = try fixture.service()
+      let view = try #require(try owner.list().first)
+      let recovery = try f.recoveryGitDirectory()
+      let packDirectory = recovery.appendingPathComponent("objects/pack")
+      let before = try ownerPackAllocation(packDirectory)
+      guard
+        case .reviewed(let review) = try owner.prepareMaintenance(
+          key: view.key, generation: view.generation, principal: fixture.principal)
+      else {
+        Issue.record("Expected a maintenance proof")
+        return
+      }
+      let hash = try #require(review.packHash)
+      #expect(review.baselineBytes == before.bytes)
+      let result = try owner.run(review, principal: fixture.principal)
+      guard case .measured(let measured) = result.outcome else {
+        Issue.record("Expected measured reclamation: \(result.outcome)")
+        return
+      }
+      let after = try ownerPackAllocation(packDirectory)
+      #expect(measured.baselineBytes == before.bytes)
+      #expect(measured.finalBytes == after.bytes)
+      #expect(measured.reclaimedBytes == before.bytes - after.bytes)
+      #expect(measured.reclaimedBytes > 0)
+      #expect(before.names.subtracting(after.names) == ["pack-\(hash).pack", "pack-\(hash).idx"])
+      #expect(after.names.subtracting(before.names).isEmpty)
+      #expect(try #require(owner.list().first).records == view.records)
+      for record in view.records {
+        let anchor = recovery.appendingPathComponent(
+          "refs/recovery/" + record.id.uuidString.lowercased())
+        #expect(try Data(contentsOf: anchor) == Data((record.oid + "\n").utf8))
+        #expect(
+          try f.raw(["--git-dir=" + recovery.path, "cat-file", "-t", record.oid])
+            == record.objectType.rawValue)
+      }
+      #expect(try owner.resume(review.handle, principal: fixture.principal) == result)
     }
   }
 
@@ -221,4 +411,17 @@ private final class OwnerConfirmationInterruption: @unchecked Sendable {
       throw Failure.injected
     }
   }
+}
+
+private func ownerPackAllocation(_ directory: URL) throws -> (names: Set<String>, bytes: Int64) {
+  let names = Set(try FileManager.default.contentsOfDirectory(atPath: directory.path))
+  var bytes: Int64 = 0
+  for name in names where name.hasSuffix(".pack") || name.hasSuffix(".idx") {
+    var info = stat()
+    guard lstat(directory.appendingPathComponent(name).path, &info) == 0 else {
+      throw POSIXError(.EIO)
+    }
+    bytes += Int64(info.st_blocks) * 512
+  }
+  return (names, bytes)
 }

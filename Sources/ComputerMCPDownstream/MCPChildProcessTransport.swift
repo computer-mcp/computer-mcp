@@ -451,10 +451,14 @@ package actor MCPChildProcessTransport: MCP.Transport {
   }
 
   package func send(_ data: Data) async throws {
+    try await send(data, afterStdioWrite: nil)
+  }
+
+  /// Lets tests hold the transport waiter after the input operation returns.
+  internal func send(_ data: Data, afterStdioWrite: (@Sendable () async -> Void)?) async throws {
     if MCPStdioCall.suppressNotification { return }
     let stdioCall = MCPStdioCall.current
-    var writtenID: MCP.ID?
-    defer { stdioCall?.finishWrite(id: writtenID) }
+    defer { stdioCall?.finishWrite(id: nil) }
     guard !closed, let process else { throw MCPError.connectionClosed }
     guard let line = String(data: data, encoding: .utf8) else {
       throw MCPError.invalidRequest("MCP stdio requires UTF-8 JSON.")
@@ -470,8 +474,10 @@ package actor MCPChildProcessTransport: MCP.Transport {
       try await process.sendLine(line) { try await request.checkCancellation() }
     } else if let stdioCall {
       let id = try JSONDecoder().decode(StdioRequestIdentity.self, from: data).id
-      try await process.sendLine(line) { try stdioCall.admit() }
-      writtenID = id
+      try await process.sendLine(
+        line, beforeWrite: { try stdioCall.admit() },
+        onWriteCompleted: { stdioCall.finishWrite(id: id) })
+      await afterStdioWrite?()
     } else {
       try await process.sendLine(line, onInputAuthorized: Self.onCancellationWriteAuthorized)
     }

@@ -16,6 +16,55 @@ import Testing
 
 @Suite(.nativeIntegration, .timeLimit(.minutes(1)))
 struct MCPChildProcessTransportTests {
+  #if canImport(Darwin)
+    @Test
+    func writtenRequestIDIsSettledWhenDisconnectJoinsInput() async throws {
+      let root = try ScopedTemporaryDirectory()
+      let environment = ["PATH": "/usr/bin:/bin"]
+      let transport = try MCPChildProcessTransport(
+        launcher: testExecutionLauncher(),
+        server: .init(id: "write-join", transport: .stdio, command: "/bin/cat"),
+        workingDirectory: root.url, environment: environment,
+        hostContext: HostEnvironmentProbe(root: root.url))
+      let administration = ExecutionAdministration(
+        mode: .fullAccess, environment: try .init(fullAccessVariables: environment))
+      try await ExecutionAdministration.$current.withValue(administration) {
+        try await transport.connect()
+      }
+
+      let call = MCPStdioCall()
+      let frame = Data(#"{"jsonrpc":"2.0","id":"held-write","method":"tools/call"}"#.utf8)
+      let parked = AsyncStream<Bool>.makeStream(bufferingPolicy: .bufferingNewest(1))
+      let release = AsyncStream<Void>.makeStream()
+      let send = Task {
+        defer { parked.continuation.finish() }
+        try await MCPStdioCall.$current.withValue(call) {
+          try await transport.send(frame) {
+            parked.continuation.yield(true)
+            parked.continuation.finish()
+            for await _ in release.stream {}
+          }
+        }
+      }
+      do {
+        var checkpoint = parked.stream.makeAsyncIterator()
+        try #require(await checkpoint.next() == true)
+        var inbound = await transport.receive().makeAsyncIterator()
+        #expect(try await inbound.next() == frame)
+        await transport.disconnect()
+        #expect(await transport.shutdownConfirmed())
+        #expect(call.writtenRequestID == .string("held-write"))
+      } catch {
+        release.continuation.finish()
+        await transport.disconnect()
+        _ = await send.result
+        throw error
+      }
+      release.continuation.finish()
+      try await send.value
+    }
+  #endif
+
   @Test
   func hostServicesRequireAProvidingEnvironmentBeforeLaunch() throws {
     let server = MCPServerConfig(

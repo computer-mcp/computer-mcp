@@ -13,11 +13,20 @@ struct ManagedLineProcessInputTests {
   func writeResultControlsAdmissionBeforeTheNextTurn(_ end: WriteEnd) async throws {
     let input = ChildProcessInput(closedError: Failure.closed, inputClosedError: Failure.eof)
     let writer = ScriptedWriter(end: end)
+    let completed = AsyncStream<String>.makeStream()
     defer { writer.release.continuation.finish() }
     await input.attach(writer)
-    let first = Task { try await input.write(Data("first".utf8), close: false) }
+    let first = Task {
+      try await input.write(
+        Data("first".utf8), close: false,
+        onWriteCompleted: { completed.continuation.yield("first") })
+    }
     for await _ in writer.entered.stream {}
-    let second = Task { try await input.write(Data("second".utf8), close: true) }
+    let second = Task {
+      try await input.write(
+        Data("second".utf8), close: true,
+        onWriteCompleted: { completed.continuation.yield("second") })
+    }
     try await waitUntil { input.snapshot.pendingWrites == 2 }
     writer.release.continuation.finish()
     await #expect(throws: end == .error ? Failure.library : Failure.closed) {
@@ -35,6 +44,10 @@ struct ManagedLineProcessInputTests {
     }
     #expect(input.snapshot.pendingWrites == 0)
     await input.finish()
+    completed.continuation.finish()
+    var completedFrames: [String] = []
+    for await frame in completed.stream { completedFrames.append(frame) }
+    #expect(completedFrames == (end == .partial ? [] : ["second"]))
   }
 
   @Test

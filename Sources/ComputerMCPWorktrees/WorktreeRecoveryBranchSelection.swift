@@ -68,7 +68,7 @@ struct WorktreeRecoveryBranchSelection: Codable, Equatable {
     let request = Request(
       repository: repository, source: source, generation: catalog.generation,
       protection: protection, baseOID: baseOID, force: force)
-    let digest = WorktreeObjectSnapshot.digest(try recoveryJSON(request))
+    let digest = try request.digest()
     let releaseRecords = terminal.filter { releasedIDs.contains($0.id) }
     let selections = try WorktreeRecoveryReleaseReceipt.digest(of: releaseRecords.map(\.selection))
     released = releaseRecords.map {
@@ -159,6 +159,33 @@ struct WorktreeRecoveryBranchSelection: Codable, Equatable {
     }
   }
 
+  func retiredReleaseReceipts() throws -> [WorktreeRecoveryReleaseReceipt] {
+    guard let owner, owner.source == source, owner.matches(protection),
+      releaseOperationID != operationID, before.count == pinned.count
+    else { throw invalidRecoveryMetadata() }
+    let retired = Set(released.map(\.selection.recordID))
+    guard retired.count == released.count, !retired.isEmpty else {
+      throw invalidRecoveryMetadata()
+    }
+    let records = try zip(before, pinned).compactMap { prior, record -> WorktreeRecoveryRecord? in
+      guard retired.contains(prior.recordID) else { return nil }
+      try record.validate(repository: repository, generation: generation)
+      guard record.id == prior.recordID, record.oid == prior.oid,
+        prior.revision > 0, prior.revision < Int64.max - 3,
+        record.revision == prior.revision + 1, record.owner == owner,
+        record.state == .retained, record.dependencies == [operationID]
+      else { throw invalidRecoveryMetadata() }
+      return Self.removingPin(record, operationID: operationID)
+    }
+    let request = Request(
+      repository: repository, source: source, generation: generation, protection: protection,
+      baseOID: baseOID, force: force)
+    let expected = try WorktreeRecoveryReleaseReceipt.batch(
+      for: records, operationID: releaseOperationID, requestDigest: request.digest())
+    guard released == expected else { throw invalidRecoveryMetadata() }
+    return expected
+  }
+
   private func requireIntent(_ intent: WorktreeRecoveryIntent, digest: String) throws {
     guard intent.kind == .branchDeletion, intent.requestDigest == digest,
       intent.selections == pinned.map(\.selection)
@@ -189,5 +216,9 @@ struct WorktreeRecoveryBranchSelection: Codable, Equatable {
     let protection: ProtectedWorktreeBranch
     let baseOID: String?
     let force: Bool
+
+    func digest() throws -> String {
+      WorktreeObjectSnapshot.digest(try recoveryJSON(self))
+    }
   }
 }

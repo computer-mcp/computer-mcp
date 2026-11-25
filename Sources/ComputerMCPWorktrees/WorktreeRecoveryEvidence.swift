@@ -185,3 +185,111 @@ extension WorktreeRepository {
     return false
   }
 }
+
+extension WorktreeRecoveryOwnerService {
+  /// Reads independent host journals under the existing store lock. The
+  /// lifecycle decoders used here neither enter the source nor acquire locks.
+  func requireRetiredReleaseEvidence(
+    _ retired: [WorktreeRecoveryReleaseReceipt], activeRecords: Set<UUID>,
+    in store: WorktreeRecoveryStore.Locked
+  ) throws {
+    let budget = WorktreeRecoveryEvidenceBudget(
+      deadline: .now.advanced(by: WorktreePromotionLimits().duration))
+    var unresolved = Dictionary(grouping: retired, by: \.operationID)
+    func match(_ id: UUID, _ frozen: [WorktreeRecoveryReleaseReceipt]) throws -> Bool {
+      if let observed = unresolved[id] {
+        try store.verifyRetiredRelease(
+          frozen, matching: observed, activeRecords: activeRecords, account: budget.account)
+        unresolved.removeValue(forKey: id)
+      }
+      return !unresolved.isEmpty
+    }
+    do {
+      for id in Array(unresolved.keys) {
+        try budget.check()
+        guard
+          let entry = try store.ownerEntry(
+            RecoveryOwnerJournal.resultName(id), account: budget.account)
+        else { continue }
+        guard entry.record.outcome == .released,
+          case .release(let review) = entry.record.request
+        else {
+          throw WorktreeError.recoveryRequired("A recovery receipt contradicts its owner result.")
+        }
+        if try !match(id, review.release.receipts(for: review.handle)) { return }
+      }
+      if let owner = unresolved.values.first?.first?.owner {
+        try reader(store.repository, owner.source).visitRetiredBranchReleases(
+          generation: store.generation, budget: budget
+        ) { selection in
+          let id = selection.releaseOperationID
+          guard unresolved[id] != nil else { return true }
+          return try match(id, selection.retiredReleaseReceipts())
+        }
+      }
+      let owners = Set(unresolved.values.flatMap { $0.map(\.owner) })
+      for owner in owners {
+        try budget.check()
+        try reader(store.repository, owner.source).visitRetiredWorktreeReleases(
+          owner: owner, generation: store.generation, budget: budget, visit: match)
+        if unresolved.isEmpty { return }
+      }
+    } catch WorktreeError.busy(let reason) {
+      throw WorktreeError.recoveryRequired(reason)
+    } catch let error as POSIXError {
+      throw WorktreeError.recoveryRequired(
+        "The foreign release history could not be read. \(error.localizedDescription)")
+    }
+    guard unresolved.isEmpty else {
+      throw WorktreeError.recoveryRequired("A retired recovery record has no proven release batch.")
+    }
+  }
+}
+
+extension WorktreeRepository {
+  func visitRetiredWorktreeReleases(
+    owner: WorktreeRecoveryRecord.Owner, generation: UUID, budget: WorktreeRecoveryEvidenceBudget,
+    visit: (UUID, [WorktreeRecoveryReleaseReceipt]) throws -> Bool
+  ) throws {
+    let publication = try readPublication(owner.projectID, account: budget.account)
+    if let publication, publication.phase == .finished, publication.removalID == nil,
+      publication.handoff?.retention.owner == owner,
+      publication.handoff?.retention.generation == generation,
+      let terminal = publication.terminal, let receipts = terminal.receipts
+    {
+      if try !visit(terminal.releaseOperationID, receipts) { return }
+    }
+    if let removal = try readRemoval(owner.projectID, account: budget.account),
+      [.unregistering, .finished].contains(removal.phase),
+      let reconciliation = removal.reconciliation, reconciliation.finished,
+      reconciliation.owner == owner, reconciliation.generation == generation,
+      reconciliation.removalID == removal.operationID
+    {
+      if let releases = reconciliation.releases,
+        try !visit(reconciliation.releaseOperationID, releases)
+      {
+        return
+      }
+      if let terminal = removal.terminal, let receipts = terminal.receipts,
+        try !visit(terminal.releaseOperationID, receipts)
+      {
+        return
+      }
+    }
+    guard let directory = try replacementDirectory(owner, create: false) else { return }
+    for name in try directory.entries(limit: WorktreeRecoveryCatalog.referenceLimit)
+    where name.hasSuffix(".json") {
+      guard let id = UUID(uuidString: String(name.dropLast(5))),
+        name == id.uuidString.lowercased() + ".json",
+        let journal = try readReplacement(
+          id, in: directory, owner: owner, generation: generation, synchronizing: false,
+          account: budget.account)
+      else { throw invalidRecoveryMetadata() }
+      if let change = journal.change, change.phase == .finished, let releases = change.releases,
+        try !visit(change.releaseOperationID, releases)
+      {
+        return
+      }
+    }
+  }
+}

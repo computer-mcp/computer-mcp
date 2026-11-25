@@ -232,7 +232,10 @@ package struct WorktreeRecoveryOwnerService: Sendable {
     let receipts = try review.release.receipts(for: review.handle)
     let decision: ReleaseDecision
     do {
-      decision = try store.releaseDecision(records: review.release.records, receipts: receipts)
+      decision = try store.releaseDecision(records: review.release.records, receipts: receipts) {
+        retired, activeRecords in
+        try requireRetiredReleaseEvidence(retired, activeRecords: activeRecords, in: store)
+      }
     } catch {
       guard isEvidenceFailure(error) else { throw error }
       let next = try store.saveOwnerOperation(
@@ -589,7 +592,8 @@ private enum ReleaseDecision { case admit, stale, busy, admitted, archived }
 
 extension WorktreeRecoveryStore.Locked {
   fileprivate func releaseDecision(
-    records: [WorktreeRecoveryRecord], receipts: [WorktreeRecoveryReleaseReceipt]
+    records: [WorktreeRecoveryRecord], receipts: [WorktreeRecoveryReleaseReceipt],
+    verifyRetired: ([WorktreeRecoveryReleaseReceipt], Set<UUID>) throws -> Void
   ) throws -> ReleaseDecision {
     guard let first = receipts.first else { throw invalidRecoveryMetadata() }
     let catalog = try catalog()
@@ -602,7 +606,7 @@ extension WorktreeRecoveryStore.Locked {
         admission.selections == receipts.map(\.selection)
       else { throw invalidRecoveryMetadata() }
     }
-    var retiredBindings: [UUID: (request: String, selection: String)] = [:]
+    var retired: [WorktreeRecoveryReleaseReceipt] = []
     var foreignDigests: [UUID: String] = [:]
     var foreignSelections: [UUID: [UUID: WorktreeRecoveryRecord.Selection]] = [:]
     var exact = 0
@@ -620,13 +624,7 @@ extension WorktreeRecoveryStore.Locked {
             receipt.selection.revision >= before.revision,
             intents[receipt.operationID] == nil
           else { throw invalidRecoveryMetadata() }
-          if let binding = retiredBindings[receipt.operationID] {
-            guard binding.request == receipt.requestDigest,
-              binding.selection == receipt.selectionDigest
-            else { throw invalidRecoveryMetadata() }
-          } else {
-            retiredBindings[receipt.operationID] = (receipt.requestDigest, receipt.selectionDigest)
-          }
+          retired.append(receipt)
           stale = true
         }
         continue
@@ -675,6 +673,7 @@ extension WorktreeRecoveryStore.Locked {
       guard exact == receipts.count else { throw invalidRecoveryMetadata() }
       return .archived
     }
+    if !retired.isEmpty { try verifyRetired(retired, Set(byID.keys)) }
     if busy { return .busy }
     return stale ? .stale : .admit
   }

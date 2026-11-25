@@ -46,8 +46,14 @@ struct WorktreeRecoveryOwnerTests {
       let fresh = try owner.reviewRelease(
         key: view.key, generation: view.generation, selections: [record.selection],
         principal: principal)
+      let competing = try owner.reviewRelease(
+        key: view.key, generation: view.generation, selections: [record.selection],
+        principal: principal)
       let released = try owner.confirm(fresh, principal: principal)
       #expect(released.outcome == .released)
+      let stale = try owner.confirm(competing, principal: principal)
+      #expect(stale.outcome == .stale)
+      #expect(stale.request.handle == competing.handle)
       #expect(released.gates.map(\.cleanup) == [.cleared])
       #expect(try owner.confirm(fresh, principal: principal) == released)
       #expect(try !#require(owner.list().first).records.contains { $0.id == record.id })
@@ -132,6 +138,91 @@ struct WorktreeRecoveryOwnerTests {
       let result = try owner.confirm(inactive, principal: principal)
       #expect(result.outcome == .released)
       #expect(try owner.resume(inactive.handle, principal: principal) == result)
+    }
+  }
+
+  enum ForeignDeletionEvidence: Sendable {
+    case intact, requestDigest, selectionDigest, missingJournal
+  }
+
+  @Test(arguments: [
+    ForeignDeletionEvidence.intact, .requestDigest, .selectionDigest, .missingJournal,
+  ])
+  func singleRetiredRecordRequiresFrozenDeletionEvidence(
+    evidence: ForeignDeletionEvidence
+  ) async throws {
+    try await removalFixture { f in
+      let worktrees = try f.service()
+      let owner = try ownerService(f)
+      let created = try worktrees.create(name: "receipt")
+      let privateGit = PrivateWorktreeGit(
+        f: f, topology: try worktrees.topology(projectID: created.projectID))
+      let blob = try f.raw(["rev-parse", "HEAD:file.txt"])
+      try privateGit.run(["update-ref", "refs/tags/base-blob", blob])
+      try privateGit.run(["tag", "-a", "survivor", "-m", "independent root"])
+      let tag = try privateGit.run(["rev-parse", "refs/tags/survivor"])
+      _ = try await worktrees.remove(projectID: created.projectID, terminate: { _, _ in }) { _, _ in
+      }
+      let view = try #require(owner.list().first)
+      let retired = try #require(view.records.first { $0.oid == blob })
+      let survivor = try #require(view.records.first { $0.oid == tag })
+      let reviewed = try owner.reviewRelease(
+        key: view.key, generation: view.generation, selections: [retired.selection],
+        principal: principal)
+      #expect(
+        try worktrees.deleteBranch(
+          created.branch, authority: .sandbox, dryRun: false, confirm: true
+        ) { _ in }.deleted)
+
+      let git = try f.recoveryGitDirectory()
+      let store = git.deletingLastPathComponent()
+      let receiptURL = store.appendingPathComponent(
+        "released/" + retired.id.uuidString.lowercased() + ".json")
+      let original = try Data(contentsOf: receiptURL)
+      let receipt = try JSONDecoder().decode(WorktreeRecoveryReleaseReceipt.self, from: original)
+      #expect(try receipt.encoded() == original)
+      #expect(receipt.selection.revision > retired.revision)
+      switch evidence {
+      case .intact: break
+      case .requestDigest, .selectionDigest:
+        func changedDigest(_ original: String) -> String {
+          String(repeating: original.first == "f" ? "e" : "f", count: 64)
+        }
+        let changed = WorktreeRecoveryReleaseReceipt(
+          storeGeneration: receipt.storeGeneration, owner: receipt.owner,
+          selection: receipt.selection,
+          operationID: receipt.operationID,
+          requestDigest: evidence == .requestDigest
+            ? changedDigest(receipt.requestDigest) : receipt.requestDigest,
+          selectionDigest: evidence == .selectionDigest
+            ? changedDigest(receipt.selectionDigest) : receipt.selectionDigest)
+        try changed.encoded().write(to: receiptURL)
+      case .missingJournal:
+        try FileManager.default.removeItem(
+          at: f.storage.journals.appendingPathComponent("branch-deletions"))
+      }
+      let expectedReceipt = try Data(contentsOf: receiptURL)
+      let anchor = git.appendingPathComponent(
+        "refs/recovery/" + survivor.id.uuidString.lowercased())
+      let expectedAnchor = try Data(contentsOf: anchor)
+      try FileManager.default.removeItem(at: f.repository)
+
+      let status = try owner.confirm(reviewed, principal: principal)
+      if evidence == .intact {
+        #expect(status.outcome == .stale)
+      } else if case .recoveryRequired = status.outcome {
+        #expect(
+          !FileManager.default.fileExists(
+            atPath: store.appendingPathComponent(
+              RecoveryOwnerJournal.resultName(reviewed.handle.id)
+            ).path))
+      } else {
+        Issue.record("Unprovable retired release returned \(status.outcome).")
+      }
+      #expect(status.request.handle == reviewed.handle)
+      #expect(try owner.resume(reviewed.handle, principal: principal) == status)
+      #expect(try Data(contentsOf: receiptURL) == expectedReceipt)
+      #expect(try Data(contentsOf: anchor) == expectedAnchor)
     }
   }
 

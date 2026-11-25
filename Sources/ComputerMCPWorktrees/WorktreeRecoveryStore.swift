@@ -736,6 +736,32 @@ extension WorktreeRecoveryStore {
       return receipt
     }
 
+    /// The caller has verified that this release intent is absent. The frozen
+    /// batch must be completely retired, including records outside the review.
+    func verifyRetiredRelease(
+      _ frozen: [WorktreeRecoveryReleaseReceipt],
+      matching observed: [WorktreeRecoveryReleaseReceipt],
+      activeRecords: Set<UUID>, account: (Int) throws -> Void
+    ) throws {
+      let batch = try releaseBatch(frozen)
+      let byID = Dictionary(
+        uniqueKeysWithValues: batch.items.map { ($0.receipt.selection.recordID, $0.receipt) })
+      guard observed.allSatisfy({ byID[$0.selection.recordID] == $0 }) else {
+        throw WorktreeError.recoveryRequired(
+          "A recovery receipt contradicts its frozen release batch.")
+      }
+      for item in batch.items {
+        let id = item.receipt.selection.recordID
+        try account(item.bytes.count)
+        guard !activeRecords.contains(id),
+          try journalIO.read(
+            receiptName(id), in: opened.directories.released, limit: item.bytes.count) == item.bytes
+        else {
+          throw WorktreeError.recoveryRequired("The frozen foreign release batch is incomplete.")
+        }
+      }
+    }
+
     func prepareRelease(_ receipts: [WorktreeRecoveryReleaseReceipt]) throws {
       let batch = try releaseBatch(receipts)
       let previous = try durableCatalog()

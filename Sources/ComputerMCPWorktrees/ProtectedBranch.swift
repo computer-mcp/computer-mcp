@@ -376,6 +376,25 @@ extension WorktreeRepository {
     }
   }
 
+  /// Traverses host deletion history once. The store lock freezes catalog
+  /// retirement and publication of the selection, including after source loss.
+  func visitRetiredBranchReleases(
+    generation: UUID, budget: WorktreeRecoveryEvidenceBudget,
+    visit: (WorktreeRecoveryBranchSelection) throws -> Bool
+  ) throws {
+    guard let root = try WorktreeDirectory.openIfPresent(storage.journals),
+      let directory = try root.childIfPresent("branch-deletions")
+    else { return }
+    for name in try directory.entries(limit: WorktreeRecoveryCatalog.recordLimit)
+    where name.hasSuffix(".json") {
+      let journal = try readDeletion(name, in: directory, account: budget.account)
+      guard journal.repository == identity, journal.version == 2, journal.phase != .prepared,
+        let selection = journal.selection, selection.generation == generation
+      else { continue }
+      if try !visit(selection) { return }
+    }
+  }
+
   private func deletionDirectory() throws -> WorktreeDirectory {
     try WorktreeDirectory(storage.journals).child("branch-deletions", create: true)
   }

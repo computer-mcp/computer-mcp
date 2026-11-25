@@ -65,10 +65,11 @@ extension WorktreeRecoveryStore.Locked {
     }
   }
 
-  func ownerEntry(_ name: String) throws -> OwnerEntry? {
+  func ownerEntry(_ name: String, account: (Int) throws -> Void = { _ in }) throws -> OwnerEntry? {
     try checkIdentity()
     guard let bytes = try journalIO.read(name, in: directory, limit: RecoveryOwnerJournal.byteLimit)
     else { return nil }
+    try account(bytes.count)
     let record = try JSONDecoder().decode(RecoveryOwnerJournal.self, from: bytes)
     guard record.schema == 1, record.revision > 0, record.handle.generation == generation,
       record.handle.storeKey == (try WorktreeRecoveryStore.key(for: repository)),

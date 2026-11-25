@@ -33,6 +33,71 @@ package actor ManagedMCPRequest {
   }
 }
 
+/// The SDK allocates the ID and writes the frame on different tasks. The input
+/// turn decides whether a deadline can still refuse the entire frame.
+package final class MCPStdioCall: @unchecked Sendable {
+  @TaskLocal package static var current: MCPStdioCall?
+
+  private enum Phase { case pending, admitted, written, finished }
+  private let lock = NSLock()
+  private var phase = Phase.pending
+  private var requestID: MCP.ID?
+  private let written: AsyncStream<MCP.ID>
+  private let completion: AsyncStream<MCP.ID>.Continuation
+
+  package init() {
+    (written, completion) = AsyncStream.makeStream(bufferingPolicy: .bufferingNewest(1))
+  }
+
+  package func refuseBeforeAdmission() {
+    lock.withLock {
+      guard phase == .pending else { return }
+      phase = .finished
+      completion.finish()
+    }
+  }
+
+  package func identify(_ id: MCP.ID) {
+    lock.withLock {
+      requestID = id
+      publishWrittenID()
+    }
+  }
+
+  package func forwardedID() async -> MCP.ID? {
+    for await id in written { return id }
+    return nil
+  }
+
+  fileprivate func admit() throws {
+    try lock.withLock {
+      guard phase == .pending else { throw CancellationError() }
+      phase = .admitted
+    }
+  }
+
+  fileprivate func finishWrite(written: Bool) {
+    lock.withLock {
+      guard phase != .finished else { return }
+      if written {
+        phase = .written
+        publishWrittenID()
+      } else {
+        phase = .finished
+        completion.finish()
+      }
+    }
+  }
+
+  // Called with the lock held. Only a complete frame supplies a cancellation ID.
+  private func publishWrittenID() {
+    guard phase == .written, let requestID else { return }
+    phase = .finished
+    completion.yield(requestID)
+    completion.finish()
+  }
+}
+
 /// MCP framing over the same owned-process primitive used by other stdio adapters.
 package actor MCPChildProcessTransport: MCP.Transport {
   @TaskLocal package static var onCancellationWriteAuthorized: (@Sendable () -> Void)?
@@ -254,6 +319,9 @@ package actor MCPChildProcessTransport: MCP.Transport {
   }
 
   package func send(_ data: Data) async throws {
+    let stdioCall = MCPStdioCall.current
+    var wroteCall = false
+    defer { stdioCall?.finishWrite(written: wroteCall) }
     guard !closed, let process else { throw MCPError.connectionClosed }
     guard let line = String(data: data, encoding: .utf8) else {
       throw MCPError.invalidRequest("MCP stdio requires UTF-8 JSON.")
@@ -267,6 +335,9 @@ package actor MCPChildProcessTransport: MCP.Transport {
     if let request = ManagedMCPRequest.current {
       try await request.beginSend()
       try await process.sendLine(line) { try await request.checkCancellation() }
+    } else if let stdioCall {
+      try await process.sendLine(line) { try stdioCall.admit() }
+      wroteCall = true
     } else {
       try await process.sendLine(line, onInputAuthorized: Self.onCancellationWriteAuthorized)
     }

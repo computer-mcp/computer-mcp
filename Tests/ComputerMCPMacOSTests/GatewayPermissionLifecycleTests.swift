@@ -61,6 +61,7 @@ struct GatewayPermissionLifecycleTests {
       #expect(fixture.hasAttribute())
 
       try fixture.answer(ids, .onlyThisTime)
+      #expect(fixture.hasAttribute())
       var changed = fixture.target
       changed["dry_run"] = .bool(true)
       let mismatched = try await fixture.retry(client, arguments: changed, ids: ids)
@@ -101,18 +102,160 @@ struct GatewayPermissionLifecycleTests {
   }
 
   @Test
-  func alwaysAnswerPersistsAcrossReconnectAndRevocationStopsExistingClients() async throws {
+  func sandboxAlwaysAnswerRequiresExactRetryAndPersistsAcrossReconnect() async throws {
+    let fixture = try FixedHostFixture(fullAccess: false, lifecycle: true, caller: .secureTunnel)
+    try await fixture.run { fixture in
+      try await fixture.initializeRepository()
+      let control = try fixturePermissionControl(
+        database: fixture.database, configuration: fixture.configuration, platform: fixture.platform
+      )
+      let http = GatewayHTTPRuntime(
+        configuration: fixture.configuration, registry: fixture.runtime, host: "127.0.0.1", port: 0,
+        publicBaseURL: nil, accessToken: "sandbox-always-fixture")
+      try await http.startListening()
+      do {
+        let port = try #require(await http.boundPort())
+        let endpoint = try #require(URL(string: "http://127.0.0.1:\(port)/mcp"))
+        let first = try await GatewayClientSession.connectHTTP(
+          endpoint: endpoint, accessToken: "sandbox-always-fixture")
+        let originalSession = try #require(await http.controlSessions().first)
+        #expect(originalSession.fullAccessConsent == nil)
+        let created = try await first.call(
+          toolName: "git.worktree_add",
+          arguments: .object(["project_id": .string("fixture"), "name": .string("always-retry")]))
+        try #require(created.result.objectValue?["isError"] != .bool(true), "\(created.result)")
+        let worktree = try #require(
+          created.result.objectValue?["structuredContent"]?.objectValue?["result"]?.objectValue)
+        let id = try #require(worktree["project_id"]?.stringValue)
+        let path = try #require(worktree["path"]?.stringValue)
+        let file = URL(fileURLWithPath: path).appendingPathComponent("value.txt")
+        let source = fixture.project.appendingPathComponent("value.txt")
+        let before = try control.view()
+        var profile = try #require(before.profiles.first { $0.id == .chatGPTOperate })
+        try profile.permissions.set(.granted(.read), for: .project("fixture"))
+        try control.updateProfile(
+          profile, expectedProfileRevision: profile.authorizationRevision,
+          expectedRevision: before.revision, expectedEpoch: before.epoch)
+
+        let target: [String: JSONValue] = [
+          "project_id": .string(id), "path": .string("value.txt"), "content": .string("reviewed"),
+        ]
+        let pending = try await first.call(toolName: "file.write", arguments: .object(target))
+        let ids = try requestIDs(pending)
+        let requests = try control.view().requests.filter { ids.contains($0.request.id) }
+        try #require(requests.count == ids.count)
+        for item in requests {
+          guard case .permission(let permission) = item.request.content else {
+            Issue.record("Expected a project write request")
+            continue
+          }
+          #expect(item.request.invocation.projectID == id)
+          #expect(item.request.requirements.mode == .sandbox)
+          #expect(permission.requirement.permission == .project("fixture"))
+          #expect(permission.requirement.value == .write)
+        }
+        #expect(try String(contentsOf: file, encoding: .utf8) == "original")
+        for request in ids {
+          _ = try control.answerRequest(
+            request, answer: .always, expectedRevision: control.view().revision)
+        }
+        let approved = try #require(try control.view().profiles.first { $0.id == profile.id })
+        #expect(approved.permissions.state(for: .project("fixture")) == .granted(.write))
+        #expect(approved.permissions.entries[.project(id)] == nil)
+        #expect(!approved.fullAccess)
+        #expect(try String(contentsOf: file, encoding: .utf8) == "original")
+
+        var retry = target
+        retry["_permission_request_ids"] = .array(ids.map { .string($0.uuidString) })
+        var changed = retry
+        changed["content"] = .string("unreviewed")
+        let mismatched = try await first.call(toolName: "file.write", arguments: .object(changed))
+        #expect(try permissionError(mismatched)["code"] == .string("permission.retry_mismatch"))
+        #expect(try String(contentsOf: file, encoding: .utf8) == "original")
+
+        let retried = try await first.call(toolName: "file.write", arguments: .object(retry))
+        try #require(retried.result.objectValue?["isError"] != .bool(true), "\(retried.result)")
+        #expect(try String(contentsOf: file, encoding: .utf8) == "reviewed")
+        #expect(try String(contentsOf: source, encoding: .utf8) == "original")
+        let currentSession = try #require(await http.controlSessions().first)
+        #expect(currentSession.id == originalSession.id && currentSession.fullAccessConsent == nil)
+        await first.disconnect()
+
+        let reconnected = try await GatewayClientSession.connectHTTP(
+          endpoint: endpoint, accessToken: "sandbox-always-fixture")
+        let reconnectTarget = target.merging(["content": .string("reconnected")]) { _, new in new }
+        let persisted = try await reconnected.call(
+          toolName: "file.write", arguments: .object(reconnectTarget))
+        try #require(persisted.result.objectValue?["isError"] != .bool(true), "\(persisted.result)")
+        #expect(try String(contentsOf: file, encoding: .utf8) == "reconnected")
+        let beforeRevocation = try control.view()
+        _ = try control.revokePermission(
+          .project("fixture"), profileID: profile.id, expectedRevision: beforeRevocation.revision)
+        let denied = try await reconnected.call(toolName: "file.write", arguments: .object(target))
+        #expect(try permissionError(denied)["code"] == .string("permission.denied"))
+        #expect(try control.view().requests.count == beforeRevocation.requests.count)
+        #expect(try String(contentsOf: file, encoding: .utf8) == "reconnected")
+        #expect(try String(contentsOf: source, encoding: .utf8) == "original")
+        await reconnected.disconnect()
+        await http.stop()
+      } catch {
+        await http.stop()
+        throw error
+      }
+    }
+  }
+
+  @Test
+  func fullAccessAlwaysAnswerInvalidatesConsentAndRequiresFreshLocalApproval() async throws {
     let fixture = try PermissionFixture()
     defer { fixture.removeFiles() }
     try await fixture.http.startListening()
     do {
       let first = try await fixture.connect()
+      let original = try #require(await fixture.http.controlSessions().first)
+      let originalConsent = try #require(original.fullAccessConsent)
       let pending = try await first.call(
         toolName: "file.remove_xattr", arguments: .object(fixture.target))
-      try fixture.answer(requestIDs(pending), .always)
+      let ids = try requestIDs(pending)
+      try fixture.answer(ids, .always)
+      #expect(fixture.hasAttribute())
       let profile = try #require(
         try fixture.control.view().profiles.first { $0.id == .chatGPTOperate })
       #expect(profile.permissions.state(for: .project("fixture")) == .granted(.write))
+      #expect(profile.fullAccess)
+      #expect(profile.authorizationRevision > originalConsent.profile.grant.authorizationRevision)
+      let invalidated = try #require(await fixture.http.controlSessions().first)
+      #expect(invalidated.id == original.id && invalidated.principalID == original.principalID)
+      #expect(invalidated.revision > original.revision)
+      #expect(invalidated.fullAccessConsent == nil)
+      let retried = try await fixture.retry(first, ids: ids)
+      let retryError = try permissionError(retried)
+      #expect(retryError["code"] == .string("permission.denied"))
+      #expect(retryError["reason"] == .string("mainProjectWrite"))
+      #expect(fixture.hasAttribute())
+
+      await #expect(throws: (any Error).self) {
+        try await fixture.http.approveControlSession(
+          id: original.id, expectedRevision: original.revision)
+      }
+      let renewed = try await fixture.http.approveControlSession(
+        id: invalidated.id, expectedRevision: invalidated.revision)
+      let renewedConsent = try #require(renewed.fullAccessConsent)
+      #expect(renewed.id == original.id && renewed.principalID == original.principalID)
+      #expect(renewedConsent.profile.grant == profile && renewedConsent != originalConsent)
+      #expect(renewed.revision > invalidated.revision)
+      #expect(fixture.hasAttribute())
+      var changed = fixture.target
+      changed["dry_run"] = .bool(true)
+      let mismatched = try await fixture.retry(first, arguments: changed, ids: ids)
+      #expect(try permissionError(mismatched)["code"] == .string("permission.retry_mismatch"))
+      #expect(fixture.hasAttribute())
+      let retriedWithConsent = try await fixture.retry(first, ids: ids)
+      try #require(
+        retriedWithConsent.result.objectValue?["isError"] != .bool(true),
+        "\(retriedWithConsent.result)")
+      #expect(!fixture.hasAttribute())
+      try fixture.replaceAttribute(with: "reconnected target")
       await first.disconnect()
 
       let reconnected = try await fixture.connect()

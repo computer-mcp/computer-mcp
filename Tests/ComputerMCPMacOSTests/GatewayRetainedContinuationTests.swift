@@ -266,6 +266,10 @@ struct GatewayRetainedContinuationTests {
 
       _ = try await fixture.startOneTime(client, requestID: "revoked")
       try fixture.revoke(.mcpServer("fixture"))
+      let completedAfterRevocation = try await fixture.call(
+        client, "mcp.requests.read",
+        ["server": .string("fixture"), "request_id": .string("owned")])
+      #expect(completedAfterRevocation.objectValue?["isError"] == .bool(true))
       for tool in ["mcp.requests.read", "mcp.requests.cancel"] {
         let rejected = try await fixture.call(
           client, tool,

@@ -40,6 +40,67 @@ import Testing
     )
   }
 
+  @Test func requestShortcutsUseTheActionsForThatRequestType() async throws {
+    let application = NSApplication.shared
+    var request = try #require(PrivacySecurityFake.sample.requests.first)
+    for registration in [PrivacyRequest.Registration?.none, .newProject, .existingProject] {
+      request.registration = registration
+      let approvals: [PrivacyRequestAnswer] =
+        registration == nil ? [.onlyThisTime, .always] : [.always]
+      #expect(request.approvalAnswers == approvals)
+      for (key, code, answer) in [("\r", UInt16(36), approvals[0]), ("\u{1b}", 53, .dontAllow)] {
+        var selected: PrivacyRequestAnswer?
+        let window = NSWindow(
+          contentViewController: NSHostingController(
+            rootView: PrivacyRequestPrompt(request: request) { selected = $0 }))
+        window.isReleasedWhenClosed = false
+        defer { window.close() }
+        window.orderBack(nil)
+        window.makeKey()
+        application.updateWindows()
+        window.contentView?.layoutSubtreeIfNeeded()
+        let event = try #require(
+          NSEvent.keyEvent(
+            with: .keyDown, location: .zero, modifierFlags: [], timestamp: 0,
+            windowNumber: window.windowNumber, context: nil, characters: key,
+            charactersIgnoringModifiers: key, isARepeat: false, keyCode: code))
+        #expect(window.performKeyEquivalent(with: event))
+        for _ in 0..<10 where selected == nil { try await Task.sleep(for: .milliseconds(10)) }
+        #expect(selected == answer)
+      }
+    }
+  }
+
+  @Test func sharedWorktreeGrantResolvesTheOriginalProfileAndProject() async throws {
+    let profile = ProfileGrant(id: .chatGPTOperate, allowedCallers: [.secureTunnel])
+    let owner = PrivacyPrincipal(
+      id: profile.id.rawValue, name: "Profile",
+      kind: .client(connection: "Secure Tunnel"), execution: .sandbox)
+    let client = PrivacyPrincipal(
+      id: "client/individual", name: "Individual",
+      kind: .client(connection: "Secure Tunnel"), execution: .sandbox,
+      sharedProfileID: profile.id)
+    let names = PermissionObjectNames(projects: ["parent": "Parent", "child": "Worktree"])
+    let sources = ["child": "parent"]
+    let ownerRows = LivePrivacySecurityService.grants(
+      profile, names: names, sourceProjects: sources)
+    let clientRows = LivePrivacySecurityService.grants(
+      profile, names: names, sourceProjects: sources, principalID: client.id)
+    let service = PrivacySecurityFake()
+    service.current = PrivacySnapshot(principals: [owner, client], grants: ownerRows + clientRows)
+    let model = PrivacySecurityModel(service: service)
+    await model.refresh()
+    let child = try #require(
+      model.grants(for: .projects, includingUnset: true).first {
+        $0.principalID == client.id && $0.object?.id == "child"
+      })
+    #expect(!model.canEdit(child))
+    let original = try #require(model.sourceGrant(for: child))
+    #expect(original.principalID == owner.id && original.object?.id == "parent")
+    #expect(model.canEdit(original))
+    #expect(model.sourceGrant(for: original) == nil)
+  }
+
   @Test func holdersCountGrantedPrincipalsOnly() async {
     let model = PrivacySecurityModel(service: PrivacySecurityFake())
     await model.refresh()
@@ -262,7 +323,8 @@ import Testing
     service.current.grants = LivePrivacySecurityService.grants(profile, names: .init())
     let model = PrivacySecurityModel(service: service)
     await model.refresh()
-    let row = try #require(model.grants(for: .projects).first)
+    let row = try #require(
+      model.grants(for: .projects).first { $0.object?.id == "retired-project" })
     #expect(row.object?.id == "retired-project" && row.object?.name == "retired-project")
     #expect(row.object?.isRegistered == false)
     #expect(row.value == .ask && row.choice == .inherited)
@@ -271,6 +333,10 @@ import Testing
       PrivacyGrantRow.inheritedTitle(row, using: PrivacyText(locale: Locale(identifier: "en")))
         == "Ask")
     #expect(model.grants(for: .projects).count == 1)
+    #expect(
+      model.grants(for: .projects, includingUnset: true).contains {
+        $0.object?.id == "*" && !$0.isStored
+      })
   }
 
   @Test func inheritedChoicesUseLibraryResolutionForEveryObjectKind() throws {
@@ -455,7 +521,7 @@ import Testing
     let resources = try Self.compiledCatalog()
     defer { try? FileManager.default.removeItem(at: resources.bundleURL) }
     let request = try #require(model.snapshot.requests.first)
-    for (locale, dark) in [("en", false), ("zh-Hans", true)] {
+    for (locale, dark) in [("en", false), ("en", true), ("zh-Hans", false), ("zh-Hans", true)] {
       let appearance = try #require(NSAppearance(named: dark ? .darkAqua : .aqua))
       let suffix = "\(locale)-\(dark ? "dark" : "light")"
       try render(

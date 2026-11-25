@@ -1,3 +1,4 @@
+import ComputerMCPPlatformPOSIX
 import Foundation
 
 #if canImport(Darwin)
@@ -72,17 +73,21 @@ package struct WorktreeJournalIO: Sendable {
       throw WorktreeError.identityChanged("Journal changed before publication: \(name)")
     }
     try requireIdentity(fd, name: temporary, directory: directory)
-    let result =
-      expected == nil
-      ? linkat(directory.descriptor, temporary, directory.descriptor, name, 0)
-      : renameat(directory.descriptor, temporary, directory.descriptor, name)
-    guard result == 0 else { throw WorktreeDirectory.posixError() }
-    // A newly linked journal must have one link before it can be read as authority.
+    let result: Int32
     if expected == nil {
-      guard unlinkat(directory.descriptor, temporary, 0) == 0 else {
-        throw WorktreeDirectory.posixError()
-      }
+      // First publication keeps the synchronized inode singly linked and
+      // refuses an occupied destination in the same filesystem operation.
+      #if canImport(Darwin)
+        result = renameatx_np(
+          directory.descriptor, temporary, directory.descriptor, name, UInt32(RENAME_EXCL))
+      #else
+        result = LinuxSystemCalls.renameExclusive(
+          directory.descriptor, temporary, directory.descriptor, name)
+      #endif
+    } else {
+      result = renameat(directory.descriptor, temporary, directory.descriptor, name)
     }
+    guard result == 0 else { throw WorktreeDirectory.posixError() }
     try requireIdentity(fd, name: name, directory: directory)
     try beforeDirectorySync()
     try directory.synchronize()

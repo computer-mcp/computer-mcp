@@ -33,20 +33,41 @@ package actor ManagedMCPRequest {
   }
 }
 
-/// The SDK allocates the ID and writes the frame on different tasks. The input
-/// turn decides whether a deadline can still refuse the entire frame.
+/// An ordinary call owns its pipe admission and its single cooperative stop.
 package final class MCPStdioCall: @unchecked Sendable {
   @TaskLocal package static var current: MCPStdioCall?
+  @TaskLocal fileprivate static var suppressNotification = false
 
-  private enum Phase { case pending, admitted, written, finished }
+  private enum Phase { case pending, admitted, finished }
+  private typealias StopResult = Result<Bool, any Error>
+  private struct Waiter {
+    let result: AsyncStream<StopResult>.Continuation
+    let onWriteAuthorized: (@Sendable () -> Void)?
+  }
+  private struct Attempt {
+    let task: Task<Void, Never>
+    var waiters: [Waiter]
+    var authorized = false
+    var onSettlement: (@Sendable () -> Void)?
+  }
+  private enum Stop {
+    case idle
+    case inProgress(Attempt)
+    case completed(Bool)
+    case closed
+  }
+
+  // Every state transition is synchronous. Pipe I/O and SDK calls run outside the lock.
   private let lock = NSLock()
   private var phase = Phase.pending
   private var requestID: MCP.ID?
-  private let written: AsyncStream<MCP.ID>
-  private let completion: AsyncStream<MCP.ID>.Continuation
+  private var forwardedID: MCP.ID?
+  private var stopping = Stop.idle
+  private let written: AsyncStream<Void>
+  private let completion: AsyncStream<Void>.Continuation
 
   package init() {
-    (written, completion) = AsyncStream.makeStream(bufferingPolicy: .bufferingNewest(1))
+    (written, completion) = AsyncStream.makeStream()
   }
 
   package func refuseBeforeAdmission() {
@@ -58,15 +79,131 @@ package final class MCPStdioCall: @unchecked Sendable {
   }
 
   package func identify(_ id: MCP.ID) {
-    lock.withLock {
-      requestID = id
-      publishWrittenID()
+    lock.withLock { requestID = id }
+  }
+
+  /// Returns whether a cancellation frame was written. Concurrent stops share
+  /// the attempt, and a failed delivery leaves the request available for retry.
+  package func stop(
+    client: MCP.Client, reason: String, observesResponse: Bool = false,
+    onWriteAuthorized: (@Sendable () -> Void)? = nil
+  ) async throws -> Bool {
+    try Task.checkCancellation()
+    refuseBeforeAdmission()
+    let (events, result) = AsyncStream<StopResult>.makeStream(bufferingPolicy: .bufferingNewest(1))
+    let waiter = Waiter(result: result, onWriteAuthorized: onWriteAuthorized)
+    let alreadyAuthorized = lock.withLock {
+      switch stopping {
+      case .idle:
+        let task = Task {
+          do {
+            let sent = try await sendStop(
+              client: client, reason: reason, observesResponse: observesResponse)
+            completeStop(.success(sent))
+          } catch {
+            completeStop(.failure(error))
+          }
+        }
+        stopping = .inProgress(Attempt(task: task, waiters: [waiter]))
+      case .inProgress(var attempt):
+        attempt.waiters.append(waiter)
+        stopping = .inProgress(attempt)
+        return attempt.authorized
+      case .completed(let sent):
+        result.yield(.success(sent))
+        result.finish()
+      case .closed:
+        result.finish()
+      }
+      return false
+    }
+    if alreadyAuthorized { onWriteAuthorized?() }
+    for await value in events { return try value.get() }
+    throw CancellationError()
+  }
+
+  package func closeStop() {
+    let attempt = lock.withLock {
+      let previous = stopping
+      stopping = .closed
+      return previous
+    }
+    if case .inProgress(let attempt) = attempt {
+      attempt.task.cancel()
+      for waiter in attempt.waiters { waiter.result.finish() }
+      attempt.onSettlement?()
     }
   }
 
-  package func forwardedID() async -> MCP.ID? {
-    for await id in written { return id }
-    return nil
+  /// The SDK can release its response waiter before the cancellation write.
+  /// A terminal close can still find the call until that write settles.
+  package func deferRemovalWhileStopping(_ remove: @escaping @Sendable () -> Void) -> Bool {
+    lock.withLock {
+      guard case .inProgress(var attempt) = stopping else { return false }
+      attempt.onSettlement = remove
+      stopping = .inProgress(attempt)
+      return true
+    }
+  }
+
+  private func sendStop(client: MCP.Client, reason: String, observesResponse: Bool) async throws
+    -> Bool
+  {
+    if lock.withLock({ phase != .finished }) {
+      for await _ in written {}
+    }
+    try Task.checkCancellation()
+    if let id = lock.withLock({ forwardedID }) {
+      let authorized: @Sendable () -> Void = { self.writeAuthorized() }
+      try await MCPChildProcessTransport.$onCancellationWriteAuthorized.withValue(authorized) {
+        if observesResponse {
+          try await client.notify(
+            CancelledNotification.message(.init(requestId: id, reason: reason)))
+        } else {
+          try await client.cancelRequest(id, reason: reason)
+        }
+      }
+      return true
+    }
+    try Task.checkCancellation()
+    if let id = lock.withLock({ requestID }) { await settleSDKWaiter(id, client: client) }
+    return false
+  }
+
+  private func settleSDKWaiter(_ id: MCP.ID, client: MCP.Client) async {
+    // The SDK couples waiter removal with a notification. The ordinary write
+    // state has already decided whether a wire notification is appropriate.
+    _ = await Self.$suppressNotification.withValue(true) {
+      try? await client.cancelRequest(id)
+    }
+  }
+
+  private func writeAuthorized() {
+    let waiters: [Waiter] = lock.withLock {
+      guard case .inProgress(var attempt) = stopping else { return [] }
+      attempt.authorized = true
+      stopping = .inProgress(attempt)
+      return attempt.waiters
+    }
+    for waiter in waiters { waiter.onWriteAuthorized?() }
+  }
+
+  private func completeStop(_ result: StopResult) {
+    let attempt: Attempt? = lock.withLock {
+      guard case .inProgress(let attempt) = stopping else { return nil }
+      if case .success(let sent) = result {
+        stopping = .completed(sent)
+      } else {
+        stopping = .idle
+      }
+      return attempt
+    }
+    guard let attempt else { return }
+    for waiter in attempt.waiters {
+      waiter.result.yield(result)
+      waiter.result.finish()
+    }
+    attempt.onSettlement?()
   }
 
   fileprivate func admit() throws {
@@ -76,26 +213,19 @@ package final class MCPStdioCall: @unchecked Sendable {
     }
   }
 
-  fileprivate func finishWrite(written: Bool) {
+  fileprivate func finishWrite(id: MCP.ID?) {
     lock.withLock {
       guard phase != .finished else { return }
-      if written {
-        phase = .written
-        publishWrittenID()
-      } else {
-        phase = .finished
-        completion.finish()
-      }
+      phase = .finished
+      forwardedID = id
+      completion.finish()
     }
   }
+}
 
-  // Called with the lock held. Only a complete frame supplies a cancellation ID.
-  private func publishWrittenID() {
-    guard phase == .written, let requestID else { return }
-    phase = .finished
-    completion.yield(requestID)
-    completion.finish()
-  }
+/// The SDK can write before the caller of its submission API resumes.
+private struct StdioRequestIdentity: Decodable {
+  let id: MCP.ID
 }
 
 /// MCP framing over the same owned-process primitive used by other stdio adapters.
@@ -319,9 +449,10 @@ package actor MCPChildProcessTransport: MCP.Transport {
   }
 
   package func send(_ data: Data) async throws {
+    if MCPStdioCall.suppressNotification { return }
     let stdioCall = MCPStdioCall.current
-    var wroteCall = false
-    defer { stdioCall?.finishWrite(written: wroteCall) }
+    var writtenID: MCP.ID?
+    defer { stdioCall?.finishWrite(id: writtenID) }
     guard !closed, let process else { throw MCPError.connectionClosed }
     guard let line = String(data: data, encoding: .utf8) else {
       throw MCPError.invalidRequest("MCP stdio requires UTF-8 JSON.")
@@ -336,8 +467,9 @@ package actor MCPChildProcessTransport: MCP.Transport {
       try await request.beginSend()
       try await process.sendLine(line) { try await request.checkCancellation() }
     } else if let stdioCall {
+      let id = try JSONDecoder().decode(StdioRequestIdentity.self, from: data).id
       try await process.sendLine(line) { try stdioCall.admit() }
-      wroteCall = true
+      writtenID = id
     } else {
       try await process.sendLine(line, onInputAuthorized: Self.onCancellationWriteAuthorized)
     }

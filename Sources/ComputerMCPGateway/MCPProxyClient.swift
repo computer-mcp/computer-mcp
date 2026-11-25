@@ -18,6 +18,7 @@ package final class MCPProxyClient: DownstreamMCPClient, @unchecked Sendable {
   private let journal: MCPExecutionJournal
   private let catalogs: MCPResolvedCatalogCache
   private let onDiscoverySelection: (@Sendable (String, UUID, UUID) throws -> Void)?
+  private let onStdioSubmission: (@Sendable (String) async -> Void)?
   private let calls = BlockingOperationExecutor(label: "computer-mcp.mcp-calls", serial: false)
 
   package init(
@@ -28,12 +29,14 @@ package final class MCPProxyClient: DownstreamMCPClient, @unchecked Sendable {
     secretStore: (any SecretStore)? = nil,
     processOwnershipRoot: URL? = nil,
     executionDatabase: GatewayDatabase? = nil, executionScope: String? = nil,
-    onDiscoverySelection: (@Sendable (String, UUID, UUID) throws -> Void)? = nil
+    onDiscoverySelection: (@Sendable (String, UUID, UUID) throws -> Void)? = nil,
+    onStdioSubmission: (@Sendable (String) async -> Void)? = nil
   ) {
     // Gateway connections need journal, retained-work and host-tool authority.
     // The nonthrowing factory defers unsupported host environments to connection admission.
     self.launcher = launcher
     self.onDiscoverySelection = onDiscoverySelection
+    self.onStdioSubmission = onStdioSubmission
     let gatewayContext = hostContext as? MCPHostContext
     let hostContextError: GatewayToolError? =
       hostContext != nil && gatewayContext == nil
@@ -79,7 +82,7 @@ package final class MCPProxyClient: DownstreamMCPClient, @unchecked Sendable {
       launcher: launcher, workingDirectory: workingDirectory, environment: environment,
       hostContext: hostContext,
       secretStore: secretStore, processOwnershipRoot: processOwnershipRoot,
-      onDiscoverySelection: onDiscoverySelection)
+      onDiscoverySelection: onDiscoverySelection, onStdioSubmission: onStdioSubmission)
   }
 
   package func toolChanges() -> AsyncStream<Void> { changes.stream() }
@@ -163,6 +166,7 @@ package final class MCPProxyClient: DownstreamMCPClient, @unchecked Sendable {
   ) async throws -> JSONValue {
     let cancellation = MCPCallCancellation(
       deliveryTimeout: .milliseconds(server.requestTimeoutMs ?? 30_000))
+    let stdioCall = server.transport == .stdio ? MCPStdioCall() : nil
     return try await withTaskCancellationHandler {
       do {
         try Task.checkCancellation()
@@ -170,7 +174,7 @@ package final class MCPProxyClient: DownstreamMCPClient, @unchecked Sendable {
           try cancellation.checkCancellation()
           return try self.callTool(
             server: server, name: name, arguments: arguments, requestID: requestID,
-            cancellation: cancellation, context: context)
+            cancellation: cancellation, stdioCall: stdioCall, context: context)
         }
         await cancellation.finish()
         try Task.checkCancellation()
@@ -189,13 +193,14 @@ package final class MCPProxyClient: DownstreamMCPClient, @unchecked Sendable {
         throw error
       }
     } onCancel: {
+      stdioCall?.refuseBeforeAdmission()
       cancellation.cancel()
     }
   }
 
   private func callTool(
     server: MCPServerConfig, name: String, arguments: JSONValue, requestID: String?,
-    cancellation: MCPCallCancellation?, context: InvocationContext
+    cancellation: MCPCallCancellation?, stdioCall: MCPStdioCall? = nil, context: InvocationContext
   ) throws -> JSONValue {
     guard let object = arguments.objectValue else {
       throw GatewayToolError.invalidArguments(
@@ -234,7 +239,7 @@ package final class MCPProxyClient: DownstreamMCPClient, @unchecked Sendable {
       }
     }
     let host = context.admission?.hostDispatch(for: server, tool: name)
-    let stdioCall = server.transport == .stdio ? MCPStdioCall() : nil
+    let stdioCall = stdioCall ?? (server.transport == .stdio ? MCPStdioCall() : nil)
     do {
       return try run(server: server, context: context, managedDeadline: .awaitedCall(stdioCall)) {
         connection in
@@ -244,6 +249,7 @@ package final class MCPProxyClient: DownstreamMCPClient, @unchecked Sendable {
           retainsResult: retainsResult, execution: execution,
           host: host,
           continuation: continuation,
+          onStdioSubmission: self.onStdioSubmission,
           cancellationDeliveryFailed: {
             self.pool.invalidate(server: server, connection: connection)
           })
@@ -1071,7 +1077,6 @@ private actor MCPProxyConnection {
     let execution: PreparedExecutionContext
     var executionID: UUID { execution.executionID }
     let resourceRetry: MCPSelectedResourceRetry?
-    var stdioCall: MCPStdioCall? = nil
     var vendorInvocationID: UUID? = nil
     var retainsResult = false
     var cancellationRequested = false
@@ -1109,6 +1114,7 @@ private actor MCPProxyConnection {
   private let eventSessionID = UUID().uuidString
   private var nextEventCursor = 1
   private var activeRequests: [String: ActiveRequest] = [:]
+  private var stdioCalls: [String: MCPStdioCall] = [:]
   private var logicalRequestIDs: Set<String> = []
   private var pendingWorkCancellation: Set<String> = []
   private let ownedWork: GatewayOwnedWork?
@@ -1257,13 +1263,14 @@ private actor MCPProxyConnection {
     execution: PreparedExecutionContext,
     host: HostServiceDispatch? = nil,
     continuation: MCPContinuationTarget? = nil,
+    onStdioSubmission: (@Sendable (String) async -> Void)? = nil,
     cancellationDeliveryFailed: @escaping @Sendable () -> Void = {}
   ) async throws -> JSONValue {
     try await ensureConnected()
     try cancellation?.checkCancellation()
     // Reserve before crossing into the SDK actor so concurrent calls cannot
     // dispatch the same gateway identity while its native request is being created.
-    guard activeRequests[gatewayRequestID] == nil,
+    guard activeRequests[gatewayRequestID] == nil, stdioCalls[gatewayRequestID] == nil,
       reservedRequestIDs.insert(gatewayRequestID).inserted
     else {
       throw GatewayToolError.invalidArguments(
@@ -1286,6 +1293,7 @@ private actor MCPProxyConnection {
     defer {
       logicalRequestIDs.remove(gatewayRequestID)
       pendingWorkCancellation.remove(gatewayRequestID)
+      forgetStdioCall(gatewayRequestID)
       try? work.finish()
     }
     let (context, ownership, resourceRetry) = try await dispatchTool(
@@ -1294,6 +1302,7 @@ private actor MCPProxyConnection {
       stdioCall: stdioCall, cancellation: cancellation)
     var confirmedResponse = false
     defer { settleOwnership(ownership, confirmed: confirmedResponse) }
+    if stdioCall != nil { await onStdioSubmission?(gatewayRequestID) }
     guard closeTask == nil else {
       if let stdioCall {
         stdioCall.refuseBeforeAdmission()
@@ -1309,7 +1318,7 @@ private actor MCPProxyConnection {
       downstreamRequestID: context.requestID,
       tool: name,
       startedAt: Date(), execution: execution,
-      resourceRetry: resourceRetry, stdioCall: stdioCall,
+      resourceRetry: resourceRetry,
       vendorInvocationID: vendorInvocationID, retainsResult: retainsResult
     )
     if retainsResult {
@@ -1337,17 +1346,22 @@ private actor MCPProxyConnection {
         }
       }
       do {
-        if let vendor, let vendorInvocationID {
+        let sent: Bool
+        if let stdioCall {
+          sent = try await stdioCall.stop(client: client, reason: "Upstream MCP request cancelled.")
+        } else if let vendor, let vendorInvocationID {
           await vendor.requestCancellation(vendorInvocationID)
           try await client.notify(
             CancelledNotification.message(
               .init(requestId: context.requestID, reason: "Upstream MCP request cancelled.")))
+          sent = true
         } else {
           if let managedRequest, !(await managedRequest.cancel()) { return }
           try await client.cancelRequest(
             context.requestID, reason: "Upstream MCP request cancelled.")
+          sent = true
         }
-        if retainsResult {
+        if retainsResult, sent {
           try journal.update(serverID: server.id, requestID: gatewayRequestID) {
             $0.cancellation = "sent"
           }
@@ -1414,7 +1428,7 @@ private actor MCPProxyConnection {
     try await ensureConnected()
     // Reserve before crossing into the SDK actor so concurrent calls cannot
     // dispatch the same gateway identity while its native request is being created.
-    guard activeRequests[gatewayRequestID] == nil,
+    guard activeRequests[gatewayRequestID] == nil, stdioCalls[gatewayRequestID] == nil,
       reservedRequestIDs.insert(gatewayRequestID).inserted
     else {
       throw GatewayToolError.invalidArguments(
@@ -1437,6 +1451,7 @@ private actor MCPProxyConnection {
       if !observing {
         logicalRequestIDs.remove(gatewayRequestID)
         pendingWorkCancellation.remove(gatewayRequestID)
+        forgetStdioCall(gatewayRequestID)
         try? work.finish()
       }
     }
@@ -1466,7 +1481,7 @@ private actor MCPProxyConnection {
       downstreamRequestID: context.requestID,
       tool: name,
       startedAt: Date(), execution: execution,
-      resourceRetry: resourceRetry, stdioCall: stdioCall,
+      resourceRetry: resourceRetry,
       vendorInvocationID: vendorExecution == nil ? nil : ownership?.providerInvocationID,
       retainsResult: true
     )
@@ -1693,27 +1708,34 @@ private actor MCPProxyConnection {
             $0.cancellation = "requested"
           }
         }
-        if let vendorExecution, let vendorInvocationID = active.vendorInvocationID {
+        let sent: Bool
+        if let call = stdioCalls[gatewayRequestID] {
+          sent = try await call.stop(
+            client: client, reason: reason, observesResponse: observesResponse)
+        } else if let vendorExecution, let vendorInvocationID = active.vendorInvocationID {
           await vendorExecution.requestCancellation(vendorInvocationID)
           try await client.notify(
             CancelledNotification.message(
               .init(requestId: active.downstreamRequestID, reason: reason)))
+          sent = true
         } else if observesResponse {
           // A detached call remains observable after a stop request. A native
           // response can establish its outcome, but notification delivery cannot.
           try await client.notify(
             CancelledNotification.message(
               .init(requestId: active.downstreamRequestID, reason: reason)))
+          sent = true
         } else {
           // End the synchronous wait without claiming that remote execution ended.
           try await client.cancelRequest(active.downstreamRequestID, reason: reason)
+          sent = true
         }
-        if active.retainsResult {
+        if active.retainsResult, sent {
           try journal.update(serverID: server.id, requestID: gatewayRequestID) {
             $0.cancellation = "sent"
           }
         }
-        appendEvent(kind: "request.cancellation_sent", requestID: gatewayRequestID)
+        if sent { appendEvent(kind: "request.cancellation_sent", requestID: gatewayRequestID) }
       } catch {
         if let vendorExecution, let id = active.vendorInvocationID {
           await vendorExecution.stopInvocation(id)
@@ -1752,6 +1774,7 @@ private actor MCPProxyConnection {
       return
     }
     activeRequests.removeValue(forKey: gatewayRequestID)
+    forgetStdioCall(gatewayRequestID)
     do {
       try journal.update(serverID: server.id, requestID: gatewayRequestID) {
         if let result {
@@ -1766,6 +1789,17 @@ private actor MCPProxyConnection {
       lastError = "The execution outcome could not be persisted; do not replay this request."
       appendEvent(kind: "request.storage_failed", requestID: gatewayRequestID)
     }
+  }
+
+  private func forgetStdioCall(_ id: String, matching previous: MCPStdioCall? = nil) {
+    guard let call = stdioCalls[id], previous == nil || previous === call else { return }
+    if call.deferRemovalWhileStopping({ [weak self, weak call] in
+      guard let call else { return }
+      Task { await self?.forgetStdioCall(id, matching: call) }
+    }) {
+      return
+    }
+    stdioCalls.removeValue(forKey: id)
   }
 
   func validateSelectedOwner(_ target: MCPContinuationTarget) throws {
@@ -1926,6 +1960,8 @@ private actor MCPProxyConnection {
       let meta = fields.isEmpty ? nil : MCP.Metadata(additionalFields: fields)
       guard closeTask == nil else { throw MCPError.connectionClosed }
       if managedRequest != nil || stdioCall != nil { try Task.checkCancellation() }
+      // SDK submission can write before the request enters the public active map.
+      stdioCalls[gatewayRequestID] = stdioCall
       forwarding = true
       let request: RequestContext<CallTool.Result> = try await MCPStdioCall.$current.withValue(
         stdioCall
@@ -2025,7 +2061,10 @@ private actor MCPProxyConnection {
     startup?.cancel()
     let requests = Array(activeRequests.values)
     let ordinaryStdio = transport is MCPChildProcessTransport && vendorExecution == nil
-    for request in requests { request.stdioCall?.refuseBeforeAdmission() }
+    let pendingCalls = stdioCalls.values.filter { $0 !== timedOutCall }
+    let ordinaryCalls = (timedOutCall.map { [$0] } ?? []) + pendingCalls
+    for call in ordinaryCalls { call.refuseBeforeAdmission() }
+    stdioCalls.removeAll()
     let observers = Array(observers.values)
     let retainedRequests = requests.filter(\.retainsResult)
     connected = false
@@ -2050,26 +2089,14 @@ private actor MCPProxyConnection {
           authorization?.continuation.finish()
         }
         let reason = "Downstream MCP session disconnected."
-        var firstAuthorization = authorization?.continuation
-        func cancel(_ id: MCP.ID) async {
-          guard !Task.isCancelled else { return }
-          if let ready = firstAuthorization {
-            firstAuthorization = nil
-            // The first notification has a separate authorization budget before
-            // its write starts the bounded pipe flush.
-            _ = await MCPChildProcessTransport.$onCancellationWriteAuthorized.withValue({
-              ready.yield(())
-            }) { try? await client.cancelRequest(id, reason: reason) }
-            ready.yield(())
-          } else {
-            try? await client.cancelRequest(id, reason: reason)
+        if ordinaryStdio {
+          await Self.flushStdioStops(
+            ordinaryCalls, client: client, reason: reason,
+            authorization: authorization?.continuation)
+        } else {
+          for request in requests {
+            try? await client.cancelRequest(request.downstreamRequestID, reason: reason)
           }
-        }
-        if let id = await timedOutCall?.forwardedID() { await cancel(id) }
-        for request in requests where timedOutCall == nil || request.stdioCall !== timedOutCall {
-          if Task.isCancelled { break }
-          if let call = request.stdioCall, await call.forwardedID() == nil { continue }
-          await cancel(request.downstreamRequestID)
         }
       }
       // Delivery is acknowledged by the transport write, not an arbitrary delay. A
@@ -2078,7 +2105,10 @@ private actor MCPProxyConnection {
         delivery, authorization: authorization?.stream,
         authorizationBudget: max(
           .milliseconds(server.requestTimeoutMs ?? 30_000), Self.cancellationFlushBudget))
-      if ordinaryStdio { cancellation.cancel() }
+      if ordinaryStdio {
+        cancellation.cancel()
+        for call in ordinaryCalls { call.closeStop() }
+      }
       await client.disconnect()
       await transport.disconnect()
       await workObservation?.value
@@ -2150,6 +2180,29 @@ private actor MCPProxyConnection {
     if ownsAdmission { try? preparedExecution?.finishAdmission() }
     appendEvent(kind: confirmed ? "connection.disconnected" : "connection.cleanup_failed")
     return confirmed
+  }
+
+  private static func flushStdioStops(
+    _ calls: [MCPStdioCall], client: MCP.Client, reason: String,
+    authorization: AsyncStream<Void>.Continuation?
+  ) async {
+    var firstAuthorization = authorization
+    for call in calls {
+      if Task.isCancelled { return }
+      let onWriteAuthorized: (@Sendable () -> Void)?
+      if let ready = firstAuthorization {
+        onWriteAuthorized = { _ = ready.yield(()) }
+      } else {
+        onWriteAuthorized = nil
+      }
+      do {
+        let sent = try await call.stop(
+          client: client, reason: reason, onWriteAuthorized: onWriteAuthorized)
+        if !sent { continue }
+      } catch {}
+      firstAuthorization?.yield(())
+      firstAuthorization = nil
+    }
   }
 
   private static let cancellationFlushBudget = Duration.milliseconds(250)

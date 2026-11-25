@@ -966,6 +966,12 @@ final class LiveAppControlPlaneTests {
   @Test
   func pluginScreenUsesSharedHostTransactionsAndRetainsFilesOnRemoval() async throws {
     try await withAppControlPlaneFixture { fixture in
+      for project in ["first", "second"] {
+        let root = fixture.root.appendingPathComponent(project, isDirectory: true)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: false)
+        try await fixture.controlPlane.database.saveProject(
+          .init(id: project, displayName: project.capitalized, rootPath: root.path))
+      }
       let package = fixture.root.appendingPathComponent("Local Package", isDirectory: true)
       let skill = package.appendingPathComponent("skills/guide", isDirectory: true)
       try FileManager.default.createDirectory(at: skill, withIntermediateDirectories: true)
@@ -976,6 +982,18 @@ final class LiveAppControlPlaneTests {
       name = 'Screen package'
       version = '1.0.0'
       plugin_api = 1
+      [[permissions]]
+      id = 'screen'
+      access = 'allow'
+      purpose = 'Inspect the screen'
+      [[permissions]]
+      id = 'desktop-control'
+      access = 'allow'
+      purpose = 'Interact with selected applications'
+      [[permissions]]
+      id = 'project'
+      access = 'read'
+      purpose = 'Read selected projects'
       [[skills]]
       id = 'guide'
       path = 'skills'
@@ -991,7 +1009,40 @@ final class LiveAppControlPlaneTests {
       #expect(registered.state.settings["screen-package"]?.enabled == false)
       #expect(model.selectedID == "screen-package")
       let draft = PluginSettingsDraft(id: "screen-package", snapshot: registered)
-      #expect(await model.apply(.enabled(pluginID: "screen-package", true), expectedRevision: 1))
+      let enable = PluginHostChange.enabled(pluginID: "screen-package", true)
+      await #expect(throws: ProviderEnablementError.reviewRequired) {
+        try await fixture.app.changePlugins(enable, expectedRevision: 1)
+      }
+      #expect(!(await model.apply(enable, expectedRevision: 1)))
+      let declined = try #require(model.enablementReview)
+      #expect(declined.provider.declarations?.permissions.count == 3)
+      #expect(declined.names.projects["first"] == "First")
+      #expect(declined.requestedMode == .sandbox)
+      model.cancelEnablement(reviewID: declined.id)
+      #expect(!(await model.confirmEnablement(reviewID: declined.id, selection: .init())))
+      #expect(try await fixture.app.fetchPlugins().state == registered.state)
+
+      var activating = draft
+      activating.enabled = true
+      let save = PluginHostChange.settings(pluginID: activating.id, try activating.settings())
+      await #expect(throws: ProviderEnablementError.reviewRequired) {
+        try await fixture.app.changePlugins(save, expectedRevision: 1)
+      }
+      #expect(!(await model.apply(save, expectedRevision: 1)))
+      let review = try #require(model.enablementReview)
+      var selection = ProviderEnablementSelection()
+      try selection.permissions.set(.granted(.access), for: .screen)
+      try selection.permissions.set(.granted(.read), for: .project("first"))
+      #expect(await model.confirmEnablement(reviewID: review.id, selection: selection))
+      #expect(!(await model.confirmEnablement(reviewID: review.id, selection: selection)))
+      let inventory = try await fixture.app.fetchPrivacyPermissionInventory()
+      let active = try #require(
+        inventory.providers.first { $0.identity == review.provider.identity })
+      #expect(active.availability == .active)
+      #expect(active.approval?.permissions.state(for: .screen) == .granted(.access))
+      #expect(active.approval?.permissions.state(for: .project("first")) == .granted(.read))
+      #expect(active.approval?.permissions.state(for: .project("second")) != .granted(.read))
+      #expect(active.approval?.permissions.state(for: .desktopControl) != .granted(.access))
       #expect(model.snapshot?.contributions.map(\.componentID) == ["guide"])
       #expect(try await fixture.controlPlane.pluginSnapshot().state == model.snapshot?.state)
 
@@ -999,8 +1050,19 @@ final class LiveAppControlPlaneTests {
         !(await model.apply(
           .settings(pluginID: draft.id, try draft.settings()), expectedRevision: draft.revision)))
       #expect(model.snapshot?.state.revision == 2)
+      #expect(await model.apply(.enabled(pluginID: draft.id, false), expectedRevision: 2))
+      let disabled = try #require(
+        try await fixture.app.fetchPrivacyPermissionInventory().providers.first {
+          $0.identity == review.provider.identity
+        })
+      #expect(disabled.availability == .disabled)
+      try await fixture.app.saveProviderPermissions(
+        reviewed: disabled, permissions: selection.permissions, fullAccess: false,
+        sandboxSettings: .init(), editingApproval: false)
+      await model.reload()
+      #expect(model.snapshot?.contributions.map(\.componentID) == ["guide"])
       #expect(
-        await model.apply(.removeDevelopment(installationID: installation.id), expectedRevision: 2))
+        await model.apply(.removeDevelopment(installationID: installation.id), expectedRevision: 4))
       let removed = try #require(model.snapshot)
       #expect(removed.state.installations.isEmpty)
       #expect(removed.state.settings["screen-package"]?.enabled == true)
@@ -1008,6 +1070,90 @@ final class LiveAppControlPlaneTests {
       #expect(!removed.issues.isEmpty)
       #expect(FileManager.default.fileExists(atPath: skill.appendingPathComponent("SKILL.md").path))
       #expect(try await fixture.app.fetchPlugins().state == removed.state)
+    }
+  }
+
+  @Test
+  func h13LocalRegistrationApprovalRollsBackFailedApplyAndKeepsRemoteTransportFlow() async throws {
+    try await withAppControlPlaneFixture { fixture in
+      let model = MCPRegistrationModel(controlPlane: fixture.app)
+      await model.reload()
+      let initial = try #require(model.snapshot)
+      let server = MCPServerConfig(id: "manual", transport: .stdio, command: "/usr/bin/true")
+      let add = MCPRegistrationChange.add(server)
+      #expect(await model.review(add))
+      let preview = try #require(model.preview)
+      let declined = try #require(model.enablementReview)
+      #expect(declined.localServer == preview.after)
+      #expect(declined.names.mcpServers[server.id] == server.id)
+      #expect(declined.allowsModeSelection)
+      #expect(declined.sandboxContainer == .localServer("manual"))
+      await model.apply()
+      await #expect(throws: ProviderEnablementError.reviewRequired) {
+        try await fixture.app.changeMCPRegistration(
+          add, apply: true, expectedCurrentDigest: initial.currentDigest)
+      }
+      model.cancelReview()
+      await model.confirmEnablement(reviewID: declined.id, selection: .init())
+      #expect(try await fixture.app.fetchMCPRegistrations() == initial)
+
+      #expect(await model.review(add))
+      let rejected = try #require(model.enablementReview)
+      var invalid = ProviderEnablementSelection()
+      try invalid.permissions.set(.granted(.read), for: .project("missing"))
+      await model.confirmEnablement(reviewID: rejected.id, selection: invalid)
+      #expect(model.errorMessage != nil)
+      #expect(try await fixture.app.fetchMCPRegistrations() == initial)
+      #expect(
+        try await fixture.app.fetchPrivacyPermissionInventory().providers.allSatisfy {
+          $0.identity != .localServer("manual")
+        })
+
+      #expect(await model.review(add))
+      let stale = try #require(model.enablementReview)
+      fixture.policyReader.set(.machineFile, .available(Data("full_access = false".utf8)))
+      await model.confirmEnablement(reviewID: stale.id, selection: .init())
+      #expect(model.errorMessage != nil)
+      #expect(try await fixture.app.fetchMCPRegistrations() == initial)
+      fixture.policyReader.set(.machineFile, .absent)
+
+      #expect(await model.review(add))
+      let accepted = try #require(model.enablementReview)
+      var selection = ProviderEnablementSelection()
+      try selection.permissions.set(.granted(.read), for: .mcpServer(server.id))
+      await model.confirmEnablement(reviewID: accepted.id, selection: selection)
+      #expect(model.errorMessage == nil)
+      #expect(
+        model.snapshot?.registrations.contains { $0.id == "manual" && $0.server.enabled } == true)
+      let approved = try await fixture.app.fetchPrivacyPermissionInventory().providers.first {
+        $0.identity == .localServer("manual")
+      }
+      #expect(approved?.availability == .active)
+      #expect(approved?.sourceDigest == accepted.provider.sourceDigest)
+      #expect(approved?.approval?.permissions.state(for: .mcpServer(server.id)) == .granted(.read))
+      await model.confirmEnablement(reviewID: accepted.id, selection: .init())
+      #expect(
+        try await fixture.app.fetchPrivacyPermissionInventory().providers.first {
+          $0.identity == .localServer("manual")
+        }?.approval?.revision == approved?.approval?.revision)
+
+      let remote = MCPServerConfig(
+        id: "remote-review", transport: .streamableHTTP, url: "https://example.invalid/mcp")
+      #expect(await model.review(.add(remote)))
+      #expect(model.enablementReview == nil)
+      await model.apply()
+      #expect(model.errorMessage == nil)
+      #expect(model.snapshot?.registrations.contains { $0.id == remote.id } == true)
+
+      let extra = MCPServerConfig(id: "restored", transport: .stdio, command: "/usr/bin/true")
+      #expect(await model.review(.add(extra)))
+      let retired = try #require(model.enablementReview)
+      fixture.counter.forget()
+      await model.confirmEnablement(reviewID: retired.id, selection: .init())
+      #expect(model.errorMessage != nil)
+      #expect(
+        try await fixture.app.fetchMCPRegistrations().registrations.allSatisfy { $0.id != extra.id }
+      )
     }
   }
 

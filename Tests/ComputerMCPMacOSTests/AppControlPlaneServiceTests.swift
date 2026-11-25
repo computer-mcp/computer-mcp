@@ -1646,12 +1646,11 @@ final class AppControlPlaneServiceTests {
       #expect(stale.exitCode != 0)
       #expect(stale.stdout.contains("Reload"))
       settings.cli["commands"]?.registrationID = "package-cli"
-      _ = try await client.call(
-        "plugin.configure",
-        arguments: .object([
-          "id": .string("test-package"), "settings": try .encoded(settings),
-          "expected_revision": .number(1),
-        ]))
+      let change = PluginHostChange.settings(pluginID: "test-package", settings)
+      let review = try #require(
+        try await fixture.controlPlane.reviewPluginEnablement(change, expectedRevision: 1))
+      _ = try await gateway.changePlugins(
+        change, expectedRevision: 1, approval: .init(review: review, selection: .init()))
       let source = try await fixture.controlPlane.activeConfiguration()
       #expect(source.cli.commands.map(\.id) == ["personal"])
       #expect(source.knownPluginMCPServerIDs.contains("plugin-12-test-package-native"))

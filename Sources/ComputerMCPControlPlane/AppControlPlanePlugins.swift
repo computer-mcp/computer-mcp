@@ -32,15 +32,63 @@ extension AppControlPlaneService {
   func providerPackage(_ id: String, configuration: GatewayDatabase.ConfigurationState) throws
     -> PluginPackage
   {
-    if let selected = configuration.plugins.selectedInstallations[id] {
-      guard let record = configuration.plugins.installations.first(where: { $0.id == selected })
-      else { throw GatewayPermissionError.invalidBinding }
-      return try PluginPackage.load(at: record.source.root)
+    guard
+      let (package, _) = try PluginStore.selectedPackage(
+        id, in: configuration.plugins, bundled: bundledPlugins.packages)
+    else { throw GatewayPermissionError.invalidBinding }
+    return package
+  }
+
+  package func reviewPluginEnablement(_ change: PluginHostChange, expectedRevision: Int64)
+    throws -> ProviderEnablementReview?
+  {
+    guard !configurationMutationInProgress else { throw PluginHostError.changeInProgress }
+    let inputs = try gatewayInputs()
+    guard inputs.plugins.revision == expectedRevision else {
+      throw PluginStoreError.staleRevision(
+        expected: expectedRevision, actual: inputs.plugins.revision)
     }
-    guard let bundled = bundledPlugins.packages.first(where: { $0.manifest.id == id }) else {
-      throw GatewayPermissionError.invalidBinding
+    guard let target = pluginEnablementTarget(change, in: inputs.plugins) else { return nil }
+    let package = try providerPackage(target.id, configuration: inputs.persisted)
+    guard package.manifest.id == target.id else { throw GatewayPermissionError.invalidBinding }
+    if let refusal = package.manifest.refusal(
+      host: try PluginVersion(ComputerMCPCLI.version), architecture: PluginHost.architecture)
+    {
+      throw refusal
     }
-    return try PluginPackage.load(at: bundled.root)
+    let source = try GatewayProviderReview(
+      package: package, configuration: inputs.persisted,
+      knownPluginIDs: Set(bundledPlugins.packages.map { $0.manifest.id }),
+      knownServerIDs: Set(inputs.configuration.mcp.servers.map(\.id)))
+    return try enablementReview(
+      source: source, name: package.manifest.name, version: package.manifest.version.description,
+      inputs: inputs, mcpContributionIDs: package.manifest.mcp.map(\.id),
+      target: .plugin(
+        expectedRevision: expectedRevision, settings: target.settings,
+        manifestDigest: try manifestStore.admittedDigest(for: inputs.configuration)))
+  }
+
+  private func pluginEnablementTarget(
+    _ change: PluginHostChange, in state: PluginStoreSnapshot
+  ) -> (id: String, settings: PluginSettings?)? {
+    let id: String
+    let settings: PluginSettings?
+    switch change {
+    case .enabled(let pluginID, true):
+      id = pluginID
+      settings = nil
+    case .settings(let pluginID, let proposed)
+    where proposed.enabled && state.settings[pluginID]?.enabled != true:
+      id = pluginID
+      settings = proposed
+    default:
+      return nil
+    }
+    guard
+      state.selectedInstallations[id] != nil
+        || bundledPlugins.packages.contains(where: { $0.manifest.id == id })
+    else { return nil }
+    return (id, settings)
   }
 
   package func approveProvider(
@@ -149,9 +197,11 @@ extension AppControlPlaneService {
   /// The publisher prepares contributions and commits while holding listener admission.
   func applyPluginChange(
     _ change: PluginHostChange, expectedRevision: Int64,
+    approval: ProviderEnablementApproval? = nil, remoteManagement: Bool = false,
     publish: (
-      @Sendable (GatewayInputs, PluginStoreSnapshot, PluginInstallationStorage?) async throws ->
-        Void
+      @Sendable (
+        GatewayInputs, PluginStoreSnapshot, PluginInstallationStorage?, GatewayProviderActivation?
+      ) async throws -> Void
     )? = nil
   ) async throws
     -> PluginHostSnapshot
@@ -163,6 +213,33 @@ extension AppControlPlaneService {
     defer { manifestStore.publicationLock.release() }
     try Task.checkCancellation()
     let inputs = try gatewayInputs()
+    guard inputs.plugins.revision == expectedRevision else {
+      throw PluginStoreError.staleRevision(
+        expected: expectedRevision, actual: inputs.plugins.revision)
+    }
+    let activation: GatewayProviderActivation?
+    if let target = pluginEnablementTarget(change, in: inputs.plugins), !remoteManagement {
+      guard let approval else {
+        let package = try providerPackage(target.id, configuration: inputs.persisted)
+        if let refusal = package.manifest.refusal(
+          host: try PluginVersion(ComputerMCPCLI.version), architecture: PluginHost.architecture)
+        {
+          throw refusal
+        }
+        throw ProviderEnablementError.reviewRequired
+      }
+      guard publish != nil,
+        approval.target
+          == .plugin(
+            expectedRevision: expectedRevision, settings: target.settings,
+            manifestDigest: try manifestStore.admittedDigest(for: inputs.configuration)),
+        approval.provider.sourceReview == (try? providerReview(.package(target.id)))
+      else { throw GatewayPermissionError.revisionConflict }
+      activation = try requirePermissionControl().prepareProviderActivation(approval)
+    } else {
+      guard approval == nil else { throw GatewayPermissionError.revisionConflict }
+      activation = nil
+    }
     let manifestStore = manifestStore
     let bundledPlugins = bundledPlugins
     let platform = platform
@@ -170,7 +247,7 @@ extension AppControlPlaneService {
     if let publish {
       publication = { proposed, expected, storage in
         guard expected == inputs.persisted else { throw GatewayDatabaseError.configurationChanged }
-        try await publish(inputs, proposed, storage)
+        try await publish(inputs, proposed, storage, activation)
       }
     } else {
       publication = nil
@@ -199,6 +276,13 @@ extension AppControlPlaneService {
           .first(where: { $0.pluginID == affected && $0.refusal != nil })?.refusal
       {
         throw refusal
+      }
+      if let approval, case .package(let id) = approval.provider.identity,
+        !resolution.plugins.contains(where: { $0.id == id })
+      {
+        throw PluginHostError.invalidComposition(
+          resolution.issues.first { $0.pluginID == id }?.message
+            ?? "The reviewed source is unavailable.")
       }
       try configuration.validate()
     }

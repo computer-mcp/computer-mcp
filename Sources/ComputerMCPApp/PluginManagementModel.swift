@@ -11,6 +11,23 @@ protocol PluginManaging: PluginCatalogManaging {
   func fetchPlugins() async throws -> PluginHostSnapshot
   func changePlugins(_ change: PluginHostChange, expectedRevision: Int64) async throws
     -> PluginHostSnapshot
+  func reviewPluginEnablement(_ change: PluginHostChange, expectedRevision: Int64) async throws
+    -> ProviderEnablementReview?
+  func changePlugins(
+    _ change: PluginHostChange, expectedRevision: Int64, approval: ProviderEnablementApproval
+  ) async throws -> PluginHostSnapshot
+}
+
+extension PluginManaging {
+  func reviewPluginEnablement(_ change: PluginHostChange, expectedRevision: Int64) async throws
+    -> ProviderEnablementReview?
+  { nil }
+
+  func changePlugins(
+    _ change: PluginHostChange, expectedRevision: Int64, approval: ProviderEnablementApproval
+  ) async throws -> PluginHostSnapshot {
+    throw ProviderEnablementError.reviewRequired
+  }
 }
 
 @MainActor
@@ -22,11 +39,17 @@ final class PluginManagementModel: ObservableObject {
   @Published private(set) var isCancelling = false
   @Published private(set) var errorMessage: String?
   @Published private(set) var refusal: PluginCompatibilityRefusal?
+  @Published private(set) var enablementReview: ProviderEnablementReview?
+  private var reviewedChange: (PluginHostChange, Int64)?
   @Published var selectedID: String?
 
   let controlPlane: any PluginManaging
   private var refreshGeneration = 0
-  private var mutation: Task<PluginHostSnapshot, any Error>?
+  private enum MutationOutcome {
+    case review(ProviderEnablementReview)
+    case saved(PluginHostSnapshot)
+  }
+  private var mutation: Task<MutationOutcome, any Error>?
 
   init(controlPlane: any PluginManaging) {
     self.controlPlane = controlPlane
@@ -57,6 +80,30 @@ final class PluginManagementModel: ObservableObject {
 
   @discardableResult
   func apply(_ change: PluginHostChange, expectedRevision: Int64) async -> Bool {
+    guard enablementReview == nil else { return false }
+    return await perform(change, expectedRevision: expectedRevision, approval: nil)
+  }
+
+  @discardableResult
+  func confirmEnablement(reviewID: UUID, selection: ProviderEnablementSelection) async -> Bool {
+    guard !isSaving, let review = enablementReview, reviewID == review.id,
+      let (change, revision) = reviewedChange
+    else { return false }
+    cancelEnablement(reviewID: reviewID)
+    return await perform(
+      change, expectedRevision: revision,
+      approval: ProviderEnablementApproval(review: review, selection: selection))
+  }
+
+  func cancelEnablement(reviewID: UUID) {
+    guard !isSaving, enablementReview?.id == reviewID else { return }
+    enablementReview = nil
+    reviewedChange = nil
+  }
+
+  private func perform(
+    _ change: PluginHostChange, expectedRevision: Int64, approval: ProviderEnablementApproval?
+  ) async -> Bool {
     guard !isSaving else { return false }
     isSaving = true
     errorMessage = nil
@@ -65,9 +112,22 @@ final class PluginManagementModel: ObservableObject {
     refreshGeneration += 1
     isRefreshing = false
     let controlPlane = controlPlane
-    let task = Task {
+    let task = Task<MutationOutcome, any Error> {
       try Task.checkCancellation()
-      return try await controlPlane.changePlugins(change, expectedRevision: expectedRevision)
+      if let approval {
+        return .saved(
+          try await controlPlane.changePlugins(
+            change, expectedRevision: expectedRevision, approval: approval))
+      }
+      if let review = try await controlPlane.reviewPluginEnablement(
+        change, expectedRevision: expectedRevision)
+      {
+        try Task.checkCancellation()
+        return .review(review)
+      }
+      try Task.checkCancellation()
+      return .saved(
+        try await controlPlane.changePlugins(change, expectedRevision: expectedRevision))
     }
     mutation = task
     defer {
@@ -76,14 +136,23 @@ final class PluginManagementModel: ObservableObject {
       isCancelling = false
     }
     do {
-      let next = try await withTaskCancellationHandler {
+      let outcome = try await withTaskCancellationHandler {
         try await task.value
       } onCancel: {
         task.cancel()
       }
-      // A cancellation request cannot turn a committed operation into a reported rollback.
-      accept(next)
-      return true
+      switch outcome {
+      case .review(let review):
+        try Task.checkCancellation()
+        guard !isCancelling else { throw CancellationError() }
+        reviewedChange = (change, expectedRevision)
+        enablementReview = review
+        return false
+      case .saved(let next):
+        // A cancellation request cannot turn a committed operation into a reported rollback.
+        accept(next)
+        return true
+      }
     } catch {
       // Refresh the list, but never retry a write or rebase an open editor's revision.
       await reload()

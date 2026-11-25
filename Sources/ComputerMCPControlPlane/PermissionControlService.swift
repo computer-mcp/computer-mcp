@@ -124,7 +124,7 @@ package final class PermissionControlService: Sendable {
     try service.setOwnerPolicy(
       document, provider: provider, owner: currentOwner(), expectedRevision: expectedRevision)
   }
-  private func currentOwner() throws -> GatewayPermissionOwner {
+  func currentOwner() throws -> GatewayPermissionOwner {
     let proof = try owner()
     guard let context = PermissionOwnerAuditScope.context else { return proof }
     return try proof.recording(context: context)

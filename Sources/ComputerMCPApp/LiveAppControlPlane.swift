@@ -327,6 +327,24 @@ final class LiveAppControlPlane: AppControlPlane {
       change, apply: apply, expectedCurrentDigest: expectedCurrentDigest)
   }
 
+  func reviewMCPRegistrationEnablement(
+    _ change: MCPRegistrationChange, preview: MCPRegistrationChangePreview
+  ) async throws -> ProviderEnablementReview? {
+    try await controlPlane.reviewMCPRegistrationEnablement(change, preview: preview)
+  }
+
+  func changeMCPRegistration(
+    _ change: MCPRegistrationChange, expectedCurrentDigest: String,
+    approval: ProviderEnablementApproval
+  ) async throws -> MCPRegistrationChangePreview {
+    do {
+      return try await operations.changeMCPRegistration(
+        change, apply: true, expectedCurrentDigest: expectedCurrentDigest, approval: approval)
+    } catch GatewayPermissionError.revisionConflict {
+      throw LivePrivacySecurityService.changedPermissions()
+    }
+  }
+
   func doctorPlugin(id: String) async throws -> PluginDoctorReport {
     try await controlPlane.doctorPlugin(id: id)
   }
@@ -342,6 +360,19 @@ final class LiveAppControlPlane: AppControlPlane {
     -> PluginCatalogSearchResult
   {
     try await controlPlane.searchPlugins(query: query, kind: kind, page: page, refresh: refresh)
+  }
+
+  func reviewPluginEnablement(_ change: PluginHostChange, expectedRevision: Int64) async throws
+    -> ProviderEnablementReview?
+  {
+    try await controlPlane.reviewPluginEnablement(change, expectedRevision: expectedRevision)
+  }
+
+  func changePlugins(
+    _ change: PluginHostChange, expectedRevision: Int64, approval: ProviderEnablementApproval
+  ) async throws -> PluginHostSnapshot {
+    try await operations.changePlugins(
+      change, expectedRevision: expectedRevision, approval: approval)
   }
 
   func changePlugins(_ change: PluginHostChange, expectedRevision: Int64) async throws
@@ -661,7 +692,7 @@ final class LiveAppControlPlane: AppControlPlane {
     reviewed: ProviderPermissionOptions, permissions: Permissions, fullAccess: Bool,
     sandboxSettings: ProviderSandboxSettings, editingApproval: Bool
   ) async throws {
-    _ = try await controlPlane.saveProviderPermissions(
+    try await operations.saveProviderPermissions(
       reviewed: reviewed, permissions: permissions, fullAccess: fullAccess,
       sandboxSettings: sandboxSettings, editingApproval: editingApproval)
   }

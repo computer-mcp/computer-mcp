@@ -288,11 +288,15 @@ package final class GatewayDatabase: OAuthStore, @unchecked Sendable {
     managementAuthorization: GatewayManagementAuthorization? = nil,
     requiresProfilePolicy: Bool = false,
     localProviders: [MCPServerConfig]? = nil,
+    providerActivation: GatewayProviderActivation? = nil,
     _ body: (Database) throws -> Result
   ) throws -> Result {
     let store = try configuredPermissionStore()
     let service = permissionRuntimeLock.withLock { permissionRuntimeCache?.service }
-    guard (!requiresProfilePolicy && managementAuthorization == nil) || service != nil else {
+    guard
+      (!requiresProfilePolicy && managementAuthorization == nil && providerActivation == nil)
+        || service != nil
+    else {
       throw GatewayPermissionError.invalidPolicySnapshot
     }
     func apply(
@@ -346,6 +350,19 @@ package final class GatewayDatabase: OAuthStore, @unchecked Sendable {
       } catch {
         // Preserve observed retirement without beginning the rejected management mutation.
         return .failure(error)
+      }
+      let approval: GatewayProviderApproval?
+      if let activation = providerActivation, let policies {
+        try Task.checkCancellation()
+        approval = try GatewayPermissionService.applyProviderApproval(
+          activation.review, permissions: activation.permissions, fullAccess: activation.fullAccess,
+          sandboxSettings: activation.sandboxSettings, owner: activation.owner,
+          expectedProviderRevision: activation.expectedProviderRevision,
+          expectedRevision: activation.expectedRevision, expectedEpoch: activation.expectedEpoch,
+          reviewedLimits: activation.limits, database: database,
+          ledger: &ledger, policies: policies, now: Date())
+      } else {
+        approval = nil
       }
       let value = try body(database)
       try GatewayPermissionService.reconcileProviderSources(
@@ -424,6 +441,14 @@ package final class GatewayDatabase: OAuthStore, @unchecked Sendable {
         }
       }
       try GatewayPermissionService.reconcileStandingConsents(database: database, ledger: &ledger)
+      if let approval {
+        try Task.checkCancellation()
+        let record = try ProviderAuthorityRecord.load(approval.identity, in: database)
+        guard let record, try GatewayPermissionService.providerApproval(record) == approval,
+          approval.fullAccessConsent.map({ ledger.isConsentValid($0, for: approval.principal) })
+            ?? true
+        else { throw GatewayPermissionError.revisionConflict }
+      }
       if try Self.configurationState(in: database) != beforeConfiguration {
         guard
           let revision = try Int64.fetchOne(
@@ -663,7 +688,8 @@ package final class GatewayDatabase: OAuthStore, @unchecked Sendable {
     _ state: PluginStoreSnapshot, expectedRevision: Int64,
     expectedConfiguration: ConfigurationState? = nil,
     resolution: GatewayConfigurationResolution = .init(),
-    authorization: GatewayManagementAuthorization? = nil
+    authorization: GatewayManagementAuthorization? = nil,
+    providerActivation: GatewayProviderActivation? = nil
   ) throws -> ConfigurationState {
     try state.validate()
     guard
@@ -674,7 +700,15 @@ package final class GatewayDatabase: OAuthStore, @unchecked Sendable {
     else {
       throw PluginStoreError.invalidState
     }
-    let committed = try permissionTransaction(managementAuthorization: authorization) { database in
+    if let providerActivation {
+      guard let expectedConfiguration, case .package(let id) = providerActivation.review.identity,
+        state.settings[id]?.enabled == true,
+        state.selectedInstallations[id] == expectedConfiguration.plugins.selectedInstallations[id]
+      else { throw GatewayPermissionError.invalidBinding }
+    }
+    let committed = try permissionTransaction(
+      managementAuthorization: authorization, providerActivation: providerActivation
+    ) { database in
       let current =
         try Int64.fetchOne(database, sql: "SELECT revision FROM pluginState WHERE id = 1") ?? 0
       guard current == expectedRevision else {
@@ -1567,6 +1601,7 @@ package final class GatewayDatabase: OAuthStore, @unchecked Sendable {
   package func activateConfigurationRevision(
     _ revision: ConfigurationRevision, expected: ConfigurationState,
     resolution: GatewayConfigurationResolution, activeTunnelIDs: Set<String>,
+    providerActivation: GatewayProviderActivation? = nil,
     replaceManifest: (ConfigurationState) throws -> Void
   ) throws -> ConfigurationState {
     guard try configurationState() == expected else {
@@ -1586,9 +1621,17 @@ package final class GatewayDatabase: OAuthStore, @unchecked Sendable {
       profiles: try Self.profiles(publishing: resolution.profileDeclarations, over: expected),
       plugins: expected.plugins, profileSource: profileSource,
       derivedProjects: expected.derivedProjects)
+    if let providerActivation {
+      guard case .localServer(let id) = providerActivation.review.identity,
+        let server = resolution.localProviders?.first(where: { $0.id == id }), server.enabled,
+        server.transport == .stdio,
+        try GatewayProviderReview.digest(server) == providerActivation.review.sourceDigest
+      else { throw GatewayPermissionError.invalidBinding }
+    }
     try replaceManifest(proposed)
     let committed = try permissionTransaction(
-      requiresProfilePolicy: sourceChanged, localProviders: resolution.localProviders
+      requiresProfilePolicy: sourceChanged, localProviders: resolution.localProviders,
+      providerActivation: providerActivation
     ) { database in
       guard try Self.configurationState(in: database) == expected else {
         throw GatewayDatabaseError.configurationChanged

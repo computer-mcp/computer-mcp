@@ -342,12 +342,11 @@ struct WorktreeServiceFixture {
       trustedHosts: [], expectedProjects: database.projects(), expectedConfigurationRevision: nil)
     executor = GatewayWorktreeGit(launcher: platform.launcher, executable: platform.gitExecutable)
     _ = try git(["init", "--initial-branch=main"])
+    _ = try git(["config", "--local", "user.name", "Fixture"])
+    _ = try git(["config", "--local", "user.email", "fixture@example.invalid"])
     try Data("initial".utf8).write(to: source.appendingPathComponent("value"))
     _ = try git(["add", "value"])
-    _ = try git([
-      "-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid", "commit", "-m",
-      "Initial",
-    ])
+    _ = try git(["commit", "-m", "Initial"])
   }
   func remove() { try? FileManager.default.removeItem(at: root) }
   func git(_ arguments: [String], at directory: URL? = nil, environment: [String: String] = [:])

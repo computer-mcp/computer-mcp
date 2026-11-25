@@ -33,6 +33,62 @@ func expectRecoveryObject(
 }
 
 struct WorktreeLifecycleRecoveryTests {
+  @Test func removalJournalsTerminalDischargeWithinItsBoundBeforeTeardown() async throws {
+    try await removalFixture { f in
+      let service = try f.service()
+      let created = try service.create(name: "reserved-discharge")
+      let old = try f.privateCommit(service, projectID: created.projectID)
+      _ = try service.publish(projectID: created.projectID) { _ in }
+      let git = PrivateWorktreeGit(
+        f: f, topology: try service.topology(projectID: created.projectID))
+      try git.run(["commit", "--amend", "-m", "replacement"])
+      let tip = try git.run(["rev-parse", "HEAD"])
+      _ = try service.publish(projectID: created.projectID) { _ in }
+      try service.acknowledgeReplacement(
+        projectID: created.projectID, replacedOID: old, expectedPublishedOID: tip
+      ) { _ in }
+      try git.run(["reflog", "expire", "--expire=now", "--all"])
+
+      let journalURL = f.storage.journals.appendingPathComponent(
+        "removals/\(created.projectID).json")
+      let interrupted = try f.service(
+        journalIO: .init(beforeDirectorySync: {
+          let journal = try? JSONDecoder().decode(
+            WorktreeRemovalJournal.self, from: Data(contentsOf: journalURL))
+          if journal?.phase == .content { throw CancellationError() }
+        }))
+      await #expect(throws: CancellationError.self) {
+        try await interrupted.remove(
+          projectID: created.projectID, terminate: { _, _ in }, authorize: { _, _ in })
+      }
+      #expect(FileManager.default.fileExists(atPath: created.path.path))
+      let prepared = try #require(try service.readRemoval(created.projectID))
+      #expect(prepared.phase == .content)
+      #expect(prepared.terminal?.receipts != nil)
+      #expect(prepared.reconciliation?.discharge?.contains { $0.before.oid == old } == true)
+      let release = try #require(
+        prepared.reconciliation?.releases?.first { $0.selection.oid == old })
+      let before = try lifecycleRecoveryRecords(f, identity: service.identity)
+      #expect(before.contains { $0.id == release.selection.recordID && $0.state == .retained })
+
+      var largest = prepared
+      largest.phase = .unregistering
+      largest.repositoryArmed = true
+      let bound = try recoveryJSON(largest).count
+      try prepared.requireCompletionSpace(limit: bound)
+      #expect(throws: WorktreeError.self) {
+        try prepared.requireCompletionSpace(limit: bound - 1)
+      }
+      _ = try await service.remove(
+        projectID: created.projectID, terminate: { _, _ in }, authorize: { _, _ in })
+      try WorktreeRecoveryStore(storage: f.storage)
+        .withExclusive(repository: service.identity) { store in
+          let archived = try store.releaseReceipt(recordID: release.selection.recordID)
+          #expect(archived == release)
+        }
+    }
+  }
+
   @Test(arguments: ["head", "reference"])
   func acknowledgedReplacementSurvivingPrivateRootRemainsRetained(root: String) async throws {
     try await removalFixture { f in

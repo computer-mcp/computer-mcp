@@ -44,7 +44,7 @@ struct WorktreeRecoveryReconciliation: Codable, Equatable {
     }.sorted { $0.id.uuidString < $1.id.uuidString }.compactMap { record in
       let eligible = try Self.eligibleClaims(record, finalCapture: final.capture, sealed: sealed)
       guard !eligible.isEmpty else { return nil }
-      guard record.revision < Int64.max - 2, !record.dependencies.contains(operationID)
+      guard record.revision < Int64.max - 4, !record.dependencies.contains(operationID)
       else { throw invalidRecoveryMetadata() }
       var pinned = record
       pinned.revision += 1
@@ -59,7 +59,7 @@ struct WorktreeRecoveryReconciliation: Codable, Equatable {
     in store: WorktreeRecoveryStore.Locked, verifyFinalRetention: () throws -> Void,
     sealed: WorktreeAcknowledgementSealCheck, persist: (Self) throws -> Void
   ) throws {
-    guard store.generation == generation, !finished, discharge == nil, releases == nil
+    guard store.generation == generation, !finished
     else { throw invalidRecoveryMetadata() }
     try verifyFinalRetention()
     try persist(self)
@@ -73,6 +73,7 @@ struct WorktreeRecoveryReconciliation: Codable, Equatable {
       else { throw invalidRecoveryMetadata() }
       return
     }
+    guard discharge == nil, releases == nil else { throw invalidRecoveryMetadata() }
     let completed = try selection.map { choice in
       guard let previous = current[choice.before.recordID], previous.selection == choice.before,
         previous.owner == owner, previous.state == .retained,
@@ -88,7 +89,42 @@ struct WorktreeRecoveryReconciliation: Codable, Equatable {
     }
     try store.admit(
       operationID: operationID, kind: .reconciliation, requestDigest: digest,
-      records: selection.map(\.pinned), completionSteps: [completed])
+      records: selection.map(\.pinned), completionSteps: [completed],
+      releaseCandidates: Set(completed.filter { $0.claims.isEmpty }.map(\.id)))
+  }
+
+  /// Project the actual terminal payload while the final and reconciliation
+  /// pins are both live. The removal journal can reserve its full after-image
+  /// before unlinking any private content.
+  func planning(
+    in catalog: WorktreeRecoveryCatalog, afterRetiring final: [WorktreeRecoveryRecord] = [],
+    sealed: WorktreeAcknowledgementSealCheck
+  ) throws -> Self {
+    guard catalog.generation == generation, !finished else { throw invalidRecoveryMetadata() }
+    if selection.isEmpty { return self }
+    let digest = try requestDigest()
+    guard let intent = catalog.intents.first(where: { $0.id == operationID })
+    else { throw invalidRecoveryMetadata() }
+    try requireIntent(intent, digest: digest)
+    var current = Dictionary(uniqueKeysWithValues: catalog.records.map { ($0.id, $0) })
+    for record in final { current[record.id] = record }
+    let updates: [Discharge] = try selection.map { choice in
+      guard let record = current[choice.before.recordID], record.owner == owner,
+        record.oid == choice.before.oid, record.state == .retained,
+        record.revision >= choice.pinned.revision, record.revision < Int64.max - 1,
+        record.dependencies.contains(operationID), !record.dependencies.contains(removalID)
+      else { throw invalidRecoveryMetadata() }
+      let remaining = Set(record.claims.map(\.id)).intersection(choice.claimIDs)
+      guard
+        remaining.isSubset(
+          of: try Self.eligibleClaims(record, finalCapture: finalCapture, sealed: sealed))
+      else { throw invalidRecoveryMetadata() }
+      return .init(before: record.selection, after: removingPin(record, claims: remaining))
+    }
+    var next = self
+    next.discharge = updates
+    next.releases = try releaseBatch(for: updates)
+    return next
   }
 
   /// Resumes only the frozen claim discharge and its exact resulting release.
@@ -102,49 +138,34 @@ struct WorktreeRecoveryReconciliation: Codable, Equatable {
     try verifyTeardown()
     try persist(self)
     if finished { return }
-    if !selection.isEmpty, releases == nil {
-      let digest = try requestDigest()
+    if !selection.isEmpty {
       let catalog = try store.catalog()
       let current = Dictionary(uniqueKeysWithValues: catalog.records.map { ($0.id, $0) })
-      let updates: [Discharge]
-      if let intent = catalog.intents.first(where: { $0.id == operationID }) {
-        try requireIntent(intent, digest: digest)
-        updates = try selection.map { choice in
-          guard let record = current[choice.before.recordID], record.owner == owner,
-            record.oid == choice.before.oid, record.state == .retained,
-            record.revision >= choice.pinned.revision, record.revision < Int64.max - 1,
-            record.dependencies.contains(operationID), !record.dependencies.contains(removalID)
-          else { throw invalidRecoveryMetadata() }
-          let remaining = Set(record.claims.map(\.id)).intersection(choice.claimIDs)
-          guard
-            remaining.isSubset(
-              of: try Self.eligibleClaims(
-                record, finalCapture: finalCapture, sealed: sealed))
-          else { throw invalidRecoveryMetadata() }
-          return .init(before: record.selection, after: removingPin(record, claims: remaining))
-        }
-        try save(persist) { $0.discharge = updates }
+      if catalog.intents.contains(where: { $0.id == operationID }) {
+        let next = try planning(in: catalog, sealed: sealed)
+        guard let updates = next.discharge, let receipts = next.releases
+        else { throw invalidRecoveryMetadata() }
+        try persist(next)
+        self = next
         try withoutActuallyEscaping(verifyTeardown) { verify in
           try store.advance(
-            operationID: operationID, records: updates.map(\.after), verifyTerminalOutcome: verify)
+            operationID: operationID, records: updates.map(\.after), verifyTerminalOutcome: verify,
+            releasing: receipts)
         }
       } else {
+        let releasing = Set((releases ?? []).map(\.selection.recordID))
         guard let recorded = discharge, recorded.count == selection.count,
           zip(recorded, selection).allSatisfy({ update, choice in
             update.before.recordID == choice.before.recordID
-              && current[choice.before.recordID] == update.after
+              && (releasing.contains(choice.before.recordID)
+                || current[choice.before.recordID] == update.after)
           })
         else { throw invalidRecoveryMetadata() }
-        updates = recorded
+        if releases == nil {
+          let receipts = try releaseBatch(for: recorded)
+          try save(persist) { $0.releases = receipts }
+        }
       }
-      let releasable = updates.map(\.after).filter { $0.claims.isEmpty && $0.dependencies.isEmpty }
-      let selected = try WorktreeRecoveryReleaseReceipt.digest(of: releasable.map(\.selection))
-      let receipts = releasable.map {
-        WorktreeRecoveryReleaseReceipt(
-          storeGeneration: generation, owner: owner, selection: $0.selection,
-          operationID: releaseOperationID, requestDigest: digest, selectionDigest: selected)
-      }
-      try save(persist) { $0.releases = receipts }
     }
     if let releases, !releases.isEmpty {
       var allowed: [UUID: WorktreeRecoveryRecord.Selection] = [:]
@@ -167,12 +188,18 @@ struct WorktreeRecoveryReconciliation: Codable, Equatable {
     try save(persist) { $0.finished = true }
   }
 
+  private func releaseBatch(for updates: [Discharge]) throws -> [WorktreeRecoveryReleaseReceipt] {
+    let releasable = updates.map(\.after).filter { $0.claims.isEmpty && $0.dependencies.isEmpty }
+    return try WorktreeRecoveryReleaseReceipt.batch(
+      for: releasable, operationID: releaseOperationID, requestDigest: requestDigest())
+  }
+
   /// Abandoning teardown retires its preparation pin without discharging
   /// historical claims. The owning removal journal records abandonment.
   func discardPreparation(
     in store: WorktreeRecoveryStore.Locked, verifyAbandoned: () throws -> Void
   ) throws {
-    guard store.generation == generation, !finished, discharge == nil, releases == nil
+    guard store.generation == generation, !finished
     else { throw invalidRecoveryMetadata() }
     try verifyAbandoned()
     let catalog = try store.catalog()

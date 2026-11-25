@@ -118,7 +118,8 @@ struct WorktreeRecoveryAcknowledgement: Codable, Equatable {
         }
         try store.admit(
           operationID: operationID, kind: .acknowledgement, requestDigest: digest,
-          records: pinned, completionSteps: [eligible, eligible.map(removingPin)])
+          records: pinned, completionSteps: [eligible, eligible.map(removingPin)],
+          releaseCandidates: Set(eligible.filter { $0.claims.isEmpty }.map(\.id)))
       }
       try verifyLive()
       try store.advance(operationID: operationID, records: eligible)
@@ -129,8 +130,9 @@ struct WorktreeRecoveryAcknowledgement: Codable, Equatable {
     if phase == .finished { return }
     guard phase == .sealed else { throw invalidRecoveryMetadata() }
     try verifySealed()
-    if releases == nil {
-      let current = try store.catalog()
+    let current = try store.catalog()
+    let intent = current.intents.first { $0.id == operationID }
+    if releases == nil || intent != nil {
       let byID = Dictionary(uniqueKeysWithValues: current.records.map { ($0.id, $0) })
       var records = try transitions.map { change in
         guard let record = byID[change.before.recordID], record.owner == owner,
@@ -145,7 +147,7 @@ struct WorktreeRecoveryAcknowledgement: Codable, Equatable {
         else { throw invalidRecoveryMetadata() }
         return record
       }
-      if let intent = current.intents.first(where: { $0.id == operationID }) {
+      if let intent {
         guard intent.kind == .acknowledgement, intent.requestDigest == digest,
           intent.selections == transitions.map(\.pinned.selection),
           records.allSatisfy({
@@ -153,21 +155,21 @@ struct WorktreeRecoveryAcknowledgement: Codable, Equatable {
           })
         else { throw invalidRecoveryMetadata() }
         records = records.map(removingPin)
-        try withoutActuallyEscaping(verifySealed) { verify in
-          try store.advance(
-            operationID: operationID, records: records, verifyTerminalOutcome: verify)
-        }
       } else if records.contains(where: { $0.dependencies.contains(operationID) }) {
         throw invalidRecoveryMetadata()
       }
       let unowned = records.filter { $0.claims.isEmpty && $0.dependencies.isEmpty }
-      let selection = try WorktreeRecoveryReleaseReceipt.digest(of: unowned.map(\.selection))
-      let receipts = unowned.map {
-        WorktreeRecoveryReleaseReceipt(
-          storeGeneration: generation, owner: owner, selection: $0.selection,
-          operationID: releaseOperationID, requestDigest: digest, selectionDigest: selection)
-      }
+      let receipts = try WorktreeRecoveryReleaseReceipt.batch(
+        for: unowned, operationID: releaseOperationID, requestDigest: digest)
+      guard releases.map({ $0 == receipts }) ?? true else { throw invalidRecoveryMetadata() }
       try save(persist) { $0.releases = receipts }
+      if intent != nil {
+        try withoutActuallyEscaping(verifySealed) { verify in
+          try store.advance(
+            operationID: operationID, records: records, verifyTerminalOutcome: verify,
+            releasing: receipts)
+        }
+      }
     }
     if let releases, !releases.isEmpty {
       let ids = Set(transitions.map(\.before.recordID))

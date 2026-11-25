@@ -107,7 +107,8 @@ struct WorktreeRecoveryBranchSelection: Codable, Equatable {
     try store.admit(
       operationID: operationID, kind: .branchDeletion, requestDigest: digest,
       records: pinned,
-      completionSteps: [pinned.map { Self.removingPin($0, operationID: operationID) }])
+      completionSteps: [pinned.map { Self.removingPin($0, operationID: operationID) }],
+      releaseCandidates: Set(released.map(\.selection.recordID)))
   }
 
   /// Called before normalization and again while arming deletion. This
@@ -146,7 +147,8 @@ struct WorktreeRecoveryBranchSelection: Codable, Equatable {
       let terminal = pinned.map { Self.removingPin($0, operationID: operationID) }
       try withoutActuallyEscaping(verifySourceDeleted) { verify in
         try store.advance(
-          operationID: operationID, records: terminal, verifyTerminalOutcome: verify)
+          operationID: operationID, records: terminal, verifyTerminalOutcome: verify,
+          releasing: released)
       }
     } else {
       guard retained.allSatisfy({ byID[$0.recordID]?.selection == $0 })

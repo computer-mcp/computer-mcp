@@ -145,6 +145,30 @@ struct WorktreeRecoveryIntent: Codable, Equatable, Sendable {
   let requestDigest: String
   let selections: [WorktreeRecoveryRecord.Selection]
   var completion: WorktreeRecoveryGrowth
+
+  /// The successor replaces this intent and swaps one pin per released record.
+  /// Each such record can grow by one state byte and one revision digit. The
+  /// successor's selections allow the largest revision spelling after a refresh.
+  func followOnReleaseGrowth(for candidates: Set<UUID>) throws -> WorktreeRecoveryGrowth {
+    guard !candidates.isEmpty else { return .init() }
+    let releasing = selections.compactMap { choice in
+      candidates.contains(choice.recordID)
+        ? WorktreeRecoveryRecord.Selection(
+          recordID: choice.recordID, revision: Int64.max - 2, oid: choice.oid)
+        : nil
+    }
+    guard kind != .release, releasing.count == candidates.count else {
+      throw invalidRecoveryMetadata()
+    }
+    let previous = Self(
+      id: id, kind: kind, requestDigest: requestDigest, selections: selections, completion: .init())
+    let successor = Self(
+      id: id, kind: .release, requestDigest: requestDigest, selections: releasing,
+      completion: .init())
+    let recordBytes = try recoverySum(releasing.count, releasing.count)
+    let successorBytes = try recoverySum(recoveryJSON(successor).count, recordBytes)
+    return .init(bytes: max(0, successorBytes - (try recoveryJSON(previous).count)))
+  }
 }
 
 struct WorktreeRecoveryCatalog: Codable, Equatable, Sendable {
@@ -240,6 +264,23 @@ struct WorktreeRecoveryReleaseReceipt: Codable, Equatable, Sendable {
   static func digest(of selections: [WorktreeRecoveryRecord.Selection]) throws -> String {
     let sorted = selections.sorted { $0.recordID.uuidString < $1.recordID.uuidString }
     return WorktreeObjectSnapshot.digest(try recoveryJSON(sorted))
+  }
+
+  static func batch(
+    for records: [WorktreeRecoveryRecord], operationID: UUID, requestDigest: String
+  ) throws -> [Self] {
+    let selectionDigest = try digest(of: records.map(\.selection))
+    var bytes = 0
+    return try records.map { record in
+      let receipt = Self(
+        storeGeneration: record.storeGeneration, owner: record.owner, selection: record.selection,
+        operationID: operationID, requestDigest: requestDigest, selectionDigest: selectionDigest)
+      bytes = try recoverySum(bytes, receipt.encoded().count)
+      guard bytes <= operationByteLimit else {
+        throw WorktreeError.busy("Recovery release exceeds its receipt byte limit.")
+      }
+      return receipt
+    }
   }
 }
 

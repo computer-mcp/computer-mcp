@@ -199,6 +199,15 @@ struct WorktreePrivateMetadata {
     self.roots = allRoots.sorted()
     index = try verifyCapture ? nil : read("index", in: directory)
     if verifyCapture {
+      // The index contributes no roots, but must still be canonical owned metadata.
+      if let stamp = try FileStamp.read(directory.descriptor, "index") {
+        guard stamp.mode & S_IFMT == S_IFREG, stamp.links == 1,
+          stamp.size >= 0, stamp.size <= remaining
+        else { throw WorktreeError.identityChanged("Invalid private index identity.") }
+        observations["index"] = stamp
+      } else {
+        absent.insert("index")
+      }
       for (path, stamp) in observations {
         try check()
         guard try FileStamp.read(directory.descriptor, path) == stamp else {

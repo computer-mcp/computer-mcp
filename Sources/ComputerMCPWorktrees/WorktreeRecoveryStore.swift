@@ -254,7 +254,8 @@ extension WorktreeRecoveryStore {
       try admit(
         operationID: retention.operationID, kind: retention.kind,
         requestDigest: retention.requestDigest(), records: retention.admitted,
-        completionSteps: [retained, terminal])
+        completionSteps: [retained, terminal],
+        releaseCandidates: Set(terminal.filter { $0.claims.isEmpty }.map(\.id)))
     }
 
     /// The journal has frozen the pack receipt and retention IDs. The caller
@@ -363,14 +364,13 @@ extension WorktreeRecoveryStore {
       try opened.verify()
     }
 
-    /// Under S, terminal evidence retires only this operation's dependencies.
-    /// Callers journal any subsequent release selection before deleting anchors.
-    func endRetention(
-      _ retention: WorktreeRecoveryRetention, verifyTerminalOutcome: () throws -> Void
-    ) throws -> [WorktreeRecoveryRecord] {
+    /// Preview the exact state after retiring this operation's pin. The caller
+    /// journals the release selection before committing the catalog transition.
+    func retentionCompletion(_ retention: WorktreeRecoveryRetention)
+      throws -> (pending: Bool, records: [WorktreeRecoveryRecord])
+    {
       let current = try durableCatalog().catalog
       try retention.validate(in: current, repository: opened.identity.repository)
-      try verifyTerminalOutcome()
       let indices = recordIndices(current)
       let records = try retention.retained.map { planned in
         guard let index = indices[planned.id] else { throw invalidRecoveryMetadata() }
@@ -384,7 +384,7 @@ extension WorktreeRecoveryStore {
       guard let intent = current.intents.first(where: { $0.id == retention.operationID }) else {
         guard records.allSatisfy({ !$0.dependencies.contains(retention.operationID) })
         else { throw invalidRecoveryMetadata() }
-        return records
+        return (false, records)
       }
       guard intent.kind == retention.kind, try intent.requestDigest == retention.requestDigest(),
         intent.selections == retention.admitted.map(\.selection)
@@ -397,12 +397,7 @@ extension WorktreeRecoveryStore {
         next.dependencies.removeAll { $0 == retention.operationID }
         return next
       }
-      try withoutActuallyEscaping(verifyTerminalOutcome) { verify in
-        try advance(
-          operationID: retention.operationID, records: updates,
-          verifyTerminalOutcome: verify)
-      }
-      return updates
+      return (true, updates)
     }
 
     /// The lifecycle caller has frozen the exact release request and authorized
@@ -532,7 +527,8 @@ extension WorktreeRecoveryStore {
     /// advance those records, but need no additional record slots.
     func admit(
       operationID: UUID, kind: WorktreeRecoveryIntent.Kind, requestDigest: String,
-      records: [WorktreeRecoveryRecord], completionSteps: [[WorktreeRecoveryRecord]]
+      records: [WorktreeRecoveryRecord], completionSteps: [[WorktreeRecoveryRecord]],
+      releaseCandidates: Set<UUID> = []
     ) throws {
       let previous = try durableCatalog()
       guard kind != .release, requestDigest.isRecoveryDigest, !records.isEmpty
@@ -540,10 +536,23 @@ extension WorktreeRecoveryStore {
       var next = previous.catalog
       let indices = recordIndices(next)
       let changes = try uniqueRecords(records)
-      let reserve = try completionReserve(from: changes, steps: completionSteps)
-      let intent = WorktreeRecoveryIntent(
+      var intent = WorktreeRecoveryIntent(
         id: operationID, kind: kind, requestDigest: requestDigest,
-        selections: records.map(\.selection), completion: reserve)
+        selections: records.map(\.selection), completion: .init())
+      try intent.completion.add(intent.followOnReleaseGrowth(for: releaseCandidates))
+      try intent.completion.add(completionReserve(from: changes, steps: completionSteps))
+      if !releaseCandidates.isEmpty {
+        // Bound the immutable output with the same revision width allowed by
+        // the pending intent. Receipt ownership fields never change.
+        let possible = records.compactMap { record -> WorktreeRecoveryRecord? in
+          guard releaseCandidates.contains(record.id) else { return nil }
+          var projected = record
+          projected.revision = Int64.max - 2
+          return projected
+        }
+        _ = try WorktreeRecoveryReleaseReceipt.batch(
+          for: possible, operationID: operationID, requestDigest: requestDigest)
+      }
       if let existing = next.intents.first(where: { $0.id == operationID }) {
         guard existing == intent,
           records.allSatisfy({ record in
@@ -589,7 +598,8 @@ extension WorktreeRecoveryStore {
 
     func advance(
       operationID: UUID, records: [WorktreeRecoveryRecord],
-      verifyTerminalOutcome: (() throws -> Void)? = nil
+      verifyTerminalOutcome: (() throws -> Void)? = nil,
+      releasing receipts: [WorktreeRecoveryReleaseReceipt] = []
     ) throws {
       let previous = try durableCatalog()
       var next = previous.catalog
@@ -599,7 +609,8 @@ extension WorktreeRecoveryStore {
       let selected = Set(next.intents[intentIndex].selections.map(\.recordID))
       let updates = try uniqueRecords(records)
       guard Set(updates.keys).isSubset(of: selected),
-        verifyTerminalOutcome == nil || Set(updates.keys) == selected
+        verifyTerminalOutcome == nil || Set(updates.keys) == selected,
+        receipts.isEmpty || verifyTerminalOutcome != nil
       else { throw invalidRecoveryMetadata() }
       let indices = recordIndices(next)
       var growth = WorktreeRecoveryGrowth()
@@ -620,6 +631,13 @@ extension WorktreeRecoveryStore {
       if let verifyTerminalOutcome {
         try verifyTerminalOutcome()
         next.intents.remove(at: intentIndex)
+        if !receipts.isEmpty {
+          let batch = try releaseBatch(receipts)
+          guard batch.operationID != operationID,
+            batch.items.allSatisfy({ updates[$0.receipt.selection.recordID] != nil })
+          else { throw invalidRecoveryMetadata() }
+          try insertRelease(batch, in: &next)
+        }
       }
       try write(next, replacing: previous.bytes)
     }
@@ -646,6 +664,15 @@ extension WorktreeRecoveryStore {
         try requireRelease(batch, intent: intent, catalog: next)
         return
       }
+      try insertRelease(batch, in: &next)
+      try write(next, replacing: previous.bytes)
+    }
+
+    private func insertRelease(_ batch: ReleaseBatch, in next: inout WorktreeRecoveryCatalog)
+      throws
+    {
+      guard !next.intents.contains(where: { $0.id == batch.operationID })
+      else { throw invalidRecoveryMetadata() }
       let indices = recordIndices(next)
       for item in batch.items {
         let receipt = item.receipt
@@ -665,7 +692,6 @@ extension WorktreeRecoveryStore {
         .init(
           id: batch.operationID, kind: .release, requestDigest: batch.digest,
           selections: batch.items.map(\.receipt.selection), completion: .init()))
-      try write(next, replacing: previous.bytes)
     }
 
     func finishRelease(

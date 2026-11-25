@@ -24,6 +24,17 @@ struct WorktreeRemovalJournal: Codable {
   var repositoryArmed: Bool?
   var reconciliation: WorktreeRecoveryReconciliation?
   var terminal: WorktreeRecoveryTerminal?
+
+  func requireCompletionSpace(limit: Int = WorktreeRecoveryCatalog.byteLimit) throws {
+    guard terminal?.receipts != nil, reconciliation != nil else { throw invalidRecoveryMetadata() }
+    var largest = self
+    largest.repositoryArmed = true
+    largest.phase = .unregistering
+    // Keep the live guards and the longer unfinished flag in the projection.
+    guard try recoveryJSON(largest).count <= limit else {
+      throw WorktreeError.busy("Removal completion exceeds its journal byte bound.")
+    }
+  }
 }
 
 extension WorktreeRepository {
@@ -170,10 +181,10 @@ extension WorktreeRepository {
       baseHistory: registration.baseHistory)
     let metadata = try sourceMetadata()
     let budget = try WorktreeObjectBudget(limits)
-    func save(_ change: (inout WorktreeRemovalJournal) -> Void) throws {
+    func save(_ change: (inout WorktreeRemovalJournal) throws -> Void) throws {
       let previous = try removalBytes(state)
       var next = state
-      change(&next)
+      try change(&next)
       try saveRemoval(next, replacing: previous)
       state = next
     }
@@ -263,6 +274,17 @@ extension WorktreeRepository {
           try reconciliation.prepare(
             in: recovery, verifyFinalRetention: verifyPrivate, sealed: sealed,
             persist: { next in try save { $0.reconciliation = next } })
+          let final = try recovery.retentionCompletion(retention)
+          guard final.pending else { throw invalidRecoveryMetadata() }
+          let terminal = try (state.terminal ?? WorktreeRecoveryTerminal()).planning(
+            retention, records: final.records, sealed: sealed)
+          let completion = try reconciliation.planning(
+            in: recovery.catalog(), afterRetiring: final.records, sealed: sealed)
+          try save {
+            $0.terminal = terminal
+            $0.reconciliation = completion
+            try $0.requireCompletionSpace()
+          }
           try verifyAuthority()
           if try store.records().first(where: { $0.projectID == removing.projectID }) != removing {
             try store.commit(removing, expecting: original.revision, protecting: nil)
@@ -284,6 +306,7 @@ extension WorktreeRepository {
         for (phase, directory, next) in steps where state.phase == phase {
           try verifyAuthority()
           if phase == .content {
+            if state.terminal?.receipts != nil { try state.requireCompletionSpace() }
             try requireRemovalChild(registration.root)
             try verifyPrivate()
           }
@@ -336,7 +359,12 @@ extension WorktreeRepository {
             persist: { next in try save { $0.terminal = next } })
           try reconciliation.complete(
             in: recovery, verifyTeardown: verifyTeardown, sealed: sealed,
-            persist: { next in try save { $0.reconciliation = next } })
+            persist: { next in
+              try save {
+                $0.reconciliation = next
+                try $0.requireCompletionSpace()
+              }
+            })
           try save { $0.phase = .unregistering }
         }
         guard state.phase == .unregistering else { throw invalidRecoveryMetadata() }

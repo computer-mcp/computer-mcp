@@ -163,35 +163,49 @@ struct WorktreeRecoveryTerminal: Codable, Equatable {
 
   init() { releaseOperationID = UUID() }
 
+  func planning(
+    _ retention: WorktreeRecoveryRetention, records: [WorktreeRecoveryRecord],
+    sealed: WorktreeAcknowledgementSealCheck
+  ) throws -> Self {
+    let temporary = retention.admitted.first {
+      $0.oid == retention.expectedOID && $0.claims.isEmpty
+    }
+    let releasable = try records.filter { record in
+      guard record.claims.isEmpty, record.dependencies.isEmpty else { return false }
+      if record.id == temporary?.id { return true }
+      for acknowledgement in record.acknowledgements {
+        if try sealed(record.id, acknowledgement) { return true }
+      }
+      return false
+    }
+    let planned = try WorktreeRecoveryReleaseReceipt.batch(
+      for: releasable, operationID: releaseOperationID, requestDigest: retention.requestDigest())
+    guard receipts.map({ $0 == planned }) ?? true else { throw invalidRecoveryMetadata() }
+    var next = self
+    next.receipts = planned
+    return next
+  }
+
   mutating func complete(
     _ retention: WorktreeRecoveryRetention, store: WorktreeRecoveryStore.Locked,
     verifyTerminalOutcome: () throws -> Void, sealed: WorktreeAcknowledgementSealCheck,
     persist: (Self) throws -> Void
   ) throws {
     try verifyTerminalOutcome()
-    if receipts == nil {
-      let records = try store.endRetention(retention, verifyTerminalOutcome: verifyTerminalOutcome)
-      let temporary = retention.admitted.first {
-        $0.oid == retention.expectedOID && $0.claims.isEmpty
-      }
-      let releases = try records.filter { record in
-        guard record.claims.isEmpty, record.dependencies.isEmpty else { return false }
-        if record.id == temporary?.id { return true }
-        for acknowledgement in record.acknowledgements {
-          if try sealed(record.id, acknowledgement) { return true }
-        }
-        return false
-      }
-      let selection = try WorktreeRecoveryReleaseReceipt.digest(of: releases.map(\.selection))
-      let digest = try retention.requestDigest()
-      var next = self
-      next.receipts = releases.map {
-        .init(
-          storeGeneration: retention.generation, owner: $0.owner, selection: $0.selection,
-          operationID: releaseOperationID, requestDigest: digest, selectionDigest: selection)
-      }
+    let pending = try store.catalog().intents.contains { $0.id == retention.operationID }
+    if receipts == nil || pending {
+      let completion = try store.retentionCompletion(retention)
+      let next = try planning(retention, records: completion.records, sealed: sealed)
       try persist(next)
       self = next
+      if completion.pending {
+        guard let receipts else { throw invalidRecoveryMetadata() }
+        try withoutActuallyEscaping(verifyTerminalOutcome) { verify in
+          try store.advance(
+            operationID: retention.operationID, records: completion.records,
+            verifyTerminalOutcome: verify, releasing: receipts)
+        }
+      }
     }
     try persist(self)
     if let receipts, !receipts.isEmpty {

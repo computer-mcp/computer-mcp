@@ -262,6 +262,109 @@ struct WorktreeRecoveryStoreTests {
     }
   }
 
+  @Test func retirementKeepsExactLimitCapacityUntilReleaseIsDurable() throws {
+    try fixture { directory in
+      let f = try RecoveryFixture(directory)
+      let retirement = UUID()
+      let release = UUID()
+      let unrelatedID = UUID()
+      let digest = String(repeating: "d", count: 64)
+      let prepared = try f.store.withExclusive(repository: f.identity) { locked in
+        let original = try (0..<16).map { _ in try f.retain(locked) }
+        let refs = try WorktreeDirectory(f.path.appendingPathComponent("repository.git/refs"))
+        let anchors = try refs.child("recovery", create: true)
+        for record in original {
+          try WorktreeJournalIO().write(
+            Data((record.oid + "\n").utf8), name: record.id.uuidString.lowercased(),
+            in: anchors, replacing: nil)
+        }
+        let pinned = original.map { record in
+          var next = record
+          next.revision += 1
+          next.dependencies = [retirement]
+          return next
+        }
+        let terminal = pinned.map { record in
+          var next = record
+          next.revision += 1
+          next.dependencies = []
+          return next
+        }
+        try locked.admit(
+          operationID: retirement, kind: .branchDeletion, requestDigest: digest,
+          records: pinned, completionSteps: [terminal],
+          releaseCandidates: Set(terminal.map(\.id)))
+        let unrelated = f.record(generation: locked.generation, operation: unrelatedID)
+        try locked.admit(
+          operationID: unrelatedID, kind: .publication, requestDigest: digest,
+          records: [unrelated], completionSteps: [])
+        var before = try locked.catalog()
+        let reserved = try #require(
+          before.intents.first { $0.id == retirement }?.completion.bytes)
+        #expect(reserved > 0)
+        let unrelatedIndex = try #require(before.intents.firstIndex { $0.id == unrelatedID })
+        let originalBytes = try recoveryJSON(before)
+        let free = WorktreeRecoveryCatalog.byteLimit - reserved - originalBytes.count
+        // Represent occupancy as an unrelated intent's reservation so the
+        // real catalog is at its accounting limit with only a few records.
+        before.intents[unrelatedIndex].completion.bytes = free
+        let extraDigits = try recoveryJSON(before).count - originalBytes.count
+        let unrelatedReserve = free - extraDigits
+        before.intents[unrelatedIndex].completion.bytes = unrelatedReserve
+        let full = try recoveryJSON(before)
+        #expect(full.count + reserved + unrelatedReserve == WorktreeRecoveryCatalog.byteLimit)
+        try before.validate(
+          repository: f.identity, generation: before.generation, byteCount: full.count)
+        try WorktreeJournalIO().write(
+          full, name: "catalog.json", in: WorktreeDirectory(f.path), replacing: originalBytes)
+        let anotherID = UUID()
+        let another = f.record(generation: locked.generation, operation: anotherID)
+        #expect(throws: WorktreeError.busy("Recovery catalog exceeds its reserved capacity.")) {
+          try locked.admit(
+            operationID: anotherID, kind: .publication, requestDigest: digest,
+            records: [another], completionSteps: [])
+        }
+        let receipts = try WorktreeRecoveryReleaseReceipt.batch(
+          for: terminal, operationID: release, requestDigest: digest)
+        return (
+          terminal: terminal, receipts: receipts, unrelated: unrelated,
+          unrelatedReserve: unrelatedReserve
+        )
+      }
+
+      let probe = RecoverySyncProbe()
+      var failing = f.store
+      failing.io = WorktreeJournalIO(beforeDirectorySync: { try probe.synchronize() })
+      probe.configure(failAt: 2)
+      #expect(throws: RecoverySyncFailure.self) {
+        try failing.withExclusive(repository: f.identity) { locked in
+          try locked.advance(
+            operationID: retirement, records: prepared.terminal, verifyTerminalOutcome: {},
+            releasing: prepared.receipts)
+        }
+      }
+      #expect(probe.calls == 2)
+      try f.store.withExclusive(repository: f.identity) { locked in
+        let after = try locked.catalog()
+        #expect(Set(after.intents.map(\.id)) == [release, unrelatedID])
+        #expect(
+          after.intents.first { $0.id == unrelatedID }?.completion.bytes
+            == prepared.unrelatedReserve)
+        #expect(after.records.filter { $0.state == .releasing }.count == prepared.terminal.count)
+        #expect(
+          after.records.filter { $0.state == .releasing }.allSatisfy {
+            $0.dependencies == [release]
+          })
+        try locked.releaseAnchors(prepared.receipts, verifyAuthority: {})
+        try locked.releaseAnchors(prepared.receipts, verifyAuthority: {})
+        #expect(try locked.catalog().records == [prepared.unrelated])
+        for receipt in prepared.receipts {
+          #expect(try locked.releaseReceipt(recordID: receipt.selection.recordID) == receipt)
+        }
+      }
+    }
+  }
+
   @Test func catalogPublicationSyncFailureRequiresDurableReplay() throws {
     try fixture { directory in
       let f = try RecoveryFixture(directory)

@@ -486,22 +486,41 @@ struct MCPBoundHostServicesTests {
     let fixture = try HostAuthorityFixture()
     defer { fixture.remove() }
     let directory = try #require(fixture.peer.context(for: "scope")?.tools)
+    let request = RetainedControlInvocation()
     _ = try await fixture.during("fixture.audit") { _, context in
       let id = try #require(context.admission?.hostInvocationID)
-      var leases: [MCPHostToolDirectory.InvocationLease] = []
-      defer { for lease in leases { lease.finish() } }
+      await request.hold(
+        id: id, lease: try directory.retain(id: id, projectID: "scope", origin: "probe"))
+      return .object([:])
+    }
+    let id = try #require(await request.id)
+    var leases: [MCPHostToolDirectory.InvocationLease] = []
+    do {
+      // The retained request owns the live call while the test measures capacity.
+      // Each lease needs a durable commit, independently of the provider's reply.
+      let path = try #require(fixture.connection.fileURL).path
+      let store = HostCallRecordStore(connection: try GatewayDatabaseConnection(path: path))
+      let initial = try #require(try store.record(id: id))
+      try #require(initial.requestLeaseIDs.count == 1 && initial.workLeaseIDs.isEmpty)
       for _ in 1..<1024 {
+        try Task.checkCancellation()
         leases.append(try directory.retainWork(id: id, projectID: "scope", origin: "probe"))
       }
       #expect(throws: (any Error).self) {
         try directory.retain(id: id, projectID: "scope", origin: "probe")
       }
-      let record = try #require(try fixture.database.hostCallRecordStore().record(id: id))
-      #expect(record.requestLeaseIDs.count == 1 && record.workLeaseIDs.count == 1023)
+      let record = try #require(try store.record(id: id))
+      #expect(record.requestLeaseIDs == initial.requestLeaseIDs)
+      #expect(record.workLeaseIDs.count == 1023)
       _ = try fixture.runtime.requireHostInvocation(projectID: "scope", origin: "probe", id: id)
-      return .object([:])
+    } catch {
+      await fixture.close()
+      throw error
     }
     await fixture.close()
+    for lease in leases { lease.finish() }
+    await request.finish()
+    #expect(try fixture.database.hostCallRecordStore().record(id: id)?.lifecycle == .completed)
   }
 
   @Test(.timeLimit(.minutes(5)), arguments: [false, true])

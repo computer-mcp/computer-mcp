@@ -1829,45 +1829,53 @@ final class LiveAppControlPlaneTests {
         AppLocalization.string("entry.projects.section_title", locale: locale) == recoverySection)
       #expect(AppLocalization.string("storage.action.reclaim", locale: locale) == reclaim)
 
-      model.selectedSection = project == nil ? .permissions : .projects
-      model.projectRecoveryPath = []
-      model.privacySecurity.path = []
-      let host = NSHostingView(
-        rootView: AppShellView()
-          .environmentObject(model)
-          .environment(\.locale, locale)
-          .environment(\.colorScheme, chinese ? .dark : .light))
-      host.sizingOptions = []
-      let viewport = NSRect(x: 0, y: 0, width: 1120, height: 1440)
-      host.frame = viewport
-      let window = NSWindow(
-        contentRect: viewport, styleMask: [.titled], backing: .buffered, defer: false)
-      window.isReleasedWhenClosed = false
-      window.appearance = NSAppearance(named: chinese ? .darkAqua : .aqua)
-      window.contentView = host
-      defer { window.close() }
-      window.display()
+      for scheme in [ColorScheme.light, .dark] {
+        let appearance: NSAppearance.Name = scheme == .dark ? .darkAqua : .aqua
+        let capture = "h16-\(route)-\(language)-\(scheme == .dark ? "dark" : "light")"
+        model.selectedSection = project == nil ? .permissions : .projects
+        model.projectRecoveryPath = []
+        model.privacySecurity.path = []
+        let host = NSHostingView(
+          rootView: AppShellView()
+            .environmentObject(model)
+            .environment(\.locale, locale)
+            .environment(\.colorScheme, scheme))
+        host.sizingOptions = []
+        let viewport = NSRect(x: 0, y: 0, width: 1120, height: 1440)
+        host.frame = viewport
+        let window = NSWindow(
+          contentRect: viewport, styleMask: [.titled], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        window.appearance = NSAppearance(named: appearance)
+        window.contentView = host
+        defer { window.close() }
+        window.display()
+        try #require(
+          host.effectiveAppearance.bestMatch(from: [.aqua, .darkAqua]) == appearance,
+          "\(capture) effective appearance")
 
-      let entryLabels =
-        project.map { [$0.displayName] }
-        ?? [chinese ? "提交与存储" : recoveryTitle, recoverySection]
-      let entry = try await h16FindLabels(entryLabels, in: host, language: language)
-      try h16Capture(entry, name: "h16-\(route)-entry-\(language)")
-      if let project {
-        model.projectRecoveryPath.append(project)
-      } else {
-        model.privacySecurity.path.append(.recovery)
+        let entryLabels =
+          project.map { [$0.displayName] }
+          ?? [chinese ? "提交与存储" : recoveryTitle, recoverySection]
+        let entry = try await h16FindLabels(entryLabels, in: host, language: language)
+        try h16Capture(entry, name: "\(capture)-entry")
+        if let project {
+          model.projectRecoveryPath.append(project)
+        } else {
+          model.privacySecurity.path.append(.recovery)
+        }
+
+        // These operation results exist only in the recovery model populated by this fixture.
+        let resultKey = project == nil ? "recovery.review_changed" : "worktree.removal.verified"
+        let sharedResult =
+          chinese && project == nil
+          ? "选择发生变化" : AppLocalization.string(resultKey, locale: locale)
+        let sectionKey = project == nil ? "commits.section.title" : "worktree.section.title"
+        let destination = try await h16FindLabels(
+          [AppLocalization.string(sectionKey, locale: locale), sharedResult, reclaim],
+          in: host, language: language, isReady: { !model.worktreeRecovery.isWorking })
+        try h16Capture(destination, name: "\(capture)-destination")
       }
-
-      // These operation results exist only in the recovery model populated by this fixture.
-      let resultKey = project == nil ? "recovery.review_changed" : "worktree.removal.verified"
-      let sharedResult =
-        chinese && project == nil
-        ? "选择发生变化" : AppLocalization.string(resultKey, locale: locale)
-      let destination = try await h16FindLabels(
-        [sharedResult, reclaim], in: host, language: language,
-        isReady: { !model.worktreeRecovery.isWorking })
-      try h16Capture(destination, name: "h16-\(route)-destination-\(language)")
     }
   }
 

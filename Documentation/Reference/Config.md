@@ -397,7 +397,7 @@ selection fields, configured MCP `[[tools]]` mappings are normalized into the
 server's explicit whitelist when decoded, and export retains that selection.
 Explicit selection fields take precedence over mappings.
 
-### Downstream risk and permission values
+### Permissions by downstream tool risk
 
 `tool_risks` contains host classifications, independently of tool selection.
 The host takes the higher of configured risk and a valid downstream declaration.

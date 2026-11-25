@@ -33,7 +33,8 @@ let neutralTargets: [Target] =
       name: "ComputerMCPPermissions",
       dependencies: [.product(name: "Crypto", package: "swift-crypto")]),
     .testTarget(
-      name: "ComputerMCPPermissionsTests", dependencies: ["ComputerMCPPermissions"]),
+      name: "ComputerMCPPermissionsTests", dependencies: ["ComputerMCPPermissions"],
+      resources: [.copy("Fixtures")]),
     .executableTarget(
       name: "computer-mcp-execution-bootstrap", path: "Sources/ComputerMCPExecutionBootstrap"),
     .target(name: "ComputerMCPSandbox"),

@@ -847,7 +847,7 @@ Arguments:
 ## MCP-Backed `[[tools]]`
 
 Required permissions and Full access follow the underlying server/tool's
-[effective risk mapping](Config.md#downstream-risk-and-permission-values).
+[effective risk mapping](Config.md#permissions-by-downstream-tool-risk).
 A named project additionally needs Project `read` for a read-only target or
 `write` for any other target. Host provisioning/removal actions require Source
 Project `write`. Plugin contributions also follow the ownership rule above.

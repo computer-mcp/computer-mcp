@@ -27,7 +27,7 @@ this repository.
 
 A downstream tool can declare a minimum risk in
 `_meta["io.github.computer-mcp/risk"]`. The
-[risk-to-permission table](Config.md#downstream-risk-and-permission-values)
+[risk-to-permission table](Config.md#permissions-by-downstream-tool-risk)
 defines all accepted values, their required MCP server and Project permission
 values, and when execution requires Full access. The host uses the higher of this
 classification and its configured tool risk. Missing declarations retain configured

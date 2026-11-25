@@ -28,7 +28,7 @@ import Vision
     let l = PrivacyText(locale: Locale(identifier: "en"))
     var request = try #require(PrivacySecurityFake.sample.requests.first)
     request.registration = .newProject
-    #expect(request.object?.detail == "/Users/owner/Developer/site")
+    #expect(request.object?.detail == "/Users/example/Developer/site")
     #expect(
       PrivacyRequestPrompt.requesterCaption(for: request, using: l)
         == "git.worktree_add · Secure Tunnel")
@@ -210,7 +210,7 @@ import Vision
     try profile.permissions.set(.granted(.write), for: .project("p1"))
     let grants = LivePrivacySecurityService.grants(
       profile, names: .init(projects: ["p1": "Project"]),
-      paths: ["p1": "/Users/owner/Project"], limits: try Self.limits())
+      paths: ["p1": "/Users/example/Project"], limits: try Self.limits())
     let project = try #require(grants.first { $0.object?.id == "p1" })
     #expect(project.availableLevels == [.read])
     let wildcard = try #require(grants.first { $0.permission == .projects && $0.object?.id == "*" })
@@ -228,11 +228,11 @@ import Vision
     #expect(LivePrivacySecurityService.fullAccessSources(try Self.limits()) == ["Machine Policy"])
     let denied = LivePrivacySecurityService.grants(
       profile, names: .init(projects: ["p1": "Project"]),
-      paths: ["p1": "/Users/owner/Project"],
+      paths: ["p1": "/Users/example/Project"],
       limits: [
         ManagedLimits(
           machine: .available(
-            ManagedPolicy(deniedReadLocations: [try CanonicalPath("/Users/owner")])))
+            ManagedPolicy(deniedReadLocations: [try CanonicalPath("/Users/example")])))
       ])
     #expect(denied.first { $0.object?.id == "p1" }?.availableLevels.isEmpty == true)
   }
@@ -853,9 +853,10 @@ private final class PrivacySecurityFake: PrivacySecurityService {
     let codex = PrivacyPrincipal(
       id: "codex", name: "Codex", kind: .plugin(version: "1.4.0"), execution: .sandbox)
     let host = PrivacyObject(
-      id: "p1", name: "computer-mcp", detail: "/Users/owner/Developer/workspace/tools/computer-mcp")
+      id: "p1", name: "computer-mcp",
+      detail: "/Users/example/Developer/workspace/tools/computer-mcp")
     let site = PrivacyObject(
-      id: "p2", name: "computer-mcp.github.io", detail: "/Users/owner/Developer/site")
+      id: "p2", name: "computer-mcp.github.io", detail: "/Users/example/Developer/site")
     return PrivacySnapshot(
       requests: [
         PrivacyRequest(

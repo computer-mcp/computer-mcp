@@ -534,6 +534,8 @@ final class PrivacySecurityModel: ObservableObject {
         guard $0.permission == permission, ids.contains($0.principalID),
           $0.object?.isRegistered != false
         else { return false }
+        // An MCP wildcard is a fallback rule. Only a concrete server can be called.
+        if permission == .mcpServers, $0.object?.id == "*" { return false }
         if case .granted = $0.effectiveValue { return true }
         return false
       }.map(\.principalID)

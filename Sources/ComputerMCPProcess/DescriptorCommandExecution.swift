@@ -4,6 +4,19 @@ import ComputerMCPSandbox
 import Foundation
 import NIOConcurrencyHelpers
 
+package enum BoundedCommandLimit: Error, LocalizedError {
+  case deadline, standardOutput, standardError, fileOutput
+
+  package var errorDescription: String? {
+    switch self {
+    case .deadline: "Bounded command exceeded its deadline."
+    case .standardOutput: "Bounded command stdout exceeded its limit."
+    case .standardError: "Bounded command stderr exceeded its limit."
+    case .fileOutput: "Bounded command file output exceeded its limit."
+    }
+  }
+}
+
 /// Host file operations retain their descriptors until execution and output consumption finish.
 internal enum DescriptorCommandExecution {
   static func runBounded(
@@ -47,18 +60,17 @@ internal enum DescriptorCommandExecution {
           try state.withLockedValue { state in
             if let error = state.error { throw error }
             guard ContinuousClock.now < deadline else {
-              throw CommandRunnerError.launchFailed("Bounded command output deadline exceeded.")
+              throw BoundedCommandLimit.deadline
             }
             if let fileOutput, let destination {
               guard chunk.count <= fileOutput.bytes - state.written else {
-                throw CommandRunnerError.launchFailed(
-                  "Bounded command file output exceeded its limit.")
+                throw BoundedCommandLimit.fileOutput
               }
               try destination.write(contentsOf: chunk)
               state.written += chunk.count
             } else {
               guard chunk.count <= maxOutputBytes - state.stdout.count else {
-                throw CommandRunnerError.launchFailed("Bounded command stdout exceeded its limit.")
+                throw BoundedCommandLimit.standardOutput
               }
               state.stdout.append(chunk)
             }
@@ -69,7 +81,7 @@ internal enum DescriptorCommandExecution {
         consume: { chunk in
           try state.withLockedValue {
             guard chunk.count <= maxOutputBytes - $0.stderr.count else {
-              throw CommandRunnerError.launchFailed("Bounded command stderr exceeded its limit.")
+              throw BoundedCommandLimit.standardError
             }
             $0.stderr.append(chunk)
           }
@@ -79,7 +91,7 @@ internal enum DescriptorCommandExecution {
       var feeding: Task<Void, any Error>?
       do {
         guard ContinuousClock.now < deadline else {
-          throw CommandRunnerError.launchFailed("Bounded command deadline exceeded before launch.")
+          throw BoundedCommandLimit.deadline
         }
         let handle = try await launcher.start(
           executable: SandboxPath(path), arguments: invocation.arguments,
@@ -106,7 +118,13 @@ internal enum DescriptorCommandExecution {
             throw error
           }
         }
-        let exit = try await handle.wait(until: deadline)
+        let exit: ExecutionExit
+        do {
+          exit = try await handle.wait(until: deadline)
+        } catch is ExecutionWaitExpired {
+          if let error = state.withLockedValue({ $0.error }) { throw error }
+          throw BoundedCommandLimit.deadline
+        }
         await output.stop(drainRemainingOutput: true)
         await diagnostics.stop(drainRemainingOutput: true)
         let fed = await feeding?.result
@@ -114,7 +132,7 @@ internal enum DescriptorCommandExecution {
         if let error = collected.error { throw error }
         try fed?.get()
         guard ContinuousClock.now < deadline else {
-          throw CommandRunnerError.launchFailed("Bounded command deadline exceeded.")
+          throw BoundedCommandLimit.deadline
         }
         return CommandDataResult(
           executable: executable, arguments: invocation.arguments,

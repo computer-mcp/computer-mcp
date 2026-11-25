@@ -77,38 +77,11 @@ extension WorktreeRepository {
         recoveryRootLimit: budget.limits.objectCount)
     }
 
-    let repository = try staging.child("capture.git", create: true, exclusive: true)
-    _ = try git.run(
-      [
-        "init", "--bare", "--template=", "--object-format=" + identity.format.rawValue,
-        repository.url.path,
-      ],
-      at: staging.url, deadline: budget.deadline)
-    try repository.verify()
-
+    let repository = try prepareCaptureRepository(in: staging, deadline: budget.deadline)
     let snapshot = WorktreeObjectSnapshot(io: io, format: identity.format)
-    func acquire(
-      _ input: WorktreeDirectory, slot: String, allowLinkedInput: Bool = false,
-      live: Bool, budget: inout WorktreeObjectBudget
-    ) throws -> WorktreeStagedObjects {
-      try budget.check()
-      try checkAuthority()
-      let destination = try staging.child(slot, create: true, exclusive: true)
-      func copy() throws -> [WorktreeCopiedObjectFile] {
-        try snapshot.copy(
-          from: input, to: destination, budget: &budget, allowLinkedInput: allowLinkedInput)
-      }
-      let files = try live ? liveRecoveryInput(copy) : copy()
-      try snapshot.validateRaw(files, in: destination, budget: &budget, reportInvalidImport: true)
-      let pool = WorktreeStagedObjects(
-        directory: destination, repository: repository, git: git, format: identity.format,
-        deadline: budget.deadline, limits: budget.limits)
-      try pool.verifyIndexes(files)
-      return pool
-    }
-
-    let privatePool = try acquire(
-      topology.objects, slot: "private-objects", live: true, budget: &budget)
+    let privatePool = try acquireRecoveryObjects(
+      topology.objects, slot: "private-objects", in: staging, repository: repository,
+      snapshot: snapshot, live: true, budget: &budget)
     try liveRecoveryInput { try topology.verifyDirectories() }
     guard let privateManifest = try privatePool.manifest(roots: metadata.roots) else {
       throw WorktreeError.busy("The captured private roots have missing objects.")
@@ -124,8 +97,9 @@ extension WorktreeRepository {
     var expectedPool = privatePool
     var expected = try privatePool.manifest(roots: [expectedOID])
     if expected == nil, let retainedExpectedObjects {
-      expectedPool = try acquire(
-        retainedExpectedObjects, slot: "retained-objects", live: false, budget: &budget)
+      expectedPool = try acquireRecoveryObjects(
+        retainedExpectedObjects, slot: "retained-objects", in: staging, repository: repository,
+        snapshot: snapshot, live: false, budget: &budget)
       guard let retained = try expectedPool.manifest(roots: [expectedOID]) else {
         throw WorktreeError.recoveryRequired("The pinned expected recovery closure is incomplete.")
       }
@@ -143,8 +117,9 @@ extension WorktreeRepository {
       }
       return sourceObjects
     }
-    let sourcePool = try acquire(
-      sourceObjects, slot: "source-objects", allowLinkedInput: true, live: true, budget: &budget)
+    let sourcePool = try acquireRecoveryObjects(
+      sourceObjects, slot: "source-objects", in: staging, repository: repository,
+      snapshot: snapshot, live: true, allowLinkedInput: true, budget: &budget)
     try liveRecoveryInput { try identity.verify() }
     let sourceExpected = try sourcePool.manifest(roots: [expectedOID])
     if let sourceExpected {
@@ -172,6 +147,68 @@ extension WorktreeRepository {
       metadata: metadata, privateObjects: privatePool, expectedObjects: expectedPool,
       privateManifest: privateManifest, headManifest: headManifest, expectedManifest: expected,
       sourceExpectedManifest: sourceExpected, recoveryManifest: recovery, sourceManifest: source)
+  }
+
+  /// The release gate protects the live generation while its expected commit
+  /// is checked in a host-owned copy with an independent Git object pool.
+  func hasVerifiedPrivateExpectedCommit(
+    _ oid: String, topology: VerifiedWorktreeTopology, scratch: WorktreeDirectory,
+    budget: inout WorktreeObjectBudget
+  ) throws -> Bool {
+    try budget.check()
+    try topology.verifyDirectories()
+    try verifyPrivateControls(topology, repository: identity)
+    let repository = try prepareCaptureRepository(in: scratch, deadline: budget.deadline)
+    let snapshot = WorktreeObjectSnapshot(io: WorktreeJournalIO(), format: identity.format)
+    do {
+      let pool = try acquireRecoveryObjects(
+        topology.objects, slot: "private-objects", in: scratch, repository: repository,
+        snapshot: snapshot, live: true, budget: &budget)
+      try liveRecoveryInput { try topology.verifyDirectories() }
+      guard try pool.manifest(roots: [oid])?.entries[oid]?.type == .commit else {
+        return false
+      }
+      try pool.verifyIntegrity()
+      try budget.check()
+      return true
+    } catch WorktreeError.invalidRequest {
+      return false
+    }
+  }
+
+  private func prepareCaptureRepository(
+    in staging: WorktreeDirectory, deadline: ContinuousClock.Instant
+  ) throws -> WorktreeDirectory {
+    let repository = try staging.child("capture.git", create: true, exclusive: true)
+    _ = try git.run(
+      [
+        "init", "--bare", "--template=", "--object-format=" + identity.format.rawValue,
+        repository.url.path,
+      ],
+      at: staging.url, deadline: deadline)
+    try repository.verify()
+    return repository
+  }
+
+  private func acquireRecoveryObjects(
+    _ input: WorktreeDirectory, slot: String, in staging: WorktreeDirectory,
+    repository: WorktreeDirectory, snapshot: WorktreeObjectSnapshot, live: Bool,
+    allowLinkedInput: Bool = false, budget: inout WorktreeObjectBudget
+  ) throws -> WorktreeStagedObjects {
+    try budget.check()
+    try checkAuthority()
+    let destination = try staging.child(slot, create: true, exclusive: true)
+    func copy() throws -> [WorktreeCopiedObjectFile] {
+      try snapshot.copy(
+        from: input, to: destination, budget: &budget, allowLinkedInput: allowLinkedInput)
+    }
+    let files = try live ? liveRecoveryInput(copy) : copy()
+    try snapshot.validateRaw(files, in: destination, budget: &budget, reportInvalidImport: true)
+    let pool = WorktreeStagedObjects(
+      directory: destination, repository: repository, git: git, format: identity.format,
+      deadline: budget.deadline, limits: budget.limits)
+    try pool.verifyIndexes(files)
+    return pool
   }
 
   private func liveRecoveryInput<Value>(_ capture: () throws -> Value) throws -> Value {

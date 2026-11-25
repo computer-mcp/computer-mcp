@@ -1,3 +1,4 @@
+import ComputerMCPPlatformPOSIX
 import Foundation
 
 struct RecoveryOwnerJournal: Codable, Equatable {
@@ -9,6 +10,19 @@ struct RecoveryOwnerJournal: Codable, Equatable {
     var cleanup: RecoveryOperationStatus.GateCleanup = .pending
   }
 
+  struct FallbackScratch: Codable, Equatable {
+    static let lockName = "release-proof.lock"
+
+    let token: UUID
+    let runtime: WorktreeDirectoryIdentity
+    let directory: WorktreeDirectoryIdentity
+    let lock: FileLock.Identity
+
+    static func name(operation: UUID, token: UUID) -> String {
+      "release-proof-" + operation.uuidString.lowercased() + "-" + token.uuidString.lowercased()
+    }
+  }
+
   var schema = 1
   var revision: Int64 = 1
   let request: RecoveryReviewedRequest
@@ -16,6 +30,7 @@ struct RecoveryOwnerJournal: Codable, Equatable {
   var gates: [Gate] = []
   var outcome: RecoveryOperationStatus.Outcome = .pending
   var maintenance: WorktreeRecoveryWithdrawal?
+  var fallbackScratch: FallbackScratch?
 
   var handle: RecoveryOperationHandle { request.handle }
   var resultName: String { Self.resultName(handle.id) }
@@ -95,8 +110,25 @@ extension WorktreeRecoveryStore.Locked {
           intended.existing.map({ $0 == actual.admission }) ?? true
         else { throw invalidRecoveryMetadata() }
       }
+      if let scratch = record.fallbackScratch {
+        let name = RecoveryOwnerJournal.FallbackScratch.name(
+          operation: record.handle.id, token: scratch.token)
+        let path = URL(fileURLWithPath: scratch.runtime.path).appendingPathComponent(name).path
+        guard !record.isResult, !record.gates.isEmpty,
+          let gate = review.release.gates.first(where: {
+            $0.record.worktree?.runtime == scratch.runtime
+          }),
+          let expected = gate.record.worktree?.lastPublishedOID,
+          review.records.contains(where: {
+            $0.owner.projectID == gate.record.projectID && $0.oid == expected
+              && $0.objectType == .commit
+          }), scratch.directory.path.utf8.elementsEqual(path.utf8)
+        else { throw invalidRecoveryMetadata() }
+      }
     case .maintenance(let review):
-      guard record.gates.isEmpty else { throw invalidRecoveryMetadata() }
+      guard record.gates.isEmpty, record.fallbackScratch == nil else {
+        throw invalidRecoveryMetadata()
+      }
       try record.maintenance?.validate(review: review)
       switch record.outcome {
       case .pending:

@@ -243,7 +243,50 @@ struct GatewayWorktreeServiceTests {
       try fixture.call(.add(name: "other", branch: "worktree/guards", base: nil))
     }
     let inventory = try fixture.call(.list)
-    #expect(inventory.objectValue?["worktrees"]?.arrayValue?.count == 2)
+    let listProof = try fixture.admit(.list, projectID: "source")
+    let callback = try InvocationExecution.$current.withValue(
+      GatewayWorktreeInvocation(authorization: listProof, hostAction: .projectList)
+    ) { try fixture.service("source").perform(.list) }
+    guard case .listed(let items) = callback else {
+      Issue.record("The worktree list callback returned another outcome.")
+      return
+    }
+    let callbackInventory = MCPHostOperations.inventory(items)
+    #expect(inventory == callbackInventory)
+    let entries = try #require(inventory.objectValue?["worktrees"]?.arrayValue)
+    #expect(entries.count == 2)
+    let host = try #require(
+      entries.first { $0.objectValue?["project_id"] == .string(id) }?.objectValue)
+    let record = try #require(try fixture.database.derivedProjects().first { $0.projectID == id })
+    let path = try #require(result.objectValue?["path"]?.stringValue)
+    #expect(
+      host == [
+        "path": .string(path), "project_id": .string(id), "branch": .string("worktree/guards"),
+        "base": .string("main"), "ahead": .integer(0), "behind": .integer(0),
+        "dirty": .bool(false), "unavailable": .null,
+        "worktree_id": .string(record.provenance.worktreeID.uuidString.lowercased()),
+        "owner": .string("host"),
+      ])
+    if case .integer(0)? = host["ahead"] {
+    } else {
+      Issue.record("The builtin ahead count must use an integer value.")
+    }
+    if case .integer(0)? = host["behind"] {
+    } else {
+      Issue.record("The builtin behind count must use an integer value.")
+    }
+    let foreign = try #require(
+      entries.first { $0.objectValue?["owner"] == .string("foreign") }?.objectValue)
+    let foreignPath = try #require(foreign["path"]?.stringValue)
+    let sourceURL = try ProjectPathResolver.canonicalProject(URL(fileURLWithPath: foreignPath))
+    #expect(sourceURL.path == fixture.source.path)
+    #expect(
+      foreign == [
+        "path": .string(foreignPath), "project_id": .null, "branch": .string("main"),
+        "base": .null, "ahead": .null, "behind": .null, "dirty": .bool(false),
+        "unavailable": .string("No host-recorded base for this checkout."),
+        "worktree_id": .null, "owner": .string("foreign"),
+      ])
     let proof = try fixture.admit(.remove(force: true), projectID: id)
     var profile = try #require(try fixture.database.profiles().first { $0.id == .chatGPTOperate })
     try profile.permissions.set(.granted(.read), for: .project("source"))
@@ -302,12 +345,11 @@ struct WorktreeServiceFixture {
       trustedHosts: [], expectedProjects: database.projects(), expectedConfigurationRevision: nil)
     executor = GatewayWorktreeGit(launcher: platform.launcher, executable: platform.gitExecutable)
     _ = try git(["init", "--initial-branch=main"])
+    _ = try git(["config", "--local", "user.name", "Fixture"])
+    _ = try git(["config", "--local", "user.email", "fixture@example.invalid"])
     try Data("initial".utf8).write(to: source.appendingPathComponent("value"))
     _ = try git(["add", "value"])
-    _ = try git([
-      "-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid", "commit", "-m",
-      "Initial",
-    ])
+    _ = try git(["commit", "-m", "Initial"])
   }
   func remove() { try? FileManager.default.removeItem(at: root) }
   func git(_ arguments: [String], at directory: URL? = nil, environment: [String: String] = [:])

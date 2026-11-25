@@ -2044,6 +2044,7 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
     if let worktrees = database?.worktreeStorage {
       for storage in [
         worktrees.content, worktrees.repositories, worktrees.runtime, worktrees.journals,
+        worktrees.recovery,
       ] {
         try rule(storage.path, .hostData)
       }

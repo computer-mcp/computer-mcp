@@ -114,12 +114,11 @@ struct WorktreePrivateRepositoryTests {
       try git.run(["commit", "--amend", "-m", "amended"])
       _ = try await service.remove(
         projectID: created.projectID, terminate: { _, _ in }, authorize: { _, _ in })
-      let retained = try f.raw([
-        "for-each-ref", "--format=%(objectname)", "refs/computer-mcp/recovery/",
-      ])
+      let retained = try f.recoveryRecords()
+      let recovery = try f.recoveryGitDirectory()
       for oid in [tip, tag, blob, stash] {
-        #expect(retained.split(separator: "\n").contains(Substring(oid)))
-        try f.raw(["cat-file", "-e", oid])
+        #expect(retained.contains { $0.oid == oid })
+        try f.raw(["--git-dir=" + recovery.path, "cat-file", "-e", oid])
       }
       #expect(try f.store.records().isEmpty)
     }

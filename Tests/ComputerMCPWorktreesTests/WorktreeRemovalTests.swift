@@ -102,7 +102,9 @@ struct WorktreeRemovalTests {
       let tip = try f.privateCommit(service, projectID: created.projectID)
       let kind = dependency == "publication" ? "publications" : "merges"
       let phase =
-        dependency == "publication" ? "published" : dependency == "prepared" ? "prepared" : "ready"
+        dependency == "publication"
+        ? "sourcePublished"
+        : dependency == "prepared" ? "prepared" : "ready"
       let path = f.storage.journals.appendingPathComponent(kind + "/" + created.projectID + ".json")
       let failing = try f.service(
         journalIO: .init(beforeDirectorySync: {
@@ -357,21 +359,22 @@ struct WorktreeRemovalTests {
           projectID: created.projectID, force: true,
           terminate: { _, _ in }, authorize: { _, _ in })
         #expect(try f.store.records().isEmpty)
+        #expect(try !f.recoveryRecords().contains { $0.oid == displaced })
       } else {
         _ = try await service.remove(
           projectID: created.projectID,
           terminate: { _, _ in }, authorize: { _, _ in })
         #expect(try f.raw(["rev-parse", "worktree/rewrite"]) == tip)
-        #expect(try f.raw(["cat-file", "-t", displaced]) == "commit")
+        #expect(try f.recoveryRecords().contains { $0.oid == displaced })
+        let recovery = try f.recoveryGitDirectory()
         #expect(
-          try f.raw(["for-each-ref", "--format=%(objectname)", "refs/computer-mcp/recovery/"])
-            .contains(displaced))
+          try f.raw(["--git-dir=" + recovery.path, "cat-file", "-t", displaced]) == "commit")
       }
     }
   }
 
   @Test(arguments: [
-    "preserved", "content", "repository", "runtime", "unregistering", "finished",
+    "preserved", "content", "repository", "runtime", "reconciling", "unregistering", "finished",
   ])
   func interruptedCleanupResumesOnlyOwnedSteps(phase: String) async throws {
     try await removalFixture { f in
@@ -400,6 +403,43 @@ struct WorktreeRemovalTests {
       #expect(result.oid == tip)
       #expect(try reopened.records().isEmpty)
       #expect(try f.raw(["rev-parse", "worktree/recover-remove"]) == tip)
+    }
+  }
+
+  @Test func unregistrationCommitEstablishesOutcomeWhenTerminalWriteFails() async throws {
+    try await removalFixture { f in
+      let service = try f.service()
+      let created = try service.create(name: "unregistration-readback")
+      let tip = try f.privateCommit(service, projectID: created.projectID)
+      let operationID = UUID()
+      let projectID = created.projectID
+      let store = f.store
+      let io = WorktreeJournalIO(beforePublication: {
+        guard try !store.records().contains(where: { $0.projectID == projectID }) else { return }
+        throw WorktreeError.recoveryRequired("Injected terminal journal write failure.")
+      })
+      await #expect(throws: WorktreeError.self) {
+        try await f.service(journalIO: io).remove(
+          projectID: projectID, operationID: operationID,
+          terminate: { _, _ in }, authorize: { _, _ in })
+      }
+      #expect(
+        try f.storage.removalOutcome(projectID: projectID, operationID: operationID) == .uncertain)
+      let outcome = try f.storage.removalOutcome(projectID: projectID, operationID: operationID) {
+        try !store.records().contains { $0.projectID == projectID }
+      }
+      guard case .removed(let replay) = outcome else {
+        Issue.record("Expected durable teardown and unregistration to establish the result.")
+        return
+      }
+      #expect(replay.oid == tip)
+      #expect(
+        try f.storage.removalOutcome(
+          projectID: projectID, operationID: UUID(), registrationRemoved: { true }) == .notStarted)
+      let result = try await service.remove(
+        projectID: projectID, operationID: operationID,
+        terminate: { _, _ in }, authorize: { _, _ in })
+      #expect(result == replay)
     }
   }
 

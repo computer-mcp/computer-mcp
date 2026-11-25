@@ -4,10 +4,18 @@ import Foundation
 /// bounds, replace its environment and return raw bytes. No shell or caller program runs.
 package protocol WorktreeGitExecuting: Sendable {
   func execute(_ command: WorktreeGitCommand) throws -> WorktreeGitResult
-  /// Send the supplied start/update/prepare input, require both acknowledgements,
-  /// then run the body while Git owns its locks. Commit only on success; otherwise
-  /// abort and reap. The adapter enforces command bounds throughout the session.
+  func executeBounded(
+    _ command: WorktreeGitCommand, fileOutput: WorktreeGitFileOutput?, fileSizeLimit: Int?
+  ) throws -> WorktreeGitResult
+  /// The prepared callback may validate only. It has no lifetime guarantee
+  /// beyond the command deadline. Success requires commit acknowledgement
+  /// and a successful, quiescent child exit; errors wait for child cleanup.
   func withPreparedTransaction(_ command: WorktreeGitCommand, _ body: () throws -> Void) throws
+}
+
+package struct WorktreeGitFileOutput: Sendable {
+  package let descriptor: Int32
+  package let byteLimit: Int
 }
 
 package struct WorktreeGitCommand: Sendable {
@@ -44,6 +52,12 @@ package struct WorktreeGitResult: Sendable {
 }
 
 extension WorktreeGitExecuting {
+  package func executeBounded(
+    _ command: WorktreeGitCommand, fileOutput: WorktreeGitFileOutput?, fileSizeLimit: Int?
+  ) throws -> WorktreeGitResult {
+    throw WorktreeError.unsupportedRepository("Bounded host Git execution is unavailable.")
+  }
+
   package func withPreparedTransaction(_ command: WorktreeGitCommand, _ body: () throws -> Void)
     throws
   {

@@ -14,25 +14,11 @@ struct ProtectedBranchTests {
       _ = try f.privateCommit(service, projectID: created.projectID)
       _ = try await service.remove(
         projectID: created.projectID, terminate: { _, _ in }, authorize: { _, _ in })
-      let journals = f.storage.journals.appendingPathComponent("branch-deletions")
-      let io = WorktreeJournalIO(beforeDirectorySync: {
-        for file
-          in (try? FileManager.default.contentsOfDirectory(
-            at: journals, includingPropertiesForKeys: nil)) ?? []
-        {
-          if let data = try? Data(contentsOf: file),
-            let value = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-            value["phase"] as? String == interruption
-          {
-            throw CancellationError()
-          }
-        }
-      })
+      let io = deletionInterruption(interruption, fixture: f)
       let failing = try f.service(
         store: LifecycleFailureStore(
           base: f.store, operation: interruption.hasPrefix("release-") ? "release" : "none",
           after: interruption == "release-after"),
-        executor: DeletionReceiptFailure(base: f.executor, enabled: interruption == "transaction"),
         journalIO: io)
       #expect(throws: CancellationError.self) {
         try failing.deleteBranch(
@@ -90,11 +76,28 @@ struct ProtectedBranchTests {
           created.branch, authority: .sandbox, dryRun: false, confirm: true
         ) { _ in }.deleted)
       #expect(try f.store.protectedBranches().isEmpty)
-      let retained = try f.raw([
-        "for-each-ref", "--format=%(objectname)", "refs/computer-mcp/recovery/",
-      ])
-      #expect(
-        retained.split(separator: "\n").contains(Substring(old)) == (!acknowledge || retainsReflog))
+      let records = try lifecycleRecoveryRecords(f, identity: service.identity)
+      let oldRecords = records.filter { $0.oid == old }
+      #expect(!oldRecords.isEmpty == (!acknowledge || retainsReflog))
+      if !acknowledge {
+        #expect(
+          oldRecords.contains { record in
+            record.claims.contains { $0.reason == .publishedReplacement && $0.rootOID == old }
+          })
+      }
+      if retainsReflog {
+        #expect(
+          oldRecords.contains { record in
+            record.claims.contains { $0.reason == .privateReflog && $0.rootOID == old }
+          })
+      }
+      for record in oldRecords {
+        #expect(record.owner.source == f.source)
+        #expect(record.owner.branch == "refs/heads/" + created.branch)
+        #expect(record.objectType == .commit)
+        try expectRecoveryObject(f, identity: service.identity, record: record)
+      }
+      try expectNoSourceRecoveryRefs(f)
     }
   }
 
@@ -181,10 +184,13 @@ struct ProtectedBranchTests {
           ) { _ in }.deleted)
         #expect(try f.store.protectedBranches().isEmpty)
       } else {
-        var calls = 0
+        var testedGuard = false
+        let baseLock = f.repository.appendingPathComponent(".git/refs/heads/main.lock")
         let authorize: (ProtectedWorktreeBranch?) throws -> Void = { _ in
-          calls += 1
-          if change == "base-race", calls == 2 {
+          if change == "base-race", !testedGuard,
+            FileManager.default.fileExists(atPath: baseLock.path)
+          {
+            testedGuard = true
             #expect(throws: (any Error).self) {
               try f.raw(["update-ref", "refs/heads/main", base, tip])
             }
@@ -195,6 +201,7 @@ struct ProtectedBranchTests {
           try service.deleteBranch(
             created.branch, authority: .sandbox, dryRun: false, confirm: true, authorize: authorize)
         }
+        if change == "base-race" { #expect(testedGuard) }
         #expect(try f.store.protectedBranches().count == 1)
         #expect(
           try !f.raw(["for-each-ref", "--format=%(refname)", "refs/heads/" + created.branch])
@@ -204,18 +211,29 @@ struct ProtectedBranchTests {
   }
 }
 
-private struct DeletionReceiptFailure: WorktreeGitExecuting {
-  let base: WorktreeTestGit
-  let enabled: Bool
-  func execute(_ command: WorktreeGitCommand) throws -> WorktreeGitResult {
-    try base.execute(command)
-  }
-  func withPreparedTransaction(_ command: WorktreeGitCommand, _ body: () throws -> Void) throws {
-    try base.withPreparedTransaction(command, body)
-    if enabled,
-      String(decoding: command.input, as: UTF8.self).contains("create refs/computer-mcp/deletions/")
+func deletionInterruption(_ interruption: String, fixture: WorktreeFixture) -> WorktreeJournalIO {
+  let journals = fixture.storage.journals.appendingPathComponent("branch-deletions")
+  let git = fixture.repository.appendingPathComponent(".git")
+  return .init(beforeDirectorySync: {
+    for file
+      in (try? FileManager.default.contentsOfDirectory(
+        at: journals, includingPropertiesForKeys: nil)) ?? []
     {
-      throw CancellationError()
+      guard
+        let value = try? JSONSerialization.jsonObject(with: Data(contentsOf: file))
+          as? [String: Any]
+      else { continue }
+      if value["phase"] as? String == interruption { throw CancellationError() }
+      if let source = value["sourceDeletion"] as? [String: Any],
+        source["phase"] as? String == "armed", let branch = value["branch"] as? String
+      {
+        let live = FileManager.default.fileExists(atPath: git.appendingPathComponent(branch).path)
+        if (live && interruption == "transaction-before")
+          || (!live && ["transaction", "transaction-after"].contains(interruption))
+        {
+          throw CancellationError()
+        }
+      }
     }
-  }
+  })
 }

@@ -5,6 +5,7 @@ package struct WorktreeStorage: Sendable {
   package let repositories: URL
   package let runtime: URL
   package let journals: URL
+  package let recovery: URL
   let base: URL
 
   /// Only file-backed hosts have lifecycle storage. Composition supplies the App's
@@ -19,6 +20,7 @@ package struct WorktreeStorage: Sendable {
       app ? "WorktreeRepositories" : "worktree-repositories")
     runtime = base.appendingPathComponent(app ? "WorktreeRuntime" : "worktree-runtime")
     journals = base.appendingPathComponent(app ? "WorktreeJournals" : "worktree-journals")
+    recovery = base.appendingPathComponent(app ? "WorktreeRecovery" : "worktree-recovery")
   }
 
   func prepare() throws {
@@ -30,6 +32,9 @@ package struct WorktreeStorage: Sendable {
 
   func validate(projectRoots: [URL], ownedRoots: Set<String>) throws {
     for project in projectRoots.map({ $0.standardizedFileURL.resolvingSymlinksInPath().path }) {
+      guard !Self.contains(project, recovery.path), !Self.contains(recovery.path, project) else {
+        throw WorktreeError.unsafeConfiguration("Recovery storage overlaps a registered project.")
+      }
       if ownedRoots.contains(project) { continue }
       for storage in [content, repositories, runtime, journals] {
         let path = storage.path

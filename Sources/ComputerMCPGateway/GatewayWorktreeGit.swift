@@ -54,15 +54,31 @@ struct GatewayWorktreeGit: WorktreeGitExecuting, CommandRunning {
   }
 
   func execute(_ command: WorktreeGitCommand) throws -> WorktreeGitResult {
+    // A checkout child can modify files while the parent owns source guards.
+    // Use the collector whose return joins execution even on a failed command.
+    try executeBounded(command, fileOutput: nil, fileSizeLimit: nil)
+  }
+
+  func executeBounded(
+    _ command: WorktreeGitCommand, fileOutput: WorktreeGitFileOutput?, fileSizeLimit: Int?
+  ) throws -> WorktreeGitResult {
     try administration(command) {
-      let result = try ManagedCommandRunner(launcher: launcher).runData(
+      let constraint = try fileSizeLimit.map { limit in
+        guard let bytes = UInt64(exactly: limit) else {
+          throw WorktreeError.invalidRequest("Invalid Git index file-size limit.")
+        }
+        return try ExecutionFileSizeLimit(bytes: bytes)
+      }
+      let result = try ManagedCommandRunner(launcher: launcher).runBounded(
         executable: executable,
         invocation: .init(arguments: command.arguments, standardInput: command.input),
         workingDirectory: command.directory, environment: command.environment,
-        timeoutMilliseconds: command.timeoutMilliseconds, maxOutputBytes: command.maxOutputBytes)
-      guard !result.timedOut, !result.stdoutTruncated, !result.stderrTruncated,
-        let code = result.exitCode
-      else { throw WorktreeError.busy("Host Git exceeded its command bounds.") }
+        timeoutMilliseconds: command.timeoutMilliseconds, maxOutputBytes: command.maxOutputBytes,
+        fileOutput: fileOutput.map { ($0.descriptor, $0.byteLimit) },
+        fileSizeLimit: constraint)
+      guard let code = result.exitCode else {
+        throw WorktreeError.busy("Bounded host Git did not confirm its exit.")
+      }
       return .init(output: result.stdout, error: result.stderr, exitCode: code)
     }
   }
@@ -85,22 +101,33 @@ struct GatewayWorktreeGit: WorktreeGitExecuting, CommandRunning {
     let input = session.input.fileHandleForReading.fileDescriptor
     let output = session.output.fileHandleForWriting.fileDescriptor
     let error = session.errors.fileHandleForWriting.fileDescriptor
-    let ownership = try GatewaySynchronousOperation.run {
-      try await InvocationExecution.$current.withValue(nil) {
-        try await ExecutionAdministration.$current.withValue(scope) {
-          try await launcher.start(
-            executable: SandboxPath(executable), arguments: command.arguments,
-            directory: SandboxPath(command.directory.path), environment: scope.environment,
-            mode: scope.mode, input: input, output: output, error: error)
+    let launch = GatewayGitLaunchOwnership()
+    let ownership: any ExecutionOwnership
+    do {
+      ownership = try GatewaySynchronousOperation.run {
+        try await InvocationExecution.$current.withValue(nil) {
+          try await ExecutionAdministration.$current.withValue(scope) {
+            try await launcher.start(
+              executable: SandboxPath(executable), arguments: command.arguments,
+              directory: SandboxPath(command.directory.path), environment: scope.environment,
+              mode: scope.mode, input: input, output: output, error: error,
+              bindOwnership: launch.bind)
+          }
         }
       }
+    } catch {
+      if let owner = launch.ownership { try Self.settleFailedTransaction(owner) }
+      throw error
     }
     let deadline = session.deadline
     let watchdog = Task {
       do { try await ContinuousClock().sleep(until: deadline) } catch { return }
       _ = try? await ownership.cancel()
     }
-    defer { watchdog.cancel() }
+    defer {
+      watchdog.cancel()
+      _ = try? GatewaySynchronousOperation.run { await watchdog.value }
+    }
     do {
       try session.closeChildEnds()
       try session.write(command.input)
@@ -113,6 +140,7 @@ struct GatewayWorktreeGit: WorktreeGitExecuting, CommandRunning {
         throw WorktreeError.commandFailed("Git did not acknowledge the reference transaction.")
       }
       try session.input.fileHandleForWriting.close()
+      try session.finishOutput()
       let exit = try GatewaySynchronousOperation.run { try await ownership.wait(until: deadline) }
       guard exit.status == 0, exit.signal == nil else {
         throw WorktreeError.commandFailed("Git reference transaction failed.")
@@ -120,11 +148,34 @@ struct GatewayWorktreeGit: WorktreeGitExecuting, CommandRunning {
     } catch {
       try? session.write(Data("abort\n".utf8))
       try? session.input.fileHandleForWriting.close()
-      // Reaping is required before a caller may interpret the released locks.
-      _ = try GatewaySynchronousOperation.run { try await ownership.cancel() }
+      try Self.settleFailedTransaction(ownership)
       throw error
     }
   }
+
+  /// The command deadline stops issuing protocol operations. It does not
+  /// release the caller's journal and filesystem protection on a failed wait.
+  private static func settleFailedTransaction(_ owner: any ExecutionOwnership) throws {
+    try GatewaySynchronousOperation.run {
+      while true {
+        do {
+          _ = try await owner.cancel()
+          return
+        } catch {
+          try? await Task.sleep(for: .milliseconds(100))
+        }
+      }
+    }
+  }
+}
+
+private final class GatewayGitLaunchOwnership: @unchecked Sendable {
+  private let lock = NSLock()
+  private var owner: (any ExecutionOwnership)?
+
+  var ownership: (any ExecutionOwnership)? { lock.withLock { owner } }
+
+  func bind(_ owner: any ExecutionOwnership) { lock.withLock { self.owner = owner } }
 }
 
 /// Nonblocking pipe I/O bounds acknowledgements, diagnostics and writes together.
@@ -137,6 +188,8 @@ private final class GatewayGitTransaction {
   private var received = Data()
   private var total = 0
   private var diagnostics = 0
+  private var stdoutOpen = true
+  private var stderrOpen = true
 
   init(_ command: WorktreeGitCommand) throws {
     installBrokenPipeHandler()
@@ -186,20 +239,36 @@ private final class GatewayGitTransaction {
         received.removeSubrange(...end)
         return value
       }
+      guard stdoutOpen else {
+        throw WorktreeError.commandFailed("Git ended before its transaction acknowledgement.")
+      }
       try pollOutput()
     }
   }
 
+  func finishOutput() throws {
+    while stdoutOpen || stderrOpen { try pollOutput() }
+    guard received.isEmpty else {
+      throw WorktreeError.commandFailed("Unexpected output after Git committed the transaction.")
+    }
+  }
+
   private func check() throws {
+    try Task.checkCancellation()
     guard ContinuousClock.now < deadline, total <= limit, diagnostics <= limit else {
       throw WorktreeError.busy("Git reference transaction exceeded its bounds.")
     }
   }
 
   private func pollOutput() throws {
+    try check()
     var descriptors = [
-      pollfd(fd: output.fileHandleForReading.fileDescriptor, events: Int16(POLLIN), revents: 0),
-      pollfd(fd: errors.fileHandleForReading.fileDescriptor, events: Int16(POLLIN), revents: 0),
+      pollfd(
+        fd: stdoutOpen ? output.fileHandleForReading.fileDescriptor : -1,
+        events: Int16(POLLIN), revents: 0),
+      pollfd(
+        fd: stderrOpen ? errors.fileHandleForReading.fileDescriptor : -1,
+        events: Int16(POLLIN), revents: 0),
     ]
     let ready = poll(&descriptors, 2, 10)
     guard ready >= 0 || errno == EINTR else {
@@ -215,8 +284,8 @@ private final class GatewayGitTransaction {
         } else {
           diagnostics += count
         }
-      } else if index == 0, count == 0 {
-        throw WorktreeError.commandFailed("Git ended before its transaction acknowledgement.")
+      } else if count == 0 {
+        if index == 0 { stdoutOpen = false } else { stderrOpen = false }
       } else if count < 0, errno != EAGAIN, errno != EINTR {
         throw WorktreeError.commandFailed("Cannot read Git transaction output.")
       }

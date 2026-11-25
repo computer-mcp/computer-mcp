@@ -4787,7 +4787,7 @@ the catalog.
 | Tool | Call location and arguments | Result |
 | --- | --- | --- |
 | `git.worktree_add` | Source project. Required `name`: `[a-z0-9]+(-[a-z0-9]+)*`, at most 48 characters. Optional new `branch` defaults to `worktree/<name>`; existing branches are refused. Optional `base` defaults to the main checkout's current branch and is required when detached. | `project_id`, `path`, `branch`, `base`, `warnings` (submodules stay uninitialized; LFS files stay pointers) |
-| `git.worktree_list` | Source or derived project; no operation arguments. | `worktrees`, each with `path`, `project_id`, `branch`, `base`, `ahead`, `behind`, `dirty`, `unavailable`. Inaccessible details and unavailable foreign metrics are null. |
+| `git.worktree_list` | Source or derived project; no operation arguments. | `worktrees`, each with `path`, `project_id`, `branch`, `base`, `ahead`, `behind`, `dirty`, `unavailable`, `worktree_id`, and `owner`. The host ledger sets `owner` to `host` or `foreign`. The host lifecycle UUID in `worktree_id` is null for foreign or inaccessible checkouts. Inaccessible details and unavailable foreign metrics are null. |
 | `git.merge` | Source project. Required `branch` selects a host worktree branch. Its recorded base must be checked out in the main checkout. | `project_id`, `branch`, `base`, `oid` |
 | `git.worktree_remove` | Host worktree project. Optional `force=false` discards uncommitted content only. | `project_id`, `branch`, `oid`, `terminationWarnings` |
 

@@ -245,11 +245,13 @@ struct WorktreeGit: Sendable {
   let maxOutputBytes: Int
   var checkAuthority: @Sendable () throws -> Void = {}
 
-  func configurationNames(at root: URL, gitDirectory: URL? = nil) throws -> String {
+  func configurationNames(
+    at root: URL, gitDirectory: URL? = nil, deadline: ContinuousClock.Instant? = nil
+  ) throws -> String {
     let result = try execute(
       ["config", "--null", "--name-only", "--list", "--no-includes"],
       at: root, gitDirectory: gitDirectory,
-      environment: HostGitConfiguration.environment(home: home))
+      environment: HostGitConfiguration.environment(home: home), deadline: deadline)
     guard result.exitCode == 0 else {
       throw WorktreeError.commandFailed("Cannot inspect Git configuration.")
     }
@@ -259,9 +261,11 @@ struct WorktreeGit: Sendable {
   func run(
     _ arguments: [String], at root: URL, gitDirectory: URL? = nil,
     objects: URL? = nil, sharedObjects: URL? = nil, index: URL? = nil, input: Data = Data(),
-    accepting: Set<Int32> = [0]
+    accepting: Set<Int32> = [0], deadline: ContinuousClock.Instant? = nil,
+    commandOutputBytes: Int? = nil, fileOutput: WorktreeGitFileOutput? = nil,
+    fileSizeLimit: Int? = nil
   ) throws -> WorktreeGitResult {
-    let names = try configurationNames(at: root, gitDirectory: gitDirectory)
+    let names = try configurationNames(at: root, gitDirectory: gitDirectory, deadline: deadline)
     let overrides = try HostGitConfiguration.overrides(for: names)
     var environment = HostGitConfiguration.environment(home: home)
     if let index { environment["GIT_INDEX_FILE"] = index.path }
@@ -277,7 +281,8 @@ struct WorktreeGit: Sendable {
     }
     let result = try execute(
       overrides + arguments, at: root, gitDirectory: gitDirectory,
-      environment: environment, input: input)
+      environment: environment, input: input, deadline: deadline,
+      commandOutputBytes: commandOutputBytes, fileOutput: fileOutput, fileSizeLimit: fileSizeLimit)
     guard accepting.contains(result.exitCode) else {
       throw WorktreeError.commandFailed(
         "Git operation failed (exit \(result.exitCode)): \(arguments.first ?? "unknown").")
@@ -292,18 +297,42 @@ struct WorktreeGit: Sendable {
 
   private func execute(
     _ arguments: [String], at root: URL, gitDirectory: URL?,
-    environment: [String: String], input: Data = Data()
+    environment: [String: String], input: Data = Data(), deadline: ContinuousClock.Instant? = nil,
+    commandOutputBytes: Int? = nil, fileOutput: WorktreeGitFileOutput? = nil,
+    fileSizeLimit: Int? = nil
   ) throws -> WorktreeGitResult {
     try checkAuthority()
+    let timeout: Int
+    if let deadline {
+      try Task.checkCancellation()
+      let remaining = ContinuousClock.now.duration(to: deadline)
+      guard remaining >= .milliseconds(1) else {
+        throw WorktreeError.busy("Object verification deadline exceeded.")
+      }
+      let bound = min(remaining, .milliseconds(timeoutMilliseconds)).components
+      timeout = Int(bound.seconds * 1_000 + bound.attoseconds / 1_000_000_000_000_000)
+    } else {
+      timeout = timeoutMilliseconds
+    }
+    let outputBound = commandOutputBytes ?? maxOutputBytes
     let binding = gitDirectory.map { ["--git-dir=\($0.path)", "--work-tree=\(root.path)"] } ?? []
-    let result = try executor.execute(
-      .init(
-        arguments: binding + ["--no-replace-objects"] + HostGitConfiguration.arguments
-          + ["-c", "core.attributesFile=/dev/null", "-c", "core.excludesFile=/dev/null"]
-          + arguments,
-        directory: root, environment: environment, input: input,
-        timeoutMilliseconds: timeoutMilliseconds, maxOutputBytes: maxOutputBytes))
-    guard result.output.count <= maxOutputBytes, result.error.count <= maxOutputBytes else {
+    let command = WorktreeGitCommand(
+      arguments: binding + ["--no-replace-objects"] + HostGitConfiguration.arguments
+        + ["-c", "core.attributesFile=/dev/null", "-c", "core.excludesFile=/dev/null"]
+        + arguments,
+      directory: root, environment: environment, input: input,
+      timeoutMilliseconds: timeout, maxOutputBytes: outputBound)
+    let result =
+      try fileOutput == nil && fileSizeLimit == nil
+      ? executor.execute(command)
+      : executor.executeBounded(command, fileOutput: fileOutput, fileSizeLimit: fileSizeLimit)
+    if let deadline {
+      try Task.checkCancellation()
+      guard ContinuousClock.now < deadline else {
+        throw WorktreeError.busy("Object verification deadline exceeded.")
+      }
+    }
+    guard result.output.count <= outputBound, result.error.count <= outputBound else {
       throw WorktreeError.commandFailed("Git output exceeded its bound.")
     }
     return result

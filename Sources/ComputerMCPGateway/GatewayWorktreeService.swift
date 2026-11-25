@@ -42,21 +42,7 @@ struct GatewayWorktreeService: GitWorktreeServing {
         "warnings": .array(result.warnings.map(JSONValue.string)),
       ])
     case .listed(let items):
-      return .object([
-        "worktrees": .array(
-          items.map { item in
-            .object([
-              "path": item.path.map(JSONValue.string) ?? .null,
-              "project_id": item.projectID.map(JSONValue.string) ?? .null,
-              "branch": item.branch.map(JSONValue.string) ?? .null,
-              "base": item.base.map(JSONValue.string) ?? .null,
-              "ahead": item.ahead.map { .number(Double($0)) } ?? .null,
-              "behind": item.behind.map { .number(Double($0)) } ?? .null,
-              "dirty": item.dirty.map(JSONValue.bool) ?? .null,
-              "unavailable": item.unavailable.map(JSONValue.string) ?? .null,
-            ])
-          })
-      ])
+      return MCPHostOperations.inventory(items)
     case .removed(let result, _):
       return .object([
         "project_id": .string(result.projectID), "branch": .string(result.branch),

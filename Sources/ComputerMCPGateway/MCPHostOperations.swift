@@ -143,15 +143,17 @@ enum MCPHostOperations {
   }
 
   /// What the lifecycle journals establish about an operation; nil when unreadable.
-  static func journalOutcome(_ operation: HostOperationRecord, storage: WorktreeStorage?)
+  static func journalOutcome(_ operation: HostOperationRecord, database: GatewayDatabase)
     -> WorktreeOperationOutcome?
   {
-    guard let storage else { return nil }
+    guard let storage = database.worktreeStorage else { return nil }
     switch operation.binding.action {
     case .projectProvision: return try? storage.creationOutcome(operationID: operation.id)
     case .projectRemoval:
-      return try? storage.removalOutcome(
-        projectID: operation.binding.admission.projectID, operationID: operation.id)
+      let project = operation.binding.admission.projectID
+      return try? storage.removalOutcome(projectID: project, operationID: operation.id) {
+        try !database.derivedProjects().contains { $0.projectID == project }
+      }
     case .projectList, .diagnosticsSnapshot: return nil
     }
   }
@@ -200,7 +202,7 @@ extension GatewayDatabase {
             code: "host.service_denied",
             message: "The originating invocation ended before lifecycle effects began."))
       case .running, .recoveryRequired:
-        let outcome = MCPHostOperations.journalOutcome(operation, storage: worktreeStorage)
+        let outcome = MCPHostOperations.journalOutcome(operation, database: self)
         if operation.state == .recoveryRequired, outcome == .notStarted { continue }
         let cause: HostOperationRecord.Failure =
           outcome == .notStarted

@@ -199,7 +199,9 @@ package final class ManagedLineProcess: @unchecked Sendable {
     }
   }
 
-  package func sendLine(_ line: String) async throws {
+  package func sendLine(
+    _ line: String, beforeWrite: (@Sendable () async throws -> Void)? = nil
+  ) async throws {
     if let prepared {
       let checking: any ExecutionAccessChecking
       if let current = InvocationExecution.current {
@@ -213,7 +215,7 @@ package final class ManagedLineProcess: @unchecked Sendable {
       }
       _ = try checking.accessExecution(prepared.executionID, operation: .writeInput)
     }
-    try await state.send(line: line)
+    try await state.send(line: line, beforeWrite: beforeWrite)
   }
 
   package func close() async {
@@ -611,7 +613,7 @@ private actor ManagedLineProcessState {
     await input.activate()
   }
 
-  func send(line: String) async throws {
+  func send(line: String, beforeWrite: (@Sendable () async throws -> Void)?) async throws {
     try Task.checkCancellation()
     guard state == .starting || state == .running else {
       if state == .failed {
@@ -623,7 +625,7 @@ private actor ManagedLineProcessState {
       throw ManagedLineProcessError.oversizedMessage(maximumMessageBytes)
     }
     guard !line.contains("\n") else { throw ManagedLineProcessError.invalidConfiguration }
-    _ = try await input.write(Data((line + "\n").utf8), close: false)
+    _ = try await input.write(Data((line + "\n").utf8), close: false, beforeWrite: beforeWrite)
   }
 
   func inputSnapshot() -> ChildProcessInput.Snapshot { input.snapshot }

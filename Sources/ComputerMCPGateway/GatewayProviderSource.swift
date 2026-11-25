@@ -16,12 +16,14 @@ package struct GatewayProviderSource: Sendable {
   let resources: [VerifiedFileIdentity]
   let validate: @Sendable () throws -> Void
   let scopedTool: MCPToolReference?
+  let vendorExecution: VendorExecutionSource?
 
   init(
     review: GatewayProviderReview, registrationID: String, workingDirectory: String?,
     executable: String?, resources: [VerifiedFileIdentity],
     validate: @escaping @Sendable () throws -> Void,
-    scopedTool: MCPToolReference? = nil
+    scopedTool: MCPToolReference? = nil,
+    vendorExecution: VendorExecutionSource? = nil
   ) {
     self.review = review
     self.registrationID = registrationID
@@ -30,6 +32,7 @@ package struct GatewayProviderSource: Sendable {
     self.resources = resources
     self.validate = validate
     self.scopedTool = scopedTool
+    self.vendorExecution = vendorExecution
   }
 
   static func resolve(
@@ -61,6 +64,7 @@ package struct GatewayProviderSource: Sendable {
       let validate: @Sendable () throws -> Void
       let launch = try Self.launch(registration, configuration: configuration)
       var scopedTool: MCPToolReference?
+      var vendorExecution: VendorExecutionSource?
       if let origin = origins[registration] {
         let package = try PluginPackage.load(at: origin.source.root)
         guard package.manifest.id == origin.pluginID,
@@ -73,6 +77,16 @@ package struct GatewayProviderSource: Sendable {
         let root = try VerifiedFileIdentity.capture(package.root)
         resources = [root] + launch.identities
         let digest = review.sourceDigest
+        let vendor: VendorExecutionSource?
+        if registration.kind == .mcp,
+          let server = configuration.mcp.servers.first(where: { $0.id == registration.id })
+        {
+          vendor = try VendorExecutionSource.resolve(
+            server: server, origin: origin, package: package, state: state.plugins)
+        } else {
+          vendor = nil
+        }
+        vendorExecution = vendor
         let scopedSelection = try Self.scopedSelection(
           tool: tool, registration: registration, origin: origin, manifest: package.manifest,
           digest: digest, configuration: configuration, resolved: resolvedPlugins,
@@ -84,6 +98,7 @@ package struct GatewayProviderSource: Sendable {
           scopedTool = tool
         }
         validate = {
+          try vendor?.verify()
           try root.verify(origin.source.root)
           for identity in launch.identities {
             try identity.verify(URL(fileURLWithPath: identity.path))
@@ -126,7 +141,8 @@ package struct GatewayProviderSource: Sendable {
       return Self(
         review: review, registrationID: registration.id,
         workingDirectory: directory == "project" ? nil : directory, executable: launch.executable,
-        resources: resources, validate: validate, scopedTool: scopedTool)
+        resources: resources, validate: validate, scopedTool: scopedTool,
+        vendorExecution: vendorExecution)
     #endif
   }
 

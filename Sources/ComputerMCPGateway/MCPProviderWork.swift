@@ -244,6 +244,18 @@ package struct MCPProviderWork {
     }
   }
 
+  /// A managed Host session has joined every resource it owns on this connection.
+  mutating func confirmHostOwnedShutdown() throws {
+    try confirmLocalShutdown()
+    for item in ownership.values { item.lease.finish() }
+    ownership.removeAll()
+    invocations.removeAll()
+    executions.removeAll()
+    observation?.finish()
+    observation = nil
+    publishContinuations()
+  }
+
   mutating func accept(_ next: Report, covering completed: Set<UUID>) throws {
     if let report {
       guard next.instanceID == report.instanceID, next.revision >= report.revision,

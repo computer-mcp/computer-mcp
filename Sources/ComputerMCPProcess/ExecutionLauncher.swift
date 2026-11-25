@@ -126,7 +126,7 @@ package struct ExecutionLauncher: Sendable {
     var variables = try environment.variables(sandbox: sandbox)
     for key in Self.reservedHostProtocolKeys { variables.removeValue(forKey: key) }
     variables.merge(hostProtocolMetadata) { _, value in value }
-    let childID = UUID()
+    let childID = prepared?.reservedChildID ?? UUID()
     try prepared?.authority.reserveChild(childID)
     do {
       let endpoint = try prepared?.hostServiceChannel?.takeEndpoint()

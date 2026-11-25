@@ -12,7 +12,7 @@ import Foundation
 /// One source watches the descriptor for the reader's lifetime. It is suspended while a
 /// chunk is consumed, and the descriptor is closed only by its cancel handler, after the
 /// source no longer monitors it.
-internal final class ProcessOutputReader: @unchecked Sendable {
+package final class ProcessOutputReader: @unchecked Sendable {
   private let handle: FileHandle
   private let consume: @Sendable (Data) async throws -> Void
   private let onError: @Sendable (Error) async -> Void
@@ -25,7 +25,7 @@ internal final class ProcessOutputReader: @unchecked Sendable {
   private var finished = false
   private var consumptionTask: Task<Void, Never>?
 
-  init(
+  package init(
     handle: FileHandle,
     consume: @escaping @Sendable (Data) async throws -> Void,
     onError: @escaping @Sendable (Error) async -> Void
@@ -43,7 +43,7 @@ internal final class ProcessOutputReader: @unchecked Sendable {
     if !finished { finishSourceLocked() }
   }
 
-  func start() {
+  package func start() {
     lock.withLock {
       guard !stopped, !finished, source == nil else { return }
       let source = ProcessOutputSource(handle: handle, queue: queue) { [weak self] in
@@ -62,7 +62,7 @@ internal final class ProcessOutputReader: @unchecked Sendable {
 
   /// `onStopping` is a test seam called under lock so tests can observe shutdown before
   /// releasing a suspended consumer.
-  func stop(drainRemainingOutput: Bool, onStopping: (@Sendable () -> Void)? = nil) async {
+  package func stop(drainRemainingOutput: Bool, onStopping: (@Sendable () -> Void)? = nil) async {
     let task = lock.withLock { () -> Task<Void, Never>? in
       guard !stopped else { return consumptionTask }
       stopped = true

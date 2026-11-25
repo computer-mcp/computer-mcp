@@ -25,6 +25,7 @@ package actor MCPChildProcessTransport: MCP.Transport {
   private let hostProtocolMetadata: [String: String]
   private let hostContext: (any MCPHostEnvironment)?
   private let preparedExecution: PreparedExecutionContext?
+  private let vendorSession: (any MCPHostSessionHandle)?
   private var hostSession: (any MCPHostSessionHandle)?
   private var process: ManagedLineProcess?
   private var ownership: MCPProcessOwnership?
@@ -34,6 +35,8 @@ package actor MCPChildProcessTransport: MCP.Transport {
   private var closed = false
   private var initializationObserved = false
   private var observedHostServiceContract: String?
+  private var vendorInitializeID: JSONValue?
+  private var observedVendorExecution = false
   private let stream: AsyncThrowingStream<Data, Swift.Error>
   private let continuation: AsyncThrowingStream<Data, Swift.Error>.Continuation
 
@@ -41,7 +44,8 @@ package actor MCPChildProcessTransport: MCP.Transport {
     launcher: ExecutionLauncher, server: MCPServerConfig, workingDirectory: URL,
     environment: [String: String],
     hostContext: (any MCPHostEnvironment)? = nil, logger: Logger? = nil,
-    preparedExecution: PreparedExecutionContext? = nil
+    preparedExecution: PreparedExecutionContext? = nil,
+    vendorSession: (any MCPHostSessionHandle)? = nil
   ) throws {
     guard let command = server.command, !command.isEmpty else {
       throw GatewayToolError.executionFailed("MCP server '\(server.id)' has no command.")
@@ -59,6 +63,11 @@ package actor MCPChildProcessTransport: MCP.Transport {
     self.server = server
     self.hostContext = hostContext
     self.preparedExecution = preparedExecution
+    self.vendorSession = vendorSession
+    guard vendorSession == nil || (preparedExecution != nil && !server.hostServices) else {
+      throw GatewayToolError.executionFailed(
+        "Private vendor execution requires its own provider channel.")
+    }
     if let preparedExecution {
       guard preparedExecution.provider?.registrationID == server.id else {
         throw GatewayToolError.executionFailed(
@@ -117,7 +126,9 @@ package actor MCPChildProcessTransport: MCP.Transport {
     self.ownership = ownership
     let session: (any MCPHostSessionHandle)?
     do {
-      if server.hostServices, let hostContext, let preparedExecution {
+      if let vendorSession {
+        session = vendorSession
+      } else if server.hostServices, let hostContext, let preparedExecution {
         session = try hostContext.makeHostSession(server: server, execution: preparedExecution)
       } else {
         session = nil
@@ -135,7 +146,9 @@ package actor MCPChildProcessTransport: MCP.Transport {
         execution = preparedExecution
       }
       let configuration = ManagedLineProcess.Configuration(
-        executable: executable, arguments: server.args, environment: environment,
+        executable: executable,
+        arguments: server.args + (vendorSession == nil ? [] : ["--host-vendor-execution"]),
+        environment: environment,
         hostProtocolMetadata: hostProtocolMetadata,
         workingDirectory: workingDirectory,
         maximumMessageBytes: 16 * 1_024 * 1_024,
@@ -188,11 +201,12 @@ package actor MCPChildProcessTransport: MCP.Transport {
     closed = true
     continuation.finish()
     reader?.cancel()
-    let task = Task { [process, hostSession, ownership, terminated] in
+    let session = hostSession ?? vendorSession
+    let task = Task { [process, session, ownership, terminated] in
       defer { terminated.finish() }
-      await hostSession?.close()
+      await session?.close()
       await process?.close()
-      let confirmed = await hostSession?.shutdownConfirmed() ?? true
+      let confirmed = await session?.shutdownConfirmed() ?? true
       let exited = await process?.snapshot().hasExited ?? true
       do {
         try ownership?.finish(confirmed: confirmed && exited, hostServicesConfirmed: confirmed)
@@ -206,7 +220,7 @@ package actor MCPChildProcessTransport: MCP.Transport {
 
   package func shutdownConfirmed() async -> Bool {
     guard !ownershipError else { return false }
-    guard await hostSession?.shutdownConfirmed() ?? true else { return false }
+    guard await (hostSession ?? vendorSession)?.shutdownConfirmed() ?? true else { return false }
     guard let process else { return closed }
     return await process.snapshot().hasExited
   }
@@ -215,6 +229,12 @@ package actor MCPChildProcessTransport: MCP.Transport {
     guard !closed, let process else { throw MCPError.connectionClosed }
     guard let line = String(data: data, encoding: .utf8) else {
       throw MCPError.invalidRequest("MCP stdio requires UTF-8 JSON.")
+    }
+    if vendorSession != nil, !observedVendorExecution, vendorInitializeID == nil,
+      let request = try? JSONDecoder().decode(JSONValue.self, from: data).objectValue,
+      request["method"]?.stringValue == "initialize"
+    {
+      vendorInitializeID = request["id"]
     }
     try await process.sendLine(line)
   }
@@ -225,15 +245,23 @@ package actor MCPChildProcessTransport: MCP.Transport {
   /// Nil before initialization or when the provider omits the marker.
   package var hostServiceContract: String? { observedHostServiceContract }
 
+  package var vendorExecutionNegotiated: Bool { observedVendorExecution }
+  package static let vendorExecutionCapability = "io.github.computer-mcp/vendor-execution-v1"
+
   private func observeInitialization(_ line: String) {
-    guard !initializationObserved,
+    guard !initializationObserved || vendorInitializeID != nil,
       let message = try? JSONDecoder().decode(JSONValue.self, from: Data(line.utf8)).objectValue,
       let result = message["result"]?.objectValue, result["protocolVersion"] != nil,
       let capabilities = result["capabilities"]?.objectValue
     else { return }
-    initializationObserved = true
-    observedHostServiceContract =
-      capabilities["experimental"]?.objectValue?[MCPHostServiceContract.capabilityKey]?
-      .stringValue
+    let experimental = capabilities["experimental"]?.objectValue
+    if let vendorInitializeID, message["id"] == vendorInitializeID {
+      observedVendorExecution = experimental?[Self.vendorExecutionCapability]?.boolValue == true
+      self.vendorInitializeID = nil
+    }
+    if !initializationObserved {
+      initializationObserved = true
+      observedHostServiceContract = experimental?[MCPHostServiceContract.capabilityKey]?.stringValue
+    }
   }
 }

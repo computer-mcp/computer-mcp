@@ -5,6 +5,7 @@ import Foundation
 /// The runtime resolves this source from its reviewed registration, never MCP metadata.
 struct MCPProviderExecutionSource: Sendable {
   let digest: String
+  var vendorExecution: VendorExecutionSource? = nil
   /// Replacement eligibility and caller liveness are checked in the admission snapshot.
   let prepareDiscovery:
     @Sendable (GatewayDiscoveryReplacement?, GatewayDiscoveryCaller?) throws ->

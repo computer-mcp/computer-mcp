@@ -61,18 +61,20 @@ package enum GatewaySandboxCompiler {
     proxy: SandboxProxyPorts? = nil, ownedTemporaryDirectory: SandboxPath? = nil,
     userHome: URL = FileManager.default.homeDirectoryForCurrentUser,
     reservedProjection: ExecutionPermissionProjection? = nil,
-    provider: ProviderExecutionBinding? = nil, providerWorkingDirectory: SandboxPath? = nil
+    provider: ProviderExecutionBinding? = nil, providerWorkingDirectory: SandboxPath? = nil,
+    additionalProviderResources: [VerifiedFileIdentity] = []
   ) throws -> GatewayExecutionConfiguration {
     guard let authorization = ledger.authorizations[authorizationID] else {
       throw PermissionModelError.unknownAuthorization
     }
-    if context.purpose == .pluginProgram || !context.providerResources.isEmpty {
+    let providerResources = context.providerResources + additionalProviderResources
+    if context.purpose == .pluginProgram || !providerResources.isEmpty {
       guard let provider, provider.providerAuthorization.id == authorizationID,
         provider.identity == context.providerContainer?.identity
       else { throw PermissionModelError.invalidAuthorization }
       for id in provider.authorizationIDs { _ = try ledger.invocationAccess(id) }
     }
-    for resource in context.providerResources {
+    for resource in providerResources {
       try resource.verify(URL(fileURLWithPath: resource.path))
     }
     let settings = ledger.sandboxSettings.settings(
@@ -211,7 +213,7 @@ package enum GatewaySandboxCompiler {
         try CanonicalPath($0.git.repository.value)
       }
       let containerRoot = context.providerContainer?.root
-      let resources = try Set(context.providerResources.map { try CanonicalPath($0.path) })
+      let resources = try Set(providerResources.map { try CanonicalPath($0.path) })
       guard
         !resources.contains(where: { resource in
           nonHostDenials.contains { $0.contains(resource) || resource.contains($0) }

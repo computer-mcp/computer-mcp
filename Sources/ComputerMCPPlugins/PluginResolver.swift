@@ -23,11 +23,12 @@ package struct PluginContributionOrigin: Codable, Equatable, Sendable {
   package let reviewedRequirements: PluginContributionRequirements?
   /// The reviewed stdio contribution's `host_service_contract` marker, if declared.
   package let hostServiceContract: String?
+  package let vendorExecutable: URL?
 
   package init(
     pluginID: String, componentID: String, version: PluginVersion, source: PluginSource,
     reviewedRequirements: PluginContributionRequirements? = nil,
-    hostServiceContract: String? = nil
+    hostServiceContract: String? = nil, vendorExecutable: URL? = nil
   ) {
     self.pluginID = pluginID
     self.componentID = componentID
@@ -35,6 +36,7 @@ package struct PluginContributionOrigin: Codable, Equatable, Sendable {
     self.source = source
     self.reviewedRequirements = reviewedRequirements
     self.hostServiceContract = hostServiceContract
+    self.vendorExecutable = vendorExecutable
   }
 }
 
@@ -126,7 +128,9 @@ package enum PluginResolver {
       return id
     }
 
-    func record(_ component: String, kind: IntegrationKind, id: String) throws {
+    func record(
+      _ component: String, kind: IntegrationKind, id: String, vendorExecutable: URL? = nil
+    ) throws {
       let key = IntegrationRegistration(kind: kind, id: id)
       guard origins[key] == nil else {
         throw ConfigurationError.invalid("Duplicate plugin contribution registration '\(id)'.")
@@ -138,7 +142,8 @@ package enum PluginResolver {
           sourceDigest: PluginStore.manifestDigest(manifest),
           declarations: PluginPermissionDeclarations(manifest), componentID: component),
         hostServiceContract: kind == .mcp
-          ? manifest.mcp.first { $0.id == component }?.hostServiceContract : nil)
+          ? manifest.mcp.first { $0.id == component }?.hostServiceContract : nil,
+        vendorExecutable: vendorExecutable)
     }
 
     func path(_ relative: String?) throws -> String? {
@@ -178,6 +183,24 @@ package enum PluginResolver {
         throw ConfigurationError.invalid(
           "HTTP MCP contributions do not accept launch arguments or inherited host services.")
       }
+      let vendorExecutable: URL?
+      if let managed = contribution.vendorExecution {
+        guard choice.args == nil, !choice.hostServices,
+          manifest.dependencies.contains(where: { $0.id == managed.dependency }),
+          let executable = dependencyExecutables[managed.dependency]
+        else {
+          diagnostics.append(
+            .init(
+              pluginID: manifest.id, componentID: contribution.id, code: .dependencyUnavailable,
+              dependencyID: managed.dependency,
+              instructions: manifest.dependencies.first { $0.id == managed.dependency }?
+                .instructions))
+          continue
+        }
+        vendorExecutable = executable
+      } else {
+        vendorExecutable = nil
+      }
       let id = try registrationID(contribution.id, override: choice.registrationID)
       let command: String?
       var launchArguments: [String] = []
@@ -202,7 +225,7 @@ package enum PluginResolver {
         capabilities: contribution.capabilities, allowedTools: choice.allowedTools,
         allowAnyTool: choice.allowAnyTool, toolRisks: choice.toolRisks,
         hostServices: choice.hostServices, authentication: choice.authentication)
-      try record(contribution.id, kind: .mcp, id: id)
+      try record(contribution.id, kind: .mcp, id: id, vendorExecutable: vendorExecutable)
       mcp.append(server)
     }
     for contribution in manifest.cli {

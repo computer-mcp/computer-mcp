@@ -196,6 +196,7 @@ package final class GatewayPermissionRuntime: @unchecked Sendable {
           mcpDiscovery: mcpDiscovery,
           providerWorkingDirectory: SandboxPath(launchDirectory.path),
           providerExecutable: try source?.executable.map(SandboxPath.init),
+          vendorResources: caller == nil ? [] : source?.vendorExecution?.dependencyFiles ?? [],
           validateProvider: validate)
       } catch {
         // Once reserved, durable recovery owns the scratch and its pending cleanup.

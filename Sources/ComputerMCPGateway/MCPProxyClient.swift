@@ -632,8 +632,14 @@ package final class MCPProxyClient: DownstreamMCPClient, @unchecked Sendable {
       try discoveryCaller?.check()
       // Retirement owns cancellation delivery and joins it after closing the transport.
       // Cancelling only this bridge would leave an SDK request or a startup task alive.
-      pool.invalidate(server: server, connection: connection)
-      task.cancel()
+      if phase == "request", let vendorExecution = connection.vendorExecution,
+        let prepared = execution as? PreparedExecutionContext
+      {
+        Task { await vendorExecution.timeOut(prepared.executionID) }
+      } else {
+        pool.invalidate(server: server, connection: connection)
+        task.cancel()
+      }
       throw GatewayToolError.executionFailed(
         "MCP server '\(server.id)' \(phase) timed out."
       )
@@ -848,6 +854,7 @@ private final class MCPConnectionPool: @unchecked Sendable {
         environment: environment, hostContext: hostContext, secretStore: secretStore,
         journal: journal,
         predecessor: predecessor, preparedExecution: execution, ownsAdmission: ownsAdmission,
+        vendorExecutionSource: source?.vendorExecution,
         onTermination: { [weak self] connection in
           self?.invalidate(server: server, connection: connection)
         }, toolsChanged: toolsChanged)
@@ -985,6 +992,7 @@ private actor MCPProxyConnection {
     let startedAt: Date
     let execution: PreparedExecutionContext
     var executionID: UUID { execution.executionID }
+    var vendorInvocationID: UUID? = nil
     var retainsResult = false
     var cancellationRequested = false
 
@@ -1034,6 +1042,7 @@ private actor MCPProxyConnection {
   }
   private var requestOwnership: [UUID: RequestOwnership] = [:]
   private var providerWork: MCPProviderWork?
+  nonisolated let vendorExecution: VendorExecutionSession?
   private var unreportedWork: GatewayOwnedWork.Lease?
   private var unreportedExecutions: [UUID: ExecutionWorkLease] = [:]
   private var workCatalogObserved = false
@@ -1052,6 +1061,7 @@ private actor MCPProxyConnection {
     secretStore: (any SecretStore)?, journal: MCPExecutionJournal,
     predecessor: Task<Bool, Never>? = nil,
     preparedExecution: PreparedExecutionContext? = nil, ownsAdmission: Bool = false,
+    vendorExecutionSource: VendorExecutionSource? = nil,
     onTermination: @escaping @Sendable (MCPProxyConnection) -> Void,
     toolsChanged: @escaping @Sendable () -> Void
   ) throws {
@@ -1069,10 +1079,14 @@ private actor MCPProxyConnection {
       name: "computer-mcp-gateway",
       version: ComputerMCPCLI.version
     )
+    vendorExecution = try vendorExecutionSource.map {
+      try VendorExecutionSession(source: $0, launcher: launcher)
+    }
     transport = try Self.makeTransport(
       launcher: launcher, server: server, workingDirectory: workingDirectory,
       environment: environment,
-      hostContext: hostContext, secretStore: secretStore, preparedExecution: preparedExecution)
+      hostContext: hostContext, secretStore: secretStore, preparedExecution: preparedExecution,
+      vendorExecution: vendorExecution)
   }
 
   func listTools(caller: GatewayDiscoveryCaller? = nil) async throws -> [MCPTool] {
@@ -1153,7 +1167,8 @@ private actor MCPProxyConnection {
       await self?.cancelRetainedWork(gatewayRequestID: gatewayRequestID)
     }
     let work =
-      try execution.provider != nil && continuation?.resources.isEmpty == false
+      try vendorExecution == nil && execution.provider != nil
+      && continuation?.resources.isEmpty == false
       ? execution.authority.retainContinuation(cancellation: cancel)
       : execution.retainWork(cancellation: cancel)
     logicalRequestIDs.insert(gatewayRequestID)
@@ -1171,11 +1186,13 @@ private actor MCPProxyConnection {
       try? await client.cancelRequest(context.requestID, reason: "Downstream MCP session retired.")
       throw MCPError.connectionClosed
     }
+    let vendorInvocationID = vendorExecution == nil ? nil : ownership?.providerInvocationID
     activeRequests[gatewayRequestID] = ActiveRequest(
       gatewayRequestID: gatewayRequestID,
       downstreamRequestID: context.requestID,
       tool: name,
-      startedAt: Date(), execution: execution, retainsResult: retainsResult
+      startedAt: Date(), execution: execution,
+      vendorInvocationID: vendorInvocationID, retainsResult: retainsResult
     )
     if retainsResult {
       try journal.update(serverID: server.id, requestID: gatewayRequestID) {
@@ -1183,7 +1200,15 @@ private actor MCPProxyConnection {
         $0.downstreamRequestID = context.requestID.description
       }
     }
-    cancellation?.install(onDeliveryFailure: cancellationDeliveryFailed) {
+    let vendor = vendorExecution
+    let handleCancellationFailure: @Sendable () -> Void = {
+      if let vendor, let vendorInvocationID {
+        Task { await vendor.stopInvocation(vendorInvocationID) }
+      } else {
+        cancellationDeliveryFailed()
+      }
+    }
+    cancellation?.install(onDeliveryFailure: handleCancellationFailure) {
       [client, journal, server] in
       if retainsResult {
         try journal.update(serverID: server.id, requestID: gatewayRequestID) {
@@ -1191,7 +1216,15 @@ private actor MCPProxyConnection {
         }
       }
       do {
-        try await client.cancelRequest(context.requestID, reason: "Upstream MCP request cancelled.")
+        if let vendor, let vendorInvocationID {
+          await vendor.requestCancellation(vendorInvocationID)
+          try await client.notify(
+            CancelledNotification.message(
+              .init(requestId: context.requestID, reason: "Upstream MCP request cancelled.")))
+        } else {
+          try await client.cancelRequest(
+            context.requestID, reason: "Upstream MCP request cancelled.")
+        }
         if retainsResult {
           try journal.update(serverID: server.id, requestID: gatewayRequestID) {
             $0.cancellation = "sent"
@@ -1261,7 +1294,8 @@ private actor MCPProxyConnection {
       await self?.cancelRetainedWork(gatewayRequestID: gatewayRequestID)
     }
     let work =
-      try execution.provider != nil && continuation?.resources.isEmpty == false
+      try vendorExecution == nil && execution.provider != nil
+      && continuation?.resources.isEmpty == false
       ? execution.authority.retainContinuation(cancellation: cancel)
       : execution.retainWork(cancellation: cancel)
     logicalRequestIDs.insert(gatewayRequestID)
@@ -1284,7 +1318,9 @@ private actor MCPProxyConnection {
       gatewayRequestID: gatewayRequestID,
       downstreamRequestID: context.requestID,
       tool: name,
-      startedAt: Date(), execution: execution, retainsResult: true
+      startedAt: Date(), execution: execution,
+      vendorInvocationID: vendorExecution == nil ? nil : ownership?.providerInvocationID,
+      retainsResult: true
     )
     activeRequests[gatewayRequestID] = active
     observers[context.requestID] = Task { [weak self] in
@@ -1502,7 +1538,12 @@ private actor MCPProxyConnection {
             $0.cancellation = "requested"
           }
         }
-        if observesResponse {
+        if let vendorExecution, let vendorInvocationID = active.vendorInvocationID {
+          await vendorExecution.requestCancellation(vendorInvocationID)
+          try await client.notify(
+            CancelledNotification.message(
+              .init(requestId: active.downstreamRequestID, reason: reason)))
+        } else if observesResponse {
           // A detached call remains observable after a stop request. A native
           // response can establish its outcome, but notification delivery cannot.
           try await client.notify(
@@ -1519,6 +1560,9 @@ private actor MCPProxyConnection {
         }
         appendEvent(kind: "request.cancellation_sent", requestID: gatewayRequestID)
       } catch {
+        if let vendorExecution, let id = active.vendorInvocationID {
+          await vendorExecution.stopInvocation(id)
+        }
         if activeRequests[gatewayRequestID]?.downstreamRequestID == active.downstreamRequestID {
           activeRequests[gatewayRequestID]?.cancellationRequested = false
         }
@@ -1626,11 +1670,16 @@ private actor MCPProxyConnection {
     let providerLease: ExecutionWorkLease?
     if execution.provider != nil {
       if providerWork != nil {
-        let cancel: @Sendable () async -> Void = { [weak self] in
-          _ = await self?.disconnect()
+        let cancel: @Sendable () async -> Void = { [weak self, vendorExecution] in
+          if let vendorExecution {
+            await vendorExecution.stopExecution(execution.executionID)
+            await vendorExecution.timeOut(execution.executionID)
+          } else {
+            _ = await self?.disconnect()
+          }
         }
         providerLease =
-          try continuation?.resources.isEmpty == false
+          try vendorExecution == nil && continuation?.resources.isEmpty == false
           ? execution.authority.retainContinuation(cancellation: cancel)
           : execution.retainWork(cancellation: cancel)
       } else {
@@ -1672,7 +1721,13 @@ private actor MCPProxyConnection {
       ? RequestOwnership(
         work: work, invocation: invocation, providerInvocationID: providerInvocationID) : nil
     if let ownership { requestOwnership[ownership.id] = ownership }
+    var forwarding = false
     do {
+      if let vendorExecution {
+        guard let providerInvocationID else { throw PermissionModelError.invalidAuthorization }
+        try await vendorExecution.admit(
+          id: providerInvocationID, tool: name, arguments: arguments, execution: execution)
+      }
       var fields: [String: MCP.Value] = [:]
       if let hostInvocationID {
         fields[MCPHostInvocation.metadataKey] = .string(hostInvocationID.uuidString)
@@ -1685,13 +1740,15 @@ private actor MCPProxyConnection {
         fields[MCPProviderWork.invocationKey] = .string(providerInvocationID.uuidString)
       }
       let meta = fields.isEmpty ? nil : MCP.Metadata(additionalFields: fields)
+      guard closeTask == nil else { throw MCPError.connectionClosed }
+      forwarding = true
       return (
         try await client.callTool(
           name: name, arguments: arguments.mapValues(\.sdkValue), meta: meta),
         ownership
       )
     } catch {
-      settleOwnership(ownership, confirmed: Self.isResponseError(error))
+      settleOwnership(ownership, confirmed: !forwarding || Self.isResponseError(error))
       throw error
     }
   }
@@ -1701,6 +1758,7 @@ private actor MCPProxyConnection {
   ) {
     guard let ownership else { return }
     if let id = ownership.providerInvocationID {
+      if let vendorExecution { Task { await vendorExecution.returned(id, confirmed: confirmed) } }
       providerWork?.finishInvocation(id, confirmed: confirmed && providerResponse)
       refreshProviderWork()
     }
@@ -1809,7 +1867,13 @@ private actor MCPProxyConnection {
     }
     if confirmed, transport is MCPChildProcessTransport {
       do {
-        try providerWork?.confirmLocalShutdown()
+        if vendorExecution != nil {
+          // The child transport confirms the managed vendor session's phase receipts
+          // and adapter exit before this connection can release its observed work.
+          try providerWork?.confirmHostOwnedShutdown()
+        } else {
+          try providerWork?.confirmLocalShutdown()
+        }
         for (id, lease) in unreportedExecutions {
           try lease.finish()
           unreportedExecutions.removeValue(forKey: id)
@@ -1891,8 +1955,17 @@ private actor MCPProxyConnection {
         // Retiring the exact generation clears stale status and resolves SDK
         // requests after owned cleanup, outside the transport reader.
         let onTermination = onTermination
-        terminationObserver = Task { [weak self] in
-          for await _ in child.termination {}
+        terminationObserver = Task { [weak self, vendorExecution] in
+          if let vendorExecution {
+            await withTaskGroup(of: Void.self) { group in
+              group.addTask { for await _ in child.termination {} }
+              group.addTask { for await _ in vendorExecution.termination {} }
+              await group.next()
+              group.cancelAll()
+            }
+          } else {
+            for await _ in child.termination {}
+          }
           if let self { onTermination(self) }
         }
       }
@@ -1909,6 +1982,14 @@ private actor MCPProxyConnection {
       try Task.checkCancellation()
       guard closeTask == nil else { throw MCPError.connectionClosed }
       try preparedExecution?.validateProviderLaunch()
+      if let vendorExecution {
+        guard await (transport as? MCPChildProcessTransport)?.vendorExecutionNegotiated == true,
+          await vendorExecution.negotiated()
+        else {
+          throw GatewayToolError.executionFailed(
+            "The adapter did not negotiate private vendor execution.")
+        }
+      }
       if ownsAdmission { try preparedExecution?.finishAdmission() }
       if !connected {
         initializeResult = result
@@ -2030,7 +2111,7 @@ private actor MCPProxyConnection {
     launcher: ExecutionLauncher, server: MCPServerConfig, workingDirectory: URL,
     environment: [String: String],
     hostContext: MCPHostContext?, secretStore: (any SecretStore)?,
-    preparedExecution: PreparedExecutionContext?
+    preparedExecution: PreparedExecutionContext?, vendorExecution: VendorExecutionSession?
   ) throws -> any MCP.Transport {
     try server.authentication?.validate(endpoint: server.url, transport: server.transport)
     switch server.transport {
@@ -2038,7 +2119,8 @@ private actor MCPProxyConnection {
       return try MCPChildProcessTransport(
         launcher: launcher, server: server, workingDirectory: workingDirectory,
         environment: environment,
-        hostContext: hostContext, preparedExecution: preparedExecution)
+        hostContext: hostContext, preparedExecution: preparedExecution,
+        vendorSession: vendorExecution)
 
     case .streamableHTTP, .sse, .http:
       guard let urlString = server.url, let url = URL(string: urlString) else {

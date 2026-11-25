@@ -1360,16 +1360,43 @@ package final class ExecutionRevocationCoordinator: ExecutionRecoveryAuthorizing
         }
       }
     }
-    // A database restore may omit the execution entirely. Independent launch
-    // receipts still retain its worktree use until every child is confirmed.
-    let settled = try journal.all()
-    for entry in settled where entry.owner != ownerID {
-      guard let use = entry.worktreeUse,
-        settled.filter({ $0.execution == entry.execution }).allSatisfy(\.completed),
-        try store.readWithDatabase({ database, _ in
-          try ExecutionRuntimeRecord.load(entry.execution, database) == nil
-        })
-      else { continue }
+    try reconcileRestoredWorktreeWriters(in: journal.all())
+  }
+
+  private func reconcileRestoredWorktreeWriters(in receipts: [ExecutionRecoveryJournal.Entry])
+    throws
+  {
+    guard receipts.contains(where: { $0.owner != ownerID && $0.worktreeUse != nil }) else { return }
+    let receiptsByExecution = Dictionary(grouping: receipts, by: \.execution)
+    let settledUses: [WorktreeWriterUse] = try store.readWithDatabase { database, ledger in
+      try receiptsByExecution.compactMap { id, children in
+        guard let entry = children.first(where: { $0.owner != ownerID && $0.worktreeUse != nil }),
+          let use = entry.worktreeUse
+        else { return nil }
+        guard use.executionID == id, use.ownerID == entry.owner,
+          children.allSatisfy({
+            $0.owner == entry.owner && $0.boot == entry.boot && $0.worktreeUse == use
+          })
+        else { throw WorktreeError.identityChanged("Worktree writer receipts disagree.") }
+        let record = try ExecutionRuntimeRecord.load(id, database)
+        if let record {
+          guard record.id == id, record.ownerID == entry.owner, record.boot == entry.boot,
+            record.worktreeUse == nil || record.worktreeUse == use
+          else { throw WorktreeError.identityChanged("Restored worktree writer identity changed.") }
+          // A bound SQL row owns its normal completion path. A row from before
+          // binding can use the journal only after its admission and work drain.
+          guard record.worktreeUse == nil, record.admissionFinished,
+            record.invocationInFlight != true, record.workIDs?.isEmpty ?? true,
+            record.children.values.allSatisfy(\.completed),
+            ledger.executions[id]?.isRunning != true
+          else { return nil }
+        }
+        return children.allSatisfy { $0.completed && $0.released } ? use : nil
+      }
+    }
+    // The exclusive Host lease rules out new receipts from the previous owner.
+    // Acknowledge outside the SQL transaction using the gate's exact identity.
+    for use in settledUses where sealAdmissionIfDrained(use.executionID) {
       try use.admission.acknowledge(use)
     }
   }

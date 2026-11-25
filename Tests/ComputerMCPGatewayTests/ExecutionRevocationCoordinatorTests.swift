@@ -1536,6 +1536,123 @@ import Testing
     #expect(prepared.limitEndReason == .memoryLimitUnavailable)
   }
 
+  @Test(.timeLimit(.minutes(1)), arguments: RestoredWriterState.allCases)
+  func successorReconcilesExactWriterReceiptsAfterSameEpochRestore(state: RestoredWriterState)
+    async throws
+  {
+    let f = try ExecutionFixture()
+    let admission = try f.worktreeAdmission()
+    let path = f.paths.root.appendingPathComponent("restore.sqlite").path
+    let counter = TestAuthorizationEpochCounter()
+    let firstStore = SQLitePermissionStore(
+      connection: try GatewayDatabaseConnection(path: path), counter: counter)
+    var first: ExecutionRevocationCoordinator? = try .init(
+      store: firstStore, launcher: .init(platform: f.platform), directory: f.directory)
+    let priorOwner = try #require(first).ownerIdentity
+    let prebinding = try firstStore.transactionWithDatabase { database, ledger in
+      let epoch = try #require(ledger.authorizationEpochID)
+      try ledger.acknowledgeEpochRecovery(epoch)
+      try ledger.confirmSuspendedAuthority(epochID: epoch, expectedRevision: ledger.revision)
+      let principal = f.paths.principal
+      ledger.register(principal)
+      guard
+        case .allowed(let proof) = try ledger.authorize(
+          invocation: .init(
+            principal: principal, tool: "fixture", projectID: "derived", argumentsDigest: "fixture"),
+          requirements: .init(mode: .sandbox), now: Date())
+      else { throw PermissionModelError.invalidAuthorization }
+      let execution = try ledger.startExecution(owner: principal, authorizationIDs: [proof.id])
+      let record = ExecutionRuntimeRecord(id: execution.id, ownerID: priorOwner, boot: "boot")
+      try record.save(database)
+      return record
+    }
+    let use = try admission.reserve(ownerID: priorOwner, executionID: prebinding.id)
+    let sibling = try admission.reserve(ownerID: UUID(), executionID: UUID())
+    let firstChild = f.platform.makeOwner()
+    let lastChild = f.platform.makeOwner()
+    firstChild.complete()
+    if state != .prebinding { lastChild.complete() }
+    let receipts = try [firstChild, lastChild].map { child in
+      try ExecutionRecoveryJournal.Entry(
+        child: UUID(), execution: prebinding.id, owner: priorOwner, boot: prebinding.boot,
+        recovery: child.recoveryState(), worktreeUse: use, completed: child.ended,
+        released: child.ended)
+    }
+    try firstStore.transactionWithDatabase { database, ledger in
+      var bound = prebinding
+      bound.worktreeUse = use
+      bound.worktreeDurable = true
+      bound.invocationInFlight = true
+      for receipt in receipts { bound.children[receipt.child] = .init(recovery: receipt.recovery) }
+      try bound.save(database)
+      if state == .inFlight {
+        try ledger.finishExecution(prebinding.id, retainUntil: .distantFuture)
+      }
+    }
+    let journal = try ExecutionRecoveryJournal(
+      directory: f.directory.appendingPathComponent("ownership"))
+    for receipt in receipts { try journal.save(receipt) }
+    let operation = UUID()
+    #expect(try admission.close(operationID: operation).contains(use))
+
+    let nextConnection = try GatewayDatabaseConnection(path: path)
+    let nextStore = SQLitePermissionStore(connection: nextConnection, counter: counter)
+    #expect(throws: (any Error).self) {
+      _ = try ExecutionRevocationCoordinator(
+        store: nextStore, launcher: .init(platform: f.platform), directory: f.directory)
+    }
+    first = nil
+    let epoch = try firstStore.readWithDatabase { _, ledger in ledger.authorizationEpochID }
+    let conflictAdmission = state == .conflicting ? try f.worktreeAdmission("conflict") : nil
+    let conflictingUse = try conflictAdmission?.reserve(
+      ownerID: priorOwner, executionID: use.executionID)
+    try await nextConnection.writer.write { database in
+      var restored = prebinding
+      restored.worktreeUse = conflictingUse
+      if state == .inFlight {
+        // A completed flag does not discharge an explicit invocation receipt.
+        restored.completed = true
+        restored.admissionFinished = true
+        restored.invocationInFlight = true
+      }
+      try restored.save(database)
+    }
+    #expect(try nextStore.readWithDatabase { _, ledger in ledger.authorizationEpochID } == epoch)
+    let next = try ExecutionRevocationCoordinator(
+      store: nextStore, launcher: .init(platform: f.platform), directory: f.directory)
+    #expect(next.ownerIdentity != priorOwner)
+
+    if state == .conflicting {
+      await #expect(throws: WorktreeError.self) { try await next.recover() }
+      let conflict = try #require(conflictAdmission)
+      #expect(try conflict.close(operationID: UUID()) == [#require(conflictingUse)])
+    } else if state == .prebinding {
+      let gate = ReconciliationTestGate()
+      lastChild.setCancellation { _ in await gate.wait() }
+      defer { Task { await gate.release() } }
+      let recovery = Task { try await next.recover() }
+      let deadline = ContinuousClock.now + .seconds(5)
+      while !(await gate.entered), ContinuousClock.now < deadline {
+        try await Task.sleep(for: .milliseconds(5))
+      }
+      try #require(await gate.entered)
+      #expect(try admission.close(operationID: operation).contains(use))
+      #expect(throws: WorktreeError.self) { try admission.requireDrained(operationID: operation) }
+      await gate.release()
+      try await recovery.value
+      #expect(lastChild.ended)
+      #expect(try admission.close(operationID: operation) == [sibling])
+      try admission.acknowledge(sibling)
+      try admission.requireDrained(operationID: operation)
+      #expect(try nextStore.readWithDatabase { _, ledger in ledger.authorizationEpochID } == epoch)
+      return
+    } else {
+      try await next.reconcile()
+    }
+    #expect(try admission.close(operationID: operation).contains(use))
+    #expect(throws: WorktreeError.self) { try admission.requireDrained(operationID: operation) }
+  }
+
   @Test func releasedReceiptsShareAStoreAccessAndStillRepairCurrentRows() async throws {
     let f = try ExecutionFixture()
     let admission = try f.worktreeAdmission()
@@ -1633,6 +1750,10 @@ import Testing
   }
 }
 
+enum RestoredWriterState: CaseIterable, Sendable {
+  case prebinding, conflicting, inFlight
+}
+
 private final class ReconciliationEpochCounter: AuthorizationEpochCounter, @unchecked Sendable {
   private let base = TestAuthorizationEpochCounter()
   private let lock = NSLock()
@@ -1662,8 +1783,8 @@ private final class ExecutionFixture: @unchecked Sendable {
       temporaryDirectory: try! SandboxPath(paths.derived.path), purpose: .projectProgram)
   }
   init() throws { paths = try DurablePathFixture() }
-  func worktreeAdmission() throws -> WorktreeAdmission {
-    let directory = paths.root.appendingPathComponent("admission")
+  func worktreeAdmission(_ name: String = "admission") throws -> WorktreeAdmission {
+    let directory = paths.root.appendingPathComponent(name)
     try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: false)
     let identity = try WorktreeDirectory(directory).identity
     let generation = UUID()

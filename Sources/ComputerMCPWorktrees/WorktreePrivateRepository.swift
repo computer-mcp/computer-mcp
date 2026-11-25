@@ -10,15 +10,24 @@ import Foundation
 struct WorktreePrivateMetadata {
   let head: String
   let refs: [String: String]
+  let reflogRoots: [String: [String]]
   let roots: [String]
   let index: Data?
+  let fingerprint: String?
 
   init(
     directory: WorktreeDirectory, format: WorktreeObjectFormat, io: WorktreeJournalIO,
-    limit: Int, deadline: ContinuousClock.Instant
+    limit: Int, deadline: ContinuousClock.Instant, recoveryRootLimit: Int? = nil
   ) throws {
     var remaining = limit
     var entriesRemaining = min(limit, 250_000)
+    let verifyCapture = recoveryRootLimit != nil
+    var observations: [String: FileStamp] = [:]
+    var absent: Set<String> = []
+    var digests: [String: String] = [:]
+    var allRoots: Set<String> = []
+    var logsByPath: [String: [String]] = [:]
+    let zero = String(repeating: "0", count: format.hexCount)
     func check() throws {
       try Task.checkCancellation()
       guard ContinuousClock.now < deadline else {
@@ -27,15 +36,64 @@ struct WorktreePrivateMetadata {
     }
     func read(_ name: String, in parent: WorktreeDirectory) throws -> Data? {
       try check()
-      let data = try io.read(name, in: parent, limit: remaining)
+      let path =
+        parent.url.path == directory.url.path
+        ? name : String(parent.url.path.dropFirst(directory.url.path.count + 1)) + "/" + name
+      let before = try verifyCapture ? FileStamp.read(parent.descriptor, name) : nil
+      let data: Data?
+      do {
+        data = try io.read(name, in: parent, limit: remaining)
+      } catch {
+        guard verifyCapture else { throw error }
+        switch error {
+        case is CancellationError: throw error
+        case WorktreeError.identityChanged, is POSIXError:
+          throw WorktreeError.busy("Private Git metadata was unavailable during capture.")
+        default: throw error
+        }
+      }
       remaining -= data?.count ?? 0
+      if verifyCapture {
+        guard try before == FileStamp.read(parent.descriptor, name),
+          (before == nil) == (data == nil)
+        else { throw WorktreeError.busy("Private Git metadata changed during capture.") }
+        if let before, let data {
+          observations[path] = before
+          digests[path] = WorktreeObjectSnapshot.digest(data)
+        } else {
+          absent.insert(path)
+        }
+      }
       return data
+    }
+    func addRoot(_ oid: String) throws {
+      guard oid != zero else { return }
+      allRoots.insert(oid)
+      if let recoveryRootLimit, allRoots.count > recoveryRootLimit {
+        throw WorktreeError.busy("Private root inventory exceeds its object bound.")
+      }
+    }
+    func observeDirectory(_ path: String, _ parent: WorktreeDirectory) throws {
+      guard verifyCapture else { return }
+      guard let stamp = try FileStamp.read(parent.descriptor, ".") else {
+        throw WorktreeError.busy("Private metadata directory disappeared.")
+      }
+      observations[path] = stamp
     }
     func text(_ data: Data) throws -> String {
       guard let value = String(data: data, encoding: .utf8), value.hasSuffix("\n") else {
         throw WorktreeError.busy("Private reference data is incomplete.")
       }
       return String(value.dropLast())
+    }
+    try observeDirectory(".", directory)
+    if verifyCapture {
+      for lock in ["HEAD.lock", "packed-refs.lock"] {
+        guard try !directory.hasEntry(lock) else {
+          throw WorktreeError.busy("Private reference update is in progress.")
+        }
+        absent.insert(lock)
+      }
     }
     guard let headBytes = try read("HEAD", in: directory) else {
       throw WorktreeError.busy("Missing private HEAD.")
@@ -56,14 +114,12 @@ struct WorktreePrivateMetadata {
         values[String(fields[1])] = String(fields[0])
       }
     }
-    func walk(
-      _ parent: WorktreeDirectory, prefix: String, logs: Bool,
-      roots: inout Set<String>
-    ) throws {
+    func walk(_ parent: WorktreeDirectory, prefix: String, logs: Bool) throws {
       guard prefix.utf8.count <= 1024 else {
         throw WorktreeError.busy("Private metadata nesting exceeds its bound.")
       }
       try check()
+      try observeDirectory(String(parent.url.path.dropFirst(directory.url.path.count + 1)), parent)
       for name in try parent.entries(limit: entriesRemaining) {
         try check()
         guard entriesRemaining > 0 else {
@@ -75,22 +131,29 @@ struct WorktreePrivateMetadata {
           throw WorktreeError.busy("Private references changed during capture.")
         }
         let path = prefix + name
+        if verifyCapture, name.hasSuffix(".lock") {
+          throw WorktreeError.busy("Private reference update is in progress.")
+        }
         if status.st_mode & S_IFMT == S_IFDIR {
-          try walk(parent.child(name), prefix: path + "/", logs: logs, roots: &roots)
+          try walk(parent.child(name), prefix: path + "/", logs: logs)
         } else {
           guard let bytes = try read(name, in: parent) else {
             throw WorktreeError.busy("Private reference disappeared.")
           }
           if logs {
+            var endpoints: Set<String> = []
             for line in (bytes.isEmpty ? "" : try text(bytes)).split(separator: "\n") {
+              try check()
               let fields = line.split(separator: " ", maxSplits: 2)
               guard fields.count == 3, fields.prefix(2).allSatisfy({ format.contains(String($0)) })
               else { throw WorktreeError.busy("Malformed private reflog.") }
-              roots.formUnion(
-                fields.prefix(2).map(String.init).filter {
-                  $0 != String(repeating: "0", count: format.hexCount)
-                })
+              for field in fields.prefix(2) where field != zero {
+                let oid = String(field)
+                try addRoot(oid)
+                if verifyCapture { endpoints.insert(oid) }
+              }
             }
+            if verifyCapture { logsByPath[path] = endpoints.sorted() }
           } else {
             try Self.requireRef(path)
             values[path] = try text(bytes)
@@ -98,12 +161,13 @@ struct WorktreePrivateMetadata {
         }
       }
     }
-    var roots: Set<String> = []
     if try directory.hasEntry("refs") {
-      try walk(directory.child("refs"), prefix: "refs/", logs: false, roots: &roots)
+      try walk(directory.child("refs"), prefix: "refs/", logs: false)
+    } else if verifyCapture {
+      absent.insert("refs")
     }
     func resolve(_ value: String, seen: Set<String> = []) throws -> String {
-      if format.contains(value) { return value }
+      if format.contains(value), !verifyCapture || value != zero { return value }
       guard value.hasPrefix("ref: ") else { throw WorktreeError.busy("Invalid private reference.") }
       let name = String(value.dropFirst(5))
       try Self.requireRef(name)
@@ -120,17 +184,71 @@ struct WorktreePrivateMetadata {
       guard !name.hasPrefix("refs/replace/") else {
         throw WorktreeError.unsafeConfiguration("Private replacement references are unsupported.")
       }
-      resolved[name] = try resolve(value)
+      let oid = try resolve(value)
+      resolved[name] = oid
+      try addRoot(oid)
     }
     if try directory.hasEntry("logs") {
-      try walk(directory.child("logs"), prefix: "", logs: true, roots: &roots)
+      try walk(directory.child("logs"), prefix: "", logs: true)
+    } else if verifyCapture {
+      absent.insert("logs")
     }
-    roots.formUnion(resolved.values)
-    roots.insert(head)
+    try addRoot(head)
     self.refs = resolved
-    self.roots = roots.sorted()
-    self.index = try read("index", in: directory)
+    reflogRoots = logsByPath
+    self.roots = allRoots.sorted()
+    index = try verifyCapture ? nil : read("index", in: directory)
+    if verifyCapture {
+      for (path, stamp) in observations {
+        try check()
+        guard try FileStamp.read(directory.descriptor, path) == stamp else {
+          throw WorktreeError.busy("Private Git metadata changed during capture.")
+        }
+      }
+      for path in absent {
+        try check()
+        guard try FileStamp.read(directory.descriptor, path) == nil else {
+          throw WorktreeError.busy("Private Git metadata changed during capture.")
+        }
+      }
+      fingerprint = WorktreeObjectSnapshot.digest(try recoveryJSON(digests))
+    } else {
+      fingerprint = nil
+    }
     try directory.verify()
+    try check()
+  }
+
+  private struct FileStamp: Equatable {
+    let device: Int64
+    let inode: UInt64
+    let size: Int64
+    let mode: mode_t
+    let links: UInt64
+    let modified: Int64
+    let modifiedNanos: Int64
+    let changed: Int64
+    let changedNanos: Int64
+
+    static func read(_ descriptor: Int32, _ path: String) throws -> Self? {
+      var status = stat()
+      guard fstatat(descriptor, path, &status, AT_SYMLINK_NOFOLLOW) == 0 else {
+        if errno == ENOENT { return nil }
+        throw WorktreeError.busy("Private metadata identity could not be read.")
+      }
+      #if canImport(Darwin)
+        let modified = status.st_mtimespec
+        let changed = status.st_ctimespec
+      #else
+        let modified = status.st_mtim
+        let changed = status.st_ctim
+      #endif
+      return Self(
+        device: Int64(status.st_dev), inode: UInt64(status.st_ino), size: Int64(status.st_size),
+        mode: status.st_mode, links: UInt64(status.st_nlink), modified: Int64(modified.tv_sec),
+        modifiedNanos: Int64(modified.tv_nsec), changed: Int64(changed.tv_sec),
+        changedNanos: Int64(changed.tv_nsec))
+    }
   }
 
   static func requireRef(_ ref: String) throws {

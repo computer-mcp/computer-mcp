@@ -6,6 +6,147 @@ package struct WorktreePublication: Sendable {
   package let oid: String
 }
 
+struct WorktreeRecoveryCapture {
+  let metadata: WorktreePrivateMetadata
+  let privateObjects: WorktreeStagedObjects
+  let expectedObjects: WorktreeStagedObjects
+  let privateManifest: WorktreeObjectManifest
+  let headManifest: WorktreeObjectManifest
+  let expectedManifest: WorktreeObjectManifest
+  let sourceExpectedManifest: WorktreeObjectManifest?
+  let recoveryManifest: WorktreeObjectManifest
+  let sourceManifest: WorktreeObjectManifest
+}
+
+extension WorktreeRepository {
+  /// The caller owns exclusive staging and any pin on the retained expected-object pool.
+  func captureRecoveryObjects(
+    _ topology: VerifiedWorktreeTopology, expectedOID: String, in staging: WorktreeDirectory,
+    retainedExpectedObjects: WorktreeDirectory? = nil, budget: inout WorktreeObjectBudget
+  ) throws -> WorktreeRecoveryCapture {
+    try budget.limits.validateRecoveryCapture()
+    try budget.check()
+    try checkAuthority()
+    guard identity.format.contains(expectedOID), expectedOID.utf8.contains(where: { $0 != 48 })
+    else { throw WorktreeError.invalidRequest("Invalid expected recovery object ID.") }
+    let metadata = try liveRecoveryInput {
+      try topology.verifyDirectories()
+      try verifyPrivateControls(topology, repository: identity)
+      return try WorktreePrivateMetadata(
+        directory: topology.gitDirectory, format: identity.format, io: io,
+        limit: git.maxOutputBytes * 8, deadline: budget.deadline,
+        recoveryRootLimit: budget.limits.objectCount)
+    }
+
+    let repository = try staging.child("capture.git", create: true, exclusive: true)
+    _ = try git.run(
+      [
+        "init", "--bare", "--template=", "--object-format=" + identity.format.rawValue,
+        repository.url.path,
+      ],
+      at: staging.url, deadline: budget.deadline)
+    try repository.verify()
+
+    let snapshot = WorktreeObjectSnapshot(io: io, format: identity.format)
+    func acquire(
+      _ input: WorktreeDirectory, slot: String, allowLinkedInput: Bool = false,
+      live: Bool, budget: inout WorktreeObjectBudget
+    ) throws -> WorktreeStagedObjects {
+      try budget.check()
+      try checkAuthority()
+      let destination = try staging.child(slot, create: true, exclusive: true)
+      func copy() throws -> [WorktreeCopiedObjectFile] {
+        try snapshot.copy(
+          from: input, to: destination, budget: &budget, allowLinkedInput: allowLinkedInput)
+      }
+      let files = try live ? liveRecoveryInput(copy) : copy()
+      try snapshot.validateRaw(files, in: destination, budget: &budget, reportInvalidImport: true)
+      let pool = WorktreeStagedObjects(
+        directory: destination, repository: repository, git: git, format: identity.format,
+        deadline: budget.deadline, limits: budget.limits)
+      try pool.verifyIndexes(files)
+      return pool
+    }
+
+    let privatePool = try acquire(
+      topology.objects, slot: "private-objects", live: true, budget: &budget)
+    try liveRecoveryInput { try topology.verifyDirectories() }
+    guard let privateManifest = try privatePool.manifest(roots: metadata.roots) else {
+      throw WorktreeError.busy("The captured private roots have missing objects.")
+    }
+    try privatePool.verifyIntegrity()
+    guard privateManifest.entries[metadata.head]?.type == .commit,
+      let headManifest = try privatePool.manifest(roots: [metadata.head]),
+      try privateManifest.union(headManifest) == privateManifest
+    else {
+      throw WorktreeError.invalidRequest("Captured HEAD has no complete private commit closure.")
+    }
+
+    var expectedPool = privatePool
+    var expected = try privatePool.manifest(roots: [expectedOID])
+    if expected == nil, let retainedExpectedObjects {
+      expectedPool = try acquire(
+        retainedExpectedObjects, slot: "retained-objects", live: false, budget: &budget)
+      guard let retained = try expectedPool.manifest(roots: [expectedOID]) else {
+        throw WorktreeError.recoveryRequired("The pinned expected recovery closure is incomplete.")
+      }
+      try expectedPool.verifyIntegrity()
+      expected = retained
+    }
+
+    try budget.check()
+    try checkAuthority()
+    let sourceObjects = try liveRecoveryInput {
+      try identity.verify()
+      let sourceObjects = try WorktreeDirectory(URL(fileURLWithPath: identity.objects.path))
+      guard sourceObjects.identity == identity.objects else {
+        throw WorktreeError.identityChanged("Source object directory was substituted.")
+      }
+      return sourceObjects
+    }
+    let sourcePool = try acquire(
+      sourceObjects, slot: "source-objects", allowLinkedInput: true, live: true, budget: &budget)
+    try liveRecoveryInput { try identity.verify() }
+    let sourceExpected = try sourcePool.manifest(roots: [expectedOID])
+    if let sourceExpected {
+      guard sourceExpected.entries[expectedOID]?.type == .commit else {
+        throw WorktreeError.invalidRequest("The source expected object is not a commit.")
+      }
+      try sourcePool.verifyIntegrity()
+      if let expected {
+        guard expected == sourceExpected else {
+          throw WorktreeError.invalidRequest("Expected object closures disagree.")
+        }
+      } else {
+        expectedPool = sourcePool
+        expected = sourceExpected
+      }
+    }
+    guard let expected, expected.entries[expectedOID]?.type == .commit else {
+      throw WorktreeError.recoveryRequired("No complete expected commit closure was acquired.")
+    }
+
+    let recovery = try privateManifest.union(expected)
+    let source = try sourceExpected.map { try headManifest.subtracting($0) } ?? headManifest
+    try budget.check()
+    return WorktreeRecoveryCapture(
+      metadata: metadata, privateObjects: privatePool, expectedObjects: expectedPool,
+      privateManifest: privateManifest, headManifest: headManifest, expectedManifest: expected,
+      sourceExpectedManifest: sourceExpected, recoveryManifest: recovery, sourceManifest: source)
+  }
+
+  private func liveRecoveryInput<Value>(_ capture: () throws -> Value) throws -> Value {
+    do {
+      return try capture()
+    } catch WorktreeError.identityChanged {
+      throw WorktreeError.busy("Repository input changed during recovery capture.")
+    } catch let error as POSIXError where [.ENOENT, .ENOTDIR, .ELOOP, .ESTALE].contains(error.code)
+    {
+      throw WorktreeError.busy("Repository input disappeared during recovery capture.")
+    }
+  }
+}
+
 extension WorktreeRepository {
   /// The adapter revalidates live source authority at capture and under the
   /// prepared ref locks. Preservation roots come only from host lifecycle logic.

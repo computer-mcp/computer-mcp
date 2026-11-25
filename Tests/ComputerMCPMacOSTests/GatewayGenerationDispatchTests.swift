@@ -2861,6 +2861,8 @@ struct GatewayGenerationDispatchTests {
   func oneTimePermissionBindsExactResourceOwnerWithinOneProvider() async throws {
     let fixture = try GenerationFixture()
     defer { fixture.removeFiles() }
+    let sourceProbe = fixture.root.appendingPathComponent("retry-source-probe")
+    try Data("original".utf8).write(to: sourceProbe)
     try await fixture.activate(version: 1, destructiveFinish: true)
     var grant = try #require(try fixture.database.profiles().first { $0.id == .chatGPTOperate })
     try grant.permissions.set(.granted(.read), for: .mcpServer("fixture"))
@@ -2868,20 +2870,25 @@ struct GatewayGenerationDispatchTests {
     try await fixture.service.start(profile: .chatGPTOperate)
     let client = try await fixture.connect()
     do {
-      _ = try await client.call(
-        toolName: "fixture.start", arguments: .object(["handle": .string("one")]))
-      _ = try await client.call(
-        toolName: "fixture.start", arguments: .object(["handle": .string("two")]))
-      let owners = try await owners(client, kind: "mcpResource")
-      #expect(owners.count == 2)
-      let first = try #require(owners.first)
-      let second = try #require(owners.last)
+      let originalPID = try pid(
+        await client.call(
+          toolName: "fixture.start", arguments: .object(["handle": .string("one")])))
+      let first = try await observedResourceOwner(client)
+      #expect(
+        try pid(
+          await client.call(
+            toolName: "fixture.start", arguments: .object(["handle": .string("two")])))
+          == originalPID)
+      let second = try await observedResourceOwner(client, excluding: [first])
+      #expect(try await owners(client, kind: "mcpResource").count == 2)
       let firstPending = try await call(client, owner: first, tool: "fixture.change")
       let firstRequests = try permissionRequestIDs(firstPending)
       let secondPending = try await call(client, owner: second, tool: "fixture.change")
       let secondRequests = try permissionRequestIDs(secondPending)
       #expect(Set(firstRequests).isDisjoint(with: secondRequests))
       let view = try fixture.permissionView()
+      let provider = try #require(view.providers.first { $0.identity == .localServer("fixture") })
+      #expect(provider.fullAccessConsent != nil)
       let firstRequest = try #require(view.requests.first { firstRequests.contains($0.request.id) })
       let secondRequest = try #require(
         view.requests.first { secondRequests.contains($0.request.id) })
@@ -2892,21 +2899,106 @@ struct GatewayGenerationDispatchTests {
       let unanswered = try await call(
         client, owner: first, tool: "fixture.change", retryIDs: firstRequests)
       #expect(unanswered.result.objectValue?["isError"] == .bool(true))
+      #expect(
+        value(unanswered, "error")?.objectValue?["code"]
+          == .string("permission.invalid_authorization"))
       #expect(try fixture.calls() == before)
       try fixture.answer(firstRequests, .onlyThisTime)
       let wrongOwner = try await call(
         client, owner: second, tool: "fixture.change", retryIDs: firstRequests)
       #expect(wrongOwner.result.objectValue?["isError"] == .bool(true))
+      #expect(
+        value(wrongOwner, "error")?.objectValue?["code"] == .string("permission.retry_mismatch"))
       #expect(try fixture.calls() == before)
       let retried = try await call(
         client, owner: first, tool: "fixture.change", retryIDs: firstRequests)
-      #expect(retried.result.objectValue?["isError"] != .bool(true))
+      #expect(retried.result.objectValue?["isError"] != .bool(true), "\(retried.result)")
       #expect(value(retried, "arguments") == .object([:]))
+      #expect(try pid(retried) == originalPID)
+      #expect(value(retried, "source_write_blocked") == .bool(false))
+      #expect(try Data(contentsOf: sourceProbe) == Data("changed".utf8))
       #expect(try fixture.calls() == before + "1:change\n")
       let replayed = try await call(
         client, owner: first, tool: "fixture.change", retryIDs: firstRequests)
       #expect(replayed.result.objectValue?["isError"] == .bool(true))
+      #expect(
+        value(replayed, "error")?.objectValue?["code"] == .string("permission.retry_consumed"))
+      let sibling = try await call(
+        client, owner: second, tool: "fixture.change", retryIDs: secondRequests)
+      #expect(
+        value(sibling, "error")?.objectValue?["code"] == .string("permission.invalid_authorization")
+      )
+      let fresh = try await client.call(toolName: "fixture.change", arguments: .object([:]))
+      #expect(Set(try permissionRequestIDs(fresh)).isDisjoint(with: firstRequests + secondRequests))
       #expect(try fixture.calls() == before + "1:change\n")
+      #expect(try fixture.invocationPIDs() == [originalPID])
+      let saved = try #require(try fixture.database.profiles().first { $0.id == .chatGPTOperate })
+      #expect(saved.permissions.state(for: .mcpServer("fixture")) == .granted(.read))
+      #expect(saved.fullAccess)
+      let providerAfter = try #require(
+        try fixture.permissionView().providers.first { $0.identity == .localServer("fixture") })
+      #expect(providerAfter.fullAccessConsent == provider.fullAccessConsent)
+      let acquired = try await observedResourceOwner(client, excluding: [first, second])
+      let foreignHandle = try await call(
+        client, owner: acquired, tool: "fixture.inspect", arguments: ["handle": .string("one")])
+      #expect(foreignHandle.result.objectValue?["isError"] == .bool(true))
+      #expect(try fixture.calls() == before + "1:change\n")
+      let retained = try await call(
+        client, owner: acquired, tool: "fixture.inspect",
+        arguments: ["handle": .string("acquired-on-retry")])
+      #expect(try pid(retained) == originalPID)
+      #expect(try fixture.calls() == before + "1:change\n1:inspect\n")
+      await client.disconnect()
+      await fixture.service.stop()
+    } catch {
+      await client.disconnect()
+      await fixture.service.stop()
+      throw error
+    }
+  }
+
+  @Test(.timeLimit(.minutes(1)))
+  func selectedRetryDoesNotGiveSandboxAWritableSourceProject() async throws {
+    let fixture = try GenerationFixture(localProviderFullAccess: false)
+    defer { fixture.removeFiles() }
+    let sourceProbe = fixture.root.appendingPathComponent("retry-source-probe")
+    try Data("original".utf8).write(to: sourceProbe)
+    try await fixture.activate(version: 1, destructiveFinish: true)
+    var grant = try #require(try fixture.database.profiles().first { $0.id == .chatGPTOperate })
+    grant.fullAccess = false
+    try grant.permissions.set(.granted(.read), for: .mcpServer("fixture"))
+    try fixture.database.saveProfile(grant, expectedRevision: grant.authorizationRevision)
+    try await fixture.service.start(profile: .chatGPTOperate)
+    let client = try await fixture.connect(consent: false)
+    do {
+      try await fixture.discover(client)
+      let originalPID = try pid(
+        await client.call(
+          toolName: "fixture.start", arguments: .object(["handle": .string("one")])))
+      let owner = try await observedResourceOwner(client)
+      let pending = try await call(client, owner: owner, tool: "fixture.change")
+      let requests = try permissionRequestIDs(pending)
+      let before = try fixture.calls()
+      try fixture.answer(requests, .onlyThisTime)
+      let rejected = try await call(
+        client, owner: owner, tool: "fixture.change", retryIDs: requests)
+      let error = try #require(value(rejected, "error")?.objectValue)
+      #expect(error["code"] == .string("execution.unavailable"))
+      #expect(
+        error["message"]
+          == .string("Execution requires a verified worktree and private Git context"))
+      #expect(try fixture.calls() == before)
+      let inspected = try await call(
+        client, owner: owner, tool: "fixture.inspect",
+        arguments: ["handle": .string("one"), "probe_source_write": .bool(true)])
+      #expect(try pid(inspected) == originalPID)
+      #expect(value(inspected, "source_write_blocked") == .bool(true))
+      #expect(try Data(contentsOf: sourceProbe) == Data("original".utf8))
+      let provider = try #require(
+        try fixture.permissionView().providers.first { $0.identity == .localServer("fixture") })
+      #expect(provider.fullAccessConsent == nil)
+      let session = try #require(await fixture.service.controlSessions().first)
+      #expect(session.fullAccessConsent == nil)
       await client.disconnect()
       await fixture.service.stop()
     } catch {
@@ -3205,6 +3297,7 @@ private struct GenerationFixture: Sendable {
   let service: AppGatewayService
   let reportWork: Bool
   let platform: PlatformServices
+  private let localProviderFullAccess: Bool
 
   func publishMetadata(version: Int) async throws {
     var configuration = try await control.activeConfiguration()
@@ -3245,9 +3338,10 @@ private struct GenerationFixture: Sendable {
   init(
     reportWork: Bool = true,
     bookmarkService: any ProjectBookmarkServicing = ProjectBookmarkService(),
-    executionLauncher: ExecutionLauncher? = nil
+    executionLauncher: ExecutionLauncher? = nil, localProviderFullAccess: Bool = true
   ) throws {
     self.reportWork = reportWork
+    self.localProviderFullAccess = localProviderFullAccess
     root = URL(fileURLWithPath: "/private/tmp/cm-gen-\(UUID().uuidString.prefix(8))")
     try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
     let directories = AppControlPlaneServiceDirectories(
@@ -3512,7 +3606,8 @@ private struct GenerationFixture: Sendable {
     let grants = try providerProjectGrants()
     for server in configuration.mcp.servers where server.transport == .stdio {
       try fixtureApproveLocalProvider(
-        server, database: database, runtime: runtime, permissions: grants, fullAccess: true)
+        server, database: database, runtime: runtime, permissions: grants,
+        fullAccess: localProviderFullAccess)
     }
     let snapshot = try database.pluginStoreSnapshot()
     if let id = snapshot.selectedInstallations["live-fixture"],
@@ -3630,6 +3725,18 @@ private struct GenerationFixture: Sendable {
             elif name == "wait":
                 while not (Path(sys.argv[1]) / "release").exists(): time.sleep(0.01)
             result = {"content": [], "structuredContent": {"pid": os.getpid(), "version": version, "arguments": arguments}}
+            if name == "change" or (name == "inspect" and arguments.get("probe_source_write")):
+                probe = Path(sys.argv[1]) / "retry-source-probe"
+                if probe.is_file():
+                    try:
+                        probe.write_text("changed")
+                        result["structuredContent"]["source_write_blocked"] = False
+                    except PermissionError:
+                        result["structuredContent"]["source_write_blocked"] = True
+                    if name == "change":
+                        acquisition = params["_meta"]["io.github.computer-mcp/work-invocation"]
+                        resources.append({"kind": "session", "id": "acquired-on-retry", "acquired_by": acquisition, "state": "active"})
+                        revision += 1
         else:
             result = {}
         print(json.dumps({"jsonrpc": "2.0", "id": message["id"], "result": result}), flush=True)

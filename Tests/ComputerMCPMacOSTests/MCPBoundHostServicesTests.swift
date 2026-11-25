@@ -77,6 +77,10 @@ struct MCPBoundHostServicesTests {
             registrationID: "scoped-probe", exposure: .reexport, prefix: "adapter",
             allowedTools: ["fixture.read"], hostServices: true)
         ]), for: "scoped-fixture", expectedRevision: registered.revision)
+    // Package approval advances the catalog revision the runtime captures at startup.
+    try fixtureApprovePlugin(
+      PluginPackage.load(at: packageRoot), database: database,
+      runtime: database.permissionRuntime(platform: platform), permissions: providerPermissions)
     let peer = HostServiceProbe()
     let runtime = try GatewayRuntime(
       configuration: .init(
@@ -86,9 +90,6 @@ struct MCPBoundHostServicesTests {
         caller: .secureTunnel, profileID: grant.id, trustedPrincipalID: "scoped-source-client"),
       database: database, platform: platform, mcpClient: peer)
     do {
-      try fixtureApprovePlugin(
-        PluginPackage.load(at: packageRoot), database: database, runtime: runtime.permissionRuntime,
-        permissions: providerPermissions)
       peer.setHandler { invocation in
         let execution = try #require(invocation.executionAuthority as? PreparedExecutionContext)
         let provider = try #require(execution.provider)

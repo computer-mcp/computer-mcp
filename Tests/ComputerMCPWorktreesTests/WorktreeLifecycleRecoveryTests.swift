@@ -102,10 +102,8 @@ struct WorktreeLifecycleRecoveryTests {
       try FileManager.default.removeItem(at: f.repository)
 
       let root = f.storage.recovery
-      let enumerator = try #require(
-        FileManager.default.enumerator(at: root, includingPropertiesForKeys: nil))
       var directories = [root]
-      for case let url as URL in enumerator {
+      for url in try lifecycleStoreEntries(root) {
         let attributes = try FileManager.default.attributesOfItem(atPath: url.path)
         if attributes[.type] as? FileAttributeType == .typeDirectory {
           directories.append(url)
@@ -131,11 +129,15 @@ struct WorktreeLifecycleRecoveryTests {
   }
 }
 
-private func lifecycleStoreSnapshot(_ root: URL) throws -> [String: Data] {
+private func lifecycleStoreEntries(_ root: URL) throws -> [URL] {
   let enumerator = try #require(
     FileManager.default.enumerator(at: root, includingPropertiesForKeys: nil))
+  return enumerator.compactMap { $0 as? URL }
+}
+
+private func lifecycleStoreSnapshot(_ root: URL) throws -> [String: Data] {
   var result: [String: Data] = [:]
-  for case let url as URL in enumerator {
+  for url in try lifecycleStoreEntries(root) {
     let attributes = try FileManager.default.attributesOfItem(atPath: url.path)
     let type = attributes[.type] as? FileAttributeType
     let mode = (attributes[.posixPermissions] as? NSNumber)?.intValue ?? -1

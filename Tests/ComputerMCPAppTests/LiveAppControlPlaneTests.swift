@@ -492,6 +492,41 @@ final class LiveAppControlPlaneTests {
   }
 
   @Test
+  func privacyPerspectivesShareLiveClientAndLocalServerEdits() async throws {
+    try await withAppControlPlaneFixture { fixture in
+      let host = fixture.controlPlane
+      var configuration = try await host.activeConfiguration()
+      configuration.mcp.servers.append(
+        .init(id: "journey-fixture", transport: .stdio, command: "/usr/bin/true"))
+      _ = try await host.activateManifest(
+        configuration.exportedTOML(), expectedDigest: host.configurationDigest())
+      let service = LivePrivacySecurityService(controlPlane: fixture.app)
+      let initial = try await service.privacySnapshot()
+      let serverID = "server/journey-fixture"
+      try await service.approveProvider(
+        #require(initial.reviewedProviders[serverID]), permissions: .init(),
+        execution: .sandbox, sandboxSettings: .init())
+      let model = PrivacySecurityModel(service: service)
+      await model.refresh()
+      for id in [GatewayProfileID.chatGPTOperate.rawValue, serverID] {
+        let principal = try #require(model.principal(id))
+        let principalRow = try #require(
+          model.grants(for: principal).first { $0.permission == .screen })
+        await model.set(principalRow, to: .granted(.allow))
+        #expect(model.failure == nil)
+        let permissionRow = try #require(model.grants(for: .screen).first { $0.principalID == id })
+        #expect(permissionRow.value == .granted(.allow))
+        #expect(permissionRow.effectiveValue == .granted(.allow))
+        await model.set(permissionRow, to: .denied)
+        #expect(model.failure == nil)
+        let revoked = try #require(model.grants(for: principal).first { $0.permission == .screen })
+        #expect(revoked.value == .denied)
+        #expect(revoked.effectiveValue == .denied)
+      }
+    }
+  }
+
+  @Test
   func privacyConfirmationIncludesUnadoptedProfilesWithoutGlobalSuspension() async throws {
     try await withAppControlPlaneFixture { fixture in
       try await fixture.controlPlane.database.connection.writer.write { database in

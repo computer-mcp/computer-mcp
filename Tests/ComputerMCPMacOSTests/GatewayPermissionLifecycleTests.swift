@@ -61,6 +61,7 @@ struct GatewayPermissionLifecycleTests {
       #expect(fixture.hasAttribute())
 
       try fixture.answer(ids, .onlyThisTime)
+      #expect(fixture.hasAttribute())
       var changed = fixture.target
       changed["dry_run"] = .bool(true)
       let mismatched = try await fixture.retry(client, arguments: changed, ids: ids)
@@ -109,10 +110,16 @@ struct GatewayPermissionLifecycleTests {
       let first = try await fixture.connect()
       let pending = try await first.call(
         toolName: "file.remove_xattr", arguments: .object(fixture.target))
-      try fixture.answer(requestIDs(pending), .always)
+      let ids = try requestIDs(pending)
+      try fixture.answer(ids, .always)
+      #expect(fixture.hasAttribute())
       let profile = try #require(
         try fixture.control.view().profiles.first { $0.id == .chatGPTOperate })
       #expect(profile.permissions.state(for: .project("fixture")) == .granted(.write))
+      let retried = try await fixture.retry(first, ids: ids)
+      #expect(retried.result.objectValue?["isError"] != .bool(true))
+      #expect(!fixture.hasAttribute())
+      try fixture.replaceAttribute(with: "reconnected target")
       await first.disconnect()
 
       let reconnected = try await fixture.connect()

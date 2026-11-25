@@ -137,7 +137,7 @@ struct WorktreeRecoveryGrowth: Codable, Equatable, Sendable {
 
 struct WorktreeRecoveryIntent: Codable, Equatable, Sendable {
   enum Kind: String, Codable, Sendable {
-    case publication, merge, removal, acknowledgement, reconciliation, release
+    case publication, merge, removal, acknowledgement, reconciliation, branchDeletion, release
   }
 
   let id: UUID

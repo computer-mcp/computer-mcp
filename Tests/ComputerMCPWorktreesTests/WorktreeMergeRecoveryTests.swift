@@ -90,8 +90,10 @@ struct WorktreeMergeRecoveryTests {
       let original = try f.service()
       let created = try original.create(name: "ack")
       let tip = try f.privateCommit(original, projectID: created.projectID)
-      let service = try f.service(
-        executor: MergeTestExecutor(base: f.executor, afterCommit: { throw CancellationError() }))
+      let failure = MergePhaseFailure(
+        phase: "published",
+        url: f.storage.journals.appendingPathComponent("merges/" + created.projectID + ".json"))
+      let service = try f.service(journalIO: .init(beforeDirectorySync: { try failure.check() }))
       #expect(throws: CancellationError.self) {
         try service.merge(projectID: created.projectID) { _, _ in }
       }
@@ -99,7 +101,18 @@ struct WorktreeMergeRecoveryTests {
       if interference == "edit" {
         try Data("owner\n".utf8).write(to: f.repository.appendingPathComponent("file.txt"))
       }
-      if interference == "third" { try f.raw(["commit", "--allow-empty", "-m", "owner"]) }
+      if interference == "third" {
+        let tree = try f.raw(["rev-parse", "HEAD^{tree}"])
+        let third = try f.raw(["commit-tree", tree, "-p", tip, "-m", "owner"])
+        #expect(throws: WorktreeError.self) {
+          try f.raw([
+            "-c", "core.filesRefLockTimeout=0", "update-ref", "refs/heads/main", third, tip,
+          ])
+        }
+        // Model a direct metadata replacement that bypasses Git's lock.
+        try Data((third + "\n").utf8).write(
+          to: f.repository.appendingPathComponent(".git/refs/heads/main"), options: .atomic)
+      }
       let observed = try f.raw(["rev-parse", "HEAD"])
       if interference == "none" {
         #expect(try f.service().merge(projectID: created.projectID) { _, _ in }.oid == tip)
@@ -129,7 +142,7 @@ struct WorktreeMergeRecoveryTests {
       let service = try f.service(
         executor: MergeTestExecutor(
           base: f.executor,
-          beforePrepare: {
+          beforeGuards: {
             switch kind {
             case "head": try f.raw(["symbolic-ref", "HEAD", "refs/heads/other"])
             case "base": try f.raw(["update-ref", "refs/heads/main", tip, old])
@@ -248,11 +261,13 @@ private final class MergePhaseFailure: @unchecked Sendable {
 
 private struct MergeTestExecutor: WorktreeGitExecuting {
   let base: WorktreeTestGit
-  var beforePrepare: @Sendable () throws -> Void = {}
+  var beforeGuards: @Sendable () throws -> Void = {}
   var afterCheckout: @Sendable () throws -> Void = {}
-  var afterCommit: @Sendable () throws -> Void = {}
   func execute(_ command: WorktreeGitCommand) throws -> WorktreeGitResult {
     let result = try base.execute(command)
+    if command.arguments.suffix(3) == ["config", "--get", "core.sharedRepository"] {
+      try beforeGuards()
+    }
     if command.arguments.contains("read-tree"), command.arguments.contains("-u"),
       !command.arguments.contains("-n")
     {
@@ -261,9 +276,6 @@ private struct MergeTestExecutor: WorktreeGitExecuting {
     return result
   }
   func withPreparedTransaction(_ command: WorktreeGitCommand, _ body: () throws -> Void) throws {
-    let merging = String(decoding: command.input, as: UTF8.self).contains("update HEAD ")
-    if merging { try beforePrepare() }
     try base.withPreparedTransaction(command, body)
-    if merging { try afterCommit() }
   }
 }

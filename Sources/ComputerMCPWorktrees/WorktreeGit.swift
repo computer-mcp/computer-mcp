@@ -7,9 +7,9 @@ package protocol WorktreeGitExecuting: Sendable {
   func executeBounded(
     _ command: WorktreeGitCommand, fileOutput: WorktreeGitFileOutput?, fileSizeLimit: Int?
   ) throws -> WorktreeGitResult
-  /// Send the supplied start/update/prepare input, require both acknowledgements,
-  /// then run the body while Git owns its locks. Commit only on success; otherwise
-  /// abort and reap. The adapter enforces command bounds throughout the session.
+  /// The prepared callback may validate only. It has no lifetime guarantee
+  /// beyond the command deadline. Success requires commit acknowledgement
+  /// and a successful, quiescent child exit; errors wait for child cleanup.
   func withPreparedTransaction(_ command: WorktreeGitCommand, _ body: () throws -> Void) throws
 }
 

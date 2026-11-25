@@ -20,6 +20,7 @@ final class WorktreeRecoveryStaging {
     var capturedBytes: Int?
     var packs: [String: PackReservation] = [:]
     var supplement: SupplementalPlacement?
+    var sourceInstallation: SourceInstallation?
     var exposed = false
     var disposing = false
   }
@@ -36,11 +37,21 @@ final class WorktreeRecoveryStaging {
     let index: WorktreeRecoveryStageFile
   }
 
+  private struct SourceInstallation: Codable {
+    let parent: WorktreeDirectoryIdentity
+    let bounds: WorktreePackBounds
+    let source: WorktreeRecoveryPackReceipt
+    var directory: WorktreeDirectoryIdentity?
+    var artifact: WorktreeRecoveryPackReceipt?
+    var discarding = false
+  }
+
   let directory: WorktreeDirectory
   private let parent: WorktreeDirectory
   private let format: WorktreeObjectFormat
   private let io: WorktreeJournalIO
   private let verifyStore: () throws -> Void
+  private let sourceObjects: WorktreeDirectoryIdentity?
   private var reservation: Reservation
   private var bytes: Data
   private let receiptName = "reservation.json"
@@ -49,11 +60,13 @@ final class WorktreeRecoveryStaging {
   init(
     parent: WorktreeDirectory, operationID: UUID, generation: UUID, format: WorktreeObjectFormat,
     inputLimit: Int, completionBytes: Int, io: WorktreeJournalIO,
+    sourceObjects: WorktreeDirectoryIdentity? = nil,
     verifyStore: @escaping () throws -> Void
   ) throws {
     self.parent = parent
     self.format = format
     self.io = io
+    self.sourceObjects = sourceObjects
     self.verifyStore = verifyStore
     guard inputLimit >= 0, inputLimit <= WorktreePromotionLimits().inputBytes,
       completionBytes >= 0, completionBytes <= 2 * WorktreePackBounds.metadataLimit
@@ -68,6 +81,70 @@ final class WorktreeRecoveryStaging {
     bytes = try recoveryJSON(reservation)
     guard bytes.count <= receiptLimit else { throw invalidRecoveryMetadata() }
     try io.write(bytes, name: receiptName, in: parent, replacing: nil)
+    try verify()
+  }
+
+  static func finishRecordedDisposal(
+    operationID: UUID, parent: WorktreeDirectory, generation: UUID, io: WorktreeJournalIO,
+    verifyStore: () throws -> Void
+  ) throws -> Bool {
+    try verifyStore()
+    let entries = try parent.entries(limit: 2)
+    let name = "reservation.json"
+    if entries.isEmpty {
+      try parent.synchronize()
+      return true
+    }
+    guard let bytes = try io.read(name, in: parent, limit: 128 * 1024) else {
+      throw invalidRecoveryMetadata()
+    }
+    let prior = try JSONDecoder().decode(Reservation.self, from: bytes)
+    let stage = operationID.uuidString.lowercased()
+    guard prior.version == 1, prior.generation == generation,
+      prior.operationID == operationID,
+      prior.directory.path == parent.url.appendingPathComponent(stage).path,
+      entries == [name] || entries == [name, stage].sorted()
+    else { throw invalidRecoveryMetadata() }
+    guard prior.disposing else { return false }
+    if let installation = prior.sourceInstallation, installation.directory != nil,
+      !installation.discarding
+    {
+      throw invalidRecoveryMetadata()
+    }
+    try io.synchronize(name, in: parent, expecting: bytes)
+    if try parent.hasEntry(stage) { try parent.removeOwnedTree(prior.directory, io: io) }
+    try io.remove(name, in: parent, expecting: bytes)
+    try verifyStore()
+    guard try parent.entries(limit: 0).isEmpty else { throw invalidRecoveryMetadata() }
+    return true
+  }
+
+  init(
+    reopening operationID: UUID, parent: WorktreeDirectory, generation: UUID,
+    format: WorktreeObjectFormat, io: WorktreeJournalIO,
+    sourceObjects: WorktreeDirectoryIdentity, verifyStore: @escaping () throws -> Void
+  ) throws {
+    self.parent = parent
+    self.format = format
+    self.io = io
+    self.sourceObjects = sourceObjects
+    self.verifyStore = verifyStore
+    try verifyStore()
+    guard let current = try io.read(receiptName, in: parent, limit: receiptLimit) else {
+      throw invalidRecoveryMetadata()
+    }
+    let decoded = try JSONDecoder().decode(Reservation.self, from: current)
+    guard decoded.version == 1, decoded.operationID == operationID,
+      decoded.generation == generation,
+      decoded.exposed, !decoded.disposing, let capturedBytes = decoded.capturedBytes,
+      capturedBytes >= 0, capturedBytes <= decoded.inputLimit
+    else { throw invalidRecoveryMetadata() }
+    directory = try parent.child(operationID.uuidString.lowercased())
+    guard directory.identity == decoded.directory else { throw invalidRecoveryMetadata() }
+    reservation = decoded
+    bytes = current
+    try checkCapacity(decoded, bytes: current.count)
+    try io.synchronize(receiptName, in: parent, expecting: current)
     try verify()
   }
 
@@ -100,6 +177,7 @@ final class WorktreeRecoveryStaging {
     let key = slot.rawValue
     let maximum = try WorktreePackBounds.maximum(format: format)
     guard reservation.capturedBytes != nil, reservation.packs[key] == nil,
+      slot != .installation || reservation.sourceInstallation == nil,
       bounds.packBytes > 0, bounds.packBytes <= maximum.packBytes,
       bounds.indexBytes > 0, bounds.indexBytes <= maximum.indexBytes
     else { throw invalidRecoveryMetadata() }
@@ -162,6 +240,18 @@ final class WorktreeRecoveryStaging {
     try save(next)
   }
 
+  func reopenPack(
+    _ receipt: WorktreeRecoveryPackReceipt, slot: PackSlot
+  ) throws -> WorktreeRecoveryPack {
+    try verify()
+    try receipt.validate(format: format)
+    guard reservation.exposed, let planned = reservation.packs[slot.rawValue], planned.indexArmed,
+      planned.directory == receipt.directory, receipt.pack.bytes <= planned.bounds.packBytes,
+      receipt.index.bytes <= planned.bounds.indexBytes
+    else { throw invalidRecoveryMetadata() }
+    return try receipt.open(in: directory.child(slot.rawValue))
+  }
+
   func copyForInstallation(
     _ artifact: WorktreeRecoveryPack, deadline: ContinuousClock.Instant
   ) throws -> WorktreeRecoveryPack {
@@ -172,6 +262,61 @@ final class WorktreeRecoveryStaging {
     let destination = try reservePack(
       .installation, bounds: .init(packBytes: artifact.pack.bytes, indexBytes: artifact.index.bytes)
     )
+    return try copyInstallation(artifact, to: destination, deadline: deadline) {
+      try armIndex(.installation)
+    }
+  }
+
+  /// Cross-filesystem publication consumes the same installation slot as a
+  /// regular copy. The charge lands before creating any source-side file.
+  func prepareSourceInstallation(
+    _ artifact: WorktreeRecoveryPack, beside packDirectory: WorktreeDirectory,
+    permissions: WorktreeSourcePermissions, deadline: ContinuousClock.Instant
+  ) throws -> WorktreeRecoveryPack {
+    try verify()
+    let receipt = WorktreeRecoveryPackReceipt(artifact)
+    _ = try reopenPack(receipt, slot: .source)
+    try requireSourcePackDirectory(packDirectory)
+    let name = sourceInstallationName
+    if reservation.sourceInstallation == nil {
+      guard reservation.packs[PackSlot.installation.rawValue] == nil,
+        try !packDirectory.hasEntry(name)
+      else { throw invalidRecoveryMetadata() }
+      var next = reservation
+      next.sourceInstallation = .init(
+        parent: packDirectory.identity,
+        bounds: .init(packBytes: artifact.pack.bytes, indexBytes: artifact.index.bytes),
+        source: receipt)
+      try save(next)
+    }
+    guard let placement = reservation.sourceInstallation, !placement.discarding,
+      placement.parent == packDirectory.identity, placement.source == receipt
+    else { throw invalidRecoveryMetadata() }
+    let scratch: WorktreeDirectory
+    if let expected = placement.directory {
+      scratch = try packDirectory.child(name)
+      guard scratch.identity == expected else { throw invalidRecoveryMetadata() }
+    } else {
+      scratch = try packDirectory.child(name, create: true, exclusive: true)
+      var next = reservation
+      next.sourceInstallation?.directory = scratch.identity
+      try save(next)
+    }
+    if let existing = placement.artifact { return try existing.open(in: scratch) }
+    try discardUnexposedCopy(in: scratch, bounds: placement.bounds)
+    let copy = try copyInstallation(
+      artifact, to: scratch, permissions: permissions, deadline: deadline, beforeIndex: {})
+    var next = reservation
+    next.sourceInstallation?.artifact = WorktreeRecoveryPackReceipt(copy)
+    try save(next)
+    return copy
+  }
+
+  private func copyInstallation(
+    _ artifact: WorktreeRecoveryPack, to destination: WorktreeDirectory,
+    permissions: WorktreeSourcePermissions? = nil, deadline: ContinuousClock.Instant,
+    beforeIndex: () throws -> Void
+  ) throws -> WorktreeRecoveryPack {
     func copy(_ name: String, expected: WorktreeRecoveryStageFile, digest: String) throws
       -> WorktreeRecoveryStageFile
     {
@@ -186,10 +331,17 @@ final class WorktreeRecoveryStaging {
           name, in: artifact.directory, limit: expected.bytes, opened: source) == expected
       else { throw invalidRecoveryMetadata() }
       let targetFD = openat(
-        destination.descriptor, name, O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC, 0o600)
+        destination.descriptor, name, O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC,
+        permissions == nil ? 0o600 : 0o444)
       guard targetFD >= 0 else { throw WorktreeDirectory.posixError() }
       let target = FileHandle(fileDescriptor: targetFD, closeOnDealloc: true)
       defer { try? target.close() }
+      if let permissions {
+        var status = stat()
+        guard fstat(targetFD, &status) == 0,
+          fchmod(targetFD, permissions.adjusted(status.st_mode & 0o7777)) == 0
+        else { throw WorktreeDirectory.posixError() }
+      }
       var remaining = expected.bytes
       var hash = SHA256()
       while remaining > 0 {
@@ -215,7 +367,7 @@ final class WorktreeRecoveryStaging {
       return copy
     }
     let pack = try copy("objects.pack", expected: artifact.pack, digest: artifact.packSHA256)
-    try armIndex(.installation)
+    try beforeIndex()
     let index = try copy("objects.idx", expected: artifact.index, digest: artifact.indexSHA256)
     try destination.synchronize()
     try verify()
@@ -225,7 +377,19 @@ final class WorktreeRecoveryStaging {
   }
 
   func finishAfterFailure() throws {
-    if !reservation.exposed { try finish() }
+    guard !reservation.exposed else { return }
+    if reservation.capturedBytes == nil {
+      try verify()
+      guard reservation.packs.isEmpty, reservation.sourceInstallation == nil else {
+        throw invalidRecoveryMetadata()
+      }
+      // An in-process capture error is observed after its writers quiesce.
+      // Account for the owned partial input before returning the reservation.
+      _ = try capturedObjectBytes(complete: false)
+      try dispose()
+    } else {
+      try finish()
+    }
   }
 
   func finish() throws {
@@ -249,6 +413,11 @@ final class WorktreeRecoveryStaging {
         }
       }
     }
+    try discardSourceInstallation()
+    try dispose()
+  }
+
+  private func dispose() throws {
     var next = reservation
     next.disposing = true
     try save(next)
@@ -260,29 +429,105 @@ final class WorktreeRecoveryStaging {
   private func save(_ next: Reservation) throws {
     try verify()
     let contents = try recoveryJSON(next)
+    try checkCapacity(next, bytes: contents.count)
+    try io.write(contents, name: receiptName, in: parent, replacing: bytes)
+    reservation = next
+    bytes = contents
+  }
+
+  private func checkCapacity(_ next: Reservation, bytes: Int) throws {
     var total = try WorktreePackBounds.sum(
       next.inputLimit, next.completionBytes, WorktreePackBounds.metadataLimit,
       receiptLimit, receiptLimit)
     for slot in next.packs.values {
       total = try WorktreePackBounds.sum(total, slot.bounds.packBytes, slot.bounds.indexBytes)
     }
-    guard contents.count <= receiptLimit, next.packs.count <= 4,
+    if let installation = next.sourceInstallation {
+      guard next.packs[PackSlot.installation.rawValue] == nil else {
+        throw invalidRecoveryMetadata()
+      }
+      total = try WorktreePackBounds.sum(
+        total, installation.bounds.packBytes, installation.bounds.indexBytes)
+    }
+    guard bytes <= receiptLimit, next.packs.count + (next.sourceInstallation == nil ? 0 : 1) <= 4,
       total <= (try WorktreePackBounds.stagingMaximum(format: format))
     else { throw invalidRecoveryMetadata() }
-    try io.write(contents, name: receiptName, in: parent, replacing: bytes)
-    reservation = next
-    bytes = contents
   }
 
-  private func capturedObjectBytes() throws -> Int {
+  private var sourceInstallationName: String {
+    ".computer-mcp-install-" + reservation.operationID.uuidString.lowercased()
+  }
+
+  private func discardUnexposedCopy(in scratch: WorktreeDirectory, bounds: WorktreePackBounds)
+    throws
+  {
+    let files = try scratch.entries(limit: 2)
+    for name in files {
+      guard name == "objects.pack" || name == "objects.idx" else { throw invalidRecoveryMetadata() }
+      let limit = name == "objects.pack" ? bounds.packBytes : bounds.indexBytes
+      let observed = try WorktreeRecoveryStageFile.read(name, in: scratch, limit: limit)
+      try scratch.verify()
+      guard try WorktreeRecoveryStageFile.read(name, in: scratch, limit: limit) == observed,
+        unlinkat(scratch.descriptor, name, 0) == 0
+      else { throw invalidRecoveryMetadata() }
+    }
+    try scratch.synchronize()
+  }
+
+  private func discardSourceInstallation() throws {
+    guard let placement = reservation.sourceInstallation else { return }
+    let packDirectory = try WorktreeDirectory(URL(fileURLWithPath: placement.parent.path))
+    guard packDirectory.identity == placement.parent else { throw invalidRecoveryMetadata() }
+    try requireSourcePackDirectory(packDirectory)
+    let name = sourceInstallationName
+    if try packDirectory.hasEntry(name) {
+      let scratch = try packDirectory.child(name)
+      guard scratch.identity == placement.directory else { throw invalidRecoveryMetadata() }
+      for file in try scratch.entries(limit: 2) {
+        guard file == "objects.pack" || file == "objects.idx" else {
+          throw invalidRecoveryMetadata()
+        }
+        let isPack = file == "objects.pack"
+        let proof = try WorktreeRecoveryStageFile.read(
+          file, in: scratch,
+          limit: isPack ? placement.bounds.packBytes : placement.bounds.indexBytes)
+        if let artifact = placement.artifact {
+          guard proof == (isPack ? artifact.pack : artifact.index)
+          else { throw invalidRecoveryMetadata() }
+        }
+      }
+      if !placement.discarding {
+        var next = reservation
+        next.sourceInstallation?.discarding = true
+        try save(next)
+      }
+      try packDirectory.removeOwnedTree(scratch.identity, io: io)
+    } else if placement.directory != nil, !placement.discarding {
+      throw invalidRecoveryMetadata()
+    }
+    try packDirectory.synchronize()
+  }
+
+  private func requireSourcePackDirectory(_ directory: WorktreeDirectory) throws {
+    guard let sourceObjects else { throw invalidRecoveryMetadata() }
+    let objects = try WorktreeDirectory(URL(fileURLWithPath: sourceObjects.path))
+    guard objects.identity == sourceObjects,
+      try objects.child("pack").identity == directory.identity
+    else { throw invalidRecoveryMetadata() }
+    try directory.verify()
+  }
+
+  private func capturedObjectBytes(complete: Bool = true) throws -> Int {
     let slots = ["private-objects", "source-objects", "retained-objects"]
     let names = try directory.entries(limit: 8)
-    guard names.contains("capture.git"), names.contains("private-objects"),
-      names.contains("source-objects"),
+    guard
+      !complete || Set(["capture.git", "private-objects", "source-objects"]).isSubset(of: names),
       names.allSatisfy({ $0 == "capture.git" || slots.contains($0) || reservation.packs[$0] != nil }
       )
     else { throw invalidRecoveryMetadata() }
-    try verifyCaptureRepository(directory.child("capture.git"))
+    if names.contains("capture.git") {
+      try verifyCaptureRepository(directory.child("capture.git"), complete: complete)
+    }
     var total = 0
     var filesRemaining = WorktreePromotionLimits().objectCount * 2 + 2
     for name in slots where names.contains(name) {
@@ -322,22 +567,30 @@ final class WorktreeRecoveryStaging {
     return total
   }
 
-  private func verifyCaptureRepository(_ repo: WorktreeDirectory) throws {
-    let objectDirectory = try repo.child("objects")
-    let refs = try repo.child("refs")
-    guard try repo.entries(limit: 4) == ["HEAD", "config", "objects", "refs"],
-      try objectDirectory.entries(limit: 2) == ["info", "pack"],
-      try refs.entries(limit: 2) == ["heads", "tags"]
-    else { throw invalidRecoveryMetadata() }
-    for name in ["info", "pack"] where try !objectDirectory.child(name).entries(limit: 0).isEmpty {
-      throw invalidRecoveryMetadata()
+  private func verifyCaptureRepository(_ repo: WorktreeDirectory, complete: Bool) throws {
+    func entries(_ directory: WorktreeDirectory, allowed: Set<String>) throws -> Set<String> {
+      let found = try Set(directory.entries(limit: allowed.count))
+      guard complete ? found == allowed : found.isSubset(of: allowed)
+      else { throw invalidRecoveryMetadata() }
+      return found
     }
-    for name in ["heads", "tags"] where try !refs.child(name).entries(limit: 0).isEmpty {
-      throw invalidRecoveryMetadata()
+    let root = try entries(repo, allowed: ["HEAD", "config", "objects", "refs"])
+    for (name, allowed) in [("objects", Set(["info", "pack"])), ("refs", Set(["heads", "tags"]))]
+    where root.contains(name) {
+      let child = try repo.child(name)
+      for entry in try entries(child, allowed: allowed) {
+        guard try child.child(entry).entries(limit: 0).isEmpty else {
+          throw invalidRecoveryMetadata()
+        }
+      }
     }
-    let head = try WorktreeRecoveryStageFile.read("HEAD", in: repo, limit: 1_024)
-    _ = try WorktreeRecoveryStageFile.read(
-      "config", in: repo, limit: WorktreePackBounds.metadataLimit - head.bytes)
+    if root.contains("HEAD") {
+      _ = try WorktreeRecoveryStageFile.read("HEAD", in: repo, limit: 1_024)
+    }
+    if root.contains("config") {
+      _ = try WorktreeRecoveryStageFile.read(
+        "config", in: repo, limit: WorktreePackBounds.metadataLimit - 1_024)
+    }
   }
 
   private static func isHex(_ byte: UInt8) -> Bool {

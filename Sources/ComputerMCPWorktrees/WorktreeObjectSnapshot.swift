@@ -444,7 +444,7 @@ struct WorktreeObjectSnapshot {
 }
 
 struct WorktreeObjectManifest: Equatable {
-  struct Entry: Hashable {
+  struct Entry: Codable, Hashable {
     let type: WorktreeRecoveryRecord.ObjectType
     let size: Int
   }

@@ -116,17 +116,7 @@ extension WorktreeRepository {
     _ id: String, lock: RepositoryLock, limits: WorktreePromotionLimits,
     authorize: (DerivedProjectRecord, [URL]) throws -> Void
   ) throws {
-    if var pending = try readMerge(id) {
-      if [.captured, .prepared].contains(pending.phase) {
-        try authorize(pending.record, [])
-        try advanceMerge(&pending, to: .abandoned)
-      }
-      if [.finished, .abandoned].contains(pending.phase) {
-        try cleanMergeStaging(pending)
-      } else {
-        _ = try finishMerge(&pending, lock: lock, limits: limits, authorize: authorize)
-      }
-    }
+    _ = try recoverMerge(id, lock: lock, limits: limits, authorize: authorize)
     if var pending = try readPublication(id) {
       if [.finished, .rejected].contains(pending.phase) {
         try cleanPublicationStaging(pending)

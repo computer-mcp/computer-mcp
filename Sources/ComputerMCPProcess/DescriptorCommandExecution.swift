@@ -13,8 +13,7 @@ internal enum DescriptorCommandExecution {
     fileSizeLimit: ExecutionFileSizeLimit?
   ) throws -> CommandDataResult {
     guard timeoutMilliseconds > 0, maxOutputBytes > 0,
-      fileOutput.map({ $0.descriptor >= 0 && $0.bytes > 0 }) ?? true,
-      fileOutput != nil || fileSizeLimit != nil
+      fileOutput.map({ $0.descriptor >= 0 && $0.bytes > 0 }) ?? true
     else { throw CommandRunnerError.launchFailed("Invalid bounded command limits.") }
     let deadline = ContinuousClock.now.advanced(by: .milliseconds(timeoutMilliseconds))
     let inspection = ExecutableInspection.inspect(

@@ -296,9 +296,20 @@ extension WorktreeRepository {
     let directory = topology.gitDirectory
     guard
       try io.read(".git", in: topology.root, limit: 16_384)
-        == Data(("gitdir: " + directory.url.path + "\n").utf8),
+        == Data(("gitdir: " + directory.url.path + "\n").utf8)
+    else { throw WorktreeError.identityChanged("Private Git control files changed.") }
+    try verifyPrivateControls(
+      directory: directory, objects: topology.objects, root: topology.root.url,
+      repository: repository)
+  }
+
+  func verifyPrivateControls(
+    directory: WorktreeDirectory, objects: WorktreeDirectory, root: URL,
+    repository: WorktreeRepositoryIdentity
+  ) throws {
+    guard
       try io.read("config", in: directory, limit: 32_768)
-        == privateConfiguration(root: topology.root.url, repository: repository),
+        == privateConfiguration(root: root, repository: repository),
       try directory.child("hooks").entries(limit: 1).isEmpty
     else { throw WorktreeError.identityChanged("Private Git control files changed.") }
     for name in ["commondir", "config.worktree", "shallow"] where try directory.hasEntry(name) {
@@ -308,7 +319,7 @@ extension WorktreeRepository {
       throw WorktreeError.unsafeConfiguration("Private grafts are unsupported.")
     }
     do {
-      let info = try topology.objects.child("info")
+      let info = try objects.child("info")
       for name in ["alternates", "http-alternates"] where try info.hasEntry(name) {
         throw WorktreeError.unsafeConfiguration("Private alternates are unsupported.")
       }

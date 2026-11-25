@@ -8,26 +8,39 @@ import Foundation
 #endif
 
 /// Git switch changes files before attempting HEAD.lock. This separate reservation
-/// excludes ordinary index writers until the prepared reference transaction ends.
+/// excludes ordinary index writers through checkout and the guarded ref commit.
 final class WorktreeIndexLease {
   let directory: WorktreeDirectory
   private var descriptor: Int32 = -1
   private let marker: Data
 
-  init(directory: WorktreeDirectory, operationID: UUID) throws {
+  init(
+    directory: WorktreeDirectory, operationID: UUID, reopening expected: WorktreeRecoveryStageFile?
+  ) throws {
     self.directory = directory
     marker = Data((operationID.uuidString.lowercased() + "\n").utf8)
     try directory.verify()
-    descriptor = openat(
-      directory.descriptor, "index.lock",
-      O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC, 0o600)
+    if expected != nil {
+      descriptor = openat(
+        directory.descriptor, "index.lock", O_RDONLY | O_NOFOLLOW | O_CLOEXEC | O_NONBLOCK)
+    } else {
+      descriptor = openat(
+        directory.descriptor, "index.lock",
+        O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC, 0o600)
+    }
     guard descriptor >= 0 else {
       throw WorktreeError.recoveryRequired(
         "The main index is locked; retain existing locks for reconciliation.")
     }
     do {
       let handle = FileHandle(fileDescriptor: descriptor, closeOnDealloc: false)
-      try handle.write(contentsOf: marker)
+      if let expected {
+        guard try proof() == expected else {
+          throw WorktreeError.identityChanged("Main index reservation changed.")
+        }
+      } else {
+        try handle.write(contentsOf: marker)
+      }
       try handle.synchronize()
       try directory.synchronize()
     } catch {
@@ -38,6 +51,13 @@ final class WorktreeIndexLease {
   }
 
   deinit { if descriptor >= 0 { close(descriptor) } }
+
+  func proof() throws -> WorktreeRecoveryStageFile {
+    try verify()
+    return try WorktreeRecoveryStageFile.read(
+      "index.lock", in: directory, limit: marker.count,
+      opened: FileHandle(fileDescriptor: descriptor, closeOnDealloc: false))
+  }
 
   func verify() throws {
     try directory.verify()

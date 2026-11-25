@@ -212,6 +212,265 @@ extension WorktreeRecoveryStore {
 
     var generation: UUID { opened.identity.generation }
 
+    func objectsForExpected(
+      oid: String, owner: WorktreeRecoveryRecord.Owner
+    ) throws -> WorktreeDirectory? {
+      let catalog = try durableCatalog().catalog
+      let anchors = try validateAnchors(for: catalog)
+      guard
+        let record = catalog.records.first(where: {
+          $0.state == .retained && $0.oid == oid && $0.owner == owner && $0.objectType == .commit
+        })
+      else { return nil }
+      guard let anchors else { throw invalidRecoveryMetadata() }
+      try synchronizeAnchor(record, in: anchors)
+      return opened.directories.objects
+    }
+
+    func packDirectory() throws -> WorktreeDirectory {
+      try opened.verify()
+      let directory = try opened.directories.objects.child("pack", create: true)
+      try opened.verify()
+      return directory
+    }
+
+    func admitRetention(_ retention: WorktreeRecoveryRetention) throws {
+      let current = try durableCatalog().catalog
+      try retention.validate(in: current, repository: opened.identity.repository)
+      _ = try validateAnchors(for: current)
+      if let intent = current.intents.first(where: { $0.id == retention.operationID }) {
+        try requireRetention(retention, intent: intent, catalog: current)
+        return
+      }
+      let retained = zip(retention.admitted, retention.retained).compactMap { before, after in
+        before == after ? nil : after
+      }
+      let terminal = retention.retained.map { record in
+        var next = record
+        next.revision += 1
+        next.dependencies.removeAll { $0 == retention.operationID }
+        return next
+      }
+      try admit(
+        operationID: retention.operationID, kind: retention.kind,
+        requestDigest: retention.requestDigest(), records: retention.admitted,
+        completionSteps: [retained, terminal])
+    }
+
+    /// The journal has frozen the pack receipt and retention IDs. The caller
+    /// seals the retained lifecycle phase only after this durable readback.
+    func retainInstalledPack(
+      _ retention: WorktreeRecoveryRetention, installation: WorktreeRecoveryPackInstall,
+      git: WorktreeGit, budget: WorktreeObjectBudget
+    ) throws {
+      let current = try durableCatalog().catalog
+      guard installation.generation == generation,
+        installation.operationID == retention.operationID,
+        let intent = current.intents.first(where: { $0.id == retention.operationID })
+      else { throw invalidRecoveryMetadata() }
+      try requireRetention(retention, intent: intent, catalog: current)
+      let existing = try validateAnchors(for: current)
+      let anchors = try existing ?? opened.directories.refs.child("recovery", create: true)
+      let created = Set(retention.admitted.filter { $0.state == .retaining }.map(\.id))
+      try installation.synchronizeInstalled(
+        in: packDirectory(), format: opened.identity.repository.format, io: opened.io,
+        deadline: budget.deadline)
+      for record in retention.retained {
+        try budget.check()
+        try opened.verify()
+        let name = anchor(record.id)
+        let contents = anchorBytes(record)
+        if try anchors.hasEntry(name) {
+          try synchronizeAnchor(record, in: anchors)
+        } else {
+          guard record.revision == 2, created.contains(record.id)
+          else { throw invalidRecoveryMetadata() }
+          try opened.io.write(contents, name: name, in: anchors, replacing: nil)
+        }
+      }
+      try verifyRetentionClosure(retention, git: git, budget: budget)
+      try advance(operationID: retention.operationID, records: retention.retained)
+      try requireRetained(retention)
+    }
+
+    func requireRetained(_ retention: WorktreeRecoveryRetention) throws {
+      let current = try durableCatalog().catalog
+      guard let intent = current.intents.first(where: { $0.id == retention.operationID })
+      else { throw invalidRecoveryMetadata() }
+      try requireRetention(retention, intent: intent, catalog: current)
+      let byID = recordIndices(current)
+      for record in retention.retained {
+        guard let index = byID[record.id], current.records[index] == record else {
+          throw invalidRecoveryMetadata()
+        }
+      }
+    }
+
+    func verifyRetentionClosure(
+      _ retention: WorktreeRecoveryRetention, git: WorktreeGit, budget: WorktreeObjectBudget
+    ) throws {
+      try opened.verify()
+      let objects = WorktreeStagedObjects(
+        directory: opened.directories.objects, repository: opened.directories.git, git: git,
+        format: opened.identity.repository.format, deadline: budget.deadline, limits: budget.limits)
+      let roots = Set(retention.roots).union([retention.expectedOID]).sorted()
+      guard let manifest = try objects.manifest(roots: roots) else {
+        throw invalidRecoveryMetadata()
+      }
+      try retention.verifyManifest(manifest)
+      try opened.verify()
+    }
+
+    func verifyRetainedRecords(
+      _ selection: [WorktreeRecoveryRecord.Selection], owner: WorktreeRecoveryRecord.Owner,
+      git: WorktreeGit, budget: WorktreeObjectBudget
+    ) throws {
+      let catalog = try durableCatalog().catalog
+      let anchors = try validateAnchors(for: catalog)
+      guard !selection.isEmpty else { return }
+      guard let anchors, Set(selection.map(\.recordID)).count == selection.count
+      else { throw invalidRecoveryMetadata() }
+      let indices = recordIndices(catalog)
+      let expected = try selection.map { selected in
+        try budget.check()
+        guard let index = indices[selected.recordID] else { throw invalidRecoveryMetadata() }
+        let record = catalog.records[index]
+        guard record.owner == owner, record.selection == selected, record.state == .retained
+        else { throw invalidRecoveryMetadata() }
+        try synchronizeAnchor(record, in: anchors)
+        return record
+      }
+      let pool = WorktreeStagedObjects(
+        directory: opened.directories.objects, repository: opened.directories.git, git: git,
+        format: opened.identity.repository.format, deadline: budget.deadline, limits: budget.limits)
+      let roots = Set(expected.map(\.oid)).sorted()
+      guard let manifest = try pool.manifest(roots: roots),
+        expected.allSatisfy({ manifest.entries[$0.oid]?.type == $0.objectType })
+      else { throw invalidRecoveryMetadata() }
+      try opened.verify()
+    }
+
+    /// Under S, terminal evidence retires only this operation's dependencies.
+    /// Callers journal any subsequent release selection before deleting anchors.
+    func endRetention(
+      _ retention: WorktreeRecoveryRetention, verifyTerminalOutcome: () throws -> Void
+    ) throws -> [WorktreeRecoveryRecord] {
+      let current = try durableCatalog().catalog
+      try retention.validate(in: current, repository: opened.identity.repository)
+      try verifyTerminalOutcome()
+      let indices = recordIndices(current)
+      let records = try retention.retained.map { planned in
+        guard let index = indices[planned.id] else { throw invalidRecoveryMetadata() }
+        let record = current.records[index]
+        guard record.state == .retained, record.revision >= planned.revision,
+          record.owner == planned.owner, record.oid == planned.oid, record.base == planned.base,
+          record.objectType == planned.objectType
+        else { throw invalidRecoveryMetadata() }
+        return record
+      }
+      guard let intent = current.intents.first(where: { $0.id == retention.operationID }) else {
+        guard records.allSatisfy({ !$0.dependencies.contains(retention.operationID) })
+        else { throw invalidRecoveryMetadata() }
+        return records
+      }
+      guard intent.kind == retention.kind, try intent.requestDigest == retention.requestDigest(),
+        intent.selections == retention.admitted.map(\.selection)
+      else { throw invalidRecoveryMetadata() }
+      let updates = try records.map { record in
+        guard record.dependencies.contains(retention.operationID), record.revision < Int64.max - 1
+        else { throw invalidRecoveryMetadata() }
+        var next = record
+        next.revision += 1
+        next.dependencies.removeAll { $0 == retention.operationID }
+        return next
+      }
+      try withoutActuallyEscaping(verifyTerminalOutcome) { verify in
+        try advance(
+          operationID: retention.operationID, records: updates,
+          verifyTerminalOutcome: verify)
+      }
+      return updates
+    }
+
+    /// The lifecycle caller has frozen the exact release request and authorized
+    /// it under its parent guards before entering this receipt transaction.
+    func releaseAnchors(
+      _ receipts: [WorktreeRecoveryReleaseReceipt], verifyAuthority: () throws -> Void
+    ) throws {
+      try verifyAuthority()
+      try prepareRelease(receipts)
+      let current = try durableCatalog().catalog
+      let anchors = try validateAnchors(for: current)
+      if let intent = current.intents.first(where: { $0.id == receipts.first?.operationID }) {
+        guard intent.kind == .release, let anchors else { throw invalidRecoveryMetadata() }
+        for receipt in receipts {
+          try verifyAuthority()
+          try opened.verify()
+          let name = anchor(receipt.selection.recordID)
+          if try anchors.hasEntry(name) {
+            try opened.io.remove(
+              name, in: anchors, expecting: Data((receipt.selection.oid + "\n").utf8))
+          }
+        }
+      }
+      try finishRelease(receipts) {
+        try verifyAuthority()
+        if let anchors {
+          for receipt in receipts where try anchors.hasEntry(anchor(receipt.selection.recordID)) {
+            throw invalidRecoveryMetadata()
+          }
+          try opened.io.beforeDirectorySync()
+          try anchors.synchronize()
+        }
+      }
+    }
+
+    private func requireRetention(
+      _ retention: WorktreeRecoveryRetention, intent: WorktreeRecoveryIntent,
+      catalog: WorktreeRecoveryCatalog
+    ) throws {
+      try retention.validate(in: catalog, repository: opened.identity.repository)
+      guard intent.kind == retention.kind, try intent.requestDigest == retention.requestDigest(),
+        intent.selections == retention.admitted.map(\.selection)
+      else { throw invalidRecoveryMetadata() }
+      let indices = recordIndices(catalog)
+      for (before, after) in zip(retention.admitted, retention.retained) {
+        guard let index = indices[before.id],
+          catalog.records[index] == before || catalog.records[index] == after
+        else { throw invalidRecoveryMetadata() }
+      }
+    }
+
+    private func validateAnchors(for catalog: WorktreeRecoveryCatalog) throws -> WorktreeDirectory?
+    {
+      try opened.verify()
+      let git = opened.directories.git
+      let refs = opened.directories.refs
+      guard try !git.hasEntry("packed-refs"), try !git.hasEntry("logs")
+      else { throw invalidRecoveryMetadata() }
+      let entries = try refs.entries(limit: 1)
+      guard entries.isEmpty || entries == ["recovery"] else { throw invalidRecoveryMetadata() }
+      let anchors = entries.isEmpty ? nil : try refs.child("recovery")
+      let names = try Set(anchors?.entries(limit: WorktreeRecoveryCatalog.recordLimit) ?? [])
+      let allowed = Set(catalog.records.map { anchor($0.id) })
+      let required = Set(catalog.records.filter { $0.state == .retained }.map { anchor($0.id) })
+      guard names.isSubset(of: allowed), required.isSubset(of: names)
+      else { throw invalidRecoveryMetadata() }
+      return anchors
+    }
+
+    private func anchor(_ id: UUID) -> String { id.uuidString.lowercased() }
+
+    private func anchorBytes(_ record: WorktreeRecoveryRecord) -> Data {
+      Data((record.oid + "\n").utf8)
+    }
+
+    private func synchronizeAnchor(
+      _ record: WorktreeRecoveryRecord, in anchors: WorktreeDirectory
+    ) throws {
+      try opened.io.synchronize(anchor(record.id), in: anchors, expecting: anchorBytes(record))
+    }
+
     func withStaging<Result>(
       operationID: UUID, inputLimit: Int, completionMetadataBytes: Int,
       _ operation: (WorktreeRecoveryStaging) throws -> Result
@@ -219,7 +478,8 @@ extension WorktreeRecoveryStore {
       let stage = try WorktreeRecoveryStaging(
         parent: opened.directories.staging, operationID: operationID, generation: generation,
         format: opened.identity.repository.format, inputLimit: inputLimit,
-        completionBytes: completionMetadataBytes, io: opened.io, verifyStore: opened.verify)
+        completionBytes: completionMetadataBytes, io: opened.io,
+        sourceObjects: opened.identity.repository.objects, verifyStore: opened.verify)
       let result: Result
       do {
         result = try operation(stage)
@@ -229,6 +489,28 @@ extension WorktreeRecoveryStore {
       }
       try stage.finish()
       return result
+    }
+
+    func resumeStaging<Result>(
+      operationID: UUID, _ operation: (WorktreeRecoveryStaging) throws -> Result
+    ) throws -> Result {
+      let stage = try WorktreeRecoveryStaging(
+        reopening: operationID, parent: opened.directories.staging, generation: generation,
+        format: opened.identity.repository.format, io: opened.io,
+        sourceObjects: opened.identity.repository.objects, verifyStore: opened.verify)
+      let result = try operation(stage)
+      try stage.finish()
+      return result
+    }
+
+    func finishStagingDisposal(operationID: UUID) throws {
+      if try WorktreeRecoveryStaging.finishRecordedDisposal(
+        operationID: operationID, parent: opened.directories.staging, generation: generation,
+        io: opened.io, verifyStore: opened.verify)
+      {
+        return
+      }
+      try resumeStaging(operationID: operationID) { _ in }
     }
 
     func catalog() throws -> WorktreeRecoveryCatalog { try durableCatalog().catalog }

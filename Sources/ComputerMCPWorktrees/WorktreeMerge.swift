@@ -18,19 +18,7 @@ extension WorktreeRepository {
     if let recovered = try withLock(
       validateHead: false,
       { lock -> WorktreeMergeResult? in
-        guard var pending = try readMerge(projectID) else { return nil }
-        // The checkout phase is durable before any main files or index change.
-        // Earlier candidates can be discarded even if the owner has since
-        // committed or rebased; unknown checkout outcomes must be reconciled.
-        if [.captured, .prepared].contains(pending.phase) {
-          try authorize(pending.record, [])
-          try advanceMerge(&pending, to: .abandoned)
-        }
-        if [.finished, .abandoned].contains(pending.phase) {
-          try cleanMergeStaging(pending)
-          return nil
-        }
-        return try finishMerge(&pending, lock: lock, limits: limits, authorize: authorize)
+        try recoverMerge(projectID, lock: lock, limits: limits, authorize: authorize)
       })
     {
       return recovered
@@ -38,7 +26,8 @@ extension WorktreeRepository {
     let publication = try publish(projectID: projectID, limits: limits) { try authorize($0, []) }
     return try withLock(validateHead: false) { lock in
       guard let record = try store.records().first(where: { $0.projectID == projectID }),
-        record.state == .active, let registration = record.worktree,
+        record.state == .active, record.revision < Int64.max - 1,
+        let registration = record.worktree,
         registration.lastPublishedOID == publication.oid, registration.base != registration.branch,
         let expected = try revision(registration.base)
       else {
@@ -59,7 +48,7 @@ extension WorktreeRepository {
       try authorize(
         record, paths.map { URL(fileURLWithPath: identity.main.path).appendingPathComponent($0) })
       var journal = WorktreeMergeJournal(
-        version: 1, operationID: UUID(), repository: identity,
+        version: 2, operationID: UUID(), repository: identity,
         record: record, expectedBase: expected, target: publication.oid, paths: paths,
         phase: .captured)
       let previous = try readMerge(projectID).map(mergeBytes)
@@ -72,6 +61,27 @@ extension WorktreeRepository {
       try saveMerge(journal, replacing: old)
       return try finishMerge(&journal, lock: lock, limits: limits, authorize: authorize)
     }
+  }
+
+  func recoverMerge(
+    _ projectID: String, lock: RepositoryLock, limits: WorktreePromotionLimits,
+    authorize: (DerivedProjectRecord, [URL]) throws -> Void
+  ) throws -> WorktreeMergeResult? {
+    guard var pending = try readMerge(projectID) else { return nil }
+    // A candidate with no live source guards reached no checkout effect.
+    if [.captured, .prepared].contains(pending.phase),
+      pending.sourceGuards == nil || pending.sourceGuards?.cleaning == true
+    {
+      try authorize(pending.record, [])
+      try advanceMerge(&pending, to: .abandoned)
+    }
+    if [.finished, .abandoned].contains(pending.phase) {
+      try authorize(pending.record, [])
+      try cleanMergeProtection(&pending, lock: lock)
+      try cleanMergeStaging(pending)
+      return nil
+    }
+    return try finishMerge(&pending, lock: lock, limits: limits, authorize: authorize)
   }
 
   private func requireMergeHead(_ base: String) throws {
@@ -113,76 +123,93 @@ extension WorktreeRepository {
     _ journal: inout WorktreeMergeJournal, lock: RepositoryLock, limits: WorktreePromotionLimits,
     authorize: (DerivedProjectRecord, [URL]) throws -> Void
   ) throws -> WorktreeMergeResult {
+    try synchronizeMerge(journal)
     let root = try WorktreeDirectory(URL(fileURLWithPath: identity.main.path))
     let common = try WorktreeDirectory(URL(fileURLWithPath: identity.common.path))
-    let destinations = journal.paths.map { root.url.appendingPathComponent($0) }
+    let paths = journal.paths
+    let destinations = paths.map { root.url.appendingPathComponent($0) }
+    let managed = journal.record.worktree!.branch
+    let branches = [journal.base, managed]
     try authorize(journal.record, destinations)
     try requireMergeHead(journal.base)
-    let base = try revision(journal.base)
-    guard base == journal.expectedBase || base == journal.target else {
-      throw WorktreeError.recoveryRequired("Base branch has an unknown merge outcome.")
-    }
     if journal.staging == nil, journal.phase == .captured {
       let stage = try mergeDirectory().child(
         journal.operationID.uuidString.lowercased(), create: true, exclusive: true)
       try io.write(mergeOwner(journal), name: "owner.json", in: stage, replacing: nil)
-      let previous = try mergeBytes(journal)
-      journal.staging = stage.identity
-      try saveMerge(journal, replacing: previous)
+      try updateMerge(&journal) { $0.staging = stage.identity }
     }
-    let lease = try WorktreeIndexLease(directory: common, operationID: journal.operationID)
-    var released = false
-    defer { if !released { try? lease.release() } }
     func current(synchronize: Bool = false) throws -> WorktreeCheckoutSnapshot {
       guard let index = try io.read("index", in: common, limit: git.maxOutputBytes * 8) else {
         throw WorktreeError.recoveryRequired("Main index is missing.")
       }
       return try .capture(
-        paths: journal.paths, root: root, index: index, limits: limits,
-        synchronize: synchronize)
+        paths: paths, root: root, index: index, limits: limits, synchronize: synchronize)
     }
-    if journal.phase == .checkout, base == journal.expectedBase, try current() == journal.before {
-      try advanceMerge(&journal, to: .prepared)
-    }
-    if [.ready, .published, .ledger].contains(journal.phase), base == journal.target {
-      guard try current() == journal.after else {
-        throw WorktreeError.recoveryRequired(
-          "Merged checkout changed before reconciliation; retain it.")
-      }
-      if journal.expectedBase != journal.target {
-        let receipt = try command(["reflog", "show", "-1", "--format=%H%x00%gs", journal.base])
-          .output
-        guard receipt == Data((journal.target + "\0" + mergeMessage(journal) + "\n").utf8) else {
-          throw WorktreeError.recoveryRequired("Merge reference ownership cannot be proved.")
-        }
-      }
-      if journal.phase == .ready { try advanceMerge(&journal, to: .published) }
-    } else {
-      guard base == journal.expectedBase, [.captured, .prepared, .ready].contains(journal.phase)
-      else {
-        throw WorktreeError.recoveryRequired(
-          "Checkout may be incomplete; retain files and index for reconciliation.")
-      }
-      guard
-        try store.records().first(where: { $0.projectID == journal.record.projectID })
-          == journal.record
-      else {
-        throw DerivedProjectStoreError.revisionConflict
-      }
+    if [.captured, .prepared].contains(journal.phase), journal.sourceGuards == nil,
+      journal.indexLease == nil
+    {
+      let before = try current()
+      try requireSafeCheckout(journal, snapshot: before)
+      guard let index = try io.read("index", in: common, limit: git.maxOutputBytes * 8),
+        WorktreeObjectSnapshot.digest(index) == before.index
+      else { throw WorktreeError.busy("Main index changed during merge preparation.") }
       let stage = try mergeStaging(journal)
-      let input =
-        "start\nupdate HEAD \(journal.target) \(journal.expectedBase)\nverify \(journal.record.worktree!.branch) \(journal.target)\nprepare\n"
-      try git.transaction(
-        input, at: root.url, gitDirectory: common.url, dereference: true,
-        message: mergeMessage(journal)
-      ) {
-        try lock.verify()
-        try lease.verify()
-        try requireMergeHead(journal.base)
-        try requireDirectRef(journal.base, oid: journal.expectedBase)
-        try requireDirectRef(journal.record.worktree!.branch, oid: journal.target)
-        try authorize(journal.record, destinations)
-        guard try mergePaths(journal.expectedBase, journal.target) == journal.paths,
+      let prior = try io.read("index", in: stage, limit: git.maxOutputBytes * 8)
+      try io.write(index, name: "index", in: stage, replacing: prior)
+      try updateMerge(&journal) {
+        $0.before = before
+        $0.phase = .prepared
+      }
+    }
+    let lease = try WorktreeIndexLease(
+      directory: common, operationID: journal.operationID, reopening: journal.indexLease)
+    if journal.indexLease == nil {
+      let proof = try lease.proof()
+      try updateMerge(&journal) { $0.indexLease = proof }
+    }
+    let metadata = try sourceMetadata()
+    var ownership =
+      try journal.sourceGuards
+      ?? .init(
+        operationID: journal.operationID, common: common.identity, branches: branches,
+        guardingHead: true)
+    let guards: WorktreeSourceGuards
+    do {
+      guards = try WorktreeSourceGuards.acquire(
+        &ownership, metadata: metadata, repositoryLock: lock, branches: branches,
+        guardingHead: true,
+        persist: { ownership in try updateMerge(&journal) { $0.sourceGuards = ownership } })
+    } catch {
+      if [.captured, .prepared].contains(journal.phase) {
+        try retireMergeIndex(&journal, common: common, held: lease)
+      }
+      throw error
+    }
+    func verifyAuthority(_ state: WorktreeMergeJournal) throws {
+      try Task.checkCancellation()
+      try guards.verify()
+      try lease.verify()
+      try requireMergeHead(state.base)
+      try authorize(state.record, destinations)
+      let existing = try store.records().first { $0.projectID == state.record.projectID }
+      guard
+        existing == state.record
+          || ([.published, .ledger].contains(state.phase) && existing == mergedRecord(state))
+      else { throw DerivedProjectStoreError.revisionConflict }
+    }
+
+    do {
+      try verifyAuthority(journal)
+      let base = try metadata.direct(journal.base).oid
+      guard base == journal.expectedBase || base == journal.target,
+        try metadata.direct(managed).oid == journal.target
+      else { throw sourceMetadataChanged() }
+      if journal.phase == .checkout, base == journal.expectedBase, try current() == journal.before {
+        try advanceMerge(&journal, to: .prepared)
+      }
+      if [.captured, .prepared].contains(journal.phase) {
+        guard base == journal.expectedBase,
+          try mergePaths(journal.expectedBase, journal.target) == journal.paths,
           try command(
             ["merge-base", "--is-ancestor", journal.expectedBase, journal.target],
             accepting: [0, 1]
@@ -190,107 +217,215 @@ extension WorktreeRepository {
         else {
           throw WorktreeError.recoveryRequired("Merge ancestry or destination set changed.")
         }
-        if journal.phase == .ready {
-          guard try current() == journal.after else {
-            throw WorktreeError.recoveryRequired(
-              "Checkout was edited after an interrupted reference update.")
-          }
-        } else {
-          let before = try current()
-          if let recorded = journal.before, recorded != before {
-            throw WorktreeError.recoveryRequired("Checkout changed after merge preparation.")
-          }
-          try requireSafeCheckout(journal, snapshot: before)
-          guard let index = try io.read("index", in: common, limit: git.maxOutputBytes * 8),
-            WorktreeObjectSnapshot.digest(index) == before.index
-          else {
-            throw WorktreeError.busy("Main index changed before checkout.")
-          }
-          let priorIndex = try io.read("index", in: stage, limit: git.maxOutputBytes * 8)
+        if journal.sourceCommit == nil {
+          let write = try mergeSourceCommit(journal, guards: guards)
+          try updateMerge(&journal) { $0.sourceCommit = write }
+        }
+        let before = try current()
+        if let recorded = journal.before, recorded != before {
+          throw WorktreeError.recoveryRequired("Checkout changed after merge preparation.")
+        }
+        try requireSafeCheckout(journal, snapshot: before)
+        guard let index = try io.read("index", in: common, limit: git.maxOutputBytes * 8),
+          WorktreeObjectSnapshot.digest(index) == before.index
+        else { throw WorktreeError.busy("Main index changed before checkout.") }
+        let stage = try mergeStaging(journal)
+        let priorIndex = try io.read("index", in: stage, limit: git.maxOutputBytes * 8)
+        if priorIndex != index {
           try io.write(index, name: "index", in: stage, replacing: priorIndex)
-          let old = try mergeBytes(journal)
-          journal.before = before
-          journal.phase = .prepared
-          try saveMerge(journal, replacing: old)
-          _ = try checkout(journal, stage: stage, dryRun: true)
-          guard try current() == before else {
-            throw WorktreeError.busy("Checkout changed during preflight.")
-          }
-          try authorize(journal.record, destinations)
-          try lease.verify()
-          try lock.verify()
-          try advanceMerge(&journal, to: .checkout)
-          _ = try checkout(journal, stage: stage, dryRun: false)
-          try lease.verify()
-          let dirty = try checkoutPaths(
-            git.run(
-              ["diff-files", "--name-only", "-z", "--"],
-              at: root.url, gitDirectory: common.url,
-              index: stage.url.appendingPathComponent("index")
-            ).output)
-          guard Set(dirty).isDisjoint(with: journal.paths) else {
-            throw WorktreeError.recoveryRequired("Checkout files changed during the transition.")
-          }
-          guard
-            let updated = try io.read(
-              "index", in: stage, limit: git.maxOutputBytes * 8, synchronize: true)
-          else {
-            throw WorktreeError.recoveryRequired("Checkout produced no index.")
-          }
-          try io.write(updated, name: "index", in: common, replacing: index)
-          let checkoutPhase = try mergeBytes(journal)
-          journal.after = try current(synchronize: true)
-          journal.phase = .ready
-          try saveMerge(journal, replacing: checkoutPhase)
         }
-        try authorize(journal.record, destinations)
-        try lock.verify()
+        if journal.before == nil || journal.phase != .prepared {
+          try updateMerge(&journal) {
+            $0.before = before
+            $0.phase = .prepared
+          }
+        }
+        _ = try checkout(journal, stage: stage, dryRun: true)
+        guard try current() == before else {
+          throw WorktreeError.busy("Checkout changed during preflight.")
+        }
+        try verifyAuthority(journal)
+        try advanceMerge(&journal, to: .checkout)
+        _ = try checkout(journal, stage: stage, dryRun: false)
+        // Finish fingerprinting the already admitted checkout before checking
+        // authority to commit the ref. Recovery needs its exact after-image.
+        try guards.verify()
         try lease.verify()
+        let dirty = try checkoutPaths(
+          git.run(
+            ["diff-files", "--name-only", "-z", "--"],
+            at: root.url, gitDirectory: common.url,
+            index: stage.url.appendingPathComponent("index")
+          ).output)
+        guard Set(dirty).isDisjoint(with: paths) else {
+          throw WorktreeError.recoveryRequired("Checkout files changed during the transition.")
+        }
         guard
-          try store.records().first(where: { $0.projectID == journal.record.projectID })
-            == journal.record,
-          try current() == journal.after
-        else {
-          throw WorktreeError.recoveryRequired(
-            "Merge authority or checkout changed before reference commit.")
+          let updated = try io.read(
+            "index", in: stage, limit: git.maxOutputBytes * 8, synchronize: true)
+        else { throw WorktreeError.recoveryRequired("Checkout produced no index.") }
+        try guards.verify()
+        try lease.verify()
+        try io.write(updated, name: "index", in: common, replacing: index)
+        let after = try current(synchronize: true)
+        try updateMerge(&journal) {
+          $0.after = after
+          $0.phase = .ready
         }
       }
-      try requireMergeHead(journal.base)
-      try requireDirectRef(journal.base, oid: journal.target)
-      try advanceMerge(&journal, to: .published)
-    }
-    try lock.verify()
-    try lease.verify()
-    try requireMergeHead(journal.base)
-    try requireDirectRef(journal.base, oid: journal.target)
-    if journal.phase == .published {
-      var next = journal.record
-      next.revision += 1
-      next.worktree!.mergedOID = journal.target
-      if try store.records().first(where: { $0.projectID == next.projectID }) != next {
-        guard case .host(let worktreeID, _) = next.provenance else {
-          throw DerivedProjectStoreError.invalidRecord
-        }
-        let registration = next.worktree!
-        try store.commit(
-          next, expecting: journal.record.revision,
-          protecting: .init(
-            repository: identity.common, branchID: registration.branchID,
-            branch: registration.branch,
-            base: registration.base, baseOID: registration.baseOID,
-            publishedOID: registration.lastPublishedOID,
-            worktreeID: worktreeID, mergedOID: journal.target, baseHistory: registration.baseHistory
-          ))
+      guard [.ready, .published, .ledger].contains(journal.phase), try current() == journal.after
+      else {
+        throw WorktreeError.recoveryRequired("Checkout may be incomplete; retain files and index.")
       }
-      try advanceMerge(&journal, to: .ledger)
+      if journal.sourceCommit == nil && base == journal.expectedBase && journal.phase == .ready {
+        let write = try mergeSourceCommit(journal, guards: guards)
+        try updateMerge(&journal) { $0.sourceCommit = write }
+      }
+      if var write = journal.sourceCommit {
+        try write.completeSource(
+          guards: guards,
+          revalidate: {
+            try verifyAuthority(journal)
+            guard try current(synchronize: true) == journal.after else {
+              throw WorktreeError.recoveryRequired("Checkout changed before reference commit.")
+            }
+          },
+          persist: { next in try updateMerge(&journal) { $0.sourceCommit = next } })
+      } else {
+        guard journal.version == 1 else { throw sourceMetadataChanged() }
+        try synchronizeLegacyMerge(journal, guards: guards)
+      }
+      try verifyAuthority(journal)
+      if journal.phase == .ready { try advanceMerge(&journal, to: .published) }
+      if journal.phase == .published {
+        let next = mergedRecord(journal)
+        if try store.records().first(where: { $0.projectID == next.projectID }) != next {
+          let registration = next.worktree!
+          try store.commit(
+            next, expecting: journal.record.revision,
+            protecting: .init(
+              repository: identity.common, branchID: registration.branchID,
+              branch: registration.branch, base: registration.base, baseOID: registration.baseOID,
+              publishedOID: registration.lastPublishedOID, worktreeID: next.provenance.worktreeID,
+              mergedOID: journal.target, baseHistory: registration.baseHistory))
+        }
+        try advanceMerge(&journal, to: .ledger)
+      }
+      try advanceMerge(&journal, to: .finished)
+    } catch {
+      if [.captured, .prepared].contains(journal.phase) {
+        try cleanMergeProtection(&journal, lock: lock, held: guards, lease: lease)
+      }
+      throw error
     }
-    try advanceMerge(&journal, to: .finished)
-    try lease.release()
-    released = true
+    try cleanMergeProtection(&journal, lock: lock, held: guards, lease: lease)
     try cleanMergeStaging(journal)
     return .init(
       projectID: journal.record.projectID, operationID: journal.operationID, base: journal.base,
       oid: journal.target)
+  }
+
+  private func updateMerge(
+    _ journal: inout WorktreeMergeJournal, _ change: (inout WorktreeMergeJournal) -> Void
+  ) throws {
+    let previous = try mergeBytes(journal)
+    change(&journal)
+    try saveMerge(journal, replacing: previous)
+  }
+
+  private func mergedRecord(_ journal: WorktreeMergeJournal) -> DerivedProjectRecord {
+    var record = journal.record
+    record.revision += 1
+    record.worktree!.mergedOID = journal.target
+    return record
+  }
+
+  private func mergeSourceCommit(
+    _ journal: WorktreeMergeJournal, guards: WorktreeSourceGuards
+  ) throws -> WorktreeSourceMerge {
+    try .init(
+      base: journal.base, managed: journal.record.worktree!.branch, expected: journal.expectedBase,
+      target: journal.target, message: mergeMessage(journal),
+      committer: journal.expectedBase == journal.target ? nil : sourceMergeCommitter(),
+      guards: guards)
+  }
+
+  /// A version-one receipt owns only the old acknowledged single-ref result.
+  private func synchronizeLegacyMerge(
+    _ journal: WorktreeMergeJournal, guards: WorktreeSourceGuards
+  ) throws {
+    let metadata = guards.metadata
+    let current = try metadata.direct(journal.base)
+    guard current.oid == journal.target else { throw sourceMetadataChanged() }
+    let path = current.loose == nil ? "packed-refs" : journal.base
+    guard let file = current.loose ?? current.packed, let location = try metadata.location(path)
+    else { throw sourceMetadataChanged() }
+    if journal.expectedBase != journal.target {
+      for path in ["logs/HEAD", "logs/" + journal.base] {
+        guard let log = try metadata.read(path), let location = try metadata.location(path),
+          log.contents.last == 10,
+          let last = log.contents.dropLast().split(separator: 10, omittingEmptySubsequences: false)
+            .last,
+          let entry = WorktreeSourceReflogEntry(last), entry.old == journal.expectedBase,
+          entry.new == journal.target, entry.message == Data(mergeMessage(journal).utf8)
+        else { throw sourceMetadataChanged() }
+        try log.synchronize(at: location, using: io)
+      }
+    }
+    try file.synchronize(at: location, using: io)
+    try guards.verify()
+  }
+
+  private func cleanMergeProtection(
+    _ journal: inout WorktreeMergeJournal, lock: RepositoryLock,
+    held: WorktreeSourceGuards? = nil, lease: WorktreeIndexLease? = nil
+  ) throws {
+    try synchronizeMerge(journal)
+    let common = try WorktreeDirectory(URL(fileURLWithPath: identity.common.path))
+    let branches = [journal.base, journal.record.worktree!.branch]
+    if var ownership = journal.sourceGuards {
+      let metadata = try held?.metadata ?? sourceMetadata()
+      if ownership.cleaning {
+        try WorktreeSourceGuards.finishCleanup(
+          ownership, metadata: metadata, repositoryLock: lock, branches: branches,
+          guardingHead: true)
+      } else {
+        let guards =
+          try held
+          ?? WorktreeSourceGuards.acquire(
+            &ownership, metadata: metadata, repositoryLock: lock, branches: branches,
+            guardingHead: true,
+            persist: { value in try updateMerge(&journal) { $0.sourceGuards = value } })
+        try guards.release(
+          &ownership, branches: branches, guardingHead: true,
+          persist: { value in try updateMerge(&journal) { $0.sourceGuards = value } })
+      }
+      try updateMerge(&journal) { $0.sourceGuards = nil }
+    }
+    try retireMergeIndex(&journal, common: common, held: lease)
+  }
+
+  private func retireMergeIndex(
+    _ journal: inout WorktreeMergeJournal, common: WorktreeDirectory, held: WorktreeIndexLease?
+  ) throws {
+    guard let proof = journal.indexLease else { return }
+    if try common.hasEntry("index.lock") {
+      let lease =
+        try held
+        ?? WorktreeIndexLease(
+          directory: common, operationID: journal.operationID, reopening: proof)
+      guard try lease.proof() == proof else { throw sourceMetadataChanged() }
+      try updateMerge(&journal) { $0.indexReleasing = true }
+      try lease.release()
+    } else {
+      guard journal.indexReleasing == true else { throw sourceMetadataChanged() }
+      try io.beforeDirectorySync()
+      try common.synchronize()
+    }
+    try updateMerge(&journal) {
+      $0.indexLease = nil
+      $0.indexReleasing = nil
+    }
   }
 
   private func checkout(_ journal: WorktreeMergeJournal, stage: WorktreeDirectory, dryRun: Bool)

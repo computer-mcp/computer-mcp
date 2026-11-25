@@ -15,6 +15,10 @@ struct WorktreeMergeJournal: Codable {
   var staging: WorktreeDirectoryIdentity?
   var before: WorktreeCheckoutSnapshot?
   var after: WorktreeCheckoutSnapshot?
+  var indexLease: WorktreeRecoveryStageFile?
+  var indexReleasing: Bool?
+  var sourceGuards: WorktreeSourceGuardJournal?
+  var sourceCommit: WorktreeSourceMerge?
   var base: String { record.worktree!.base }
 }
 
@@ -45,14 +49,26 @@ extension WorktreeRepository {
     else { return nil }
     let journal = try JSONDecoder().decode(WorktreeMergeJournal.self, from: data)
     try journal.record.validate()
-    guard journal.version == 1, journal.repository == identity,
+    guard [1, 2].contains(journal.version), journal.repository == identity,
       journal.record.source == source, journal.record.projectID == projectID,
       let registration = journal.record.worktree, registration.base != registration.branch,
       journal.target == registration.lastPublishedOID,
+      journal.sourceGuards.map({ $0.operationID == journal.operationID }) ?? true,
+      journal.sourceCommit.map({
+        $0.operationID == journal.operationID && $0.base == registration.base
+          && $0.managed == registration.branch && $0.expected == journal.expectedBase
+          && $0.target == journal.target
+      }) ?? true,
       identity.format.contains(journal.expectedBase), identity.format.contains(journal.target),
       journal.paths == Array(Set(journal.paths)).sorted()
     else {
       throw WorktreeError.recoveryRequired("Invalid merge journal identity.")
+    }
+    if journal.version == 2, [.checkout, .ready, .published, .ledger].contains(journal.phase) {
+      guard journal.indexLease != nil, journal.indexReleasing == nil,
+        journal.sourceGuards?.cleaning == false, journal.sourceCommit != nil, journal.before != nil,
+        journal.phase == .checkout || journal.after != nil
+      else { throw WorktreeError.recoveryRequired("Guarded merge journal is incomplete.") }
     }
     for path in journal.paths { try WorktreeCheckoutSnapshot.requirePath(path) }
     if let stage = journal.staging {
@@ -74,6 +90,11 @@ extension WorktreeRepository {
     let old = try mergeBytes(journal)
     journal.phase = phase
     try saveMerge(journal, replacing: old)
+  }
+
+  func synchronizeMerge(_ journal: WorktreeMergeJournal) throws {
+    try io.synchronize(
+      journal.record.projectID + ".json", in: mergeDirectory(), expecting: mergeBytes(journal))
   }
 
   func mergeOwner(_ journal: WorktreeMergeJournal) -> Data {

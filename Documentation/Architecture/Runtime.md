@@ -352,14 +352,15 @@ listener-wait callers join that same cleanup. Listener restart is rejected while
 cleanup is pending, and a waiter from a completed listener generation cannot
 stop a subsequent listener.
 
-The shared managed-line process primitive supplies protocol-independent stdio
-ownership for downstream MCP adapters. It launches an owned
-supervisor and child group, bounds protocol lines and receive queues, drains
-stderr, and closes stdin before escalating through TERM and KILL. Shutdown
-joins startup, readers and pipe writes; only the recorded owned group is
-signalled. The supervisor also cleans up when its owner exits. This is process
-ownership, not an OS sandbox, and does not claim containment of descendants
-that deliberately leave the group.
+The shared managed-line process primitive bounds protocol lines and receive
+queues, drains stderr, and joins startup, readers and pipe writes on shutdown.
+For a prepared provider, the transport uses the verified executable and working
+directory from its execution context and attaches the host-created channel when
+the provider uses scoped Host services. An unprepared launch uses a supervisor
+that owns the child process group and cleans it up when its owner exits.
+Shutdown closes stdin before escalating through TERM and KILL against the
+recorded group. Process-group ownership covers descendants that stay in the
+group.
 
 For stdio, the scoped client's project directory is the base for an absent,
 empty, `project`, or relative registration `cwd`. The transport resolves the
@@ -383,7 +384,10 @@ Callback-enabled owned stdio adapters receive a private standard MCP endpoint.
 The host retains caller grants, project registrations, permission authority and
 audit; the adapter owns domain state and vendor protocol execution.
 `MCPHostInvocation` records the live outer call without exporting a credential.
-The host sends only its correlation UUID in downstream request metadata.
+The host sends the invocation UUID in downstream request metadata. For a
+worktree add or remove, it also sends the operation UUID reserved for that
+mutation. See the [Host Services wire reference](../Reference/HostServices.md)
+for the metadata keys and request fields.
 `host.invocations.describe` resolves that identity within the private channel
 and checks current authorization. Independently started MCP requests retain the
 record until their response or confirmed local cleanup, including after their

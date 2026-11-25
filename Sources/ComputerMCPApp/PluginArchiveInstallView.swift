@@ -8,7 +8,7 @@ struct PluginArchiveInstallView: View {
   let revision: Int64
   @Environment(\.dismiss) private var dismiss
   @State private var archive: URL?
-  @State private var installed: InstalledPluginActivation?
+  @State private var installed: InstalledPlugin?
   @State private var importing = false
   @State private var pluginID = ""
   @State private var version = ""
@@ -103,35 +103,17 @@ struct PluginArchiveInstallView: View {
       Task {
         let accessing = archive.startAccessingSecurityScopedResource()
         defer { if accessing { archive.stopAccessingSecurityScopedResource() } }
-        if await model.apply(change, expectedRevision: revision) {
-          if let snapshot = model.snapshot {
-            installed = InstalledPluginActivation(afterInstalling: pluginID, in: snapshot)
-          }
-          if installed == nil { dismiss() }
-        }
+        guard let result = await model.install(change, expectedRevision: revision) else { return }
+        if result.requiresActivation { installed = result } else { dismiss() }
       }
     } catch { model.report(error) }
-  }
-}
-
-/// The activation action uses the revision returned by the successful install.
-struct InstalledPluginActivation {
-  let id: String
-  let revision: Int64
-  let needsSourceReview: Bool
-
-  init?(afterInstalling id: String, in snapshot: PluginHostSnapshot) {
-    needsSourceReview = snapshot.pendingSourceReviews.contains(id)
-    guard needsSourceReview || !snapshot.settings(for: id).enabled else { return nil }
-    self.id = id
-    revision = snapshot.state.revision
   }
 }
 
 struct InstalledPluginActivationView: View {
   @Environment(\.dismiss) private var dismiss
   @ObservedObject var model: PluginManagementModel
-  let installed: InstalledPluginActivation
+  let installed: InstalledPlugin
   @State private var enablement: ProviderEnablementReview?
 
   var body: some View {
@@ -160,9 +142,7 @@ struct InstalledPluginActivationView: View {
           .keyboardShortcut(.cancelAction)
           Button {
             Task {
-              if await model.apply(
-                .enabled(pluginID: installed.id, true), expectedRevision: installed.revision)
-              {
+              if await model.enableInstalled(installed) {
                 dismiss()
               } else {
                 enablement = model.enablementReview

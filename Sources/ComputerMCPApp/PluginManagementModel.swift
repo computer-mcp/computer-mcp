@@ -1,5 +1,6 @@
 import Combine
 import ComputerMCPControlPlane
+import ComputerMCPGateway
 import ComputerMCPPlugins
 import Foundation
 
@@ -81,7 +82,49 @@ final class PluginManagementModel: ObservableObject {
   @discardableResult
   func apply(_ change: PluginHostChange, expectedRevision: Int64) async -> Bool {
     guard enablementReview == nil else { return false }
-    return await perform(change, expectedRevision: expectedRevision, approval: nil)
+    return await perform(change, expectedRevision: expectedRevision, approval: nil) != nil
+  }
+
+  func install(_ change: PluginHostChange, expectedRevision: Int64) async -> InstalledPlugin? {
+    guard enablementReview == nil else { return nil }
+    let (id, version, sha256): (String, PluginVersion, String)
+    switch change {
+    case .installArchive(_, let digest, let pluginID, let archiveVersion):
+      (id, version, sha256) = (pluginID, archiveVersion, digest)
+    case .installRelease(let artifact):
+      (id, version, sha256) = (
+        artifact.declaration.pluginID, artifact.declaration.version, artifact.sha256
+      )
+    default:
+      report(PluginStoreError.invalidState)
+      return nil
+    }
+    guard let committed = await perform(change, expectedRevision: expectedRevision, approval: nil)
+    else { return nil }
+    let revision = committed.state.revision
+    guard revision > 0, revision - 1 == expectedRevision else {
+      report(PluginStoreError.staleRevision(expected: expectedRevision, actual: revision))
+      return nil
+    }
+    guard let selected = committed.state.selectedInstallations[id],
+      let installation = committed.state.installations.first(where: { $0.id == selected }),
+      installation.pluginID == id, installation.version == version,
+      installation.source.artifactSHA256 == sha256
+    else {
+      report(PluginStoreError.invalidState)
+      return nil
+    }
+    return InstalledPlugin(
+      installation: installation, revision: revision,
+      enabled: committed.settings(for: id).enabled,
+      needsSourceReview: committed.pendingSourceReviews.contains(id))
+  }
+
+  func enableInstalled(_ installed: InstalledPlugin) async -> Bool {
+    guard enablementReview == nil else { return false }
+    return await perform(
+      .enabled(pluginID: installed.id, true), expectedRevision: installed.revision, approval: nil,
+      expectedSourceDigest: installed.installation.manifestDigest) != nil
   }
 
   @discardableResult
@@ -92,7 +135,7 @@ final class PluginManagementModel: ObservableObject {
     cancelEnablement(reviewID: reviewID)
     return await perform(
       change, expectedRevision: revision,
-      approval: ProviderEnablementApproval(review: review, selection: selection))
+      approval: ProviderEnablementApproval(review: review, selection: selection)) != nil
   }
 
   func cancelEnablement(reviewID: UUID) {
@@ -102,9 +145,10 @@ final class PluginManagementModel: ObservableObject {
   }
 
   private func perform(
-    _ change: PluginHostChange, expectedRevision: Int64, approval: ProviderEnablementApproval?
-  ) async -> Bool {
-    guard !isSaving else { return false }
+    _ change: PluginHostChange, expectedRevision: Int64, approval: ProviderEnablementApproval?,
+    expectedSourceDigest: String? = nil
+  ) async -> PluginHostSnapshot? {
+    guard !isSaving else { return nil }
     isSaving = true
     errorMessage = nil
     refusal = nil
@@ -119,9 +163,12 @@ final class PluginManagementModel: ObservableObject {
           try await controlPlane.changePlugins(
             change, expectedRevision: expectedRevision, approval: approval))
       }
-      if let review = try await controlPlane.reviewPluginEnablement(
+      let review = try await controlPlane.reviewPluginEnablement(
         change, expectedRevision: expectedRevision)
-      {
+      if let expectedSourceDigest, review?.provider.sourceDigest != expectedSourceDigest {
+        throw GatewayPermissionError.revisionConflict
+      }
+      if let review {
         try Task.checkCancellation()
         return .review(review)
       }
@@ -147,11 +194,11 @@ final class PluginManagementModel: ObservableObject {
         guard !isCancelling else { throw CancellationError() }
         reviewedChange = (change, expectedRevision)
         enablementReview = review
-        return false
+        return nil
       case .saved(let next):
         // A cancellation request cannot turn a committed operation into a reported rollback.
         accept(next)
-        return true
+        return next
       }
     } catch {
       // Refresh the list, but never retry a write or rebase an open editor's revision.
@@ -162,7 +209,7 @@ final class PluginManagementModel: ObservableObject {
       } else {
         report(error)
       }
-      return false
+      return nil
     }
   }
 
@@ -191,6 +238,17 @@ final class PluginManagementModel: ObservableObject {
       selectedID = pluginIDs.first
     }
   }
+}
+
+/// The selected artifact and store revision returned by its install transaction.
+struct InstalledPlugin {
+  let installation: PluginInstallationRecord
+  let revision: Int64
+  let enabled: Bool
+  let needsSourceReview: Bool
+
+  var id: String { installation.pluginID }
+  var requiresActivation: Bool { needsSourceReview || !enabled }
 }
 
 enum PluginToolSelection: String, CaseIterable {

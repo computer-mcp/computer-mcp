@@ -1441,9 +1441,26 @@ final class LiveAppControlPlaneTests {
   @Test(arguments: [false, true])
   func wideningPluginUpdateRequiresReviewFromNormalEntries(catalog: Bool) async throws {
     let platform = MacOSPlatform.services(launcher: testExecutionLauncher())
-    let v1 = PreparationFixture.manifest
+    let sandbox = """
+
+      [sandbox]
+      network = 'trusted'
+      purpose = 'Look up metadata on trusted hosts'
+      """
+    let v1 =
+      PreparationFixture.manifest
+      + (catalog
+        ? ""
+        : """
+
+        [[permissions]]
+        id = 'project'
+        access = 'read'
+        purpose = 'Read selected projects'
+        """ + sandbox)
     let v2 =
-      v1.replacingOccurrences(of: "version = '1.2.3'", with: "version = '1.2.4'") + """
+      PreparationFixture.manifest.replacingOccurrences(
+        of: "version = '1.2.3'", with: "version = '1.2.4'") + """
 
         [[permissions]]
         id = 'project'
@@ -1456,7 +1473,7 @@ final class LiveAppControlPlaneTests {
         [sandbox]
         full_access = true
         purpose = 'Run the selected provider outside the sandbox'
-        """ : "")
+        """ : sandbox)
     let prior = try await PreparationFixture.make(
       launcher: platform.launcher, directoryFactory: platform.pluginDirectories, manifest: v1)
     defer { prior.files.remove() }
@@ -1476,11 +1493,21 @@ final class LiveAppControlPlaneTests {
       pluginDownload: server.map { GitHubPluginDownload(origin: $0.origin) }
         ?? GitHubPluginDownload())
     do {
+      let database = await fixture.controlPlane.database
+      let gateway = try database.permissionRuntime(platform: fixture.controlPlane.platform)
       for id in ["first", "second"] {
         let root = fixture.root.appendingPathComponent(id)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: false)
-        try await fixture.controlPlane.database.saveProject(
+        try database.saveProject(
           .init(id: id, displayName: id.capitalized, rootPath: root.path))
+      }
+      let trusted = "metadata.example"
+      if !catalog {
+        try gateway.store.transactionWithDatabase { _, ledger in
+          var environment = ledger.environment
+          environment.trustedHosts = [HostRule(trusted)]
+          _ = try ledger.reconcile(environment: environment, expectedRevision: ledger.revision)
+        }
       }
       fixture.policyReader.set(.machineFile, .available(Data("[projects]\nfirst = 'read'".utf8)))
       let id = "combined"
@@ -1495,7 +1522,23 @@ final class LiveAppControlPlaneTests {
           expectedRevision: 0))
       #expect(!(await model.apply(enable, expectedRevision: 1)))
       let initial = try #require(model.enablementReview)
-      try #require(await model.confirmEnablement(reviewID: initial.id, selection: .init()))
+      let defaults = ProviderSandboxSettings(defaults: .init(network: catalog ? .none : .trusted))
+      let initialGrants = catalog ? Permissions() : appPermissions([.project("*"): .granted(.read)])
+      try #require(
+        await model.confirmEnablement(
+          reviewID: initial.id,
+          selection: .init(permissions: initialGrants, sandboxSettings: defaults)))
+
+      let privacy = LivePrivacySecurityService(controlPlane: fixture.app)
+      if !catalog {
+        let reviewed = try await privacy.privacySnapshot()
+        let project = try #require(
+          reviewed.grants.first {
+            $0.principalID == "plugin/combined" && $0.permission == .projects
+              && $0.object?.id == "first"
+          })
+        try await privacy.setNetwork(project, to: .none, reviewed: reviewed)
+      }
 
       let change: PluginHostChange =
         if catalog { .installRelease(pluginArtifactFixture(bytes: bytes, manifest: v2)) } else {
@@ -1503,10 +1546,9 @@ final class LiveAppControlPlaneTests {
             archive: update.archive, sha256: update.digest, pluginID: id,
             version: try .init("1.2.4"))
         }
-      try #require(await model.apply(change, expectedRevision: 2))
+      let staged = try #require(await model.install(change, expectedRevision: 2))
       let snapshot = try #require(model.snapshot)
-      let staged = try #require(InstalledPluginActivation(afterInstalling: id, in: snapshot))
-      #expect(staged.revision == 3 && staged.needsSourceReview)
+      #expect(staged.revision == 3 && staged.requiresActivation && staged.needsSourceReview)
       #expect(snapshot.settings(for: id).enabled)
       #expect(try await fixture.app.fetchPlugins().pendingSourceReviews == [id])
       let wire = try JSONDecoder().decode(
@@ -1522,8 +1564,11 @@ final class LiveAppControlPlaneTests {
       #expect(pending.approval?.sourceDigest == initial.provider.sourceDigest)
       #expect(
         pendingDigest == source.sourceDigest && pendingDigest != pending.approval?.sourceDigest)
-      let database = await fixture.controlPlane.database
-      let gateway = try database.permissionRuntime(platform: fixture.controlPlane.platform)
+      #expect(staged.installation.manifestDigest == pendingDigest)
+      if !catalog {
+        #expect(pending.approval?.sandboxSettings?.defaults.network.configuration == .trusted)
+        #expect(pending.approval?.sandboxSettings?.projects["first"]?.network == NetworkAccess.none)
+      }
       #expect(throws: GatewayPermissionError.invalidBinding) {
         try gateway.service.authorizeProviderExecution(
           review: source, registrationID: "native", caller: nil, retryIDs: [])
@@ -1539,7 +1584,7 @@ final class LiveAppControlPlaneTests {
         try pressEnablementShortcut(.approve, in: window)
         try await waitForEnablementPresentation { model.enablementReview != nil && !model.isSaving }
       } else {
-        #expect(!(await model.apply(enable, expectedRevision: staged.revision)))
+        #expect(!(await model.enableInstalled(staged)))
       }
       let installedReview = try #require(model.enablementReview)
       #expect(installedReview.provider.sourceDigest == pendingDigest)
@@ -1598,7 +1643,8 @@ final class LiveAppControlPlaneTests {
       try #require(
         await model.confirmEnablement(
           reviewID: review.id,
-          selection: .init(permissions: draft.permissions(), fullAccess: catalog)))
+          selection: .init(
+            permissions: draft.permissions(), sandboxSettings: defaults, fullAccess: catalog)))
       #expect(model.snapshot?.pendingSourceReviews.isEmpty == true)
       let approved = try #require(
         try await fixture.app.fetchPrivacyPermissionInventory().providers.first {
@@ -1613,7 +1659,19 @@ final class LiveAppControlPlaneTests {
       #expect(binding.sourceDigest == pendingDigest)
       #expect(approved.approval?.permissions.entries[first] == .notGranted)
       #expect(approved.approval?.permissions.state(for: .project("second")) == .denied)
-      if !catalog { #expect(model.snapshot?.settings(for: id) == settings) }
+      if !catalog {
+        #expect(model.snapshot?.settings(for: id) == settings)
+        let approvedSettings = try #require(approved.approval?.sandboxSettings)
+        #expect(approvedSettings.defaults.network.configuration == .trusted)
+        #expect(approvedSettings.projects["first"]?.network == NetworkAccess.none)
+        let grants = try await privacy.privacySnapshot().grants.filter {
+          $0.principalID == "plugin/combined" && $0.permission == .projects
+        }
+        let first = try #require(grants.first { $0.object?.id == "first" })
+        let second = try #require(grants.first { $0.object?.id == "second" })
+        #expect(first.effectiveNetwork == PrivacyNetworkAccess.none)
+        #expect(second.effectiveNetwork == .custom(hosts: [trusted], includesTrusted: false))
+      }
       if catalog {
         fixture.policyReader.set(
           .machineFile, .available(Data("full_access = false\n[projects]\nfirst = 'read'".utf8)))
@@ -1640,6 +1698,81 @@ final class LiveAppControlPlaneTests {
           model.cancelEnablement(reviewID: restricted.id)
         }
       }
+    } catch {
+      await fixture.cleanup()
+      throw error
+    }
+    await fixture.cleanup()
+  }
+
+  @Test
+  func postInstallReviewKeepsCommittedVersionWhenRefreshSelectsAnother() async throws {
+    let platform = MacOSPlatform.services(launcher: testExecutionLauncher())
+    let prior = try await PreparationFixture.make(
+      launcher: platform.launcher, directoryFactory: platform.pluginDirectories)
+    defer { prior.files.remove() }
+    let v2 =
+      PreparationFixture.manifest.replacingOccurrences(
+        of: "version = '1.2.3'", with: "version = '1.2.4'") + """
+
+        [[permissions]]
+        id = 'screen'
+        access = 'allow'
+        purpose = 'Inspect the screen'
+        """
+    let update = try await PreparationFixture.make(
+      launcher: platform.launcher, directoryFactory: platform.pluginDirectories, manifest: v2)
+    defer { update.files.remove() }
+    let fixture = try AppControlPlaneFixture(
+      gatewayExecutablePath: nativeGatewayTestExecutable().path)
+    do {
+      let id = "combined"
+      let service = InterleavedPluginInstall(controlPlane: fixture.app)
+      let model = PluginManagementModel(controlPlane: service)
+      let original = try #require(
+        await model.install(
+          .installArchive(
+            archive: prior.archive, sha256: prior.digest, pluginID: id, version: .init("1.2.3")),
+          expectedRevision: 0))
+      #expect(!(await model.enableInstalled(original)))
+      let initialReview = try #require(model.enablementReview)
+      try #require(await model.confirmEnablement(reviewID: initialReview.id, selection: .init()))
+
+      var committedDigest: String?
+      service.afterInstall = { [weak model] committed in
+        let source = try await fixture.controlPlane.providerReview(.package(id))
+        committedDigest = source.sourceDigest
+        #expect(committed.pendingSourceReviews.contains(id))
+        _ = try await fixture.app.changePlugins(
+          .select(pluginID: id, installationID: original.installation.id),
+          expectedRevision: committed.state.revision)
+        await model?.reload()
+      }
+      let version = try PluginVersion("1.2.4")
+      let installed = try #require(
+        await model.install(
+          .installArchive(
+            archive: update.archive, sha256: update.digest, pluginID: id, version: version),
+          expectedRevision: 2))
+
+      let refreshed = try #require(model.snapshot)
+      #expect(refreshed.state.revision == 4)
+      #expect(refreshed.state.selectedInstallations[id] == original.installation.id)
+      #expect(refreshed.settings(for: id).enabled && refreshed.pendingSourceReviews.isEmpty)
+      #expect(installed.requiresActivation && installed.needsSourceReview)
+      #expect(installed.revision == 3)
+      #expect(installed.installation.id != original.installation.id)
+      #expect(installed.installation.version == version)
+      #expect(installed.installation.source.artifactSHA256 == update.digest)
+      #expect(installed.installation.manifestDigest == committedDigest)
+      #expect(installed.installation.manifestDigest != original.installation.manifestDigest)
+      #expect(!(await model.enableInstalled(installed)))
+      #expect(model.enablementReview == nil)
+      #expect(
+        model.errorMessage
+          == AppLocalization.errorDescription(
+            PluginStoreError.staleRevision(expected: 3, actual: 4)))
+      #expect(try await fixture.app.fetchPlugins().state == refreshed.state)
     } catch {
       await fixture.cleanup()
       throw error
@@ -1963,6 +2096,56 @@ final class LiveAppControlPlaneTests {
       await fixture.cleanup()
       throw error
     }
+  }
+}
+
+@MainActor
+private final class InterleavedPluginInstall: PluginManaging {
+  let controlPlane: LiveAppControlPlane
+  var afterInstall: ((PluginHostSnapshot) async throws -> Void)?
+
+  init(controlPlane: LiveAppControlPlane) { self.controlPlane = controlPlane }
+
+  func doctorPlugin(id: String) async throws -> PluginDoctorReport {
+    try await controlPlane.doctorPlugin(id: id)
+  }
+
+  func searchPlugins(query: String, kind: IntegrationKind?, page: Int, refresh: Bool) async throws
+    -> PluginCatalogSearchResult
+  {
+    try await controlPlane.searchPlugins(query: query, kind: kind, page: page, refresh: refresh)
+  }
+
+  func pluginReleaseArtifacts(repository: String, repositoryID: Int64, tag: String?, page: Int)
+    async throws -> GitHubPluginReleaseArtifacts
+  {
+    try await controlPlane.pluginReleaseArtifacts(
+      repository: repository, repositoryID: repositoryID, tag: tag, page: page)
+  }
+
+  func fetchPlugins() async throws -> PluginHostSnapshot {
+    try await controlPlane.fetchPlugins()
+  }
+
+  func reviewPluginEnablement(_ change: PluginHostChange, expectedRevision: Int64) async throws
+    -> ProviderEnablementReview?
+  {
+    try await controlPlane.reviewPluginEnablement(change, expectedRevision: expectedRevision)
+  }
+
+  func changePlugins(_ change: PluginHostChange, expectedRevision: Int64) async throws
+    -> PluginHostSnapshot
+  {
+    let committed = try await controlPlane.changePlugins(change, expectedRevision: expectedRevision)
+    try await afterInstall?(committed)
+    return committed
+  }
+
+  func changePlugins(
+    _ change: PluginHostChange, expectedRevision: Int64, approval: ProviderEnablementApproval
+  ) async throws -> PluginHostSnapshot {
+    try await controlPlane.changePlugins(
+      change, expectedRevision: expectedRevision, approval: approval)
   }
 }
 

@@ -7,7 +7,7 @@ struct PluginReleaseView: View {
   let selection: PluginReleaseSelection
   @StateObject private var model: PluginReleaseModel
   @State private var selectedID: String?
-  @State private var installed: InstalledPluginActivation?
+  @State private var installed: InstalledPlugin?
   @Environment(\.dismiss) private var dismiss
   @Environment(\.locale) private var locale
 
@@ -242,13 +242,11 @@ struct PluginReleaseView: View {
   private func install() {
     guard let artifact = selectedArtifact, model.canInstall, !stale else { return }
     Task {
-      if await management.apply(.installRelease(artifact), expectedRevision: selection.revision) {
-        if let snapshot = management.snapshot {
-          installed = InstalledPluginActivation(
-            afterInstalling: artifact.declaration.pluginID, in: snapshot)
-        }
-        if installed == nil { dismiss() }
-      }
+      guard
+        let result = await management.install(
+          .installRelease(artifact), expectedRevision: selection.revision)
+      else { return }
+      if result.requiresActivation { installed = result } else { dismiss() }
     }
   }
 }

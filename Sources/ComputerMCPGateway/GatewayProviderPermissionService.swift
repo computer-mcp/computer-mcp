@@ -113,9 +113,17 @@ extension GatewayPermissionService {
     }
     let trustedHosts = Set(ledger.environment.trustedHosts.map(\.host))
     let currentSettings = ledger.sandboxSettings.providers[review.identity]
-    var selectedSettings =
-      !editingApproval && previous != nil && currentSettings == nil
-      ? sandboxSettings.rebindingReviewedChoices() : sandboxSettings
+    var selectedSettings = sandboxSettings
+    if !editingApproval, let previous, previous.pendingSourceDigest == review.sourceDigest,
+      let storedSettings = currentSettings ?? previous.sandboxSettings
+    {
+      selectedSettings.retainProjectRestrictions(
+        from: storedSettings,
+        projectIDs: Set(review.configuration.projects.map(\.id)).subtracting(derivedIDs))
+    }
+    if !editingApproval && previous != nil && currentSettings == nil {
+      selectedSettings = selectedSettings.rebindingReviewedChoices()
+    }
     let ceiling = review.declarations.map { $0.sandbox?.network?.value ?? .none }
     selectedSettings.defaults.networkCeiling = ceiling.map {
       (currentSettings?.defaults.networkCeiling ?? .none).updating(to: $0)

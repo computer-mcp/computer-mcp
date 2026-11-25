@@ -134,6 +134,31 @@ package struct ProviderSandboxSettings: Hashable, Sendable, Codable {
     sourceProjectID.flatMap { projects[$0]?.applying(to: defaults) } ?? defaults
   }
 
+  /// A reviewed provider default must still respect existing restrictions on unreviewed projects.
+  package mutating func retainProjectRestrictions(from current: Self, projectIDs: Set<String>) {
+    for (id, var override) in current.projects where projectIDs.contains(id) && projects[id] == nil
+    {
+      override.network = override.network.map { $0.intersecting(defaults.network) }
+      if let exceptions = override.readExceptions {
+        override.readExceptions = Set(
+          exceptions.compactMap { prior in
+            guard
+              let reviewed = defaults.readExceptions.first(where: {
+                $0.declaredPath == prior.declaredPath
+                  && $0.ownerSelectedPath == prior.ownerSelectedPath
+                  && $0.path == prior.path && $0.filesystemIdentity == prior.filesystemIdentity
+                  && $0.isDirectory == prior.isDirectory
+              })
+            else { return nil }
+            var retained = prior
+            retained.purpose = reviewed.purpose
+            return retained
+          })
+      }
+      projects[id] = override
+    }
+  }
+
   /// A new authority epoch keeps reviewed values and revalidates their filesystem
   /// evidence before the ledger allocates any rule identities.
   package func rebindingReviewedChoices() -> Self {
@@ -165,5 +190,18 @@ package struct ProviderSandboxSettings: Hashable, Sendable, Codable {
       try override.commit(against: current?.projects[id], in: &ledger)
       projects[id] = override
     }
+  }
+}
+
+extension NetworkAccess {
+  fileprivate func intersecting(_ ceiling: Self) -> Self {
+    if ceiling.configuration == .full || configuration == .none { return self }
+    if configuration == .full { return updating(to: ceiling) }
+    // A trusted-host choice stays dynamic only when both scopes allow it.
+    let hosts = NetworkHost.intersection(
+      hosts(trustedHosts: []) ?? [], ceiling.hosts(trustedHosts: []) ?? [])
+    let includesTrusted = trustedRule != nil && ceiling.trustedRule != nil
+    if hosts.isEmpty { return updating(to: includesTrusted ? .trusted : .none) }
+    return updating(to: .custom(hosts: hosts, includesTrusted: includesTrusted))
   }
 }

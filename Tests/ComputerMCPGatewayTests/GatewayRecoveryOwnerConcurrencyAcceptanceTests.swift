@@ -200,3 +200,37 @@ private func gatewayPackFiles(_ directory: URL) throws -> [String: Data] {
   }
   return result
 }
+
+extension GatewayRecoveryOwnerConcurrencyAcceptanceTests {
+  @Test func boundedAdapterReportsActualWaitDeadline() throws {
+    let f = try WorktreeServiceFixture()
+    defer { f.remove() }
+    let marker = f.root.appendingPathComponent("slow-worker-started")
+    let executable = f.root.appendingPathComponent("slow-git")
+    let quotedGit = "'" + f.executor.executable.replacingOccurrences(of: "'", with: "'\\''") + "'"
+    let quotedMarker = "'" + marker.path.replacingOccurrences(of: "'", with: "'\\''") + "'"
+    let script =
+      "#!/bin/sh\nprintf started > \(quotedMarker)\n/bin/sleep 2\nexec \(quotedGit) \"$@\"\n"
+    try Data(script.utf8).write(to: executable)
+    try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: executable.path)
+    let adapter = GatewayWorktreeGit(launcher: f.platform.launcher, executable: executable.path)
+    let command = WorktreeGitCommand(
+      arguments: ["--version"], directory: f.source,
+      environment: HostGitConfiguration.environment(home: f.root), timeoutMilliseconds: 500,
+      maxOutputBytes: 4096)
+    do {
+      _ = try adapter.execute(command)
+      Issue.record("The slow worker exceeded its deadline without a bounded error")
+    } catch WorktreeError.busy(let reason) {
+      #expect(reason == "Bounded command exceeded its deadline.")
+    }
+    #expect(try String(contentsOf: marker, encoding: .utf8) == "started")
+    #expect(
+      try f.executor.execute(
+        .init(
+          arguments: ["--version"], directory: f.source,
+          environment: HostGitConfiguration.environment(home: f.root),
+          timeoutMilliseconds: 30_000, maxOutputBytes: 4096)
+      ).exitCode == 0)
+  }
+}

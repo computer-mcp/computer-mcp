@@ -110,6 +110,114 @@ struct WorktreeRecoveryCaptureTests {
     }
   }
 
+  @Test(arguments: [false, true])
+  func retainedExpectedUsesIndependentSourcePossession(sourceHasExpected: Bool) throws {
+    try fixture { directory in
+      let f = try WorktreeFixture(directory)
+      let service = try f.service()
+      let created = try service.create(name: "retained")
+      let head = try f.privateCommit(service, projectID: created.projectID)
+      let topology = try service.topology(projectID: created.projectID)
+      let git = PrivateWorktreeGit(f: f, topology: topology)
+      let side = try git.run(["hash-object", "-w", "--stdin"], input: Data("side root".utf8))
+      try git.run(["update-ref", "refs/tags/side", side])
+      let expected = try sourceExpectedCommit(f)
+      let expectedOIDs = try closure(
+        f.raw(["rev-list", "--objects", "--no-object-names", expected]))
+      let retained = try retainedPool(f, directory: directory)
+      if !sourceHasExpected {
+        try FileManager.default.removeItem(
+          at: looseObject(f.repository.appendingPathComponent(".git/objects"), expected))
+      }
+      var budget = try WorktreeObjectBudget(.init())
+      let capture = try service.captureRecoveryObjects(
+        topology, expectedOID: expected, in: staging(directory, "retained-capture"),
+        retainedExpectedObjects: retained, budget: &budget)
+      let privateOIDs = try closure(
+        git.run(["rev-list", "--objects", "--no-object-names"] + capture.metadata.roots))
+      let headOIDs = try closure(git.run(["rev-list", "--objects", "--no-object-names", head]))
+      #expect(capture.expectedObjects.directory.url.lastPathComponent == "retained-objects")
+      #expect(!privateOIDs.contains(expected))
+      #expect(privateOIDs.contains(side))
+      #expect(Set(capture.privateManifest.oids) == privateOIDs)
+      #expect(Set(capture.expectedManifest.oids) == expectedOIDs)
+      #expect(Set(capture.recoveryManifest.oids) == privateOIDs.union(expectedOIDs))
+      if sourceHasExpected {
+        #expect(Set(capture.sourceExpectedManifest?.oids ?? []) == expectedOIDs)
+        #expect(Set(capture.sourceManifest.oids) == headOIDs.subtracting(expectedOIDs))
+      } else {
+        #expect(capture.sourceExpectedManifest == nil)
+        #expect(Set(capture.sourceManifest.oids) == headOIDs)
+      }
+      #expect(try f.raw(["rev-parse", created.branch]) != head)
+    }
+  }
+
+  @Test func incompleteRetainedExpectedIsRejectedEvenIfSourceHasIt() throws {
+    try fixture { directory in
+      let f = try WorktreeFixture(directory)
+      let service = try f.service()
+      let created = try service.create(name: "incomplete-retained")
+      _ = try f.privateCommit(service, projectID: created.projectID)
+      let topology = try service.topology(projectID: created.projectID)
+      let expected = try sourceExpectedCommit(f)
+      let tree = try f.raw(["rev-parse", "HEAD^{tree}"])
+      let retained = try retainedPool(f, directory: directory)
+      try FileManager.default.removeItem(at: looseObject(retained.url, tree))
+      #expect(try f.raw(["cat-file", "-t", tree]) == "tree")
+      let branchBefore = try f.raw(["rev-parse", created.branch])
+      var budget = try WorktreeObjectBudget(.init())
+      do {
+        _ = try service.captureRecoveryObjects(
+          topology, expectedOID: expected, in: staging(directory, "incomplete"),
+          retainedExpectedObjects: retained, budget: &budget)
+        Issue.record("Incomplete retained closure was accepted")
+      } catch WorktreeError.recoveryRequired {
+      } catch {
+        Issue.record("Expected recoveryRequired for the incomplete retained closure: \(error)")
+      }
+      #expect(
+        !FileManager.default.fileExists(
+          atPath: directory.appendingPathComponent("incomplete/source-objects").path))
+      #expect(try f.raw(["rev-parse", created.branch]) == branchBefore)
+    }
+  }
+
+  @Test func replacedPrivateObjectDirectoryIsRetryable() throws {
+    try fixture { directory in
+      let f = try WorktreeFixture(directory)
+      let ordinary = try f.service()
+      let created = try ordinary.create(name: "replaced-input")
+      _ = try f.privateCommit(ordinary, projectID: created.projectID)
+      let topology = try ordinary.topology(projectID: created.projectID)
+      let expected = try f.raw(["rev-parse", "HEAD"])
+      let sourceBefore = try f.raw([
+        "cat-file", "--batch-all-objects", "--batch-check=%(objectname)",
+      ])
+      let replacement = CaptureInputReplacement(
+        objects: topology.objects.url, staging: directory.appendingPathComponent("replaced"))
+      let service = try f.service(
+        journalIO: .init(beforePublication: { try replacement.replace() }))
+      var budget = try WorktreeObjectBudget(.init())
+      do {
+        _ = try service.captureRecoveryObjects(
+          topology, expectedOID: expected, in: staging(directory, "replaced"), budget: &budget)
+        Issue.record("Replaced live input was accepted")
+      } catch WorktreeError.busy {
+      } catch {
+        Issue.record("Expected retryable busy after input replacement: \(error)")
+      }
+      #expect(replacement.fired)
+      #expect(
+        !FileManager.default.fileExists(
+          atPath: directory.appendingPathComponent("replaced/source-objects").path))
+      #expect(try f.raw(["rev-parse", created.branch]) == expected)
+      #expect(
+        try f.raw(["cat-file", "--batch-all-objects", "--batch-check=%(objectname)"])
+          == sourceBefore)
+    }
+  }
+
   @Test(arguments: ["input", "inflated", "count"])
   func acquisitionSharesBudgetAcrossPools(bound: String) throws {
     try fixture { directory in
@@ -180,6 +288,48 @@ private final class CaptureDeadlineGit: WorktreeGitExecuting, @unchecked Sendabl
     }
     return result
   }
+}
+
+private final class CaptureInputReplacement: @unchecked Sendable {
+  let objects: URL
+  let staging: URL
+  var fired = false
+
+  init(objects: URL, staging: URL) {
+    self.objects = objects
+    self.staging = staging
+  }
+
+  func replace() throws {
+    guard !fired,
+      let paths = FileManager.default.enumerator(
+        atPath: staging.appendingPathComponent("private-objects").path),
+      paths.allObjects.contains(where: { ($0 as? String)?.contains(".journal-") == true })
+    else { return }
+    fired = true
+    try FileManager.default.moveItem(
+      at: objects, to: objects.deletingLastPathComponent().appendingPathComponent("objects-moved"))
+    try FileManager.default.createDirectory(at: objects, withIntermediateDirectories: false)
+  }
+}
+
+private func sourceExpectedCommit(_ f: WorktreeFixture) throws -> String {
+  try Data("expected content".utf8).write(to: f.repository.appendingPathComponent("expected"))
+  try f.raw(["add", "expected"])
+  try f.raw(["commit", "-m", "expected"])
+  return try f.raw(["rev-parse", "HEAD"])
+}
+
+private func retainedPool(_ f: WorktreeFixture, directory: URL) throws -> WorktreeDirectory {
+  let pool = directory.appendingPathComponent("retained-pool")
+  try FileManager.default.copyItem(
+    at: f.repository.appendingPathComponent(".git/objects"), to: pool)
+  return try WorktreeDirectory(pool)
+}
+
+private func looseObject(_ directory: URL, _ oid: String) -> URL {
+  directory.appendingPathComponent(String(oid.prefix(2))).appendingPathComponent(
+    String(oid.dropFirst(2)))
 }
 
 private func staging(_ directory: URL, _ name: String) throws -> WorktreeDirectory {

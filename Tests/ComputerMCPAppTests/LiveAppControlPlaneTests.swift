@@ -419,8 +419,15 @@ final class LiveAppControlPlaneTests {
       await #expect(throws: AppControlPlaneError.self) {
         try await service.setGrant(grant, reviewed: restricted)
       }
-      #expect(try await service.privacySnapshot().reviewedProviders[id]?.approval == original)
-      try await service.confirmRestoredPermissions(reviewed: restored)
+      let database = await fixture.controlPlane.database
+      let coordinator = try ExecutionRevocationCoordinator(
+        store: database.permissionStore(counter: fixture.counter),
+        launcher: testExecutionLauncher(),
+        directory: fixture.root.appendingPathComponent("recovery"))
+      try await coordinator.recover()
+      let afterRecovery = try await service.privacySnapshot()
+      #expect(afterRecovery.reviewedProviders[id]?.approval == original)
+      try await service.confirmRestoredPermissions(reviewed: afterRecovery)
       fixture.policyReader.set(.machineFile, .absent)
       let confirmed = try await service.privacySnapshot()
       #expect(confirmed.reviewedProviders[id]?.availability == .needsRestoreReview)

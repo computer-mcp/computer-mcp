@@ -30,7 +30,8 @@ struct MCPRegistrationControlPlaneTests {
     let fixture = try MCPRegistrationControlFixture()
     defer { fixture.remove() }
     try fixture.registerProject()
-    let current = try #require(fixture.database.project(id: "fixture"))
+    let registered = try fixture.database.project(id: "fixture")
+    let current = try #require(registered)
     let previous = DerivedProjectSource(
       id: current.id, root: current.rootPath,
       registeredAt: current.createdAt.addingTimeInterval(-60))

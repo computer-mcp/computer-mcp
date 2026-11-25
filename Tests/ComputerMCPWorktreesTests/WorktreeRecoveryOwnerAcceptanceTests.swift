@@ -1019,3 +1019,87 @@ private final class OwnerProofIntegrityFailureGit: WorktreeGitExecuting, @unchec
     try base.withPreparedTransaction(command, body)
   }
 }
+
+extension WorktreeRecoveryOwnerAcceptanceTests {
+  @Test func visibleReleaseIntentSynchronizesAndFinishesExactReviewedBatch() throws {
+    try fixture { directory in
+      let f = try WorktreeFixture(directory)
+      let fixture = try OwnerAcceptanceFixture(f)
+      let first = try fixture.captureBlob()
+      let worktrees = try f.service()
+      let git = PrivateWorktreeGit(
+        f: f, topology: try worktrees.topology(projectID: first.owner.projectID))
+      let secondOID = try git.run(
+        ["hash-object", "-w", "--stdin"], input: Data("another retained root".utf8))
+      try git.run(["update-ref", "refs/tags/second-root", secondOID])
+      _ = try worktrees.publish(projectID: first.owner.projectID) { _ in }
+      let owner = try fixture.service()
+      let view = try #require(try owner.list().first)
+      let firstCurrent = try #require(view.records.first { $0.id == first.id })
+      let second = try #require(view.records.first { $0.oid == secondOID })
+      let gate = try worktrees.admission(projectID: first.owner.projectID)
+      let other = try worktrees.create(name: "other-release-holder")
+      let otherGate = try worktrees.admission(projectID: other.projectID)
+      let otherID = UUID()
+      #expect(try otherGate.close(operationID: otherID).isEmpty)
+      let review = try owner.reviewRelease(
+        key: view.key, generation: view.generation,
+        selections: [firstCurrent.selection, second.selection], principal: fixture.principal)
+      let catalogURL = fixture.storeDirectory(view.key).appendingPathComponent("catalog.json")
+      let fault = VisibleReleaseSyncFault(catalogURL: catalogURL, operation: review.handle.id)
+      let interrupted = try fixture.service(
+        io: .init(beforeDirectorySync: { try fault.interrupt() }))
+      let released = try interrupted.confirm(review, principal: fixture.principal)
+      #expect(fault.fired)
+      #expect(released.outcome == .released)
+      #expect(released.request == .release(review))
+      #expect(released.gates.map(\.cleanup) == [.cleared])
+      #expect(try owner.resume(review.handle, principal: fixture.principal) == released)
+      let receipts = try review.release.receipts(for: review.handle)
+      let store = WorktreeRecoveryStore(storage: f.storage)
+      try store.withExclusive(repository: view.repository) { locked in
+        let catalog = try locked.catalog()
+        #expect(!catalog.intents.contains { $0.id == review.handle.id })
+        #expect(!catalog.records.contains { [firstCurrent.id, second.id].contains($0.id) })
+        for expected in receipts {
+          let actual = try locked.releaseReceipt(recordID: expected.selection.recordID)
+          #expect(actual == expected)
+        }
+      }
+      let writer = try gate.reserve(ownerID: UUID(), executionID: UUID())
+      try gate.acknowledge(writer)
+      #expect(throws: WorktreeError.self) {
+        try otherGate.reserve(ownerID: UUID(), executionID: UUID())
+      }
+      try otherGate.reopen(operationID: otherID)
+    }
+  }
+}
+
+private final class VisibleReleaseSyncFault: @unchecked Sendable {
+  let catalogURL: URL
+  let operation: UUID
+  private let lock = NSLock()
+  private var didFire = false
+
+  init(catalogURL: URL, operation: UUID) {
+    self.catalogURL = catalogURL
+    self.operation = operation
+  }
+  var fired: Bool {
+    lock.lock()
+    defer { lock.unlock() }
+    return didFire
+  }
+
+  func interrupt() throws {
+    lock.lock()
+    defer { lock.unlock() }
+    guard !didFire, let data = try? Data(contentsOf: catalogURL),
+      let catalog = try? JSONDecoder().decode(WorktreeRecoveryCatalog.self, from: data),
+      catalog.intents.contains(where: { $0.id == operation && $0.kind == .release })
+    else { return }
+    didFire = true
+    throw OwnerConfirmationInterruption.Failure.injected
+  }
+}

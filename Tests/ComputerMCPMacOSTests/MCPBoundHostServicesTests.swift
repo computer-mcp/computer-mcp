@@ -2212,16 +2212,17 @@ private final class HostServiceProbe: DownstreamMCPClient, @unchecked Sendable {
     let provider = (context.executionAuthority as? PreparedExecutionContext)?.executionID
     let stopped = state.lock.withLock { state.providerStopped }
     let deadline = DispatchTime.now() + state.callbackTimeout
-    while ready.wait(timeout: .now() + .milliseconds(10)) != .success {
+    while true {
+      let replied = ready.wait(timeout: .now() + .milliseconds(10)) == .success
       if let provider, let stopped, stopped(provider) {
         throw MCPHostServiceError.denied("The fixture provider was stopped.")
       }
+      if replied { return try box.get() }
       guard DispatchTime.now() < deadline else {
         task.cancel()
         throw MCPHostServiceError.denied("Fixture callback timed out.")
       }
     }
-    return try box.get()
   }
   func listResources(server: MCPServerConfig, cursor: String?, context: InvocationContext) throws
     -> JSONValue

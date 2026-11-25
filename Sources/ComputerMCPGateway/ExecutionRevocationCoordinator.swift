@@ -1181,7 +1181,18 @@ package final class ExecutionRevocationCoordinator: ExecutionRecoveryAuthorizing
                 && pendingChildren[record.id]?.contains(child) == true
             })
           {
-            if let ownership = lock.withLock({ children[child] }) {
+            // Confirmation persists the receipt before retiring the live handle.
+            // Both can have changed since the reconciliation snapshot was read.
+            let (local, confirmed): ((any ExecutionOwnership)?, Bool) = try publication.withLock {
+              if let ownership = lock.withLock({ children[child] }) { return (ownership, false) }
+              let confirmed = try store.readWithDatabase { database, _ in
+                try ExecutionRuntimeRecord.load(record.id, database)?.children[child]?.completed
+                  == true
+              }
+              return (nil, confirmed)
+            }
+            if confirmed { continue }
+            if let ownership = local {
               try await cancelOwnedExecution(ownership)
             } else if let recovery = entry.recovery {
               guard let boot = launcher.bootSessionID else {

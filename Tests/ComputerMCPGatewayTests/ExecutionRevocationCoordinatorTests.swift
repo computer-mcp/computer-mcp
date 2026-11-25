@@ -1301,6 +1301,61 @@ import Testing
     #expect(f.platform.started == 0)
   }
 
+  @Test(.timeLimit(.minutes(1)))
+  func childExitDuringReconciliationDoesNotRequireRecovery() async throws {
+    let f = try ExecutionFixture()
+    let admission = try f.worktreeAdmission()
+    let coordinator = try f.coordinator()
+    try await coordinator.recover()
+    let id = try f.paths.authorize(f.paths.project, operation: .read, once: false)
+    let prepared = try await coordinator.prepare(
+      authorizationID: id, context: f.context, worktreeAdmission: admission)
+    _ = try await f.start(prepared)
+    _ = try await f.start(prepared)
+    try prepared.finishAdmission()
+    let owners = f.platform.owners
+    let gate = ReconciliationTestGate()
+    for owner in owners { owner.setCancellation { _ in await gate.wait() } }
+    defer {
+      for owner in owners { owner.complete() }
+      Task { await gate.release() }
+    }
+
+    let operation = UUID()
+    _ = try admission.close(operationID: operation)
+    try f.paths.store.transactionWithDatabase { _, ledger in
+      try ledger.terminateExecution(prepared.executionID)
+    }
+    let drain = Task { try await f.untilFinished(prepared.executionID, coordinator) }
+    defer { drain.cancel() }
+    let deadline = ContinuousClock.now + .seconds(5)
+    while !(await gate.entered), ContinuousClock.now < deadline {
+      try await Task.sleep(for: .milliseconds(5))
+    }
+    try #require(await gate.entered)
+    #expect(throws: WorktreeError.self) { try admission.requireDrained(operationID: operation) }
+
+    // The first cancellation pins the reconciliation snapshot while its sibling exits.
+    let exited = try #require(owners.first { $0.cancellationDeadlines.isEmpty })
+    exited.complete()
+    func confirmedExit() throws -> Bool {
+      try f.paths.store.readWithDatabase { database, _ in
+        try ExecutionRuntimeRecord.load(prepared.executionID, database)?.children.values.contains {
+          $0.recovery?.root == exited.member && $0.completed
+        } == true
+      }
+    }
+    while try !confirmedExit(), ContinuousClock.now < deadline {
+      try await Task.sleep(for: .milliseconds(5))
+    }
+    try #require(try confirmedExit())
+    await gate.release()
+    try await drain.value
+
+    #expect(exited.cancellationDeadlines.isEmpty)
+    try admission.requireDrained(operationID: operation)
+  }
+
   @Test(arguments: [false, true]) func failedLaunchDoesNotResurrectRetry(afterBinding: Bool)
     async throws
   {

@@ -689,6 +689,40 @@ package final class MCPProxyClient: DownstreamMCPClient, @unchecked Sendable {
   }
 }
 
+extension MCPContinuationTarget {
+  fileprivate func resourceRetry(
+    for reference: MCPToolReference?, server: MCPServerConfig, ownedWork: GatewayOwnedWork?,
+    admitted: PreparedExecutionContext?, running: PreparedExecutionContext?
+  ) throws -> MCPSelectedResourceRetry? {
+    guard reference == self.reference, self.reference.serverID == server.id,
+      server.transport == .stdio, !server.hostServices, let ownedWork,
+      let retry = try MCPSelectedResourceRetry(admitted: admitted, running: running)
+    else { return nil }
+    if !resources.isEmpty {
+      // Later calls may retain the retry's execution through an exact acquisition.
+      guard try ownedWork.continuations.execution(for: self) === admitted else { return nil }
+    } else {
+      guard let ownerID = selectedOwnershipID, let instanceID,
+        let record = ownedWork.snapshot.first(where: { $0.id == ownerID }),
+        record.kind == .mcpResource, record.connectionID == connectionID,
+        record.registrationID == server.id, record.projectID == projectID,
+        let entry = ownedWork.continuations.entry(connectionID: connectionID),
+        entry.connected, entry.instanceID == instanceID, entry.registrationID == server.id,
+        entry.projectID == projectID,
+        let identity = try JSONDecoder().decode(
+          JSONValue.self, from: Data(record.resourceID.utf8)
+        ).objectValue,
+        identity["connection_id"] == .string(connectionID.uuidString),
+        identity["instance_id"] == .string(instanceID.uuidString),
+        entry.resources.contains(where: {
+          identity["kind"] == .string($0.key.kind) && identity["id"] == $0.key.id.json
+        })
+      else { return nil }
+    }
+    return retry
+  }
+}
+
 private final class MCPConnectionPool: @unchecked Sendable {
   private struct Key: Hashable {
     let serverID: String
@@ -796,6 +830,12 @@ private final class MCPConnectionPool: @unchecked Sendable {
       }
       if discovery, entry.execution?.provider?.delegatingAuthorization == nil {
         try entry.execution?.validateProviderLaunch()
+      } else if source?.vendorExecution == nil,
+        let retry = try continuation.resourceRetry(
+          for: context.admission?.reference, server: server, ownedWork: hostContext?.ownedWork,
+          admitted: execution, running: entry.execution)
+      {
+        try retry.validate()
       } else {
         let managedObservation =
           source?.vendorExecution?.signature.tools[continuation.reference.toolName] == .observe
@@ -1004,6 +1044,7 @@ private actor MCPProxyConnection {
     let startedAt: Date
     let execution: PreparedExecutionContext
     var executionID: UUID { execution.executionID }
+    let resourceRetry: MCPSelectedResourceRetry?
     var vendorInvocationID: UUID? = nil
     var retainsResult = false
     var cancellationRequested = false
@@ -1219,7 +1260,7 @@ private actor MCPProxyConnection {
       pendingWorkCancellation.remove(gatewayRequestID)
       try? work.finish()
     }
-    let (context, ownership) = try await dispatchTool(
+    let (context, ownership, resourceRetry) = try await dispatchTool(
       name: name, arguments: arguments, gatewayRequestID: gatewayRequestID,
       host: host, continuation: continuation, execution: execution, managedRequest: managedRequest,
       cancellation: cancellation)
@@ -1235,6 +1276,7 @@ private actor MCPProxyConnection {
       downstreamRequestID: context.requestID,
       tool: name,
       startedAt: Date(), execution: execution,
+      resourceRetry: resourceRetry,
       vendorInvocationID: vendorInvocationID, retainsResult: retainsResult
     )
     if retainsResult {
@@ -1365,7 +1407,7 @@ private actor MCPProxyConnection {
       }
     }
     let managedRequest = vendorExecution.map { _ in ManagedMCPRequest() }
-    let (context, ownership) = try await dispatchTool(
+    let (context, ownership, resourceRetry) = try await dispatchTool(
       name: name, arguments: arguments, gatewayRequestID: gatewayRequestID,
       host: host, continuation: continuation, execution: execution, managedRequest: managedRequest)
     if Task.isCancelled, let managedRequest {
@@ -1384,6 +1426,7 @@ private actor MCPProxyConnection {
       downstreamRequestID: context.requestID,
       tool: name,
       startedAt: Date(), execution: execution,
+      resourceRetry: resourceRetry,
       vendorInvocationID: vendorExecution == nil ? nil : ownership?.providerInvocationID,
       retainsResult: true
     )
@@ -1549,8 +1592,12 @@ private actor MCPProxyConnection {
     guard let executionID, let active = activeRequests[requestID],
       active.executionID == executionID
     else { throw MCPContinuationTarget.unavailable() }
-    try MCPProviderSessionAuthority.requireMatch(
-      admitted: active.execution, running: preparedExecution)
+    if let retry = active.resourceRetry {
+      try retry.validate()
+    } else {
+      try MCPProviderSessionAuthority.requireMatch(
+        admitted: active.execution, running: preparedExecution)
+    }
   }
 
   func activeRequestsJSON(access: any ExecutionAccessChecking) -> JSONValue {
@@ -1697,7 +1744,8 @@ private actor MCPProxyConnection {
     host: HostServiceDispatch?, continuation: MCPContinuationTarget?,
     execution: PreparedExecutionContext, managedRequest: ManagedMCPRequest? = nil,
     cancellation: MCPCallCancellation? = nil
-  ) async throws -> (RequestContext<CallTool.Result>, RequestOwnership?) {
+  ) async throws -> (RequestContext<CallTool.Result>, RequestOwnership?, MCPSelectedResourceRetry?)
+  {
     if !workCatalogObserved && initializeResult?.capabilities.resources != nil {
       _ = try await listTools(
         settleManagedPages: vendorExecution != nil, cancellation: cancellation)
@@ -1726,9 +1774,19 @@ private actor MCPProxyConnection {
       }
     }
     let managedObservation = vendorExecution?.observationTools.contains(name) == true
-    try MCPProviderSessionAuthority.requireMatch(
-      admitted: execution, running: preparedExecution,
-      managedObservation: continuation != nil && managedObservation)
+    let resourceRetry: MCPSelectedResourceRetry? =
+      if vendorExecution == nil {
+        try continuation?.resourceRetry(
+          for: .init(serverID: server.id, toolName: name), server: server, ownedWork: ownedWork,
+          admitted: execution, running: preparedExecution)
+      } else { nil }
+    if let resourceRetry {
+      try resourceRetry.validate()
+    } else {
+      try MCPProviderSessionAuthority.requireMatch(
+        admitted: execution, running: preparedExecution,
+        managedObservation: continuation != nil && managedObservation)
+    }
     let invocation: MCPHostToolDirectory.InvocationLease?
     if let hostInvocationID {
       guard let hostTools, let projectID else { throw MCPError.connectionClosed }
@@ -1834,7 +1892,7 @@ private actor MCPProxyConnection {
         try await client.callTool(
           name: name, arguments: arguments.mapValues(\.sdkValue), meta: meta)
       }
-      return (request, ownership)
+      return (request, ownership, resourceRetry)
     } catch {
       settleOwnership(ownership, confirmed: !forwarding || Self.isResponseError(error))
       throw error

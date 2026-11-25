@@ -658,7 +658,7 @@ private func ownerPackFiles(_ directory: URL) throws -> [String: Data] {
 }
 
 extension WorktreeRecoveryOwnerAcceptanceTests {
-  @Test func corruptIndependentExpectedObjectCannotReleaseRecoveryFallback() throws {
+  @Test func invalidIndependentExpectedProofCannotReleaseRecoveryFallback() throws {
     try fixture { directory in
       let f = try WorktreeFixture(directory)
       let fixture = try OwnerAcceptanceFixture(f)
@@ -666,18 +666,6 @@ extension WorktreeRecoveryOwnerAcceptanceTests {
       let created = try worktrees.create(name: "expected-integrity")
       let expected = try f.privateCommit(worktrees, projectID: created.projectID)
       _ = try worktrees.publish(projectID: created.projectID) { _ in }
-      let topology = try worktrees.topology(projectID: created.projectID)
-      let git = PrivateWorktreeGit(f: f, topology: topology)
-      let blob = try git.run(["rev-parse", "HEAD:file.txt"])
-      let alternate = try git.run(["hash-object", "-w", "--stdin"], input: Data("invalid\n".utf8))
-      let objects = topology.objects.url
-      func loose(_ oid: String) -> URL {
-        objects.appendingPathComponent(String(oid.prefix(2))).appendingPathComponent(
-          String(oid.dropFirst(2)))
-      }
-      let replacement = try Data(contentsOf: loose(alternate))
-      try replacement.write(to: loose(blob))
-      #expect(try git.run(["cat-file", "-s", blob]) == "8")
       let owner = try fixture.service()
       let view = try #require(try owner.list().first)
       let record = try #require(
@@ -688,13 +676,27 @@ extension WorktreeRecoveryOwnerAcceptanceTests {
       let review = try owner.reviewRelease(
         key: view.key, generation: view.generation, selections: [record.selection],
         principal: fixture.principal)
-      let status = try owner.confirm(review, principal: fixture.principal)
-      switch status.outcome {
-      case .busy, .recoveryRequired: break
-      default: Issue.record("An invalid expected-object copy authorized release: \(status.outcome)")
+      let invalidProof = OwnerProofIntegrityFailureGit(base: f.executor)
+      let failing = try WorktreeRecoveryOwnerService(
+        storage: f.storage, derived: f.store,
+        dependencies: OwnerAcceptanceEvidence(source: f.source, store: f.store),
+        executor: invalidProof)
+      let status = try failing.confirm(review, principal: fixture.principal)
+      #expect(invalidProof.manifestCompleted)
+      #expect(invalidProof.integrityRejected)
+      guard case .busy = status.outcome else {
+        Issue.record("Failed independent integrity proof authorized release: \(status.outcome)")
+        return
       }
+      #expect(status.request == .release(review))
       #expect(try Data(contentsOf: anchor) == anchorBytes)
       #expect(try f.recoveryRecords().contains { $0.id == record.id })
+      let retry = try owner.reviewRelease(
+        key: view.key, generation: view.generation, selections: [record.selection],
+        principal: fixture.principal)
+      let released = try owner.confirm(retry, principal: fixture.principal)
+      #expect(released.outcome == .released)
+      #expect(try !f.recoveryRecords().contains { $0.id == record.id })
     }
   }
 
@@ -964,5 +966,56 @@ extension WorktreeRecoveryOwnerAcceptanceTests {
       try gate.acknowledge(writer)
       #expect(try owner.resume(review.handle, principal: fixture.principal) == cleaned)
     }
+  }
+}
+
+private final class OwnerProofIntegrityFailureGit: WorktreeGitExecuting, @unchecked Sendable {
+  let base: WorktreeTestGit
+  private let lock = NSLock()
+  private var traversed = false
+  private var rejected = false
+
+  init(base: WorktreeTestGit) { self.base = base }
+
+  var manifestCompleted: Bool {
+    lock.lock()
+    defer { lock.unlock() }
+    return traversed
+  }
+  var integrityRejected: Bool {
+    lock.lock()
+    defer { lock.unlock() }
+    return rejected
+  }
+
+  func execute(_ command: WorktreeGitCommand) throws -> WorktreeGitResult {
+    try executeBounded(command, fileOutput: nil, fileSizeLimit: nil)
+  }
+
+  func executeBounded(
+    _ command: WorktreeGitCommand, fileOutput: WorktreeGitFileOutput?, fileSizeLimit: Int?
+  ) throws -> WorktreeGitResult {
+    let proof = command.directory.path.contains("/release-proof-")
+    if proof && command.arguments.contains("fsck") {
+      lock.lock()
+      let shouldReject = traversed
+      if shouldReject { rejected = true }
+      lock.unlock()
+      if shouldReject {
+        return .init(output: Data(), error: Data("Synthetic integrity failure".utf8), exitCode: 1)
+      }
+    }
+    let result = try base.executeBounded(
+      command, fileOutput: fileOutput, fileSizeLimit: fileSizeLimit)
+    if proof && command.arguments.contains("rev-list") && result.exitCode == 0 {
+      lock.lock()
+      traversed = true
+      lock.unlock()
+    }
+    return result
+  }
+
+  func withPreparedTransaction(_ command: WorktreeGitCommand, _ body: () throws -> Void) throws {
+    try base.withPreparedTransaction(command, body)
   }
 }

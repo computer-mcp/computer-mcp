@@ -1226,7 +1226,7 @@ package actor AppGatewayService {
       try await manifestWillPublish()
       return try await preparePublication(
         inputs: .init(configuration: prepared.configuration, persisted: prepared.persisted),
-        storage: nil
+        manifestRevision: .captured(prepared.revision.id), storage: nil
       ) { resolution, install in
         try self.controlPlane.manifestStore.commit(
           prepared, resolution: resolution, providerActivation: providerActivation, install: install
@@ -1413,7 +1413,9 @@ package actor AppGatewayService {
   }
 
   private func preparePublication<Result: Sendable>(
-    inputs: AppControlPlaneService.GatewayInputs, storage: PluginInstallationStorage?,
+    inputs: AppControlPlaneService.GatewayInputs,
+    manifestRevision: GatewayManifestRevision = .current,
+    storage: PluginInstallationStorage?,
     requiredProject: (id: String, root: ProjectRootIdentity)? = nil,
     publish: (GatewayConfigurationResolution, (GatewayDatabase.ConfigurationState) -> Void) throws
       -> Result
@@ -1438,7 +1440,8 @@ package actor AppGatewayService {
       if keys.isEmpty {
         validation = try await controlPlane.prepareGateway(
           inputs: inputs, caller: .localCLI, profileID: .localAdmin, trustedPrincipalID: nil,
-          terminalSessions: terminalSessions, artifactStorage: storage)
+          terminalSessions: terminalSessions, artifactStorage: storage,
+          manifestRevision: manifestRevision)
       } else {
         for key in keys {
           guard let ownerEpoch = currentEpoch(for: key.owner) else {
@@ -1447,7 +1450,8 @@ package actor AppGatewayService {
           let preparation = try await controlPlane.prepareGateway(
             inputs: inputs, caller: key.caller, profileID: key.profileID,
             trustedPrincipalID: key.principalID, terminalSessions: try sessions(for: key.owner),
-            artifactStorage: storage, requiresControlSession: key.owner != .administration,
+            artifactStorage: storage, manifestRevision: manifestRevision,
+            requiresControlSession: key.owner != .administration,
             remoteManagement: management(key: key, epoch: ownerEpoch))
           candidates[key] = (preparation, ownerEpoch)
         }

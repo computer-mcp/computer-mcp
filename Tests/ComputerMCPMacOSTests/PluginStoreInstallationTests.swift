@@ -249,7 +249,10 @@ struct PluginStoreInstallationTests {
       #expect(
         try await store.recoverInstallations(storageRoot: fixture.installationRoot).count == 1)
       authenticated = try runtime.authenticatedSession(principalID: "fixture", transportTrace: nil)
-      #expect(authenticated?.pluginOrigins == runtime.pluginOrigins)
+      let sessionRuntime = try #require(authenticated)
+      #expect(sessionRuntime.pluginOrigins == runtime.pluginOrigins)
+      #expect(try sessionRuntime.hasCurrentDirectoryInputs())
+      _ = try sessionRuntime.makeControlSession()
       await runtime.shutdown()
       #expect(
         try await store.recoverInstallations(storageRoot: fixture.installationRoot).count == 1)

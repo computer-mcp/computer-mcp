@@ -686,7 +686,9 @@ package actor AppControlPlaneService {
   func prepareGateway(
     inputs: GatewayInputs, caller: GatewayCallerKind, profileID: GatewayProfileID,
     trustedPrincipalID: String?, terminalSessions: GatewayTerminalSessions,
-    artifactStorage: PluginInstallationStorage?, requiresControlSession: Bool = false,
+    artifactStorage: PluginInstallationStorage?,
+    manifestRevision: GatewayManifestRevision = .current,
+    requiresControlSession: Bool = false,
     remoteManagement: GatewayRemoteManagement? = nil
   ) async throws -> GatewayRuntimePreparation {
     var context = inputs.configuration.executionContext(caller: caller, profileID: profileID)
@@ -697,7 +699,8 @@ package actor AppControlPlaneService {
       platform: platform,
       mcpClient: MCPProxyClient(launcher: platform.launcher, secretStore: secretStore),
       bundledPlugins: bundledPlugins, terminalSessions: terminalSessions,
-      artifactStorage: artifactStorage, requiresControlSession: requiresControlSession,
+      artifactStorage: artifactStorage, manifestRevision: manifestRevision,
+      requiresControlSession: requiresControlSession,
       remoteManagement: remoteManagement)
   }
 

@@ -42,6 +42,8 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
   package let permissionRuntime: GatewayPermissionRuntime
   private let lifetime: GatewayRuntimeLifetime
   private let publication = GatewayRuntimePublication()
+  private let manifestRevisionID: String?
+  private let pluginStoreRevision: Int64?
   private let configurationResolution: GatewayConfigurationResolution
   package let ownedWork = GatewayOwnedWork()
   package let generationID = UUID()
@@ -77,6 +79,15 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
   package let pluginDiagnostics: [PluginResolutionDiagnostic]
   package let pluginIssues: [PluginStoreIssue]
 
+  private enum PluginDirectory: Sendable {
+    case database
+    case captured(state: PluginStoreSnapshot?, plugins: [ResolvedPlugin]?)
+
+    init(state: PluginStoreSnapshot?, plugins: [ResolvedPlugin]?) {
+      self = state == nil && plugins == nil ? .database : .captured(state: state, plugins: plugins)
+    }
+  }
+
   /// Synchronous construction starts discovery. Async callers use `make` to join failed startup cleanup.
   package convenience init(
     configuration: GatewayConfiguration,
@@ -88,6 +99,7 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
     mcpClient: (any DownstreamMCPClient)? = nil,
     plugins: [ResolvedPlugin]? = nil,
     pluginState: PluginStoreSnapshot? = nil,
+    manifestRevision: GatewayManifestRevision = .current,
     bundledPlugins: BundledPlugins = .current,
     terminalSessions: GatewayTerminalSessions = GatewayTerminalSessions(),
     requiresControlSession: Bool = false,
@@ -97,8 +109,9 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
       configuration: configuration, context: context, database: database,
       registeredProjects: registeredProjects, platform: platform,
       policyEvaluator: policyEvaluator,
-      mcpClient: mcpClient ?? MCPProxyClient(launcher: platform.launcher), plugins: plugins,
-      pluginState: pluginState,
+      mcpClient: mcpClient ?? MCPProxyClient(launcher: platform.launcher),
+      pluginDirectory: .init(state: pluginState, plugins: plugins),
+      manifestRevision: manifestRevision,
       bundledPlugins: bundledPlugins, terminalSessions: terminalSessions,
       lifetime: GatewayRuntimeLifetime(), preparationState: nil, artifactStorage: nil,
       requiresControlSession: requiresControlSession, remoteManagement: remoteManagement)
@@ -114,6 +127,7 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
     mcpClient: (any DownstreamMCPClient)? = nil,
     plugins: [ResolvedPlugin]? = nil,
     pluginState: PluginStoreSnapshot? = nil,
+    manifestRevision: GatewayManifestRevision = .current,
     bundledPlugins: BundledPlugins = .current,
     terminalSessions: GatewayTerminalSessions = GatewayTerminalSessions(),
     requiresControlSession: Bool = false,
@@ -127,8 +141,9 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
           configuration: configuration, context: context, database: database,
           registeredProjects: registeredProjects, platform: platform,
           policyEvaluator: policyEvaluator,
-          mcpClient: mcpClient ?? MCPProxyClient(launcher: platform.launcher), plugins: plugins,
-          pluginState: pluginState,
+          mcpClient: mcpClient ?? MCPProxyClient(launcher: platform.launcher),
+          pluginDirectory: .init(state: pluginState, plugins: plugins),
+          manifestRevision: manifestRevision,
           bundledPlugins: bundledPlugins, terminalSessions: terminalSessions, lifetime: lifetime,
           preparationState: nil, artifactStorage: nil,
           requiresControlSession: requiresControlSession, remoteManagement: remoteManagement)
@@ -151,6 +166,7 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
     bundledPlugins: BundledPlugins = .current,
     terminalSessions: GatewayTerminalSessions = GatewayTerminalSessions(),
     artifactStorage: PluginInstallationStorage? = nil,
+    manifestRevision: GatewayManifestRevision = .current,
     requiresControlSession: Bool = false,
     remoteManagement: (any GatewayManagementProvider)? = nil
   ) async throws -> GatewayRuntimePreparation {
@@ -163,7 +179,8 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
           registeredProjects: state.projects, platform: platform,
           policyEvaluator: GatewayPolicyEvaluator(),
           mcpClient: mcpClient ?? MCPProxyClient(launcher: platform.launcher),
-          plugins: nil, pluginState: state.plugins, bundledPlugins: bundledPlugins,
+          pluginDirectory: .database, manifestRevision: manifestRevision,
+          bundledPlugins: bundledPlugins,
           terminalSessions: terminalSessions, lifetime: lifetime,
           preparationState: state, artifactStorage: artifactStorage,
           requiresControlSession: requiresControlSession, remoteManagement: remoteManagement)
@@ -196,10 +213,7 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
   }
 
   package func publishPrepared() {
-    publication.publish(
-      revisionID: (try? database?.configurationRevisions(limit: 50))?.filter {
-        $0.activatedAt != nil && $0.activationError == nil
-      }.first?.id)
+    publication.publish()
     hostToolDirectory.attach(self)
   }
 
@@ -207,7 +221,8 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
     configuration: GatewayConfiguration, context: ExecutionContext?, database: GatewayDatabase?,
     registeredProjects: [ComputerMCPCore.RegisteredProject]?, platform: PlatformServices,
     policyEvaluator: GatewayPolicyEvaluator, mcpClient: any DownstreamMCPClient,
-    plugins: [ResolvedPlugin]?, pluginState: PluginStoreSnapshot?, bundledPlugins: BundledPlugins,
+    pluginDirectory: PluginDirectory, manifestRevision: GatewayManifestRevision,
+    bundledPlugins: BundledPlugins,
     terminalSessions: GatewayTerminalSessions, lifetime: GatewayRuntimeLifetime,
     preparationState: GatewayDatabase.ConfigurationState?,
     artifactStorage: PluginInstallationStorage?, requiresControlSession: Bool,
@@ -215,6 +230,16 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
   ) throws {
     let initializationConfiguration = configuration
     let database: GatewayDatabase? = try database ?? GatewayDatabase(inMemory: ())
+    let activeRevisionID = try database?.activeConfigurationRevisionID()
+    let manifestRevisionID: String?
+    switch manifestRevision {
+    case .current: manifestRevisionID = activeRevisionID
+    case .captured(let revisionID): manifestRevisionID = revisionID
+    }
+    guard preparationState != nil || activeRevisionID == manifestRevisionID else {
+      throw GatewayDatabaseError.configurationChanged
+    }
+    self.manifestRevisionID = manifestRevisionID
     if preparationState == nil {
       try database!.bootstrapPermissionProfiles(
         Set(GatewayProfileID.builtIns + configuration.profiles.map(\.id)).map {
@@ -234,9 +259,24 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
     var initialized = false
     defer { if !initialized { _ = lifetime.beginShutdown() } }
     var sourceConfiguration = configuration
-    try pluginState?.validate()
-    let pluginState = (pluginState ?? capturedInputs.plugins)
-      .includingBundledDefaults(bundledPlugins.packages.map(\.manifest))
+    let selectedState: PluginStoreSnapshot
+    let plugins: [ResolvedPlugin]?
+    let refreshPlugins: PluginDirectory
+    switch pluginDirectory {
+    case .database:
+      selectedState = capturedInputs.plugins
+      plugins = nil
+      refreshPlugins = .database
+      self.pluginStoreRevision = selectedState.revision
+    case .captured(let state, let supplied):
+      selectedState = state ?? capturedInputs.plugins
+      try selectedState.validate()
+      plugins = supplied
+      refreshPlugins = .captured(state: selectedState, plugins: supplied)
+      self.pluginStoreRevision = nil
+    }
+    let pluginState = selectedState.includingBundledDefaults(
+      bundledPlugins.packages.map(\.manifest))
     resolvedPluginSettings = pluginState
     let artifactLeases = try Self.retainPluginArtifacts(
       state: pluginState, plugins: plugins, database: database,
@@ -483,13 +523,11 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
       bound.trustedPrincipalID = principalID
       bound.transportTrace = trace
       bound.controlSession = nil
-      let currentPluginState = refreshDirectory ? try database?.pluginStoreSnapshot() : nil
-      let pluginsChanged = currentPluginState.map { $0.revision != pluginState.revision } ?? false
       return try GatewayRuntime(
         configuration: initializationConfiguration, context: bound, database: database,
         registeredProjects: refreshDirectory ? nil : registeredProjects, platform: platform,
         policyEvaluator: policyEvaluator, mcpClient: mcpClient,
-        plugins: pluginsChanged ? nil : plugins, pluginState: currentPluginState ?? pluginState,
+        pluginDirectory: refreshPlugins, manifestRevision: .captured(manifestRevisionID),
         bundledPlugins: bundledPlugins, terminalSessions: terminalSessions,
         lifetime: GatewayRuntimeLifetime(), preparationState: nil, artifactStorage: nil,
         requiresControlSession: requiresControlSession || sessionRequired,
@@ -517,10 +555,7 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
       plugins: capturedInputs.plugins, profileSource: capturedInputs.profileSource,
       derivedProjects: capturedInputs.derivedProjects)
     if preparationState == nil {
-      publication.publish(
-        revisionID: (try? database?.configurationRevisions(limit: 50))?.filter {
-          $0.activatedAt != nil && $0.activationError == nil
-        }.first?.id)
+      publication.publish()
       hostToolDirectory.attach(self)
     }
     initialized = true
@@ -1067,7 +1102,7 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
   package func hasCurrentDirectoryInputs() throws -> Bool {
     guard let database, let generationInputs else { return true }
     let current = try database.configurationState()
-    return current.plugins.revision == resolvedPluginSettings.revision
+    return (pluginStoreRevision == nil || current.plugins.revision == pluginStoreRevision)
       && current.projects.count == generationInputs.projects.count
       && zip(current.projects, generationInputs.projects).allSatisfy(
         GatewayDatabase.sameStoredProject)
@@ -2048,8 +2083,8 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
       paths,
       trustedHosts: Set(EgressPolicy.trustedHosts.map(HostRule.init)),
       expectedProjects: database?.projects() ?? [],
-      expectedConfigurationRevision: publication.configurationRevisionID,
-      expectedPluginRevision: resolvedPluginSettings.revision,
+      expectedConfigurationRevision: manifestRevisionID,
+      expectedPluginRevision: pluginStoreRevision,
       platformRules: permissionPlatformRules(),
       configurationRules: GatewayConfigurationPaths.capture(configuration))
     return paths

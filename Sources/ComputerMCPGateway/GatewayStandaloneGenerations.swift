@@ -3,8 +3,8 @@ import ComputerMCPDownstream
 import ComputerMCPTransport
 import Foundation
 
-/// A standalone HTTP principal retains execution owners across directory changes.
-/// The HTTP connection keeps its own consent and supplies it on every generation.
+/// A standalone connection keeps its execution owners across directory changes.
+/// HTTP connections supply their own consent on every generation.
 package actor GatewayStandaloneGenerations: GatewayAsyncToolServing {
   private var current: GatewayRuntime
   private var retired: [GatewayRuntime] = []

@@ -25,7 +25,7 @@ internal struct ManifestChange: Codable, Equatable, Sendable {
 struct PreparedManifestChange: Sendable {
   fileprivate let admissionID: UUID
   fileprivate let previous: Data?
-  fileprivate let revision: ConfigurationRevision
+  let revision: ConfigurationRevision
   fileprivate let reason: ManifestChangeReason
   let configuration: GatewayConfiguration
   let persisted: GatewayDatabase.ConfigurationState

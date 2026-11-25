@@ -74,7 +74,7 @@ package final class AtomicManifestStore: @unchecked Sendable {
   private var continuations: [UUID: AsyncStream<ManifestChange>.Continuation] = [:]
   private var knownDigest: String?
   // Protected by writeLock; disk edits become active only after validation.
-  private var configuration: GatewayConfiguration?
+  private var snapshot: Snapshot?
   private var admissionID = UUID()
 
   private var files: ManifestFileTransaction {
@@ -197,13 +197,19 @@ package final class AtomicManifestStore: @unchecked Sendable {
     try write(manifest: manifest, reason: .activated, expectedDigest: expectedDigest)
   }
 
+  package typealias Snapshot = (configuration: GatewayConfiguration, revisionID: String?)
+
   package func activeConfiguration() throws -> GatewayConfiguration {
+    try activeSnapshot().configuration
+  }
+
+  package func activeSnapshot() throws -> Snapshot {
     writeLock.lock()
     defer { writeLock.unlock() }
-    if let configuration { return configuration }
+    if let snapshot { return snapshot }
     return try files.withExclusiveAccess {
       try files.recover()
-      return try admittedConfiguration()
+      return try admittedSnapshot()
     }
   }
 
@@ -216,7 +222,7 @@ package final class AtomicManifestStore: @unchecked Sendable {
     defer { writeLock.unlock() }
     return try files.withExclusiveAccess {
       try files.recover()
-      guard try admittedConfiguration() == expected,
+      guard try admittedSnapshot().configuration == expected,
         try Self.digest(of: Data(contentsOf: manifestURL)) == currentKnownDigest()
       else { throw AtomicManifestStoreError.staleDigest }
       return try publication()
@@ -230,8 +236,8 @@ package final class AtomicManifestStore: @unchecked Sendable {
     }
   }
 
-  private func admittedConfiguration() throws -> GatewayConfiguration {
-    if let configuration { return configuration }
+  private func admittedSnapshot() throws -> Snapshot {
+    if let snapshot { return snapshot }
     guard fileManager.fileExists(atPath: manifestURL.path) else {
       throw AtomicManifestStoreError.manifestMissing
     }
@@ -241,9 +247,10 @@ package final class AtomicManifestStore: @unchecked Sendable {
     guard try Data(contentsOf: manifestURL) == data else {
       throw AtomicManifestStoreError.staleDigest
     }
-    configuration = loaded
+    let admitted = (loaded, try database.activeConfigurationRevisionID())
     setKnownDigest(try Self.digest(of: data))
-    return loaded
+    snapshot = admitted
+    return admitted
   }
 
   internal func history(limit: Int = 50) throws -> [ConfigurationRevision] {
@@ -284,7 +291,7 @@ package final class AtomicManifestStore: @unchecked Sendable {
     defer { writeLock.unlock() }
     return try files.withExclusiveAccess {
       try files.recover()
-      if let expectedConfiguration, try admittedConfiguration() != expectedConfiguration {
+      if let expectedConfiguration, try admittedSnapshot().configuration != expectedConfiguration {
         throw AtomicManifestStoreError.staleDigest
       }
       let previous = try files.currentData()
@@ -364,7 +371,7 @@ package final class AtomicManifestStore: @unchecked Sendable {
           expected: prepared.persisted, resolution: resolution, activeTunnelIDs: activeTunnelIDs,
           providerActivation: providerActivation)
       }
-      configuration = prepared.configuration
+      snapshot = (prepared.configuration, revision.id)
       admissionID = UUID()
       setKnownDigest(revision.digest)
       install(persisted)

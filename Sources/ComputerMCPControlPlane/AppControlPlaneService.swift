@@ -734,6 +734,10 @@ package actor AppControlPlaneService {
     remoteManagement: GatewayRemoteManagement? = nil
   ) async throws -> GatewayRuntime {
     try requireCurrentGatewayInputs(inputs)
+    let manifest = try manifestStore.activeSnapshot()
+    guard manifest.configuration == inputs.configuration else {
+      throw AppControlPlaneServiceError.gatewayInputsChanged
+    }
     let database = persistentState ? database : nil
     let platform = platform
     let bundledPlugins = bundledPlugins
@@ -754,7 +758,9 @@ package actor AppControlPlaneService {
       database: database, registeredProjects: inputs.projects,
       platform: platform,
       mcpClient: MCPProxyClient(launcher: platform.launcher, secretStore: secretStore),
-      plugins: plugins, pluginState: inputs.plugins, bundledPlugins: bundledPlugins,
+      plugins: plugins, pluginState: persistentState ? nil : inputs.plugins,
+      manifestRevision: .captured(persistentState ? manifest.revisionID : nil),
+      bundledPlugins: bundledPlugins,
       terminalSessions: terminalSessions, requiresControlSession: requiresControlSession,
       remoteManagement: remoteManagement)
     do {

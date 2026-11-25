@@ -1671,7 +1671,7 @@ package final class GatewayDatabase: OAuthStore, @unchecked Sendable {
     try writer.read { try ConfigurationRevisionRecord.fetchOne($0, key: id)?.value }
   }
 
-  func activeConfigurationRevisionID() throws -> String? {
+  package func activeConfigurationRevisionID() throws -> String? {
     try writer.read(Self.activeConfigurationRevisionID(in:))
   }
 

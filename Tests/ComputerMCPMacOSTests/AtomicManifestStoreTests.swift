@@ -20,6 +20,24 @@ import Testing
 @Suite
 
 final class AtomicManifestStoreTests {
+  @Test
+  func admittedSnapshotRetainsItsManifestIdentity() throws {
+    let fixture = try ManifestStoreFixture(persistent: true)
+    defer { fixture.cleanup() }
+    var configuration = GatewayConfiguration()
+    configuration.server.name = "first"
+    let first = try fixture.store.activate(manifest: configuration.exportedTOML())
+    let admitted = try fixture.store.activeSnapshot()
+    configuration.server.name = "second"
+    let second = try fixture.store.activate(
+      manifest: configuration.exportedTOML(), expectedDigest: first.digest)
+    let current = try fixture.store.activeSnapshot()
+    #expect(admitted.configuration.server.name == "first")
+    #expect(admitted.revisionID == first.id)
+    #expect(current.configuration.server.name == "second")
+    #expect(current.revisionID == second.id)
+  }
+
   @Test(arguments: [false, true])
   func installedBuiltinUpgradePublishesCurrentManifestAndPreservesHistory(legacyProfiles: Bool)
     throws

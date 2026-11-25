@@ -83,14 +83,15 @@ struct WorktreeHTTPRestartHostTests {
         try configuration.exportedTOML().write(to: manifest, atomically: true, encoding: .utf8)
       }
       let command = try ServeHTTP.parse(["--config", manifest.path, "--port", "0"])
-      let loaded = try await command.runtime.loadConfiguration(
+      let snapshot = try await command.runtime.loadConfiguration(
         database: database, platform: platform)
+      let loaded = snapshot.configuration
       let sessions = try await command.makeTerminalSessions(
         database: database, platform: platform, configuration: loaded)
       let runtime = try await GatewayRuntime.make(
         configuration: loaded,
         context: loaded.executionContext(caller: .cloudflareTunnel, profileID: .chatGPTOperate),
-        database: database, platform: platform,
+        database: database, platform: platform, manifestRevision: .captured(snapshot.revisionID),
         bundledPlugins: .init(packages: [], issues: []), terminalSessions: sessions)
       source = .registry(runtime)
       try await serve(configuration: loaded, source: source, root: root)

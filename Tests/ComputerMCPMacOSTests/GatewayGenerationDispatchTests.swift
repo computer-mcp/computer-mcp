@@ -30,6 +30,28 @@ import Testing
 struct GatewayGenerationDispatchTests {
 
   @Test(.timeLimit(.minutes(1)))
+  func controlPlaneCatalogTracksPersistentPluginRevision() async throws {
+    let fixture = try GenerationFixture()
+    defer { fixture.removeFiles() }
+    try await fixture.activate(version: 1, callers: [.cloudflareTunnel])
+    let inputs = try await fixture.control.gatewayInputs()
+    let gateway = try await fixture.control.makeGateway(
+      inputs: inputs, caller: .cloudflareTunnel, profileID: .chatGPTOperate)
+    do {
+      #expect(try gateway.hasCurrentDirectoryInputs())
+      var plugins = inputs.plugins
+      plugins.revision += 1
+      try fixture.database.savePluginStoreSnapshot(
+        plugins, expectedRevision: inputs.plugins.revision)
+      #expect(try !gateway.hasCurrentDirectoryInputs())
+      await gateway.shutdown()
+    } catch {
+      await gateway.shutdown()
+      throw error
+    }
+  }
+
+  @Test(.timeLimit(.minutes(1)))
   func standaloneCatalogRefreshKeepsItsManifestRevision() async throws {
     let fixture = try GenerationFixture()
     defer { fixture.removeFiles() }

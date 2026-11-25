@@ -79,12 +79,12 @@ struct StandaloneRuntimeOptions: ParsableArguments {
   func loadConfiguration(
     database: GatewayDatabase, platform: PlatformServices,
     diagnosticOutput: FileHandle = .standardError
-  ) async throws -> GatewayConfiguration {
+  ) async throws -> AtomicManifestStore.Snapshot {
     let manifestURL = URL(fileURLWithPath: config).standardizedFileURL
     let configuration = try GatewayConfiguration.load(
       path: manifestURL.path,
       knownPluginMCPServerIDs: database.pluginStoreSnapshot().knownMCPRegistrationIDs)
-    guard database.fileURL != nil else { return configuration }
+    guard database.fileURL != nil else { return (configuration, nil) }
     let report = try database.activatePermissionMigration(
       manifest: String(contentsOf: manifestURL, encoding: .utf8),
       baseURL: manifestURL.deletingLastPathComponent(), applications: platform.applications)
@@ -106,7 +106,7 @@ struct StandaloneRuntimeOptions: ParsableArguments {
       manifestURL: manifestURL, database: database,
       loader: GatewayManifestConfigurationLoader(
         database: database, applications: platform.applications))
-    return try store.activeConfiguration()
+    return try store.activeSnapshot()
   }
 
   func makeDatabase() throws -> GatewayDatabase {
@@ -132,7 +132,8 @@ struct ServeStdio: AsyncParsableCommand {
   func run() async throws {
     let database = try runtime.makeDatabase()
     let platform = try runtime.makePlatform()
-    let gateway = try await runtime.loadConfiguration(database: database, platform: platform)
+    let manifest = try await runtime.loadConfiguration(database: database, platform: platform)
+    let gateway = manifest.configuration
     let context = LocalCLIExecutionIdentity.bind(
       gateway.executionContext(
         caller: runtime.caller,
@@ -147,7 +148,8 @@ struct ServeStdio: AsyncParsableCommand {
       configuration: gateway,
       context: context,
       database: database,
-      platform: platform, terminalSessions: sessions
+      platform: platform, manifestRevision: .captured(manifest.revisionID),
+      terminalSessions: sessions
     )
     let serving: any GatewayAsyncToolServing =
       database.fileURL == nil ? registry : GatewayStandaloneGenerations(registry)
@@ -196,7 +198,8 @@ struct ServeHTTP: AsyncParsableCommand {
     if let controlSocket {
       platform.hostDataPaths.insert(URL(fileURLWithPath: controlSocket).standardizedFileURL)
     }
-    let gateway = try await runtime.loadConfiguration(database: database, platform: platform)
+    let manifest = try await runtime.loadConfiguration(database: database, platform: platform)
+    let gateway = manifest.configuration
     let sessions = try await makeTerminalSessions(
       database: database, platform: platform, configuration: gateway)
     let registry = try await GatewayRuntime.make(
@@ -208,7 +211,8 @@ struct ServeHTTP: AsyncParsableCommand {
         transportTrace: GatewayTransportTrace(transport: "streamable_http")
       ),
       database: database,
-      platform: platform, terminalSessions: sessions
+      platform: platform, manifestRevision: .captured(manifest.revisionID),
+      terminalSessions: sessions
     )
     let permissionControl = PermissionControlService(
       service: try database.permissionRuntime(platform: platform).service,

@@ -210,7 +210,8 @@ package final class ManagedLineProcess: @unchecked Sendable {
 
   package func sendLine(
     _ line: String, beforeWrite: (@Sendable () async throws -> Void)? = nil,
-    onInputAuthorized: (@Sendable () -> Void)? = nil
+    onInputAuthorized: (@Sendable () -> Void)? = nil,
+    onWriteCompleted: (@Sendable () -> Void)? = nil
   ) async throws {
     if let prepared {
       let checking: any ExecutionAccessChecking
@@ -226,7 +227,7 @@ package final class ManagedLineProcess: @unchecked Sendable {
       _ = try checking.accessExecution(prepared.executionID, operation: .writeInput)
     }
     onInputAuthorized?()
-    try await state.send(line: line, beforeWrite: beforeWrite)
+    try await state.send(line: line, beforeWrite: beforeWrite, onWriteCompleted: onWriteCompleted)
   }
 
   package func close() async {
@@ -635,7 +636,10 @@ private actor ManagedLineProcessState {
     await input.activate()
   }
 
-  func send(line: String, beforeWrite: (@Sendable () async throws -> Void)?) async throws {
+  func send(
+    line: String, beforeWrite: (@Sendable () async throws -> Void)?,
+    onWriteCompleted: (@Sendable () -> Void)?
+  ) async throws {
     try Task.checkCancellation()
     guard state == .starting || state == .running else {
       if state == .failed {
@@ -647,7 +651,9 @@ private actor ManagedLineProcessState {
       throw ManagedLineProcessError.oversizedMessage(maximumMessageBytes)
     }
     guard !line.contains("\n") else { throw ManagedLineProcessError.invalidConfiguration }
-    _ = try await input.write(Data((line + "\n").utf8), close: false, beforeWrite: beforeWrite)
+    _ = try await input.write(
+      Data((line + "\n").utf8), close: false, beforeWrite: beforeWrite,
+      onWriteCompleted: onWriteCompleted)
   }
 
   func inputSnapshot() -> ChildProcessInput.Snapshot { input.snapshot }

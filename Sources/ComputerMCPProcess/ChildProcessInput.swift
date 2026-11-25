@@ -82,7 +82,8 @@ internal actor ChildProcessInput {
   }
 
   func write(
-    _ data: Data, close: Bool, beforeWrite: (@Sendable () async throws -> Void)? = nil
+    _ data: Data, close: Bool, beforeWrite: (@Sendable () async throws -> Void)? = nil,
+    onWriteCompleted: (@Sendable () -> Void)? = nil
   ) async throws -> Int {
     let id = UUID()
     return try await withTaskCancellationHandler {
@@ -105,7 +106,8 @@ internal actor ChildProcessInput {
       // An unstructured owner task shields a whole frame from caller cancellation.
       // It releases admission itself, even if the caller has not resumed yet.
       let task = ExecutionTasks.startThrowing {
-        try await self.performWrite(data, close: close, beforeWrite: beforeWrite)
+        try await self.performWrite(
+          data, close: close, beforeWrite: beforeWrite, onWriteCompleted: onWriteCompleted)
       }
       writeTask = task
       return try await task.value
@@ -188,7 +190,8 @@ internal actor ChildProcessInput {
   }
 
   private func performWrite(
-    _ data: Data, close: Bool, beforeWrite: (@Sendable () async throws -> Void)?
+    _ data: Data, close: Bool, beforeWrite: (@Sendable () async throws -> Void)?,
+    onWriteCompleted: (@Sendable () -> Void)?
   ) async throws -> Int {
     defer { releaseTurn() }
     guard let writer else { throw closedError }
@@ -215,6 +218,8 @@ internal actor ChildProcessInput {
         rejectWaiters()
       }
       guard count == data.count else { throw closedError }
+      // Teardown joins this turn, so publish the full write before handing it off.
+      onWriteCompleted?()
     }
     if close {
       try await finishWriter()

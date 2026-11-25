@@ -208,7 +208,8 @@ extension WorktreeRepository {
 
   func publishLocked(
     projectID: String, preserving roots: [String], limits: WorktreePromotionLimits,
-    lock: RepositoryLock, removalID: UUID? = nil, authorize: (DerivedProjectRecord) throws -> Void
+    lock: RepositoryLock, removalID: UUID? = nil, reviewedHead: String? = nil,
+    authorize: (DerivedProjectRecord) throws -> Void
   ) throws -> WorktreePublication {
     let removal = try readRemoval(projectID)
     if let removal, removal.phase != .abandoned {
@@ -255,7 +256,7 @@ extension WorktreeRepository {
         try savePublication(journal, replacing: try publicationDiskBytes(projectID))
         return try finishPublication(
           &journal, topology: topology, limits: limits, recovery: recovery, lock: lock,
-          authorize: authorize)
+          reviewedHead: reviewedHead, authorize: authorize)
       }
   }
 
@@ -277,6 +278,7 @@ extension WorktreeRepository {
   private func finishPublication(
     _ journal: inout WorktreePublicationJournal, topology: VerifiedWorktreeTopology?,
     limits: WorktreePromotionLimits, recovery: WorktreeRecoveryStore.Locked, lock: RepositoryLock,
+    reviewedHead: String? = nil,
     authorize: (DerivedProjectRecord) throws -> Void
   ) throws -> WorktreePublication {
     var state = journal
@@ -318,6 +320,9 @@ extension WorktreeRepository {
     }
     func persistHandoff(_ value: WorktreeRecoveryHandoff) throws {
       let captured = try value.retention.capturedHead()
+      guard reviewedHead.map({ captured == $0 }) ?? true else {
+        throw WorktreeError.identityChanged("The captured commit differs from the removal review.")
+      }
       let roots = value.retention.roots
       guard Set(state.requiredRoots ?? []).isSubset(of: roots),
         let phase = WorktreePublicationJournal.Phase(rawValue: value.phase.rawValue)

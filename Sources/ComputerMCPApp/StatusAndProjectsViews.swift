@@ -372,6 +372,12 @@ struct ProjectsView: View {
   @EnvironmentObject private var model: ComputerMCPAppModel
 
   var body: some View {
+    NavigationStack {
+      projectsPage
+    }
+  }
+
+  private var projectsPage: some View {
     VStack(spacing: 0) {
       ProjectHeader(
         "Projects",
@@ -503,8 +509,22 @@ private struct ProjectRow: View {
 
       VStack(alignment: .leading, spacing: 3) {
         HStack(spacing: 8) {
-          Text(project.displayName)
-            .fontWeight(.medium)
+          NavigationLink {
+            WorktreeStorageView(model: model.worktreeRecovery, project: project)
+              .task { await model.worktreeRecovery.refresh() }
+          } label: {
+            HStack(spacing: 5) {
+              Text(verbatim: project.displayName).fontWeight(.medium)
+              Image(systemName: "chevron.right")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .accessibilityHidden(true)
+            }
+            .contentShape(Rectangle())
+          }
+          .buttonStyle(.plain)
+          .accessibilityIdentifier("project.\(project.id).worktrees")
+          .accessibilityHint(AppLocalization.string("entry.projects.section_title"))
           StateBadge(
             text: project.health.label,
             color: project.health.color

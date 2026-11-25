@@ -87,6 +87,10 @@ struct WorktreeRecoveryOwnerTests {
       #expect(throws: CancellationError.self) {
         try ownerService(f, journalIO: interruption).confirm(review, principal: principal)
       }
+      #expect(
+        try owner.list(principal: principal).first?.activeOperation?.request.handle == review.handle
+      )
+      #expect(try owner.list(principal: "another-owner").first?.activeOperation == nil)
       try FileManager.default.removeItem(at: f.repository)
       let resumed = try owner.resume(review.handle, principal: principal)
       #expect(resumed.outcome == .released)

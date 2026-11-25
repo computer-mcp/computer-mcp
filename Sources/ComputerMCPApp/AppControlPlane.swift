@@ -181,6 +181,7 @@ struct ProjectSummary: Identifiable, Sendable {
   var permissionRevision: UInt64
   var lastResolvedAt: Date?
   var healthDetail: String? = nil
+  var registeredAt: Date? = nil
 }
 
 struct ProfileSummary: Identifiable, Sendable {
@@ -410,7 +411,7 @@ struct DiagnosticsSnapshot: Sendable {
 
 @MainActor
 protocol AppControlPlane: PluginManaging, MCPRegistrationManaging, ClientAccessManaging,
-  LocalClientRegistering
+  LocalClientRegistering, WorktreeRecoveryServicing
 {
   func startApplication() async throws
   func maintainApplication() async
@@ -430,20 +431,6 @@ protocol AppControlPlane: PluginManaging, MCPRegistrationManaging, ClientAccessM
     sandboxSettings: ProviderSandboxSettings, editingApproval: Bool
   ) async throws
   func revokeProviderPermissions(reviewed: ProviderPermissionOptions) async throws
-  func fetchProjectWorktrees() async throws -> [ProjectWorktreeInventory]
-  func fetchRecoveryStores() async throws -> [RecoveryStoreView]
-  func reviewRecoveryRelease(
-    storeKey: String, generation: UUID, selections: [RecoveryRecordSelection]
-  ) async throws -> RecoveryReleaseReview
-  func confirmRecoveryRelease(_ review: RecoveryReleaseReview) async throws
-    -> RecoveryOperationStatus
-  func prepareRecoveryMaintenance(storeKey: String, generation: UUID) async throws
-    -> RecoveryMaintenancePreparation
-  func runRecoveryMaintenance(_ review: RecoveryMaintenanceReview) async throws
-    -> RecoveryOperationStatus
-  func recoveryOperation(handle: RecoveryOperationHandle) async throws -> RecoveryOperationLookup
-  func resumeRecoveryOperation(handle: RecoveryOperationHandle) async throws
-    -> RecoveryOperationStatus
   func fetchPermissionRequests() async throws -> GatewayPermissionView
   func fetchProfilePermissionOptions(id: GatewayProfileID) async throws -> ProfilePermissionOptions
   func saveProfilePermissions(_ grant: ProfileGrant, reviewed: ProfilePermissionOptions)
@@ -577,30 +564,35 @@ final class UnavailableControlPlane: AppControlPlane {
   }
   func fetchProjectWorktrees() async throws -> [ProjectWorktreeInventory] { throw unavailable() }
   func fetchRecoveryStores() async throws -> [RecoveryStoreView] { throw unavailable() }
+  func worktreeRecoveryEpoch() async throws -> UUID { throw unavailable() }
+  func reviewWorktreeRemoval(_ target: ManagedWorktreeRemovalTarget, epoch: UUID) async throws
+    -> ManagedWorktreeRemovalReview
+  { throw unavailable() }
+  func confirmWorktreeRemoval(
+    _ review: ManagedWorktreeRemovalReview, discard: Bool, epoch: UUID
+  ) async throws { throw unavailable() }
+  func worktreeRemovalOutcome(_ review: ManagedWorktreeRemovalReview) async throws
+    -> ManagedWorktreeRemovalOutcome
+  { throw unavailable() }
   func reviewRecoveryRelease(
-    storeKey: String, generation: UUID, selections: [RecoveryRecordSelection]
+    storeKey: String, generation: UUID, selections: [RecoveryRecordSelection], epoch: UUID
   ) async throws -> RecoveryReleaseReview { throw unavailable() }
-  func confirmRecoveryRelease(_ review: RecoveryReleaseReview) async throws
+  func confirmRecoveryRelease(_ review: RecoveryReleaseReview, epoch: UUID) async throws
     -> RecoveryOperationStatus
-  {
-    throw unavailable()
-  }
-  func prepareRecoveryMaintenance(storeKey: String, generation: UUID) async throws
+  { throw unavailable() }
+  func prepareRecoveryMaintenance(storeKey: String, generation: UUID, epoch: UUID) async throws
     -> RecoveryMaintenancePreparation
   { throw unavailable() }
-  func runRecoveryMaintenance(_ review: RecoveryMaintenanceReview) async throws
+  func runRecoveryMaintenance(_ review: RecoveryMaintenanceReview, epoch: UUID) async throws
     -> RecoveryOperationStatus
-  {
-    throw unavailable()
-  }
+  { throw unavailable() }
   func recoveryOperation(handle: RecoveryOperationHandle) async throws -> RecoveryOperationLookup {
     throw unavailable()
   }
-  func resumeRecoveryOperation(handle: RecoveryOperationHandle) async throws
+  func resumeRecoveryOperation(handle: RecoveryOperationHandle, epoch: UUID) async throws
     -> RecoveryOperationStatus
-  {
-    throw unavailable()
-  }
+  { throw unavailable() }
+
   func fetchPermissionRequests() async throws -> GatewayPermissionView { throw unavailable() }
   func fetchProfilePermissionOptions(id: GatewayProfileID) async throws -> ProfilePermissionOptions
   {

@@ -7,6 +7,8 @@ package struct RecoveryStoreView: Sendable {
   package let format: WorktreeObjectFormat
   package let records: [WorktreeRecoveryRecord]
   package let dependencies: [UUID: [Dependency]]
+  package let removedWorktreeIDs: Set<UUID>
+  package let activeOperation: RecoveryOperationStatus?
 
   package enum Dependency: Sendable, Equatable {
     case catalog(UUID)

@@ -962,6 +962,257 @@ final class LiveAppControlPlaneTests {
   }
 
   @Test
+  func h16RecoverySettingsUseLiveWorktreeAndRecoveryOperations() async throws {
+    let interruption = H16ReleaseInterruption()
+    try await withAppControlPlaneFixture(recoveryWillSync: interruption.check) { fixture in
+      let root = fixture.root.resolvingSymlinksInPath()
+      let source = root.appendingPathComponent("Disposable Project")
+      let foreign = root.appendingPathComponent("Foreign Checkout")
+      try FileManager.default.createDirectory(at: source, withIntermediateDirectories: false)
+      try h16Git(["init", "-b", "main"], in: source, home: root)
+      try Data("fixture\n".utf8).write(to: source.appendingPathComponent("file.txt"))
+      try h16Git(["add", "file.txt"], in: source, home: root)
+      try h16Git(["commit", "-m", "Base"], in: source, home: root)
+      try h16Git(["worktree", "add", "--detach", foreign.path, "HEAD"], in: source, home: root)
+
+      let configuration = GatewayConfiguration(
+        policy: .init(shellEnabled: true),
+        profiles: [
+          .init(
+            id: .chatGPTOperate, permissions: appPermissions([.project("*"): .granted(.write)]),
+            allowedCallers: [.localMCP])
+        ],
+        builtin: .init(enabled: ["git.worktree_add", "git.branch_delete"]),
+        projectDirectory: root)
+      _ = try await fixture.controlPlane.activateManifest(
+        configuration.exportedTOML(),
+        expectedDigest: try await fixture.controlPlane.configurationDigest())
+      try await fixture.controlPlane.setActiveGatewayProfile(.chatGPTOperate)
+      try await fixture.controlPlane.database.saveProject(
+        .init(id: "h16-fixture", displayName: "Disposable Project", rootPath: source.path))
+      try await fixture.app.startApplication()
+      let project = try #require(
+        try await fixture.app.fetchProjects().first {
+          $0.id == "h16-fixture"
+        })
+      try await fixture.app.startGateway()
+      let client = try await GatewayClientSession.connectSocket(socketURL: fixture.socketURL)
+      do {
+        func call(_ name: String, _ arguments: [String: JSONValue]) async throws
+          -> [String: JSONValue]
+        {
+          let result = try await client.call(toolName: name, arguments: .object(arguments))
+          try #require(result.result.objectValue?["isError"] != .bool(true), "\(result.result)")
+          return try #require(
+            result.result.objectValue?["structuredContent"]?.objectValue?["result"]?.objectValue)
+        }
+
+        let created = try await call(
+          "git.worktree_add", ["project_id": .string(project.id), "name": .string("review")])
+        let id = try #require(created["project_id"]?.stringValue)
+        let path = try #require(created["path"]?.stringValue)
+        let branch = try #require(created["branch"]?.stringValue)
+        try #require(path.hasPrefix(root.path + "/"))
+        let checkout = URL(fileURLWithPath: path)
+        let baseBlob = try h16Git(["rev-parse", "HEAD:file.txt"], in: checkout, home: root)
+        try h16Git(["tag", "base-blob", baseBlob], in: checkout, home: root)
+        try h16Git(
+          ["tag", "-a", "independent", "-m", "Retained fixture"], in: checkout, home: root)
+        let tag = try h16Git(["rev-parse", "refs/tags/independent"], in: checkout, home: root)
+        try h16Git(
+          ["tag", "-a", "restore-review", "-m", "Separate retained fixture"],
+          in: checkout, home: root)
+        let restoreTag = try h16Git(
+          ["rev-parse", "refs/tags/restore-review"], in: checkout, home: root)
+
+        let model = ComputerMCPAppModel(controlPlane: fixture.app).worktreeRecovery
+        await model.refresh()
+        let inventory = try #require(
+          model.projectInventory(
+            id: project.id, registeredAt: project.registeredAt))
+        let rows = model.worktrees(for: inventory)
+        let foreignRow = try #require(rows.first { $0.path == foreign.path })
+        #expect(foreignRow.state == .foreign && foreignRow.target == nil)
+        let target = try #require(rows.first { $0.target?.projectID == id }?.target)
+        let (clean, originalEpoch) = try #require(await model.reviewRemoval(target))
+        #expect(!clean.hasUncommittedChanges)
+
+        let staleFile = checkout.appendingPathComponent("changed-after-review")
+        try Data("uncommitted".utf8).write(to: staleFile)
+        await model.confirmRemoval(clean, discard: false, epoch: originalEpoch)
+        #expect(model.removals.first?.outcome == .notStarted)
+        #expect(model.removals.first?.issue?.key == "recovery.review_changed")
+        #expect(FileManager.default.fileExists(atPath: staleFile.path))
+
+        let marker = checkout.appendingPathComponent("writer.pid")
+        _ = try await call(
+          "shell.spawn",
+          [
+            "project_id": .string(id), "shell": .string("/bin/sh"),
+            "command": .string("echo $$ > writer.pid; exec /bin/sleep 60"),
+          ])
+        let deadline = ContinuousClock.now.advanced(by: .seconds(10))
+        while !FileManager.default.fileExists(atPath: marker.path), .now < deadline {
+          try await Task.sleep(for: .milliseconds(10))
+        }
+        let pid = try #require(
+          Int32(
+            String(contentsOf: marker, encoding: .utf8).trimmingCharacters(in: .newlines)))
+        try #require(pid > 1 && kill(pid, 0) == 0)
+        let (dirty, epoch) = try #require(await model.reviewRemoval(target))
+        #expect(dirty.hasUncommittedChanges)
+        await model.confirmRemoval(dirty, discard: false, epoch: epoch)
+        #expect(FileManager.default.fileExists(atPath: checkout.path))
+        await model.confirmRemoval(dirty, discard: true, epoch: epoch)
+        let removal = try #require(model.removals.first { $0.id == dirty.operationID })
+        guard case .removed(let result) = removal.outcome else {
+          Issue.record(
+            "Removal outcome was \(String(describing: removal.outcome)); \(removal.issue?.details ?? "")"
+          )
+          return
+        }
+        #expect(result.terminationWarnings.isEmpty)
+        #expect(kill(pid, 0) == -1 && errno == ESRCH)
+        #expect(!FileManager.default.fileExists(atPath: checkout.path))
+        #expect(FileManager.default.fileExists(atPath: foreign.path))
+        let postRemoval = try #require(
+          model.projectInventory(
+            id: project.id, registeredAt: project.registeredAt))
+        #expect(
+          model.worktrees(for: postRemoval).contains {
+            $0.id == .managed(target.worktreeID) && $0.state == .removed
+          })
+        try h16Render(model, project: project)
+
+        let missing = root.appendingPathComponent("Moved Fixture Source")
+        try FileManager.default.moveItem(at: source, to: missing)
+        await model.refresh()
+        #expect(
+          model.projectInventory(id: project.id, registeredAt: project.registeredAt)?
+            .isInventoryAvailable == false)
+        #expect(model.stores?.first?.records.contains { $0.oid == tag } == true)
+        try FileManager.default.moveItem(at: missing, to: source)
+        await model.refresh()
+
+        let store = try #require(model.stores?.first)
+        let storeID = RecoveryStoreIdentity(store)
+        let oldRecord = try #require(store.records.first { $0.oid == baseBlob })
+        let oldChoice = RetainedRecoverySelection(store: storeID, record: oldRecord)
+        let (staleRelease, staleEpoch) = try #require(await model.reviewRelease([oldChoice]))
+        let deleted = try await call(
+          "git.branch_delete",
+          [
+            "project_id": .string(project.id), "name": .string(branch),
+            "dry_run": .bool(false), "confirm_delete": .bool(true),
+          ])
+        #expect(deleted["deleted"] == .bool(true))
+        await model.confirm(.release(staleRelease), epoch: staleEpoch)
+        #expect(
+          model.operations.first { $0.id == staleRelease.handle.id }?.status?.outcome == .stale)
+        #expect(await model.reviewRelease([oldChoice]) == nil)
+
+        try await fixture.app.removeProject(id: project.id)
+        try FileManager.default.moveItem(at: source, to: missing)
+        await model.refresh()
+        let retainedStore = try #require(model.stores?.first)
+        #expect(RecoveryStoreIdentity(retainedStore) == storeID)
+        let tagRecord = try #require(retainedStore.records.first { $0.oid == tag })
+        let choice = RetainedRecoverySelection(store: storeID, record: tagRecord)
+        try h16Render(model, project: nil)
+
+        let (release, releaseEpoch) = try #require(await model.reviewRelease([choice]))
+        let storage = try #require(await fixture.controlPlane.database.worktreeStorage)
+        let anchor = storage.recovery.appendingPathComponent(
+          "stores/\(storeID.key)/repository.git/refs/recovery/\(tagRecord.id.uuidString.lowercased())"
+        )
+        try #require(anchor.path.hasPrefix(root.path + "/"))
+        try #require(FileManager.default.fileExists(atPath: anchor.path))
+        interruption.arm(anchor)
+        await model.confirm(.release(release), epoch: releaseEpoch)
+        let retry = try #require(model.operations.first { $0.id == release.handle.id })
+        #expect(interruption.fired && retry.canResume)
+        #expect(retry.status?.outcome == .pending)
+        await model.retry(retry)
+        #expect(model.operations.first { $0.id == release.handle.id }?.status?.outcome == .released)
+        #expect(model.stores?.first?.records.contains { $0.id == tagRecord.id } == false)
+        #expect(!model.operations.contains { $0.review.handle.action == .maintenance })
+
+        let (maintenance, maintenanceEpoch) = try #require(await model.prepareMaintenance(storeID))
+        await model.confirm(.maintenance(maintenance), epoch: maintenanceEpoch)
+        let readback = try #require(model.operations.first { $0.id == maintenance.handle.id })
+        guard case .measured(let allocation) = readback.status?.outcome else {
+          Issue.record(
+            "Expected measured storage readback, got \(String(describing: readback.status?.outcome))."
+          )
+          return
+        }
+        #expect(allocation.reclaimedBytes == allocation.baselineBytes - allocation.finalBytes)
+        #expect(readback.measuredAt != nil)
+
+        let unaffected = try #require(model.stores?.first?.records.first { $0.oid == restoreTag })
+        let restoreChoice = RetainedRecoverySelection(store: storeID, record: unaffected)
+        let (beforeRestore, beforeRestoreEpoch) = try #require(
+          await model.reviewRelease([restoreChoice]))
+        fixture.counter.forget()
+        await model.confirm(.release(beforeRestore), epoch: beforeRestoreEpoch)
+        #expect(model.authorityIssue?.key == "recovery.restore_review")
+        #expect(model.stores?.first?.records.contains { $0.id == unaffected.id } == true)
+        await client.disconnect()
+      } catch {
+        await client.disconnect()
+        throw error
+      }
+    }
+  }
+
+  @discardableResult
+  private func h16Git(_ arguments: [String], in directory: URL, home: URL) throws -> String {
+    let process = Process()
+    let output = Pipe()
+    process.executableURL = URL(fileURLWithPath: try testExecutable("git"))
+    process.currentDirectoryURL = directory
+    process.environment = [
+      "HOME": home.path, "PATH": "/usr/bin:/bin", "GIT_CONFIG_NOSYSTEM": "1",
+    ]
+    process.arguments =
+      [
+        "-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid",
+      ] + arguments
+    process.standardOutput = output
+    process.standardError = output
+    try process.run()
+    let data = output.fileHandleForReading.readDataToEndOfFile()
+    process.waitUntilExit()
+    let text = String(decoding: data, as: UTF8.self).trimmingCharacters(in: .newlines)
+    try #require(process.terminationStatus == 0, "\(text)")
+    return text
+  }
+
+  private func h16Render(_ model: WorktreeRecoveryModel, project: ProjectSummary?) throws {
+    guard
+      let bundlePath = ProcessInfo.processInfo.environment["COMPUTER_MCP_RECOVERY_RENDER_BUNDLE"]
+    else { return }
+    let bundle = try #require(Bundle(url: URL(fileURLWithPath: bundlePath)))
+    for language in ["en", "zh-Hans"] {
+      let locale = Locale(identifier: language)
+      #expect(
+        AppLocalization.string("worktree.section.title", locale: locale, resources: bundle)
+          == (language == "en" ? "Worktrees" : "工作树"))
+      for dark in [false, true] {
+        let appearance = try #require(NSAppearance(named: dark ? .darkAqua : .aqua))
+        try render(
+          NavigationStack { WorktreeStorageView(model: model, project: project) }
+            .environment(\.colorScheme, dark ? .dark : .light)
+            .environment(\.locale, locale)
+            .environment(\.localizationResources, bundle),
+          size: .init(width: 840, height: 780), appearance: appearance,
+          name:
+            "h16-\(project == nil ? "retained" : "project")-\(language)-\(dark ? "dark" : "light")")
+      }
+    }
+  }
+
+  @Test
   func testProfileActivationUpdatesAdmissionAndRejectedProfileRollsBack() async throws {
     try await withAppControlPlaneFixture { fixture in
       try await fixture.app.startApplication()
@@ -1311,12 +1562,13 @@ final class LiveAppControlPlaneTests {
     permissionRequester: any SystemPermissionRequesting = MacOSSystemPermissionRequester(),
     keychainAdapter: any KeychainAdapter = AppTestKeychainAdapter(),
     executionLauncher: ((AppControlPlaneServiceDirectories) -> ExecutionLauncher)? = nil,
+    recoveryWillSync: @escaping @Sendable () throws -> Void = {},
     operation: (AppControlPlaneFixture) async throws -> T
   ) async throws -> T {
     let fixture = try AppControlPlaneFixture(
       permissionRequester: permissionRequester,
       keychainAdapter: keychainAdapter,
-      executionLauncher: executionLauncher
+      executionLauncher: executionLauncher, recoveryWillSync: recoveryWillSync
     )
     do {
       let result = try await operation(fixture)
@@ -1345,7 +1597,8 @@ private final class AppControlPlaneFixture {
     keychainAdapter: any KeychainAdapter = AppTestKeychainAdapter(),
     registrationService: ClientRegistrationService? = nil,
     gatewayExecutablePath: String = "computer-mcp",
-    executionLauncher: ((AppControlPlaneServiceDirectories) -> ExecutionLauncher)? = nil
+    executionLauncher: ((AppControlPlaneServiceDirectories) -> ExecutionLauncher)? = nil,
+    recoveryWillSync: @escaping @Sendable () throws -> Void = {}
   ) throws {
     root = FileManager.default.temporaryDirectory
       .appendingPathComponent(UUID().uuidString, isDirectory: true)
@@ -1394,6 +1647,11 @@ private final class AppControlPlaneFixture {
       directories: directories,
       database: database,
       permissionControl: permissionControl,
+      recoveryOwner: try GatewayRecoveryOwnerService(
+        database: database, platform: platform,
+        owner: .init(
+          caller: .localApp, profileID: .localAdmin, trustedPrincipalID: "app-fixture-owner"),
+        journalIO: .init(beforeDirectorySync: recoveryWillSync)),
       manifestStore: manifestStore,
       defaultManifest: DefaultGatewayConfiguration.manifest,
       secretStore: secretStore,
@@ -1430,6 +1688,26 @@ private final class AppControlPlaneFixture {
     await app.stopApplication()
     try? FileManager.default.removeItem(at: root)
     try? FileManager.default.removeItem(at: socketURL.deletingLastPathComponent())
+  }
+}
+
+private final class H16ReleaseInterruption: @unchecked Sendable {
+  private let lock = NSLock()
+  private var state: (anchor: URL?, fired: Bool) = (nil, false)
+
+  var fired: Bool { lock.withLock { state.fired } }
+
+  func arm(_ anchor: URL) {
+    lock.withLock { state = (anchor, false) }
+  }
+
+  func check() throws {
+    try lock.withLock {
+      guard let anchor = state.anchor, !FileManager.default.fileExists(atPath: anchor.path)
+      else { return }
+      state = (nil, true)
+      throw CancellationError()
+    }
   }
 }
 

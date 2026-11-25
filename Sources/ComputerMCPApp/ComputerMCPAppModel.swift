@@ -75,6 +75,7 @@ final class ComputerMCPAppModel: ObservableObject {
   let mcpRegistrations: MCPRegistrationModel
   let clientAccess: ClientAccessModel
   let privacySecurity: PrivacySecurityModel
+  let worktreeRecovery: WorktreeRecoveryModel
   let localClients: LocalClientsModel
   private let onboardingPreferences: any OnboardingPreferenceStoring
   private let permissionCoach = PermissionCoachWindowController()
@@ -89,6 +90,7 @@ final class ComputerMCPAppModel: ObservableObject {
     let privacyService = LivePrivacySecurityService(controlPlane: controlPlane)
     let clientAccess = ClientAccessModel(controlPlane: controlPlane)
     self.privacySecurity = PrivacySecurityModel(service: privacyService, clientAccess: clientAccess)
+    self.worktreeRecovery = WorktreeRecoveryModel(service: controlPlane)
     self.controlPlane = controlPlane
     self.pluginManagement = PluginManagementModel(controlPlane: controlPlane)
     self.mcpRegistrations = MCPRegistrationModel(controlPlane: controlPlane)

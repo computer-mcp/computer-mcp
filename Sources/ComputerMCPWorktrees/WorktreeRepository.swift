@@ -77,6 +77,7 @@ package final class WorktreeRepository: Sendable {
   let storage: WorktreeStorage
   let git: WorktreeGit
   let identity: WorktreeRepositoryIdentity
+  package var repositoryIdentity: WorktreeRepositoryIdentity { identity }
   let projectRoots: [URL]
   let io: WorktreeJournalIO
   let creationLimits: WorktreePromotionLimits

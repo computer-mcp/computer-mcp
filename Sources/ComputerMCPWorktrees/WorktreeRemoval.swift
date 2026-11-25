@@ -7,6 +7,42 @@ package struct WorktreeRemovalResult: Equatable, Sendable {
   package let terminationWarnings: [String]
 }
 
+package struct ManagedWorktreeRemovalTarget: Equatable, Sendable {
+  package let source: DerivedProjectSource
+  package let projectID: String
+  package let worktreeID: UUID
+  package let generation: UUID
+  package let revision: Int64
+
+  package init(
+    source: DerivedProjectSource, projectID: String, worktreeID: UUID, generation: UUID,
+    revision: Int64
+  ) {
+    self.source = source
+    self.projectID = projectID
+    self.worktreeID = worktreeID
+    self.generation = generation
+    self.revision = revision
+  }
+
+  func matches(_ record: DerivedProjectRecord) -> Bool {
+    record.source == source && record.projectID == projectID && record.state == .active
+      && record.provenance == .host(worktreeID: worktreeID, storageGeneration: generation)
+      && record.revision == revision
+  }
+}
+
+package struct ManagedWorktreeRemovalReview: Equatable, Sendable {
+  package let operationID: UUID
+  package let target: ManagedWorktreeRemovalTarget
+  package let path: String
+  package let branch: String
+  package let head: String
+  package let hasUncommittedChanges: Bool
+  let repository: WorktreeRepositoryIdentity
+  let statusDigest: String
+}
+
 struct WorktreeRemovalJournal: Codable {
   enum Phase: String, Codable {
     case closing, preserved, content, repository, runtime, reconciling, unregistering, finished,
@@ -38,6 +74,33 @@ struct WorktreeRemovalJournal: Codable {
 }
 
 extension WorktreeRepository {
+  package func reviewRemoval(_ target: ManagedWorktreeRemovalTarget) throws
+    -> ManagedWorktreeRemovalReview
+  {
+    try withLock(validateHead: false) { _ in
+      try removalReview(target, operationID: UUID())
+    }
+  }
+
+  private func removalReview(_ target: ManagedWorktreeRemovalTarget, operationID: UUID) throws
+    -> ManagedWorktreeRemovalReview
+  {
+    guard target.source == source,
+      let record = try store.records().first(where: target.matches),
+      let creation = try readJournal(target.projectID), creation.phase == .active,
+      try matchesActiveRecord(creation, record)
+    else { throw WorktreeError.identityChanged("The worktree changed since it was listed.") }
+    let topology = try verifyTopology(
+      creation, repository: identity, source: source, validateHead: false)
+    let head = try privateMetadata(topology).head
+    let status = try status(topology)
+    try topology.verifyDirectories()
+    return .init(
+      operationID: operationID, target: target, path: record.root, branch: creation.result.branch,
+      head: head, hasUncommittedChanges: !status.isEmpty, repository: identity,
+      statusDigest: WorktreeObjectSnapshot.digest(status))
+  }
+
   /// The caller supplies the execution owner's termination barrier and live
   /// authorization, including main-checkout destinations needed by recovery.
   /// A host-reserved `operationID` names a new removal journal; an incomplete
@@ -45,12 +108,18 @@ extension WorktreeRepository {
   package func remove(
     projectID: String, force: Bool = false, operationID: UUID? = nil,
     limits: WorktreePromotionLimits = .init(),
+    review: ManagedWorktreeRemovalReview? = nil,
     terminate: (WorktreeAdmission, UUID) async throws -> Void,
     authorize: (DerivedProjectRecord, [URL]) throws -> Void
   ) async throws -> WorktreeRemovalResult {
     try limits.validate()
     let lock = try acquireLock(validateHead: false)
     defer { lock.release() }
+    if let review {
+      guard review.target.projectID == projectID, review.operationID == operationID,
+        review.repository == identity, force == review.hasUncommittedChanges
+      else { throw WorktreeError.identityChanged("The confirmed removal target changed.") }
+    }
     try WorktreeRecoveryStore(storage: storage, io: io).requireMaintenanceIdle(repository: identity)
     var pending = try readRemoval(projectID)
     if let operationID, let other = pending, other.operationID != operationID,
@@ -70,6 +139,9 @@ extension WorktreeRepository {
       pending = nil
     }
     if pending == nil {
+      if let review, try removalReview(review.target, operationID: review.operationID) != review {
+        throw WorktreeError.identityChanged("The worktree changed since removal was reviewed.")
+      }
       guard let record = try store.records().first(where: { $0.projectID == projectID }),
         record.state == .active, let creation = try readJournal(projectID),
         creation.phase == .active, try matchesActiveRecord(creation, record)
@@ -107,18 +179,42 @@ extension WorktreeRepository {
       else { throw WorktreeError.recoveryRequired("Removal registration changed.") }
       let topology = try verifyTopology(
         creation, repository: identity, source: source, validateHead: false)
-      if !force, try !status(topology).isEmpty {
+      func abandonBeforeCapture() throws {
         let publication = try readPublication(projectID)
         if publication?.removalID != journal.operationID || publication?.phase == .rejected {
           try advanceRemoval(&journal, to: .abandoned)
           try journal.admission.reopen(operationID: journal.operationID)
         }
+      }
+      let capturedByThisRemoval =
+        try readPublication(projectID).map {
+          $0.removalID == journal.operationID && $0.phase != .rejected
+        } ?? false
+      if let review, !capturedByThisRemoval {
+        do {
+          guard try removalReview(review.target, operationID: review.operationID) == review else {
+            throw WorktreeError.identityChanged("The worktree changed since removal was reviewed.")
+          }
+        } catch {
+          try abandonBeforeCapture()
+          throw error
+        }
+      } else if review == nil, !force, try !status(topology).isEmpty {
+        try abandonBeforeCapture()
         throw WorktreeError.busy("Worktree contains tracked, staged, untracked or ignored changes.")
       }
-      let publication = try publishLocked(
-        projectID: projectID, preserving: [], limits: limits, lock: lock,
-        removalID: journal.operationID, authorize: { try authorize($0, []) })
-      guard let published = try store.records().first(where: { $0.projectID == projectID }),
+      let publication: WorktreePublication
+      do {
+        publication = try publishLocked(
+          projectID: projectID, preserving: [], limits: limits, lock: lock,
+          removalID: journal.operationID, reviewedHead: review?.head,
+          authorize: { try authorize($0, []) })
+      } catch let error as WorktreeError {
+        if review != nil, case .identityChanged = error { try abandonBeforeCapture() }
+        throw error
+      }
+      guard review.map({ $0.head == publication.oid }) ?? true,
+        let published = try store.records().first(where: { $0.projectID == projectID }),
         published.worktree?.lastPublishedOID == publication.oid
       else { throw WorktreeError.recoveryRequired("Worktree changed after removal capture.") }
       try authorize(published, [])

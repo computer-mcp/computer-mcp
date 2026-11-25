@@ -701,7 +701,8 @@ struct MCPBoundHostServicesTests {
         replies.setID("provider", provider.providerAuthorization.id)
         // The drain stops this provider before capture; its reply is never delivered.
         let reply = try await fixture.providerCallback(
-          context, project: projectID, "host.projects.worktree_remove")
+          context, project: projectID, "host.projects.worktree_remove",
+          retainWriterThroughClose: cause == "complete")
         #expect(reply == nil)
         return .object([:])
       }
@@ -1837,7 +1838,8 @@ private final class HostAuthorityFixture: @unchecked Sendable {
   /// either way its reply is lost and nil is returned.
   func providerCallback(
     _ context: InvocationContext, project: String, _ name: String,
-    _ arguments: [String: JSONValue] = [:], closeAfterClaim: Bool = false
+    _ arguments: [String: JSONValue] = [:], closeAfterClaim: Bool = false,
+    retainWriterThroughClose: Bool = false
   ) async throws -> HostReply? {
     let execution = try #require(context.executionAuthority as? PreparedExecutionContext)
     let host = try #require(peer.context(for: project))
@@ -1851,7 +1853,18 @@ private final class HostAuthorityFixture: @unchecked Sendable {
     }
     let client = MCP.Client(name: "fixture-provider", version: "1")
     let outcome = HostCallbackOutcome()
+    var invocationWork: ExecutionWorkLease?
+    defer {
+      if let invocationWork {
+        #expect(throws: Never.self) { try invocationWork.finish() }
+      }
+    }
     do {
+      if retainWriterThroughClose {
+        // The peer's retirement loop below observes the stop. Like a local MCP proxy,
+        // it keeps the execution receipt until closing the host callback channel.
+        invocationWork = try execution.retainWork(cancellation: {})
+      }
       let transport = try MCPInheritedSocketTransport(
         takingOwnershipOf: try session.providerChannel.takeEndpoint())
       _ = try await client.connect(transport: transport)

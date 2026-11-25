@@ -107,13 +107,25 @@ actor MCPBoundHostServices {
   /// Audit attribution for one call. Calls may interleave across lifecycle suspension.
   private final class Scope: @unchecked Sendable {
     var invocation: MCPHostInvocation?
+    var operationLease: GatewayOwnedWork.Lease?
   }
 
   func call(name: String, arguments: [String: JSONValue]) async throws -> MCP.CallTool.Result {
+    // The private services borrow the live call's authorizations.
+    let lifetime = GatewayHostCallbackLifetime(revoke: { _ in })
+    return try await lifetime.run {
+      try await self.dispatch(name: name, arguments: arguments, lifetime: lifetime)
+    }
+  }
+
+  private func dispatch(
+    name: String, arguments: [String: JSONValue], lifetime: GatewayHostCallbackLifetime
+  ) async throws -> MCP.CallTool.Result {
     try Task.checkCancellation()
     guard !closed else { throw MCPError.connectionClosed }
     let started = ContinuousClock.now
     let scope = Scope()
+    defer { scope.operationLease?.finish() }
     guard let tool = Self.tools.first(where: { $0.name == name }) else {
       // Retired and unknown methods are not part of this contract under any spelling.
       return refusal(
@@ -135,9 +147,9 @@ actor MCPBoundHostServices {
       switch name {
       case "host.invocations.describe": reply = try describe(arguments, scope: scope)
       case "host.projects.worktree_add":
-        reply = try await mutate(.projectProvision, arguments, scope: scope)
+        reply = try await mutate(.projectProvision, arguments, scope: scope, lifetime: lifetime)
       case "host.projects.worktree_remove":
-        reply = try await mutate(.projectRemoval, arguments, scope: scope)
+        reply = try await mutate(.projectRemoval, arguments, scope: scope, lifetime: lifetime)
       case "host.projects.worktree_list": reply = try await list(arguments, scope: scope)
       default: reply = Reply(result: try snapshot(arguments, scope: scope))
       }
@@ -399,9 +411,10 @@ actor MCPBoundHostServices {
     return operation
   }
 
-  private func mutate(_ action: MCPHostServiceAction, _ args: [String: JSONValue], scope: Scope)
-    async throws -> Reply
-  {
+  private func mutate(
+    _ action: MCPHostServiceAction, _ args: [String: JSONValue], scope: Scope,
+    lifetime: GatewayHostCallbackLifetime
+  ) async throws -> Reply {
     guard let invocationID = try Self.identifier("invocation_id", in: args),
       let operationID = try Self.identifier("operation_id", in: args)
     else {
@@ -441,9 +454,15 @@ actor MCPBoundHostServices {
       else { throw WorktreeError.identityChanged("Source registration changed.") }
       // The reservation bound an admitted basis; the claim rechecks it and admits nothing.
       authorized = try Self.callAuthority(active, action: action, service: service)
-      claimed = try runtime.withHostMutation(active) { host in
-        try database.withHostAuthority(host) { sql in
-          try HostOperationStore.claim(operationID, in: sql)
+      scope.operationLease = try runtime.ownedWork.admitInvocation(
+        projectID: context.launchMetadata.project.id, resourceID: operationID.uuidString)
+      // The claim and channel cancellation share a gate. After the claim, the
+      // callback receiver must be able to leave so the channel can retire its writer.
+      claimed = try lifetime.claimOperation {
+        try runtime.withHostMutation(active) { host in
+          try database.withHostAuthority(host) { sql in
+            try HostOperationStore.claim(operationID, in: sql)
+          }
         }
       }
     } catch {
@@ -462,8 +481,7 @@ actor MCPBoundHostServices {
     let store = operations
     let storage = database.worktreeStorage
     let fallback = claimed.record
-    // Host-owned work: the effect and its settlement continue when the callback task
-    // or channel ends; the callback only awaits the settled record.
+    // Run the synchronous Git effect off the actor so the channel can close during drain.
     let settled = await Task.detached { () -> Result<HostOperationRecord, any Error> in
       Result {
         try Self.run(

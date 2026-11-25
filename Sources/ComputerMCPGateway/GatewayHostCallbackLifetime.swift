@@ -39,6 +39,21 @@ final class GatewayHostCallbackLifetime: @unchecked Sendable {
     }
   }
 
+  /// A durable operation borrows the live call's proofs. Only the worker that moves
+  /// the reservation to running may outlive the channel.
+  func claimOperation<Record>(
+    _ prepare: () throws -> (record: Record, claimed: Bool)
+  ) throws -> (record: Record, claimed: Bool) {
+    try lock.withLock {
+      guard !cancelled, !finished, !claimed, authorizations.isEmpty else {
+        throw CancellationError()
+      }
+      let result = try prepare()
+      claimed = result.claimed
+      return result
+    }
+  }
+
   /// Returns whether the receiver may leave host-owned work running. Unclaimed
   /// callbacks still cancel and join their worker before returning to the channel.
   @discardableResult

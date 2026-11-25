@@ -1,6 +1,5 @@
 import ComputerMCPConfiguration
 import ComputerMCPCore
-import ComputerMCPPersistence
 import ComputerMCPPlatform
 import ComputerMCPSandbox
 import ComputerMCPTestSupport
@@ -12,6 +11,7 @@ import Testing
 @testable import ComputerMCPEgress
 @testable import ComputerMCPGateway
 @testable import ComputerMCPPermissions
+@testable import ComputerMCPPersistence
 @testable import ComputerMCPPlugins
 @testable import ComputerMCPProcess
 
@@ -1543,7 +1543,7 @@ import Testing
     let f = try ExecutionFixture()
     let admission = try f.worktreeAdmission()
     let path = f.paths.root.appendingPathComponent("restore.sqlite").path
-    let counter = TestAuthorizationEpochCounter()
+    let counter = ReconciliationEpochCounter()
     let firstStore = SQLitePermissionStore(
       connection: try GatewayDatabaseConnection(path: path), counter: counter)
     var first: ExecutionRevocationCoordinator? = try .init(
@@ -1585,7 +1585,7 @@ import Testing
       bound.invocationInFlight = true
       for receipt in receipts { bound.children[receipt.child] = .init(recovery: receipt.recovery) }
       try bound.save(database)
-      if state == .inFlight {
+      if state == .inFlight || state == .interleavedConflict {
         try ledger.finishExecution(prebinding.id, retainUntil: .distantFuture)
       }
     }
@@ -1603,29 +1603,59 @@ import Testing
     }
     first = nil
     let epoch = try firstStore.readWithDatabase { _, ledger in ledger.authorizationEpochID }
-    let conflictAdmission = state == .conflicting ? try f.worktreeAdmission("conflict") : nil
+    let conflictAdmission =
+      state == .conflicting || state == .interleavedConflict
+      ? try f.worktreeAdmission("conflict") : nil
     let conflictingUse = try conflictAdmission?.reserve(
       ownerID: priorOwner, executionID: use.executionID)
     try await nextConnection.writer.write { database in
       var restored = prebinding
-      restored.worktreeUse = conflictingUse
-      if state == .inFlight {
-        // A completed flag does not discharge an explicit invocation receipt.
+      restored.worktreeUse = state == .interleavedConflict ? use : conflictingUse
+      if state == .inFlight || state == .interleavedConflict {
         restored.completed = true
         restored.admissionFinished = true
-        restored.invocationInFlight = true
+        restored.invocationInFlight = state == .inFlight
       }
       try restored.save(database)
     }
     #expect(try nextStore.readWithDatabase { _, ledger in ledger.authorizationEpochID } == epoch)
+    let recoveringStore: SQLitePermissionStore
+    if state == .interleavedConflict {
+      let conflictingUse = try #require(conflictingUse)
+      let restoreConnection = try GatewayDatabaseConnection(path: path)
+      // Reconciliation first repairs the released children, then reads SQL to
+      // compare the prior writer. Restore after that read commits.
+      let restoreAfter = counter.accesses + 2
+      recoveringStore = .init(connection: nextConnection, counter: counter) { stage in
+        guard stage == .afterCommit, counter.accesses == restoreAfter else { return }
+        try restoreConnection.writer.write { database in
+          var restored = try #require(try ExecutionRuntimeRecord.load(prebinding.id, database))
+          try #require(restored.worktreeUse == use)
+          restored.worktreeUse = conflictingUse
+          try restored.save(database)
+        }
+      }
+    } else {
+      recoveringStore = nextStore
+    }
     let next = try ExecutionRevocationCoordinator(
-      store: nextStore, launcher: .init(platform: f.platform), directory: f.directory)
+      store: recoveringStore, launcher: .init(platform: f.platform), directory: f.directory)
     #expect(next.ownerIdentity != priorOwner)
 
     if state == .conflicting {
       await #expect(throws: WorktreeError.self) { try await next.recover() }
       let conflict = try #require(conflictAdmission)
       #expect(try conflict.close(operationID: UUID()) == [#require(conflictingUse)])
+    } else if state == .interleavedConflict {
+      await #expect(throws: WorktreeError.self) { try await next.reconcile() }
+      let conflictingUse = try #require(conflictingUse)
+      try nextStore.readWithDatabase { database, ledger in
+        let restored = try ExecutionRuntimeRecord.load(prebinding.id, database)
+        #expect(restored?.worktreeUse == conflictingUse)
+        #expect(ledger.authorizationEpochID == epoch)
+      }
+      let conflict = try #require(conflictAdmission)
+      #expect(try conflict.close(operationID: UUID()) == [conflictingUse])
     } else if state == .prebinding {
       let gate = ReconciliationTestGate()
       lastChild.setCancellation { _ in await gate.wait() }
@@ -1751,7 +1781,7 @@ import Testing
 }
 
 enum RestoredWriterState: CaseIterable, Sendable {
-  case prebinding, conflicting, inFlight
+  case prebinding, conflicting, inFlight, interleavedConflict
 }
 
 private final class ReconciliationEpochCounter: AuthorizationEpochCounter, @unchecked Sendable {

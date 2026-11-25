@@ -1133,7 +1133,7 @@ package final class ExecutionRevocationCoordinator: ExecutionRecoveryAuthorizing
     } else {
       snapshot = (preview.0, preview.1)
     }
-    let confirmedWorktreeReceipts = try confirmedWorktreeReceipts(in: snapshot.0)
+    let completedWorktreeReceipts = try worktreeReceiptsForCompletedExecutions(in: snapshot.0)
     var firstError: (any Error)?
     for record in snapshot.0 {
       if let firstError { throw firstError }
@@ -1248,11 +1248,26 @@ package final class ExecutionRevocationCoordinator: ExecutionRecoveryAuthorizing
           guard sealAdmissionIfDrained(completed.id) else { continue }
           if let use = completed.worktreeUse {
             guard completed.invocationInFlight != true else { continue }
-            if !confirmedWorktreeReceipts.contains(completed.id) {
-              guard
-                try journal.all().filter({ $0.execution == completed.id }).allSatisfy(\.completed)
-              else { continue }
+            let cached = completedWorktreeReceipts[completed.id]
+            let receipts: [ExecutionRecoveryJournal.Entry]
+            if let cached, cached.allSatisfy(\.completed) {
+              receipts = cached
+            } else {
+              receipts = try journal.all().filter { $0.execution == completed.id }
             }
+            // The completion row can come from a later SQL snapshot than the
+            // restore check. Compare the actual writer with the sealed receipts.
+            if receipts.contains(where: { $0.worktreeUse != nil }) {
+              guard use.executionID == completed.id, use.ownerID == completed.ownerID,
+                receipts.allSatisfy({
+                  $0.worktreeUse == use && $0.owner == completed.ownerID
+                    && $0.boot == completed.boot
+                })
+              else {
+                throw WorktreeError.identityChanged("Restored worktree writer identity changed.")
+              }
+            }
+            guard receipts.allSatisfy(\.completed) else { continue }
             try use.admission.acknowledge(use)
           }
           // Ports cannot be recycled while any member remains unconfirmed.
@@ -1401,15 +1416,21 @@ package final class ExecutionRevocationCoordinator: ExecutionRecoveryAuthorizing
     }
   }
 
-  private func confirmedWorktreeReceipts(in records: [ExecutionRuntimeRecord]) throws -> Set<UUID> {
+  private func worktreeReceiptsForCompletedExecutions(in records: [ExecutionRuntimeRecord])
+    throws -> [UUID: [ExecutionRecoveryJournal.Entry]]
+  {
     let completed = Set(records.lazy.filter { $0.completed && $0.worktreeUse != nil }.map(\.id))
-    guard !completed.isEmpty else { return [] }
+    guard !completed.isEmpty else { return [:] }
     return try publication.withLock {
       // Seal before taking the receipt snapshot. A new child can no longer publish
       // for these executions, even if a database restore makes a row appear live.
       lock.withLock { closedAdmissions.formUnion(completed) }
-      let unconfirmed = try journal.all().lazy.filter { !$0.completed }.map(\.execution)
-      return completed.subtracting(unconfirmed)
+      var receiptsByExecution = Dictionary(
+        uniqueKeysWithValues: completed.map { ($0, [ExecutionRecoveryJournal.Entry]()) })
+      for receipt in try journal.all() {
+        receiptsByExecution[receipt.execution]?.append(receipt)
+      }
+      return receiptsByExecution
     }
   }
 

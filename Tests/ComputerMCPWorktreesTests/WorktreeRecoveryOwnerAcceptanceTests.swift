@@ -176,11 +176,25 @@ struct WorktreeRecoveryOwnerAcceptanceTests {
       let receiptURL = fixture.storeDirectory(view.key).appendingPathComponent(
         "released/" + retired.id.uuidString.lowercased() + ".json")
       let original = try Data(contentsOf: receiptURL)
+      let decoded = try JSONDecoder().decode(WorktreeRecoveryReleaseReceipt.self, from: original)
+      #expect(try recoveryJSON(decoded) == original)
       if contradictory {
-        var receipt = try #require(JSONSerialization.jsonObject(with: original) as? [String: Any])
-        receipt["requestDigest"] = String(repeating: "f", count: 64)
-        try JSONSerialization.data(withJSONObject: receipt, options: [.sortedKeys]).write(
-          to: receiptURL)
+        let replacementDigest = String(
+          repeating: decoded.requestDigest.first == "f" ? "e" : "f", count: 64)
+        let originalField = "\"requestDigest\":\"\(decoded.requestDigest)\""
+        let replacementField = "\"requestDigest\":\"\(replacementDigest)\""
+        let originalText = try #require(String(data: original, encoding: .utf8))
+        #expect(originalText.components(separatedBy: originalField).count == 2)
+        let mutatedText = originalText.replacingOccurrences(
+          of: originalField, with: replacementField)
+        let mutated = Data(mutatedText.utf8)
+        let changed = try JSONDecoder().decode(WorktreeRecoveryReleaseReceipt.self, from: mutated)
+        #expect(changed.requestDigest == replacementDigest)
+        #expect(try recoveryJSON(changed) == mutated)
+        #expect(
+          mutatedText.replacingOccurrences(of: replacementField, with: originalField)
+            == originalText)
+        try mutated.write(to: receiptURL)
       }
       let expectedReceipt = try Data(contentsOf: receiptURL)
       let anchor = fixture.storeDirectory(view.key).appendingPathComponent(

@@ -344,8 +344,10 @@ struct WorktreeRecoveryStoreTests {
       #expect(probe.calls == 3)
       #expect(verifications == 3)
       try f.store.withExclusive(repository: f.identity) { locked in
-        #expect(try locked.catalog().records.isEmpty)
-        #expect(try locked.releaseReceipt(recordID: record.id) == receipt)
+        let catalog = try locked.catalog()
+        let archived = try locked.releaseReceipt(recordID: record.id)
+        #expect(catalog.records.isEmpty)
+        #expect(archived == receipt)
       }
     }
   }

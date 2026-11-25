@@ -18,6 +18,14 @@ struct WorktreeRestartSpec: Codable {
   let source: String
   let managed: Bool
   let gitExecutable: String
+
+  var directories: AppControlPlaneServiceDirectories? {
+    managed ? GatewayManagedHostFixture.directories(root: URL(fileURLWithPath: root)) : nil
+  }
+
+  var databaseURL: URL {
+    directories?.database ?? URL(fileURLWithPath: root).appendingPathComponent("state.sqlite")
+  }
 }
 
 @Suite(
@@ -31,9 +39,9 @@ struct WorktreeHTTPRestartHostTests {
     let spec = try JSONDecoder().decode(
       WorktreeRestartSpec.self, from: Data(contentsOf: URL(fileURLWithPath: path)))
     let root = URL(fileURLWithPath: spec.root)
-    let directories = spec.managed ? GatewayManagedHostFixture.directories(root: root) : nil
+    let directories = spec.directories
     try directories?.prepare()
-    let location = directories?.database ?? root.appendingPathComponent("state.sqlite")
+    let location = spec.databaseURL
     let fresh = !FileManager.default.fileExists(atPath: location.path)
     let database = try GatewayDatabase(
       path: location.path, applicationSupportRoot: directories?.applicationSupport)

@@ -37,18 +37,9 @@ struct GatewayToolCatalogTests {
     let configuration = GatewayConfiguration(
       runtime: .init(caller: .secureTunnel, profileID: .chatGPTObserve), profiles: [profile])
     let providers = GenerationCatalogProviders()
-    let base = fixtureHostedPlatform()
-    let platform = PlatformServices(
-      launcher: base.launcher, projectGrants: base.projectGrants,
-      pluginDirectories: base.pluginDirectories, applications: base.applications,
-      toolProviders: providers, managementToolNames: base.managementToolNames,
-      executableSearchDirectories: base.executableSearchDirectories,
-      gitExecutable: base.gitExecutable,
-      fileChanges: base.fileChanges, permissionPolicyReader: base.permissionPolicyReader,
-      executionProxy: base.executionProxy, hostDataPaths: base.hostDataPaths)
     let gateway = try GatewayRuntime(
       configuration: configuration, database: database,
-      registeredProjects: try database.projects(), platform: platform)
+      registeredProjects: try database.projects(), platform: providers.platform)
     let http = GatewayHTTPRuntime(
       configuration: configuration, registry: gateway, host: "127.0.0.1", port: 0,
       publicBaseURL: nil, accessToken: "catalog-generation-token")
@@ -108,6 +99,34 @@ struct GatewayToolCatalogTests {
       await gateway.shutdown()
       throw error
     }
+  }
+
+  @Test
+  func explicitCatalogRefreshPublishesProjectlessProviderChanges() async throws {
+    let database = try GatewayDatabase(inMemory: ())
+    let profile = ProfileGrantConfig(
+      id: .chatGPTObserve, permissions: fixturePermissions([:]), allowedCallers: [.localMCP])
+    try database.saveProfile(profile.grant)
+    let providers = GenerationCatalogProviders(projectID: "unscoped")
+    let gateway = try GatewayRuntime(
+      configuration: GatewayConfiguration(
+        runtime: .init(caller: .localMCP, profileID: profile.id), profiles: [profile]),
+      context: .init(
+        caller: .localMCP, profileID: profile.id, trustedPrincipalID: "catalog-reader"),
+      database: database, registeredProjects: [], platform: providers.platform)
+    do {
+      let entry = try #require(providers.latest)
+      #expect(try await gateway.listToolsAsync(context: .empty).contains { $0.name == "sample" })
+      entry.source.replace(names: ["updated"], revision: 2)
+      try await gateway.refreshTools(context: .empty)
+      let names = try await gateway.listToolsAsync(context: .empty).map(\.name)
+      #expect(names.contains("updated"))
+      #expect(!names.contains("sample"))
+    } catch {
+      await gateway.shutdown()
+      throw error
+    }
+    await gateway.shutdown()
   }
 
   @Test
@@ -887,6 +906,22 @@ private final class GenerationCatalogProviders: GatewayToolProviderFactory, Send
     let source = CatalogSourceFixture()
     let changes = GatewayToolChangeBroadcaster()
   }
+  private let projectID: String
+
+  init(projectID: String = "fixture") { self.projectID = projectID }
+
+  var platform: PlatformServices {
+    let base = fixtureHostedPlatform()
+    return PlatformServices(
+      launcher: base.launcher, projectGrants: base.projectGrants,
+      pluginDirectories: base.pluginDirectories, applications: base.applications,
+      toolProviders: self, managementToolNames: base.managementToolNames,
+      executableSearchDirectories: base.executableSearchDirectories,
+      gitExecutable: base.gitExecutable,
+      fileChanges: base.fileChanges, permissionPolicyReader: base.permissionPolicyReader,
+      executionProxy: base.executionProxy, hostDataPaths: base.hostDataPaths)
+  }
+
   private let entries = NIOLockedValueBox<[Entry]>([])
   var latest: Entry? { entries.withLockedValue { $0.last } }
 
@@ -896,7 +931,7 @@ private final class GenerationCatalogProviders: GatewayToolProviderFactory, Send
     mcpClient: any DownstreamMCPClient, hostContext: MCPHostContext
   ) -> GatewayToolRegistry {
     let entry = Entry()
-    if hostContext.launchMetadata.project.id == "fixture" {
+    if hostContext.launchMetadata.project.id == projectID {
       entries.withLockedValue { $0.append(entry) }
     }
     return GatewayToolRegistry(

@@ -452,9 +452,10 @@ directory. Recovery requires the same storage namespace. HTTP connections do
 not own local processes and do not use these receipts.
 
 The receipt records the host PID and process start time, not credentials,
-arguments, plugin grants or executable authorization. The supervisor and its
-watchdog inherit the locked file reference before the native command starts;
-the native command does not inherit it. New sessions from live host owners
+arguments, plugin grants or executable authorization. In an unprepared launch,
+the supervisor and watchdog inherit the receipt lock. In a prepared provider
+launch, the lock stays in the host and the launcher tracks the provider
+execution. The native command never inherits the receipt lock. New sessions from live host owners
 remain independent. If an owner has exited or its PID has been reused while
 the process lock remains held, startup fails with `mcp.cleanup_pending`.
 Releasing the orphaned lock permits the next startup to reconcile the receipt.

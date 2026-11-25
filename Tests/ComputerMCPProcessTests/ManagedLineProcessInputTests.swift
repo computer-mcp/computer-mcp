@@ -38,6 +38,31 @@ struct ManagedLineProcessInputTests {
   }
 
   @Test
+  func queuedWriteRefusalSendsNoBytesAndPassesTheTurn() async throws {
+    let input = ChildProcessInput(closedError: Failure.closed, inputClosedError: Failure.eof)
+    let writer = ScriptedWriter(end: .zero)
+    defer { writer.release.continuation.finish() }
+    await input.attach(writer)
+
+    let first = Task { try await input.write(Data("first".utf8), close: false) }
+    for await _ in writer.entered.stream {}
+    let rejected = Task {
+      try await input.write(Data("expired".utf8), close: false) { throw Failure.library }
+    }
+    try await waitUntil { input.snapshot.pendingWrites == 2 }
+    let last = Task { try await input.write(Data("last".utf8), close: false) }
+    try await waitUntil { input.snapshot.pendingWrites == 3 }
+    writer.release.continuation.finish()
+
+    await #expect(throws: Failure.closed) { try await first.value }
+    await #expect(throws: Failure.library) { try await rejected.value }
+    #expect(try await last.value == 4)
+    #expect(await writer.operations == ["first", "last"])
+    #expect(!input.snapshot.retired)
+    await input.finish()
+  }
+
+  @Test
   func cancellationAtTurnHandoffPassesTheTurnWithoutWriting() async throws {
     let input = ChildProcessInput(closedError: Failure.closed, inputClosedError: Failure.eof)
     let writer = ScriptedWriter(end: .zero)

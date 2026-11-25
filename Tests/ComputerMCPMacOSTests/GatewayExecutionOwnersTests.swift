@@ -32,6 +32,121 @@ struct GatewayExecutionOwnersTests {
     }
   }
 
+  @Test(.nativeIntegration)
+  func derivedProjectDirectoryUsesInheritedAccessAndKeepsTheExactOwner() async throws {
+    let fixture = try FixedHostFixture(fullAccess: false, lifecycle: true)
+    try await fixture.run { fixture in
+      try await fixture.initializeRepository()
+      func router(principalID: String) async throws -> GatewayStandaloneGenerations {
+        let runtime = try await GatewayRuntime.make(
+          configuration: fixture.configuration,
+          context: .init(
+            caller: .localMCP, profileID: .chatGPTOperate, trustedPrincipalID: principalID),
+          database: fixture.database, platform: fixture.platform,
+          bundledPlugins: .init(packages: [], issues: []), requiresControlSession: true)
+        return GatewayStandaloneGenerations(runtime)
+      }
+      let calls = try await router(principalID: fixture.session.principalID)
+      do {
+        let ownerSession = try await calls.makeControlSession()
+        defer { ownerSession.end() }
+        func call(
+          _ name: String, _ arguments: [String: JSONValue],
+          using router: GatewayStandaloneGenerations? = nil, session: GatewayControlSession? = nil
+        ) async throws -> JSONValue {
+          try await (router ?? calls).callToolForMCPAsync(
+            name: name, arguments: .object(arguments),
+            context: .init(session: session ?? ownerSession))
+        }
+        func payload(_ result: JSONValue) throws -> [String: JSONValue] {
+          try #require(result.objectValue?["isError"] != .bool(true), "\(result)")
+          return try #require(
+            result.objectValue?["structuredContent"]?.objectValue?["result"]?.objectValue)
+        }
+        func errorCode(_ result: JSONValue) -> String? {
+          result.objectValue?["structuredContent"]?.objectValue?["error"]?.objectValue?["code"]?
+            .stringValue
+        }
+        let created = try payload(
+          await call(
+            "git.worktree_add", ["project_id": .string("fixture"), "name": .string("owners")]))
+        let projectID = try #require(created["project_id"]?.stringValue)
+        let scope: [String: JSONValue] = ["project_id": .string(projectID)]
+        #expect(try fixture.database.derivedSourceID(for: projectID) == "fixture")
+        let grant = try #require(fixture.database.profiles().first { $0.id == .chatGPTOperate })
+        #expect(grant.permissions.state(for: .project("fixture")) == .granted(.write))
+        #expect(grant.permissions.state(for: .project(projectID)) == .notGranted)
+
+        let started = try payload(
+          await call(
+            "process.spawn",
+            [
+              "project_id": .string(projectID), "id": .string("fixture"),
+              "argv": .array([.string("-c"), .string("exec /bin/cat")]),
+            ]))
+        let processID = try #require(started["process_id"]?.stringValue)
+        let directory = try payload(await call("runtime.owners.list", scope))
+        let owners = try #require(directory["owners"]?.arrayValue)
+        let record = try #require(
+          owners.first {
+            $0.objectValue?["resource_id"] == .string(processID)
+          }?.objectValue)
+        let owner = try GatewayOwnerSelection(record["owner"])
+        #expect(owner.projectID == projectID)
+        let sourceDirectory = try payload(
+          await call("runtime.owners.list", ["project_id": .string("fixture")]))
+        #expect(
+          sourceDirectory["owners"]?.arrayValue?.contains {
+            $0.objectValue?["resource_id"] == .string(processID)
+          } == false)
+
+        let selection: [String: JSONValue] = [
+          "project_id": .string(projectID), "owner": owner.json, "tool": .string("process.read"),
+          "arguments": .object(["process_id": .string(processID)]),
+        ]
+        let result = try await call("runtime.owners.call", selection)
+        #expect(try payload(result)["is_running"] == .bool(true))
+        var wrongProject = selection
+        wrongProject["project_id"] = .string("fixture")
+        let mismatched = try await call("runtime.owners.call", wrongProject)
+        #expect(errorCode(mismatched) == "runtime.owner_unavailable")
+
+        let foreign = try await router(principalID: "other-owner")
+        do {
+          let session = try await foreign.makeControlSession()
+          defer { session.end() }
+          let foreignDirectory = try payload(
+            await call("runtime.owners.list", scope, using: foreign, session: session))
+          #expect(foreignDirectory["owners"] == .array([]))
+          let refused = try await call(
+            "runtime.owners.call", selection, using: foreign, session: session)
+          #expect(errorCode(refused) == "runtime.owner_unavailable")
+        } catch {
+          await foreign.shutdown()
+          throw error
+        }
+        await foreign.shutdown()
+
+        let permissionOwner = try GatewayPermissionOwner(
+          context: .init(caller: .localApp, profileID: .localAdmin, trustedPrincipalID: "owner"),
+          validate: {})
+        let permissionService = fixture.runtime.permissionRuntime.service
+        let view = try permissionService.view(owner: permissionOwner)
+        _ = try permissionService.revokePermission(
+          .project("fixture"), profileID: .chatGPTOperate, owner: permissionOwner,
+          expectedRevision: view.revision)
+        let revokedDirectory = try await call("runtime.owners.list", scope)
+        #expect(errorCode(revokedDirectory) == "permission.denied")
+        let revokedSelection = try await call("runtime.owners.call", selection)
+        #expect(errorCode(revokedSelection) == "permission.invalid_authorization")
+      } catch {
+        await calls.shutdown()
+        throw error
+      }
+      await calls.shutdown()
+    }
+  }
+
   @Test
   func directoryPagesHaveBoundedBytesAndExcludeForeignScopesAndRevokedGrants() async throws {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)

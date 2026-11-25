@@ -22,26 +22,11 @@ final class MCPCallCancellation: Sendable {
   }
 
   func install(
-    onDeliveryFailure: @escaping @Sendable () -> Void,
+    onDeliveryFailure: (@Sendable () -> Void)?,
     _ send: @escaping @Sendable () async throws -> Void
   ) {
     let action: @Sendable () async -> Void = { [deliveryTimeout] in
-      await withTaskGroup(of: Bool.self) { group in
-        group.addTask {
-          do {
-            try await send()
-            return true
-          } catch { return false }
-        }
-        group.addTask {
-          do { try await Task.sleep(for: deliveryTimeout) } catch { return true }
-          return false
-        }
-        if await group.next() == false { onDeliveryFailure() }
-        group.cancelAll()
-        // Failure retires the connection, unblocking a transport write that ignored cancellation.
-        await group.waitForAll()
-      }
+      await Self.deliver(within: deliveryTimeout, onDeliveryFailure: onDeliveryFailure, send)
     }
     state.withLockedValue {
       guard !$0.finished else { return }
@@ -51,6 +36,35 @@ final class MCPCallCancellation: Sendable {
         $0.action = action
       }
     }
+  }
+
+  static func deliver(
+    within timeout: Duration, onDeliveryFailure: (@Sendable () -> Void)?,
+    _ send: @escaping @Sendable () async throws -> Void
+  ) async {
+    let (outcomes, outcome) = AsyncStream<Bool>.makeStream(bufferingPolicy: .bufferingOldest(1))
+    let writer = Task {
+      do {
+        try await send()
+        outcome.yield(true)
+      } catch { outcome.yield(false) }
+    }
+    let deadline = Task {
+      do {
+        try await Task.sleep(for: timeout)
+        outcome.yield(false)
+      } catch {}
+    }
+    for await delivered in outcomes {
+      if !delivered { onDeliveryFailure?() }
+      break
+    }
+    outcome.finish()
+    deadline.cancel()
+    writer.cancel()
+    // Advisory delivery may have reached transport-owned frame I/O. The connection
+    // keeps that frame indivisible and the caller can leave at the delivery deadline.
+    if onDeliveryFailure != nil { await writer.value }
   }
 
   func cancel() {

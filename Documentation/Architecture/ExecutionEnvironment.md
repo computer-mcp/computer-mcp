@@ -181,13 +181,13 @@ explicit local-owner host administration from principal tool execution, includin
 local stdio MCP and plugin processes. The mechanisms below preserve the selected
 context; they do not classify every supervised process as host infrastructure.
 
-- `ManagedLineProcess` starts its supervisor through the launcher, retaining the
-  child job-control group, owner-death watchdog and termination grace periods.
-  Nonblocking descriptor input preserves FIFO admission and complete protocol
-  frames; bounded stdout framing and stderr draining run independently. The host
-  service descriptor and supervisor ownership lock are explicitly mapped into the
-  child. EOF, cancellation and failure join input and output before retiring the
-  execution's resources.
+- For an unprepared administration launch, `ManagedLineProcess` starts a
+  supervisor with a child job-control group and an owner-death watchdog. The
+  supervisor and watchdog inherit the ownership lock. For a prepared provider,
+  the launcher starts the reviewed executable directly and tracks its execution.
+  An adapter with scoped host services receives the host-service descriptor.
+  Both launch paths use ordered nonblocking input and independent output drains.
+  Teardown joins the I/O before releasing execution resources.
 - `PluginArchivePreparation` uses launcher capture with a read-only archive input
   descriptor, an explicit inherited installation lock, private working directory,
   and only fixed `PATH`, `LANG` and job-owned `TMPDIR`. Capture limits are inclusive;

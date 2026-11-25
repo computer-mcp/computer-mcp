@@ -75,6 +75,30 @@ struct MCPCallCancellationTests {
   }
 
   @Test
+  func advisoryDeadlineLetsTheCallerLeaveAnAdmittedFrame() async {
+    let cancellation = MCPCallCancellation(deliveryTimeout: .milliseconds(250))
+    let started = CancellationWriterGate()
+    let release = CancellationWriterGate()
+    let completed = CancellationWriterGate()
+    cancellation.install(onDeliveryFailure: nil) {
+      await started.release()
+      await release.wait()
+      await completed.release()
+    }
+    let watchdog = Task {
+      do { try await Task.sleep(for: .seconds(3)) } catch { return }
+      Issue.record("Caller settlement waited for the admitted advisory frame.")
+      await release.release()
+    }
+    defer { watchdog.cancel() }
+    cancellation.cancel()
+    await started.wait()
+    await cancellation.finish()
+    await release.release()
+    await completed.wait()
+  }
+
+  @Test
   func alreadyCancelledCallCannotStartADownstreamProcess() async throws {
     let client = MCPProxyClient(launcher: testExecutionLauncher())
     let gate = CancellationWriterGate()

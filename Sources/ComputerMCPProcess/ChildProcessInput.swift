@@ -81,7 +81,9 @@ internal actor ChildProcessInput {
     ExecutionTasks.start { await self.rejectWaiters() }
   }
 
-  func write(_ data: Data, close: Bool) async throws -> Int {
+  func write(
+    _ data: Data, close: Bool, beforeWrite: (@Sendable () async throws -> Void)? = nil
+  ) async throws -> Int {
     let id = UUID()
     return try await withTaskCancellationHandler {
       try Task.checkCancellation()
@@ -102,7 +104,9 @@ internal actor ChildProcessInput {
 
       // An unstructured owner task shields a whole frame from caller cancellation.
       // It releases admission itself, even if the caller has not resumed yet.
-      let task = ExecutionTasks.startThrowing { try await self.performWrite(data, close: close) }
+      let task = ExecutionTasks.startThrowing {
+        try await self.performWrite(data, close: close, beforeWrite: beforeWrite)
+      }
       writeTask = task
       return try await task.value
     } onCancel: {
@@ -183,11 +187,15 @@ internal actor ChildProcessInput {
     shared.withLockedValue { $0.snapshot.pendingWrites = waiters.count + (turnHeld ? 1 : 0) }
   }
 
-  private func performWrite(_ data: Data, close: Bool) async throws -> Int {
+  private func performWrite(
+    _ data: Data, close: Bool, beforeWrite: (@Sendable () async throws -> Void)?
+  ) async throws -> Int {
     defer { releaseTurn() }
     guard let writer else { throw closedError }
     var count = 0
     if !data.isEmpty {
+      try await beforeWrite?()
+      if beforeWrite != nil, let error = currentError { throw error }
       shared.withLockedValue { $0.snapshot.writeInProgress = true }
       observer?(.writeStarted)
       do {

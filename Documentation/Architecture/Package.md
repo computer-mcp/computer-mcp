@@ -422,9 +422,10 @@ supervisor PID wait. Idle close can use one additional termination grace for EOF
 Shell cancellation delegates to `ExecutionOwnership`, whose termination and
 confirmation do not wait for input to drain. The descriptor adapter uses
 nonblocking writes, stops them on execution cancellation or exit, joins admitted
-input, then closes the descriptor. Managed transports retain their supervisor and
-watchdog while the launcher tracks execution ownership. `pendingWrites` counts queued plus outstanding operations,
-including explicit EOF.
+input, then closes the descriptor. The launcher tracks execution ownership on
+both paths. An unprepared administration launch also uses a supervisor and
+watchdog. `pendingWrites` counts queued and outstanding operations, including
+explicit EOF.
 
 Shell callers running in tasks use `writeAsync`, including the shell tool
 provider, so their cancellation reaches admission. The synchronous `write`

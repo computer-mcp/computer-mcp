@@ -9,7 +9,7 @@ bounded execution, or a deliberate safety gate.
 | Owner | Responsibilities |
 | --- | --- |
 | Computer MCP core | MCP transports, App socket, profiles, project grants, audit, permission requests, CLI/MCP bridges, Skills, typed project/file/Git/structured/system tools, Shell, and generic Computer Use |
-| Plugins | Domain state, runtime configuration and vendor execution |
+| Plugins | Domain state, runtime configuration and vendor protocols |
 | `apple-cli` / `apple-cli-mcp` | Clipboard, notifications, Finder, application launching, URL opening, and Apple application/domain workflows |
 | Browser provider | Browser engine, page lifecycle, selectors, and browser automation |
 | Other downstream MCP providers | Their own business schemas, authentication, and side-effect contracts |
@@ -23,9 +23,15 @@ primitives. They do not form a general Finder or application automation API.
 
 ## Plugin ownership
 
-Plugins own their runtime configuration, domain state and vendor execution.
-The host owns admission, project registrations, grants, permission requests and
-audit through the [host-service contract](../Reference/HostServices.md).
+Plugins own their runtime configuration, domain state and vendor protocols. The
+adapter sends the vendor’s ordinary stop request for the addressed turn. For a
+managed vendor execution, the host launches the admitted process, tracks its
+owner and retires it when that execution must end independently. See
+[Managed vendor execution](../Reference/PluginPackages.md#managed-vendor-execution).
+
+The host owns project registrations, grants, permission requests and audit.
+Plugins use the [host-service contract](../Reference/HostServices.md) for project
+and worktree operations.
 For coding runtime details, see the [Codex plugin](https://github.com/computer-mcp/plugin-codex).
 
 ## Project Identity
@@ -52,9 +58,10 @@ the same host permission authority; MCP elicitation is interaction, not a grant.
 ## External Provider Composition
 
 For `apple-cli-mcp` or another local MCP provider, registration and tool selection
-are separate from launch availability. Local stdio launches are currently refused
-on Darwin in both execution modes; see the
-[execution availability matrix](SecurityAndPrivacy.md#execution-admission).
+are separate from launch availability. On macOS, the host admits the local stdio
+provider under its approved execution mode. The
+[execution availability matrix](SecurityAndPrivacy.md#execution-admission)
+describes the platform, permission and worktree requirements.
 The configuration and inspection surfaces are:
 
 1. Register it under `[[mcp.servers]]`.

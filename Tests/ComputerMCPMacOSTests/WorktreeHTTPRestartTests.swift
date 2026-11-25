@@ -1,4 +1,5 @@
 import ComputerMCPTestSupport
+import ComputerMCPWorktrees
 import Darwin
 import Foundation
 import Testing
@@ -21,11 +22,10 @@ struct WorktreeHTTPRestartTests {
       let root = f.root.appendingPathComponent("restart-host")
       try FileManager.default.createDirectory(at: root, withIntermediateDirectories: false)
       let spec = root.appendingPathComponent("spec.json")
-      try JSONEncoder().encode(
-        WorktreeRestartSpec(
-          root: root.path, source: f.project.path, managed: managed,
-          gitExecutable: f.platform.gitExecutable)
-      ).write(to: spec)
+      let settings = WorktreeRestartSpec(
+        root: root.path, source: f.project.path, managed: managed,
+        gitExecutable: f.platform.gitExecutable)
+      try JSONEncoder().encode(settings).write(to: spec)
       let first = try RestartHostProcess(spec: spec, log: root.appendingPathComponent("first.log"))
       var second: RestartHostProcess?
       var client: GatewayClientSession?
@@ -108,14 +108,11 @@ struct WorktreeHTTPRestartTests {
             "name": try #require(standing["branch"]), "dry_run": .bool(false),
             "confirm_delete": .bool(true),
           ])
-        _ = try await f.ownerGit(["reflog", "expire", "--expire=now", "--all"])
-        _ = try await f.ownerGit(["gc", "--prune=now"])
-        for (oid, type) in zip(oids, ["commit", "tag", "blob", "tree"]) {
-          #expect(
-            try await f.ownerGit(["cat-file", "-t", oid]).trimmingCharacters(in: .newlines) == type)
-          _ = try await f.ownerGit(["cat-file", "-p", oid])
-        }
-        _ = try await f.ownerGit(["fsck", "--strict", "--no-dangling"])
+        let storage = try #require(
+          WorktreeStorage(
+            databaseURL: settings.databaseURL,
+            applicationSupportRoot: settings.directories?.applicationSupport))
+        try await f.verifyRetainedObjects(oids, storage: storage)
         print(
           "WORKTREE_RESTART managed=\(managed) killed_and_reaped=true interrupted=true replay=false worktree=usable retained_original_types=commit,tag,blob,tree gc=passed"
         )

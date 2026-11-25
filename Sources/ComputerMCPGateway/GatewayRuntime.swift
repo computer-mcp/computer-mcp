@@ -265,8 +265,16 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
       let digest =
         try origins[registration]?.reviewedRequirements?.sourceDigest
         ?? GatewayProviderReview.digest(server)
+      let vendor: VendorExecutionSource?
+      if let origin = origins[registration], server.transport == .stdio {
+        vendor = try VendorExecutionSource.resolve(
+          server: server, origin: origin, package: PluginPackage.load(at: origin.source.root),
+          state: database.configurationState().plugins)
+      } else {
+        vendor = nil
+      }
       return MCPProviderExecutionSource(
-        digest: digest,
+        digest: digest, vendorExecution: vendor,
         prepareDiscovery: { replacement, caller in
           let source = try GatewayProviderSource.resolve(
             registration: registration, configuration: configuration,
@@ -1142,6 +1150,7 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
     for projectID in projectOrder {
       try await providerRouters[projectID]?.refreshTools(context: context)
     }
+    try await unscopedRouter?.refreshTools(context: context)
   }
 
   package func listTools(context: ExecutionContext, invocationContext: InvocationContext)
@@ -1297,9 +1306,9 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
       guard runtime.context.principalID == context.principalID,
         runtime.context.profileID == context.profileID, runtime.context.caller == context.caller,
         let grant = try? runtime.currentHostGrant(context: context),
-        Self.allows(grant.permissions.state(for: .project(projectID)), .read),
         grant.allowedCallers.contains(context.caller),
-        (try? runtime.validateExecutionProject(projectID)) != nil
+        (try? runtime.validateExecutionProject(projectID)) != nil,
+        ["read", "write"].contains(runtime.projectAccess(id: projectID, context: context))
       else { continue }
       let policy = MCPToolAccessPolicy(
         configuration: runtime.configuration, grant: grant, fullAccessConsented: grant.fullAccess,
@@ -1577,6 +1586,18 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
         else { throw MCPContinuationTarget.unavailable() }
         execution = retained
       } else if let source = admitted.providerSource {
+        if let prior = admitted.managedContinuation {
+          guard let target = invocationContext.continuationTarget,
+            target.reference == admitted.resolved.descriptor.mcpReference,
+            target.projectID == auditContext.projectID,
+            try ownedWork.continuations.execution(for: target) === prior,
+            prior.provider?.registrationID == source.registrationID,
+            prior.provider?.delegatingAuthorization?.invocation.principal
+              == admitted.authorization.invocation.principal
+          else { throw MCPContinuationTarget.unavailable() }
+          try Self.validateManagedContinuation(
+            prior, source: source, tool: target.reference.toolName)
+        }
         let project: GatewayProviderProject?
         if Self.mcpServer(admitted.resolved.descriptor, arguments: admitted.route.arguments)
           == source.registrationID
@@ -1881,9 +1902,10 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
     } else {
       forwarded = false
     }
-    let retained = try invocationContext.continuationTarget.flatMap {
+    var retained = try invocationContext.continuationTarget.flatMap {
       try ownedWork.continuations.execution(for: $0)
     }
+    var managedContinuation: PreparedExecutionContext?
     let callback = GatewayHostToolScope.execution
     let source: GatewayProviderSource?
     if let callback, let provider = callback.provider, let database {
@@ -1906,6 +1928,26 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
           } ?? []), paths: requirements.paths, networks: requirements.networks,
         mode: requirements.mode, sandboxProjectID: requirements.sandboxProjectID,
         execution: requirements.execution, providers: requirements.providers)
+    } else if let prior = retained, let target = invocationContext.continuationTarget,
+      pluginOrigins[.init(kind: .mcp, id: target.reference.serverID)]?.vendorExecutable != nil,
+      let database
+    {
+      guard target.reference == descriptor.mcpReference,
+        target.projectID == routed.context.projectID,
+        prior.provider?.registrationID == target.reference.serverID,
+        let original = prior.provider?.delegatingAuthorization,
+        original.invocation.principal == subject.principal,
+        original.invocation.projectID == routed.context.projectID
+      else { throw MCPContinuationTarget.unavailable() }
+      let selected = try GatewayProviderSource.resolve(
+        registration: .init(kind: .mcp, id: target.reference.serverID),
+        configuration: configuration, origins: pluginOrigins, database: database,
+        tool: descriptor.mcpReference, resolvedPlugins: resolvedPluginSettings)
+      guard selected.vendorExecution != nil else { throw MCPContinuationTarget.unavailable() }
+      try Self.validateManagedContinuation(prior, source: selected, tool: target.reference.toolName)
+      source = selected
+      managedContinuation = prior
+      retained = nil
     } else if retained == nil,
       let registration = providerRegistration(
         descriptor: descriptor, arguments: routed.arguments), let database
@@ -1961,7 +2003,18 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
       route: dispatchRoute, grant: grant, resolved: resolved,
       authorization: authorization, evidence: evaluated.evidence, directory: directory,
       remoteService: remoteService, retryIDs: input.requestIDs, retainedExecution: retained,
+      managedContinuation: managedContinuation,
       providerSource: source, providerBinding: evaluated.provider, callbackExecution: callback)
+  }
+
+  private static func validateManagedContinuation(
+    _ prior: PreparedExecutionContext, source: GatewayProviderSource, tool: String
+  ) throws {
+    if source.vendorExecution?.signature.tools[tool] == .observe {
+      _ = try prior.authority.access(prior.executionID, operation: .readResult)
+    } else {
+      try prior.validateProviderLaunch()
+    }
   }
 
   private func permissionPaths() throws -> PathEnvironmentSnapshot {
@@ -2905,6 +2958,7 @@ private struct GatewayAdmittedInvocation: Sendable {
   let remoteService: Bool
   let retryIDs: Set<UUID>
   let retainedExecution: PreparedExecutionContext?
+  let managedContinuation: PreparedExecutionContext?
   let providerSource: GatewayProviderSource?
   let providerBinding: ProviderExecutionBinding?
   let callbackExecution: PreparedExecutionContext?

@@ -156,21 +156,7 @@ struct WorktreeHTTPAcceptanceTests {
           client, "git.branch_delete", "fixture",
           ["name": .string(branch), "dry_run": .bool(false), "confirm_delete": .bool(true)])
         #expect(try await f.ownerGit(["for-each-ref", "refs/heads/" + branch]).isEmpty)
-        _ = try await f.ownerGit(["reflog", "expire", "--expire=now", "--all"])
-        _ = try await f.ownerGit(["gc", "--prune=now"])
-        let storage = try #require(f.database.worktreeStorage)
-        let snapshot = try #require(try WorktreeRecoveryStore(storage: storage).list().only)
-        let key = try WorktreeRecoveryStore.key(for: snapshot.repository)
-        let recovery = storage.recovery.appendingPathComponent("stores/" + key + "/repository.git")
-        let gitDirectory = "--git-dir=" + recovery.path
-        for (oid, type) in zip(roots, ["commit", "tag", "blob", "tree"]) {
-          #expect(snapshot.catalog.records.contains { $0.oid == oid })
-          #expect(try await f.ownerGit([gitDirectory, "cat-file", "-t", oid]) == type + "\n")
-          _ = try await f.ownerGit([gitDirectory, "cat-file", "-p", oid])
-        }
-        #expect(try await f.ownerGit(["for-each-ref", "refs/computer-mcp/recovery/"]).isEmpty)
-        _ = try await f.ownerGit([gitDirectory, "fsck", "--full", "--strict", "--no-dangling"])
-        _ = try await f.ownerGit(["fsck", "--full", "--strict", "--no-dangling"])
+        try await f.verifyRetainedObjects(roots, storage: #require(f.database.worktreeStorage))
         #expect(await http.controlSessions().map(\.id) == [session.id])
         #expect(try f.database.profiles() == profiles)
         let audit = try await f.database.connection.writer.read { db in
@@ -378,6 +364,26 @@ struct WorktreeHTTPAcceptanceTests {
       try await Task.sleep(for: .milliseconds(250))
     }
     Issue.record("Background build did not finish within its acceptance budget")
+  }
+}
+
+extension FixedHostFixture {
+  func verifyRetainedObjects(_ roots: [String], storage: WorktreeStorage) async throws {
+    _ = try await ownerGit(["reflog", "expire", "--expire=now", "--all"])
+    _ = try await ownerGit(["gc", "--prune=now"])
+    let snapshot = try #require(try WorktreeRecoveryStore(storage: storage).list().only)
+    try #require(snapshot.repository.sourcePath == project.resolvingSymlinksInPath().path)
+    let recovery = storage.recovery.appendingPathComponent(
+      "stores/" + snapshot.key + "/repository.git")
+    let gitDirectory = "--git-dir=" + recovery.path
+    for (oid, type) in zip(roots, ["commit", "tag", "blob", "tree"]) {
+      #expect(snapshot.catalog.records.contains { $0.oid == oid })
+      #expect(try await ownerGit([gitDirectory, "cat-file", "-t", oid]) == type + "\n")
+      _ = try await ownerGit([gitDirectory, "cat-file", "-p", oid])
+    }
+    #expect(try await ownerGit(["for-each-ref", "refs/computer-mcp/recovery/"]).isEmpty)
+    _ = try await ownerGit([gitDirectory, "fsck", "--full", "--strict", "--no-dangling"])
+    _ = try await ownerGit(["fsck", "--full", "--strict", "--no-dangling"])
   }
 }
 

@@ -116,6 +116,8 @@ package final class PreparedExecutionContext: ExecutionAccessChecking, Sendable 
   /// The provider source's verified launch path; a launch must not resolve another one.
   package let providerExecutable: SandboxPath?
   package let hostServiceChannel: ProviderHostServiceChannel?
+  package let reservedChildID: UUID?
+  package let vendorSandbox: SandboxConfiguration?
   // Channel attachments share limits with the coordinator-registered preparation.
   private let preparation: PreparedExecutionContext?
   private let validateProvider: (@Sendable () throws -> Void)?
@@ -136,7 +138,8 @@ package final class PreparedExecutionContext: ExecutionAccessChecking, Sendable 
     validateWorktree: (@Sendable () throws -> Void)? = nil,
     provider: ProviderExecutionBinding? = nil, providerProject: ProviderProjectIdentity? = nil,
     providerWorkingDirectory: SandboxPath? = nil, providerExecutable: SandboxPath? = nil,
-    hostServiceChannel: ProviderHostServiceChannel? = nil,
+    hostServiceChannel: ProviderHostServiceChannel? = nil, reservedChildID: UUID? = nil,
+    vendorSandbox: SandboxConfiguration? = nil,
     validateProvider: (@Sendable () throws -> Void)? = nil
   ) {
     self.preparation = nil
@@ -154,6 +157,8 @@ package final class PreparedExecutionContext: ExecutionAccessChecking, Sendable 
     self.providerWorkingDirectory = providerWorkingDirectory
     self.providerExecutable = providerExecutable
     self.hostServiceChannel = hostServiceChannel
+    self.reservedChildID = reservedChildID
+    self.vendorSandbox = vendorSandbox
     self.validateProvider = validateProvider
     state = .init(State(limits: limits))
   }
@@ -176,6 +181,8 @@ package final class PreparedExecutionContext: ExecutionAccessChecking, Sendable 
     providerWorkingDirectory = nil
     providerExecutable = nil
     hostServiceChannel = nil
+    reservedChildID = nil
+    vendorSandbox = nil
     validateProvider = parent.validateProvider
     state = parent.state
   }
@@ -196,6 +203,8 @@ package final class PreparedExecutionContext: ExecutionAccessChecking, Sendable 
     providerWorkingDirectory = parent.providerWorkingDirectory
     providerExecutable = parent.providerExecutable
     hostServiceChannel = channel
+    reservedChildID = nil
+    vendorSandbox = parent.vendorSandbox
     validateProvider = parent.validateProvider
     state = parent.state
   }

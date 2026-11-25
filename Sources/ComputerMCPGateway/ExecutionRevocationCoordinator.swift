@@ -48,6 +48,8 @@ package final class ExecutionRevocationCoordinator: ExecutionRecoveryAuthorizing
   private var pendingAuthorizationRevocations: Set<UUID> = []
   private var contexts: [UUID: WeakExecutionContext] = [:]
   private var proxies: [UUID: EgressProxy] = [:]
+  private var vendorEgress: [UUID: EgressPolicy] = [:]
+  private var vendorPhases: [UUID: VendorExecutionPhase] = [:]
   private var monitoring: Task<Void, Never>?
 
   package convenience init(
@@ -158,6 +160,7 @@ package final class ExecutionRevocationCoordinator: ExecutionRecoveryAuthorizing
     provider: ProviderExecutionBinding? = nil, providerProject: ProviderProjectIdentity? = nil,
     mcpDiscovery: Bool = false,
     providerWorkingDirectory: SandboxPath? = nil, providerExecutable: SandboxPath? = nil,
+    vendorResources: [VerifiedFileIdentity] = [],
     validateProvider: (@Sendable () throws -> Void)? = nil,
     callback: ProviderExecutionBinding? = nil
   ) async throws -> PreparedExecutionContext {
@@ -310,20 +313,33 @@ package final class ExecutionRevocationCoordinator: ExecutionRecoveryAuthorizing
         }
       }
       let configuration: GatewayExecutionConfiguration
+      let vendorSandbox: SandboxConfiguration?
       if let initialConfiguration {
         configuration = initialConfiguration
+        vendorSandbox = nil
       } else {
         try validateProvider?()
-        configuration = try store.transactionWithDatabase { _, ledger in
+        (configuration, vendorSandbox) = try store.transactionWithDatabase { _, ledger in
           let ownedRoot = try ProjectPathResolver.canonicalProject(storageDirectory)
           guard
             context.temporaryDirectory.value
               == ownedRoot.appendingPathComponent(authorizationID.uuidString).path
           else { throw PermissionModelError.invalidAuthorization }
-          return try GatewaySandboxCompiler.compile(
+          let adapter = try GatewaySandboxCompiler.compile(
             ledger: &ledger, authorizationID: compiledAuthorizationID, context: context,
             ownedTemporaryDirectory: context.temporaryDirectory, reservedProjection: projection,
             provider: provider, providerWorkingDirectory: providerWorkingDirectory)
+          // Reuse the admitted projection while limiting dependency openings to the vendor child.
+          let vendor =
+            try vendorResources.isEmpty
+            ? nil
+            : GatewaySandboxCompiler.compile(
+              ledger: &ledger, authorizationID: compiledAuthorizationID, context: context,
+              ownedTemporaryDirectory: context.temporaryDirectory, reservedProjection: projection,
+              provider: provider, providerWorkingDirectory: providerWorkingDirectory,
+              additionalProviderResources: vendorResources
+            ).sandbox
+          return (adapter, vendor)
         }
       }
       var sandbox = configuration.sandbox
@@ -392,10 +408,16 @@ package final class ExecutionRevocationCoordinator: ExecutionRecoveryAuthorizing
         fixedHostOperation: context.fixedHostOperation, worktreeGit: context.worktree?.git,
         validateWorktree: validateWorktree, provider: provider, providerProject: providerProject,
         providerWorkingDirectory: providerWorkingDirectory, providerExecutable: providerExecutable,
+        vendorSandbox: vendorSandbox,
         validateProvider: validateLaunch)
       try validateLaunch()
       _ = try authority.access(execution.id, operation: .readResult)
-      lock.withLock { contexts[execution.id] = WeakExecutionContext(prepared) }
+      lock.withLock {
+        contexts[execution.id] = WeakExecutionContext(prepared)
+        if provider != nil, configuration.egress.access != .none {
+          vendorEgress[execution.id] = configuration.egress
+        }
+      }
       return prepared
     } catch {
       try? finishAdmission(execution.id)
@@ -502,9 +524,12 @@ package final class ExecutionRevocationCoordinator: ExecutionRecoveryAuthorizing
         pendingOwnerStops.formUnion(ids)
         return (
           proxies: ids.compactMap { proxies[$0] },
+          phases: ids.flatMap { id in
+            (pendingChildren[id] ?? []).compactMap { vendorPhases[$0] }
+          },
           children: ids.flatMap { executionID in
             (pendingChildren[executionID] ?? []).compactMap { child in
-              children[child].map { (executionID, child, $0) }
+              vendorPhases[child] == nil ? children[child].map { (executionID, child, $0) } : nil
             }
           },
           cancellations: logicalWork.values.filter { ids.contains($0.executionID) }
@@ -515,13 +540,16 @@ package final class ExecutionRevocationCoordinator: ExecutionRecoveryAuthorizing
     var firstError: (any Error)?
     do { try persistOwnerStops(ids) } catch { firstError = error }
     for cancellation in resources.cancellations { Task.detached { await cancellation() } }
+    for phase in resources.phases {
+      do { try await phase.stop() } catch { firstError = firstError ?? error }
+    }
     for proxy in resources.proxies {
       do { try await proxy.revoke() } catch { firstError = firstError ?? error }
     }
     for (executionID, child, ownership) in resources.children {
       do {
         try await cancelOwnedExecution(ownership)
-        try confirmChild(child, executionID: executionID)
+        try await confirmOwnedChild(child, executionID: executionID)
       } catch { firstError = firstError ?? error }
     }
     do { try await reconcile() } catch { firstError = firstError ?? error }
@@ -716,7 +744,7 @@ package final class ExecutionRevocationCoordinator: ExecutionRecoveryAuthorizing
   }
 
   /// Cleanup belongs to the execution owner, independently of any caller's wait.
-  private func cancelOwnedExecution(_ ownership: any ExecutionOwnership) async throws {
+  fileprivate func cancelOwnedExecution(_ ownership: any ExecutionOwnership) async throws {
     while true {
       do {
         _ = try await ownership.cancel()
@@ -774,10 +802,12 @@ package final class ExecutionRevocationCoordinator: ExecutionRecoveryAuthorizing
       ready = false
       return (
         Array(children.values), Array(proxies.values),
+        Array(vendorPhases.values),
         logicalWork.values.compactMap { $0.takeCancellation() }
       )
     }
-    for cancellation in resources.2 { Task.detached { await cancellation() } }
+    for cancellation in resources.3 { Task.detached { await cancellation() } }
+    for phase in resources.2 { try? await phase.stop() }
     for proxy in resources.1 { try? await proxy.revoke() }
     for ownership in resources.0 { try? await cancelOwnedExecution(ownership) }
   }
@@ -907,6 +937,12 @@ package final class ExecutionRevocationCoordinator: ExecutionRecoveryAuthorizing
   }
 
   fileprivate func reserveChild(_ child: UUID, authority: GatewayExecutionAuthority) throws {
+    try reserveChildren([child], authority: authority)
+  }
+
+  private func reserveChildren(
+    _ ids: Set<UUID>, authority: GatewayExecutionAuthority, phases: [VendorExecutionPhase] = []
+  ) throws {
     try publication.withLock {
       try requireWorktreeAdmission(authority.executionID)
       guard lock.withLock({ ready && !closedAdmissions.contains(authority.executionID) }) else {
@@ -915,26 +951,50 @@ package final class ExecutionRevocationCoordinator: ExecutionRecoveryAuthorizing
       let result: Result<Void, any Error> = try store.transactionWithDatabase { database, ledger in
         guard var record = try ExecutionRuntimeRecord.load(authority.executionID, database),
           record.ownerID == ownerID, !record.admissionFinished, !record.completed,
-          record.children[child] == nil, ledger.executions[record.id]?.isRunning == true,
+          ids.allSatisfy({ record.children[$0] == nil }),
+          ledger.executions[record.id]?.isRunning == true,
           ledger.executionAccess(
             record.id, principal: authority.principal, operation: .readResult,
             connectionID: authority.connectionID, now: Date()) == .allowed
         else { return .failure(PermissionModelError.invalidAuthorization) }
-        record.children[child] = .init()
+        for child in ids { record.children[child] = .init() }
         try record.save(database)
         return .success(())
       }
       try result.get()
-      lock.withLock { _ = pendingChildren[authority.executionID, default: []].insert(child) }
+      lock.withLock {
+        pendingChildren[authority.executionID, default: []].formUnion(ids)
+        for phase in phases { vendorPhases[phase.id] = phase }
+      }
     }
   }
 
+  static func reserveVendorExecutionPhases(
+    execution: PreparedExecutionContext
+  ) throws -> (probe: VendorExecutionPhase, workload: VendorExecutionPhase) {
+    guard execution.provider?.delegatingAuthorization != nil,
+      let authority = execution.authority as? GatewayExecutionAuthority
+    else {
+      throw PermissionModelError.invalidAuthorization
+    }
+    let probe = VendorExecutionPhase(authority: authority)
+    let egress = authority.coordinator.lock.withLock {
+      authority.coordinator.vendorEgress[authority.executionID]
+    }
+    let workload = VendorExecutionPhase(authority: authority, egress: egress)
+    try execution.validateProviderLaunch()
+    try authority.coordinator.reserveChildren(
+      [probe.id, workload.id], authority: authority, phases: [probe, workload])
+    return (probe, workload)
+  }
+
   fileprivate func bindChild(
-    _ child: UUID, authority: GatewayExecutionAuthority, ownership: any ExecutionOwnership
+    _ child: UUID, authority: GatewayExecutionAuthority, ownership: any ExecutionOwnership,
+    vendorPhase: VendorExecutionPhase? = nil
   ) {
     lock.withLock {
       children[child] = ownership
-      proxies[authority.executionID]?.attach(to: ownership)
+      if vendorPhase == nil { proxies[authority.executionID]?.attach(to: ownership) }
     }
     ownership.onSandboxViolation { [weak permissionDiscovery] violation in
       permissionDiscovery?.receive(violation, executionID: authority.executionID)
@@ -942,7 +1002,13 @@ package final class ExecutionRevocationCoordinator: ExecutionRecoveryAuthorizing
     ownership.beforeStart { [self] _ in
       try publication.withLock {
         try requireWorktreeAdmission(authority.executionID)
-        guard lock.withLock({ ready && !closedAdmissions.contains(authority.executionID) }) else {
+        try vendorPhase?.checkBootstrap()
+        guard
+          lock.withLock({
+            ready && !pendingOwnerStops.contains(authority.executionID)
+              && (vendorPhase != nil || !closedAdmissions.contains(authority.executionID))
+          })
+        else {
           throw ExecutionEnvironmentError.unavailable("Execution recovery has not completed")
         }
         let canBind = try store.readWithDatabase { database, _ in
@@ -990,7 +1056,7 @@ package final class ExecutionRevocationCoordinator: ExecutionRecoveryAuthorizing
     Task.detached { [self] in
       do {
         _ = try await ownership.waitForExit()
-        try confirmChild(child, executionID: authority.executionID)
+        try await confirmOwnedChild(child, executionID: authority.executionID)
       } catch {
         try? store.transactionWithDatabase { _, ledger in
           try ledger.interruptExecution(authority.executionID)
@@ -1084,7 +1150,7 @@ package final class ExecutionRevocationCoordinator: ExecutionRecoveryAuthorizing
     _ = lock.withLock { pendingAdmissionClosures.remove(id) }
   }
 
-  private func confirmChild(_ child: UUID, executionID: UUID) throws {
+  fileprivate func confirmChild(_ child: UUID, executionID: UUID) throws {
     try publication.withLock {
       try journal.confirm(child)
       try store.transactionWithDatabase { database, _ in
@@ -1102,10 +1168,30 @@ package final class ExecutionRevocationCoordinator: ExecutionRecoveryAuthorizing
       }
       lock.withLock {
         children[child] = nil
+        vendorPhases[child] = nil
         unpublishedRecovery[child] = nil
         pendingChildren[executionID]?.remove(child)
         if pendingChildren[executionID]?.isEmpty == true { pendingChildren[executionID] = nil }
       }
+    }
+  }
+
+  private func confirmOwnedChild(_ child: UUID, executionID: UUID) async throws {
+    if let phase = lock.withLock({ vendorPhases[child] }) {
+      try await phase.confirm(.retired)
+    } else {
+      try confirmChild(child, executionID: executionID)
+    }
+  }
+
+  fileprivate func makeVendorProxy(
+    child: UUID, executionID: UUID, policy: EgressPolicy
+  ) async throws -> EgressProxy {
+    guard let proxyFactory else {
+      throw ExecutionEnvironmentError.unavailable("Execution egress is unavailable")
+    }
+    return try await proxyFactory(child, policy) { [weak permissionDiscovery] denial in
+      permissionDiscovery?.receive(denial, executionID: executionID)
     }
   }
 
@@ -1218,12 +1304,15 @@ package final class ExecutionRevocationCoordinator: ExecutionRecoveryAuthorizing
                 lock.withLock { children[child] = ownership }
                 try await cancelOwnedExecution(ownership)
               }
+            } else if let phase = lock.withLock({ vendorPhases[child] }) {
+              try await phase.stop()
+              continue
             } else if record.ownerID == ownerID {
               // A current launch may still be moving from reservation to its
               // ownership callback. That callback must fail or confirm cleanup.
               continue
             }
-            try confirmChild(child, executionID: record.id)
+            try await confirmOwnedChild(child, executionID: record.id)
           }
         }
         let mayComplete =
@@ -1326,6 +1415,7 @@ package final class ExecutionRevocationCoordinator: ExecutionRecoveryAuthorizing
               !logicalWork.values.contains(where: { $0.executionID == completed.id })
             {
               pendingOwnerStops.remove(completed.id)
+              vendorEgress[completed.id] = nil
             }
           }
         }
@@ -1362,7 +1452,7 @@ package final class ExecutionRevocationCoordinator: ExecutionRecoveryAuthorizing
           }
           try await cancelOwnedExecution(ownership)
         }
-        try confirmChild(entry.child, executionID: entry.execution)
+        try await confirmOwnedChild(entry.child, executionID: entry.execution)
       }
       if entry.completed || entry.owner != ownerID || orphaned {
         try launcher.releaseRecovery(entry.recovery)
@@ -1467,27 +1557,177 @@ package final class ExecutionRevocationCoordinator: ExecutionRecoveryAuthorizing
       let resources = publication.withLock {
         lock.withLock {
           closedAdmissions.insert(id)
+          let pending = pendingChildren[id] ?? []
           return (
-            proxies[id],
-            (pendingChildren[id] ?? []).compactMap { child in
-              children[child].map { (child, $0) }
-            }
+            proxy: proxies[id],
+            children: pending.compactMap { child in
+              vendorPhases[child] == nil ? children[child].map { (child, $0) } : nil
+            },
+            phases: pending.compactMap { vendorPhases[$0] }
           )
         }
       }
-      try await resources.0?.revoke()
-      for (child, ownership) in resources.1 {
+      try await resources.proxy?.revoke()
+      for phase in resources.phases { try await phase.stop() }
+      for (child, ownership) in resources.children {
         try await cancelOwnedExecution(ownership)
-        try confirmChild(child, executionID: id)
+        try await confirmOwnedChild(child, executionID: id)
       }
       let receipts = try journal.all().filter { $0.execution == id }
       let drained = sealAdmissionIfDrained(id)
       // Closed admission makes this stable after every reserved child settles,
       // including children that have not reached their ownership callback yet.
       guard drained, receipts.allSatisfy(\.completed) else { continue }
-      try await resources.0?.releaseAfterExecutionEnds()
-      lock.withLock { proxies[id] = nil }
+      try await resources.proxy?.releaseAfterExecutionEnds()
+      lock.withLock {
+        proxies[id] = nil
+        vendorEgress[id] = nil
+      }
     }
+  }
+}
+
+/// A single reserved phase inherits the call's ledger execution without inheriting
+/// the adapter's egress proxy or the ability to allocate another child.
+final class VendorExecutionPhase: ExecutionAuthorizing, @unchecked Sendable {
+  let id = UUID()
+  private let parent: GatewayExecutionAuthority
+  private let egress: EgressPolicy?
+  private let lock = NSLock()
+  private var claimed = false
+  private var sealed = false
+  private var bootstrapAuthorized = false
+  private var ownership: (any ExecutionOwnership)?
+  private var failedBeforeBinding = false
+  private var startingProxy: Task<EgressProxy, any Error>?
+  private var proxy: EgressProxy?
+  enum Receipt: String {
+    case pending
+    case neverDispatched = "never_dispatched"
+    case retired
+  }
+  private var receiptState = Receipt.pending
+  private var deadline = ContinuousClock.now + .seconds(60)
+
+  fileprivate init(authority: GatewayExecutionAuthority, egress: EgressPolicy? = nil) {
+    parent = authority
+    self.egress = egress
+  }
+  var executionID: UUID { parent.executionID }
+  var authorizationIDs: Set<UUID> { parent.authorizationIDs }
+
+  func reserveChild(_ id: UUID) throws {
+    try lock.withLock {
+      guard id == self.id, !claimed, !sealed, ContinuousClock.now < deadline else {
+        throw PermissionModelError.invalidAuthorization
+      }
+      claimed = true
+    }
+  }
+
+  func limitStart(to deadline: ContinuousClock.Instant) {
+    lock.withLock { self.deadline = min(self.deadline, deadline) }
+  }
+
+  func checkGateOpen() throws {
+    try lock.withLock {
+      guard !sealed, ContinuousClock.now < deadline else {
+        throw PermissionModelError.invalidAuthorization
+      }
+    }
+  }
+
+  func checkBootstrap() throws {
+    try lock.withLock {
+      guard claimed, !sealed, ContinuousClock.now < deadline else {
+        throw PermissionModelError.invalidAuthorization
+      }
+      bootstrapAuthorized = true
+    }
+  }
+
+  func sealPendingBootstrap() -> Bool {
+    lock.withLock {
+      guard !bootstrapAuthorized else { return false }
+      sealed = true
+      return true
+    }
+  }
+
+  func configureEgress(_ sandbox: SandboxConfiguration) async throws -> SandboxConfiguration {
+    guard let egress else { return sandbox }
+    let task = try lock.withLock {
+      guard !sealed, startingProxy == nil else { throw PermissionModelError.invalidAuthorization }
+      let task = Task { [parent, id] in
+        try await parent.coordinator.makeVendorProxy(
+          child: id, executionID: parent.executionID, policy: egress)
+      }
+      startingProxy = task
+      return task
+    }
+    let proxy = try await task.value
+    try lock.withLock {
+      guard !sealed else { throw PermissionModelError.invalidAuthorization }
+      self.proxy = proxy
+    }
+    return try sandbox.withProxy(await proxy.sandboxPorts())
+  }
+
+  func bindChild(_ id: UUID, ownership: any ExecutionOwnership) {
+    lock.withLock {
+      self.ownership = ownership
+      proxy?.attach(to: ownership)
+    }
+    parent.coordinator.bindChild(id, authority: parent, ownership: ownership, vendorPhase: self)
+  }
+
+  func stop() async throws {
+    let (neverDispatched, ownership) = lock.withLock {
+      sealed = true
+      return (!claimed || failedBeforeBinding, self.ownership)
+    }
+    if neverDispatched {
+      try await confirm(.neverDispatched)
+    } else if let ownership {
+      try await parent.coordinator.cancelOwnedExecution(ownership)
+      try await confirm(.retired)
+    }
+  }
+
+  func launchFailed(_ id: UUID) {
+    lock.withLock { failedBeforeBinding = ownership == nil }
+    Task { try? await self.stop() }
+  }
+
+  var receipt: Receipt { lock.withLock { receiptState } }
+  var completed: Bool { receipt != .pending }
+
+  func confirm(_ receipt: Receipt) async throws {
+    if completed { return }
+    let startingProxy = lock.withLock { self.startingProxy }
+    if let proxy = try? await startingProxy?.value {
+      try await proxy.releaseAfterExecutionEnds()
+    }
+    try parent.coordinator.confirmChild(id, executionID: executionID)
+    lock.withLock {
+      receiptState = receipt
+      proxy = nil
+      self.startingProxy = nil
+      ownership = nil
+    }
+  }
+
+  func awaitReceipt() async -> Bool {
+    let deadline = ContinuousClock.now + .seconds(2)
+    while !completed && ContinuousClock.now < deadline {
+      do { try await Task.sleep(for: .milliseconds(10)) } catch { return false }
+    }
+    return completed
+  }
+
+  func finishAdmission() throws {}
+  func access(_ id: UUID, operation: ExecutionOperation) throws -> EffectiveExecutionLimits {
+    try parent.access(id, operation: operation)
   }
 }
 

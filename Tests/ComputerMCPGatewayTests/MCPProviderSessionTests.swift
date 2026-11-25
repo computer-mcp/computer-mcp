@@ -78,6 +78,42 @@ struct MCPProviderSessionTests {
     }
   }
 
+  @Test func managedObservationKeepsTheExactStandingDelegationAndProject() throws {
+    let folder = try ScopedTemporaryDirectory()
+    let date = Date()
+    let root = try ProjectRootIdentity(folder.url)
+    let project = ProviderProjectIdentity(
+      projectID: "project", registeredAt: date, root: root, content: .worktree(UUID()))
+    let writable = try SessionAuthority(client: "a")
+    let running = try writable.prepared(folder.url, project: project, readOnly: false)
+    let read = try SessionAuthority(client: "a").prepared(folder.url, project: project)
+    try MCPProviderSessionAuthority.requireMatch(
+      admitted: read, running: running, managedObservation: true)
+    #expect(throws: PermissionModelError.self) {
+      try MCPProviderSessionAuthority.requireMatch(admitted: read, running: running)
+    }
+    let newGeneration = ProviderProjectIdentity(
+      projectID: "project", registeredAt: date, root: root, content: .worktree(UUID()))
+    let otherCalls = try [
+      SessionAuthority(client: "b").prepared(folder.url, project: project),
+      SessionAuthority(client: "a", once: true).prepared(folder.url, project: project),
+      SessionAuthority(client: "a", digest: String(repeating: "b", count: 64))
+        .prepared(folder.url, project: project),
+      SessionAuthority(client: "a").prepared(folder.url, project: newGeneration),
+    ]
+    for other in otherCalls {
+      #expect(throws: PermissionModelError.self) {
+        try MCPProviderSessionAuthority.requireMatch(
+          admitted: other, running: running, managedObservation: true)
+      }
+    }
+    writable.invalidate()
+    #expect(throws: PermissionModelError.self) {
+      try MCPProviderSessionAuthority.requireMatch(
+        admitted: read, running: running, managedObservation: true)
+    }
+  }
+
   @Test func uncertainCleanupBlocksOnlyItsDelegationAndLegacyRemainsConservative() throws {
     let root = try ScopedTemporaryDirectory()
     let storage = root.url.appendingPathComponent("ownership")

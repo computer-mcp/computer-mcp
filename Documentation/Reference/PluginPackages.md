@@ -608,6 +608,36 @@ host channel nor lifecycle permission; host-owned settings still enable the
 channel. The matching launch, peer and action fields are specified in
 [Scoped host services](HostServices.md#contract-and-launch-context).
 
+### Managed vendor execution
+
+A managed stdio contribution declares a `vendor_execution` table with a
+declared `dependency` ID, a package-relative `signature` file, and a `files`
+map from package-relative paths to lowercase SHA-256 digests. The inventory
+covers the signature, the adapter executable, and the package files used to
+encode and correlate vendor operations. The package archive includes those
+files at their declared paths. Host verifies them against the selected
+manifest and uses the executable selected by its normal dependency resolver.
+
+The JSON signature declares `capability`, `dependency`, `probe`, `workload`,
+`version_stdout`, and `tools`. The capability is
+`io.github.computer-mcp/vendor-execution-v1`. The probe is `["--version"]` and
+`version_stdout` gives its exact UTF-8 stdout. `workload` gives the fixed
+argument vector. `tools` maps exact downstream tool names to `acquire`,
+`detached_acquire`, `prompt`, `detached_prompt`, `mode`, `stop`, `answer`,
+`close`, or `observe`. These effects bind the private operations to the
+admitted invocation. The owner still approves the package and its permissions.
+
+Host supplies `--host-vendor-execution` and the inherited vendor channel. The
+adapter completes the private `initialize` exchange and advertises the
+capability as `true` in its MCP initialize result's experimental capabilities.
+Its private writes carry the admitted invocation, acquisition, and workload
+IDs. A short frame can use UTF-8 `data` directly. A frame split across requests
+uses one UUID in `frame`, a byte `offset`, a Boolean `final`, and base64
+`data` with up to 196,608 decoded bytes per chunk. One vendor line including
+its newline may occupy up to 1 MiB. A definitive refusal such as
+`vendor_effect_denied` or `vendor_effect_stale` confirms zero bytes for that
+write. `vendor_write_unknown` requires stream retirement and forbids replay.
+
 ### CLI
 
 Each `[[cli]]` has `id`, `executable`, optional `description`, and optional
@@ -827,8 +857,9 @@ host-owned, outside the package payload, and validated against symlinks, file
 ownership and the receipted directory identity.
 
 Downstream MCP launch receipts also bind the managed artifact identity. Cleanup
-checks these persisted receipts and locks held by supervisors and watchdogs,
-including after the runtime or host exits. An uncertain cleanup receipt retains
+checks these persisted receipts, including after the runtime or host exits.
+For unprepared launches it also checks for locks inherited by the supervisor
+and watchdog. An uncertain cleanup receipt retains
 the artifact until the existing reviewed process-recovery procedure succeeds.
 Legacy receipts lack artifact provenance, so live or uncertain legacy owners
 conservatively retain files. Neither a supervisor exit nor a released host

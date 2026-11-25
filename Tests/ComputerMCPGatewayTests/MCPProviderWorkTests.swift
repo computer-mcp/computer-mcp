@@ -65,6 +65,38 @@ struct MCPProviderWorkTests {
     #expect(work.needsObservation && releases.count == 1)
   }
 
+  @Test func confirmedHostOwnedShutdownReleasesOnlyItsConnectionWork() throws {
+    let releases = ProviderLeaseReleases()
+    let ledger = GatewayOwnedWork()
+    var work = MCPProviderWork(work: ledger, projectID: "ws", registrationID: "provider")
+    let sibling = ledger.retain(
+      .mcpResource, projectID: "ws", registrationID: "provider",
+      resourceID: "sibling", connectionID: UUID())
+    let opened = try work.beginInvocation(tool: "start", executionLease: releases.lease())
+    work.finishInvocation(opened, confirmed: true)
+    try work.accept(report(UUID(), 1, [resource(opened)]), covering: work.completedInvocations)
+    _ = try work.beginInvocation(tool: "start", executionLease: releases.lease())
+
+    #expect(throws: (any Error).self) { try work.confirmHostOwnedShutdown() }
+    work.disconnected()
+    let retained = ledger.snapshot.filter { $0.connectionID == work.connectionID }
+    #expect(Set(retained.map(\.kind)) == [.mcpResource, .mcpObservation])
+    let uncertain = retained.allSatisfy(\.uncertain)
+    #expect(uncertain)
+    releases.fail = true
+    #expect(throws: (any Error).self) { try work.confirmHostOwnedShutdown() }
+    #expect(ledger.snapshot.filter { $0.connectionID == work.connectionID }.count == 2)
+    #expect(ledger.continuations.entry(connectionID: work.connectionID) != nil)
+
+    releases.fail = false
+    try work.confirmHostOwnedShutdown()
+    try work.confirmHostOwnedShutdown()
+    #expect(releases.count == 2)
+    #expect(!work.needsObservation)
+    #expect(ledger.snapshot.map(\.id) == [sibling.id])
+    #expect(ledger.continuations.entry(connectionID: work.connectionID) == nil)
+  }
+
   @Test
   func gatewayExportsDoNotAdvertiseADownstreamConnectionResource() throws {
     let tool = MCPTool(

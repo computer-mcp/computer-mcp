@@ -151,7 +151,7 @@ struct RecoveryIssue: Identifiable {
       RecoveryOwnerError.identityConflict, WorktreeCleanupError.identityChanged:
       self.init("recovery.review_changed")
     default:
-      self.init("recovery.operation_failed", details: error.localizedDescription)
+      self.init("recovery.operation_failed", details: AppLocalization.errorDescription(error))
     }
   }
 }

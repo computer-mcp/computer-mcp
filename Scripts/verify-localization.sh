@@ -42,6 +42,11 @@ catalog.each do |key, entry|
   end
   en_placeholders = values.fetch("en").scan(placeholder_pattern)
   zh_placeholders = values.fetch("zh-Hans").scan(placeholder_pattern)
+  # Indexed arguments retain their types when a translation changes word order.
+  if (en_placeholders + zh_placeholders).all? { |token| token.match?(/%\d+\$/) }
+    en_placeholders.sort!
+    zh_placeholders.sort!
+  end
   abort "error: Placeholder mismatch for #{key.inspect}." unless en_placeholders == zh_placeholders
 end
 

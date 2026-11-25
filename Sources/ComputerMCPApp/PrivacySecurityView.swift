@@ -881,7 +881,8 @@ struct PrivacyNetworkPicker: View {
           Text(verbatim: l("Any Host")).tag(Choice.full)
             .disabled(!grant.allowsNetwork(.full))
           if case .custom = network {
-            Text(verbatim: PrivacyGrantRow.networkValue(network, using: l)).tag(Choice.custom)
+            AppLocalization.verbatimText(PrivacyGrantRow.networkValue(network, using: l)).tag(
+              Choice.custom)
           }
           Divider()
           Text(verbatim: l("Custom…")).tag(Choice.edit)
@@ -1132,9 +1133,11 @@ struct PrivacyRequestPrompt: View {
             .font(.caption).foregroundStyle(.secondary)
             .multilineTextAlignment(.center)
           if let profile = request.sharedProfileName {
-            Text(verbatim: l.format("Always applies to every connection that uses “%@”.", profile))
-              .font(.caption).foregroundStyle(.secondary)
-              .multilineTextAlignment(.center)
+            AppLocalization.verbatimText(
+              l.format("Always applies to every connection that uses “%@”.", profile)
+            )
+            .font(.caption).foregroundStyle(.secondary)
+            .multilineTextAlignment(.center)
           }
         }
       }

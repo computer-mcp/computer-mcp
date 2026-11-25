@@ -209,8 +209,8 @@ struct WorktreeStorageView: View {
     let choices = selected.filter { $0.store == store }
     let candidates = selectable.filter { $0.store == store }
     return HStack(spacing: 8) {
-      Text(
-        verbatim: choices.isEmpty
+      AppLocalization.verbatimText(
+        choices.isEmpty
           ? l("commits.selection.none")
           : l.format("commits.selection.count", Int64(choices.count))
       )

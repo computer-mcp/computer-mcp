@@ -9,6 +9,8 @@ IMPLEMENTATION = {
     "Sources/ComputerMCPPlatformDarwin/DarwinExecutionPlatform.swift",
     "Sources/ComputerMCPPlatformDarwin/DarwinExecutionSentinel.swift",
     "Sources/ComputerMCPPlatformDarwin/DarwinExecutionOwnership.swift",
+    # The Darwin launch backend owns the fixed system log reader shared by its sandbox observers.
+    "Sources/ComputerMCPPlatformDarwin/DarwinSandboxViolationObserver.swift",
     "Sources/ComputerMCPPlatformPOSIX/POSIXExecutionPlatform.swift",
 }
 # Any use of Foundation's Process type, not only its constructors, can start a child

@@ -32,10 +32,10 @@ struct PermissionGrantRow<Actions: View>: View {
               GrantStatusBadge(title: l("grant.status.inherited"), tone: .inherited)
             }
           }
-          Text(verbatim: l.format("grant.saved.format", saved))
+          AppLocalization.verbatimText(l.format("grant.saved.format", saved))
             .font(.caption).foregroundStyle(.secondary)
-          Text(
-            verbatim: l.format("grant.effective.format", effective ?? l("grant.status.unavailable"))
+          AppLocalization.verbatimText(
+            l.format("grant.effective.format", effective ?? l("grant.status.unavailable"))
           )
           .font(.caption).foregroundStyle(.secondary)
           if let explanation {

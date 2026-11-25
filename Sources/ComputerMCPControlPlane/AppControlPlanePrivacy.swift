@@ -15,7 +15,7 @@ package struct ProviderPermissionOptions: Equatable, Sendable {
   package let version: String?
   package let availability: Availability
   package let approval: GatewayProviderApproval?
-  fileprivate let sourceReview: GatewayProviderReview?
+  let sourceReview: GatewayProviderReview?
   package var sourceDigest: String? { sourceReview?.sourceDigest }
   package var declarations: PluginPermissionDeclarations? { sourceReview?.declarations }
   package let declarationDigest: String?
@@ -23,6 +23,7 @@ package struct ProviderPermissionOptions: Equatable, Sendable {
   package let effectiveMode: ExecutionMode?
   package let permissionRevision: UInt64
   package let epoch: UUID?
+  let manifestDigest: String?
 }
 
 package struct PrivacyPermissionInventory: Sendable {
@@ -36,6 +37,7 @@ extension AppControlPlaneService {
   package func privacyPermissionInventory() throws -> PrivacyPermissionInventory {
     guard !configurationMutationInProgress else { throw PluginHostError.changeInProgress }
     let inputs = try gatewayInputs()
+    let manifestDigest = try? manifestStore.admittedDigest(for: inputs.configuration)
     let packages = inputs.plugins.includingBundledDefaults(bundledPlugins.packages.map(\.manifest))
     let resolved = try PluginHost.resolve(
       packages, bundled: bundledPlugins, applications: platform.applications)
@@ -44,9 +46,7 @@ extension AppControlPlaneService {
     var pluginIDs = Set(bundledPlugins.packages.map { $0.manifest.id })
     pluginIDs.formUnion(packages.installations.map(\.pluginID))
     let knownServers = Set(inputs.configuration.mcp.servers.map(\.id))
-    let directServers = inputs.configuration.mcp.servers.filter {
-      $0.transport == .stdio && !packages.knownMCPRegistrationIDs.contains($0.id)
-    }
+    let directServers = inputs.configuration.mcp.servers.filter { $0.transport == .stdio }
     let configured = Set(pluginIDs.map(PluginIdentity.package))
       .union(directServers.map { .localServer($0.id) })
     let view = try requirePermissionControl().view(providerIDs: configured)
@@ -82,8 +82,8 @@ extension AppControlPlaneService {
         if pluginIDs.contains(id) { pluginNames[id] = name }
       case .localServer(let id):
         let server = directServers.first { $0.id == id }
-        review = try server.map {
-          try GatewayProviderReview(
+        review = server.flatMap {
+          try? GatewayProviderReview(
             server: $0, configuration: inputs.persisted, knownPluginIDs: pluginIDs,
             knownServerIDs: knownServers)
         }
@@ -116,7 +116,7 @@ extension AppControlPlaneService {
         sourceReview: review,
         declarationDigest: try review?.declarations?.digest(),
         limits: view.providerLimits[identity] ?? .init(), effectiveMode: mode,
-        permissionRevision: view.revision, epoch: view.epoch)
+        permissionRevision: view.revision, epoch: view.epoch, manifestDigest: manifestDigest)
     }.sorted {
       (String(describing: $0.identity), $0.name) < (String(describing: $1.identity), $1.name)
     }
@@ -151,6 +151,32 @@ extension AppControlPlaneService {
       reviewed.identity, expectedProviderRevision: approval.revision,
       expectedRevision: reviewed.permissionRevision, expectedEpoch: epoch,
       expectedSourceDigest: approval.sourceDigest)
+  }
+}
+
+extension AppControlPlaneOperations {
+  package func saveProviderPermissions(
+    reviewed: ProviderPermissionOptions, permissions: Permissions, fullAccess: Bool,
+    sandboxSettings: ProviderSandboxSettings, editingApproval: Bool
+  ) async throws {
+    if !editingApproval, case .package(let id) = reviewed.identity {
+      guard let source = reviewed.sourceReview, let digest = reviewed.manifestDigest else {
+        throw GatewayPermissionError.revisionConflict
+      }
+      let revision = source.pluginStoreRevision
+      let approval = ProviderEnablementApproval(
+        provider: reviewed,
+        target: .plugin(expectedRevision: revision, settings: nil, manifestDigest: digest),
+        selection: .init(
+          permissions: permissions, sandboxSettings: sandboxSettings, fullAccess: fullAccess))
+      _ = try await changePlugins(
+        .enabled(pluginID: id, true), expectedRevision: revision,
+        approval: approval)
+    } else {
+      _ = try await controlPlane.saveProviderPermissions(
+        reviewed: reviewed, permissions: permissions, fullAccess: fullAccess,
+        sandboxSettings: sandboxSettings, editingApproval: editingApproval)
+    }
   }
 }
 

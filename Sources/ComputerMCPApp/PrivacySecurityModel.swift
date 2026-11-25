@@ -1,5 +1,6 @@
 import ComputerMCPControlPlane
 import ComputerMCPCore
+import ComputerMCPGateway
 import ComputerMCPPermissions
 import Foundation
 import SwiftUI
@@ -149,6 +150,9 @@ struct PrivacyPrincipal: Identifiable, Hashable, Sendable {
   var execution: Execution
   var fullAccessLimitSources: [String] = []
   var providerAvailability: ProviderPermissionOptions.Availability?
+  var clientAvailability: GatewayPermissionSubjectView.Availability?
+  /// Verified clients share the saved profile. The profile row owns edits.
+  var sharedProfileID: GatewayProfileID?
   var effectiveExecution: Execution?
 
   var systemImage: String {
@@ -257,7 +261,11 @@ struct PrivacyGrant: Identifiable, Hashable, Sendable {
   /// Standing authority after ceilings and provider availability are applied.
   var effectiveValue: PrivacyGrantValue?
   var effectiveNetwork: PrivacyNetworkAccess?
-  var networkSourceProjectID: String?
+  /// A worktree uses this source project's standing permission and sandbox settings.
+  var sourceProjectID: String?
+  var inheritsProjectAuthority: Bool {
+    sourceProjectID.map { $0 != object?.id } ?? false
+  }
   var source: PrivacyGrantSource = .owner
   var isStored = true
   var isNetworkStored = false
@@ -362,6 +370,8 @@ struct PrivacySnapshot: Equatable, Sendable {
   var epoch: UUID?
   var reviewedProfiles: [ProfileGrant] = []
   var reviewedProviders: [String: ProviderPermissionOptions] = [:]
+  var clientSubjects: [String: GatewayPermissionSubjectView] = [:]
+  var sourceProjects: [String: String] = [:]
   var profileRevisions: [String: Int64] {
     Dictionary(
       uniqueKeysWithValues: reviewedProfiles.map { ($0.id.rawValue, $0.authorizationRevision) })
@@ -499,14 +509,21 @@ final class PrivacySecurityModel: ObservableObject {
     snapshot.grants.filter { $0.principalID == principal.id }
   }
 
-  /// Principals currently holding any granted value of the permission.
+  /// Count effective authority once per verified subject, or per unbound profile.
   func holders(of permission: PrivacyPermissionKind) -> Int {
+    let boundProfiles = Set(snapshot.principals.compactMap(\.sharedProfileID).map(\.rawValue))
+    let principals = snapshot.principals.filter { !boundProfiles.contains($0.id) }
     if permission == .fullAccess {
-      return snapshot.principals.filter { $0.execution != .sandbox }.count
+      return principals.filter { $0.effectiveExecution == .fullAccessAllowed }.count
     }
+    let ids = Set(principals.map(\.id))
     return Set(
-      grants(for: permission).filter {
-        if case .granted = $0.value { true } else { false }
+      snapshot.grants.filter {
+        guard $0.permission == permission, ids.contains($0.principalID),
+          $0.object?.isRegistered != false
+        else { return false }
+        if case .granted = $0.effectiveValue { return true }
+        return false
       }.map(\.principalID)
     ).count
   }

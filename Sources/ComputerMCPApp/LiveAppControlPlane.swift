@@ -661,7 +661,7 @@ final class LiveAppControlPlane: AppControlPlane {
     reviewed: ProviderPermissionOptions, permissions: Permissions, fullAccess: Bool,
     sandboxSettings: ProviderSandboxSettings, editingApproval: Bool
   ) async throws {
-    _ = try await controlPlane.saveProviderPermissions(
+    try await operations.saveProviderPermissions(
       reviewed: reviewed, permissions: permissions, fullAccess: fullAccess,
       sandboxSettings: sandboxSettings, editingApproval: editingApproval)
   }

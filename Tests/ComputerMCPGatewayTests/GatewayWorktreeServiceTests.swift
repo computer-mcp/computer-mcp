@@ -20,6 +20,48 @@ import Testing
 
 @Suite(.nativeIntegration, .serialized)
 struct GatewayWorktreeServiceTests {
+  @Test func h12WorktreeInventoryValidatesResolvedSourceAndOwnership() throws {
+    let f = try WorktreeServiceFixture()
+    defer { f.remove() }
+    let managed = try f.repository().create(name: "privacy-inventory")
+    let foreign = f.root.appendingPathComponent("foreign")
+    _ = try f.git(["worktree", "add", "--detach", foreign.path, "HEAD"])
+
+    func inventory(resolving root: URL) throws -> ProjectWorktreeInventory {
+      let platform = PlatformServices(
+        launcher: f.platform.launcher, projectGrants: InventoryProjectBookmark(root: root),
+        pluginDirectories: f.platform.pluginDirectories, applications: f.platform.applications,
+        toolProviders: f.platform.toolProviders, managementToolNames: [],
+        executableSearchDirectories: [], gitExecutable: f.platform.gitExecutable,
+        fileChanges: f.platform.fileChanges,
+        permissionPolicyReader: f.platform.permissionPolicyReader)
+      let inventory = try f.database.projectWorktreeInventory(platform: platform)
+      return try #require(inventory.first { $0.source.id == "source" })
+    }
+
+    let current = try inventory(resolving: f.source)
+    #expect(current.isInventoryAvailable)
+    let managedRow = try #require(current.worktrees.first { $0.projectID == managed.projectID })
+    #expect(managedRow.lifecycleState == .active)
+    #expect(managedRow.worktreeID != nil && managedRow.isInspectable)
+    let canonicalForeign = try ProjectPathResolver.canonicalProject(foreign)
+    let checkout = try #require(
+      current.worktrees.first { entry in
+        guard let path = entry.path else { return false }
+        return (try? ProjectPathResolver.canonicalProject(URL(fileURLWithPath: path)))
+          == canonicalForeign
+      }, "\(current.worktrees.map(\.path))")
+    #expect(checkout.worktreeID == nil && checkout.isInspectable)
+
+    let moved = try inventory(resolving: foreign)
+    #expect(!moved.isInventoryAvailable)
+    let retained = try #require(moved.worktrees.first)
+    #expect(moved.worktrees.count == 1)
+    #expect(retained.worktreeID == managedRow.worktreeID)
+    #expect(retained.lifecycleRevision == managedRow.lifecycleRevision)
+    #expect(!retained.isInspectable)
+  }
+
   @Test func recoveryOwnerRequiresAppAuthorityAndUsesFileBackedLedger() throws {
     let f = try WorktreeServiceFixture()
     defer { f.remove() }
@@ -437,6 +479,22 @@ struct WorktreeServiceFixture {
       registeredProjectRoots: database.projects().map { URL(fileURLWithPath: $0.rootPath) },
       timeoutMilliseconds: 30_000, maxOutputBytes: 1_048_576, lockTimeout: .seconds(1),
       journalIO: journalIO)
+  }
+}
+
+private struct InventoryProjectBookmark: ProjectBookmarkServicing {
+  let root: URL
+
+  func registerFolder(at url: URL, displayName: String?) throws -> ComputerMCPCore.RegisteredProject
+  {
+    throw WorktreeServiceTestFailure.unexpected
+  }
+
+  func resolve(_ project: ComputerMCPCore.RegisteredProject) throws -> ResolvedProjectAccess {
+    var resolved = project
+    resolved.rootPath = root.path
+    return try .init(
+      project: resolved, rootURL: root, bookmarkWasRefreshed: false, stopAccessing: nil)
   }
 }
 

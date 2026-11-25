@@ -34,6 +34,8 @@ struct PluginControlPlaneTests {
     )
     defer { fixture.remove() }
     _ = try await fixture.gateway.changePlugins(.registerDevelopment(package), expectedRevision: 0)
+    let operations = AppControlPlaneOperations(
+      controlPlane: fixture.host, gatewayService: fixture.gateway)
     let initial = try await fixture.host.privacyPermissionInventory()
     let review = try #require(initial.providers.first { $0.identity == .package("test-package") })
     #expect(review.availability == .needsApproval)
@@ -45,14 +47,99 @@ struct PluginControlPlaneTests {
       to: package.appendingPathComponent(PluginManifest.filename), atomically: true,
       encoding: .utf8)
     await #expect(throws: GatewayPermissionError.revisionConflict) {
-      try await fixture.host.saveProviderPermissions(
-        reviewed: review, permissions: .init(), fullAccess: false, sandboxSettings: .init())
+      try await operations.saveProviderPermissions(
+        reviewed: review, permissions: .init(), fullAccess: false, sandboxSettings: .init(),
+        editingApproval: false)
     }
     try FileManager.default.removeItem(at: package)
     let current = try await fixture.host.privacyPermissionInventory()
     let unavailable = try #require(current.providers.first { $0.identity == review.identity })
     #expect(unavailable.availability == .unavailable)
     #expect(unavailable.approval == nil)
+  }
+
+  @Test
+  func h12PackageApprovalPublishesWithTheRunningGatewayAndRollsBackCompositionFailure() async throws
+  {
+    let files = try PluginStoreFixture()
+    defer { files.cleanup() }
+    let package = try files.makePackage(
+      directory: "activation",
+      text: PluginManifestFixture.header + """
+
+        [[mcp]]
+        id = 'fixture'
+        transport = 'stdio'
+        executable = { platform_paths = { macos = 'helper' } }
+        """)
+    let helper = package.appendingPathComponent("helper")
+    try "#!/bin/sh\nexit 0\n".write(to: helper, atomically: true, encoding: .utf8)
+    try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: helper.path)
+    let fixture = try PluginControlFixture(
+      bundled: .init(packages: [], issues: []), cliExecutable: URL(fileURLWithPath: "/usr/bin/true")
+    )
+    defer { fixture.remove() }
+    let operations = AppControlPlaneOperations(
+      controlPlane: fixture.host, gatewayService: fixture.gateway)
+
+    var configuration = try await fixture.host.activeConfiguration()
+    configuration.mcp.servers.append(
+      .init(id: "shared-fixture", transport: .stdio, command: "/usr/bin/true"))
+    _ = try await operations.activateManifest(
+      configuration.exportedTOML(), expectedDigest: fixture.host.configurationDigest())
+    _ = try await operations.changePlugins(.registerDevelopment(package), expectedRevision: 0)
+    let prepared = try await operations.changePlugins(
+      .settings(
+        pluginID: "test-package",
+        .init(
+          enabled: false, mcp: ["fixture": .init(registrationID: "shared-fixture")])),
+      expectedRevision: 1)
+
+    try await fixture.gateway.start()
+    do {
+      let client = try await GatewayClientSession.connectSocket(
+        socketURL: fixture.directories.gatewaySocket)
+      do {
+        _ = try await client.listTools()
+        let rejected = try await fixture.host.privacyPermissionInventory()
+        let review = try #require(
+          rejected.providers.first { $0.identity == .package("test-package") })
+        await #expect(throws: ConfigurationError.self) {
+          try await operations.saveProviderPermissions(
+            reviewed: review, permissions: .init(), fullAccess: false, sandboxSettings: .init(),
+            editingApproval: false)
+        }
+        #expect(try fixture.database.pluginStoreSnapshot() == prepared.state)
+        #expect(try await fixture.host.permissionRequests().providers.isEmpty)
+        #expect(
+          try await fixture.host.permissionRequests().revision == rejected.permissions.revision)
+
+        configuration.mcp.servers.removeAll { $0.id == "shared-fixture" }
+        _ = try await operations.activateManifest(
+          configuration.exportedTOML(), expectedDigest: fixture.host.configurationDigest())
+        let inventory = try await fixture.host.privacyPermissionInventory()
+        let current = try #require(inventory.providers.first { $0.identity == review.identity })
+        try await operations.saveProviderPermissions(
+          reviewed: current, permissions: .init(), fullAccess: false, sandboxSettings: .init(),
+          editingApproval: false)
+        let active = try await fixture.host.privacyPermissionInventory()
+        #expect(active.providers.first { $0.identity == review.identity }?.availability == .active)
+        #expect(
+          try await fixture.host.pluginSnapshot().contributions.contains {
+            $0.pluginID == "test-package"
+          })
+        #expect(await fixture.gateway.snapshot().state == .running)
+        _ = try await client.listTools()
+      } catch {
+        await client.disconnect()
+        throw error
+      }
+      await client.disconnect()
+    } catch {
+      await fixture.gateway.stop()
+      throw error
+    }
+    await fixture.gateway.stop()
   }
 
   @Test(arguments: ["", "plugin_api = 0", "plugin_api = '1'"])

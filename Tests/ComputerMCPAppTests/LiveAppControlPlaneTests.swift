@@ -5,6 +5,7 @@ import ComputerMCPSandbox
 import ComputerMCPTestSupport
 import ComputerMCPTransport
 import ComputerMCPTunnels
+import ComputerMCPWorktrees
 import Darwin
 import Foundation
 import GRDB
@@ -486,6 +487,116 @@ final class LiveAppControlPlaneTests {
       await #expect(throws: AppControlPlaneError.self) {
         try await service.revokeAll(principalID: principalID, reviewed: before)
       }
+    }
+  }
+
+  @Test
+  func h12VerifiedClientsKeepSharedProfileAndEffectiveAvailability() async throws {
+    try await withAppControlPlaneFixture { fixture in
+      let host = fixture.controlPlane
+      let database = await host.database
+      let permissionService = try database.permissionRuntime(platform: host.platform).service
+      let service = LivePrivacySecurityService(controlPlane: fixture.app)
+      fixture.policyReader.set(
+        .machineFile, .available(Data("[permissions]\nscreen = 'deny'".utf8)))
+      let profileID = GatewayProfileID.chatGPTOperate
+      for identity in ["first-client", "second-client"] {
+        let subject = try GatewayPermissionSubject(
+          context: .init(caller: .secureTunnel, profileID: profileID, trustedPrincipalID: identity))
+        let decision = try permissionService.admit(
+          subject: subject, tool: "screen.capture", projectID: nil, argumentsDigest: identity,
+          requirements: .init(actions: [.init(requirement: try .init(.screen, .access))]))
+        #expect(decision == .denied(.managedLimit([.machine])))
+      }
+
+      let reviewed = try await service.privacySnapshot()
+      let clients = reviewed.principals.filter { $0.sharedProfileID == profileID }
+      #expect(Set(clients.map(\.id)).count == 2)
+      #expect(clients.allSatisfy { $0.clientAvailability == .available })
+      #expect(
+        clients.allSatisfy {
+          reviewed.clientSubjects[$0.id]?.limits.sources[.machine] != nil
+        })
+      let clientIDs = Set(clients.map(\.id))
+      let screen = reviewed.grants.filter {
+        clientIDs.contains($0.principalID) && $0.permission == .screen
+      }
+      #expect(screen.count == 2)
+      #expect(screen.allSatisfy { $0.value == .ask && $0.effectiveValue == .denied })
+      await #expect(throws: AppControlPlaneError.self) {
+        try await service.setGrant(#require(screen.first), reviewed: reviewed)
+      }
+
+      fixture.counter.forget()
+      let restored = try await service.privacySnapshot()
+      let suspended = restored.principals.filter { $0.sharedProfileID == profileID }
+      #expect(suspended.count == 2)
+      #expect(suspended.allSatisfy { $0.clientAvailability == .restoreReview })
+      #expect(
+        restored.grants.filter { clientIDs.contains($0.principalID) }.allSatisfy {
+          $0.effectiveValue == nil && $0.effectiveNetwork == nil
+        })
+    }
+  }
+
+  @Test(.nativeIntegration)
+  func h12AppMaintainsRecoveryReadbackAfterSourceRemoval() async throws {
+    try await withAppControlPlaneFixture(includesRecoveryOwner: true) { fixture in
+      let host = fixture.controlPlane
+      let database = await host.database
+      let proposed = fixture.root.appendingPathComponent("source")
+      try FileManager.default.createDirectory(at: proposed, withIntermediateDirectories: true)
+      let source = proposed.standardizedFileURL.resolvingSymlinksInPath()
+      let git = GatewayWorktreeGit(
+        launcher: host.platform.launcher, executable: host.platform.gitExecutable)
+      func runGit(_ args: [String]) throws {
+        let result = try git.run(
+          executable: host.platform.gitExecutable, arguments: HostGitConfiguration.arguments + args,
+          workingDirectory: source,
+          environment: HostGitConfiguration.environment(home: fixture.root),
+          timeoutMilliseconds: 20_000, maxOutputBytes: 1_048_576)
+        try #require(result.exitCode == 0, "\(result.stderr)")
+      }
+      try runGit(["init", "--initial-branch=main"])
+      try runGit([
+        "-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid",
+        "commit", "--allow-empty", "-m", "Initial",
+      ])
+      let registration = ComputerMCPCore.RegisteredProject(
+        id: "recovery-source", displayName: "Recovery Source", rootPath: source.path)
+      try database.saveProject(registration)
+      let saved = try database.project(id: registration.id)
+      let registered = try #require(saved)
+      let repository = try WorktreeRepository(
+        source: .init(id: registered.id, root: source.path, registeredAt: registered.createdAt),
+        store: database.derivedProjectStore(inspectNesting: { _ in [] }),
+        storage: #require(database.worktreeStorage), executor: git,
+        registeredProjectRoots: [source], timeoutMilliseconds: 20_000,
+        maxOutputBytes: 1_048_576, lockTimeout: .seconds(5))
+      let child = try repository.create(name: "privacy-recovery")
+      let service = LivePrivacySecurityService(controlPlane: fixture.app)
+      let reviewed = try await service.privacySnapshot()
+      let worktreeGrant = try #require(
+        reviewed.grants.first {
+          $0.principalID == GatewayProfileID.localAdmin.rawValue
+            && $0.object?.id == child.projectID && $0.permission == .projects
+        })
+      #expect(worktreeGrant.sourceProjectID == registration.id)
+      await #expect(throws: AppControlPlaneError.self) {
+        try await service.setGrant(worktreeGrant, reviewed: reviewed)
+      }
+
+      let publication = try repository.publish(projectID: child.projectID) { _ in }
+      let stores = try await fixture.app.fetchRecoveryStores()
+      let store = try #require(stores.first)
+      let record = try #require(store.records.first { $0.oid == publication.oid })
+      try database.deleteProject(id: registration.id)
+      try FileManager.default.moveItem(
+        at: source, to: fixture.root.appendingPathComponent("retired-source"))
+      let retainedStores = try await fixture.app.fetchRecoveryStores()
+      let retained = try #require(retainedStores.first { $0.key == store.key })
+      #expect(retained.generation == store.generation)
+      #expect(retained.records.contains { $0.selection == record.selection })
     }
   }
 
@@ -1061,12 +1172,13 @@ final class LiveAppControlPlaneTests {
     permissionRequester: any SystemPermissionRequesting = MacOSSystemPermissionRequester(),
     keychainAdapter: any KeychainAdapter = AppTestKeychainAdapter(),
     executionLauncher: ((AppControlPlaneServiceDirectories) -> ExecutionLauncher)? = nil,
+    includesRecoveryOwner: Bool = false,
     operation: (AppControlPlaneFixture) async throws -> T
   ) async throws -> T {
     let fixture = try AppControlPlaneFixture(
       permissionRequester: permissionRequester,
       keychainAdapter: keychainAdapter,
-      executionLauncher: executionLauncher
+      executionLauncher: executionLauncher, includesRecoveryOwner: includesRecoveryOwner
     )
     do {
       let result = try await operation(fixture)
@@ -1095,7 +1207,8 @@ private final class AppControlPlaneFixture {
     keychainAdapter: any KeychainAdapter = AppTestKeychainAdapter(),
     registrationService: ClientRegistrationService? = nil,
     gatewayExecutablePath: String = "computer-mcp",
-    executionLauncher: ((AppControlPlaneServiceDirectories) -> ExecutionLauncher)? = nil
+    executionLauncher: ((AppControlPlaneServiceDirectories) -> ExecutionLauncher)? = nil,
+    includesRecoveryOwner: Bool = false
   ) throws {
     root = FileManager.default.temporaryDirectory
       .appendingPathComponent(UUID().uuidString, isDirectory: true)
@@ -1140,10 +1253,18 @@ private final class AppControlPlaneFixture {
       accessGroup: "TESTTEAMID.com.showxu.computer-mcp.tests",
       adapter: keychainAdapter
     )
+    let recoveryOwner: GatewayRecoveryOwnerService? =
+      if includesRecoveryOwner {
+        try GatewayRecoveryOwnerService(
+          database: database, platform: platform,
+          owner: .init(
+            caller: .localApp, profileID: .localAdmin, trustedPrincipalID: "app-fixture-owner"))
+      } else { nil }
     controlPlane = AppControlPlaneService(
       directories: directories,
       database: database,
       permissionControl: permissionControl,
+      recoveryOwner: recoveryOwner,
       manifestStore: manifestStore,
       defaultManifest: DefaultGatewayConfiguration.manifest,
       secretStore: secretStore,

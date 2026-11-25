@@ -49,6 +49,36 @@ import Testing
     #expect(model.holders(of: .fullAccess) == 1)
   }
 
+  @Test func h12WorktreeGrantInheritsSourceAndWildcardNetworkWithEffectiveCeilings() throws {
+    var profile = ProfileGrant(id: .chatGPTOperate, allowedCallers: [.secureTunnel])
+    try profile.permissions.set(.granted(.write), for: .project("*"))
+    try profile.permissions.set(.granted(.write), for: .project("source"))
+    try profile.permissions.set(.denied, for: .project("worktree"))
+    profile.projectNetworks["*"] = .full
+    profile.projectNetworks["worktree"] = NetworkAccess.none
+
+    var ceilings = Permissions()
+    try ceilings.set(.denied, for: .screen)
+    try ceilings.set(.granted(.read), for: .project("source"))
+    let limits = ManagedLimits(
+      machine: .available(.init(permissionCeilings: ceilings, network: .trusted)))
+    let rows = LivePrivacySecurityService.grants(
+      profile, names: .init(projects: ["source": "Source", "worktree": "Worktree"]),
+      limits: [limits], trustedHosts: ["trusted.example"], sourceProjects: ["worktree": "source"])
+    let child = try #require(rows.first { $0.object?.id == "worktree" })
+    #expect(child.sourceProjectID == "source" && child.inheritsProjectAuthority)
+    #expect(child.choice == .inherited)
+    #expect(child.value == .granted(.readWrite))
+    #expect(child.effectiveValue == .granted(.read))
+    #expect(child.network == .full)
+    #expect(child.effectiveNetwork == .custom(hosts: ["trusted.example"], includesTrusted: false))
+    let wildcard = try #require(rows.first { $0.permission == .projects && $0.object?.id == "*" })
+    #expect(wildcard.effectiveValue == .granted(.readWrite))
+    #expect(!wildcard.availableLevels.contains(.readWrite))
+    let screen = try #require(rows.first { $0.permission == .screen })
+    #expect(screen.value == .ask && screen.effectiveValue == .denied)
+  }
+
   @Test func networkEditsRefreshTheProjectGrant() async throws {
     let service = PrivacySecurityFake()
     let model = PrivacySecurityModel(service: service)
@@ -630,7 +660,7 @@ private final class PrivacySecurityFake: PrivacySecurityService {
       execution: .sandbox)
     let claude = PrivacyPrincipal(
       id: "claude-code", name: "Claude Code", kind: .client(connection: "This Mac"),
-      execution: .fullAccessAllowed)
+      execution: .fullAccessAllowed, effectiveExecution: .fullAccessAllowed)
     let codex = PrivacyPrincipal(
       id: "codex", name: "Codex", kind: .plugin(version: "1.4.0"), execution: .sandbox)
     let host = PrivacyObject(
@@ -647,15 +677,17 @@ private final class PrivacySecurityFake: PrivacySecurityService {
       grants: [
         PrivacyGrant(
           principalID: "chatgpt", permission: .projects, object: host,
-          value: .granted(.readWrite), network: PrivacyNetworkAccess.none),
+          value: .granted(.readWrite), network: PrivacyNetworkAccess.none,
+          effectiveValue: .granted(.readWrite)),
         PrivacyGrant(
           principalID: "codex", permission: .projects, object: host, value: .granted(.readWrite),
           network: .custom(hosts: ["api.openai.com", "chatgpt.com"], includesTrusted: false),
-          source: .pluginDeclaration),
+          effectiveValue: .granted(.readWrite), source: .pluginDeclaration),
         PrivacyGrant(
           principalID: "claude-code", permission: .projects, object: site, value: .ask),
         PrivacyGrant(
-          principalID: "chatgpt", permission: .screen, object: nil, value: .granted(.allow)),
+          principalID: "chatgpt", permission: .screen, object: nil, value: .granted(.allow),
+          effectiveValue: .granted(.allow)),
         PrivacyGrant(principalID: "chatgpt", permission: .desktopControl, object: nil, value: .ask),
         PrivacyGrant(principalID: "chatgpt", permission: .unifiedLogs, object: nil, value: .denied),
         PrivacyGrant(

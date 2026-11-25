@@ -48,9 +48,7 @@ extension AppControlPlaneService {
     var pluginIDs = Set(bundledPlugins.packages.map { $0.manifest.id })
     pluginIDs.formUnion(packages.installations.map(\.pluginID))
     let knownServers = Set(inputs.configuration.mcp.servers.map(\.id))
-    let directServers = inputs.configuration.mcp.servers.filter {
-      $0.transport == .stdio && !packages.knownMCPRegistrationIDs.contains($0.id)
-    }
+    let directServers = inputs.configuration.mcp.servers.filter { $0.transport == .stdio }
     let configured = Set(pluginIDs.map(PluginIdentity.package))
       .union(directServers.map { .localServer($0.id) })
     let view = try requirePermissionControl().view(
@@ -87,8 +85,8 @@ extension AppControlPlaneService {
         if pluginIDs.contains(id) { pluginNames[id] = name }
       case .localServer(let id):
         let server = directServers.first { $0.id == id }
-        review = try server.map {
-          try GatewayProviderReview(
+        review = server.flatMap {
+          try? GatewayProviderReview(
             server: $0, configuration: inputs.persisted, knownPluginIDs: pluginIDs,
             knownServerIDs: knownServers)
         }

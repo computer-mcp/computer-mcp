@@ -134,6 +134,28 @@ package struct ProviderSandboxSettings: Hashable, Sendable, Codable {
     sourceProjectID.flatMap { projects[$0]?.applying(to: defaults) } ?? defaults
   }
 
+  /// A new authority epoch keeps reviewed values and revalidates their filesystem
+  /// evidence before the ledger allocates any rule identities.
+  package func rebindingReviewedChoices() -> Self {
+    func drafts(_ exceptions: Set<ApprovedReadException>) -> Set<ApprovedReadException> {
+      Set(
+        exceptions.map { exception in
+          var draft = exception
+          draft.identity = BasisIdentity()
+          return draft
+        })
+    }
+    return Self(
+      defaults: SandboxSettings(
+        network: defaults.network.freshDraft(), deniedReadLocations: defaults.deniedReadLocations,
+        readExceptions: drafts(defaults.readExceptions)),
+      projects: projects.mapValues {
+        SandboxSettingsOverride(
+          network: $0.network?.freshDraft(), readExceptions: $0.readExceptions.map(drafts),
+          deniedReadLocations: $0.deniedReadLocations)
+      })
+  }
+
   mutating func commit(against current: Self?, in ledger: inout PermissionLedger) throws {
     try defaults.commit(against: current?.defaults, in: &ledger)
     for (id, var override) in projects {

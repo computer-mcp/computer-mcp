@@ -93,9 +93,15 @@ package struct GatewayPermissionView: Sendable {
   package var providerFullAccess: Set<PluginIdentity> = []
 }
 
-package struct GatewayPermissionSubjectView: Sendable {
+package struct GatewayPermissionSubjectView: Equatable, Sendable {
+  package enum Availability: Hashable, Sendable {
+    case available, restoreReview, profileUnavailable, callerDenied
+  }
+
   package let principal: Principal
   package let profileID: GatewayProfileID
   package let caller: GatewayCallerKind
   package let limits: ManagedLimits
+  package var availability: Availability = .available
+  package var effectiveMode: ExecutionMode? = nil
 }

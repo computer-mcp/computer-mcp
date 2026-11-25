@@ -132,6 +132,42 @@ import Testing
     }
   }
 
+  @Test func h12WorktreeInventoryAuthorityMatchesSourceAdmission() throws {
+    let f = try DerivedAuthorityFixture()
+    defer { f.remove() }
+    let managed = try f.create("source-policy")
+    let owner = try GatewayPermissionOwner(
+      context: .init(caller: .localApp, profileID: .localAdmin, trustedPrincipalID: "owner"),
+      validate: {})
+    let view = try f.service.view(owner: owner)
+    let policyProject = try #require(view.sourceProjects[managed.projectID])
+    #expect(policyProject == "source")
+
+    let subject = try GatewayPermissionSubject(
+      context: .init(
+        caller: .secureTunnel, profileID: .chatGPTOperate, trustedPrincipalID: "source-user"))
+    func admit() throws -> AuthorizationDecision {
+      try f.service.admit(
+        subject: subject, tool: "source-policy", projectID: managed.projectID,
+        argumentsDigest: UUID().uuidString,
+        requirements: .init(
+          actions: [
+            .init(
+              requirement: try .init(.project(policyProject), .read), scope: .project(policyProject)
+            )
+          ],
+          sandboxProjectID: policyProject))
+    }
+    guard case .allowed = try admit() else {
+      Issue.record("The reviewed source grant did not admit its worktree.")
+      return
+    }
+    var profile = try #require(f.database.profiles().first { $0.id == subject.profileID })
+    try profile.permissions.set(.denied, for: .project(policyProject))
+    try f.database.saveProfile(profile)
+    #expect(try admit() == .denied(.permissionDenied(.project(policyProject))))
+  }
+
   @Test func activationRejectsNarrowerTrackedProjectsAndProjectsNestedLocations() throws {
     let f = try DerivedAuthorityFixture()
     defer { f.remove() }

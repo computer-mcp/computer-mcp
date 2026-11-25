@@ -70,7 +70,14 @@ extension GatewayPermissionService {
         throw GatewayPermissionError.invalidBinding
       }
     }
+    let derivedIDs = Set(review.configuration.derivedProjects.map(\.projectID))
     for (permission, state) in permissions.entries {
+      if case .project(let id) = permission, derivedIDs.contains(id) {
+        guard previous?.permissions.entries[permission] == state else {
+          throw PermissionModelError.invalidObject
+        }
+        continue
+      }
       guard case .granted = state else { continue }
       let known: Bool
       switch permission {
@@ -95,9 +102,24 @@ extension GatewayPermissionService {
       throw PermissionMigrationError.revisionExhausted
     }
     let trustedHosts = Set(ledger.environment.trustedHosts.map(\.host))
-    var selectedSettings = sandboxSettings
+    let currentSettings = ledger.sandboxSettings.providers[review.identity]
+    var selectedSettings =
+      !editingApproval && previous != nil && currentSettings == nil
+      ? sandboxSettings.rebindingReviewedChoices() : sandboxSettings
     let ceiling = review.declarations.map { $0.sandbox?.network?.value ?? .none }
-    selectedSettings.defaults.networkCeiling = ceiling
+    selectedSettings.defaults.networkCeiling = ceiling.map {
+      (currentSettings?.defaults.networkCeiling ?? .none).updating(to: $0)
+    }
+    if let currentSettings {
+      selectedSettings.defaults.network = currentSettings.defaults.network.updating(
+        to: selectedSettings.defaults.network)
+      for (id, var override) in selectedSettings.projects {
+        if let network = override.network {
+          override.network = (currentSettings.projects[id]?.network ?? .none).updating(to: network)
+          selectedSettings.projects[id] = override
+        }
+      }
+    }
     for projectID in [nil] + selectedSettings.projects.keys.sorted().map(Optional.some) {
       let settings = selectedSettings.settings(sourceProjectID: projectID)
       if editingApproval,
@@ -141,13 +163,21 @@ extension GatewayPermissionService {
       }
     }
     let principal = Principal.plugin(review.identity)
-    var selection = Permissions()
-    for (permission, state) in permissions.entries {
+    let current = ledger.permissions(for: principal)
+    var selection = current
+    for permission in current.entries.keys where permissions.entries[permission] == nil {
+      selection.removeEntry(for: permission)
+    }
+    for (permission, state) in permissions.entries where current.entries[permission] != state {
       try selection.set(state, for: permission)
     }
-    _ = try ledger.setPermissions(selection, for: principal, expectedRevision: ledger.revision)
-    _ = try ledger.setProviderSandboxSettings(
-      selectedSettings, for: review.identity, expectedRevision: ledger.revision)
+    if selection != current {
+      _ = try ledger.setPermissions(selection, for: principal, expectedRevision: ledger.revision)
+    }
+    if selectedSettings != currentSettings {
+      _ = try ledger.setProviderSandboxSettings(
+        selectedSettings, for: review.identity, expectedRevision: ledger.revision)
+    }
     let consent: ModeConsent? =
       if editingApproval { previous?.fullAccessConsent } else if fullAccess {
         ledger.consent(for: principal, mode: .fullAccess(.standing))

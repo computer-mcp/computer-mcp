@@ -97,6 +97,9 @@ extension AppControlPlaneService {
     expectedProviderRevision: Int64?, expectedRevision: UInt64, expectedEpoch: UUID,
     editingApproval: Bool = false, reviewedLimits: ManagedLimits? = nil
   ) async throws -> GatewayProviderApproval {
+    if !editingApproval, case .package = review.identity {
+      throw ProviderEnablementError.reviewRequired
+    }
     guard !configurationMutationInProgress else { throw PluginHostError.changeInProgress }
     configurationMutationInProgress = true
     defer { configurationMutationInProgress = false }
@@ -233,7 +236,9 @@ extension AppControlPlaneService {
           == .plugin(
             expectedRevision: expectedRevision, settings: target.settings,
             manifestDigest: try manifestStore.admittedDigest(for: inputs.configuration)),
-        approval.provider.sourceReview == (try? providerReview(.package(target.id)))
+        approval.provider.identity == .package(target.id),
+        let source = approval.provider.sourceReview,
+        source == (try? providerReview(.package(target.id)))
       else { throw GatewayPermissionError.revisionConflict }
       activation = try requirePermissionControl().prepareProviderActivation(approval)
     } else {

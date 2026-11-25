@@ -490,6 +490,55 @@ final class LiveAppControlPlaneTests {
   }
 
   @Test
+  func h12VerifiedClientsKeepSharedProfileAndEffectiveAvailability() async throws {
+    try await withAppControlPlaneFixture { fixture in
+      let host = fixture.controlPlane
+      let database = await host.database
+      let permissionService = try database.permissionRuntime(platform: host.platform).service
+      let service = LivePrivacySecurityService(controlPlane: fixture.app)
+      fixture.policyReader.set(
+        .machineFile, .available(Data("[permissions]\nscreen = 'deny'".utf8)))
+      let profileID = GatewayProfileID.chatGPTOperate
+      for identity in ["first-client", "second-client"] {
+        let subject = try GatewayPermissionSubject(
+          context: .init(caller: .secureTunnel, profileID: profileID, trustedPrincipalID: identity))
+        let decision = try permissionService.admit(
+          subject: subject, tool: "screen.capture", projectID: nil, argumentsDigest: identity,
+          requirements: .init(actions: [.init(requirement: try .init(.screen, .access))]))
+        #expect(decision == .denied(.managedLimit([.machine])))
+      }
+
+      let reviewed = try await service.privacySnapshot()
+      let clients = reviewed.principals.filter { $0.sharedProfileID == profileID }
+      #expect(Set(clients.map(\.id)).count == 2)
+      #expect(clients.allSatisfy { $0.clientAvailability == .available })
+      #expect(
+        clients.allSatisfy {
+          reviewed.clientSubjects[$0.id]?.limits.sources[.machine] != nil
+        })
+      let clientIDs = Set(clients.map(\.id))
+      let screen = reviewed.grants.filter {
+        clientIDs.contains($0.principalID) && $0.permission == .screen
+      }
+      #expect(screen.count == 2)
+      #expect(screen.allSatisfy { $0.value == .ask && $0.effectiveValue == .denied })
+      await #expect(throws: AppControlPlaneError.self) {
+        try await service.setGrant(#require(screen.first), reviewed: reviewed)
+      }
+
+      fixture.counter.forget()
+      let restored = try await service.privacySnapshot()
+      let suspended = restored.principals.filter { $0.sharedProfileID == profileID }
+      #expect(suspended.count == 2)
+      #expect(suspended.allSatisfy { $0.clientAvailability == .restoreReview })
+      #expect(
+        restored.grants.filter { clientIDs.contains($0.principalID) }.allSatisfy {
+          $0.effectiveValue == nil && $0.effectiveNetwork == nil
+        })
+    }
+  }
+
+  @Test
   func privacyConfirmationIncludesUnadoptedProfilesWithoutGlobalSuspension() async throws {
     try await withAppControlPlaneFixture { fixture in
       try await fixture.controlPlane.database.connection.writer.write { database in

@@ -97,6 +97,7 @@ extension AppControlPlaneService {
     if case .registration(let currentDigest, _) = target, currentDigest != manifestDigest {
       throw AtomicManifestStoreError.staleDigest
     }
+    let derivedProjectIDs = Set(inputs.persisted.derivedProjects.map(\.projectID))
     var serverNames = inventory.names.mcpServers.filter { source.serverIDs.contains($0.key) }
     if let server { serverNames[server.id] = name }
     return ProviderEnablementReview(
@@ -108,7 +109,7 @@ extension AppControlPlaneService {
         permissionRevision: view.revision, epoch: view.epoch,
         manifestDigest: manifestDigest),
       names: PermissionObjectNames(
-        projects: inventory.names.projects,
+        projects: inventory.names.projects.filter { !derivedProjectIDs.contains($0.key) },
         plugins: inventory.names.plugins.filter { source.pluginIDs.contains($0.key) },
         mcpServers: serverNames),
       localServer: server, mcpContributionIDs: mcpContributionIDs,

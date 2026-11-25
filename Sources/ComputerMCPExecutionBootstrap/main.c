@@ -1,24 +1,68 @@
-#if defined(__linux__)
 #include <errno.h>
+#include <inttypes.h>
+#include <stdio.h>
+#include <string.h>
+#include <sys/resource.h>
+
+static int target_arguments(int argc, char **argv) {
+  int target = 1;
+  if (argc > 1 && strcmp(argv[1], "--file-size-limit") == 0) {
+    target = 3;
+    if (argc <= target || !argv[2][0]) {
+      errno = EINVAL;
+      return -1;
+    }
+    for (const char *digit = argv[2]; *digit; ++digit) {
+      if (*digit < '0' || *digit > '9') {
+        errno = EINVAL;
+        return -1;
+      }
+    }
+    errno = 0;
+    uintmax_t bytes = strtoumax(argv[2], NULL, 10);
+    rlim_t limit = (rlim_t)bytes;
+    if (errno || !bytes || (uintmax_t)limit != bytes || limit == RLIM_INFINITY) {
+      errno = ERANGE;
+      return -1;
+    }
+    struct rlimit requested = {limit, limit};
+    if (setrlimit(RLIMIT_FSIZE, &requested) != 0) return -1;
+    struct rlimit actual;
+    if (getrlimit(RLIMIT_FSIZE, &actual) != 0) return -1;
+    if (actual.rlim_cur != limit || actual.rlim_max != limit) {
+      errno = EINVAL;
+      return -1;
+    }
+  }
+  if (argc <= target || argv[target][0] != '/') {
+    errno = EINVAL;
+    return -1;
+  }
+  return target;
+}
+
+#if defined(__linux__)
 #include <signal.h>
 #include <sys/prctl.h>
 #include <unistd.h>
 
 int main(int argc, char **argv) {
-  if (argc < 2 || argv[1][0] != '/') return 126;
+  int target = target_arguments(argc, argv);
+  if (target < 0) {
+    perror("Execution bootstrap target or file-size limit");
+    return 126;
+  }
   pid_t parent = getppid();
   if (parent == 1 || prctl(PR_SET_PDEATHSIG, SIGKILL) != 0 || getppid() != parent) return 126;
   /* The host persists ownership before continuing this process into exec. */
   if (raise(SIGSTOP) != 0) return 126;
-  execv(argv[1], argv + 1);
+  execv(argv[target], argv + target);
   return errno == ENOENT ? 127 : 126;
 }
 #else
-#include <errno.h>
 #include <libproc.h>
 #include <fcntl.h>
 #include <stdint.h>
-#include <stdio.h>
 #include <stdlib.h>
 #include <sys/socket.h>
 #include <sys/time.h>
@@ -45,7 +89,11 @@ _Static_assert(sizeof(struct process_identity_info) == 56, "Darwin process ident
 _Static_assert(sizeof(struct bootstrap_identity) == 16, "Bootstrap wire identity ABI");
 
 int main(int argc, char **argv) {
-  if (argc < 2 || argv[1][0] != '/') return 126;
+  int target = target_arguments(argc, argv);
+  if (target < 0) {
+    perror("Execution bootstrap target or file-size limit");
+    return 126;
+  }
   /* Allow scheduling and host ownership admission under heavy machine load. */
   struct timeval timeout = {.tv_sec = 30};
   int enabled = 1;
@@ -137,7 +185,7 @@ int main(int argc, char **argv) {
   }
   close(channel);
   close(diagnostics);
-  execv(argv[1], argv + 1);
+  execv(argv[target], argv + target);
   int status = errno == ENOENT ? 127 : 126;
   perror("Execution target exec failed");
   return status;

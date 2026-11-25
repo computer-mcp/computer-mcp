@@ -1,4 +1,5 @@
 import ComputerMCPPlatform
+import ComputerMCPSandbox
 import Foundation
 
 /// Finite argv commands using the shared CLI lifecycle and a complete child environment.
@@ -69,6 +70,20 @@ package struct ManagedCommandRunner: CommandRunning {
         inputDescriptor: inputDescriptor, outputDescriptor: outputDescriptor,
         environment: environment, timeoutMilliseconds: timeoutMilliseconds,
         maxOutputBytes: maxOutputBytes)
+    }
+  }
+
+  package func runBounded(
+    executable: String, invocation: CLIInvocation, workingDirectory: URL,
+    environment: [String: String], timeoutMilliseconds: Int, maxOutputBytes: Int,
+    fileOutput: (descriptor: Int32, bytes: Int)?, fileSizeLimit: ExecutionFileSizeLimit?
+  ) throws -> CommandDataResult {
+    try HostCommandEnvironment.$current.withValue(environment) {
+      try DescriptorCommandExecution.runBounded(
+        launcher: launcher, executable: executable, invocation: invocation,
+        directory: workingDirectory, environment: environment,
+        timeoutMilliseconds: timeoutMilliseconds, maxOutputBytes: maxOutputBytes,
+        fileOutput: fileOutput, fileSizeLimit: fileSizeLimit)
     }
   }
 

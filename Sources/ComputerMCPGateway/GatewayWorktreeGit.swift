@@ -67,6 +67,30 @@ struct GatewayWorktreeGit: WorktreeGitExecuting, CommandRunning {
     }
   }
 
+  func executeBounded(
+    _ command: WorktreeGitCommand, fileOutput: WorktreeGitFileOutput?, fileSizeLimit: Int?
+  ) throws -> WorktreeGitResult {
+    try administration(command) {
+      let constraint = try fileSizeLimit.map { limit in
+        guard let bytes = UInt64(exactly: limit) else {
+          throw WorktreeError.invalidRequest("Invalid Git index file-size limit.")
+        }
+        return try ExecutionFileSizeLimit(bytes: bytes)
+      }
+      let result = try ManagedCommandRunner(launcher: launcher).runBounded(
+        executable: executable,
+        invocation: .init(arguments: command.arguments, standardInput: command.input),
+        workingDirectory: command.directory, environment: command.environment,
+        timeoutMilliseconds: command.timeoutMilliseconds, maxOutputBytes: command.maxOutputBytes,
+        fileOutput: fileOutput.map { ($0.descriptor, $0.byteLimit) },
+        fileSizeLimit: constraint)
+      guard let code = result.exitCode else {
+        throw WorktreeError.busy("Bounded host Git did not confirm its exit.")
+      }
+      return .init(output: result.stdout, error: result.stderr, exitCode: code)
+    }
+  }
+
   private func administration<T>(_ command: WorktreeGitCommand, _ body: () throws -> T) throws -> T
   {
     let scope = try ExecutionAdministration(

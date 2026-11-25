@@ -113,13 +113,14 @@ package struct DarwinExecutionPlatform: ExecutionPlatform {
     if sandbox == nil { try responsibility.preflight() }
     let bootstrap = try bootstrapExecutable ?? Self.locateBootstrap()
     let marker = try sandbox.map { _ in try ExecutionSandboxMarker() }
-    let arguments =
+    let target =
       sandbox.map {
         [
           "/usr/bin/sandbox-exec", "-p", SeatbeltProfile.generate($0, marker: marker), "--",
           command.executable.value,
         ] + command.arguments
       } ?? [command.executable.value] + command.arguments
+    let arguments = command.bootstrapOptions + target
     let channel = try ExecutionBootstrapChannel(input: input, error: error, timeout: launchTimeout)
     let diagnostics = try ExecutionBootstrapDiagnostics()
     let sentinel: DarwinExecutionSentinel?

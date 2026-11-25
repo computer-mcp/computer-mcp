@@ -46,14 +46,15 @@ struct WorktreeObjectBudget {
   var input = 0
   var inflated = 0
   var objects = 0
+  private var files = 0
 
   var remainingInflated: Int { limits.inflatedBytes - inflated }
   var remainingInput: Int { limits.inputBytes - input }
 
-  init(_ limits: WorktreePromotionLimits) throws {
+  init(_ limits: WorktreePromotionLimits, deadline: ContinuousClock.Instant? = nil) throws {
     try limits.validate()
     self.limits = limits
-    deadline = .now.advanced(by: limits.duration)
+    self.deadline = deadline ?? .now.advanced(by: limits.duration)
   }
 
   func check() throws {
@@ -70,6 +71,14 @@ struct WorktreeObjectBudget {
     else { throw WorktreeError.busy("Object verification exceeds its inflated bounds.") }
     objects += 1
     inflated += size
+  }
+
+  mutating func acquireFile() throws {
+    try check()
+    guard files < limits.objectCount * 2 else {
+      throw WorktreeError.busy("Object acquisition exceeds its file inventory bound.")
+    }
+    files += 1
   }
 }
 
@@ -151,6 +160,7 @@ struct WorktreeObjectSnapshot {
             throw WorktreeError.busy("Invalid loose object filename.")
           }
         }
+        try budget.acquireFile()
         let file = try copyFile(
           entry, from: input, to: output, relative: name + "/" + entry, budget: &budget,
           clone: clone, allowLinkedInput: clone || allowLinkedInput)
@@ -253,7 +263,7 @@ struct WorktreeObjectSnapshot {
         guard names.contains(String(file.name.dropLast(5)) + ".idx") else {
           throw WorktreeError.busy("Private pack has no corresponding index.")
         }
-        try validatePack(data, name: parts[1], budget: &budget)
+        _ = try validatePack(data, name: parts[1], budget: &budget)
       } else {
         let limit = min(budget.limits.objectBytes, budget.remainingInflated) + 128
         let inflated = try inflate(data, at: 0, limit: limit)
@@ -270,24 +280,44 @@ struct WorktreeObjectSnapshot {
     }
   }
 
+  func verifyGeneratedPack(
+    _ data: Data, manifest: WorktreeObjectManifest, deadline: ContinuousClock.Instant
+  ) throws -> String {
+    var verification = try WorktreeObjectBudget(.init(), deadline: deadline)
+    do {
+      return try validatePack(data, name: nil, budget: &verification, expected: manifest)
+    } catch let failure as InvalidImport {
+      throw WorktreeError.invalidRequest(failure.message)
+    }
+  }
+
   private func validatePack(
-    _ data: Data, name: String, budget: inout WorktreeObjectBudget
-  ) throws {
+    _ data: Data, name: String?, budget: inout WorktreeObjectBudget,
+    expected: WorktreeObjectManifest? = nil
+  ) throws -> String {
     let hashBytes = format.hexCount / 2
     guard data.count >= 12 + hashBytes, data.prefix(4) == Data("PACK".utf8),
       [2, 3].contains(Self.bigEndian(data, at: 4))
     else { throw InvalidImport("Invalid pack header.") }
-    guard Self.bigEndian(data, at: 8) <= budget.limits.objectCount - budget.objects
+    let count = Self.bigEndian(data, at: 8)
+    guard count <= budget.limits.objectCount - budget.objects
     else { throw WorktreeError.busy("Pack exceeds the remaining object count.") }
+    if let expected, count != expected.entries.count {
+      throw InvalidImport("Generated pack object count differs from the manifest.")
+    }
+    var expectedSizes: [WorktreeObjectManifest.Entry: Int] = [:]
+    if let expected {
+      for entry in expected.entries.values { expectedSizes[entry, default: 0] += 1 }
+    }
     let content = data.dropLast(hashBytes)
     let digest =
       format == .sha1
       ? Array(Insecure.SHA1.hash(data: content)) : Array(SHA256.hash(data: content))
-    guard data.suffix(hashBytes) == Data(digest),
-      name == "pack-" + digest.map({ String(format: "%02x", $0) }).joined() + ".pack"
+    let hex = digest.map({ String(format: "%02x", $0) }).joined()
+    guard data.suffix(hashBytes) == Data(digest), name == nil || name == "pack-" + hex + ".pack"
     else { throw InvalidImport("Pack digest does not match its content and name.") }
     var offset = 12
-    for _ in 0..<Self.bigEndian(data, at: 8) {
+    for _ in 0..<count {
       try budget.check()
       guard offset < content.count else { throw InvalidImport("Truncated pack.") }
       var byte = data[offset]
@@ -306,6 +336,19 @@ struct WorktreeObjectSnapshot {
       }
       guard [1, 2, 3, 4, 6, 7].contains(type) else {
         throw InvalidImport("Invalid pack object type.")
+      }
+      if expected != nil {
+        let kinds: [UInt8: WorktreeRecoveryRecord.ObjectType] = [
+          1: .commit, 2: .tree, 3: .blob, 4: .tag,
+        ]
+        guard let kind = kinds[type] else {
+          throw InvalidImport("Generated pack contains a delta.")
+        }
+        let entry = WorktreeObjectManifest.Entry(type: kind, size: size)
+        guard let remaining = expectedSizes[entry], remaining > 0 else {
+          throw InvalidImport("Generated pack object type or size differs from the manifest.")
+        }
+        expectedSizes[entry] = remaining - 1
       }
       let limit = min(budget.limits.objectBytes, budget.remainingInflated)
       guard size <= limit else { throw WorktreeError.busy("Pack object exceeds its size bound.") }
@@ -336,6 +379,8 @@ struct WorktreeObjectSnapshot {
     guard offset == content.count else {
       throw InvalidImport("Unexpected pack trailing data.")
     }
+    try budget.check()
+    return hex
   }
 
   private func inflate(_ data: Data, at offset: Int, limit: Int) throws
@@ -399,7 +444,7 @@ struct WorktreeObjectSnapshot {
 }
 
 struct WorktreeObjectManifest: Equatable {
-  struct Entry: Equatable {
+  struct Entry: Hashable {
     let type: WorktreeRecoveryRecord.ObjectType
     let size: Int
   }
@@ -436,14 +481,18 @@ struct WorktreeStagedObjects {
   let deadline: ContinuousClock.Instant
   let limits: WorktreePromotionLimits
 
-  private func run(_ arguments: [String], input: Data = Data(), outputBytes: Int? = nil)
+  func run(
+    _ arguments: [String], input: Data = Data(), outputBytes: Int? = nil,
+    fileOutput: WorktreeGitFileOutput? = nil, fileSizeLimit: Int? = nil
+  )
     throws -> Data
   {
     try directory.verify()
     try repository.verify()
     let result = try git.run(
       arguments, at: repository.url, gitDirectory: repository.url, objects: directory.url,
-      input: input, deadline: deadline, commandOutputBytes: outputBytes)
+      input: input, deadline: deadline, commandOutputBytes: outputBytes,
+      fileOutput: fileOutput, fileSizeLimit: fileSizeLimit)
     try directory.verify()
     try repository.verify()
     return result.output

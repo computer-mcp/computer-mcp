@@ -126,7 +126,8 @@
           "Execution requires the bundled execution bootstrap")
       }
       let argv =
-        ([bootstrap.path, command.executable.value] + command.arguments)
+        ([bootstrap.path] + command.bootstrapOptions + [command.executable.value]
+        + command.arguments)
         .map { strdup($0) } + [nil]
       let env = command.environment.map { strdup($0.key + "=" + $0.value) } + [nil]
       defer { for value in argv + env { free(value) } }
@@ -165,7 +166,7 @@
     func failedLaunch(_ error: any Error) {
       let active = lock.withLock {
         guard pid != nil else {
-          finish(.failure(error))
+          finish(.success(.init(status: 126)))
           return false
         }
         cancellationStarted = .now.advanced(by: .milliseconds(-500))

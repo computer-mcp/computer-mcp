@@ -212,6 +212,25 @@ extension WorktreeRecoveryStore {
 
     var generation: UUID { opened.identity.generation }
 
+    func withStaging<Result>(
+      operationID: UUID, inputLimit: Int, completionMetadataBytes: Int,
+      _ operation: (WorktreeRecoveryStaging) throws -> Result
+    ) throws -> Result {
+      let stage = try WorktreeRecoveryStaging(
+        parent: opened.directories.staging, operationID: operationID, generation: generation,
+        format: opened.identity.repository.format, inputLimit: inputLimit,
+        completionBytes: completionMetadataBytes, io: opened.io, verifyStore: opened.verify)
+      let result: Result
+      do {
+        result = try operation(stage)
+      } catch {
+        try? stage.finishAfterFailure()
+        throw error
+      }
+      try stage.finish()
+      return result
+    }
+
     func catalog() throws -> WorktreeRecoveryCatalog { try durableCatalog().catalog }
 
     /// New record IDs are admitted in their retaining state. Completion steps can

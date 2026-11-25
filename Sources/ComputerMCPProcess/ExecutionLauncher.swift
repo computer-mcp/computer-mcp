@@ -46,6 +46,7 @@ package struct ExecutionLauncher: Sendable {
     input: Int32 = 0, output: Int32 = 1, error: Int32 = 2,
     directoryDescriptor: Int32? = nil, inheritedDescriptors: [Int32: Int32] = [:],
     hostProtocolMetadata: [String: String] = [:],
+    fileSizeLimit: ExecutionFileSizeLimit? = nil,
     bindOwnership: @Sendable (any ExecutionOwnership) -> Void = { _ in }
   ) async throws -> any ExecutionOwnership {
     try Task.checkCancellation()
@@ -139,7 +140,7 @@ package struct ExecutionLauncher: Sendable {
       let command = ExecutionCommand(
         executable: executable, arguments: arguments, directory: launchDirectory,
         environment: variables, directoryDescriptor: directoryDescriptor,
-        inheritedDescriptors: descriptors)
+        inheritedDescriptors: descriptors, fileSizeLimit: fileSizeLimit)
       let ownership = try await platform.start(
         command, sandbox: sandbox,
         method: directoryDescriptor == nil && descriptors.isEmpty ? method : .posixSpawn,

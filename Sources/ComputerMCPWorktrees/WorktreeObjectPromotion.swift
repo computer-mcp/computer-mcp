@@ -19,6 +19,45 @@ struct WorktreeRecoveryCapture {
 }
 
 extension WorktreeRepository {
+  /// Verified artifacts remain owned by the staging reservation through the consumer.
+  func withRecoveryPacks<Result>(
+    _ topology: VerifiedWorktreeTopology, expectedOID: String,
+    retainedExpectedObjects: WorktreeDirectory? = nil,
+    operationID: UUID, store: WorktreeRecoveryStore.Locked, completionMetadataBytes: Int,
+    budget: inout WorktreeObjectBudget,
+    _ consume: (
+      WorktreeRecoveryCapture, WorktreeRecoveryPack, WorktreeRecoveryPack,
+      WorktreeRecoveryStaging
+    ) throws -> Result
+  ) throws -> Result {
+    let initialInput = budget.input
+    return try store.withStaging(
+      operationID: operationID, inputLimit: budget.remainingInput,
+      completionMetadataBytes: completionMetadataBytes
+    ) { staging in
+      let capture = try captureRecoveryObjects(
+        topology, expectedOID: expectedOID, in: staging.directory,
+        retainedExpectedObjects: retainedExpectedObjects, budget: &budget)
+      try staging.sealCapture(bytes: budget.input - initialInput)
+      if capture.privateObjects.directory.identity != capture.expectedObjects.directory.identity {
+        let additional = try capture.expectedManifest.subtracting(capture.privateManifest)
+        if !additional.entries.isEmpty {
+          let supplement = try capture.expectedObjects.generatePack(
+            additional, slot: .supplemental, staging: staging)
+          try staging.attachSupplement(supplement, to: capture.privateObjects.directory)
+          try capture.privateObjects.verifyIntegrity()
+        }
+      }
+      let recovery = try capture.privateObjects.generatePack(
+        capture.recoveryManifest, slot: .recovery, staging: staging)
+      let source = try capture.privateObjects.generatePack(
+        capture.sourceManifest, slot: .source, staging: staging)
+      try budget.check()
+      try staging.exposeArtifacts()
+      return try consume(capture, recovery, source, staging)
+    }
+  }
+
   /// The caller owns exclusive staging and any pin on the retained expected-object pool.
   func captureRecoveryObjects(
     _ topology: VerifiedWorktreeTopology, expectedOID: String, in staging: WorktreeDirectory,

@@ -11,6 +11,17 @@ package enum ExecutionMode: Sendable {
   case fullAccess
 }
 
+package struct ExecutionFileSizeLimit: Sendable {
+  package let bytes: UInt64
+
+  package init(bytes: UInt64) throws {
+    guard bytes > 0, bytes < UInt64.max else {
+      throw ExecutionEnvironmentError.invalidConfiguration("Invalid execution file-size limit")
+    }
+    self.bytes = bytes
+  }
+}
+
 package struct ExecutionCommand: Sendable {
   package let executable: SandboxPath
   package let arguments: [String]
@@ -20,11 +31,12 @@ package struct ExecutionCommand: Sendable {
   /// Destination-to-source mappings, borrowed until start returns.
   package let inheritedDescriptors: [Int32: Int32]
   package let environment: [String: String]
+  package let fileSizeLimit: ExecutionFileSizeLimit?
 
   package init(
     executable: SandboxPath, arguments: [String], directory: SandboxPath,
     environment: [String: String], directoryDescriptor: Int32? = nil,
-    inheritedDescriptors: [Int32: Int32] = [:]
+    inheritedDescriptors: [Int32: Int32] = [:], fileSizeLimit: ExecutionFileSizeLimit? = nil
   ) {
     self.executable = executable
     self.arguments = arguments
@@ -32,6 +44,11 @@ package struct ExecutionCommand: Sendable {
     self.directoryDescriptor = directoryDescriptor
     self.inheritedDescriptors = inheritedDescriptors
     self.environment = environment
+    self.fileSizeLimit = fileSizeLimit
+  }
+
+  package var bootstrapOptions: [String] {
+    fileSizeLimit.map { ["--file-size-limit", String($0.bytes)] } ?? []
   }
 }
 

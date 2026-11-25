@@ -291,9 +291,19 @@ struct WorktreeObjectSnapshot {
     }
   }
 
+  func verifyInstalledPack(
+    _ data: Data, name: String, budget: inout WorktreeObjectBudget
+  ) throws {
+    do {
+      _ = try validatePack(data, name: name, budget: &budget, wholeObjects: true)
+    } catch let failure as InvalidImport {
+      throw WorktreeError.recoveryRequired(failure.message)
+    }
+  }
+
   private func validatePack(
     _ data: Data, name: String?, budget: inout WorktreeObjectBudget,
-    expected: WorktreeObjectManifest? = nil
+    expected: WorktreeObjectManifest? = nil, wholeObjects: Bool = false
   ) throws -> String {
     let hashBytes = format.hexCount / 2
     guard data.count >= 12 + hashBytes, data.prefix(4) == Data("PACK".utf8),
@@ -337,6 +347,7 @@ struct WorktreeObjectSnapshot {
       guard [1, 2, 3, 4, 6, 7].contains(type) else {
         throw InvalidImport("Invalid pack object type.")
       }
+      if wholeObjects, type > 4 { throw InvalidImport("Installed recovery pack contains a delta.") }
       if expected != nil {
         let kinds: [UInt8: WorktreeRecoveryRecord.ObjectType] = [
           1: .commit, 2: .tree, 3: .blob, 4: .tag,
@@ -480,6 +491,7 @@ struct WorktreeStagedObjects {
   let format: WorktreeObjectFormat
   let deadline: ContinuousClock.Instant
   let limits: WorktreePromotionLimits
+  var maintenanceBudget: WorktreeMaintenanceBudget? = nil
 
   func run(
     _ arguments: [String], input: Data = Data(), outputBytes: Int? = nil,
@@ -489,6 +501,11 @@ struct WorktreeStagedObjects {
   {
     try directory.verify()
     try repository.verify()
+    if let maintenanceBudget {
+      return try maintenanceBudget.run(
+        git, arguments: arguments, repository: repository, objects: directory, input: input,
+        outputBytes: outputBytes ?? git.maxOutputBytes)
+    }
     let result = try git.run(
       arguments, at: repository.url, gitDirectory: repository.url, objects: directory.url,
       input: input, deadline: deadline, commandOutputBytes: outputBytes,
@@ -575,9 +592,11 @@ struct WorktreeStagedObjects {
       }
       guard fields.count == 3, fields[0] == oid,
         let type = WorktreeRecoveryRecord.ObjectType(rawValue: String(fields[1])),
-        let size = Int(fields[2]), size >= 0, size <= limits.objectBytes,
-        size <= limits.inflatedBytes - total
+        let size = Int(fields[2]), size >= 0
       else { throw WorktreeError.invalidRequest("Invalid imported object type or size.") }
+      guard size <= limits.objectBytes, size <= limits.inflatedBytes - total else {
+        throw WorktreeError.busy("Object manifest exceeds its inflated bounds.")
+      }
       total += size
       entries[oid] = .init(type: type, size: size)
     }

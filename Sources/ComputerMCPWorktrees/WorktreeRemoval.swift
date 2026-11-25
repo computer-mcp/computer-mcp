@@ -51,6 +51,7 @@ extension WorktreeRepository {
     try limits.validate()
     let lock = try acquireLock(validateHead: false)
     defer { lock.release() }
+    try WorktreeRecoveryStore(storage: storage, io: io).requireMaintenanceIdle(repository: identity)
     var pending = try readRemoval(projectID)
     if let operationID, let other = pending, other.operationID != operationID,
       other.phase != .abandoned
@@ -457,13 +458,19 @@ extension WorktreeRepository {
     }
   }
 
-  func readRemoval(_ id: String) throws -> WorktreeRemovalJournal? {
+  func readRemoval(_ id: String, account: (Int) throws -> Void = { _ in }) throws
+    -> WorktreeRemovalJournal?
+  {
+    guard let root = try WorktreeDirectory.openIfPresent(storage.journals),
+      let directory = try root.childIfPresent("removals")
+    else { return nil }
     guard
       let data = try io.read(
-        id + ".json", in: removalDirectory(), limit: WorktreeRecoveryCatalog.byteLimit)
+        id + ".json", in: directory, limit: WorktreeRecoveryCatalog.byteLimit)
     else {
       return nil
     }
+    try account(data.count)
     let journal = try JSONDecoder().decode(WorktreeRemovalJournal.self, from: data)
     try journal.record.validate()
     guard journal.repository == identity, journal.record.projectID == id,
@@ -471,7 +478,8 @@ extension WorktreeRepository {
       journal.admission.projectID == id,
       case .host(_, let generation) = journal.record.provenance,
       journal.admission.generation == generation,
-      let creation = try readJournal(id), try matchesActiveRecord(creation, journal.record)
+      let creation = try readJournal(id, account: account),
+      try matchesActiveRecord(creation, journal.record)
     else {
       throw WorktreeError.recoveryRequired("Removal journal identity is invalid.")
     }

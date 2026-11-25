@@ -131,24 +131,34 @@ extension WorktreeStagedObjects {
   }
 
   private func verifyPackInventory(_ index: URL, manifest: WorktreeObjectManifest) throws {
-    let lineBytes = format.hexCount + 64
-    let result = try run(
-      ["verify-pack", "-v", index.path],
-      outputBytes: try WorktreePackBounds.sum(manifest.entries.count * lineBytes, 4_096))
-    guard let text = String(data: result, encoding: .utf8), text.hasSuffix("\n")
+    guard try packEntries(index: index, count: manifest.entries.count) == manifest.entries else {
+      throw invalidRecoveryMetadata()
+    }
+  }
+
+  func packEntries(index: URL, count: Int) throws -> [String: WorktreeObjectManifest.Entry] {
+    let limit = try WorktreePackBounds.sum(count * (format.hexCount + 64), 4096)
+    let output = try run(["verify-pack", "-v", index.path], outputBytes: limit)
+    guard let text = String(data: output, encoding: .utf8), text.hasSuffix("\n"),
+      text.hasSuffix(index.deletingPathExtension().appendingPathExtension("pack").path + ": ok\n")
     else { throw invalidRecoveryMetadata() }
-    var remaining = manifest.entries
+    var entries: [String: WorktreeObjectManifest.Entry] = [:]
     for line in text.split(separator: "\n") {
       try Task.checkCancellation()
       guard ContinuousClock.now < deadline else {
         throw WorktreeError.busy("Recovery pack verification deadline exceeded.")
       }
-      let fields = line.split(whereSeparator: { $0.isWhitespace })
-      guard let first = fields.first, format.contains(String(first)) else { continue }
-      guard fields.count == 5, let entry = remaining.removeValue(forKey: String(first)),
-        entry.type.rawValue == fields[1], Int(fields[2]) == entry.size
+      let fields = line.split(whereSeparator: \.isWhitespace)
+      guard let oid = fields.first.map(String.init), format.containsRecoveryOID(oid) else {
+        continue
+      }
+      guard fields.count == 5, entries.count < count,
+        let type = WorktreeRecoveryRecord.ObjectType(rawValue: String(fields[1])),
+        let size = Int(fields[2]), size >= 0, size <= limits.objectBytes,
+        entries.updateValue(.init(type: type, size: size), forKey: oid) == nil
       else { throw invalidRecoveryMetadata() }
     }
-    guard remaining.isEmpty else { throw invalidRecoveryMetadata() }
+    guard entries.count == count else { throw invalidRecoveryMetadata() }
+    return entries
   }
 }

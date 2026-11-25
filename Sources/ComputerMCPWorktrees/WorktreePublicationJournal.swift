@@ -49,8 +49,11 @@ extension WorktreeRepository {
   }
 
   func publicationDiskBytes(_ projectID: String) throws -> Data? {
-    try io.read(
-      projectID + ".json", in: publicationDirectory(), limit: WorktreeRecoveryCatalog.byteLimit)
+    guard let root = try WorktreeDirectory.openIfPresent(storage.journals),
+      let directory = try root.childIfPresent("publications")
+    else { return nil }
+    return try io.read(
+      projectID + ".json", in: directory, limit: WorktreeRecoveryCatalog.byteLimit)
   }
 
   func savePublication(_ journal: WorktreePublicationJournal, replacing previous: Data?) throws {
@@ -67,8 +70,11 @@ extension WorktreeRepository {
     }
   }
 
-  func readPublication(_ projectID: String) throws -> WorktreePublicationJournal? {
+  func readPublication(_ projectID: String, account: (Int) throws -> Void = { _ in }) throws
+    -> WorktreePublicationJournal?
+  {
     guard let bytes = try publicationDiskBytes(projectID) else { return nil }
+    try account(bytes.count)
     let journal = try JSONDecoder().decode(WorktreePublicationJournal.self, from: bytes)
     try journal.record.validate()
     guard [1, 2].contains(journal.version), journal.repository == identity,
@@ -190,7 +196,7 @@ extension WorktreeRepository {
   func replacementDirectory(_ owner: WorktreeRecoveryRecord.Owner, create: Bool)
     throws -> WorktreeDirectory?
   {
-    let journals = try WorktreeDirectory(storage.journals)
+    guard let journals = try WorktreeDirectory.openIfPresent(storage.journals) else { return nil }
     guard try create || journals.hasEntry("acknowledgements") else { return nil }
     let root = try journals.child("acknowledgements", create: create)
     let name = owner.worktreeID.uuidString.lowercased()
@@ -200,11 +206,13 @@ extension WorktreeRepository {
 
   func readReplacement(
     _ id: UUID, in directory: WorktreeDirectory, owner: WorktreeRecoveryRecord.Owner,
-    generation: UUID
+    generation: UUID, synchronizing: Bool = true,
+    account: (Int) throws -> Void = { _ in }
   ) throws -> WorktreeReplacementJournal? {
     let name = id.uuidString.lowercased() + ".json"
     guard let bytes = try io.read(name, in: directory, limit: WorktreeRecoveryCatalog.byteLimit)
     else { return nil }
+    try account(bytes.count)
     let journal = try JSONDecoder().decode(WorktreeReplacementJournal.self, from: bytes)
     guard journal.operationID == id, journal.repository == identity, journal.owner == owner,
       journal.storeGeneration == generation,
@@ -221,7 +229,7 @@ extension WorktreeRepository {
           && $0.replacedOID == journal.replaced && $0.expectedPublishedOID == journal.expected
       }) ?? true
     else { throw invalidRecoveryMetadata() }
-    try io.synchronize(name, in: directory, expecting: bytes)
+    if synchronizing { try io.synchronize(name, in: directory, expecting: bytes) }
     return journal
   }
 

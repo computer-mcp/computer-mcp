@@ -3,7 +3,7 @@ import Foundation
 /// Durable host topology and branch identity. The ledger owns active registration;
 /// the creation journal is its expected-input recovery evidence.
 package struct WorktreeRegistration: Codable, Equatable, Sendable {
-  let repository: WorktreeRepositoryIdentity
+  package let repository: WorktreeRepositoryIdentity
   let branchID: UUID
   let branch: String
   let base: String

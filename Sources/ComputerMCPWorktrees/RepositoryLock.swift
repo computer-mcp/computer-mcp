@@ -27,20 +27,39 @@ package final class RepositoryLock {
 
   /// The caller chooses its waiting budget; cancellation is checked before admission
   /// and while waiting. A timeout never removes or replaces a lock file.
-  package init(
+  package convenience init(
     commonDirectory: URL, owner: Owner, timeout: Duration,
     checkCancellation: () throws -> Void = { try Task.checkCancellation() }
   ) throws {
+    try self.init(
+      commonDirectory: commonDirectory, diagnostic: owner, timeout: timeout,
+      checkCancellation: checkCancellation)
+  }
+
+  /// Recovery reuses the lifecycle lock inode without adding source state.
+  convenience init(existingCommonDirectory: URL, timeout: Duration) throws {
+    try self.init(
+      commonDirectory: existingCommonDirectory, diagnostic: nil, timeout: timeout,
+      checkCancellation: { try Task.checkCancellation() })
+  }
+
+  private init(
+    commonDirectory: URL, diagnostic: Owner?, timeout: Duration,
+    checkCancellation: () throws -> Void
+  ) throws {
     common = try WorktreeDirectory(commonDirectory.resolvingSymlinksInPath().standardizedFileURL)
-    directory = try common.child("computer-mcp", create: true)
+    directory = try common.child("computer-mcp", create: diagnostic != nil)
     let deadline = ContinuousClock.now.advanced(by: timeout)
     while true {
       try checkCancellation()
       try common.verify()
       try directory.verify()
       do {
-        lock = try FileLock(
-          path: directory.url.appendingPathComponent("repository.lock").path, mode: .exclusive)
+        let path = directory.url.appendingPathComponent("repository.lock").path
+        lock =
+          try diagnostic == nil
+          ? FileLock(lockingExisting: path)
+          : FileLock(path: path, mode: .exclusive)
         break
       } catch FileLockError.held {
         guard ContinuousClock.now < deadline else {
@@ -52,8 +71,10 @@ package final class RepositoryLock {
     do {
       try checkCancellation()
       try verify()
-      try lock.writeDiagnostic(JSONEncoder().encode(owner))
-      try directory.synchronize()
+      if let diagnostic {
+        try lock.writeDiagnostic(JSONEncoder().encode(diagnostic))
+        try directory.synchronize()
+      }
     } catch {
       lock.release()
       throw error

@@ -20,6 +20,29 @@ import Testing
 
 @Suite(.nativeIntegration, .serialized)
 struct GatewayWorktreeServiceTests {
+  @Test func recoveryOwnerRequiresAppAuthorityAndUsesFileBackedLedger() throws {
+    let f = try WorktreeServiceFixture()
+    defer { f.remove() }
+    let denied = try GatewayRecoveryOwnerService(
+      database: f.database, platform: f.platform,
+      owner: .init(caller: .localCLI, profileID: .localAdmin, trustedPrincipalID: "local-cli"))
+    #expect(throws: WorktreeRecoveryOwnerError.unauthorized) { try denied.list() }
+    let owner = try GatewayRecoveryOwnerService(
+      database: f.database, platform: f.platform,
+      owner: .init(caller: .localApp, profileID: .localAdmin, trustedPrincipalID: "local-app"))
+    #expect(try owner.list().isEmpty)
+    let worktrees = try f.repository()
+    let created = try worktrees.create(name: "recovery-owner")
+    let publication = try worktrees.publish(projectID: created.projectID) { _ in }
+    let view = try #require(owner.list().first)
+    let root = try #require(view.records.first { $0.oid == publication.oid })
+    let review = try owner.reviewRelease(
+      storeKey: view.key, generation: view.generation, selections: [root.selection])
+    let released = try owner.confirm(review)
+    #expect(released.outcome == .released)
+    #expect(try owner.resume(handle: review.handle) == released)
+  }
+
   @Test func sandboxLifecyclePreservesPrivateCommitAndProtectsBranches() throws {
     let fixture = try WorktreeServiceFixture()
     defer { fixture.remove() }

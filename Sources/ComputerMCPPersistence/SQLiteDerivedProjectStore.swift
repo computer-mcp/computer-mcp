@@ -16,21 +16,29 @@ package final class SQLiteDerivedProjectStore: DerivedProjectStore, Sendable {
   }
 
   package func protectedBranches() throws -> [ProtectedWorktreeBranch] {
-    try connection.writer.read { database in
-      try Row.fetchAll(
-        database, sql: "SELECT * FROM protectedWorktreeBranches ORDER BY repositoryID, branchID"
-      ).map { row in
-        let payload: Data = row["payload"]
-        guard payload.count <= 131_072, row["codecVersion"] as Int == 1 else {
-          throw DerivedProjectStoreError.invalidRecord
-        }
-        let branch = try JSONDecoder().decode(ProtectedWorktreeBranch.self, from: payload)
-        guard branch.repositoryKey == row["repositoryID"],
-          branch.branchID.uuidString == row["branchID"],
-          branch.branch == row["branchRef"]
-        else { throw DerivedProjectStoreError.invalidRecord }
-        return branch
+    try connection.writer.read { try Self.protectedBranches(in: $0) }
+  }
+
+  package static func protectedBranches(in database: Database, repositoryKey: String? = nil)
+    throws -> [ProtectedWorktreeBranch]
+  {
+    let filter = repositoryKey == nil ? "" : " WHERE repositoryID = ?"
+    let arguments: StatementArguments = repositoryKey.map { [$0] } ?? []
+    return try Row.fetchAll(
+      database,
+      sql: "SELECT * FROM protectedWorktreeBranches" + filter + " ORDER BY repositoryID, branchID",
+      arguments: arguments
+    ).map { row in
+      let payload: Data = row["payload"]
+      guard payload.count <= 131_072, row["codecVersion"] as Int == 1 else {
+        throw DerivedProjectStoreError.invalidRecord
       }
+      let branch = try JSONDecoder().decode(ProtectedWorktreeBranch.self, from: payload)
+      guard branch.repositoryKey == row["repositoryID"],
+        branch.branchID.uuidString == row["branchID"],
+        branch.branch == row["branchRef"]
+      else { throw DerivedProjectStoreError.invalidRecord }
+      return branch
     }
   }
 

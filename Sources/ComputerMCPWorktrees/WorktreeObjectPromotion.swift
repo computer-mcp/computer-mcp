@@ -250,10 +250,10 @@ extension WorktreeRepository {
       operationID: id, repository: identity, record: record, expectedOID: expected,
       capturedOID: expected, maxPackBytes: limits.inputBytes, removalID: removalID,
       requiredRoots: roots.isEmpty ? nil : Array(Set(roots)).sorted())
-    try savePublication(journal, replacing: try publicationDiskBytes(projectID))
     return try WorktreeRecoveryStore(storage: storage, io: io)
       .withExclusive(repository: identity, create: true) { recovery in
-        try finishPublication(
+        try savePublication(journal, replacing: try publicationDiskBytes(projectID))
+        return try finishPublication(
           &journal, topology: topology, limits: limits, recovery: recovery, lock: lock,
           authorize: authorize)
       }

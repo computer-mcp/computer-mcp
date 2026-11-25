@@ -67,10 +67,14 @@ extension AppControlPlaneService {
     try database.bootstrapPermissionProfiles(
       initialProfiles,
       declarations: configuration.profiles.map(\.grant))
+    let recoveryOwner = try GatewayRecoveryOwnerService(
+      database: database, platform: platform,
+      owner: .init(caller: .localApp, profileID: .localAdmin, trustedPrincipalID: "local-app"))
     return AppControlPlaneService(
       directories: resolvedDirectories,
       database: database,
       permissionControl: permissions.control,
+      recoveryOwner: recoveryOwner,
       manifestStore: manifestStore,
       defaultManifest: defaultManifest,
       secretStore: secretStore,

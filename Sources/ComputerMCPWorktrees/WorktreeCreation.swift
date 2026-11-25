@@ -293,11 +293,32 @@ extension WorktreeRepository {
       replacing: previous)
   }
 
-  func readJournal(_ id: String) throws -> WorktreeCreationJournal? {
-    guard FileManager.default.fileExists(atPath: storage.journals.path) else { return nil }
-    guard
-      let data = try io.read(id + ".json", in: WorktreeDirectory(storage.journals), limit: 131_072)
+  func readJournal(_ id: String, account: (Int) throws -> Void = { _ in }) throws
+    -> WorktreeCreationJournal?
+  {
+    guard let directory = try WorktreeDirectory.openIfPresent(storage.journals),
+      let data = try io.read(id + ".json", in: directory, limit: 131_072)
     else { return nil }
+    try account(data.count)
+    return try decodeCreation(data, id: id)
+  }
+
+  func recoveryCreations(account: (Int) throws -> Void) throws -> [WorktreeCreationJournal] {
+    guard let directory = try WorktreeDirectory.openIfPresent(storage.journals) else { return [] }
+    var result: [WorktreeCreationJournal] = []
+    for name in try directory.entries(limit: WorktreeRecoveryCatalog.recordLimit)
+    where name.hasPrefix("worktree-") && name.hasSuffix(".json") {
+      guard let data = try io.read(name, in: directory, limit: 131_072) else {
+        throw invalidRecoveryMetadata()
+      }
+      try account(data.count)
+      let journal = try decodeCreation(data, id: String(name.dropLast(5)))
+      if journal.repository == identity { result.append(journal) }
+    }
+    return result
+  }
+
+  private func decodeCreation(_ data: Data, id: String) throws -> WorktreeCreationJournal {
     let journal = try JSONDecoder().decode(WorktreeCreationJournal.self, from: data)
     guard journal.id == id else {
       throw WorktreeError.recoveryRequired("Journal identity does not match its filename.")

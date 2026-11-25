@@ -148,6 +148,8 @@ struct PrivacyPrincipal: Identifiable, Hashable, Sendable {
   let kind: Kind
   var execution: Execution
   var fullAccessLimitSources: [String] = []
+  var providerAvailability: ProviderPermissionOptions.Availability?
+  var effectiveExecution: Execution?
 
   var systemImage: String {
     switch kind {
@@ -252,6 +254,10 @@ struct PrivacyGrant: Identifiable, Hashable, Sendable {
   /// The explicit or inherited value resolved by the permission library.
   var value: PrivacyGrantValue
   var network: PrivacyNetworkAccess?
+  /// Standing authority after ceilings and provider availability are applied.
+  var effectiveValue: PrivacyGrantValue?
+  var effectiveNetwork: PrivacyNetworkAccess?
+  var networkSourceProjectID: String?
   var source: PrivacyGrantSource = .owner
   var isStored = true
   var isNetworkStored = false
@@ -328,6 +334,9 @@ struct PrivacyManagedSource: Identifiable, Hashable, Sendable {
   let name: String
   let location: String
   let state: State
+  var profileID: GatewayProfileID?
+  var provider: PluginIdentity?
+  var revision: String?
 }
 
 struct PrivacySystemPermission: Identifiable, Hashable, Sendable {
@@ -352,6 +361,7 @@ struct PrivacySnapshot: Equatable, Sendable {
   var revision: UInt64 = 0
   var epoch: UUID?
   var reviewedProfiles: [ProfileGrant] = []
+  var reviewedProviders: [String: ProviderPermissionOptions] = [:]
   var profileRevisions: [String: Int64] {
     Dictionary(
       uniqueKeysWithValues: reviewedProfiles.map { ($0.id.rawValue, $0.authorizationRevision) })

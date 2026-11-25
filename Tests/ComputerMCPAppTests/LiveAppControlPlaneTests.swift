@@ -374,6 +374,122 @@ final class LiveAppControlPlaneTests {
   }
 
   @Test
+  func h12PrivacyProjectsAndEditsDirectProviderAuthority() async throws {
+    try await withAppControlPlaneFixture { fixture in
+      let host = fixture.controlPlane
+      var configuration = try await host.activeConfiguration()
+      configuration.mcp.servers.append(
+        .init(id: "local-fixture", transport: .stdio, command: "/usr/bin/true"))
+      _ = try await host.activateManifest(
+        configuration.exportedTOML(), expectedDigest: host.configurationDigest())
+
+      let service = LivePrivacySecurityService(controlPlane: fixture.app)
+      let principalID = "server/local-fixture"
+      let initial = try await service.privacySnapshot()
+      let review = try #require(initial.reviewedProviders[principalID])
+      #expect(review.availability == .needsApproval)
+      #expect(review.effectiveMode == nil)
+      #expect(initial.principals.contains { $0.id == principalID && $0.kind == .localServer })
+      #expect(initial.principals.contains { $0.id == GatewayProfileID.localAdmin.rawValue })
+
+      var selection = Permissions()
+      try selection.set(.granted(.access), for: .screen)
+      try await service.approveProvider(
+        review, permissions: selection, execution: .sandbox, sandboxSettings: .init())
+      let approved = try await service.privacySnapshot()
+      let provider = try #require(approved.reviewedProviders[principalID])
+      #expect(provider.availability == .active)
+      #expect(provider.effectiveMode == .sandbox)
+      #expect(approved.reviewedProfiles == initial.reviewedProfiles)
+
+      var screen = try #require(
+        approved.grants.first {
+          $0.principalID == principalID && $0.permission == .screen
+        })
+      #expect(screen.value == .granted(.allow))
+      #expect(screen.effectiveValue == .granted(.allow))
+      fixture.policyReader.set(
+        .machineFile, .available(Data("[permissions]\nscreen = 'deny'".utf8)))
+      let restricted = try await service.privacySnapshot()
+      let restrictedScreen = try #require(
+        restricted.grants.first {
+          $0.principalID == principalID && $0.permission == .screen
+        })
+      #expect(restrictedScreen.value == .granted(.allow))
+      #expect(restrictedScreen.effectiveValue == .denied)
+      #expect(
+        restrictedScreen.limitNotices == [.init(source: "Machine Policy", effect: .permission(nil))]
+      )
+
+      screen.value = .denied
+      await #expect(throws: AppControlPlaneError.self) {
+        try await service.setGrant(screen, reviewed: approved)
+      }
+      try await service.setGrant(screen, reviewed: restricted)
+      await #expect(throws: AppControlPlaneError.self) {
+        try await service.revokeAll(principalID: principalID, reviewed: approved)
+      }
+      let edited = try await service.privacySnapshot()
+      #expect(
+        edited.reviewedProviders[principalID]?.approval?.permissions.state(for: .screen) == .denied)
+      #expect(edited.reviewedProfiles == initial.reviewedProfiles)
+
+      try await service.revokeAll(principalID: principalID, reviewed: edited)
+      let revoked = try await service.privacySnapshot()
+      #expect(revoked.reviewedProviders[principalID]?.availability == .disabled)
+      #expect(revoked.reviewedProviders[principalID]?.effectiveMode == nil)
+      #expect(
+        revoked.grants.first {
+          $0.principalID == principalID && $0.permission == .screen
+        }?.effectiveValue == nil)
+
+      configuration.mcp.servers.removeAll { $0.id == "local-fixture" }
+      _ = try await host.activateManifest(
+        configuration.exportedTOML(), expectedDigest: host.configurationDigest())
+      let unavailable = try await service.privacySnapshot()
+      #expect(unavailable.reviewedProviders[principalID]?.availability == .unavailable)
+      #expect(unavailable.reviewedProviders[principalID]?.approval != nil)
+    }
+  }
+
+  @Test
+  func h12RestoredProviderAuthorityRequiresAnExplicitReview() async throws {
+    try await withAppControlPlaneFixture { fixture in
+      let host = fixture.controlPlane
+      var configuration = try await host.activeConfiguration()
+      configuration.mcp.servers.append(
+        .init(id: "restore-fixture", transport: .stdio, command: "/usr/bin/true"))
+      _ = try await host.activateManifest(
+        configuration.exportedTOML(), expectedDigest: host.configurationDigest())
+      let service = LivePrivacySecurityService(controlPlane: fixture.app)
+      let principalID = "server/restore-fixture"
+      let initial = try await service.privacySnapshot()
+      try await service.approveProvider(
+        #require(initial.reviewedProviders[principalID]), permissions: .init(),
+        execution: .fullAccessAllowed, sandboxSettings: .init())
+      let before = try await service.privacySnapshot()
+      #expect(before.reviewedProviders[principalID]?.effectiveMode == .fullAccess(.standing))
+
+      fixture.policyReader.set(.machineFile, .available(Data("full_access = false".utf8)))
+      let restricted = try await service.privacySnapshot()
+      let principal = try #require(restricted.principals.first { $0.id == principalID })
+      #expect(principal.execution == .fullAccessAllowed)
+      #expect(principal.effectiveExecution == nil)
+      #expect(principal.fullAccessLimitSources == ["Machine Policy"])
+
+      fixture.counter.forget()
+      let restored = try await service.privacySnapshot()
+      #expect(restored.epoch != before.epoch)
+      #expect(restored.reviewedProviders[principalID]?.availability == .needsRestoreReview)
+      #expect(restored.reviewedProviders[principalID]?.approval?.epoch == before.epoch)
+      #expect(restored.reviewedProviders[principalID]?.effectiveMode == nil)
+      await #expect(throws: AppControlPlaneError.self) {
+        try await service.revokeAll(principalID: principalID, reviewed: before)
+      }
+    }
+  }
+
+  @Test
   func privacyConfirmationIncludesUnadoptedProfilesWithoutGlobalSuspension() async throws {
     try await withAppControlPlaneFixture { fixture in
       try await fixture.controlPlane.database.connection.writer.write { database in

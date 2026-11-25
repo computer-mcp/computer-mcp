@@ -424,6 +424,26 @@ protocol AppControlPlane: PluginManaging, MCPRegistrationManaging, ClientAccessM
   func fetchOpenAITunnels() async throws -> [OpenAITunnelSummary]
   func fetchCloudflareTunnels() async throws -> [CloudflareTunnelSummary]
   func fetchPermissions() async throws -> [PermissionSummary]
+  func fetchPrivacyPermissionInventory() async throws -> PrivacyPermissionInventory
+  func saveProviderPermissions(
+    reviewed: ProviderPermissionOptions, permissions: Permissions, fullAccess: Bool,
+    sandboxSettings: ProviderSandboxSettings, editingApproval: Bool
+  ) async throws
+  func revokeProviderPermissions(reviewed: ProviderPermissionOptions) async throws
+  func fetchProjectWorktrees() async throws -> [ProjectWorktreeInventory]
+  func fetchRecoveryStores() async throws -> [RecoveryStoreView]
+  func reviewRecoveryRelease(
+    storeKey: String, generation: UUID, selections: [RecoveryRecordSelection]
+  ) async throws -> RecoveryReleaseReview
+  func confirmRecoveryRelease(_ review: RecoveryReleaseReview) async throws
+    -> RecoveryOperationStatus
+  func prepareRecoveryMaintenance(storeKey: String, generation: UUID) async throws
+    -> RecoveryMaintenancePreparation
+  func runRecoveryMaintenance(_ review: RecoveryMaintenanceReview) async throws
+    -> RecoveryOperationStatus
+  func recoveryOperation(handle: RecoveryOperationHandle) async throws -> RecoveryOperationLookup
+  func resumeRecoveryOperation(handle: RecoveryOperationHandle) async throws
+    -> RecoveryOperationStatus
   func fetchPermissionRequests() async throws -> GatewayPermissionView
   func fetchProfilePermissionOptions(id: GatewayProfileID) async throws -> ProfilePermissionOptions
   func saveProfilePermissions(_ grant: ProfileGrant, reviewed: ProfilePermissionOptions)
@@ -545,6 +565,42 @@ final class UnavailableControlPlane: AppControlPlane {
   func fetchOpenAITunnels() async throws -> [OpenAITunnelSummary] { throw unavailable() }
   func fetchCloudflareTunnels() async throws -> [CloudflareTunnelSummary] { throw unavailable() }
   func fetchPermissions() async throws -> [PermissionSummary] { throw unavailable() }
+  func fetchPrivacyPermissionInventory() async throws -> PrivacyPermissionInventory {
+    throw unavailable()
+  }
+  func saveProviderPermissions(
+    reviewed: ProviderPermissionOptions, permissions: Permissions, fullAccess: Bool,
+    sandboxSettings: ProviderSandboxSettings, editingApproval: Bool
+  ) async throws { throw unavailable() }
+  func revokeProviderPermissions(reviewed: ProviderPermissionOptions) async throws {
+    throw unavailable()
+  }
+  func fetchProjectWorktrees() async throws -> [ProjectWorktreeInventory] { throw unavailable() }
+  func fetchRecoveryStores() async throws -> [RecoveryStoreView] { throw unavailable() }
+  func reviewRecoveryRelease(
+    storeKey: String, generation: UUID, selections: [RecoveryRecordSelection]
+  ) async throws -> RecoveryReleaseReview { throw unavailable() }
+  func confirmRecoveryRelease(_ review: RecoveryReleaseReview) async throws
+    -> RecoveryOperationStatus
+  {
+    throw unavailable()
+  }
+  func prepareRecoveryMaintenance(storeKey: String, generation: UUID) async throws
+    -> RecoveryMaintenancePreparation
+  { throw unavailable() }
+  func runRecoveryMaintenance(_ review: RecoveryMaintenanceReview) async throws
+    -> RecoveryOperationStatus
+  {
+    throw unavailable()
+  }
+  func recoveryOperation(handle: RecoveryOperationHandle) async throws -> RecoveryOperationLookup {
+    throw unavailable()
+  }
+  func resumeRecoveryOperation(handle: RecoveryOperationHandle) async throws
+    -> RecoveryOperationStatus
+  {
+    throw unavailable()
+  }
   func fetchPermissionRequests() async throws -> GatewayPermissionView { throw unavailable() }
   func fetchProfilePermissionOptions(id: GatewayProfileID) async throws -> ProfilePermissionOptions
   {

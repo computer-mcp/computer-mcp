@@ -24,6 +24,37 @@ import Testing
 
 @Suite(.nativeIntegration, .timeLimit(.minutes(1)))
 struct PluginControlPlaneTests {
+  @Test
+  func h12PackageReviewRejectsChangedDeclarationsAndProjectsUnavailableSource() async throws {
+    let files = try PluginStoreFixture()
+    defer { files.cleanup() }
+    let package = files.packageRoot
+    let fixture = try PluginControlFixture(
+      bundled: .init(packages: [], issues: []), cliExecutable: URL(fileURLWithPath: "/usr/bin/true")
+    )
+    defer { fixture.remove() }
+    _ = try await fixture.gateway.changePlugins(.registerDevelopment(package), expectedRevision: 0)
+    let initial = try await fixture.host.privacyPermissionInventory()
+    let review = try #require(initial.providers.first { $0.identity == .package("test-package") })
+    #expect(review.availability == .needsApproval)
+    #expect(review.declarationDigest != nil)
+
+    let changed = PluginStoreFixture.manifest.replacingOccurrences(
+      of: "1.2.3", with: "1.2.4")
+    try changed.write(
+      to: package.appendingPathComponent(PluginManifest.filename), atomically: true,
+      encoding: .utf8)
+    await #expect(throws: GatewayPermissionError.revisionConflict) {
+      try await fixture.host.saveProviderPermissions(
+        reviewed: review, permissions: .init(), fullAccess: false, sandboxSettings: .init())
+    }
+    try FileManager.default.removeItem(at: package)
+    let current = try await fixture.host.privacyPermissionInventory()
+    let unavailable = try #require(current.providers.first { $0.identity == review.identity })
+    #expect(unavailable.availability == .unavailable)
+    #expect(unavailable.approval == nil)
+  }
+
   @Test(arguments: ["", "plugin_api = 0", "plugin_api = '1'"])
   func malformedGitHubManifestDiagnosticSurvivesControlClientAndCLI(declaration: String)
     async throws

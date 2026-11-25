@@ -87,6 +87,10 @@ package struct GatewayPermissionView: Sendable {
   package var profileLimits: [GatewayProfileID: [ManagedLimits]] = [:]
   package var trustedHosts: Set<String> = []
   package var providers: [GatewayProviderApproval] = []
+  package var sourceProjects: [String: String] = [:]
+  package var providerLimits: [PluginIdentity: ManagedLimits] = [:]
+  /// Providers with usable standing consent under the current ledger and policy.
+  package var providerFullAccess: Set<PluginIdentity> = []
 }
 
 package struct GatewayPermissionSubjectView: Sendable {

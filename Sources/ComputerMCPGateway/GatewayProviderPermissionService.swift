@@ -12,7 +12,8 @@ extension GatewayPermissionService {
     sandboxSettings: ProviderSandboxSettings = .init(),
     userHome: URL = FileManager.default.homeDirectoryForCurrentUser,
     owner: GatewayPermissionOwner, expectedProviderRevision: Int64?, expectedRevision: UInt64,
-    expectedEpoch: UUID, now: Date = Date()
+    expectedEpoch: UUID, editingApproval: Bool = false, reviewedLimits: ManagedLimits? = nil,
+    now: Date = Date()
   ) throws -> GatewayProviderApproval {
     try transactionWithPolicy { database, ledger, policies in
       try owner.authorize()
@@ -28,6 +29,12 @@ extension GatewayPermissionService {
       let previous = record.payload.isEmpty ? nil : try Self.providerApproval(record)
       guard previous?.revision == expectedProviderRevision else {
         throw GatewayPermissionError.revisionConflict
+      }
+      if editingApproval {
+        guard let previous, previous.enabled, previous.epoch == expectedEpoch,
+          previous.sourceDigest == review.sourceDigest,
+          fullAccess == (previous.fullAccessConsent != nil)
+        else { throw GatewayPermissionError.revisionConflict }
       }
       if let declarations = review.declarations {
         try GatewayProviderApproval.validate(permissions, declarations: declarations)
@@ -49,8 +56,15 @@ extension GatewayPermissionService {
         }
         guard known else { throw PermissionModelError.invalidObject }
       }
-      let limits = policies.providerLimits(review.identity, epoch: expectedEpoch, previous: nil)
-      try Self.validateProviderEdit(permissions, fullAccess: fullAccess, limits: limits)
+      let limits = policies.providerLimits(
+        review.identity, epoch: expectedEpoch,
+        previous: ledger.environment.limits[.plugin(review.identity)])
+      guard reviewedLimits.map({ $0 == limits }) ?? true else {
+        throw GatewayPermissionError.revisionConflict
+      }
+      try Self.validateProviderEdit(
+        permissions, fullAccess: fullAccess, limits: limits,
+        previous: editingApproval ? previous : nil)
       guard (previous?.revision ?? 0) < Int64.max else {
         throw PermissionMigrationError.revisionExhausted
       }
@@ -58,9 +72,13 @@ extension GatewayPermissionService {
       var selectedSettings = sandboxSettings
       let ceiling = review.declarations.map { $0.sandbox?.network?.value ?? .none }
       selectedSettings.defaults.networkCeiling = ceiling
-      for settings in [selectedSettings.defaults]
-        + selectedSettings.projects.keys.map({ selectedSettings.settings(sourceProjectID: $0) })
-      {
+      for projectID in [nil] + selectedSettings.projects.keys.sorted().map(Optional.some) {
+        let settings = selectedSettings.settings(sourceProjectID: projectID)
+        if editingApproval,
+          settings == previous?.sandboxSettings?.settings(sourceProjectID: projectID)
+        {
+          continue
+        }
         if fullAccess {
           guard settings.network.configuration == .none, settings.readExceptions.isEmpty else {
             throw GatewayPermissionError.invalidBinding
@@ -104,7 +122,10 @@ extension GatewayPermissionService {
       _ = try ledger.setPermissions(selection, for: principal, expectedRevision: ledger.revision)
       _ = try ledger.setProviderSandboxSettings(
         selectedSettings, for: review.identity, expectedRevision: ledger.revision)
-      let consent = fullAccess ? ledger.consent(for: principal, mode: .fullAccess(.standing)) : nil
+      let consent: ModeConsent? =
+        if editingApproval { previous?.fullAccessConsent } else if fullAccess {
+          ledger.consent(for: principal, mode: .fullAccess(.standing))
+        } else { nil }
       let approval = GatewayProviderApproval(
         identity: review.identity, revision: (previous?.revision ?? 0) + 1, epoch: expectedEpoch,
         enabled: true, sourceDigest: review.sourceDigest, declarations: review.declarations,
@@ -115,7 +136,7 @@ extension GatewayPermissionService {
       try approval.validate()
       record.payload = try Self.encodeProviderApproval(approval)
       try record.save(database)
-      if case .package(let id) = review.identity {
+      if !editingApproval, case .package(let id) = review.identity {
         var state = review.configuration.plugins
         guard state.revision < Int64.max else { throw PermissionMigrationError.revisionExhausted }
         state.settings[id, default: .init()].enabled = true
@@ -135,7 +156,8 @@ extension GatewayPermissionService {
 
   package func revokeProvider(
     _ identity: PluginIdentity, owner: GatewayPermissionOwner,
-    expectedProviderRevision: Int64, expectedRevision: UInt64, now: Date = Date()
+    expectedProviderRevision: Int64, expectedRevision: UInt64, expectedEpoch: UUID? = nil,
+    expectedSourceDigest: String? = nil, now: Date = Date()
   ) throws -> RevocationResult {
     try transactionWithPolicy { database, ledger, _ in
       try owner.authorize()
@@ -144,7 +166,10 @@ extension GatewayPermissionService {
         throw GatewayPermissionError.invalidBinding
       }
       var approval = try Self.providerApproval(record)
-      guard approval.revision == expectedProviderRevision, approval.revision < Int64.max else {
+      guard approval.revision == expectedProviderRevision, approval.revision < Int64.max,
+        expectedEpoch.map({ $0 == ledger.authorizationEpochID }) ?? true,
+        expectedSourceDigest.map({ $0 == approval.sourceDigest }) ?? true
+      else {
         throw GatewayPermissionError.revisionConflict
       }
       approval.enabled = false
@@ -315,10 +340,12 @@ extension GatewayPermissionService {
   }
 
   static func validateProviderEdit(
-    _ permissions: Permissions, fullAccess: Bool, limits: ManagedLimits
+    _ permissions: Permissions, fullAccess: Bool, limits: ManagedLimits,
+    previous: GatewayProviderApproval? = nil
   ) throws {
     for (permission, state) in permissions.entries {
       guard case .granted(let value) = state else { continue }
+      if let previous, previous.permissions.entries[permission]?.allows(value) == true { continue }
       switch permission {
       case .project(let id), .plugin(let id), .mcpServer(let id):
         guard !id.isEmpty, id.utf8.count <= 256,
@@ -337,7 +364,18 @@ extension GatewayPermissionService {
         throw GatewayPermissionError.managedLimit
       }
     }
-    if fullAccess {
+    if let previous {
+      for permission in previous.permissions.entries.keys
+      where permissions.entries[permission] == nil {
+        if case .granted(let value) = permissions.state(for: permission),
+          !previous.permissions.state(for: permission).allows(value),
+          !limits.restrictingSources(for: try .init(permission, value)).isEmpty
+        {
+          throw GatewayPermissionError.managedLimit
+        }
+      }
+    }
+    if fullAccess && previous == nil {
       for source in limits.sources.values {
         switch source {
         case .absent: continue

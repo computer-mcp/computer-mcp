@@ -14,16 +14,8 @@ extension AppControlPlaneService {
     let serverIDs = Set(active.mcp.servers.map(\.id))
     switch identity {
     case .package(let id):
-      let package: PluginPackage
-      if let selected = configuration.plugins.selectedInstallations[id],
-        let record = configuration.plugins.installations.first(where: { $0.id == selected })
-      {
-        package = try PluginPackage.load(at: record.source.root)
-      } else if let bundled = bundledPlugins.packages.first(where: { $0.manifest.id == id }) {
-        package = try PluginPackage.load(at: bundled.root)
-      } else {
-        throw GatewayPermissionError.invalidBinding
-      }
+      let package = try providerPackage(id, configuration: configuration)
+      guard package.manifest.id == id else { throw GatewayPermissionError.invalidBinding }
       return try GatewayProviderReview(
         package: package, configuration: configuration,
         knownPluginIDs: pluginIDs, knownServerIDs: serverIDs)
@@ -37,10 +29,25 @@ extension AppControlPlaneService {
     }
   }
 
+  func providerPackage(_ id: String, configuration: GatewayDatabase.ConfigurationState) throws
+    -> PluginPackage
+  {
+    if let selected = configuration.plugins.selectedInstallations[id] {
+      guard let record = configuration.plugins.installations.first(where: { $0.id == selected })
+      else { throw GatewayPermissionError.invalidBinding }
+      return try PluginPackage.load(at: record.source.root)
+    }
+    guard let bundled = bundledPlugins.packages.first(where: { $0.manifest.id == id }) else {
+      throw GatewayPermissionError.invalidBinding
+    }
+    return try PluginPackage.load(at: bundled.root)
+  }
+
   package func approveProvider(
     _ review: GatewayProviderReview, permissions: Permissions, fullAccess: Bool,
     sandboxSettings: ProviderSandboxSettings = .init(),
-    expectedProviderRevision: Int64?, expectedRevision: UInt64, expectedEpoch: UUID
+    expectedProviderRevision: Int64?, expectedRevision: UInt64, expectedEpoch: UUID,
+    editingApproval: Bool = false, reviewedLimits: ManagedLimits? = nil
   ) async throws -> GatewayProviderApproval {
     guard !configurationMutationInProgress else { throw PluginHostError.changeInProgress }
     configurationMutationInProgress = true
@@ -48,14 +55,22 @@ extension AppControlPlaneService {
     await manifestStore.publicationLock.acquire()
     defer { manifestStore.publicationLock.release() }
     try Task.checkCancellation()
-    let current = try providerReview(review.identity)
-    guard current.sourceDigest == review.sourceDigest else {
+    guard (try? providerReview(review.identity)) == review else {
       throw GatewayPermissionError.revisionConflict
     }
-    return try requirePermissionControl().approveProvider(
-      review, permissions: permissions, fullAccess: fullAccess, sandboxSettings: sandboxSettings,
-      expectedProviderRevision: expectedProviderRevision, expectedRevision: expectedRevision,
-      expectedEpoch: expectedEpoch)
+    let configuration = try manifestStore.activeConfiguration()
+    do {
+      return try manifestStore.withCurrentConfiguration(configuration) {
+        try requirePermissionControl().approveProvider(
+          review, permissions: permissions, fullAccess: fullAccess,
+          sandboxSettings: sandboxSettings,
+          expectedProviderRevision: expectedProviderRevision, expectedRevision: expectedRevision,
+          expectedEpoch: expectedEpoch, editingApproval: editingApproval,
+          reviewedLimits: reviewedLimits)
+      }
+    } catch AtomicManifestStoreError.staleDigest {
+      throw GatewayPermissionError.revisionConflict
+    }
   }
 
   package func doctorPlugin(id: String) throws -> PluginDoctorReport {

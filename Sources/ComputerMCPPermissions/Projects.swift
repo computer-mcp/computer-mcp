@@ -324,7 +324,7 @@ package struct SandboxSettings: Hashable, Sendable, Codable {
 }
 
 extension SandboxSettings {
-  func effectiveNetwork(limits: ManagedLimits, trustedHosts: Set<String>)
+  package func effectiveNetwork(limits: ManagedLimits, trustedHosts: Set<String>)
     -> NetworkAccess.Configuration
   {
     let selected = limits.network(applying: network, trustedHosts: trustedHosts)

@@ -6,7 +6,7 @@ import Crypto
 import Foundation
 
 /// Host-verified input to owner review, pinned to the observed configuration and source.
-package struct GatewayProviderReview: Sendable {
+package struct GatewayProviderReview: Equatable, Sendable {
   package let identity: PluginIdentity
   package let sourceDigest: String
   package let declarations: PluginPermissionDeclarations?

@@ -303,7 +303,9 @@ package final class GatewayPermissionService: @unchecked Sendable {
   }
 
   /// Local diagnostics remain accessible with unreadable policies or suspended grants.
-  package func view(owner: GatewayPermissionOwner, now: Date = Date()) throws
+  package func view(
+    owner: GatewayPermissionOwner, providerIDs: Set<PluginIdentity> = [], now: Date = Date()
+  ) throws
     -> GatewayPermissionView
   {
     try transactionWithPolicy { database, ledger, policies in
@@ -324,6 +326,16 @@ package final class GatewayPermissionService: @unchecked Sendable {
         return try JSONDecoder().decode(ProfileGrant.self, from: bytes)
       }
       let registeredProjects = try GatewayDatabase.projects(in: database)
+      let providers = try ProviderAuthorityRecord.fetchAll(database).map(Self.providerApproval)
+      let providerLimits = Dictionary(
+        uniqueKeysWithValues: providerIDs.union(providers.map(\.identity)).map { identity in
+          (
+            identity,
+            policies.providerLimits(
+              identity, epoch: ledger.authorizationEpochID,
+              previous: ledger.environment.limits[.plugin(identity)])
+          )
+        })
       return GatewayPermissionView(
         revision: try Self.controlRevision(database),
         profiles: profiles,
@@ -376,7 +388,22 @@ package final class GatewayPermissionService: @unchecked Sendable {
             )
           }),
         trustedHosts: Set(ledger.environment.trustedHosts.map(\.host)),
-        providers: try ProviderAuthorityRecord.fetchAll(database).map(Self.providerApproval))
+        providers: providers,
+        sourceProjects: Dictionary(
+          uniqueKeysWithValues: registeredProjects.compactMap { project in
+            ledger.environment.paths?.projects.sourceID(for: project.id).map { (project.id, $0) }
+          }),
+        providerLimits: providerLimits,
+        providerFullAccess: Set(
+          providers.compactMap { approval in
+            guard approval.enabled, approval.epoch == ledger.authorizationEpochID,
+              let consent = approval.fullAccessConsent,
+              ledger.environment.modes[approval.principal] == consent,
+              ledger.isConsentValid(consent, for: approval.principal),
+              providerLimits[approval.identity]?.modeDenial(consent.mode) == nil
+            else { return nil }
+            return approval.identity
+          }))
     }
   }
 

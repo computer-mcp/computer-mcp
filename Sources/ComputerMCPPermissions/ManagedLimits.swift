@@ -121,7 +121,7 @@ package struct ManagedLimits: Equatable, Sendable, Codable {
     }
   }
 
-  func modeDenial(_ mode: ExecutionMode) -> DenialReason? {
+  package func modeDenial(_ mode: ExecutionMode) -> DenialReason? {
     guard case .fullAccess(let consent) = mode else { return nil }
     if consent == .notGranted { return .fullAccessRequiresConsent }
     let sources = restrictingSources { !$0.allowsFullAccess }

@@ -5,6 +5,7 @@ import ComputerMCPSandbox
 import ComputerMCPTestSupport
 import ComputerMCPTransport
 import ComputerMCPTunnels
+import ComputerMCPWorktrees
 import Darwin
 import Foundation
 import Testing
@@ -24,6 +25,39 @@ import Testing
 
 @Suite(.nativeIntegration, .timeLimit(.minutes(1)))
 struct MCPRegistrationControlPlaneTests {
+  @Test
+  func h12ProjectInventoryRetainsUnavailableWorktreeIdentity() async throws {
+    let fixture = try MCPRegistrationControlFixture()
+    defer { fixture.remove() }
+    let source = DerivedProjectSource(
+      id: "removed-source", root: fixture.root.appendingPathComponent("old-source").path,
+      registeredAt: Date())
+    let worktreeID = UUID()
+    let generation = UUID()
+    let record = DerivedProjectRecord(
+      projectID: "retained-worktree", source: source,
+      root: fixture.root.appendingPathComponent("old-checkout").path,
+      provenance: .host(worktreeID: worktreeID, storageGeneration: generation),
+      state: .sourceUnavailable)
+    try fixture.database.derivedProjectStore(inspectNesting: { _ in [] })
+      .commit(record, expecting: nil, protecting: nil)
+
+    let inventory = try await fixture.host.projectWorktreeInventory()
+    let group = try #require(inventory.first)
+    #expect(group.source == source)
+    #expect(group.projectName == nil)
+    #expect(!group.isInventoryAvailable)
+    let row = try #require(group.worktrees.first)
+    #expect(row.worktreeID == worktreeID)
+    #expect(row.storageGeneration == generation)
+    #expect(row.lifecycleRevision == record.revision)
+    #expect(row.lifecycleState == .sourceUnavailable)
+    #expect(!row.isInspectable)
+    await #expect(throws: AppControlPlaneServiceError.recoveryOwnerUnavailable) {
+      try await fixture.host.recoveryStores()
+    }
+  }
+
   @Test(arguments: [false, true])
   func doctorAndRecoveryShareHostStorageWithoutLaunching(hostConfirmed: Bool) async throws {
     let fixture = try MCPRegistrationControlFixture()

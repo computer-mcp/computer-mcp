@@ -78,10 +78,15 @@ This document owns product meaning, the tagline and voice; text rendered into
 brand images follows it. The organization
 [DESIGN.md](https://github.com/computer-mcp/.github/blob/master/DESIGN.md) owns
 the visual system for the App icon, README headers, social cards and the
-website. `Resources/ComputerMCPApp/AppIcon.icon`, `Documentation/Brand/` and
-`.github/brand/` are imports locked by `.github/brand/brand.lock.json`; update
-them with the organization repository's `python3 Brand/brand.py sync`, and CI
-verifies the lock. An App icon change alters candidate bytes; follow
+website. The organization generates App icons with `apple-app-icon-design` and
+component icons with `apple-framework-icon-design`. Deliver icon updates through
+a consumer pull request and record the destination and SHA-256 in the icon's
+`provenance.json`, following the organization's
+[icon update procedure](https://github.com/computer-mcp/.github#updating-icons).
+
+CI checks the imported files in `Resources/ComputerMCPApp/AppIcon.icon`,
+`Documentation/Brand/` and `.github/brand/` against
+`.github/brand/brand.lock.json`. An App icon change alters candidate bytes. Follow
 [Versioning](../../VERSIONING.md) for version rules and the
 [Release Reference](../Reference/Release.md#evidence-reuse-and-invalidation)
 for candidate and installed acceptance.

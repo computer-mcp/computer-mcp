@@ -26,7 +26,10 @@ package struct WorktreeJournalIO: Sendable {
     try WorktreeDirectory.requireName(name)
     try directory.verify()
     let fd = openat(directory.descriptor, name, O_RDONLY | O_NOFOLLOW | O_CLOEXEC | O_NONBLOCK)
-    if fd < 0, errno == ENOENT { return nil }
+    if fd < 0, errno == ENOENT {
+      try directory.verify()
+      return nil
+    }
     guard fd >= 0 else { throw WorktreeDirectory.posixError() }
     let handle = FileHandle(fileDescriptor: fd, closeOnDealloc: true)
     defer { try? handle.close() }
@@ -68,6 +71,7 @@ package struct WorktreeJournalIO: Sendable {
     guard existing == expected else {
       throw WorktreeError.identityChanged("Journal changed before publication: \(name)")
     }
+    try requireIdentity(fd, name: temporary, directory: directory)
     let result =
       expected == nil
       ? linkat(directory.descriptor, temporary, directory.descriptor, name, 0)
@@ -79,22 +83,34 @@ package struct WorktreeJournalIO: Sendable {
         throw WorktreeDirectory.posixError()
       }
     }
+    try requireIdentity(fd, name: name, directory: directory)
     try beforeDirectorySync()
     try directory.synchronize()
+    try requireIdentity(fd, name: name, directory: directory)
   }
 
   private func requireIdentity(_ fd: Int32, name: String, directory: WorktreeDirectory) throws {
+    try directory.verify()
     var opened = stat()
     var current = stat()
     guard fstat(fd, &opened) == 0,
       fstatat(directory.descriptor, name, &current, AT_SYMLINK_NOFOLLOW) == 0,
       current.st_mode & S_IFMT == S_IFREG, current.st_dev == opened.st_dev,
-      current.st_ino == opened.st_ino
+      current.st_ino == opened.st_ino, current.st_nlink == 1
     else { throw WorktreeError.identityChanged("Journal file identity changed: \(name)") }
   }
 }
 
 extension WorktreeJournalIO {
+  func synchronize(_ name: String, in directory: WorktreeDirectory, expecting content: Data) throws
+  {
+    guard try read(name, in: directory, limit: content.count, synchronize: true) == content else {
+      throw WorktreeError.identityChanged("Journal content changed before synchronization: \(name)")
+    }
+    try beforeDirectorySync()
+    try directory.synchronize()
+  }
+
   func remove(_ name: String, in directory: WorktreeDirectory, expecting content: Data) throws {
     guard try read(name, in: directory, limit: content.count) == content else {
       throw WorktreeError.identityChanged("Owned journal content changed before removal.")

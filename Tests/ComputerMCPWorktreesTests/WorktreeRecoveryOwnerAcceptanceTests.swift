@@ -922,3 +922,47 @@ private final class OwnerVerificationLimitGit: WorktreeGitExecuting, @unchecked 
     try base.withPreparedTransaction(command, body)
   }
 }
+
+extension WorktreeRecoveryOwnerAcceptanceTests {
+  @Test func cleanupAfterGateReopenDoesNotClearLaterHolder() throws {
+    try fixture { directory in
+      let f = try WorktreeFixture(directory)
+      let fixture = try OwnerAcceptanceFixture(f)
+      let record = try fixture.captureBlob()
+      let worktrees = try f.service()
+      let gate = try worktrees.admission(projectID: record.owner.projectID)
+      let topology = try worktrees.topology(projectID: record.owner.projectID)
+      let state = topology.common.url.appendingPathComponent(
+        "computer-mcp/admission/\(topology.generation.uuidString.lowercased())/state.json")
+      let owner = try fixture.service()
+      let view = try #require(try owner.list().first)
+      let review = try owner.reviewRelease(
+        key: view.key, generation: view.generation, selections: [record.selection],
+        principal: fixture.principal)
+      let resultFile = fixture.storeDirectory(view.key).appendingPathComponent(
+        RecoveryOwnerJournal.resultName(review.handle.id))
+      let io = WorktreeJournalIO(beforeDirectorySync: {
+        guard FileManager.default.fileExists(atPath: resultFile.path),
+          let bytes = try? Data(contentsOf: state),
+          let object = try? JSONSerialization.jsonObject(with: bytes) as? [String: Any],
+          object["recoveryHold"] == nil || object["recoveryHold"] is NSNull
+        else { return }
+        throw OwnerConfirmationInterruption.Failure.injected
+      })
+      let interrupted = try fixture.service(io: io)
+      let released = try interrupted.confirm(review, principal: fixture.principal)
+      #expect(released.outcome == .released)
+      #expect(released.gates.map(\.cleanup) == [.pending])
+      let laterID = UUID()
+      #expect(try gate.close(operationID: laterID).isEmpty)
+      let cleaned = try owner.resume(review.handle, principal: fixture.principal)
+      #expect(cleaned.outcome == .released)
+      #expect(cleaned.gates.map(\.cleanup) == [.cleared])
+      #expect(throws: WorktreeError.self) { try gate.reserve(ownerID: UUID(), executionID: UUID()) }
+      try gate.reopen(operationID: laterID)
+      let writer = try gate.reserve(ownerID: UUID(), executionID: UUID())
+      try gate.acknowledge(writer)
+      #expect(try owner.resume(review.handle, principal: fixture.principal) == cleaned)
+    }
+  }
+}

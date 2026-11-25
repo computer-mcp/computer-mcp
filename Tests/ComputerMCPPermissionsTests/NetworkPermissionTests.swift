@@ -4,6 +4,67 @@ import Testing
 @testable import ComputerMCPPermissions
 
 struct ComputerMCPPermissionsNetworkTests {
+  @Test func repeatedSandboxBasesRevalidateRetainedResultsPerPrincipal() throws {
+    var ledger = PermissionLedger()
+    for principal in [client, otherClient] {
+      try ledger.setPermission(
+        .granted(.read), for: .project("project"), principal: principal,
+        expectedRevision: ledger.revision)
+    }
+    var environment = ledger.environment
+    environment.paths = TestPathEnvironment().snapshot(preserving: nil)
+    environment.trustedHosts = hostRules(["registry.example", "*.example.org"], preserving: [])
+    _ = try ledger.reconcile(environment: environment, expectedRevision: ledger.revision)
+
+    let requirements = InvocationRequirements(
+      paths: [.init(path: path("/people/me/Downloads/repo/value.txt"), operation: .read)],
+      sandboxProjectID: "project")
+    var retained: [Principal: [UUID]] = [:]
+    var sandboxBases: Set<SandboxAccessBasis> = []
+    for principal in [client, otherClient] {
+      for index in 0..<3 {
+        let proof = try authorization(
+          from: ledger.authorize(
+            invocation: invocation(principal: principal, digest: "retained-\(index)"),
+            requirements: requirements, now: instant))
+        let sandbox = try #require(
+          proof.basis.compactMap {
+            if case .sandbox(let basis) = $0 { return basis }
+            return nil
+          }.first)
+        sandboxBases.insert(sandbox)
+        let execution = try ledger.startExecution(owner: principal, authorizationIDs: [proof.id])
+        try ledger.finishInvocation(proof.id)
+        try ledger.finishExecution(execution.id, retainUntil: .distantFuture, now: instant)
+        retained[principal, default: []].append(execution.id)
+      }
+    }
+    #expect(sandboxBases.count == 1)
+    for (principal, ids) in retained {
+      for id in ids {
+        #expect(
+          ledger.executionAccess(id, principal: principal, operation: .readResult, now: instant)
+            == .allowed)
+      }
+    }
+
+    environment = ledger.environment
+    environment.limits[client] = .init(
+      owner: .available(ManagedPolicy(deniedReadLocations: [path("/people/me/tasks/job")])))
+    _ = try ledger.reconcile(environment: environment, expectedRevision: ledger.revision)
+
+    for id in try #require(retained[client]) {
+      #expect(
+        ledger.executionAccess(id, principal: client, operation: .readResult, now: instant)
+          == .denied(.authorizationRevoked))
+    }
+    for id in try #require(retained[otherClient]) {
+      #expect(
+        ledger.executionAccess(id, principal: otherClient, operation: .readResult, now: instant)
+          == .allowed)
+    }
+  }
+
   @Test func networkContainmentUsesTrustedHostsAndWildcardIntersection() {
     let trusted: Set<String> = ["github.com", "*.example.org"]
     for includesTrusted in [false, true] {

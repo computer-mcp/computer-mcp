@@ -12,9 +12,12 @@ package func testExecutionLauncher(observations: ExecutionObservations? = nil) -
     root.appendingPathComponent(".build/debug"),
     root.appendingPathComponent(".build/out/Products/Debug"),
   ]
-  let bootstrap = roots.flatMap { root in
-    Array(sequence(first: root) { $0.deletingLastPathComponent() }.prefix(7))
-  }.map { $0.appendingPathComponent("computer-mcp-execution-bootstrap") }
+  let bootstrapName = "computer-mcp-execution-bootstrap"
+  let bootstrap =
+    nativeTestExecutable(named: bootstrapName)
+    ?? roots.flatMap { root in
+      Array(sequence(first: root) { $0.deletingLastPathComponent() }.prefix(7))
+    }.map { $0.appendingPathComponent(bootstrapName) }
     .first { FileManager.default.isExecutableFile(atPath: $0.path) }
   let base = DarwinExecutionPlatform(bootstrapExecutable: bootstrap)
   if let observations {

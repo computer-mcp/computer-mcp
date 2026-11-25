@@ -653,22 +653,72 @@ final class LiveAppControlPlane: AppControlPlane {
       .info, event: "profile.permissions.updated", fields: ["profile_id": grant.id.rawValue])
   }
 
+  func fetchPrivacyPermissionInventory() async throws -> PrivacyPermissionInventory {
+    try await controlPlane.privacyPermissionInventory()
+  }
+
+  func saveProviderPermissions(
+    reviewed: ProviderPermissionOptions, permissions: Permissions, fullAccess: Bool,
+    sandboxSettings: ProviderSandboxSettings, editingApproval: Bool
+  ) async throws {
+    try await operations.saveProviderPermissions(
+      reviewed: reviewed, permissions: permissions, fullAccess: fullAccess,
+      sandboxSettings: sandboxSettings, editingApproval: editingApproval)
+  }
+
+  func revokeProviderPermissions(reviewed: ProviderPermissionOptions) async throws {
+    try await controlPlane.revokeProviderPermissions(reviewed: reviewed)
+  }
+
+  func fetchProjectWorktrees() async throws -> [ProjectWorktreeInventory] {
+    try await controlPlane.projectWorktreeInventory()
+  }
+
+  func fetchRecoveryStores() async throws -> [RecoveryStoreView] {
+    try await controlPlane.recoveryStores()
+  }
+
+  func reviewRecoveryRelease(
+    storeKey: String, generation: UUID, selections: [RecoveryRecordSelection]
+  ) async throws -> RecoveryReleaseReview {
+    try await controlPlane.reviewRecoveryRelease(
+      storeKey: storeKey, generation: generation, selections: selections)
+  }
+
+  func confirmRecoveryRelease(_ review: RecoveryReleaseReview) async throws
+    -> RecoveryOperationStatus
+  {
+    try await controlPlane.confirmRecoveryRelease(review)
+  }
+
+  func prepareRecoveryMaintenance(storeKey: String, generation: UUID) async throws
+    -> RecoveryMaintenancePreparation
+  {
+    try await controlPlane.prepareRecoveryMaintenance(storeKey: storeKey, generation: generation)
+  }
+
+  func runRecoveryMaintenance(_ review: RecoveryMaintenanceReview) async throws
+    -> RecoveryOperationStatus
+  {
+    try await controlPlane.runRecoveryMaintenance(review)
+  }
+
+  func recoveryOperation(handle: RecoveryOperationHandle) async throws -> RecoveryOperationLookup {
+    try await controlPlane.recoveryOperation(handle: handle)
+  }
+
+  func resumeRecoveryOperation(handle: RecoveryOperationHandle) async throws
+    -> RecoveryOperationStatus
+  {
+    try await controlPlane.resumeRecoveryOperation(handle: handle)
+  }
+
   func fetchPermissionRequests() async throws -> GatewayPermissionView {
     try await controlPlane.permissionRequests()
   }
 
   func fetchPermissionObjectNames() async throws -> PermissionObjectNames {
-    let view = try await controlPlane.permissionRequests()
-    guard let profile = view.profiles.first else {
-      let projects = try await controlPlane.projects()
-      return .init(
-        projects: Dictionary(uniqueKeysWithValues: projects.map { ($0.id, $0.displayName) }))
-    }
-    let options = try await controlPlane.profilePermissionOptions(profileID: profile.id)
-    return .init(
-      projects: Dictionary(uniqueKeysWithValues: options.projects.map { ($0.id, $0.displayName) }),
-      plugins: Dictionary(uniqueKeysWithValues: options.plugins.map { ($0.id, $0.title) }),
-      mcpServers: Dictionary(uniqueKeysWithValues: options.integrations.map { ($0.id, $0.title) }))
+    try await controlPlane.privacyPermissionInventory().names
   }
 
   func confirmPermissionAuthority(epoch: UUID, expectedRevision: UInt64, profiles: [ProfileGrant])

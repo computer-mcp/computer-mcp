@@ -1135,13 +1135,16 @@ package actor AppGatewayService {
   /// Existing keys continue on their admitted generation while new keys await publication.
   package func changePlugins(
     _ change: PluginHostChange, expectedRevision: Int64,
-    authorization: GatewayManagementAuthorization? = nil
+    authorization: GatewayManagementAuthorization? = nil,
+    approval: ProviderEnablementApproval? = nil
   ) async throws
     -> PluginHostSnapshot
   {
     try await withConfigurationChange {
-      try await controlPlane.applyPluginChange(change, expectedRevision: expectedRevision) {
-        [self] expected, proposed, storage in
+      let bundled = await controlPlane.bundledPlugins.packages
+      return try await controlPlane.applyPluginChange(
+        change, expectedRevision: expectedRevision, approval: approval
+      ) { [self] expected, proposed, storage, activation in
         let state = GatewayDatabase.ConfigurationState(
           projects: expected.projects, projectAliases: expected.persisted.projectAliases,
           profiles: expected.profiles, plugins: proposed,
@@ -1150,10 +1153,18 @@ package actor AppGatewayService {
         _ = try await preparePublication(expected: expected, proposed: state, storage: storage) {
           resolution in
           let commit = {
-            try self.controlPlane.database.savePluginStoreSnapshot(
+            if let approval, case .package(let id) = approval.provider.identity {
+              guard
+                let (source, _) = try PluginStore.selectedPackage(
+                  id, in: proposed, bundled: bundled),
+                try PluginStore.manifestDigest(source.manifest)
+                  == approval.provider.sourceDigest
+              else { throw GatewayPermissionError.revisionConflict }
+            }
+            return try self.controlPlane.database.savePluginStoreSnapshot(
               proposed, expectedRevision: expected.plugins.revision,
               expectedConfiguration: expected.persisted, resolution: resolution,
-              authorization: authorization)
+              authorization: authorization, providerActivation: activation)
           }
           return try authorization.map { try $0.perform(commit) } ?? commit()
         }

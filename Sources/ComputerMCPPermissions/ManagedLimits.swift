@@ -85,6 +85,16 @@ package struct ManagedLimits: Equatable, Sendable, Codable {
     }
   }
 
+  /// The ceiling on an unlisted object. Named ceilings are checked on their own rows.
+  package func restrictingSources(forDefault permission: Permission, value: PermissionValue)
+    -> Set<PolicySource>
+  {
+    restrictingSources {
+      guard let state = $0.permissionCeilings.entries[permission] else { return false }
+      return !state.allows(value)
+    }
+  }
+
   package func denying(_ path: CanonicalPath) -> Set<PolicySource> {
     restrictingSources { policy in policy.deniedReadLocations.contains { $0.contains(path) } }
   }
@@ -121,7 +131,7 @@ package struct ManagedLimits: Equatable, Sendable, Codable {
     }
   }
 
-  func modeDenial(_ mode: ExecutionMode) -> DenialReason? {
+  package func modeDenial(_ mode: ExecutionMode) -> DenialReason? {
     guard case .fullAccess(let consent) = mode else { return nil }
     if consent == .notGranted { return .fullAccessRequiresConsent }
     let sources = restrictingSources { !$0.allowsFullAccess }

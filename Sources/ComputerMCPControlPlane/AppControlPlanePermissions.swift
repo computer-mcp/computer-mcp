@@ -35,14 +35,16 @@ package struct PermissionObjectNames: Sendable {
   package let projects: [String: String]
   package let plugins: [String: String]
   package let mcpServers: [String: String]
+  package let enabledMCPServerIDs: Set<String>
 
   package init(
     projects: [String: String] = [:], plugins: [String: String] = [:],
-    mcpServers: [String: String] = [:]
+    mcpServers: [String: String] = [:], enabledMCPServerIDs: Set<String>? = nil
   ) {
     self.projects = projects
     self.plugins = plugins
     self.mcpServers = mcpServers
+    self.enabledMCPServerIDs = enabledMCPServerIDs ?? Set(mcpServers.keys)
   }
 }
 
@@ -59,6 +61,8 @@ package struct ProfilePermissionOptions: Sendable {
   package let plugins: [ProfilePermissionIntegration]
   package let projects: [ComputerMCPCore.RegisteredProject]
   package let permissionRevision: UInt64
+  package let permissionEpoch: UUID?
+  package let sourceProjects: [String: String]
   let inputs: AppControlPlaneService.GatewayInputs
 }
 
@@ -127,6 +131,7 @@ extension AppControlPlaneService {
     try requireCurrentGatewayInputs(inputs)
     return ProfilePermissionOptions(
       grant: grant, integrations: integrations, plugins: plugins,
-      projects: inputs.projects, permissionRevision: view.revision, inputs: inputs)
+      projects: inputs.projects, permissionRevision: view.revision, permissionEpoch: view.epoch,
+      sourceProjects: view.sourceProjects, inputs: inputs)
   }
 }

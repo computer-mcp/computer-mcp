@@ -1006,6 +1006,163 @@ struct GatewayProviderApprovalTests {
     #expect(try f.view().suspended)
   }
 
+  @Test func h12OrdinaryProviderEditsRetireOnlyDependentStandingWork() throws {
+    let f = try ProviderApprovalFixture()
+    defer { f.remove() }
+    let project = try ProjectPathResolver.canonicalProject(f.root)
+    try f.database.saveProject(.init(id: "project", displayName: "Project", rootPath: project.path))
+    try f.service.configureEnvironment(
+      .init(projects: [.init(id: "project", root: .init(project.path))], rules: []),
+      trustedHosts: [], expectedProjects: f.database.projects(), expectedConfigurationRevision: nil)
+    let server = MCPServerConfig(id: "edit-scope", transport: .stdio, command: "/usr/bin/true")
+    let review = try GatewayProviderReview(
+      server: server, configuration: f.database.configurationState())
+    var selection = Permissions()
+    try selection.set(.granted(.access), for: .screen)
+    try selection.set(.granted(.access), for: .unifiedLogs)
+    let approved = try f.approve(review, permissions: selection)
+    let (screen, logs, projectLogs) = try f.store.transactionWithDatabase { _, ledger in
+      func start(_ permission: Permission, projectID: String? = nil) throws -> AuthorizedExecution {
+        let decision = try ledger.authorize(
+          invocation: .init(
+            principal: approved.principal, tool: "owner-fixture", projectID: projectID,
+            argumentsDigest: "standing"),
+          requirements: .init(
+            actions: [
+              .init(requirement: try .init(permission, .access))
+            ], sandboxProjectID: projectID), now: .now)
+        guard case .allowed(let proof) = decision else {
+          throw PermissionModelError.invalidAuthorization
+        }
+        return try ledger.startExecution(owner: approved.principal, authorizationIDs: [proof.id])
+      }
+      return (
+        try start(.screen), try start(.unifiedLogs), try start(.unifiedLogs, projectID: "project")
+      )
+    }
+    func edit(
+      _ approval: GatewayProviderApproval, permissions: Permissions,
+      settings: ProviderSandboxSettings
+    )
+      throws -> GatewayProviderApproval
+    {
+      let view = try f.view()
+      return try f.service.approveProvider(
+        review, permissions: permissions, fullAccess: false, sandboxSettings: settings,
+        owner: f.owner, expectedProviderRevision: approval.revision,
+        expectedRevision: view.revision, expectedEpoch: #require(view.epoch),
+        editingApproval: true)
+    }
+    let network = try edit(
+      approved, permissions: approved.permissions,
+      settings: .init(projects: ["project": .init(network: .trusted)]))
+    #expect(network.permissions == approved.permissions)
+    try f.store.readWithDatabase { _, ledger in
+      #expect(ledger.executions[screen.id]?.isRunning == true)
+      #expect(ledger.executions[logs.id]?.isRunning == true)
+      #expect(ledger.pendingExecutionTerminations == [projectLogs.id])
+    }
+    try selection.set(.denied, for: .screen)
+    _ = try edit(network, permissions: selection, settings: #require(network.sandboxSettings))
+    try f.store.transactionWithDatabase { _, ledger in
+      #expect(ledger.pendingExecutionTerminations.contains(screen.id))
+      #expect(!ledger.pendingExecutionTerminations.contains(logs.id))
+      let unaffected = try #require(logs.authorizationIDs.first)
+      _ = try ledger.invocationAccess(unaffected)
+    }
+  }
+
+  @Test func h12DefaultProviderGrantIdentitiesSurviveAdmissionAndNetworkEdit() throws {
+    let f = try ProviderApprovalFixture()
+    defer { f.remove() }
+    let server = MCPServerConfig(id: "default-grants", transport: .stdio, command: "/usr/bin/true")
+    let review = try GatewayProviderReview(
+      server: server, configuration: f.database.configurationState())
+    let defaults = Permissions.newPrincipal
+    let approved = try f.approve(review, permissions: defaults)
+    #expect(approved.permissions.entries == defaults.entries)
+    #expect(approved.permissions.grantIDs.values.allSatisfy { !$0.isDraft })
+    try f.store.readWithDatabase { _, ledger in
+      #expect(ledger.permissions(for: approved.principal) == approved.permissions)
+    }
+
+    let binding = try f.service.authorizeProviderExecution(
+      review: review, registrationID: server.id, caller: nil, retryIDs: [])
+    #expect(binding.providerAuthorization.invocation.principal == approved.principal)
+    try f.store.readWithDatabase { _, ledger in
+      #expect(ledger.permissions(for: approved.principal) == approved.permissions)
+    }
+
+    let view = try f.view()
+    let edited = try f.service.approveProvider(
+      review, permissions: approved.permissions, fullAccess: false,
+      sandboxSettings: .init(defaults: .init(network: .trusted)), owner: f.owner,
+      expectedProviderRevision: approved.revision, expectedRevision: view.revision,
+      expectedEpoch: #require(view.epoch), editingApproval: true)
+    #expect(edited.sandboxSettings?.defaults.network.configuration == .trusted)
+    #expect(edited.permissions == approved.permissions)
+    #expect(try f.view().providers.first?.permissions == approved.permissions)
+  }
+
+  @Test func h12ReviewedSandboxChoicesReceiveFreshEvidenceAfterRestore() throws {
+    let f = try ProviderApprovalFixture()
+    defer { f.remove() }
+    let home = try ProjectPathResolver.canonicalProject(f.root).appendingPathComponent("home")
+    try FileManager.default.createDirectory(at: home, withIntermediateDirectories: false)
+    try Data("configuration".utf8).write(to: home.appendingPathComponent("settings"))
+    try f.service.configureEnvironment(
+      .init(projects: [], rules: [.init(root: .init(home.path), kind: .userData)]),
+      trustedHosts: [], expectedProjects: [], expectedConfigurationRevision: nil)
+    let review = try f.install(
+      requirement: "write",
+      sandbox: """
+        [sandbox]
+        network = 'trusted'
+        purpose = 'Use trusted services'
+        read_exceptions = [{path = '~/settings', purpose = 'Read configuration'}]
+        """)
+    let exceptionReviews = try review.readExceptions(userHome: home)
+    let selected = try #require(exceptionReviews.first?.approval)
+    let settings = ProviderSandboxSettings(
+      defaults: .init(network: .trusted, readExceptions: [selected]))
+    let approved: GatewayProviderApproval
+    do {
+      approved = try f.approve(
+        review, permissions: .newPrincipal, sandboxSettings: settings, userHome: home)
+    } catch {
+      Issue.record("Initial approval failed: \(error)")
+      return
+    }
+    let saved = try #require(approved.sandboxSettings)
+    let oldException = try #require(saved.defaults.readExceptions.first)
+
+    f.counter.forget()
+    try f.store.transactionWithDatabase { _, ledger in
+      try ledger.acknowledgeEpochRecovery(#require(ledger.authorizationEpochID))
+    }
+    let suspended = try f.view()
+    try f.service.confirmAuthority(
+      owner: f.owner, epoch: #require(suspended.epoch), expectedRevision: suspended.revision,
+      profileEdits: [])
+    try GatewayProviderReadExceptions.verify(saved.defaults.readExceptions, userHome: home)
+    try f.store.readWithDatabase { _, ledger in
+      #expect(ledger.sandboxSettings.providers[approved.identity] == nil)
+      #expect(
+        ledger.canApproveReadException(
+          at: oldException.path, for: approved.identity, settings: saved.defaults, limits: .init()))
+    }
+    let restored = try f.approve(
+      f.currentReview(), permissions: approved.permissions, previous: approved.revision,
+      sandboxSettings: saved, userHome: home)
+    let rebound = try #require(restored.sandboxSettings)
+    let reboundException = try #require(rebound.defaults.readExceptions.first)
+    #expect(restored.epoch != approved.epoch)
+    #expect(rebound.defaults.network.configuration == saved.defaults.network.configuration)
+    #expect(rebound.defaults.network != saved.defaults.network)
+    #expect(reboundException.filesystemIdentity == oldException.filesystemIdentity)
+    #expect(reboundException.identity != oldException.identity)
+  }
+
   @Test func epochRecoveryDoesNotAdoptProviderThroughClientConfirmation() throws {
     let f = try ProviderApprovalFixture()
     defer { f.remove() }

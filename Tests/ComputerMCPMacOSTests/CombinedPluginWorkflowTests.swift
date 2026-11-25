@@ -339,6 +339,16 @@ struct CombinedPluginWorkflowTests {
         return
       }
     }
+    if case .package = identity {
+      let inventory = try await fixture.host.privacyPermissionInventory()
+      let reviewed = try #require(inventory.providers.first { $0.identity == identity })
+      let operations = AppControlPlaneOperations(
+        controlPlane: fixture.host, gatewayService: fixture.gateway)
+      try await operations.saveProviderPermissions(
+        reviewed: reviewed, permissions: permissions, fullAccess: true, sandboxSettings: .init(),
+        editingApproval: false)
+      return
+    }
     _ = try await fixture.host.approveProvider(
       review, permissions: permissions, fullAccess: true,
       expectedProviderRevision: view.providers.first { $0.identity == identity }?.revision,

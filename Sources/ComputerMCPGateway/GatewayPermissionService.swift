@@ -203,11 +203,15 @@ package final class GatewayPermissionService: @unchecked Sendable {
   package func updateProfile(
     _ proposed: ProfileGrant, owner: GatewayPermissionOwner,
     expectedProfileRevision: Int64?, expectedRevision: UInt64,
-    authorization: GatewayManagementAuthorization? = nil, now: Date = Date()
+    authorization: GatewayManagementAuthorization? = nil, expectedEpoch: UUID? = nil,
+    now: Date = Date()
   ) throws {
     let result: Result<Void, any Error> = try transactionWithPolicy { database, ledger, policies in
       try owner.authorize()
       try Self.requireRevision(expectedRevision, database: database)
+      guard expectedEpoch.map({ $0 == ledger.authorizationEpochID }) ?? true else {
+        return .failure(GatewayPermissionError.revisionConflict)
+      }
       _ = try refresh(database, ledger: &ledger, snapshot: policies, now: now)
       guard ledger.suspendedAuthority == nil, ledger.pendingEpochRecovery == nil else {
         return .failure(PermissionModelError.authoritySuspended)
@@ -303,7 +307,9 @@ package final class GatewayPermissionService: @unchecked Sendable {
   }
 
   /// Local diagnostics remain accessible with unreadable policies or suspended grants.
-  package func view(owner: GatewayPermissionOwner, now: Date = Date()) throws
+  package func view(
+    owner: GatewayPermissionOwner, providerIDs: Set<PluginIdentity> = [], now: Date = Date()
+  ) throws
     -> GatewayPermissionView
   {
     try transactionWithPolicy { database, ledger, policies in
@@ -324,13 +330,70 @@ package final class GatewayPermissionService: @unchecked Sendable {
         return try JSONDecoder().decode(ProfileGrant.self, from: bytes)
       }
       let registeredProjects = try GatewayDatabase.projects(in: database)
+      var sourceProjects = Dictionary(
+        uniqueKeysWithValues: registeredProjects.map { ($0.id, $0.id) })
+      for derived in try GatewayDatabase.availableDerivedProjects(in: database) {
+        sourceProjects[derived.projectID] = sourceProjects[derived.source.id]
+      }
+      let suspended = ledger.suspendedAuthority != nil || ledger.pendingEpochRecovery != nil
+      let unconfirmed = Set(
+        try Row.fetchAll(
+          database,
+          sql:
+            "SELECT id FROM permissionProfiles WHERE authorityEpoch IS NULL OR authorityEpoch != ?",
+          arguments: [ledger.authorizationEpochID?.uuidString]
+        ).compactMap { row in
+          GatewayProfileID(rawValue: row["id"] as String)
+        })
+      let profilesByID = Dictionary(uniqueKeysWithValues: profiles.map { ($0.id, $0) })
+      let liveConnections = Dictionary(
+        grouping: ledger.environment.connections.keys.sorted().compactMap { id in
+          ledger.environment.endedConnections.contains(id)
+            ? nil : ledger.environment.connections[id]
+        }, by: \.principal)
+      let providers = try ProviderAuthorityRecord.fetchAll(database).map(Self.providerApproval)
+      let providerLimits = Dictionary(
+        uniqueKeysWithValues: providerIDs.union(providers.map(\.identity)).map { identity in
+          (
+            identity,
+            policies.providerLimits(
+              identity, epoch: ledger.authorizationEpochID,
+              previous: ledger.environment.limits[.plugin(identity)])
+          )
+        })
       return GatewayPermissionView(
         revision: try Self.controlRevision(database),
         profiles: profiles,
-        subjects: bindings.map {
-          .init(
-            principal: $0.principal, profileID: $0.profileID, caller: $0.caller,
-            limits: ledger.environment.limits[$0.principal] ?? .init())
+        subjects: bindings.map { binding in
+          let profile = profilesByID[binding.profileID]
+          let availability: GatewayPermissionSubjectView.Availability =
+            if profile == nil {
+              .profileUnavailable
+            } else if suspended || unconfirmed.contains(binding.profileID) {
+              .restoreReview
+            } else if profile?.allowedCallers.contains(binding.caller) != true {
+              .callerDenied
+            } else { .available }
+          let principal = binding.principal
+          let limits = ledger.environment.limits[principal] ?? .init()
+          let standing = ledger.environment.modes[principal]
+          let fullAccess: ExecutionMode? =
+            if profile?.fullAccess == true, let standing,
+              ledger.isConsentValid(standing, for: principal),
+              limits.modeDenial(standing.mode) == nil
+            { standing.mode } else if profile?.fullAccess == true {
+              liveConnections[principal, default: []].compactMap { connection -> ExecutionMode? in
+                guard let consent = connection.consent, connection.attenuation.allowsFullAccess,
+                  ledger.isConsentValid(consent, for: principal),
+                  limits.modeDenial(consent.mode) == nil
+                else { return nil }
+                return consent.mode
+              }.first
+            } else { nil }
+          return .init(
+            principal: principal, profileID: binding.profileID, caller: binding.caller,
+            limits: limits, availability: availability,
+            effectiveMode: availability == .available ? (fullAccess ?? .sandbox) : nil)
         },
         requests: ledger.requests.values.sorted {
           $0.createdAt == $1.createdAt
@@ -353,16 +416,7 @@ package final class GatewayPermissionService: @unchecked Sendable {
             request: request, profileID: profileID, alwaysIsShared: profileID != nil,
             registrationGrantRoot: grantRoot, registrationGrantName: grantName)
         }, sources: sources, epoch: ledger.authorizationEpochID,
-        suspended: ledger.suspendedAuthority != nil || ledger.pendingEpochRecovery != nil,
-        unconfirmedProfileIDs: Set(
-          try Row.fetchAll(
-            database,
-            sql:
-              "SELECT id FROM permissionProfiles WHERE authorityEpoch IS NULL OR authorityEpoch != ?",
-            arguments: [ledger.authorizationEpochID?.uuidString]
-          ).compactMap { row in
-            GatewayProfileID(rawValue: row["id"] as String)
-          }),
+        suspended: suspended, unconfirmedProfileIDs: unconfirmed,
         profileLimits: Dictionary(
           uniqueKeysWithValues: profiles.map { profile in
             (
@@ -376,7 +430,19 @@ package final class GatewayPermissionService: @unchecked Sendable {
             )
           }),
         trustedHosts: Set(ledger.environment.trustedHosts.map(\.host)),
-        providers: try ProviderAuthorityRecord.fetchAll(database).map(Self.providerApproval))
+        providers: providers,
+        sourceProjects: sourceProjects,
+        providerLimits: providerLimits,
+        providerFullAccess: Set(
+          providers.compactMap { approval in
+            guard approval.enabled, approval.epoch == ledger.authorizationEpochID,
+              let consent = approval.fullAccessConsent,
+              ledger.environment.modes[approval.principal] == consent,
+              ledger.isConsentValid(consent, for: approval.principal),
+              providerLimits[approval.identity]?.modeDenial(consent.mode) == nil
+            else { return nil }
+            return approval.identity
+          }))
     }
   }
 

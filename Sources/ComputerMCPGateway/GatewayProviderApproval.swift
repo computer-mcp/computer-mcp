@@ -6,13 +6,15 @@ import Crypto
 import Foundation
 
 /// Host-verified input to owner review, pinned to the observed configuration and source.
-package struct GatewayProviderReview: Sendable {
+package struct GatewayProviderReview: Equatable, Sendable {
   package let identity: PluginIdentity
   package let sourceDigest: String
   package let declarations: PluginPermissionDeclarations?
   let configuration: GatewayDatabase.ConfigurationState
-  let pluginIDs: Set<String>
-  let serverIDs: Set<String>
+  package let pluginIDs: Set<String>
+  package let serverIDs: Set<String>
+
+  package var pluginStoreRevision: Int64 { configuration.plugins.revision }
 
   package init(
     package: PluginPackage, configuration: GatewayDatabase.ConfigurationState,
@@ -54,6 +56,36 @@ package struct GatewayProviderReview: Sendable {
     let encoder = JSONEncoder()
     encoder.outputFormatting = [.sortedKeys]
     return SHA256.hash(data: try encoder.encode(value)).map { String(format: "%02x", $0) }.joined()
+  }
+}
+
+/// Owner proof and review expectations carried into configuration publication.
+package struct GatewayProviderActivation: Sendable {
+  let review: GatewayProviderReview
+  let permissions: Permissions
+  let fullAccess: Bool
+  let sandboxSettings: ProviderSandboxSettings
+  let owner: GatewayPermissionOwner
+  let expectedProviderRevision: Int64?
+  let expectedRevision: UInt64
+  let expectedEpoch: UUID
+  let limits: ManagedLimits
+
+  package init(
+    review: GatewayProviderReview, permissions: Permissions, fullAccess: Bool,
+    sandboxSettings: ProviderSandboxSettings, owner: GatewayPermissionOwner,
+    expectedProviderRevision: Int64?, expectedRevision: UInt64, expectedEpoch: UUID,
+    limits: ManagedLimits
+  ) {
+    self.review = review
+    self.permissions = permissions
+    self.fullAccess = fullAccess
+    self.sandboxSettings = sandboxSettings
+    self.owner = owner
+    self.expectedProviderRevision = expectedProviderRevision
+    self.expectedRevision = expectedRevision
+    self.expectedEpoch = expectedEpoch
+    self.limits = limits
   }
 }
 

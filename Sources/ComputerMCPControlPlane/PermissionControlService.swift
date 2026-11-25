@@ -17,8 +17,10 @@ package final class PermissionControlService: Sendable {
     self.owner = owner
   }
 
-  package func view(now: Date = Date()) throws -> GatewayPermissionView {
-    try service.view(owner: currentOwner(), now: now)
+  package func view(providerIDs: Set<PluginIdentity> = [], now: Date = Date()) throws
+    -> GatewayPermissionView
+  {
+    try service.view(owner: currentOwner(), providerIDs: providerIDs, now: now)
   }
 
   package func answerRequest(
@@ -68,11 +70,13 @@ package final class PermissionControlService: Sendable {
 
   package func updateProfile(
     _ profile: ProfileGrant, expectedProfileRevision: Int64?, expectedRevision: UInt64,
-    authorization: GatewayManagementAuthorization? = nil, now: Date = Date()
+    authorization: GatewayManagementAuthorization? = nil, expectedEpoch: UUID? = nil,
+    now: Date = Date()
   ) throws {
     try service.updateProfile(
       profile, owner: currentOwner(), expectedProfileRevision: expectedProfileRevision,
-      expectedRevision: expectedRevision, authorization: authorization, now: now)
+      expectedRevision: expectedRevision, authorization: authorization,
+      expectedEpoch: expectedEpoch, now: now)
   }
 
   package func setOwnerPolicy(
@@ -95,21 +99,25 @@ package final class PermissionControlService: Sendable {
   package func approveProvider(
     _ review: GatewayProviderReview, permissions: Permissions, fullAccess: Bool,
     sandboxSettings: ProviderSandboxSettings = .init(),
-    expectedProviderRevision: Int64?, expectedRevision: UInt64, expectedEpoch: UUID
+    expectedProviderRevision: Int64?, expectedRevision: UInt64, expectedEpoch: UUID,
+    editingApproval: Bool = false, reviewedLimits: ManagedLimits? = nil
   ) throws -> GatewayProviderApproval {
     try service.approveProvider(
       review, permissions: permissions, fullAccess: fullAccess, sandboxSettings: sandboxSettings,
       owner: currentOwner(),
       expectedProviderRevision: expectedProviderRevision, expectedRevision: expectedRevision,
-      expectedEpoch: expectedEpoch)
+      expectedEpoch: expectedEpoch, editingApproval: editingApproval, reviewedLimits: reviewedLimits
+    )
   }
 
   package func revokeProvider(
-    _ identity: PluginIdentity, expectedProviderRevision: Int64, expectedRevision: UInt64
+    _ identity: PluginIdentity, expectedProviderRevision: Int64, expectedRevision: UInt64,
+    expectedEpoch: UUID? = nil, expectedSourceDigest: String? = nil
   ) throws -> RevocationResult {
     try service.revokeProvider(
       identity, owner: currentOwner(), expectedProviderRevision: expectedProviderRevision,
-      expectedRevision: expectedRevision)
+      expectedRevision: expectedRevision, expectedEpoch: expectedEpoch,
+      expectedSourceDigest: expectedSourceDigest)
   }
 
   package func setOwnerPolicy(
@@ -118,7 +126,7 @@ package final class PermissionControlService: Sendable {
     try service.setOwnerPolicy(
       document, provider: provider, owner: currentOwner(), expectedRevision: expectedRevision)
   }
-  private func currentOwner() throws -> GatewayPermissionOwner {
+  func currentOwner() throws -> GatewayPermissionOwner {
     let proof = try owner()
     guard let context = PermissionOwnerAuditScope.context else { return proof }
     return try proof.recording(context: context)

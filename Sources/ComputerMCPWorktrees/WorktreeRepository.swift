@@ -17,6 +17,10 @@ package struct WorktreeRepositoryIdentity: Codable, Equatable, Sendable {
   let objects: WorktreeDirectoryIdentity
   let format: WorktreeObjectFormat
 
+  package var sourcePath: String { source.path }
+  package var commonDirectory: WorktreeDirectoryIdentity { common }
+  package var protectionKey: String { "\(common.device):\(common.inode):\(common.path)" }
+
   init(source: DerivedProjectSource, git: WorktreeGit) throws {
     guard !source.root.unicodeScalars.contains(where: { $0.value < 32 }) else {
       throw WorktreeError.unsupportedRepository("Repository path contains control characters.")
@@ -116,6 +120,28 @@ package final class WorktreeRepository: Sendable {
     identity = try WorktreeRepositoryIdentity(source: source, git: git)
     try requireSupportedLayout(identity)
     try withLock { _ in }
+  }
+
+  /// Journal readers use the identity installed with the recovery store.
+  /// Source topology is verified explicitly when live coordination is needed.
+  init(
+    recoveryRepository: WorktreeRepositoryIdentity, source: DerivedProjectSource,
+    store: any DerivedProjectStore, storage: WorktreeStorage,
+    git: WorktreeGit, io: WorktreeJournalIO, limits: WorktreePromotionLimits
+  ) {
+    identity = recoveryRepository
+    self.source = source
+    self.store = store
+    self.storage = storage
+    self.git = git
+    self.io = io
+    creationLimits = limits
+    projectRoots = []
+    cloneCreationObjects = false
+    lockTimeout = .seconds(30)
+    owner = .init()
+    checkAuthority = {}
+    authorizeCreationPath = { _ in }
   }
 
   func validateStorage(validateHead: Bool = true) throws -> [WorktreeCreationJournal] {
@@ -290,6 +316,28 @@ struct WorktreeGit: Sendable {
     return result
   }
 
+  /// The caller verifies the fixed bare-store config and object namespace.
+  func runInRecoveryStore(
+    _ arguments: [String], repository: WorktreeDirectory, objects: WorktreeDirectory,
+    input: Data, deadline: ContinuousClock.Instant, outputBytes: Int
+  ) throws -> WorktreeGitResult {
+    try repository.verify()
+    try objects.verify()
+    var environment = HostGitConfiguration.environment(home: home)
+    environment["GIT_OBJECT_DIRECTORY"] = objects.url.path
+    environment["GIT_OPTIONAL_LOCKS"] = "0"
+    let result = try execute(
+      ["-c", "core.commitGraph=false", "-c", "core.multiPackIndex=false"] + arguments,
+      at: repository.url, gitDirectory: repository.url, environment: environment, input: input,
+      deadline: deadline, commandOutputBytes: outputBytes)
+    try repository.verify()
+    try objects.verify()
+    guard result.exitCode == 0 else {
+      throw WorktreeError.recoveryRequired("Git could not verify the recovery object pool.")
+    }
+    return result
+  }
+
   func text(_ arguments: [String], at root: URL, accepting: Set<Int32> = [0]) throws -> String {
     String(decoding: try run(arguments, at: root, accepting: accepting).output, as: UTF8.self)
       .trimmingCharacters(in: .newlines)
@@ -333,7 +381,7 @@ struct WorktreeGit: Sendable {
       }
     }
     guard result.output.count <= outputBound, result.error.count <= outputBound else {
-      throw WorktreeError.commandFailed("Git output exceeded its bound.")
+      throw WorktreeError.busy("Git output exceeded its bound.")
     }
     return result
   }

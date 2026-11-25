@@ -92,7 +92,12 @@ extension WorktreeRepository {
       )
       try requireDeletionPolicy(journal, metadata: metadata, deleted: false)
       if dryRun || !confirm { return .init(branch: branch, oid: oid, deleted: false) }
-      try saveDeletion(journal, replacing: nil)
+      if protection != nil {
+        try WorktreeRecoveryStore(storage: storage, io: io)
+          .withExclusive(repository: identity) { _ in try saveDeletion(journal, replacing: nil) }
+      } else {
+        try saveDeletion(journal, replacing: nil)
+      }
       return try finishBranchDeletion(
         &journal, lock: lock, authority: authority, authorize: authorize)
     }
@@ -348,6 +353,48 @@ extension WorktreeRepository {
     return try finish(nil)
   }
 
+  func pendingRecoveryDeletions(account: (Int) throws -> Void = { _ in }) throws
+    -> [ProtectedWorktreeBranch]
+  {
+    guard let root = try WorktreeDirectory.openIfPresent(storage.journals),
+      let directory = try root.childIfPresent("branch-deletions")
+    else { return [] }
+    var remaining = WorktreeRecoveryCatalog.byteLimit
+    return try directory.entries(limit: WorktreeRecoveryCatalog.recordLimit).compactMap { name in
+      guard name.hasSuffix(".json") else { return nil }
+      let journal = try readDeletion(
+        name, in: directory,
+        account: { bytes in
+          guard bytes <= remaining else {
+            throw WorktreeError.busy("Branch deletion evidence exceeds its aggregate bound.")
+          }
+          remaining -= bytes
+          try account(bytes)
+        })
+      guard journal.repository == identity, journal.phase != .finished else { return nil }
+      return journal.protection
+    }
+  }
+
+  /// Traverses host deletion history once. The store lock freezes catalog
+  /// retirement and publication of the selection, including after source loss.
+  func visitRetiredBranchReleases(
+    generation: UUID, budget: WorktreeRecoveryEvidenceBudget,
+    visit: (WorktreeRecoveryBranchSelection) throws -> Bool
+  ) throws {
+    guard let root = try WorktreeDirectory.openIfPresent(storage.journals),
+      let directory = try root.childIfPresent("branch-deletions")
+    else { return }
+    for name in try directory.entries(limit: WorktreeRecoveryCatalog.recordLimit)
+    where name.hasSuffix(".json") {
+      let journal = try readDeletion(name, in: directory, account: budget.account)
+      guard journal.repository == identity, journal.version == 2, journal.phase != .prepared,
+        let selection = journal.selection, selection.generation == generation
+      else { continue }
+      if try !visit(selection) { return }
+    }
+  }
+
   private func deletionDirectory() throws -> WorktreeDirectory {
     try WorktreeDirectory(storage.journals).child("branch-deletions", create: true)
   }
@@ -356,11 +403,12 @@ extension WorktreeRepository {
     try recoveryJSON(journal)
   }
 
-  private func readDeletion(_ name: String, in directory: WorktreeDirectory)
-    throws -> WorktreeBranchDeletionJournal
-  {
+  private func readDeletion(
+    _ name: String, in directory: WorktreeDirectory, account: (Int) throws -> Void = { _ in }
+  ) throws -> WorktreeBranchDeletionJournal {
     guard let bytes = try io.read(name, in: directory, limit: WorktreeRecoveryCatalog.byteLimit)
     else { throw invalidRecoveryMetadata() }
+    try account(bytes.count)
     let journal = try JSONDecoder().decode(WorktreeBranchDeletionJournal.self, from: bytes)
     try WorktreeSourceMetadata.requireBranch(journal.branch)
     try WorktreeSourceMetadata.requireBranch(journal.base)

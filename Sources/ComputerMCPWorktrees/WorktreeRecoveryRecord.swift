@@ -1,15 +1,15 @@
 import Foundation
 
-struct WorktreeRecoveryRecord: Codable, Equatable, Sendable {
-  enum ObjectType: String, Codable, Sendable { case commit, tree, blob, tag }
-  enum State: String, Codable, Sendable { case retaining, retained, releasing }
+package struct WorktreeRecoveryRecord: Codable, Equatable, Sendable {
+  package enum ObjectType: String, Codable, Sendable { case commit, tree, blob, tag }
+  package enum State: String, Codable, Sendable { case retaining, retained, releasing }
 
-  struct Owner: Codable, Equatable, Sendable {
-    let source: DerivedProjectSource
-    let branchID: UUID
-    let branch: String
-    let worktreeID: UUID
-    let storageGeneration: UUID
+  package struct Owner: Codable, Hashable, Sendable {
+    package let source: DerivedProjectSource
+    package let branchID: UUID
+    package let branch: String
+    package let worktreeID: UUID
+    package let storageGeneration: UUID
 
     func validate(repository: WorktreeRepositoryIdentity) throws {
       guard source.root == repository.source.path, !source.id.isEmpty, source.id != "*",
@@ -19,55 +19,69 @@ struct WorktreeRecoveryRecord: Codable, Equatable, Sendable {
     }
   }
 
-  struct Claim: Codable, Equatable, Sendable {
-    enum Reason: String, Codable, Sendable {
+  package struct Claim: Codable, Equatable, Sendable {
+    package enum Reason: String, Codable, Sendable {
       case privateHead, privateReference, privateReflog, publishedReplacement
     }
 
-    struct Capture: Codable, Equatable, Sendable {
-      let id: UUID
-      let metadataDigest: String
-      let storageGeneration: UUID
+    package struct Capture: Codable, Equatable, Sendable {
+      package let id: UUID
+      package let metadataDigest: String
+      package let storageGeneration: UUID
     }
 
-    let id: UUID
-    let operationID: UUID
-    let reason: Reason
-    let rootOID: String
-    let capture: Capture?
+    package let id: UUID
+    package let operationID: UUID
+    package let reason: Reason
+    package let rootOID: String
+    package let capture: Capture?
   }
 
-  struct Acknowledgement: Codable, Equatable, Sendable {
-    let operationID: UUID
-    let selectedRevision: Int64
-    let claimIDs: [UUID]
+  package struct Acknowledgement: Codable, Equatable, Sendable {
+    package let operationID: UUID
+    package let selectedRevision: Int64
+    package let claimIDs: [UUID]
   }
 
-  struct Base: Codable, Equatable, Sendable {
-    let ref: String
-    let oid: String
-    let history: WorktreeRefHistory?
+  package struct Base: Codable, Equatable, Sendable {
+    package let ref: String
+    package let oid: String
+    package let history: WorktreeRefHistory?
   }
 
-  struct Selection: Codable, Equatable, Sendable {
-    let recordID: UUID
-    let revision: Int64
-    let oid: String
+  package struct Selection: Codable, Equatable, Sendable {
+    package let recordID: UUID
+    package let revision: Int64
+    package let oid: String
+
+    package init(recordID: UUID, revision: Int64, oid: String) {
+      self.recordID = recordID
+      self.revision = revision
+      self.oid = oid
+    }
   }
 
-  let id: UUID
-  let storeGeneration: UUID
-  let owner: Owner
-  let oid: String
-  let objectType: ObjectType
-  let base: Base
-  var revision: Int64
-  var state: State
-  var claims: [Claim]
-  var acknowledgements: [Acknowledgement]
-  var dependencies: [UUID]
+  package let id: UUID
+  package let storeGeneration: UUID
+  package let owner: Owner
+  package let oid: String
+  package let objectType: ObjectType
+  package let base: Base
+  package var revision: Int64
+  package var state: State
+  package var claims: [Claim]
+  package var acknowledgements: [Acknowledgement]
+  package var dependencies: [UUID]
 
-  var selection: Selection { .init(recordID: id, revision: revision, oid: oid) }
+  package var selection: Selection { .init(recordID: id, revision: revision, oid: oid) }
+
+  func admittingRelease(_ operationID: UUID) -> Self {
+    var admitted = self
+    admitted.state = .releasing
+    admitted.revision += 1
+    admitted.dependencies = [operationID]
+    return admitted
+  }
 
   func validate(repository: WorktreeRepositoryIdentity, generation: UUID) throws {
     try owner.validate(repository: repository)

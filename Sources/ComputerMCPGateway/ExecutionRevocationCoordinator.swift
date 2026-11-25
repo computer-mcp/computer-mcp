@@ -29,6 +29,7 @@ package final class ExecutionRevocationCoordinator: ExecutionRecoveryAuthorizing
   private let journal: ExecutionRecoveryJournal
   private let storageDirectory: URL
   private let refreshPolicy: (@Sendable () throws -> Void)?
+  private let afterWorktreeReservation: (@Sendable (WorktreeWriterUse) async -> Void)?
   private let lock = NSLock()
   private let publication = NSLock()
   private let reconciliation = ExecutionReconciliation()
@@ -49,9 +50,19 @@ package final class ExecutionRevocationCoordinator: ExecutionRecoveryAuthorizing
   private var proxies: [UUID: EgressProxy] = [:]
   private var monitoring: Task<Void, Never>?
 
-  package init(
+  package convenience init(
     store: SQLitePermissionStore, launcher: ExecutionLauncher, directory: URL,
     proxyFactory: ProxyFactory? = nil, refreshPolicy: (@Sendable () throws -> Void)? = nil
+  ) throws {
+    try self.init(
+      store: store, launcher: launcher, directory: directory,
+      proxyFactory: proxyFactory, refreshPolicy: refreshPolicy, afterWorktreeReservation: nil)
+  }
+
+  init(
+    store: SQLitePermissionStore, launcher: ExecutionLauncher, directory: URL,
+    proxyFactory: ProxyFactory? = nil, refreshPolicy: (@Sendable () throws -> Void)? = nil,
+    afterWorktreeReservation: (@Sendable (WorktreeWriterUse) async -> Void)?
   ) throws {
     try FileManager.default.createDirectory(
       at: directory, withIntermediateDirectories: true,
@@ -61,6 +72,7 @@ package final class ExecutionRevocationCoordinator: ExecutionRecoveryAuthorizing
     self.launcher = launcher
     self.proxyFactory = proxyFactory
     self.refreshPolicy = refreshPolicy
+    self.afterWorktreeReservation = afterWorktreeReservation
     let ownerID = UUID()
     self.ownerID = ownerID
     permissionDiscovery = ExecutionPermissionDiscovery(
@@ -276,6 +288,8 @@ package final class ExecutionRevocationCoordinator: ExecutionRecoveryAuthorizing
           ownerID: ownerID, executionID: execution.id,
           unconfined: providerSandboxed.map { !$0 }
             ?? (initialConfiguration!.sandbox == nil && initialConfiguration!.permitsProgramLaunch))
+        // The gate transaction has committed. SQL does not yet refer to this writer.
+        await afterWorktreeReservation?(use)
         do {
           try store.transactionWithDatabase { database, _ in
             guard var record = try ExecutionRuntimeRecord.load(execution.id, database),

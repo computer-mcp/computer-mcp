@@ -42,11 +42,17 @@ extension WorktreeRepository {
       data, name: journal.record.projectID + ".json", in: mergeDirectory(), replacing: previous)
   }
 
-  func readMerge(_ projectID: String) throws -> WorktreeMergeJournal? {
+  func readMerge(_ projectID: String, account: (Int) throws -> Void = { _ in }) throws
+    -> WorktreeMergeJournal?
+  {
+    guard let root = try WorktreeDirectory.openIfPresent(storage.journals),
+      let directory = try root.childIfPresent("merges")
+    else { return nil }
     guard
       let data = try io.read(
-        projectID + ".json", in: mergeDirectory(), limit: git.maxOutputBytes * 8)
+        projectID + ".json", in: directory, limit: git.maxOutputBytes * 8)
     else { return nil }
+    try account(data.count)
     let journal = try JSONDecoder().decode(WorktreeMergeJournal.self, from: data)
     try journal.record.validate()
     guard [1, 2].contains(journal.version), journal.repository == identity,
@@ -74,7 +80,7 @@ extension WorktreeRepository {
     if let stage = journal.staging {
       guard
         stage.path
-          == (try mergeDirectory()).url.appendingPathComponent(
+          == directory.url.appendingPathComponent(
             journal.operationID.uuidString.lowercased()
           ).path
       else {

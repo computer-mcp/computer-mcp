@@ -6,6 +6,7 @@ struct WorktreeRecoveryStore {
   var io = WorktreeJournalIO()
 
   struct Snapshot {
+    let key: String
     let repository: WorktreeRepositoryIdentity
     let catalog: WorktreeRecoveryCatalog
   }
@@ -29,7 +30,7 @@ struct WorktreeRecoveryStore {
         let opened = try open(key, layout: layout, lock: lock)
         let catalog = try opened.readCatalog().catalog
         try opened.verify()
-        return Snapshot(repository: opened.identity.repository, catalog: catalog)
+        return Snapshot(key: key, repository: opened.identity.repository, catalog: catalog)
       }
       try layout.verify()
       return snapshots
@@ -78,7 +79,63 @@ struct WorktreeRecoveryStore {
     // A visible removal of the creation intent may follow a failed directory sync.
     try layout.locks.synchronize()
     try opened.verify()
+    let store = Locked(opened: opened)
+    try store.requireMaintenanceIdle()
+    // Confirm that an observed active-journal retirement is durable before a
+    // different operation mutates the inventory.
+    try store.directory.synchronize()
+    return try operation(store)
+  }
+
+  /// Opens an already installed generation. Owner operations and lookup use
+  /// the same lock and identity verification as ordinary lifecycle mutations.
+  func withExisting<Result>(
+    key: String, generation: UUID, exclusive: Bool,
+    _ operation: (Locked) throws -> Result
+  ) throws -> Result {
+    guard key.isRecoveryDigest, let root = try rootIfPresent()
+    else { throw WorktreeRecoveryOwnerError.unavailable }
+    let layout = try Layout(root)
+    let lock: FileLock
+    do {
+      lock =
+        try exclusive
+        ? FileLock(lockingExisting: layout.lockPath(key))
+        : FileLock(sharingExisting: layout.lockPath(key))
+    } catch FileLockError.held {
+      throw WorktreeError.busy("Recovery store is in use.")
+    } catch {
+      throw WorktreeRecoveryOwnerError.unavailable
+    }
+    defer { lock.release() }
+    let opened: OpenStore
+    do { opened = try open(key, layout: layout, lock: lock) } catch let error as POSIXError
+      where [.ENOENT, .EACCES, .EPERM].contains(error.code)
+    {
+      throw WorktreeRecoveryOwnerError.unavailable
+    }
+    guard opened.identity.generation == generation else {
+      throw WorktreeRecoveryOwnerError.storeChanged
+    }
+    if exclusive { try layout.locks.synchronize() }
     return try operation(Locked(opened: opened))
+  }
+
+  /// A lifecycle caller already holds repository coordination. This check
+  /// precedes publishing an intent whose effects may need the store.
+  func requireMaintenanceIdle(repository: WorktreeRepositoryIdentity) throws {
+    guard let root = try rootIfPresent() else { return }
+    let layout = try Layout(root)
+    let key = try Self.key(for: repository)
+    guard try layout.locks.hasEntry(key + ".lock") else {
+      guard try !layout.stores.hasEntry(key) else { throw invalidRecoveryMetadata() }
+      return
+    }
+    let lock = try FileLock(sharingExisting: layout.lockPath(key))
+    defer { lock.release() }
+    if try layout.locks.hasEntry(layout.intentName(key)) { return }
+    let store = Locked(opened: try open(key, layout: layout, lock: lock))
+    try store.requireMaintenanceIdle()
   }
 
   private func rootIfPresent() throws -> WorktreeDirectory? {
@@ -211,6 +268,29 @@ extension WorktreeRecoveryStore {
     fileprivate let opened: OpenStore
 
     var generation: UUID { opened.identity.generation }
+    var repository: WorktreeRepositoryIdentity { opened.identity.repository }
+    var directory: WorktreeDirectory { opened.directories.store }
+    var gitDirectory: WorktreeDirectory { opened.directories.git }
+    var objectsDirectory: WorktreeDirectory { opened.directories.objects }
+    var stagingDirectory: WorktreeDirectory { opened.directories.staging }
+    var journalIO: WorktreeJournalIO { opened.io }
+
+    func checkIdentity() throws { try opened.verify() }
+
+    func observedCatalog() throws -> (catalog: WorktreeRecoveryCatalog, bytes: Data) {
+      try opened.readCatalog()
+    }
+
+    func validateAnchorContents(for catalog: WorktreeRecoveryCatalog) throws {
+      guard let anchors = try validateAnchors(for: catalog) else { return }
+      for record in catalog.records {
+        let bytes = anchorBytes(record)
+        let observed = try opened.io.read(anchor(record.id), in: anchors, limit: bytes.count)
+        guard observed == bytes || (observed == nil && record.state != .retained) else {
+          throw invalidRecoveryMetadata()
+        }
+      }
+    }
 
     func objectsForExpected(
       oid: String, owner: WorktreeRecoveryRecord.Owner
@@ -652,20 +732,65 @@ extension WorktreeRecoveryStore {
       let receipt = try JSONDecoder().decode(WorktreeRecoveryReleaseReceipt.self, from: data)
       try receipt.validate(
         repository: opened.identity.repository, generation: generation, recordID: recordID)
+      guard try receipt.encoded() == data else { throw invalidRecoveryMetadata() }
       return receipt
     }
 
+    /// The caller has verified that this release intent is absent. The frozen
+    /// batch must be completely retired, including records outside the review.
+    func verifyRetiredRelease(
+      _ frozen: [WorktreeRecoveryReleaseReceipt],
+      matching observed: [WorktreeRecoveryReleaseReceipt],
+      activeRecords: Set<UUID>, account: (Int) throws -> Void
+    ) throws {
+      let batch = try releaseBatch(frozen)
+      let byID = Dictionary(
+        uniqueKeysWithValues: batch.items.map { ($0.receipt.selection.recordID, $0.receipt) })
+      guard observed.allSatisfy({ byID[$0.selection.recordID] == $0 }) else {
+        throw WorktreeError.recoveryRequired(
+          "A recovery receipt contradicts its frozen release batch.")
+      }
+      for item in batch.items {
+        let id = item.receipt.selection.recordID
+        try account(item.bytes.count)
+        guard !activeRecords.contains(id),
+          try journalIO.read(
+            receiptName(id), in: opened.directories.released, limit: item.bytes.count) == item.bytes
+        else {
+          throw WorktreeError.recoveryRequired("The frozen foreign release batch is incomplete.")
+        }
+      }
+    }
+
+    enum ReleaseAdmission {
+      case admitted
+      case capacityRefused(String)
+    }
+
     func prepareRelease(_ receipts: [WorktreeRecoveryReleaseReceipt]) throws {
+      if case .capacityRefused(let reason) = try admitRelease(receipts) {
+        throw WorktreeError.busy(reason)
+      }
+    }
+
+    func admitRelease(_ receipts: [WorktreeRecoveryReleaseReceipt]) throws -> ReleaseAdmission {
       let batch = try releaseBatch(receipts)
       let previous = try durableCatalog()
       var next = previous.catalog
-      if try releaseIsArchived(batch, catalog: next) { return }
+      if try releaseIsArchived(batch, catalog: next) { return .admitted }
       if let intent = next.intents.first(where: { $0.id == batch.operationID }) {
         try requireRelease(batch, intent: intent, catalog: next)
-        return
+        return .admitted
       }
       try insertRelease(batch, in: &next)
-      try write(next, replacing: previous.bytes)
+      let bytes: Data
+      do {
+        bytes = try validatedCatalogBytes(next)
+      } catch WorktreeError.busy(let reason) {
+        return .capacityRefused(reason)
+      }
+      try publishCatalog(bytes, replacing: previous.bytes)
+      return .admitted
     }
 
     private func insertRelease(_ batch: ReleaseBatch, in next: inout WorktreeRecoveryCatalog)
@@ -679,14 +804,11 @@ extension WorktreeRecoveryStore {
         let id = receipt.selection.recordID
         guard let index = indices[id], try releaseReceipt(recordID: id) == nil
         else { throw invalidRecoveryMetadata() }
-        var record = next.records[index]
+        let record = next.records[index]
         guard record.selection == receipt.selection, record.owner == receipt.owner,
           record.state == .retained, record.dependencies.isEmpty
         else { throw invalidRecoveryMetadata() }
-        record.state = .releasing
-        record.revision += 1
-        record.dependencies = [batch.operationID]
-        next.records[index] = record
+        next.records[index] = record.admittingRelease(batch.operationID)
       }
       next.intents.append(
         .init(
@@ -732,9 +854,17 @@ extension WorktreeRecoveryStore {
     }
 
     private func write(_ catalog: WorktreeRecoveryCatalog, replacing previous: Data) throws {
+      try publishCatalog(validatedCatalogBytes(catalog), replacing: previous)
+    }
+
+    private func validatedCatalogBytes(_ catalog: WorktreeRecoveryCatalog) throws -> Data {
       let bytes = try recoveryJSON(catalog)
       try catalog.validate(
         repository: opened.identity.repository, generation: generation, byteCount: bytes.count)
+      return bytes
+    }
+
+    private func publishCatalog(_ bytes: Data, replacing previous: Data) throws {
       try opened.verify()
       if bytes != previous {
         try opened.io.write(

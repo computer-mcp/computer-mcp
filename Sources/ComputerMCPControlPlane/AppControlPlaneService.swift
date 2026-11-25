@@ -95,11 +95,13 @@ package actor AppControlPlaneService {
   let pluginReleases: GitHubPluginReleases
   let pluginDownload: GitHubPluginDownload
   let bundledPlugins: BundledPlugins
+  let recoveryOwner: GatewayRecoveryOwnerService?
 
   package init(
     directories: AppControlPlaneServiceDirectories,
     database: GatewayDatabase,
     permissionControl: PermissionControlService? = nil,
+    recoveryOwner: GatewayRecoveryOwnerService? = nil,
     manifestStore: AtomicManifestStore,
     defaultManifest: String,
     secretStore: any SecretStore,
@@ -120,6 +122,7 @@ package actor AppControlPlaneService {
     self.gatewayExecutablePath = gatewayExecutablePath
     self.database = database
     self.permissionControl = permissionControl
+    self.recoveryOwner = recoveryOwner
     self.manifestStore = manifestStore
     self.defaultManifest = defaultManifest
     self.secretStore = secretStore
@@ -1191,6 +1194,7 @@ package enum AppControlPlaneServiceError: ControlErrorClassifying, LocalizedErro
   case invalidStoredProfile(String)
   case localAdminCannotBeSocketProfile
   case permissionServiceUnavailable
+  case recoveryOwnerUnavailable
   case invalidDesiredOpenAITunnelState
   case gatewayInputsChanged
 
@@ -1226,6 +1230,8 @@ package enum AppControlPlaneServiceError: ControlErrorClassifying, LocalizedErro
       return "local-admin cannot be bound to the Tunnel-facing local socket."
     case .permissionServiceUnavailable:
       return "The durable permission service is unavailable. Restart the App and try again."
+    case .recoveryOwnerUnavailable:
+      return "The App recovery owner service is unavailable."
     case .invalidDesiredOpenAITunnelState:
       return "The persisted Tunnel runtime state is invalid."
     case .gatewayInputsChanged:

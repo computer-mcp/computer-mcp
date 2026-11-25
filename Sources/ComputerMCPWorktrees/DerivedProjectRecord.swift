@@ -2,7 +2,7 @@ import Foundation
 
 /// Registration generation and canonical root are captured together. A source ID
 /// reused for another registration does not confer authority over retained children.
-package struct DerivedProjectSource: Codable, Equatable, Sendable {
+package struct DerivedProjectSource: Codable, Hashable, Sendable {
   package let id: String
   package let root: String
   package let registeredAt: Date

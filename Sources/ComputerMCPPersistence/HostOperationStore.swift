@@ -116,12 +116,29 @@ package final class HostOperationStore: Sendable {
   }
 
   package func unfinished() throws -> [HostOperationRecord] {
-    try connection.writer.read { database in
-      try Row.fetchAll(
-        database,
-        sql: "SELECT payload FROM hostOperations WHERE state NOT IN ('completed', 'failed')"
-      ).map { try Self.decode($0["payload"]) }
+    try connection.writer.read { try Self.unfinished(in: $0) }
+  }
+
+  package static func unfinished(in database: Database, byteLimit: Int = Int.max)
+    throws -> [HostOperationRecord]
+  {
+    let rows = try Row.fetchCursor(
+      database,
+      sql:
+        "SELECT id, state, payload FROM hostOperations WHERE state NOT IN ('completed', 'failed') ORDER BY id"
+    )
+    var records: [HostOperationRecord] = []
+    var remaining = byteLimit
+    while let row = try rows.next() {
+      let payload: Data = row["payload"]
+      let record = try decode(payload)
+      guard payload.count <= remaining, row["id"] == record.id.uuidString,
+        row["state"] == record.state.rawValue, !record.state.isTerminal
+      else { throw HostOperationStoreError.invalidRecord }
+      remaining -= payload.count
+      records.append(record)
     }
+    return records
   }
 
   /// Moves a reserved operation to running inside the caller's transaction. Returns

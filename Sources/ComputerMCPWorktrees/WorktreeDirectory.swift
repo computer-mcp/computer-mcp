@@ -1,3 +1,4 @@
+import ComputerMCPPlatformPOSIX
 import Foundation
 
 #if canImport(Darwin)
@@ -76,6 +77,29 @@ package final class WorktreeDirectory {
       url.appendingPathComponent(name, isDirectory: true), usesPhysicalPath: usesPhysicalPath)
     try verify()
     return child
+  }
+
+  static func openIfPresent(_ url: URL) throws -> WorktreeDirectory? {
+    do { return try WorktreeDirectory(url) } catch let error as POSIXError
+      where error.code == .ENOENT
+    { return nil }
+  }
+
+  func childIfPresent(_ name: String) throws -> WorktreeDirectory? {
+    guard try hasEntry(name) else { return nil }
+    return try child(name)
+  }
+
+  func renameExclusive(_ original: String, to newName: String) throws {
+    try Self.requireName(original)
+    try Self.requireName(newName)
+    try verify()
+    #if canImport(Darwin)
+      let result = renameatx_np(descriptor, original, descriptor, newName, UInt32(RENAME_EXCL))
+    #else
+      let result = LinuxSystemCalls.renameExclusive(descriptor, original, descriptor, newName)
+    #endif
+    guard result == 0 else { throw Self.posixError() }
   }
 
   package func synchronize() throws {

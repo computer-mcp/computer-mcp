@@ -72,20 +72,16 @@ package struct GatewayRuntimePreparation: Sendable {
   package let resolution: GatewayConfigurationResolution
 }
 
+package enum GatewayManifestRevision: Sendable {
+  case current
+  case captured(String?)
+}
+
 /// Discovery is allowed before publication; tool execution and child sessions are not.
 final class GatewayRuntimePublication: @unchecked Sendable {
   private let lock = NSLock()
   private var published = false
-  private var revisionID: String?
-
-  func publish(revisionID: String? = nil) {
-    lock.withLock {
-      self.revisionID = revisionID
-      published = true
-    }
-  }
-
-  var configurationRevisionID: String? { lock.withLock { revisionID } }
+  func publish() { lock.withLock { published = true } }
 
   func requirePublished() throws {
     guard lock.withLock({ published }) else {

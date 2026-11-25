@@ -28,6 +28,42 @@ import Testing
 
 @Suite(.nativeIntegration, .serialized)
 struct GatewayGenerationDispatchTests {
+
+  @Test(.timeLimit(.minutes(1)))
+  func standaloneCatalogRefreshKeepsItsManifestRevision() async throws {
+    let fixture = try GenerationFixture()
+    defer { fixture.removeFiles() }
+    try await fixture.activate(version: 1, callers: [.cloudflareTunnel])
+    let runtime = try await GatewayRuntime.make(
+      configuration: fixture.control.activeConfiguration(),
+      context: .init(
+        caller: .cloudflareTunnel, profileID: .chatGPTOperate,
+        trustedPrincipalID: "catalog-client"),
+      database: fixture.database, platform: fixture.platform,
+      bundledPlugins: .init(packages: [], issues: []))
+    let generations = GatewayStandaloneGenerations(runtime)
+    func advancePluginRevision() throws {
+      var snapshot = try fixture.database.pluginStoreSnapshot()
+      let previous = snapshot.revision
+      snapshot.revision += 1
+      try fixture.database.savePluginStoreSnapshot(snapshot, expectedRevision: previous)
+    }
+    do {
+      try advancePluginRevision()
+      let catalog = try await generations.listToolsAsync(context: .empty)
+      #expect(catalog.contains { $0.name == "project.describe" })
+      try await fixture.activate(version: 2, callers: [.cloudflareTunnel])
+      try advancePluginRevision()
+      await #expect(throws: GatewayDatabaseError.configurationChanged) {
+        _ = try await generations.listToolsAsync(context: .empty)
+      }
+      await generations.shutdown()
+    } catch {
+      await generations.shutdown()
+      throw error
+    }
+  }
+
   @Test(.timeLimit(.minutes(1)))
   func standaloneRegistrationRevisionRefreshPreservesOwnersAndRefusesFailedConstruction()
     async throws

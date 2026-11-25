@@ -119,10 +119,14 @@ struct GatewayRuntimePreparationTests {
     let fixture = try PreparationStateFixture()
     defer { fixture.cleanup() }
     let original = try fixture.database.configurationState()
-    let prepared = try await fixture.prepare(state: original)
+    var proposed = original.plugins
+    proposed.revision += 1
+    let prepared = try await fixture.prepare(
+      state: .init(
+        projects: original.projects, projectAliases: original.projectAliases,
+        profiles: original.profiles, plugins: proposed, profileSource: original.profileSource,
+        derivedProjects: original.derivedProjects))
     do {
-      var proposed = original.plugins
-      proposed.revision += 1
       var resolution = prepared.resolution
       if fail {
         let conflict = try #require(resolution.projects.first)

@@ -149,7 +149,9 @@ struct ServeStdio: AsyncParsableCommand {
       database: database,
       platform: platform, terminalSessions: sessions
     )
-    try await MCPRuntimeAdapter.runStdioGateway(configuration: gateway, registry: registry)
+    let serving: any GatewayAsyncToolServing =
+      database.fileURL == nil ? registry : GatewayStandaloneGenerations(registry)
+    try await MCPRuntimeAdapter.runStdioGateway(configuration: gateway, registry: serving)
   }
 
   func makeTerminalSessions(database: GatewayDatabase, platform: PlatformServices) async throws

@@ -1671,6 +1671,20 @@ package final class GatewayDatabase: OAuthStore, @unchecked Sendable {
     try writer.read { try ConfigurationRevisionRecord.fetchOne($0, key: id)?.value }
   }
 
+  func activeConfigurationRevisionID() throws -> String? {
+    try writer.read(Self.activeConfigurationRevisionID(in:))
+  }
+
+  static func activeConfigurationRevisionID(in database: Database) throws -> String? {
+    try String.fetchOne(
+      database,
+      sql: """
+        SELECT id FROM configurationRevisions
+        WHERE activatedAt IS NOT NULL AND activationError IS NULL
+        ORDER BY activatedAt DESC, createdAt DESC, id DESC LIMIT 1
+        """)
+  }
+
   package func configurationRevisions(limit: Int = 50) throws -> [ConfigurationRevision] {
     try writer.read { database in
       try ConfigurationRevisionRecord

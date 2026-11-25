@@ -31,8 +31,8 @@ struct GatewayRecoveryPathTests {
       _ = try gateway.makeControlSession()
       let paths = try #require(
         gateway.permissionRuntime.store.readWithDatabase { _, ledger in ledger.environment.paths })
-      #expect(
-        paths.pathRules.contains(.init(root: try CanonicalPath(recovery.path), kind: .hostData)))
+      let root = try CanonicalPath(recovery.path)
+      #expect(paths.hostDataLocations.contains(root))
       #expect(!FileManager.default.fileExists(atPath: recovery.path))
       await gateway.shutdown()
     } catch {

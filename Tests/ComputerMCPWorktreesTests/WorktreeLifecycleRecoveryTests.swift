@@ -44,6 +44,8 @@ struct WorktreeLifecycleRecoveryTests {
       try git.run(["add", "private.txt"])
       try git.run(["commit", "-m", marker])
       let privateOID = try git.run(["rev-parse", "HEAD"])
+      try git.run(["branch", "private-retained"])
+      try git.run(["reset", "--hard", "HEAD^"])
       _ = try await service.remove(
         projectID: created.projectID, terminate: { _, _ in }, authorize: { _, _ in })
       #expect(
@@ -54,6 +56,7 @@ struct WorktreeLifecycleRecoveryTests {
       let record = try #require(
         try lifecycleRecoveryRecords(f, identity: service.identity).first {
           $0.oid == privateOID && $0.state == .retained
+            && $0.claims.contains { $0.reason == .privateReference && $0.rootOID == privateOID }
         })
       try expectRecoveryObject(f, identity: service.identity, record: record)
       let recovery = try f.recoveryGitDirectory()

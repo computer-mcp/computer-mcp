@@ -18,7 +18,7 @@ struct MCPRegistrationsView: View {
   var body: some View {
     VStack(spacing: 0) {
       HStack {
-        Text("MCP Registrations", bundle: AppLocalization.resourceBundle).font(.title2.bold())
+        Text(verbatim: l("MCP Registrations")).font(.title2.bold())
         Spacer()
         Button(l("Add MCP")) { editor = .new }
           .disabled(model.isBusy || model.preview != nil)
@@ -97,7 +97,7 @@ struct MCPRegistrationsView: View {
       if let preview = model.preview {
         Divider()
         VStack(alignment: .leading, spacing: 10) {
-          Text("Review MCP change", bundle: AppLocalization.resourceBundle).font(.headline)
+          Text(verbatim: l("Review MCP change")).font(.headline)
           Text(verbatim: preview.id)
           if let after = preview.after {
             Text(
@@ -139,7 +139,7 @@ struct MCPRegistrationsView: View {
               Button {
                 enablement = review
               } label: {
-                Text("Review Permissions…", bundle: AppLocalization.resourceBundle)
+                Text(verbatim: l("Review Permissions…"))
               }
               .keyboardShortcut(.defaultAction)
               .accessibilityIdentifier("mcp.preview.reviewEnablement")

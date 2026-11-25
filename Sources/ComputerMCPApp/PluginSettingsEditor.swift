@@ -147,7 +147,11 @@ struct PluginSettingsEditor: View {
             } catch { model.report(error) }
           }
         } label: {
-          Text("Save", bundle: AppLocalization.resourceBundle)
+          if draft.enabled && model.snapshot?.pendingSourceReviews.contains(draft.id) == true {
+            Text("Review changes…", bundle: AppLocalization.resourceBundle)
+          } else {
+            Text("Save", bundle: AppLocalization.resourceBundle)
+          }
         }
         .keyboardShortcut(.defaultAction)
       }

@@ -294,9 +294,9 @@ struct ProviderEnablementReviewView: View {
         .accessibilityIdentifier("enablement.executionMode")
 
       } else {
+        let mode = declaredFullAccess ? l.format("Requested: %@", l("Full Access")) : l("Sandbox")
         LabeledContent(l("Execution")) {
-          Text(verbatim: l(declaredFullAccess ? "Full Access" : "Sandbox"))
-            .foregroundStyle(.secondary)
+          Text(verbatim: mode).foregroundStyle(.secondary)
         }
         .accessibilityIdentifier("enablement.executionMode")
       }
@@ -327,7 +327,7 @@ struct ProviderEnablementReviewView: View {
           .foregroundStyle(.secondary)
       }
 
-      if usesFullAccess {
+      if usesFullAccess && !fullAccessIsRestricted {
         VStack(alignment: .leading, spacing: 10) {
           Label {
             Text(
@@ -349,7 +349,6 @@ struct ProviderEnablementReviewView: View {
               )
             )
           }
-          .disabled(fullAccessIsRestricted)
           .accessibilityIdentifier("enablement.fullAccess.consent")
         }
         .padding(.vertical, 4)
@@ -492,7 +491,8 @@ struct ProviderEnablementReviewView: View {
     VStack(alignment: .leading, spacing: 2) {
       Text(verbatim: l(title))
       if let declaration {
-        let requested = l.format("Requested: %@", l(Self.permissionValueTitle(declaration.value)))
+        let requested = l.format(
+          "Requested: %@", l(EnablementPermissionChoice.granted(declaration.value).title))
         Text(verbatim: requested)
           .font(.caption)
           .foregroundStyle(.secondary)
@@ -567,7 +567,6 @@ struct ProviderEnablementReviewView: View {
       declaration.map { ComputerMCPPermissions.PermissionState.granted($0.value).allows(level) }
         ?? true
     }
-    let inheritsWildcard = if case .granted = draft.choices[wildcard] { true } else { false }
     let identifier = "enablement.permission.\(kind.privacyKind.rawValue)"
 
     return VStack(alignment: .leading, spacing: 10) {
@@ -578,9 +577,7 @@ struct ProviderEnablementReviewView: View {
       }
       VStack(alignment: .leading, spacing: 8) {
         ForEach(objects, id: \.id) { item in
-          permissionPicker(
-            kind.permission(for: item.id), levels: levels, inheritsWildcard: inheritsWildcard
-          ) {
+          permissionPicker(kind.permission(for: item.id), levels: levels) {
             VStack(alignment: .leading, spacing: 1) {
               Text(verbatim: item.name)
               if item.id != item.name {
@@ -604,24 +601,41 @@ struct ProviderEnablementReviewView: View {
   }
 
   private func permissionPicker<Title: View>(
-    _ permission: Permission, levels: [PermissionValue], inheritsWildcard: Bool = false,
-    @ViewBuilder label: () -> Title
+    _ permission: Permission, levels: [PermissionValue], @ViewBuilder label: () -> Title
   ) -> some View {
+    let limits = review.provider.limits
+    let inherited = draft.inheritedChoice(for: permission)
     let selection = Binding(
-      get: { draft.choices[permission] ?? (inheritsWildcard ? .inherit : .ask) },
-      set: { draft.choices[permission] = $0 == .inherit ? nil : $0 })
+      get: { draft.choice(for: permission) },
+      set: {
+        guard draft.allows($0, for: permission, limits: limits) else { return }
+        draft.choices[permission] = $0 == .inherit ? nil : $0
+      })
+    let restricted =
+      levels.contains { !draft.allows(.granted($0), for: permission, limits: limits) }
+      || (inherited != nil && !draft.allows(.inherit, for: permission, limits: limits))
     return Picker(selection: selection) {
-      if inheritsWildcard {
-        Text(verbatim: l("Use wildcard grant")).tag(EnablementPermissionChoice.inherit)
+      if let inherited {
+        let title = l.format("Use wildcard setting (%@)", l(inherited.title))
+        Text(verbatim: title).tag(EnablementPermissionChoice.inherit)
+          .disabled(!draft.allows(.inherit, for: permission, limits: limits))
       }
       Text(verbatim: l("Ask")).tag(EnablementPermissionChoice.ask)
       ForEach(levels, id: \.self) { level in
-        Text(verbatim: l(Self.permissionValueTitle(level)))
-          .tag(EnablementPermissionChoice.granted(level))
+        let choice = EnablementPermissionChoice.granted(level)
+        Text(verbatim: l(choice.title)).tag(choice)
+          .disabled(!draft.allows(choice, for: permission, limits: limits))
       }
       Text(verbatim: l("Don't Allow")).tag(EnablementPermissionChoice.denied)
     } label: {
-      label()
+      VStack(alignment: .leading, spacing: 4) {
+        label()
+        if restricted {
+          Text(verbatim: l("Managed limits restrict these choices."))
+            .font(.caption)
+            .foregroundStyle(.secondary)
+        }
+      }
     }
   }
 
@@ -939,20 +953,7 @@ struct ProviderEnablementReviewView: View {
     guard !busy, !approvalIsBlocked else { return }
     localError = nil
     do {
-      var permissions = Permissions()
-      for (permission, choice) in draft.choices {
-        if choice == .ask {
-          let fallback: Permission? =
-            switch permission {
-            case .project(let id) where id != "*": .project("*")
-            case .plugin(let id) where id != "*": .plugin("*")
-            case .mcpServer(let id) where id != "*": .mcpServer("*")
-            default: nil
-            }
-          guard let fallback, case .granted = draft.choices[fallback] else { continue }
-        }
-        try permissions.set(choice.permissionState, for: permission)
-      }
+      let permissions = try draft.permissions()
 
       let approvedExceptions = Set(
         readExceptions.compactMap { item -> ApprovedReadException? in
@@ -1016,22 +1017,25 @@ struct ProviderEnablementReviewView: View {
     }
   }
 
-  private static func permissionValueTitle(_ value: PermissionValue) -> String {
-    switch value {
-    case .read: "Read"
-    case .write: "Read & Write"
-    case .use: "Use"
-    case .all: "All"
-    case .access: "Allow"
-    }
-  }
 }
 
-private enum EnablementPermissionChoice: Hashable {
+enum EnablementPermissionChoice: Hashable {
   case inherit
   case ask
   case granted(PermissionValue)
   case denied
+
+  var title: String {
+    switch self {
+    case .inherit, .ask: "Ask"
+    case .granted(.read): "Read"
+    case .granted(.write): "Read & Write"
+    case .granted(.use): "Use"
+    case .granted(.all): "All"
+    case .granted(.access): "Allow"
+    case .denied: "Don't Allow"
+    }
+  }
 
   var permissionState: ComputerMCPPermissions.PermissionState {
     switch self {
@@ -1042,11 +1046,63 @@ private enum EnablementPermissionChoice: Hashable {
   }
 }
 
-private struct EnablementDraft {
+struct EnablementDraft {
   var choices: [Permission: EnablementPermissionChoice] = [:]
   var network: PrivacyNetworkAccess = .none
   var fullAccess = false
   var fullAccessConsented = false
+
+  func inheritedChoice(for permission: Permission) -> EnablementPermissionChoice? {
+    guard let wildcard = permission.fallback, wildcard != permission else { return nil }
+    switch choices[wildcard] {
+    case .granted, .denied: return choices[wildcard]
+    default: return nil
+    }
+  }
+
+  func choice(for permission: Permission) -> EnablementPermissionChoice {
+    choices[permission] ?? (inheritedChoice(for: permission) == nil ? .ask : .inherit)
+  }
+
+  func permissions() throws -> Permissions {
+    var permissions = Permissions()
+    for (permission, choice) in choices where choice != .inherit {
+      try permissions.set(choice.permissionState, for: permission)
+    }
+    return permissions
+  }
+
+  func allows(
+    _ choice: EnablementPermissionChoice, for permission: Permission, limits: ManagedLimits
+  ) -> Bool {
+    let target: Permission
+    let value: PermissionValue
+    switch choice {
+    case .granted(let granted):
+      target = permission
+      value = granted
+    case .inherit:
+      guard let wildcard = permission.fallback, case .granted(let granted) = choices[wildcard]
+      else { return true }
+      target = wildcard
+      value = granted
+    case .ask, .denied:
+      return true
+    }
+    do {
+      var proposed = try permissions()
+      if choice == .inherit {
+        proposed.removeEntry(for: permission)
+      } else {
+        try proposed.set(.granted(value), for: permission)
+      }
+      return try GatewayPermissionService.allowsProviderGrant(
+        value, for: target, in: proposed, limits: limits)
+    } catch {
+      return false
+    }
+  }
+
 }
 
 struct PluginEnablementReviewForm: View {

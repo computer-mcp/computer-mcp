@@ -1,5 +1,6 @@
 import AppKit
 import ComputerMCPMacOS
+import ComputerMCPPermissions
 import ComputerMCPTestSupport
 import Foundation
 import QuartzCore
@@ -17,6 +18,27 @@ import Testing
 
 @Suite
 struct PluginSettingsDraftTests {
+  @Test
+  func wildcardDenialDistinguishesInheritanceFromExplicitAsk() throws {
+    let rows: [(Permission, Permission)] = [
+      (.project("*"), .project("example")),
+      (.plugin("*"), .plugin("example")),
+      (.mcpServer("*"), .mcpServer("example")),
+    ]
+    for (wildcard, object) in rows {
+      var draft = EnablementDraft()
+      #expect(draft.choice(for: object) == .ask)
+      draft.choices[wildcard] = .denied
+      #expect(draft.choice(for: object) == .inherit)
+      #expect(draft.inheritedChoice(for: object) == .denied)
+      #expect(try draft.permissions().state(for: object) == .denied)
+      draft.choices[object] = .ask
+      #expect(draft.choice(for: object) == .ask)
+      #expect(try draft.permissions().entries[object] == .notGranted)
+      #expect(try draft.permissions().state(for: object) == .notGranted)
+    }
+  }
+
   @Test
   func argumentEditingPreservesEmptyUnicodeAndNewlineValues() throws {
     let values = ["--codex-executable", "/tmp/My Codex/执行", "", "a\nb", "--", "-1"]
@@ -369,9 +391,10 @@ struct PluginManagementModelTests {
 }
 
 @MainActor
+@discardableResult
 func render<V: View>(
   _ view: V, size: NSSize, appearance: NSAppearance, name: String, scrollToBottom: Bool = false
-) throws {
+) throws -> Data {
   _ = NSApplication.shared
   let host = NSHostingView(rootView: view.background(Color(nsColor: .controlBackgroundColor)))
   // The fixture owns the viewport; content sizing must not resize its window.
@@ -413,6 +436,7 @@ func render<V: View>(
   if let path = ProcessInfo.processInfo.environment["COMPUTER_MCP_UI_SNAPSHOT_DIR"] {
     try png.write(to: URL(fileURLWithPath: path).appendingPathComponent(name + ".png"))
   }
+  return png
 }
 
 @MainActor

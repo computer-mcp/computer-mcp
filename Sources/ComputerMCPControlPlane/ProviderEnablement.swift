@@ -100,10 +100,12 @@ extension AppControlPlaneService {
     let derivedProjectIDs = Set(inputs.persisted.derivedProjects.map(\.projectID))
     var serverNames = inventory.names.mcpServers.filter { source.serverIDs.contains($0.key) }
     if let server { serverNames[server.id] = name }
+    let availability = inventory.providers.first { $0.identity == source.identity }?.availability
     return ProviderEnablementReview(
       provider: ProviderPermissionOptions(
         identity: source.identity, name: name, version: version,
-        availability: .needsApproval, approval: provider, sourceReview: source,
+        availability: availability == .needsSourceReview ? .needsSourceReview : .needsApproval,
+        approval: provider, sourceReview: source,
         declarationDigest: try source.declarations?.digest(),
         limits: view.providerLimits[source.identity] ?? .init(), effectiveMode: nil,
         permissionRevision: view.revision, epoch: view.epoch,

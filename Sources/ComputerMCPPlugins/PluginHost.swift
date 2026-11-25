@@ -46,6 +46,12 @@ package struct PluginHostSnapshot: Codable, Sendable {
   package let issues: [PluginStoreIssue]
   /// A store-wide recovery failure, independent of any one plugin's resolution.
   package let recoveryError: String?
+  /// Local App presentation state. The control socket snapshot keeps its existing wire format.
+  package var pendingSourceReviews: Set<String> = []
+
+  private enum CodingKeys: String, CodingKey {
+    case state, bundled, effectiveSettings, contributions, diagnostics, issues, recoveryError
+  }
 
   package init(
     state: PluginStoreSnapshot, issues: [PluginStoreIssue] = [], recoveryError: String? = nil,
@@ -81,6 +87,7 @@ package struct PluginHostSnapshot: Codable, Sendable {
     diagnostics = snapshot.diagnostics.filter { $0.pluginID == pluginID }
     issues = snapshot.issues.filter { $0.pluginID == pluginID }
     recoveryError = snapshot.recoveryError
+    pendingSourceReviews = snapshot.pendingSourceReviews.intersection([pluginID])
   }
 }
 

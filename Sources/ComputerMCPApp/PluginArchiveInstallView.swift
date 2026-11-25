@@ -118,9 +118,11 @@ struct PluginArchiveInstallView: View {
 struct InstalledPluginActivation {
   let id: String
   let revision: Int64
+  let needsSourceReview: Bool
 
   init?(afterInstalling id: String, in snapshot: PluginHostSnapshot) {
-    guard !snapshot.settings(for: id).enabled else { return nil }
+    needsSourceReview = snapshot.pendingSourceReviews.contains(id)
+    guard needsSourceReview || !snapshot.settings(for: id).enabled else { return nil }
     self.id = id
     revision = snapshot.state.revision
   }
@@ -167,7 +169,11 @@ struct InstalledPluginActivationView: View {
               }
             }
           } label: {
-            Text("Enable…", bundle: AppLocalization.resourceBundle)
+            if installed.needsSourceReview {
+              Text("Review changes…", bundle: AppLocalization.resourceBundle)
+            } else {
+              Text("Enable…", bundle: AppLocalization.resourceBundle)
+            }
           }
           .keyboardShortcut(.defaultAction)
           .accessibilityIdentifier("plugin.install.enable")

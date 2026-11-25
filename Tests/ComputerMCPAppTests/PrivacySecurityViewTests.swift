@@ -1,7 +1,10 @@
 import AppKit
+import CoreML
+import CryptoKit
 import Foundation
 import SwiftUI
 import Testing
+import Vision
 
 @testable import ComputerMCPApp
 @testable import ComputerMCPControlPlane
@@ -395,7 +398,7 @@ import Testing
     ]
   }
 
-  @Test func clientPluginUseDescribesExactAndWildcardExecution() throws {
+  @Test func clientPluginUseDescribesExactAndWildcardExecution() async throws {
     let client = PrivacyPrincipal(
       id: "client", name: "Client", kind: .client(connection: "Secure Tunnel"), execution: .sandbox)
     let sandbox = PrivacyPrincipal(
@@ -404,7 +407,13 @@ import Testing
     let fullAccess = PrivacyPrincipal(
       id: "plugin/full", name: "Full Access Fixture", kind: .plugin(version: "1"),
       execution: .sandbox, providerAvailability: .active, effectiveExecution: .fullAccessAllowed)
-    let snapshot = PrivacySnapshot(principals: [client, sandbox, fullAccess])
+    let blocked = PrivacyPrincipal(
+      id: "plugin/blocked", name: "Blocked Fixture", kind: .plugin(version: "1"),
+      execution: .fullAccessAllowed, providerAvailability: .active)
+    let inactive = PrivacyPrincipal(
+      id: "plugin/inactive", name: "Inactive Fixture", kind: .plugin(version: "1"),
+      execution: .fullAccessAllowed, providerAvailability: .needsSourceReview)
+    let snapshot = PrivacySnapshot(principals: [client, sandbox, fullAccess, blocked, inactive])
     func request(for objectID: String, from principal: PrivacyPrincipal = client) -> PrivacyRequest
     {
       PrivacyRequest(
@@ -421,7 +430,17 @@ import Testing
       PrivacyGrantRow.pluginExecutionSummary(for: exact, using: english) == "Execution: Sandbox")
     let wildcard = request(for: "*")
     let matches = PrivacySecurityView.pluginExecutionTargets(for: wildcard, in: snapshot)
-    #expect(matches == [sandbox, fullAccess])
+    #expect(matches == [sandbox, fullAccess, blocked, inactive])
+    #expect(
+      PrivacyGrantRow.pluginExecutionSummary(for: matches, using: english)
+        == "Sandbox and Full Access (Full Access Fixture) · Execution blocked for Blocked Fixture · Execution unavailable for Inactive Fixture"
+    )
+    #expect(
+      PrivacyGrantRow.pluginExecutionSummary(for: [inactive], using: english)
+        == "Execution unavailable")
+    #expect(
+      PrivacyGrantRow.pluginExecutionSummary(for: [blocked, sandbox], using: english)
+        == "Execution: Sandbox · Execution blocked for Blocked Fixture")
     #expect(
       PrivacyGrantRow.pluginExecutionSummary(for: matches, using: english)?.contains(
         fullAccess.name) == true)
@@ -434,18 +453,13 @@ import Testing
       ).isEmpty)
 
     if ProcessInfo.processInfo.environment["COMPUTER_MCP_UI_SNAPSHOT_DIR"] != nil {
-      let resources = try Self.compiledCatalog()
-      defer { try? FileManager.default.removeItem(at: resources.bundleURL) }
-      for language in ["en", "zh-Hans"] {
-        for dark in [false, true] {
-          try render(
-            PrivacyRequestPrompt(request: wildcard, pluginExecutionTargets: matches) { _ in }
-              .styled(language, dark, resources),
-            size: NSSize(width: 340, height: 460),
-            appearance: try #require(NSAppearance(named: dark ? .darkAqua : .aqua)),
-            name: "privacy-plugin-use-\(language)-\(dark ? "dark" : "light")")
-        }
-      }
+      try await renderLocalizedEnablement(
+        PrivacyRequestPrompt(request: wildcard, pluginExecutionTargets: [sandbox, fullAccess]) {
+          _ in
+        },
+        name: "privacy-plugin-use", size: NSSize(width: 340, height: 460),
+        headings: ("Sandbox and Full Access", "沙盒与完全访问"),
+        controls: ("Only This Time", "仅这一次"))
     }
   }
 
@@ -630,7 +644,7 @@ import Testing
 
 extension PrivacySecurityViewTests {
   /// SwiftPM copies the String Catalog uncompiled; compile it as the App build does.
-  fileprivate static func compiledCatalog() throws -> Bundle {
+  static func compiledCatalog() throws -> Bundle {
     let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
       .deletingLastPathComponent().deletingLastPathComponent()
     let output = FileManager.default.temporaryDirectory
@@ -650,10 +664,65 @@ extension PrivacySecurityViewTests {
 }
 
 extension View {
-  fileprivate func styled(_ locale: String, _ dark: Bool, _ resources: Bundle) -> some View {
+  func styled(_ locale: String, _ dark: Bool, _ resources: Bundle) -> some View {
     environment(\.colorScheme, dark ? .dark : .light)
       .environment(\.locale, Locale(identifier: locale))
       .environment(\.localizationResources, resources)
+  }
+}
+
+@MainActor
+func renderLocalizedEnablement(
+  _ view: some View, name: String, size: NSSize = NSSize(width: 680, height: 720),
+  headings: (en: String, zhHans: String), controls: (en: String, zhHans: String)? = nil,
+  scrollToBottom: Bool = false
+) async throws {
+  let resources = try PrivacySecurityViewTests.compiledCatalog()
+  defer { try? FileManager.default.removeItem(at: resources.bundleURL) }
+  func comparable(_ text: String) -> String {
+    // OCR can read the visually similar 查 as 査.
+    let normalized = text.lowercased().replacingOccurrences(of: "査", with: "查")
+    return String(
+      String.UnicodeScalarView(
+        normalized.unicodeScalars.filter(CharacterSet.alphanumerics.contains)))
+  }
+  try #require(comparable(headings.en) != comparable(headings.zhHans))
+  for dark in [false, true] {
+    let appearance = try #require(NSAppearance(named: dark ? .darkAqua : .aqua))
+    let appearanceName = dark ? "dark" : "light"
+    var digests: [SHA256.Digest] = []
+    for (language, heading, other, control, otherControl) in [
+      ("en", headings.en, headings.zhHans, controls?.en, controls?.zhHans),
+      ("zh-Hans", headings.zhHans, headings.en, controls?.zhHans, controls?.en),
+    ] {
+      let filename = "\(name)-\(language)-\(appearanceName)"
+      let png = try render(
+        view.styled(language, dark, resources), size: size, appearance: appearance,
+        name: filename, scrollToBottom: scrollToBottom)
+      let lines = try await Task.detached(priority: .utility) {
+        let request = VNRecognizeTextRequest()
+        request.recognitionLevel = .accurate
+        request.recognitionLanguages = language == "en" ? ["en-US"] : ["zh-Hans", "en-US"]
+        for (stage, devices) in try request.supportedComputeStageDevices {
+          if let cpu = devices.first(where: { if case .cpu = $0 { true } else { false } }) {
+            request.setComputeDevice(cpu, for: stage)
+          }
+        }
+        try VNImageRequestHandler(data: png).perform([request])
+        return (request.results ?? []).compactMap { $0.topCandidates(1).first?.string }
+      }.value
+      let text = comparable(lines.joined(separator: " "))
+      try #require(text.contains(comparable(heading)), "\(filename) rendered \(lines)")
+      try #require(!text.contains(comparable(other)), "\(filename) rendered \(lines)")
+      if let control, let otherControl {
+        try #require(text.contains(comparable(control)), "\(filename) rendered \(lines)")
+        try #require(!text.contains(comparable(otherControl)), "\(filename) rendered \(lines)")
+      }
+      let digest = SHA256.hash(data: png)
+      digests.append(digest)
+      print("\(filename).png \(digest.map { String(format: "%02x", $0) }.joined()) \(heading)")
+    }
+    try #require(digests[0] != digests[1], "\(name) \(appearanceName) captures must differ")
   }
 }
 

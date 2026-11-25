@@ -289,7 +289,7 @@ final class LiveAppControlPlane: AppControlPlane {
   }
 
   func fetchPlugins() async throws -> PluginHostSnapshot {
-    try await controlPlane.pluginSnapshot()
+    try await controlPlane.pluginSnapshot(includingSourceReviews: true)
   }
 
   func fetchMCPRegistrations() async throws -> MCPRegistrationSnapshot {

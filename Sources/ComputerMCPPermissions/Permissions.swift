@@ -24,7 +24,7 @@ package enum Permission: Hashable, Sendable, Codable {
   case mcpServer(String)
   case screen, desktopControl, localNetwork, machineInformation, unifiedLogs, skills
 
-  var fallback: Permission? {
+  package var fallback: Permission? {
     switch self {
     case .project: .project("*")
     case .plugin: .plugin("*")

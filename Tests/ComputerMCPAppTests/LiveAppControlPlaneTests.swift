@@ -1438,6 +1438,215 @@ final class LiveAppControlPlaneTests {
     }
   }
 
+  @Test(arguments: [false, true])
+  func wideningPluginUpdateRequiresReviewFromNormalEntries(catalog: Bool) async throws {
+    let platform = MacOSPlatform.services(launcher: testExecutionLauncher())
+    let v1 = PreparationFixture.manifest
+    let v2 =
+      v1.replacingOccurrences(of: "version = '1.2.3'", with: "version = '1.2.4'") + """
+
+        [[permissions]]
+        id = 'project'
+        access = 'write'
+        purpose = 'Publish project changes'
+        """
+      + (catalog
+        ? """
+
+        [sandbox]
+        full_access = true
+        purpose = 'Run the selected provider outside the sandbox'
+        """ : "")
+    let prior = try await PreparationFixture.make(
+      launcher: platform.launcher, directoryFactory: platform.pluginDirectories, manifest: v1)
+    defer { prior.files.remove() }
+    let update = try await PreparationFixture.make(
+      launcher: platform.launcher, directoryFactory: platform.pluginDirectories, manifest: v2,
+      format: "zip")
+    defer { update.files.remove() }
+    let bytes = try Data(contentsOf: update.archive)
+    let server: CatalogHTTPFixture? =
+      if catalog {
+        try await CatalogHTTPFixture.start(script: pluginDownloadHTTPFixture(bytes: bytes))
+      } else { nil }
+    defer { server?.stop() }
+    let releases = GitHubPluginReleases(http: ReleaseHTTPFake(manifest: v2, artifactBytes: bytes))
+    let fixture = try AppControlPlaneFixture(
+      gatewayExecutablePath: nativeGatewayTestExecutable().path, pluginReleases: releases,
+      pluginDownload: server.map { GitHubPluginDownload(origin: $0.origin) }
+        ?? GitHubPluginDownload())
+    do {
+      for id in ["first", "second"] {
+        let root = fixture.root.appendingPathComponent(id)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: false)
+        try await fixture.controlPlane.database.saveProject(
+          .init(id: id, displayName: id.capitalized, rootPath: root.path))
+      }
+      fixture.policyReader.set(.machineFile, .available(Data("[projects]\nfirst = 'read'".utf8)))
+      let id = "combined"
+      let identity = PluginIdentity.package(id)
+      let model = PluginManagementModel(controlPlane: fixture.app)
+      let enable = PluginHostChange.enabled(pluginID: id, true)
+      let v1Version = try PluginVersion("1.2.3")
+      try #require(
+        await model.apply(
+          .installArchive(
+            archive: prior.archive, sha256: prior.digest, pluginID: id, version: v1Version),
+          expectedRevision: 0))
+      #expect(!(await model.apply(enable, expectedRevision: 1)))
+      let initial = try #require(model.enablementReview)
+      try #require(await model.confirmEnablement(reviewID: initial.id, selection: .init()))
+
+      let change: PluginHostChange =
+        if catalog { .installRelease(pluginArtifactFixture(bytes: bytes, manifest: v2)) } else {
+          .installArchive(
+            archive: update.archive, sha256: update.digest, pluginID: id,
+            version: try .init("1.2.4"))
+        }
+      try #require(await model.apply(change, expectedRevision: 2))
+      let snapshot = try #require(model.snapshot)
+      let staged = try #require(InstalledPluginActivation(afterInstalling: id, in: snapshot))
+      #expect(staged.revision == 3 && staged.needsSourceReview)
+      #expect(snapshot.settings(for: id).enabled)
+      #expect(try await fixture.app.fetchPlugins().pendingSourceReviews == [id])
+      let wire = try JSONDecoder().decode(
+        PluginHostSnapshot.self, from: JSONEncoder().encode(snapshot))
+      #expect(wire.pendingSourceReviews.isEmpty && wire.state == snapshot.state)
+      let pending = try #require(
+        try await fixture.app.fetchPrivacyPermissionInventory().providers.first {
+          $0.identity == identity
+        })
+      let pendingDigest = try #require(pending.approval?.pendingSourceDigest)
+      let source = try await fixture.controlPlane.providerReview(identity)
+      #expect(pending.availability == .needsSourceReview && pending.effectiveMode == nil)
+      #expect(pending.approval?.sourceDigest == initial.provider.sourceDigest)
+      #expect(
+        pendingDigest == source.sourceDigest && pendingDigest != pending.approval?.sourceDigest)
+      let database = await fixture.controlPlane.database
+      let gateway = try database.permissionRuntime(platform: fixture.controlPlane.platform)
+      #expect(throws: GatewayPermissionError.invalidBinding) {
+        try gateway.service.authorizeProviderExecution(
+          review: source, registrationID: "native", caller: nil, retryIDs: [])
+      }
+
+      let checkNativeWindow =
+        ProcessInfo.processInfo.environment["COMPUTER_MCP_UI_SNAPSHOT_DIR"] != nil
+      let window =
+        checkNativeWindow
+        ? enablementWindow(InstalledPluginActivationView(model: model, installed: staged)) : nil
+      defer { window?.close() }
+      if let window {
+        try pressEnablementShortcut(.approve, in: window)
+        try await waitForEnablementPresentation { model.enablementReview != nil && !model.isSaving }
+      } else {
+        #expect(!(await model.apply(enable, expectedRevision: staged.revision)))
+      }
+      let installedReview = try #require(model.enablementReview)
+      #expect(installedReview.provider.sourceDigest == pendingDigest)
+      #expect(installedReview.provider.availability == .needsSourceReview)
+      if let window {
+        try pressEnablementShortcut(.decline, in: window)
+        try await waitForEnablementPresentation { model.enablementReview == nil }
+      } else {
+        model.cancelEnablement(reviewID: installedReview.id)
+      }
+      #expect(try await fixture.app.fetchPlugins().state == snapshot.state)
+
+      var settingsDraft = PluginSettingsDraft(id: id, snapshot: snapshot)
+      let native = try #require(settingsDraft.mcp.firstIndex { $0.id == "native" })
+      settingsDraft.mcp[native].settings.prefix = "reviewed"
+      let settings = try settingsDraft.settings()
+      let save = PluginHostChange.settings(pluginID: id, settings)
+      let reopenedChange = catalog ? enable : save
+      await #expect(throws: ProviderEnablementError.reviewRequired) {
+        try await fixture.app.changePlugins(save, expectedRevision: staged.revision)
+      }
+      let settingsWindow =
+        !catalog && checkNativeWindow
+        ? enablementWindow(PluginSettingsEditor(model: model, initial: settingsDraft)) : nil
+      defer { settingsWindow?.close() }
+      if let settingsWindow {
+        try pressEnablementShortcut(.approve, in: settingsWindow)
+        try await waitForEnablementPresentation { model.enablementReview != nil && !model.isSaving }
+      } else {
+        #expect(!(await model.apply(reopenedChange, expectedRevision: staged.revision)))
+      }
+      let review = try #require(model.enablementReview)
+      #expect(review.provider.sourceDigest == pendingDigest)
+      let limits = review.provider.limits
+      let first = Permission.project("first")
+      let wildcard = Permission.project("*")
+      var draft = EnablementDraft()
+      #expect(draft.allows(.granted(.read), for: first, limits: limits))
+      #expect(!draft.allows(.granted(.write), for: first, limits: limits))
+      #expect(!draft.allows(.granted(.write), for: wildcard, limits: limits))
+      let forbidden = ProviderEnablementSelection(
+        permissions: appPermissions([first: .granted(.write)]), fullAccess: catalog)
+      await #expect(throws: GatewayPermissionError.managedLimit) {
+        try await fixture.app.changePlugins(
+          reopenedChange, expectedRevision: staged.revision,
+          approval: .init(review: review, selection: forbidden))
+      }
+      #expect(try await fixture.app.fetchPlugins().state == snapshot.state)
+      draft.choices[first] = .ask
+      #expect(draft.allows(.granted(.write), for: wildcard, limits: limits))
+      draft.choices[wildcard] = .granted(.write)
+      #expect(!draft.allows(.inherit, for: first, limits: limits))
+      draft.choices[wildcard] = .denied
+      #expect(draft.choice(for: .project("second")) == .inherit)
+      #expect(draft.inheritedChoice(for: .project("second")) == .denied)
+      try #require(
+        await model.confirmEnablement(
+          reviewID: review.id,
+          selection: .init(permissions: draft.permissions(), fullAccess: catalog)))
+      #expect(model.snapshot?.pendingSourceReviews.isEmpty == true)
+      let approved = try #require(
+        try await fixture.app.fetchPrivacyPermissionInventory().providers.first {
+          $0.identity == identity
+        })
+      #expect(approved.availability == .active)
+      #expect(approved.approval?.sourceDigest == pendingDigest)
+      #expect(approved.approval?.pendingSourceDigest == nil)
+      let approvedSource = try await fixture.controlPlane.providerReview(identity)
+      let binding = try gateway.service.authorizeProviderExecution(
+        review: approvedSource, registrationID: "native", caller: nil, retryIDs: [])
+      #expect(binding.sourceDigest == pendingDigest)
+      #expect(approved.approval?.permissions.entries[first] == .notGranted)
+      #expect(approved.approval?.permissions.state(for: .project("second")) == .denied)
+      if !catalog { #expect(model.snapshot?.settings(for: id) == settings) }
+      if catalog {
+        fixture.policyReader.set(
+          .machineFile, .available(Data("full_access = false\n[projects]\nfirst = 'read'".utf8)))
+        let privacy = try await LivePrivacySecurityService(controlPlane: fixture.app)
+          .privacySnapshot()
+        let principal = try #require(privacy.plugins(forUseOf: id).first)
+        let english = PrivacyText(locale: Locale(identifier: "en"))
+        #expect(principal.execution == .fullAccessAllowed && principal.effectiveExecution == nil)
+        #expect(
+          PrivacyGrantRow.pluginExecutionSummary(for: [principal], using: english)
+            == "Execution blocked")
+        #expect(
+          PrivacyGrantRow.pluginExecutionExplanation(for: [principal], using: english).isEmpty)
+        if checkNativeWindow {
+          let revision = try #require(model.snapshot?.state.revision)
+          #expect(!(await model.apply(enable, expectedRevision: revision)))
+          let restricted = try #require(model.enablementReview)
+          #expect(restricted.provider.limits.modeDenial(restricted.requestedMode) != nil)
+          try await renderLocalizedEnablement(
+            PluginEnablementReviewForm(model: model, review: restricted) { _ in },
+            name: "plugin-enablement-restricted",
+            headings: ("Review Provider Enablement", "审查提供方启用"),
+            controls: ("Managed limits prevent Full Access", "受管限制禁止完全访问"))
+          model.cancelEnablement(reviewID: restricted.id)
+        }
+      }
+    } catch {
+      await fixture.cleanup()
+      throw error
+    }
+    await fixture.cleanup()
+  }
+
   @Test
   func pluginScreenUsesSharedHostTransactionsAndRetainsFilesOnRemoval() async throws {
     try await withAppControlPlaneFixture { fixture in
@@ -1500,12 +1709,14 @@ final class LiveAppControlPlaneTests {
       #expect(declined.provider.declarations?.sandbox?.network == .trusted)
       #expect(try declined.readExceptions().map(\.purpose) == ["Read saved metadata"])
       if ProcessInfo.processInfo.environment["COMPUTER_MCP_UI_SNAPSHOT_DIR"] != nil {
-        try renderEnablement(
+        try await renderLocalizedEnablement(
           PluginEnablementReviewForm(model: model, review: declined) { _ in },
-          name: "plugin-enablement")
-        try renderEnablement(
+          name: "plugin-enablement", headings: ("Review Provider Enablement", "审查提供方启用"),
+          controls: ("Approve & Enable", "批准并启用"))
+        try await renderLocalizedEnablement(
           PluginEnablementReviewForm(model: model, review: declined) { _ in },
-          name: "plugin-enablement-details", scrollToBottom: true)
+          name: "plugin-enablement-details", headings: ("Sandbox Read Exceptions", "沙盒读取例外"),
+          controls: ("Approve & Enable", "批准并启用"), scrollToBottom: true)
       }
       model.cancelEnablement(reviewID: declined.id)
       #expect(!(await model.confirmEnablement(reviewID: declined.id, selection: .init())))
@@ -1592,14 +1803,16 @@ final class LiveAppControlPlaneTests {
       #expect(declined.allowsModeSelection)
       #expect(declined.sandboxContainer == .localServer("manual"))
       if ProcessInfo.processInfo.environment["COMPUTER_MCP_UI_SNAPSHOT_DIR"] != nil {
-        try renderEnablement(
+        try await renderLocalizedEnablement(
           MCPRegistrationsView(model: model) { _ in }, name: "mcp-enablement-preview",
-          size: NSSize(width: 780, height: 620))
-        try renderEnablement(
+          size: NSSize(width: 780, height: 620), headings: ("Review MCP change", "核对 MCP 变更"),
+          controls: ("Review Permissions", "审查权限"))
+        try await renderLocalizedEnablement(
           ProviderEnablementReviewView(review: declined, isBusy: false) { _ in
           } onDecline: {
           },
-          name: "mcp-enablement")
+          name: "mcp-enablement", headings: ("Review Provider Enablement", "审查提供方启用"),
+          controls: ("Approve & Enable", "批准并启用"))
       }
       await model.apply()
       await #expect(throws: ProviderEnablementError.reviewRequired) {
@@ -1769,6 +1982,8 @@ private final class AppControlPlaneFixture {
     keychainAdapter: any KeychainAdapter = AppTestKeychainAdapter(),
     registrationService: ClientRegistrationService? = nil,
     gatewayExecutablePath: String = "computer-mcp",
+    pluginReleases: GitHubPluginReleases = GitHubPluginReleases(),
+    pluginDownload: GitHubPluginDownload = GitHubPluginDownload(),
     executionLauncher: ((AppControlPlaneServiceDirectories) -> ExecutionLauncher)? = nil
   ) throws {
     root = FileManager.default.temporaryDirectory
@@ -1835,7 +2050,7 @@ private final class AppControlPlaneFixture {
       gatewayExecutablePath: gatewayExecutablePath,
       launchAtLoginController: AppTestLaunchAtLoginController(),
       computerUsePermissionReader: FixedComputerUsePermissionReader(),
-      platform: platform
+      platform: platform, pluginReleases: pluginReleases, pluginDownload: pluginDownload
     )
     gatewayService = AppGatewayService(
       controlPlane: controlPlane,
@@ -2023,23 +2238,6 @@ private func appPermissions(_ entries: [Permission: ComputerMCPPermissions.Permi
   var result = Permissions()
   for (permission, state) in entries { try! result.set(state, for: permission) }
   return result
-}
-
-@MainActor
-private func renderEnablement(
-  _ view: some View, name: String, size: NSSize = NSSize(width: 680, height: 720),
-  scrollToBottom: Bool = false
-) throws {
-  for language in ["en", "zh-Hans"] {
-    for dark in [false, true] {
-      try render(
-        view.environment(\.locale, Locale(identifier: language))
-          .environment(\.colorScheme, dark ? .dark : .light),
-        size: size, appearance: try #require(NSAppearance(named: dark ? .darkAqua : .aqua)),
-        name: "\(name)-\(language)-\(dark ? "dark" : "light")",
-        scrollToBottom: scrollToBottom)
-    }
-  }
 }
 
 private enum EnablementShortcut {

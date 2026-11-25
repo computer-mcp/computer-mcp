@@ -48,7 +48,7 @@ extension AppControlPlaneService {
       throw PluginStoreError.staleRevision(
         expected: expectedRevision, actual: inputs.plugins.revision)
     }
-    guard let target = pluginEnablementTarget(change, in: inputs.plugins) else { return nil }
+    guard let target = try pluginEnablementTarget(change, in: inputs.plugins) else { return nil }
     let package = try providerPackage(target.id, configuration: inputs.persisted)
     guard package.manifest.id == target.id else { throw GatewayPermissionError.invalidBinding }
     if let refusal = package.manifest.refusal(
@@ -70,7 +70,7 @@ extension AppControlPlaneService {
 
   private func pluginEnablementTarget(
     _ change: PluginHostChange, in state: PluginStoreSnapshot
-  ) -> (id: String, settings: PluginSettings?)? {
+  ) throws -> (id: String, settings: PluginSettings?)? {
     let id: String
     let settings: PluginSettings?
     switch change {
@@ -78,7 +78,7 @@ extension AppControlPlaneService {
       id = pluginID
       settings = nil
     case .settings(let pluginID, let proposed)
-    where proposed.enabled && state.settings[pluginID]?.enabled != true:
+    where proposed.enabled:
       id = pluginID
       settings = proposed
     default:
@@ -88,6 +88,11 @@ extension AppControlPlaneService {
       state.selectedInstallations[id] != nil
         || bundledPlugins.packages.contains(where: { $0.manifest.id == id })
     else { return nil }
+    if settings != nil, state.settings[id]?.enabled == true,
+      try !database.pendingPluginSourceReviews(in: state).contains(id)
+    {
+      return nil
+    }
     return (id, settings)
   }
 
@@ -145,11 +150,21 @@ extension AppControlPlaneService {
     try await pluginCatalog.search(query: query, kind: kind, page: page, refresh: refresh)
   }
 
-  package func pluginSnapshot() throws -> PluginHostSnapshot {
-    try PluginHostSnapshot(
-      state: database.pluginStoreSnapshot(), issues: pluginRecoveryIssues,
-      recoveryError: pluginRecoveryError, bundled: bundledPlugins,
-      applications: platform.applications)
+  package func pluginSnapshot(includingSourceReviews: Bool = false) throws -> PluginHostSnapshot {
+    try pluginSnapshot(
+      database.pluginStoreSnapshot(), includingSourceReviews: includingSourceReviews)
+  }
+
+  private func pluginSnapshot(
+    _ state: PluginStoreSnapshot, includingSourceReviews: Bool
+  ) throws -> PluginHostSnapshot {
+    var snapshot = try PluginHostSnapshot(
+      state: state, issues: pluginRecoveryIssues, recoveryError: pluginRecoveryError,
+      bundled: bundledPlugins, applications: platform.applications)
+    if includingSourceReviews {
+      snapshot.pendingSourceReviews = try database.pendingPluginSourceReviews(in: state)
+    }
+    return snapshot
   }
 
   /// Run after the App has claimed its control socket, before admitting gateway clients.
@@ -221,7 +236,7 @@ extension AppControlPlaneService {
         expected: expectedRevision, actual: inputs.plugins.revision)
     }
     let activation: GatewayProviderActivation?
-    if let target = pluginEnablementTarget(change, in: inputs.plugins), !remoteManagement {
+    if !remoteManagement, let target = try pluginEnablementTarget(change, in: inputs.plugins) {
       guard let approval else {
         let package = try providerPackage(target.id, configuration: inputs.persisted)
         if let refusal = package.manifest.refusal(
@@ -335,9 +350,7 @@ extension AppControlPlaneService {
     for issue in issues where !pluginRecoveryIssues.contains(issue) {
       pluginRecoveryIssues.append(issue)
     }
-    return try PluginHostSnapshot(
-      state: state, issues: pluginRecoveryIssues, recoveryError: pluginRecoveryError,
-      bundled: bundledPlugins, applications: platform.applications)
+    return try pluginSnapshot(state, includingSourceReviews: !remoteManagement)
   }
 
   private func pluginArchiveWorker() throws -> URL {

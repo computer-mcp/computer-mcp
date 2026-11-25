@@ -442,9 +442,11 @@ struct PrivacyGrantRow: View {
           }
           if !pluginExecutionTargets.isEmpty {
             let explanation = Self.pluginExecutionExplanation(for: pluginExecutionTargets, using: l)
-            Text(verbatim: explanation)
-              .font(.caption).foregroundStyle(.secondary)
-              .fixedSize(horizontal: false, vertical: true)
+            if !explanation.isEmpty {
+              Text(verbatim: explanation)
+                .font(.caption).foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            }
           }
         }
       } icon: {
@@ -492,35 +494,43 @@ struct PrivacyGrantRow: View {
     for targets: [PrivacyPrincipal], using l: PrivacyText
   ) -> String? {
     guard !targets.isEmpty else { return nil }
-    let fullAccess = targets.filter {
-      ($0.effectiveExecution ?? $0.execution) == .fullAccessAllowed
+    let sandbox = targets.filter { $0.effectiveExecution == .sandbox }
+    let fullAccess = targets.filter { $0.effectiveExecution == .fullAccessAllowed }
+    var details: [String] = []
+    if !sandbox.isEmpty && !fullAccess.isEmpty {
+      details.append(l.format("Sandbox and Full Access (%@)", l.list(fullAccess.map(\.name))))
+    } else if !fullAccess.isEmpty {
+      details.append(l("Execution: Full Access"))
+    } else if !sandbox.isEmpty {
+      details.append(l("Execution: Sandbox"))
     }
-    let mode: String
-    if fullAccess.isEmpty {
-      mode = l("Execution: Sandbox")
-    } else if fullAccess.count == targets.count {
-      mode = l("Execution: Full Access")
-    } else {
-      mode = l.format("Sandbox and Full Access (%@)", l.list(fullAccess.map(\.name)))
+
+    let blocked = targets.filter {
+      $0.effectiveExecution == nil && $0.providerAvailability == .active
     }
-    let inactive = targets.filter {
-      if let availability = $0.providerAvailability { return availability != .active }
-      return false
+    let unavailable = targets.filter {
+      $0.effectiveExecution == nil && $0.providerAvailability != .active
     }
-    guard !inactive.isEmpty else { return mode }
-    let unavailable = l.format("Inactive plugins: %@", l.list(inactive.map(\.name)))
-    return [mode, unavailable].joined(separator: " · ")
+    if targets.count == 1 && !blocked.isEmpty { return l("Execution blocked") }
+    if targets.count == 1 && !unavailable.isEmpty { return l("Execution unavailable") }
+    if !blocked.isEmpty {
+      details.append(l.format("Execution blocked for %@", l.list(blocked.map(\.name))))
+    }
+    if !unavailable.isEmpty {
+      details.append(l.format("Execution unavailable for %@", l.list(unavailable.map(\.name))))
+    }
+    return details.joined(separator: " · ")
   }
 
   static func pluginExecutionExplanation(
     for targets: [PrivacyPrincipal], using l: PrivacyText
   ) -> String {
-    let modes = Set(targets.map { $0.effectiveExecution ?? $0.execution })
+    let modes = Set(targets.compactMap(\.effectiveExecution))
     var details: [String] = []
     if modes.contains(.sandbox) {
       details.append(
         l(
-          "Sandboxed plugins keep their files private from other principals’ host tools and sandboxed programs."
+          "Other principals’ host tools and sandboxed programs cannot read files in the plugin’s sandbox container. Files in shared projects follow the project’s permissions."
         ))
     }
     if modes.contains(.fullAccessAllowed) {
@@ -955,7 +965,7 @@ struct PrivacyRequestPrompt: View {
               .accessibilityIdentifier("privacy.prompt.execution")
             let explanation = PrivacyGrantRow.pluginExecutionExplanation(
               for: pluginExecutionTargets, using: l)
-            Text(verbatim: explanation)
+            if !explanation.isEmpty { Text(verbatim: explanation) }
           }
           .font(.caption)
           .foregroundStyle(.secondary)

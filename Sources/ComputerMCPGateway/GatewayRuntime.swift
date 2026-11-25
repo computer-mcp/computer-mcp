@@ -1305,9 +1305,9 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
       guard runtime.context.principalID == context.principalID,
         runtime.context.profileID == context.profileID, runtime.context.caller == context.caller,
         let grant = try? runtime.currentHostGrant(context: context),
-        Self.allows(grant.permissions.state(for: .project(projectID)), .read),
         grant.allowedCallers.contains(context.caller),
-        (try? runtime.validateExecutionProject(projectID)) != nil
+        (try? runtime.validateExecutionProject(projectID)) != nil,
+        ["read", "write"].contains(runtime.projectAccess(id: projectID, context: context))
       else { continue }
       let policy = MCPToolAccessPolicy(
         configuration: runtime.configuration, grant: grant, fullAccessConsented: grant.fullAccess,

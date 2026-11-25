@@ -152,42 +152,28 @@ extension WorktreeRepository {
   /// The release gate protects the live generation while its expected commit
   /// is checked in a host-owned copy with an independent Git object pool.
   func hasVerifiedPrivateExpectedCommit(
-    _ oid: String, topology: VerifiedWorktreeTopology, budget: inout WorktreeObjectBudget
+    _ oid: String, topology: VerifiedWorktreeTopology, scratch: WorktreeDirectory,
+    budget: inout WorktreeObjectBudget
   ) throws -> Bool {
     try budget.check()
     try topology.verifyDirectories()
     try verifyPrivateControls(topology, repository: identity)
-    let scratch = try topology.runtime.child(
-      "release-proof-" + UUID().uuidString.lowercased(), create: true, exclusive: true)
-    let scratchIO = WorktreeJournalIO()
-    func verify() throws -> Bool {
-      let repository = try prepareCaptureRepository(in: scratch, deadline: budget.deadline)
-      let snapshot = WorktreeObjectSnapshot(io: scratchIO, format: identity.format)
-      do {
-        let pool = try acquireRecoveryObjects(
-          topology.objects, slot: "private-objects", in: scratch, repository: repository,
-          snapshot: snapshot, live: true, budget: &budget)
-        try liveRecoveryInput { try topology.verifyDirectories() }
-        guard try pool.manifest(roots: [oid])?.entries[oid]?.type == .commit else {
-          return false
-        }
-        try pool.verifyIntegrity()
-        try budget.check()
-        return true
-      } catch WorktreeError.invalidRequest {
+    let repository = try prepareCaptureRepository(in: scratch, deadline: budget.deadline)
+    let snapshot = WorktreeObjectSnapshot(io: WorktreeJournalIO(), format: identity.format)
+    do {
+      let pool = try acquireRecoveryObjects(
+        topology.objects, slot: "private-objects", in: scratch, repository: repository,
+        snapshot: snapshot, live: true, budget: &budget)
+      try liveRecoveryInput { try topology.verifyDirectories() }
+      guard try pool.manifest(roots: [oid])?.entries[oid]?.type == .commit else {
         return false
       }
+      try pool.verifyIntegrity()
+      try budget.check()
+      return true
+    } catch WorktreeError.invalidRequest {
+      return false
     }
-
-    let verified: Bool
-    do {
-      verified = try verify()
-    } catch {
-      try? topology.runtime.removeOwnedTree(scratch.identity, io: scratchIO)
-      throw error
-    }
-    try topology.runtime.removeOwnedTree(scratch.identity, io: scratchIO)
-    return verified
   }
 
   private func prepareCaptureRepository(

@@ -112,6 +112,7 @@ extension GatewayPermissionService {
       throw PermissionMigrationError.revisionExhausted
     }
     let trustedHosts = Set(ledger.environment.trustedHosts.map(\.host))
+    let ceiling = review.declarations.map { $0.sandbox?.network?.value ?? .none }
     let currentSettings = ledger.sandboxSettings.providers[review.identity]
     var selectedSettings = sandboxSettings
     if !editingApproval, let previous, previous.pendingSourceDigest == review.sourceDigest,
@@ -119,12 +120,13 @@ extension GatewayPermissionService {
     {
       selectedSettings.retainProjectRestrictions(
         from: storedSettings,
-        projectIDs: Set(review.configuration.projects.map(\.id)).subtracting(derivedIDs))
+        projectIDs: Set(review.configuration.projects.map(\.id)).subtracting(derivedIDs),
+        // Only a trusted-only declaration keeps every carried host conditional at runtime.
+        trustedHosts: ceiling?.configuration == .trusted ? trustedHosts : [])
     }
     if !editingApproval && previous != nil && currentSettings == nil {
       selectedSettings = selectedSettings.rebindingReviewedChoices()
     }
-    let ceiling = review.declarations.map { $0.sandbox?.network?.value ?? .none }
     selectedSettings.defaults.networkCeiling = ceiling.map {
       (currentSettings?.defaults.networkCeiling ?? .none).updating(to: $0)
     }

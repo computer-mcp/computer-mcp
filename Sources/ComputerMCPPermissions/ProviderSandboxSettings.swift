@@ -135,10 +135,14 @@ package struct ProviderSandboxSettings: Hashable, Sendable, Codable {
   }
 
   /// A reviewed provider default must still respect existing restrictions on unreviewed projects.
-  package mutating func retainProjectRestrictions(from current: Self, projectIDs: Set<String>) {
+  package mutating func retainProjectRestrictions(
+    from current: Self, projectIDs: Set<String>, trustedHosts: Set<String>
+  ) {
     for (id, var override) in current.projects where projectIDs.contains(id) && projects[id] == nil
     {
-      override.network = override.network.map { $0.intersecting(defaults.network) }
+      override.network = override.network.map {
+        $0.intersecting(defaults.network, trustedHosts: trustedHosts)
+      }
       if let exceptions = override.readExceptions {
         override.readExceptions = Set(
           exceptions.compactMap { prior in
@@ -194,13 +198,15 @@ package struct ProviderSandboxSettings: Hashable, Sendable, Codable {
 }
 
 extension NetworkAccess {
-  fileprivate func intersecting(_ ceiling: Self) -> Self {
+  fileprivate func intersecting(_ ceiling: Self, trustedHosts: Set<String>) -> Self {
     if ceiling.configuration == .full || configuration == .none { return self }
     if configuration == .full { return updating(to: ceiling) }
     // A trusted-host choice stays dynamic only when both scopes allow it.
-    let hosts = NetworkHost.intersection(
-      hosts(trustedHosts: []) ?? [], ceiling.hosts(trustedHosts: []) ?? [])
     let includesTrusted = trustedRule != nil && ceiling.trustedRule != nil
+    let concreteTrustedHosts = includesTrusted ? [] : trustedHosts
+    let hosts = NetworkHost.intersection(
+      hosts(trustedHosts: concreteTrustedHosts) ?? [],
+      ceiling.hosts(trustedHosts: concreteTrustedHosts) ?? [])
     if hosts.isEmpty { return updating(to: includesTrusted ? .trusted : .none) }
     return updating(to: .custom(hosts: hosts, includesTrusted: includesTrusted))
   }

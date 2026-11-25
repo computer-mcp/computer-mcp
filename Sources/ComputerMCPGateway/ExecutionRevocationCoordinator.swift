@@ -1582,6 +1582,7 @@ final class VendorExecutionPhase: ExecutionAuthorizing, @unchecked Sendable {
   private let lock = NSLock()
   private var claimed = false
   private var sealed = false
+  private var bootstrapAuthorized = false
   private var ownership: (any ExecutionOwnership)?
   private var failedBeforeBinding = false
   private var startingProxy: Task<EgressProxy, any Error>?
@@ -1627,6 +1628,15 @@ final class VendorExecutionPhase: ExecutionAuthorizing, @unchecked Sendable {
       guard claimed, !sealed, ContinuousClock.now < deadline else {
         throw PermissionModelError.invalidAuthorization
       }
+      bootstrapAuthorized = true
+    }
+  }
+
+  func sealPendingBootstrap() -> Bool {
+    lock.withLock {
+      guard !bootstrapAuthorized else { return false }
+      sealed = true
+      return true
     }
   }
 

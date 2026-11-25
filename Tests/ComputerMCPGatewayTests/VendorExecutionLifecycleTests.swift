@@ -3,6 +3,7 @@
   import ComputerMCPCore
   import ComputerMCPPermissions
   import ComputerMCPPlatform
+  import ComputerMCPPlatformPOSIX
   import ComputerMCPPlugins
   import ComputerMCPSandbox
   import ComputerMCPTestSupport
@@ -179,7 +180,7 @@
     }
 
     @Test func printReceivesEOFAndReportsNativeExitForItsOwnChild() async throws {
-      let fixture = try Fixture(claudePrint: true)
+      let fixture = try Fixture(.print)
       defer { fixture.base.remove() }
       let host = try VendorExecutionSession(
         source: fixture.vendor, launcher: fixture.base.platform.launcher)
@@ -254,6 +255,303 @@
         try? await fixture.cleanup()
         throw error
       }
+    }
+
+    @Test func addressedCloseFencesLaunchBeforeAdapterRetirement() async throws {
+      let fixture = try Fixture()
+      defer { fixture.base.remove() }
+      try await withVendor(fixture) { host, peer in
+        let work = try await acquire(
+          tool: "open", arguments: [:], handle: "a", fixture: fixture, host: host, peer: &peer)
+        let close = try await admit("close", session: work, fixture: fixture, host: host)
+
+        // Exercise the Host's fence before delivering the adapter's private retire request.
+        #expect(try await peer.rejection("launch", work.fields(work.acquisition)) == "cancelled")
+        let receipt = try await peer.call("retire", work.fields(close))
+        #expect(receipt["probe_state"] == .string("retired"))
+        #expect(receipt["workload_state"] == .string("never_dispatched"))
+        #expect(receipt["retired"] == .bool(true))
+      }
+    }
+
+    @Test func observationDeadlineSettlesItsWaiterAndKeepsTheVendorSessionLive() async throws {
+      let fixture = try Fixture(adapterSource: Self.observationAdapter)
+      defer { fixture.base.remove() }
+      let ownedWork = GatewayOwnedWork()
+      let source = fixture.vendor
+      var context = MCPHostContext(
+        runtimeID: UUID(), context: .init(caller: .localMCP, profileID: .localAdmin),
+        projectID: "source", rootURL: fixture.base.source, readOnly: true,
+        processOwnershipRoot: fixture.base.root.appendingPathComponent("ownership"))
+      context.ownedWork = ownedWork
+      context.providerSource = { _ in
+        MCPProviderExecutionSource(digest: source.manifestDigest, vendorExecution: source) { _, _ in
+          throw PermissionModelError.invalidAuthorization
+        }
+      }
+      let client = MCPProxyClient(
+        launcher: fixture.base.platform.launcher, workingDirectory: fixture.base.source,
+        hostContext: context)
+      var configuration = fixture.server
+      configuration.requestTimeoutMs = 5_000
+      let server = configuration
+      do {
+        let opening = try await fixture.prepare("open")
+        let opened = try await client.callToolAsync(
+          server: server, name: "open", arguments: .object([:]), requestID: nil,
+          context: .init(executionAuthority: opening))
+        let instance = try #require(opened.objectValue?["structuredContent"]?.objectValue?["pid"])
+
+        let observation = try await fixture.prepare("list")
+        let requestID = "observation-deadline"
+        await #expect(throws: GatewayToolError.self) {
+          _ = try await client.callToolAsync(
+            server: server, name: "list", arguments: .object([:]), requestID: requestID,
+            context: .init(executionAuthority: observation))
+        }
+        try observation.finishAdmission()
+        let deadline = ContinuousClock.now + .seconds(5)
+        while true {
+          let running = try fixture.base.runtime.store.readWithDatabase { _, ledger in
+            try #require(ledger.executions[observation.executionID]).isRunning
+          }
+          if !running, !ownedWork.snapshot.contains(where: { $0.resourceID == requestID }) {
+            break
+          }
+          try #require(
+            ContinuousClock.now < deadline, "Observation retained its execution or request")
+          try await Task.sleep(for: .milliseconds(20))
+        }
+
+        let prompt = try await fixture.prepare("prompt")
+        let reply = try await client.callToolAsync(
+          server: server, name: "prompt",
+          arguments: .object(["session": .string(String(repeating: "a", count: 32))]),
+          requestID: nil,
+          context: .init(executionAuthority: prompt))
+        let output = try #require(reply.objectValue?["structuredContent"]?.objectValue)
+        #expect(output["pid"] == instance)
+        #expect(output["exact_cancel"] == .bool(true))
+        #expect(output["native_output"] == .string("done:11\n"))
+      } catch {
+        await client.shutdown()
+        try? await fixture.cleanup()
+        throw error
+      }
+      await client.shutdown()
+      try await fixture.cleanup()
+    }
+
+    private static let observationAdapter = #"""
+      import base64, json, os, socket, sys, uuid
+
+      capability = 'io.github.computer-mcp/vendor-execution-v1'
+      uri = 'computer-mcp://runtime/work/v1'
+      instance = str(uuid.uuid4())
+      vendor = socket.socket(fileno=3).makefile('rwb', buffering=0)
+      private_id = 0
+      acquisition = child = hung = None
+      cancelled = []
+
+      def private(op, call=None, **fields):
+          global private_id
+          private_id += 1
+          request = {'id': private_id, 'op': op, **fields}
+          if call is not None:
+              request.update(call=call, acquisition=acquisition)
+          vendor.write((json.dumps(request) + '\n').encode())
+          reply = json.loads(vendor.readline())
+          assert reply['id'] == private_id, reply
+          return reply['result']
+
+      def respond(id, result):
+          print(json.dumps({'jsonrpc': '2.0', 'id': id, 'result': result}), flush=True)
+
+      assert private('initialize', capability=capability)['capability'] == capability
+      for line in sys.stdin:
+          message = json.loads(line)
+          method, id = message['method'], message.get('id')
+          params = message.get('params', {})
+          if method == 'initialize':
+              respond(id, {'protocolVersion': '2025-06-18', 'serverInfo': {'name': 'fixture', 'version': '1'},
+                           'capabilities': {'tools': {}, 'resources': {}, 'experimental': {capability: True}}})
+          elif method == 'tools/list':
+              respond(id, {'tools': [
+                  {'name': name, 'inputSchema': {'type': 'object'},
+                   '_meta': {'io.github.computer-mcp/work': {'format_version': 1, 'uri': uri}}}
+                  for name in ('open', 'list', 'prompt')]})
+          elif method == 'resources/read':
+              resources = [] if acquisition is None else [
+                  {'kind': 'fixture.session', 'id': 'a' * 32, 'acquired_by': acquisition, 'state': 'active'}]
+              report = {'format_version': 1, 'instance_id': instance,
+                        'revision': int(bool(resources)), 'resources': resources}
+              respond(id, {'contents': [{'uri': uri, 'mimeType': 'application/json', 'text': json.dumps(report)}]})
+          elif method == 'notifications/cancelled':
+              cancelled.append(params['requestId'])
+          elif method == 'tools/call':
+              name = params['name']
+              if name == 'list':
+                  hung = id
+                  continue
+              call = params['_meta']['io.github.computer-mcp/work-invocation']
+              if name == 'open':
+                  acquisition = call
+                  slots = private('bind', call, session='a' * 32)
+                  private('probe', call, child=slots['probe'])
+                  child = slots['workload']
+                  private('launch', call, child=child)
+                  for _ in range(3):
+                      private('write', call, child=child, kind='setup', data='setup')
+                  private('ready', call, child=child)
+                  result = {'pid': os.getpid()}
+              else:
+                  private('write', call, child=child, kind='prompt', data='finish:ping')
+                  output = {}
+                  while 'data' not in output:
+                      output = private('read', call, child=child, after=0)
+                  private('finish', call, child=child)
+                  result = {'pid': os.getpid(), 'exact_cancel': hung is not None and cancelled == [hung],
+                            'native_output': base64.b64decode(output['data']).decode()}
+              respond(id, {'content': [], 'structuredContent': result})
+      """#
+
+    @Test func traePromptWaitsForDetachedOpenCompletion() async throws {
+      let fixture = try Fixture(.trae)
+      defer { fixture.base.remove() }
+      try await withVendor(fixture) { host, peer in
+        let work = try await acquire(
+          tool: "trae.session.open", arguments: [:], handle: "a", detached: true,
+          fixture: fixture, host: host, peer: &peer)
+        let opener = work.acquisition
+        _ = try await peer.call("launch", work.fields(opener))
+        let initialize =
+          #"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":1,"clientCapabilities":{},"clientInfo":{"name":"computer-mcp-plugin-trae","version":"1"}}}"#
+        try await peer.write(initialize, kind: "setup", call: opener, on: work)
+        try await peer.expectOutput(
+          #"{"jsonrpc":"2.0","id":1,"result":{"protocolVersion":1,"agentCapabilities":{}}}"# + "\n",
+          after: 0, call: opener, on: work)
+        let directory = try ProjectPathResolver.canonicalProject(fixture.base.source).path
+        let new: JSONValue = .object([
+          "jsonrpc": .string("2.0"), "id": .integer(2), "method": .string("session/new"),
+          "params": .object(["cwd": .string(directory), "mcpServers": .array([])]),
+        ])
+        try await peer.write(
+          String(decoding: JSONEncoder().encode(new), as: UTF8.self),
+          kind: "setup", call: opener, on: work)
+        try await peer.expectOutput(
+          #"{"jsonrpc":"2.0","id":2,"result":{"sessionId":"native"}}"# + "\n",
+          after: 1, call: opener, on: work)
+        _ = try await peer.call("ready", work.fields(opener))
+
+        let execution = try await fixture.prepare("trae.session.prompt")
+        let args: [String: JSONValue] = [
+          "session_handle": .string(work.handle), "prompt": .string("hello"),
+        ]
+        await #expect(throws: GatewayToolError.self) {
+          try await host.admit(
+            id: UUID(), tool: "trae.session.prompt", arguments: args, execution: execution)
+        }
+        _ = try await peer.call("finish", work.fields(opener))
+        let prompt = UUID()
+        try await host.admit(
+          id: prompt, tool: "trae.session.prompt", arguments: args, execution: execution)
+        try await peer.write(
+          #"{"jsonrpc":"2.0","id":3,"method":"session/prompt","params":{"sessionId":"native","prompt":[{"type":"text","text":"hello"}]}}"#,
+          kind: "prompt", call: prompt, on: work)
+        try await peer.expectOutput(
+          #"{"jsonrpc":"2.0","id":3,"result":{"stopReason":"end_turn"}}"# + "\n",
+          after: 2, call: prompt, on: work)
+        _ = try await peer.call("finish", work.fields(prompt))
+      }
+    }
+
+    @Test(arguments: ["truncated", "oversized"])
+    func vendorOutputFailureAfterFinalEventRetiresTheWorkload(_ kind: String) async throws {
+      let fixture = try Fixture(.print)
+      defer { fixture.base.remove() }
+      try await withVendor(fixture) { host, peer in
+        let work = try await acquire(
+          tool: "claude.run", arguments: ["prompt": .string(kind)], handle: "a",
+          fixture: fixture, host: host, peer: &peer)
+        let run = work.acquisition
+        _ = try await peer.call("launch", work.fields(run))
+        try await peer.expectOutput(
+          #"{"type":"result","is_error":false}"# + "\n", after: 0, call: run, on: work)
+        try Data().write(to: fixture.base.source.appendingPathComponent("release-output"))
+        var fields = work.fields(run)
+        fields["after"] = .integer(1)
+        let expected = kind == "truncated" ? "vendor_output_truncated" : "vendor_output_failed"
+        let deadline = ContinuousClock.now + .seconds(8)
+        while true {
+          let reply = try await peer.exchange("read", fields)
+          if let failure = reply["error"]?.stringValue {
+            #expect(failure == expected)
+            break
+          }
+          try #require(reply["result"]?.objectValue?["eof"] == .bool(false))
+          try #require(.now < deadline)
+        }
+        var receipt = try await peer.call("receipt", fields)
+        while receipt["retired"] != .bool(true) {
+          try #require(.now < deadline)
+          try await Task.sleep(for: .milliseconds(20))
+          receipt = try await peer.call("receipt", fields)
+        }
+        #expect(receipt["workload_state"] == .string("retired"))
+        #expect(receipt["output_error"] == .string(expected))
+        if kind == "truncated" { #expect(receipt["exit_code"] == .integer(0)) }
+        #expect(try await peer.rejection("read", fields) == expected)
+      }
+    }
+
+    private func withVendor(
+      _ fixture: Fixture, _ body: (VendorExecutionSession, inout Peer) async throws -> Void
+    ) async throws {
+      let host = try VendorExecutionSession(
+        source: fixture.vendor, launcher: fixture.base.platform.launcher)
+      let transport = try MCPInheritedSocketTransport(
+        takingOwnershipOf: host.providerChannel.takeEndpoint())
+      try await transport.connect()
+      var peer = Peer(transport: transport, replies: await transport.receive().makeAsyncIterator())
+      do {
+        _ = try await peer.call(
+          "initialize", ["capability": .string(VendorExecutionSource.capability)])
+        try await body(host, &peer)
+      } catch {
+        await transport.disconnect()
+        await host.close()
+        try? await fixture.cleanup()
+        throw error
+      }
+      await transport.disconnect()
+      await host.close()
+      #expect(await host.shutdownConfirmed())
+      try await fixture.cleanup()
+    }
+
+    private func acquire(
+      tool: String, arguments: [String: JSONValue], handle: String, detached: Bool = false,
+      fixture: Fixture, host: VendorExecutionSession, peer: inout Peer
+    ) async throws -> Workload {
+      let execution = try await fixture.prepare(tool)
+      let id = UUID()
+      try await host.admit(id: id, tool: tool, arguments: arguments, execution: execution)
+      var fields: [String: JSONValue] = [
+        "call": .string(id.uuidString), "acquisition": .string(id.uuidString),
+      ]
+      if detached {
+        _ = try await peer.call("detach", fields)
+        await host.returned(id, confirmed: true)
+        try execution.finishAdmission()
+      }
+      let session = String(repeating: handle, count: 32)
+      fields["session"] = .string(session)
+      let receipt = try await peer.call("bind", fields)
+      fields["child"] = .string(try #require(receipt["probe"]?.stringValue))
+      let probe = try await peer.call("probe", fields)
+      #expect(probe["probe_state"] == .string("retired"))
+      let workload = try #require(receipt["workload"]?.stringValue.flatMap(UUID.init(uuidString:)))
+      return Workload(acquisition: id, child: workload, handle: session)
     }
 
     private func open(
@@ -386,15 +684,18 @@
     }
 
     private final class Fixture {
+      enum Vendor { case acp, print, trae }
+
       let base: WorktreeServiceFixture
       let adapter: URL
       let executable: URL
       let source: GatewayProviderSource
       let vendor: VendorExecutionSource
       let pluginID: String
+      let server: MCPServerConfig
       private var preparations: [PreparedExecutionContext] = []
 
-      init(claudePrint: Bool = false) throws {
+      init(_ profile: Vendor = .acp, adapterSource: String = "pass") throws {
         let base = try WorktreeServiceFixture()
         self.base = base
         let root = base.root.appendingPathComponent("package")
@@ -404,10 +705,14 @@
         }
         adapter = root.appendingPathComponent("adapter")
         executable = tools.appendingPathComponent("vendor-peer")
-        try writePythonTestExecutable("pass", to: adapter)
-        pluginID = claudePrint ? "claude" : "vendor-fixture"
-        let component = claudePrint ? "stream" : "acp"
-        let dependency = claudePrint ? "claude-code" : "peer"
+        try writePythonTestExecutable(adapterSource, to: adapter)
+        let component: String
+        let dependency: String
+        switch profile {
+        case .acp: (pluginID, component, dependency) = ("vendor-fixture", "acp", "peer")
+        case .print: (pluginID, component, dependency) = ("claude", "stream", "claude-code")
+        case .trae: (pluginID, component, dependency) = ("trae", "acp", "trae-cli")
+        }
         let printPeer = #"""
           #!/bin/sh
           if [ "$#" -eq 1 ] && [ "$1" = --version ]; then
@@ -415,10 +720,16 @@
             exit 0
           fi
           if IFS= read -r unexpected; then exit 91; fi
-          [ "$#" -eq 9 ] && [ "$1" = -p ] && [ "$7" = dontAsk ] &&
-            [ "$8" = -- ] && [ "$9" = --text ] || exit 92
-          printf 'received prompt after EOF\n'
-          exit 23
+          [ "$#" -eq 9 ] && [ "$1" = -p ] && [ "$7" = dontAsk ] && [ "$8" = -- ] || exit 92
+          case "$9" in
+            --text) printf 'received prompt after EOF\n'; exit 23 ;;
+            truncated|oversized)
+              printf '{"type":"result","is_error":false}\n'
+              while [ ! -f release-output ]; do /bin/sleep 0.02; done
+              if [ "$9" = truncated ]; then printf '{"type":'; else printf '%1048576s' ''; fi
+              exit 0 ;;
+          esac
+          exit 92
           """#
         let acpPeer = #"""
           #!/bin/sh
@@ -441,14 +752,31 @@
             esac
           done
           """#
-        try (claudePrint ? printPeer : acpPeer).write(
-          to: executable, atomically: true, encoding: .utf8)
+        if profile == .trae {
+          try writePythonTestExecutable(
+            #"""
+            import json, sys
+            if sys.argv[1:] == ['--version']:
+                print('TRAE test peer')
+                sys.exit(0)
+            for line in sys.stdin:
+                request = json.loads(line)
+                results = {'initialize': {'protocolVersion': 1, 'agentCapabilities': {}},
+                           'session/new': {'sessionId': 'native'},
+                           'session/prompt': {'stopReason': 'end_turn'}}
+                reply = {'jsonrpc': '2.0', 'id': request['id'], 'result': results[request['method']]}
+                print(json.dumps(reply, separators=(',', ':')), flush=True)
+            """#, to: executable)
+        } else {
+          try (profile == .print ? printPeer : acpPeer).write(
+            to: executable, atomically: true, encoding: .utf8)
+        }
         try FileManager.default.setAttributes(
           [.posixPermissions: 0o700], ofItemAtPath: executable.path)
         let signature = root.appendingPathComponent("signature.json")
         let acpSignature = #"""
           {"capability":"io.github.computer-mcp/vendor-execution-v1","dependency":"peer",
-           "tools":{"open":"acquire","open_async":"detached_acquire","prompt":"prompt","stop":"stop","answer":"answer","list":"observe"},
+           "tools":{"open":"acquire","open_async":"detached_acquire","prompt":"prompt","stop":"stop","answer":"answer","close":"close","list":"observe"},
            "probe":["--version"],"workload":["acp"],"version_stdout":"ordinary-peer-1\n"}
           """#
         let printSignature = #"""
@@ -457,7 +785,20 @@
            "probe":["--version"],"workload":\#(ClaudePrintRecipeTests.recipe),
            "version_stdout":"deterministic print peer\n"}
           """#
-        try Data((claudePrint ? printSignature : acpSignature).utf8).write(to: signature)
+        let traeSignature = #"""
+          {"capability":"io.github.computer-mcp/vendor-execution-v1","dependency":"trae-cli",
+           "tools":{"trae.session.open":"detached_acquire","trae.session.prompt":"detached_prompt",
+                    "trae.session.close":"close","trae.permissions.respond":"answer","trae.turn.cancel":"stop"},
+           "probe":["--version"],"workload":["--sandbox","read-only","--ask-for-approval","on-request","-c",
+             "analytics.enabled=false","acp","serve"],"version_stdout":"TRAE test peer\n"}
+          """#
+        let recipe =
+          switch profile {
+          case .acp: acpSignature
+          case .print: printSignature
+          case .trae: traeSignature
+          }
+        try Data(recipe.utf8).write(to: signature)
         func digest(_ file: URL) throws -> String {
           SHA256.hash(data: try Data(contentsOf: file)).map { String(format: "%02x", $0) }.joined()
         }
@@ -503,7 +844,7 @@
           applications: TestApplicationBundleLocator())
         let composition = try GatewayPluginComposition(
           configuration: GatewayConfiguration(), plugins: resolved.plugins)
-        let server = try #require(composition.runtimeConfiguration.mcp.servers.first)
+        server = try #require(composition.runtimeConfiguration.mcp.servers.first)
         let owner = try GatewayPermissionOwner(
           context: .init(caller: .localApp, profileID: .localAdmin, trustedPrincipalID: "owner"),
           validate: {})

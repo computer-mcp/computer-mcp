@@ -235,7 +235,7 @@ package final class MCPProxyClient: DownstreamMCPClient, @unchecked Sendable {
     }
     let host = context.admission?.hostDispatch(for: server, tool: name)
     do {
-      return try run(server: server, context: context) { connection in
+      return try run(server: server, context: context, settlesManagedWaiter: true) { connection in
         try await connection.callTool(
           name: name, arguments: object, gatewayRequestID: requestID, cancellation: cancellation,
           retainsResult: retainsResult, execution: execution,
@@ -542,6 +542,7 @@ package final class MCPProxyClient: DownstreamMCPClient, @unchecked Sendable {
     context: InvocationContext, discovery: Bool = false,
     discoveryReplacement: GatewayDiscoverySelection? = nil,
     discoveryCaller: GatewayDiscoveryCaller? = nil,
+    settlesManagedWaiter: Bool = false,
     operation: @escaping @Sendable (MCPProxyConnection) async throws -> T
   ) throws -> T {
     try discoveryCaller?.check()
@@ -583,7 +584,8 @@ package final class MCPProxyClient: DownstreamMCPClient, @unchecked Sendable {
       try discoveryCaller?.check()
       return try runExisting(
         server: server, connection: connection, context: operationContext,
-        discoveryCaller: discoveryCaller, operation: operation)
+        discoveryCaller: discoveryCaller, settlesManagedWaiter: settlesManagedWaiter,
+        operation: operation)
     } catch let expired as GatewayDiscoveryExpired {
       try discoveryCaller?.check()
       guard discovery, server.transport == .stdio, context.continuationTarget == nil,
@@ -604,6 +606,7 @@ package final class MCPProxyClient: DownstreamMCPClient, @unchecked Sendable {
     phase: String = "request",
     context: InvocationContext,
     discoveryCaller: GatewayDiscoveryCaller? = nil,
+    settlesManagedWaiter: Bool = false,
     operation: @escaping @Sendable (MCPProxyConnection) async throws -> T
   ) throws -> T {
     try discoveryCaller?.check()
@@ -630,12 +633,14 @@ package final class MCPProxyClient: DownstreamMCPClient, @unchecked Sendable {
 
     guard box.wait(timeoutMilliseconds: timeout) else {
       try discoveryCaller?.check()
-      // Retirement owns cancellation delivery and joins it after closing the transport.
-      // Cancelling only this bridge would leave an SDK request or a startup task alive.
       if phase == "request", let vendorExecution = connection.vendorExecution,
         let prepared = execution as? PreparedExecutionContext
       {
-        Task { await vendorExecution.timeOut(prepared.executionID) }
+        if settlesManagedWaiter {
+          task.cancel()
+        } else {
+          Task { await vendorExecution.timeOut(prepared.executionID) }
+        }
       } else {
         pool.invalidate(server: server, connection: connection)
         task.cancel()
@@ -1042,6 +1047,7 @@ private actor MCPProxyConnection {
     let work: GatewayOwnedWork.Lease?
     let invocation: MCPHostToolDirectory.InvocationLease?
     let providerInvocationID: UUID?
+    let managedObservation: Bool
   }
   private var requestOwnership: [UUID: RequestOwnership] = [:]
   private var providerWork: MCPProviderWork?
@@ -1166,6 +1172,8 @@ private actor MCPProxyConnection {
     }
     defer { reservedRequestIDs.remove(gatewayRequestID) }
 
+    let vendor = vendorExecution
+    let managedRequest = vendor.map { _ in ManagedMCPRequest() }
     let cancel: @Sendable () async -> Void = { [weak self] in
       await self?.cancelRetainedWork(gatewayRequestID: gatewayRequestID)
     }
@@ -1182,7 +1190,7 @@ private actor MCPProxyConnection {
     }
     let (context, ownership) = try await dispatchTool(
       name: name, arguments: arguments, gatewayRequestID: gatewayRequestID,
-      host: host, continuation: continuation, execution: execution)
+      host: host, continuation: continuation, execution: execution, managedRequest: managedRequest)
     var confirmedResponse = false
     defer { settleOwnership(ownership, confirmed: confirmedResponse) }
     guard closeTask == nil else {
@@ -1203,7 +1211,6 @@ private actor MCPProxyConnection {
         $0.downstreamRequestID = context.requestID.description
       }
     }
-    let vendor = vendorExecution
     let handleCancellationFailure: @Sendable () -> Void = {
       if let vendor, let vendorInvocationID {
         Task { await vendor.stopInvocation(vendorInvocationID) }
@@ -1254,7 +1261,20 @@ private actor MCPProxyConnection {
     }
     let result: CallTool.Result
     do {
-      result = try await context.value
+      result = try await withTaskCancellationHandler {
+        try await context.value
+      } onCancel: { [client] in
+        guard let managedRequest else { return }
+        if let vendor, let vendorInvocationID {
+          Task { await vendor.stopInvocation(vendorInvocationID) }
+        }
+        Task {
+          if await managedRequest.cancel() {
+            try? await client.cancelRequest(
+              context.requestID, reason: "Host request deadline elapsed.")
+          }
+        }
+      }
       confirmedResponse = true
     } catch {
       confirmedResponse = Self.isResponseError(error)
@@ -1630,7 +1650,7 @@ private actor MCPProxyConnection {
   private func dispatchTool(
     name: String, arguments: [String: JSONValue], gatewayRequestID: String,
     host: HostServiceDispatch?, continuation: MCPContinuationTarget?,
-    execution: PreparedExecutionContext
+    execution: PreparedExecutionContext, managedRequest: ManagedMCPRequest? = nil
   ) async throws -> (RequestContext<CallTool.Result>, RequestOwnership?) {
     if !workCatalogObserved && initializeResult?.capabilities.resources != nil {
       _ = try await listTools()
@@ -1654,10 +1674,10 @@ private actor MCPProxyConnection {
         try providerWork.validate(continuation, tool: name, arguments: .object(arguments))
       }
     }
+    let managedObservation = vendorExecution?.observationTools.contains(name) == true
     try MCPProviderSessionAuthority.requireMatch(
       admitted: execution, running: preparedExecution,
-      managedObservation: continuation != nil
-        && vendorExecution?.observationTools.contains(name) == true)
+      managedObservation: continuation != nil && managedObservation)
     let invocation: MCPHostToolDirectory.InvocationLease?
     if let hostInvocationID {
       guard let hostTools, let projectID else { throw MCPError.connectionClosed }
@@ -1667,14 +1687,15 @@ private actor MCPProxyConnection {
       invocation = nil
     }
     let workContext: MCPHostToolDirectory.InvocationLease?
-    if providerWork != nil, let hostInvocationID, let hostTools, let projectID {
+    if !managedObservation, providerWork != nil, let hostInvocationID, let hostTools, let projectID
+    {
       workContext = try hostTools.retainWork(
         id: hostInvocationID, projectID: projectID, origin: server.id)
     } else {
       workContext = nil
     }
     let providerLease: ExecutionWorkLease?
-    if execution.provider != nil {
+    if execution.provider != nil, !managedObservation {
       if providerWork != nil {
         let cancel: @Sendable () async -> Void = { [weak self, vendorExecution] in
           if let vendorExecution {
@@ -1705,15 +1726,18 @@ private actor MCPProxyConnection {
     }
     let providerInvocationID: UUID?
     do {
-      providerInvocationID = try providerWork?.beginInvocation(
-        tool: name, hostContext: workContext, executionLease: providerLease,
-        execution: execution.provider == nil ? nil : execution)
+      providerInvocationID =
+        if managedObservation { nil } else {
+          try providerWork?.beginInvocation(
+            tool: name, hostContext: workContext, executionLease: providerLease,
+            execution: execution.provider == nil ? nil : execution)
+        }
     } catch {
       try? providerLease?.finish()
       throw error
     }
     // A response from a provider without lifetime reporting cannot prove background work drained.
-    if providerWork == nil, unreportedWork == nil {
+    if !managedObservation, providerWork == nil, unreportedWork == nil {
       unreportedWork = ownedWork?.retain(
         .mcpUnreportedWork, projectID: projectID, registrationID: server.id,
         resourceID: connectionID.uuidString, connectionID: connectionID)
@@ -1723,16 +1747,20 @@ private actor MCPProxyConnection {
       .mcpRequest, projectID: projectID, registrationID: server.id,
       resourceID: gatewayRequestID, connectionID: connectionID)
     let ownership =
-      work != nil || invocation != nil || providerInvocationID != nil
+      work != nil || invocation != nil || providerInvocationID != nil || managedObservation
       ? RequestOwnership(
-        work: work, invocation: invocation, providerInvocationID: providerInvocationID) : nil
+        work: work, invocation: invocation, providerInvocationID: providerInvocationID,
+        managedObservation: managedObservation) : nil
     if let ownership { requestOwnership[ownership.id] = ownership }
     var forwarding = false
     do {
       if let vendorExecution {
-        guard let providerInvocationID else { throw PermissionModelError.invalidAuthorization }
+        guard providerWork != nil, managedObservation || providerInvocationID != nil else {
+          throw PermissionModelError.invalidAuthorization
+        }
         try await vendorExecution.admit(
-          id: providerInvocationID, tool: name, arguments: arguments, execution: execution)
+          id: providerInvocationID ?? UUID(), tool: name, arguments: arguments, execution: execution
+        )
       }
       var fields: [String: MCP.Value] = [:]
       if let hostInvocationID {
@@ -1747,12 +1775,15 @@ private actor MCPProxyConnection {
       }
       let meta = fields.isEmpty ? nil : MCP.Metadata(additionalFields: fields)
       guard closeTask == nil else { throw MCPError.connectionClosed }
+      if managedRequest != nil { try Task.checkCancellation() }
       forwarding = true
-      return (
+      let request: RequestContext<CallTool.Result> = try await ManagedMCPRequest.$current.withValue(
+        managedRequest
+      ) {
         try await client.callTool(
-          name: name, arguments: arguments.mapValues(\.sdkValue), meta: meta),
-        ownership
-      )
+          name: name, arguments: arguments.mapValues(\.sdkValue), meta: meta)
+      }
+      return (request, ownership)
     } catch {
       settleOwnership(ownership, confirmed: !forwarding || Self.isResponseError(error))
       throw error
@@ -1767,8 +1798,10 @@ private actor MCPProxyConnection {
       if let vendorExecution { Task { await vendorExecution.returned(id, confirmed: confirmed) } }
       providerWork?.finishInvocation(id, confirmed: confirmed && providerResponse)
       refreshProviderWork()
+    } else if ownership.managedObservation {
+      refreshProviderWork()
     }
-    if confirmed {
+    if confirmed || ownership.managedObservation {
       ownership.work?.finish()
       ownership.invocation?.finish()
       requestOwnership.removeValue(forKey: ownership.id)

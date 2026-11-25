@@ -7,6 +7,31 @@ import Foundation
 import Logging
 import MCP
 
+/// The SDK installs its pending waiter before entering transport.send.
+package actor ManagedMCPRequest {
+  @TaskLocal package static var current: ManagedMCPRequest?
+
+  private var sending = false
+  private var cancelled = false
+
+  package init() {}
+
+  func beginSend() throws {
+    try checkCancellation()
+    sending = true
+  }
+
+  func checkCancellation() throws {
+    if cancelled { throw CancellationError() }
+  }
+
+  /// Before send, a refusal at the transport completes the SDK waiter itself.
+  package func cancel() -> Bool {
+    cancelled = true
+    return sending
+  }
+}
+
 /// MCP framing over the same owned-process primitive used by other stdio adapters.
 package actor MCPChildProcessTransport: MCP.Transport {
   package nonisolated let logger: Logger
@@ -236,7 +261,12 @@ package actor MCPChildProcessTransport: MCP.Transport {
     {
       vendorInitializeID = request["id"]
     }
-    try await process.sendLine(line)
+    if let request = ManagedMCPRequest.current {
+      try await request.beginSend()
+      try await process.sendLine(line) { try await request.checkCancellation() }
+    } else {
+      try await process.sendLine(line)
+    }
   }
 
   package func receive() -> AsyncThrowingStream<Data, Swift.Error> { stream }

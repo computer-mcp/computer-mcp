@@ -57,6 +57,7 @@ package enum ManagedLineProcessError: Error, LocalizedError, Sendable {
   case bufferOverflow
   case launchFailed(String)
   case oversizedMessage(Int)
+  case unterminatedOutput
   case terminationTimedOut(processID: Int32?)
 
   package var errorDescription: String? {
@@ -71,6 +72,8 @@ package enum ManagedLineProcessError: Error, LocalizedError, Sendable {
       return "Could not launch the gateway-owned process: \(message)"
     case .oversizedMessage(let limit):
       return "Managed process emitted a protocol line larger than \(limit) bytes."
+    case .unterminatedOutput:
+      return "Managed process stdout ended within a protocol line."
     case .terminationTimedOut(let processID):
       return
         "Managed process \(processID.map(String.init) ?? "unknown") did not exit after SIGKILL."
@@ -95,6 +98,7 @@ package final class ManagedLineProcess: @unchecked Sendable {
     var maximumMessageBytes: Int
     var ownerProcessID: Int32
     var closesInputOnLaunch: Bool
+    var requiresCompleteOutputLines: Bool
     /// Explicit descriptors inherited only by the owned command, never its watchdog.
     var inheritedDescriptors: [Int32: FileHandle]
     /// Retained through prepared execution completion. Owner-administration
@@ -112,6 +116,7 @@ package final class ManagedLineProcess: @unchecked Sendable {
       maximumMessageBytes: Int = 1_024 * 1_024,
       ownerProcessID: Int32 = getpid(),
       closesInputOnLaunch: Bool = false,
+      requiresCompleteOutputLines: Bool = false,
       inheritedDescriptors: [Int32: FileHandle] = [:],
       ownershipHandle: FileHandle? = nil
     ) {
@@ -125,6 +130,7 @@ package final class ManagedLineProcess: @unchecked Sendable {
       self.maximumMessageBytes = maximumMessageBytes
       self.ownerProcessID = ownerProcessID
       self.closesInputOnLaunch = closesInputOnLaunch
+      self.requiresCompleteOutputLines = requiresCompleteOutputLines
       self.inheritedDescriptors = inheritedDescriptors
       self.ownershipHandle = ownershipHandle
     }
@@ -424,7 +430,8 @@ package final class ManagedLineProcess: @unchecked Sendable {
         await state.inputBodyReturning()
         await outputReader.stop(drainRemainingOutput: true)
         await errorReader.stop(drainRemainingOutput: true)
-        await state.finish(status: outcome)
+        await state.finish(
+          status: outcome, requiresCompleteOutputLines: configuration.requiresCompleteOutputLines)
       } catch {
         writer?.cancel()
         if let execution = owner.withLockedValue({ $0 }) { await execution.cancelAndWait() }
@@ -659,9 +666,7 @@ private actor ManagedLineProcessState {
     guard !data.isEmpty else { return }
     outputBuffer.append(data)
     guard outputBuffer.count <= maximumMessageBytes || outputBuffer.contains(0x0A) else {
-      let error = ManagedLineProcessError.oversizedMessage(maximumMessageBytes)
-      continuation.finish(throwing: error)
-      throw error
+      throw ManagedLineProcessError.oversizedMessage(maximumMessageBytes)
     }
 
     while let newline = outputBuffer.firstIndex(of: 0x0A) {
@@ -671,16 +676,12 @@ private actor ManagedLineProcessState {
       }
       outputBuffer.removeSubrange(...newline)
       guard line.count <= maximumMessageBytes else {
-        let error = ManagedLineProcessError.oversizedMessage(maximumMessageBytes)
-        continuation.finish(throwing: error)
-        throw error
+        throw ManagedLineProcessError.oversizedMessage(maximumMessageBytes)
       }
       guard let text = String(data: line, encoding: .utf8) else {
-        let error = ManagedLineProcessError.launchFailed(
+        throw ManagedLineProcessError.launchFailed(
           "Managed process stdout was not valid UTF-8."
         )
-        continuation.finish(throwing: error)
-        throw error
       }
       switch continuation.yield(text) {
       case .enqueued: break
@@ -722,18 +723,22 @@ private actor ManagedLineProcessState {
   }
 
   func recordStreamError(_ error: Error) {
-    guard state != .stopped else { return }
+    guard state != .stopped, lastError == nil else { return }
     lastError = Self.safeMessage(error)
     continuation.finish(throwing: error)
   }
 
-  func finish(status: ExecutionExit) {
+  func finish(status: ExecutionExit, requiresCompleteOutputLines: Bool = false) {
     launchFinished = true
     exitCode = status.signal == nil ? status.status : nil
     signal = status.signal
     input.stop()
     execution = nil
     stoppedAt = Date()
+    if requiresCompleteOutputLines, !outputBuffer.isEmpty {
+      recordStreamError(ManagedLineProcessError.unterminatedOutput)
+    }
+    outputBuffer.removeAll()
     if state != .failed {
       state = .stopped
     }

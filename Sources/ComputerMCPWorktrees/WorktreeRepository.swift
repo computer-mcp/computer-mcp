@@ -395,11 +395,14 @@ extension WorktreeGit {
   ) throws {
     let names = try configurationNames(at: root, gitDirectory: gitDirectory)
     let overrides = try HostGitConfiguration.overrides(for: names)
-    let arguments =
-      ["--git-dir=\(gitDirectory.path)", "--work-tree=\(root.path)", "--no-replace-objects"]
-      + HostGitConfiguration.arguments + overrides
-      + ["update-ref"] + (dereference ? [] : ["--no-deref"])
-      + ["--create-reflog", "-m", message, "--stdin"]
+    var arguments = [
+      "--git-dir=\(gitDirectory.path)", "--work-tree=\(root.path)", "--no-replace-objects",
+    ]
+    arguments.append(contentsOf: HostGitConfiguration.arguments)
+    arguments.append(contentsOf: overrides)
+    arguments.append("update-ref")
+    if !dereference { arguments.append("--no-deref") }
+    arguments.append(contentsOf: ["--create-reflog", "-m", message, "--stdin"])
     try checkAuthority()
     try executor.withPreparedTransaction(
       .init(

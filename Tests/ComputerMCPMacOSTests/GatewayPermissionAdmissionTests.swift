@@ -208,8 +208,10 @@ struct GatewayPermissionAdmissionTests {
     }
   }
 
-  @Test func machinePolicyTighteningReachesLiveWorkWithoutAnotherGatewayCall() async throws {
-    let fixture = try AdmissionFixture(permissions: [.screen: .granted(.access)])
+  @Test(arguments: [false, true])
+  func policyTighteningReachesLiveWorkWithoutAnotherGatewayCall(fromEditor: Bool) async throws {
+    let fixture = try AdmissionFixture(
+      permissions: [.screen: .granted(.access)], withoutEgress: true)
     try await fixture.run { fixture in
       _ = try payload(await fixture.call("project.list"))
       let runtime = fixture.gateway.permissionRuntime
@@ -239,7 +241,15 @@ struct GatewayPermissionAdmissionTests {
       let cancelled = AdmissionCancellation()
       let work = try prepared.retainWork { await cancelled.mark() }
       try prepared.finishAdmission()
-      fixture.reader.set(.machineFile, .available(Data("[permissions]\nscreen = 'deny'\n".utf8)))
+      let text = "[permissions]\nscreen = 'deny'\n"
+      if fromEditor {
+        let service = OwnerPolicyEditorService(control: fixture.control)
+        var editor = try await service.load(.profile(fixture.grant.id))
+        editor.draft = text
+        _ = try await service.save(editor)
+      } else {
+        fixture.reader.set(.machineFile, .available(Data("network = 'none'\n\(text)".utf8)))
+      }
       for _ in 0..<100 {
         if await cancelled.value { break }
         try await Task.sleep(for: .milliseconds(10))
@@ -468,7 +478,7 @@ private struct AdmissionFixture {
   init(
     permissions: [Permission: PermissionState], projectIDs: [String] = [],
     boundProjectID: String? = nil, fullAccess: Bool = false,
-    provider: AdmissionCountingProvider? = nil
+    provider: AdmissionCountingProvider? = nil, withoutEgress: Bool = false
   ) throws {
     root = FileManager.default.temporaryDirectory.appendingPathComponent("cm-admission-\(UUID())")
     try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
@@ -489,15 +499,23 @@ private struct AdmissionFixture {
       return project
     }
     var platform = fixtureHostedPlatform()
-    if let provider {
+    if provider != nil || withoutEgress {
+      let tools: any GatewayToolProviderFactory =
+        if let provider { AdmissionCountingFactory(provider: provider) } else {
+          platform.toolProviders
+        }
       platform = PlatformServices(
         launcher: platform.launcher, projectGrants: platform.projectGrants,
         pluginDirectories: platform.pluginDirectories, applications: platform.applications,
-        toolProviders: AdmissionCountingFactory(provider: provider),
+        toolProviders: tools,
         managementToolNames: platform.managementToolNames,
         executableSearchDirectories: platform.executableSearchDirectories,
         gitExecutable: platform.gitExecutable, fileChanges: platform.fileChanges,
-        executionProxy: platform.executionProxy, hostDataPaths: platform.hostDataPaths)
+        executionProxy: withoutEgress ? nil : platform.executionProxy,
+        hostDataPaths: platform.hostDataPaths)
+    }
+    if withoutEgress {
+      reader.set(.machineFile, .available(Data("network = 'none'".utf8)))
     }
     platform.permissionPolicyReader = reader
     let service = try database.permissionRuntime(platform: platform).service

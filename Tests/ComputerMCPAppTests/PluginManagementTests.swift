@@ -384,6 +384,11 @@ func render<V: View>(
   window.contentView = host
   defer { window.close() }
   host.layoutSubtreeIfNeeded()
+  window.display()
+  if host.bounds.size != size {
+    window.setContentSize(size)
+    host.layoutSubtreeIfNeeded()
+  }
   if scrollToBottom {
     func scrollViews(in view: NSView) -> [NSScrollView] {
       (view as? NSScrollView).map { [$0] } ?? view.subviews.flatMap { scrollViews(in: $0) }

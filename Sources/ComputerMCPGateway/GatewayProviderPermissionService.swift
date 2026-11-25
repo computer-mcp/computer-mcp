@@ -249,12 +249,15 @@ extension GatewayPermissionService {
 
   package func setOwnerPolicy(
     _ document: Data?, provider: PluginIdentity, owner: GatewayPermissionOwner,
-    expectedRevision: UInt64, now: Date = Date()
+    expectedRevision: UInt64, expectedEpoch: UUID? = nil, now: Date = Date()
   ) throws -> RevocationResult {
     let resolved = try document.map { try GatewayResolvedPolicy(bytes: $0, reader: policyReader) }
     return try transactionWithPolicy { database, ledger, policies in
       try owner.authorize()
       try Self.requireRevision(expectedRevision, database: database)
+      guard expectedEpoch.map({ $0 == ledger.authorizationEpochID }) ?? true else {
+        throw GatewayPermissionError.revisionConflict
+      }
       guard ledger.suspendedAuthority == nil && ledger.pendingEpochRecovery == nil,
         let epoch = ledger.authorizationEpochID,
         var record = try ProviderAuthorityRecord.load(provider, in: database)

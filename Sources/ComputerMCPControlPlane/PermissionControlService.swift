@@ -126,6 +126,31 @@ package final class PermissionControlService: Sendable {
     try service.setOwnerPolicy(
       document, provider: provider, owner: currentOwner(), expectedRevision: expectedRevision)
   }
+  func ownerPolicySnapshot(for target: GatewayOwnerPolicyTarget) throws
+    -> GatewayOwnerPolicySnapshot
+  {
+    try service.ownerPolicySnapshot(for: target, owner: currentOwner())
+  }
+
+  func validateOwnerPolicy(_ document: Data) throws {
+    try service.validateOwnerPolicy(document, owner: currentOwner())
+  }
+
+  func writeOwnerPolicy(
+    _ document: Data?, target: GatewayOwnerPolicyTarget, revision: UInt64, epoch: UUID
+  ) throws {
+    let owner = try currentOwner()
+    switch target {
+    case .profile(let id):
+      _ = try service.setOwnerPolicy(
+        document, profileID: id, owner: owner, expectedRevision: revision, expectedEpoch: epoch)
+    case .provider(let identity):
+      _ = try service.setOwnerPolicy(
+        document, provider: identity, owner: owner, expectedRevision: revision, expectedEpoch: epoch
+      )
+    }
+  }
+
   func currentOwner() throws -> GatewayPermissionOwner {
     let proof = try owner()
     guard let context = PermissionOwnerAuditScope.context else { return proof }

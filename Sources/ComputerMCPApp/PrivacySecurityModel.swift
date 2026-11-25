@@ -336,7 +336,7 @@ extension PrivacyRequest {
 }
 
 struct PrivacyManagedSource: Identifiable, Hashable, Sendable {
-  enum State: Hashable, Sendable { case active, unreadable }
+  enum State: Hashable, Sendable { case active, unreadable, absent }
 
   let id: String
   let name: String
@@ -345,6 +345,7 @@ struct PrivacyManagedSource: Identifiable, Hashable, Sendable {
   var profileID: GatewayProfileID?
   var provider: PluginIdentity?
   var revision: String?
+  var failure: String?
 }
 
 struct PrivacySystemPermission: Identifiable, Hashable, Sendable {
@@ -391,6 +392,7 @@ enum PrivacyRequestAnswer: Hashable, Sendable {
 
 @MainActor
 protocol PrivacySecurityService: AnyObject {
+  func ownerPolicyEditorService() async throws -> OwnerPolicyEditorService
   func privacySnapshot() async throws -> PrivacySnapshot
   func answer(request id: String, with answer: PrivacyRequestAnswer, reviewed: PrivacySnapshot)
     async throws
@@ -405,6 +407,12 @@ protocol PrivacySecurityService: AnyObject {
   func openSystemSettings(for permission: PrivacySystemPermission.Kind)
 }
 
+extension PrivacySecurityService {
+  func ownerPolicyEditorService() async throws -> OwnerPolicyEditorService {
+    throw GatewayPermissionError.localOwnerRequired
+  }
+}
+
 @MainActor
 final class PrivacySecurityModel: ObservableObject {
   @Published var path: [PrivacyRoute] = []
@@ -417,6 +425,10 @@ final class PrivacySecurityModel: ObservableObject {
   init(service: any PrivacySecurityService, clientAccess: ClientAccessModel? = nil) {
     self.clientAccess = clientAccess
     self.service = service
+  }
+
+  func ownerPolicyEditorService() async throws -> OwnerPolicyEditorService {
+    try await service.ownerPolicyEditorService()
   }
 
   func refresh() async {

@@ -1,3 +1,4 @@
+import AppKit
 import ComputerMCPMacOS
 import ComputerMCPPermissions
 import ComputerMCPProcess
@@ -9,6 +10,7 @@ import ComputerMCPWorktrees
 import Darwin
 import Foundation
 import GRDB
+import SwiftUI
 import Testing
 
 @testable import ComputerMCPApp
@@ -465,6 +467,159 @@ final class LiveAppControlPlaneTests {
   }
 
   @Test
+  func privacySettingsUsesLiveOwnerPolicyEditor() async throws {
+    try await withAppControlPlaneFixture { fixture in
+      let privacy = LivePrivacySecurityService(controlPlane: fixture.app)
+      let model = PrivacySecurityModel(service: privacy)
+      let service = try await model.ownerPolicyEditorService()
+      var editor = try await service.load(.profile(.chatGPTOperate))
+      editor.draft = "[permissions]\nscreen = 'deny'"
+      _ = try await service.save(editor)
+      let snapshot = try await privacy.privacySnapshot()
+      #expect(snapshot.managedSources.contains { $0.profileID == .chatGPTOperate })
+      let screen = try #require(
+        snapshot.grants.first {
+          $0.principalID == GatewayProfileID.chatGPTOperate.rawValue && $0.permission == .screen
+        })
+      #expect(screen.effectiveValue == .denied)
+    }
+  }
+
+  @Test
+  func ownerPolicyKeyboardActionsPreserveDraftThroughStaleReviewAndReload() async throws {
+    try await withAppControlPlaneFixture { fixture in
+      let privacy = PrivacySecurityModel(
+        service: LivePrivacySecurityService(controlPlane: fixture.app))
+      fixture.policyReader.set(.machineFile, .unreadable("fixture machine policy unavailable"))
+      await privacy.refresh()
+      let machine = try #require(
+        privacy.snapshot.managedSources.first { $0.name == "Machine Policy" })
+      #expect(machine.state == .unreadable)
+      #expect(machine.failure == "fixture machine policy unavailable")
+      let application = NSApplication.shared
+      application.setActivationPolicy(.accessory)
+      application.finishLaunching()
+
+      let l = PrivacyText(locale: Locale(identifier: "en"))
+      let target = try #require(
+        PrivacyOwnerPolicyTarget.all(in: privacy.snapshot, using: l).first {
+          $0.id == .profile(.chatGPTOperate)
+        })
+      #expect(target.actionID == "privacy.policySource.profile.chatgpt-operate.editButton")
+      #expect(target.source(in: privacy.snapshot) == nil)
+
+      let model = OwnerPolicyEditorModel(target: target, privacy: privacy)
+      await model.load()
+      let window = policyTestWindow(
+        OwnerPolicyEditorView(model: model, close: {}).environment(\.locale, l.locale), height: 720)
+      defer { window.close() }
+
+      model.draft = "[execution]\ntime_ms = -1"
+      try await sendPolicyShortcut("s", keyCode: 1, to: window)
+      try await waitForPolicyState { if case .parser = model.issue { true } else { false } }
+      #expect(model.draft == "[execution]\ntime_ms = -1")
+      #expect(model.editor?.savedText == nil)
+
+      let external = try await privacy.ownerPolicyEditorService()
+      var other = try await external.load(target.id)
+      other.draft = "full_access = false"
+      _ = try await external.save(other)
+      let draft = "[permissions]\nscreen = 'deny'"
+      model.draft = draft
+      try await sendPolicyShortcut("s", keyCode: 1, to: window)
+      try await waitForPolicyState { model.isStale && !model.busy }
+      #expect(model.draft == draft)
+      #expect(!model.canSave && !model.canClear)
+      await model.reviewCurrent()
+      try await waitForPolicyState { model.currentReview != nil && !model.busy }
+      #expect(model.currentReview?.savedText == other.draft)
+      model.acceptReview(keepingDraft: true)
+      #expect(model.draft == draft)
+      #expect(model.canSave)
+      try await sendPolicyShortcut("s", keyCode: 1, to: window)
+      try await waitForPolicyState { model.editor?.requiresReload == true && !model.busy }
+      #expect(model.editor?.savedText == draft)
+      try await sendPolicyShortcut("r", keyCode: 15, to: window)
+      try await waitForPolicyState { model.editor?.requiresReload == false && !model.busy }
+      #expect(model.draft == draft)
+      #expect(try await external.load(target.id).savedText == draft)
+      #expect(target.source(in: privacy.snapshot)?.state == .active)
+      #expect(model.canClear)
+      await model.clear()
+      try await waitForPolicyState { model.editor?.requiresReload == true && !model.busy }
+      #expect(model.editor?.savedText == nil)
+      try await sendPolicyShortcut("r", keyCode: 15, to: window)
+      try await waitForPolicyState { model.editor?.requiresReload == false && !model.busy }
+      #expect(target.source(in: privacy.snapshot)?.state == .absent)
+    }
+  }
+
+  @Test
+  func ownerPolicyRendersWithLiveSourcesAcrossLocalesAndAppearances() async throws {
+    try await withAppControlPlaneFixture { fixture in
+      let machine = """
+        network = { level = "custom", hosts = ["ci.build.example"], include_trusted = false }
+        [projects]
+        "*" = "deny"
+        [execution]
+        time_ms = 1000
+        """
+      fixture.policyReader.set(.machineFile, .available(Data(machine.utf8)))
+      let privacy = PrivacySecurityModel(
+        service: LivePrivacySecurityService(controlPlane: fixture.app))
+      await privacy.refresh()
+      let target = PrivacyOwnerPolicyTarget(id: .profile(.chatGPTOperate), title: "ChatGPT")
+      let model = OwnerPolicyEditorModel(target: target, privacy: privacy)
+      await model.load()
+      model.draft = """
+        network = { level = "custom", hosts = ["*.build.example"], include_trusted = false }
+        [projects]
+        "*" = "read"
+        [execution]
+        time_ms = 5000
+        """
+      await model.save()
+      await model.reload()
+      let snapshot = try #require(model.editor?.reviewed)
+      let context = try #require(snapshot.limits.first)
+      #expect(try context.executionLimits(for: .foreground).timeMilliseconds == 1000)
+      let project = context.effective.permissionCeiling(for: .project("*"))
+      #expect(project.value == nil)
+      #expect(project.sources == [.machine])
+      let outbound = context.effective.networkCeiling(trustedHosts: snapshot.trustedHosts)
+      #expect(
+        outbound.configuration == .custom(hosts: ["ci.build.example"], includesTrusted: false))
+      #expect(outbound.sources == [.machine])
+      #expect(model.editor?.savedText?.contains("5000") == true)
+
+      let resources = try PrivacySecurityViewTests.compiledCatalog()
+      defer { try? FileManager.default.removeItem(at: resources.bundleURL) }
+      for locale in ["en", "zh-Hans"] {
+        for dark in [false, true] {
+          let appearance = try #require(NSAppearance(named: dark ? .darkAqua : .aqua))
+          let suffix = "\(locale)-\(dark ? "dark" : "light")"
+          let editor = OwnerPolicyEditorView(model: model, close: {}).styled(
+            locale, dark, resources)
+          try render(
+            editor, size: NSSize(width: 660, height: 720), appearance: appearance,
+            name: "h15-owner-editor-" + suffix)
+          try render(
+            editor, size: NSSize(width: 660, height: 720), appearance: appearance,
+            name: "h15-owner-limits-" + suffix, scrollToBottom: true)
+          try render(
+            Form { PrivacyPolicySourcesSection(snapshot: privacy.snapshot) { _ in } }
+              .formStyle(.grouped).styled(locale, dark, resources),
+            size: NSSize(width: 660, height: 580), appearance: appearance,
+            name: "h15-policy-sources-" + suffix)
+        }
+      }
+      let zh = PrivacyText(locale: Locale(identifier: "zh-Hans"), resources: resources)
+      #expect(zh("Effective Limits") == "实际生效的限制")
+      #expect(zh("Review Current Source") == "查看当前来源")
+    }
+  }
+
+  @Test
   func h12NetworkEditKeepsUnchangedPermissionIdentities() async throws {
     try await withAppControlPlaneFixture { fixture in
       let host = fixture.controlPlane
@@ -595,6 +750,11 @@ final class LiveAppControlPlaneTests {
       #expect(provider.availability == .active)
       #expect(provider.effectiveMode == .sandbox)
       #expect(approved.reviewedProfiles == initial.reviewedProfiles)
+      let target = try #require(
+        PrivacyOwnerPolicyTarget.all(in: approved, using: .init(locale: Locale(identifier: "en")))
+          .first { $0.id == .provider(.localServer("local-fixture")) })
+      #expect(target.actionID == "privacy.policySource.localServer.local-fixture.editButton")
+      #expect(target.source(in: approved)?.state == .absent)
 
       var screen = try #require(
         approved.grants.first {
@@ -1550,6 +1710,43 @@ final class LiveAppControlPlaneTests {
       throw error
     }
   }
+}
+
+@MainActor
+private func policyTestWindow(_ view: some View, height: CGFloat) -> NSWindow {
+  _ = NSApplication.shared
+  let frame = NSRect(x: 0, y: 0, width: 660, height: height)
+  let window = NSWindow(contentRect: frame, styleMask: [.titled], backing: .buffered, defer: false)
+  window.isReleasedWhenClosed = false
+  let controller = NSHostingController(rootView: view)
+  controller.sizingOptions = []
+  controller.view.frame = frame
+  window.contentViewController = controller
+  window.makeKeyAndOrderFront(nil)
+  controller.view.layoutSubtreeIfNeeded()
+  window.display()
+  return window
+}
+
+@MainActor
+private func waitForPolicyState(_ condition: () -> Bool) async throws {
+  let deadline = ContinuousClock.now.advanced(by: .seconds(3))
+  while !condition(), ContinuousClock.now < deadline {
+    try await Task.sleep(for: .milliseconds(20))
+  }
+  try #require(condition(), "Owner policy action did not reach its expected state")
+}
+
+@MainActor
+private func sendPolicyShortcut(_ key: String, keyCode: UInt16, to window: NSWindow) async throws {
+  try await Task.sleep(for: .milliseconds(50))
+  let event = try #require(
+    NSEvent.keyEvent(
+      with: .keyDown, location: .zero, modifierFlags: .command,
+      timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: window.windowNumber,
+      context: nil, characters: key, charactersIgnoringModifiers: key, isARepeat: false,
+      keyCode: keyCode))
+  try #require(window.performKeyEquivalent(with: event), "Command-\(key.uppercased())")
 }
 
 @MainActor

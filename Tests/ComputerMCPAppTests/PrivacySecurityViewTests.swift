@@ -576,7 +576,7 @@ import Testing
 
 extension PrivacySecurityViewTests {
   /// SwiftPM copies the String Catalog uncompiled; compile it as the App build does.
-  fileprivate static func compiledCatalog() throws -> Bundle {
+  static func compiledCatalog() throws -> Bundle {
     let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
       .deletingLastPathComponent().deletingLastPathComponent()
     let output = FileManager.default.temporaryDirectory
@@ -596,7 +596,7 @@ extension PrivacySecurityViewTests {
 }
 
 extension View {
-  fileprivate func styled(_ locale: String, _ dark: Bool, _ resources: Bundle) -> some View {
+  func styled(_ locale: String, _ dark: Bool, _ resources: Bundle) -> some View {
     environment(\.colorScheme, dark ? .dark : .light)
       .environment(\.locale, Locale(identifier: locale))
       .environment(\.localizationResources, resources)

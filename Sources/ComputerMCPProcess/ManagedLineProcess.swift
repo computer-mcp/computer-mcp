@@ -209,7 +209,8 @@ package final class ManagedLineProcess: @unchecked Sendable {
   }
 
   package func sendLine(
-    _ line: String, beforeWrite: (@Sendable () async throws -> Void)? = nil
+    _ line: String, beforeWrite: (@Sendable () async throws -> Void)? = nil,
+    onInputAuthorized: (@Sendable () -> Void)? = nil
   ) async throws {
     if let prepared {
       let checking: any ExecutionAccessChecking
@@ -224,6 +225,7 @@ package final class ManagedLineProcess: @unchecked Sendable {
       }
       _ = try checking.accessExecution(prepared.executionID, operation: .writeInput)
     }
+    onInputAuthorized?()
     try await state.send(line: line, beforeWrite: beforeWrite)
   }
 

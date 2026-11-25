@@ -35,6 +35,8 @@ package actor ManagedMCPRequest {
 
 /// MCP framing over the same owned-process primitive used by other stdio adapters.
 package actor MCPChildProcessTransport: MCP.Transport {
+  @TaskLocal package static var onCancellationWriteAuthorized: (@Sendable () -> Void)?
+
   package nonisolated let logger: Logger
   /// Finishes after process and host-service cleanup, including failed startup.
   package nonisolated let termination: AsyncStream<Void>
@@ -266,7 +268,7 @@ package actor MCPChildProcessTransport: MCP.Transport {
       try await request.beginSend()
       try await process.sendLine(line) { try await request.checkCancellation() }
     } else {
-      try await process.sendLine(line)
+      try await process.sendLine(line, onInputAuthorized: Self.onCancellationWriteAuthorized)
     }
   }
 

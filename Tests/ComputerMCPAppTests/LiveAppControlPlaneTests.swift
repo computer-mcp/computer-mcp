@@ -647,6 +647,236 @@ final class LiveAppControlPlaneTests {
   }
 
   @Test
+  func h12RemovedServerGrantDoesNotBlockUnrelatedRevocation() async throws {
+    try await withAppControlPlaneFixture { fixture in
+      let host = fixture.controlPlane
+      let service = LivePrivacySecurityService(controlPlane: fixture.app)
+      let id = "server/editor"
+      let removed = Permission.mcpServer("removed")
+      var configuration = try await host.activeConfiguration()
+      configuration.mcp.servers += ["editor", "removed"].map {
+        .init(id: $0, transport: .stdio, command: "/usr/bin/true")
+      }
+      _ = try await host.activateManifest(
+        configuration.exportedTOML(), expectedDigest: host.configurationDigest())
+      let initial = try await service.privacySnapshot()
+      var permissions = Permissions()
+      try permissions.set(.granted(.access), for: .screen)
+      try permissions.set(.granted(.all), for: removed)
+      try await service.approveProvider(
+        #require(initial.reviewedProviders[id]), permissions: permissions,
+        execution: .sandbox, sandboxSettings: .init())
+
+      let model = PrivacySecurityModel(service: service)
+      await model.refresh()
+      let originalHolderCount = model.holders(of: .mcpServers)
+      let original = try #require(model.snapshot.reviewedProviders[id]?.approval)
+      configuration.mcp.servers.removeAll { $0.id == "removed" }
+      _ = try await host.activateManifest(
+        configuration.exportedTOML(), expectedDigest: host.configurationDigest())
+      await model.refresh()
+      let reviewed = model.snapshot
+      #expect(reviewed.reviewedProviders[id]?.availability == .active)
+      #expect(model.holders(of: .mcpServers) == originalHolderCount - 1)
+      var target = try #require(
+        reviewed.grants.first { $0.principalID == id && $0.object?.id == "removed" })
+      #expect(target.isStored && target.object?.isRegistered == false)
+      #expect(target.value == .granted(.all))
+      #expect(target.effectiveValue == nil)
+      var screen = try #require(
+        reviewed.grants.first { $0.principalID == id && $0.permission == .screen })
+      screen.value = .denied
+      try await service.setGrant(screen, reviewed: reviewed)
+
+      let revoked = try await service.privacySnapshot()
+      var expected = original.permissions
+      try expected.set(.denied, for: .screen)
+      #expect(revoked.reviewedProviders[id]?.approval?.permissions == expected)
+      target.value = .granted(.read)
+      try await service.setGrant(target, reviewed: revoked)
+      let narrowed = try await service.privacySnapshot()
+      #expect(
+        narrowed.reviewedProviders[id]?.approval?.permissions.state(for: removed) == .granted(.read)
+      )
+
+      target.value = .granted(.all)
+      await #expect(throws: PermissionModelError.invalidObject) {
+        try await service.setGrant(target, reviewed: narrowed)
+      }
+      let approval = try #require(narrowed.reviewedProviders[id])
+      var newTarget = try #require(approval.approval?.permissions)
+      try newTarget.set(.granted(.read), for: .mcpServer("never-registered"))
+      await #expect(throws: PermissionModelError.invalidObject) {
+        _ = try await host.saveProviderPermissions(
+          reviewed: approval, permissions: newTarget, fullAccess: false,
+          sandboxSettings: .init(), editingApproval: true)
+      }
+
+      var fallback = try #require(
+        narrowed.grants.first {
+          $0.principalID == id && $0.permission == .mcpServers && $0.object?.id == "*"
+        })
+      fallback.value = .granted(.all)
+      try await service.setGrant(fallback, reviewed: narrowed)
+      let overridden = try await service.privacySnapshot()
+      let savedTarget = try #require(
+        overridden.grants.first { $0.principalID == id && $0.object?.id == "removed" })
+      target = savedTarget
+      target.isStored = false
+      await #expect(throws: PermissionModelError.invalidObject) {
+        try await service.setGrant(target, reviewed: overridden)
+      }
+      let final = try await service.privacySnapshot()
+      #expect(final.revision == overridden.revision)
+      #expect(final.reviewedProviders[id]?.approval == overridden.reviewedProviders[id]?.approval)
+    }
+  }
+
+  @Test
+  func h12MCPRowsFollowDirectAndPackageAdmissionKeys() async throws {
+    try await withAppControlPlaneFixture { fixture in
+      let host = fixture.controlPlane
+      let packageID = "test-package"
+      let directID = "direct-fixture"
+      let packageServerID = PluginResolver.registrationID(
+        pluginID: packageID, componentID: "fixture", override: nil)
+      var configuration = try await host.activeConfiguration()
+      configuration.mcp.servers += [directID, packageServerID].map {
+        .init(id: $0, transport: .stdio, command: "/usr/bin/true")
+      }
+      _ = try await host.activateManifest(
+        configuration.exportedTOML(), expectedDigest: host.configurationDigest())
+
+      let observe = try await fixture.app.fetchProfilePermissionOptions(id: .chatGPTObserve)
+      var stale = observe.grant
+      try stale.permissions.set(.granted(.all), for: .mcpServer("*"))
+      try stale.permissions.set(.denied, for: .mcpServer(directID))
+      try stale.permissions.set(.granted(.read), for: .mcpServer(packageServerID))
+      try await fixture.app.saveProfilePermissions(stale, reviewed: observe)
+
+      configuration.mcp.servers.removeAll { $0.id == packageServerID }
+      _ = try await host.activateManifest(
+        configuration.exportedTOML(), expectedDigest: host.configurationDigest())
+      let files = try PluginStoreFixture()
+      defer { files.cleanup() }
+      let package = try files.makePackage(
+        directory: "mcp-privacy",
+        text: PluginManifestFixture.header + """
+          [[mcp]]
+          id = 'fixture'
+          transport = 'stdio'
+          executable = { platform_paths = { macos = 'helper' } }
+          """)
+      let helper = package.appendingPathComponent("helper")
+      try "#!/bin/sh\nexit 0\n".write(to: helper, atomically: true, encoding: .utf8)
+      try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: helper.path)
+      let registered = try await fixture.app.changePlugins(
+        .registerDevelopment(package), expectedRevision: 0)
+      let service = LivePrivacySecurityService(controlPlane: fixture.app)
+      let prepared = try await service.privacySnapshot()
+      try await service.approveProvider(
+        #require(prepared.reviewedProviders["plugin/" + packageID]),
+        permissions: .newPrincipal, execution: .sandbox, sandboxSettings: .init())
+      let activated = try await fixture.app.fetchPlugins()
+      #expect(activated.state.revision == registered.state.revision + 1)
+      let origin = try #require(
+        activated.contributions.first { $0.pluginID == packageID && $0.componentID == "fixture" })
+
+      let operate = try await fixture.app.fetchProfilePermissionOptions(id: .chatGPTOperate)
+      var current = operate.grant
+      try current.permissions.set(.granted(.read), for: .mcpServer(directID))
+      try current.permissions.set(.granted(.use), for: .plugin(packageID))
+      try await fixture.app.saveProfilePermissions(current, reviewed: operate)
+
+      let model = PrivacySecurityModel(service: service)
+      await model.refresh()
+      @MainActor func grant(
+        _ profile: GatewayProfileID, _ kind: PrivacyPermissionKind, _ id: String
+      )
+        -> PrivacyGrant?
+      {
+        model.snapshot.grants.first {
+          $0.principalID == profile.rawValue && $0.permission == kind && $0.object?.id == id
+        }
+      }
+      let old = try #require(grant(.chatGPTObserve, .mcpServers, packageServerID))
+      #expect(old.isStored && old.object?.isRegistered == false)
+      #expect(old.value == .granted(.read) && old.effectiveValue == nil)
+      #expect(grant(.chatGPTOperate, .mcpServers, packageServerID) == nil)
+      #expect(grant(.chatGPTOperate, .plugins, packageID)?.effectiveValue == .granted(.use))
+      let direct = try #require(grant(.chatGPTOperate, .mcpServers, directID))
+      #expect(direct.object?.isRegistered == true && direct.effectiveValue == .granted(.read))
+      #expect(model.holders(of: .mcpServers) == 1)
+
+      let inputs = try await host.gatewayInputs()
+      let resolver = try GatewayToolRequirementResolver(
+        configuration: inputs.configuration,
+        origins: [.init(kind: .mcp, id: packageServerID): origin],
+        paths: .init(projects: [], rules: []))
+      func admissionKeys(for id: String) throws -> Set<Permission> {
+        let descriptor = CapabilityDescriptor(
+          id: "fixture.read", risk: .readOnly, requirement: .init(access: .none),
+          projectRequirement: .optional, localOnly: false, usesNetwork: false,
+          mcpReference: .init(serverID: id, toolName: "read"))
+        let (requirements, _, _) = try resolver.resolve(
+          descriptor: descriptor, arguments: [:], projectID: nil, mode: .sandbox)
+        return Set(requirements.actions.map(\.requirement.permission))
+      }
+      #expect(try admissionKeys(for: packageServerID).contains(.plugin(packageID)))
+      #expect(try !admissionKeys(for: packageServerID).contains(.mcpServer(packageServerID)))
+      #expect(try admissionKeys(for: directID).contains(.mcpServer(directID)))
+
+      let directIndex = try #require(configuration.mcp.servers.firstIndex { $0.id == directID })
+      configuration.mcp.servers[directIndex].enabled = false
+      _ = try await host.activateManifest(
+        configuration.exportedTOML(), expectedDigest: host.configurationDigest())
+      await model.refresh()
+      let disabled = try #require(grant(.chatGPTOperate, .mcpServers, directID))
+      #expect(disabled.object?.isRegistered == true)
+      #expect(disabled.value == .granted(.read) && disabled.effectiveValue == nil)
+      #expect(model.holders(of: .mcpServers) == 0)
+    }
+  }
+
+  @Test
+  func h12ProfileWithoutEligibleCallersHasNoEffectiveHolders() async throws {
+    try await withAppControlPlaneFixture { fixture in
+      let id = GatewayProfileID.chatGPTOperate
+      let initial = try await fixture.app.fetchProfilePermissionOptions(id: id)
+      var grant = initial.grant
+      try grant.permissions.set(.granted(.access), for: .screen)
+      try await fixture.app.saveProfilePermissions(grant, reviewed: initial)
+      let model = PrivacySecurityModel(
+        service: LivePrivacySecurityService(controlPlane: fixture.app))
+      await model.refresh()
+      #expect(model.holders(of: .screen) == 1)
+
+      let reviewed = try await fixture.app.fetchProfilePermissionOptions(id: id)
+      grant = reviewed.grant
+      grant.allowedCallers = []
+      try await fixture.app.saveProfilePermissions(grant, reviewed: reviewed)
+      await model.refresh()
+      #expect(!model.snapshot.principals.contains { $0.sharedProfileID == id })
+      #expect(model.principal(id.rawValue)?.clientAvailability == .callerDenied)
+      let screen = try #require(
+        model.grants(for: .screen).first { $0.principalID == id.rawValue })
+      #expect(screen.value == .granted(.allow) && screen.effectiveValue == nil)
+      #expect(model.holders(of: .screen) == 0)
+
+      let host = fixture.controlPlane
+      let database = await host.database
+      let permissionService = try database.permissionRuntime(platform: host.platform).service
+      let subject = try GatewayPermissionSubject(
+        context: .init(caller: .secureTunnel, profileID: id, trustedPrincipalID: "profile-fixture"))
+      #expect(throws: GatewayPermissionError.invalidBinding) {
+        try permissionService.admit(
+          subject: subject, tool: "screen.capture", projectID: nil, argumentsDigest: "profile",
+          requirements: .init(actions: [.init(requirement: try .init(.screen, .access))]))
+      }
+    }
+  }
+
+  @Test
   func h12RestoredProviderAuthorityRequiresAnExplicitReview() async throws {
     try await withAppControlPlaneFixture { fixture in
       let host = fixture.controlPlane

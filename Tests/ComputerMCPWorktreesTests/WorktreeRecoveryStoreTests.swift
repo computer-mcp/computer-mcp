@@ -70,6 +70,34 @@ private func recoverySnapshot(_ root: URL) throws -> [String: Data] {
   return result
 }
 
+private enum RecoverySyncFailure: Error { case injected }
+
+private final class RecoverySyncProbe: @unchecked Sendable {
+  private let lock = NSLock()
+  private var count = 0
+  private var failure: Int?
+
+  func configure(failAt: Int?) {
+    lock.lock()
+    defer { lock.unlock() }
+    count = 0
+    failure = failAt
+  }
+
+  var calls: Int {
+    lock.lock()
+    defer { lock.unlock() }
+    return count
+  }
+
+  func synchronize() throws {
+    lock.lock()
+    defer { lock.unlock() }
+    count += 1
+    if count == failure { throw RecoverySyncFailure.injected }
+  }
+}
+
 struct WorktreeRecoveryStoreTests {
   @Test func missingRootListingIsEmptyAndDoesNotCreateAnything() throws {
     try fixture { directory in
@@ -230,6 +258,134 @@ struct WorktreeRecoveryStoreTests {
           try locked.advance(operationID: operation, records: [grown])
         }
         #expect(try locked.catalog() == before)
+      }
+    }
+  }
+
+  @Test func catalogPublicationSyncFailureRequiresDurableReplay() throws {
+    try fixture { directory in
+      let f = try RecoveryFixture(directory)
+      let generation = try f.store.withExclusive(repository: f.identity) { $0.generation }
+      let operation = UUID()
+      let record = f.record(generation: generation, operation: operation)
+      let digest = String(repeating: "b", count: 64)
+      let probe = RecoverySyncProbe()
+      var store = f.store
+      store.io = WorktreeJournalIO(beforeDirectorySync: { try probe.synchronize() })
+      func admit() throws {
+        try store.withExclusive(repository: f.identity) { locked in
+          try locked.admit(
+            operationID: operation, kind: .publication,
+            requestDigest: digest, records: [record], completionSteps: [])
+        }
+      }
+      probe.configure(failAt: 2)
+      #expect(throws: RecoverySyncFailure.self) { try admit() }
+      #expect(probe.calls == 2)
+      let catalogURL = f.path.appendingPathComponent("catalog.json")
+      let published = try Data(contentsOf: catalogURL)
+      let visible = try JSONDecoder().decode(WorktreeRecoveryCatalog.self, from: published)
+      #expect(visible.records == [record])
+      #expect(visible.intents.map(\.id) == [operation])
+
+      probe.configure(failAt: 1)
+      #expect(throws: RecoverySyncFailure.self) { try admit() }
+      #expect(probe.calls == 1)
+      #expect(try Data(contentsOf: catalogURL) == published)
+      probe.configure(failAt: nil)
+      try admit()
+      #expect(probe.calls == 1)
+      #expect(try Data(contentsOf: catalogURL) == published)
+    }
+  }
+
+  @Test func visibleReceiptSyncFailureIsRetriedBeforeCatalogRemoval() throws {
+    try fixture { directory in
+      let f = try RecoveryFixture(directory)
+      let record = try f.store.withExclusive(repository: f.identity) { try f.retain($0) }
+      let operation = UUID()
+      let receipt = try f.store.withExclusive(repository: f.identity) { locked in
+        WorktreeRecoveryReleaseReceipt(
+          storeGeneration: locked.generation, owner: record.owner,
+          selection: record.selection, operationID: operation,
+          requestDigest: String(repeating: "c", count: 64),
+          selectionDigest: try WorktreeRecoveryReleaseReceipt.digest(of: [record.selection]))
+      }
+      try f.store.withExclusive(repository: f.identity) { try $0.prepareRelease([receipt]) }
+      let probe = RecoverySyncProbe()
+      var store = f.store
+      store.io = WorktreeJournalIO(beforeDirectorySync: { try probe.synchronize() })
+      var verifications = 0
+      func finish() throws {
+        try store.withExclusive(repository: f.identity) { locked in
+          try locked.finishRelease([receipt]) { verifications += 1 }
+        }
+      }
+      probe.configure(failAt: 2)
+      #expect(throws: RecoverySyncFailure.self) { try finish() }
+      #expect(probe.calls == 2)
+      let receiptURL = f.path.appendingPathComponent(
+        "released/" + record.id.uuidString.lowercased() + ".json")
+      #expect(FileManager.default.fileExists(atPath: receiptURL.path))
+      let released = try Data(contentsOf: receiptURL)
+      let catalogURL = f.path.appendingPathComponent("catalog.json")
+      let pending = try Data(contentsOf: catalogURL)
+      let visible = try JSONDecoder().decode(WorktreeRecoveryCatalog.self, from: pending)
+      #expect(visible.records.map(\.id) == [record.id])
+      #expect(visible.records.first?.state == .releasing)
+
+      probe.configure(failAt: 2)
+      #expect(throws: RecoverySyncFailure.self) { try finish() }
+      #expect(probe.calls == 2)
+      #expect(try Data(contentsOf: catalogURL) == pending)
+      #expect(try Data(contentsOf: receiptURL) == released)
+      probe.configure(failAt: nil)
+      try finish()
+      #expect(probe.calls == 3)
+      #expect(verifications == 3)
+      try f.store.withExclusive(repository: f.identity) { locked in
+        #expect(try locked.catalog().records.isEmpty)
+        #expect(try locked.releaseReceipt(recordID: record.id) == receipt)
+      }
+    }
+  }
+
+  @Test func releaseBatchRejectsSubsetReplayBeforeAndAfterCompletion() throws {
+    try fixture { directory in
+      let f = try RecoveryFixture(directory)
+      try f.store.withExclusive(repository: f.identity) { locked in
+        let records = try [f.retain(locked), f.retain(locked)]
+        let operation = UUID()
+        let digest = String(repeating: "c", count: 64)
+        let selectionDigest = try WorktreeRecoveryReleaseReceipt.digest(
+          of: records.map(\.selection))
+        let receipts = records.map { record in
+          WorktreeRecoveryReleaseReceipt(
+            storeGeneration: locked.generation, owner: record.owner,
+            selection: record.selection, operationID: operation, requestDigest: digest,
+            selectionDigest: selectionDigest)
+        }
+        let first = receipts[0]
+        let forgedSubset = WorktreeRecoveryReleaseReceipt(
+          storeGeneration: first.storeGeneration, owner: first.owner, selection: first.selection,
+          operationID: first.operationID, requestDigest: first.requestDigest,
+          selectionDigest: try WorktreeRecoveryReleaseReceipt.digest(of: [first.selection]))
+        try locked.prepareRelease(receipts)
+        let pending = try locked.catalog()
+        for subset in [[first], [forgedSubset]] {
+          #expect(throws: WorktreeError.self) { try locked.prepareRelease(subset) }
+          #expect(throws: WorktreeError.self) { try locked.finishRelease(subset) {} }
+        }
+        #expect(try locked.catalog() == pending)
+        try locked.finishRelease(receipts) {}
+        #expect(try locked.catalog().records.isEmpty)
+        for subset in [[first], [forgedSubset]] {
+          #expect(throws: WorktreeError.self) { try locked.prepareRelease(subset) }
+          #expect(throws: WorktreeError.self) { try locked.finishRelease(subset) {} }
+        }
+        for receipt in receipts {
+          #expect(try locked.releaseReceipt(recordID: receipt.selection.recordID) == receipt)
+        }
       }
     }
   }

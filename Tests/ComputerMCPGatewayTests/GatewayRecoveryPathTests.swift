@@ -1,6 +1,7 @@
 import ComputerMCPConfiguration
 import ComputerMCPCore
 import ComputerMCPPermissions
+import ComputerMCPPlatform
 import Foundation
 import Testing
 
@@ -12,12 +13,19 @@ struct GatewayRecoveryPathTests {
     let f = try WorktreeServiceFixture()
     defer { f.remove() }
     let recovery = try #require(f.database.worktreeStorage?.recovery)
+    let platform = PlatformServices(
+      launcher: f.platform.launcher, projectGrants: RecoveryPathProjectGrants(),
+      pluginDirectories: f.platform.pluginDirectories, applications: f.platform.applications,
+      toolProviders: f.platform.toolProviders, managementToolNames: [],
+      executableSearchDirectories: [],
+      gitExecutable: f.platform.gitExecutable, fileChanges: f.platform.fileChanges,
+      permissionPolicyReader: f.platform.permissionPolicyReader)
     let gateway = try GatewayRuntime(
       configuration: GatewayConfiguration(),
       context: .init(
         caller: .secureTunnel, profileID: .chatGPTOperate, projectID: "source",
         trustedPrincipalID: "recovery-path-test"),
-      database: f.database, registeredProjects: f.database.projects(), platform: f.platform,
+      database: f.database, registeredProjects: f.database.projects(), platform: platform,
       bundledPlugins: .init(packages: [], issues: []))
     do {
       _ = try gateway.makeControlSession()
@@ -31,5 +39,18 @@ struct GatewayRecoveryPathTests {
       await gateway.shutdown()
       throw error
     }
+  }
+}
+
+private struct RecoveryPathProjectGrants: ProjectBookmarkServicing {
+  func registerFolder(at url: URL, displayName: String?) throws -> ComputerMCPCore.RegisteredProject
+  {
+    throw PermissionModelError.invalidAuthorization
+  }
+
+  func resolve(_ project: ComputerMCPCore.RegisteredProject) throws -> ResolvedProjectAccess {
+    try .init(
+      project: project, rootURL: URL(fileURLWithPath: project.rootPath),
+      bookmarkWasRefreshed: false, stopAccessing: nil)
   }
 }

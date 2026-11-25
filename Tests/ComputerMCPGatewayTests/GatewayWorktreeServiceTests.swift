@@ -85,6 +85,193 @@ struct GatewayWorktreeServiceTests {
     #expect(try owner.resume(handle: review.handle) == released)
   }
 
+  @Test func ownerReleaseResumesDuringExecutionReservationBeforeSQLAttachment() async throws {
+    let f = try WorktreeServiceHost()
+    defer { f.remove() }
+    let store = try f.database.configuredPermissionStore()
+    let service = GatewayPermissionService(
+      store: store, policyReader: f.platform.permissionPolicyReader)
+    try f.configureEnvironment(using: service)
+    try f.initializeRepository()
+    let worktrees = try f.repository()
+    let created = try worktrees.create(name: "reservation-gap")
+    let worktree = try #require(
+      try f.database.executionWorktree(
+        projectID: created.projectID, directory: created.path, platform: f.platform))
+    let oids = try ["first", "second"].map { name in
+      try Data(name.utf8).write(to: created.path.appendingPathComponent(name))
+      let oid = try f.git(["hash-object", "-w", name], at: created.path)
+        .trimmingCharacters(in: .newlines)
+      _ = try f.git(["update-ref", "refs/tags/" + name, oid], at: created.path)
+      return oid
+    }
+    _ = try worktrees.publish(projectID: created.projectID) { _ in }
+
+    let principal = ExecutionContext(
+      caller: .localApp, profileID: .localAdmin, trustedPrincipalID: "local-app")
+    let owner = try GatewayRecoveryOwnerService(
+      database: f.database, platform: f.platform, owner: principal)
+    let view = try #require(try owner.list().first)
+    let selected = view.records.filter { oids.contains($0.oid) }
+    try #require(selected.count == 2 && selected.allSatisfy { $0.state == .retained })
+    let review = try owner.reviewRelease(
+      storeKey: view.key, generation: view.generation, selections: selected.map(\.selection))
+    let recovery = try #require(f.database.worktreeStorage).recovery
+      .appendingPathComponent("stores/" + view.key)
+    let catalog = recovery.appendingPathComponent("catalog.json")
+    let originalCatalog = try Data(contentsOf: catalog)
+    let retained = try selected.map { record in
+      let name = record.id.uuidString.lowercased()
+      let anchor = recovery.appendingPathComponent("repository.git/refs/recovery/" + name)
+      let receipt = recovery.appendingPathComponent("released/" + name + ".json")
+      return (anchor: anchor, bytes: try Data(contentsOf: anchor), receipt: receipt)
+    }
+
+    // Stage a resumable confirmation with frozen gate identities and no holds.
+    let active = recovery.appendingPathComponent("owner-operation.json")
+    let submitter = try GatewayRecoveryOwnerService(
+      database: f.database, platform: f.platform, owner: principal,
+      journalIO: .init(beforeDirectorySync: {
+        let bytes = try Data(contentsOf: active)
+        let record = try JSONSerialization.jsonObject(with: bytes) as? [String: Any]
+        if let gates = record?["gates"] as? [[String: Any]], !gates.isEmpty {
+          throw WorktreeServiceTestFailure.releaseSubmissionInterrupted
+        }
+      }))
+    #expect(throws: WorktreeServiceTestFailure.releaseSubmissionInterrupted) {
+      try submitter.confirm(review)
+    }
+    guard case .submitted(let pending) = try owner.operation(handle: review.handle) else {
+      throw WorktreeServiceTestFailure.unexpected
+    }
+    try #require(pending.outcome == .pending && pending.request.handle == review.handle)
+    try #require(pending.gates.map(\.cleanup) == [.pending])
+
+    let reservation = AsyncStream<WorktreeWriterUse>.makeStream(
+      bufferingPolicy: .bufferingNewest(1))
+    let attachment = AsyncStream<Void>.makeStream()
+    let runtimeDirectory = f.database.permissionExecutionRoot
+    let coordinator = try ExecutionRevocationCoordinator(
+      store: store, launcher: f.platform.launcher, directory: runtimeDirectory,
+      afterWorktreeReservation: { use in
+        reservation.continuation.yield(use)
+        for await _ in attachment.stream {}
+      })
+    try await coordinator.recover()
+    let authorization = try service.admit(
+      subject: .init(
+        context: .init(
+          caller: .secureTunnel, profileID: .chatGPTOperate, trustedPrincipalID: "execution")),
+      tool: "fixture.write", projectID: created.projectID, argumentsDigest: UUID().uuidString,
+      requirements: .init(
+        actions: [.init(requirement: .init(.project("source"), .write), scope: .project("source"))],
+        paths: [.init(path: .init(worktree.directory.value), operation: .write)],
+        sandboxProjectID: "source"))
+    guard case .allowed(let proof) = authorization else {
+      throw WorktreeServiceTestFailure.unexpected
+    }
+    let scratch = runtimeDirectory.appendingPathComponent(proof.id.uuidString)
+    try FileManager.default.createDirectory(at: scratch, withIntermediateDirectories: false)
+    let context = try GatewaySandboxContext(
+      directory: worktree.directory,
+      temporaryDirectory: .init(ProjectPathResolver.canonicalProject(scratch).path),
+      fixedHostOperation: .init(
+        operation: .fileMutation, gitExecutable: .init(f.platform.gitExecutable),
+        directory: worktree.directory, allowsWrites: true), worktree: worktree)
+
+    func finish(_ prepared: PreparedExecutionContext) async throws {
+      try prepared.finishAdmission()
+      // The first pass can join a reconciliation that read before admission closed.
+      try await coordinator.reconcile()
+      try await coordinator.reconcile()
+    }
+    @Sendable func resumeDuringRace() throws -> RecoveryOperationStatus? {
+      do {
+        return try owner.resume(handle: review.handle)
+      } catch WorktreeError.busy("Recovery store is in use.") {
+        return nil
+      }
+    }
+    let preparing = Task {
+      defer { reservation.continuation.finish() }
+      return try await coordinator.prepare(
+        authorizationID: proof.id, context: context, worktreeAdmission: worktree.binding.admission)
+    }
+    do {
+      var reservations = reservation.stream.makeAsyncIterator()
+      guard let use = await reservations.next() else {
+        try Task.checkCancellation()
+        _ = try await preparing.value
+        Issue.record("Prepare completed without observing its durable worktree reservation.")
+        throw WorktreeServiceTestFailure.unexpected
+      }
+      try store.readWithDatabase { database, ledger in
+        let row = try #require(try ExecutionRuntimeRecord.load(use.executionID, database))
+        #expect(row.ownerID == use.ownerID && row.ownerID == coordinator.ownerIdentity)
+        #expect(row.worktreeUse == nil && !row.admissionFinished && !row.completed)
+        #expect(ledger.executions[use.executionID]?.isRunning == true)
+      }
+      try worktree.binding.admission.requireOpen(use)
+
+      async let first = resumeDuringRace()
+      async let second = resumeDuringRace()
+      let (firstAttempt, secondAttempt) = try await (first, second)
+      try #require(firstAttempt != nil || secondAttempt != nil)
+      // Store lock acquisition is nonblocking. A refused caller can replay
+      // after its peer settles while SQL attachment remains suspended.
+      let blocked = try firstAttempt ?? owner.resume(handle: review.handle)
+      let replay = try secondAttempt ?? owner.resume(handle: review.handle)
+      #expect(blocked == replay)
+      #expect(blocked.request.handle == review.handle)
+      #expect(
+        blocked.outcome == .busy("Worktree admission belongs to an active writer or operation."))
+      #expect(blocked.gates.map(\.cleanup) == [.cleared])
+      #expect(try Data(contentsOf: catalog) == originalCatalog)
+      for item in retained {
+        #expect(try Data(contentsOf: item.anchor) == item.bytes)
+        #expect(!FileManager.default.fileExists(atPath: item.receipt.path))
+      }
+      try worktree.binding.admission.requireOpen(use)
+      try store.readWithDatabase { database, _ in
+        let row = try #require(try ExecutionRuntimeRecord.load(use.executionID, database))
+        #expect(row.worktreeUse == nil && row.ownerID == use.ownerID && !row.completed)
+      }
+
+      attachment.continuation.finish()
+      let prepared = try await preparing.value
+      #expect(prepared.executionID == use.executionID)
+      try store.readWithDatabase { database, _ in
+        let row = try #require(try ExecutionRuntimeRecord.load(prepared.executionID, database))
+        #expect(
+          row.worktreeUse == use && row.invocationInFlight == true && row.worktreeDurable == true)
+      }
+      try worktree.binding.admission.requireOpen(use)
+      try await finish(prepared)
+      try store.readWithDatabase { database, ledger in
+        let row = try #require(try ExecutionRuntimeRecord.load(use.executionID, database))
+        #expect(row.completed && row.admissionFinished && row.invocationInFlight == false)
+        #expect(ledger.executions[use.executionID]?.isRunning == false)
+      }
+      #expect(throws: WorktreeError.busy("Worktree writer admission is closed.")) {
+        try worktree.binding.admission.requireOpen(use)
+      }
+      #expect(!FileManager.default.fileExists(atPath: scratch.path))
+
+      let fresh = try owner.reviewRelease(
+        storeKey: view.key, generation: view.generation, selections: selected.map(\.selection))
+      #expect(try owner.confirm(fresh).outcome == .released)
+      #expect(try owner.resume(handle: review.handle) == blocked)
+      for item in retained {
+        #expect(!FileManager.default.fileExists(atPath: item.anchor.path))
+        #expect(FileManager.default.fileExists(atPath: item.receipt.path))
+      }
+    } catch {
+      attachment.continuation.finish()
+      if let prepared = try? await preparing.value { try? await finish(prepared) }
+      throw error
+    }
+  }
+
   @Test func sandboxLifecyclePreservesPrivateCommitAndProtectsBranches() throws {
     let fixture = try WorktreeServiceFixture()
     defer { fixture.remove() }
@@ -365,72 +552,32 @@ struct GatewayWorktreeServiceTests {
   }
 }
 
-private enum WorktreeServiceTestFailure: Error { case unexpected }
+private enum WorktreeServiceTestFailure: Error { case unexpected, releaseSubmissionInterrupted }
 
 struct WorktreeServiceFixture {
-  let root: URL
-  let source: URL
-  let database: GatewayDatabase
+  private let host: WorktreeServiceHost
   let runtime: GatewayPermissionRuntime
-  let platform: PlatformServices
-  let executor: GatewayWorktreeGit
+  var root: URL { host.root }
+  var source: URL { host.source }
+  var database: GatewayDatabase { host.database }
+  var platform: PlatformServices { host.platform }
+  var executor: GatewayWorktreeGit { host.executor }
+
   init(policyReader: any ManagedPolicyReading = TestManagedPolicyReader()) throws {
-    let temporary = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
-    try FileManager.default.createDirectory(at: temporary, withIntermediateDirectories: true)
-    root = try ProjectPathResolver.canonicalProject(temporary)
-    source = root.appendingPathComponent("source")
-    let host = root.appendingPathComponent("host")
-    for directory in [source, host] {
-      try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: false)
-    }
-    database = try fixturePermissionDatabase(path: host.appendingPathComponent("state.sqlite").path)
-    try database.bootstrapPermissionProfiles([])
-    try database.saveProject(.init(id: "source", displayName: "Source", rootPath: source.path))
-    var permissions = Permissions()
-    try permissions.set(.granted(.write), for: .project("source"))
-    try database.saveProfile(
-      .init(id: .chatGPTOperate, permissions: permissions, allowedCallers: [.secureTunnel]))
-    let unused = WorktreeServicePlatform()
-    platform = PlatformServices(
-      launcher: testExecutionLauncher(), projectGrants: unused,
-      pluginDirectories: unused, applications: TestApplicationBundleLocator(),
-      toolProviders: unused,
-      managementToolNames: [], executableSearchDirectories: [],
-      gitExecutable: try testExecutable("git"),
-      fileChanges: { _ in throw WorktreeServiceTestFailure.unexpected },
-      permissionPolicyReader: policyReader)
-    runtime = try database.permissionRuntime(platform: platform)
-    try runtime.service.configureEnvironment(
-      .init(
-        projects: [.init(id: "source", root: .init(source.path))],
-        rules: [
-          .init(root: .init(root.path), kind: .userData),
-          .init(root: .init(host.path), kind: .hostData),
-        ]),
-      trustedHosts: [], expectedProjects: database.projects(), expectedConfigurationRevision: nil)
-    executor = GatewayWorktreeGit(launcher: platform.launcher, executable: platform.gitExecutable)
-    _ = try git(["init", "--initial-branch=main"])
-    _ = try git(["config", "--local", "user.name", "Fixture"])
-    _ = try git(["config", "--local", "user.email", "fixture@example.invalid"])
-    try Data("initial".utf8).write(to: source.appendingPathComponent("value"))
-    _ = try git(["add", "value"])
-    _ = try git(["commit", "-m", "Initial"])
+    host = try WorktreeServiceHost(policyReader: policyReader)
+    runtime = try host.database.permissionRuntime(platform: host.platform)
+    try host.configureEnvironment(using: runtime.service)
+    try host.initializeRepository()
   }
-  func remove() { try? FileManager.default.removeItem(at: root) }
+
+  func remove() { host.remove() }
+
   func git(_ arguments: [String], at directory: URL? = nil, environment: [String: String] = [:])
     throws -> String
   {
-    let result = try executor.execute(
-      .init(
-        arguments: HostGitConfiguration.arguments + arguments,
-        directory: directory ?? source,
-        environment: HostGitConfiguration.environment(home: root).merging(environment) { _, value in
-          value
-        },
-        timeoutMilliseconds: 30_000, maxOutputBytes: 1_048_576))
-    try #require(result.exitCode == 0, "\(String(decoding: result.error, as: UTF8.self))")
-    return String(decoding: result.output, as: UTF8.self)
+    try host.git(arguments, at: directory, environment: environment)
   }
+
   func service(_ projectID: String) -> GatewayWorktreeService {
     .init(database: database, runtime: runtime, platform: platform, projectID: projectID)
   }
@@ -467,6 +614,79 @@ struct WorktreeServiceFixture {
     return try InvocationExecution.$current.withValue(invocation) {
       try service(projectID).call(operation)
     }
+  }
+  func repository(journalIO: WorktreeJournalIO = .init()) throws -> WorktreeRepository {
+    try host.repository(journalIO: journalIO)
+  }
+}
+
+private struct WorktreeServiceHost {
+  let root: URL
+  let source: URL
+  let database: GatewayDatabase
+  let platform: PlatformServices
+  let executor: GatewayWorktreeGit
+  init(policyReader: any ManagedPolicyReading = TestManagedPolicyReader()) throws {
+    let temporary = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    try FileManager.default.createDirectory(at: temporary, withIntermediateDirectories: true)
+    root = try ProjectPathResolver.canonicalProject(temporary)
+    source = root.appendingPathComponent("source")
+    let host = root.appendingPathComponent("host")
+    for directory in [source, host] {
+      try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: false)
+    }
+    database = try fixturePermissionDatabase(path: host.appendingPathComponent("state.sqlite").path)
+    try database.bootstrapPermissionProfiles([])
+    try database.saveProject(.init(id: "source", displayName: "Source", rootPath: source.path))
+    var permissions = Permissions()
+    try permissions.set(.granted(.write), for: .project("source"))
+    try database.saveProfile(
+      .init(id: .chatGPTOperate, permissions: permissions, allowedCallers: [.secureTunnel]))
+    let unused = WorktreeServicePlatform()
+    platform = PlatformServices(
+      launcher: testExecutionLauncher(), projectGrants: unused,
+      pluginDirectories: unused, applications: TestApplicationBundleLocator(),
+      toolProviders: unused,
+      managementToolNames: [], executableSearchDirectories: [],
+      gitExecutable: try testExecutable("git"),
+      fileChanges: { _ in throw WorktreeServiceTestFailure.unexpected },
+      permissionPolicyReader: policyReader)
+    executor = GatewayWorktreeGit(launcher: platform.launcher, executable: platform.gitExecutable)
+  }
+
+  func configureEnvironment(using service: GatewayPermissionService) throws {
+    try service.configureEnvironment(
+      .init(
+        projects: [.init(id: "source", root: .init(source.path))],
+        rules: [
+          .init(root: .init(root.path), kind: .userData),
+          .init(root: .init(root.appendingPathComponent("host").path), kind: .hostData),
+        ]),
+      trustedHosts: [], expectedProjects: database.projects(), expectedConfigurationRevision: nil)
+  }
+
+  func initializeRepository() throws {
+    _ = try git(["init", "--initial-branch=main"])
+    _ = try git(["config", "--local", "user.name", "Fixture"])
+    _ = try git(["config", "--local", "user.email", "fixture@example.invalid"])
+    try Data("initial".utf8).write(to: source.appendingPathComponent("value"))
+    _ = try git(["add", "value"])
+    _ = try git(["commit", "-m", "Initial"])
+  }
+  func remove() { try? FileManager.default.removeItem(at: root) }
+  func git(_ arguments: [String], at directory: URL? = nil, environment: [String: String] = [:])
+    throws -> String
+  {
+    let result = try executor.execute(
+      .init(
+        arguments: HostGitConfiguration.arguments + arguments,
+        directory: directory ?? source,
+        environment: HostGitConfiguration.environment(home: root).merging(environment) { _, value in
+          value
+        },
+        timeoutMilliseconds: 30_000, maxOutputBytes: 1_048_576))
+    try #require(result.exitCode == 0, "\(String(decoding: result.error, as: UTF8.self))")
+    return String(decoding: result.output, as: UTF8.self)
   }
   func repository(journalIO: WorktreeJournalIO = .init()) throws -> WorktreeRepository {
     let project = try #require(try database.project(id: "source"))

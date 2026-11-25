@@ -36,8 +36,11 @@ final class LivePrivacySecurityService: PrivacySecurityService {
       principal.fullAccessLimitSources = Self.fullAccessSources(
         view.profileLimits[profile.id] ?? [])
       principal.clientAvailability =
-        view.suspended || view.unconfirmedProfileIDs.contains(profile.id)
-        ? .restoreReview : .available
+        if view.suspended || view.unconfirmedProfileIDs.contains(profile.id) {
+          .restoreReview
+        } else if profile.allowedCallers.isEmpty {
+          .callerDenied
+        } else { .available }
       return principal
     }
     let verified = view.subjects.map { subject in
@@ -360,10 +363,16 @@ final class LivePrivacySecurityService: PrivacySecurityService {
         permission = listedPermission
       }
       let object = original.map { object in
-        PrivacyObject(
+        let isRegistered =
+          if object.id == "*" { true } else if kind == .projects {
+            names.projects[object.id] != nil
+          } else if kind == .mcpServers {
+            names.mcpServers[object.id] != nil
+          } else { true }
+        return PrivacyObject(
           id: object.id, name: object.name,
           detail: kind == .projects ? paths[object.id] : object.detail,
-          isRegistered: kind != .projects || object.id == "*" || names.projects[object.id] != nil)
+          isRegistered: isRegistered)
       }
       var grant = PrivacyGrant(
         principalID: principalID, permission: kind,
@@ -407,7 +416,11 @@ final class LivePrivacySecurityService: PrivacySecurityService {
       grant.allowedLevels = declaredLevels.filter { level in
         limits.allSatisfy { permitted(level, by: $0, editingFallback: true) }
       }
-      if isAvailable, object?.isRegistered != false {
+      let isEnabled =
+        if case .mcpServer(let id) = permission, id != "*" {
+          names.enabledMCPServerIDs.contains(id)
+        } else { true }
+      if isAvailable, isEnabled, object?.isRegistered != false {
         let levels = declaredLevels.filter { level in
           limits.allSatisfy { permitted(level, by: $0, editingFallback: false) }
         }

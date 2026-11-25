@@ -382,7 +382,7 @@ package final class GatewayPermissionService: @unchecked Sendable {
               ledger.isConsentValid(standing, for: principal),
               limits.modeDenial(standing.mode) == nil
             { standing.mode } else if profile?.fullAccess == true {
-              liveConnections[principal, default: []].compactMap { connection in
+              liveConnections[principal, default: []].compactMap { connection -> ExecutionMode? in
                 guard let consent = connection.consent, connection.attenuation.allowsFullAccess,
                   ledger.isConsentValid(consent, for: principal),
                   limits.modeDenial(consent.mode) == nil

@@ -3,7 +3,7 @@ import Testing
 
 @testable import ComputerMCPWorktrees
 
-private enum HandoffTestFailure: Error { case interrupted, denied }
+private enum HandoffTestFailure: Error { case interrupted, missingGuards }
 
 // Git produces and indexes the actual fixture pack; process limits have separate tests.
 private struct HandoffFixtureGit: WorktreeGitExecuting {
@@ -67,6 +67,60 @@ private struct HandoffJournal {
   }
 }
 
+private final class HandoffSourceGuards {
+  let metadata: WorktreeSourceMetadata
+  let repositoryLock: RepositoryLock
+  let branches: [String]
+  let directory: WorktreeDirectory
+  var ownership: WorktreeSourceGuardJournal
+  private var held: WorktreeSourceGuards?
+  private let io = WorktreeJournalIO()
+
+  init(
+    service: WorktreeRepository, lock: RepositoryLock, operation: UUID, branch: String,
+    directory: WorktreeDirectory
+  ) throws {
+    let source = try service.sourceMetadata()
+    metadata = source
+    repositoryLock = lock
+    branches = [branch]
+    self.directory = directory
+    ownership = try WorktreeSourceGuardJournal(
+      operationID: operation, common: source.common.identity, branches: [branch],
+      guardingHead: false)
+  }
+
+  private func persist(_ value: WorktreeSourceGuardJournal) throws {
+    let name = "source-guards.json"
+    let previous = try io.read(name, in: directory, limit: WorktreeRecoveryCatalog.byteLimit)
+    try io.write(recoveryJSON(value), name: name, in: directory, replacing: previous)
+  }
+
+  func acquire() throws -> WorktreeSourceGuards {
+    if let held { return held }
+    var current = ownership
+    defer { ownership = current }
+    let guards = try WorktreeSourceGuards.acquire(
+      &current, metadata: metadata, repositoryLock: repositoryLock, branches: branches,
+      guardingHead: false, persist: persist)
+    held = guards
+    return guards
+  }
+
+  func verifyHeld() throws {
+    guard let held else { throw HandoffTestFailure.missingGuards }
+    try held.verify(covering: branches + ["packed-refs"])
+  }
+
+  func release() throws {
+    guard let held else { return }
+    var current = ownership
+    defer { ownership = current }
+    try held.release(&current, branches: branches, guardingHead: false, persist: persist)
+    self.held = nil
+  }
+}
+
 struct WorktreeRecoveryHandoffTests {
   @Test(arguments: [false, true])
   func retentionPrecedesSourceInstallationAndAuthorityDenial(deny: Bool) throws {
@@ -89,12 +143,19 @@ struct WorktreeRecoveryHandoffTests {
         let sourcePack = f.repository.appendingPathComponent(".git/objects/pack")
         let originalEntries = try FileManager.default.contentsOfDirectory(atPath: sourcePack.path)
           .sorted()
+        let branch = "refs/heads/" + created.branch
+        let sourceGuards = try HandoffSourceGuards(
+          service: service, lock: lock, operation: operation, branch: branch,
+          directory: WorktreeDirectory(directory))
+        let foreignLock = f.repository.appendingPathComponent(".git/packed-refs.lock")
+        let foreignBytes = Data("foreign guard".utf8)
+        if deny { try foreignBytes.write(to: foreignLock) }
         let perform = {
           try service.beginRecoveryHandoff(
             operationID: operation, kind: .publication, record: record, topology: topology,
             store: store, budget: &budget, persist: journal.write,
             revalidate: { try lock.verify() },
-            verifySource: {
+            sourceGuards: {
               sourceChecks += 1
               if sourceChecks == 1 {
                 let saved = try journal.read()
@@ -117,11 +178,14 @@ struct WorktreeRecoveryHandoffTests {
                   try FileManager.default.contentsOfDirectory(atPath: sourcePack.path).sorted()
                     == originalEntries)
               }
-              if deny { throw HandoffTestFailure.denied }
+              let guards = try sourceGuards.acquire()
+              try guards.verify(covering: [branch, "packed-refs"])
+              return guards
             })
         }
         if deny {
-          #expect(throws: HandoffTestFailure.self) { try perform() }
+          #expect(throws: WorktreeError.self) { try perform() }
+          #expect(try Data(contentsOf: foreignLock) == foreignBytes)
           #expect(try journal.read().phase == .retained)
           #expect(
             try FileManager.default.contentsOfDirectory(atPath: sourcePack.path).sorted()
@@ -132,6 +196,12 @@ struct WorktreeRecoveryHandoffTests {
           #expect(try journal.read() == result)
         }
         #expect(sourceChecks > 0)
+        try sourceGuards.release()
+        if deny { try FileManager.default.removeItem(at: foreignLock) }
+        #expect(!FileManager.default.fileExists(atPath: foreignLock.path))
+        #expect(
+          !FileManager.default.fileExists(
+            atPath: f.repository.appendingPathComponent(".git/" + branch + ".lock").path))
         #expect(try f.raw(["rev-parse", "refs/heads/" + created.branch]) == base)
         try expectNoSourceRecoveryRefs(f)
       }
@@ -165,12 +235,16 @@ struct WorktreeRecoveryHandoffTests {
         defer { lock.release() }
         var budget = try WorktreeObjectBudget(.init())
         try recovery.withExclusive(repository: interrupted.identity) { store -> Void in
+          let sourceGuards = try HandoffSourceGuards(
+            service: interrupted, lock: lock, operation: operation,
+            branch: "refs/heads/" + created.branch, directory: WorktreeDirectory(directory))
           #expect(throws: HandoffTestFailure.self) {
             try interrupted.beginRecoveryHandoff(
               operationID: operation, kind: .publication, record: record, topology: topology,
               store: store, budget: &budget, persist: journal.write,
-              revalidate: { try lock.verify() }, verifySource: { try lock.verify() })
+              revalidate: { try lock.verify() }, sourceGuards: sourceGuards.acquire)
           }
+          try sourceGuards.release()
         }
       }
       #expect(failure.fired)
@@ -207,6 +281,9 @@ struct WorktreeRecoveryHandoffTests {
       defer { lock.release() }
       let freshStore = WorktreeRecoveryStore(storage: f.storage)
       try freshStore.withExclusive(repository: normal.identity) { store in
+        let sourceGuards = try HandoffSourceGuards(
+          service: normal, lock: lock, operation: operation,
+          branch: "refs/heads/" + created.branch, directory: WorktreeDirectory(directory))
         let before = try store.catalog()
         #expect(before.intents.contains { $0.id == operation })
         #expect(Set(before.records.map(\.id)) == Set(originalIDs))
@@ -215,7 +292,7 @@ struct WorktreeRecoveryHandoffTests {
             try normal.resumeRecoveryHandoff(
               &reopened, store: store, budget: WorktreeObjectBudget(.init()),
               persist: journal.write, revalidate: { try lock.verify() },
-              verifySource: { try lock.verify() })
+              sourceGuards: sourceGuards.acquire)
           }
           #expect(try Data(contentsOf: pack) == replacement)
           #expect(
@@ -229,8 +306,9 @@ struct WorktreeRecoveryHandoffTests {
           try normal.resumeRecoveryHandoff(
             &reopened, store: store, budget: WorktreeObjectBudget(.init()),
             persist: journal.write, revalidate: { try lock.verify() },
-            verifySource: { try lock.verify() })
+            sourceGuards: sourceGuards.acquire)
           #expect(reopened.phase == .sourceInstalled)
+          try sourceGuards.verifyHeld()
           #expect(reopened.retention.operationID == operation)
           #expect(reopened.retention.admitted.map(\.id) == originalIDs)
           let retained = try #require(store.catalog().records.first { $0.oid == tip })
@@ -242,6 +320,7 @@ struct WorktreeRecoveryHandoffTests {
               pack.lastPathComponent, in: WorktreeDirectory(packURL),
               limit: saved.recoveryArtifact.pack.bytes) == installed)
         }
+        try sourceGuards.release()
         #expect(try f.raw(["rev-parse", "refs/heads/" + created.branch]) == base)
         try expectNoSourceRecoveryRefs(f)
       }

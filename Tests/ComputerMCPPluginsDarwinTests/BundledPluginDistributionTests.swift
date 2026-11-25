@@ -40,7 +40,7 @@ struct BundledPluginDistributionTests {
       ]))
     let cli = try ExecutionAdministration.$current.withValue(administration) {
       try ProcessCommandRunner(launcher: testExecutionLauncher()).run(
-        executable: Self.worker.path,
+        executable: nativeGatewayTestExecutable().path,
         arguments: [
           "_bundle-plugins", "--index", index.path, "--output", output.path, "--architectures",
           "arm64",
@@ -65,7 +65,7 @@ struct BundledPluginDistributionTests {
     let artifacts = try await BundledPluginDistribution.prepare(
       launcher: testExecutionLauncher(),
       index: Self.repository.appendingPathComponent("Resources/PluginArchives/index.json"),
-      destination: output, workerExecutable: Self.worker,
+      destination: output, workerExecutable: nativeGatewayTestExecutable(),
       hostVersion: PluginVersion(ComputerMCPCLI.version), architectures: ["arm64", "x86_64"],
       directoryFactory: DarwinPluginArchiveDirectoryFactory())
     #expect(artifacts.map(\.id) == ["computer-use"])
@@ -213,16 +213,12 @@ struct BundledPluginDistributionTests {
       .deletingLastPathComponent().deletingLastPathComponent()
   }
 
-  private static var worker: URL {
-    repository.appendingPathComponent(".build/debug/computer-mcp")
-  }
-
   private static func prepare(index: URL, output: URL, architectures: [String]) async throws
     -> [BundledPluginArtifact]
   {
     try await BundledPluginDistribution.prepare(
       launcher: testExecutionLauncher(),
-      index: index, destination: output, workerExecutable: worker,
+      index: index, destination: output, workerExecutable: nativeGatewayTestExecutable(),
       hostVersion: PluginVersion("1.0.0"), architectures: architectures,
       directoryFactory: DarwinPluginArchiveDirectoryFactory())
   }

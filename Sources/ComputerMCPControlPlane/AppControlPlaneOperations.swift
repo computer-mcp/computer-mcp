@@ -175,9 +175,7 @@ package struct AppControlPlaneOperations: Sendable {
 
   package func changePlugins(
     _ change: PluginHostChange, expectedRevision: Int64, approval: ProviderEnablementApproval? = nil
-  ) async throws
-    -> PluginHostSnapshot
-  {
+  ) async throws -> PluginHostSnapshot {
     try await gatewayService.changePlugins(
       change, expectedRevision: expectedRevision, approval: approval)
   }

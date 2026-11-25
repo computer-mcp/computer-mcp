@@ -532,7 +532,7 @@ package actor AppControlPlaneService {
       try requireCurrentPermissionOwnerRouter()
       try service.updateProfile(
         grant, expectedProfileRevision: grant.authorizationRevision,
-        expectedRevision: expectedRevision)
+        expectedRevision: expectedRevision, expectedEpoch: reviewedOptions?.permissionEpoch)
     }
     guard let saved = try service.view().profiles.first(where: { $0.id == grant.id }) else {
       throw AppControlPlaneServiceError.unknownGatewayProfile(grant.id.rawValue)

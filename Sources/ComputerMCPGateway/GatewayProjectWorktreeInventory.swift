@@ -3,6 +3,7 @@ import ComputerMCPPersistence
 import ComputerMCPPlatform
 import ComputerMCPWorktrees
 import Foundation
+import GRDB
 
 package struct ProjectWorktreeInventory: Sendable {
   /// The registration generation continues to identify children after source removal or ID reuse.
@@ -32,16 +33,21 @@ extension GatewayDatabase {
   package func projectWorktreeInventory(platform: PlatformServices) throws
     -> [ProjectWorktreeInventory]
   {
-    let (projects, records) = try connection.writer.read { sql in
-      (try Self.projects(in: sql), try SQLiteDerivedProjectStore.records(sql))
+    let (projects, records, registeredRoots) = try connection.writer.read { sql in
+      (
+        try Self.projects(in: sql), try SQLiteDerivedProjectStore.records(sql),
+        Dictionary(grouping: try ProjectCanonicalRootRecord.fetchAll(sql), by: \.projectID)
+      )
     }
     let childIDs = Set(records.map(\.projectID))
     let sources = Dictionary(
-      uniqueKeysWithValues: projects.filter { !childIDs.contains($0.id) }.map {
-        (
-          DerivedProjectSource(
-            id: $0.id, root: Self.canonicalProjectRoot($0.rootPath), registeredAt: $0.createdAt),
-          $0
+      uniqueKeysWithValues: projects.filter { !childIDs.contains($0.id) }.map { project in
+        let root =
+          registeredRoots[project.id]?.first {
+            $0.createdAt.databaseValue == project.createdAt.databaseValue
+          }?.canonicalRootPath ?? project.rootPath
+        return (
+          DerivedProjectSource(id: project.id, root: root, registeredAt: project.createdAt), project
         )
       })
     let executor = GatewayWorktreeGit(
@@ -56,13 +62,27 @@ extension GatewayDatabase {
         let access = try? platform.projectGrants.resolve(project)
       {
         defer { access.close() }
-        inventory = try? WorktreeRepository(
-          source: source, store: derivedProjectStore(inspectNesting: { _ in [] }),
-          storage: storage, executor: executor,
-          registeredProjectRoots: projects.map { URL(fileURLWithPath: $0.rootPath) },
-          timeoutMilliseconds: 30_000, maxOutputBytes: 16_777_216, lockTimeout: .seconds(30),
-          owner: .init(bootSessionID: platform.launcher.bootSessionID)
-        ).inventory { _ in true }
+        let root = URL(fileURLWithPath: source.root)
+        @Sendable func checkSource() throws {
+          guard access.isActive, try ProjectRootIdentity(root) == access.rootIdentity else {
+            throw WorktreeError.identityChanged("The registered project moved.")
+          }
+        }
+        do {
+          let items = try WorktreeRepository(
+            source: source, store: derivedProjectStore(inspectNesting: { _ in [] }),
+            storage: storage, executor: executor,
+            registeredProjectRoots: projects.map { URL(fileURLWithPath: $0.rootPath) },
+            timeoutMilliseconds: 30_000, maxOutputBytes: 16_777_216, lockTimeout: .seconds(30),
+            owner: .init(bootSessionID: platform.launcher.bootSessionID),
+            checkAuthority: checkSource
+          ).inventory { _ in true }
+          try checkSource()
+          inventory = items
+        } catch {
+          try Task.checkCancellation()
+          inventory = nil
+        }
       } else {
         inventory = nil
       }

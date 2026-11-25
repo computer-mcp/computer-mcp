@@ -60,6 +60,7 @@ package struct ProfilePermissionOptions: Sendable {
   package let projects: [ComputerMCPCore.RegisteredProject]
   package let permissionRevision: UInt64
   package let permissionEpoch: UUID?
+  package let sourceProjects: [String: String]
   let inputs: AppControlPlaneService.GatewayInputs
 }
 
@@ -129,6 +130,6 @@ extension AppControlPlaneService {
     return ProfilePermissionOptions(
       grant: grant, integrations: integrations, plugins: plugins,
       projects: inputs.projects, permissionRevision: view.revision, permissionEpoch: view.epoch,
-      inputs: inputs)
+      sourceProjects: view.sourceProjects, inputs: inputs)
   }
 }

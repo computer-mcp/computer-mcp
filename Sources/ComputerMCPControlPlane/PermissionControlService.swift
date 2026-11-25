@@ -70,11 +70,13 @@ package final class PermissionControlService: Sendable {
 
   package func updateProfile(
     _ profile: ProfileGrant, expectedProfileRevision: Int64?, expectedRevision: UInt64,
-    authorization: GatewayManagementAuthorization? = nil, now: Date = Date()
+    authorization: GatewayManagementAuthorization? = nil, expectedEpoch: UUID? = nil,
+    now: Date = Date()
   ) throws {
     try service.updateProfile(
       profile, owner: currentOwner(), expectedProfileRevision: expectedProfileRevision,
-      expectedRevision: expectedRevision, authorization: authorization, now: now)
+      expectedRevision: expectedRevision, authorization: authorization,
+      expectedEpoch: expectedEpoch, now: now)
   }
 
   package func setOwnerPolicy(

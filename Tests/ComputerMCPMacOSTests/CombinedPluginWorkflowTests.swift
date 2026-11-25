@@ -153,8 +153,13 @@ struct CombinedPluginWorkflowTests {
       snapshot = try await Self.run(
         fixture, ["disable", "combined"], revision: snapshot.state.revision)
       try await Self.checkIndependent(active, fixture: fixture, removedCLI: projectedName)
-      snapshot = try await Self.run(
-        fixture, ["enable", "combined"], revision: snapshot.state.revision)
+      let unreviewed = try await fixture.cli([
+        "enable", "combined", "--expected-revision", String(snapshot.state.revision),
+      ])
+      #expect(unreviewed.exitCode == 1)
+      #expect(unreviewed.stdout.contains("provider.approval_required"))
+      #expect(try fixture.database.pluginStoreSnapshot() == snapshot.state)
+      try await Self.approve(fixture, identity: .package("combined"))
       #expect(try await Self.checkActive(active, fixture: fixture) == projectedName)
       await active.disconnect()
       client = nil
@@ -338,6 +343,16 @@ struct CombinedPluginWorkflowTests {
       }) {
         return
       }
+    }
+    if case .package = identity {
+      let inventory = try await fixture.host.privacyPermissionInventory()
+      let reviewed = try #require(inventory.providers.first { $0.identity == identity })
+      let operations = AppControlPlaneOperations(
+        controlPlane: fixture.host, gatewayService: fixture.gateway)
+      try await operations.saveProviderPermissions(
+        reviewed: reviewed, permissions: permissions, fullAccess: true, sandboxSettings: .init(),
+        editingApproval: false)
+      return
     }
     _ = try await fixture.host.approveProvider(
       review, permissions: permissions, fullAccess: true,

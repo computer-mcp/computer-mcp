@@ -482,7 +482,8 @@ struct MCPBoundHostServicesTests {
     await fixture.close()
   }
 
-  @Test(.timeLimit(.minutes(1))) func leaseCapacityDoesNotLoseAnExistingLiveCall() async throws {
+  // The fixture commits each lease separately with the production disk durability settings.
+  @Test(.timeLimit(.minutes(2))) func leaseCapacityDoesNotLoseAnExistingLiveCall() async throws {
     let fixture = try HostAuthorityFixture()
     defer { fixture.remove() }
     let directory = try #require(fixture.peer.context(for: "scope")?.tools)
@@ -520,7 +521,9 @@ struct MCPBoundHostServicesTests {
     await fixture.close()
     for lease in leases { lease.finish() }
     await request.finish()
-    #expect(try fixture.database.hostCallRecordStore().record(id: id)?.lifecycle == .completed)
+    let completed = try #require(try fixture.database.hostCallRecordStore().record(id: id))
+    #expect(completed.lifecycle == .completed)
+    #expect(completed.requestLeaseIDs.isEmpty && completed.workLeaseIDs.isEmpty)
   }
 
   @Test(.timeLimit(.minutes(5)), arguments: [false, true])

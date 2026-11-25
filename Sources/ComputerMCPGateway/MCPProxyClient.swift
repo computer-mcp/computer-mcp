@@ -1098,11 +1098,23 @@ private actor MCPProxyConnection {
       vendorExecution: vendorExecution)
   }
 
-  func listTools(caller: GatewayDiscoveryCaller? = nil) async throws -> [MCPTool] {
+  func listTools(caller: GatewayDiscoveryCaller? = nil, settleManagedPages: Bool = false)
+    async throws -> [MCPTool]
+  {
     try caller?.check()
     try await ensureConnected(notifyTools: false, caller: caller)
+    let deliveryTimeout = Duration.milliseconds(server.requestTimeoutMs ?? 30_000)
     let tools = try await MCPToolCatalogLoader.load { [client] cursor in
-      try await client.listTools(cursor: cursor)
+      guard settleManagedPages else { return try await client.listTools(cursor: cursor) }
+      // The pinned SDK convenience method hides the request ID used to settle its waiter.
+      let page = ManagedMCPRequest()
+      let request = ListTools.request(cursor.map { .init(cursor: $0) } ?? .init())
+      let response = try await ManagedMCPRequest.$current.withValue(page) {
+        try await client.send(request)
+      }
+      let result = try await Self.waitForResponse(
+        response, client: client, managedRequest: page, deliveryTimeout: deliveryTimeout)
+      return (result.tools, result.nextCursor)
     }
     let catalog = tools.map { tool in
       MCPTool(
@@ -1190,7 +1202,8 @@ private actor MCPProxyConnection {
     }
     let (context, ownership) = try await dispatchTool(
       name: name, arguments: arguments, gatewayRequestID: gatewayRequestID,
-      host: host, continuation: continuation, execution: execution, managedRequest: managedRequest)
+      host: host, continuation: continuation, execution: execution, managedRequest: managedRequest,
+      cancellation: cancellation)
     var confirmedResponse = false
     defer { settleOwnership(ownership, confirmed: confirmedResponse) }
     guard closeTask == nil else {
@@ -1211,12 +1224,16 @@ private actor MCPProxyConnection {
         $0.downstreamRequestID = context.requestID.description
       }
     }
-    let handleCancellationFailure: @Sendable () -> Void = {
-      if let vendor, let vendorInvocationID {
+    let handleCancellationFailure: (@Sendable () -> Void)?
+    if let vendor, let vendorInvocationID {
+      handleCancellationFailure = {
         Task { await vendor.stopInvocation(vendorInvocationID) }
-      } else {
-        cancellationDeliveryFailed()
       }
+    } else if ownership?.managedObservation == true {
+      // This request owns an SDK waiter. The adapter's native workloads have separate owners.
+      handleCancellationFailure = nil
+    } else {
+      handleCancellationFailure = cancellationDeliveryFailed
     }
     cancellation?.install(onDeliveryFailure: handleCancellationFailure) {
       [client, journal, server] in
@@ -1232,6 +1249,7 @@ private actor MCPProxyConnection {
             CancelledNotification.message(
               .init(requestId: context.requestID, reason: "Upstream MCP request cancelled.")))
         } else {
+          if let managedRequest, !(await managedRequest.cancel()) { return }
           try await client.cancelRequest(
             context.requestID, reason: "Upstream MCP request cancelled.")
         }
@@ -1261,18 +1279,12 @@ private actor MCPProxyConnection {
     }
     let result: CallTool.Result
     do {
-      result = try await withTaskCancellationHandler {
-        try await context.value
-      } onCancel: { [client] in
-        guard let managedRequest else { return }
+      result = try await Self.waitForResponse(
+        context, client: client, managedRequest: managedRequest,
+        deliveryTimeout: .milliseconds(server.requestTimeoutMs ?? 30_000)
+      ) {
         if let vendor, let vendorInvocationID {
           Task { await vendor.stopInvocation(vendorInvocationID) }
-        }
-        Task {
-          if await managedRequest.cancel() {
-            try? await client.cancelRequest(
-              context.requestID, reason: "Host request deadline elapsed.")
-          }
         }
       }
       confirmedResponse = true
@@ -1650,10 +1662,15 @@ private actor MCPProxyConnection {
   private func dispatchTool(
     name: String, arguments: [String: JSONValue], gatewayRequestID: String,
     host: HostServiceDispatch?, continuation: MCPContinuationTarget?,
-    execution: PreparedExecutionContext, managedRequest: ManagedMCPRequest? = nil
+    execution: PreparedExecutionContext, managedRequest: ManagedMCPRequest? = nil,
+    cancellation: MCPCallCancellation? = nil
   ) async throws -> (RequestContext<CallTool.Result>, RequestOwnership?) {
     if !workCatalogObserved && initializeResult?.capabilities.resources != nil {
-      _ = try await listTools()
+      _ = try await listTools(settleManagedPages: managedRequest != nil)
+    }
+    if managedRequest != nil {
+      try Task.checkCancellation()
+      try cancellation?.checkCancellation()
     }
     guard closeTask == nil else { throw MCPError.connectionClosed }
     if host?.action?.isProjectLifecycle == true {
@@ -1787,6 +1804,26 @@ private actor MCPProxyConnection {
     } catch {
       settleOwnership(ownership, confirmed: !forwarding || Self.isResponseError(error))
       throw error
+    }
+  }
+
+  private static func waitForResponse<Response: Sendable & Decodable>(
+    _ response: RequestContext<Response>, client: MCP.Client, managedRequest: ManagedMCPRequest?,
+    deliveryTimeout: Duration, onDeadline: (@Sendable () -> Void)? = nil
+  ) async throws -> Response {
+    try await withTaskCancellationHandler {
+      try await response.value
+    } onCancel: {
+      guard let managedRequest else { return }
+      onDeadline?()
+      Task {
+        await MCPCallCancellation.deliver(within: deliveryTimeout, onDeliveryFailure: nil) {
+          if await managedRequest.cancel() {
+            try await client.cancelRequest(
+              response.requestID, reason: "Host request deadline elapsed.")
+          }
+        }
+      }
     }
   }
 

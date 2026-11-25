@@ -27,6 +27,7 @@ package actor ManagedMCPRequest {
 
   /// Before send, a refusal at the transport completes the SDK waiter itself.
   package func cancel() -> Bool {
+    guard !cancelled else { return false }
     cancelled = true
     return sending
   }

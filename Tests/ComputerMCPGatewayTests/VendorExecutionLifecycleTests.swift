@@ -274,64 +274,56 @@
       }
     }
 
-    @Test func observationDeadlineSettlesItsWaiterAndKeepsTheVendorSessionLive() async throws {
-      let fixture = try Fixture(adapterSource: Self.observationAdapter)
+    @Test(arguments: [false, true])
+    func observationDeadlineSettlesItsWaiterAndKeepsTheVendorSessionLive(
+      freshCatalog: Bool
+    ) async throws {
+      let fixture = try Fixture(adapterSource: Self.managedAdapter(stallCatalog: freshCatalog))
       defer { fixture.base.remove() }
       let ownedWork = GatewayOwnedWork()
-      let source = fixture.vendor
-      var context = MCPHostContext(
-        runtimeID: UUID(), context: .init(caller: .localMCP, profileID: .localAdmin),
-        projectID: "source", rootURL: fixture.base.source, readOnly: true,
-        processOwnershipRoot: fixture.base.root.appendingPathComponent("ownership"))
-      context.ownedWork = ownedWork
-      context.providerSource = { _ in
-        MCPProviderExecutionSource(digest: source.manifestDigest, vendorExecution: source) { _, _ in
-          throw PermissionModelError.invalidAuthorization
-        }
-      }
-      let client = MCPProxyClient(
-        launcher: fixture.base.platform.launcher, workingDirectory: fixture.base.source,
-        hostContext: context)
+      let client = fixture.proxy(ownedWork: ownedWork)
       var configuration = fixture.server
       configuration.requestTimeoutMs = 5_000
       let server = configuration
       do {
-        let opening = try await fixture.prepare("open")
-        let opened = try await client.callToolAsync(
-          server: server, name: "open", arguments: .object([:]), requestID: nil,
-          context: .init(executionAuthority: opening))
-        let instance = try #require(opened.objectValue?["structuredContent"]?.objectValue?["pid"])
+        let instance: JSONValue
+        if freshCatalog {
+          // Initialize the adapter without a tool catalog, under a different execution
+          // so the caller's lease can settle while the adapter stays alive.
+          let adapter = try await fixture.prepare("open")
+          let listed = try client.listResources(
+            server: server, cursor: nil, context: .init(executionAuthority: adapter))
+          let pid = try #require(
+            listed.objectValue?["resources"]?.arrayValue?.first?
+              .objectValue?["name"]?.stringValue.flatMap(Int64.init))
+          instance = .integer(pid)
+        } else {
+          let opened = try await fixture.call("open", server: server, client: client)
+          instance = try #require(opened["pid"])
+        }
 
         let observation = try await fixture.prepare("list")
         let requestID = "observation-deadline"
-        await #expect(throws: GatewayToolError.self) {
+        do {
           _ = try await client.callToolAsync(
             server: server, name: "list", arguments: .object([:]), requestID: requestID,
             context: .init(executionAuthority: observation))
+          Issue.record("The unanswered managed request should time out.")
+        } catch let error as GatewayToolError {
+          #expect(String(describing: error).contains("request timed out"))
         }
-        try observation.finishAdmission()
-        let deadline = ContinuousClock.now + .seconds(5)
-        while true {
-          let running = try fixture.base.runtime.store.readWithDatabase { _, ledger in
-            try #require(ledger.executions[observation.executionID]).isRunning
-          }
-          if !running, !ownedWork.snapshot.contains(where: { $0.resourceID == requestID }) {
-            break
-          }
-          try #require(
-            ContinuousClock.now < deadline, "Observation retained its execution or request")
-          try await Task.sleep(for: .milliseconds(20))
-        }
+        try await fixture.requireSettled(observation, requestID: requestID, ownedWork: ownedWork)
 
-        let prompt = try await fixture.prepare("prompt")
-        let reply = try await client.callToolAsync(
-          server: server, name: "prompt",
-          arguments: .object(["session": .string(String(repeating: "a", count: 32))]),
-          requestID: nil,
-          context: .init(executionAuthority: prompt))
-        let output = try #require(reply.objectValue?["structuredContent"]?.objectValue)
+        if freshCatalog {
+          let opened = try await fixture.call("open", server: server, client: client)
+          #expect(opened["pid"] == instance)
+        }
+        let output = try await fixture.call(
+          "prompt", server: server, client: client,
+          arguments: ["session": .string(String(repeating: "a", count: 32))])
         #expect(output["pid"] == instance)
         #expect(output["exact_cancel"] == .bool(true))
+        #expect(output["observations"] == .integer(freshCatalog ? 0 : 1))
         #expect(output["native_output"] == .string("done:11\n"))
       } catch {
         await client.shutdown()
@@ -342,18 +334,107 @@
       try await fixture.cleanup()
     }
 
+    @Test func delayedObservationAdvisoryKeepsTheSiblingWorkloadOnItsAdapter() async throws {
+      let fixture = try Fixture(adapterSource: Self.managedAdapter(stallAdvisory: true))
+      defer { fixture.base.remove() }
+      let ownedWork = GatewayOwnedWork()
+      let client = fixture.proxy(ownedWork: ownedWork)
+      var configuration = fixture.server
+      let requestTimeout = 5_000
+      configuration.requestTimeoutMs = requestTimeout
+      let server = configuration
+      let home = try fixture.base.database.prepareProviderContainer(.package(fixture.pluginID))
+        .sandbox.home
+      let gates = URL(fileURLWithPath: home.value)
+      let release = gates.appendingPathComponent("advisory-release")
+      var observed: Task<JSONValue, any Error>?
+      var filler: Task<JSONValue, any Error>?
+      do {
+        let first = try await fixture.call("open", server: server, client: client)
+        let sibling = try await fixture.call("open", server: server, client: client)
+        let siblingSession = String(repeating: "b", count: 32)
+        #expect(first["pid"] == sibling["pid"])
+        try #require(first["child"] != sibling["child"])
+
+        let observation = try await fixture.prepare("list")
+        let requestID = "cancel-managed-observation"
+        let waiting = Task {
+          try await client.callToolAsync(
+            server: server, name: "list", arguments: .object([:]), requestID: requestID,
+            context: .init(executionAuthority: observation))
+        }
+        observed = waiting
+        try await requireAdapterMarker("advisory-ready", in: gates)
+        let fillerExecution = try await fixture.prepare("list")
+        filler = Task {
+          try await client.callToolAsync(
+            server: server, name: "list",
+            arguments: .object(["filler": .string(String(repeating: "x", count: 512 * 1024))]),
+            requestID: nil, context: .init(executionAuthority: fillerExecution))
+        }
+        try await requireAdapterMarker("advisory-backpressure", in: gates)
+        let cancelledAt = ContinuousClock.now
+        waiting.cancel()
+        await #expect(throws: CancellationError.self) { _ = try await waiting.value }
+        #expect(ContinuousClock.now - cancelledAt >= .milliseconds(requestTimeout))
+        try await fixture.requireSettled(observation, requestID: requestID, ownedWork: ownedWork)
+        #expect(!FileManager.default.fileExists(atPath: release.path))
+        let status = try client.connectionStatus(
+          server: server, context: .init(executionAuthority: fillerExecution))
+        try #require(status.objectValue?["state"] == .string("connected"))
+
+        try Data().write(to: release)
+        _ = await filler?.result
+        let output = try await fixture.call(
+          "prompt", server: server, client: client, arguments: ["session": .string(siblingSession)])
+        #expect(output["pid"] == sibling["pid"])
+        #expect(output["child"] == sibling["child"])
+        #expect(output["native_output"] == .string("done:11\n"))
+      } catch {
+        try? Data().write(to: release)
+        observed?.cancel()
+        filler?.cancel()
+        await client.shutdown()
+        _ = await observed?.result
+        _ = await filler?.result
+        try? await fixture.cleanup()
+        throw error
+      }
+      await client.shutdown()
+      try await fixture.cleanup()
+    }
+
+    private func requireAdapterMarker(_ name: String, in directory: URL) async throws {
+      let path = directory.appendingPathComponent(name).path
+      let deadline = ContinuousClock.now + .seconds(4)
+      while !FileManager.default.fileExists(atPath: path) {
+        try #require(ContinuousClock.now < deadline, "Adapter did not reach \(name).")
+        try await Task.sleep(for: .milliseconds(10))
+      }
+    }
+
+    private static func managedAdapter(
+      stallCatalog: Bool = false, stallAdvisory: Bool = false
+    ) -> String {
+      "stall_catalog = \(stallCatalog ? "True" : "False")\n"
+        + "stall_advisory = \(stallAdvisory ? "True" : "False")\n" + observationAdapter
+    }
+
     private static let observationAdapter = #"""
-      import base64, json, os, socket, sys, uuid
+      import base64, fcntl, json, os, pathlib, socket, struct, sys, termios, time, uuid
 
       capability = 'io.github.computer-mcp/vendor-execution-v1'
       uri = 'computer-mcp://runtime/work/v1'
       instance = str(uuid.uuid4())
       vendor = socket.socket(fileno=3).makefile('rwb', buffering=0)
+      home = pathlib.Path(os.environ['HOME'])
       private_id = 0
-      acquisition = child = hung = None
+      sessions = {}
+      hung = catalog_hung = None
+      observations = 0
       cancelled = []
 
-      def private(op, call=None, **fields):
+      def private(op, call=None, acquisition=None, **fields):
           global private_id
           private_id += 1
           request = {'id': private_id, 'op': op, **fields}
@@ -367,6 +448,17 @@
       def respond(id, result):
           print(json.dumps({'jsonrpc': '2.0', 'id': id, 'result': result}), flush=True)
 
+      def hold_input():
+          (home / 'advisory-ready').touch()
+          release = home / 'advisory-release'
+          deadline = time.monotonic() + 20
+          while not release.exists():
+              assert time.monotonic() < deadline, 'Host did not release test input'
+              available = fcntl.ioctl(0, termios.FIONREAD, struct.pack('i', 0))
+              if struct.unpack('i', available)[0] >= 4096:
+                  (home / 'advisory-backpressure').touch()
+              time.sleep(0.01)
+
       assert private('initialize', capability=capability)['capability'] == capability
       for line in sys.stdin:
           message = json.loads(line)
@@ -375,42 +467,65 @@
           if method == 'initialize':
               respond(id, {'protocolVersion': '2025-06-18', 'serverInfo': {'name': 'fixture', 'version': '1'},
                            'capabilities': {'tools': {}, 'resources': {}, 'experimental': {capability: True}}})
+          elif method == 'resources/list':
+              respond(id, {'resources': [{'uri': uri, 'name': str(os.getpid())}]})
           elif method == 'tools/list':
+              if stall_catalog and catalog_hung is None:
+                  if 'cursor' not in params:
+                      respond(id, {'tools': [], 'nextCursor': 'next'})
+                  else:
+                      catalog_hung = id
+                  continue
               respond(id, {'tools': [
                   {'name': name, 'inputSchema': {'type': 'object'},
                    '_meta': {'io.github.computer-mcp/work': {'format_version': 1, 'uri': uri}}}
                   for name in ('open', 'list', 'prompt')]})
           elif method == 'resources/read':
-              resources = [] if acquisition is None else [
-                  {'kind': 'fixture.session', 'id': 'a' * 32, 'acquired_by': acquisition, 'state': 'active'}]
+              resources = [
+                  {'kind': 'fixture.session', 'id': handle, 'acquired_by': acquisition, 'state': 'active'}
+                  for handle, (acquisition, child) in sessions.items()]
               report = {'format_version': 1, 'instance_id': instance,
-                        'revision': int(bool(resources)), 'resources': resources}
+                        'revision': len(resources), 'resources': resources}
               respond(id, {'contents': [{'uri': uri, 'mimeType': 'application/json', 'text': json.dumps(report)}]})
           elif method == 'notifications/cancelled':
               cancelled.append(params['requestId'])
+              if params['requestId'] == catalog_hung:
+                  respond(catalog_hung, {'tools': []})
           elif method == 'tools/call':
               name = params['name']
+              arguments = params.get('arguments', {})
               if name == 'list':
-                  hung = id
+                  if 'filler' in arguments:
+                      respond(id, {'content': []})
+                  else:
+                      observations += 1
+                      hung = id
+                      if stall_advisory:
+                          hold_input()
                   continue
               call = params['_meta']['io.github.computer-mcp/work-invocation']
               if name == 'open':
+                  handle = chr(ord('a') + len(sessions)) * 32
                   acquisition = call
-                  slots = private('bind', call, session='a' * 32)
-                  private('probe', call, child=slots['probe'])
+                  slots = private('bind', call, acquisition, session=handle)
+                  private('probe', call, acquisition, child=slots['probe'])
                   child = slots['workload']
-                  private('launch', call, child=child)
+                  private('launch', call, acquisition, child=child)
                   for _ in range(3):
-                      private('write', call, child=child, kind='setup', data='setup')
-                  private('ready', call, child=child)
-                  result = {'pid': os.getpid()}
+                      private('write', call, acquisition, child=child, kind='setup', data='setup')
+                  private('ready', call, acquisition, child=child)
+                  sessions[handle] = (acquisition, child)
+                  result = {'pid': os.getpid(), 'child': child}
               else:
-                  private('write', call, child=child, kind='prompt', data='finish:ping')
+                  acquisition, child = sessions[arguments['session']]
+                  private('write', call, acquisition, child=child, kind='prompt', data='finish:ping')
                   output = {}
                   while 'data' not in output:
-                      output = private('read', call, child=child, after=0)
-                  private('finish', call, child=child)
-                  result = {'pid': os.getpid(), 'exact_cancel': hung is not None and cancelled == [hung],
+                      output = private('read', call, acquisition, child=child, after=0)
+                  private('finish', call, acquisition, child=child)
+                  expected_cancel = catalog_hung if stall_catalog else hung
+                  result = {'pid': os.getpid(), 'child': child, 'observations': observations,
+                            'exact_cancel': expected_cancel is not None and cancelled == [expected_cancel],
                             'native_output': base64.b64decode(output['data']).decode()}
               respond(id, {'content': [], 'structuredContent': result})
       """#
@@ -862,6 +977,52 @@
           configuration: composition.runtimeConfiguration,
           origins: composition.origins, database: base.database)
         vendor = try #require(source.vendorExecution)
+      }
+
+      func proxy(ownedWork: GatewayOwnedWork) -> MCPProxyClient {
+        let source = vendor
+        var context = MCPHostContext(
+          runtimeID: UUID(), context: .init(caller: .localMCP, profileID: .localAdmin),
+          projectID: "source", rootURL: base.source, readOnly: true,
+          processOwnershipRoot: base.root.appendingPathComponent("ownership"))
+        context.ownedWork = ownedWork
+        context.providerSource = { _ in
+          MCPProviderExecutionSource(digest: source.manifestDigest, vendorExecution: source) {
+            _, _ in
+            throw PermissionModelError.invalidAuthorization
+          }
+        }
+        return MCPProxyClient(
+          launcher: base.platform.launcher, workingDirectory: base.source, hostContext: context)
+      }
+
+      func call(
+        _ tool: String, server: MCPServerConfig, client: MCPProxyClient,
+        arguments: [String: JSONValue] = [:]
+      ) async throws -> [String: JSONValue] {
+        let execution = try await prepare(tool)
+        let reply = try await client.callToolAsync(
+          server: server, name: tool, arguments: .object(arguments), requestID: nil,
+          context: .init(executionAuthority: execution))
+        return try #require(reply.objectValue?["structuredContent"]?.objectValue)
+      }
+
+      func requireSettled(
+        _ observation: PreparedExecutionContext, requestID: String, ownedWork: GatewayOwnedWork
+      ) async throws {
+        try observation.finishAdmission()
+        let deadline = ContinuousClock.now + .seconds(3)
+        while true {
+          let running = try base.runtime.store.readWithDatabase { _, ledger in
+            try #require(ledger.executions[observation.executionID]).isRunning
+          }
+          if !running, !ownedWork.snapshot.contains(where: { $0.resourceID == requestID }) {
+            return
+          }
+          try #require(
+            ContinuousClock.now < deadline, "Observation retained its execution or request")
+          try await Task.sleep(for: .milliseconds(20))
+        }
       }
 
       func prepare(_ tool: String) async throws -> PreparedExecutionContext {

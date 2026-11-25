@@ -115,48 +115,18 @@ struct WorktreeRecoveryOwnerAcceptanceTests {
       let review = try owner.reviewRelease(
         key: view.key, generation: view.generation, selections: [record.selection],
         principal: fixture.principal)
+      let input = OwnerChildInput(
+        databasePath: f.database.path, source: f.source, principal: fixture.principal,
+        request: .release(review), projectID: nil)
+      let child = try OwnerChildRunner(directory: directory, input: input)
+      let exit = try child.run("interrupt-confirmation", expecting: 71)
+      #expect(exit == 71)
+      #expect(try child.readPhase("interrupt-confirmation") == "confirmation-published")
       let active = fixture.storeDirectory(view.key).appendingPathComponent("owner-operation.json")
-      let child = fork()
-      guard child >= 0 else { throw POSIXError(.EAGAIN) }
-      if child == 0 {
-        do {
-          let store = try SQLiteDerivedProjectStore(
-            connection: GatewayDatabaseConnection(path: f.database.path))
-          let interruption = OwnerConfirmationInterruption(active: active)
-          let service = try WorktreeRecoveryOwnerService(
-            storage: f.storage, derived: store,
-            dependencies: OwnerAcceptanceEvidence(source: f.source, store: store),
-            executor: WorktreeTestGit(),
-            journalIO: .init(beforeDirectorySync: { try interruption.check() }))
-          do {
-            _ = try service.confirm(review, principal: fixture.principal)
-            _exit(2)
-          } catch is OwnerConfirmationInterruption.Failure {
-            _exit(interruption.fired ? 0 : 3)
-          } catch {
-            _exit(4)
-          }
-        } catch {
-          _exit(5)
-        }
-      }
-      var status: Int32 = 0
-      let deadline = ContinuousClock.now.advanced(by: .seconds(30))
-      var waited: pid_t = 0
-      while waited == 0 && ContinuousClock.now < deadline {
-        waited = waitpid(child, &status, WNOHANG)
-        if waited == 0 { Thread.sleep(forTimeInterval: 0.01) }
-      }
-      if waited == 0 {
-        _ = kill(child, SIGKILL)
-        _ = waitpid(child, &status, 0)
-        Issue.record("Child confirmation exceeded its deadline")
-        return
-      }
-      guard waited == child, status == 0 else {
-        Issue.record("Child confirmation failed, wait status: \(status)")
-        return
-      }
+      let journal = try JSONDecoder().decode(
+        RecoveryOwnerJournal.self, from: Data(contentsOf: active))
+      #expect(journal.request == .release(review))
+      #expect(journal.outcome == .pending)
       guard
         case .submitted(let pending) = try owner.operation(
           review.handle, principal: fixture.principal)
@@ -287,6 +257,93 @@ struct WorktreeRecoveryOwnerAcceptanceTests {
       }
       #expect(try owner.resume(review.handle, principal: fixture.principal) == result)
     }
+  }
+
+  @Test func maintenanceAfterLastUnlinkExcludesAnotherProcessUntilRestart() throws {
+    try fixture { directory in
+      let f = try WorktreeFixture(directory)
+      let fixture = try OwnerAcceptanceFixture(f)
+      let worktrees = try f.service()
+      let created = try worktrees.create(name: "maintenance-crash")
+      _ = try f.privateCommit(worktrees, projectID: created.projectID)
+      _ = try worktrees.publish(projectID: created.projectID) { _ in }
+      let git = PrivateWorktreeGit(
+        f: f, topology: try worktrees.topology(projectID: created.projectID))
+      try git.run(["commit", "--allow-empty", "-m", "shared history"])
+      _ = try worktrees.publish(projectID: created.projectID) { _ in }
+      let owner = try fixture.service()
+      let view = try #require(try owner.list().first)
+      guard
+        case .reviewed(let review) = try owner.prepareMaintenance(
+          key: view.key, generation: view.generation, principal: fixture.principal)
+      else {
+        Issue.record("Expected a maintenance proof")
+        return
+      }
+      let hash = try #require(review.packHash)
+      let input = OwnerChildInput(
+        databasePath: f.database.path, source: f.source, principal: fixture.principal,
+        request: .maintenance(review), projectID: created.projectID)
+      let child = try OwnerChildRunner(directory: directory, input: input)
+      #expect(try child.run("interrupt-maintenance", expecting: 71) == 71)
+      #expect(try child.readPhase("interrupt-maintenance") == "last-unlink")
+      let store = fixture.storeDirectory(view.key)
+      let active = store.appendingPathComponent("owner-operation.json")
+      let activeBytes = try Data(contentsOf: active)
+      let interrupted = try JSONDecoder().decode(RecoveryOwnerJournal.self, from: activeBytes)
+      #expect(interrupted.request == .maintenance(review))
+      #expect(interrupted.maintenance?.phase == .disposing)
+      let resultURL = store.appendingPathComponent(
+        RecoveryOwnerJournal.resultName(review.handle.id))
+      #expect(!FileManager.default.fileExists(atPath: resultURL.path))
+      let catalog = store.appendingPathComponent("catalog.json")
+      let catalogBytes = try Data(contentsOf: catalog)
+      let packDirectory = store.appendingPathComponent("repository.git/objects/pack")
+      let afterUnlink = try ownerPackAllocation(packDirectory)
+      let survivingFiles = try ownerPackFiles(packDirectory)
+      #expect(!afterUnlink.names.contains("pack-\(hash).pack"))
+      #expect(!afterUnlink.names.contains("pack-\(hash).idx"))
+      #expect(!afterUnlink.names.contains { $0.hasSuffix(".quarantine") })
+      #expect(try child.run("conflicting-publication") == 0)
+      #expect(try child.readPhase("conflicting-publication").contains("Recovery maintenance"))
+      #expect(try Data(contentsOf: active) == activeBytes)
+      #expect(try Data(contentsOf: catalog) == catalogBytes)
+      #expect(try ownerPackAllocation(packDirectory).names == afterUnlink.names)
+      #expect(try ownerPackFiles(packDirectory) == survivingFiles)
+      #expect(!FileManager.default.fileExists(atPath: resultURL.path))
+      #expect(try child.run("resume") == 0)
+      let first = try child.readStatus("resume")
+      guard case .measured(let measurement) = first.outcome else {
+        Issue.record("Restart did not measure the disposed pair: \(first.outcome)")
+        return
+      }
+      #expect(first.request == .maintenance(review))
+      #expect(measurement.baselineBytes == review.baselineBytes)
+      #expect(measurement.finalBytes == afterUnlink.bytes)
+      #expect(measurement.reclaimedBytes == review.baselineBytes - afterUnlink.bytes)
+      #expect(measurement.reclaimedBytes > 0)
+      #expect(try child.run("resume-again") == 0)
+      #expect(try child.readStatus("resume-again") == first)
+      #expect(!FileManager.default.fileExists(atPath: active.path))
+      #expect(FileManager.default.fileExists(atPath: resultURL.path))
+      #expect(
+        try !ownerPackAllocation(packDirectory).names.contains { $0.hasSuffix(".quarantine") })
+      #expect(try ownerPackFiles(packDirectory) == survivingFiles)
+      #expect(try #require(owner.list().first).records == view.records)
+      let recovery = try f.recoveryGitDirectory()
+      for record in view.records {
+        #expect(
+          try f.raw(["--git-dir=" + recovery.path, "cat-file", "-t", record.oid])
+            == record.objectType.rawValue)
+      }
+    }
+  }
+
+  @Test func ownerAcceptanceChildProcess() throws {
+    guard let directory = ProcessInfo.processInfo.environment["OWNER_ACCEPTANCE_CHILD_DIRECTORY"],
+      let mode = ProcessInfo.processInfo.environment["OWNER_ACCEPTANCE_CHILD_MODE"]
+    else { return }
+    try runOwnerAcceptanceChild(directory: URL(fileURLWithPath: directory), mode: mode)
   }
 
   @Test func unexplainedMissingReceiptRequiresRecoveryAndPreservesSurvivor() throws {
@@ -424,4 +481,162 @@ private func ownerPackAllocation(_ directory: URL) throws -> (names: Set<String>
     bytes += Int64(info.st_blocks) * 512
   }
   return (names, bytes)
+}
+
+private struct OwnerChildInput: Codable, Sendable {
+  let databasePath: String
+  let source: DerivedProjectSource
+  let principal: String
+  let request: RecoveryReviewedRequest
+  let projectID: String?
+}
+
+private struct OwnerChildRunner {
+  let directory: URL
+
+  init(directory: URL, input: OwnerChildInput) throws {
+    self.directory = directory
+    try JSONEncoder().encode(input).write(
+      to: directory.appendingPathComponent("owner-child-input.json"))
+  }
+
+  func run(_ mode: String, expecting expected: Int32 = 0) throws -> Int32 {
+    let process = Process()
+    process.executableURL = URL(fileURLWithPath: CommandLine.arguments[0])
+    var arguments = [
+      "--testing-library", "swift-testing", "--filter", "ownerAcceptanceChildProcess",
+    ]
+    if let index = CommandLine.arguments.firstIndex(of: "--test-bundle-path"),
+      CommandLine.arguments.indices.contains(index + 1)
+    {
+      let bundle = CommandLine.arguments[index + 1]
+      arguments = ["--test-bundle-path", bundle, bundle] + arguments
+    }
+    process.arguments = arguments
+    var environment = ProcessInfo.processInfo.environment
+    environment["OWNER_ACCEPTANCE_CHILD_DIRECTORY"] = directory.path
+    environment["OWNER_ACCEPTANCE_CHILD_MODE"] = mode
+    process.environment = environment
+    let log = directory.appendingPathComponent("owner-child-\(mode).log")
+    try Data().write(to: log)
+    let output = try FileHandle(forWritingTo: log)
+    process.standardOutput = output
+    process.standardError = output
+    try process.run()
+    try output.close()
+    let deadline = ContinuousClock.now.advanced(by: .seconds(90))
+    while process.isRunning && ContinuousClock.now < deadline {
+      Thread.sleep(forTimeInterval: 0.02)
+    }
+    if process.isRunning {
+      process.terminate()
+      let stop = ContinuousClock.now.advanced(by: .seconds(2))
+      while process.isRunning && ContinuousClock.now < stop {
+        Thread.sleep(forTimeInterval: 0.02)
+      }
+      if process.isRunning { _ = kill(process.processIdentifier, SIGKILL) }
+      process.waitUntilExit()
+      throw OwnerChildFailure.timeout
+    }
+    process.waitUntilExit()
+    guard process.terminationReason == .exit, process.terminationStatus == expected else {
+      let diagnostics = (try? String(contentsOf: log, encoding: .utf8)) ?? "unavailable"
+      throw WorktreeError.commandFailed(
+        "Owner child \(mode) exited \(process.terminationStatus), expected \(expected): \(diagnostics)"
+      )
+    }
+    return process.terminationStatus
+  }
+
+  func readPhase(_ mode: String) throws -> String {
+    try String(
+      contentsOf: directory.appendingPathComponent("owner-child-\(mode).phase"), encoding: .utf8)
+  }
+
+  func readStatus(_ mode: String) throws -> RecoveryOperationStatus {
+    try JSONDecoder().decode(
+      RecoveryOperationStatus.self,
+      from: Data(contentsOf: directory.appendingPathComponent("owner-child-\(mode).status")))
+  }
+}
+
+private enum OwnerChildFailure: Error { case timeout, unexpectedMode, didNotInterrupt }
+
+private func runOwnerAcceptanceChild(directory: URL, mode: String) throws {
+  let input = try JSONDecoder().decode(
+    OwnerChildInput.self,
+    from: Data(contentsOf: directory.appendingPathComponent("owner-child-input.json")))
+  let store = try SQLiteDerivedProjectStore(
+    connection: GatewayDatabaseConnection(path: input.databasePath))
+  let storage = try #require(WorktreeStorage(databaseURL: URL(fileURLWithPath: input.databasePath)))
+  let active = storage.recovery.appendingPathComponent(
+    "stores/\(input.request.handle.storeKey)/owner-operation.json")
+  let phase = directory.appendingPathComponent("owner-child-\(mode).phase")
+  let journalIO = WorktreeJournalIO(beforeDirectorySync: {
+    guard let data = try? Data(contentsOf: active),
+      let journal = try? JSONDecoder().decode(RecoveryOwnerJournal.self, from: data),
+      journal.request == input.request
+    else { return }
+    if mode == "interrupt-confirmation" {
+      try Data("confirmation-published".utf8).write(to: phase)
+      _exit(71)
+    }
+    if mode == "interrupt-maintenance", journal.maintenance?.phase == .disposing,
+      case .maintenance(let review) = input.request, let hash = review.packHash
+    {
+      let packs = active.deletingLastPathComponent().appendingPathComponent(
+        "repository.git/objects/pack")
+      let names = try FileManager.default.contentsOfDirectory(atPath: packs.path)
+      guard !names.contains("pack-\(hash).pack"), !names.contains("pack-\(hash).idx"),
+        !names.contains(where: { $0.hasSuffix(".quarantine") })
+      else { return }
+      try Data("last-unlink".utf8).write(to: phase)
+      _exit(71)
+    }
+  })
+  let service = try WorktreeRecoveryOwnerService(
+    storage: storage, derived: store,
+    dependencies: OwnerAcceptanceEvidence(source: input.source, store: store),
+    executor: WorktreeTestGit(), journalIO: journalIO)
+  switch mode {
+  case "interrupt-confirmation":
+    guard case .release(let review) = input.request else { throw OwnerChildFailure.unexpectedMode }
+    _ = try service.confirm(review, principal: input.principal)
+    throw OwnerChildFailure.didNotInterrupt
+  case "interrupt-maintenance":
+    guard case .maintenance(let review) = input.request else {
+      throw OwnerChildFailure.unexpectedMode
+    }
+    _ = try service.run(review, principal: input.principal)
+    throw OwnerChildFailure.didNotInterrupt
+  case "conflicting-publication":
+    do {
+      let worktrees = try WorktreeRepository(
+        source: input.source, store: store, storage: storage, executor: WorktreeTestGit(),
+        registeredProjectRoots: [URL(fileURLWithPath: input.source.root)],
+        timeoutMilliseconds: 10_000, maxOutputBytes: 1_048_576, lockTimeout: .seconds(1))
+      _ = try worktrees.publish(projectID: #require(input.projectID)) { _ in }
+      try Data("admitted".utf8).write(to: phase)
+    } catch WorktreeError.busy(let reason) {
+      try Data(reason.utf8).write(to: phase)
+    }
+  case "resume", "resume-again":
+    let status = try service.resume(input.request.handle, principal: input.principal)
+    try JSONEncoder().encode(status).write(
+      to: directory.appendingPathComponent("owner-child-\(mode).status"))
+  default: throw OwnerChildFailure.unexpectedMode
+  }
+}
+
+private func ownerPackFiles(_ directory: URL) throws -> [String: Data] {
+  var result: [String: Data] = [:]
+  for name in try FileManager.default.contentsOfDirectory(atPath: directory.path) {
+    let url = directory.appendingPathComponent(name)
+    var info = stat()
+    guard lstat(url.path, &info) == 0 else { throw POSIXError(.EIO) }
+    var bytes = Data("\(info.st_dev):\(info.st_ino):\(info.st_mode):\(info.st_blocks):".utf8)
+    bytes.append(try Data(contentsOf: url))
+    result[name] = bytes
+  }
+  return result
 }

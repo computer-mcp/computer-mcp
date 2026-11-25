@@ -1,5 +1,6 @@
 import ComputerMCPCore
 import ComputerMCPPersistence
+import ComputerMCPTestSupport
 import ComputerMCPWorktrees
 import Foundation
 import GRDB
@@ -7,6 +8,13 @@ import Testing
 
 @testable import ComputerMCPGateway
 @testable import ComputerMCPWorktrees
+
+#if os(macOS)
+  import ComputerMCPDarwinTestSupport
+  import Darwin
+#elseif canImport(Glibc)
+  import Glibc
+#endif
 
 @Suite(.nativeIntegration, .serialized, .timeLimit(.minutes(2)))
 struct GatewayRecoveryOwnerConcurrencyAcceptanceTests {
@@ -46,6 +54,129 @@ struct GatewayRecoveryOwnerConcurrencyAcceptanceTests {
     let result = try owner.confirm(fresh)
     #expect(result.outcome == .released)
     #expect(try owner.resume(handle: fresh.handle) == result)
+  }
+
+  @Test func postQuarantineDeadlineRestoresInFreshProcess() throws {
+    let f = try WorktreeServiceFixture()
+    defer { f.remove() }
+    let repository = try f.repository()
+    let created = try repository.create(name: "deadline-restart")
+    try Data("private\n".utf8).write(to: created.path.appendingPathComponent("value"))
+    _ = try f.git(["add", "value"], at: created.path)
+    _ = try f.git(
+      [
+        "-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid",
+        "commit", "-m", "private",
+      ], at: created.path)
+    _ = try repository.publish(projectID: created.projectID) { _ in }
+    _ = try f.git(
+      [
+        "-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid",
+        "commit", "--allow-empty", "-m", "shared",
+      ], at: created.path)
+    _ = try repository.publish(projectID: created.projectID) { _ in }
+    let project = try #require(try f.database.project(id: "source"))
+    let source = DerivedProjectSource(
+      id: "source",
+      root: GatewayDatabase.canonicalProjectRoot(f.source.path), registeredAt: project.createdAt)
+    let storage = try #require(f.database.worktreeStorage)
+    let derived = f.database.derivedProjectStore(inspectNesting: { _ in [] })
+    let dependencies = GatewayAcceptanceDependencies(source: source, store: derived)
+    let normal = try WorktreeRecoveryOwnerService(
+      storage: storage, derived: derived, dependencies: dependencies, executor: f.executor)
+    let view = try #require(try normal.list().first)
+    guard
+      case .reviewed(let review) = try normal.prepareMaintenance(
+        key: view.key, generation: view.generation, principal: "local-app")
+    else {
+      Issue.record("Expected maintenance review")
+      return
+    }
+    _ = try #require(review.packHash)
+    let store = storage.recovery.appendingPathComponent("stores/" + view.key)
+    let active = store.appendingPathComponent("owner-operation.json")
+    let packs = store.appendingPathComponent("repository.git/objects/pack")
+    let before = try gatewayPackFiles(packs)
+    let marker = f.root.appendingPathComponent("deadline-worker-started")
+    let script = f.root.appendingPathComponent("deadline-git")
+    func quote(_ value: String) -> String {
+      "'" + value.replacingOccurrences(of: "'", with: "'\\''") + "'"
+    }
+    try Data(
+      "#!/bin/sh\nprintf '%s' \"$$\" > \(quote(marker.path))\n/bin/sleep 3\nexec \(quote(f.executor.executable)) \"$@\"\n"
+        .utf8
+    ).write(to: script)
+    try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: script.path)
+    let slow = GatewayWorktreeGit(launcher: f.platform.launcher, executable: script.path)
+    let limited = GatewayVerificationDeadline(base: f.executor, slow: slow, active: active)
+    let io = WorktreeJournalIO(beforeDirectorySync: {
+      guard let bytes = try? Data(contentsOf: active),
+        let journal = try? JSONDecoder().decode(RecoveryOwnerJournal.self, from: bytes),
+        journal.handle == review.handle, journal.maintenance?.phase == .restoringDeferred
+      else { return }
+      throw GatewayAcceptanceInterruption.injected
+    })
+    let interrupted = try WorktreeRecoveryOwnerService(
+      storage: storage, derived: derived,
+      dependencies: dependencies, executor: limited, journalIO: io)
+    #expect(throws: GatewayAcceptanceInterruption.self) {
+      try interrupted.run(review, principal: "local-app")
+    }
+    #expect(limited.fired)
+    let workerPID = try #require(Int32(String(contentsOf: marker, encoding: .utf8)))
+    #expect(kill(workerPID, 0) == -1 && errno == ESRCH)
+    let pending = try JSONDecoder().decode(
+      RecoveryOwnerJournal.self, from: Data(contentsOf: active))
+    #expect(pending.request == .maintenance(review))
+    #expect(pending.maintenance?.phase == .restoringDeferred)
+    #expect(pending.maintenance?.reason == "Bounded command exceeded its deadline.")
+    #expect(
+      try FileManager.default.contentsOfDirectory(atPath: packs.path).contains {
+        $0.hasSuffix(".quarantine")
+      })
+    let input = GatewayDeadlineChildInput(
+      databasePath: try #require(f.database.fileURL).path,
+      source: source, handle: review.handle, git: f.executor.executable)
+    try JSONEncoder().encode(input).write(to: f.root.appendingPathComponent("deadline-input.json"))
+    try runDeadlineChild(f.root)
+    let child = try JSONDecoder().decode(
+      GatewayDeadlineChildOutput.self,
+      from: Data(contentsOf: f.root.appendingPathComponent("deadline-output.json")))
+    #expect(child.pid != ProcessInfo.processInfo.processIdentifier)
+    #expect(child.first == child.second)
+    guard case .deferred(let reason) = child.first.outcome else {
+      Issue.record("Fresh process did not restore and defer: \(child.first.outcome)")
+      return
+    }
+    #expect(reason == "Bounded command exceeded its deadline.")
+    #expect(child.first.request == .maintenance(review))
+    #expect(try gatewayPackFiles(packs) == before)
+    #expect(try #require(normal.list().first).records == view.records)
+    #expect(!FileManager.default.fileExists(atPath: active.path))
+    #expect(try normal.resume(review.handle, principal: "local-app") == child.first)
+  }
+
+  @Test func gatewayDeadlineResumeChild() throws {
+    guard let root = ProcessInfo.processInfo.environment["GATEWAY_DEADLINE_CHILD"] else { return }
+    let directory = URL(fileURLWithPath: root)
+    let input = try JSONDecoder().decode(
+      GatewayDeadlineChildInput.self,
+      from: Data(contentsOf: directory.appendingPathComponent("deadline-input.json")))
+    let database = try GatewayDatabaseConnection(path: input.databasePath)
+    let derived = SQLiteDerivedProjectStore(connection: database)
+    let storage = try #require(
+      WorktreeStorage(databaseURL: URL(fileURLWithPath: input.databasePath)))
+    let service = try WorktreeRecoveryOwnerService(
+      storage: storage, derived: derived,
+      dependencies: GatewayAcceptanceDependencies(source: input.source, store: derived),
+      executor: GatewayWorktreeGit(launcher: testExecutionLauncher(), executable: input.git))
+    let first = try service.resume(input.handle, principal: "local-app")
+    let second = try service.resume(input.handle, principal: "local-app")
+    try JSONEncoder().encode(
+      GatewayDeadlineChildOutput(
+        pid: ProcessInfo.processInfo.processIdentifier,
+        first: first, second: second)
+    ).write(to: directory.appendingPathComponent("deadline-output.json"))
   }
 
   @Test func boundedAdapterLimitAfterWithdrawalRestoresOnRestart() throws {
@@ -232,5 +363,102 @@ extension GatewayRecoveryOwnerConcurrencyAcceptanceTests {
           environment: HostGitConfiguration.environment(home: f.root),
           timeoutMilliseconds: 30_000, maxOutputBytes: 4096)
       ).exitCode == 0)
+  }
+}
+
+private struct GatewayDeadlineChildInput: Codable {
+  let databasePath: String
+  let source: DerivedProjectSource
+  let handle: RecoveryOperationHandle
+  let git: String
+}
+
+private struct GatewayDeadlineChildOutput: Codable {
+  let pid: Int32
+  let first: RecoveryOperationStatus
+  let second: RecoveryOperationStatus
+}
+
+private func runDeadlineChild(_ directory: URL) throws {
+  let process = Process()
+  process.executableURL = URL(fileURLWithPath: CommandLine.arguments[0])
+  var arguments = ["--testing-library", "swift-testing", "--filter", "gatewayDeadlineResumeChild"]
+  if let index = CommandLine.arguments.firstIndex(of: "--test-bundle-path"),
+    CommandLine.arguments.indices.contains(index + 1)
+  {
+    let bundle = CommandLine.arguments[index + 1]
+    arguments = ["--test-bundle-path", bundle, bundle] + arguments
+  }
+  process.arguments = arguments
+  var environment = ProcessInfo.processInfo.environment
+  environment["GATEWAY_DEADLINE_CHILD"] = directory.path
+  process.environment = environment
+  let log = directory.appendingPathComponent("deadline-child.log")
+  try Data().write(to: log)
+  let output = try FileHandle(forWritingTo: log)
+  process.standardOutput = output
+  process.standardError = output
+  try process.run()
+  try output.close()
+  let deadline = ContinuousClock.now.advanced(by: .seconds(90))
+  while process.isRunning && ContinuousClock.now < deadline { Thread.sleep(forTimeInterval: 0.02) }
+  if process.isRunning {
+    process.terminate()
+    let stop = ContinuousClock.now.advanced(by: .seconds(2))
+    while process.isRunning && ContinuousClock.now < stop { Thread.sleep(forTimeInterval: 0.02) }
+    if process.isRunning { _ = kill(process.processIdentifier, SIGKILL) }
+    process.waitUntilExit()
+    throw WorktreeError.busy("Deadline child exceeded its timeout.")
+  }
+  process.waitUntilExit()
+  guard process.terminationReason == .exit, process.terminationStatus == 0 else {
+    throw WorktreeError.commandFailed(try String(contentsOf: log, encoding: .utf8))
+  }
+}
+
+private final class GatewayVerificationDeadline: WorktreeGitExecuting, @unchecked Sendable {
+  let base: GatewayWorktreeGit
+  let slow: GatewayWorktreeGit
+  let active: URL
+  private let lock = NSLock()
+  private var didFire = false
+
+  init(base: GatewayWorktreeGit, slow: GatewayWorktreeGit, active: URL) {
+    self.base = base
+    self.slow = slow
+    self.active = active
+  }
+  var fired: Bool {
+    lock.lock()
+    defer { lock.unlock() }
+    return didFire
+  }
+
+  private func useSlow(_ command: WorktreeGitCommand) -> Bool {
+    lock.lock()
+    defer { lock.unlock() }
+    guard !didFire, command.arguments.contains("verify-pack"),
+      let data = try? Data(contentsOf: active),
+      let journal = try? JSONDecoder().decode(RecoveryOwnerJournal.self, from: data),
+      journal.maintenance?.phase == .verifying
+    else { return false }
+    didFire = true
+    return true
+  }
+  func execute(_ command: WorktreeGitCommand) throws -> WorktreeGitResult {
+    try executeBounded(command, fileOutput: nil, fileSizeLimit: nil)
+  }
+  func executeBounded(
+    _ command: WorktreeGitCommand, fileOutput: WorktreeGitFileOutput?, fileSizeLimit: Int?
+  ) throws -> WorktreeGitResult {
+    guard useSlow(command) else {
+      return try base.executeBounded(command, fileOutput: fileOutput, fileSizeLimit: fileSizeLimit)
+    }
+    var bounded = command
+    bounded.timeoutMilliseconds = 500
+    return try slow.executeBounded(bounded, fileOutput: fileOutput, fileSizeLimit: fileSizeLimit)
+  }
+  func withPreparedTransaction(_ command: WorktreeGitCommand, _ body: () throws -> Void) throws {
+    try base.withPreparedTransaction(command, body)
   }
 }

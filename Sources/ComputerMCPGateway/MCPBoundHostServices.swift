@@ -43,6 +43,9 @@ actor MCPBoundHostServices {
     let text: JSONValue = .object([
       "type": .string("string"), "minLength": .number(1), "maxLength": .number(1024),
     ])
+    let nullableText: JSONValue = .object([
+      "anyOf": .array([text, .object(["type": .string("null")])])
+    ])
     func tool(
       _ name: String, _ description: String, _ properties: [String: JSONValue],
       _ required: [String], read: Bool = false, destructive: Bool = false
@@ -71,7 +74,7 @@ actor MCPBoundHostServices {
         "Create a host worktree for the live projects.provision invocation's reserved operation.",
         [
           "invocation_id": identifier, "operation_id": identifier, "name": text,
-          "branch": text, "base": text,
+          "branch": nullableText, "base": nullableText,
         ], ["invocation_id", "operation_id", "name"]),
       tool(
         "host.projects.worktree_list",

@@ -820,6 +820,36 @@ struct MCPBoundHostServicesTests {
     await fixture.close()
   }
 
+  @Test(.timeLimit(.minutes(2)))
+  func explicitNullCreationFieldsUseReservedDefaults() async throws {
+    let tool = try #require(
+      MCPBoundHostServices.tools.first { $0.name == "host.projects.worktree_add" })
+    let schema = try #require(try JSONValue.encoded(tool.inputSchema).objectValue)
+    let properties = try #require(schema["properties"]?.objectValue)
+    let nameSchema = try #require(properties["name"])
+    for key in ["branch", "base"] {
+      let alternatives = try #require(properties[key]?.objectValue?["anyOf"]?.arrayValue)
+      #expect(alternatives.contains(.object(["type": .string("null")])))
+      #expect(alternatives.contains(nameSchema))
+    }
+
+    let fixture = try HostAuthorityFixture(lifecycle: true)
+    defer { fixture.remove() }
+    let selection: [String: JSONValue] = ["name": .string("topic"), "branch": .null, "base": .null]
+    _ = try await fixture.during("fixture.provision", selection) { service, context in
+      let arguments = try ProjectServiceCaller.identifiers(context).merging(selection) { _, field in
+        field
+      }
+      let reply = try await ProjectServiceCaller.reply(
+        service.call(name: "host.projects.worktree_add", arguments: arguments))
+      let created = try #require(reply.result?["result"]?.objectValue)
+      #expect(created["branch"] == .string("worktree/topic"))
+      #expect(created["base"] == .string("main"))
+      return .object([:])
+    }
+    await fixture.close()
+  }
+
   @Test(.timeLimit(.minutes(2)), arguments: ["unchanged", "client", "provider"])
   func operationInspectionRequiresBothPrincipalsCurrentOriginalWriteEffect(downgrade: String)
     async throws
@@ -1964,7 +1994,7 @@ private enum ProjectServiceCaller {
         arguments: ["invocation_id": .string(invocation.uuidString)]))
   }
 
-  private static func identifiers(_ context: InvocationContext) throws -> [String: JSONValue] {
+  static func identifiers(_ context: InvocationContext) throws -> [String: JSONValue] {
     [
       "invocation_id": .string(try #require(context.admission?.hostInvocationID).uuidString),
       "operation_id": .string(

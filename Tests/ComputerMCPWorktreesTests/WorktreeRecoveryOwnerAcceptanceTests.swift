@@ -380,8 +380,10 @@ struct WorktreeRecoveryOwnerAcceptanceTests {
       #expect(try Data(contentsOf: survivorAnchor) == survivorBytes)
       #expect(try f.recoveryRecords().contains(second))
       try store.withExclusive(repository: view.repository) { locked in
-        #expect(try locked.releaseReceipt(recordID: first.id) == nil)
-        #expect(try locked.releaseReceipt(recordID: second.id) == nil)
+        let firstReceipt = try locked.releaseReceipt(recordID: first.id)
+        let secondReceipt = try locked.releaseReceipt(recordID: second.id)
+        #expect(firstReceipt == nil)
+        #expect(secondReceipt == nil)
       }
     }
   }

@@ -178,6 +178,84 @@
       #expect(throws: (any Error).self) { try fixture.vendor.verify() }
     }
 
+    @Test func printReceivesEOFAndReportsNativeExitForItsOwnChild() async throws {
+      let fixture = try Fixture(claudePrint: true)
+      defer { fixture.base.remove() }
+      let host = try VendorExecutionSession(
+        source: fixture.vendor, launcher: fixture.base.platform.launcher)
+      let transport = try MCPInheritedSocketTransport(
+        takingOwnershipOf: host.providerChannel.takeEndpoint())
+      try await transport.connect()
+      var peer = Peer(transport: transport, replies: await transport.receive().makeAsyncIterator())
+      do {
+        _ = try await peer.call(
+          "initialize", ["capability": .string(VendorExecutionSource.capability)])
+        let execution = try await fixture.prepare("claude.run")
+        let run = UUID()
+        try await host.admit(
+          id: run, tool: "claude.run", arguments: ["prompt": .string("--text")],
+          execution: execution)
+        let handle = String(repeating: "d", count: 32)
+        let binding = try await peer.call(
+          "bind",
+          [
+            "call": .string(run.uuidString), "acquisition": .string(run.uuidString),
+            "session": .string(handle),
+          ])
+        let probe = try #require(binding["probe"]?.stringValue)
+        let child = try #require(binding["workload"]?.stringValue.flatMap(UUID.init(uuidString:)))
+        let work = Workload(acquisition: run, child: child, handle: handle)
+        var probeFields = work.fields(run)
+        probeFields["child"] = .string(probe)
+        _ = try await peer.call("probe", probeFields)
+        let supplied = work.fields(run).merging(["argv": .array([.string("--unexpected")])]) {
+          _, new in new
+        }
+        #expect(try await peer.rejection("launch", supplied) == "vendor_effect_denied")
+        _ = try await peer.call("launch", work.fields(run))
+        let output = work.fields(run)
+        let write = output.merging(["kind": .string("setup"), "data": .string("unsafe")]) {
+          _, new in new
+        }
+        #expect(try await peer.rejection("write", write) == "vendor_effect_denied")
+        #expect(try await peer.rejection("ready", output) == "vendor_effect_denied")
+        try await peer.expectOutput("received prompt after EOF\n", after: 0, call: run, on: work)
+        var end = output
+        end["after"] = .integer(1)
+        let deadline = ContinuousClock.now + .seconds(5)
+        while try await peer.call("read", end)["eof"] != .bool(true) {
+          try #require(ContinuousClock.now < deadline)
+        }
+        var receipt = try await peer.call("receipt", output)
+        while receipt["workload_settled"] != .bool(true) {
+          try #require(ContinuousClock.now < deadline)
+          try await Task.sleep(for: .milliseconds(20))
+          receipt = try await peer.call("receipt", output)
+        }
+        #expect(receipt["exit_code"] == .integer(23))
+        #expect(receipt["exit_signal"] == nil)
+        let close = UUID()
+        let closing = try await fixture.prepare("claude.run.cancel")
+        try await host.admit(
+          id: close, tool: "claude.run.cancel", arguments: ["run_id": .string(handle)],
+          execution: closing)
+        let retired = try await peer.call("retire", work.fields(close))
+        #expect(retired["retired"] == .bool(true))
+        #expect(retired["exit_code"] == receipt["exit_code"])
+        await host.returned(close, confirmed: true)
+        await host.returned(run, confirmed: true)
+        await transport.disconnect()
+        for await _ in host.termination {}
+        #expect(await host.shutdownConfirmed())
+        try await fixture.cleanup()
+      } catch {
+        await transport.disconnect()
+        await host.close()
+        try? await fixture.cleanup()
+        throw error
+      }
+    }
+
     private func open(
       _ character: String, execution: PreparedExecutionContext, host: VendorExecutionSession,
       peer: inout Peer, detached: Bool = false
@@ -313,9 +391,10 @@
       let executable: URL
       let source: GatewayProviderSource
       let vendor: VendorExecutionSource
+      let pluginID: String
       private var preparations: [PreparedExecutionContext] = []
 
-      init() throws {
+      init(claudePrint: Bool = false) throws {
         let base = try WorktreeServiceFixture()
         self.base = base
         let root = base.root.appendingPathComponent("package")
@@ -326,42 +405,64 @@
         adapter = root.appendingPathComponent("adapter")
         executable = tools.appendingPathComponent("vendor-peer")
         try writePythonTestExecutable("pass", to: adapter)
-        try #"""
-        #!/bin/sh
-        if [ "$#" -eq 1 ] && [ "$1" = --version ]; then
-          printf 'ordinary-peer-1\n'
-          exit 0
-        fi
-        [ "$#" -eq 1 ] && [ "$1" = acp ] || exit 1
-        active=
-        while IFS= read -r line; do
-          case "$line" in
-            wait|ignore) active=$line; printf 'begun\n' ;;
-            cancel)
-              if [ "$active" = wait ]; then
-                active=
-                printf 'original:cancelled\n'
-              fi ;;
-            answer) printf 'answer received\n' ;;
-            finish:*) printf 'done:%s\n' "${#line}" ;;
-          esac
-        done
-        """#.write(to: executable, atomically: true, encoding: .utf8)
+        pluginID = claudePrint ? "claude" : "vendor-fixture"
+        let component = claudePrint ? "stream" : "acp"
+        let dependency = claudePrint ? "claude-code" : "peer"
+        let printPeer = #"""
+          #!/bin/sh
+          if [ "$#" -eq 1 ] && [ "$1" = --version ]; then
+            printf 'deterministic print peer\n'
+            exit 0
+          fi
+          if IFS= read -r unexpected; then exit 91; fi
+          [ "$#" -eq 9 ] && [ "$1" = -p ] && [ "$7" = dontAsk ] &&
+            [ "$8" = -- ] && [ "$9" = --text ] || exit 92
+          printf 'received prompt after EOF\n'
+          exit 23
+          """#
+        let acpPeer = #"""
+          #!/bin/sh
+          if [ "$#" -eq 1 ] && [ "$1" = --version ]; then
+            printf 'ordinary-peer-1\n'
+            exit 0
+          fi
+          [ "$#" -eq 1 ] && [ "$1" = acp ] || exit 1
+          active=
+          while IFS= read -r line; do
+            case "$line" in
+              wait|ignore) active=$line; printf 'begun\n' ;;
+              cancel)
+                if [ "$active" = wait ]; then
+                  active=
+                  printf 'original:cancelled\n'
+                fi ;;
+              answer) printf 'answer received\n' ;;
+              finish:*) printf 'done:%s\n' "${#line}" ;;
+            esac
+          done
+          """#
+        try (claudePrint ? printPeer : acpPeer).write(
+          to: executable, atomically: true, encoding: .utf8)
         try FileManager.default.setAttributes(
           [.posixPermissions: 0o700], ofItemAtPath: executable.path)
         let signature = root.appendingPathComponent("signature.json")
-        try Data(
-          #"""
+        let acpSignature = #"""
           {"capability":"io.github.computer-mcp/vendor-execution-v1","dependency":"peer",
            "tools":{"open":"acquire","open_async":"detached_acquire","prompt":"prompt","stop":"stop","answer":"answer","list":"observe"},
            "probe":["--version"],"workload":["acp"],"version_stdout":"ordinary-peer-1\n"}
-          """#.utf8
-        ).write(to: signature)
+          """#
+        let printSignature = #"""
+          {"capability":"io.github.computer-mcp/vendor-execution-v1","dependency":"claude-code",
+           "tools":{"claude.run":"acquire","claude.run.start":"detached_acquire","claude.run.cancel":"close"},
+           "probe":["--version"],"workload":\#(ClaudePrintRecipeTests.recipe),
+           "version_stdout":"deterministic print peer\n"}
+          """#
+        try Data((claudePrint ? printSignature : acpSignature).utf8).write(to: signature)
         func digest(_ file: URL) throws -> String {
           SHA256.hash(data: try Data(contentsOf: file)).map { String(format: "%02x", $0) }.joined()
         }
         try """
-        id = 'vendor-fixture'
+        id = '\(pluginID)'
         name = 'Deterministic vendor fixture'
         version = '1.0.0'
         plugin_api = 1
@@ -370,15 +471,15 @@
         access = 'read'
         purpose = 'Read the test project.'
         [[dependencies]]
-        id = 'peer'
+        id = '\(dependency)'
         commands = ['vendor-peer']
         instructions = 'Use the deterministic peer.'
         [[mcp]]
-        id = 'acp'
+        id = '\(component)'
         transport = 'stdio'
         executable = { path = 'adapter' }
         requirements = { project = 'read' }
-        vendor_execution = { dependency = 'peer', signature = 'signature.json', files = { adapter = '\(digest(adapter))', 'signature.json' = '\(digest(signature))' } }
+        vendor_execution = { dependency = '\(dependency)', signature = 'signature.json', files = { adapter = '\(digest(adapter))', 'signature.json' = '\(digest(signature))' } }
         """.write(
           to: root.appendingPathComponent(PluginManifest.filename), atomically: true,
           encoding: .utf8)
@@ -392,7 +493,7 @@
         state.installations.append(installed)
         state.selectedInstallations[installed.pluginID] = installed.id
         state.settings[installed.pluginID] = .init(
-          enabled: true, mcp: ["acp": .init(enabled: true)])
+          enabled: true, mcp: [component: .init(enabled: true)])
         let revision = state.revision
         state.revision += 1
         _ = try base.database.savePluginStoreSnapshot(state, expectedRevision: revision)
@@ -425,7 +526,7 @@
       func prepare(_ tool: String) async throws -> PreparedExecutionContext {
         let caller = try base.runtime.store.transactionWithDatabase { _, ledger in
           let principal = Principal.client("vendor-fixture")
-          let permission = Permission.plugin("vendor-fixture")
+          let permission = Permission.plugin(pluginID)
           if ledger.permissions(for: principal).state(for: permission) != .granted(.use) {
             var grants = Permissions.newPrincipal
             try grants.set(.granted(.use), for: permission)

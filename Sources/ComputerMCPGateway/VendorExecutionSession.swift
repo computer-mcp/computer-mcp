@@ -10,12 +10,15 @@ import Foundation
 final class VendorExecutionSession: MCPHostSessionHandle {
   let providerChannel: ProviderHostServiceChannel
   let termination: AsyncStream<Void>
+  let observationTools: Set<String>
   private let transport: MCPInheritedSocketTransport
   private let acquisitions: VendorExecutionAcquisitions
   private let serving: Task<Void, Never>
 
   init(source: VendorExecutionSource, launcher: ExecutionLauncher) throws {
     try source.verify()
+    observationTools = Set(
+      source.signature.tools.compactMap { $0.value == .observe ? $0.key : nil })
     let pair = try ProviderHostServiceChannel.make(metadata: VendorExecutionSource.capability)
     providerChannel = pair.channel
     let transport = try MCPInheritedSocketTransport(takingOwnershipOf: pair.host)
@@ -75,7 +78,7 @@ final class VendorExecutionSession: MCPHostSessionHandle {
     var control: Bool {
       switch operation {
       case "read", "bind", "probe", "launch": false
-      case "write": fields["kind"]?.stringValue == "cancel"
+      case "write": ["cancel", "close"].contains(fields["kind"]?.stringValue)
       default: true
       }
     }
@@ -146,7 +149,7 @@ final class VendorExecutionSession: MCPHostSessionHandle {
   func negotiated() async -> Bool { await acquisitions.negotiatedForDispatch }
 }
 
-private enum VendorExecutionFailure: String, Error {
+enum VendorExecutionFailure: String, Error {
   case denied = "vendor_effect_denied"
   case busy = "vendor_busy"
   case capacity = "vendor_capacity"
@@ -187,6 +190,7 @@ private actor VendorExecutionAcquisitions {
     let execution: PreparedExecutionContext
     let probe: VendorExecutionPhase
     let workload: VendorExecutionPhase
+    let argv: [String]
     var handle: String?
     var probeTask: Task<Bool, Never>?
     var workloadProcess: ManagedLineProcess?
@@ -203,6 +207,12 @@ private actor VendorExecutionAcquisitions {
     var startupCancelled = false
     var outputReadWaiting = false
     var setupWrites = 0
+    var trae: TraeVendorProtocol?
+    var closingCall: UUID?
+    var nativeCloseCall: UUID?
+    var completedTurns: [UUID] = []
+    var exitCode: Int32?
+    var exitSignal: Int32?
     var turn: UUID?
     var retiredTurn: UUID?
     var dispatched = false
@@ -216,11 +226,13 @@ private actor VendorExecutionAcquisitions {
 
     init(
       execution: PreparedExecutionContext, probe: VendorExecutionPhase,
-      workload: VendorExecutionPhase
+      workload: VendorExecutionPhase, argv: [String], trae: TraeVendorProtocol?
     ) {
       self.execution = execution
       self.probe = probe
       self.workload = workload
+      self.argv = argv
+      self.trae = trae
     }
   }
 
@@ -272,12 +284,17 @@ private actor VendorExecutionAcquisitions {
       invocations = invocations.filter { acquisitions[$0.value.acquisition]?.retired == false }
     }
     guard invocations.count < 64 else { throw VendorExecutionFailure.capacity }
-    let timeout = min(1800, max(1, arguments["timeout_seconds"]?.intValue ?? 300))
+    let defaultTimeout = source.protocolKind == .cursor ? 300 : 600
+    let timeout = min(1800, max(1, arguments["timeout_seconds"]?.intValue ?? defaultTimeout))
     let deadline = ContinuousClock.now + .seconds(timeout)
     if effect.acquires {
       guard chargedAcquisitions.count < 8 else {
         throw VendorExecutionFailure.capacity
       }
+      let argv = try source.signature.workload.arguments(arguments)
+      let trae =
+        source.protocolKind == .trae
+        ? try TraeVendorProtocol(open: arguments, directory: directory(execution).value) : nil
       // Keep a bounded set of exact receipts on this generation.
       if acquisitions.count == 64, let receipt = acquisitions.first(where: { $0.value.retired }) {
         acquisitions.removeValue(forKey: receipt.key)
@@ -287,7 +304,7 @@ private actor VendorExecutionAcquisitions {
       let slots = try ExecutionRevocationCoordinator.reserveVendorExecutionPhases(
         execution: execution)
       let acquisition = Acquisition(
-        execution: execution, probe: slots.probe, workload: slots.workload)
+        execution: execution, probe: slots.probe, workload: slots.workload, argv: argv, trae: trae)
       acquisitions[id] = acquisition
       invocations[id] = Invocation(
         effect: effect, execution: execution, acquisition: id, targetTurn: nil,
@@ -297,13 +314,34 @@ private actor VendorExecutionAcquisitions {
         await self?.expireStartup(id)
       }
     } else {
-      guard let handle = arguments["session"]?.stringValue, let key = handles[handle],
+      let target: UUID?
+      let key: UUID?
+      if source.protocolKind == .trae, effect == .stop {
+        target = uuid(arguments["turn_id"])
+        key = target.flatMap { turn in
+          if let active = invocations[turn], Self.isPrompt(active.effect) {
+            return active.acquisition
+          }
+          return acquisitions.first(where: { $0.value.completedTurns.contains(turn) })?.key
+        }
+      } else {
+        target = nil
+        key = arguments[source.protocolKind.handleArgument]?.stringValue.flatMap { handles[$0] }
+      }
+      guard let key,
         let acquisition = acquisitions[key],
-        effect == .close || !acquisition.retirementRequested,
+        effect == .close || (effect == .stop && target != nil)
+          || (!acquisition.retirementRequested && acquisition.closingCall == nil),
         let original = acquisition.execution.provider?.delegatingAuthorization?.invocation,
         let admitted = execution.provider?.delegatingAuthorization?.invocation,
         admitted.principal == original.principal, admitted.projectID == original.projectID
       else { throw VendorExecutionFailure.stale }
+      if effect == .close, source.protocolKind == .trae {
+        guard acquisition.closingCall.flatMap({ invocations[$0] }) == nil else {
+          throw VendorExecutionFailure.busy
+        }
+        acquisition.closingCall = id
+      }
       if Self.ownsTurn(effect) {
         guard acquisition.turn == nil, acquisition.queuedWrites == 0 else {
           throw VendorExecutionFailure.busy
@@ -315,13 +353,16 @@ private actor VendorExecutionAcquisitions {
         acquisition.outbound = nil
         acquisition.pending.removeAll()
         acquisition.issuedTokens.removeAll()
-      } else if effect == .stop, let turn = acquisition.turn,
+      } else if (effect == .stop && (target == nil || target == acquisition.turn))
+        || (effect == .close && source.protocolKind == .trae),
+        let turn = acquisition.turn,
         invocations[turn].map({ Self.isPrompt($0.effect) }) == true
       {
         acquisition.stopRequested = true
       }
       invocations[id] = Invocation(
-        effect: effect, execution: execution, acquisition: key, targetTurn: acquisition.turn,
+        effect: effect, execution: execution, acquisition: key,
+        targetTurn: target ?? acquisition.turn,
         arguments: arguments, deadline: deadline)
     }
   }
@@ -347,13 +388,16 @@ private actor VendorExecutionAcquisitions {
     else { return }
     if invocation.effect.acquires {
       if confirmed && invocation.detached { return }
-      if !confirmed || acquisition.expiry != nil { _ = await retire(id) }
+      if !confirmed || acquisition.expiry != nil || source.protocolKind == .claudePrint {
+        _ = await retire(id)
+      }
     } else if acquisition.turn == id {
       if confirmed && invocation.detached { return }
       if !confirmed || acquisition.dispatched {
         _ = await retire(invocation.acquisition)
       } else {
         acquisition.turn = nil
+        rememberTurn(id, acquisition: acquisition)
       }
     }
     try? invocation.detachedLease?.finish()
@@ -363,7 +407,8 @@ private actor VendorExecutionAcquisitions {
   func cancelInvocation(_ id: UUID) async {
     guard let invocation = invocations[id], let acquisition = acquisitions[invocation.acquisition]
     else { return }
-    if invocation.effect.acquires, acquisition.expiry != nil {
+    if invocation.effect.acquires, acquisition.expiry != nil || source.protocolKind == .claudePrint
+    {
       acquisition.startupCancelled = true
       _ = await retire(invocation.acquisition)
     } else if acquisition.turn == id {
@@ -386,10 +431,7 @@ private actor VendorExecutionAcquisitions {
   func timeOut(_ executionID: UUID) async {
     for (id, invocation) in invocations where invocation.execution.executionID == executionID {
       guard let acquisition = acquisitions[invocation.acquisition] else { continue }
-      if invocation.effect.acquires || acquisition.turn == id
-        || (invocation.effect == .stop && invocation.targetTurn != nil
-          && invocation.targetTurn == acquisition.turn)
-      {
+      if invocation.effect.acquires || acquisition.turn == id {
         _ = await retire(invocation.acquisition)
       }
     }
@@ -430,7 +472,10 @@ private actor VendorExecutionAcquisitions {
       ["receipt", "retire", "finish"].contains(op) || ContinuousClock.now < invocation.deadline
     else { throw VendorExecutionFailure.denied }
 
-    try validate(invocation.execution)
+    // Empty reads and buffered write fragments carry no authority to emit
+    // native bytes. Check live proofs when a read exposes data or at final write.
+    let checksAuthorityAtIO = op == "read" || op == "write"
+    if !checksAuthorityAtIO { try validate(invocation.execution) }
     if op == "detach" {
       let canDetach =
         (invocation.effect == .detachedPrompt && acquisition.turn == call
@@ -457,12 +502,26 @@ private actor VendorExecutionAcquisitions {
       guard await retire(key) else { throw VendorExecutionFailure.unconfirmed }
       return receipt(acquisition)
     }
-    if invocation.execution !== acquisition.execution { try validate(acquisition.execution) }
+    if !checksAuthorityAtIO, invocation.execution !== acquisition.execution {
+      try validate(acquisition.execution)
+    }
+    if op == "stop", source.protocolKind == .trae, invocation.effect == .stop,
+      invocation.targetTurn != acquisition.turn
+    {
+      guard uuid(fields["child"]) == acquisition.workload.id else {
+        throw VendorExecutionFailure.stale
+      }
+      return [:]
+    }
     try await requireActive(acquisition, id: key)
     switch op {
     case "bind":
       guard invocation.effect.acquires, call == key, let handle = fields["session"]?.stringValue,
-        handle.utf8.count == 32, handles[handle] == nil, acquisition.handle == nil
+        handle.utf8.count == 32, handles[handle] == nil, acquisition.handle == nil,
+        source.protocolKind == .cursor
+          || handle.utf8.allSatisfy({
+            (48...57).contains($0) || (97...102).contains($0)
+          })
       else { throw VendorExecutionFailure.denied }
       acquisition.handle = handle
       handles[handle] = key
@@ -488,7 +547,8 @@ private actor VendorExecutionAcquisitions {
       return receipt(acquisition)
     case "launch":
       guard invocation.effect.acquires, call == key, acquisition.workloadProcess == nil,
-        uuid(fields["child"]) == acquisition.workload.id, let probe = acquisition.probeTask
+        uuid(fields["child"]) == acquisition.workload.id, let probe = acquisition.probeTask,
+        !fields.keys.contains("argv"), !fields.keys.contains("arguments")
       else { throw VendorExecutionFailure.denied }
       let passed = await probe.value
       try await requireActive(acquisition, id: key)
@@ -504,22 +564,29 @@ private actor VendorExecutionAcquisitions {
       let context = try await phaseContext(acquisition, phase: acquisition.workload)
       try await requireActive(acquisition, id: key)
       try validate(invocation.execution)
+      let print = source.protocolKind == .claudePrint
       let process = try context.withValue {
         try ManagedLineProcess(
           launcher: launcher,
           configuration: .init(
-            executable: source.executable.value, arguments: source.signature.workload,
+            executable: source.executable.value, arguments: acquisition.argv,
             workingDirectory: URL(fileURLWithPath: try directory(context).value),
-            terminationGraceMilliseconds: 100, maximumMessageBytes: Self.maximumFrameBytes - 1))
+            terminationGraceMilliseconds: 100, maximumMessageBytes: Self.maximumFrameBytes - 1,
+            closesInputOnLaunch: print))
       }
       acquisition.workloadProcess = process
+      if print {
+        acquisition.expiry?.cancel()
+        acquisition.expiry = nil
+      }
       acquisition.outputTask = Task { [weak self] in
         do {
           for try await line in process.inboundLines {
             guard await self?.append(Data((line + "\n").utf8), to: key) == true else { break }
           }
         } catch {}
-        await self?.endOutput(key)
+        let outcome = print ? await process.snapshot() : nil
+        await self?.endOutput(key, exitCode: outcome?.exitCode, signal: outcome?.signal)
       }
       return receipt(acquisition)
     default:
@@ -528,7 +595,9 @@ private actor VendorExecutionAcquisitions {
       else { throw VendorExecutionFailure.denied }
       switch op {
       case "ready":
-        guard invocation.effect.acquires, call == key, acquisition.setupWrites >= 3
+        guard invocation.effect.acquires, call == key,
+          acquisition.trae.map(\.sessionReady)
+            ?? (source.protocolKind == .cursor && acquisition.setupWrites >= 3)
         else { throw VendorExecutionFailure.denied }
         acquisition.expiry?.cancel()
         acquisition.expiry = nil
@@ -540,6 +609,7 @@ private actor VendorExecutionAcquisitions {
         // A timed-out poll may outlive its subscriber. Keep the head until the
         // adapter acknowledges buffering it, including across turn boundaries.
         if acquisition.outputOffered, after == acquisition.outputAcknowledged + 1 {
+          try validateIO(invocation, acquisition: acquisition)
           acquisition.outputBytes -= acquisition.output.removeFirst().count
           acquisition.outputAcknowledged = after
           acquisition.outputOffered = false
@@ -557,15 +627,9 @@ private actor VendorExecutionAcquisitions {
               invocations[call] != nil, ownsIO(invocation, id: call, acquisition: acquisition)
             else { throw VendorExecutionFailure.stale }
           }
-          if !acquisition.output.isEmpty || acquisition.outputEnded {
-            guard ContinuousClock.now < invocation.deadline else {
-              throw VendorExecutionFailure.stale
-            }
-            try validate(invocation.execution)
-            if invocation.execution !== acquisition.execution {
-              try validate(acquisition.execution)
-            }
-          }
+        }
+        if !acquisition.output.isEmpty || acquisition.outputEnded {
+          try validateIO(invocation, acquisition: acquisition)
         }
         if let bytes = acquisition.output.first {
           acquisition.outputOffered = true
@@ -588,22 +652,28 @@ private actor VendorExecutionAcquisitions {
         let finishedDetachedOpen =
           invocation.effect == .detachedAcquire && invocation.detached
           && acquisition.expiry == nil && acquisition.turn == nil
-        guard acquisition.queuedWrites == 0,
+        guard source.protocolKind != .claudePrint,
+          acquisition.queuedWrites == 0, acquisition.trae?.promptInFlight != true,
           (acquisition.turn == call && !invocation.effect.acquires) || finishedDetachedOpen
             || (invocation.effect == .detachedAcquire && acquisition.turn == call)
         else { throw VendorExecutionFailure.stale }
+        if acquisition.turn == call { rememberTurn(call, acquisition: acquisition) }
         acquisition.turn = nil
         acquisition.outbound = nil
         acquisition.pending.removeAll()
         acquisition.issuedTokens.removeAll()
+        acquisition.trae?.finishTurn()
         try invocation.detachedLease?.finish()
         invocations.removeValue(forKey: call)
       case "pending":
         guard ownsIO(invocation, id: call, acquisition: acquisition),
+          source.protocolKind != .claudePrint,
           let token = fields["token"]?.stringValue, token.utf8.count == 32,
           acquisition.pending.count < 16, acquisition.issuedTokens.count < 256,
-          acquisition.issuedTokens.insert(token).inserted
+          !acquisition.issuedTokens.contains(token)
         else { throw VendorExecutionFailure.denied }
+        try acquisition.trae?.bindPermission(token)
+        acquisition.issuedTokens.insert(token)
         acquisition.pending.insert(token)
       case "write":
         try await write(
@@ -625,8 +695,18 @@ private actor VendorExecutionAcquisitions {
   }
 
   private func ownsIO(_ invocation: Invocation, id: UUID, acquisition: Acquisition) -> Bool {
-    (invocation.effect.acquires && (acquisition.expiry != nil || acquisition.turn == id))
+    (invocation.effect.acquires
+      && (acquisition.expiry != nil || acquisition.turn == id
+        || source.protocolKind == .claudePrint))
       || (Self.ownsTurn(invocation.effect) && acquisition.turn == id)
+      || (acquisition.nativeCloseCall == id && acquisition.closingCall == id
+        && acquisition.turn == nil)
+  }
+
+  private func rememberTurn(_ id: UUID, acquisition: Acquisition) {
+    guard source.protocolKind == .trae else { return }
+    if acquisition.completedTurns.count == 8 { acquisition.completedTurns.removeFirst() }
+    acquisition.completedTurns.append(id)
   }
 
   private static func isPrompt(_ effect: Effect) -> Bool {
@@ -637,11 +717,18 @@ private actor VendorExecutionAcquisitions {
     isPrompt(effect) || effect == .mode
   }
 
+  private func validateIO(_ invocation: Invocation, acquisition: Acquisition) throws {
+    guard ContinuousClock.now < invocation.deadline else { throw VendorExecutionFailure.stale }
+    try validate(invocation.execution)
+    if invocation.execution !== acquisition.execution { try validate(acquisition.execution) }
+    guard ContinuousClock.now < invocation.deadline else { throw VendorExecutionFailure.stale }
+  }
+
   private func write(
     _ fields: [String: JSONValue], call: UUID, invocation: Invocation, acquisition: Acquisition,
     process: ManagedLineProcess
   ) async throws {
-    guard let kind = fields["kind"]?.stringValue,
+    guard source.protocolKind != .claudePrint, let kind = fields["kind"]?.stringValue,
       let data = fields["data"]?.stringValue,
       acquisition.queuedWrites < 8
     else { throw VendorExecutionFailure.denied }
@@ -650,17 +737,20 @@ private actor VendorExecutionAcquisitions {
       kind, token: token, call: call, invocation: invocation,
       acquisition: acquisition, commit: false)
     guard
-      let line = try collectLine(
+      let collected = try collectLine(
         fields, data: data, kind: kind, token: token,
         call: call, acquisition: acquisition)
     else { return }
+    let line = acquisition.trae == nil ? collected : try TraeVendorProtocol.canonicalLine(collected)
+    guard line.utf8.count < Self.maximumFrameBytes else { throw VendorExecutionFailure.denied }
     let key = invocation.acquisition
     acquisition.queuedWrites += 1
     defer { acquisition.queuedWrites -= 1 }
     do {
       try await acquisition.execution.withValue {
         try await process.sendLine(line) { [self] in
-          try await admitWrite(kind, token: token, call: call, acquisitionID: key, child: process)
+          try await admitWrite(
+            kind, line: line, token: token, call: call, acquisitionID: key, child: process)
         }
       }
     } catch let refusal as VendorExecutionFailure {
@@ -713,7 +803,8 @@ private actor VendorExecutionAcquisitions {
 
   /// This runs after the process writer obtains its turn and before any vendor bytes.
   private func admitWrite(
-    _ kind: String, token: String?, call: UUID, acquisitionID: UUID, child: ManagedLineProcess
+    _ kind: String, line: String, token: String?, call: UUID, acquisitionID: UUID,
+    child: ManagedLineProcess
   ) throws {
     guard !closed, let acquisition = acquisitions[acquisitionID],
       !acquisition.retirementRequested, acquisition.workloadProcess === child,
@@ -721,12 +812,17 @@ private actor VendorExecutionAcquisitions {
       ContinuousClock.now < invocation.deadline
     else { throw VendorExecutionFailure.stale }
     do {
-      try validate(invocation.execution)
-      if invocation.execution !== acquisition.execution { try validate(acquisition.execution) }
+      try validateIO(invocation, acquisition: acquisition)
+    } catch let failure as VendorExecutionFailure {
+      throw failure
     } catch {
       throw VendorExecutionFailure.denied
     }
-    guard ContinuousClock.now < invocation.deadline else { throw VendorExecutionFailure.stale }
+    try authorizeWrite(
+      kind, token: token, call: call, invocation: invocation,
+      acquisition: acquisition, commit: false)
+    try acquisition.trae?.commitWrite(
+      kind, line: line, token: token, arguments: invocation.arguments)
     try authorizeWrite(
       kind, token: token, call: call, invocation: invocation,
       acquisition: acquisition, commit: true)
@@ -766,7 +862,8 @@ private actor VendorExecutionAcquisitions {
     case "answer":
       guard invocation.effect == .answer, let turn = invocation.targetTurn,
         acquisition.turn == turn, !acquisition.stopRequested,
-        let token, invocation.arguments["request_id"]?.stringValue == token,
+        let token,
+        invocation.arguments[source.protocolKind.permissionArgument]?.stringValue == token,
         acquisition.pending.contains(token)
       else { throw VendorExecutionFailure.denied }
       if commit { acquisition.pending.remove(token) }
@@ -777,6 +874,11 @@ private actor VendorExecutionAcquisitions {
         guard acquisition.pending.contains(token) else { throw VendorExecutionFailure.stale }
         if commit { acquisition.pending.remove(token) }
       }
+    case "close":
+      guard acquisition.trae != nil, invocation.effect == .close, acquisition.closingCall == call,
+        acquisition.turn == nil, acquisition.nativeCloseCall == nil
+      else { throw VendorExecutionFailure.denied }
+      if commit { acquisition.nativeCloseCall = call }
     default: throw VendorExecutionFailure.denied
     }
   }
@@ -785,6 +887,7 @@ private actor VendorExecutionAcquisitions {
     guard let acquisition = acquisitions[key], !acquisition.retirementRequested else {
       return false
     }
+    acquisition.trae?.observe(bytes)
     let chunks = bytes.isEmpty ? 0 : (bytes.count - 1) / Self.maximumChunkBytes + 1
     guard bytes.count + acquisition.outputBytes <= 2_097_152,
       acquisition.output.count + chunks <= 32
@@ -802,22 +905,36 @@ private actor VendorExecutionAcquisitions {
     return true
   }
 
-  private func endOutput(_ key: UUID) { acquisitions[key]?.outputEnded = true }
+  private func endOutput(_ key: UUID, exitCode: Int32?, signal: Int32?) {
+    guard let acquisition = acquisitions[key] else { return }
+    acquisition.exitCode = exitCode
+    acquisition.exitSignal = signal
+    acquisition.outputEnded = true
+  }
 
   private func uuid(_ value: JSONValue?) -> UUID? {
     value?.stringValue.flatMap(UUID.init(uuidString:))
   }
 
   private func receipt(_ acquisition: Acquisition) -> [String: JSONValue] {
-    [
+    let print = source.protocolKind == .claudePrint
+    let mayReportExit =
+      acquisition.workload.completed
+      && (acquisition.outputEnded || acquisition.retired || acquisition.workloadProcess == nil)
+    var result: [String: JSONValue] = [
       "probe": .string(acquisition.probe.id.uuidString.lowercased()),
       "workload": .string(acquisition.workload.id.uuidString.lowercased()),
       "probe_settled": .bool(acquisition.probe.completed),
-      "workload_settled": .bool(acquisition.workload.completed),
+      "workload_settled": .bool(print ? mayReportExit : acquisition.workload.completed),
       "probe_state": .string(acquisition.probe.receipt.rawValue),
       "workload_state": .string(acquisition.workload.receipt.rawValue),
       "retired": .bool(acquisition.retired),
     ]
+    if print && mayReportExit {
+      if let code = acquisition.exitCode { result["exit_code"] = .integer(Int64(code)) }
+      if let signal = acquisition.exitSignal { result["exit_signal"] = .integer(Int64(signal)) }
+    }
+    return result
   }
 
   private func directory(_ execution: PreparedExecutionContext) throws -> SandboxPath {
@@ -863,17 +980,24 @@ private actor VendorExecutionAcquisitions {
       let probeConfirmed = await probe.awaitReceipt()
       let workloadConfirmed = await workload.awaitReceipt()
       let confirmed = probeConfirmed && workloadConfirmed
-      await self?.finishRetirement(id, confirmed: confirmed)
+      let outcome = await process?.snapshot()
+      await self?.finishRetirement(id, confirmed: confirmed, outcome: outcome)
       return confirmed
     }
     acquisition.retirement = retirement
     return await retirement.value
   }
 
-  private func finishRetirement(_ id: UUID, confirmed: Bool) {
+  private func finishRetirement(
+    _ id: UUID, confirmed: Bool, outcome: ManagedLineProcessSnapshot?
+  ) {
     guard let acquisition = acquisitions[id] else { return }
     acquisition.retirement = nil
     if confirmed {
+      if let outcome {
+        acquisition.exitCode = outcome.exitCode
+        acquisition.exitSignal = outcome.signal
+      }
       acquisition.retired = true
       acquisition.outputTask?.cancel()
       acquisition.outputTask = nil
@@ -881,6 +1005,7 @@ private actor VendorExecutionAcquisitions {
       acquisition.probeTask = nil
       acquisition.workloadProcess = nil
       acquisition.retiredTurn = acquisition.turn
+      if let turn = acquisition.turn { rememberTurn(turn, acquisition: acquisition) }
       acquisition.turn = nil
       acquisition.outbound = nil
       for invocation in invocations.values where invocation.acquisition == id {

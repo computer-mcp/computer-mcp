@@ -788,7 +788,10 @@ private final class MCPConnectionPool: @unchecked Sendable {
       if discovery, entry.execution?.provider?.delegatingAuthorization == nil {
         try entry.execution?.validateProviderLaunch()
       } else {
-        try MCPProviderSessionAuthority.requireMatch(admitted: execution, running: entry.execution)
+        let managedObservation =
+          source?.vendorExecution?.signature.tools[continuation.reference.toolName] == .observe
+        try MCPProviderSessionAuthority.requireMatch(
+          admitted: execution, running: entry.execution, managedObservation: managedObservation)
       }
       return entry.connection
     }
@@ -1651,7 +1654,10 @@ private actor MCPProxyConnection {
         try providerWork.validate(continuation, tool: name, arguments: .object(arguments))
       }
     }
-    try MCPProviderSessionAuthority.requireMatch(admitted: execution, running: preparedExecution)
+    try MCPProviderSessionAuthority.requireMatch(
+      admitted: execution, running: preparedExecution,
+      managedObservation: continuation != nil
+        && vendorExecution?.observationTools.contains(name) == true)
     let invocation: MCPHostToolDirectory.InvocationLease?
     if let hostInvocationID {
       guard let hostTools, let projectID else { throw MCPError.connectionClosed }

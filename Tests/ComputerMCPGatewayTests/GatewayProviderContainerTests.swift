@@ -1,6 +1,8 @@
+import ComputerMCPCore
 import ComputerMCPPermissions
 import ComputerMCPPlatform
 import ComputerMCPPlatformPOSIX
+import ComputerMCPProcess
 import ComputerMCPSandbox
 import Foundation
 import GRDB
@@ -49,6 +51,123 @@ struct GatewayProviderContainerTests {
     #expect(!FileManager.default.fileExists(atPath: storage.path))
     #expect(throws: FileIdentityError.self) {
       try GatewayDatabase(inMemory: ()).prepareProviderContainer(.package("one"))
+    }
+  }
+
+  @Test func sourceStorageMustStayDisjointFromTheProjectAndExternalGitDirectories() throws {
+    let root = try root()
+    defer { try? FileManager.default.removeItem(at: root) }
+    let database = try GatewayDatabase(path: root.appendingPathComponent("gateway.sqlite").path)
+    let container = try database.prepareProviderContainer(.package("one"))
+    let source = root.appendingPathComponent("source")
+    let administrative = root.appendingPathComponent("administrative")
+    let scratch = root.appendingPathComponent("scratch")
+    for directory in [source, administrative, scratch] {
+      try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: false)
+    }
+    let project = RegisteredProject(id: "source", displayName: "Source", rootPath: source.path)
+    let scope = try GatewayProviderProject(
+      registration: .init(id: project.id, root: source.path, registeredAt: project.createdAt),
+      access: .init(
+        project: project, rootURL: source, bookmarkWasRefreshed: false, stopAccessing: nil),
+      wasDerived: false)
+    let nested = source.appendingPathComponent("nested")
+    try FileManager.default.createDirectory(at: nested, withIntermediateDirectories: false)
+    for overlap in [nested, root] {
+      #expect(throws: ExecutionEnvironmentError.self) {
+        try GatewayProviderSourceSandbox(project: scope, container: container, scratch: overlap)
+      }
+    }
+    try Data("gitdir: ../administrative\n".utf8).write(to: source.appendingPathComponent(".git"))
+    let common = administrative.appendingPathComponent("commondir")
+    try Data((container.root.string + "\n").utf8).write(to: common)
+    #expect(throws: ExecutionEnvironmentError.self) {
+      try GatewayProviderSourceSandbox(project: scope, container: container, scratch: scratch)
+    }
+    try Data("../scratch\n".utf8).write(to: common)
+    #expect(throws: ExecutionEnvironmentError.self) {
+      try GatewayProviderSourceSandbox(project: scope, container: container, scratch: scratch)
+    }
+    try FileManager.default.removeItem(at: common)
+    let prepared = try GatewayProviderSourceSandbox(
+      project: scope, container: container, scratch: scratch)
+    try prepared.validate()
+    try FileManager.default.moveItem(at: administrative, to: root.appendingPathComponent("old-git"))
+    try FileManager.default.createDirectory(at: administrative, withIntermediateDirectories: false)
+    #expect(throws: (any Error).self) { try prepared.validate() }
+  }
+
+  @Test func admittedSourceProjectWriteDoesNotSatisfyAFilesystemWriteRequirement() throws {
+    let root = try root()
+    defer { try? FileManager.default.removeItem(at: root) }
+    let database = try GatewayDatabase(path: root.appendingPathComponent("gateway.sqlite").path)
+    let identity = PluginIdentity.package("one")
+    let container = try database.prepareProviderContainer(identity)
+    let source = root.appendingPathComponent("source")
+    let scratch = root.appendingPathComponent("scratch")
+    for directory in [source, scratch] {
+      try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: false)
+    }
+    let project = RegisteredProject(id: "source", displayName: "Source", rootPath: source.path)
+    let scope = try GatewayProviderProject(
+      registration: .init(id: project.id, root: source.path, registeredAt: project.createdAt),
+      access: .init(
+        project: project, rootURL: source, bookmarkWasRefreshed: false, stopAccessing: nil),
+      wasDerived: false)
+    let prepared = try GatewayProviderSourceSandbox(
+      project: scope, container: container, scratch: scratch)
+    let context = GatewaySandboxContext(
+      directory: prepared.directory, temporaryDirectory: prepared.scratch, purpose: .pluginProgram,
+      providerContainer: container, sourceSandbox: prepared)
+    let caller = Principal.client("caller")
+    let provider = Principal.plugin(identity)
+    var ledger = PermissionLedger()
+    var environment = PermissionEnvironment()
+    environment.paths = try .init(
+      projects: [.init(id: project.id, root: .init(source.path))],
+      rules: [.init(root: container.storageRoot, kind: .hostData)])
+    _ = try ledger.reconcile(environment: environment, expectedRevision: ledger.revision)
+    var permissions = Permissions.newPrincipal
+    try permissions.set(.granted(.write), for: .project(project.id))
+    _ = try ledger.setPermissions(permissions, for: provider, expectedRevision: ledger.revision)
+    try permissions.set(.granted(.use), for: .plugin("one"))
+    _ = try ledger.setPermissions(permissions, for: caller, expectedRevision: ledger.revision)
+    let projectWrite = PermissionAction(
+      requirement: try .init(.project(project.id), .write), scope: .project(project.id))
+    let pluginUse = PermissionAction(requirement: try .init(.plugin("one"), .use))
+    for requiresPathWrite in [false, true] {
+      let path = try CanonicalPath(source.appendingPathComponent("file").path)
+      let paths: [PathRequirement] = requiresPathWrite ? [.init(path: path, operation: .write)] : []
+      let callerDecision = try ledger.authorize(
+        invocation: .init(
+          principal: caller, tool: "fixture", projectID: project.id, argumentsDigest: "fixture"),
+        requirements: .init(
+          actions: [projectWrite, pluginUse], paths: paths, sandboxProjectID: project.id),
+        now: Date())
+      let providerDecision = try ledger.authorize(
+        invocation: .init(
+          principal: provider, tool: "fixture", projectID: project.id, argumentsDigest: "fixture"),
+        requirements: .init(actions: [projectWrite], paths: paths, sandboxProjectID: project.id),
+        now: Date())
+      guard case .allowed(let providerProof) = providerDecision,
+        case .allowed(let callerProof) = callerDecision
+      else { throw PermissionModelError.invalidAuthorization }
+      let binding = try ProviderExecutionBinding(
+        identity: identity, registrationID: "one", sourceDigest: String(repeating: "a", count: 64),
+        providerAuthorization: providerProof, delegatingAuthorization: callerProof)
+      if requiresPathWrite {
+        #expect(throws: ExecutionEnvironmentError.self) {
+          try GatewaySandboxCompiler.compile(
+            ledger: &ledger, authorizationID: providerProof.id, context: context,
+            ownedTemporaryDirectory: prepared.scratch, provider: binding)
+        }
+      } else {
+        let compiled = try GatewaySandboxCompiler.compile(
+          ledger: &ledger, authorizationID: providerProof.id, context: context,
+          ownedTemporaryDirectory: prepared.scratch, provider: binding)
+        #expect(compiled.sandbox?.readOnly == true)
+        #expect(compiled.sandbox?.worktree == prepared.directory)
+      }
     }
   }
 

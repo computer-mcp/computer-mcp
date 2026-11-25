@@ -15,10 +15,27 @@ package struct GatewayProviderSource: Sendable {
   let executable: String?
   let resources: [VerifiedFileIdentity]
   let validate: @Sendable () throws -> Void
+  let scopedTool: MCPToolReference?
+
+  init(
+    review: GatewayProviderReview, registrationID: String, workingDirectory: String?,
+    executable: String?, resources: [VerifiedFileIdentity],
+    validate: @escaping @Sendable () throws -> Void,
+    scopedTool: MCPToolReference? = nil
+  ) {
+    self.review = review
+    self.registrationID = registrationID
+    self.workingDirectory = workingDirectory
+    self.executable = executable
+    self.resources = resources
+    self.validate = validate
+    self.scopedTool = scopedTool
+  }
 
   static func resolve(
     registration: IntegrationRegistration, configuration: GatewayConfiguration,
-    origins: [IntegrationRegistration: PluginContributionOrigin], database: GatewayDatabase
+    origins: [IntegrationRegistration: PluginContributionOrigin], database: GatewayDatabase,
+    tool: MCPToolReference? = nil, resolvedPlugins: PluginStoreSnapshot? = nil
   ) throws -> Self {
     #if os(Linux)
       throw GatewayToolError.executionFailed("Linux provider activation is unavailable")
@@ -43,6 +60,7 @@ package struct GatewayProviderSource: Sendable {
       let resources: [VerifiedFileIdentity]
       let validate: @Sendable () throws -> Void
       let launch = try Self.launch(registration, configuration: configuration)
+      var scopedTool: MCPToolReference?
       if let origin = origins[registration] {
         let package = try PluginPackage.load(at: origin.source.root)
         guard package.manifest.id == origin.pluginID,
@@ -55,6 +73,16 @@ package struct GatewayProviderSource: Sendable {
         let root = try VerifiedFileIdentity.capture(package.root)
         resources = [root] + launch.identities
         let digest = review.sourceDigest
+        let scopedSelection = try Self.scopedSelection(
+          tool: tool, registration: registration, origin: origin, manifest: package.manifest,
+          digest: digest, configuration: configuration, resolved: resolvedPlugins,
+          current: state.plugins)
+        if scopedSelection != nil {
+          guard launch.executable != nil, !launch.identities.isEmpty else {
+            throw GatewayPermissionError.invalidBinding
+          }
+          scopedTool = tool
+        }
         validate = {
           try root.verify(origin.source.root)
           for identity in launch.identities {
@@ -65,6 +93,7 @@ package struct GatewayProviderSource: Sendable {
             throw GatewayPermissionError.invalidBinding
           }
           let selection = try database.configurationState().plugins
+          try scopedSelection?(selection)
           guard selection.settings[origin.pluginID] == state.plugins.settings[origin.pluginID]
           else {
             throw GatewayPermissionError.invalidBinding
@@ -97,8 +126,49 @@ package struct GatewayProviderSource: Sendable {
       return Self(
         review: review, registrationID: registration.id,
         workingDirectory: directory == "project" ? nil : directory, executable: launch.executable,
-        resources: resources, validate: validate)
+        resources: resources, validate: validate, scopedTool: scopedTool)
     #endif
+  }
+
+  private static func scopedSelection(
+    tool: MCPToolReference?, registration: IntegrationRegistration,
+    origin: PluginContributionOrigin,
+    manifest: PluginManifest, digest: String, configuration: GatewayConfiguration,
+    resolved: PluginStoreSnapshot?, current: PluginStoreSnapshot
+  ) throws -> (@Sendable (PluginStoreSnapshot) throws -> Void)? {
+    guard registration.kind == .mcp, let tool, tool.serverID == registration.id,
+      let server = configuration.mcp.servers.first(where: { $0.id == registration.id }),
+      server.transport == .stdio, server.hostServices, server.permitsTool(tool.toolName),
+      let settings = resolved?.settings[origin.pluginID], settings.enabled,
+      let choice = settings.mcp[origin.componentID], choice.enabled, choice.hostServices,
+      choice.allowAnyTool || choice.allowedTools.contains(tool.toolName),
+      PluginResolver.registrationID(
+        pluginID: origin.pluginID, componentID: origin.componentID, override: choice.registrationID
+      ) == registration.id,
+      manifest.version == origin.version,
+      manifest.mcp.contains(where: { $0.id == origin.componentID && $0.transport == .stdio })
+    else { return nil }
+    let pluginID = origin.pluginID
+    let selected = resolved?.selectedInstallations[pluginID]
+    let installation = resolved?.installations.first { $0.id == selected }
+    if let selected {
+      guard let installation, installation.id == selected, installation.pluginID == pluginID,
+        installation.source == origin.source, installation.manifestDigest == digest,
+        installation.version == origin.version
+      else { throw GatewayPermissionError.invalidBinding }
+    } else {
+      guard origin.source.kind == .bundled else { return nil }
+    }
+    let validate: @Sendable (PluginStoreSnapshot) throws -> Void = { state in
+      guard state.selectedInstallations[pluginID] == selected,
+        state.installations.first(where: { $0.id == selected }) == installation,
+        let current = state.settings[pluginID], current.enabled,
+        current.mcp[origin.componentID] == choice,
+        current.dependencyExecutables == settings.dependencyExecutables
+      else { throw GatewayPermissionError.invalidBinding }
+    }
+    try validate(current)
+    return validate
   }
 
   /// Resolves the launch executable, a CLI tree helper and every interpreter they

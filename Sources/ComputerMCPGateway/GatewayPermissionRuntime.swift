@@ -61,7 +61,7 @@ package final class GatewayPermissionRuntime: @unchecked Sendable {
     source: GatewayProviderSource? = nil, platformRules: Set<PathRule>? = nil,
     admittedProvider: ProviderExecutionBinding? = nil, discoveryInScratch: Bool = false,
     mcpDiscovery: Bool = false, discoveryReplacement: GatewayDiscoveryReplacement? = nil,
-    discoveryCaller: GatewayDiscoveryCaller? = nil
+    discoveryCaller: GatewayDiscoveryCaller? = nil, project: GatewayProviderProject? = nil
   ) async throws -> PreparedExecutionContext {
     #if os(Linux)
       throw ExecutionEnvironmentError.unavailable("Linux provider activation is unavailable")
@@ -100,11 +100,44 @@ package final class GatewayPermissionRuntime: @unchecked Sendable {
         binding.sourceDigest == review.sourceDigest,
         binding.delegatingAuthorization?.id == caller?.id
       else { throw PermissionModelError.invalidAuthorization }
-      let authorizationID = caller?.id ?? binding.providerAuthorization.id
-      let container = try database.prepareProviderContainer(binding.identity)
+      if let source {
+        guard source.review.identity == binding.identity,
+          source.registrationID == binding.registrationID,
+          source.review.sourceDigest == binding.sourceDigest
+        else { throw PermissionModelError.invalidAuthorization }
+      }
+      let providerAuthorization = binding.providerAuthorization
+      let authorizationID = caller?.id ?? providerAuthorization.id
+      let derived = try project?.validate(in: database, platform: platform)
+      if let project {
+        guard let workingDirectory, caller?.invocation.projectID == project.registration.id,
+          providerAuthorization.invocation.projectID == project.registration.id,
+          try ProjectPathResolver.canonicalProject(workingDirectory).path
+            == project.registration.root
+        else { throw PermissionModelError.invalidAuthorization }
+      }
       let worktree = try database.executionWorktree(
-        projectID: binding.providerAuthorization.invocation.projectID,
+        projectID: providerAuthorization.invocation.projectID,
         directory: workingDirectory, platform: platform)
+      if let derived {
+        guard let worktree, case .host(_, let generation) = derived.provenance,
+          generation == worktree.binding.generation
+        else {
+          throw PermissionModelError.invalidAuthorization
+        }
+      }
+      let sourceProject: GatewayProviderProject?
+      if let project, worktree == nil, providerAuthorization.mode == .sandbox,
+        source?.scopedTool?.serverID == registrationID
+      {
+        guard admittedProvider != nil, caller?.sandboxProjectID == project.registration.id,
+          providerAuthorization.sandboxProjectID == project.registration.id
+        else { throw PermissionModelError.invalidAuthorization }
+        sourceProject = project
+      } else {
+        sourceProject = nil
+      }
+      let container = try database.prepareProviderContainer(binding.identity)
       let temporary = directory.appendingPathComponent(
         authorizationID.uuidString, isDirectory: true)
       guard temporary.path.withCString({ mkdir($0, mode_t(0o700)) }) == 0 else {
@@ -113,15 +146,36 @@ package final class GatewayPermissionRuntime: @unchecked Sendable {
       }
       do {
         let root = caller == nil ? temporary : (workingDirectory ?? temporary)
+        let scratch = try ProjectPathResolver.canonicalProject(temporary)
+        let sourceSandbox = try sourceProject.map {
+          try GatewayProviderSourceSandbox(project: $0, container: container, scratch: scratch)
+        }
+        let projectIdentity = project.map {
+          $0.identity(
+            content: worktree.map { .worktree($0.binding.generation) }
+              ?? (sourceSandbox == nil ? .registered : .source))
+        }
         let launchDirectory = try ProjectPathResolver.canonicalProject(
           (discoveryInScratch && caller == nil ? nil : source?.workingDirectory).map {
             $0.hasPrefix("/") ? URL(fileURLWithPath: $0) : root.appendingPathComponent($0)
           } ?? root)
         let launchIdentity = try VerifiedFileIdentity.capture(launchDirectory)
-        let validate: @Sendable () throws -> Void = { [service] in
+        let validate: @Sendable () throws -> Void = { [service, database, platform] in
           try container.verify()
           try source?.validate()
           try launchIdentity.verify(launchDirectory)
+          if let project {
+            let current = try project.validate(in: database, platform: platform)
+            if let worktree {
+              guard let current, case .host(_, let generation) = current.provenance,
+                generation == worktree.binding.generation,
+                current.state == .active || current.state == .removing
+              else { throw PermissionModelError.invalidAuthorization }
+            } else {
+              guard current == nil else { throw PermissionModelError.invalidAuthorization }
+            }
+          }
+          try sourceSandbox?.validate()
           try service.validateProviderExecution(binding)
         }
         return try await coordinator.prepare(
@@ -131,14 +185,14 @@ package final class GatewayPermissionRuntime: @unchecked Sendable {
               try ProjectPathResolver.canonicalProject(
                 root
               ).path),
-            temporaryDirectory: SandboxPath(
-              try ProjectPathResolver.canonicalProject(temporary).path),
+            temporaryDirectory: SandboxPath(scratch.path),
             purpose: caller == nil ? .readOnlyHelper : .pluginProgram,
             privateWorkingDirectory: caller == nil || workingDirectory == nil,
             worktree: worktree, providerContainer: container,
-            providerResources: source?.resources ?? []),
+            providerResources: source?.resources ?? [], sourceSandbox: sourceSandbox),
           connectionID: connectionID, auditContext: auditContext,
           worktreeAdmission: worktree?.binding.admission, provider: binding,
+          providerProject: projectIdentity,
           mcpDiscovery: mcpDiscovery,
           providerWorkingDirectory: SandboxPath(launchDirectory.path),
           providerExecutable: try source?.executable.map(SandboxPath.init),

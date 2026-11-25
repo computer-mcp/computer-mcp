@@ -40,6 +40,44 @@ struct MCPProviderSessionTests {
         != MCPProviderSessionAuthority(retry.prepared(root.url)))
   }
 
+  @Test func projectGenerationAndCompiledFilesystemModeArePartOfSessionAuthority() throws {
+    let folder = try ScopedTemporaryDirectory()
+    let replacement = try ScopedTemporaryDirectory()
+    let root = try ProjectRootIdentity(folder.url)
+    let newRoot = try ProjectRootIdentity(replacement.url)
+    let date = Date()
+    let authority = try SessionAuthority(client: "a")
+    let sibling = try SessionAuthority(client: "a")
+    func project(
+      _ content: ProviderProjectIdentity.Content, generation: Date = date,
+      rootIdentity: ProjectRootIdentity = root
+    ) -> ProviderProjectIdentity {
+      .init(projectID: "project", registeredAt: generation, root: rootIdentity, content: content)
+    }
+    let source = try authority.prepared(folder.url, project: project(.source))
+    let match = try sibling.prepared(folder.url, project: project(.source))
+    try MCPProviderSessionAuthority.requireMatch(admitted: match, running: source)
+    for mismatch in [
+      project(.registered), project(.source, generation: date + 1),
+      project(.source, rootIdentity: newRoot), project(.worktree(UUID())),
+    ] {
+      let admission = try sibling.prepared(folder.url, project: mismatch)
+      #expect(throws: PermissionModelError.self) {
+        try MCPProviderSessionAuthority.requireMatch(admitted: admission, running: source)
+      }
+    }
+    let child = project(.worktree(UUID()))
+    let read = try authority.prepared(folder.url, project: child)
+    let write = try sibling.prepared(folder.url, project: child, readOnly: false)
+    #expect(throws: PermissionModelError.self) {
+      try MCPProviderSessionAuthority.requireMatch(admitted: read, running: write)
+    }
+    authority.invalidate()
+    #expect(throws: PermissionModelError.self) {
+      try MCPProviderSessionAuthority.requireMatch(admitted: match, running: source)
+    }
+  }
+
   @Test func uncertainCleanupBlocksOnlyItsDelegationAndLegacyRemainsConservative() throws {
     let root = try ScopedTemporaryDirectory()
     let storage = root.url.appendingPathComponent("ownership")
@@ -95,6 +133,47 @@ struct MCPProviderSessionTests {
   }
 
   #if os(macOS)
+    @Test(.nativeIntegration, arguments: [true, false])
+    func explicitConnectionSelectionCannotChangePreparedProjectScope(sourceFirst: Bool) async throws
+    {
+      let fixture = try SessionFixture()
+      defer { fixture.remove() }
+      let work = GatewayOwnedWork()
+      let client = fixture.client(ownedWork: work)
+      let authority = try SessionAuthority(client: "a")
+      let root = try ProjectRootIdentity(fixture.root)
+      let date = Date()
+      let child = ProviderProjectIdentity.Content.worktree(UUID())
+      let source = ProviderProjectIdentity.Content.source
+      func project(_ content: ProviderProjectIdentity.Content) -> ProviderProjectIdentity {
+        .init(projectID: "project", registeredAt: date, root: root, content: content)
+      }
+      do {
+        let first = try authority.prepared(
+          fixture.root, project: project(sourceFirst ? source : child))
+        let pid = try await fixture.call(client, execution: first)
+        let owner = try #require(work.snapshot.first { $0.kind == .mcpUnreportedWork })
+        let connection = try #require(owner.connectionID)
+        let target = MCPContinuationTarget(
+          projectID: "project", reference: .init(serverID: "provider", toolName: "pid"),
+          connectionID: connection, instanceID: nil, resources: [:], selectedOwnershipID: owner.id)
+        let other = try SessionAuthority(client: "a")
+        let mismatch = try other.prepared(
+          fixture.root, project: project(sourceFirst ? child : source))
+        await #expect(throws: PermissionModelError.self) {
+          try await fixture.call(client, execution: mismatch, selection: target)
+        }
+        #expect(other.starts == 0 && other.retained == 0)
+        let match = try other.prepared(fixture.root, project: project(sourceFirst ? source : child))
+        #expect(try await fixture.call(client, execution: match, selection: target) == pid)
+        #expect(try await fixture.call(client, execution: mismatch) != pid)
+        await client.shutdown()
+      } catch {
+        await client.shutdown()
+        throw error
+      }
+    }
+
     @Test(.nativeIntegration)
     func concurrentCallsReuseMatchingAuthorityAndSeparateClientsAndOneTimeExecutions() async throws
     {
@@ -585,7 +664,10 @@ private final class SessionAuthority: ExecutionAuthorizing, @unchecked Sendable 
       providerAuthorization: provider, delegatingAuthorization: caller)
   }
 
-  func prepared(_ directory: URL, hostVariables: [String: String] = [:]) throws
+  func prepared(
+    _ directory: URL, hostVariables: [String: String] = [:],
+    project: ProviderProjectIdentity? = nil, readOnly: Bool = true
+  ) throws
     -> PreparedExecutionContext
   {
     let root = try SandboxPath(ProjectPathResolver.canonicalProject(directory).path)
@@ -595,14 +677,14 @@ private final class SessionAuthority: ExecutionAuthorizing, @unchecked Sendable 
       let reads: [SandboxPath] = []
     #endif
     let sandbox = try SandboxConfiguration(
-      readOnly: true, worktree: root, temporaryDirectory: root, homeDirectory: root,
+      readOnly: readOnly, worktree: root, temporaryDirectory: root, homeDirectory: root,
       cacheDirectory: root, readableRoots: reads, listableAncestors: [.init("/")])
     return try PreparedExecutionContext(
       authority: self, mode: .sandbox(sandbox),
       environment: .init(
         searchPath: [.init("/usr/bin"), .init("/bin")], home: root, temporary: root, cache: root,
         hostVariables: hostVariables),
-      limits: Self.limits, provider: binding)
+      limits: Self.limits, provider: binding, providerProject: project)
   }
 
   func invalidate() { lock.withLock { valid = false } }
@@ -794,7 +876,7 @@ private final class SessionAuthority: ExecutionAuthorizing, @unchecked Sendable 
     }
     func remove() { try? FileManager.default.removeItem(at: root) }
     func client(
-      source: SessionSource? = nil,
+      source: SessionSource? = nil, ownedWork: GatewayOwnedWork? = nil,
       onSelection: (@Sendable (String, UUID, UUID) throws -> Void)? = nil
     ) -> MCPProxyClient {
       var host = MCPHostContext(
@@ -802,15 +884,21 @@ private final class SessionAuthority: ExecutionAuthorizing, @unchecked Sendable 
         projectID: "project", rootURL: root, readOnly: true, tools: MCPHostToolDirectory(),
         processOwnershipRoot: root.appendingPathComponent("ownership"))
       if let source { host.providerSource = { _ in source.source() } }
+      host.ownedWork = ownedWork
       return MCPProxyClient(
         launcher: testExecutionLauncher(), workingDirectory: root, hostContext: host,
         onDiscoverySelection: onSelection)
     }
     func call(_ client: MCPProxyClient, authority: SessionAuthority) async throws -> Int32 {
-      let execution = try authority.prepared(root)
+      try await call(client, execution: authority.prepared(root))
+    }
+    func call(
+      _ client: MCPProxyClient, execution: PreparedExecutionContext,
+      selection: MCPContinuationTarget? = nil
+    ) async throws -> Int32 {
       let result = try await client.callToolAsync(
         server: server, name: "pid", arguments: .object([:]), requestID: nil,
-        context: .init(executionAuthority: execution))
+        context: .init(continuation: selection, executionAuthority: execution))
       return try #require(
         result.objectValue?["content"]?.arrayValue?.first?.objectValue?["text"]?
           .stringValue.flatMap(Int32.init))

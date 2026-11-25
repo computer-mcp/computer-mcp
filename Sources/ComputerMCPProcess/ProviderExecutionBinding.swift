@@ -1,5 +1,26 @@
+import ComputerMCPCore
 import ComputerMCPPermissions
 import Foundation
+
+/// Host evidence for the selected project, independent of per-execution scratch.
+package struct ProviderProjectIdentity: Hashable, Sendable {
+  package enum Content: Hashable, Sendable {
+    case registered, source
+    case worktree(UUID)
+  }
+
+  package let projectID: String
+  package let registeredAt: Date
+  package let root: ProjectRootIdentity
+  package let content: Content
+
+  package init(projectID: String, registeredAt: Date, root: ProjectRootIdentity, content: Content) {
+    self.projectID = projectID
+    self.registeredAt = registeredAt
+    self.root = root
+    self.content = content
+  }
+}
 
 /// Host-resolved authority for one provider generation. Discovery has no delegator
 /// and cannot borrow a project or a Full access invocation's authority.

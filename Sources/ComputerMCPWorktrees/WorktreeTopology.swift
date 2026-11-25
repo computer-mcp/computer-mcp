@@ -1,5 +1,83 @@
 import Foundation
 
+#if canImport(Darwin)
+  import Darwin
+#elseif canImport(Glibc)
+  import Glibc
+#endif
+
+extension WorktreeDirectory {
+  /// Read the Git storage selected by filesystem discovery without reading Git
+  /// configuration or invoking repository code.
+  package func sourceGitDirectories() throws -> [WorktreeDirectoryIdentity] {
+    let io = WorktreeJournalIO()
+    func indirectDirectory(_ data: Data, prefix: String, relativeTo parent: URL) throws
+      -> WorktreeDirectory
+    {
+      guard let text = String(data: data, encoding: .utf8), text.hasPrefix(prefix) else {
+        throw WorktreeError.identityChanged("Invalid source Git directory indirection.")
+      }
+      var path = String(text.dropFirst(prefix.count))
+      while path.last == "\n" || path.last == "\r" { path.removeLast() }
+      guard !path.isEmpty, !path.unicodeScalars.contains(where: { $0.value < 32 }) else {
+        throw WorktreeError.identityChanged("Invalid source Git directory path.")
+      }
+      let absolute = path.hasPrefix("/") ? path : parent.path + "/" + path
+      guard let resolved = realpath(absolute, nil) else { throw Self.posixError() }
+      defer { free(resolved) }
+      return try WorktreeDirectory(URL(fileURLWithPath: String(cString: resolved)))
+    }
+    func storage(for git: WorktreeDirectory) throws -> [WorktreeDirectoryIdentity] {
+      let common = try io.read("commondir", in: git, limit: 16_384).map {
+        try indirectDirectory($0, prefix: "", relativeTo: git.url)
+      }
+      try git.verify()
+      try common?.verify()
+      return [git.identity] + (common.map { [$0.identity] } ?? [])
+    }
+    let device = identity.device
+    var checkout = self
+    while true {
+      if try checkout.hasEntry(".git") {
+        let git: WorktreeDirectory
+        if let direct = try? checkout.child(".git") {
+          git = direct
+        } else {
+          guard let pointer = try io.read(".git", in: checkout, limit: 16_384) else {
+            throw WorktreeError.identityChanged("Source Git directory changed during inspection.")
+          }
+          git = try indirectDirectory(pointer, prefix: "gitdir: ", relativeTo: checkout.url)
+        }
+        return try storage(for: git)
+      }
+      if try checkout.hasEntry("HEAD"),
+        try checkout.hasEntry("objects") || checkout.hasEntry("commondir")
+      {
+        return try storage(for: checkout)
+      }
+      try checkout.verify()
+      guard checkout.url.path != "/" else { return [] }
+      let parent = try WorktreeDirectory(checkout.url.deletingLastPathComponent())
+      guard parent.identity.device == device else { return [] }
+      checkout = parent
+    }
+  }
+}
+
+extension WorktreeDirectoryIdentity {
+  /// Compare physical ancestors so alternate spellings on the same volume
+  /// cannot place a writable opening inside a protected directory.
+  package func containsDirectory(_ directory: Self) throws -> Bool {
+    var path = URL(fileURLWithPath: directory.path)
+    while true {
+      let current = try WorktreeDirectory(path).identity
+      if current.device == device, current.inode == inode { return true }
+      guard path.path != "/" else { return false }
+      path.deleteLastPathComponent()
+    }
+  }
+}
+
 /// Filesystem evidence only: this value grants neither execution admission nor
 /// sandbox access. Those owners must obtain their lease and revalidate it.
 package final class VerifiedWorktreeTopology {

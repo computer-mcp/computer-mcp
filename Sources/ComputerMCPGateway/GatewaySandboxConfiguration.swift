@@ -23,13 +23,15 @@ package struct GatewaySandboxContext: Sendable {
   package let worktree: GatewayWorktreeExecution?
   package let providerContainer: GatewayProviderContainer?
   let providerResources: [VerifiedFileIdentity]
+  let sourceSandbox: GatewayProviderSourceSandbox?
 
   package init(
     directory: SandboxPath, temporaryDirectory: SandboxPath,
     purpose: GatewayExecutionPurpose = .readOnlyHelper, privateWorkingDirectory: Bool = false,
     fixedHostOperation: PreparedExecutionContext.FixedHostOperation? = nil,
     worktree: GatewayWorktreeExecution? = nil, providerContainer: GatewayProviderContainer? = nil,
-    providerResources: [VerifiedFileIdentity] = []
+    providerResources: [VerifiedFileIdentity] = [],
+    sourceSandbox: GatewayProviderSourceSandbox? = nil
   ) {
     self.directory = directory
     self.temporaryDirectory = temporaryDirectory
@@ -39,6 +41,7 @@ package struct GatewaySandboxContext: Sendable {
     self.worktree = worktree
     self.providerContainer = providerContainer
     self.providerResources = providerResources
+    self.sourceSandbox = sourceSandbox
   }
 }
 
@@ -107,6 +110,23 @@ package enum GatewaySandboxCompiler {
           "Writable host operations require their verified execution context")
       }
     }
+    if let source = context.sourceSandbox {
+      guard let caller = provider?.delegatingAuthorization, authorization.mode == .sandbox,
+        context.purpose == .pluginProgram, context.worktree == nil,
+        context.fixedHostOperation == nil, context.providerContainer != nil,
+        context.directory == source.directory, ownedTemporaryDirectory == source.scratch,
+        authorization.invocation.projectID == source.projectID,
+        caller.invocation.projectID == source.projectID,
+        authorization.sandboxProjectID == source.projectID,
+        caller.sandboxProjectID == source.projectID
+      else { throw PermissionModelError.invalidAuthorization }
+      guard !authorization.requirements.paths.contains(where: { $0.operation == .write }),
+        !caller.requirements.paths.contains(where: { $0.operation == .write })
+      else {
+        throw ExecutionEnvironmentError.unavailable(
+          "A read-only source provider cannot satisfy a filesystem write requirement")
+      }
+    }
     let providerWrites =
       context.purpose == .pluginProgram
       && authorization.actions.contains {
@@ -115,6 +135,7 @@ package enum GatewaySandboxCompiler {
       }
     if authorization.mode == .sandbox,
       (context.purpose == .projectProgram || providerWrites) && context.worktree == nil
+        && context.sourceSandbox == nil
     {
       throw ExecutionEnvironmentError.unavailable(
         "Execution requires a verified worktree and private Git context")

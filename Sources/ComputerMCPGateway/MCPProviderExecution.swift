@@ -14,10 +14,16 @@ struct MCPProviderExecutionSource: Sendable {
 /// Standing grants may share a process only while both complete authority bases match.
 /// Request-scoped authority stays with the execution that consumed it.
 struct MCPProviderSessionAuthority: Hashable, Sendable {
+  enum Filesystem: Hashable, Sendable {
+    case readOnly, writable, unconfined
+  }
+
   let provider: PluginIdentity
   let registrationID: String
   let sourceDigest: String
   let projectID: String?
+  let project: ProviderProjectIdentity?
+  let filesystem: Filesystem
   let delegator: Principal?
   let providerBasis: Set<AuthorizationBasis>
   let delegatingBasis: Set<AuthorizationBasis>
@@ -31,6 +37,13 @@ struct MCPProviderSessionAuthority: Hashable, Sendable {
     registrationID = binding.registrationID
     sourceDigest = binding.sourceDigest
     projectID = binding.providerAuthorization.invocation.projectID
+    project = execution.providerProject
+    switch execution.mode {
+    case .sandbox(let configuration):
+      filesystem = configuration.readOnly ? .readOnly : .writable
+    case .fullAccess:
+      filesystem = .unconfined
+    }
     delegator = binding.delegatingAuthorization?.invocation.principal
     providerBasis = binding.providerAuthorization.basis
     delegatingBasis = binding.delegatingAuthorization?.basis ?? []
@@ -43,5 +56,16 @@ struct MCPProviderSessionAuthority: Hashable, Sendable {
   func sharesDelegation(with other: Self) -> Bool {
     provider == other.provider && registrationID == other.registrationID
       && projectID == other.projectID && delegator == other.delegator
+  }
+
+  static func requireMatch(
+    admitted: PreparedExecutionContext?, running: PreparedExecutionContext?
+  ) throws {
+    if admitted?.provider == nil, running?.provider == nil { return }
+    guard let admitted, let running,
+      try Self(admitted) == Self(running)
+    else { throw PermissionModelError.invalidAuthorization }
+    try admitted.validateProviderLaunch()
+    if running !== admitted { try running.validateProviderLaunch() }
   }
 }

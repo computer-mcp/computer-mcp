@@ -17,6 +17,7 @@ import Testing
 @testable import ComputerMCPGateway
 @testable import ComputerMCPPermissions
 @testable import ComputerMCPPlatform
+@testable import ComputerMCPPlugins
 @testable import ComputerMCPProcess
 
 #if os(macOS)
@@ -25,6 +26,102 @@ import Testing
 
 @Suite(.nativeIntegration, .serialized)
 struct MCPBoundHostServicesTests {
+  @Test(.timeLimit(.minutes(1)))
+  func ownerEnabledScopedPackageRunsBothRoutesOnASandboxedRegisteredSource() async throws {
+    let temporary = try ScopedTemporaryDirectory()
+    let root = try ProjectPathResolver.canonicalProject(temporary.url)
+    let project = root.appendingPathComponent("source")
+    let packageRoot = root.appendingPathComponent("package")
+    for directory in [project, packageRoot] {
+      try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: false)
+    }
+    try """
+    id = 'scoped-fixture'
+    name = 'Scoped fixture'
+    version = '1.0.0'
+    plugin_api = 1
+    [[permissions]]
+    id = 'project'
+    access = 'write'
+    purpose = 'Request host worktree operations.'
+    [[mcp]]
+    id = 'probe'
+    transport = 'stdio'
+    host_service_contract = 'projects-v1'
+    executable = { path = 'provider' }
+    capabilities = ['tools']
+    """.write(
+      to: packageRoot.appendingPathComponent(PluginManifest.filename), atomically: true,
+      encoding: .utf8)
+    try FileManager.default.copyItem(
+      at: URL(fileURLWithPath: "/bin/cat"), to: packageRoot.appendingPathComponent("provider"))
+    let database = try fixturePermissionDatabase(
+      path: root.appendingPathComponent("host.sqlite").path)
+    try database.saveProject(
+      RegisteredProject(id: "source", displayName: "Source", rootPath: project.path))
+    let permissions = fixturePermissions([
+      .project("source"): .granted(.write),
+      .plugin("scoped-fixture"): .granted(.use),
+    ])
+    let grant = ProfileGrant(
+      id: .chatGPTOperate, permissions: permissions, fullAccess: false,
+      allowedCallers: [.secureTunnel])
+    try database.saveProfile(grant)
+    let platform = fixtureHostedPlatform()
+    let store = PluginStore(database: database, platform: platform)
+    let registered = try await store.registerDevelopment(at: packageRoot, expectedRevision: 0)
+    _ = try await store.setSettings(
+      .init(
+        enabled: true,
+        mcp: [
+          "probe": .init(
+            registrationID: "scoped-probe", exposure: .reexport, prefix: "adapter",
+            allowedTools: ["fixture.read"], hostServices: true)
+        ]), for: "scoped-fixture", expectedRevision: registered.revision)
+    let peer = HostServiceProbe()
+    let runtime = try GatewayRuntime(
+      configuration: .init(
+        runtime: .init(caller: .secureTunnel, profileID: grant.id),
+        profiles: [.init(grant: grant)]),
+      context: .init(
+        caller: .secureTunnel, profileID: grant.id, trustedPrincipalID: "scoped-source-client"),
+      database: database, platform: platform, mcpClient: peer)
+    do {
+      try fixtureApprovePlugin(
+        PluginPackage.load(at: packageRoot), database: database, runtime: runtime.permissionRuntime,
+        permissions: permissions)
+      peer.setHandler { invocation in
+        let execution = try #require(invocation.executionAuthority as? PreparedExecutionContext)
+        let provider = try #require(execution.provider)
+        #expect(provider.identity == .package("scoped-fixture"))
+        #expect(provider.providerAuthorization.sandboxProjectID == "source")
+        #expect(provider.delegatingAuthorization?.invocation.projectID == "source")
+        #expect(execution.providerProject?.content == .source)
+        #expect(invocation.admission?.hostInvocationID != nil)
+        #expect(invocation.resolvedInvocation?.descriptor.risk == .externalWrite)
+        guard case .sandbox(let sandbox) = execution.mode else {
+          throw PermissionModelError.invalidAuthorization
+        }
+        #expect(sandbox.readOnly && sandbox.worktree.value == project.path && sandbox.git == nil)
+        let container = try #require(sandbox.providerContainer)
+        #expect(Set(sandbox.writableDirectories) == [sandbox.temporaryDirectory, container.root])
+        return .object(["ok": .bool(true)])
+      }
+      _ = try await runtime.callToolAsync(
+        name: "mcp.tools.call",
+        arguments: .object([
+          "server": .string("scoped-probe"), "tool": .string("fixture.read"),
+          "arguments": .object(["project_id": .string("downstream-arguments-do-not-route")]),
+        ]), context: .empty)
+      _ = try await runtime.callToolAsync(
+        name: "adapter.fixture.read", arguments: .object([:]), context: .empty)
+      await runtime.shutdown()
+    } catch {
+      await runtime.shutdown()
+      throw error
+    }
+  }
+
   @Test(.timeLimit(.minutes(1)))
   func consumerStartupBudgetPreservesLiveInvocation() async throws {
     let fixture = try HostAuthorityFixture(callbackTimeout: PluginConsumerTiming.invocationSeconds)

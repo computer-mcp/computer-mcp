@@ -312,6 +312,15 @@ package final class MCPProxyClient: DownstreamMCPClient, @unchecked Sendable {
   ) throws -> JSONValue {
     let record = try journal.read(serverID: server.id, requestID: requestID)
     try requireExecutionAccess(record, operation: .readResult, context: context)
+    if let target = context.continuationTarget {
+      guard
+        let connection = pool.existingConnection(
+          for: server, continuation: target, context: context)
+      else { throw MCPContinuationTarget.unavailable() }
+      try runExisting(server: server, connection: connection, context: context) { connection in
+        try await connection.requireActiveRequest(requestID, executionID: record.executionID)
+      }
+    }
     return try record.snapshot(instance: journal.instanceID, offset: offset, maxBytes: maxBytes)
   }
 
@@ -757,15 +766,25 @@ private final class MCPConnectionPool: @unchecked Sendable {
     guard !stopped else {
       throw GatewayToolError.disabled("The downstream MCP client is stopped.")
     }
+    var execution = (context.executionAuthority as? PreparedExecutionContext).flatMap {
+      $0.provider == nil ? nil : $0
+    }
+    if !discovery, source != nil, execution == nil {
+      throw PermissionModelError.invalidAuthorization
+    }
     if let continuation {
       guard let entry = selectedLocked(server: server, target: continuation) else {
         throw MCPContinuationTarget.unavailable()
       }
-      try entry.execution?.validateProviderLaunch()
+      guard source == nil || entry.execution?.provider?.sourceDigest == source?.digest else {
+        throw MCPContinuationTarget.unavailable()
+      }
+      if discovery, entry.execution?.provider?.delegatingAuthorization == nil {
+        try entry.execution?.validateProviderLaunch()
+      } else {
+        try MCPProviderSessionAuthority.requireMatch(admitted: execution, running: entry.execution)
+      }
       return entry.connection
-    }
-    var execution = (context.executionAuthority as? PreparedExecutionContext).flatMap {
-      $0.provider == nil ? nil : $0
     }
     var ownsAdmission = false
     if discovery, let source {
@@ -790,8 +809,6 @@ private final class MCPConnectionPool: @unchecked Sendable {
       try replacement?.caller.check()
       execution = try source.prepareDiscovery(replacement, discoveryCaller)
       ownsAdmission = true
-    } else if source != nil && execution == nil {
-      throw PermissionModelError.invalidAuthorization
     }
     do {
       if let execution {
@@ -966,7 +983,8 @@ private actor MCPProxyConnection {
     let downstreamRequestID: MCP.ID
     let tool: String
     let startedAt: Date
-    let executionID: UUID?
+    let execution: PreparedExecutionContext
+    var executionID: UUID { execution.executionID }
     var retainsResult = false
     var cancellationRequested = false
 
@@ -1157,7 +1175,7 @@ private actor MCPProxyConnection {
       gatewayRequestID: gatewayRequestID,
       downstreamRequestID: context.requestID,
       tool: name,
-      startedAt: Date(), executionID: execution.executionID, retainsResult: retainsResult
+      startedAt: Date(), execution: execution, retainsResult: retainsResult
     )
     if retainsResult {
       try journal.update(serverID: server.id, requestID: gatewayRequestID) {
@@ -1266,7 +1284,7 @@ private actor MCPProxyConnection {
       gatewayRequestID: gatewayRequestID,
       downstreamRequestID: context.requestID,
       tool: name,
-      startedAt: Date(), executionID: execution.executionID, retainsResult: true
+      startedAt: Date(), execution: execution, retainsResult: true
     )
     activeRequests[gatewayRequestID] = active
     observers[context.requestID] = Task { [weak self] in
@@ -1423,13 +1441,20 @@ private actor MCPProxyConnection {
     return activeRequests[requestID]?.executionID == executionID
   }
 
+  func requireActiveRequest(_ requestID: String, executionID: UUID?) throws {
+    guard let executionID, let active = activeRequests[requestID],
+      active.executionID == executionID
+    else { throw MCPContinuationTarget.unavailable() }
+    try MCPProviderSessionAuthority.requireMatch(
+      admitted: active.execution, running: preparedExecution)
+  }
+
   func activeRequestsJSON(access: any ExecutionAccessChecking) -> JSONValue {
     .object([
       "server": .string(server.id),
       "requests": .array(
         activeRequests.values.filter {
-          guard let executionID = $0.executionID else { return false }
-          return (try? access.accessExecution(executionID, operation: .readResult)) != nil
+          (try? access.accessExecution($0.executionID, operation: .readResult)) != nil
         }.sorted { $0.gatewayRequestID < $1.gatewayRequestID }.map(\.json)
       ),
       "persistent_session": .bool(true),
@@ -1439,12 +1464,12 @@ private actor MCPProxyConnection {
   func cancelRequest(
     gatewayRequestID: String, reason: String, access: any ExecutionAccessChecking
   ) async throws -> JSONValue {
-    guard let active = activeRequests[gatewayRequestID], !active.cancellationRequested,
-      let executionID = active.executionID
+    guard let active = activeRequests[gatewayRequestID], !active.cancellationRequested
     else {
       throw PermissionModelError.invalidAuthorization
     }
-    _ = try access.accessExecution(executionID, operation: .requestCancellation)
+    _ = try access.accessExecution(active.executionID, operation: .requestCancellation)
+    try requireActiveRequest(gatewayRequestID, executionID: active.executionID)
     return try await requestCancellation(gatewayRequestID: gatewayRequestID, reason: reason)
   }
 
@@ -1582,6 +1607,7 @@ private actor MCPProxyConnection {
         try providerWork.validate(continuation, tool: name, arguments: .object(arguments))
       }
     }
+    try MCPProviderSessionAuthority.requireMatch(admitted: execution, running: preparedExecution)
     let invocation: MCPHostToolDirectory.InvocationLease?
     if let hostInvocationID {
       guard let hostTools, let projectID else { throw MCPError.connectionClosed }
@@ -1834,7 +1860,6 @@ private actor MCPProxyConnection {
     notifyTools: Bool = true, caller: GatewayDiscoveryCaller? = nil
   ) async throws {
     try caller?.check()
-    try preparedExecution?.validateProviderLaunch()
     try Task.checkCancellation()
     guard closeTask == nil else { throw MCPError.connectionClosed }
     if let predecessor, !(await predecessor.value) {
@@ -1843,6 +1868,7 @@ private actor MCPProxyConnection {
         "Previous MCP process has not confirmed exit; reconnect is blocked.")
     }
     try caller?.check()
+    try preparedExecution?.validateProviderLaunch()
     try Task.checkCancellation()
     guard closeTask == nil else { throw MCPError.connectionClosed }
     if connected {

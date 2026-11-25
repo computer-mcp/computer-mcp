@@ -143,7 +143,8 @@ package final class ExecutionRevocationCoordinator: ExecutionRecoveryAuthorizing
     searchPath: [SandboxPath] = [try! SandboxPath("/usr/bin"), try! SandboxPath("/bin")],
     fullAccessEnvironment: [String: String] = [:], connectionID: String? = nil,
     auditContext: ExecutionContext? = nil, worktreeAdmission: WorktreeAdmission? = nil,
-    provider: ProviderExecutionBinding? = nil, mcpDiscovery: Bool = false,
+    provider: ProviderExecutionBinding? = nil, providerProject: ProviderProjectIdentity? = nil,
+    mcpDiscovery: Bool = false,
     providerWorkingDirectory: SandboxPath? = nil, providerExecutable: SandboxPath? = nil,
     validateProvider: (@Sendable () throws -> Void)? = nil,
     callback: ProviderExecutionBinding? = nil
@@ -375,7 +376,7 @@ package final class ExecutionRevocationCoordinator: ExecutionRecoveryAuthorizing
         ),
         permitsProgramLaunch: configuration.permitsProgramLaunch,
         fixedHostOperation: context.fixedHostOperation, worktreeGit: context.worktree?.git,
-        validateWorktree: validateWorktree, provider: provider,
+        validateWorktree: validateWorktree, provider: provider, providerProject: providerProject,
         providerWorkingDirectory: providerWorkingDirectory, providerExecutable: providerExecutable,
         validateProvider: validateLaunch)
       try validateLaunch()

@@ -38,6 +38,19 @@ before spawning children, so vendor subprocesses do not retain it. Arbitrary
 descriptor inheritance is not allowed.
 The channel does not enlarge sandbox filesystem or network permissions.
 
+An admitted sandboxed tool from an owner-enabled stdio plugin with scoped host
+services runs on a verified registered source with the project files and Git
+storage read-only. The provider can write to its private container and scratch.
+A tool that requires a concrete filesystem write path cannot run there. Project
+write for host-mediated actions still needs both the caller's and the provider's
+grants. A verified managed worktree uses its own admitted filesystem mode and
+private Git configuration.
+
+Each provider connection is bound to its admitted authority, project
+registration and filesystem mode. Selecting a connection still requires a
+matching admission. A resource continuation uses the originating execution's
+recorded authority and rechecks its scope.
+
 The endpoint uses MCP initialization and newline-delimited JSON-RPC, including
 `tools/list` and `tools/call`. Ordinary callbacks use the authenticated subject,
 current profile and selected project. Aliases and forwarding cannot create a

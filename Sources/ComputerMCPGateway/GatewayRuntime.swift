@@ -73,6 +73,7 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
   private let remoteManagement: (any GatewayManagementProvider)?
   private let hostToolDirectory = MCPHostToolDirectory()
   package let pluginOrigins: [IntegrationRegistration: PluginContributionOrigin]
+  private let resolvedPluginSettings: PluginStoreSnapshot
   package let pluginDiagnostics: [PluginResolutionDiagnostic]
   package let pluginIssues: [PluginStoreIssue]
 
@@ -236,6 +237,7 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
     try pluginState?.validate()
     let pluginState = try (pluginState ?? database?.pluginStoreSnapshot() ?? PluginStoreSnapshot())
       .includingBundledDefaults(bundledPlugins.packages.map(\.manifest))
+    resolvedPluginSettings = pluginState
     let artifactLeases = try Self.retainPluginArtifacts(
       state: pluginState, plugins: plugins, database: database,
       directoryFactory: platform.pluginDirectories, transaction: artifactStorage)
@@ -650,6 +652,23 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
     }
   }
 
+  private func providerProject(selected: String?, routed: String?) throws -> GatewayProviderProject?
+  {
+    guard let selected, selected == routed,
+      let registration = persistedProjectRegistrations[selected]
+    else { return nil }
+    guard let access = projectAccesses[selected],
+      try ProjectPathResolver.canonicalProject(URL(fileURLWithPath: registration.rootPath)).path
+        == ProjectPathResolver.canonicalProject(access.rootURL).path
+    else { throw ProjectBookmarkError.rootChanged(projectID: selected) }
+    return GatewayProviderProject(
+      registration: .init(
+        id: selected, root: try ProjectPathResolver.canonicalProject(access.rootURL).path,
+        registeredAt: registration.createdAt),
+      access: access,
+      wasDerived: generationInputs?.derivedProjects.contains { $0.projectID == selected } == true)
+  }
+
   private func projectAccessError(_ project: ComputerMCPCore.RegisteredProject)
     -> ProjectBookmarkError?
   {
@@ -763,6 +782,7 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
     guard let reference = descriptor.mcpReference,
       hostServiceRegistrations.contains(reference.serverID)
     else { return nil }
+    try providerExecution?.validateProviderLaunch()
     let downstream =
       name == "mcp.tools.call" ? arguments["arguments"]?.objectValue ?? [:] : arguments
     let plugin = pluginOrigins[.init(kind: .mcp, id: reference.serverID)]
@@ -1548,15 +1568,31 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
             }
           })
       } else if let retained = admitted.retainedExecution {
-        try retained.validateProviderLaunch()
+        guard let target = invocationContext.continuationTarget,
+          target.reference == admitted.resolved.descriptor.mcpReference,
+          target.projectID == auditContext.projectID,
+          retained.provider?.registrationID == target.reference.serverID,
+          retained.provider?.delegatingAuthorization?.id == admitted.authorization.id,
+          try ownedWork.continuations.execution(for: target) === retained
+        else { throw MCPContinuationTarget.unavailable() }
         execution = retained
       } else if let source = admitted.providerSource {
+        let project: GatewayProviderProject?
+        if Self.mcpServer(admitted.resolved.descriptor, arguments: admitted.route.arguments)
+          == source.registrationID
+        {
+          project = try providerProject(
+            selected: auditContext.projectID, routed: admitted.route.registryProjectID)
+        } else {
+          project = nil
+        }
         execution = try await permissionRuntime.prepareProvider(
           review: source.review, registrationID: source.registrationID,
           authorization: admitted.authorization, directory: admitted.directory,
           connectionID: admitted.route.context.controlSession?.id, retryIDs: admitted.retryIDs,
           auditContext: auditContext, source: source,
-          platformRules: permissionPlatformRules(), admittedProvider: admitted.providerBinding)
+          platformRules: permissionPlatformRules(), admittedProvider: admitted.providerBinding,
+          project: project)
       } else {
         execution = try await permissionRuntime.prepare(
           authorization: admitted.authorization, descriptor: admitted.resolved.descriptor,
@@ -1876,7 +1912,8 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
     {
       source = try GatewayProviderSource.resolve(
         registration: registration,
-        configuration: configuration, origins: pluginOrigins, database: database)
+        configuration: configuration, origins: pluginOrigins, database: database,
+        tool: descriptor.mcpReference, resolvedPlugins: resolvedPluginSettings)
     } else {
       source = nil
     }

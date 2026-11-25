@@ -111,6 +111,7 @@ package final class PreparedExecutionContext: ExecutionAccessChecking, Sendable 
   private let fixedCommand: FixedCommand?
   package let worktreeGit: SandboxGitConfiguration?
   package let provider: ProviderExecutionBinding?
+  package let providerProject: ProviderProjectIdentity?
   package let providerWorkingDirectory: SandboxPath?
   /// The provider source's verified launch path; a launch must not resolve another one.
   package let providerExecutable: SandboxPath?
@@ -133,7 +134,7 @@ package final class PreparedExecutionContext: ExecutionAccessChecking, Sendable 
     permitsProgramLaunch: Bool = true, fixedHostOperation: FixedHostOperation? = nil,
     worktreeGit: SandboxGitConfiguration? = nil,
     validateWorktree: (@Sendable () throws -> Void)? = nil,
-    provider: ProviderExecutionBinding? = nil,
+    provider: ProviderExecutionBinding? = nil, providerProject: ProviderProjectIdentity? = nil,
     providerWorkingDirectory: SandboxPath? = nil, providerExecutable: SandboxPath? = nil,
     hostServiceChannel: ProviderHostServiceChannel? = nil,
     validateProvider: (@Sendable () throws -> Void)? = nil
@@ -149,6 +150,7 @@ package final class PreparedExecutionContext: ExecutionAccessChecking, Sendable 
     self.worktreeGit = worktreeGit
     self.validateWorktree = validateWorktree
     self.provider = provider
+    self.providerProject = providerProject
     self.providerWorkingDirectory = providerWorkingDirectory
     self.providerExecutable = providerExecutable
     self.hostServiceChannel = hostServiceChannel
@@ -170,6 +172,7 @@ package final class PreparedExecutionContext: ExecutionAccessChecking, Sendable 
     worktreeGit = parent.worktreeGit
     validateWorktree = parent.validateWorktree
     provider = nil
+    providerProject = nil
     providerWorkingDirectory = nil
     providerExecutable = nil
     hostServiceChannel = nil
@@ -189,6 +192,7 @@ package final class PreparedExecutionContext: ExecutionAccessChecking, Sendable 
     worktreeGit = parent.worktreeGit
     validateWorktree = parent.validateWorktree
     provider = parent.provider
+    providerProject = parent.providerProject
     providerWorkingDirectory = parent.providerWorkingDirectory
     providerExecutable = parent.providerExecutable
     hostServiceChannel = channel
@@ -275,8 +279,15 @@ package final class PreparedExecutionContext: ExecutionAccessChecking, Sendable 
       return
     }
     guard authority.authorizationIDs == provider.authorizationIDs,
-      fixedHostOperation == nil
+      fixedHostOperation == nil,
+      providerProject == nil
+        || providerProject?.projectID == provider.providerAuthorization.invocation.projectID
     else { throw PermissionModelError.invalidAuthorization }
+    if providerProject?.content == .source {
+      guard case .sandbox(let sandbox) = mode, sandbox.readOnly, sandbox.git == nil,
+        worktreeGit == nil
+      else { throw PermissionModelError.invalidAuthorization }
+    }
     if case .fullAccess = mode, provider.providerAuthorization.mode == .sandbox {
       throw PermissionModelError.invalidAuthorization
     }

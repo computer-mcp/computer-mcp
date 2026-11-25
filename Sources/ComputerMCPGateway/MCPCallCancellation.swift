@@ -7,7 +7,7 @@ final class MCPCallCancellation: Sendable {
   private struct State {
     var cancelled = false
     var finished = false
-    var action: (@Sendable () async -> Void)?
+    var action: (id: UUID, run: @Sendable () async -> Void)?
     var delivery: Task<Void, Never>?
   }
   private let state = NIOLockedValueBox(State())
@@ -18,23 +18,39 @@ final class MCPCallCancellation: Sendable {
   }
 
   func checkCancellation() throws {
-    if state.withLockedValue({ $0.cancelled }) { throw CancellationError() }
+    try whileActive {}
   }
 
+  func whileActive<Result>(_ operation: () throws -> Result) throws -> Result {
+    try state.withLockedValue {
+      if $0.cancelled { throw CancellationError() }
+      return try operation()
+    }
+  }
+
+  @discardableResult
   func install(
     onDeliveryFailure: (@Sendable () -> Void)?,
     _ send: @escaping @Sendable () async throws -> Void
-  ) {
+  ) -> UUID {
+    let id = UUID()
     let action: @Sendable () async -> Void = { [deliveryTimeout] in
       await Self.deliver(within: deliveryTimeout, onDeliveryFailure: onDeliveryFailure, send)
     }
     state.withLockedValue {
-      guard !$0.finished else { return }
+      guard !$0.finished, $0.delivery == nil else { return }
       if $0.cancelled {
         $0.delivery = Task { await action() }
       } else {
-        $0.action = action
+        $0.action = (id, action)
       }
+    }
+    return id
+  }
+
+  func clear(_ id: UUID) {
+    state.withLockedValue {
+      if $0.action?.id == id { $0.action = nil }
     }
   }
 
@@ -73,7 +89,7 @@ final class MCPCallCancellation: Sendable {
       $0.cancelled = true
       if let action = $0.action {
         $0.action = nil
-        $0.delivery = Task { await action() }
+        $0.delivery = Task { await action.run() }
       }
     }
   }

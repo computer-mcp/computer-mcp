@@ -684,6 +684,10 @@ final class LiveAppControlPlane: AppControlPlane {
       .info, event: "profile.permissions.updated", fields: ["profile_id": grant.id.rawValue])
   }
 
+  func ownerPolicyEditorService() async throws -> OwnerPolicyEditorService {
+    try await controlPlane.ownerPolicyEditorService()
+  }
+
   func fetchPrivacyPermissionInventory() async throws -> PrivacyPermissionInventory {
     try await controlPlane.privacyPermissionInventory()
   }

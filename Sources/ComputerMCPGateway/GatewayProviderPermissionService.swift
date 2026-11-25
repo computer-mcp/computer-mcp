@@ -70,15 +70,19 @@ extension GatewayPermissionService {
         throw GatewayPermissionError.invalidBinding
       }
     }
+    let priorPermissions = editingApproval ? previous?.permissions : nil
     let derivedIDs = Set(review.configuration.derivedProjects.map(\.projectID))
-    for (permission, state) in permissions.entries {
+    let objects = Set(permissions.entries.keys).union(priorPermissions?.entries.keys ?? [:].keys)
+    for permission in objects {
       if case .project(let id) = permission, derivedIDs.contains(id) {
-        guard previous?.permissions.entries[permission] == state else {
+        if let state = permissions.entries[permission],
+          previous?.permissions.entries[permission] != state
+        {
           throw PermissionModelError.invalidObject
         }
         continue
       }
-      guard case .granted = state else { continue }
+      guard case .granted(let value) = permissions.state(for: permission) else { continue }
       let known: Bool
       switch permission {
       case .project(let id):
@@ -87,7 +91,13 @@ extension GatewayPermissionService {
       case .mcpServer(let id): known = id == "*" || review.serverIDs.contains(id)
       default: known = true
       }
-      guard known else { throw PermissionModelError.invalidObject }
+      if !known {
+        // An explicit grant must already exist. Removing an override may also expose a fallback.
+        let prior =
+          permissions.entries[permission] == nil
+          ? priorPermissions?.state(for: permission) : priorPermissions?.entries[permission]
+        guard prior?.allows(value) == true else { throw PermissionModelError.invalidObject }
+      }
     }
     let limits = policies.providerLimits(
       review.identity, epoch: expectedEpoch,
@@ -163,6 +173,7 @@ extension GatewayPermissionService {
       }
     }
     let principal = Principal.plugin(review.identity)
+    ledger.register(principal)
     let current = ledger.permissions(for: principal)
     var selection = current
     for permission in current.entries.keys where permissions.entries[permission] == nil {
@@ -238,12 +249,15 @@ extension GatewayPermissionService {
 
   package func setOwnerPolicy(
     _ document: Data?, provider: PluginIdentity, owner: GatewayPermissionOwner,
-    expectedRevision: UInt64, now: Date = Date()
+    expectedRevision: UInt64, expectedEpoch: UUID? = nil, now: Date = Date()
   ) throws -> RevocationResult {
     let resolved = try document.map { try GatewayResolvedPolicy(bytes: $0, reader: policyReader) }
     return try transactionWithPolicy { database, ledger, policies in
       try owner.authorize()
       try Self.requireRevision(expectedRevision, database: database)
+      guard expectedEpoch.map({ $0 == ledger.authorizationEpochID }) ?? true else {
+        throw GatewayPermissionError.revisionConflict
+      }
       guard ledger.suspendedAuthority == nil && ledger.pendingEpochRecovery == nil,
         let epoch = ledger.authorizationEpochID,
         var record = try ProviderAuthorityRecord.load(provider, in: database)

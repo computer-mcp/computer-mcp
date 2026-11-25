@@ -1,3 +1,4 @@
+import ComputerMCPPlatformPOSIX
 import Foundation
 
 package struct WorktreeRecoveryOwnerService: Sendable {
@@ -207,6 +208,16 @@ package struct WorktreeRecoveryOwnerService: Sendable {
       guard case .release(let review) = entry.record.request else {
         throw invalidRecoveryMetadata()
       }
+      var entry = entry
+      if let scratch = entry.record.fallbackScratch {
+        do {
+          entry = try recoverFallbackScratch(scratch, entry: entry)
+        } catch {
+          guard isEvidenceFailure(error) else { throw error }
+          try markReleaseRecovery(entry, reason: error.localizedDescription)
+          return try releaseStatus(handle, principal: principal)
+        }
+      }
       do {
         return try coordinate(repository) { live in
           try admitRelease(
@@ -243,6 +254,7 @@ package struct WorktreeRecoveryOwnerService: Sendable {
     }
     if case .recoveryRequired = entry.record.outcome { return .recovery(entry.record.status) }
     guard case .release(let review) = entry.record.request else { throw invalidRecoveryMetadata() }
+    if entry.record.fallbackScratch != nil { return .pending(store.repository, entry) }
     let receipts = try review.release.receipts(for: review.handle)
     let decision: ReleaseDecision
     do {
@@ -284,6 +296,7 @@ package struct WorktreeRecoveryOwnerService: Sendable {
     _ outcome: RecoveryOperationStatus.Outcome,
     entry: WorktreeRecoveryStore.Locked.OwnerEntry, in store: WorktreeRecoveryStore.Locked
   ) throws -> ReleaseProgress {
+    guard entry.record.fallbackScratch == nil else { throw invalidRecoveryMetadata() }
     let next = try store.saveOwnerOperation(
       entry.record.advanced { $0.outcome = outcome }, replacing: entry)
     try store.publishOwnerResult(next)
@@ -328,6 +341,9 @@ package struct WorktreeRecoveryOwnerService: Sendable {
         handle, principal: principal, synchronizing: true)
       guard observed.result == nil, let active = observed.active, active.record.handle == handle
       else { return false }
+      guard active.record.fallbackScratch == nil else {
+        throw WorktreeError.busy("The expected-commit proof is still active.")
+      }
       if case .pending = try classifyAndReplay(active, in: store) {
         entry = active
         return true
@@ -377,8 +393,9 @@ package struct WorktreeRecoveryOwnerService: Sendable {
       }
       try requireReleaseDependencies(
         owners, admissions: admissions, evidence: evidence, repository: repository,
-        generation: handle.generation)
+        entry: &entry)
     } catch let error as WorktreeError {
+      guard entry.record.fallbackScratch == nil else { throw error }
       switch error {
       case .busy(let reason): try finishPendingRelease(entry, outcome: .busy(reason))
       case .identityChanged: try finishPendingRelease(entry, outcome: .stale)
@@ -387,7 +404,8 @@ package struct WorktreeRecoveryOwnerService: Sendable {
         try markReleaseRecovery(entry, reason: error.localizedDescription)
       }
       return
-    } catch is DecodingError {
+    } catch let error as DecodingError {
+      guard entry.record.fallbackScratch == nil else { throw error }
       try markReleaseRecovery(entry, reason: "Lifecycle evidence cannot be decoded.")
       return
     }
@@ -403,16 +421,29 @@ package struct WorktreeRecoveryOwnerService: Sendable {
         return
       }
       let receipts = try review.release.receipts(for: handle)
-      let admitted = try dependencies.validateRecoveryEvidence(
-        evidence, for: repository, sources: sources
-      ) {
-        try store.prepareRelease(receipts)
+      var admission: WorktreeRecoveryStore.Locked.ReleaseAdmission?
+      let matched: Bool
+      do {
+        matched = try dependencies.validateRecoveryEvidence(
+          evidence, for: repository, sources: sources
+        ) {
+          admission = try store.admitRelease(receipts)
+        }
+      } catch {
+        // The catalog rename can be visible even when synchronization or the
+        // enclosing SQL validation throws. Only the durable intent authorizes replay.
+        if case .pending = try classifyAndReplay(active, in: store) { throw error }
+        return
       }
-      if admitted {
-        _ = try classifyAndReplay(active, in: store)
-      } else {
+      guard case .pending = try classifyAndReplay(active, in: store) else { return }
+      switch admission {
+      case .capacityRefused(let reason):
+        try recordOutcome(.busy(reason), entry: active, in: store)
+      case nil where !matched:
         try recordOutcome(
           .busy("Recovery dependency evidence changed during admission."), entry: active, in: store)
+      default:
+        throw invalidRecoveryMetadata()
       }
     }
   }
@@ -445,7 +476,7 @@ package struct WorktreeRecoveryOwnerService: Sendable {
     _ owners: [WorktreeRecoveryRecord.Owner: [WorktreeRecoveryRecord]],
     admissions: [(WorktreeRecoveryRecord.Owner, VerifiedWorktreeTopology)],
     evidence: WorktreeRecoveryDependencyEvidence, repository: WorktreeRepositoryIdentity,
-    generation: UUID
+    entry: inout WorktreeRecoveryStore.Locked.OwnerEntry
   ) throws {
     guard evidence.unfinishedOperations.isEmpty, evidence.executions.isEmpty else {
       throw WorktreeError.busy("An unfinished host operation or execution protects recovery data.")
@@ -454,6 +485,8 @@ package struct WorktreeRecoveryOwnerService: Sendable {
     let deletions = try reader(repository, firstOwner.source).pendingRecoveryDeletions()
     let live = Dictionary(uniqueKeysWithValues: admissions)
     let records = Dictionary(uniqueKeysWithValues: evidence.derived.map { ($0.projectID, $0) })
+    let generation = entry.record.handle.generation
+    var fallbackBudget = try WorktreeObjectBudget(limits)
     for (owner, selected) in owners {
       let reader = reader(repository, owner.source)
       guard !deletions.contains(where: owner.matches),
@@ -462,13 +495,11 @@ package struct WorktreeRecoveryOwnerService: Sendable {
       if let topology = live[owner],
         let expected = records[owner.projectID]?.worktree?.lastPublishedOID
       {
-        if selected.contains(where: { $0.oid == expected && $0.objectType == .commit }) {
-          let budget = try WorktreeObjectBudget(limits)
-          let pool = WorktreeStagedObjects(
-            directory: topology.objects, repository: topology.gitDirectory, git: git,
-            format: repository.format, deadline: budget.deadline, limits: limits)
-          guard try pool.manifest(roots: [expected])?.entries[expected]?.type == .commit
-          else { throw WorktreeError.busy("The worktree needs its retained expected commit.") }
+        if selected.contains(where: { $0.oid == expected && $0.objectType == .commit }),
+          try !verifyExpectedCommit(
+            expected, reader: reader, topology: topology, budget: &fallbackBudget, entry: &entry)
+        {
+          throw WorktreeError.busy("The worktree needs its retained expected commit.")
         }
       } else {
         let final = try reader.recoveryFinalCapture(owner, generation: generation)
@@ -486,6 +517,124 @@ package struct WorktreeRecoveryOwnerService: Sendable {
           }
         }
       }
+    }
+  }
+
+  private typealias FallbackScratch = RecoveryOwnerJournal.FallbackScratch
+  private typealias OwnerEntry = WorktreeRecoveryStore.Locked.OwnerEntry
+
+  private func verifyExpectedCommit(
+    _ oid: String, reader: WorktreeRepository, topology: VerifiedWorktreeTopology,
+    budget: inout WorktreeObjectBudget, entry: inout OwnerEntry
+  ) throws -> Bool {
+    let runtime = topology.runtime
+    try budget.check()
+    try runtime.verify()
+    let lock = try lockFallbackScratch(in: runtime)
+    defer { lock.release() }
+    let token = UUID()
+    let name = FallbackScratch.name(operation: entry.record.handle.id, token: token)
+    let lockIdentity = try lock.identity()
+    let directory = try runtime.child(name, create: true, exclusive: true)
+    let scratch = FallbackScratch(
+      token: token, runtime: runtime.identity, directory: directory.identity, lock: lockIdentity)
+    do {
+      // Ownership is durable before the first copy. A failed reservation can only leave an empty root.
+      entry = try replaceFallbackScratch(scratch, entry: entry)
+    } catch {
+      try? removeFallbackScratch(scratch, in: runtime, holding: lock)
+      throw error
+    }
+    let verified: Bool
+    do {
+      verified = try reader.hasVerifiedPrivateExpectedCommit(
+        oid, topology: topology, scratch: directory, budget: &budget)
+    } catch {
+      if let cleared = try? retireFallbackScratch(scratch, in: runtime, holding: lock, entry: entry)
+      {
+        entry = cleared
+      }
+      throw error
+    }
+    entry = try retireFallbackScratch(scratch, in: runtime, holding: lock, entry: entry)
+    return verified
+  }
+
+  private func recoverFallbackScratch(_ scratch: FallbackScratch, entry: OwnerEntry) throws
+    -> OwnerEntry
+  {
+    let runtime: WorktreeDirectory?
+    do {
+      runtime = try WorktreeDirectory.openIfPresent(URL(fileURLWithPath: scratch.runtime.path))
+    } catch let error as POSIXError where [.ENOTDIR, .ELOOP].contains(error.code) {
+      throw WorktreeError.recoveryRequired("Expected-commit proof runtime changed.")
+    }
+    guard let runtime, runtime.identity == scratch.runtime else {
+      throw WorktreeError.recoveryRequired("Expected-commit proof runtime changed.")
+    }
+    let lock = try lockFallbackScratch(in: runtime, expecting: scratch.lock)
+    defer { lock.release() }
+    return try retireFallbackScratch(scratch, in: runtime, holding: lock, entry: entry)
+  }
+
+  private func lockFallbackScratch(
+    in runtime: WorktreeDirectory, expecting expected: FileLock.Identity? = nil
+  ) throws -> FileLock {
+    let path = runtime.url.appendingPathComponent(FallbackScratch.lockName).path
+    do {
+      if let expected {
+        let lock = try FileLock(lockingExisting: path)
+        guard try lock.identity() == expected else {
+          throw FileLockError.identityChanged(path: path)
+        }
+        return lock
+      }
+      return try FileLock(path: path, mode: .exclusive)
+    } catch FileLockError.held {
+      throw WorktreeError.busy("The expected-commit proof is still active.")
+    } catch FileLockError.identityChanged {
+      throw WorktreeError.recoveryRequired("Expected-commit proof lock changed.")
+    } catch let error as POSIXError where expected != nil && [.ENOENT, .ELOOP].contains(error.code)
+    {
+      throw WorktreeError.recoveryRequired("Expected-commit proof lock changed.")
+    }
+  }
+
+  private func retireFallbackScratch(
+    _ scratch: FallbackScratch, in runtime: WorktreeDirectory, holding lock: FileLock,
+    entry: OwnerEntry
+  ) throws -> OwnerEntry {
+    try removeFallbackScratch(scratch, in: runtime, holding: lock)
+    return try replaceFallbackScratch(nil, entry: entry)
+  }
+
+  private func removeFallbackScratch(
+    _ scratch: FallbackScratch, in runtime: WorktreeDirectory, holding lock: FileLock
+  ) throws {
+    try runtime.verify()
+    guard (try? lock.identity()) == scratch.lock else {
+      throw WorktreeError.recoveryRequired("Expected-commit proof lock changed.")
+    }
+    do {
+      try runtime.removeOwnedTree(scratch.directory, io: WorktreeJournalIO())
+    } catch let error as POSIXError where [.ENOTDIR, .ELOOP].contains(error.code) {
+      throw WorktreeError.recoveryRequired("Expected-commit proof scratch topology changed.")
+    }
+    // Also synchronize a previously completed unlink before retiring its ownership record.
+    try runtime.synchronize()
+  }
+
+  private func replaceFallbackScratch(_ scratch: FallbackScratch?, entry: OwnerEntry) throws
+    -> OwnerEntry
+  {
+    try withStore(entry.record.handle) { store in
+      let observed = try store.observeOwnerOperation(
+        entry.record.handle, principal: entry.record.principal, synchronizing: true)
+      guard observed.result == nil, let active = observed.active, active.bytes == entry.bytes else {
+        throw WorktreeError.busy("The release operation changed during the expected-commit proof.")
+      }
+      return try store.saveOwnerOperation(
+        active.record.advanced { $0.fallbackScratch = scratch }, replacing: active)
     }
   }
 
@@ -643,6 +792,12 @@ extension WorktreeRecoveryStore.Locked {
         }
         continue
       }
+      if admission != nil {
+        guard current == before.admittingRelease(first.operationID),
+          receipt.map({ $0 == expected }) ?? true
+        else { throw invalidRecoveryMetadata() }
+        continue
+      }
       var identity = current
       identity.revision = before.revision
       identity.state = before.state
@@ -652,12 +807,7 @@ extension WorktreeRecoveryStore.Locked {
       guard identity == before, current.revision >= before.revision else {
         throw invalidRecoveryMetadata()
       }
-      if admission != nil {
-        guard current.state == .releasing, current.dependencies == [first.operationID],
-          current.revision == before.revision + 1,
-          receipt.map({ $0 == expected }) ?? true
-        else { throw invalidRecoveryMetadata() }
-      } else if current.state == .releasing, let foreign = current.dependencies.first {
+      if current.state == .releasing, let foreign = current.dependencies.first {
         guard foreign != first.operationID, let intent = intents[foreign], intent.kind == .release
         else { throw invalidRecoveryMetadata() }
         if let receipt {

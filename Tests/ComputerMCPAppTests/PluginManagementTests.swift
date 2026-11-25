@@ -384,6 +384,11 @@ func render<V: View>(
   window.contentView = host
   defer { window.close() }
   host.layoutSubtreeIfNeeded()
+  window.display()
+  if host.bounds.size != size {
+    window.setContentSize(size)
+    host.layoutSubtreeIfNeeded()
+  }
   if scrollToBottom {
     func scrollViews(in view: NSView) -> [NSScrollView] {
       (view as? NSScrollView).map { [$0] } ?? view.subviews.flatMap { scrollViews(in: $0) }
@@ -402,6 +407,11 @@ func render<V: View>(
     host.layoutSubtreeIfNeeded()
   }
   window.display()
+  _ = try captureAppView(host, size: size, name: name)
+}
+
+@MainActor
+func captureAppView(_ host: NSView, size: NSSize, name: String) throws -> Data {
   host.displayIfNeeded()
   CATransaction.flush()
   try #require(host.bounds.size == size)
@@ -413,6 +423,7 @@ func render<V: View>(
   if let path = ProcessInfo.processInfo.environment["COMPUTER_MCP_UI_SNAPSHOT_DIR"] {
     try png.write(to: URL(fileURLWithPath: path).appendingPathComponent(name + ".png"))
   }
+  return png
 }
 
 @MainActor

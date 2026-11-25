@@ -382,7 +382,7 @@ struct WorktreeGit: Sendable {
       }
     }
     guard result.output.count <= outputBound, result.error.count <= outputBound else {
-      throw WorktreeError.commandFailed("Git output exceeded its bound.")
+      throw WorktreeError.busy("Git output exceeded its bound.")
     }
     return result
   }

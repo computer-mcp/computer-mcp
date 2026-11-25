@@ -91,7 +91,9 @@ package struct EffectiveExecutionLimits: Equatable, Sendable, Codable {
     }
   }
 
-  static func resolve(_ request: ExecutionLimitRequest, limits: [ManagedLimits]) throws -> Self {
+  package static func resolve(_ request: ExecutionLimitRequest, limits: [ManagedLimits]) throws
+    -> Self
+  {
     if !limits.allSatisfy({ $0.unreadableSources.isEmpty }) {
       throw PermissionModelError.invalidExecutionLimits
     }

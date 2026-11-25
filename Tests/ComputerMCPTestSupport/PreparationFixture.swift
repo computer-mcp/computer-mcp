@@ -157,6 +157,14 @@ package func nativeGatewayTestExecutable() throws -> URL {
       "The exact native test executable is unavailable: \(path)")
     return executable
   }
+  return try #require(
+    nativeTestExecutable(named: "computer-mcp"),
+    "Set COMPUTER_MCP_TEST_GATEWAY_EXECUTABLE to the exact computer-mcp artifact next to the running native test build"
+  )
+}
+
+/// Finds a product in the running test build, including xctest-hosted test modules.
+package func nativeTestExecutable(named name: String) -> URL? {
   let locations = [
     URL(fileURLWithPath: CommandLine.arguments[0]).resolvingSymlinksInPath(),
     Bundle(for: NativeGatewayTestBundle.self).bundleURL.resolvingSymlinksInPath(),
@@ -170,12 +178,9 @@ package func nativeGatewayTestExecutable() throws -> URL {
     }
   }
   let candidates = directories.map {
-    $0.appendingPathComponent("computer-mcp").resolvingSymlinksInPath()
+    $0.appendingPathComponent(name).resolvingSymlinksInPath()
   }
-  return try #require(
-    candidates.first { files.isExecutableFile(atPath: $0.path) },
-    "Set COMPUTER_MCP_TEST_GATEWAY_EXECUTABLE to the exact computer-mcp artifact next to the running native test build"
-  )
+  return candidates.first { FileManager.default.isExecutableFile(atPath: $0.path) }
 }
 
 private final class NativeGatewayTestBundle: NSObject {}

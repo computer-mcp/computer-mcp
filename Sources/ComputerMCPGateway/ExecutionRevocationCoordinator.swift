@@ -29,6 +29,7 @@ package final class ExecutionRevocationCoordinator: ExecutionRecoveryAuthorizing
   private let journal: ExecutionRecoveryJournal
   private let storageDirectory: URL
   private let refreshPolicy: (@Sendable () throws -> Void)?
+  private let afterWorktreeReservation: (@Sendable (WorktreeWriterUse) async -> Void)?
   private let lock = NSLock()
   private let publication = NSLock()
   private let reconciliation = ExecutionReconciliation()
@@ -49,9 +50,19 @@ package final class ExecutionRevocationCoordinator: ExecutionRecoveryAuthorizing
   private var proxies: [UUID: EgressProxy] = [:]
   private var monitoring: Task<Void, Never>?
 
-  package init(
+  package convenience init(
     store: SQLitePermissionStore, launcher: ExecutionLauncher, directory: URL,
     proxyFactory: ProxyFactory? = nil, refreshPolicy: (@Sendable () throws -> Void)? = nil
+  ) throws {
+    try self.init(
+      store: store, launcher: launcher, directory: directory,
+      proxyFactory: proxyFactory, refreshPolicy: refreshPolicy, afterWorktreeReservation: nil)
+  }
+
+  init(
+    store: SQLitePermissionStore, launcher: ExecutionLauncher, directory: URL,
+    proxyFactory: ProxyFactory? = nil, refreshPolicy: (@Sendable () throws -> Void)? = nil,
+    afterWorktreeReservation: (@Sendable (WorktreeWriterUse) async -> Void)?
   ) throws {
     try FileManager.default.createDirectory(
       at: directory, withIntermediateDirectories: true,
@@ -61,6 +72,7 @@ package final class ExecutionRevocationCoordinator: ExecutionRecoveryAuthorizing
     self.launcher = launcher
     self.proxyFactory = proxyFactory
     self.refreshPolicy = refreshPolicy
+    self.afterWorktreeReservation = afterWorktreeReservation
     let ownerID = UUID()
     self.ownerID = ownerID
     permissionDiscovery = ExecutionPermissionDiscovery(
@@ -276,6 +288,8 @@ package final class ExecutionRevocationCoordinator: ExecutionRecoveryAuthorizing
           ownerID: ownerID, executionID: execution.id,
           unconfined: providerSandboxed.map { !$0 }
             ?? (initialConfiguration!.sandbox == nil && initialConfiguration!.permitsProgramLaunch))
+        // The gate transaction has committed. SQL does not yet refer to this writer.
+        await afterWorktreeReservation?(use)
         do {
           try store.transactionWithDatabase { database, _ in
             guard var record = try ExecutionRuntimeRecord.load(execution.id, database),
@@ -1133,6 +1147,7 @@ package final class ExecutionRevocationCoordinator: ExecutionRecoveryAuthorizing
     } else {
       snapshot = (preview.0, preview.1)
     }
+    let completedWorktreeReceipts = try worktreeReceiptsForCompletedExecutions(in: snapshot.0)
     var firstError: (any Error)?
     for record in snapshot.0 {
       if let firstError { throw firstError }
@@ -1246,9 +1261,27 @@ package final class ExecutionRevocationCoordinator: ExecutionRecoveryAuthorizing
         if let completed {
           guard sealAdmissionIfDrained(completed.id) else { continue }
           if let use = completed.worktreeUse {
-            guard completed.invocationInFlight != true,
-              try journal.all().filter({ $0.execution == completed.id }).allSatisfy(\.completed)
-            else { continue }
+            guard completed.invocationInFlight != true else { continue }
+            let cached = completedWorktreeReceipts[completed.id]
+            let receipts: [ExecutionRecoveryJournal.Entry]
+            if let cached, cached.allSatisfy(\.completed) {
+              receipts = cached
+            } else {
+              receipts = try journal.all().filter { $0.execution == completed.id }
+            }
+            // The completion row can come from a later SQL snapshot than the
+            // restore check. Compare the actual writer with the sealed receipts.
+            if receipts.contains(where: { $0.worktreeUse != nil }) {
+              guard use.executionID == completed.id, use.ownerID == completed.ownerID,
+                receipts.allSatisfy({
+                  $0.worktreeUse == use && $0.owner == completed.ownerID
+                    && $0.boot == completed.boot
+                })
+              else {
+                throw WorktreeError.identityChanged("Restored worktree writer identity changed.")
+              }
+            }
+            guard receipts.allSatisfy(\.completed) else { continue }
             try use.admission.acknowledge(use)
           }
           // Ports cannot be recycled while any member remains unconfirmed.
@@ -1304,7 +1337,12 @@ package final class ExecutionRevocationCoordinator: ExecutionRecoveryAuthorizing
   private func reconcileIndependentOwnership() async throws {
     try await reconcileOrphanedProxies()
     let records = try journal.all()
+    var releasedChildren: [UUID: Set<UUID>] = [:]
     for entry in records {
+      if entry.released {
+        releasedChildren[entry.execution, default: []].insert(entry.child)
+        continue
+      }
       let orphaned = try store.readWithDatabase { database, ledger in
         let record = try ExecutionRuntimeRecord.load(entry.execution, database)
         return record?.children[entry.child] == nil || ledger.executions[entry.execution] == nil
@@ -1327,42 +1365,86 @@ package final class ExecutionRevocationCoordinator: ExecutionRecoveryAuthorizing
         try confirmChild(entry.child, executionID: entry.execution)
       }
       if entry.completed || entry.owner != ownerID || orphaned {
-        if !entry.released {
-          try launcher.releaseRecovery(entry.recovery)
-          try journal.release(entry.child)
-        }
-        // A restored SQL copy may predate the independently confirmed completion.
-        let needsSync = try store.readWithDatabase { database, _ in
-          guard
-            let child = try ExecutionRuntimeRecord.load(entry.execution, database)?.children[
-              entry.child]
-          else { return false }
-          return !child.completed || !child.released
-        }
-        if needsSync {
-          try store.transactionWithDatabase { database, _ in
-            guard var record = try ExecutionRuntimeRecord.load(entry.execution, database),
-              var child = record.children[entry.child], !child.completed || !child.released
-            else { return }
+        try launcher.releaseRecovery(entry.recovery)
+        try journal.release(entry.child)
+        releasedChildren[entry.execution, default: []].insert(entry.child)
+      }
+    }
+    // SQL may have been restored even when the epoch is unchanged. Compare the
+    // retained receipts with current rows in a single validated store access.
+    if !releasedChildren.isEmpty {
+      try store.transactionWithDatabase { database, _ in
+        for (id, children) in releasedChildren {
+          guard var record = try ExecutionRuntimeRecord.load(id, database) else { continue }
+          var changed = false
+          for childID in children {
+            guard var child = record.children[childID], !child.completed || !child.released
+            else { continue }
             child.completed = true
             child.released = true
-            record.children[entry.child] = child
-            try record.save(database)
+            record.children[childID] = child
+            changed = true
           }
+          if changed { try record.save(database) }
         }
       }
     }
-    // A database restore may omit the execution entirely. Independent launch
-    // receipts still retain its worktree use until every child is confirmed.
-    let settled = try journal.all()
-    for entry in settled where entry.owner != ownerID {
-      guard let use = entry.worktreeUse,
-        settled.filter({ $0.execution == entry.execution }).allSatisfy(\.completed),
-        try store.readWithDatabase({ database, _ in
-          try ExecutionRuntimeRecord.load(entry.execution, database) == nil
-        })
-      else { continue }
+    try reconcileRestoredWorktreeWriters(in: journal.all())
+  }
+
+  private func reconcileRestoredWorktreeWriters(in receipts: [ExecutionRecoveryJournal.Entry])
+    throws
+  {
+    guard receipts.contains(where: { $0.owner != ownerID && $0.worktreeUse != nil }) else { return }
+    let receiptsByExecution = Dictionary(grouping: receipts, by: \.execution)
+    let settledUses: [WorktreeWriterUse] = try store.readWithDatabase { database, ledger in
+      try receiptsByExecution.compactMap { id, children in
+        guard let entry = children.first(where: { $0.owner != ownerID && $0.worktreeUse != nil }),
+          let use = entry.worktreeUse
+        else { return nil }
+        guard use.executionID == id, use.ownerID == entry.owner,
+          children.allSatisfy({
+            $0.owner == entry.owner && $0.boot == entry.boot && $0.worktreeUse == use
+          })
+        else { throw WorktreeError.identityChanged("Worktree writer receipts disagree.") }
+        let record = try ExecutionRuntimeRecord.load(id, database)
+        if let record {
+          guard record.id == id, record.ownerID == entry.owner, record.boot == entry.boot,
+            record.worktreeUse == nil || record.worktreeUse == use
+          else { throw WorktreeError.identityChanged("Restored worktree writer identity changed.") }
+          // A bound SQL row owns its normal completion path. A row from before
+          // binding can use the journal only after its admission and work drain.
+          guard record.worktreeUse == nil, record.admissionFinished,
+            record.invocationInFlight != true, record.workIDs?.isEmpty ?? true,
+            record.children.values.allSatisfy(\.completed),
+            ledger.executions[id]?.isRunning != true
+          else { return nil }
+        }
+        return children.allSatisfy { $0.completed && $0.released } ? use : nil
+      }
+    }
+    // The exclusive Host lease rules out new receipts from the previous owner.
+    // Acknowledge outside the SQL transaction using the gate's exact identity.
+    for use in settledUses where sealAdmissionIfDrained(use.executionID) {
       try use.admission.acknowledge(use)
+    }
+  }
+
+  private func worktreeReceiptsForCompletedExecutions(in records: [ExecutionRuntimeRecord])
+    throws -> [UUID: [ExecutionRecoveryJournal.Entry]]
+  {
+    let completed = Set(records.lazy.filter { $0.completed && $0.worktreeUse != nil }.map(\.id))
+    guard !completed.isEmpty else { return [:] }
+    return try publication.withLock {
+      // Seal before taking the receipt snapshot. A new child can no longer publish
+      // for these executions, even if a database restore makes a row appear live.
+      lock.withLock { closedAdmissions.formUnion(completed) }
+      var receiptsByExecution = Dictionary(
+        uniqueKeysWithValues: completed.map { ($0, [ExecutionRecoveryJournal.Entry]()) })
+      for receipt in try journal.all() {
+        receiptsByExecution[receipt.execution]?.append(receipt)
+      }
+      return receiptsByExecution
     }
   }
 

@@ -64,6 +64,15 @@ fresh local owner approval is required. Restoring previous settings cannot reviv
 retired authority. Profile/trust revocation and retention apply even when no
 connection is active.
 
+The App’s Privacy & Security owner policy controls target a saved client profile
+or a provider approval for a plugin package or direct local MCP server. The App
+uses the gateway's local owner proof and checks the reviewed permission revision
+and authorization epoch in the write transaction. The gateway resolves the
+updated source together with the read-only machine and managed preference
+sources. Saved permissions and policy text remain visible when the effective
+ceiling is lower or a managed source fails closed. The standalone machine file
+uses the same [policy format](../Reference/Config.md#managed-limits).
+
 The durable permission ledger reconciles profile edits, requests, running work and
 result access. Revocation terminates affected executions and proxy streams. A
 one-time execution retains authorized input, output and cancellation access for

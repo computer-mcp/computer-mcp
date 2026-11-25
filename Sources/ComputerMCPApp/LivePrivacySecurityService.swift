@@ -18,6 +18,10 @@ final class LivePrivacySecurityService: PrivacySecurityService {
     self.controlPlane = controlPlane
   }
 
+  func ownerPolicyEditorService() async throws -> OwnerPolicyEditorService {
+    try await controlPlane.ownerPolicyEditorService()
+  }
+
   func privacySnapshot() async throws -> PrivacySnapshot {
     let inventory = try await controlPlane.fetchPrivacyPermissionInventory()
     let view = inventory.permissions
@@ -36,8 +40,11 @@ final class LivePrivacySecurityService: PrivacySecurityService {
       principal.fullAccessLimitSources = Self.fullAccessSources(
         view.profileLimits[profile.id] ?? [])
       principal.clientAvailability =
-        view.suspended || view.unconfirmedProfileIDs.contains(profile.id)
-        ? .restoreReview : .available
+        if view.suspended || view.unconfirmedProfileIDs.contains(profile.id) {
+          .restoreReview
+        } else if profile.allowedCallers.isEmpty {
+          .callerDenied
+        } else { .available }
       return principal
     }
     let verified = view.subjects.map { subject in
@@ -94,7 +101,10 @@ final class LivePrivacySecurityService: PrivacySecurityService {
   func answer(request id: String, with answer: PrivacyRequestAnswer, reviewed: PrivacySnapshot)
     async throws
   {
-    guard let uuid = UUID(uuidString: id) else { return }
+    guard let uuid = UUID(uuidString: id),
+      let request = reviewed.requests.first(where: { $0.id == id }),
+      answer == .dontAllow || request.approvalAnswers.contains(answer)
+    else { throw Self.changedPermissions() }
     let answer: PermissionAnswer? =
       switch answer {
       case .onlyThisTime: .onlyThisTime
@@ -145,12 +155,14 @@ final class LivePrivacySecurityService: PrivacySecurityService {
     principalID: String, to execution: PrivacyPrincipal.Execution, reviewed: PrivacySnapshot
   ) async throws {
     if let provider = reviewed.reviewedProviders[principalID] {
-      guard provider.availability == .active, let approval = provider.approval else {
+      guard case .localServer = provider.identity,
+        provider.availability == .active, let approval = provider.approval
+      else {
         throw Self.changedPermissions()
       }
       try await approveProvider(
         provider, permissions: approval.permissions, execution: execution,
-        sandboxSettings: approval.sandboxSettings ?? .init())
+        sandboxSettings: execution == .sandbox ? (approval.sandboxSettings ?? .init()) : .init())
       return
     }
     try await edit(principalID, reviewed: reviewed) { profile in
@@ -317,6 +329,14 @@ final class LivePrivacySecurityService: PrivacySecurityService {
     ).map { grant in
       var grant = grant
       if grant.permission == .projects {
+        if let declarations = provider.declarations {
+          let ceiling = network((declarations.sandbox?.network?.value ?? .none).configuration)
+          if ceiling != .full {
+            grant.networkLimits.append(ceiling)
+            grant.networkLimitNotices.append(
+              .init(source: "Plugin Declaration", effect: .network(ceiling)))
+          }
+        }
         if provider.effectiveMode == .sandbox, grant.object?.isRegistered == true,
           let settings, let id = grant.sourceProjectID
         {
@@ -360,10 +380,17 @@ final class LivePrivacySecurityService: PrivacySecurityService {
         permission = listedPermission
       }
       let object = original.map { object in
-        PrivacyObject(
+        let isRegistered =
+          switch kind {
+          case .projects: object.id == "*" || names.projects[object.id] != nil
+          case .plugins: object.id == "*" || names.plugins[object.id] != nil
+          case .mcpServers: object.id == "*" || names.mcpServers[object.id] != nil
+          default: true
+          }
+        return PrivacyObject(
           id: object.id, name: object.name,
           detail: kind == .projects ? paths[object.id] : object.detail,
-          isRegistered: kind != .projects || object.id == "*" || names.projects[object.id] != nil)
+          isRegistered: isRegistered)
       }
       var grant = PrivacyGrant(
         principalID: principalID, permission: kind,
@@ -404,10 +431,15 @@ final class LivePrivacySecurityService: PrivacySecurityService {
             && ComputerMCPPermissions.PermissionState.granted($0.value).allows(value)
         }
       }
+      if declaredLevels != kind.grantedValues { grant.declarationLevels = declaredLevels }
       grant.allowedLevels = declaredLevels.filter { level in
         limits.allSatisfy { permitted(level, by: $0, editingFallback: true) }
       }
-      if isAvailable, object?.isRegistered != false {
+      let isEnabled =
+        if case .mcpServer(let id) = permission, id != "*" {
+          names.enabledMCPServerIDs.contains(id)
+        } else { true }
+      if isAvailable, isEnabled, object?.isRegistered != false {
         let levels = declaredLevels.filter { level in
           limits.allSatisfy { permitted(level, by: $0, editingFallback: false) }
         }
@@ -498,7 +530,7 @@ final class LivePrivacySecurityService: PrivacySecurityService {
     sources.map(sourceName).sorted()
   }
 
-  private static func sourceName(_ source: PolicySource) -> String {
+  static func sourceName(_ source: PolicySource) -> String {
     switch source {
     case .owner: "Owner Policy"
     case .machine: "Machine Policy"
@@ -526,6 +558,11 @@ final class LivePrivacySecurityService: PrivacySecurityService {
         id: principal.id, name: principal.name,
         kind: .client(connection: connectionName(subject.caller)), execution: principal.execution)
     }
+    let sharedProfileName =
+      item.alwaysIsShared
+      ? item.profileID.map { id in
+        principals.first { $0.id == id.rawValue }?.name ?? AppLocalization.string(id.displayName)
+      } : nil
     switch request.content {
     case .permission(let content):
       guard let (kind, classifiedObject) = classify(content.requirement.permission, names: names)
@@ -544,7 +581,8 @@ final class LivePrivacySecurityService: PrivacySecurityService {
       }
       return PrivacyRequest(
         id: request.id.uuidString, principal: principal, permission: kind, object: object,
-        level: level(content.requirement.value), purpose: content.pluginPurpose,
+        level: level(content.requirement.value), sharedProfileName: sharedProfileName,
+        purpose: content.pluginPurpose,
         tool: request.invocation.tool, expires: request.expiresAt)
     case .network(let content):
       return PrivacyRequest(
@@ -552,7 +590,8 @@ final class LivePrivacySecurityService: PrivacySecurityService {
         object: PrivacyObject(
           id: content.projectID, name: project(content.projectID, names: names).name,
           detail: paths[content.projectID]), level: .read, host: content.host,
-        purpose: content.pluginPurpose, tool: request.invocation.tool,
+        sharedProfileName: sharedProfileName, purpose: content.pluginPurpose,
+        tool: request.invocation.tool,
         expires: request.expiresAt)
     case .projectRegistration(let content):
       let root = item.registrationGrantRoot ?? content.path
@@ -595,7 +634,7 @@ final class LivePrivacySecurityService: PrivacySecurityService {
     }
   }
 
-  private static func source(_ source: GatewayManagedPolicyView) -> PrivacyManagedSource {
+  static func source(_ source: GatewayManagedPolicyView) -> PrivacyManagedSource {
     let name =
       switch source.source {
       case .owner: "Owner Policy"
@@ -609,8 +648,10 @@ final class LivePrivacySecurityService: PrivacySecurityService {
         source.provider.map { invocationPrincipal(.plugin($0), names: .init()).id },
       ]
       .compactMap { $0 }.joined(separator: "/"),
-      name: name, location: source.location, state: source.failure == nil ? .active : .unreadable,
-      profileID: source.profileID, provider: source.provider, revision: source.revision)
+      name: name, location: source.location,
+      state: source.failure != nil ? .unreadable : source.revision == "absent" ? .absent : .active,
+      profileID: source.profileID, provider: source.provider, revision: source.revision,
+      failure: source.failure)
   }
 
   private static func systemPermission(_ summary: PermissionSummary) -> PrivacySystemPermission? {
@@ -629,7 +670,7 @@ final class LivePrivacySecurityService: PrivacySecurityService {
     return PrivacySystemPermission(kind: kind, state: state)
   }
 
-  private static func classify(_ permission: Permission, names: PermissionObjectNames)
+  static func classify(_ permission: Permission, names: PermissionObjectNames)
     -> (PrivacyPermissionKind, PrivacyObject?)?
   {
     switch permission {
@@ -681,7 +722,7 @@ final class LivePrivacySecurityService: PrivacySecurityService {
     }
   }
 
-  private static func value(_ state: ComputerMCPPermissions.PermissionState) -> PrivacyGrantValue {
+  static func value(_ state: ComputerMCPPermissions.PermissionState) -> PrivacyGrantValue {
     switch state {
     case .notGranted: .ask
     case .denied: .denied
@@ -689,7 +730,7 @@ final class LivePrivacySecurityService: PrivacySecurityService {
     }
   }
 
-  private static func state(_ value: PrivacyGrantValue) -> ComputerMCPPermissions.PermissionState {
+  static func state(_ value: PrivacyGrantValue) -> ComputerMCPPermissions.PermissionState {
     switch value {
     case .ask: .notGranted
     case .denied: .denied

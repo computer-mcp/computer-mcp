@@ -56,15 +56,10 @@ extension AppControlPlaneService {
     let saved = Dictionary(uniqueKeysWithValues: view.providers.map { ($0.identity, $0) })
     let identities = configured.union(saved.keys)
     var pluginNames: [String: String] = [:]
-    let serverNames = Dictionary(
-      uniqueKeysWithValues: composition.runtimeConfiguration.mcp.servers.map {
-        let origin = composition.origins[.init(kind: .mcp, id: $0.id)]
-        let manifest = bundledPlugins.packages.first { $0.manifest.id == origin?.pluginID }?
-          .manifest
-        return (
-          $0.id, origin.map { "\(manifest?.name ?? $0.pluginID) · \($0.componentID)" } ?? $0.id
-        )
-      })
+    // Gateway admission resolves package contributions through their owning plugin.
+    let serverObjects = composition.runtimeConfiguration.mcp.servers.filter {
+      composition.origins[.init(kind: .mcp, id: $0.id)] == nil
+    }
     let providers = try identities.map { identity in
       let review: GatewayProviderReview?
       let name: String
@@ -128,7 +123,9 @@ extension AppControlPlaneService {
       permissions: view,
       names: .init(
         projects: Dictionary(uniqueKeysWithValues: inputs.projects.map { ($0.id, $0.displayName) }),
-        plugins: pluginNames, mcpServers: serverNames),
+        plugins: pluginNames,
+        mcpServers: Dictionary(uniqueKeysWithValues: serverObjects.map { ($0.id, $0.id) }),
+        enabledMCPServerIDs: Set(serverObjects.filter(\.enabled).map(\.id))),
       projects: inputs.projects, providers: providers)
   }
 

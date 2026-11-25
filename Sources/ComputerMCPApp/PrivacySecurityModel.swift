@@ -155,6 +155,25 @@ struct PrivacyPrincipal: Identifiable, Hashable, Sendable {
   var sharedProfileID: GatewayProfileID?
   var effectiveExecution: Execution?
 
+  var availabilityTitle: String? {
+    if let providerAvailability {
+      return switch providerAvailability {
+      case .active: nil
+      case .disabled: "Disabled"
+      case .unavailable: "Provider source unavailable"
+      case .needsApproval: "Approval required"
+      case .needsSourceReview: "Source review required"
+      case .needsRestoreReview: "Permission review required"
+      }
+    }
+    return switch clientAvailability {
+    case .available, nil: nil
+    case .restoreReview: "Permission review required"
+    case .profileUnavailable: "Client profile unavailable"
+    case .callerDenied: "Connection type restricted"
+    }
+  }
+
   var systemImage: String {
     switch kind {
     case .client: "bubble.left.and.text.bubble.right.fill"
@@ -271,6 +290,7 @@ struct PrivacyGrant: Identifiable, Hashable, Sendable {
   var isNetworkStored = false
   /// The library-resolved value after removing this object's explicit entry.
   var inheritedValue: PrivacyGrantValue?
+  var declarationLevels: [PrivacyGrantValue.Level]?
   var allowedLevels: [PrivacyGrantValue.Level]? = nil
   var networkLimits: [PrivacyNetworkAccess] = []
   var trustedHosts: Set<String> = []
@@ -321,6 +341,7 @@ struct PrivacyRequest: Identifiable, Hashable, Sendable {
   var host: String? = nil
   /// Set when allowing registers a folder; such a request is answered Allow or Don't Allow.
   var registration: Registration? = nil
+  var sharedProfileName: String? = nil
   let purpose: String?
   let tool: String
   let expires: Date
@@ -333,10 +354,14 @@ extension PrivacyRequest {
     /// The folder is already a registered project; allowing grants access to it.
     case existingProject
   }
+
+  var approvalAnswers: [PrivacyRequestAnswer] {
+    registration == nil ? [.onlyThisTime, .always] : [.always]
+  }
 }
 
 struct PrivacyManagedSource: Identifiable, Hashable, Sendable {
-  enum State: Hashable, Sendable { case active, unreadable }
+  enum State: Hashable, Sendable { case active, unreadable, absent }
 
   let id: String
   let name: String
@@ -345,6 +370,7 @@ struct PrivacyManagedSource: Identifiable, Hashable, Sendable {
   var profileID: GatewayProfileID?
   var provider: PluginIdentity?
   var revision: String?
+  var failure: String?
 }
 
 struct PrivacySystemPermission: Identifiable, Hashable, Sendable {
@@ -398,6 +424,7 @@ enum PrivacyRequestAnswer: Hashable, Sendable {
 
 @MainActor
 protocol PrivacySecurityService: AnyObject {
+  func ownerPolicyEditorService() async throws -> OwnerPolicyEditorService
   func privacySnapshot() async throws -> PrivacySnapshot
   func answer(request id: String, with answer: PrivacyRequestAnswer, reviewed: PrivacySnapshot)
     async throws
@@ -412,6 +439,12 @@ protocol PrivacySecurityService: AnyObject {
   func openSystemSettings(for permission: PrivacySystemPermission.Kind)
 }
 
+extension PrivacySecurityService {
+  func ownerPolicyEditorService() async throws -> OwnerPolicyEditorService {
+    throw GatewayPermissionError.localOwnerRequired
+  }
+}
+
 @MainActor
 final class PrivacySecurityModel: ObservableObject {
   @Published var path: [PrivacyRoute] = []
@@ -424,6 +457,10 @@ final class PrivacySecurityModel: ObservableObject {
   init(service: any PrivacySecurityService, clientAccess: ClientAccessModel? = nil) {
     self.clientAccess = clientAccess
     self.service = service
+  }
+
+  func ownerPolicyEditorService() async throws -> OwnerPolicyEditorService {
+    try await service.ownerPolicyEditorService()
   }
 
   func refresh() async {
@@ -508,12 +545,37 @@ final class PrivacySecurityModel: ObservableObject {
     snapshot.principals.first { $0.id == id }
   }
 
-  func grants(for permission: PrivacyPermissionKind) -> [PrivacyGrant] {
-    snapshot.grants.filter { $0.permission == permission && ($0.isStored || $0.isNetworkStored) }
+  func grants(for permission: PrivacyPermissionKind, includingUnset: Bool = false) -> [PrivacyGrant]
+  {
+    snapshot.grants.filter {
+      $0.permission == permission && (includingUnset || $0.isStored || $0.isNetworkStored)
+    }
   }
 
   func grants(for principal: PrivacyPrincipal) -> [PrivacyGrant] {
     snapshot.grants.filter { $0.principalID == principal.id }
+  }
+
+  func grant(principalID: String, permission: PrivacyPermissionKind, objectID: String?)
+    -> PrivacyGrant?
+  {
+    snapshot.grants.first {
+      $0.principalID == principalID && $0.permission == permission && $0.object?.id == objectID
+    }
+  }
+
+  func sourceGrant(for grant: PrivacyGrant) -> PrivacyGrant? {
+    let profileID = principal(grant.principalID)?.sharedProfileID?.rawValue
+    guard profileID != nil || grant.inheritsProjectAuthority else { return nil }
+    return self.grant(
+      principalID: profileID ?? grant.principalID, permission: grant.permission,
+      objectID: grant.sourceProjectID ?? grant.object?.id)
+  }
+
+  func canEdit(_ grant: PrivacyGrant) -> Bool {
+    guard let principal = principal(grant.principalID) else { return false }
+    return !grant.inheritsProjectAuthority && principal.sharedProfileID == nil
+      && principal.availabilityTitle == nil
   }
 
   /// Count effective authority once per verified subject, or per unbound profile.
@@ -529,6 +591,8 @@ final class PrivacySecurityModel: ObservableObject {
         guard $0.permission == permission, ids.contains($0.principalID),
           $0.object?.isRegistered != false
         else { return false }
+        // An MCP wildcard is a fallback rule. Only a concrete server can be called.
+        if permission == .mcpServers, $0.object?.id == "*" { return false }
         if case .granted = $0.effectiveValue { return true }
         return false
       }.map(\.principalID)

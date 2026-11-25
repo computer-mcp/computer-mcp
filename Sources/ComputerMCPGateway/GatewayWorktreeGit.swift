@@ -69,15 +69,20 @@ struct GatewayWorktreeGit: WorktreeGitExecuting, CommandRunning {
         }
         return try ExecutionFileSizeLimit(bytes: bytes)
       }
-      let result = try ManagedCommandRunner(launcher: launcher).runBounded(
-        executable: executable,
-        invocation: .init(arguments: command.arguments, standardInput: command.input),
-        workingDirectory: command.directory, environment: command.environment,
-        timeoutMilliseconds: command.timeoutMilliseconds, maxOutputBytes: command.maxOutputBytes,
-        fileOutput: fileOutput.map { ($0.descriptor, $0.byteLimit) },
-        fileSizeLimit: constraint)
+      let result: CommandDataResult
+      do {
+        result = try ManagedCommandRunner(launcher: launcher).runBounded(
+          executable: executable,
+          invocation: .init(arguments: command.arguments, standardInput: command.input),
+          workingDirectory: command.directory, environment: command.environment,
+          timeoutMilliseconds: command.timeoutMilliseconds, maxOutputBytes: command.maxOutputBytes,
+          fileOutput: fileOutput.map { ($0.descriptor, $0.byteLimit) },
+          fileSizeLimit: constraint)
+      } catch let limit as BoundedCommandLimit {
+        throw WorktreeError.busy(limit.localizedDescription)
+      }
       guard let code = result.exitCode else {
-        throw WorktreeError.busy("Bounded host Git did not confirm its exit.")
+        throw WorktreeError.commandFailed("Bounded host Git did not confirm its exit.")
       }
       return .init(output: result.stdout, error: result.stderr, exitCode: code)
     }

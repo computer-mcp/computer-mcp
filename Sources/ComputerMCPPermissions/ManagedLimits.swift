@@ -60,11 +60,28 @@ package struct ManagedLimits: Equatable, Sendable, Codable {
   package init(sources: [PolicySource: PolicyAvailability]) { self.sources = sources }
 
   package func restrictingSources(for requirement: PermissionRequirement) -> Set<PolicySource> {
+    restrictingSources(for: requirement.permission, value: requirement.value)
+  }
+
+  /// The first blocked level identifies every source that imposes the lowest ceiling.
+  package func permissionCeiling(for permission: Permission)
+    -> (value: PermissionValue?, sources: Set<PolicySource>)
+  {
+    var value: PermissionValue?
+    for level in permission.grantLevels {
+      let sources = restrictingSources(for: permission, value: level)
+      if !sources.isEmpty { return (value, sources) }
+      value = level
+    }
+    return (value, [])
+  }
+
+  private func restrictingSources(for permission: Permission, value: PermissionValue)
+    -> Set<PolicySource>
+  {
     restrictingSources {
-      guard let entry = $0.permissionCeilings.entry(for: requirement.permission) else {
-        return false
-      }
-      return !entry.state.allows(requirement.value)
+      guard let entry = $0.permissionCeilings.entry(for: permission) else { return false }
+      return !entry.state.allows(value)
     }
   }
 
@@ -106,21 +123,71 @@ package struct ManagedLimits: Equatable, Sendable, Codable {
   package func network(
     applying settings: NetworkAccess, trustedHosts: Set<String>
   ) -> NetworkAccess.Configuration {
-    var candidates: Set<String>?
-    for level in [settings]
-      + sources.values.compactMap({ source in
-        switch source {
-        case .absent: nil
-        case .unreadable: NetworkAccess.none
-        case .available(let policy): policy.network
-        }
-      })
-    {
-      guard let hosts = level.hosts(trustedHosts: trustedHosts) else { continue }
-      candidates = candidates.map { NetworkHost.intersection($0, hosts) } ?? hosts
+    let ceilings = networkHostCeilings(trustedHosts: trustedHosts)
+    return Self.networkConfiguration(
+      for: Self.intersect(ceilings.values, startingAt: settings.hosts(trustedHosts: trustedHosts)))
+  }
+
+  package func networkCeiling(trustedHosts: Set<String>)
+    -> (configuration: NetworkAccess.Configuration, sources: Set<PolicySource>)
+  {
+    let ceilings = networkHostCeilings(trustedHosts: trustedHosts)
+    guard let effective = Self.intersect(ceilings.values) else { return (.full, []) }
+    let configuration = Self.networkConfiguration(for: effective)
+
+    func covers(_ broader: Set<String>, _ narrower: Set<String>) -> Bool {
+      narrower.allSatisfy { rule in broader.contains { NetworkHost.contains($0, rule: rule) } }
     }
-    guard let candidates else { return .full }
-    return candidates.isEmpty ? .none : .custom(hosts: candidates, includesTrusted: false)
+
+    // Host rules that cannot match a destination do not affect attribution.
+    let rules = ceilings.mapValues { Set($0.compactMap(NetworkHost.validRule)) }
+    let effectiveRules = Set(effective.compactMap(NetworkHost.validRule))
+    let direct = rules.filter {
+      covers(effectiveRules, $0.value) && covers($0.value, effectiveRules)
+    }
+    if !direct.isEmpty { return (configuration, Set(direct.keys)) }
+
+    let candidates = rules.filter { _, hosts in
+      !rules.values.contains { covers(hosts, $0) && !covers($0, hosts) }
+    }
+    // At most one ceiling per PolicySource participates. Consider proper
+    // subsets first so a source is counted only if it helps form the result.
+    var subsets: [Set<PolicySource>] = [[]]
+    for source in candidates.keys {
+      subsets += subsets.map { $0.union([source]) }
+    }
+    var minimal: [Set<PolicySource>] = []
+    for selected in subsets.dropFirst() {
+      guard !minimal.contains(where: { $0.isSubset(of: selected) }),
+        let overlap = Self.intersect(selected.compactMap { candidates[$0] }),
+        covers(overlap, effectiveRules), covers(effectiveRules, overlap)
+      else { continue }
+      minimal.append(selected)
+    }
+    return (configuration, minimal.reduce(into: []) { $0.formUnion($1) })
+  }
+
+  private func networkHostCeilings(trustedHosts: Set<String>) -> [PolicySource: Set<String>] {
+    sources.compactMapValues { availability in
+      switch availability {
+      case .absent: nil
+      case .unreadable: []
+      case .available(let policy): policy.network.hosts(trustedHosts: trustedHosts)
+      }
+    }
+  }
+
+  private static func intersect(
+    _ ceilings: some Sequence<Set<String>>, startingAt initial: Set<String>? = nil
+  ) -> Set<String>? {
+    ceilings.reduce(initial) { candidates, hosts in
+      candidates.map { NetworkHost.intersection($0, hosts) } ?? hosts
+    }
+  }
+
+  private static func networkConfiguration(for hosts: Set<String>?) -> NetworkAccess.Configuration {
+    guard let hosts else { return .full }
+    return hosts.isEmpty ? .none : .custom(hosts: hosts, includesTrusted: false)
   }
 
   var unreadableSources: Set<PolicySource> { restrictingSources { _ in false } }

@@ -5,6 +5,7 @@ import ComputerMCPSandbox
 import ComputerMCPTestSupport
 import ComputerMCPTransport
 import ComputerMCPTunnels
+import ComputerMCPWorktrees
 import Darwin
 import Foundation
 import GRDB
@@ -26,6 +27,96 @@ import Testing
 @MainActor
 @Suite(.serialized)
 final class LiveAppControlPlaneTests {
+  @Test
+  func h12AppReadsManagedForeignAndRetainedWorktreeRecords() async throws {
+    try await withAppControlPlaneFixture { fixture in
+      let source = fixture.root.appendingPathComponent("source")
+      let foreign = fixture.root.appendingPathComponent("foreign")
+      try FileManager.default.createDirectory(at: source, withIntermediateDirectories: true)
+      let platform = MacOSPlatform.services(launcher: testExecutionLauncher())
+      let git = GatewayWorktreeGit(launcher: platform.launcher, executable: platform.gitExecutable)
+      func runGit(_ arguments: [String], at directory: URL) throws {
+        let result = try git.execute(
+          .init(
+            arguments: HostGitConfiguration.arguments + arguments, directory: directory,
+            environment: HostGitConfiguration.environment(home: fixture.root),
+            timeoutMilliseconds: 30_000, maxOutputBytes: 1_048_576))
+        try #require(result.exitCode == 0, "\(String(decoding: result.error, as: UTF8.self))")
+      }
+      try runGit(["init", "--initial-branch=main"], at: source)
+      try runGit(["config", "--local", "user.name", "Fixture"], at: source)
+      try runGit(["config", "--local", "user.email", "fixture@example.invalid"], at: source)
+      try Data("initial".utf8).write(to: source.appendingPathComponent("value"))
+      try runGit(["add", "value"], at: source)
+      try runGit(["commit", "-m", "Initial"], at: source)
+      try await fixture.app.startApplication()
+      try await fixture.app.registerProject(at: source)
+      let database = await fixture.controlPlane.database
+      let projects = try database.projects()
+      let project = try #require(
+        projects.first { $0.rootPath == source.resolvingSymlinksInPath().path })
+      let repository = try WorktreeRepository(
+        source: .init(id: project.id, root: project.rootPath, registeredAt: project.createdAt),
+        store: database.derivedProjectStore(inspectNesting: { _ in [] }),
+        storage: #require(database.worktreeStorage), executor: git,
+        registeredProjectRoots: projects.map { URL(fileURLWithPath: $0.rootPath) },
+        timeoutMilliseconds: 30_000, maxOutputBytes: 1_048_576, lockTimeout: .seconds(30))
+      let created = try repository.create(name: "managed")
+      try runGit(["worktree", "add", "-b", "foreign", foreign.path], at: source)
+      let groups = try await fixture.app.fetchProjectWorktrees()
+      let group = try #require(groups.first { $0.source.id == project.id })
+      #expect(group.isInventoryAvailable)
+      let managed = try #require(group.worktrees.first { $0.projectID == created.projectID })
+      #expect(managed.lifecycleState == .active)
+      #expect(managed.worktreeID != nil)
+      #expect(managed.isInspectable)
+      let other = try #require(group.worktrees.first { $0.path == foreign.path })
+      #expect(other.projectID == nil && other.worktreeID == nil)
+      #expect(other.isInspectable)
+
+      var config = try await fixture.controlPlane.activeConfiguration()
+      config.mcp.servers.append(
+        .init(id: "worktree-fixture", transport: .stdio, command: "/usr/bin/true"))
+      _ = try await fixture.controlPlane.activateManifest(
+        config.exportedTOML(), expectedDigest: fixture.controlPlane.configurationDigest())
+      let privacy = LivePrivacySecurityService(controlPlane: fixture.app)
+      let before = try await privacy.privacySnapshot()
+      let providerID = "server/worktree-fixture"
+      var selection = Permissions()
+      try selection.set(.granted(.read), for: .project(project.id))
+      try await privacy.approveProvider(
+        #require(before.reviewedProviders[providerID]), permissions: selection,
+        execution: .sandbox, sandboxSettings: .init())
+      let grants = try await privacy.privacySnapshot().grants
+      let sourceGrant = grants.first {
+        $0.principalID == providerID && $0.permission == .projects && $0.object?.id == project.id
+      }
+      let childGrant = grants.first {
+        $0.principalID == providerID && $0.permission == .projects
+          && $0.object?.id == created.projectID
+      }
+      #expect(sourceGrant?.effectiveValue == .granted(.read))
+      #expect(childGrant != nil)
+      #expect(childGrant?.effectiveValue == sourceGrant?.effectiveValue)
+
+      try Data("private".utf8).write(to: created.path.appendingPathComponent("value"))
+      try runGit(["add", "value"], at: created.path)
+      try runGit(
+        [
+          "-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid", "commit", "-m",
+          "Private",
+        ], at: created.path)
+      let publication = try repository.publish(projectID: created.projectID) { _ in }
+      _ = try await Task.detached {
+        try await repository.remove(
+          projectID: created.projectID, terminate: { _, _ in }, authorize: { _, _ in })
+      }.value
+      try await fixture.app.removeProject(id: project.id)
+      let stores = try await fixture.app.fetchRecoveryStores()
+      #expect(stores.flatMap(\.records).contains { $0.oid == publication.oid })
+    }
+  }
+
   @Test
   func tunnelEditorPassesItsOpenedDigestThroughToTheControlPlane() async throws {
     try await withAppControlPlaneFixture { fixture in
@@ -374,6 +465,39 @@ final class LiveAppControlPlaneTests {
   }
 
   @Test
+  func h12NetworkEditKeepsUnchangedPermissionIdentities() async throws {
+    try await withAppControlPlaneFixture { fixture in
+      let host = fixture.controlPlane
+      var config = try await host.activeConfiguration()
+      config.mcp.servers.append(
+        .init(id: "network-fixture", transport: .stdio, command: "/usr/bin/true"))
+      _ = try await host.activateManifest(
+        config.exportedTOML(), expectedDigest: host.configurationDigest())
+      let service = LivePrivacySecurityService(controlPlane: fixture.app)
+      let id = "server/network-fixture"
+      let initial = try await service.privacySnapshot()
+      var permissions = Permissions()
+      try permissions.set(.granted(.access), for: .screen)
+      try permissions.set(.granted(.read), for: .project("*"))
+      try await service.approveProvider(
+        #require(initial.reviewedProviders[id]), permissions: permissions,
+        execution: .sandbox, sandboxSettings: .init())
+      let before = try await service.privacySnapshot()
+      let saved = try #require(before.reviewedProviders[id]?.approval?.permissions)
+      let wildcard = try #require(
+        before.grants.first {
+          $0.principalID == id && $0.permission == .projects && $0.object?.id == "*"
+        })
+      try await service.setNetwork(wildcard, to: .trusted, reviewed: before)
+      let after = try await service.privacySnapshot()
+      #expect(after.reviewedProviders[id]?.approval?.permissions == saved)
+      #expect(
+        after.reviewedProviders[id]?.approval?.sandboxSettings?.defaults.network.configuration
+          == .trusted)
+    }
+  }
+
+  @Test
   func h12RejectedProviderEditsPreserveAuthorityAndRestoreRequiresNewReview() async throws {
     try await withAppControlPlaneFixture { fixture in
       let host = fixture.controlPlane
@@ -389,7 +513,7 @@ final class LiveAppControlPlaneTests {
       try permissions.set(.granted(.access), for: .screen)
       try await service.approveProvider(
         #require(initial.reviewedProviders[id]), permissions: permissions,
-        execution: .sandbox, sandboxSettings: .init())
+        execution: .sandbox, sandboxSettings: .init(defaults: .init(network: .trusted)))
       let approved = try await service.privacySnapshot()
       let original = try #require(approved.reviewedProviders[id]?.approval)
       var grant = try #require(
@@ -433,10 +557,13 @@ final class LiveAppControlPlaneTests {
       #expect(confirmed.reviewedProviders[id]?.availability == .needsRestoreReview)
       try await service.approveProvider(
         #require(confirmed.reviewedProviders[id]), permissions: permissions,
-        execution: .sandbox, sandboxSettings: .init())
+        execution: .sandbox, sandboxSettings: #require(original.sandboxSettings))
       let reviewed = try await service.privacySnapshot()
       #expect(reviewed.reviewedProviders[id]?.availability == .active)
       #expect(reviewed.reviewedProviders[id]?.approval?.epoch == reviewed.epoch)
+      #expect(
+        reviewed.reviewedProviders[id]?.approval?.sandboxSettings?.defaults.network.configuration
+          == .trusted)
     }
   }
 
@@ -1211,6 +1338,10 @@ private final class AppControlPlaneFixture {
       directories: directories,
       database: database,
       permissionControl: permissionControl,
+      recoveryOwner: try GatewayRecoveryOwnerService(
+        database: database, platform: platform,
+        owner: .init(
+          caller: .localApp, profileID: .localAdmin, trustedPrincipalID: "app-fixture-owner")),
       manifestStore: manifestStore,
       defaultManifest: DefaultGatewayConfiguration.manifest,
       secretStore: secretStore,

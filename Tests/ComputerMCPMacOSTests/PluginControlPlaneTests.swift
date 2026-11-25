@@ -25,6 +25,70 @@ import Testing
 @Suite(.nativeIntegration, .timeLimit(.minutes(1)))
 struct PluginControlPlaneTests {
   @Test
+  func h12RunningGatewayPublishesPackageApproval() async throws {
+    let files = try PluginStoreFixture()
+    defer { files.cleanup() }
+    let package = try files.makePackage(
+      directory: "simple",
+      text: PluginManifestFixture.header + """
+        [[skills]]
+        id = 'guidance'
+        path = 'skills'
+        """)
+    let fixture = try PluginControlFixture(
+      bundled: .init(packages: [], issues: []), cliExecutable: URL(fileURLWithPath: "/usr/bin/true")
+    )
+    defer { fixture.remove() }
+    var configuration = try await fixture.host.activeConfiguration()
+    configuration.profiles = [
+      .init(
+        id: .chatGPTObserve,
+        permissions: fixturePermissions([
+          .skills: .granted(.access), .plugin("test-package"): .granted(.use),
+        ]), allowedCallers: [.localCLI])
+    ]
+    _ = try await fixture.host.activateManifest(
+      configuration.exportedTOML(), expectedDigest: fixture.host.configurationDigest())
+    _ = try await fixture.gateway.changePlugins(.registerDevelopment(package), expectedRevision: 0)
+    try await fixture.gateway.start(profile: .chatGPTObserve)
+    let transport = GatewaySocketTransport(
+      configuration: .init(socketURL: fixture.directories.gatewaySocket, clientIdentity: .localCLI))
+    let client = Client(name: "privacy-package-review", version: "1")
+    do {
+      _ = try await client.connect(transport: transport)
+      _ = try await client.listTools()
+      let before = try await fixture.host.privacyPermissionInventory()
+      let review = try #require(before.providers.first { $0.identity == .package("test-package") })
+      #expect(review.availability == .needsApproval)
+      _ = try await fixture.host.saveProviderPermissions(
+        reviewed: review, permissions: .newPrincipal, fullAccess: false, sandboxSettings: .init())
+      let after = try await fixture.host.privacyPermissionInventory()
+      let approved = try #require(after.providers.first { $0.identity == review.identity })
+      #expect(approved.availability == .active)
+      #expect(approved.effectiveMode == .sandbox)
+      #expect(approved.approval?.enabled == true)
+      #expect(
+        try await fixture.host.pluginSnapshot().state.settings["test-package"]?.enabled == true)
+      let request: RequestContext<MCP.CallTool.Result> = try await client.callTool(
+        name: "skills.read",
+        arguments: [
+          "root_id": .string("plugin-12-test-package-guidance"), "name": .string("example"),
+        ])
+      let result = try await request.value
+      #expect(result.isError != true, "\(result)")
+      #expect(
+        result.structuredContent?.objectValue?["result"]?.objectValue?["content"]?.stringValue?
+          .contains("Read safely.") == true)
+      await client.disconnect()
+      await fixture.gateway.stop()
+    } catch {
+      await client.disconnect()
+      await fixture.gateway.stop()
+      throw error
+    }
+  }
+
+  @Test
   func h12InventoryCombinesClientsPackagesAndSavedUnavailableServers() async throws {
     let files = try PluginStoreFixture()
     defer { files.cleanup() }

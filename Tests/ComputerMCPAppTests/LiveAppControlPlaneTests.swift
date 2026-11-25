@@ -11,6 +11,7 @@ import Foundation
 import GRDB
 import SwiftUI
 import Testing
+import Vision
 
 @testable import ComputerMCPApp
 @testable import ComputerMCPConfiguration
@@ -1025,7 +1026,9 @@ final class LiveAppControlPlaneTests {
         let restoreTag = try h16Git(
           ["rev-parse", "refs/tags/restore-review"], in: checkout, home: root)
 
-        let model = ComputerMCPAppModel(controlPlane: fixture.app).worktreeRecovery
+        let appModel = ComputerMCPAppModel(
+          controlPlane: fixture.app, onboardingPreferences: H16CompletedOnboarding())
+        let model = appModel.worktreeRecovery
         await model.refresh()
         let inventory = try #require(
           model.projectInventory(
@@ -1082,7 +1085,7 @@ final class LiveAppControlPlaneTests {
           model.worktrees(for: postRemoval).contains {
             $0.id == .managed(target.worktreeID) && $0.state == .removed
           })
-        try h16Render(model, project: project)
+        try await h16VerifyRecoveryRoute(appModel, project: project)
 
         let missing = root.appendingPathComponent("Moved Fixture Source")
         try FileManager.default.moveItem(at: source, to: missing)
@@ -1110,6 +1113,8 @@ final class LiveAppControlPlaneTests {
         #expect(
           model.operations.first { $0.id == staleRelease.handle.id }?.status?.outcome == .stale)
         #expect(await model.reviewRelease([oldChoice]) == nil)
+        #expect(model.issue?.key == "recovery.review_changed")
+        model.issue = nil
 
         try await fixture.app.removeProject(id: project.id)
         try FileManager.default.moveItem(at: source, to: missing)
@@ -1118,7 +1123,7 @@ final class LiveAppControlPlaneTests {
         #expect(RecoveryStoreIdentity(retainedStore) == storeID)
         let tagRecord = try #require(retainedStore.records.first { $0.oid == tag })
         let choice = RetainedRecoverySelection(store: storeID, record: tagRecord)
-        try h16Render(model, project: nil)
+        try await h16VerifyRecoveryRoute(appModel, project: nil)
 
         let (release, releaseEpoch) = try #require(await model.reviewRelease([choice]))
         let storage = try #require(await fixture.controlPlane.database.worktreeStorage)
@@ -1188,28 +1193,117 @@ final class LiveAppControlPlaneTests {
     return text
   }
 
-  private func h16Render(_ model: WorktreeRecoveryModel, project: ProjectSummary?) throws {
-    guard
-      let bundlePath = ProcessInfo.processInfo.environment["COMPUTER_MCP_RECOVERY_RENDER_BUNDLE"]
-    else { return }
-    let bundle = try #require(Bundle(url: URL(fileURLWithPath: bundlePath)))
+  private func h16VerifyRecoveryRoute(
+    _ model: ComputerMCPAppModel, project: ProjectSummary?
+  ) async throws {
+    let route = project == nil ? "privacy" : "projects"
+    if project != nil { model.refresh(.projects) }
+    _ = NSApplication.shared
+
     for language in ["en", "zh-Hans"] {
       let locale = Locale(identifier: language)
+      let chinese = language == "zh-Hans"
+      let recoveryTitle = chinese ? "保留的提交与存储" : "Retained Commits & Storage"
+      let recoverySection = chinese ? "工作树与恢复" : "Worktrees & Recovery"
+      let reclaim = chinese ? "回收存储空间…" : "Reclaim Storage…"
+      #expect(AppLocalization.string("commits.standalone.title", locale: locale) == recoveryTitle)
+      #expect(AppLocalization.string("entry.privacy.row_title", locale: locale) == recoveryTitle)
       #expect(
-        AppLocalization.string("worktree.section.title", locale: locale, resources: bundle)
-          == (language == "en" ? "Worktrees" : "工作树"))
-      for dark in [false, true] {
-        let appearance = try #require(NSAppearance(named: dark ? .darkAqua : .aqua))
-        try render(
-          NavigationStack { WorktreeStorageView(model: model, project: project) }
-            .environment(\.colorScheme, dark ? .dark : .light)
-            .environment(\.locale, locale)
-            .environment(\.localizationResources, bundle),
-          size: .init(width: 840, height: 780), appearance: appearance,
-          name:
-            "h16-\(project == nil ? "retained" : "project")-\(language)-\(dark ? "dark" : "light")")
+        AppLocalization.string("entry.projects.section_title", locale: locale) == recoverySection)
+      #expect(AppLocalization.string("storage.action.reclaim", locale: locale) == reclaim)
+
+      model.selectedSection = project == nil ? .permissions : .projects
+      model.projectRecoveryPath = []
+      model.privacySecurity.path = []
+      let host = NSHostingView(
+        rootView: AppShellView()
+          .environmentObject(model)
+          .environment(\.locale, locale)
+          .environment(\.colorScheme, chinese ? .dark : .light))
+      host.sizingOptions = []
+      let viewport = NSRect(x: 0, y: 0, width: 1120, height: 1440)
+      host.frame = viewport
+      let window = NSWindow(
+        contentRect: viewport, styleMask: [.titled], backing: .buffered, defer: false)
+      window.isReleasedWhenClosed = false
+      window.appearance = NSAppearance(named: chinese ? .darkAqua : .aqua)
+      window.contentView = host
+      defer { window.close() }
+      window.display()
+
+      let entryLabels =
+        project.map { [$0.displayName] }
+        ?? [chinese ? "提交与存储" : recoveryTitle, recoverySection]
+      let entry = try await h16FindLabels(entryLabels, in: host, language: language)
+      try h16Capture(entry, name: "h16-\(route)-entry-\(language)")
+      if let project {
+        model.projectRecoveryPath.append(project)
+      } else {
+        model.privacySecurity.path.append(.recovery)
       }
+
+      // These operation results exist only in the recovery model populated by this fixture.
+      let resultKey = project == nil ? "recovery.review_changed" : "worktree.removal.verified"
+      let sharedResult =
+        chinese && project == nil
+        ? "选择发生变化" : AppLocalization.string(resultKey, locale: locale)
+      let destination = try await h16FindLabels(
+        [sharedResult, reclaim], in: host, language: language,
+        isReady: { !model.worktreeRecovery.isWorking })
+      try h16Capture(destination, name: "h16-\(route)-destination-\(language)")
     }
+  }
+
+  private func h16FindLabels(
+    _ labels: [String], in host: NSView, language: String, isReady: () -> Bool = { true }
+  ) async throws -> NSBitmapImageRep {
+    let deadline = ContinuousClock.now.advanced(by: .seconds(10))
+    let expected = labels.map(Self.h16Normalized)
+    var recognized: [String] = []
+    repeat {
+      host.layoutSubtreeIfNeeded()
+      host.displayIfNeeded()
+      let wasReady = isReady()
+      let bitmap = try #require(host.bitmapImageRepForCachingDisplay(in: host.bounds))
+      host.cacheDisplay(in: host.bounds, to: bitmap)
+      let image = try #require(bitmap.cgImage)
+      let result = try await Task.detached {
+        try Self.h16RecognizeText(image, language: language)
+      }.value
+      recognized = result
+      let normalized = recognized.map(Self.h16Normalized)
+      if wasReady, isReady(),
+        expected.allSatisfy({ label in normalized.contains(where: { $0.contains(label) }) })
+      {
+        return bitmap
+      }
+      try await Task.sleep(for: .milliseconds(150))
+    } while .now < deadline
+    throw H16NavigationError.labelsMissing(labels, recognized)
+  }
+
+  nonisolated private static func h16RecognizeText(
+    _ image: CGImage, language: String
+  ) throws -> [String] {
+    let request = VNRecognizeTextRequest()
+    request.recognitionLanguages = language == "zh-Hans" ? ["zh-Hans", "en-US"] : ["en-US"]
+    request.recognitionLevel = .accurate
+    try VNImageRequestHandler(cgImage: image).perform([request])
+    return (request.results ?? []).compactMap { observation in
+      observation.topCandidates(1).first?.string
+    }
+  }
+
+  nonisolated private static func h16Normalized(_ text: String) -> String {
+    text.lowercased().filter { $0.isLetter || $0.isNumber }
+  }
+
+  private func h16Capture(_ bitmap: NSBitmapImageRep, name: String) throws {
+    guard let directory = ProcessInfo.processInfo.environment["COMPUTER_MCP_UI_SNAPSHOT_DIR"] else {
+      return
+    }
+    let png = try #require(bitmap.representation(using: .png, properties: [:]))
+    try png.write(to: URL(fileURLWithPath: directory).appendingPathComponent(name + ".png"))
   }
 
   @Test
@@ -1689,6 +1783,15 @@ private final class AppControlPlaneFixture {
     try? FileManager.default.removeItem(at: root)
     try? FileManager.default.removeItem(at: socketURL.deletingLastPathComponent())
   }
+}
+
+private enum H16NavigationError: Error {
+  case labelsMissing([String], [String])
+}
+
+private struct H16CompletedOnboarding: OnboardingPreferenceStoring {
+  let completedVersion = UserDefaultsOnboardingPreferences.currentVersion
+  func markCompleted(version: Int) {}
 }
 
 private final class H16ReleaseInterruption: @unchecked Sendable {

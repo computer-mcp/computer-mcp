@@ -45,6 +45,7 @@ final class ComputerMCPAppModel: ObservableObject {
   ]
 
   @Published var selectedSection: AppSection? = .home
+  @Published var projectRecoveryPath: [ProjectSummary] = []
   @Published private(set) var isPresentingWelcome: Bool
   @Published var pendingProjectRemoval: ProjectSummary?
   @Published var pendingProfileConfirmation: ProfileConfirmation?

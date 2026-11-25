@@ -39,6 +39,7 @@ struct PrivacySymbol: View {
 enum PrivacyRoute: Hashable {
   case permission(PrivacyPermissionKind)
   case principal(String)
+  case recovery
 }
 
 struct PrivacySecurityView: View {
@@ -46,6 +47,7 @@ struct PrivacySecurityView: View {
   @Environment(\.localizationResources) private var resources
   private var l: PrivacyText { PrivacyText(locale: locale, resources: resources) }
   @ObservedObject var model: PrivacySecurityModel
+  var worktreeRecovery: WorktreeRecoveryModel? = nil
   @State private var prompted: PrivacyRequest?
   @State private var promptedSnapshot = PrivacySnapshot()
 
@@ -57,6 +59,11 @@ struct PrivacySecurityView: View {
         permissionsSection
         principalsSection
         if !model.snapshot.managedSources.isEmpty { managedSection }
+        if let worktreeRecovery {
+          Section(l("entry.projects.section_title")) {
+            WorktreeRecoveryPrivacyLink(model: worktreeRecovery)
+          }
+        }
         systemSection
       }
       .formStyle(.grouped)
@@ -65,6 +72,11 @@ struct PrivacySecurityView: View {
         switch route {
         case .permission(let kind): PrivacyPermissionDetailView(model: model, permission: kind)
         case .principal(let id): PrivacyPrincipalDetailView(model: model, principalID: id)
+        case .recovery:
+          if let worktreeRecovery {
+            WorktreeStorageView(model: worktreeRecovery, project: nil)
+              .task { await worktreeRecovery.refresh() }
+          }
         }
       }
     }

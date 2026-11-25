@@ -372,9 +372,14 @@ struct ProjectsView: View {
   @EnvironmentObject private var model: ComputerMCPAppModel
 
   var body: some View {
-    NavigationStack {
+    NavigationStack(path: $model.projectRecoveryPath) {
       projectsPage
+        .navigationDestination(for: ProjectSummary.self) { project in
+          WorktreeStorageView(model: model.worktreeRecovery, project: project)
+            .task { await model.worktreeRecovery.refresh() }
+        }
     }
+    .onDisappear { model.projectRecoveryPath.removeAll() }
   }
 
   private var projectsPage: some View {
@@ -494,6 +499,8 @@ enum ProjectOpenPanelFactory {
 
 private struct ProjectRow: View {
   @EnvironmentObject private var model: ComputerMCPAppModel
+  @Environment(\.locale) private var locale
+  @Environment(\.localizationResources) private var resources
 
   let project: ProjectSummary
   let repair: () -> Void
@@ -509,10 +516,7 @@ private struct ProjectRow: View {
 
       VStack(alignment: .leading, spacing: 3) {
         HStack(spacing: 8) {
-          NavigationLink {
-            WorktreeStorageView(model: model.worktreeRecovery, project: project)
-              .task { await model.worktreeRecovery.refresh() }
-          } label: {
+          NavigationLink(value: project) {
             HStack(spacing: 5) {
               Text(verbatim: project.displayName).fontWeight(.medium)
               Image(systemName: "chevron.right")
@@ -524,7 +528,9 @@ private struct ProjectRow: View {
           }
           .buttonStyle(.plain)
           .accessibilityIdentifier("project.\(project.id).worktrees")
-          .accessibilityHint(AppLocalization.string("entry.projects.section_title"))
+          .accessibilityHint(
+            AppLocalization.string(
+              "entry.projects.section_title", locale: locale, resources: resources))
           StateBadge(
             text: project.health.label,
             color: project.health.color

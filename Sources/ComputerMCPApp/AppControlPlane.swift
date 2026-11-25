@@ -169,7 +169,7 @@ enum ProjectHealth: String, Sendable {
   }
 }
 
-struct ProjectSummary: Identifiable, Sendable {
+struct ProjectSummary: Identifiable, Hashable, Sendable {
   var id: String
   var displayName: String
   var path: String

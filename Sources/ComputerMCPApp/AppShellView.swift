@@ -76,7 +76,7 @@ struct AppShellView: View {
     case .tunnels:
       TunnelsView()
     case .permissions:
-      PrivacySecurityView(model: model.privacySecurity)
+      PrivacySecurityView(model: model.privacySecurity, worktreeRecovery: model.worktreeRecovery)
     case .audit:
       AuditView()
     case .diagnostics:

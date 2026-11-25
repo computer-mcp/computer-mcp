@@ -487,10 +487,7 @@ struct WorktreeRecoveryPrivacyLink: View {
 
   var body: some View {
     let l = PrivacyText(locale: locale, resources: resources)
-    NavigationLink {
-      WorktreeStorageView(model: model, project: nil)
-        .task { await model.refresh() }
-    } label: {
+    NavigationLink(value: PrivacyRoute.recovery) {
       Label {
         VStack(alignment: .leading, spacing: 2) {
           Text(verbatim: l("entry.privacy.row_title"))

@@ -52,9 +52,7 @@ struct WorktreeMergeRecoveryTests {
       #expect(result.oid == rebased)
       #expect(try f.raw(["rev-parse", "HEAD"]) == rebased)
       #expect(try f.raw(["merge-base", ownerTip, rebased]) == ownerTip)
-      #expect(
-        try f.raw(["rev-parse", original.preservationRef(pending.record, oid: pending.target)])
-          == pending.target)
+      #expect(try f.recoveryRecords().contains { $0.oid == pending.target })
       if let stage = pending.staging {
         #expect(!FileManager.default.fileExists(atPath: stage.path))
       }
@@ -274,6 +272,11 @@ private struct MergeTestExecutor: WorktreeGitExecuting {
       try afterCheckout()
     }
     return result
+  }
+  func executeBounded(
+    _ command: WorktreeGitCommand, fileOutput: WorktreeGitFileOutput?, fileSizeLimit: Int?
+  ) throws -> WorktreeGitResult {
+    try base.executeBounded(command, fileOutput: fileOutput, fileSizeLimit: fileSizeLimit)
   }
   func withPreparedTransaction(_ command: WorktreeGitCommand, _ body: () throws -> Void) throws {
     try base.withPreparedTransaction(command, body)

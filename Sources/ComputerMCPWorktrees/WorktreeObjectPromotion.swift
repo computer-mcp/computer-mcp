@@ -184,11 +184,16 @@ extension WorktreeRepository {
       throw WorktreeError.busy("Repository input disappeared during recovery capture.")
     }
   }
+
+  func requireDirectRef(_ ref: String, oid: String) throws {
+    guard try command(["symbolic-ref", "--quiet", ref], accepting: [0, 1]).exitCode == 1,
+      try revision(ref) == oid
+    else { throw WorktreeError.recoveryRequired("The expected direct branch changed.") }
+  }
+
 }
 
 extension WorktreeRepository {
-  /// The adapter revalidates live source authority at capture and under the
-  /// prepared ref locks. Preservation roots come only from host lifecycle logic.
   package func publish(
     projectID: String, preserving roots: [String] = [],
     limits: WorktreePromotionLimits = .init(),
@@ -203,422 +208,236 @@ extension WorktreeRepository {
 
   func publishLocked(
     projectID: String, preserving roots: [String], limits: WorktreePromotionLimits,
-    lock: RepositoryLock,
-    authorize: (DerivedProjectRecord) throws -> Void
+    lock: RepositoryLock, removalID: UUID? = nil, authorize: (DerivedProjectRecord) throws -> Void
   ) throws -> WorktreePublication {
-    if var pending = try readPublication(projectID),
-      ![.finished, .rejected].contains(pending.phase)
-    {
-      return try recoverPublication(&pending, lock: lock, authorize: authorize)
+    let removal = try readRemoval(projectID)
+    if let removal, removal.phase != .abandoned {
+      guard removal.operationID == removalID, removal.phase == .closing else {
+        throw WorktreeError.busy("The worktree has a pending removal.")
+      }
+    } else if removalID != nil {
+      throw invalidRecoveryMetadata()
     }
-    if let previous = try readPublication(projectID) { try cleanPublicationStaging(previous) }
+    if var previous = try readPublication(projectID) {
+      if previous.removalID == removalID, removalID != nil, previous.phase == .finished,
+        previous.sourcePublication?.guards == nil
+      {
+        try authorize(previous.record)
+        return publicationResult(previous)
+      }
+      if ![.finished, .rejected].contains(previous.phase)
+        || previous.sourcePublication?.guards != nil
+      {
+        let recovered = try recoverPublication(&previous, lock: lock, authorize: authorize)
+        if removalID == nil || previous.removalID == removalID { return recovered }
+      }
+    }
     guard let record = try store.records().first(where: { $0.projectID == projectID }),
-      let registration = record.worktree, let creation = try readJournal(projectID),
-      creation.phase == .active, try matchesActiveRecord(creation, record),
-      roots.allSatisfy(identity.format.contains)
+      record.state == .active, let registration = record.worktree,
+      let creation = try readJournal(projectID), creation.phase == .active,
+      try matchesActiveRecord(creation, record), roots.allSatisfy(identity.format.contains)
     else { throw WorktreeError.recoveryRequired("No active publication registration.") }
     try authorize(record)
+    try lock.verify()
     let topology = try verifyTopology(
       creation, repository: identity, source: source, validateHead: false)
-    let expected = registration.publishedOID ?? registration.baseOID
-    try requireDirectRef(registration.branch, oid: expected)
-    // This is the publication's only read of live HEAD. No later operation
-    // resolves a mutable private ref or asks Git to open private objects.
-    let captured: String
-    do { captured = try privateMetadata(topology).head } catch {
-      throw WorktreeError.busy("Worktree HEAD changed or cannot be captured; retry publication.")
+    let expected = registration.lastPublishedOID
+    guard try sourceMetadata().direct(registration.branch).oid == expected else {
+      throw sourceMetadataChanged()
     }
+    let id = removalID ?? UUID()
     var journal = WorktreePublicationJournal(
-      version: 1, operationID: UUID(), repository: identity, record: record,
-      expectedOID: expected, capturedOID: captured, maxPackBytes: limits.inputBytes,
-      roots: Array(Set([captured] + roots)).sorted(),
-      preservationRef: preservationRef(record, oid: expected), phase: .captured)
-    let previousJournal = try readPublication(projectID)
-    journal.replacementAcknowledgements = previousJournal?.replacementAcknowledgements
-    let previous = try previousJournal.map(publicationBytes)
-    try savePublication(journal, replacing: previous)
-    do {
-      let staging = try publicationDirectory().child(
-        journal.operationID.uuidString.lowercased(), create: true, exclusive: true)
-      try io.write(publicationOwner(journal), name: "owner.json", in: staging, replacing: nil)
-      let old = try publicationBytes(journal)
-      journal.staging = staging.identity
-      try savePublication(journal, replacing: old)
-      let objects = try staging.child("objects", create: true, exclusive: true)
-      var budget = try WorktreeObjectBudget(limits)
-      let snapshot = WorktreeObjectSnapshot(io: io, format: identity.format)
-      let files = try snapshot.copy(from: topology.objects, to: objects, budget: &budget)
-      let uncopied = try publicationBytes(journal)
-      journal.files = files
-      journal.phase = .copied
-      try savePublication(journal, replacing: uncopied)
-      try snapshot.validateRaw(files, in: objects, budget: &budget)
-      try verifyPublication(&journal, budget: &budget)
-    } catch {
-      // A rejected attempt cannot install objects. Retain the input worktree;
-      // a retry captures a fresh HEAD instead of trusting a partial snapshot.
-      let reason =
-        (error as? WorktreeError)?.errorDescription
-        ?? (error is CancellationError
-          ? "Object capture was cancelled." : "Object capture I/O failed.")
-      if [.captured, .copied].contains(journal.phase) {
-        let previous = try publicationBytes(journal)
-        journal.rejection = String(reason.prefix(512))
-        journal.phase = .rejected
-        try savePublication(journal, replacing: previous)
-        try cleanPublicationStaging(journal)
+      operationID: id, repository: identity, record: record, expectedOID: expected,
+      capturedOID: expected, maxPackBytes: limits.inputBytes, removalID: removalID,
+      requiredRoots: roots.isEmpty ? nil : Array(Set(roots)).sorted())
+    try savePublication(journal, replacing: try publicationDiskBytes(projectID))
+    return try WorktreeRecoveryStore(storage: storage, io: io)
+      .withExclusive(repository: identity, create: true) { recovery in
+        try finishPublication(
+          &journal, topology: topology, limits: limits, recovery: recovery, lock: lock,
+          authorize: authorize)
       }
-      if error is CancellationError { throw error }
-      if case WorktreeError.recoveryRequired = error { throw error }
-      throw WorktreeError.busy(
-        "Private object publication is busy: " + String(reason.prefix(512)))
-    }
-    return try finishPublication(&journal, lock: lock, authorize: authorize)
-  }
-
-  func requireDirectRef(_ ref: String, oid: String) throws {
-    guard try command(["symbolic-ref", "--quiet", ref], accepting: [0, 1]).exitCode == 1,
-      try revision(ref) == oid
-    else { throw WorktreeError.recoveryRequired("The expected direct branch changed.") }
-  }
-
-  private func verifyPublication(
-    _ journal: inout WorktreePublicationJournal, budget: inout WorktreeObjectBudget
-  ) throws {
-    let staging = try publicationStaging(journal)
-    let objects = try staging.child("objects")
-    let repository = try staging.child("repository", create: true, exclusive: true)
-    _ = try git.run(
-      [
-        "init", "--bare", "--template=", "--object-format=" + identity.format.rawValue,
-        repository.url.path,
-      ],
-      at: staging.url)
-    func run(_ args: [String], input: Data = Data(), accepting: Set<Int32> = [0]) throws
-      -> WorktreeGitResult
-    {
-      try git.run(
-        args, at: staging.url, gitDirectory: repository.url,
-        objects: objects.url,
-        input: input, accepting: accepting)
-    }
-    // Validate indexes against the copied packs; indexes never authorize an OID.
-    for file in journal.files where file.name.hasSuffix(".idx") {
-      try budget.check()
-      _ = try run(["verify-pack", objects.url.appendingPathComponent(file.name).path])
-    }
-    guard try run(["cat-file", "-t", journal.capturedOID]).output == Data("commit\n".utf8) else {
-      throw WorktreeError.busy("Published HEAD must name a commit.")
-    }
-    guard
-      try run(
-        ["merge-base", "--is-ancestor", journal.record.worktree!.baseOID, journal.capturedOID],
-        accepting: [0, 1]
-      ).exitCode == 0
-    else {
-      throw WorktreeError.busy("Captured commit is unrelated to the recorded base.")
-    }
-    let manifestOutput = try run(["rev-list", "--objects", "--no-object-names"] + journal.roots)
-      .output
-    let manifest = String(decoding: manifestOutput, as: UTF8.self).split(separator: "\n").map(
-      String.init
-    ).sorted()
-    guard !manifest.isEmpty, manifest.count <= budget.limits.objectCount,
-      Set(manifest).count == manifest.count, manifest.allSatisfy(identity.format.contains)
-    else { throw WorktreeError.busy("Invalid or excessive reachable object manifest.") }
-    // Verify the complete closure; only the expected managed branch may supply omitted objects.
-    let sizes = try run(
-      ["cat-file", "--batch-check=%(objectname) %(objecttype) %(objectsize)"],
-      input: Data((manifest.joined(separator: "\n") + "\n").utf8)
-    ).output
-    var closureBudget = try WorktreeObjectBudget(budget.limits)
-    let lines = String(decoding: sizes, as: UTF8.self).split(separator: "\n")
-    guard lines.count == manifest.count else {
-      throw WorktreeError.busy("Missing object metadata.")
-    }
-    for (index, line) in lines.enumerated() {
-      let fields = line.split(separator: " ")
-      guard fields.count == 3, fields[0] == manifest[index],
-        ["commit", "tree", "blob", "tag"].contains(fields[1]), let size = Int(fields[2])
-      else { throw WorktreeError.busy("Invalid object metadata.") }
-      try closureBudget.object(size)
-    }
-    try budget.check()
-    _ = try run(["fsck", "--full", "--strict", "--no-reflogs", "--no-dangling"] + journal.roots)
-    let omittedOutput = try command([
-      "rev-list", "--objects", "--no-object-names", journal.expectedOID,
-    ]).output
-    let omitted = Set(
-      String(decoding: omittedOutput, as: UTF8.self).split(separator: "\n").map(String.init))
-    guard omitted.allSatisfy(identity.format.contains) else {
-      throw WorktreeError.busy("Invalid expected branch closure.")
-    }
-    let installedManifest = manifest.filter { !omitted.contains($0) }
-    let output = try staging.child("verified", create: true, exclusive: true)
-    let packHash = try run(
-      [
-        "pack-objects", "--no-reuse-object", "--no-reuse-delta", "--window=0", "--threads=1",
-        output.url.appendingPathComponent("pack").path,
-      ],
-      input: Data(
-        (installedManifest.joined(separator: "\n") + (installedManifest.isEmpty ? "" : "\n")).utf8)
-    ).output
-    let hash = String(decoding: packHash, as: UTF8.self).trimmingCharacters(in: .newlines)
-    guard identity.format.contains(hash) else {
-      throw WorktreeError.busy("Invalid generated pack ID.")
-    }
-    let pack = "pack-" + hash
-    // The output has no deltas, cannot depend on omitted objects, and has a
-    // separately enforced compressed-size ceiling before installation.
-    guard let packBytes = try io.read(pack + ".pack", in: output, limit: budget.limits.inputBytes),
-      let indexBytes = try io.read(pack + ".idx", in: output, limit: budget.limits.inputBytes)
-    else { throw WorktreeError.busy("Generated pack is incomplete.") }
-    _ = try run([
-      "index-pack", "--strict", "--index-version=2", "-o",
-      output.url.appendingPathComponent("checked.idx").path,
-      output.url.appendingPathComponent(pack + ".pack").path,
-    ])
-    guard try io.read("checked.idx", in: output, limit: budget.limits.inputBytes) == indexBytes
-    else {
-      throw WorktreeError.busy("Generated pack index differs from strict verification.")
-    }
-    let inventory = try run(["show-index"], input: indexBytes).output
-    let installed = String(decoding: inventory, as: UTF8.self).split(separator: "\n").map {
-      $0.split(separator: " ").dropFirst().first.map(String.init) ?? ""
-    }.sorted()
-    guard installed == installedManifest else {
-      throw WorktreeError.busy("Pack contains unexpected objects.")
-    }
-    try budget.check()
-    let previous = try publicationBytes(journal)
-    journal.manifest = manifest
-    journal.pack = pack
-    journal.packDigest = WorktreeObjectSnapshot.digest(packBytes)
-    journal.indexDigest = WorktreeObjectSnapshot.digest(indexBytes)
-    journal.phase = .verified
-    try savePublication(journal, replacing: previous)
-  }
-
-  private func finishPublication(
-    _ journal: inout WorktreePublicationJournal, lock: RepositoryLock,
-    authorize: (DerivedProjectRecord) throws -> Void
-  ) throws -> WorktreePublication {
-    if [.verified, .installing].contains(journal.phase) {
-      try authorize(journal.record)
-      try requirePublicationRecord(journal)
-      try requireDirectRef(journal.branch, oid: journal.expectedOID)
-      try advancePublication(&journal, to: .installing)
-      try installPublication(journal)
-      try advancePublication(&journal, to: .installed)
-    }
-    if [.installed, .publishing].contains(journal.phase) {
-      try lock.verify()
-      try authorize(journal.record)
-      try requirePublicationRecord(journal)
-      try requireDirectRef(journal.branch, oid: journal.expectedOID)
-      let protections = Array(Set(journal.roots + [journal.expectedOID])).sorted()
-      var preservation = ""
-      var protectionsBefore: [String: String] = [:]
-      for oid in protections {
-        let ref = preservationRef(journal.record, oid: oid)
-        if try objectRevision(ref) == nil {
-          preservation += "create \(ref) \(oid)\n"
-        } else {
-          try requireObjectRef(ref, oid: oid)
-          protectionsBefore[ref] = oid
-          preservation += "verify \(ref) \(oid)\n"
-        }
-      }
-      let installed = try publicationBytes(journal)
-      journal.protectionsBefore = protectionsBefore
-      journal.phase = .publishing
-      try savePublication(journal, replacing: installed)
-      let input =
-        "start\nupdate \(journal.branch) \(journal.capturedOID) \(journal.expectedOID)\n"
-        + preservation + "prepare\n"
-      try git.transaction(
-        input, at: URL(fileURLWithPath: identity.main.path),
-        gitDirectory: URL(fileURLWithPath: identity.common.path),
-        message: publicationMessage(journal)
-      ) {
-        try lock.verify()
-        try authorize(journal.record)
-        try requirePublicationRecord(journal)
-        try requireDirectRef(journal.branch, oid: journal.expectedOID)
-        for oid in protections {
-          let ref = preservationRef(journal.record, oid: oid)
-          if try objectRevision(ref) != nil { try requireObjectRef(ref, oid: oid) }
-        }
-      }
-      try requirePublicationRoots(journal)
-      try advancePublication(&journal, to: .published)
-    }
-    if journal.phase == .published {
-      try requirePublicationRoots(journal)
-      var next = journal.record
-      next.revision += 1
-      next.worktree!.publishedOID = journal.capturedOID
-      let existing = try store.records().first { $0.projectID == next.projectID }
-      if existing != next {
-        guard existing == journal.record else { throw DerivedProjectStoreError.revisionConflict }
-        let registration = next.worktree!
-        guard case .host(let worktreeID, _) = next.provenance else {
-          throw DerivedProjectStoreError.invalidRecord
-        }
-        try store.commit(
-          next, expecting: journal.record.revision,
-          protecting: .init(
-            repository: identity.common, branchID: registration.branchID,
-            branch: registration.branch, base: registration.base, baseOID: registration.baseOID,
-            publishedOID: journal.capturedOID, worktreeID: worktreeID,
-            mergedOID: registration.mergedOID, baseHistory: registration.baseHistory))
-      }
-      try advancePublication(&journal, to: .ledger)
-    }
-    if journal.phase == .ledger {
-      try requireDirectRef(journal.branch, oid: journal.capturedOID)
-      try advancePublication(&journal, to: .finished)
-    }
-    guard journal.phase == .finished else {
-      throw WorktreeError.recoveryRequired("Publication has no completed outcome.")
-    }
-    try cleanPublicationStaging(journal)
-    return .init(
-      projectID: journal.record.projectID, operationID: journal.operationID,
-      oid: journal.capturedOID)
-  }
-
-  private func requirePublicationRecord(_ journal: WorktreePublicationJournal) throws {
-    guard
-      try store.records().first(where: { $0.projectID == journal.record.projectID })
-        == journal.record
-    else {
-      throw DerivedProjectStoreError.revisionConflict
-    }
-  }
-
-  private func publicationMessage(_ journal: WorktreePublicationJournal) -> String {
-    "computer-mcp publication " + journal.operationID.uuidString.lowercased()
-  }
-
-  private func installPublication(_ journal: WorktreePublicationJournal) throws {
-    let verified = try publicationStaging(journal).child("verified")
-    guard let pack = journal.pack, let packDigest = journal.packDigest,
-      let indexDigest = journal.indexDigest
-    else {
-      throw WorktreeError.recoveryRequired("Verified pack receipt is missing.")
-    }
-    let shared = try WorktreeDirectory(URL(fileURLWithPath: identity.objects.path)).child(
-      "pack", create: true)
-    // Keep precedes either object file. Never remove an existing/ambiguous keep
-    // or pack on failure; a concurrent GC or foreign ref may depend on them.
-    let keep = Data((publicationMessage(journal) + "\n").utf8)
-    if try io.read(pack + ".keep", in: shared, limit: 4096) == nil {
-      try io.write(keep, name: pack + ".keep", in: shared, replacing: nil)
-    }
-    for (suffix, digest) in [(".pack", packDigest), (".idx", indexDigest)] {
-      guard let data = try io.read(pack + suffix, in: verified, limit: journal.maxPackBytes),
-        WorktreeObjectSnapshot.digest(data) == digest
-      else { throw WorktreeError.recoveryRequired("Verified pack bytes changed.") }
-      if let existing = try io.read(pack + suffix, in: shared, limit: data.count, synchronize: true)
-      {
-        guard existing == data else {
-          throw WorktreeError.recoveryRequired("Shared pack content differs.")
-        }
-      } else {
-        try io.write(data, name: pack + suffix, in: shared, replacing: nil)
-      }
-    }
-    try shared.synchronize()
   }
 
   func recoverPublication(
     _ journal: inout WorktreePublicationJournal, lock: RepositoryLock,
     authorize: (DerivedProjectRecord) throws -> Void
   ) throws -> WorktreePublication {
-    if [.captured, .copied].contains(journal.phase) {
-      try advancePublication(&journal, to: .rejected)
-      try cleanPublicationStaging(journal)
-      throw WorktreeError.busy("Incomplete object capture was discarded; retry publication.")
+    guard journal.version == 2 else {
+      throw WorktreeError.recoveryRequired("The publication predates recovery-store ownership.")
     }
-    if journal.phase == .publishing {
-      let branch = try revision(journal.branch)
-      let preserved = try objectRevision(journal.preservationRef)
-      if journal.expectedOID == journal.capturedOID {
-        // Git writes no branch reflog entry for an unchanged OID. Accept only
-        // a complete before/after protection set, then replay the transaction
-        // under current authority and expected-value locks.
-        try requireDirectRef(journal.branch, oid: journal.expectedOID)
-        guard let before = journal.protectionsBefore else {
-          throw WorktreeError.recoveryRequired("Publication protection receipt is missing.")
-        }
-        var matchesBefore = true
-        var matchesAfter = true
-        for oid in Set(journal.roots + [journal.expectedOID]) {
-          let ref = preservationRef(journal.record, oid: oid)
-          let current = try objectRevision(ref)
-          if let current { try requireObjectRef(ref, oid: current) }
-          matchesBefore = matchesBefore && current == before[ref]
-          matchesAfter = matchesAfter && current == oid
-        }
-        guard matchesBefore || matchesAfter else {
-          throw WorktreeError.recoveryRequired("Publication refs have a mixed transaction outcome.")
-        }
-      } else if branch == journal.capturedOID, preserved == journal.expectedOID {
-        try requireDirectRef(journal.branch, oid: journal.capturedOID)
-        let receipt = try command(["reflog", "show", "-1", "--format=%H%x00%gs", journal.branch])
-          .output
-        guard
-          receipt == Data((journal.capturedOID + "\0" + publicationMessage(journal) + "\n").utf8)
-        else {
-          throw WorktreeError.recoveryRequired("Publication ownership cannot be proved.")
-        }
-        try requirePublicationRoots(journal)
-        try advancePublication(&journal, to: .published)
+    return try WorktreeRecoveryStore(storage: storage, io: io)
+      .withExclusive(repository: identity, create: journal.handoff == nil) { recovery in
+        try finishPublication(
+          &journal, topology: nil, limits: .init(), recovery: recovery, lock: lock,
+          authorize: authorize)
+      }
+  }
+
+  private func finishPublication(
+    _ journal: inout WorktreePublicationJournal, topology: VerifiedWorktreeTopology?,
+    limits: WorktreePromotionLimits, recovery: WorktreeRecoveryStore.Locked, lock: RepositoryLock,
+    authorize: (DerivedProjectRecord) throws -> Void
+  ) throws -> WorktreePublication {
+    var state = journal
+    defer { journal = state }
+    let record = state.record
+    let branch = state.branch
+    let id = state.operationID
+    let project = record.projectID
+    let kind: WorktreeRecoveryIntent.Kind = state.removalID == nil ? .publication : .removal
+    try authorize(record)
+    try lock.verify()
+    try savePublication(state, replacing: publicationBytes(state))
+    var budget = try WorktreeObjectBudget(limits)
+    func save(_ change: (inout WorktreePublicationJournal) throws -> Void) throws {
+      let previous = try publicationBytes(state)
+      var next = state
+      try change(&next)
+      try savePublication(next, replacing: previous)
+      state = next
+    }
+    func revalidateOriginal() throws {
+      try Task.checkCancellation()
+      try lock.verify()
+      try identity.verify()
+      try authorize(record)
+      guard try store.records().first(where: { $0.projectID == project }) == record else {
+        throw DerivedProjectStoreError.revisionConflict
+      }
+    }
+    func admissionGuards() throws -> WorktreeSourceGuards {
+      let metadata = try sourceMetadata()
+      var owned =
+        try state.installationGuards
+        ?? .init(
+          operationID: id, common: identity.common, branches: [branch], guardingHead: false)
+      return try WorktreeSourceGuards.acquire(
+        &owned, metadata: metadata, repositoryLock: lock, branches: [branch], guardingHead: false,
+        persist: { value in try save { $0.installationGuards = value } })
+    }
+    func persistHandoff(_ value: WorktreeRecoveryHandoff) throws {
+      let captured = try value.retention.capturedHead()
+      let roots = value.retention.roots
+      guard Set(state.requiredRoots ?? []).isSubset(of: roots),
+        let phase = WorktreePublicationJournal.Phase(rawValue: value.phase.rawValue)
+      else {
+        throw WorktreeError.invalidRequest("Required root was absent from the private capture.")
+      }
+      try save {
+        $0.handoff = value
+        $0.capturedOID = captured
+        $0.roots = roots
+        $0.phase = phase
+      }
+    }
+    if state.sourcePublication == nil {
+      if var handoff = state.handoff {
+        try resumeRecoveryHandoff(
+          &handoff, store: recovery, budget: budget, persist: persistHandoff,
+          revalidate: revalidateOriginal, sourceGuards: admissionGuards)
       } else {
-        guard branch == journal.expectedOID, let before = journal.protectionsBefore else {
-          throw WorktreeError.recoveryRequired("Publication refs have an unknown outcome.")
-        }
-        for oid in Set(journal.roots + [journal.expectedOID]) {
-          let ref = preservationRef(journal.record, oid: oid)
-          guard try objectRevision(ref) == before[ref] else {
-            throw WorktreeError.recoveryRequired(
-              "Publication refs have a mixed transaction outcome.")
+        guard let topology else {
+          try recovery.finishStagingDisposal(operationID: id)
+          try save {
+            $0.phase = .rejected
+            $0.rejection = "Capture was interrupted before retention."
           }
+          throw WorktreeError.busy("Incomplete object capture was discarded; retry publication.")
+        }
+        do {
+          _ = try beginRecoveryHandoff(
+            operationID: id, kind: kind, record: record, topology: topology, store: recovery,
+            budget: &budget, persist: persistHandoff, revalidate: revalidateOriginal,
+            sourceGuards: admissionGuards)
+        } catch {
+          if state.handoff == nil {
+            // A visible first handoff save may have failed directory sync.
+            // Resume that exact intent instead of discarding its artifacts.
+            let pending = try readPublication(project)
+            if pending?.handoff == nil {
+              try recovery.finishStagingDisposal(operationID: id)
+              try save {
+                $0.rejection = String(error.localizedDescription.prefix(512))
+                $0.phase = .rejected
+              }
+            }
+          }
+          throw error
         }
       }
-    }
-    return try finishPublication(&journal, lock: lock, authorize: authorize)
-  }
-
-  private func requirePublicationRoots(_ journal: WorktreePublicationJournal) throws {
-    try requireDirectRef(journal.branch, oid: journal.capturedOID)
-    for oid in Set(journal.roots + [journal.expectedOID]) {
-      try requireObjectRef(preservationRef(journal.record, oid: oid), oid: oid)
-    }
-  }
-
-  func cleanPublicationStaging(_ journal: WorktreePublicationJournal) throws {
-    if journal.phase == .finished, let pack = journal.pack {
-      let shared = try WorktreeDirectory(URL(fileURLWithPath: identity.objects.path)).child("pack")
-      let owned = Data((publicationMessage(journal) + "\n").utf8)
-      if try io.read(pack + ".keep", in: shared, limit: 4096) == owned {
-        try requirePublicationRoots(journal)
-        try io.remove(pack + ".keep", in: shared, expecting: owned)
+      let protection = try admissionGuards()
+      guard let ownership = state.installationGuards else { throw invalidRecoveryMetadata() }
+      let sourcePhase = try WorktreeRecoverySourcePublication(
+        repository: identity, record: record, target: state.capturedOID,
+        protectedBy: protection, guardOwnership: ownership)
+      try save {
+        $0.sourcePublication = sourcePhase
+        $0.installationGuards = nil
+        $0.phase = .sourcePublishing
+        if kind == .publication { $0.terminal = WorktreeRecoveryTerminal() }
       }
     }
-    guard let expected = journal.staging else { return }
-    guard FileManager.default.fileExists(atPath: expected.path) else { return }
-    let directory = try publicationStaging(journal)
-    try directory.verify()
-    try FileManager.default.removeItem(at: directory.url)
-    try publicationDirectory().synchronize()
+    guard var sourcePhase = state.sourcePublication, let handoff = state.handoff,
+      handoff.retention.generation == recovery.generation
+    else { throw invalidRecoveryMetadata() }
+    let retention = handoff.retention
+    func persistSource(_ value: WorktreeRecoverySourcePublication) throws {
+      guard let phase = WorktreePublicationJournal.Phase(rawValue: value.phase.rawValue)
+      else { throw invalidRecoveryMetadata() }
+      try save {
+        $0.sourcePublication = value
+        $0.phase = phase
+      }
+    }
+    return try sourcePhase.complete(
+      in: self, lock: lock, authorize: authorize,
+      verifyRetention: {
+        if topology == nil {
+          try handoff.verifyRecoveryPack(repository: self, store: recovery, budget: budget)
+        } else {
+          try recovery.requireRetained(retention)
+        }
+      },
+      completeCatalog: { protection in
+        func verifyTerminal() throws {
+          try protection.verify()
+          try authorize(record)
+          guard state.phase == .ledger, state.sourcePublication?.phase == .ledger,
+            try protection.metadata.direct(branch).oid == state.capturedOID
+          else { throw sourceMetadataChanged() }
+          try savePublication(state, replacing: publicationBytes(state))
+        }
+        try verifyTerminal()
+        try sealPublicationLineage(
+          .init(
+            operationID: id, repository: identity, storeGeneration: recovery.generation,
+            owner: retention.owner, expected: state.expectedOID, published: state.capturedOID,
+            hadPublishedExpected: record.worktree?.publishedOID != nil))
+        try handoff.releaseSourceKeep(repository: self, verifyTerminalOutcome: verifyTerminal)
+        if kind == .publication {
+          guard var terminal = state.terminal else { throw invalidRecoveryMetadata() }
+          try terminal.complete(
+            retention, store: recovery, verifyTerminalOutcome: verifyTerminal,
+            sealed: { recordID, evidence in
+              try requireAcknowledgementSeal(
+                recordID, evidence: evidence, owner: retention.owner,
+                generation: retention.generation)
+            },
+            persist: { value in try save { $0.terminal = value } })
+        }
+      },
+      persist: persistSource)
+  }
+
+  private func publicationResult(_ journal: WorktreePublicationJournal) -> WorktreePublication {
+    .init(
+      projectID: journal.record.projectID, operationID: journal.operationID,
+      oid: journal.capturedOID)
   }
 }
 
 extension WorktreeRepository {
-  /// Explicit acknowledgement releases just this obsolete host recovery root.
-  /// Ordinary rebase/publication retains it and never ages it out automatically.
   package func acknowledgeReplacement(
     projectID: String, replacedOID: String, expectedPublishedOID: String,
     authorize: (DerivedProjectRecord) throws -> Void
@@ -626,39 +445,142 @@ extension WorktreeRepository {
     try withLock(validateHead: false) { lock in
       guard identity.format.contains(replacedOID), replacedOID != expectedPublishedOID,
         let record = try store.records().first(where: { $0.projectID == projectID }),
-        let registration = record.worktree, registration.publishedOID == expectedPublishedOID,
-        var journal = try readPublication(projectID), journal.phase == .finished
+        record.source == source, record.state == .active, let registration = record.worktree,
+        registration.publishedOID == expectedPublishedOID,
+        let publication = try readPublication(projectID), publication.version == 2,
+        publication.phase == .finished, publication.capturedOID == expectedPublishedOID,
+        publication.sourcePublication?.guards == nil, let handoff = publication.handoff
       else { throw WorktreeError.recoveryRequired("Replacement acknowledgement is stale.") }
-      try cleanPublicationStaging(journal)
+      if let removal = try readRemoval(projectID), removal.phase != .abandoned {
+        throw WorktreeError.busy("The worktree has a pending removal.")
+      }
       try authorize(record)
-      let ref = preservationRef(record, oid: replacedOID)
-      try requireDirectRef(registration.branch, oid: expectedPublishedOID)
-      if try objectRevision(ref) == nil,
-        journal.replacementAcknowledgements?.contains(replacedOID) == true
-      {
-        return
-      }
-      try requireObjectRef(ref, oid: replacedOID)
-      if journal.replacementAcknowledgements?.contains(replacedOID) != true {
-        let previous = try publicationBytes(journal)
-        journal.replacementAcknowledgements =
-          (journal.replacementAcknowledgements ?? []) + [replacedOID]
-        try savePublication(journal, replacing: previous)
-      }
-      try git.transaction(
-        "start\nverify \(registration.branch) \(expectedPublishedOID)\ndelete \(ref) \(replacedOID)\nprepare\n",
-        at: URL(fileURLWithPath: identity.main.path),
-        gitDirectory: URL(fileURLWithPath: identity.common.path),
-        message: "computer-mcp acknowledged replacement"
-      ) {
-        try lock.verify()
-        try authorize(record)
-        guard try store.records().first(where: { $0.projectID == projectID }) == record else {
-          throw DerivedProjectStoreError.revisionConflict
+      let owner = handoff.retention.owner
+      let branch = owner.branch
+      let publicationID = publication.operationID
+      guard registration.branchID == owner.branchID, registration.branch == branch,
+        case .host(let worktreeID, let storageGeneration) = record.provenance,
+        owner.worktreeID == worktreeID, owner.storageGeneration == storageGeneration,
+        let outcome = try readPublicationLineage(publicationID),
+        outcome.owner == owner, outcome.published == expectedPublishedOID
+      else { throw invalidRecoveryMetadata() }
+      try WorktreeRecoveryStore(storage: storage, io: io)
+        .withExclusive(repository: identity) { recovery in
+          guard recovery.generation == handoff.retention.generation,
+            outcome.storeGeneration == recovery.generation,
+            let directory = try replacementDirectory(owner, create: true)
+          else { throw invalidRecoveryMetadata() }
+          let operationID = try WorktreeReplacementJournal.operationID(
+            owner: owner, generation: recovery.generation, publicationID: publicationID,
+            replaced: replacedOID, expected: expectedPublishedOID)
+          let matching = try readReplacement(
+            operationID, in: directory, owner: owner, generation: recovery.generation)
+          guard
+            matching.map({
+              $0.publicationID == publicationID && $0.replaced == replacedOID
+                && $0.expected == expectedPublishedOID
+            }) ?? true
+          else { throw invalidRecoveryMetadata() }
+          var journal =
+            matching
+            ?? .init(
+              operationID: operationID, owner: owner, repository: identity,
+              storeGeneration: recovery.generation, publicationID: publicationID,
+              replaced: replacedOID, expected: expectedPublishedOID)
+          let name = journal.operationID.uuidString.lowercased() + ".json"
+          var bytes = try matching.map { try recoveryJSON($0) }
+          func save(_ change: (inout WorktreeReplacementJournal) -> Void) throws {
+            var next = journal
+            change(&next)
+            let updated = try recoveryJSON(next)
+            guard updated.count <= WorktreeRecoveryCatalog.byteLimit else {
+              throw WorktreeError.busy("Acknowledgement journal exceeds its byte bound.")
+            }
+            if updated == bytes {
+              try io.synchronize(name, in: directory, expecting: updated)
+            } else {
+              try io.write(updated, name: name, in: directory, replacing: bytes)
+            }
+            journal = next
+            bytes = updated
+          }
+          var planned: WorktreeRecoveryAcknowledgement?
+          if journal.change == nil {
+            guard try sourceMetadata().direct(branch).oid == expectedPublishedOID else {
+              throw sourceMetadataChanged()
+            }
+            let catalog = try recovery.catalog()
+            let operations = Set(
+              catalog.records.lazy.filter {
+                $0.owner == owner && $0.state == .retained && $0.oid == replacedOID
+              }.flatMap { record in
+                record.claims.lazy.filter { $0.reason == .publishedReplacement }.map(\.operationID)
+              })
+            var lineage: Set<UUID> = []
+            for operation in operations {
+              guard let prior = try readPublicationLineage(operation),
+                prior.owner == owner, prior.storeGeneration == recovery.generation,
+                prior.expected == replacedOID, prior.published != replacedOID,
+                prior.hadPublishedExpected
+              else { throw invalidRecoveryMetadata() }
+              lineage.insert(operation)
+            }
+            planned = try WorktreeRecoveryAcknowledgement(
+              operationID: journal.operationID, publicationID: publicationID, owner: owner,
+              replacedOID: replacedOID, expectedPublishedOID: expectedPublishedOID,
+              lineage: lineage, catalog: catalog)
+          }
+          let metadata = try sourceMetadata()
+          if journal.guardOwnership?.cleaning == true {
+            guard let owned = journal.guardOwnership else { throw invalidRecoveryMetadata() }
+            try WorktreeSourceGuards.finishCleanup(
+              owned, metadata: metadata, repositoryLock: lock, branches: [branch],
+              guardingHead: false)
+            try save { $0.guardOwnership = nil }
+          }
+          if journal.change?.phase == .finished, journal.guardOwnership == nil { return }
+          try save { _ in }
+          var owned =
+            try journal.guardOwnership
+            ?? .init(
+              operationID: journal.operationID, common: identity.common, branches: [branch],
+              guardingHead: false)
+          let protection = try WorktreeSourceGuards.acquire(
+            &owned, metadata: metadata, repositoryLock: lock, branches: [branch],
+            guardingHead: false, persist: { next in try save { $0.guardOwnership = next } })
+          func verifySealed() throws {
+            try lock.verify()
+            try protection.verify()
+            try authorize(record)
+            let expectedProtection = ProtectedWorktreeBranch(
+              repository: identity.common, branchID: registration.branchID, branch: branch,
+              base: registration.base, baseOID: registration.baseOID,
+              publishedOID: expectedPublishedOID,
+              worktreeID: worktreeID, mergedOID: registration.mergedOID,
+              baseHistory: registration.baseHistory)
+            guard try store.records().first(where: { $0.projectID == projectID }) == record,
+              try store.protectedBranches().contains(expectedProtection)
+            else { throw DerivedProjectStoreError.revisionConflict }
+          }
+          func verifyLive() throws {
+            try verifySealed()
+            guard try metadata.direct(branch).oid == expectedPublishedOID,
+              try readPublication(projectID)?.operationID == publicationID
+            else { throw sourceMetadataChanged() }
+          }
+          if let planned {
+            try verifyLive()
+            try save { $0.change = planned }
+          }
+          guard var change = journal.change else { throw invalidRecoveryMetadata() }
+          try change.complete(
+            store: recovery, verifyLive: verifyLive, verifySealed: verifySealed,
+            persist: { next in try save { $0.change = next } })
+          try protection.release(
+            &owned, branches: [branch], guardingHead: false,
+            persist: { next in try save { $0.guardOwnership = next } })
+          try save { $0.guardOwnership = nil }
         }
-        try requireDirectRef(registration.branch, oid: expectedPublishedOID)
-        try requireObjectRef(ref, oid: replacedOID)
-      }
     }
   }
 }

@@ -12,6 +12,7 @@ import Testing
 @testable import ComputerMCPControlPlane
 @testable import ComputerMCPCore
 @testable import ComputerMCPGateway
+@testable import ComputerMCPWorktrees
 
 @Suite(
   .nativeIntegration, .serialized, .timeLimit(.minutes(5)),
@@ -157,14 +158,18 @@ struct WorktreeHTTPAcceptanceTests {
         #expect(try await f.ownerGit(["for-each-ref", "refs/heads/" + branch]).isEmpty)
         _ = try await f.ownerGit(["reflog", "expire", "--expire=now", "--all"])
         _ = try await f.ownerGit(["gc", "--prune=now"])
-        let retained = try await f.ownerGit([
-          "for-each-ref", "--format=%(objectname)", "refs/computer-mcp/recovery/",
-        ])
+        let storage = try #require(f.database.worktreeStorage)
+        let snapshot = try #require(try WorktreeRecoveryStore(storage: storage).list().only)
+        let key = try WorktreeRecoveryStore.key(for: snapshot.repository)
+        let recovery = storage.recovery.appendingPathComponent("stores/" + key + "/repository.git")
+        let gitDirectory = "--git-dir=" + recovery.path
         for (oid, type) in zip(roots, ["commit", "tag", "blob", "tree"]) {
-          #expect(retained.split(separator: "\n").contains(Substring(oid)))
-          #expect(try await f.ownerGit(["cat-file", "-t", oid]) == type + "\n")
-          _ = try await f.ownerGit(["cat-file", "-p", oid])
+          #expect(snapshot.catalog.records.contains { $0.oid == oid })
+          #expect(try await f.ownerGit([gitDirectory, "cat-file", "-t", oid]) == type + "\n")
+          _ = try await f.ownerGit([gitDirectory, "cat-file", "-p", oid])
         }
+        #expect(try await f.ownerGit(["for-each-ref", "refs/computer-mcp/recovery/"]).isEmpty)
+        _ = try await f.ownerGit([gitDirectory, "fsck", "--full", "--strict", "--no-dangling"])
         _ = try await f.ownerGit(["fsck", "--full", "--strict", "--no-dangling"])
         #expect(await http.controlSessions().map(\.id) == [session.id])
         #expect(try f.database.profiles() == profiles)

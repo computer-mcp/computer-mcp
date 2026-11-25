@@ -9,7 +9,7 @@ package struct WorktreeRemovalResult: Equatable, Sendable {
 
 struct WorktreeRemovalJournal: Codable {
   enum Phase: String, Codable {
-    case closing, preserved, content, repository, runtime, unregistering, finished,
+    case closing, preserved, content, repository, runtime, reconciling, unregistering, finished,
       abandoned
   }
   let operationID: UUID
@@ -20,6 +20,10 @@ struct WorktreeRemovalJournal: Codable {
   var phase: Phase
   var oid: String?
   var terminationWarnings: [String]?
+  var guards: WorktreeSourceGuardJournal?
+  var repositoryArmed: Bool?
+  var reconciliation: WorktreeRecoveryReconciliation?
+  var terminal: WorktreeRecoveryTerminal?
 }
 
 extension WorktreeRepository {
@@ -42,9 +46,11 @@ extension WorktreeRepository {
     {
       throw WorktreeError.busy("Another removal operation is incomplete for this worktree.")
     }
-    if let pending, pending.phase == .finished {
-      try authorize(pending.record, [])
-      return try removalResult(pending)
+    if var completed = pending, completed.phase == .finished {
+      try authorize(completed.record, [])
+      try synchronizeRemoval(completed)
+      try cleanRemovalGuards(&completed, lock: lock)
+      return try removalResult(completed)
     }
     if let abandoned = pending, abandoned.phase == .abandoned {
       try authorize(abandoned.record, [])
@@ -87,19 +93,21 @@ extension WorktreeRepository {
         let current = try store.records().first(where: { $0.projectID == projectID }),
         current.state == .active, try matchesActiveRecord(creation, current)
       else { throw WorktreeError.recoveryRequired("Removal registration changed.") }
-      let topology = try verifyTopology(creation, repository: identity, source: source)
+      let topology = try verifyTopology(
+        creation, repository: identity, source: source, validateHead: false)
       if !force, try !status(topology).isEmpty {
-        try advanceRemoval(&journal, to: .abandoned)
-        try journal.admission.reopen(operationID: journal.operationID)
+        let publication = try readPublication(projectID)
+        if publication?.removalID != journal.operationID || publication?.phase == .rejected {
+          try advanceRemoval(&journal, to: .abandoned)
+          try journal.admission.reopen(operationID: journal.operationID)
+        }
         throw WorktreeError.busy("Worktree contains tracked, staged, untracked or ignored changes.")
       }
-      let roots = try removalRoots(topology)
       let publication = try publishLocked(
-        projectID: projectID, preserving: roots, limits: limits, lock: lock,
-        authorize: { try authorize($0, []) })
+        projectID: projectID, preserving: [], limits: limits, lock: lock,
+        removalID: journal.operationID, authorize: { try authorize($0, []) })
       guard let published = try store.records().first(where: { $0.projectID == projectID }),
-        published.worktree?.lastPublishedOID == publication.oid,
-        try privateMetadata(topology).head == publication.oid
+        published.worktree?.lastPublishedOID == publication.oid
       else { throw WorktreeError.recoveryRequired("Worktree changed after removal capture.") }
       try authorize(published, [])
       try topology.verifyDirectories()
@@ -109,7 +117,7 @@ extension WorktreeRepository {
       journal.phase = .preserved
       try saveRemoval(journal, replacing: old)
     }
-    return try finishRemoval(&journal, lock: lock, authorize: authorize)
+    return try finishRemoval(&journal, lock: lock, limits: limits, authorize: authorize)
   }
 
   private func reconcileRemovalDependencies(
@@ -117,93 +125,263 @@ extension WorktreeRepository {
     authorize: (DerivedProjectRecord, [URL]) throws -> Void
   ) throws {
     _ = try recoverMerge(id, lock: lock, limits: limits, authorize: authorize)
-    if var pending = try readPublication(id) {
-      if [.finished, .rejected].contains(pending.phase) {
-        try cleanPublicationStaging(pending)
-      } else {
-        _ = try recoverPublication(&pending, lock: lock, authorize: { try authorize($0, []) })
-      }
+    if var pending = try readPublication(id),
+      ![.finished, .rejected].contains(pending.phase) || pending.sourcePublication?.guards != nil
+    {
+      _ = try recoverPublication(&pending, lock: lock, authorize: { try authorize($0, []) })
     }
   }
 
   private func finishRemoval(
-    _ journal: inout WorktreeRemovalJournal, lock: RepositoryLock,
+    _ journal: inout WorktreeRemovalJournal, lock: RepositoryLock, limits: WorktreePromotionLimits,
     authorize: (DerivedProjectRecord, [URL]) throws -> Void
   ) throws -> WorktreeRemovalResult {
-    guard let registration = journal.record.worktree, let oid = journal.oid,
-      var creation = try readJournal(journal.record.projectID)
+    var state = journal
+    defer { journal = state }
+    let original = state.record
+    let id = state.operationID
+    guard let registration = original.worktree, let oid = state.oid,
+      var creation = try readJournal(original.projectID),
+      let publication = try readPublication(original.projectID),
+      publication.version == 2, publication.phase == .finished, publication.capturedOID == oid,
+      publication.removalID == id, publication.operationID == id,
+      publication.sourcePublication?.guards == nil, let handoff = publication.handoff,
+      handoff.retention.kind == .removal, handoff.retention.operationID == id,
+      try readMerge(original.projectID).map({ [.finished, .abandoned].contains($0.phase) }) ?? true
     else { throw WorktreeError.recoveryRequired("Removal preservation receipt is incomplete.") }
-    try requireDirectRef(registration.branch, oid: oid)
-    guard let publication = try readPublication(journal.record.projectID),
-      publication.phase == .finished, publication.capturedOID == oid,
-      try readMerge(journal.record.projectID).map({ [.finished, .abandoned].contains($0.phase) })
-        ?? true
-    else { throw WorktreeError.recoveryRequired("A lifecycle journal still needs this worktree.") }
-    for root in Set(publication.roots + [publication.expectedOID]) {
-      try requireObjectRef(preservationRef(journal.record, oid: root), oid: root)
+    try synchronizeRemoval(state)
+    try savePublication(publication, replacing: publicationBytes(publication))
+    try state.admission.requireDrained(operationID: id)
+    let retention = handoff.retention
+    if let reconciliation = state.reconciliation {
+      guard reconciliation.removalID == id, reconciliation.generation == retention.generation,
+        reconciliation.owner == retention.owner, reconciliation.finalCapture == retention.capture
+      else { throw invalidRecoveryMetadata() }
     }
-    if journal.phase == .preserved {
-      let topology = try verifyTopology(creation, repository: identity, source: source)
-      guard try privateMetadata(topology).head == oid,
-        try journal.force || status(topology).isEmpty
-      else { throw WorktreeError.busy("Worktree changed before destruction.") }
-      // Committing teardown is itself an authority boundary.
-      try authorize(journal.record, [])
-      var removing = journal.record
-      removing.state = .removing
-      removing.revision += 1
-      if try store.records().first(where: { $0.projectID == removing.projectID }) != removing {
-        try store.commit(removing, expecting: journal.record.revision, protecting: nil)
-      }
-      if creation.phase == .active {
-        let old = try encoded(creation)
-        creation.phase = .removing
-        try saveJournal(creation, replacing: old)
-      }
-      try advanceRemoval(&journal, to: .content)
+    let branch = registration.branch
+    guard original.revision < Int64.max - 1 else { throw invalidRecoveryMetadata() }
+    var removing = original
+    removing.state = .removing
+    removing.revision += 1
+    let expectedProtection = ProtectedWorktreeBranch(
+      repository: identity.common, branchID: registration.branchID, branch: branch,
+      base: registration.base, baseOID: registration.baseOID, publishedOID: oid,
+      worktreeID: original.provenance.worktreeID, mergedOID: registration.mergedOID,
+      baseHistory: registration.baseHistory)
+    let metadata = try sourceMetadata()
+    let budget = try WorktreeObjectBudget(limits)
+    func save(_ change: (inout WorktreeRemovalJournal) -> Void) throws {
+      let previous = try removalBytes(state)
+      var next = state
+      change(&next)
+      try saveRemoval(next, replacing: previous)
+      state = next
     }
-    let steps:
-      [(WorktreeRemovalJournal.Phase, WorktreeDirectoryIdentity, WorktreeRemovalJournal.Phase)] = [
-        (.content, registration.contentParent, .repository),
-        (.repository, registration.repositoryParent, .runtime),
-        (.runtime, registration.runtime, .unregistering),
-      ]
-    for (phase, directory, next) in steps where journal.phase == phase {
+    func unregister() throws -> WorktreeRemovalResult {
       try lock.verify()
-      try journal.admission.requireDrained(operationID: journal.operationID)
-      try authorize(journal.record, [])
-      if phase == .content { try requireRemovalChild(registration.root) }
-      if phase == .repository { try requireRemovalChild(registration.gitDirectory) }
-      let parent = try WorktreeDirectory(
-        URL(fileURLWithPath: directory.path).deletingLastPathComponent())
-      try parent.removeOwnedTree(directory, io: io) { path in
-        if phase == .content {
-          let root = URL(fileURLWithPath: journal.record.root)
-          if path.path == root.path || path.path.hasPrefix(root.path + "/") {
-            try authorize(journal.record, [path])
-          }
-        }
-      }
-      try advanceRemoval(&journal, to: next)
-    }
-    if journal.phase == .unregistering {
-      try authorize(journal.record, [])
-      if let record = try store.records().first(where: { $0.projectID == journal.record.projectID })
-      {
-        var removing = journal.record
-        removing.state = .removing
-        removing.revision += 1
-        guard record == removing else { throw DerivedProjectStoreError.revisionConflict }
-        try store.remove(record.projectID, expecting: record.revision)
+      try identity.verify()
+      try authorize(original, [])
+      guard state.phase == .unregistering, state.guards == nil,
+        state.reconciliation?.finished == true, state.terminal?.receipts != nil,
+        try store.protectedBranches().contains(expectedProtection)
+      else { throw invalidRecoveryMetadata() }
+      let current = try store.records().first(where: { $0.projectID == original.projectID })
+      guard current == nil || current == removing else {
+        throw DerivedProjectStoreError.revisionConflict
       }
       if creation.phase != .removed {
         let old = try encoded(creation)
         creation.phase = .removed
         try saveJournal(creation, replacing: old)
+      } else {
+        try io.synchronize(
+          creation.id + ".json", in: WorktreeDirectory(storage.journals),
+          expecting: encoded(creation))
       }
-      try advanceRemoval(&journal, to: .finished)
+      if let current {
+        try store.remove(current.projectID, expecting: current.revision)
+      }
+      try save { $0.phase = .finished }
+      return try removalResult(state)
     }
-    return try removalResult(journal)
+    return try WorktreeRecoveryStore(storage: storage, io: io)
+      .withExclusive(repository: identity) { recovery in
+        guard retention.generation == recovery.generation else { throw invalidRecoveryMetadata() }
+        if state.phase == .unregistering {
+          try authorize(original, [])
+          try cleanRemovalGuards(&state, lock: lock)
+          return try unregister()
+        }
+        var ownership =
+          try state.guards
+          ?? .init(
+            operationID: id, common: identity.common, branches: [branch], guardingHead: false)
+        let protection = try WorktreeSourceGuards.acquire(
+          &ownership, metadata: metadata, repositoryLock: lock, branches: [branch],
+          guardingHead: false, persist: { next in try save { $0.guards = next } })
+        func verifyAuthority() throws {
+          try lock.verify()
+          try protection.verify()
+          try identity.verify()
+          try authorize(original, [])
+          guard try metadata.direct(branch).oid == oid,
+            try store.protectedBranches().contains(expectedProtection)
+          else { throw sourceMetadataChanged() }
+          let current = try store.records().first { $0.projectID == original.projectID }
+          if state.phase == .preserved {
+            guard current == original || current == removing else {
+              throw DerivedProjectStoreError.revisionConflict
+            }
+          } else {
+            guard current == removing else { throw DerivedProjectStoreError.revisionConflict }
+          }
+        }
+        func verifyPrivate() throws {
+          try verifyAuthority()
+          try verifyFinalRecoveryCapture(handoff, record: original, store: recovery, budget: budget)
+        }
+        func sealed(_ recordID: UUID, _ evidence: WorktreeRecoveryRecord.Acknowledgement)
+          throws -> Bool
+        {
+          try requireAcknowledgementSeal(
+            recordID, evidence: evidence, owner: retention.owner, generation: retention.generation)
+        }
+        try verifyAuthority()
+        if state.phase == .preserved {
+          let topology = try verifyTopology(
+            creation, repository: identity, source: source, validateHead: false)
+          guard try state.force || status(topology).isEmpty else {
+            throw WorktreeError.busy("Worktree became dirty after final capture.")
+          }
+          try verifyPrivate()
+          if state.reconciliation == nil {
+            let reconciliation = try WorktreeRecoveryReconciliation(
+              operationID: UUID(), final: retention, catalog: recovery.catalog(), sealed: sealed)
+            try save { $0.reconciliation = reconciliation }
+          }
+          guard let reconciliation = state.reconciliation else { throw invalidRecoveryMetadata() }
+          try reconciliation.prepare(
+            in: recovery, verifyFinalRetention: verifyPrivate, sealed: sealed,
+            persist: { next in try save { $0.reconciliation = next } })
+          try verifyAuthority()
+          if try store.records().first(where: { $0.projectID == removing.projectID }) != removing {
+            try store.commit(removing, expecting: original.revision, protecting: nil)
+          }
+          if creation.phase == .active {
+            let old = try encoded(creation)
+            creation.phase = .removing
+            try saveJournal(creation, replacing: old)
+          }
+          try save { $0.phase = .content }
+        }
+        let steps:
+          [(WorktreeRemovalJournal.Phase, WorktreeDirectoryIdentity, WorktreeRemovalJournal.Phase)] =
+            [
+              (.content, registration.contentParent, .repository),
+              (.repository, registration.repositoryParent, .runtime),
+              (.runtime, registration.runtime, .reconciling),
+            ]
+        for (phase, directory, next) in steps where state.phase == phase {
+          try verifyAuthority()
+          if phase == .content {
+            try requireRemovalChild(registration.root)
+            try verifyPrivate()
+          }
+          if phase == .repository {
+            try requireRemovalChild(registration.gitDirectory)
+            if state.repositoryArmed != true {
+              try verifyPrivate()
+              try save { $0.repositoryArmed = true }
+            } else if try removalMetadataStillIntact(registration.gitDirectory) {
+              // HEAD is the first entry removed by the owned Git directory traversal.
+              try verifyPrivate()
+            }
+          }
+          let parent = try WorktreeDirectory(
+            URL(fileURLWithPath: directory.path).deletingLastPathComponent())
+          try parent.removeOwnedTree(directory, io: io) { path in
+            if phase == .content {
+              let root = URL(fileURLWithPath: original.root)
+              if path.path == root.path || path.path.hasPrefix(root.path + "/") {
+                try authorize(original, [path])
+              }
+            }
+          }
+          try io.beforeDirectorySync()
+          try parent.synchronize()
+          try save { $0.phase = next }
+        }
+        if state.phase == .reconciling {
+          func verifyTeardown() throws {
+            try verifyAuthority()
+            try synchronizeRemoval(state)
+            guard state.phase == .reconciling, state.repositoryArmed == true
+            else { throw invalidRecoveryMetadata() }
+            for removed in [
+              registration.contentParent, registration.repositoryParent, registration.runtime,
+            ] {
+              let target = URL(fileURLWithPath: removed.path)
+              let parent = try WorktreeDirectory(target.deletingLastPathComponent())
+              guard try !parent.hasEntry(target.lastPathComponent) else {
+                throw invalidRecoveryMetadata()
+              }
+            }
+          }
+          try verifyTeardown()
+          guard var reconciliation = state.reconciliation else { throw invalidRecoveryMetadata() }
+          var terminal = state.terminal ?? WorktreeRecoveryTerminal()
+          if state.terminal == nil { try save { $0.terminal = terminal } }
+          try terminal.complete(
+            retention, store: recovery, verifyTerminalOutcome: verifyTeardown, sealed: sealed,
+            persist: { next in try save { $0.terminal = next } })
+          try reconciliation.complete(
+            in: recovery, verifyTeardown: verifyTeardown, sealed: sealed,
+            persist: { next in try save { $0.reconciliation = next } })
+          try save { $0.phase = .unregistering }
+        }
+        guard state.phase == .unregistering else { throw invalidRecoveryMetadata() }
+        try verifyAuthority()
+        try protection.release(
+          &ownership, branches: [branch], guardingHead: false,
+          persist: { next in try save { $0.guards = next } })
+        try save { $0.guards = nil }
+        return try unregister()
+      }
+  }
+
+  private func removalMetadataStillIntact(_ expected: WorktreeDirectoryIdentity) throws -> Bool {
+    let path = URL(fileURLWithPath: expected.path)
+    let parent = try WorktreeDirectory(path.deletingLastPathComponent())
+    guard try parent.hasEntry(path.lastPathComponent) else { return false }
+    let directory = try parent.child(path.lastPathComponent)
+    guard directory.identity == expected else { throw invalidRecoveryMetadata() }
+    return try directory.hasEntry("HEAD")
+  }
+
+  private func cleanRemovalGuards(
+    _ journal: inout WorktreeRemovalJournal, lock: RepositoryLock
+  ) throws {
+    guard var ownership = journal.guards, let branch = journal.record.worktree?.branch else {
+      return
+    }
+    let metadata = try sourceMetadata()
+    func persist(_ next: WorktreeSourceGuardJournal?) throws {
+      let previous = try removalBytes(journal)
+      journal.guards = next
+      try saveRemoval(journal, replacing: previous)
+    }
+    if ownership.cleaning {
+      try WorktreeSourceGuards.finishCleanup(
+        ownership, metadata: metadata, repositoryLock: lock, branches: [branch], guardingHead: false
+      )
+    } else {
+      let protection = try WorktreeSourceGuards.acquire(
+        &ownership, metadata: metadata, repositoryLock: lock, branches: [branch],
+        guardingHead: false, persist: { try persist($0) })
+      try protection.release(
+        &ownership, branches: [branch], guardingHead: false, persist: { try persist($0) })
+    }
+    try persist(nil)
   }
 
   private func requireRemovalChild(_ expected: WorktreeDirectoryIdentity) throws {
@@ -238,13 +416,24 @@ extension WorktreeRepository {
   }
 
   func saveRemoval(_ journal: WorktreeRemovalJournal, replacing previous: Data?) throws {
-    try io.write(
-      removalBytes(journal), name: journal.record.projectID + ".json", in: removalDirectory(),
-      replacing: previous)
+    let bytes = try removalBytes(journal)
+    guard bytes.count <= WorktreeRecoveryCatalog.byteLimit else {
+      throw WorktreeError.busy("Removal journal exceeds its byte bound.")
+    }
+    if bytes == previous {
+      try synchronizeRemoval(journal)
+    } else {
+      try io.write(
+        bytes, name: journal.record.projectID + ".json", in: removalDirectory(), replacing: previous
+      )
+    }
   }
 
   func readRemoval(_ id: String) throws -> WorktreeRemovalJournal? {
-    guard let data = try io.read(id + ".json", in: removalDirectory(), limit: 131_072) else {
+    guard
+      let data = try io.read(
+        id + ".json", in: removalDirectory(), limit: WorktreeRecoveryCatalog.byteLimit)
+    else {
       return nil
     }
     let journal = try JSONDecoder().decode(WorktreeRemovalJournal.self, from: data)
@@ -259,6 +448,11 @@ extension WorktreeRepository {
       throw WorktreeError.recoveryRequired("Removal journal identity is invalid.")
     }
     return journal
+  }
+
+  private func synchronizeRemoval(_ journal: WorktreeRemovalJournal) throws {
+    try io.synchronize(
+      journal.record.projectID + ".json", in: removalDirectory(), expecting: removalBytes(journal))
   }
 
   private func advanceRemoval(

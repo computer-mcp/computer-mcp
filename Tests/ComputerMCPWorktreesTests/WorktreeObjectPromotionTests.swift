@@ -194,10 +194,11 @@ extension WorktreeObjectPromotionTests {
       }
       let second = try service.publish(projectID: created.projectID) { _ in }
       #expect(first != second.oid)
-      let record = try f.store.records().first!
-      #expect(try f.raw(["rev-parse", service.preservationRef(record, oid: first)]) == first)
+      let before = try #require(try f.recoveryRecords().first { $0.oid == first })
+      #expect(before.claims.contains { $0.reason == .publishedReplacement })
       try f.raw(["gc", "--prune=now"])
-      #expect(try f.raw(["cat-file", "-t", first]) == "commit")
+      let recovery = try f.recoveryGitDirectory()
+      #expect(try f.raw(["--git-dir=" + recovery.path, "cat-file", "-t", first]) == "commit")
       try service.acknowledgeReplacement(
         projectID: created.projectID, replacedOID: first,
         expectedPublishedOID: second.oid
@@ -206,7 +207,10 @@ extension WorktreeObjectPromotionTests {
         projectID: created.projectID, replacedOID: first,
         expectedPublishedOID: second.oid
       ) { _ in }
-      #expect(try service.revision(service.preservationRef(record, oid: first)) == nil)
+      let after = try #require(try f.recoveryRecords().first { $0.id == before.id })
+      #expect(!after.claims.contains { $0.reason == .publishedReplacement })
+      #expect(!after.acknowledgements.isEmpty)
+      #expect(try f.raw(["for-each-ref", "refs/computer-mcp/recovery/"]).isEmpty)
     }
   }
 }
@@ -225,6 +229,11 @@ final class PublicationTestGit: WorktreeGitExecuting, @unchecked Sendable {
       try action(command)
     }
     return try base.execute(command)
+  }
+  func executeBounded(
+    _ command: WorktreeGitCommand, fileOutput: WorktreeGitFileOutput?, fileSizeLimit: Int?
+  ) throws -> WorktreeGitResult {
+    try base.executeBounded(command, fileOutput: fileOutput, fileSizeLimit: fileSizeLimit)
   }
   func withPreparedTransaction(_ command: WorktreeGitCommand, _ body: () throws -> Void) throws {
     try base.withPreparedTransaction(command, body)
@@ -284,6 +293,14 @@ private struct ExtraPackObject: WorktreeGitExecuting {
     if command.arguments.contains("pack-objects") { command.input.append(Data((oid + "\n").utf8)) }
     return try base.execute(command)
   }
+  func executeBounded(
+    _ original: WorktreeGitCommand, fileOutput: WorktreeGitFileOutput?, fileSizeLimit: Int?
+  ) throws -> WorktreeGitResult {
+    var command = original
+    if command.arguments.contains("pack-objects") { command.input.append(Data((oid + "\n").utf8)) }
+    return try base.executeBounded(command, fileOutput: fileOutput, fileSizeLimit: fileSizeLimit)
+  }
+
 }
 
 extension WorktreeObjectPromotionTests {
@@ -324,8 +341,13 @@ private final class CopyRace: @unchecked Sendable {
         contentsOf: f.storage.journals.appendingPathComponent("publications/" + projectID + ".json")
       ),
       let journal = try? JSONDecoder().decode(WorktreePublicationJournal.self, from: data),
-      journal.phase == .captured, let staging = journal.staging,
-      let enumerator = FileManager.default.enumerator(atPath: staging.path + "/objects"),
+      journal.phase == .captured,
+      let key = try? WorktreeRecoveryStore.key(for: journal.repository),
+      let enumerator = FileManager.default.enumerator(
+        atPath: f.storage.recovery.appendingPathComponent(
+          "stores/" + key + "/staging/" + journal.operationID.uuidString.lowercased()
+            + "/private-objects"
+        ).path),
       enumerator.allObjects.contains(where: { ($0 as? String)?.contains(".journal-") == true })
     else { return }
     fired = true

@@ -457,7 +457,6 @@ actor MCPBoundHostServices {
         base: requested["base"]?.stringValue)
       : .remove(force: requested["force"]?.boolValue ?? false)
     let store = operations
-    let storage = database.worktreeStorage
     let fallback = claimed.record
     // Host-owned work: the effect and its settlement continue when the callback task
     // or channel ends; the callback only awaits the settled record.
@@ -465,7 +464,7 @@ actor MCPBoundHostServices {
       Result {
         try Self.run(
           effect, operationID: operationID, lifecycle: authorized, service: service,
-          store: store, storage: storage, fallback: fallback)
+          store: store, fallback: fallback)
       }
     }.value
     return reply(try settled.get())
@@ -473,7 +472,7 @@ actor MCPBoundHostServices {
 
   private static func run(
     _ effect: GitWorktreeOperation, operationID: UUID, lifecycle: GatewayWorktreeInvocation,
-    service: GatewayWorktreeService, store: HostOperationStore, storage: WorktreeStorage?,
+    service: GatewayWorktreeService, store: HostOperationStore,
     fallback: HostOperationRecord
   ) throws -> HostOperationRecord {
     do {
@@ -495,7 +494,7 @@ actor MCPBoundHostServices {
     } catch {
       let current = try store.operation(id: operationID) ?? fallback
       return try MCPHostOperations.settle(
-        current, outcome: MCPHostOperations.journalOutcome(current, storage: storage),
+        current, outcome: MCPHostOperations.journalOutcome(current, database: service.database),
         cause: MCPHostOperations.failure(error), store: store)
     }
   }

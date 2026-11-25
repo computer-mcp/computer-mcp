@@ -64,6 +64,13 @@ struct WorktreeTestGit: WorktreeGitExecuting {
       guard try line() == "commit: ok\n" else {
         throw WorktreeError.commandFailed("Commit failed.")
       }
+      try input.fileHandleForWriting.close()
+      while process.isRunning, ContinuousClock.now < deadline {
+        Thread.sleep(forTimeInterval: 0.002)
+      }
+      guard !process.isRunning, process.terminationStatus == 0 else {
+        throw WorktreeError.commandFailed("Git reference transaction did not complete.")
+      }
     } catch {
       if process.isRunning {
         try? input.fileHandleForWriting.write(contentsOf: Data("abort\n".utf8))
@@ -71,6 +78,37 @@ struct WorktreeTestGit: WorktreeGitExecuting {
       }
       throw error
     }
+  }
+
+  func executeBounded(
+    _ command: WorktreeGitCommand, fileOutput: WorktreeGitFileOutput?, fileSizeLimit: Int?
+  ) throws -> WorktreeGitResult {
+    var bounded = command
+    if let fileOutput {
+      bounded.maxOutputBytes = max(command.maxOutputBytes, fileOutput.byteLimit)
+    }
+    let result = try execute(bounded)
+    guard result.error.count <= command.maxOutputBytes else {
+      throw WorktreeError.busy("Test Git diagnostics exceeded their bound.")
+    }
+    if let fileSizeLimit, result.exitCode == 0 {
+      // The fixture checks the one index output in its disposable repository.
+      // The Gateway integration tests exercise the child-only kernel limit.
+      guard let flag = command.arguments.firstIndex(of: "-o"), flag + 1 < command.arguments.count,
+        let size = try FileManager.default.attributesOfItem(atPath: command.arguments[flag + 1])[
+          .size]
+          as? NSNumber, size.int64Value <= fileSizeLimit
+      else { throw WorktreeError.busy("Test Git index exceeded its bound.") }
+    }
+    if let fileOutput {
+      guard result.output.count <= fileOutput.byteLimit else {
+        throw WorktreeError.busy("Test Git pack exceeded its bound.")
+      }
+      try FileHandle(fileDescriptor: fileOutput.descriptor, closeOnDealloc: false)
+        .write(contentsOf: result.output)
+      return .init(output: Data(), error: result.error, exitCode: result.exitCode)
+    }
+    return result
   }
 
   func execute(_ command: WorktreeGitCommand) throws -> WorktreeGitResult {
@@ -125,6 +163,19 @@ struct WorktreeFixture {
   let storage: WorktreeStorage
   let executor: WorktreeTestGit
   let store: SQLiteDerivedProjectStore
+
+  func recoveryRecords() throws -> [WorktreeRecoveryRecord] {
+    try WorktreeRecoveryStore(storage: storage).list().flatMap(\.catalog.records)
+  }
+
+  func recoveryGitDirectory() throws -> URL {
+    let snapshots = try WorktreeRecoveryStore(storage: storage).list()
+    guard snapshots.count == 1, let snapshot = snapshots.first else {
+      throw WorktreeError.recoveryRequired("Fixture recovery store is unavailable.")
+    }
+    let key = try WorktreeRecoveryStore.key(for: snapshot.repository)
+    return storage.recovery.appendingPathComponent("stores/" + key + "/repository.git")
+  }
 
   init(_ directory: URL, format: String = "sha1", commit: Bool = true) throws {
     self.directory = directory

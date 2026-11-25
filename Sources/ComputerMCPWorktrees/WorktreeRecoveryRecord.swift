@@ -252,7 +252,7 @@ extension WorktreeRecoveryRecord {
 }
 
 extension WorktreeObjectFormat {
-  fileprivate func containsRecoveryOID(_ oid: String) -> Bool {
+  func containsRecoveryOID(_ oid: String) -> Bool {
     contains(oid) && oid.utf8.contains { $0 != 48 }
   }
 }

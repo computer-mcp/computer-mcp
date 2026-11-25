@@ -20,15 +20,15 @@ struct WorktreeRecoveryHandoff: Codable, Equatable {
   ) {
     self.retention = retention
     recoveryArtifact = .init(recovery)
-    if retention.kind == .publication, !capture.sourceManifest.entries.isEmpty {
+    if !capture.sourceManifest.entries.isEmpty {
       sourceArtifact = .init(source)
     } else {
       sourceArtifact = nil
     }
   }
 
-  /// The publication caller holds R/S and supplies its exact expected-source
-  /// guard for every source write. Removal completes at the retained boundary.
+  /// The lifecycle caller holds R/S and supplies its exact expected-source
+  /// guard for every source pack write.
   mutating func complete(
     repository: WorktreeRepository, store: WorktreeRecoveryStore.Locked,
     staging: WorktreeRecoveryStaging, budget: WorktreeObjectBudget,
@@ -38,8 +38,7 @@ struct WorktreeRecoveryHandoff: Codable, Equatable {
     let format = repository.identity.format
     let io = repository.io
     guard retention.generation == store.generation,
-      retention.owner.source == repository.source,
-      retention.kind == .publication || sourceArtifact == nil
+      retention.owner.source == repository.source
     else { throw invalidRecoveryMetadata() }
     try revalidate()
     try persist(self)
@@ -73,10 +72,6 @@ struct WorktreeRecoveryHandoff: Codable, Equatable {
     try store.requireRetained(retention)
     if phase == .retained, let recoveryInstallation {
       try recoveryInstallation.releaseKeep(in: store.packDirectory(), io: io)
-    }
-    guard retention.kind == .publication else {
-      guard phase == .retained else { throw invalidRecoveryMetadata() }
-      return
     }
     let guards = try sourceGuards()
     let branch = retention.owner.branch
@@ -124,6 +119,22 @@ struct WorktreeRecoveryHandoff: Codable, Equatable {
       try save(persist) { $0.phase = .sourceInstalled }
     }
     guard phase == .sourceInstalled else { throw invalidRecoveryMetadata() }
+  }
+
+  func verifyRecoveryPack(
+    repository: WorktreeRepository, store: WorktreeRecoveryStore.Locked,
+    budget: WorktreeObjectBudget
+  ) throws {
+    guard phase == .sourceInstalled, let installation = recoveryInstallation,
+      installation.operationID == retention.operationID,
+      installation.generation == retention.generation,
+      installation.artifact == recoveryArtifact
+    else { throw invalidRecoveryMetadata() }
+    try store.requireRetained(retention)
+    try installation.synchronizeInstalled(
+      in: store.packDirectory(), format: repository.identity.format, io: repository.io,
+      deadline: budget.deadline)
+    try store.verifyRetentionClosure(retention, git: repository.git, budget: budget)
   }
 
   /// Keep ownership survives staging disposal and is retired only after the
@@ -194,9 +205,7 @@ extension WorktreeRepository {
     revalidate: () throws -> Void, sourceGuards: () throws -> WorktreeSourceGuards
   ) throws {
     let id = handoff.retention.operationID
-    if handoff.phase == .sourceInstalled
-      || (handoff.retention.kind == .removal && handoff.phase == .retained)
-    {
+    if handoff.phase == .sourceInstalled {
       try revalidate()
       try persist(handoff)
       try store.requireRetained(handoff.retention)

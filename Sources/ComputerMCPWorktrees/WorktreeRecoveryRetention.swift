@@ -48,8 +48,7 @@ struct WorktreeRecoveryRetention: Codable, Equatable {
       for oid in oids { reasons[oid, default: []].insert(.privateReflog) }
     }
     guard Set(roots) == Set(reasons.keys) else { throw invalidRecoveryMetadata() }
-    if kind == .publication, registration.publishedOID != nil, expectedOID != objects.metadata.head
-    {
+    if registration.publishedOID != nil, expectedOID != objects.metadata.head {
       reasons[expectedOID, default: []].insert(.publishedReplacement)
     }
     let matching = Dictionary(
@@ -144,7 +143,7 @@ struct WorktreeRecoveryRetention: Codable, Equatable {
         record.revision < Int64.max - 2, record.state != .releasing,
         record.claims.filter({ $0.operationID == operationID }).allSatisfy({
           $0.reason == .publishedReplacement
-            ? kind == .publication && $0.capture == nil && $0.rootOID == expectedOID
+            ? $0.capture == nil && $0.rootOID == expectedOID
             : $0.capture == capture && roots.contains($0.rootOID)
         })
       else { throw invalidRecoveryMetadata() }

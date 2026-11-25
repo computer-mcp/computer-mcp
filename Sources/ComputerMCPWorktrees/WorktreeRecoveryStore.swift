@@ -295,14 +295,27 @@ extension WorktreeRecoveryStore {
 
     func requireRetained(_ retention: WorktreeRecoveryRetention) throws {
       let current = try durableCatalog().catalog
-      guard let intent = current.intents.first(where: { $0.id == retention.operationID })
+      try retention.validate(in: current, repository: opened.identity.repository)
+      guard let intent = current.intents.first(where: { $0.id == retention.operationID }),
+        intent.kind == retention.kind, try intent.requestDigest == retention.requestDigest(),
+        intent.selections == retention.admitted.map(\.selection),
+        let anchors = try validateAnchors(for: current)
       else { throw invalidRecoveryMetadata() }
-      try requireRetention(retention, intent: intent, catalog: current)
       let byID = recordIndices(current)
       for record in retention.retained {
-        guard let index = byID[record.id], current.records[index] == record else {
+        guard let index = byID[record.id] else { throw invalidRecoveryMetadata() }
+        var observed = current.records[index]
+        guard observed.revision >= record.revision,
+          Set(record.dependencies).isSubset(of: observed.dependencies)
+        else { throw invalidRecoveryMetadata() }
+        observed.revision = record.revision
+        observed.dependencies = record.dependencies
+        guard observed == record else {
           throw invalidRecoveryMetadata()
         }
+        let contents = anchorBytes(record)
+        guard try opened.io.read(anchor(record.id), in: anchors, limit: contents.count) == contents
+        else { throw invalidRecoveryMetadata() }
       }
     }
 

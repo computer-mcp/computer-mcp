@@ -38,7 +38,7 @@ struct WorktreeRecoverySourcePublication: Codable, Equatable {
   mutating func complete(
     in owner: WorktreeRepository, lock: RepositoryLock,
     authorize: (DerivedProjectRecord) throws -> Void,
-    verifyRetention: () throws -> Void, completeCatalog: () throws -> Void,
+    verifyRetention: () throws -> Void, completeCatalog: (WorktreeSourceGuards) throws -> Void,
     persist: (Self) throws -> Void
   ) throws -> WorktreePublication {
     guard let registration = record.worktree, repository == owner.identity,
@@ -64,6 +64,14 @@ struct WorktreeRecoverySourcePublication: Codable, Equatable {
       try authorize(original)
       let current = try owner.store.records().first { $0.projectID == original.projectID }
       guard current == original || (allowUpdated && current == updated)
+      else { throw DerivedProjectStoreError.revisionConflict }
+      let expectedProtection = ProtectedWorktreeBranch(
+        repository: repository.common, branchID: registration.branchID, branch: branch,
+        base: registration.base, baseOID: registration.baseOID,
+        publishedOID: current == updated ? target : receipt.expected,
+        worktreeID: original.provenance.worktreeID, mergedOID: registration.mergedOID,
+        baseHistory: registration.baseHistory)
+      guard try owner.store.protectedBranches().contains(expectedProtection)
       else { throw DerivedProjectStoreError.revisionConflict }
     }
     try validate(allowUpdated: phase != .sourcePublishing)
@@ -124,7 +132,7 @@ struct WorktreeRecoverySourcePublication: Codable, Equatable {
     guard phase == .ledger,
       try owner.store.records().first(where: { $0.projectID == original.projectID }) == updated
     else { throw invalidRecoveryMetadata() }
-    try completeCatalog()
+    try completeCatalog(protection)
     try save(persist) { $0.phase = .finished }
     try release(protection, branches: branches, persist: persist)
     return .init(projectID: original.projectID, operationID: operationID, oid: target)

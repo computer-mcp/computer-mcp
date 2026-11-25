@@ -27,19 +27,44 @@ extension WorktreeStorage {
     }
   }
 
-  package func removalOutcome(projectID: String, operationID: UUID) throws
-    -> WorktreeOperationOutcome
-  {
+  package func removalOutcome(
+    projectID: String, operationID: UUID, registrationRemoved: () throws -> Bool = { false }
+  ) throws -> WorktreeOperationOutcome {
     guard
       let data = try journal(
-        projectID + ".json", in: journals.appendingPathComponent("removals"))
+        projectID + ".json", in: journals.appendingPathComponent("removals"),
+        limit: WorktreeRecoveryCatalog.byteLimit)
     else { return .notStarted }
     let journal = try JSONDecoder().decode(WorktreeRemovalJournal.self, from: data)
     // A later removal journal replaces only a terminal earlier one.
     guard journal.operationID == operationID else { return .notStarted }
+    guard journal.record.projectID == projectID else { return .uncertain }
     switch journal.phase {
+    case .unregistering:
+      // Unregistration is the final mutation. Its commit can precede the
+      // terminal journal write, including when recovery runs without the source.
+      guard journal.guards == nil, let reconciliation = journal.reconciliation,
+        reconciliation.finished, reconciliation.removalID == operationID,
+        journal.terminal?.receipts != nil,
+        let bytes = try self.journal(projectID + ".json", in: journals)
+      else { return .uncertain }
+      let creation = try JSONDecoder().decode(WorktreeCreationJournal.self, from: bytes)
+      guard creation.id == projectID, creation.phase == .removed,
+        creation.operationID == journal.record.provenance.worktreeID,
+        creation.repository == journal.repository, creation.record.source == journal.record.source,
+        creation.record.provenance == journal.record.provenance,
+        creation.branchID == journal.record.worktree?.branchID,
+        reconciliation.owner.branchID == creation.branchID,
+        reconciliation.owner.source == journal.record.source,
+        reconciliation.owner.worktreeID == creation.operationID,
+        reconciliation.finalCapture.storageGeneration == reconciliation.owner.storageGeneration,
+        try registrationRemoved()
+      else { return .uncertain }
+      fallthrough
     case .finished:
-      guard let oid = journal.oid, let branch = journal.record.worktree?.branch else {
+      guard let oid = journal.oid, let branch = journal.record.worktree?.branch,
+        journal.repository.format.containsRecoveryOID(oid)
+      else {
         return .uncertain
       }
       return .removed(
@@ -47,13 +72,14 @@ extension WorktreeStorage {
           projectID: journal.record.projectID, branch: branch, oid: oid,
           terminationWarnings: journal.terminationWarnings ?? []))
     case .abandoned: return .refused
-    case .closing, .preserved, .content, .repository, .runtime, .unregistering: return .uncertain
+    case .closing, .preserved, .content, .repository, .runtime, .reconciling:
+      return .uncertain
     }
   }
 
-  private func journal(_ name: String, in directory: URL) throws -> Data? {
+  private func journal(_ name: String, in directory: URL, limit: Int = 131_072) throws -> Data? {
     guard FileManager.default.fileExists(atPath: directory.path) else { return nil }
-    return try WorktreeJournalIO().read(name, in: WorktreeDirectory(directory), limit: 131_072)
+    return try WorktreeJournalIO().read(name, in: WorktreeDirectory(directory), limit: limit)
   }
 }
 

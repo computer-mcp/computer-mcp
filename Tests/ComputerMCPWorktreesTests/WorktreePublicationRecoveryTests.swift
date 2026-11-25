@@ -4,7 +4,7 @@ import Testing
 @testable import ComputerMCPWorktrees
 
 struct WorktreePublicationRecoveryTests {
-  @Test func unchangedPublicationRetainsMixedProtectionOutcome() throws {
+  @Test func unchangedPublicationRefusesMissingRetainedAnchor() throws {
     try fixture { directory in
       let f = try WorktreeFixture(directory)
       let original = try f.service()
@@ -20,7 +20,7 @@ struct WorktreePublicationRecoveryTests {
       }
       try git.run(["reset", "--hard", tip])
       let failure = PublicationPhaseFailure(
-        phase: "publishing",
+        phase: "sourcePublishing",
         journal: f.storage.journals.appendingPathComponent(
           "publications/" + created.projectID + ".json"))
       let service = try f.service(journalIO: .init(beforeDirectorySync: { try failure.check() }))
@@ -28,17 +28,18 @@ struct WorktreePublicationRecoveryTests {
         try service.publish(projectID: created.projectID, preserving: roots) { _ in }
       }
       let pending = try #require(try original.readPublication(created.projectID))
-      try f.raw(["update-ref", original.preservationRef(pending.record, oid: roots[0]), roots[0]])
+      try removeRetainedAnchor(roots[0], publication: pending, fixture: f)
       #expect(throws: WorktreeError.self) {
         try original.publish(projectID: created.projectID) { _ in }
       }
-      #expect(try original.readPublication(created.projectID)?.phase == .publishing)
+      #expect(try original.readPublication(created.projectID)?.phase == .sourcePublishing)
       #expect(try f.raw(["rev-parse", "refs/heads/" + created.branch]) == tip)
     }
   }
 
   @Test(arguments: [false, true], [false, true])
-  func unchangedPublicationRecoversAcrossRefTransaction(afterCommit: Bool, extraRoots: Bool) throws
+  func unchangedPublicationRecoversAcrossDurableSourceSeal(afterCommit: Bool, extraRoots: Bool)
+    throws
   {
     try fixture { directory in
       let f = try WorktreeFixture(directory)
@@ -57,19 +58,18 @@ struct WorktreePublicationRecoveryTests {
         roots.append(try git.run(["rev-parse", "HEAD"]))
         try git.run(["reset", "--hard", tip])
       }
+      let expectedPhase: WorktreePublicationJournal.Phase =
+        afterCommit ? .sourcePublished : .sourcePublishing
       let failure = PublicationPhaseFailure(
-        phase: "publishing",
+        phase: expectedPhase.rawValue,
         journal: f.storage.journals.appendingPathComponent(
           "publications/" + created.projectID + ".json"))
-      let service =
-        try afterCommit
-        ? f.service(executor: LostPublicationAcknowledgement(base: f.executor))
-        : f.service(journalIO: .init(beforeDirectorySync: { try failure.check() }))
+      let service = try f.service(journalIO: .init(beforeDirectorySync: { try failure.check() }))
       #expect(throws: (any Error).self) {
         try service.publish(projectID: created.projectID, preserving: roots) { _ in }
       }
       let pending = try #require(try original.readPublication(created.projectID))
-      #expect(pending.phase == .publishing)
+      #expect(pending.phase == expectedPhase)
       #expect(pending.expectedOID == pending.capturedOID)
       #expect(
         try f.raw(["reflog", "show", "-1", "--format=%gs", "refs/heads/" + created.branch])
@@ -80,17 +80,14 @@ struct WorktreePublicationRecoveryTests {
       let result = try original.publish(projectID: created.projectID) { _ in }
       #expect(result.operationID == pending.operationID)
       #expect(result.oid == tip)
-      for oid in roots {
-        #expect(
-          try f.raw(["rev-parse", original.preservationRef(pending.record, oid: oid)]) == oid)
-      }
+      #expect(try Set(roots).isSubset(of: f.recoveryRecords().map(\.oid)))
       #expect(try original.readPublication(created.projectID)?.phase == .finished)
     }
   }
 
   @Test(arguments: [
-    "captured", "copied", "verified", "installing", "installed", "publishing", "published",
-    "ledger", "finished",
+    "captured", "verified", "retaining", "retained", "sourceInstalling", "sourceInstalled",
+    "sourcePublishing", "sourcePublished", "ledger", "finished",
   ])
   func everyDurablePhaseRecoversWithoutRevertingRefs(phase: String) throws {
     try fixture { directory in
@@ -110,7 +107,7 @@ struct WorktreePublicationRecoveryTests {
       let recovered = try f.service()
       // Incomplete input is rejected once, then a fresh call captures it again.
       if let pending = try recovered.readPublication(created.projectID),
-        [.captured, .copied].contains(pending.phase)
+        pending.phase == .captured
       {
         #expect(throws: WorktreeError.self) {
           try recovered.publish(projectID: created.projectID) { _ in }
@@ -203,6 +200,11 @@ private struct LostPublicationAcknowledgement: WorktreeGitExecuting {
   func execute(_ command: WorktreeGitCommand) throws -> WorktreeGitResult {
     try base.execute(command)
   }
+  func executeBounded(
+    _ command: WorktreeGitCommand, fileOutput: WorktreeGitFileOutput?, fileSizeLimit: Int?
+  ) throws -> WorktreeGitResult {
+    try base.executeBounded(command, fileOutput: fileOutput, fileSizeLimit: fileSizeLimit)
+  }
   func withPreparedTransaction(_ command: WorktreeGitCommand, _ body: () throws -> Void) throws {
     try base.withPreparedTransaction(command, body)
     throw CancellationError()
@@ -216,11 +218,18 @@ extension WorktreePublicationRecoveryTests {
       let service = try f.service()
       let created = try service.create(name: "gc")
       let tip = try f.privateCommit(service, projectID: created.projectID)
-      var calls = 0
+      var collected = false
       let result = try service.publish(projectID: created.projectID) { _ in
-        calls += 1
-        if calls == 3 { try f.raw(["gc", "--prune=now"]) }
+        guard !collected, let journal = try service.readPublication(created.projectID),
+          journal.phase == .sourcePublishing, let pack = journal.pack
+        else { return }
+        let keep = f.repository.appendingPathComponent(".git/objects/pack/" + pack + ".keep")
+        #expect(FileManager.default.fileExists(atPath: keep.path))
+        try pruneWithoutRewritingReferences(f)
+        #expect(FileManager.default.fileExists(atPath: keep.path))
+        collected = true
       }
+      #expect(collected)
       #expect(result.oid == tip)
       #expect(try f.raw(["cat-file", "-t", tip]) == "commit")
       let journal = try service.readPublication(created.projectID)!
@@ -253,7 +262,7 @@ extension WorktreePublicationRecoveryTests {
         FileManager.default.fileExists(
           atPath: directory.appendingPathComponent(journal.pack! + ".keep").path))
       do {
-        try f.raw(["gc", "--prune=now"])
+        try pruneWithoutRewritingReferences(f)
       } catch WorktreeError.commandFailed(let message) {
         // An incomplete shared pack cannot resolve this private worktree HEAD.
         #expect(message.contains("bad object"))
@@ -274,7 +283,7 @@ private final class PackInstallFailure: @unchecked Sendable {
   func check() throws {
     guard !fired, let data = try? Data(contentsOf: journal),
       let value = try? JSONDecoder().decode(WorktreePublicationJournal.self, from: data),
-      value.phase == .installing, let pack = value.pack,
+      value.phase == .sourceInstalling, let pack = value.pack,
       FileManager.default.fileExists(
         atPath:
           URL(fileURLWithPath: value.repository.objects.path).appendingPathComponent(
@@ -287,7 +296,7 @@ private final class PackInstallFailure: @unchecked Sendable {
 }
 
 extension WorktreePublicationRecoveryTests {
-  @Test func mixedRefTransactionIsRetainedForReconciliation() throws {
+  @Test func changedPublicationRefusesMissingRetainedAnchor() throws {
     try fixture { directory in
       let f = try WorktreeFixture(directory)
       let original = try f.service()
@@ -295,7 +304,7 @@ extension WorktreePublicationRecoveryTests {
       let base = try f.raw(["rev-parse", "HEAD"])
       let tip = try f.privateCommit(original, projectID: created.projectID)
       let failure = PublicationPhaseFailure(
-        phase: "publishing",
+        phase: "sourcePublishing",
         journal: f.storage.journals.appendingPathComponent(
           "publications/" + created.projectID + ".json"))
       let service = try f.service(journalIO: .init(beforeDirectorySync: { try failure.check() }))
@@ -303,7 +312,7 @@ extension WorktreePublicationRecoveryTests {
         try service.publish(projectID: created.projectID) { _ in }
       }
       let journal = try original.readPublication(created.projectID)!
-      try f.raw(["update-ref", original.preservationRef(journal.record, oid: tip), tip])
+      try removeRetainedAnchor(tip, publication: journal, fixture: f)
       #expect(throws: WorktreeError.self) {
         try original.publish(projectID: created.projectID) { _ in }
       }
@@ -311,4 +320,22 @@ extension WorktreePublicationRecoveryTests {
       #expect(try f.raw(["cat-file", "-t", tip]) == "commit")
     }
   }
+}
+
+private func removeRetainedAnchor(
+  _ oid: String, publication: WorktreePublicationJournal, fixture: WorktreeFixture
+) throws {
+  let selected = try #require(publication.handoff?.retention.admitted.first { $0.oid == oid })
+  let directory = try fixture.recoveryGitDirectory()
+  try fixture.raw([
+    "--git-dir=" + directory.path, "update-ref", "-d",
+    "refs/recovery/" + selected.id.uuidString.lowercased(), oid,
+  ])
+}
+
+private func pruneWithoutRewritingReferences(_ fixture: WorktreeFixture) throws {
+  try fixture.raw([
+    "-c", "gc.packRefs=false", "-c", "gc.reflogExpire=never",
+    "-c", "gc.reflogExpireUnreachable=never", "gc", "--prune=now",
+  ])
 }

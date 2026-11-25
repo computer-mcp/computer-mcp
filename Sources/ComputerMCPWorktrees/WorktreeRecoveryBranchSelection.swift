@@ -46,7 +46,7 @@ struct WorktreeRecoveryBranchSelection: Codable, Equatable {
         $0.owner == selectedOwner && $0.base.ref == protection.base
           && $0.base.oid == protection.baseOID
           && $0.base.history == protection.baseHistory && $0.state == .retained
-          && $0.revision < Int64.max - 2 && !$0.dependencies.contains(operationID)
+          && $0.revision < Int64.max - 3 && !$0.dependencies.contains(operationID)
       })
     else { throw invalidRecoveryMetadata() }
     let selected = matching.filter { force || originalBaseObjects.contains($0.oid) }

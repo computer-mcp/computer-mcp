@@ -1,9 +1,8 @@
 import Foundation
 
-/// A fixed-point revocation pass cannot edit path authority or connection ceilings.
-/// Request, consent and execution dependencies remain live. Identical path checks
-/// and request-free invocation resolutions can be reused within this pass.
-private final class PathValidationMemo {
+/// Path authority, sandbox policy and connection ceilings are constant within
+/// one fixed-point pass. Request, consent and execution dependencies stay live.
+private final class BasisValidationMemo {
   private struct Key: Hashable {
     let path: PathAccessBasis
     let principal: Principal
@@ -19,6 +18,13 @@ private final class PathValidationMemo {
     let basis: Set<AuthorizationBasis>
   }
   private var resolutions: [ResolutionKey: InvocationResolution] = [:]
+
+  private struct SandboxKey: Hashable {
+    let basis: SandboxAccessBasis
+    let principal: Principal
+    let connectionID: String?
+  }
+  private var sandboxResults: [SandboxKey: Bool] = [:]
 
   func resolve(
     _ requirements: InvocationRequirements, principal: Principal,
@@ -40,6 +46,17 @@ private final class PathValidationMemo {
     if let result = results[key] { return result }
     let result = operation()
     results[key] = result
+    return result
+  }
+
+  func validateSandbox(
+    _ basis: SandboxAccessBasis, principal: Principal, connectionID: String?,
+    operation: () -> Bool
+  ) -> Bool {
+    let key = SandboxKey(basis: basis, principal: principal, connectionID: connectionID)
+    if let result = sandboxResults[key] { return result }
+    let result = operation()
+    sandboxResults[key] = result
     return result
   }
 }
@@ -1726,7 +1743,7 @@ package struct PermissionLedger: Equatable, Sendable, Codable {
       uniqueKeysWithValues: standingPrincipals.map {
         ($0, profileDigest(for: $0, environmentDigest: environmentDigest))
       })
-    let paths = PathValidationMemo()
+    let memo = BasisValidationMemo()
     for (principal, consents) in issuedConsents {
       for consent in consents
       where !consent.mode.isSandbox && !retiredConsents.contains(consent.identity) {
@@ -1762,7 +1779,7 @@ package struct PermissionLedger: Equatable, Sendable, Codable {
             principal: request.content.principal,
             authorizationID: owner,
             now: now,
-            currentProfileDigest: profileDigests[request.content.principal], paths: paths)
+            currentProfileDigest: profileDigests[request.content.principal], memo: memo)
         {
           requests[id]!.status = .revoked
           changed = true
@@ -1771,7 +1788,7 @@ package struct PermissionLedger: Equatable, Sendable, Codable {
       for (id, authorization) in authorizations where !authorization.revoked {
         if !isValid(
           authorization, currentProfileDigest: profileDigests[authorization.invocation.principal],
-          paths: paths)
+          memo: memo)
         {
           authorizations[id]!.revoked = true
           changed = true
@@ -1806,7 +1823,7 @@ package struct PermissionLedger: Equatable, Sendable, Codable {
 
   private func isValid(
     _ authorization: InvocationAuthorization, currentProfileDigest: String? = nil,
-    paths: PathValidationMemo? = nil
+    memo: BasisValidationMemo? = nil
   ) -> Bool {
     guard !authorization.revoked,
       authorization.mode.isSandbox
@@ -1819,7 +1836,7 @@ package struct PermissionLedger: Equatable, Sendable, Codable {
         requirements: authorization.requirements,
         principal: authorization.invocation.principal,
         authorizationID: authorization.id,
-        currentProfileDigest: currentProfileDigest, paths: paths)
+        currentProfileDigest: currentProfileDigest, memo: memo)
     else { return false }
     return true
   }
@@ -1884,7 +1901,7 @@ package struct PermissionLedger: Equatable, Sendable, Codable {
   private func basisRemainsValid(
     _ basis: Set<AuthorizationBasis>, requirements: InvocationRequirements, principal: Principal,
     authorizationID: UUID? = nil, now: Date? = nil, currentProfileDigest: String? = nil,
-    paths: PathValidationMemo? = nil
+    memo: BasisValidationMemo? = nil
   ) -> Bool {
     var limits = currentLimits[principal] ?? .init()
     let connection = basis.compactMap { element -> (String, ManagedPolicy)? in
@@ -1904,7 +1921,7 @@ package struct PermissionLedger: Equatable, Sendable, Codable {
     }
     let resolution =
       admittedRequests.isEmpty
-      ? (paths?.resolve(requirements, principal: principal, basis: basis, operation: resolve)
+      ? (memo?.resolve(requirements, principal: principal, basis: basis, operation: resolve)
         ?? resolve())
       : resolve()
     guard resolution.denial == nil, authorizationID == nil || resolution.isAllowed else {
@@ -2021,31 +2038,36 @@ package struct PermissionLedger: Equatable, Sendable, Codable {
             path, principal: principal, permissions: permissions, mode: mode,
             limits: limits, sandbox: sandbox)
         }
-        return paths?.validate(
+        return memo?.validate(
           path, principal: principal, mode: mode, connectionID: connection?.0,
           ceiling: connectionCeiling?.identity, operation: validate) ?? validate()
       case .sandbox(let original):
         guard mode.isSandbox else { return true }
-        let current =
-          sandboxSettings.settings(for: principal, sourceProjectID: original.projectID)
-        if case .plugin(let identity) = principal, sandboxSettings.providers[identity] != nil {
-          guard current.network == original.settings.network,
-            current.networkCeiling == original.settings.networkCeiling,
-            current.deniedReadRules == original.settings.deniedReadRules,
-            Set(current.readExceptions.map(\.identity))
-              == Set(original.settings.readExceptions.map(\.identity))
-          else { return false }
-        }
-        return current.network.preservesUnboundedRule(of: original.settings.network)
-          && Set(original.settings.deniedReadRules.map(\.identity)).isSubset(
-            of: Set(current.deniedReadRules.map(\.identity)))
-          && !current.isMoreRestrictive(
-            than: original.settings, trustedHosts: Set(trustedHosts.map(\.host)))
-          && !limits.deniedReadLocations.contains { path in
-            !original.managedDeniedReadLocations.contains { $0.contains(path) }
+        let validate = { [self] in
+          let current =
+            sandboxSettings.settings(for: principal, sourceProjectID: original.projectID)
+          if case .plugin(let identity) = principal, sandboxSettings.providers[identity] != nil {
+            guard current.network == original.settings.network,
+              current.networkCeiling == original.settings.networkCeiling,
+              current.deniedReadRules == original.settings.deniedReadRules,
+              Set(current.readExceptions.map(\.identity))
+                == Set(original.settings.readExceptions.map(\.identity))
+            else { return false }
           }
-          && !current.effectiveNetwork(limits: limits, trustedHosts: Set(trustedHosts.map(\.host)))
-            .isMoreRestrictive(than: original.network, trustedHosts: Set(trustedHosts.map(\.host)))
+          let hostNames = Set(trustedHosts.map(\.host))
+          return current.network.preservesUnboundedRule(of: original.settings.network)
+            && Set(original.settings.deniedReadRules.map(\.identity)).isSubset(
+              of: Set(current.deniedReadRules.map(\.identity)))
+            && !current.isMoreRestrictive(than: original.settings, trustedHosts: hostNames)
+            && !limits.deniedReadLocations.contains { path in
+              !original.managedDeniedReadLocations.contains { $0.contains(path) }
+            }
+            && !current.effectiveNetwork(limits: limits, trustedHosts: hostNames)
+              .isMoreRestrictive(than: original.network, trustedHosts: hostNames)
+        }
+        return memo?.validateSandbox(
+          original, principal: principal, connectionID: connection?.0, operation: validate)
+          ?? validate()
       }
     }
   }

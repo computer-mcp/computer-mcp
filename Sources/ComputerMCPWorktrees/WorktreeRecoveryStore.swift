@@ -762,17 +762,35 @@ extension WorktreeRecoveryStore {
       }
     }
 
+    enum ReleaseAdmission {
+      case admitted
+      case capacityRefused(String)
+    }
+
     func prepareRelease(_ receipts: [WorktreeRecoveryReleaseReceipt]) throws {
+      if case .capacityRefused(let reason) = try admitRelease(receipts) {
+        throw WorktreeError.busy(reason)
+      }
+    }
+
+    func admitRelease(_ receipts: [WorktreeRecoveryReleaseReceipt]) throws -> ReleaseAdmission {
       let batch = try releaseBatch(receipts)
       let previous = try durableCatalog()
       var next = previous.catalog
-      if try releaseIsArchived(batch, catalog: next) { return }
+      if try releaseIsArchived(batch, catalog: next) { return .admitted }
       if let intent = next.intents.first(where: { $0.id == batch.operationID }) {
         try requireRelease(batch, intent: intent, catalog: next)
-        return
+        return .admitted
       }
       try insertRelease(batch, in: &next)
-      try write(next, replacing: previous.bytes)
+      let bytes: Data
+      do {
+        bytes = try validatedCatalogBytes(next)
+      } catch WorktreeError.busy(let reason) {
+        return .capacityRefused(reason)
+      }
+      try publishCatalog(bytes, replacing: previous.bytes)
+      return .admitted
     }
 
     private func insertRelease(_ batch: ReleaseBatch, in next: inout WorktreeRecoveryCatalog)
@@ -786,14 +804,11 @@ extension WorktreeRecoveryStore {
         let id = receipt.selection.recordID
         guard let index = indices[id], try releaseReceipt(recordID: id) == nil
         else { throw invalidRecoveryMetadata() }
-        var record = next.records[index]
+        let record = next.records[index]
         guard record.selection == receipt.selection, record.owner == receipt.owner,
           record.state == .retained, record.dependencies.isEmpty
         else { throw invalidRecoveryMetadata() }
-        record.state = .releasing
-        record.revision += 1
-        record.dependencies = [batch.operationID]
-        next.records[index] = record
+        next.records[index] = record.admittingRelease(batch.operationID)
       }
       next.intents.append(
         .init(
@@ -839,9 +854,17 @@ extension WorktreeRecoveryStore {
     }
 
     private func write(_ catalog: WorktreeRecoveryCatalog, replacing previous: Data) throws {
+      try publishCatalog(validatedCatalogBytes(catalog), replacing: previous)
+    }
+
+    private func validatedCatalogBytes(_ catalog: WorktreeRecoveryCatalog) throws -> Data {
       let bytes = try recoveryJSON(catalog)
       try catalog.validate(
         repository: opened.identity.repository, generation: generation, byteCount: bytes.count)
+      return bytes
+    }
+
+    private func publishCatalog(_ bytes: Data, replacing previous: Data) throws {
       try opened.verify()
       if bytes != previous {
         try opened.io.write(

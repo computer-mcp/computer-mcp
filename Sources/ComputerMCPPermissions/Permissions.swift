@@ -40,15 +40,18 @@ package enum Permission: Hashable, Sendable, Codable {
     }
   }
 
-  func accepts(_ value: PermissionValue) -> Bool {
+  /// Grant levels in order from least to most permissive.
+  var grantLevels: [PermissionValue] {
     switch self {
-    case .project: value == .read || value == .write
-    case .filesAndFolders: value == .read
-    case .plugin: value == .use
-    case .mcpServer: value == .read || value == .all
-    default: value == .access
+    case .project: [.read, .write]
+    case .filesAndFolders: [.read]
+    case .plugin: [.use]
+    case .mcpServer: [.read, .all]
+    default: [.access]
     }
   }
+
+  func accepts(_ value: PermissionValue) -> Bool { grantLevels.contains(value) }
 }
 
 package enum PermissionValue: String, Hashable, Sendable, Codable {

@@ -361,7 +361,7 @@ extension PrivacyRequest {
 }
 
 struct PrivacyManagedSource: Identifiable, Hashable, Sendable {
-  enum State: Hashable, Sendable { case active, unreadable }
+  enum State: Hashable, Sendable { case active, unreadable, absent }
 
   let id: String
   let name: String
@@ -370,6 +370,7 @@ struct PrivacyManagedSource: Identifiable, Hashable, Sendable {
   var profileID: GatewayProfileID?
   var provider: PluginIdentity?
   var revision: String?
+  var failure: String?
 }
 
 struct PrivacySystemPermission: Identifiable, Hashable, Sendable {
@@ -423,6 +424,7 @@ enum PrivacyRequestAnswer: Hashable, Sendable {
 
 @MainActor
 protocol PrivacySecurityService: AnyObject {
+  func ownerPolicyEditorService() async throws -> OwnerPolicyEditorService
   func privacySnapshot() async throws -> PrivacySnapshot
   func answer(request id: String, with answer: PrivacyRequestAnswer, reviewed: PrivacySnapshot)
     async throws
@@ -437,6 +439,12 @@ protocol PrivacySecurityService: AnyObject {
   func openSystemSettings(for permission: PrivacySystemPermission.Kind)
 }
 
+extension PrivacySecurityService {
+  func ownerPolicyEditorService() async throws -> OwnerPolicyEditorService {
+    throw GatewayPermissionError.localOwnerRequired
+  }
+}
+
 @MainActor
 final class PrivacySecurityModel: ObservableObject {
   @Published var path: [PrivacyRoute] = []
@@ -449,6 +457,10 @@ final class PrivacySecurityModel: ObservableObject {
   init(service: any PrivacySecurityService, clientAccess: ClientAccessModel? = nil) {
     self.clientAccess = clientAccess
     self.service = service
+  }
+
+  func ownerPolicyEditorService() async throws -> OwnerPolicyEditorService {
+    try await service.ownerPolicyEditorService()
   }
 
   func refresh() async {
@@ -579,6 +591,8 @@ final class PrivacySecurityModel: ObservableObject {
         guard $0.permission == permission, ids.contains($0.principalID),
           $0.object?.isRegistered != false
         else { return false }
+        // An MCP wildcard is a fallback rule. Only a concrete server can be called.
+        if permission == .mcpServers, $0.object?.id == "*" { return false }
         if case .granted = $0.effectiveValue { return true }
         return false
       }.map(\.principalID)

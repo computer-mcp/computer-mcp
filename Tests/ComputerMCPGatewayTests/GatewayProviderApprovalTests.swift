@@ -1072,6 +1072,38 @@ struct GatewayProviderApprovalTests {
     }
   }
 
+  @Test func h12DefaultProviderGrantIdentitiesSurviveAdmissionAndNetworkEdit() throws {
+    let f = try ProviderApprovalFixture()
+    defer { f.remove() }
+    let server = MCPServerConfig(id: "default-grants", transport: .stdio, command: "/usr/bin/true")
+    let review = try GatewayProviderReview(
+      server: server, configuration: f.database.configurationState())
+    let defaults = Permissions.newPrincipal
+    let approved = try f.approve(review, permissions: defaults)
+    #expect(approved.permissions.entries == defaults.entries)
+    #expect(approved.permissions.grantIDs.values.allSatisfy { !$0.isDraft })
+    try f.store.readWithDatabase { _, ledger in
+      #expect(ledger.permissions(for: approved.principal) == approved.permissions)
+    }
+
+    let binding = try f.service.authorizeProviderExecution(
+      review: review, registrationID: server.id, caller: nil, retryIDs: [])
+    #expect(binding.providerAuthorization.invocation.principal == approved.principal)
+    try f.store.readWithDatabase { _, ledger in
+      #expect(ledger.permissions(for: approved.principal) == approved.permissions)
+    }
+
+    let view = try f.view()
+    let edited = try f.service.approveProvider(
+      review, permissions: approved.permissions, fullAccess: false,
+      sandboxSettings: .init(defaults: .init(network: .trusted)), owner: f.owner,
+      expectedProviderRevision: approved.revision, expectedRevision: view.revision,
+      expectedEpoch: #require(view.epoch), editingApproval: true)
+    #expect(edited.sandboxSettings?.defaults.network.configuration == .trusted)
+    #expect(edited.permissions == approved.permissions)
+    #expect(try f.view().providers.first?.permissions == approved.permissions)
+  }
+
   @Test func h12ReviewedSandboxChoicesReceiveFreshEvidenceAfterRestore() throws {
     let f = try ProviderApprovalFixture()
     defer { f.remove() }

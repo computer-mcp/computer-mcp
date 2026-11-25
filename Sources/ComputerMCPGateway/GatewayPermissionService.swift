@@ -270,12 +270,15 @@ package final class GatewayPermissionService: @unchecked Sendable {
 
   package func setOwnerPolicy(
     _ document: Data?, profileID: GatewayProfileID, owner: GatewayPermissionOwner,
-    expectedRevision: UInt64, now: Date = Date()
+    expectedRevision: UInt64, expectedEpoch: UUID? = nil, now: Date = Date()
   ) throws -> RevocationResult {
     let resolved = try document.map { try GatewayResolvedPolicy(bytes: $0, reader: policyReader) }
     return try transactionWithPolicy { database, ledger, policies in
       try owner.authorize()
       try Self.requireRevision(expectedRevision, database: database)
+      guard expectedEpoch.map({ $0 == ledger.authorizationEpochID }) ?? true else {
+        throw GatewayPermissionError.revisionConflict
+      }
       guard ledger.suspendedAuthority == nil, ledger.pendingEpochRecovery == nil else {
         throw PermissionModelError.authoritySuspended
       }
@@ -382,7 +385,7 @@ package final class GatewayPermissionService: @unchecked Sendable {
               ledger.isConsentValid(standing, for: principal),
               limits.modeDenial(standing.mode) == nil
             { standing.mode } else if profile?.fullAccess == true {
-              liveConnections[principal, default: []].compactMap { connection in
+              liveConnections[principal, default: []].compactMap { connection -> ExecutionMode? in
                 guard let consent = connection.consent, connection.attenuation.allowsFullAccess,
                   ledger.isConsentValid(consent, for: principal),
                   limits.modeDenial(consent.mode) == nil
@@ -627,7 +630,7 @@ package final class GatewayPermissionService: @unchecked Sendable {
     }
   }
 
-  private static func controlRevision(_ database: Database) throws -> UInt64 {
+  static func controlRevision(_ database: Database) throws -> UInt64 {
     guard
       let value = try Int64.fetchOne(
         database, sql: "SELECT revision FROM permissionControlRevision WHERE id = 1"), value >= 0
@@ -833,6 +836,10 @@ package final class GatewayPermissionService: @unchecked Sendable {
     guard let epoch, savedEpoch == epoch.uuidString else {
       throw GatewayPermissionError.profileUnavailable
     }
+    return try decodeProfile(row, id: id)
+  }
+
+  static func decodeProfile(_ row: Row, id: GatewayProfileID) throws -> ProfileGrant {
     let bytes: Data = row["payload"]
     guard bytes.count <= 4_194_304 else { throw PermissionPersistenceError.invalidCurrentState }
     let profile = try JSONDecoder().decode(ProfileGrant.self, from: bytes)

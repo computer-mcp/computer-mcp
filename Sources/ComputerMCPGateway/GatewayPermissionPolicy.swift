@@ -139,6 +139,20 @@ struct GatewayPermissionPolicySnapshot {
       }
   }
 
+  func ownerText(for target: GatewayOwnerPolicyTarget) -> String? {
+    let payload =
+      switch target {
+      case .profile(let id): owners[id.rawValue]?.record.payload
+      case .provider(let identity): providers[identity]?.0.ownerPolicy
+      }
+    return payload.flatMap { String(data: $0, encoding: .utf8) }
+  }
+
+  func savedProviderPolicy(_ identity: PluginIdentity) -> PolicyAvailability {
+    guard let owner = providers[identity], owner.0.ownerPolicy != nil else { return .absent }
+    return owner.1.map { .available($0.resolvedForProvider()) } ?? .unreadable
+  }
+
   func providerLimits(_ identity: PluginIdentity, epoch: UUID?, previous: ManagedLimits?)
     -> ManagedLimits
   {
@@ -146,8 +160,8 @@ struct GatewayPermissionPolicySnapshot {
     sources[.owner] = .absent
     if let owner = providers[identity], owner.0.ownerPolicy != nil {
       sources[.owner] =
-        owner.0.policyEpoch == epoch?.uuidString
-        ? owner.1.map { .available($0.resolvedForProvider()) } ?? .unreadable : .unreadable
+        epoch.map { owner.0.policyEpoch == $0.uuidString } == true
+        ? savedProviderPolicy(identity) : .unreadable
     }
     for (source, document) in documents {
       sources[source] = .available(document.resolvedForProvider())
@@ -173,7 +187,11 @@ struct GatewayPermissionPolicySnapshot {
   {
     guard let owner = owners[id.rawValue] else { return .absent }
     guard let epoch, owner.record.authorityEpoch == epoch.uuidString else { return .unreadable }
-    guard owner.record.payload != nil else { return .absent }
+    return savedOwnerPolicy(id, caller: caller)
+  }
+
+  func savedOwnerPolicy(_ id: GatewayProfileID, caller: GatewayCallerKind) -> PolicyAvailability {
+    guard let owner = owners[id.rawValue], owner.record.payload != nil else { return .absent }
     return owner.document.map { .available($0.resolved(for: caller)) } ?? .unreadable
   }
 

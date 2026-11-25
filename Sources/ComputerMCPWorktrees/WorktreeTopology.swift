@@ -25,7 +25,7 @@ extension WorktreeDirectory {
       let absolute = path.hasPrefix("/") ? path : parent.path + "/" + path
       guard let resolved = realpath(absolute, nil) else { throw Self.posixError() }
       defer { free(resolved) }
-      return try WorktreeDirectory(URL(fileURLWithPath: String(cString: resolved)))
+      return try WorktreeDirectory(physicalURL: URL(fileURLWithPath: String(cString: resolved)))
     }
     func storage(for git: WorktreeDirectory) throws -> [WorktreeDirectoryIdentity] {
       let common = try io.read("commondir", in: git, limit: 16_384).map {
@@ -57,7 +57,7 @@ extension WorktreeDirectory {
       }
       try checkout.verify()
       guard checkout.url.path != "/" else { return [] }
-      let parent = try WorktreeDirectory(checkout.url.deletingLastPathComponent())
+      let parent = try WorktreeDirectory(physicalURL: checkout.url.deletingLastPathComponent())
       guard parent.identity.device == device else { return [] }
       checkout = parent
     }
@@ -70,7 +70,7 @@ extension WorktreeDirectoryIdentity {
   package func containsDirectory(_ directory: Self) throws -> Bool {
     var path = URL(fileURLWithPath: directory.path)
     while true {
-      let current = try WorktreeDirectory(path).identity
+      let current = try WorktreeDirectory(physicalURL: path).identity
       if current.device == device, current.inode == inode { return true }
       guard path.path != "/" else { return false }
       path.deleteLastPathComponent()

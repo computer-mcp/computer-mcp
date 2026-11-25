@@ -2041,6 +2041,13 @@ package final class GatewayRuntime: GatewayToolServing, @unchecked Sendable {
     if let ownership = database?.mcpProcessOwnershipRoot { try rule(ownership.path, .hostData) }
     if let executions = database?.permissionExecutionRoot { try rule(executions.path, .hostData) }
     if let containers = database?.providerContainerRoot { try rule(containers.path, .hostData) }
+    if let worktrees = database?.worktreeStorage {
+      for storage in [
+        worktrees.content, worktrees.repositories, worktrees.runtime, worktrees.journals,
+      ] {
+        try rule(storage.path, .hostData)
+      }
+    }
     return rules
   }
 

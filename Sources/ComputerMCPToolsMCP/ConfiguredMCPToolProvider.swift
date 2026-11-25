@@ -196,7 +196,7 @@ package final class ConfiguredMCPToolProvider: GatewayToolProvider, @unchecked S
         id: tool.name,
         risk: policy.risk,
         requirement: server.requirement(for: policy),
-        projectRequirement: .optional,
+        projectRequirement: server.hostServices ? .required : .optional,
         usesNetwork: true,
         mcpReference: reference,
         equivalentCapabilityIDs: mcp.configuration.mcpCapabilityIDs(for: reference),

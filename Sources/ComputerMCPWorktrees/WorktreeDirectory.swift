@@ -20,15 +20,25 @@ package final class WorktreeDirectory {
   package let url: URL
   package let identity: WorktreeDirectoryIdentity
   let descriptor: Int32
+  private let usesPhysicalPath: Bool
 
-  package init(_ url: URL) throws {
-    let url = url.standardizedFileURL
+  package convenience init(_ url: URL) throws {
+    try self.init(url, usesPhysicalPath: false)
+  }
+
+  /// Open the exact POSIX canonical path supplied by source admission.
+  package convenience init(physicalURL: URL) throws {
+    try self.init(physicalURL, usesPhysicalPath: true)
+  }
+
+  private init(_ input: URL, usesPhysicalPath: Bool) throws {
+    let url = usesPhysicalPath ? input : input.standardizedFileURL
     let fd = open(url.path, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC)
     guard fd >= 0 else { throw Self.posixError() }
     var status = stat()
     var current = stat()
     guard fstat(fd, &status) == 0, lstat(url.path, &current) == 0,
-      url.resolvingSymlinksInPath().path == url.path,
+      Self.pathMatches(url, usesPhysicalPath: usesPhysicalPath),
       current.st_mode & S_IFMT == S_IFDIR,
       current.st_dev == status.st_dev, current.st_ino == status.st_ino
     else {
@@ -36,6 +46,7 @@ package final class WorktreeDirectory {
       throw WorktreeError.identityChanged("Directory identity changed: \(url.path)")
     }
     self.url = url
+    self.usesPhysicalPath = usesPhysicalPath
     descriptor = fd
     identity = Self.identity(url.path, status)
   }
@@ -44,7 +55,7 @@ package final class WorktreeDirectory {
 
   package func verify() throws {
     var current = stat()
-    guard url.resolvingSymlinksInPath().path == url.path,
+    guard Self.pathMatches(url, usesPhysicalPath: usesPhysicalPath),
       lstat(url.path, &current) == 0, current.st_mode & S_IFMT == S_IFDIR,
       Self.identity(url.path, current) == identity
     else { throw WorktreeError.identityChanged("Directory identity changed: \(url.path)") }
@@ -61,7 +72,8 @@ package final class WorktreeDirectory {
       }
       try synchronize()
     }
-    let child = try WorktreeDirectory(url.appendingPathComponent(name, isDirectory: true))
+    let child = try WorktreeDirectory(
+      url.appendingPathComponent(name, isDirectory: true), usesPhysicalPath: usesPhysicalPath)
     try verify()
     return child
   }
@@ -75,6 +87,14 @@ package final class WorktreeDirectory {
     guard !name.isEmpty, name != ".", name != "..", !name.contains("/"), !name.contains("\0") else {
       throw WorktreeError.unsafeConfiguration("Expected a single directory entry name.")
     }
+  }
+
+  private static func pathMatches(_ url: URL, usesPhysicalPath: Bool) -> Bool {
+    guard usesPhysicalPath else { return url.resolvingSymlinksInPath().path == url.path }
+    // Foundation can spell Darwin's physical /private/tmp using its /tmp symlink.
+    guard let resolved = realpath(url.path, nil) else { return false }
+    defer { free(resolved) }
+    return String(cString: resolved) == url.path
   }
 
   private static func identity(_ path: String, _ status: stat) -> WorktreeDirectoryIdentity {

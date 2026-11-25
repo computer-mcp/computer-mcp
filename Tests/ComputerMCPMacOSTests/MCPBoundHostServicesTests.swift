@@ -59,12 +59,11 @@ struct MCPBoundHostServicesTests {
       path: root.appendingPathComponent("host.sqlite").path)
     try database.saveProject(
       RegisteredProject(id: "source", displayName: "Source", rootPath: project.path))
-    let permissions = fixturePermissions([
-      .project("source"): .granted(.write),
-      .plugin("scoped-fixture"): .granted(.use),
-    ])
+    let providerPermissions = fixturePermissions([.project("source"): .granted(.write)])
+    var callerPermissions = providerPermissions
+    try callerPermissions.set(.granted(.use), for: .plugin("scoped-fixture"))
     let grant = ProfileGrant(
-      id: .chatGPTOperate, permissions: permissions, fullAccess: false,
+      id: .chatGPTOperate, permissions: callerPermissions, fullAccess: false,
       allowedCallers: [.secureTunnel])
     try database.saveProfile(grant)
     let platform = fixtureHostedPlatform()
@@ -89,7 +88,7 @@ struct MCPBoundHostServicesTests {
     do {
       try fixtureApprovePlugin(
         PluginPackage.load(at: packageRoot), database: database, runtime: runtime.permissionRuntime,
-        permissions: permissions)
+        permissions: providerPermissions)
       peer.setHandler { invocation in
         let execution = try #require(invocation.executionAuthority as? PreparedExecutionContext)
         let provider = try #require(execution.provider)

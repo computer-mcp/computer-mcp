@@ -62,6 +62,10 @@ package enum SeatbeltProfile {
       configuration.writableDirectories + configuration.readableRoots
       + (configuration.git.map { [$0.repository, $0.sharedDirectory] } ?? [])
     for path in traversed {
+      if path.value == "/" {
+        ancestors.insert(path)
+        continue
+      }
       var current = URL(fileURLWithPath: path.value).deletingLastPathComponent()
       while true {
         if let value = try? SandboxPath(current.path) { ancestors.insert(value) }

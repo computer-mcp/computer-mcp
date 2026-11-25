@@ -58,22 +58,25 @@ package struct GatewayProviderSourceSandbox: Sendable {
 
   init(project: GatewayProviderProject, container: GatewayProviderContainer, scratch: URL) throws {
     projectID = project.registration.id
-    let source = try WorktreeDirectory(URL(fileURLWithPath: project.registration.root))
+    let source = try WorktreeDirectory(physicalURL: URL(fileURLWithPath: project.registration.root))
     directory = try SandboxPath(source.identity.path)
-    temporary = try WorktreeDirectory(scratch).identity
+    temporary = try WorktreeDirectory(physicalURL: scratch).identity
     self.scratch = try SandboxPath(temporary.path)
-    self.container = try WorktreeDirectory(URL(fileURLWithPath: container.root.string)).identity
+    self.container = try WorktreeDirectory(physicalURL: URL(fileURLWithPath: container.root.string))
+      .identity
     protected = try [source.identity] + source.sourceGitDirectories()
     try validate()
   }
 
   func validate() throws {
-    let source = try WorktreeDirectory(URL(fileURLWithPath: directory.value))
+    let source = try WorktreeDirectory(physicalURL: URL(fileURLWithPath: directory.value))
     guard try [source.identity] + source.sourceGitDirectories() == protected else {
       throw WorktreeError.identityChanged("Source Git storage changed.")
     }
     for writable in [container, temporary] {
-      guard try WorktreeDirectory(URL(fileURLWithPath: writable.path)).identity == writable else {
+      guard
+        try WorktreeDirectory(physicalURL: URL(fileURLWithPath: writable.path)).identity == writable
+      else {
         throw WorktreeError.identityChanged("Provider writable storage changed.")
       }
       for root in protected {

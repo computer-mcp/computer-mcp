@@ -71,6 +71,16 @@ struct GatewayProviderContainerTests {
       access: .init(
         project: project, rootURL: source, bookmarkWasRefreshed: false, stopAccessing: nil),
       wasDerived: false)
+    let plain = try GatewayProviderSourceSandbox(
+      project: scope, container: container, scratch: scratch)
+    #expect(plain.directory.value == source.path)
+    #expect(plain.scratch.value == scratch.path)
+    try plain.validate()
+    let dotGit = source.appendingPathComponent(".git")
+    try FileManager.default.createDirectory(at: dotGit, withIntermediateDirectories: false)
+    try GatewayProviderSourceSandbox(project: scope, container: container, scratch: scratch)
+      .validate()
+    try FileManager.default.removeItem(at: dotGit)
     let nested = source.appendingPathComponent("nested")
     try FileManager.default.createDirectory(at: nested, withIntermediateDirectories: false)
     for overlap in [nested, root] {
@@ -78,7 +88,7 @@ struct GatewayProviderContainerTests {
         try GatewayProviderSourceSandbox(project: scope, container: container, scratch: overlap)
       }
     }
-    try Data("gitdir: ../administrative\n".utf8).write(to: source.appendingPathComponent(".git"))
+    try Data("gitdir: ../administrative\n".utf8).write(to: dotGit)
     let common = administrative.appendingPathComponent("commondir")
     try Data((container.root.string + "\n").utf8).write(to: common)
     #expect(throws: ExecutionEnvironmentError.self) {
@@ -125,7 +135,10 @@ struct GatewayProviderContainerTests {
     var environment = PermissionEnvironment()
     environment.paths = try .init(
       projects: [.init(id: project.id, root: .init(source.path))],
-      rules: [.init(root: container.storageRoot, kind: .hostData)])
+      rules: [
+        .init(root: .init(root.path), kind: .userData),
+        .init(root: container.storageRoot, kind: .hostData),
+      ])
     _ = try ledger.reconcile(environment: environment, expectedRevision: ledger.revision)
     var permissions = Permissions.newPrincipal
     try permissions.set(.granted(.write), for: .project(project.id))
@@ -149,25 +162,23 @@ struct GatewayProviderContainerTests {
           principal: provider, tool: "fixture", projectID: project.id, argumentsDigest: "fixture"),
         requirements: .init(actions: [projectWrite], paths: paths, sandboxProjectID: project.id),
         now: Date())
+      if requiresPathWrite {
+        #expect(callerDecision == .denied(.mainProjectWrite))
+        #expect(providerDecision == .denied(.mainProjectWrite))
+        continue
+      }
       guard case .allowed(let providerProof) = providerDecision,
         case .allowed(let callerProof) = callerDecision
       else { throw PermissionModelError.invalidAuthorization }
       let binding = try ProviderExecutionBinding(
         identity: identity, registrationID: "one", sourceDigest: String(repeating: "a", count: 64),
         providerAuthorization: providerProof, delegatingAuthorization: callerProof)
-      if requiresPathWrite {
-        #expect(throws: ExecutionEnvironmentError.self) {
-          try GatewaySandboxCompiler.compile(
-            ledger: &ledger, authorizationID: providerProof.id, context: context,
-            ownedTemporaryDirectory: prepared.scratch, provider: binding)
-        }
-      } else {
-        let compiled = try GatewaySandboxCompiler.compile(
-          ledger: &ledger, authorizationID: providerProof.id, context: context,
-          ownedTemporaryDirectory: prepared.scratch, provider: binding)
-        #expect(compiled.sandbox?.readOnly == true)
-        #expect(compiled.sandbox?.worktree == prepared.directory)
-      }
+      let compiled = try GatewaySandboxCompiler.compile(
+        ledger: &ledger, authorizationID: providerProof.id, context: context,
+        ownedTemporaryDirectory: prepared.scratch, provider: binding)
+      #expect(compiled.sandbox?.readOnly == true)
+      #expect(compiled.sandbox?.worktree == prepared.directory)
+      #expect(compiled.sandbox?.readableRoots.contains(try .init("/")) == true)
     }
   }
 

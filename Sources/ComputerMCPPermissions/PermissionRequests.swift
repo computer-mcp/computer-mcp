@@ -1073,6 +1073,7 @@ package struct PermissionLedger: Equatable, Sendable, Codable {
     }
     let ancestors = Set(
       reads.flatMap { value -> [CanonicalPath] in
+        if value.path.string == "/" { return [value.path] }
         var current = URL(fileURLWithPath: value.path.string).deletingLastPathComponent()
         var result: [CanonicalPath] = []
         while true {

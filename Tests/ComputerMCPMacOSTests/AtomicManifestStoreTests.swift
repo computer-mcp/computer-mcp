@@ -38,6 +38,27 @@ final class AtomicManifestStoreTests {
     #expect(current.revisionID == second.id)
   }
 
+  @Test
+  func reopeningAdmitsAnOfflineServerNameEditWithItsOwnRevision() throws {
+    let fixture = try ManifestStoreFixture(persistent: true)
+    defer { fixture.cleanup() }
+    let original = try fixture.store.activate(manifest: Self.manifest(name: "original"))
+    let edited = Data(Self.manifest(name: "renamed").utf8)
+    try edited.write(to: fixture.manifestURL, options: .atomic)
+    let reopened = try AtomicManifestStore(
+      manifestURL: fixture.manifestURL, database: fixture.database,
+      loader: GatewayManifestConfigurationLoader(
+        database: fixture.database, applications: MacOSPlatform.services.applications))
+    let admitted = try reopened.activeSnapshot()
+    let revision = try #require(admitted.revisionID)
+    #expect(admitted.configuration.server.name == "renamed")
+    #expect(revision != original.id)
+    #expect(
+      try fixture.database.configurationRevision(id: revision)?.digest
+        == AtomicManifestStore.digest(of: edited))
+    #expect(try Data(contentsOf: fixture.manifestURL) == edited)
+  }
+
   @Test(arguments: [false, true])
   func installedBuiltinUpgradePublishesCurrentManifestAndPreservesHistory(legacyProfiles: Bool)
     throws

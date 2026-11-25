@@ -374,6 +374,66 @@ final class LiveAppControlPlaneTests {
   }
 
   @Test
+  func h12RejectedProviderEditsPreserveAuthorityAndRestoreRequiresNewReview() async throws {
+    try await withAppControlPlaneFixture { fixture in
+      let host = fixture.controlPlane
+      var config = try await host.activeConfiguration()
+      config.mcp.servers.append(
+        .init(id: "review-fixture", transport: .stdio, command: "/usr/bin/true"))
+      _ = try await host.activateManifest(
+        config.exportedTOML(), expectedDigest: host.configurationDigest())
+      let service = LivePrivacySecurityService(controlPlane: fixture.app)
+      let id = "server/review-fixture"
+      let initial = try await service.privacySnapshot()
+      var permissions = Permissions()
+      try permissions.set(.granted(.access), for: .screen)
+      try await service.approveProvider(
+        #require(initial.reviewedProviders[id]), permissions: permissions,
+        execution: .sandbox, sandboxSettings: .init())
+      let approved = try await service.privacySnapshot()
+      let original = try #require(approved.reviewedProviders[id]?.approval)
+      var grant = try #require(
+        approved.grants.first { $0.principalID == id && $0.permission == .screen })
+      grant.value = .denied
+
+      fixture.policyReader.set(
+        .machineFile, .available(Data("[permissions]\nscreen = 'deny'".utf8)))
+      await #expect(throws: AppControlPlaneError.self) {
+        try await service.setGrant(grant, reviewed: approved)
+      }
+      let restricted = try await service.privacySnapshot()
+      #expect(restricted.reviewedProviders[id]?.approval == original)
+      let restrictedGrant = try #require(
+        restricted.grants.first { $0.principalID == id && $0.permission == .screen })
+      #expect(restrictedGrant.value == .granted(.allow))
+      #expect(restrictedGrant.effectiveValue == .denied)
+
+      fixture.counter.forget()
+      let restored = try await service.privacySnapshot()
+      #expect(restored.reviewedProviders[id]?.availability == .needsRestoreReview)
+      #expect(restored.reviewedProviders[id]?.approval == original)
+      let restoredGrant = try #require(
+        restored.grants.first { $0.principalID == id && $0.permission == .screen })
+      #expect(restoredGrant.value == .granted(.allow))
+      #expect(restoredGrant.effectiveValue == nil)
+      await #expect(throws: AppControlPlaneError.self) {
+        try await service.setGrant(grant, reviewed: restricted)
+      }
+      #expect(try await service.privacySnapshot().reviewedProviders[id]?.approval == original)
+      try await service.confirmRestoredPermissions(reviewed: restored)
+      fixture.policyReader.set(.machineFile, .absent)
+      let confirmed = try await service.privacySnapshot()
+      #expect(confirmed.reviewedProviders[id]?.availability == .needsRestoreReview)
+      try await service.approveProvider(
+        #require(confirmed.reviewedProviders[id]), permissions: permissions,
+        execution: .sandbox, sandboxSettings: .init())
+      let reviewed = try await service.privacySnapshot()
+      #expect(reviewed.reviewedProviders[id]?.availability == .active)
+      #expect(reviewed.reviewedProviders[id]?.approval?.epoch == reviewed.epoch)
+    }
+  }
+
+  @Test
   func h12PrivacyProjectsAndEditsDirectProviderAuthority() async throws {
     try await withAppControlPlaneFixture { fixture in
       let host = fixture.controlPlane

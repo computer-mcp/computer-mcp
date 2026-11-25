@@ -25,6 +25,52 @@ import Testing
 @Suite(.nativeIntegration, .timeLimit(.minutes(1)))
 struct PluginControlPlaneTests {
   @Test
+  func h12InventoryCombinesClientsPackagesAndSavedUnavailableServers() async throws {
+    let files = try PluginStoreFixture()
+    defer { files.cleanup() }
+    let fixture = try PluginControlFixture(
+      bundled: .init(packages: [], issues: []), cliExecutable: URL(fileURLWithPath: "/usr/bin/true")
+    )
+    defer { fixture.remove() }
+    var config = try await fixture.host.activeConfiguration()
+    config.mcp.servers.append(
+      .init(id: "retired-server", transport: .stdio, command: "/usr/bin/true"))
+    config.mcp.servers.append(
+      .init(id: "current-server", transport: .stdio, command: "/usr/bin/true"))
+    _ = try await fixture.host.activateManifest(
+      config.exportedTOML(), expectedDigest: fixture.host.configurationDigest())
+    let initial = try await fixture.host.privacyPermissionInventory()
+    let retired = try #require(
+      initial.providers.first { $0.identity == .localServer("retired-server") })
+    var saved = Permissions()
+    try saved.set(.granted(.access), for: .screen)
+    _ = try await fixture.host.saveProviderPermissions(
+      reviewed: retired, permissions: saved, fullAccess: false, sandboxSettings: .init())
+    config.mcp.servers.removeAll { $0.id == "retired-server" }
+    _ = try await fixture.host.activateManifest(
+      config.exportedTOML(), expectedDigest: fixture.host.configurationDigest())
+    _ = try await fixture.gateway.changePlugins(
+      .registerDevelopment(files.packageRoot), expectedRevision: 0)
+
+    let inventory = try await fixture.host.privacyPermissionInventory()
+    #expect(inventory.permissions.profiles.contains { $0.id == .localAdmin })
+    #expect(
+      Set(inventory.providers.map(\.identity)) == [
+        .package("test-package"), .localServer("current-server"), .localServer("retired-server"),
+      ])
+    let unavailable = try #require(inventory.providers.first { $0.identity == retired.identity })
+    #expect(unavailable.availability == .unavailable)
+    #expect(unavailable.approval?.permissions.state(for: .screen) == .granted(.access))
+    #expect(unavailable.effectiveMode == nil)
+    #expect(
+      inventory.providers.first { $0.identity == .localServer("current-server") }?.availability
+        == .needsApproval)
+    #expect(
+      inventory.providers.first { $0.identity == .package("test-package") }?.availability
+        == .needsApproval)
+  }
+
+  @Test
   func h12PackageReviewRejectsChangedDeclarationsAndProjectsUnavailableSource() async throws {
     let files = try PluginStoreFixture()
     defer { files.cleanup() }

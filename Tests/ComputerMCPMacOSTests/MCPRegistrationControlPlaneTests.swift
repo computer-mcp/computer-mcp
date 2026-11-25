@@ -26,6 +26,44 @@ import Testing
 @Suite(.nativeIntegration, .timeLimit(.minutes(1)))
 struct MCPRegistrationControlPlaneTests {
   @Test
+  func h12WorktreeInventorySeparatesReusedProjectRegistrations() async throws {
+    let fixture = try MCPRegistrationControlFixture()
+    defer { fixture.remove() }
+    try fixture.registerProject()
+    let current = try #require(fixture.database.project(id: "fixture"))
+    let previous = DerivedProjectSource(
+      id: current.id, root: current.rootPath,
+      registeredAt: current.createdAt.addingTimeInterval(-60))
+    let currentSource = DerivedProjectSource(
+      id: current.id, root: current.rootPath, registeredAt: current.createdAt)
+    let oldID = UUID()
+    let currentID = UUID()
+    let old = DerivedProjectRecord(
+      projectID: "old-child", source: previous,
+      root: fixture.root.appendingPathComponent("old").path,
+      provenance: .host(worktreeID: oldID, storageGeneration: UUID()), state: .sourceUnavailable)
+    let retained = DerivedProjectRecord(
+      projectID: "current-child", source: currentSource,
+      root: fixture.root.appendingPathComponent("retained").path,
+      provenance: .host(worktreeID: currentID, storageGeneration: UUID()), state: .recoveryRequired)
+    let store = fixture.database.derivedProjectStore(inspectNesting: { _ in [] })
+    try store.commit(old, expecting: nil, protecting: nil)
+    try store.commit(retained, expecting: nil, protecting: nil)
+
+    let inventory = try await fixture.host.projectWorktreeInventory()
+    let oldGroup = try #require(inventory.first { $0.source == previous })
+    let currentGroup = try #require(inventory.first { $0.source == currentSource })
+    #expect(oldGroup.projectName == nil)
+    #expect(oldGroup.worktrees.map(\.worktreeID) == [oldID])
+    #expect(oldGroup.worktrees.first?.lifecycleState == .sourceUnavailable)
+    #expect(currentGroup.projectName == current.displayName)
+    #expect(currentGroup.worktrees.map(\.worktreeID) == [currentID])
+    #expect(currentGroup.worktrees.first?.lifecycleState == .recoveryRequired)
+    #expect(!oldGroup.isInventoryAvailable)
+    #expect(!currentGroup.isInventoryAvailable)
+  }
+
+  @Test
   func h12ProjectInventoryRetainsUnavailableWorktreeIdentity() async throws {
     let fixture = try MCPRegistrationControlFixture()
     defer { fixture.remove() }

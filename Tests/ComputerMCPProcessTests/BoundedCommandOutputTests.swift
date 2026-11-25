@@ -5,6 +5,10 @@ import ComputerMCPTestSupport
 import Foundation
 import Testing
 
+#if os(macOS)
+  import ComputerMCPDarwinTestSupport
+#endif
+
 #if canImport(Darwin)
   import Darwin
 #elseif canImport(Glibc)

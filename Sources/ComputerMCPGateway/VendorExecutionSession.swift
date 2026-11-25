@@ -494,6 +494,7 @@ private actor VendorExecutionAcquisitions {
     guard negotiated, let call = uuid(fields["call"]), let key = uuid(fields["acquisition"]),
       let acquisition = acquisitions[key]
     else { throw VendorExecutionFailure.denied }
+    let childID = uuid(fields["child"])
     let invocation = invocations[call]
     guard invocation?.acquisition == key || (invocation == nil && call == key) else {
       throw VendorExecutionFailure.denied
@@ -507,7 +508,7 @@ private actor VendorExecutionAcquisitions {
       let execution = invocation?.execution ?? acquisition.execution
       _ = try execution.authority.access(execution.executionID, operation: .readResult)
       if op == "retire" {
-        guard uuid(fields["child"]) == acquisition.workload.id else {
+        guard childID == acquisition.workload.id else {
           throw VendorExecutionFailure.stale
         }
         guard await retire(key) else { throw VendorExecutionFailure.unconfirmed }
@@ -525,7 +526,7 @@ private actor VendorExecutionAcquisitions {
     if op == "detach" {
       let canDetach =
         (invocation.effect == .detachedPrompt && acquisition.turn == call
-          && uuid(fields["child"]) == acquisition.workload.id && !acquisition.dispatched)
+          && childID == acquisition.workload.id && !acquisition.dispatched)
         || (invocation.effect == .detachedAcquire && acquisition.expiry != nil
           && acquisition.handle == nil)
       guard canDetach, !invocation.detached, !acquisition.retirementRequested
@@ -543,7 +544,7 @@ private actor VendorExecutionAcquisitions {
           || ((acquisition.turn == call || acquisition.retiredTurn == call)
             && Self.ownsTurn(invocation.effect)),
         (acquisition.workloadProcess == nil && acquisition.workload.receipt != .retired)
-          || uuid(fields["child"]) == acquisition.workload.id
+          || childID == acquisition.workload.id
       else { throw VendorExecutionFailure.denied }
       guard await retire(key) else { throw VendorExecutionFailure.unconfirmed }
       return receipt(acquisition)
@@ -554,7 +555,7 @@ private actor VendorExecutionAcquisitions {
     if op == "stop", source.protocolKind == .trae, invocation.effect == .stop,
       invocation.targetTurn != acquisition.turn
     {
-      guard uuid(fields["child"]) == acquisition.workload.id else {
+      guard childID == acquisition.workload.id else {
         throw VendorExecutionFailure.stale
       }
       return [:]
@@ -587,7 +588,7 @@ private actor VendorExecutionAcquisitions {
       return receipt(acquisition)
     case "probe":
       guard invocation.effect.acquires, call == key,
-        uuid(fields["child"]) == acquisition.probe.id, let task = acquisition.probeTask
+        childID == acquisition.probe.id, let task = acquisition.probeTask
       else { throw VendorExecutionFailure.denied }
       let passed = await task.value
       try await requireActive(acquisition, id: key)
@@ -597,7 +598,7 @@ private actor VendorExecutionAcquisitions {
       return receipt(acquisition)
     case "launch":
       guard invocation.effect.acquires, call == key, acquisition.workloadProcess == nil,
-        uuid(fields["child"]) == acquisition.workload.id, let probe = acquisition.probeTask,
+        childID == acquisition.workload.id, let probe = acquisition.probeTask,
         !fields.keys.contains("argv"), !fields.keys.contains("arguments")
       else { throw VendorExecutionFailure.denied }
       let passed = await probe.value
@@ -615,11 +616,12 @@ private actor VendorExecutionAcquisitions {
       try await requireActive(acquisition, id: key)
       try validate(invocation.execution)
       let print = source.protocolKind == .claudePrint
+      let arguments = acquisition.argv
       let process = try context.withValue {
         try ManagedLineProcess(
           launcher: launcher,
           configuration: .init(
-            executable: source.executable.value, arguments: acquisition.argv,
+            executable: source.executable.value, arguments: arguments,
             workingDirectory: URL(fileURLWithPath: try directory(context).value),
             terminationGraceMilliseconds: 100, maximumMessageBytes: Self.maximumFrameBytes - 1,
             closesInputOnLaunch: print, requiresCompleteOutputLines: true))
@@ -644,15 +646,16 @@ private actor VendorExecutionAcquisitions {
       }
       return receipt(acquisition)
     default:
-      guard uuid(fields["child"]) == acquisition.workload.id,
+      guard childID == acquisition.workload.id,
         let process = acquisition.workloadProcess
       else { throw VendorExecutionFailure.denied }
       switch op {
       case "ready":
         try adapterExecution?.validateProviderLaunch()
+        let setupWrites = acquisition.setupWrites
         guard invocation.effect.acquires, call == key,
           acquisition.trae.map(\.sessionReady)
-            ?? (source.protocolKind == .cursor && acquisition.setupWrites >= 3)
+            ?? (source.protocolKind == .cursor && setupWrites >= 3)
         else { throw VendorExecutionFailure.denied }
         acquisition.expiry?.cancel()
         acquisition.expiry = nil
@@ -758,9 +761,11 @@ private actor VendorExecutionAcquisitions {
   }
 
   private func ownsIO(_ invocation: Invocation, id: UUID, acquisition: Acquisition) -> Bool {
-    (invocation.effect.acquires
+    let isClaudePrint = source.protocolKind == .claudePrint
+    return
+      (invocation.effect.acquires
       && (acquisition.expiry != nil || acquisition.turn == id
-        || source.protocolKind == .claudePrint))
+        || isClaudePrint))
       || (Self.ownsTurn(invocation.effect) && acquisition.turn == id)
       || (acquisition.nativeCloseCall == id && acquisition.closingCall == id
         && acquisition.turn == nil)

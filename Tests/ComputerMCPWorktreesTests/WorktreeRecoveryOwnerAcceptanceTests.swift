@@ -656,3 +656,269 @@ private func ownerPackFiles(_ directory: URL) throws -> [String: Data] {
   }
   return result
 }
+
+extension WorktreeRecoveryOwnerAcceptanceTests {
+  @Test func corruptIndependentExpectedObjectCannotReleaseRecoveryFallback() throws {
+    try fixture { directory in
+      let f = try WorktreeFixture(directory)
+      let fixture = try OwnerAcceptanceFixture(f)
+      let worktrees = try f.service()
+      let created = try worktrees.create(name: "expected-integrity")
+      let expected = try f.privateCommit(worktrees, projectID: created.projectID)
+      _ = try worktrees.publish(projectID: created.projectID) { _ in }
+      let topology = try worktrees.topology(projectID: created.projectID)
+      let git = PrivateWorktreeGit(f: f, topology: topology)
+      let blob = try git.run(["rev-parse", "HEAD:file.txt"])
+      let alternate = try git.run(["hash-object", "-w", "--stdin"], input: Data("invalid\n".utf8))
+      let objects = topology.objects.url
+      func loose(_ oid: String) -> URL {
+        objects.appendingPathComponent(String(oid.prefix(2))).appendingPathComponent(
+          String(oid.dropFirst(2)))
+      }
+      let replacement = try Data(contentsOf: loose(alternate))
+      try replacement.write(to: loose(blob))
+      #expect(try git.run(["cat-file", "-s", blob]) == "8")
+      let owner = try fixture.service()
+      let view = try #require(try owner.list().first)
+      let record = try #require(
+        view.records.first { $0.oid == expected && $0.objectType == .commit })
+      let anchor = fixture.storeDirectory(view.key).appendingPathComponent(
+        "repository.git/refs/recovery/" + record.id.uuidString.lowercased())
+      let anchorBytes = try Data(contentsOf: anchor)
+      let review = try owner.reviewRelease(
+        key: view.key, generation: view.generation, selections: [record.selection],
+        principal: fixture.principal)
+      let status = try owner.confirm(review, principal: fixture.principal)
+      switch status.outcome {
+      case .busy, .recoveryRequired: break
+      default: Issue.record("An invalid expected-object copy authorized release: \(status.outcome)")
+      }
+      #expect(try Data(contentsOf: anchor) == anchorBytes)
+      #expect(try f.recoveryRecords().contains { $0.id == record.id })
+    }
+  }
+
+  @Test func catalogCapacityRefusalClearsOnlyItsOwnGate() throws {
+    try fixture { directory in
+      let f = try WorktreeFixture(directory)
+      let fixture = try OwnerAcceptanceFixture(f)
+      let record = try fixture.captureBlob()
+      let worktrees = try f.service()
+      let ownGate = try worktrees.admission(projectID: record.owner.projectID)
+      let other = try worktrees.create(name: "other-holder")
+      let otherGate = try worktrees.admission(projectID: other.projectID)
+      let otherID = UUID()
+      #expect(try otherGate.close(operationID: otherID).isEmpty)
+      let owner = try fixture.service()
+      let view = try #require(try owner.list().first)
+      let review = try owner.reviewRelease(
+        key: view.key, generation: view.generation, selections: [record.selection],
+        principal: fixture.principal)
+      let operation = UUID()
+      let extra = WorktreeRecoveryRecord(
+        id: UUID(), storeGeneration: record.storeGeneration, owner: record.owner,
+        oid: record.oid, objectType: record.objectType, base: record.base, revision: 1,
+        state: .retaining,
+        claims: [
+          .init(
+            id: UUID(), operationID: operation, reason: .publishedReplacement,
+            rootOID: record.oid, capture: nil)
+        ], acknowledgements: [], dependencies: [operation])
+      let recovery = WorktreeRecoveryStore(storage: f.storage)
+      let catalogURL = fixture.storeDirectory(view.key).appendingPathComponent("catalog.json")
+      try recovery.withExclusive(repository: view.repository) { locked in
+        try locked.admit(
+          operationID: operation, kind: .publication,
+          requestDigest: String(repeating: "b", count: 64),
+          records: [extra], completionSteps: [])
+        let old = try Data(contentsOf: catalogURL)
+        var catalog = try JSONDecoder().decode(WorktreeRecoveryCatalog.self, from: old)
+        let index = try #require(catalog.intents.firstIndex { $0.id == operation })
+        let otherReserved = catalog.intents.enumerated().filter { $0.offset != index }
+          .reduce(0) { $0 + $1.element.completion.bytes }
+        catalog.intents[index].completion.bytes =
+          WorktreeRecoveryCatalog.byteLimit - old.count - otherReserved
+        let digits = try recoveryJSON(catalog).count - old.count
+        catalog.intents[index].completion.bytes -= digits
+        let full = try recoveryJSON(catalog)
+        #expect(
+          full.count + otherReserved + catalog.intents[index].completion.bytes
+            == WorktreeRecoveryCatalog.byteLimit)
+        try catalog.validate(
+          repository: view.repository, generation: view.generation, byteCount: full.count)
+        try WorktreeJournalIO().write(
+          full, name: "catalog.json", in: WorktreeDirectory(catalogURL.deletingLastPathComponent()),
+          replacing: old)
+      }
+      let result = try owner.confirm(review, principal: fixture.principal)
+      guard case .busy = result.outcome else {
+        Issue.record("Capacity refusal was not terminal busy: \(result.outcome)")
+        return
+      }
+      #expect(result.request == .release(review))
+      let writer = try ownGate.reserve(ownerID: UUID(), executionID: UUID())
+      try ownGate.acknowledge(writer)
+      #expect(throws: WorktreeError.self) {
+        try otherGate.reserve(ownerID: UUID(), executionID: UUID())
+      }
+      #expect(try f.recoveryRecords().contains { $0.id == record.id })
+    }
+  }
+
+  @Test func verificationLimitPersistsRestorationBeforeRestart() throws {
+    try fixture { directory in
+      let f = try WorktreeFixture(directory)
+      let fixture = try OwnerAcceptanceFixture(f)
+      let worktrees = try f.service()
+      let created = try worktrees.create(name: "restore-limit")
+      _ = try f.privateCommit(worktrees, projectID: created.projectID)
+      _ = try worktrees.publish(projectID: created.projectID) { _ in }
+      let git = PrivateWorktreeGit(
+        f: f, topology: try worktrees.topology(projectID: created.projectID))
+      try git.run(["commit", "--allow-empty", "-m", "shared"])
+      _ = try worktrees.publish(projectID: created.projectID) { _ in }
+      let owner = try fixture.service()
+      let view = try #require(try owner.list().first)
+      guard
+        case .reviewed(let review) = try owner.prepareMaintenance(
+          key: view.key, generation: view.generation, principal: fixture.principal)
+      else {
+        Issue.record("Expected maintenance proof")
+        return
+      }
+      _ = try #require(review.packHash)
+      let store = fixture.storeDirectory(view.key)
+      let active = store.appendingPathComponent("owner-operation.json")
+      let packs = store.appendingPathComponent("repository.git/objects/pack")
+      let before = try ownerPackFiles(packs)
+      let limited = OwnerVerificationLimitGit(base: f.executor, active: active)
+      let io = WorktreeJournalIO(beforeDirectorySync: {
+        guard let bytes = try? Data(contentsOf: active),
+          let journal = try? JSONDecoder().decode(RecoveryOwnerJournal.self, from: bytes),
+          journal.handle == review.handle, journal.maintenance?.phase == .restoringDeferred
+        else { return }
+        throw OwnerConfirmationInterruption.Failure.injected
+      })
+      let interrupted = try WorktreeRecoveryOwnerService(
+        storage: f.storage, derived: f.store,
+        dependencies: OwnerAcceptanceEvidence(source: f.source, store: f.store),
+        executor: limited, journalIO: io)
+      #expect(throws: OwnerConfirmationInterruption.Failure.self) {
+        try interrupted.run(review, principal: fixture.principal)
+      }
+      #expect(limited.fired)
+      let journal = try JSONDecoder().decode(
+        RecoveryOwnerJournal.self, from: Data(contentsOf: active))
+      #expect(journal.maintenance?.phase == .restoringDeferred)
+      #expect(try ownerPackAllocation(packs).names.contains { $0.hasSuffix(".quarantine") })
+      let resumed = try owner.resume(review.handle, principal: fixture.principal)
+      guard case .deferred = resumed.outcome else {
+        Issue.record("Verification limit did not defer after restoration: \(resumed.outcome)")
+        return
+      }
+      #expect(resumed.request == .maintenance(review))
+      #expect(try ownerPackFiles(packs) == before)
+      #expect(try #require(owner.list().first).records == view.records)
+      #expect(!FileManager.default.fileExists(atPath: active.path))
+      #expect(try owner.resume(review.handle, principal: fixture.principal) == resumed)
+    }
+  }
+
+  @Test func admittedReleaseRejectsChangedClaimsWithoutRemovingAnchor() throws {
+    try fixture { directory in
+      let f = try WorktreeFixture(directory)
+      let fixture = try OwnerAcceptanceFixture(f)
+      let record = try fixture.captureBlob()
+      let owner = try fixture.service()
+      let view = try #require(try owner.list().first)
+      let review = try owner.reviewRelease(
+        key: view.key, generation: view.generation, selections: [record.selection],
+        principal: fixture.principal)
+      let store = fixture.storeDirectory(view.key)
+      let catalogURL = store.appendingPathComponent("catalog.json")
+      let anchor = store.appendingPathComponent(
+        "repository.git/refs/recovery/" + record.id.uuidString.lowercased())
+      let anchorBytes = try Data(contentsOf: anchor)
+      let interrupt = WorktreeJournalIO(beforeDirectorySync: {
+        guard let bytes = try? Data(contentsOf: catalogURL),
+          let catalog = try? JSONDecoder().decode(WorktreeRecoveryCatalog.self, from: bytes),
+          catalog.intents.contains(where: { $0.id == review.handle.id && $0.kind == .release })
+        else { return }
+        throw OwnerConfirmationInterruption.Failure.injected
+      })
+      let interrupted = try fixture.service(io: interrupt)
+      #expect(throws: OwnerConfirmationInterruption.Failure.self) {
+        try interrupted.confirm(review, principal: fixture.principal)
+      }
+      let before = try Data(contentsOf: catalogURL)
+      var catalog = try JSONDecoder().decode(WorktreeRecoveryCatalog.self, from: before)
+      let index = try #require(catalog.records.firstIndex { $0.id == record.id })
+      #expect(catalog.records[index].state == .releasing)
+      let claim = try #require(catalog.records[index].claims.first)
+      catalog.records[index].claims[0] = .init(
+        id: UUID(), operationID: claim.operationID, reason: claim.reason,
+        rootOID: claim.rootOID, capture: claim.capture)
+      let changed = try recoveryJSON(catalog)
+      try catalog.validate(
+        repository: view.repository, generation: view.generation, byteCount: changed.count)
+      try changed.write(to: catalogURL)
+      let result = try owner.resume(review.handle, principal: fixture.principal)
+      guard case .recoveryRequired = result.outcome else {
+        Issue.record("Contradictory admitted row was accepted: \(result.outcome)")
+        return
+      }
+      #expect(result.request == .release(review))
+      #expect(try Data(contentsOf: catalogURL) == changed)
+      #expect(try Data(contentsOf: anchor) == anchorBytes)
+      let worktrees = try f.service()
+      let gate = try worktrees.admission(projectID: record.owner.projectID)
+      #expect(throws: WorktreeError.self) { try gate.reserve(ownerID: UUID(), executionID: UUID()) }
+    }
+  }
+}
+
+private final class OwnerVerificationLimitGit: WorktreeGitExecuting, @unchecked Sendable {
+  let base: WorktreeTestGit
+  let active: URL
+  private let lock = NSLock()
+  private var didFire = false
+
+  init(base: WorktreeTestGit, active: URL) {
+    self.base = base
+    self.active = active
+  }
+
+  var fired: Bool {
+    lock.lock()
+    defer { lock.unlock() }
+    return didFire
+  }
+
+  private func check() throws {
+    lock.lock()
+    defer { lock.unlock() }
+    guard !didFire, let bytes = try? Data(contentsOf: active),
+      let journal = try? JSONDecoder().decode(RecoveryOwnerJournal.self, from: bytes),
+      journal.maintenance?.phase == .verifying
+    else { return }
+    didFire = true
+    throw WorktreeError.busy("Injected bounded Git verification limit.")
+  }
+
+  func execute(_ command: WorktreeGitCommand) throws -> WorktreeGitResult {
+    try check()
+    return try base.execute(command)
+  }
+
+  func executeBounded(
+    _ command: WorktreeGitCommand, fileOutput: WorktreeGitFileOutput?, fileSizeLimit: Int?
+  ) throws -> WorktreeGitResult {
+    try check()
+    return try base.executeBounded(command, fileOutput: fileOutput, fileSizeLimit: fileSizeLimit)
+  }
+
+  func withPreparedTransaction(_ command: WorktreeGitCommand, _ body: () throws -> Void) throws {
+    try check()
+    try base.withPreparedTransaction(command, body)
+  }
+}

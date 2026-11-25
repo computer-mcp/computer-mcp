@@ -1133,6 +1133,7 @@ package final class ExecutionRevocationCoordinator: ExecutionRecoveryAuthorizing
     } else {
       snapshot = (preview.0, preview.1)
     }
+    let confirmedWorktreeReceipts = try confirmedWorktreeReceipts(in: snapshot.0)
     var firstError: (any Error)?
     for record in snapshot.0 {
       if let firstError { throw firstError }
@@ -1246,9 +1247,12 @@ package final class ExecutionRevocationCoordinator: ExecutionRecoveryAuthorizing
         if let completed {
           guard sealAdmissionIfDrained(completed.id) else { continue }
           if let use = completed.worktreeUse {
-            guard completed.invocationInFlight != true,
-              try journal.all().filter({ $0.execution == completed.id }).allSatisfy(\.completed)
-            else { continue }
+            guard completed.invocationInFlight != true else { continue }
+            if !confirmedWorktreeReceipts.contains(completed.id) {
+              guard
+                try journal.all().filter({ $0.execution == completed.id }).allSatisfy(\.completed)
+              else { continue }
+            }
             try use.admission.acknowledge(use)
           }
           // Ports cannot be recycled while any member remains unconfirmed.
@@ -1304,7 +1308,12 @@ package final class ExecutionRevocationCoordinator: ExecutionRecoveryAuthorizing
   private func reconcileIndependentOwnership() async throws {
     try await reconcileOrphanedProxies()
     let records = try journal.all()
+    var releasedChildren: [UUID: Set<UUID>] = [:]
     for entry in records {
+      if entry.released {
+        releasedChildren[entry.execution, default: []].insert(entry.child)
+        continue
+      }
       let orphaned = try store.readWithDatabase { database, ledger in
         let record = try ExecutionRuntimeRecord.load(entry.execution, database)
         return record?.children[entry.child] == nil || ledger.executions[entry.execution] == nil
@@ -1327,28 +1336,27 @@ package final class ExecutionRevocationCoordinator: ExecutionRecoveryAuthorizing
         try confirmChild(entry.child, executionID: entry.execution)
       }
       if entry.completed || entry.owner != ownerID || orphaned {
-        if !entry.released {
-          try launcher.releaseRecovery(entry.recovery)
-          try journal.release(entry.child)
-        }
-        // A restored SQL copy may predate the independently confirmed completion.
-        let needsSync = try store.readWithDatabase { database, _ in
-          guard
-            let child = try ExecutionRuntimeRecord.load(entry.execution, database)?.children[
-              entry.child]
-          else { return false }
-          return !child.completed || !child.released
-        }
-        if needsSync {
-          try store.transactionWithDatabase { database, _ in
-            guard var record = try ExecutionRuntimeRecord.load(entry.execution, database),
-              var child = record.children[entry.child], !child.completed || !child.released
-            else { return }
+        try launcher.releaseRecovery(entry.recovery)
+        try journal.release(entry.child)
+        releasedChildren[entry.execution, default: []].insert(entry.child)
+      }
+    }
+    // SQL may have been restored even when the epoch is unchanged. Compare the
+    // retained receipts with current rows in a single validated store access.
+    if !releasedChildren.isEmpty {
+      try store.transactionWithDatabase { database, _ in
+        for (id, children) in releasedChildren {
+          guard var record = try ExecutionRuntimeRecord.load(id, database) else { continue }
+          var changed = false
+          for childID in children {
+            guard var child = record.children[childID], !child.completed || !child.released
+            else { continue }
             child.completed = true
             child.released = true
-            record.children[entry.child] = child
-            try record.save(database)
+            record.children[childID] = child
+            changed = true
           }
+          if changed { try record.save(database) }
         }
       }
     }
@@ -1363,6 +1371,18 @@ package final class ExecutionRevocationCoordinator: ExecutionRecoveryAuthorizing
         })
       else { continue }
       try use.admission.acknowledge(use)
+    }
+  }
+
+  private func confirmedWorktreeReceipts(in records: [ExecutionRuntimeRecord]) throws -> Set<UUID> {
+    let completed = Set(records.lazy.filter { $0.completed && $0.worktreeUse != nil }.map(\.id))
+    guard !completed.isEmpty else { return [] }
+    return try publication.withLock {
+      // Seal before taking the receipt snapshot. A new child can no longer publish
+      // for these executions, even if a database restore makes a row appear live.
+      lock.withLock { closedAdmissions.formUnion(completed) }
+      let unconfirmed = try journal.all().lazy.filter { !$0.completed }.map(\.execution)
+      return completed.subtracting(unconfirmed)
     }
   }
 

@@ -1,7 +1,9 @@
 import ComputerMCPConfiguration
 import ComputerMCPCore
 import ComputerMCPPersistence
+import ComputerMCPPlatform
 import ComputerMCPSandbox
+import ComputerMCPTestSupport
 import ComputerMCPWorktrees
 import Foundation
 import GRDB
@@ -1534,6 +1536,88 @@ import Testing
     #expect(prepared.limitEndReason == .memoryLimitUnavailable)
   }
 
+  @Test func releasedReceiptsShareAStoreAccessAndStillRepairCurrentRows() async throws {
+    let f = try ExecutionFixture()
+    let admission = try f.worktreeAdmission()
+    let connection = try GatewayDatabaseConnection(inMemory: ())
+    let counter = ReconciliationEpochCounter()
+    let store = SQLitePermissionStore(connection: connection, counter: counter)
+    let coordinator = try ExecutionRevocationCoordinator(
+      store: store, launcher: .init(platform: f.platform), directory: f.directory)
+    try await coordinator.recover()
+    let record = try store.transactionWithDatabase { database, ledger in
+      try ledger.confirmSuspendedAuthority(
+        epochID: #require(ledger.authorizationEpochID), expectedRevision: ledger.revision)
+      let principal = f.paths.principal
+      ledger.register(principal)
+      let decision = try ledger.authorize(
+        invocation: .init(
+          principal: principal, tool: "fixture", projectID: "project", argumentsDigest: "fixture"),
+        requirements: .init(mode: .sandbox), now: Date())
+      guard case .allowed(let proof) = decision else {
+        throw PermissionModelError.invalidAuthorization
+      }
+      let execution = try ledger.startExecution(owner: principal, authorizationIDs: [proof.id])
+      try ledger.finishInvocation(proof.id)
+      try ledger.finishExecution(execution.id, retainUntil: .distantFuture)
+      var record = ExecutionRuntimeRecord(
+        id: execution.id, ownerID: coordinator.ownerIdentity, boot: "boot")
+      record.worktreeUse = try admission.reserve(ownerID: record.ownerID, executionID: record.id)
+      record.completed = true
+      record.admissionFinished = true
+      for _ in 0..<12 {
+        let ownership = f.platform.makeOwner()
+        ownership.complete()
+        record.children[UUID()] = .init(
+          recovery: try ownership.recoveryState(), completed: true, released: true)
+      }
+      try record.save(database)
+      return record
+    }
+    let journal = try ExecutionRecoveryJournal(
+      directory: f.directory.appendingPathComponent("ownership"))
+    for (child, receipt) in record.children {
+      try journal.save(
+        .init(
+          child: child, execution: record.id, owner: record.ownerID, boot: record.boot,
+          recovery: #require(receipt.recovery), completed: true, released: true))
+    }
+    try await coordinator.reconcile()
+    let before = counter.accesses
+    try await coordinator.reconcile()
+    #expect(counter.accesses - before < record.children.count)
+
+    // Replacing a runtime row can leave the permission epoch and counter unchanged.
+    try await connection.writer.write { database in
+      var restored = record
+      restored.children = record.children.mapValues {
+        .init(recovery: $0.recovery, completed: false, released: false)
+      }
+      try restored.save(database)
+    }
+    try await coordinator.reconcile()
+    try store.readWithDatabase { database, _ in
+      let current = try #require(try ExecutionRuntimeRecord.load(record.id, database))
+      #expect(current.children.keys == record.children.keys)
+      #expect(current.children.values.allSatisfy { $0.completed && $0.released })
+    }
+    #expect(f.platform.owners.allSatisfy { $0.cancellationDeadlines.isEmpty })
+
+    let (child, receipt) = try #require(record.children.first)
+    try journal.save(
+      .init(
+        child: child, execution: record.id, owner: record.ownerID, boot: record.boot,
+        recovery: #require(receipt.recovery)))
+    _ = try admission.reserve(ownerID: record.ownerID, executionID: record.id)
+    let operation = UUID()
+    _ = try admission.close(operationID: operation)
+    try await coordinator.reconcile()
+    #expect(throws: WorktreeError.self) { try admission.requireDrained(operationID: operation) }
+    try journal.confirm(child)
+    try await coordinator.reconcile()
+    try admission.requireDrained(operationID: operation)
+  }
+
   @Test func tighteningElapsedTimeEndsExecution() async throws {
     let f = try ExecutionFixture()
     let id = try f.paths.authorize(f.paths.project, operation: .read, once: false)
@@ -1546,6 +1630,20 @@ import Testing
     try f.limits(.init(timeMilliseconds: 1))
     try await f.untilFinished(prepared.executionID, coordinator)
     #expect(prepared.limitEndReason == .timeLimit)
+  }
+}
+
+private final class ReconciliationEpochCounter: AuthorizationEpochCounter, @unchecked Sendable {
+  private let base = TestAuthorizationEpochCounter()
+  private let lock = NSLock()
+  private var count = 0
+
+  var accesses: Int { lock.withLock { count } }
+
+  func withExclusiveAccess<T>(_ body: (any AuthorizationEpochCounterAccess) throws -> T) throws -> T
+  {
+    lock.withLock { count += 1 }
+    return try base.withExclusiveAccess(body)
   }
 }
 

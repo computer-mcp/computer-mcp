@@ -15,6 +15,7 @@ struct WorktreeJournalTests {
       #expect(throws: WorktreeError.self) {
         try io.write(next, name: "operation.json", in: directory, replacing: nil)
       }
+      #expect(try io.read("operation.json", in: directory, limit: 100) == first)
       #expect(throws: WorktreeError.self) {
         try io.write(next, name: "operation.json", in: directory, replacing: next)
       }
@@ -24,7 +25,7 @@ struct WorktreeJournalTests {
     }
   }
 
-  @Test func publicationAndDirectorySyncFailuresRetainObservedState() throws {
+  @Test func failedPreparationLeavesNoPublicJournal() throws {
     try fixture { root in
       let directory = try WorktreeDirectory(root)
       let data = Data("intent".utf8)
@@ -33,11 +34,47 @@ struct WorktreeJournalTests {
         try before.write(data, name: "operation.json", in: directory, replacing: nil)
       }
       #expect(try before.read("operation.json", in: directory, limit: 100) == nil)
-      let after = WorktreeJournalIO(beforeDirectorySync: { throw POSIXError(.EIO) })
-      #expect(throws: POSIXError.self) {
-        try after.write(data, name: "operation.json", in: directory, replacing: nil)
+      #expect(try FileManager.default.contentsOfDirectory(atPath: root.path).isEmpty)
+    }
+  }
+
+  @Test func firstPublicationBeforeDirectorySyncReplaysTheSameInode() throws {
+    try fixture { root in
+      let directory = try WorktreeDirectory(root)
+      let name = "operation.json"
+      let path = root.appendingPathComponent(name).path
+      let data = Data("intent".utf8)
+      let io = WorktreeJournalIO()
+      let interrupted = WorktreeJournalIO(
+        beforePublication: {
+          let directory = try WorktreeDirectory(root)
+          let entries = try FileManager.default.contentsOfDirectory(atPath: root.path)
+          let temporary = try #require(entries.first)
+          #expect(entries.count == 1)
+          #expect(temporary.hasPrefix(".journal-"))
+          #expect(try io.read(temporary, in: directory, limit: data.count) == data)
+          #expect(try io.read(name, in: directory, limit: data.count) == nil)
+        },
+        beforeDirectorySync: {
+          let directory = try WorktreeDirectory(root)
+          #expect(try FileManager.default.contentsOfDirectory(atPath: root.path) == [name])
+          #expect(try io.read(name, in: directory, limit: data.count) == data)
+          throw POSIXError(.EIO)
+        })
+      #expect(throws: POSIXError(.EIO)) {
+        try interrupted.write(data, name: name, in: directory, replacing: nil)
       }
-      #expect(try after.read("operation.json", in: directory, limit: 100) == data)
+      let attributes = try FileManager.default.attributesOfItem(atPath: path)
+      let inode = try #require(attributes[.systemFileNumber] as? NSNumber)
+      let mode = try #require(attributes[.posixPermissions] as? NSNumber)
+      #expect(mode.intValue & 0o077 == 0)
+      #expect(throws: WorktreeError.self) {
+        try io.synchronize(name, in: directory, expecting: Data("other!".utf8))
+      }
+      try io.synchronize(name, in: directory, expecting: data)
+      let replayed = try FileManager.default.attributesOfItem(atPath: path)
+      #expect(replayed[.systemFileNumber] as? NSNumber == inode)
+      #expect(try io.read(name, in: directory, limit: data.count) == data)
     }
   }
 

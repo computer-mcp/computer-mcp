@@ -5,21 +5,30 @@ import SwiftUI
 
 struct MCPRegistrationsView: View {
   @Environment(\.dismiss) private var dismiss
+  @Environment(\.locale) private var locale
+  @Environment(\.localizationResources) private var resources
+  private var l: PrivacyText { PrivacyText(locale: locale, resources: resources) }
   @ObservedObject var model: MCPRegistrationModel
   let managePlugin: (String) -> Void
   @State private var editor: MCPRegistrationEditorPresentation?
   @State private var checking: MCPRegistrationEntry?
   @State private var credential: MCPRegistrationEntry?
+  @State private var enablement: ProviderEnablementReview?
 
   var body: some View {
     VStack(spacing: 0) {
       HStack {
-        Text("MCP Registrations", bundle: AppLocalization.resourceBundle).font(.title2.bold())
+        Text(verbatim: l("MCP Registrations")).font(.title2.bold())
         Spacer()
-        Button(AppLocalization.string("Add MCP")) { editor = .new }
+        Button(l("Add MCP")) { editor = .new }
           .disabled(model.isBusy || model.preview != nil)
-        Button(AppLocalization.string("Refresh")) { Task { await model.reload() } }
-        Button(AppLocalization.string("Done")) { dismiss() }.keyboardShortcut(.cancelAction)
+        Button(l("Refresh")) { Task { await model.reload() } }
+        Button(l("Done")) {
+          model.cancelReview()
+          dismiss()
+        }
+        .keyboardShortcut(.cancelAction)
+        .disabled(model.isBusy)
       }.padding()
       Divider()
       if let message = model.errorMessage {
@@ -33,46 +42,46 @@ struct MCPRegistrationsView: View {
               HStack {
                 Text(verbatim: entry.id).font(.headline)
                 Text(
-                  verbatim: AppLocalization.string(entry.server.enabled ? "Enabled" : "Disabled")
+                  verbatim: l(entry.server.enabled ? "Enabled" : "Disabled")
                 )
                 .foregroundStyle(.secondary)
                 Spacer()
                 if entry.server.authentication != nil {
-                  Button(AppLocalization.string("Manage credential")) { credential = entry }
+                  Button(l("Manage credential")) { credential = entry }
                 }
-                Button(AppLocalization.string("Check connection")) {
+                Button(l("Check connection")) {
                   model.clearConnectionReport()
                   checking = entry
                 }
                 if let origin = entry.origin {
-                  Button(AppLocalization.string("Plugin settings")) {
+                  Button(l("Plugin settings")) {
                     dismiss()
                     managePlugin(origin.pluginID)
                   }
                 } else {
-                  Button(AppLocalization.string("Edit")) {
+                  Button(l("Edit")) {
                     editor = .init(server: entry.server, isNew: false)
                   }
                   Button {
                     Task { _ = await model.review(.enabled(id: entry.id, !entry.server.enabled)) }
                   } label: {
                     Text(
-                      verbatim: AppLocalization.string(entry.server.enabled ? "Disable" : "Enable"))
+                      verbatim: l(entry.server.enabled ? "Disable" : "Enable"))
                   }
-                  Button(AppLocalization.string("Remove"), role: .destructive) {
+                  Button(l("Remove"), role: .destructive) {
                     Task { _ = await model.review(.remove(id: entry.id)) }
                   }
                 }
               }
               Text(
                 verbatim: entry.origin.map { "\($0.pluginID) · \($0.version)" }
-                  ?? AppLocalization.string("Manual registration")
+                  ?? l("Manual registration")
               )
               .font(.caption).foregroundStyle(.secondary)
               Text(verbatim: entry.server.command ?? entry.server.url ?? "")
                 .font(.system(.caption, design: .monospaced)).textSelection(.enabled)
               Text(
-                verbatim: AppLocalization.string(
+                verbatim: l(
                   entry.server.allowAnyTool ? "All current and future tools" : "Selected tools only"
                 )
               )
@@ -88,16 +97,21 @@ struct MCPRegistrationsView: View {
       if let preview = model.preview {
         Divider()
         VStack(alignment: .leading, spacing: 10) {
-          Text("Review MCP change", bundle: AppLocalization.resourceBundle).font(.headline)
+          Text(verbatim: l("Review MCP change")).font(.headline)
           Text(verbatim: preview.id)
           if let after = preview.after {
             Text(
-              verbatim: AppLocalization.string(
+              verbatim: l(
                 after.enabled ? "Registration will be enabled." : "Registration will be disabled."))
-            Text(
-              verbatim: after.allowAnyTool
-                ? AppLocalization.string("All current and future tools")
-                : after.allowedTools.joined(separator: ", "))
+            let toolSummary =
+              if after.allowAnyTool {
+                l("All current and future tools")
+              } else if after.allowedTools.isEmpty {
+                l("No tools selected")
+              } else {
+                l.list(after.allowedTools)
+              }
+            Text(verbatim: toolSummary)
           } else {
             Text(
               "The registration will be removed. External dependencies are retained.",
@@ -110,7 +124,7 @@ struct MCPRegistrationsView: View {
           .font(.caption).foregroundStyle(.secondary)
           if preview.transportWillRestart {
             Label(
-              AppLocalization.string("Applying this change reconnects the running gateway."),
+              l("Applying this change reconnects the running gateway."),
               systemImage: "exclamationmark.triangle")
             Text(
               "Outstanding calls may have an unknown outcome. Reconnect and inspect before retrying.",
@@ -120,14 +134,26 @@ struct MCPRegistrationsView: View {
           }
           HStack {
             Spacer()
-            Button(AppLocalization.string("Cancel")) { model.cancelReview() }
-            Button(AppLocalization.string("Apply")) { Task { await model.apply() } }
+            Button(l("Cancel")) { model.cancelReview() }
+            if let review = model.enablementReview {
+              Button {
+                enablement = review
+              } label: {
+                Text(verbatim: l("Review Permissions…"))
+              }
+              .keyboardShortcut(.defaultAction)
+              .accessibilityIdentifier("mcp.preview.reviewEnablement")
+            } else {
+              Button(l("Apply")) { Task { await model.apply() } }
+            }
           }.disabled(model.isBusy)
         }.padding()
       }
     }
     .frame(minWidth: 720, idealWidth: 780, minHeight: 520, idealHeight: 620)
-    .task { await model.reload() }
+    .task {
+      if model.preview == nil { await model.reload() }
+    }
     .sheet(item: $editor) { presentation in
       MCPRegistrationEditor(presentation: presentation, model: model)
     }
@@ -136,6 +162,18 @@ struct MCPRegistrationsView: View {
     }
     .sheet(item: $credential) { entry in
       MCPCredentialView(registrationID: entry.id, model: model)
+    }
+    .sheet(item: $enablement) { review in
+      ProviderEnablementReviewView(review: review, isBusy: model.isBusy) { selection in
+        await model.confirmEnablement(reviewID: review.id, selection: selection)
+        enablement = nil
+      } onDecline: {
+        model.cancelReview()
+        enablement = nil
+      }
+      .onDisappear {
+        if model.enablementReview?.id == review.id { model.cancelReview() }
+      }
     }
   }
 }

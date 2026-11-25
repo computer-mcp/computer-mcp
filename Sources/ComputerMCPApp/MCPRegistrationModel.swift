@@ -19,6 +19,26 @@ protocol MCPRegistrationManaging {
   func changeMCPRegistration(
     _ change: MCPRegistrationChange, apply: Bool, expectedCurrentDigest: String?
   ) async throws -> MCPRegistrationChangePreview
+  func reviewMCPRegistrationEnablement(
+    _ change: MCPRegistrationChange, preview: MCPRegistrationChangePreview
+  ) async throws -> ProviderEnablementReview?
+  func changeMCPRegistration(
+    _ change: MCPRegistrationChange, expectedCurrentDigest: String,
+    approval: ProviderEnablementApproval
+  ) async throws -> MCPRegistrationChangePreview
+}
+
+extension MCPRegistrationManaging {
+  func reviewMCPRegistrationEnablement(
+    _ change: MCPRegistrationChange, preview: MCPRegistrationChangePreview
+  ) async throws -> ProviderEnablementReview? { nil }
+
+  func changeMCPRegistration(
+    _ change: MCPRegistrationChange, expectedCurrentDigest: String,
+    approval: ProviderEnablementApproval
+  ) async throws -> MCPRegistrationChangePreview {
+    throw ProviderEnablementError.reviewRequired
+  }
 }
 
 @MainActor
@@ -27,6 +47,7 @@ final class MCPRegistrationModel: ObservableObject {
   @Published private(set) var isBusy = false
   @Published private(set) var errorMessage: String?
   @Published private(set) var preview: MCPRegistrationChangePreview?
+  @Published private(set) var enablementReview: ProviderEnablementReview?
   @Published private(set) var doctorReport: MCPRegistrationDoctorReport?
   @Published private(set) var processRecovered = false
   @Published private(set) var credentialStatus: MCPRegistrationCredentialStatus?
@@ -113,12 +134,18 @@ final class MCPRegistrationModel: ObservableObject {
     guard !isBusy else { return false }
     isBusy = true
     preview = nil
+    enablementReview = nil
     doctorReport = nil
     change = nil
     defer { isBusy = false }
     do {
-      preview = try await controlPlane.changeMCPRegistration(
+      let prepared = try await controlPlane.changeMCPRegistration(
         proposed, apply: false, expectedCurrentDigest: nil)
+      let review = try await controlPlane.reviewMCPRegistrationEnablement(
+        proposed, preview: prepared)
+      try Task.checkCancellation()
+      enablementReview = review
+      preview = prepared
       change = proposed
       errorMessage = nil
       return true
@@ -130,26 +157,44 @@ final class MCPRegistrationModel: ObservableObject {
 
   func cancelReview() {
     guard !isBusy else { return }
-    preview = nil
-    change = nil
+    clearReview()
   }
 
   func apply() async {
+    guard enablementReview == nil else { return }
+    await apply(approval: nil)
+  }
+
+  func confirmEnablement(reviewID: UUID, selection: ProviderEnablementSelection) async {
+    guard let review = enablementReview, review.id == reviewID else { return }
+    await apply(approval: ProviderEnablementApproval(review: review, selection: selection))
+  }
+
+  private func apply(approval: ProviderEnablementApproval?) async {
     guard !isBusy, let preview, let change else { return }
     isBusy = true
     defer { isBusy = false }
+    clearReview()
     do {
-      _ = try await controlPlane.changeMCPRegistration(
-        change, apply: true, expectedCurrentDigest: preview.currentDigest)
-      self.preview = nil
-      self.change = nil
+      try Task.checkCancellation()
+      if let approval {
+        _ = try await controlPlane.changeMCPRegistration(
+          change, expectedCurrentDigest: preview.currentDigest, approval: approval)
+      } else {
+        _ = try await controlPlane.changeMCPRegistration(
+          change, apply: true, expectedCurrentDigest: preview.currentDigest)
+      }
       snapshot = try await controlPlane.fetchMCPRegistrations()
       errorMessage = nil
     } catch {
-      self.preview = nil
-      self.change = nil
       errorMessage = AppLocalization.errorDescription(error)
     }
+  }
+
+  private func clearReview() {
+    preview = nil
+    enablementReview = nil
+    change = nil
   }
 }
 

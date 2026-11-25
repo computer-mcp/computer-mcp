@@ -29,6 +29,7 @@ struct PluginsView: View {
         } label: {
           Label("Search official plugins", systemImage: "magnifyingglass")
         }
+        .disabled(model.isSaving)
         Button("Install archive") {
           sheet = .install(revision: model.snapshot?.state.revision ?? 0)
         }
@@ -70,7 +71,7 @@ struct PluginsView: View {
                   PluginRefusalStatus(refusal: refusal)
                     .font(.caption).foregroundStyle(.secondary)
                 } else {
-                  Text(snapshot.state.settings[id]?.enabled == true ? "Enabled" : "Disabled")
+                  statusLabel(id: id, snapshot: snapshot)
                     .font(.caption).foregroundStyle(.secondary)
                 }
               }
@@ -110,6 +111,8 @@ struct PluginsView: View {
       case .search: PluginCatalogView(management: model)
       case .install(let revision): PluginArchiveInstallView(model: model, revision: revision)
       case .doctor(let doctor): PluginDoctorView(model: doctor)
+      case .enablement(let review):
+        PluginEnablementReviewForm(model: model, review: review) { _ in self.sheet = nil }
       }
     }
     .alert(item: $removal) { pending in
@@ -131,8 +134,28 @@ struct PluginsView: View {
     }
   }
 
+  @ViewBuilder
+  private func statusLabel(id: String, snapshot: PluginHostSnapshot) -> some View {
+    if snapshot.pendingSourceReviews.contains(id) {
+      Text("Review required", bundle: AppLocalization.resourceBundle)
+    } else if snapshot.settings(for: id).enabled {
+      Text("Enabled", bundle: AppLocalization.resourceBundle)
+    } else {
+      Text("Disabled", bundle: AppLocalization.resourceBundle)
+    }
+  }
+
+  private func changeEnabled(_ enabled: Bool, id: String, revision: Int64) {
+    Task {
+      await model.apply(.enabled(pluginID: id, enabled), expectedRevision: revision)
+      if let review = model.enablementReview { sheet = .enablement(review) }
+    }
+  }
+
   private func details(id: String, snapshot: PluginHostSnapshot) -> some View {
-    Form {
+    let enabled = snapshot.settings(for: id).enabled
+    let needsSourceReview = snapshot.pendingSourceReviews.contains(id)
+    return Form {
       let refusals = Self.refusals(for: id, in: snapshot)
       if !refusals.isEmpty {
         Section {
@@ -144,17 +167,22 @@ struct PluginsView: View {
       Section {
         LabeledContent("Plugin", value: id)
         LabeledContent("Status") {
-          Text(snapshot.state.settings[id]?.enabled == true ? "Enabled" : "Disabled")
+          statusLabel(id: id, snapshot: snapshot)
         }
         HStack {
           Button("Edit settings") {
             sheet = .settings(PluginSettingsDraft(id: id, snapshot: snapshot))
           }
-          Button(snapshot.state.settings[id]?.enabled == true ? "Disable" : "Enable") {
-            Task {
-              await model.apply(
-                .enabled(pluginID: id, snapshot.state.settings[id]?.enabled != true),
-                expectedRevision: snapshot.state.revision)
+          if needsSourceReview {
+            Button {
+              changeEnabled(true, id: id, revision: snapshot.state.revision)
+            } label: {
+              Text("Review changes…", bundle: AppLocalization.resourceBundle)
+            }
+          }
+          if enabled || !needsSourceReview {
+            Button(enabled ? "Disable" : "Enable") {
+              changeEnabled(!enabled, id: id, revision: snapshot.state.revision)
             }
           }
         }
@@ -323,6 +351,7 @@ private enum PluginSheet: Identifiable {
   case search
   case install(revision: Int64)
   case doctor(PluginDoctorModel)
+  case enablement(ProviderEnablementReview)
 
   var id: String {
     switch self {
@@ -330,6 +359,7 @@ private enum PluginSheet: Identifiable {
     case .search: "search"
     case .install: "install"
     case .doctor(let doctor): "doctor-\(doctor.pluginID)"
+    case .enablement(let review): review.id.uuidString
     }
   }
 }

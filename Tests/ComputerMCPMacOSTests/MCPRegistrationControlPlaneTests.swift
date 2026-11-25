@@ -498,7 +498,11 @@ struct MCPRegistrationControlPlaneTests {
     try await fixture.socket.start()
     var clients: [GatewayClientSession] = []
     do {
-      try await fixture.apply(["add", "--registration-file", input.path])
+      try await fixture.applyLocal(
+        .add(server),
+        selection: .init(
+          permissions: fixturePermissions([.project("fixture"): .granted(.write)]),
+          fullAccess: true))
       #expect(!FileManager.default.fileExists(atPath: starts.path))
       try fixture.database.saveProfile(
         .init(
@@ -533,11 +537,11 @@ struct MCPRegistrationControlPlaneTests {
       try JSONEncoder().encode(server).write(to: input)
       let preview = try await fixture.json(["configure", "--registration-file", input.path])
       #expect(preview.objectValue?["transport_will_restart"] == .bool(false))
-      let digest = try #require(preview.objectValue?["current_digest"]?.stringValue)
-      _ = try await fixture.json([
-        "configure", "--registration-file", input.path, "--apply", "--expected-current-digest",
-        digest,
-      ])
+      try await fixture.applyLocal(
+        .configure(server),
+        selection: .init(
+          permissions: fixturePermissions([.project("fixture"): .granted(.write)]),
+          fullAccess: true))
       try await fixture.waitForExit(firstDelegationPIDs)
       #expect(await fixture.gateway.snapshot().connectionCount == 1)
       let second = first
@@ -634,7 +638,15 @@ struct MCPRegistrationControlPlaneTests {
       #expect(stale.exitCode != 0)
       #expect(try fixture.configuration().mcp.servers == [server])
 
-      try await fixture.apply(["enable", "manual"])
+      let enable = ["enable", "manual"]
+      let current = try await fixture.json(enable)
+      let currentDigest = try #require(current.objectValue?["current_digest"]?.stringValue)
+      let refused = try await fixture.cli(
+        enable + ["--apply", "--expected-current-digest", currentDigest])
+      #expect(refused.exitCode != 0)
+      #expect(refused.stderr.contains("provider.approval_required"))
+      #expect(try fixture.configuration().mcp.servers == [server])
+      try await fixture.applyLocal(.enabled(id: "manual", true))
       var enabled = server
       enabled.enabled = true
       #expect(try fixture.configuration().mcp.servers == [enabled])
@@ -644,7 +656,7 @@ struct MCPRegistrationControlPlaneTests {
       exportedServer["allow_any_tool"] = .bool(true)
       exportedServer["allowed_tools"] = .array([])
       try JSONEncoder().encode(JSONValue.object(exportedServer)).write(to: input)
-      try await fixture.apply(["configure", "--registration-file", input.path])
+      try await fixture.applyLocal(.configure(enabled))
       #expect(try fixture.configuration().mcp.servers == [enabled])
       try await fixture.apply(["disable", "manual"])
       enabled.enabled = false
@@ -917,6 +929,18 @@ struct MCPRegistrationControlFixture: Sendable {
     let preview = try await json(arguments)
     let digest = try #require(preview.objectValue?["current_digest"]?.stringValue)
     _ = try await json(arguments + ["--apply", "--expected-current-digest", digest])
+  }
+
+  func applyLocal(
+    _ change: MCPRegistrationChange, selection: ProviderEnablementSelection = .init()
+  ) async throws {
+    let operations = AppControlPlaneOperations(controlPlane: host, gatewayService: gateway)
+    let preview = try await operations.changeMCPRegistration(change)
+    let review = try #require(
+      try await host.reviewMCPRegistrationEnablement(change, preview: preview))
+    _ = try await operations.changeMCPRegistration(
+      change, apply: true, expectedCurrentDigest: preview.currentDigest,
+      approval: .init(review: review, selection: selection))
   }
 
   func discover(_ client: GatewayClientSession, server: String) async throws {

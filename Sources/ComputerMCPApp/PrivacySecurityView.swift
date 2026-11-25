@@ -77,7 +77,10 @@ struct PrivacySecurityView: View {
       }
     }
     .sheet(item: $prompted) { request in
-      PrivacyRequestPrompt(request: request) { answer in
+      PrivacyRequestPrompt(
+        request: request,
+        pluginExecutionTargets: Self.pluginExecutionTargets(for: request, in: promptedSnapshot)
+      ) { answer in
         let reviewed = promptedSnapshot
         prompted = nil
         Task { await model.answer(request, answer, reviewed: reviewed) }
@@ -251,6 +254,15 @@ struct PrivacySecurityView: View {
     case .notDetermined: "Not Requested"
     }
   }
+
+  static func pluginExecutionTargets(
+    for request: PrivacyRequest, in snapshot: PrivacySnapshot
+  ) -> [PrivacyPrincipal] {
+    guard request.permission == .plugins, case .client = request.principal.kind,
+      let objectID = request.object?.id
+    else { return [] }
+    return snapshot.plugins(forUseOf: objectID)
+  }
 }
 
 struct PrivacyPermissionDetailView: View {
@@ -403,6 +415,14 @@ struct PrivacyGrantRow: View {
           if let caption {
             Text(verbatim: caption).font(.caption).foregroundStyle(.secondary)
           }
+          if !pluginExecutionTargets.isEmpty {
+            let explanation = Self.pluginExecutionExplanation(for: pluginExecutionTargets, using: l)
+            if !explanation.isEmpty {
+              Text(verbatim: explanation)
+                .font(.caption).foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            }
+          }
         }
       } icon: {
         PrivacySymbol(name: systemImage ?? grant.permission.systemImage)
@@ -419,6 +439,9 @@ struct PrivacyGrantRow: View {
   private var caption: String? {
     var parts: [String] = []
     if grant.object?.isRegistered == false { parts.append(l("Not registered")) }
+    if let execution = Self.pluginExecutionSummary(for: pluginExecutionTargets, using: l) {
+      parts.append(execution)
+    }
     if showsNetwork, let network = grant.network {
       parts.append(Self.networkTitle(network, using: l))
     }
@@ -431,6 +454,64 @@ struct PrivacyGrantRow: View {
       parts += grant.networkLimitNotices.filter(\.isPerRow).map { $0.text(using: l) }
     }
     return parts.isEmpty ? nil : parts.joined(separator: " · ")
+  }
+
+  private var pluginExecutionTargets: [PrivacyPrincipal] {
+    guard grant.permission == .plugins,
+      let principal = model.snapshot.principals.first(where: { $0.id == grant.principalID }),
+      case .client = principal.kind,
+      let objectID = grant.object?.id
+    else { return [] }
+    return model.snapshot.plugins(forUseOf: objectID)
+  }
+
+  static func pluginExecutionSummary(
+    for targets: [PrivacyPrincipal], using l: PrivacyText
+  ) -> String? {
+    guard !targets.isEmpty else { return nil }
+    let sandbox = targets.filter { $0.effectiveExecution == .sandbox }
+    let fullAccess = targets.filter { $0.effectiveExecution == .fullAccessAllowed }
+    var details: [String] = []
+    if !sandbox.isEmpty && !fullAccess.isEmpty {
+      details.append(l.format("Sandbox and Full Access (%@)", l.list(fullAccess.map(\.name))))
+    } else if !fullAccess.isEmpty {
+      details.append(l("Execution: Full Access"))
+    } else if !sandbox.isEmpty {
+      details.append(l("Execution: Sandbox"))
+    }
+
+    let blocked = targets.filter {
+      $0.effectiveExecution == nil && $0.providerAvailability == .active
+    }
+    let unavailable = targets.filter {
+      $0.effectiveExecution == nil && $0.providerAvailability != .active
+    }
+    if targets.count == 1 && !blocked.isEmpty { return l("Execution blocked") }
+    if targets.count == 1 && !unavailable.isEmpty { return l("Execution unavailable") }
+    if !blocked.isEmpty {
+      details.append(l.format("Execution blocked for %@", l.list(blocked.map(\.name))))
+    }
+    if !unavailable.isEmpty {
+      details.append(l.format("Execution unavailable for %@", l.list(unavailable.map(\.name))))
+    }
+    return details.joined(separator: " · ")
+  }
+
+  static func pluginExecutionExplanation(
+    for targets: [PrivacyPrincipal], using l: PrivacyText
+  ) -> String {
+    let modes = Set(targets.compactMap(\.effectiveExecution))
+    var details: [String] = []
+    if modes.contains(.sandbox) {
+      details.append(
+        l(
+          "Other principals’ host tools and sandboxed programs cannot read files in the plugin’s sandbox container. Files in shared projects follow the project’s permissions."
+        ))
+    }
+    if modes.contains(.fullAccessAllowed) {
+      details.append(l("Full Access plugins run outside the sandbox as your user account."))
+    }
+    return details.joined(separator: " ")
   }
 
   /// The network level alone, as a picker shows its current value.
@@ -818,7 +899,18 @@ struct PrivacyRequestPrompt: View {
   @Environment(\.localizationResources) private var resources
   private var l: PrivacyText { PrivacyText(locale: locale, resources: resources) }
   let request: PrivacyRequest
+  let pluginExecutionTargets: [PrivacyPrincipal]
   let answer: (PrivacyRequestAnswer) -> Void
+
+  init(
+    request: PrivacyRequest,
+    pluginExecutionTargets: [PrivacyPrincipal] = [],
+    answer: @escaping (PrivacyRequestAnswer) -> Void
+  ) {
+    self.request = request
+    self.pluginExecutionTargets = pluginExecutionTargets
+    self.answer = answer
+  }
 
   var body: some View {
     VStack(spacing: 16) {
@@ -840,6 +932,21 @@ struct PrivacyRequestPrompt: View {
         }
         let requester = Self.requesterCaption(for: request, using: l)
         Text(verbatim: requester).font(.caption).foregroundStyle(.secondary)
+        if let executionContext = PrivacyGrantRow.pluginExecutionSummary(
+          for: pluginExecutionTargets, using: l)
+        {
+          VStack(spacing: 3) {
+            Text(verbatim: executionContext)
+              .accessibilityIdentifier("privacy.prompt.execution")
+            let explanation = PrivacyGrantRow.pluginExecutionExplanation(
+              for: pluginExecutionTargets, using: l)
+            if !explanation.isEmpty { Text(verbatim: explanation) }
+          }
+          .font(.caption)
+          .foregroundStyle(.secondary)
+          .multilineTextAlignment(.center)
+          .fixedSize(horizontal: false, vertical: true)
+        }
         if let purpose = request.purpose {
           Text(verbatim: purpose)
             .multilineTextAlignment(.center)

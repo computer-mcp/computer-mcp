@@ -112,11 +112,21 @@ extension GatewayPermissionService {
       throw PermissionMigrationError.revisionExhausted
     }
     let trustedHosts = Set(ledger.environment.trustedHosts.map(\.host))
-    let currentSettings = ledger.sandboxSettings.providers[review.identity]
-    var selectedSettings =
-      !editingApproval && previous != nil && currentSettings == nil
-      ? sandboxSettings.rebindingReviewedChoices() : sandboxSettings
     let ceiling = review.declarations.map { $0.sandbox?.network?.value ?? .none }
+    let currentSettings = ledger.sandboxSettings.providers[review.identity]
+    var selectedSettings = sandboxSettings
+    if !editingApproval, let previous, previous.pendingSourceDigest == review.sourceDigest,
+      let storedSettings = currentSettings ?? previous.sandboxSettings
+    {
+      selectedSettings.retainProjectRestrictions(
+        from: storedSettings,
+        projectIDs: Set(review.configuration.projects.map(\.id)).subtracting(derivedIDs),
+        // Only a trusted-only declaration keeps every carried host conditional at runtime.
+        trustedHosts: ceiling?.configuration == .trusted ? trustedHosts : [])
+    }
+    if !editingApproval && previous != nil && currentSettings == nil {
+      selectedSettings = selectedSettings.rebindingReviewedChoices()
+    }
     selectedSettings.defaults.networkCeiling = ceiling.map {
       (currentSettings?.defaults.networkCeiling ?? .none).updating(to: $0)
     }
@@ -414,15 +424,9 @@ extension GatewayPermissionService {
           !id.unicodeScalars.contains(where: { $0.value < 32 || $0.value == 127 }),
           id == "*" || !id.contains("*")
         else { throw PermissionModelError.invalidObject }
-        if id == "*" {
-          guard limits.restrictingSources(forFallback: permission, in: permissions).isEmpty else {
-            throw GatewayPermissionError.managedLimit
-          }
-          continue
-        }
       default: break
       }
-      guard limits.restrictingSources(for: try .init(permission, value)).isEmpty else {
+      guard try allowsProviderGrant(value, for: permission, in: permissions, limits: limits) else {
         throw GatewayPermissionError.managedLimit
       }
     }
@@ -446,6 +450,16 @@ extension GatewayPermissionService {
         }
       }
     }
+  }
+
+  package static func allowsProviderGrant(
+    _ value: PermissionValue, for permission: Permission, in permissions: Permissions,
+    limits: ManagedLimits
+  ) throws -> Bool {
+    if permission.fallback == permission {
+      return limits.restrictingSources(forFallback: permission, in: permissions).isEmpty
+    }
+    return try limits.restrictingSources(for: .init(permission, value)).isEmpty
   }
 
   /// Called in the same transaction that publishes the newly selected installation.
@@ -576,6 +590,24 @@ extension GatewayPermissionService {
       record.payload = try encodeProviderApproval(approval)
       try record.save(database)
       try retireProvider(approval.principal, ledger: &ledger)
+    }
+  }
+}
+
+extension GatewayDatabase {
+  package func pendingPluginSourceReviews(in state: PluginStoreSnapshot) throws -> Set<String> {
+    guard !state.selectedInstallations.isEmpty else { return [] }
+    return try connection.writer.read { database in
+      Set(
+        try state.installations.compactMap { installation in
+          let id = installation.pluginID
+          guard state.selectedInstallations[id] == installation.id,
+            let record = try ProviderAuthorityRecord.load(.package(id), in: database),
+            !record.payload.isEmpty
+          else { return nil }
+          let approval = try GatewayPermissionService.providerApproval(record)
+          return approval.pendingSourceDigest == installation.manifestDigest ? id : nil
+        })
     }
   }
 }

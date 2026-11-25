@@ -1143,7 +1143,8 @@ package actor AppGatewayService {
     try await withConfigurationChange {
       let bundled = await controlPlane.bundledPlugins.packages
       return try await controlPlane.applyPluginChange(
-        change, expectedRevision: expectedRevision, approval: approval
+        change, expectedRevision: expectedRevision, approval: approval,
+        remoteManagement: authorization != nil
       ) { [self] expected, proposed, storage, activation in
         let state = GatewayDatabase.ConfigurationState(
           projects: expected.projects, projectAliases: expected.persisted.projectAliases,
@@ -1202,10 +1203,13 @@ package actor AppGatewayService {
   }
 
   func changeManifest(
-    _ manifest: String, reason: ManifestChangeReason = .activated, expectedDigest: String
+    _ manifest: String, reason: ManifestChangeReason = .activated, expectedDigest: String,
+    providerActivation: GatewayProviderActivation? = nil
   ) async throws -> ConfigurationRevision {
     let revision = try await withConfigurationChange {
-      try await publishManifest(manifest, reason: reason, expectedDigest: expectedDigest)
+      try await publishManifest(
+        manifest, reason: reason, expectedDigest: expectedDigest,
+        providerActivation: providerActivation)
     }
     manifestReloadError = nil
     lastManifestAttempt = nil
@@ -1213,7 +1217,8 @@ package actor AppGatewayService {
   }
 
   private func publishManifest(
-    _ manifest: String, reason: ManifestChangeReason, expectedDigest: String
+    _ manifest: String, reason: ManifestChangeReason, expectedDigest: String,
+    providerActivation: GatewayProviderActivation? = nil
   ) async throws -> ConfigurationRevision {
     try await controlPlane.applyManifestChange(
       manifest, reason: reason, expectedDigest: expectedDigest
@@ -1224,7 +1229,8 @@ package actor AppGatewayService {
         storage: nil
       ) { resolution, install in
         try self.controlPlane.manifestStore.commit(
-          prepared, resolution: resolution, install: install)
+          prepared, resolution: resolution, providerActivation: providerActivation, install: install
+        )
       }
     }
   }

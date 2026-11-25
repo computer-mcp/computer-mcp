@@ -221,10 +221,16 @@ struct PluginReleaseTests {
     let management = PluginManagementModel(controlPlane: service)
     await management.reload()
     let selection = service.artifact
-    #expect(await management.apply(.installRelease(selection), expectedRevision: 0))
+    let activation = try #require(
+      await management.install(.installRelease(selection), expectedRevision: 0))
     #expect(service.installed == [selection])
     #expect(service.revisions == [0])
     #expect(management.snapshot?.state.revision == 1)
+    #expect(activation.id == selection.declaration.pluginID)
+    #expect(activation.revision == 1)
+    #expect(activation.installation.version == selection.declaration.version)
+    #expect(activation.installation.source.artifactSHA256 == selection.sha256)
+    #expect(activation.requiresActivation)
   }
 
   @Test
@@ -362,6 +368,14 @@ private final class ReleaseAppFake: PluginManaging {
     guard expectedRevision == state.revision else {
       throw PluginStoreError.staleRevision(expected: expectedRevision, actual: state.revision)
     }
+    let record = PluginInstallationRecord(
+      id: artifact.id, pluginID: artifact.declaration.pluginID,
+      version: artifact.declaration.version,
+      source: .init(
+        kind: .artifact, root: URL(fileURLWithPath: "/fixture"), artifactSHA256: artifact.sha256),
+      manifestDigest: artifact.declaration.manifestSHA256, registeredAt: .now)
+    state.installations.append(record)
+    state.selectedInstallations[record.pluginID] = record.id
     state.revision += 1
     return try PluginHostSnapshot(
       state: state,

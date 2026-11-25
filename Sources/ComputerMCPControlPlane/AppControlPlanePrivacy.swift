@@ -34,7 +34,9 @@ package struct PrivacyPermissionInventory: Sendable {
 }
 
 extension AppControlPlaneService {
-  package func privacyPermissionInventory() throws -> PrivacyPermissionInventory {
+  package func privacyPermissionInventory(additionalProvider: PluginIdentity? = nil) throws
+    -> PrivacyPermissionInventory
+  {
     guard !configurationMutationInProgress else { throw PluginHostError.changeInProgress }
     let inputs = try gatewayInputs()
     let manifestDigest = try? manifestStore.admittedDigest(for: inputs.configuration)
@@ -49,7 +51,8 @@ extension AppControlPlaneService {
     let directServers = inputs.configuration.mcp.servers.filter { $0.transport == .stdio }
     let configured = Set(pluginIDs.map(PluginIdentity.package))
       .union(directServers.map { .localServer($0.id) })
-    let view = try requirePermissionControl().view(providerIDs: configured)
+    let view = try requirePermissionControl().view(
+      providerIDs: configured.union(additionalProvider.map { [$0] } ?? []))
     let saved = Dictionary(uniqueKeysWithValues: view.providers.map { ($0.identity, $0) })
     let identities = configured.union(saved.keys)
     var pluginNames: [String: String] = [:]

@@ -62,7 +62,7 @@ struct ManifestFileTransaction {
   func commit(
     stagedURL: URL, previous: Data?, revision: ConfigurationRevision,
     expected: GatewayDatabase.ConfigurationState, resolution: GatewayConfigurationResolution,
-    activeTunnelIDs: Set<String>
+    activeTunnelIDs: Set<String>, providerActivation: GatewayProviderActivation? = nil
   ) throws -> GatewayDatabase.ConfigurationState {
     guard try currentData() == previous else { throw AtomicManifestStoreError.staleDigest }
     let record = ManifestRecoveryRecord(version: 1, revision: revision, previous: previous)
@@ -84,7 +84,8 @@ struct ManifestFileTransaction {
     do {
       try Self.synchronizeDirectory(manifestURL.deletingLastPathComponent())
       _ = try database.activateConfigurationRevision(
-        revision, expected: expected, resolution: resolution, activeTunnelIDs: activeTunnelIDs
+        revision, expected: expected, resolution: resolution, activeTunnelIDs: activeTunnelIDs,
+        providerActivation: providerActivation
       ) {
         state in
         committed = state

@@ -80,6 +80,45 @@ package enum ProviderEnablementError: LocalizedError, ControlErrorClassifying, E
   }
 }
 
+extension AppControlPlaneService {
+  func enablementReview(
+    source: GatewayProviderReview, name: String, version: String?, inputs: GatewayInputs,
+    server: MCPServerConfig? = nil, mcpContributionIDs: [String] = [],
+    target: ProviderEnablementReview.Target
+  ) throws -> ProviderEnablementReview {
+    let inventory = try privacyPermissionInventory(additionalProvider: source.identity)
+    let view = inventory.permissions
+    let provider = view.providers.first { $0.identity == source.identity }
+    guard !view.suspended, view.epoch != nil else {
+      throw GatewayPermissionError.revisionConflict
+    }
+    try requireCurrentGatewayInputs(inputs)
+    let manifestDigest = try manifestStore.admittedDigest(for: inputs.configuration)
+    if case .registration(let currentDigest, _) = target, currentDigest != manifestDigest {
+      throw AtomicManifestStoreError.staleDigest
+    }
+    let derivedProjectIDs = Set(inputs.persisted.derivedProjects.map(\.projectID))
+    var serverNames = inventory.names.mcpServers.filter { source.serverIDs.contains($0.key) }
+    if let server { serverNames[server.id] = name }
+    let availability = inventory.providers.first { $0.identity == source.identity }?.availability
+    return ProviderEnablementReview(
+      provider: ProviderPermissionOptions(
+        identity: source.identity, name: name, version: version,
+        availability: availability == .needsSourceReview ? .needsSourceReview : .needsApproval,
+        approval: provider, sourceReview: source,
+        declarationDigest: try source.declarations?.digest(),
+        limits: view.providerLimits[source.identity] ?? .init(), effectiveMode: nil,
+        permissionRevision: view.revision, epoch: view.epoch,
+        manifestDigest: manifestDigest),
+      names: PermissionObjectNames(
+        projects: inventory.names.projects.filter { !derivedProjectIDs.contains($0.key) },
+        plugins: inventory.names.plugins.filter { source.pluginIDs.contains($0.key) },
+        mcpServers: serverNames),
+      localServer: server, mcpContributionIDs: mcpContributionIDs,
+      trustedHosts: view.trustedHosts, target: target)
+  }
+}
+
 extension PermissionControlService {
   func prepareProviderActivation(_ approval: ProviderEnablementApproval) throws
     -> GatewayProviderActivation

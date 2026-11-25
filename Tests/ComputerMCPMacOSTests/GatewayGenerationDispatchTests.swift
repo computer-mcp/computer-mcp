@@ -1772,9 +1772,7 @@ struct GatewayGenerationDispatchTests {
       let changes = GatewayToolChangeBroadcaster()
       let events = changes.stream()
       await observer.onNotification(ToolListChangedNotification.self) { _ in changes.send() }
-      snapshot = try await fixture.service.changePlugins(
-        .enabled(pluginID: "live-fixture", true),
-        expectedRevision: try await fixture.control.pluginSnapshot().state.revision)
+      snapshot = try await fixture.enableLivePlugin()
       try await fixture.discover(client)
       let announced = try await withThrowingTaskGroup(of: Bool.self) { group in
         group.addTask {
@@ -1812,9 +1810,7 @@ struct GatewayGenerationDispatchTests {
         #expect(retired.result.objectValue?["isError"] == .bool(true))
         #expect(try fixture.calls() == before)
       }
-      snapshot = try await fixture.service.changePlugins(
-        .enabled(pluginID: "live-fixture", true),
-        expectedRevision: try await fixture.control.pluginSnapshot().state.revision)
+      snapshot = try await fixture.enableLivePlugin()
       snapshot = try await fixture.installPlugin(version: 2, managed: managed, archives: archives)
       let fresh = try await fixture.identity(client)
       let newPID = try pid(fresh)
@@ -3490,14 +3486,30 @@ private struct GenerationFixture: Sendable {
         trustedPrincipalID: "verified-generation-owner"), validate: {})
   }
 
-  func approveProviders() async throws {
-    let configuration = try await control.activeConfiguration()
-    let runtime = try database.permissionRuntime(platform: platform)
-    let grants = fixturePermissions(
+  func enableLivePlugin() async throws -> PluginHostSnapshot {
+    let change = PluginHostChange.enabled(pluginID: "live-fixture", true)
+    let revision = try database.pluginStoreSnapshot().revision
+    let review = try #require(
+      try await control.reviewPluginEnablement(change, expectedRevision: revision))
+    return try await service.changePlugins(
+      change, expectedRevision: revision,
+      approval: .init(
+        review: review, selection: .init(permissions: try providerProjectGrants(), fullAccess: true)
+      ))
+  }
+
+  private func providerProjectGrants() throws -> Permissions {
+    fixturePermissions(
       Dictionary(
         uniqueKeysWithValues:
           try database.projects().filter { try database.derivedSourceID(for: $0.id) == nil }
           .map { (Permission.project($0.id), PermissionState.granted(.write)) }))
+  }
+
+  func approveProviders() async throws {
+    let configuration = try await control.activeConfiguration()
+    let runtime = try database.permissionRuntime(platform: platform)
+    let grants = try providerProjectGrants()
     for server in configuration.mcp.servers where server.transport == .stdio {
       try fixtureApproveLocalProvider(
         server, database: database, runtime: runtime, permissions: grants, fullAccess: true)

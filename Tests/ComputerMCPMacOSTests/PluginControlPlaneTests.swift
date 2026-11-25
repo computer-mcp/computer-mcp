@@ -172,6 +172,59 @@ struct PluginControlPlaneTests {
   }
 
   @Test
+  func h13ApprovalRejectsChangedSourceAndRequiresExplicitFullAccess() async throws {
+    let files = try PluginStoreFixture()
+    defer { files.cleanup() }
+    let manifest =
+      PluginStoreFixture.manifest + """
+
+        [sandbox]
+        full_access = true
+        purpose = 'Run the selected fixture outside the sandbox'
+        """
+    let package = try files.makePackage(directory: "full-access", text: manifest)
+    let fixture = try PluginControlFixture(
+      bundled: .init(packages: [], issues: []), cliExecutable: URL(fileURLWithPath: "/usr/bin/true")
+    )
+    defer { fixture.remove() }
+    let operations = AppControlPlaneOperations(
+      controlPlane: fixture.host, gatewayService: fixture.gateway)
+    _ = try await operations.changePlugins(.registerDevelopment(package), expectedRevision: 0)
+    let enable = PluginHostChange.enabled(pluginID: "test-package", true)
+    let review = try #require(
+      try await fixture.host.reviewPluginEnablement(enable, expectedRevision: 1))
+    #expect(review.requestedMode == .fullAccess(.standing))
+    #expect(!review.allowsModeSelection)
+    await #expect(throws: GatewayPermissionError.invalidBinding) {
+      try await operations.changePlugins(
+        enable, expectedRevision: 1, approval: .init(review: review, selection: .init()))
+    }
+    #expect(try fixture.database.pluginStoreSnapshot().revision == 1)
+    #expect(try await fixture.host.privacyPermissionInventory().permissions.providers.isEmpty)
+
+    let selectedManifest = package.appendingPathComponent(PluginManifest.filename)
+    let edited = manifest.replacingOccurrences(of: "selected fixture", with: "updated fixture")
+    try edited.write(to: selectedManifest, atomically: true, encoding: .utf8)
+    let accepted = ProviderEnablementSelection(fullAccess: true)
+    await #expect(throws: GatewayPermissionError.revisionConflict) {
+      try await operations.changePlugins(
+        enable, expectedRevision: 1, approval: .init(review: review, selection: accepted))
+    }
+    #expect(try fixture.database.pluginStoreSnapshot().settings["test-package"]?.enabled == false)
+
+    _ = try await operations.changePlugins(.registerDevelopment(package), expectedRevision: 1)
+    let updated = try #require(
+      try await fixture.host.reviewPluginEnablement(enable, expectedRevision: 2))
+    #expect(updated.provider.sourceDigest != review.provider.sourceDigest)
+    let result = try await operations.changePlugins(
+      enable, expectedRevision: 2, approval: .init(review: updated, selection: accepted))
+    #expect(result.state.settings["test-package"]?.enabled == true)
+    let provider = try #require(try await fixture.host.privacyPermissionInventory().providers.first)
+    #expect(provider.sourceDigest == updated.provider.sourceDigest)
+    #expect(provider.effectiveMode == .fullAccess(.standing))
+  }
+
+  @Test
   func h12PackageApprovalPublishesWithTheRunningGatewayAndRollsBackCompositionFailure() async throws
   {
     let files = try PluginStoreFixture()
@@ -487,9 +540,14 @@ struct PluginControlPlaneTests {
       let manifest = fixture.root.appendingPathComponent("bundled-profile.toml")
       try configuration.exportedTOML().write(to: manifest, atomically: true, encoding: .utf8)
       #expect(try loader.load(path: manifest.path).profiles.count == 1)
-      let enabled = try await fixture.cli(["enable", "test-package", "--expected-revision", "0"])
-      #expect(enabled.exitCode == 0, "\(enabled.stdout)\n\(enabled.stderr)")
-      let active = try await fixture.host.pluginSnapshot()
+      let blocked = try await fixture.cli(["enable", "test-package", "--expected-revision", "0"])
+      #expect(blocked.exitCode == 1)
+      #expect(blocked.stdout.contains("provider.approval_required"))
+      let change = PluginHostChange.enabled(pluginID: "test-package", true)
+      let review = try #require(
+        try await fixture.host.reviewPluginEnablement(change, expectedRevision: 0))
+      let active = try await fixture.gateway.changePlugins(
+        change, expectedRevision: 0, approval: .init(review: review, selection: .init()))
       #expect(active.state.revision == 1 && active.state.installations.isEmpty)
       #expect(active.settings(for: "test-package").enabled)
       #expect(active.settings(for: "test-package").mcp["native"]?.allowedTools == [])

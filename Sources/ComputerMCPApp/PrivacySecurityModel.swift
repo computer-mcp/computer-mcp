@@ -377,6 +377,13 @@ struct PrivacySnapshot: Equatable, Sendable {
     Dictionary(
       uniqueKeysWithValues: reviewedProfiles.map { ($0.id.rawValue, $0.authorizationRevision) })
   }
+  func plugins(forUseOf objectID: String) -> [PrivacyPrincipal] {
+    principals.filter { principal in
+      guard case .plugin = principal.kind else { return false }
+      return objectID == "*" || principal.id == "plugin/" + objectID
+    }
+  }
+
   var requests: [PrivacyRequest] = []
   var principals: [PrivacyPrincipal] = []
   var grants: [PrivacyGrant] = []

@@ -747,6 +747,83 @@ struct GatewayProviderApprovalTests {
     #expect(try f.view().providers == [approved])
   }
 
+  @Test func wideningApprovalKeepsProjectHostUnderTrustedDeclarationCeiling() throws {
+    let f = try ProviderApprovalFixture()
+    defer { f.remove() }
+    let projectID = "project"
+    let host = "metadata.example"
+    let other = HostRule("other.example")
+    let project = try ProjectPathResolver.canonicalProject(f.root)
+    try f.database.saveProject(.init(id: projectID, displayName: "Project", rootPath: project.path))
+    try f.service.configureEnvironment(
+      .init(
+        projects: [.init(id: projectID, root: .init(project.path))],
+        rules: [
+          .init(root: .init("/people"), kind: .userData),
+          .init(root: .init("/host"), kind: .hostData),
+        ]),
+      trustedHosts: [HostRule(host), other], expectedProjects: f.database.projects(),
+      expectedConfigurationRevision: nil)
+
+    let sandbox = "[sandbox]\nnetwork = 'trusted'\npurpose = 'Network'\n"
+    let projectNetwork = NetworkAccess.custom(hosts: [host], includesTrusted: false)
+    let defaults = ProviderSandboxSettings(defaults: .init(network: .trusted))
+    let initial = try f.approve(
+      f.install(requirement: "read", access: "read", sandbox: sandbox), permissions: .newPrincipal,
+      sandboxSettings: .init(
+        defaults: defaults.defaults, projects: [projectID: .init(network: projectNetwork)]))
+    let savedNetwork = try #require(initial.sandboxSettings?.projects[projectID]?.network)
+
+    let updated = try f.install(
+      requirement: "read", access: "read", sandbox: sandbox,
+      additionalPermissions: """
+        [[permissions]]
+        id = 'screen'
+        access = 'allow'
+        purpose = 'Inspect the screen'
+        """)
+    let pending = try #require(f.view().providers.first)
+    #expect(pending.pendingSourceDigest == updated.sourceDigest)
+    var permissions = pending.permissions
+    try permissions.set(.granted(.access), for: .screen)
+    let approved = try f.approve(
+      updated, permissions: permissions, previous: pending.revision, sandboxSettings: defaults)
+    #expect(approved.permissions.state(for: .screen) == .granted(.access))
+    #expect(approved.sandboxSettings?.projects[projectID]?.network == savedNetwork)
+    #expect(approved.sandboxSettings?.defaults.networkCeiling?.configuration == .trusted)
+
+    try f.store.transactionWithDatabase { _, ledger in
+      let invocation = InvocationIdentity(
+        principal: approved.principal, tool: "network-check", projectID: projectID,
+        argumentsDigest: "trusted-host")
+      let requirements = InvocationRequirements(
+        networks: [.init(host: host, projectID: projectID, isLocalNetwork: false)],
+        sandboxProjectID: projectID)
+      let decision = try ledger.authorize(
+        invocation: invocation, requirements: requirements, now: Date())
+      guard case .allowed(let authorization) = decision else {
+        Issue.record("The retained host must be usable while trusted: \(decision)")
+        return
+      }
+      #expect(
+        try ledger.prepareExecutionPermissions(authorization.id).network
+          == projectNetwork.configuration)
+
+      var environment = ledger.environment
+      environment.trustedHosts = environment.trustedHosts.filter { $0.host == other.host }
+      _ = try ledger.reconcile(environment: environment, expectedRevision: ledger.revision)
+      #expect(throws: PermissionModelError.invalidAuthorization) {
+        try ledger.invocationAccess(authorization.id)
+      }
+      #expect(
+        try ledger.authorize(invocation: invocation, requirements: requirements, now: Date())
+          == .denied(.invalidNetworkRequirement))
+      #expect(
+        ledger.sandboxSettings.providers[approved.identity]?.projects[projectID]?.network
+          == savedNetwork)
+    }
+  }
+
   @Test func approvalBindsSourceEpochRevisionsAndNeverCreatesProfile() throws {
     let f = try ProviderApprovalFixture()
     defer { f.remove() }
@@ -1217,7 +1294,7 @@ private final class ProviderApprovalFixture: @unchecked Sendable {
 
   func install(
     requirement: String, access: String = "write", purpose: String = "Edit",
-    recordDeclarations: Bool = true, sandbox: String = ""
+    recordDeclarations: Bool = true, sandbox: String = "", additionalPermissions: String = ""
   ) throws
     -> GatewayProviderReview
   {
@@ -1227,6 +1304,7 @@ private final class ProviderApprovalFixture: @unchecked Sendable {
         id = 'project'
         access = '\(access)'
         purpose = '\(purpose)'
+        \(additionalPermissions)
         [[mcp]]
         id = 'remote'
         transport = 'http'

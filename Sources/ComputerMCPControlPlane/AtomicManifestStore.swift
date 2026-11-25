@@ -321,6 +321,7 @@ package final class AtomicManifestStore: @unchecked Sendable {
 
   func commit(
     _ prepared: PreparedManifestChange, resolution: GatewayConfigurationResolution = .init(),
+    providerActivation: GatewayProviderActivation? = nil,
     install: (GatewayDatabase.ConfigurationState) -> Void = { _ in }
   ) throws -> ConfigurationRevision {
     writeLock.lock()
@@ -360,7 +361,8 @@ package final class AtomicManifestStore: @unchecked Sendable {
         try ManifestFileTransaction.writeAndSynchronize(Data(revision.manifest.utf8), to: stagedURL)
         persisted = try files.commit(
           stagedURL: stagedURL, previous: prepared.previous, revision: revision,
-          expected: prepared.persisted, resolution: resolution, activeTunnelIDs: activeTunnelIDs)
+          expected: prepared.persisted, resolution: resolution, activeTunnelIDs: activeTunnelIDs,
+          providerActivation: providerActivation)
       }
       configuration = prepared.configuration
       admissionID = UUID()

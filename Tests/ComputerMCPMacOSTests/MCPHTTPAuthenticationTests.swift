@@ -306,14 +306,13 @@ struct MCPHTTPAuthenticationTests {
       let client = Client(name: "credential-workflow", version: "1")
       do {
         if plugin {
-          let inventory = try await fixture.host.privacyPermissionInventory()
+          let change = PluginHostChange.enabled(pluginID: "http-fixture", true)
           let review = try #require(
-            inventory.providers.first { $0.identity == .package("http-fixture") })
-          let operations = AppControlPlaneOperations(
-            controlPlane: fixture.host, gatewayService: fixture.gateway)
-          try await operations.saveProviderPermissions(
-            reviewed: review, permissions: .newPrincipal, fullAccess: false,
-            sandboxSettings: .init(), editingApproval: false)
+            try await fixture.host.reviewPluginEnablement(
+              change, expectedRevision: pluginBefore.revision))
+          _ = try await fixture.gateway.changePlugins(
+            change, expectedRevision: pluginBefore.revision,
+            approval: .init(review: review, selection: .init(permissions: .newPrincipal)))
           pluginBefore = try fixture.database.pluginStoreSnapshot()
         }
         let missing = try await fixture.host.doctorMCPRegistration(

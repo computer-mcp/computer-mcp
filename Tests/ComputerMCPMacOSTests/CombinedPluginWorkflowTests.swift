@@ -153,8 +153,13 @@ struct CombinedPluginWorkflowTests {
       snapshot = try await Self.run(
         fixture, ["disable", "combined"], revision: snapshot.state.revision)
       try await Self.checkIndependent(active, fixture: fixture, removedCLI: projectedName)
-      snapshot = try await Self.run(
-        fixture, ["enable", "combined"], revision: snapshot.state.revision)
+      let unreviewed = try await fixture.cli([
+        "enable", "combined", "--expected-revision", String(snapshot.state.revision),
+      ])
+      #expect(unreviewed.exitCode == 1)
+      #expect(unreviewed.stdout.contains("provider.approval_required"))
+      #expect(try fixture.database.pluginStoreSnapshot() == snapshot.state)
+      try await Self.approve(fixture, identity: .package("combined"))
       #expect(try await Self.checkActive(active, fixture: fixture) == projectedName)
       await active.disconnect()
       client = nil

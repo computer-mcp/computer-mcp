@@ -14,7 +14,7 @@ extension WorktreeDirectory {
     authorize: (URL) throws -> Void = { _ in }
   ) throws {
     let url = URL(fileURLWithPath: expected.path)
-    guard url.deletingLastPathComponent() == self.url else {
+    guard url.deletingLastPathComponent().path.utf8.elementsEqual(identity.path.utf8) else {
       throw WorktreeError.identityChanged("Removal root has a different parent.")
     }
     var status = stat()

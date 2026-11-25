@@ -5,6 +5,26 @@ import Testing
 @testable import ComputerMCPWorktrees
 
 struct WorktreeRemovalTests {
+  @Test(arguments: [false, true])
+  func ownedRemovalChecksTheExactParentPath(directoryHint: Bool) throws {
+    try fixture { root in
+      let parent = try WorktreeDirectory(
+        URL(fileURLWithPath: root.path, isDirectory: directoryHint))
+      let child = try parent.child("child", create: true)
+      let sibling = try parent.child("sibling", create: true)
+      let otherChild = try sibling.child("child", create: true)
+
+      #expect(throws: WorktreeError.self) {
+        try parent.removeOwnedTree(otherChild.identity, io: .init())
+      }
+      try otherChild.verify()
+      try child.verify()
+      try parent.removeOwnedTree(child.identity, io: .init())
+      #expect(try !parent.hasEntry("child"))
+      try otherChild.verify()
+    }
+  }
+
   @Test func unconfinedTerminationWarningsSurviveRemovalAndRetry() async throws {
     try await removalFixture { f in
       let service = try f.service()

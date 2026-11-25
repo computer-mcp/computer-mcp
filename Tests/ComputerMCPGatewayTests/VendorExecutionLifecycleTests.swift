@@ -274,17 +274,25 @@
       }
     }
 
-    @Test(arguments: [false, true])
+    enum WaitCase: Sendable, CaseIterable {
+      case observationDeadline, catalogDeadline, catalogCancellation, detachedCatalogDeadline
+
+      var freshCatalog: Bool { self != .observationDeadline }
+    }
+
+    @Test(arguments: WaitCase.allCases)
     func observationDeadlineSettlesItsWaiterAndKeepsTheVendorSessionLive(
-      freshCatalog: Bool
+      scenario: WaitCase
     ) async throws {
+      let freshCatalog = scenario.freshCatalog
       let fixture = try Fixture(adapterSource: Self.managedAdapter(stallCatalog: freshCatalog))
       defer { fixture.base.remove() }
       let ownedWork = GatewayOwnedWork()
       let client = fixture.proxy(ownedWork: ownedWork)
       var configuration = fixture.server
-      configuration.requestTimeoutMs = 5_000
+      configuration.requestTimeoutMs = scenario == .catalogCancellation ? 30_000 : 5_000
       let server = configuration
+      var upstream: Task<JSONValue, any Error>?
       do {
         let instance: JSONValue
         if freshCatalog {
@@ -304,15 +312,40 @@
 
         let observation = try await fixture.prepare("list")
         let requestID = "observation-deadline"
-        do {
-          _ = try await client.callToolAsync(
-            server: server, name: "list", arguments: .object([:]), requestID: requestID,
-            context: .init(executionAuthority: observation))
-          Issue.record("The unanswered managed request should time out.")
-        } catch let error as GatewayToolError {
-          #expect(String(describing: error).contains("request timed out"))
+        if scenario == .catalogCancellation {
+          let home = try fixture.base.database.prepareProviderContainer(.package(fixture.pluginID))
+            .sandbox.home
+          let waiting = Task {
+            try await client.callToolAsync(
+              server: server, name: "list", arguments: .object([:]), requestID: requestID,
+              context: .init(executionAuthority: observation))
+          }
+          upstream = waiting
+          try await requireAdapterMarker("catalog-page-held", in: URL(fileURLWithPath: home.value))
+          let cancelledAt = ContinuousClock.now
+          waiting.cancel()
+          try await fixture.requireSettled(observation, requestID: requestID, ownedWork: ownedWork)
+          await #expect(throws: CancellationError.self) { _ = try await waiting.value }
+          #expect(ContinuousClock.now - cancelledAt < .seconds(10))
+        } else {
+          do {
+            if scenario == .detachedCatalogDeadline {
+              _ = try await BlockingOperationExecutor(label: "test-managed-start").perform {
+                try client.startToolCall(
+                  server: server, name: "list", arguments: .object([:]), requestID: requestID,
+                  context: .init(executionAuthority: observation))
+              }
+            } else {
+              _ = try await client.callToolAsync(
+                server: server, name: "list", arguments: .object([:]), requestID: requestID,
+                context: .init(executionAuthority: observation))
+            }
+            Issue.record("The unanswered managed request should time out.")
+          } catch let error as GatewayToolError {
+            #expect(String(describing: error).contains("request timed out"))
+          }
+          try await fixture.requireSettled(observation, requestID: requestID, ownedWork: ownedWork)
         }
-        try await fixture.requireSettled(observation, requestID: requestID, ownedWork: ownedWork)
 
         if freshCatalog {
           let opened = try await fixture.call("open", server: server, client: client)
@@ -324,9 +357,11 @@
         #expect(output["pid"] == instance)
         #expect(output["exact_cancel"] == .bool(true))
         #expect(output["observations"] == .integer(freshCatalog ? 0 : 1))
+        #expect(output["catalog_loads"] == .integer(freshCatalog ? 2 : 1))
         #expect(output["native_output"] == .string("done:11\n"))
       } catch {
         await client.shutdown()
+        _ = await upstream?.result
         try? await fixture.cleanup()
         throw error
       }
@@ -432,6 +467,7 @@
       sessions = {}
       hung = catalog_hung = None
       observations = 0
+      catalog_loads = 0
       cancelled = []
 
       def private(op, call=None, acquisition=None, **fields):
@@ -470,11 +506,14 @@
           elif method == 'resources/list':
               respond(id, {'resources': [{'uri': uri, 'name': str(os.getpid())}]})
           elif method == 'tools/list':
+              if 'cursor' not in params:
+                  catalog_loads += 1
               if stall_catalog and catalog_hung is None:
                   if 'cursor' not in params:
                       respond(id, {'tools': [], 'nextCursor': 'next'})
                   else:
                       catalog_hung = id
+                      (home / 'catalog-page-held').touch()
                   continue
               respond(id, {'tools': [
                   {'name': name, 'inputSchema': {'type': 'object'},
@@ -525,6 +564,7 @@
                   private('finish', call, acquisition, child=child)
                   expected_cancel = catalog_hung if stall_catalog else hung
                   result = {'pid': os.getpid(), 'child': child, 'observations': observations,
+                            'catalog_loads': catalog_loads,
                             'exact_cancel': expected_cancel is not None and cancelled == [expected_cancel],
                             'native_output': base64.b64decode(output['data']).decode()}
               respond(id, {'content': [], 'structuredContent': result})
@@ -580,6 +620,58 @@
       }
     }
 
+    @Test func traeAcquisitionPublicationRequiresBothLiveExecutions() async throws {
+      let fixture = try Fixture(.trae)
+      defer { fixture.base.remove() }
+      let tool = "trae.session.open"
+      let adapter = try await fixture.prepare(tool)
+      try await withVendor(fixture, adapterExecution: adapter) { host, peer in
+        func fields(_ call: UUID, handle: String) -> [String: JSONValue] {
+          [
+            "call": .string(call.uuidString), "acquisition": .string(call.uuidString),
+            "session": .string(String(repeating: handle, count: 32)),
+          ]
+        }
+        let short = try await fixture.prepare(tool, timeMilliseconds: 20_000)
+        let sibling = try await fixture.prepare(tool)
+        let shortID = UUID()
+        let siblingID = UUID()
+        try await host.admit(id: shortID, tool: tool, arguments: [:], execution: short)
+        try await host.admit(id: siblingID, tool: tool, arguments: [:], execution: sibling)
+        _ = try await peer.call("bind", fields(shortID, handle: "a"))
+        _ = try await peer.call("bind", fields(siblingID, handle: "b"))
+        try await host.validateAcquisitionReply(shortID, tool: tool)
+        try await host.validateAcquisitionReply(siblingID, tool: tool)
+
+        try fixture.expire(short)
+        await #expect(throws: PermissionModelError.invalidAuthorization) {
+          try await host.validateAcquisitionReply(shortID, tool: tool)
+        }
+        let prompt = try await fixture.prepare("trae.session.prompt")
+        await #expect(throws: PermissionModelError.invalidAuthorization) {
+          try await host.admit(
+            id: UUID(), tool: "trae.session.prompt",
+            arguments: [
+              "session_handle": .string(String(repeating: "a", count: 32)),
+              "prompt": .string("hello"),
+            ],
+            execution: prompt)
+        }
+        try await host.validateAcquisitionReply(siblingID, tool: tool)
+
+        let pending = try await fixture.prepare(tool)
+        let pendingID = UUID()
+        try await host.admit(id: pendingID, tool: tool, arguments: [:], execution: pending)
+        try fixture.expire(adapter)
+        await #expect(throws: PermissionModelError.invalidAuthorization) {
+          try await host.validateAcquisitionReply(siblingID, tool: tool)
+        }
+        #expect(
+          try await peer.rejection("bind", fields(pendingID, handle: "c"))
+            == "vendor_effect_denied")
+      }
+    }
+
     @Test(arguments: ["truncated", "oversized"])
     func vendorOutputFailureAfterFinalEventRetiresTheWorkload(_ kind: String) async throws {
       let fixture = try Fixture(.print)
@@ -620,10 +712,12 @@
     }
 
     private func withVendor(
-      _ fixture: Fixture, _ body: (VendorExecutionSession, inout Peer) async throws -> Void
+      _ fixture: Fixture, adapterExecution: PreparedExecutionContext? = nil,
+      _ body: (VendorExecutionSession, inout Peer) async throws -> Void
     ) async throws {
       let host = try VendorExecutionSession(
-        source: fixture.vendor, launcher: fixture.base.platform.launcher)
+        source: fixture.vendor, launcher: fixture.base.platform.launcher,
+        adapterExecution: adapterExecution)
       let transport = try MCPInheritedSocketTransport(
         takingOwnershipOf: host.providerChannel.takeEndpoint())
       try await transport.connect()
@@ -1025,7 +1119,10 @@
         }
       }
 
-      func prepare(_ tool: String) async throws -> PreparedExecutionContext {
+      func prepare(_ tool: String, timeMilliseconds: Int64? = nil) async throws
+        -> PreparedExecutionContext
+      {
+        let limit = try timeMilliseconds.map { try ExecutionLimitRequest(timeMilliseconds: $0) }
         let caller = try base.runtime.store.transactionWithDatabase { _, ledger in
           let principal = Principal.client("vendor-fixture")
           let permission = Permission.plugin(pluginID)
@@ -1043,7 +1140,7 @@
               actions: [
                 .init(requirement: .init(permission, .use)),
                 .init(requirement: .init(.project("source"), .read), scope: .project("source")),
-              ], sandboxProjectID: "source"),
+              ], sandboxProjectID: "source", execution: limit),
             now: Date())
           guard case .allowed(let authorization) = decision else {
             throw PermissionModelError.invalidAuthorization
@@ -1055,6 +1152,16 @@
           directory: base.source, connectionID: nil, source: source)
         preparations.append(execution)
         return execution
+      }
+
+      func expire(_ execution: PreparedExecutionContext) throws {
+        try base.runtime.store.transactionWithDatabase { _, ledger in
+          let running = try #require(ledger.executions[execution.executionID])
+          let duration = try #require(running.limits.timeMilliseconds)
+          let expired = running.startedAt.addingTimeInterval(Double(duration) / 1_000 + 0.001)
+          _ = ledger.reconcileExecutionLimits(now: expired)
+          #expect(ledger.executions[execution.executionID]?.limitEndReason == .timeLimit)
+        }
       }
 
       func cleanup() async throws {

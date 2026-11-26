@@ -1863,8 +1863,10 @@ final class LiveAppControlPlaneTests {
         let entryLabels =
           project.map { [$0.displayName] }
           ?? [chinese ? "提交与存储" : recoveryTitle, recoverySection]
-        let entry = try await h16FindLabels(entryLabels, in: host, language: language)
-        try h16Capture(entry, name: "\(capture)-entry")
+        let entryName = "\(capture)-entry"
+        let entry = try await h16FindLabels(
+          entryLabels, in: host, language: language, capture: entryName)
+        try h16Capture(entry, name: entryName)
         if let project {
           model.projectRecoveryPath.append(project)
         } else {
@@ -1877,10 +1879,12 @@ final class LiveAppControlPlaneTests {
           chinese && project == nil
           ? "选择发生变化" : AppLocalization.string(resultKey, locale: locale)
         let sectionKey = project == nil ? "commits.section.title" : "worktree.section.title"
+        let destinationName = "\(capture)-destination"
         let destination = try await h16FindLabels(
           [AppLocalization.string(sectionKey, locale: locale), sharedResult, reclaim],
-          in: host, language: language, isReady: { !model.worktreeRecovery.isWorking })
-        try h16Capture(destination, name: "\(capture)-destination")
+          in: host, language: language, capture: destinationName,
+          isReady: { !model.worktreeRecovery.isWorking })
+        try h16Capture(destination, name: destinationName)
       }
     }
   }
@@ -1906,7 +1910,8 @@ final class LiveAppControlPlaneTests {
   }
 
   private func h16FindLabels(
-    _ labels: [String], in host: NSView, language: String, isReady: () -> Bool = { true }
+    _ labels: [String], in host: NSView, language: String, capture: String,
+    isReady: () -> Bool = { true }
   ) async throws -> NSBitmapImageRep {
     let deadline = ContinuousClock.now.advanced(by: .seconds(10))
     let expected = labels.map(Self.h16Normalized)
@@ -1918,9 +1923,14 @@ final class LiveAppControlPlaneTests {
         let bitmap = try #require(host.bitmapImageRepForCachingDisplay(in: host.bounds))
         host.cacheDisplay(in: host.bounds, to: bitmap)
         let image = try #require(bitmap.cgImage)
-        let result = try await Task.detached {
-          try Self.h16RecognizeText(image, language: language)
-        }.value
+        let result: [String]
+        do {
+          result = try await Task.detached {
+            try Self.h16RecognizeText(image, language: language)
+          }.value
+        } catch {
+          throw H16VisionCaptureError(capture: capture, cause: error)
+        }
         recognized = result
         let normalized = result.map(Self.h16Normalized)
         if isReady(),
@@ -2883,6 +2893,15 @@ private enum H16NavigationError: Error {
   case projectLoadTimedOut(String)
   case captureNotReady([String])
   case labelsMissing([String], [String])
+}
+
+private struct H16VisionCaptureError: Error, CustomStringConvertible {
+  let capture: String
+  let cause: any Error
+
+  var description: String {
+    "Vision OCR failed for \(capture): \(String(reflecting: cause))"
+  }
 }
 
 private struct H16CompletedOnboarding: OnboardingPreferenceStoring {

@@ -5,6 +5,7 @@ import ComputerMCPProcess
 import ComputerMCPTestSupport
 import Foundation
 import GRDB
+import MCP
 import Testing
 
 @testable import ComputerMCPCore
@@ -813,6 +814,7 @@ struct MCPHostInvocationTests {
         .string
     ).appendingPathComponent("home")
     var pending: Task<JSONValue, any Error>?
+    var phase = "waiting for the original discovery selection"
     do {
       gate.arm(providerHost, expiries: 1, pauseFirstExpiry: true)
       pending = Task {
@@ -828,10 +830,12 @@ struct MCPHostInvocationTests {
         }
         try await Task.sleep(for: .milliseconds(10))
       }
+      phase = "listing tools on the newer discovery connection"
       let tools = try await BlockingOperationExecutor(label: "newer-discovery-selection").perform {
         try providerHost.listIndependentDiscovery()
       }
       #expect(tools.contains { $0.name == "background" })
+      phase = "confirming retirement of the original discovery connection"
       let newerExecutions = try providerHost.discoveryExecutions()
       let stale = try #require(gate.selections.first)
       let newerBefore = try #require(gate.selections.last)
@@ -862,12 +866,14 @@ struct MCPHostInvocationTests {
       }
       #expect(!FileManager.default.fileExists(atPath: staleScratch.path))
       #expect(gate.selections.count == 2 && gate.replacementCount == 0)
+      phase = "checking the original pending call after retirement"
       gate.releaseSelection()
-      do {
-        _ = try await #require(pending).value
-        Issue.record("The retired selection unexpectedly forwarded the old call")
-      } catch let error as ProjectPathResolutionError {
-        guard case .cannotInspectExistingAncestor = error else { throw error }
+      let originalCall = try #require(pending)
+      await #expect(
+        throws: MCPError.connectionClosed,
+        "The original pending call must fail on its closed discovery connection"
+      ) {
+        try await originalCall.value
       }
       #expect(try latch.effects(home: home).isEmpty)
       #expect(gate.replacementCount == 0)
@@ -877,6 +883,7 @@ struct MCPHostInvocationTests {
       let newerSelection = try #require(earlierSelections.last)
       #expect(newerSelection.connectionID == newerBefore.connectionID)
       #expect(newerSelection.executionID == newerBefore.executionID)
+      phase = "checking the follow-up call on the newer discovery connection"
       gate.arm(providerHost, expiries: 0)
       let result = try await runtime.callToolAsync(
         name: "mcp.tools.call",
@@ -900,11 +907,13 @@ struct MCPHostInvocationTests {
           Self.payload(result).objectValue?["structuredContent"]?.objectValue?["pid"]?.int64Value))
       #expect(try latch.effects(home: home).count == 1)
       try await Self.waitForResourceCount(1, runtime: runtime)
+      phase = "finishing retained provider work"
       _ = try await runtime.callToolAsync(
         name: "mcp.tools.call", arguments: Self.arguments(tool: "finish"),
         context: .init(session: fixture.session))
       try await Self.waitForResourceCount(0, runtime: runtime)
     } catch {
+      Issue.record("Stale discovery test failed while \(phase) with \(error)")
       gate.releaseSelection()
       if let pending { _ = await pending.result }
       _ = gate.finish()

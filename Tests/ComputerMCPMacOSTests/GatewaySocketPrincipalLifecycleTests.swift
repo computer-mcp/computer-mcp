@@ -77,9 +77,6 @@ struct GatewaySocketPrincipalLifecycleTests {
     _ = try await control.activateManifest(
       configuration.exportedTOML(), expectedDigest: try? await control.configurationDigest())
     try database.saveProject(.init(id: "fixture", displayName: "Fixture", rootPath: root.path))
-    try fixtureApproveLocalProvider(
-      provider, database: database, runtime: database.permissionRuntime(platform: platform),
-      permissions: fixturePermissions([.project("fixture"): .granted(.write)]), fullAccess: true)
     let service = AppGatewayService(
       controlPlane: control,
       socketConfiguration: .init(socketURL: root.appendingPathComponent("gateway.sock")))
@@ -88,6 +85,10 @@ struct GatewaySocketPrincipalLifecycleTests {
     do {
       let first = try await GatewayClientSession.connectSocket(
         socketURL: service.socketConfiguration.socketURL)
+      // Standing provider consent binds to the environment published by the socket runtime.
+      try fixtureApproveLocalProvider(
+        provider, database: database, runtime: database.permissionRuntime(platform: platform),
+        permissions: fixturePermissions([.project("fixture"): .granted(.write)]), fullAccess: true)
       let firstScope = try #require(await operations.controlSessions().first)
       #expect(firstScope.fullAccessConsent == nil)
       let approved = try await operations.approveControlSession(

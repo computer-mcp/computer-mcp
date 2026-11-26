@@ -334,9 +334,10 @@ struct MCPRegistrationControlPlaneTests {
       #"""
       import json, os, socket, sys
       context = json.loads(os.environ["COMPUTER_MCP_HOST_CONTEXT"])
+      assert context["hostServiceContract"] == "projects-v1"
       assert context["readOnly"] is True
       assert context["profileID"] == "chatgpt-observe"
-      assert context["workspace"]["id"] == "fixture"
+      assert context["project"]["id"] == "fixture"
       assert "processOwnershipRoot" not in context
       import glob
       records = glob.glob(os.path.join(sys.argv[2], "*", "*"))

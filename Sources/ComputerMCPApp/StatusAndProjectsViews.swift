@@ -507,12 +507,10 @@ private struct ProjectRow: View {
 
   var body: some View {
     HStack(spacing: 12) {
-      Image(
-        systemName: project.effectiveAccess.isGranted ? "folder.fill.badge.checkmark" : "folder"
-      )
-      .font(.title3)
-      .foregroundStyle(project.effectiveAccess.isGranted ? Color.accentColor : Color.secondary)
-      .frame(width: 24)
+      Image(systemName: project.effectiveAccess.isGranted ? "folder.fill" : "folder")
+        .font(.title3)
+        .foregroundStyle(project.effectiveAccess.isGranted ? Color.accentColor : Color.secondary)
+        .frame(width: 24)
 
       VStack(alignment: .leading, spacing: 3) {
         HStack(spacing: 8) {

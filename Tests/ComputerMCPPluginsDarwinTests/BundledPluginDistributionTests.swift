@@ -72,6 +72,9 @@ struct BundledPluginDistributionTests {
     let inventory = BundledPlugins.load(directory: output)
     #expect(inventory.issues.isEmpty)
     let package = try #require(inventory.packages.first)
+    let requested = package.manifest.permissions ?? []
+    #expect(Set(requested.map(\.id)) == [.screen, .desktopControl])
+    #expect(requested.allSatisfy { $0.access == .allow })
     #expect(package.manifest.mcp.first?.executable?.dependency == "computer-use-client")
     #expect(package.manifest.mcp.first?.args == ["mcp"])
     #expect(package.manifest.skills.first?.path == "skills")
@@ -90,7 +93,7 @@ struct BundledPluginDistributionTests {
     #expect(
       try Set(FileManager.default.contentsOfDirectory(atPath: package.root.path))
         == [
-          "README.md", "CONTRIBUTING.md", "Documentation", "computer-mcp-plugin.toml", "skills",
+          "README.md", "CONTRIBUTING.md", ".github", "docs", "computer-mcp-plugin.toml", "skills",
           "LICENSE", "THIRD_PARTY_NOTICES.md", "ThirdPartyNotices.txt",
         ])
     for name in ["LICENSE", "THIRD_PARTY_NOTICES.md", "ThirdPartyNotices.txt"] {

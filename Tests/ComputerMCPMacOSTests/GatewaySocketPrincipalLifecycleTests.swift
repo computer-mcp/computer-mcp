@@ -31,9 +31,9 @@ struct GatewaySocketPrincipalLifecycleTests {
     try directories.prepare()
     let database = try fixturePermissionDatabase(path: directories.database.path)
     let script = root.appendingPathComponent("fixture.py")
-    try Data(Self.server.utf8).write(to: script)
+    try writePythonTestExecutable(Self.server, to: script)
     let launcher = fixtureProtocolExecutionLauncher(
-      root: root, scripts: [Self.server], arguments: [[root.path]])
+      root: root, scripts: [try String(contentsOf: script, encoding: .utf8)], arguments: [[]])
     var platform = MacOSPlatform.services(launcher: launcher)
     platform.permissionPolicyReader = TestManagedPolicyReader()
     let permissionControl = try fixturePermissionControl(database: database, platform: platform)
@@ -58,6 +58,11 @@ struct GatewaySocketPrincipalLifecycleTests {
       computerUsePermissionReader: FixedComputerUsePermissionReader(),
       platform: platform,
       bundledPlugins: .init(packages: [], issues: []))
+    let provider = MCPServerConfig(
+      id: "fixture", transport: .stdio, command: script.path,
+      exposure: .reexport, prefix: "fixture", allowAnyTool: true,
+      startupTimeoutMs: 5000, requestTimeoutMs: 5000,
+      toolRisks: ["hang": .readOnly, "finish": .readOnly])
     let configuration = GatewayConfiguration(
       runtime: .init(caller: .localMCP, profileID: .chatGPTOperate),
       profiles: [
@@ -68,17 +73,13 @@ struct GatewaySocketPrincipalLifecycleTests {
             .mcpServer("*"): .granted(.all),
           ]), fullAccess: true, allowedCallers: [.localMCP])
       ],
-      mcp: .init(servers: [
-        .init(
-          id: "fixture", transport: .stdio, command: "/usr/bin/python3",
-          args: [script.path, root.path],
-          exposure: .reexport, prefix: "fixture", allowAnyTool: true,
-          startupTimeoutMs: 5000, requestTimeoutMs: 5000,
-          toolRisks: ["hang": .readOnly, "finish": .readOnly])
-      ]), projectDirectory: root)
+      mcp: .init(servers: [provider]), projectDirectory: root)
     _ = try await control.activateManifest(
       configuration.exportedTOML(), expectedDigest: try? await control.configurationDigest())
     try database.saveProject(.init(id: "fixture", displayName: "Fixture", rootPath: root.path))
+    try fixtureApproveLocalProvider(
+      provider, database: database, runtime: database.permissionRuntime(platform: platform),
+      permissions: fixturePermissions([.project("fixture"): .granted(.write)]), fullAccess: true)
     let service = AppGatewayService(
       controlPlane: control,
       socketConfiguration: .init(socketURL: root.appendingPathComponent("gateway.sock")))
@@ -177,7 +178,7 @@ struct GatewaySocketPrincipalLifecycleTests {
   private static let server = #"""
     import json, os, sys
     from pathlib import Path
-    root = Path(sys.argv[1])
+    root = Path.cwd()
     (root / "pid").write_text(str(os.getpid()))
     pending = []
     for line in sys.stdin:

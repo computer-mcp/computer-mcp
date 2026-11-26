@@ -570,10 +570,15 @@ struct GatewayToolCatalogTests {
       let discovery: RequestContext<CallTool.Result> = try await client.callTool(
         name: "mcp.tools.list", arguments: ["server": .string("native")])
       let refused = try await discovery.value
+      let error = refused.structuredContent?.objectValue?["error"]?.objectValue
+      let message = error?["message"]?.stringValue
       #expect(refused.isError == true)
       #expect(
-        refused.structuredContent?.objectValue?["error"]?.objectValue?["code"]
-          == .string(granted ? "permission.unavailable" : "permission.required"))
+        error?["code"] == .string(granted ? "gateway.capability_disabled" : "permission.required"),
+        "Discovery error: \(message ?? "missing error message")")
+      if granted {
+        #expect(message?.hasPrefix("[provider.approval_required]") == true)
+      }
       #expect(try await client.listTools().tools.allSatisfy { !$0.name.hasPrefix("native.") })
       await client.disconnect()
       #expect(await transport.shutdownConfirmed())

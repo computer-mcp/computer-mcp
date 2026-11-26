@@ -122,10 +122,12 @@ struct FixedHostFixture {
     fullAccess: Bool = true, lifecycle: Bool = false, callback: Bool = false,
     nestedAccess: PermissionValue? = nil, caller: GatewayCallerKind = .localMCP,
     gitExecutable: String? = nil, managed: Bool = false,
-    allowedCallers: Set<GatewayCallerKind>? = nil
+    allowedCallers: Set<GatewayCallerKind>? = nil, isolatedRoot: URL? = nil
   ) throws {
-    let location = URL(fileURLWithPath: "/private/tmp/cm-fixed-\(UUID())")
-    try FileManager.default.createDirectory(at: location, withIntermediateDirectories: true)
+    let location = isolatedRoot ?? URL(fileURLWithPath: "/private/tmp/cm-fixed-\(UUID())")
+    if isolatedRoot == nil {
+      try FileManager.default.createDirectory(at: location, withIntermediateDirectories: true)
+    }
     root = try ProjectPathResolver.canonicalProject(location)
     project = root.appendingPathComponent("project")
     try FileManager.default.createDirectory(at: project, withIntermediateDirectories: false)

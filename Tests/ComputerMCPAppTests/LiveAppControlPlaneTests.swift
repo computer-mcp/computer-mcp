@@ -7,6 +7,7 @@ import ComputerMCPTestSupport
 import ComputerMCPTransport
 import ComputerMCPTunnels
 import ComputerMCPWorktrees
+import CoreML
 import Darwin
 import Foundation
 import GRDB
@@ -1913,6 +1914,11 @@ final class LiveAppControlPlaneTests {
     let request = VNRecognizeTextRequest()
     request.recognitionLanguages = language == "zh-Hans" ? ["zh-Hans", "en-US"] : ["en-US"]
     request.recognitionLevel = .accurate
+    for (stage, devices) in try request.supportedComputeStageDevices {
+      if let cpu = devices.first(where: { if case .cpu = $0 { true } else { false } }) {
+        request.setComputeDevice(cpu, for: stage)
+      }
+    }
     try VNImageRequestHandler(cgImage: image).perform([request])
     return (request.results ?? []).compactMap { observation in
       observation.topCandidates(1).first?.string

@@ -41,7 +41,7 @@ struct GatewayWorktreeLifecycleTests {
     let root = try WorktreeProviderFixtureReceipts.openParentRoot()
     let fixture = try FixedHostFixture(
       fullAccess: false, lifecycle: true, callback: true, isolatedRoot: root.url)
-    let receipts: WorktreeProviderFixtureReceipts
+    let receipts: WorktreeProviderFixtureReceipts?
     do {
       receipts = try await exerciseWorktreeProviders(fixture, root: root)
     } catch {
@@ -51,18 +51,25 @@ struct GatewayWorktreeLifecycleTests {
     }
     fixture.session.end()
     await fixture.runtime.shutdown()
+    guard let receipts else { return }
     try await receipts.waitForCommit(fixture, root: root)
     try receipts.report()
   }
 
   private static func exerciseWorktreeProviders(
     _ fixture: FixedHostFixture, root: WorktreeDirectory
-  ) async throws -> WorktreeProviderFixtureReceipts {
+  ) async throws -> WorktreeProviderFixtureReceipts? {
     try await fixture.initializeRepository()
     let generations = GatewayStandaloneGenerations(fixture.runtime)
     var processes: [ManagedLineProcess] = []
     var consumerRuntime: GatewayRuntime?
-    let receipts: WorktreeProviderFixtureReceipts
+    let receipts: WorktreeProviderFixtureReceipts?
+    var scenarioPassed = true
+    // Report each original expectation while gating the receipt on their combined outcome.
+    func recordCheck(_ passed: Bool) -> Bool {
+      if !passed { scenarioPassed = false }
+      return passed
+    }
     do {
       func call(_ name: String, _ arguments: [String: JSONValue]) async throws -> JSONValue {
         let result = try await generations.callToolForMCPAsync(
@@ -177,28 +184,36 @@ struct GatewayWorktreeLifecycleTests {
       }
 
       let removed = try await call("git.worktree_remove", ["project_id": .string(target.id)])
-      try #require(removed.objectValue?["terminationWarnings"] == .array([]))
-      try #require(DarwinProcessIdentity.current(pid: targetPID)?.identity != targetIdentity)
-      try #require(try fixture.database.project(id: target.id) == nil)
+      #expect(recordCheck(removed.objectValue?["terminationWarnings"] == .array([])))
+      #expect(
+        recordCheck(DarwinProcessIdentity.current(pid: targetPID)?.identity != targetIdentity))
+      #expect(recordCheck(try fixture.database.project(id: target.id) == nil))
       let registeredSibling = try #require(try fixture.database.project(id: sibling.id))
-      try #require(
-        try ProjectPathResolver.canonicalProject(URL(fileURLWithPath: registeredSibling.rootPath))
-          == ProjectPathResolver.canonicalProject(sibling.directory))
+      #expect(
+        recordCheck(
+          try ProjectPathResolver.canonicalProject(URL(fileURLWithPath: registeredSibling.rootPath))
+            == ProjectPathResolver.canonicalProject(sibling.directory)))
       try runtime.store.readWithDatabase { _, ledger in
-        try #require(
-          ledger.environment.paths?.pathRules.first { $0.root == skillRoot } == skillRule)
-        try #require(ledger.executions[targetExecution.executionID]?.isRunning == false)
-        try #require(ledger.executions[targetExecution.executionID]?.revoked == true)
-        try #require(ledger.executions[siblingExecution.executionID]?.isRunning == true)
-        try #require(ledger.executions[siblingExecution.executionID]?.revoked == false)
+        #expect(
+          recordCheck(
+            ledger.environment.paths?.pathRules.first { $0.root == skillRoot } == skillRule))
+        #expect(recordCheck(ledger.executions[targetExecution.executionID]?.isRunning == false))
+        #expect(recordCheck(ledger.executions[targetExecution.executionID]?.revoked == true))
+        #expect(recordCheck(ledger.executions[siblingExecution.executionID]?.isRunning == true))
+        #expect(recordCheck(ledger.executions[siblingExecution.executionID]?.revoked == false))
       }
       try #require(DarwinProcessIdentity.current(pid: siblingPID)?.identity == siblingIdentity)
       try await siblingProcess.sendLine("after removal")
-      try #require(try await siblingLines.next() == "after removal")
-      receipts = try WorktreeProviderFixtureReceipts.capture(
-        root: root, runtime: runtime, sessions: [fixture.session, consumerSession],
-        target: (target.id, targetExecution.executionID, targetIdentity),
-        sibling: (sibling.id, siblingExecution.executionID, siblingIdentity))
+      let siblingReplied = try await siblingLines.next() == "after removal"
+      #expect(recordCheck(siblingReplied))
+      if scenarioPassed {
+        receipts = try WorktreeProviderFixtureReceipts.capture(
+          root: root, runtime: runtime, sessions: [fixture.session, consumerSession],
+          target: (target.id, targetExecution.executionID, targetIdentity),
+          sibling: (sibling.id, siblingExecution.executionID, siblingIdentity))
+      } else {
+        receipts = nil
+      }
     } catch {
       for process in processes { await process.close() }
       await consumerRuntime?.shutdown()

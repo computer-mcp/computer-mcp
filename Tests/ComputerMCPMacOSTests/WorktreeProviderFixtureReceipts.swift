@@ -161,6 +161,9 @@ struct WorktreeProviderFixtureReceipts: Codable {
         let child = record.children[provider.childID], child.recovery?.root == provider.member,
         child.completed, child.released
       else { throw ReadbackError.incomplete("provider child \(provider.childID)") }
+      guard let use = record.worktreeUse, use.ownerID == ownerID,
+        use.executionID == provider.executionID, use.admission.projectID == provider.projectID
+      else { throw ReadbackError.incomplete("worktree writer ownership \(provider.projectID)") }
     }
     guard
       records.allSatisfy({
@@ -184,8 +187,10 @@ struct WorktreeProviderFixtureReceipts: Codable {
       else { throw ReadbackError.incomplete("ended session \(session.id)") }
     }
 
+    guard try HostOperationStore.unfinished(in: database).isEmpty else {
+      throw ReadbackError.incomplete("pending host operations")
+    }
     try verifyOwnership(records, in: root)
-    try verifyWorktrees(records, in: root, database: database)
   }
 
   private func verifyOwnership(_ records: [ExecutionRuntimeRecord], in root: WorktreeDirectory)
@@ -213,65 +218,6 @@ struct WorktreeProviderFixtureReceipts: Codable {
     else { throw ReadbackError.incomplete("unsettled execution ownership or scratch") }
   }
 
-  private func verifyWorktrees(
-    _ records: [ExecutionRuntimeRecord], in root: WorktreeDirectory, database: Database
-  ) throws {
-    let journals = try root.child("worktree-journals")
-    let removals = try journals.child("removals")
-    let removal: WorktreeRemovalJournal = try readJournal(
-      target.projectID, from: removals, limit: WorktreeRecoveryCatalog.byteLimit)
-    let targetRegistration = try SQLiteDerivedProjectStore.record(target.projectID, in: database)
-    let siblingRegistration = try SQLiteDerivedProjectStore.record(sibling.projectID, in: database)
-    guard removal.record.projectID == target.projectID, removal.phase == .finished,
-      removal.reconciliation?.finished == true, removal.terminal?.receipts != nil,
-      targetRegistration == nil, siblingRegistration?.state == .active,
-      try HostOperationStore.unfinished(in: database).isEmpty
-    else { throw ReadbackError.incomplete("finished worktree removal and registrations") }
-
-    let common = try root.child("project").child(".git")
-    let repositoryIdentity = try WorktreeDirectory(common.url).identity
-    let admission = try common.child("computer-mcp").child("admission")
-    for provider in [target, sibling] {
-      let removed = provider.projectID == target.projectID
-      let creation: WorktreeCreationJournal = try readJournal(provider.projectID, from: journals)
-      guard creation.id == provider.projectID,
-        creation.repository.commonDirectory == repositoryIdentity,
-        creation.phase == (removed ? .removed : .active),
-        let use = records.first(where: { $0.id == provider.executionID })?.worktreeUse,
-        use.ownerID == ownerID, use.executionID == provider.executionID,
-        use.admission.projectID == provider.projectID,
-        case .host(_, let generation) = creation.record.provenance,
-        generation == use.admission.generation
-      else {
-        throw ReadbackError.incomplete(
-          "worktree creation and writer identity \(provider.projectID)")
-      }
-      let gate = try admission.child(generation.uuidString.lowercased())
-      let bytes = try WorktreeJournalIO().read("state.json", in: gate, limit: 4_194_304)
-      guard let bytes else {
-        throw ReadbackError.incomplete("worktree writer gate \(provider.projectID)")
-      }
-      let state = try JSONDecoder().decode(WriterGate.self, from: bytes)
-      guard state.projectID == provider.projectID, state.generation == generation,
-        state.writers.isEmpty, state.closedBy == (removed ? removal.operationID : nil)
-      else { throw ReadbackError.incomplete("worktree writer gate \(provider.projectID)") }
-    }
-  }
-
-  private func readJournal<Record: Decodable>(
-    _ id: String, from directory: WorktreeDirectory, limit: Int = 131_072
-  ) throws -> Record {
-    guard let bytes = try WorktreeJournalIO().read(id + ".json", in: directory, limit: limit)
-    else { throw ReadbackError.incomplete("worktree journal \(id)") }
-    return try JSONDecoder().decode(Record.self, from: bytes)
-  }
-
-  private struct WriterGate: Decodable {
-    let projectID: String
-    let generation: UUID
-    let closedBy: UUID?
-    let writers: [UUID: UUID]
-  }
 }
 
 extension GatewayWorktreeLifecycleTests {

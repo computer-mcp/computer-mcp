@@ -1812,10 +1812,15 @@ final class LiveAppControlPlaneTests {
   }
 
   private func h16VerifyRecoveryRoute(
-    _ model: ComputerMCPAppModel, project: ProjectSummary?
+    _ model: ComputerMCPAppModel, project expectedProject: ProjectSummary?
   ) async throws {
+    let project: ProjectSummary? =
+      if let expectedProject {
+        try await h16LoadProject(expectedProject, in: model)
+      } else {
+        nil
+      }
     let route = project == nil ? "privacy" : "projects"
-    if project != nil { model.refresh(.projects) }
     _ = NSApplication.shared
 
     for language in ["en", "zh-Hans"] {
@@ -1880,31 +1885,53 @@ final class LiveAppControlPlaneTests {
     }
   }
 
+  private func h16LoadProject(
+    _ project: ProjectSummary, in model: ComputerMCPAppModel
+  ) async throws -> ProjectSummary {
+    model.refresh(.projects)
+    let deadline = ContinuousClock.now.advanced(by: .seconds(10))
+    while true {
+      switch model.projects {
+      case .loaded(let projects):
+        return try #require(
+          projects.first { $0.id == project.id && $0.registeredAt == project.registeredAt },
+          "Projects did not publish the registered fixture \(project.id)")
+      case .failed(let message):
+        throw H16NavigationError.projectLoadFailed(message)
+      case .idle, .loading:
+        guard .now < deadline else { throw H16NavigationError.projectLoadTimedOut(project.id) }
+        try await Task.sleep(for: .milliseconds(20))
+      }
+    }
+  }
+
   private func h16FindLabels(
     _ labels: [String], in host: NSView, language: String, isReady: () -> Bool = { true }
   ) async throws -> NSBitmapImageRep {
     let deadline = ContinuousClock.now.advanced(by: .seconds(10))
     let expected = labels.map(Self.h16Normalized)
-    var recognized: [String] = []
+    var recognized: [String]?
     repeat {
       host.layoutSubtreeIfNeeded()
       host.displayIfNeeded()
-      let wasReady = isReady()
-      let bitmap = try #require(host.bitmapImageRepForCachingDisplay(in: host.bounds))
-      host.cacheDisplay(in: host.bounds, to: bitmap)
-      let image = try #require(bitmap.cgImage)
-      let result = try await Task.detached {
-        try Self.h16RecognizeText(image, language: language)
-      }.value
-      recognized = result
-      let normalized = recognized.map(Self.h16Normalized)
-      if wasReady, isReady(),
-        expected.allSatisfy({ label in normalized.contains(where: { $0.contains(label) }) })
-      {
-        return bitmap
+      if isReady() {
+        let bitmap = try #require(host.bitmapImageRepForCachingDisplay(in: host.bounds))
+        host.cacheDisplay(in: host.bounds, to: bitmap)
+        let image = try #require(bitmap.cgImage)
+        let result = try await Task.detached {
+          try Self.h16RecognizeText(image, language: language)
+        }.value
+        recognized = result
+        let normalized = result.map(Self.h16Normalized)
+        if isReady(),
+          expected.allSatisfy({ label in normalized.contains(where: { $0.contains(label) }) })
+        {
+          return bitmap
+        }
       }
       try await Task.sleep(for: .milliseconds(150))
     } while .now < deadline
+    guard let recognized else { throw H16NavigationError.captureNotReady(labels) }
     throw H16NavigationError.labelsMissing(labels, recognized)
   }
 
@@ -2852,6 +2879,9 @@ private final class AppControlPlaneFixture {
 }
 
 private enum H16NavigationError: Error {
+  case projectLoadFailed(String)
+  case projectLoadTimedOut(String)
+  case captureNotReady([String])
   case labelsMissing([String], [String])
 }
 

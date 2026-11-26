@@ -1926,16 +1926,22 @@ final class LiveAppControlPlaneTests {
         let result: [String]
         do {
           result = try await Task.detached {
-            try Self.h16RecognizeText(image, language: language)
+            try Self.h16RecognizeText(language: language, capture: capture) {
+              VNImageRequestHandler(cgImage: image)
+            }
           }.value
-        } catch {
-          throw H16VisionCaptureError(capture: capture, cause: error)
+        } catch let failure as H16VisionCaptureError {
+          if let directory = ProcessInfo.processInfo.environment[
+            "COMPUTER_MCP_H16_VISION_DIAGNOSTICS_DIR"]
+          {
+            await h16RecordVisionFailure(
+              failure, bitmap: bitmap, language: language, labels: labels, expected: expected,
+              directory: directory)
+          }
+          throw failure
         }
         recognized = result
-        let normalized = result.map(Self.h16Normalized)
-        if isReady(),
-          expected.allSatisfy({ label in normalized.contains(where: { $0.contains(label) }) })
-        {
+        if isReady(), Self.h16MatchesLabels(result, expected: expected) {
           return bitmap
         }
       }
@@ -1946,20 +1952,96 @@ final class LiveAppControlPlaneTests {
   }
 
   nonisolated private static func h16RecognizeText(
-    _ image: CGImage, language: String
+    language: String, capture: String, makeHandler: () -> VNImageRequestHandler
   ) throws -> [String] {
     let request = VNRecognizeTextRequest()
     request.recognitionLanguages = language == "zh-Hans" ? ["zh-Hans", "en-US"] : ["en-US"]
     request.recognitionLevel = .accurate
-    for (stage, devices) in try request.supportedComputeStageDevices {
+    let devicesByStage: [VNComputeStage: [MLComputeDevice]]
+    do {
+      devicesByStage = try request.supportedComputeStageDevices
+    } catch {
+      throw H16VisionCaptureError(
+        capture: capture, cause: error, phase: "supportedComputeStageDevices", stageDevices: nil)
+    }
+    for (stage, devices) in devicesByStage {
       if let cpu = devices.first(where: { if case .cpu = $0 { true } else { false } }) {
         request.setComputeDevice(cpu, for: stage)
       }
     }
-    try VNImageRequestHandler(cgImage: image).perform([request])
+    do {
+      try makeHandler().perform([request])
+    } catch {
+      let stageDevices = devicesByStage.map { stage, devices in
+        let selected = request.computeDevice(for: stage).map { String(describing: $0) }
+        return "\(stage.rawValue): supported=\(devices), selected=\(selected ?? "Vision default")"
+      }.sorted()
+      throw H16VisionCaptureError(
+        capture: capture, cause: error, phase: "perform", stageDevices: stageDevices)
+    }
     return (request.results ?? []).compactMap { observation in
       observation.topCandidates(1).first?.string
     }
+  }
+
+  private func h16RecordVisionFailure(
+    _ failure: H16VisionCaptureError, bitmap: NSBitmapImageRep, language: String,
+    labels: [String], expected: [String], directory: String
+  ) async {
+    var isDirectory: ObjCBool = false
+    guard directory.hasPrefix("/"),
+      FileManager.default.fileExists(atPath: directory, isDirectory: &isDirectory),
+      isDirectory.boolValue
+    else {
+      print("H16 Vision diagnostics require an existing absolute directory.")
+      return
+    }
+    let output = URL(fileURLWithPath: directory, isDirectory: true)
+    let capture = failure.capture
+    func write(_ data: Data, suffix: String) {
+      do {
+        try data.write(
+          to: output.appendingPathComponent("\(capture)-\(suffix)"), options: .withoutOverwriting)
+      } catch {
+        print("Could not save H16 Vision diagnostic \(capture)-\(suffix): \(error)")
+      }
+    }
+
+    write(
+      Data(
+        """
+        pixels: \(bitmap.pixelsWide) x \(bitmap.pixelsHigh)
+        expected visible labels: \(labels)
+        \(failure.diagnosticDescription)
+        """.utf8), suffix: "cgimage.txt")
+    guard let png = bitmap.representation(using: .png, properties: [:]) else {
+      write(Data("Could not encode the failed bitmap as PNG.".utf8), suffix: "png.txt")
+      return
+    }
+    write(png, suffix: "failed-frame.png")
+
+    let comparison: String
+    do {
+      let lines = try await Task.detached {
+        try Self.h16RecognizeText(language: language, capture: capture) {
+          VNImageRequestHandler(data: png)
+        }
+      }.value
+      comparison = """
+        labels matched: \(Self.h16MatchesLabels(lines, expected: expected))
+        recognized text: \(lines)
+        """
+    } catch let comparisonFailure as H16VisionCaptureError {
+      comparison = comparisonFailure.diagnosticDescription
+    } catch {
+      comparison = String(reflecting: error)
+    }
+    write(Data(comparison.utf8), suffix: "png.txt")
+  }
+
+  nonisolated private static func h16MatchesLabels(_ lines: [String], expected: [String]) -> Bool {
+    let normalized = lines.map(Self.h16Normalized)
+    return expected.allSatisfy { label in normalized.contains(where: { $0.contains(label) }) }
   }
 
   nonisolated private static func h16Normalized(_ text: String) -> String {
@@ -2898,9 +2980,15 @@ private enum H16NavigationError: Error {
 private struct H16VisionCaptureError: Error, CustomStringConvertible {
   let capture: String
   let cause: any Error
+  let phase: String
+  let stageDevices: [String]?
 
   var description: String {
     "Vision OCR failed for \(capture): \(String(reflecting: cause))"
+  }
+
+  var diagnosticDescription: String {
+    "\(description)\nphase: \(phase)\nstage devices: \(stageDevices?.joined(separator: "\n") ?? "unavailable")"
   }
 }
 

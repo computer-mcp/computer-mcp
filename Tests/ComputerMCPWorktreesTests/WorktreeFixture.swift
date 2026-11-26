@@ -34,8 +34,10 @@ struct WorktreeTestGit: WorktreeGitExecuting {
       if process.isRunning { process.terminate() }
       let end = ContinuousClock.now.advanced(by: .seconds(1))
       while process.isRunning, ContinuousClock.now < end { Thread.sleep(forTimeInterval: 0.002) }
-      if process.isRunning { _ = kill(process.processIdentifier, SIGKILL) }
-      process.waitUntilExit()
+      if process.isRunning {
+        _ = kill(process.processIdentifier, SIGKILL)
+        process.waitUntilExit()
+      }
     }
     func line() throws -> String {
       var data = Data()
@@ -145,7 +147,6 @@ struct WorktreeTestGit: WorktreeGitExecuting {
       process.waitUntilExit()
       throw WorktreeError.commandFailed("Test Git timed out.")
     }
-    process.waitUntilExit()
     let stdout = try Data(contentsOf: outputURL)
     let stderr = try Data(contentsOf: errorURL)
     guard stdout.count <= command.maxOutputBytes, stderr.count <= command.maxOutputBytes else {

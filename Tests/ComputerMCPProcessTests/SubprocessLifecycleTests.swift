@@ -57,7 +57,11 @@ struct SubprocessLifecycleTests {
         var lines = process.inboundLines.makeAsyncIterator()
         try #require(try await lines.next() == "ready")
         let owner = try #require(observations.ownerships.first)
-        try await waitUntil { (try? await owner.members().count) ?? 0 >= 3 }
+        try await waitUntil {
+          let memberCount = (try? await owner.members().count) ?? 0
+          let snapshot = await process.snapshot()
+          return memberCount >= 3 && snapshot.state == .running
+        }
         let snapshot = await process.snapshot()
         let supervisor = try #require(snapshot.supervisorProcessID)
         let child = try #require(snapshot.processID)

@@ -166,12 +166,22 @@ final class MCPInvocationBackgroundProvider: Sendable {
     }
     let authority: any InvocationExecutionAuthority
     do {
+      let configuration = try database.configurationState()
+      let registration = try #require(configuration.projects.first { $0.id == metadata.project.id })
+      let bookmarks = try #require(runtime.permissionRuntime.service.projectBookmarks)
+      let access = try bookmarks.resolve(registration)
+      try runtime.requirePreparedProject(id: registration.id, root: access.rootIdentity)
+      let project = try GatewayProviderProject(
+        registration: .init(
+          id: registration.id, root: ProjectPathResolver.canonicalProject(access.rootURL).path,
+          registeredAt: registration.createdAt),
+        access: access,
+        wasDerived: configuration.derivedProjects.contains { $0.projectID == registration.id })
       authority = try await runtime.permissionRuntime.prepareProvider(
-        review: GatewayProviderReview(
-          server: server, configuration: database.configurationState()),
+        review: GatewayProviderReview(server: server, configuration: configuration),
         registrationID: server.id, authorization: authorization,
         directory: scope.host.projectRoot, connectionID: session.id,
-        auditContext: caller)
+        auditContext: caller, project: project)
     } catch {
       try? runtime.permissionRuntime.service.finishInvocation(authorization.id)
       throw error

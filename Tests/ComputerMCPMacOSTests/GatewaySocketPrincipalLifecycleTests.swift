@@ -62,7 +62,7 @@ struct GatewaySocketPrincipalLifecycleTests {
       id: "fixture", transport: .stdio, command: script.path,
       exposure: .reexport, prefix: "fixture", allowAnyTool: true,
       startupTimeoutMs: 5000, requestTimeoutMs: 5000,
-      toolRisks: ["hang": .readOnly, "finish": .readOnly])
+      toolRisks: ["hang": .readOnly])
     let configuration = GatewayConfiguration(
       runtime: .init(caller: .localMCP, profileID: .chatGPTOperate),
       profiles: [
@@ -143,26 +143,33 @@ struct GatewaySocketPrincipalLifecycleTests {
         toolName: "mcp.requests.cancel", arguments: selector)
       #expect(try payload(cancelled).objectValue?["cancellation_requested"] == .bool(true))
       #expect(kill(pid, 0) == 0)
-      _ = try await reconnected.call(
-        toolName: "mcp.tools.call",
-        arguments: .object([
-          "project_id": .string("fixture"), "server": .string("fixture"),
-          "tool": .string("finish"),
-          "arguments": .object([:]),
-        ]))
       let clock = ContinuousClock()
-      let deadline = clock.now.advanced(by: .seconds(5))
-      var receipt = try await reconnected.call(toolName: "mcp.requests.read", arguments: selector)
-      while try payload(receipt).objectValue?["state"] != .string("succeeded"), clock.now < deadline
+      let cancellationMarker = root.appendingPathComponent("cancelled")
+      let cancellationDeadline = clock.now.advanced(by: .seconds(5))
+      while !FileManager.default.fileExists(atPath: cancellationMarker.path),
+        clock.now < cancellationDeadline
       {
         try await Task.sleep(for: .milliseconds(10))
-        receipt = try await reconnected.call(toolName: "mcp.requests.read", arguments: selector)
       }
-      #expect(try payload(receipt).objectValue?["state"] == .string("succeeded"))
+      try #require(
+        FileManager.default.fileExists(atPath: cancellationMarker.path),
+        "The original provider did not receive native cancellation.")
+      var receipt = try payload(
+        await reconnected.call(toolName: "mcp.requests.read", arguments: selector))
+      try #require(receipt.objectValue?["state"] == .string("running"), "\(receipt)")
+      try Data().write(to: root.appendingPathComponent("release"))
+      let deadline = clock.now.advanced(by: .seconds(5))
+      while receipt.objectValue?["state"] == .string("running"), clock.now < deadline {
+        try await Task.sleep(for: .milliseconds(10))
+        receipt = try payload(
+          await reconnected.call(toolName: "mcp.requests.read", arguments: selector))
+      }
+      #expect(receipt.objectValue?["state"] == .string("succeeded"), "\(receipt)")
+      #expect(
+        receipt.objectValue?["result"]?.objectValue?["content"]?.arrayValue?.first?
+          .objectValue?["text"] == .string("late completion"))
       #expect(
         try String(contentsOf: root.appendingPathComponent("dispatches"), encoding: .utf8) == "1")
-      #expect(
-        try String(contentsOf: root.appendingPathComponent("cancelled"), encoding: .utf8) == "1")
       await reconnected.disconnect()
       await service.stop()
       #expect(kill(pid, 0) == -1 && errno == ESRCH)
@@ -177,16 +184,28 @@ struct GatewaySocketPrincipalLifecycleTests {
   }
 
   private static let server = #"""
-    import json, os, sys
+    import json, os, sys, time
     from pathlib import Path
     root = Path.cwd()
     (root / "pid").write_text(str(os.getpid()))
-    pending = []
+    pending_id = None
+    dispatches = 0
     for line in sys.stdin:
         message = json.loads(line)
         method = message.get("method")
         if method == "notifications/cancelled":
-            (root / "cancelled").write_text("1")
+            if pending_id is None or message.get("params", {}).get("requestId") != pending_id:
+                continue
+            (root / "cancelled").touch()
+            release = root / "release"
+            deadline = time.monotonic() + 10
+            while not release.exists():
+                if time.monotonic() >= deadline:
+                    raise TimeoutError("Fixture completion was not released")
+                time.sleep(0.01)
+            result = {"content": [{"type": "text", "text": "late completion"}]}
+            print(json.dumps({"jsonrpc": "2.0", "id": pending_id, "result": result}), flush=True)
+            pending_id = None
             continue
         if "id" not in message:
             continue
@@ -194,16 +213,12 @@ struct GatewaySocketPrincipalLifecycleTests {
         if method == "initialize":
             result = {"protocolVersion":"2025-11-25", "capabilities":{"tools":{}}, "serverInfo":{"name":"fixture", "version":"1"}}
         elif method == "tools/list":
-            result = {"tools":[{"name": name, "inputSchema":{"type":"object"}} for name in ["hang", "finish"]]}
-        elif method == "tools/call":
-            if message["params"]["name"] == "hang":
-                pending.append(message["id"])
-                (root / "dispatches").write_text(str(len(pending)))
-                continue
-            for request_id in pending:
-                print(json.dumps({"jsonrpc":"2.0", "id":request_id, "result":{"content":[{"type":"text", "text":"late completion"}]}}), flush=True)
-            pending.clear()
-            result = {"content":[]}
+            result = {"tools":[{"name":"hang", "inputSchema":{"type":"object"}}]}
+        elif method == "tools/call" and message["params"]["name"] == "hang":
+            pending_id = message["id"]
+            dispatches += 1
+            (root / "dispatches").write_text(str(dispatches))
+            continue
         print(json.dumps({"jsonrpc":"2.0", "id":message["id"], "result":result}), flush=True)
     """#
 }

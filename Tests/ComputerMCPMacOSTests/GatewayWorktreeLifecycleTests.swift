@@ -32,8 +32,7 @@ struct GatewayWorktreeLifecycleTests {
       let receipts = try WorktreeProviderFixtureReceipts.decode(child.standardOutputContent)
       try receipts.verifyAndRemove(root)
     } catch {
-      Issue.record("Worktree fixture cleanup failed at \(root.identity.path)")
-      throw error
+      Issue.record(error, "Worktree fixture cleanup failed at \(root.identity.path)")
     }
   }
 
@@ -65,10 +64,11 @@ struct GatewayWorktreeLifecycleTests {
     var consumerRuntime: GatewayRuntime?
     let receipts: WorktreeProviderFixtureReceipts?
     var scenarioPassed = true
-    // Report each original expectation while gating the receipt on their combined outcome.
-    func recordCheck(_ passed: Bool) -> Bool {
-      if !passed { scenarioPassed = false }
-      return passed
+    // Report operand values and let independent checks continue after a failed expectation.
+    func recordCheck(_ check: () throws -> Void) throws {
+      do { try check() } catch is ExpectationFailedError {
+        scenarioPassed = false
+      }
     }
     do {
       func call(_ name: String, _ arguments: [String: JSONValue]) async throws -> JSONValue {
@@ -184,28 +184,39 @@ struct GatewayWorktreeLifecycleTests {
       }
 
       let removed = try await call("git.worktree_remove", ["project_id": .string(target.id)])
-      #expect(recordCheck(removed.objectValue?["terminationWarnings"] == .array([])))
-      #expect(
-        recordCheck(DarwinProcessIdentity.current(pid: targetPID)?.identity != targetIdentity))
-      #expect(recordCheck(try fixture.database.project(id: target.id) == nil))
+      try recordCheck { try #require(removed.objectValue?["terminationWarnings"] == .array([])) }
+      try recordCheck {
+        try #require(DarwinProcessIdentity.current(pid: targetPID)?.identity != targetIdentity)
+      }
+      try recordCheck { try #require(try fixture.database.project(id: target.id) == nil) }
       let registeredSibling = try #require(try fixture.database.project(id: sibling.id))
-      #expect(
-        recordCheck(
+      try recordCheck {
+        try #require(
           try ProjectPathResolver.canonicalProject(URL(fileURLWithPath: registeredSibling.rootPath))
-            == ProjectPathResolver.canonicalProject(sibling.directory)))
+            == ProjectPathResolver.canonicalProject(sibling.directory))
+      }
       try runtime.store.readWithDatabase { _, ledger in
-        #expect(
-          recordCheck(
-            ledger.environment.paths?.pathRules.first { $0.root == skillRoot } == skillRule))
-        #expect(recordCheck(ledger.executions[targetExecution.executionID]?.isRunning == false))
-        #expect(recordCheck(ledger.executions[targetExecution.executionID]?.revoked == true))
-        #expect(recordCheck(ledger.executions[siblingExecution.executionID]?.isRunning == true))
-        #expect(recordCheck(ledger.executions[siblingExecution.executionID]?.revoked == false))
+        try recordCheck {
+          try #require(
+            ledger.environment.paths?.pathRules.first { $0.root == skillRoot } == skillRule)
+        }
+        try recordCheck {
+          try #require(ledger.executions[targetExecution.executionID]?.isRunning == false)
+        }
+        try recordCheck {
+          try #require(ledger.executions[targetExecution.executionID]?.revoked == true)
+        }
+        try recordCheck {
+          try #require(ledger.executions[siblingExecution.executionID]?.isRunning == true)
+        }
+        try recordCheck {
+          try #require(ledger.executions[siblingExecution.executionID]?.revoked == false)
+        }
       }
       try #require(DarwinProcessIdentity.current(pid: siblingPID)?.identity == siblingIdentity)
       try await siblingProcess.sendLine("after removal")
-      let siblingReplied = try await siblingLines.next() == "after removal"
-      #expect(recordCheck(siblingReplied))
+      let siblingReply = try await siblingLines.next()
+      try recordCheck { try #require(siblingReply == "after removal") }
       if scenarioPassed {
         receipts = try WorktreeProviderFixtureReceipts.capture(
           root: root, runtime: runtime, sessions: [fixture.session, consumerSession],

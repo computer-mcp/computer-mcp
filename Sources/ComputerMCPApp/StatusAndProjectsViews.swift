@@ -545,8 +545,9 @@ private struct ProjectRow: View {
         if let lastResolvedAt = project.lastResolvedAt {
           AppLocalization.verbatimText(
             AppLocalization.formatted(
-              "Resolved %@",
-              lastResolvedAt.formatted(.relative(presentation: .named))
+              "Resolved %@", locale: locale, bundle: resources,
+              lastResolvedAt.formatted(
+                Date.RelativeFormatStyle(presentation: .named, locale: locale))
             )
           )
           .font(.caption)

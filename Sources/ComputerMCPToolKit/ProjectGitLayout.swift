@@ -108,10 +108,20 @@ enum ProjectGitLayout {
   /// Launcher warnings may precede Git's diagnostic. Another fatal error, including
   /// one containing a forged newline in a path, cannot establish a non-repository.
   static func isNonRepository(_ result: CommandResult) -> Bool {
-    result.exitCode == 128 && result.stdout.isEmpty
-      && result.stderr.split(whereSeparator: \.isNewline).filter { $0.hasPrefix("fatal:") } == [
-        "fatal: not a git repository (or any of the parent directories): .git"
-      ]
+    guard result.exitCode == 128, result.stdout.isEmpty, !result.stderrTruncated else {
+      return false
+    }
+    let lines = result.stderr.split(whereSeparator: \.isNewline)
+    let fatalLines = lines.filter { $0.hasPrefix("fatal:") }
+    guard fatalLines.count == 1, let fatal = fatalLines.first else { return false }
+    if fatal == "fatal: not a git repository (or any of the parent directories): .git" {
+      return true
+    }
+    return fatal.hasPrefix("fatal: not a git repository (or any parent up to mount point /")
+      && fatal.hasSuffix(")")
+      && lines.suffix(2).elementsEqual([
+        fatal, "Stopping at filesystem boundary (GIT_DISCOVERY_ACROSS_FILESYSTEM not set).",
+      ])
   }
 
   private static func resolve(_ path: String) throws -> URL {

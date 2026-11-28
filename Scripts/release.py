@@ -476,6 +476,7 @@ def main():
     parser.add_argument("operation", choices=("plan", "run", "status", "resume", "publish", "cleanup"))
     parser.add_argument("--run", default="local", help="Local run identifier; receipts stay in .agent/releases/")
     parser.add_argument("--profile", default="ci")
+    parser.add_argument("--pr-base", metavar="COMMIT", help="Select root Swift tests for a pull request CI run")
     parser.add_argument("--apply", action="store_true", help="Apply cleanup; otherwise preview")
     parser.add_argument("--reuse-ci", nargs="?", const="latest", metavar="RUN",
                         help="Import matching master CI checks, optionally from the selected run ID or 'none'")
@@ -488,6 +489,14 @@ def main():
     profile = "publish" if args.operation == "publish" else args.profile
     if profile not in definition["profiles"]:
         parser.error("Unknown profile: " + profile)
+    if args.pr_base is not None:
+        if profile != "ci" or args.operation not in ("plan", "run", "resume", "status"):
+            parser.error("--pr-base applies to CI checks only")
+        stage = next(stage for stage in definition["stages"] if stage["id"] == "swift-tests")
+        # Keep the selected command and its base in the stage receipt's fingerprint.
+        commands = stage["commands"]
+        index = commands.index(["python3", "Scripts/run-swift-tests.py"])
+        commands[index] = ["python3", "Scripts/select-swift-tests.py", "--base", args.pr_base]
     git_dir = Path(output(["git", "rev-parse", "--git-common-dir"], ROOT))
     if not git_dir.is_absolute():
         git_dir = ROOT / git_dir

@@ -48,8 +48,15 @@ swift-format lint --strict --recursive --configuration .swift-format Package.swi
 swift run computer-mcp config validate --config Examples/computer-mcp.toml
 ```
 
-CI runs `python3 Scripts/release.py run --run ci --profile ci`, which needs
-`actionlint`, `jq`, and `ripgrep`; run it locally to reproduce a CI failure.
+For pull requests, Linux and macOS select root Swift tests from the diff between
+the PR base commit and the checked-out merge result. Preview that selection
+locally with `python3 Scripts/select-swift-tests.py --base <base-commit> --list-only`.
+Omit `--list-only` to run it. Changes with uncertain impact run the full suite.
+
+The merge queue and `master` run the full Swift checks. Reproduce the macOS CI
+checks with `python3 Scripts/release.py run --run ci --profile ci`. Add
+`--pr-base <base-commit>` for a PR run. These checks need `actionlint`, `jq`,
+and `ripgrep`.
 
 For version rules, read [Versioning](VERSIONING.md). The
 [Release Reference](Documentation/Reference/Release.md) owns version sources,

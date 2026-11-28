@@ -101,9 +101,10 @@ struct ManagedLineProcessInputTests {
   func cancellationBeforeProcessReadyRemovesTheWaiter() async throws {
     let input = ChildProcessInput(closedError: Failure.closed, inputClosedError: Failure.eof)
     let waiting = Task { try await input.write(Data("waiting".utf8), close: false) }
-    try await waitUntil { input.snapshot.pendingWrites == 1 }
-    waiting.cancel()
-    try await waitUntil { input.snapshot.pendingWrites == 0 }
+    for pendingWrites in [1, 0] {
+      try await waitUntil { input.snapshot.pendingWrites == pendingWrites }
+      if pendingWrites == 1 { waiting.cancel() }
+    }
     await #expect(throws: CancellationError.self) { try await waiting.value }
     await input.finish()
   }

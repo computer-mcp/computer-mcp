@@ -878,79 +878,126 @@ private struct LifecycleFixture: Sendable {
       at: directory, withIntermediateDirectories: true,
       attributes: [.posixPermissions: 0o700])
     scope = try MCPConnectionFixtureScope(directory: directory)
-    script = directory.appendingPathComponent("peer.py")
+    script = directory.appendingPathComponent("peer.pl")
     try Data(
       #"""
-      #!/usr/bin/env python3
-      import json, os, pathlib, signal, subprocess, sys, time
-      root = pathlib.Path(sys.argv[1])
-      def append(name, value):
-          with (root / name).open("a", encoding="utf-8") as handle:
-              handle.write(json.dumps(value) + "\n")
-      def exists(pid):
-          try:
-              os.kill(pid, 0)
-              return True
-          except ProcessLookupError:
-              return False
-      signal.signal(signal.SIGTERM, signal.SIG_IGN)
-      previous = []
-      if (root / "starts").exists():
-          previous = [json.loads(line) for line in (root / "starts").read_text().splitlines()]
-      child = subprocess.Popen(
-          ["/bin/sh", "-c", "trap '' TERM; while :; do /bin/sleep 1; done"],
-          stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-      append("starts", {
-          "pid": os.getpid(), "child": child.pid,
-          "supervisor": os.getppid(),
-          "overlap": any(exists(item["pid"]) for item in previous)})
-      for line in sys.stdin:
-          message = json.loads(line)
-          method = message.get("method")
-          if method == "notifications/cancelled":
-              append("cancellations", message["params"]["requestId"])
-              continue
-          if "id" not in message:
-              continue
-          result = {}
-          if method == "initialize":
-              while os.environ.get("HOLD_INITIALIZE") == "1":
-                  time.sleep(0.01)
-              result = {
-                  "protocolVersion": "2025-11-25", "capabilities": {"tools": {}},
-                  "serverInfo": {"name": "owned-lifecycle-fixture", "version": "1"}}
-          elif method == "tools/list":
-              if (root / "hold-list").exists():
-                  append("held-lists", os.getpid())
-                  while (root / "hold-list").exists():
-                      time.sleep(0.01)
-              version = ((root / "version").read_text() if (root / "version").exists()
-                         else os.environ["CATALOG_VERSION"])
-              result = {"tools": [
-                  {"name": name, "inputSchema": {"type": "object"}}
-                  for name in [version, "hang"]]}
-          elif method == "tools/call":
-              append("calls", message["params"]["name"])
-              if message["params"]["name"] == "hang":
-                  continue
-              arguments = message["params"].get("arguments", {})
-              if "error_code" in arguments:
-                  error = {"code": arguments["error_code"], "message": "fixture rejection"}
-                  if error["code"] == -32042:
-                      error["data"] = {"elicitations": [{
-                          "mode": "url", "elicitationId": "fixture-input",
-                          "url": "https://example.invalid/confirm", "message": "fixture input"}]}
-                  print(json.dumps({"jsonrpc": "2.0", "id": message["id"], "error": error}), flush=True)
-                  continue
-              result = {"content": [{"type": "text", "text": "done"}]}
-              if arguments.get("tool_error"):
-                  result = {"content": [{"type": "text", "text": "operation rejected"}],
-                            "structuredContent": {"accepted": False}, "isError": True}
-          print(json.dumps({"jsonrpc": "2.0", "id": message["id"], "result": result}), flush=True)
-          if method == "tools/call" and arguments.get("exit_after_response"):
-              os._exit(0)
-      while True:
-          time.sleep(0.01)
+      #!/usr/bin/perl
+      use strict;
+      use warnings;
+      use Errno qw(ESRCH);
+      use JSON::PP qw(decode_json encode_json);
+      use POSIX qw(_exit);
+      use Time::HiRes qw(usleep);
+
+      my ($root) = @ARGV;
+      $| = 1;
+      $SIG{TERM} = 'IGNORE';
+      $SIG{PIPE} = 'IGNORE';
+
+      sub append_record {
+        my ($name, $value) = @_;
+        open my $file, '>>', "$root/$name" or die "open $name: $!";
+        print {$file} encode_json($value), "\n" or die "write $name: $!";
+        close $file or die "close $name: $!";
+      }
+
+      sub process_exists {
+        my ($pid) = @_;
+        return 1 if kill 0, $pid;
+        return 0 if $! == ESRCH;
+        die "probe process $pid: $!";
+      }
+
+      my @previous;
+      if (-e "$root/starts") {
+        open my $file, '<', "$root/starts" or die "open starts: $!";
+        @previous = map { decode_json($_) } <$file>;
+      }
+
+      my $child = fork();
+      die "fork descendant: $!" unless defined $child;
+      if ($child == 0) {
+        $SIG{PIPE} = 'DEFAULT';
+        open STDIN, '<', '/dev/null' or die "redirect stdin: $!";
+        open STDOUT, '>', '/dev/null' or die "redirect stdout: $!";
+        open STDERR, '>', '/dev/null' or die "redirect stderr: $!";
+        exec '/bin/sh', '-c', "trap '' TERM; while :; do /bin/sleep 1; done";
+        die "exec descendant: $!";
+      }
+
+      my $overlap = JSON::PP::false;
+      for my $start (@previous) {
+        if (process_exists($start->{pid})) {
+          $overlap = JSON::PP::true;
+          last;
+        }
+      }
+      append_record('starts', {
+        pid => $$, child => $child, supervisor => getppid(), overlap => $overlap,
+      });
+
+      while (my $line = <STDIN>) {
+        my $message = decode_json($line);
+        my $method = $message->{method} // '';
+        if ($method eq 'notifications/cancelled') {
+          append_record('cancellations', $message->{params}{requestId});
+          next;
+        }
+        next unless exists $message->{id};
+
+        my $response = {jsonrpc => '2.0', id => $message->{id}, result => {}};
+        my $exit_after_response;
+        if ($method eq 'initialize') {
+          usleep(10_000) while ($ENV{HOLD_INITIALIZE} // '') eq '1';
+          $response->{result} = {
+            protocolVersion => '2025-11-25', capabilities => {tools => {}},
+            serverInfo => {name => 'owned-lifecycle-fixture', version => '1'},
+          };
+        } elsif ($method eq 'tools/list') {
+          if (-e "$root/hold-list") {
+            append_record('held-lists', $$);
+            usleep(10_000) while -e "$root/hold-list";
+          }
+          my $version = $ENV{CATALOG_VERSION};
+          if (-e "$root/version") {
+            open my $file, '<:encoding(UTF-8)', "$root/version" or die "open version: $!";
+            local $/;
+            $version = <$file> // '';
+          }
+          $response->{result} = {
+            tools => [map { {name => $_, inputSchema => {type => 'object'}} } ($version, 'hang')],
+          };
+        } elsif ($method eq 'tools/call') {
+          my $name = $message->{params}{name};
+          append_record('calls', $name);
+          next if $name eq 'hang';
+          my $arguments = $message->{params}{arguments} // {};
+          if (exists $arguments->{error_code}) {
+            my $error = {code => $arguments->{error_code}, message => 'fixture rejection'};
+            if ($error->{code} == -32042) {
+              $error->{data} = {elicitations => [{
+                mode => 'url', elicitationId => 'fixture-input',
+                url => 'https://example.invalid/confirm', message => 'fixture input',
+              }]};
+            }
+            delete $response->{result};
+            $response->{error} = $error;
+          } else {
+            $response->{result} = {content => [{type => 'text', text => 'done'}]};
+            if ($arguments->{tool_error}) {
+              $response->{result} = {
+                content => [{type => 'text', text => 'operation rejected'}],
+                structuredContent => {accepted => JSON::PP::false}, isError => JSON::PP::true,
+              };
+            }
+            $exit_after_response = $arguments->{exit_after_response};
+          }
+        }
+        print encode_json($response), "\n" or die "write response: $!";
+        _exit(0) if $exit_after_response;
+      }
+
+      usleep(10_000) while 1;
       """#.utf8
     ).write(to: script)
     try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: script.path)

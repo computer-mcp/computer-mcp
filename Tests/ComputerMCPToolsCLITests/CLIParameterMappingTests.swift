@@ -7,17 +7,8 @@ import Testing
 
 @Suite(.nativeIntegration, .timeLimit(.minutes(1)))
 struct CLIParameterMappingTests {
-  @Test(arguments: [
-    (CLIArgumentToken.Style.separate, ["--value", "", "你好 world", "a\"b'c", "$(never-execute)\n"]),
-    (
-      .repeated,
-      ["--value", "", "--value", "你好 world", "--value", "a\"b'c", "--value", "$(never-execute)\n"]
-    ),
-    (.equals, ["--value=", "--value=你好 world", "--value=a\"b'c", "--value=$(never-execute)\n"]),
-  ])
-  func anActualProcessReceivesTheDeclaredOptionArray(
-    style: CLIArgumentToken.Style, expected: [String]
-  ) async throws {
+  @Test
+  func anActualProcessReceivesTheRepeatedOptionArray() async throws {
     let scratch = try ScopedTemporaryDirectory()
     defer { withExtendedLifetime(scratch) {} }
     let directory = scratch.url
@@ -38,24 +29,26 @@ struct CLIParameterMappingTests {
       id: "argv", path: [], description: "Read exact argv",
       parameters: [.init(name: "values", schema: CLITreeTests.strings, required: true)],
       argv: program.map { .init(kind: .literal, value: $0) } + [
-        .init(kind: .option, parameter: "values", flag: "--value", style: style)
+        .init(kind: .option, parameter: "values", flag: "--value", style: .repeated)
       ], stdout: .json, outputSchema: CLITreeTests.strings)
     let provider = CLITreeTests.provider(
       command, executable: try testExecutable(Self.interpreter), project: directory)
     let tool = try #require(provider.definitions().first?.tool.name)
-    let values: JSONValue = .array([
-      .string(""), .string("你好 world"), .string("a\"b'c"), .string("$(never-execute)\n"),
-    ])
     let result = try await withCLIProcessScope(
       directory: directory, readOnly: true
     ) {
       try await provider.callToolAsync(
         .init(
-          name: tool, arguments: .object(["values": values]), context: .empty))
+          name: tool, arguments: CLITreeTests.arrayOptionInput, context: .empty))
     }
-    #expect(result.objectValue?["isError"] == .bool(false), "\(result)")
-    #expect(CLITreeTests.output(result)?["data"] == .array(expected.map(JSONValue.string)))
     await provider.execution.shutdown()
+    #expect(result.objectValue?["isError"] == .bool(false), "\(result)")
+    #expect(
+      CLITreeTests.output(result)?["data"]
+        == .array([
+          .string("--value"), .string(""), .string("--value"), .string("你好 world"),
+          .string("--value"), .string("a\"b'c"), .string("--value"), .string("$(never-execute)\n"),
+        ]))
   }
 
   @Test func nativeCLIArgumentsAndJSONOutputPreserveLargeIntegers() async throws {

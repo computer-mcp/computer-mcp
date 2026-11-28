@@ -81,6 +81,25 @@ struct CLITreeTests {
         == .number(10))
   }
 
+  @Test(arguments: [
+    (CLIArgumentToken.Style.separate, ["--value", "", "你好 world", "a\"b'c", "$(never-execute)\n"]),
+    (
+      .repeated,
+      ["--value", "", "--value", "你好 world", "--value", "a\"b'c", "--value", "$(never-execute)\n"]
+    ),
+    (.equals, ["--value=", "--value=你好 world", "--value=a\"b'c", "--value=$(never-execute)\n"]),
+  ])
+  func arrayOptionStylesPreserveArgumentBoundaries(
+    style: CLIArgumentToken.Style, expected: [String]
+  ) throws {
+    let command = CLICommandDescriptor(
+      id: "argv", path: [], description: "Encode exact argv",
+      parameters: [.init(name: "values", schema: Self.strings, required: true)],
+      argv: [.init(kind: .option, parameter: "values", flag: "--value", style: style)])
+    let invocation = try CLIArgumentEncoder.encode(Self.arrayOptionInput, command: command)
+    #expect(invocation.arguments == expected)
+  }
+
   @Test
   func schemaAndEncoderEnforceTheSameRelationships() throws {
     let command = CLICommandDescriptor(
@@ -407,6 +426,11 @@ struct CLITreeTests {
 
   static let string = JSONValue.object(["type": .string("string")])
   static let strings = JSONValue.object(["type": .string("array"), "items": string])
+  static let arrayOptionInput = JSONValue.object([
+    "values": .array([
+      .string(""), .string("你好 world"), .string("a\"b'c"), .string("$(never-execute)\n"),
+    ])
+  ])
 
   static func printCommand() -> CLICommandDescriptor {
     CLICommandDescriptor(

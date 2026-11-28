@@ -2080,14 +2080,35 @@ struct GatewayGenerationDispatchTests {
     }
   }
 
+  enum PublicationOutcome: Sendable {
+    case publish, cancel, profileConflict, staleManifest
+  }
+
+  enum PublicationChange: Sendable {
+    case plugin, register, repair, manifest
+  }
+
   @Test(
     .timeLimit(.minutes(1)),
-    arguments: ["publish", "cancel", "profile", "manifest"],
-    ["plugin", "register", "repair", "manifest"])
+    arguments: [
+      (PublicationOutcome.publish, PublicationChange.plugin),
+      (.publish, .register),
+      (.publish, .repair),
+      (.publish, .manifest),
+      // Repair first pauses during selected-folder validation, before preparing runtimes.
+      (.cancel, .repair),
+      (.cancel, .plugin),
+      (.profileConflict, .plugin),
+      (.profileConflict, .register),
+      (.profileConflict, .repair),
+      (.profileConflict, .manifest),
+      // Plugins and projects use withCurrentConfiguration. Manifest changes commit prepared bytes.
+      (.staleManifest, .plugin),
+      (.staleManifest, .manifest),
+    ])
   func configurationPublicationCoordinatesAdmissionAndIrreversibleAuthorityChanges(
-    outcome: String, change: String
+    outcome: PublicationOutcome, change: PublicationChange
   ) async throws {
-    let project = change != "plugin"
     let bookmark = GatedBookmarkService()
     let fixture = try GenerationFixture(bookmarkService: bookmark)
     defer { fixture.removeFiles() }
@@ -2124,15 +2145,16 @@ struct GatewayGenerationDispatchTests {
     try FileManager.default.createDirectory(at: addedRoot, withIntermediateDirectories: true)
     bookmark.arm()
     let mutation = Task {
-      if change == "manifest" {
+      switch change {
+      case .manifest:
         _ = try await fixture.service.changeManifest(
           manifestCandidate, expectedDigest: try await fixture.control.configurationDigest())
-      } else if change == "repair" {
+      case .repair:
         _ = try await fixture.service.changeProjects(
           .repair(id: "fixture", root: fixture.root, displayName: nil))
-      } else if project {
+      case .register:
         _ = try await fixture.service.changeProjects(.register(addedRoot, displayName: "Added"))
-      } else {
+      case .plugin:
         _ = try await fixture.service.changePlugins(
           .enabled(pluginID: "future-plugin", true), expectedRevision: 0)
       }
@@ -2152,14 +2174,14 @@ struct GatewayGenerationDispatchTests {
           profileID: .cloudflareObserve, trace: .init(transport: "http"))
       }
       try await fixture.service.selectProfile(future)
-      connecting = Task { try await fixture.connect(consent: outcome != "manifest") }
+      connecting = Task { try await fixture.connect(consent: outcome != .staleManifest) }
       let deadline = ContinuousClock.now + .seconds(5)
       while await fixture.service.snapshot().connectionCount < 3, ContinuousClock.now < deadline {
         try await Task.sleep(for: .milliseconds(10))
       }
       #expect(await fixture.service.snapshot().connectionCount == 3)
-      if outcome == "cancel" { mutation.cancel() }
-      if outcome == "profile" {
+      if outcome == .cancel { mutation.cancel() }
+      if outcome == .profileConflict {
         var grant = try #require(before.profiles.first { $0.id == .chatGPTOperate })
         grant.permissions.removeEntry(for: .mcpServer("fixture"))
         try fixture.database.saveProfile(grant, expectedRevision: grant.authorizationRevision)
@@ -2167,25 +2189,36 @@ struct GatewayGenerationDispatchTests {
           toolName: "fixture.inspect", arguments: .object(["handle": .string("live")]))
         #expect(denied.result.objectValue?["isError"] == .bool(true))
       }
-      if outcome == "manifest" {
+      if outcome == .staleManifest {
         try unadmittedManifest.write(to: manifestURL, options: .atomic)
       }
       bookmark.release()
-      if outcome == "publish" {
+      switch outcome {
+      case .publish:
         try await mutation.value
-        #expect(try fixture.database.pluginStoreSnapshot().revision == (project ? 0 : 1))
-        #expect(try fixture.database.projects().count == (change == "register" ? 2 : 1))
-      } else if outcome == "manifest" {
+        #expect(try fixture.database.pluginStoreSnapshot().revision == (change == .plugin ? 1 : 0))
+        #expect(try fixture.database.projects().count == (change == .register ? 2 : 1))
+      case .staleManifest:
         await #expect(throws: AtomicManifestStoreError.staleDigest) { try await mutation.value }
-        #expect(try fixture.database.pluginStoreSnapshot() == before.plugins)
-        #expect(try fixture.database.projects() == before.projects)
-      } else {
-        await #expect(throws: (any Error).self) { try await mutation.value }
+      case .cancel:
+        await #expect(throws: CancellationError.self) { try await mutation.value }
+      case .profileConflict:
+        if change == .repair {
+          await #expect(throws: AppControlPlaneServiceError.gatewayInputsChanged) {
+            try await mutation.value
+          }
+        } else {
+          await #expect(throws: GatewayDatabaseError.configurationChanged) {
+            try await mutation.value
+          }
+        }
+      }
+      if outcome != .publish {
         #expect(try fixture.database.pluginStoreSnapshot() == before.plugins)
         #expect(try fixture.database.projects() == before.projects)
       }
       let third = try await #require(connecting).value
-      if outcome == "manifest" {
+      if outcome == .staleManifest {
         let sessions = await fixture.service.controlSessions().filter { $0.profileID == future }
         try #require(sessions.count == 1)
         #expect(sessions.first?.fullAccessConsent == nil)
@@ -2243,7 +2276,7 @@ struct GatewayGenerationDispatchTests {
           toolName: "fixture.identity", arguments: .object(["project_id": .string("fixture")])))
       await third.disconnect()
       connecting = nil
-      if outcome == "publish", change == "register" || change == "repair" {
+      if outcome == .publish, change == .register || change == .repair {
         try await wait { !alive(previous) && !alive(secondPID) }
         let beforeApproval = try fixture.calls()
         let denied = try await call(
@@ -2274,7 +2307,7 @@ struct GatewayGenerationDispatchTests {
               arguments: try #require(freshArguments.objectValue)))
             == freshPID)
         #expect(!alive(previous) && !alive(secondPID))
-      } else if outcome == "publish" {
+      } else if outcome == .publish {
         #expect(try pid(await fixture.identity(first)) != previous)
         #expect(try pid(await fixture.identity(second)) != secondPID)
         #expect(
@@ -2285,7 +2318,7 @@ struct GatewayGenerationDispatchTests {
         try await wait { !alive(secondPID) }
       } else {
         #expect(try pid(await second.call(toolName: "fixture.identity")) == secondPID)
-        if outcome == "profile" {
+        if outcome == .profileConflict {
           try await wait { !alive(previous) }
         } else {
           #expect(alive(previous))

@@ -496,7 +496,11 @@ def main():
         # Keep the selected command and its base in the stage receipt's fingerprint.
         commands = stage["commands"]
         index = commands.index(["python3", "Scripts/run-swift-tests.py"])
-        commands[index] = ["python3", "Scripts/select-swift-tests.py", "--base", args.pr_base]
+        try:
+            base = output(["git", "rev-parse", "--verify", "--end-of-options", args.pr_base + "^{commit}"], ROOT)
+        except subprocess.CalledProcessError:
+            base = ""  # An unavailable base selects the full suite.
+        commands[index] = ["python3", "Scripts/select-swift-tests.py", "--base", base]
     git_dir = Path(output(["git", "rev-parse", "--git-common-dir"], ROOT))
     if not git_dir.is_absolute():
         git_dir = ROOT / git_dir

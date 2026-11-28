@@ -16,6 +16,7 @@ ROOT = SCRIPTS.parent
 SWIFT = "/usr/bin/swift" if sys.platform == "darwin" else "swift"
 TEST = re.compile(r"[A-Za-z_]\w*(?:\.[^\s/]+)?/[^\s/]+", re.ASCII)
 SUITE = re.compile(r"(?:final )?(?:struct|class|enum) ([A-Za-z_]\w*)\s*(?:: [^;{}]+)?\s*\{\}", re.ASCII)
+FUNCTION_BLOCK = re.compile(r"^func \w+[^\n]*\}$|^func \w+[\s\S]*?^\}$", re.MULTILINE)
 SOURCE_SUFFIXES = {".swift", ".c", ".h", ".modulemap"}
 
 # These adapters locate the bootstrap executable at runtime.
@@ -82,50 +83,68 @@ def affected_modules(targets, changed):
     return modules
 
 
-def suite_names(source):
-    """Recognize suite-only files by inspecting top-level declarations."""
-    names, groups, outline = set(), [], []
+def declarations(source):
+    """Pair each top-level declaration's outline with its complete code."""
+    parts, groups, outline, start = [], [], [], 0
     closing = {"(": ")", "[": "]", "{": "}"}
-    for character in source + "\n":
+    for index, character in enumerate(source + "\n"):
         if character in closing:
             if not groups:
                 outline.append(character + closing[character])
             groups.append(closing[character])
         elif character in ")]}":
             if not groups or groups.pop() != character:
-                return set()
+                return []
         elif not groups and character == "\n":
             declaration = " ".join("".join(outline).split())
+            if declaration:
+                parts.append((declaration, source[start:index]))
             outline.clear()
-            if not declaration or re.fullmatch(
-                r"(?:@testable )?import [\w.]+|#(?:if|elseif|else|endif)(?: [^;{}]+)?",
-                declaration,
-            ):
-                continue
-            if declaration in {"@Suite", "@Suite()"}:
-                continue
-            declaration = re.sub(r"^@Suite(?:\(\))? ", "", declaration)
-            match = SUITE.fullmatch(declaration)
-            if match:
-                names.add(match[1])
-            elif not re.fullmatch(
-                r"(?:private|fileprivate) (?:final )?(?:struct|class|enum|func) \w+[^;{}]*\{\}", declaration
-            ):
-                return set()
+            start = index + 1
         elif not groups:
             outline.append(character)
-    return names if not groups else set()
+    return [] if groups else parts
+
+
+def suite_names(source):
+    declared = []
+    for outline, body in declarations(source):
+        if re.fullmatch(r"(?:@testable )?import [\w.]+|#(?:if|elseif|else|endif)(?: [^;{}]+)?|@Suite(?:\(\))?", outline):
+            continue
+        suite = SUITE.fullmatch(re.sub(r"^@Suite(?:\(\))? ", "", outline))
+        if not suite and not re.fullmatch(r"(?:private|fileprivate) (?:final )?(?:struct|class|enum|func) \w+[^;{}]*\{\}", outline):
+            return set()
+        declared.append((suite[1] if suite else None, body))
+    names = {name for name, _ in declared if name}
+    for name in names:
+        if any(re.search(rf"\b{name}\b", body) for other, body in declared if other != name):
+            return set()
+    return names
 
 
 def file_suites(base, status, path, directory, code_text):
-    names = suite_names(code_text(capture("git", "show", f"HEAD:{path}")))
-    if not names:
-        return set()
+    current = capture("git", "show", f"HEAD:{path}")
     if status == "M":
-        # Removing a suite or a shared declaration can affect sibling suites.
-        previous = suite_names(code_text(capture("git", "show", f"{base}:{path}")))
-        if not previous or not previous <= names:
+        previous = capture("git", "show", f"{base}:{path}")
+        # Compare original blobs so changes inside strings count. Only a complete,
+        # unchanged function may be treated like a file-local helper.
+        unchanged = set(FUNCTION_BLOCK.findall(previous)) & set(FUNCTION_BLOCK.findall(current))
+        helpers = set()
+        for block in unchanged:
+            parts = declarations(code_text(block))
+            if len(parts) == 1 and re.fullmatch(r"func \w+[^;{}]*\{\}", parts[0][0]):
+                helpers.add(block)
+
+        def localize(match):
+            return ("private " if match[0] in helpers else "") + match[0]
+
+        current = FUNCTION_BLOCK.sub(localize, current)
+        previous_names = suite_names(code_text(FUNCTION_BLOCK.sub(localize, previous)))
+        if not previous_names:
             return set()
+    names = suite_names(code_text(current))
+    if not names or (status == "M" and not previous_names <= names):
+        return set()
     # A suite type can also supply helpers to sibling files in its target.
     patterns = [argument for name in sorted(names) for argument in ("-e", name)]
     references = subprocess.run(
@@ -173,12 +192,6 @@ def selected_plan(base):
             raise FullRun(f"diff touches an unclassified source input {str(path)!r}")
 
     modules.update(affected_modules(targets, sources))
-    optimized = None
-    if sys.platform == "darwin":
-        optimized = runpy.run_path(str(SCRIPTS / "run-swift-tests.py"))["OPTIMIZED_TEST"]
-        if optimized.split(".", 1)[0] in modules:
-            raise FullRun("the macOS optimized test requires the full runner")
-
     inventory = set(capture(SWIFT, "test", "list").splitlines())
     if not inventory or any(not TEST.fullmatch(test) for test in inventory):
         raise FullRun("SwiftPM returned an empty or unrecognized test inventory")
@@ -203,9 +216,19 @@ def selected_plan(base):
         raise FullRun("a selected module or suite has no discovered tests")
 
     pattern = r"^(?:" + "|".join(map(re.escape, prefixes)) + r")[./]"
-    if optimized and (optimized not in inventory or re.search(pattern, optimized)):
-        raise FullRun("the macOS optimized test requires the full runner")
-    return ", ".join(prefixes), [SWIFT, "test", "--no-parallel", "--skip-build", "--filter", pattern]
+    selected = {test for test in inventory if re.search(pattern, test)}
+    reason = f"{len(selected)} tests matching {', '.join(prefixes)}"
+    debug = [SWIFT, "test", "--no-parallel", "--skip-build", "--filter", pattern]
+    if sys.platform == "darwin":
+        runner = runpy.run_path(str(SCRIPTS / "run-swift-tests.py"))
+        optimized = runner["OPTIMIZED_TEST"]
+        if optimized not in inventory:
+            raise FullRun("SwiftPM discovery is missing the optimized test")
+        if optimized in selected:
+            commands = [debug + ["--skip", runner["OPTIMIZED_PATTERN"]]] if len(selected) > 1 else []
+            commands.append([sys.executable, "Scripts/run-swift-tests.py", "--optimized-only"])
+            return f"{reason} (release build for {optimized})", commands
+    return reason, [debug]
 
 
 def main():
@@ -214,22 +237,27 @@ def main():
     parser.add_argument("--list-only", action="store_true", help="print the plan without running tests")
     args = parser.parse_args()
     try:
-        reason, command = selected_plan(args.base)
+        reason, commands = selected_plan(args.base)
         plan = f"Selected tests for changed paths: {reason}"
     except (FullRun, subprocess.CalledProcessError, OSError, ValueError, KeyError, StopIteration) as failure:
         reason = str(failure) if isinstance(failure, FullRun) else "could not resolve the diff, package graph, or test inventory"
         plan = f"Full test suite: {reason}"
-        command = ([sys.executable, "Scripts/run-swift-tests.py"] if sys.platform == "darwin"
-                   else [SWIFT, "test", "--no-parallel"])
-    print(f"{plan}\nCommand: {shlex.join(command)}", flush=True)
+        commands = [[sys.executable, "Scripts/run-swift-tests.py"] if sys.platform == "darwin"
+                    else [SWIFT, "test", "--no-parallel"]]
+    print(plan, flush=True)
+    for command in commands:
+        print(f"Command: {shlex.join(command)}", flush=True)
     if args.list_only:
         return 0
     try:
-        status = subprocess.run(command, cwd=ROOT).returncode
+        for command in commands:
+            status = subprocess.run(command, cwd=ROOT).returncode
+            if status:
+                return status if status > 0 else 128 - status
     except OSError as failure:
         print(failure, file=sys.stderr)
         return 1
-    return status if status >= 0 else 128 - status
+    return 0
 
 
 if __name__ == "__main__":

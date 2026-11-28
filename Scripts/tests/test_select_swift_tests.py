@@ -5,6 +5,7 @@ import json
 from pathlib import Path
 import re
 import runpy
+import shlex
 import subprocess
 import tempfile
 import unittest
@@ -58,7 +59,7 @@ class TestSelection(unittest.TestCase):
         return self.git("rev-parse", "HEAD")
 
     def selected(self, base):
-        _, command = selector.selected_plan(base)
+        _, (command,) = selector.selected_plan(base)
         self.assertEqual(command[:-1], ["swift", "test", "--no-parallel", "--skip-build", "--filter"])
         return {test for test in self.inventory if re.search(command[-1], test)}
 
@@ -109,6 +110,25 @@ class TestSelection(unittest.TestCase):
         self.write("Tests/AlphaTests/Sibling.swift", "struct Sibling { func testExample() { Example.helper() } }\n")
         base = self.commit()
         self.write("Tests/AlphaTests/Example.swift", "struct Example { static func helper() { print(1) } }\n")
+        self.commit()
+        self.assertEqual(self.selected(base), set(self.inventory[:2]))
+
+    def test_unchanged_shared_helper_allows_suite_selection_unless_it_consumes_the_suite(self):
+        path = "Tests/AlphaTests/Example.swift"
+        suite = "struct Example { static func value() -> Int { 1 } }\n"
+        helper = 'func shared() -> String {\n  "first"\n}\n'
+        self.write(path, suite + helper)
+        base = self.commit()
+        self.write(path, suite.replace("1", "2") + helper)
+        self.commit()
+        self.assertEqual(self.selected(base), {self.inventory[0]})
+        self.write(path, suite + helper.replace("first", "second"))
+        self.commit()
+        self.assertEqual(self.selected(base), set(self.inventory[:2]))
+        consumer = "func shared() -> Int { Example.value() }\n"
+        self.write(path, consumer + suite)
+        base = self.commit()
+        self.write(path, consumer + suite.replace("1", "2"))
         self.commit()
         self.assertEqual(self.selected(base), set(self.inventory[:2]))
 
@@ -172,7 +192,7 @@ class TestSelection(unittest.TestCase):
                 self.inventory = inventory
                 self.assertIn("Full test suite", self.list_plan("--base", base))
 
-    def test_macos_preserves_optimized_runner_when_its_test_is_selected(self):
+    def test_macos_partitions_the_selection_between_filtered_debug_and_verified_release(self):
         optimized = runpy.run_path(str(SCRIPTS / "run-swift-tests.py"))["OPTIMIZED_TEST"]
         module, suite = optimized.split("/")[0].split(".")
         self.targets += [target(module)]
@@ -183,18 +203,26 @@ class TestSelection(unittest.TestCase):
             self.write(f"Tests/{module}/Ordinary.swift", "struct Ordinary { @Test func run() {} }\n")
             self.commit()
             self.assertEqual(self.selected(base), {f"{module}.Ordinary/run()"})
-            self.write(f"Tests/{module}/{suite}.swift", f"struct {suite} {{ @Test func changed() {{}} }}\n")
+            self.write(f"Tests/{module}/Fixture.swift", "func fixture() {}\n")
             self.commit()
-            plan = self.list_plan("--base", base)
-            self.assertIn("optimized test", plan)
-            self.assertIn("Scripts/run-swift-tests.py", plan)
+            _, (debug, release) = selector.selected_plan(base)
+            include, skip = debug[-3], debug[-1]
+            self.assertEqual(debug[:-4], ["swift", "test", "--no-parallel", "--skip-build"])
+            self.assertEqual(debug[-4::2], ["--filter", "--skip"])
+            self.assertEqual({t for t in self.inventory if re.search(include, t) and not re.search(skip, t)},
+                             {f"{module}.Ordinary/run()"})
+            self.assertEqual(release, [selector.sys.executable, "Scripts/run-swift-tests.py", "--optimized-only"])
+            self.assertEqual(self.list_plan("--base", base).splitlines()[1:],
+                             [f"Command: {shlex.join(c)}" for c in (debug, release)])
+            self.inventory.remove(f"{module}.Ordinary/run()")
+            self.assertEqual(selector.selected_plan(base)[1], [release])
 
 
 class TestExecution(unittest.TestCase):
     def test_list_only_prints_without_running_and_execution_returns_test_status(self):
         command = ["swift", "test", "--filter", "^ExampleTests\\.Suite/"]
         with (
-            patch.object(selector, "selected_plan", return_value=("ExampleTests.Suite", command)),
+            patch.object(selector, "selected_plan", return_value=("ExampleTests.Suite", [command, ["second"]])),
             patch.object(selector.subprocess, "run", return_value=subprocess.CompletedProcess(command, 7)) as run,
             contextlib.redirect_stdout(io.StringIO()) as output,
         ):

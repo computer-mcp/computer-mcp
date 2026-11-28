@@ -39,13 +39,13 @@ class SwiftTestPartition(unittest.TestCase):
             self.assertIsNone(re.search(selector, f"{module_suite}/{method[:-2]}Suffix()"))
             self.assertEqual(list(Path(work).iterdir()), [])
 
-    def test_optimized_report_must_prove_exactly_one_pass(self):
+    def test_optimized_only_run_requires_a_report_proving_exactly_one_pass(self):
         module_suite, method = swift_tests.OPTIMIZED_TEST.split("/")
         for cases in ([], ["wrong()"], [method, "other()"], [method, method], [method, "skipped"]):
             with self.subTest(cases=cases):
                 def run(*arguments):
-                    if "--xunit-output" not in arguments:
-                        return
+                    self.assertIn("--xunit-output", arguments)
+                    self.assertIn("release", arguments)
                     suite = ET.Element("testsuite")
                     for name in cases:
                         if name == "skipped":
@@ -56,4 +56,4 @@ class SwiftTestPartition(unittest.TestCase):
 
                 with patch.object(swift_tests, "run_tests", side_effect=run):
                     with self.assertRaisesRegex(ValueError, "exactly one passing optimized test"):
-                        swift_tests.main()
+                        swift_tests.main(optimized_only=True)

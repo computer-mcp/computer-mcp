@@ -1,3 +1,4 @@
+import ComputerMCPPermissions
 import ComputerMCPTestSupport
 import Foundation
 import GRDB
@@ -19,6 +20,48 @@ import Testing
 @Suite
 
 final class GatewayDatabaseTests {
+  @Test func worktreeStorageComesOnlyFromDurableComposition() throws {
+    let memory = try GatewayDatabase(inMemory: ())
+    #expect(memory.worktreeStorage == nil)
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+      .resolvingSymlinksInPath()
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: false)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let path = root.appendingPathComponent("host.sqlite").path
+    let standalone = try GatewayDatabase(path: path)
+    #expect(
+      standalone.worktreeStorage?.content.path == root.appendingPathComponent("worktrees").path)
+    let appRoot = root.appendingPathComponent("distribution")
+    let app = try GatewayDatabase(path: path, applicationSupportRoot: appRoot)
+    #expect(app.worktreeStorage?.content.path == appRoot.appendingPathComponent("Worktrees").path)
+    #expect(!FileManager.default.fileExists(atPath: appRoot.path))
+  }
+
+  @Test func bootstrapPreservesLiveEditsAndLeavesRecoveryForTheOwner() throws {
+    let database = try GatewayDatabase(inMemory: ())
+    let counter = TestAuthorizationEpochCounter()
+    let store = database.permissionStore(counter: counter)
+    try database.bootstrapPermissionProfiles([.operate])
+    var edited = try #require(database.profiles().first)
+    try edited.permissions.set(.denied, for: .screen)
+    try database.saveProfile(edited, expectedRevision: edited.authorizationRevision)
+    let before = try #require(database.profiles().first)
+    try database.bootstrapPermissionProfiles([.operate])
+    #expect(try database.profiles() == [before])
+    let initialEpoch = try store.readWithDatabase { _, ledger in ledger.authorizationEpochID }
+    counter.forget()
+    let missing = ProfileGrant.newPrincipal(id: .chatGPTObserve, allowedCallers: [.secureTunnel])
+    try database.bootstrapPermissionProfiles([.operate, missing])
+    #expect(try database.profiles() == [before])
+    try store.readWithDatabase { (database: Database, ledger: PermissionLedger) throws -> Void in
+      #expect(ledger.authorizationEpochID != initialEpoch)
+      #expect(ledger.suspendedAuthority != nil)
+      #expect(
+        try ProfileRecord.fetchOne(database, key: before.id.rawValue)?.authorityEpoch
+          == initialEpoch?.uuidString)
+    }
+  }
+
   @Test(arguments: [false, true], [false, true])
   func projectMutationsPublishOnlyCommittedAuthorization(rollback: Bool, removing: Bool)
     async throws
@@ -29,9 +72,10 @@ final class GatewayDatabaseTests {
     let path = root.appendingPathComponent("state.sqlite").path
     let stream = try { () -> AsyncStream<Void> in
       let database = try GatewayDatabase(path: path)
+      let store = database.permissionStore(counter: TestAuthorizationEpochCounter())
       for (id, date) in [("canonical", 1.0), ("duplicate", 2.0)] {
         try database.saveProject(
-          RegisteredProject(
+          ComputerMCPCore.RegisteredProject(
             id: id, displayName: "Shared", rootPath: root.path,
             createdAt: Date(timeIntervalSince1970: date)))
       }
@@ -41,27 +85,34 @@ final class GatewayDatabaseTests {
           expectedPlanDigest: plan.planDigest, allowMetadataConflicts: false)
       }
       var profile = ProfileGrant.operate
-      profile.projectIDs = ["duplicate"]
+      try profile.permissions.set(.granted(.write), for: .project("duplicate"))
       try database.saveProfile(profile)
+      let service = GatewayPermissionService(store: store, policyReader: TestManagedPolicyReader())
+      let subject = try GatewayPermissionSubject(
+        context: .init(
+          caller: .secureTunnel, profileID: profile.id, trustedPrincipalID: "fixture"))
+      let requirements = try InvocationRequirements(actions: [
+        .init(requirement: .init(.project("duplicate"), .read))
+      ])
+      guard
+        case .allowed(let authorization) = try service.admit(
+          subject: subject, tool: "fixture", projectID: "duplicate", argumentsDigest: "digest",
+          requirements: requirements)
+      else { throw GatewayDatabaseError.configurationChanged }
+      let execution = try store.transactionWithDatabase { _, ledger in
+        try ledger.startExecution(owner: subject.principal, authorizationIDs: [authorization.id])
+      }
       let before = try database.configurationState()
       let plan = try database.projectDeduplicationPlan()
-      let pending = OperationTicket(
-        id: "pending", capabilityID: "file.trash", caller: .secureTunnel,
-        profileID: profile.id, inputDigest: "fixture", state: .approved,
-        expiresAt: Date().addingTimeInterval(3_600))
-      try database.saveOperationTicket(pending)
-      let ticket = try #require(try database.operationTicket(id: pending.id))
       let connection = try DatabaseQueue(path: path)
       defer { try? connection.close() }
       if rollback {
         try connection.write {
-          let operation =
-            removing ? "DELETE ON projects" : "INSERT ON projectDeduplicationReceipts"
+          let operation = removing ? "DELETE ON projects" : "INSERT ON projectDeduplicationReceipts"
           try $0.execute(
-            sql: """
-              CREATE TRIGGER refuse_mutation BEFORE \(operation)
-              BEGIN SELECT RAISE(ABORT, 'fixture receipt failure'); END
-              """)
+            sql:
+              "CREATE TRIGGER refuse_mutation BEFORE \(operation) BEGIN SELECT RAISE(ABORT, 'fixture'); END"
+          )
         }
       }
       let stream = database.profileChanges(for: profile.id)
@@ -73,24 +124,22 @@ final class GatewayDatabaseTests {
             expectedPlanDigest: plan.planDigest, allowMetadataConflicts: false)
         }
         #expect(!rollback)
-      } catch is DatabaseError {
-        #expect(rollback)
-      }
+      } catch is DatabaseError { #expect(rollback) }
       if rollback {
         #expect(try database.configurationState() == before)
-        #expect(try database.operationTicket(id: "pending") == ticket)
       } else {
-        #expect(try database.profiles().first?.projectIDs == (removing ? [] : ["canonical"]))
-        #expect(try database.operationTicket(id: "pending")?.state == .denied)
-        #expect(try database.projects().map(\.id) == (removing ? [] : ["canonical"]))
+        let saved = try #require(database.profiles().first)
+        #expect(saved.permissions.entries[.project("duplicate")] == nil)
+        #expect(
+          saved.permissions.state(for: .project("canonical"))
+            == (removing ? .notGranted : .granted(.write)))
       }
-      let receipts = try connection.read {
-        try Int.fetchOne($0, sql: "SELECT COUNT(*) FROM projectDeduplicationReceipts")
-      }
-      #expect(receipts == (rollback && !removing ? 0 : 1))
+      #expect(
+        try store.readWithDatabase { _, ledger in
+          ledger.pendingRevocations.executionsToTerminate.contains(execution.id)
+        } == !rollback)
       return stream
     }()
-    // Database destruction finishes the stream, making absence of a rollback event deterministic.
     var notifications = 0
     for await _ in stream { notifications += 1 }
     #expect(notifications == (rollback ? 0 : 1))
@@ -101,18 +150,18 @@ final class GatewayDatabaseTests {
     let database = try GatewayDatabase(inMemory: ())
     for (id, date) in [("canonical", 1.0), ("duplicate", 2.0)] {
       try database.saveProject(
-        RegisteredProject(
+        ComputerMCPCore.RegisteredProject(
           id: id, displayName: "Shared", rootPath: "/tmp/shared-project",
           createdAt: Date(timeIntervalSince1970: date)))
     }
     var profile = ProfileGrant.operate
-    profile.projectIDs = ["duplicate"]
+    try profile.permissions.set(.granted(.write), for: .project("duplicate"))
     try database.saveProfile(profile)
     let expected = try database.configurationState()
     let plan = try database.projectDeduplicationPlan()
     switch change {
     case "profile":
-      profile.capabilityIDs = ["project.list"]
+      try profile.permissions.set(.denied, for: .screen)
       try database.saveProfile(profile)
     case "bookmark":
       var project = try #require(try database.project(id: "canonical"))
@@ -143,9 +192,10 @@ final class GatewayDatabaseTests {
     defer { try? FileManager.default.removeItem(at: root) }
     let path = root.appendingPathComponent("state.sqlite").path
     let database = try GatewayDatabase(path: path)
+    _ = database.permissionStore(counter: TestAuthorizationEpochCounter())
     for (id, date) in [("canonical", 1.0), ("duplicate", 2.0)] {
       try database.saveProject(
-        RegisteredProject(
+        ComputerMCPCore.RegisteredProject(
           id: id, displayName: "Shared", rootPath: root.path,
           createdAt: Date(timeIntervalSince1970: date)))
     }
@@ -158,84 +208,52 @@ final class GatewayDatabaseTests {
       try $0.execute(sql: "UPDATE projectCanonicalRoots SET projectID = 'duplicate'")
     }
     let existing = try database.registerProjectIdempotently(
-      RegisteredProject(displayName: "Shared", rootPath: root.path))
+      ComputerMCPCore.RegisteredProject(displayName: "Shared", rootPath: root.path))
     #expect(!existing.created)
     #expect(existing.project.id == "canonical")
     var moved = existing.project
     moved.rootPath = root.appendingPathComponent("moved").path
     try database.saveProject(moved)
     let replacement = try database.registerProjectIdempotently(
-      RegisteredProject(id: "replacement", displayName: "New", rootPath: root.path))
+      ComputerMCPCore.RegisteredProject(id: "replacement", displayName: "New", rootPath: root.path))
     #expect(replacement.created)
     #expect(replacement.project.id == "replacement")
     #expect(try database.project(id: "duplicate")?.rootPath == moved.rootPath)
   }
 
-  @Test
-  func projectDeduplicationRevokesTicketsOnceAndPreservesCanonicalRegistration() throws {
+  @Test func projectDeduplicationPreservesPermissionAndNetworkEntries() throws {
     let database = try GatewayDatabase(inMemory: ())
-    for id in ["a", "b"] {
-      for (suffix, date) in [("duplicate", 2.0), ("canonical", 1.0)] {
-        try database.saveProject(
-          RegisteredProject(
-            id: "\(id)-\(suffix)", displayName: id, rootPath: "/tmp/dedup-\(id)",
-            createdAt: Date(timeIntervalSince1970: date)))
-      }
+    for (id, date) in [("canonical", 1.0), ("duplicate", 2.0)] {
+      try database.saveProject(
+        ComputerMCPCore.RegisteredProject(
+          id: id, displayName: "Shared", rootPath: "/tmp/shared-project",
+          createdAt: Date(timeIntervalSince1970: date)))
     }
     var profile = ProfileGrant.operate
-    profile.projectIDs = ["a-duplicate", "b-duplicate", "unrelated"]
+    try profile.permissions.set(.denied, for: .project("duplicate"))
+    profile.projectNetworks["duplicate"] = .trusted
     try database.saveProfile(profile)
-    let before = try #require(try database.profiles().first)
-    let states: [OperationTicketState] = [
-      .prepared, .pendingApproval, .approved, .executing, .succeeded,
-    ]
-    for state in states {
-      try database.saveOperationTicket(
-        OperationTicket(
-          id: state.rawValue, capabilityID: "file.trash", caller: .secureTunnel,
-          profileID: profile.id, projectID: "a-duplicate", inputDigest: "fixture",
-          state: state, expiresAt: Date().addingTimeInterval(60),
-          authorizationRevision: before.authorizationRevision))
-    }
-    try database.saveOperationTicket(
-      OperationTicket(
-        id: "other-profile", capabilityID: "file.trash", caller: .secureTunnel,
-        profileID: .chatGPTObserve, inputDigest: "fixture", state: .approved,
-        expiresAt: Date().addingTimeInterval(60)))
+    let revision = try #require(database.profiles().first).authorizationRevision
     let plan = try database.projectDeduplicationPlan()
-    let result = try database.applyProjectDeduplication(
+    _ = try database.applyProjectDeduplication(
       expectedPlanDigest: plan.planDigest, allowMetadataConflicts: false)
-    let saved = try #require(try database.profiles().first)
-    #expect(saved.authorizationRevision == before.authorizationRevision + 1)
-    #expect(saved.projectIDs == ["a-canonical", "b-canonical", "unrelated"])
-    #expect(result.updatedProfileIDs == [profile.id.rawValue])
-    for state in states {
-      let ticket = try #require(try database.operationTicket(id: state.rawValue))
-      if [.prepared, .pendingApproval, .approved].contains(state) {
-        #expect(ticket.state == .denied)
-        #expect(ticket.failureCode == "operations.authorization_changed")
-      } else {
-        #expect(ticket.state == state)
-      }
-    }
-    #expect(try database.operationTicket(id: "other-profile")?.state == .approved)
-    for id in ["a", "b"] {
-      let registration = try database.registerProjectIdempotently(
-        RegisteredProject(displayName: id, rootPath: "/tmp/dedup-\(id)"))
-      #expect(!registration.created)
-      #expect(registration.project.id == "\(id)-canonical")
-    }
+    let saved = try #require(database.profiles().first)
+    #expect(saved.authorizationRevision == revision + 1)
+    #expect(saved.permissions.entries[.project("duplicate")] == nil)
+    #expect(saved.permissions.state(for: .project("canonical")) == .denied)
+    #expect(saved.projectNetworks["canonical"]?.configuration == .trusted)
+    #expect(saved.projectNetworks["duplicate"] == nil)
   }
 
   @Test
   func configurationSnapshotAllowsUnrelatedRuntimeEvidenceDuringCommit() throws {
     let database = try GatewayDatabase(inMemory: ())
     try database.saveProject(
-      RegisteredProject(id: "fixture", displayName: "Fixture", rootPath: "/tmp/fixture"))
+      ComputerMCPCore.RegisteredProject(
+        id: "fixture", displayName: "Fixture", rootPath: "/tmp/fixture"))
     try database.saveProfile(
       ProfileGrant(
-        id: .localAdmin, capabilityIDs: ["project.list"], projectIDs: ["fixture"],
-        allowedCallers: [.localCLI]))
+        id: .localAdmin, allowedCallers: [.localCLI]))
     let expected = try database.configurationState()
     #expect(try expected.projects == database.projects())
     #expect(try expected.profiles == database.profiles())
@@ -257,7 +275,7 @@ final class GatewayDatabaseTests {
   func bookmarkRefreshPreservesConcurrentRegistrationChanges(change: String) throws {
     let database = try GatewayDatabase(inMemory: ())
     try database.saveProject(
-      RegisteredProject(
+      ComputerMCPCore.RegisteredProject(
         id: "fixture", displayName: "Fixture", rootPath: "/tmp/bookmark-original",
         bookmarkData: Data([1]), bookmarkIsStale: true))
     let original = try #require(try database.project(id: "fixture"))
@@ -277,7 +295,7 @@ final class GatewayDatabaseTests {
     #expect(try database.project(id: original.id) == (change == "unchanged" ? refreshed : before))
     if change == "unchanged" {
       let registration = try database.registerProjectIdempotently(
-        RegisteredProject(displayName: "Alias", rootPath: refreshed.rootPath))
+        ComputerMCPCore.RegisteredProject(displayName: "Alias", rootPath: refreshed.rootPath))
       #expect(!registration.created)
       #expect(registration.project.id == original.id)
     }
@@ -292,8 +310,8 @@ final class GatewayDatabaseTests {
   @Test
   func testPersistsProjectsProfilesProvidersAndAuditWithoutPayloadContent() throws {
     let database = try GatewayDatabase(inMemory: ())
-    let timestamp = Date(timeIntervalSince1970: 1_000)
-    let project = RegisteredProject(
+    let timestamp = Date(timeIntervalSince1970: Date().timeIntervalSince1970.rounded(.down) - 60)
+    let project = ComputerMCPCore.RegisteredProject(
       id: "project-1",
       displayName: "Example",
       rootPath: "/tmp/example",
@@ -303,15 +321,10 @@ final class GatewayDatabaseTests {
     )
     try database.saveProject(project)
 
-    let profile = ProfileGrant(
-      id: .localAdmin,
-      capabilityIDs: ["file.write", "shell.run"],
-      projectIDs: [project.id],
-      allowedCallers: [],
-      fullShellEnabled: true,
-      mcpServerIDs: ["sample-mcp"],
-      mode: .localFullAccess
-    )
+    var profile = ProfileGrant(id: .localAdmin, fullAccess: true, allowedCallers: [])
+    try profile.permissions.set(.granted(.write), for: .project(project.id))
+    try profile.permissions.set(.granted(.all), for: .mcpServer("sample-mcp"))
+    profile.projectNetworks[project.id] = .trusted
     try database.saveProfile(profile)
 
     let provider = ProviderState(
@@ -352,14 +365,14 @@ final class GatewayDatabaseTests {
   @Test
   func testProjectDeduplicationPreviewIsNonMutating() throws {
     let database = try GatewayDatabase(inMemory: ())
-    let canonical = RegisteredProject(
+    let canonical = ComputerMCPCore.RegisteredProject(
       id: "project-canonical",
       displayName: "Shared Project",
       rootPath: "/tmp/shared-project",
       createdAt: Date(timeIntervalSince1970: 1),
       updatedAt: Date(timeIntervalSince1970: 1)
     )
-    let duplicate = RegisteredProject(
+    let duplicate = ComputerMCPCore.RegisteredProject(
       id: "project-duplicate",
       displayName: "Shared Project",
       rootPath: canonical.rootPath,
@@ -385,14 +398,15 @@ final class GatewayDatabaseTests {
   @Test
   func testProjectDeduplicationMigrationPreservesReferencesAndHistory() throws {
     let database = try GatewayDatabase(inMemory: ())
-    let canonical = RegisteredProject(
+    let auditTime = Date(timeIntervalSince1970: Date().timeIntervalSince1970.rounded(.down) - 60)
+    let canonical = ComputerMCPCore.RegisteredProject(
       id: "project-canonical",
       displayName: "Shared Project",
       rootPath: "/tmp/shared-project",
       createdAt: Date(timeIntervalSince1970: 1),
       updatedAt: Date(timeIntervalSince1970: 1)
     )
-    let duplicate = RegisteredProject(
+    let duplicate = ComputerMCPCore.RegisteredProject(
       id: "project-duplicate",
       displayName: "Shared Project",
       rootPath: canonical.rootPath,
@@ -402,11 +416,11 @@ final class GatewayDatabaseTests {
     try database.saveProject(canonical)
     try database.saveProject(duplicate)
     var profile = ProfileGrant.operate
-    profile.projectIDs = [duplicate.id]
+    try profile.permissions.set(.granted(.read), for: .project(duplicate.id))
     try database.saveProfile(profile)
     let historicalAudit = AuditEvent(
       id: "project-history",
-      occurredAt: Date(timeIntervalSince1970: 3),
+      occurredAt: auditTime,
       requestID: "project-history",
       caller: .secureTunnel,
       profileID: .chatGPTOperate,
@@ -420,7 +434,7 @@ final class GatewayDatabaseTests {
     let result = try database.applyProjectDeduplication(
       expectedPlanDigest: plan.planDigest,
       allowMetadataConflicts: false,
-      now: Date(timeIntervalSince1970: 4)
+      now: auditTime.addingTimeInterval(1)
     )
 
     #expect(result.canonicalProjectIDs == [canonical.id])
@@ -433,7 +447,8 @@ final class GatewayDatabaseTests {
     let postApplyPlan = try database.projectDeduplicationPlan()
     #expect(projectIDs == [canonical.id])
     #expect(resolvedDuplicate?.id == canonical.id)
-    #expect(storedProfile?.projectIDs == [canonical.id])
+    #expect(storedProfile?.permissions.state(for: .project(canonical.id)) == .granted(.read))
+    #expect(storedProfile?.permissions.entries[.project(duplicate.id)] == nil)
     #expect(storedAudit == historicalAudit)
     #expect(postApplyPlan.groups.isEmpty)
   }
@@ -441,7 +456,7 @@ final class GatewayDatabaseTests {
   @Test
   func testProjectCanonicalRootBindingTracksAnUpdatedRegistration() throws {
     let database = try GatewayDatabase(inMemory: ())
-    let original = RegisteredProject(
+    let original = ComputerMCPCore.RegisteredProject(
       id: "project-moving",
       displayName: "Moving Project",
       rootPath: "/tmp/project-original"
@@ -452,7 +467,7 @@ final class GatewayDatabaseTests {
     moved.updatedAt = moved.updatedAt.addingTimeInterval(1)
     try database.saveProject(moved)
 
-    let replacement = RegisteredProject(
+    let replacement = ComputerMCPCore.RegisteredProject(
       id: "project-replacement",
       displayName: "Replacement Project",
       rootPath: original.rootPath
@@ -462,133 +477,6 @@ final class GatewayDatabaseTests {
     #expect(registration.created)
     #expect(registration.project.id == replacement.id)
     #expect(try database.project(id: original.id)?.rootPath == moved.rootPath)
-  }
-
-  @Test
-  func testOperationTicketLifecycleIsSingleUseAndRecordsSuccess() throws {
-    let database = try GatewayDatabase(inMemory: ())
-    let now = Date(timeIntervalSince1970: 1_000)
-    let ticket = OperationTicket(
-      id: "ticket-1",
-      capabilityID: "file.trash",
-      caller: .secureTunnel,
-      profileID: .chatGPTOperate,
-      projectID: "project-1",
-      inputDigest: "sha256:input",
-      expiresAt: now.addingTimeInterval(30)
-    )
-    try database.saveOperationTicket(ticket)
-
-    let executing = try database.beginOperationTicket(
-      id: ticket.id,
-      principalID: ticket.principalID,
-      invocationID: "invocation-1",
-      parentRequestID: "commit-request-1",
-      at: now
-    )
-    #expect((executing.state) == (.executing))
-    #expect((executing.invocationID) == ("invocation-1"))
-    #expect((executing.parentRequestID) == ("commit-request-1"))
-    #expect((executing.executingAt) == (now))
-
-    let succeeded = try database.finishOperationTicket(
-      id: ticket.id,
-      invocationID: "invocation-1",
-      state: .succeeded,
-      at: now.addingTimeInterval(1)
-    )
-    #expect((succeeded.state) == (.succeeded))
-    #expect((succeeded.completedAt) == (now.addingTimeInterval(1)))
-    #expect((succeeded.failureCode) == nil)
-
-    expectThrows(
-      try database.beginOperationTicket(
-        id: ticket.id,
-        principalID: ticket.principalID,
-        invocationID: "invocation-2",
-        parentRequestID: "commit-request-2",
-        at: now
-      )
-    ) { error in
-      guard case GatewayDatabaseError.operationTicketUnavailable = error else {
-        Issue.record("Unexpected error: \(error)")
-        return
-      }
-    }
-  }
-
-  @Test
-  func testOperationTicketExpiryRecordsExpiredState() throws {
-    let database = try GatewayDatabase(inMemory: ())
-    let now = Date(timeIntervalSince1970: 1_000)
-    let expired = OperationTicket(
-      id: "ticket-2",
-      capabilityID: "file.trash",
-      caller: .secureTunnel,
-      profileID: .chatGPTOperate,
-      inputDigest: "sha256:expired",
-      expiresAt: now.addingTimeInterval(-1)
-    )
-    try database.saveOperationTicket(expired)
-    expectThrows(
-      try database.beginOperationTicket(
-        id: expired.id,
-        principalID: expired.principalID,
-        invocationID: "expired-invocation",
-        parentRequestID: "expired-request",
-        at: now
-      )
-    ) { error in
-      #expect((error as? GatewayDatabaseError) == (.operationTicketExpired(expired.id)))
-    }
-    let stored = try #require(try database.operationTicket(id: expired.id))
-    #expect((stored.state) == (.expired))
-    #expect((stored.completedAt) == (now))
-    #expect((stored.failureCode) == ("operations.ticket_expired"))
-    #expect(stored.invocationID == nil)
-    #expect(stored.executingAt == nil)
-  }
-
-  @Test
-  func testConcurrentOperationTicketClaimAllowsExactlyOneInvocation() throws {
-    let database = try GatewayDatabase(inMemory: ())
-    let now = Date(timeIntervalSince1970: 1_000)
-    let ticket = OperationTicket(
-      id: "ticket-concurrent",
-      capabilityID: "file.trash",
-      caller: .secureTunnel,
-      profileID: .chatGPTOperate,
-      inputDigest: "sha256:concurrent",
-      expiresAt: now.addingTimeInterval(30)
-    )
-    try database.saveOperationTicket(ticket)
-    let claims = ConcurrentTicketClaims()
-
-    DispatchQueue.concurrentPerform(iterations: 2) { index in
-      let invocationID = "invocation-\(index)"
-      do {
-        _ = try database.beginOperationTicket(
-          id: ticket.id,
-          principalID: ticket.principalID,
-          invocationID: invocationID,
-          parentRequestID: "request-\(index)",
-          at: now
-        )
-        claims.recordSuccess(invocationID)
-      } catch {
-        claims.recordFailure(error)
-      }
-    }
-
-    #expect((claims.successes.count) == (1))
-    #expect((claims.failures.count) == (1))
-    guard let failure = claims.failures.first as? GatewayDatabaseError,
-      case .operationTicketUnavailable = failure
-    else {
-      Issue.record("Expected the losing claim to observe an unavailable ticket.")
-      return
-    }
-    #expect((try database.operationTicket(id: ticket.id)?.invocationID) == (claims.successes.first))
   }
 
   @Test
@@ -616,9 +504,10 @@ final class GatewayDatabaseTests {
   @Test
   func testFindsAuditEventByExactRequestIDBeyondBoundedRecentPage() throws {
     let database = try GatewayDatabase(inMemory: ())
+    let timestamp = Date(timeIntervalSince1970: Date().timeIntervalSince1970.rounded(.down) - 300)
     let target = AuditEvent(
       id: "audit-target",
-      occurredAt: Date(timeIntervalSince1970: 1),
+      occurredAt: timestamp,
       requestID: "gateway-request-target",
       caller: .secureTunnel,
       profileID: .chatGPTOperate,
@@ -630,7 +519,7 @@ final class GatewayDatabaseTests {
       try database.recordAudit(
         AuditEvent(
           id: "audit-\(index)",
-          occurredAt: Date(timeIntervalSince1970: TimeInterval(index + 2)),
+          occurredAt: timestamp.addingTimeInterval(TimeInterval(index + 1)),
           requestID: "gateway-request-\(index)",
           caller: .secureTunnel,
           profileID: .chatGPTOperate,
@@ -640,34 +529,11 @@ final class GatewayDatabaseTests {
       )
     }
 
+    let recent = try database.auditEvents()
+    #expect(recent.count == 200)
+    #expect(!recent.contains { $0.requestID == target.requestID })
     #expect((try database.auditEvent(requestID: target.requestID)) == (target))
     #expect((try database.auditEvent(requestID: "missing-request")) == nil)
   }
 
-}
-
-private final class ConcurrentTicketClaims: @unchecked Sendable {
-  private let lock = NSLock()
-  private var storedSuccesses: [String] = []
-  private var storedFailures: [Error] = []
-
-  var successes: [String] {
-    lock.withLock { storedSuccesses }
-  }
-
-  var failures: [Error] {
-    lock.withLock { storedFailures }
-  }
-
-  func recordSuccess(_ invocationID: String) {
-    lock.withLock {
-      storedSuccesses.append(invocationID)
-    }
-  }
-
-  func recordFailure(_ error: Error) {
-    lock.withLock {
-      storedFailures.append(error)
-    }
-  }
 }

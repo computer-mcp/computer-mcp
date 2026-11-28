@@ -9,11 +9,16 @@ import Testing
 @testable import ComputerMCPPlatform
 @testable import ComputerMCPPlugins
 
+#if os(macOS)
+  import ComputerMCPDarwinTestSupport
+#endif
+
 @Suite(.timeLimit(.minutes(1)))
 struct BundledPluginDistributionTests {
   @Test
   func newerPluginAPIFailsBundledPreparationWithTheOriginalRefusal() async throws {
     let fixture = try await PreparationFixture.make(
+      launcher: testExecutionLauncher(),
       directoryFactory: DarwinPluginArchiveDirectoryFactory(),
       manifest: PreparationFixture.manifest.replacingOccurrences(
         of: "plugin_api = 1", with: "plugin_api = 2\nfuture = true"))
@@ -27,14 +32,22 @@ struct BundledPluginDistributionTests {
       try await Self.prepare(index: index, output: output, architectures: ["arm64"])
     }
     #expect(!FileManager.default.fileExists(atPath: output.path))
-    let cli = try ProcessCommandRunner().run(
-      executable: Self.worker.path,
-      arguments: [
-        "_bundle-plugins", "--index", index.path, "--output", output.path, "--architectures",
-        "arm64",
-      ],
-      workingDirectory: fixture.files.root, environment: [:], timeoutMilliseconds: 30_000,
-      maxOutputBytes: 16_384)
+    let administration = ExecutionAdministration(
+      mode: .fullAccess,
+      environment: try .init(fullAccessVariables: [
+        "PATH": systemUtilityPath, "HOME": fixture.files.root.path,
+        "TMPDIR": fixture.files.root.path + "/",
+      ]))
+    let cli = try ExecutionAdministration.$current.withValue(administration) {
+      try ProcessCommandRunner(launcher: testExecutionLauncher()).run(
+        executable: nativeGatewayTestExecutable().path,
+        arguments: [
+          "_bundle-plugins", "--index", index.path, "--output", output.path, "--architectures",
+          "arm64",
+        ],
+        workingDirectory: fixture.files.root, environment: [:], timeoutMilliseconds: 30_000,
+        maxOutputBytes: 16_384)
+    }
     #expect(cli.exitCode == 1)
     let payload = try JSONDecoder().decode(JSONValue.self, from: Data(cli.stdout.utf8))
     #expect(payload.objectValue?["error"]?.objectValue?["code"] == .string(refusal.code))
@@ -50,14 +63,18 @@ struct BundledPluginDistributionTests {
     defer { files.remove() }
     let output = files.root.appendingPathComponent("Plugins")
     let artifacts = try await BundledPluginDistribution.prepare(
+      launcher: testExecutionLauncher(),
       index: Self.repository.appendingPathComponent("Resources/PluginArchives/index.json"),
-      destination: output, workerExecutable: Self.worker,
+      destination: output, workerExecutable: nativeGatewayTestExecutable(),
       hostVersion: PluginVersion(ComputerMCPCLI.version), architectures: ["arm64", "x86_64"],
       directoryFactory: DarwinPluginArchiveDirectoryFactory())
     #expect(artifacts.map(\.id) == ["computer-use"])
     let inventory = BundledPlugins.load(directory: output)
     #expect(inventory.issues.isEmpty)
     let package = try #require(inventory.packages.first)
+    let requested = package.manifest.permissions ?? []
+    #expect(Set(requested.map(\.id)) == [.screen, .desktopControl])
+    #expect(requested.allSatisfy { $0.access == .allow })
     #expect(package.manifest.mcp.first?.executable?.dependency == "computer-use-client")
     #expect(package.manifest.mcp.first?.args == ["mcp"])
     #expect(package.manifest.skills.first?.path == "skills")
@@ -76,7 +93,7 @@ struct BundledPluginDistributionTests {
     #expect(
       try Set(FileManager.default.contentsOfDirectory(atPath: package.root.path))
         == [
-          "README.md", "CONTRIBUTING.md", "Documentation", "computer-mcp-plugin.toml", "skills",
+          "README.md", "CONTRIBUTING.md", ".github", "docs", "computer-mcp-plugin.toml", "skills",
           "LICENSE", "THIRD_PARTY_NOTICES.md", "ThirdPartyNotices.txt",
         ])
     for name in ["LICENSE", "THIRD_PARTY_NOTICES.md", "ThirdPartyNotices.txt"] {
@@ -92,6 +109,7 @@ struct BundledPluginDistributionTests {
   @Test
   func combinedPackagePreservesExecutableBitsWithoutRunningHelpers() async throws {
     let fixture = try await PreparationFixture.make(
+      launcher: testExecutionLauncher(),
       directoryFactory: DarwinPluginArchiveDirectoryFactory(), )
     defer { fixture.files.remove() }
     let index = try Self.index(fixture)
@@ -113,6 +131,7 @@ struct BundledPluginDistributionTests {
   ])
   func invalidInputNeverLeavesAPartialDistribution(failure: String) async throws {
     let fixture = try await PreparationFixture.make(
+      launcher: testExecutionLauncher(),
       directoryFactory: DarwinPluginArchiveDirectoryFactory(), )
     defer { fixture.files.remove() }
     let output = fixture.files.root.appendingPathComponent("Plugins")
@@ -152,6 +171,7 @@ struct BundledPluginDistributionTests {
   @Test(arguments: [false, true])
   func existingOutputAndLinksAreNeverOverwritten(link: Bool) async throws {
     let fixture = try await PreparationFixture.make(
+      launcher: testExecutionLauncher(),
       directoryFactory: DarwinPluginArchiveDirectoryFactory(), )
     defer { fixture.files.remove() }
     let index = try Self.index(fixture)
@@ -172,6 +192,7 @@ struct BundledPluginDistributionTests {
   @Test
   func laterFailureReclaimsEarlierPackagesWithoutTouchingSourceArchives() async throws {
     let fixture = try await PreparationFixture.make(
+      launcher: testExecutionLauncher(),
       directoryFactory: DarwinPluginArchiveDirectoryFactory(), )
     defer { fixture.files.remove() }
     let index = try Self.index(fixture)
@@ -195,15 +216,12 @@ struct BundledPluginDistributionTests {
       .deletingLastPathComponent().deletingLastPathComponent()
   }
 
-  private static var worker: URL {
-    repository.appendingPathComponent(".build/debug/computer-mcp")
-  }
-
   private static func prepare(index: URL, output: URL, architectures: [String]) async throws
     -> [BundledPluginArtifact]
   {
     try await BundledPluginDistribution.prepare(
-      index: index, destination: output, workerExecutable: worker,
+      launcher: testExecutionLauncher(),
+      index: index, destination: output, workerExecutable: nativeGatewayTestExecutable(),
       hostVersion: PluginVersion("1.0.0"), architectures: architectures,
       directoryFactory: DarwinPluginArchiveDirectoryFactory())
   }

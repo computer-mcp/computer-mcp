@@ -1,3 +1,4 @@
+import ComputerMCPCore
 import Foundation
 import Testing
 
@@ -6,6 +7,19 @@ import Testing
 @Suite
 
 final class ComputerMCPAppModelTests {
+  @MainActor
+  @Test
+  func clientPermissionsNavigateToTheSelectedPrincipal() {
+    let model = ComputerMCPAppModel(controlPlane: UnavailableControlPlane())
+    for profileID in [GatewayProfileID.chatGPTOperate, .chatGPTObserve] {
+      model.showPrivacySecurity(for: profileID)
+      #expect(model.selectedSection == .permissions)
+      #expect(model.privacySecurity.path == [.principal(profileID.rawValue)])
+    }
+    #expect(AppSection.permissions.title == AppLocalization.string("Privacy & Security"))
+    #expect(AppSection.permissions.systemImage == "hand.raised.fill")
+  }
+
   @Test
   func testEveryServiceStateHasALocalizedLabel() {
     let states: [ServiceState] = [
@@ -114,7 +128,13 @@ final class ComputerMCPAppModelTests {
       let chinese = try localizedValue("zh-Hans", in: localizations, key: key)
       #expect(english.isEmpty == false)
       #expect(chinese.isEmpty == false)
-      #expect(placeholders(in: english) == placeholders(in: chinese))
+      var englishPlaceholders = placeholders(in: english)
+      var chinesePlaceholders = placeholders(in: chinese)
+      if (englishPlaceholders + chinesePlaceholders).allSatisfy({ $0.contains("$") }) {
+        englishPlaceholders.sort()
+        chinesePlaceholders.sort()
+      }
+      #expect(englishPlaceholders == chinesePlaceholders, "Placeholder mismatch: \(key)")
     }
   }
 
@@ -329,7 +349,7 @@ final class ComputerMCPAppModelTests {
   }
 
   private func placeholders(in value: String) -> [String] {
-    let pattern = #"%(?:\d+\$)?[@dfiu]"#
+    let pattern = #"%(?:[0-9]+\$)?[@dfiu]"#
     let expression = try? NSRegularExpression(pattern: pattern)
     let range = NSRange(value.startIndex..<value.endIndex, in: value)
     return expression?.matches(in: value, range: range).compactMap {

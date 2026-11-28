@@ -1,5 +1,7 @@
 import ComputerMCPCore
 import ComputerMCPMacOS
+import ComputerMCPPermissions
+import ComputerMCPSandbox
 import ComputerMCPTestSupport
 import ComputerMCPTransport
 import Foundation
@@ -15,11 +17,15 @@ import Testing
 @testable import ComputerMCPProcess
 @testable import ComputerMCPToolsCLI
 
+#if os(macOS)
+  import ComputerMCPDarwinTestSupport
+#endif
+
 @Suite(.nativeIntegration, .timeLimit(.minutes(1)))
 struct MCPHTTPAuthenticationTests {
   @Test(arguments: [false, true])
   func gatewayClientSessionTerminatesThroughItsTransportOnce(streaming: Bool) async throws {
-    try await HTTPStreamProcessFixture.withFixture { fixture in
+    try await HTTPStreamProcessFixture.withFixture(launcher: testExecutionLauncher()) { fixture in
       let session = try await GatewayClientSession.connectHTTP(
         endpoint: fixture.endpoint, accessToken: "fixture-token", streaming: streaming)
       do {
@@ -37,13 +43,80 @@ struct MCPHTTPAuthenticationTests {
     }
   }
 
+  @Test
+  func remoteMetadataRunsInSandboxWithoutAProjectOrNativeProgram() async throws {
+    try await HTTPStreamProcessFixture.withFixture(launcher: testExecutionLauncher()) { fixture in
+      let observations = ExecutionObservations()
+      let launcher = testExecutionLauncher(observations: observations)
+      var platform = MacOSPlatform.services(launcher: launcher)
+      platform.permissionPolicyReader = TestManagedPolicyReader()
+      let database = try GatewayDatabase(inMemory: ())
+      let binding = MCPHTTPAuthentication(
+        endpoint: fixture.endpoint.absoluteString, keychainAccount: "mcp.fixture")
+      let secrets = try KeychainSecretStore(adapter: MemoryKeychainAdapter())
+      try secrets.set("fixture-token", for: SecretReference(account: binding.keychainAccount))
+      let profile = ProfileGrantConfig(
+        id: .chatGPTOperate,
+        permissions: fixturePermissions([.mcpServer("remote"): .granted(.read)]),
+        allowedCallers: [.secureTunnel])
+      let configuration = GatewayConfiguration(
+        runtime: .init(caller: .secureTunnel, profileID: .chatGPTOperate), profiles: [profile],
+        mcp: .init(servers: [
+          .init(
+            id: "remote", transport: .http, url: binding.endpoint,
+            allowedTools: ["inspect"], toolRisks: ["inspect": .readOnly], authentication: binding)
+        ]))
+      let runtime = try GatewayRuntime(
+        configuration: configuration,
+        context: .init(
+          caller: .secureTunnel, profileID: .chatGPTOperate,
+          trustedPrincipalID: "verified-http-fixture"),
+        database: database, platform: platform,
+        mcpClient: MCPProxyClient(launcher: launcher, secretStore: secrets))
+      do {
+        let listed = try await runtime.callToolAsync(
+          name: "mcp.tools.list", arguments: .object(["server": .string("remote")]), context: .empty
+        )
+        #expect(listed.objectValue?["isError"] != .bool(true))
+        let result = try await runtime.callToolAsync(
+          name: "mcp.tools.call",
+          arguments: .object([
+            "server": .string("remote"), "tool": .string("inspect"), "arguments": .object([:]),
+          ]), context: .empty)
+        #expect(result.objectValue?["isError"] != .bool(true))
+        #expect(String(describing: result).contains("authenticated reply"))
+        #expect(try database.projects().isEmpty)
+        let saved = try #require(try database.profiles().first { $0.id == .chatGPTOperate })
+        #expect(!saved.fullAccess)
+        #expect(saved.permissions.state(for: .project("*")) == .notGranted)
+        let proofs = try database.configuredPermissionStore().readWithDatabase { _, ledger in
+          Array(ledger.authorizations.values).filter {
+            ["mcp.tools.list", "mcp.tools.call"].contains($0.invocation.tool)
+          }
+        }
+        #expect(proofs.count == 2)
+        #expect(proofs.allSatisfy { $0.mode == .sandbox && $0.invocation.projectID == nil })
+        #expect(observations.members.isEmpty)
+        let requests = try fixture.requests()
+        #expect(requests.filter { $0["rpc"] == .string("tools/call") }.count == 1)
+        #expect(requests.allSatisfy { $0["authorized"] == .bool(true) })
+        await runtime.shutdown()
+      } catch {
+        await runtime.shutdown()
+        throw error
+      }
+    }
+  }
+
   @Test(arguments: ["source", "endpoint", "ambiguous"])
   func inactivePluginCredentialsRequireUnambiguousCurrentSourceAndEndpoint(change: String)
     async throws
   {
     let fixture = try MCPRegistrationControlFixture()
     defer { fixture.remove() }
-    let store = PluginStore(database: fixture.database, platform: MacOSPlatform.services)
+    let store = PluginStore(
+      database: fixture.database,
+      platform: MacOSPlatform.services(launcher: testExecutionLauncher()))
     let endpoint = "https://example.test/mcp"
     func register(_ id: String) async throws -> URL {
       let root = fixture.root.appendingPathComponent(id)
@@ -144,14 +217,15 @@ struct MCPHTTPAuthenticationTests {
 
   @Test(arguments: ["unavailable", "missing", "invalid"])
   func credentialsFailBeforeAnyNetworkRequest(state: String) async throws {
-    try await HTTPStreamProcessFixture.withFixture { fixture in
+    try await HTTPStreamProcessFixture.withFixture(launcher: testExecutionLauncher()) { fixture in
       let store = try KeychainSecretStore(adapter: MemoryKeychainAdapter())
       let binding = MCPHTTPAuthentication(
         endpoint: fixture.endpoint.absoluteString, keychainAccount: "mcp.fixture")
       if state == "invalid" {
         try store.set("invalid\nheader", for: SecretReference(account: binding.keychainAccount))
       }
-      let client = MCPProxyClient(secretStore: state == "unavailable" ? nil : store)
+      let client = MCPProxyClient(
+        launcher: testExecutionLauncher(), secretStore: state == "unavailable" ? nil : store)
       let server = MCPServerConfig(
         id: "remote", transport: .http, url: binding.endpoint, authentication: binding)
       await #expect(throws: (any Error).self) {
@@ -165,9 +239,8 @@ struct MCPHTTPAuthenticationTests {
   }
 
   @Test(arguments: [false, true])
-  func ownerCredentialWorkflowReachesDoctorAndLiveDirectOrPluginRequests(plugin: Bool) async throws
-  {
-    try await HTTPStreamProcessFixture.withFixture { http in
+  func ownerCredentialsReachAdmittedDirectOrPluginHTTPRequests(plugin: Bool) async throws {
+    try await HTTPStreamProcessFixture.withFixture(launcher: testExecutionLauncher()) { http in
       let fixture = try MCPRegistrationControlFixture()
       defer { fixture.remove() }
       let binding = MCPHTTPAuthentication(
@@ -175,8 +248,14 @@ struct MCPHTTPAuthenticationTests {
       var configuration = GatewayConfiguration(projectDirectory: fixture.root)
       configuration.profiles = [
         .init(
-          id: .chatGPTOperate, capabilities: ["*"], projects: ["fixture"],
-          allowedCallers: [.localCLI])
+          id: .chatGPTOperate,
+          permissions: fixturePermissions([
+            .machineInformation: .granted(.access), .skills: .granted(.access),
+            .screen: .granted(.access), .desktopControl: .granted(.access),
+            .unifiedLogs: .granted(.access), .localNetwork: .granted(.access),
+            .project("fixture"): .granted(.write), .mcpServer("*"): .granted(.all),
+            .plugin("*"): .granted(.use),
+          ]), allowedCallers: [.localCLI])
       ]
       if !plugin {
         configuration.mcp.servers = [
@@ -192,8 +271,14 @@ struct MCPHTTPAuthenticationTests {
         .init(id: "fixture", displayName: "Fixture", rootPath: fixture.root.path))
       try fixture.database.saveProfile(
         .init(
-          id: .chatGPTOperate, capabilityIDs: ["*"], projectIDs: ["fixture"],
-          allowedCallers: [.localCLI]))
+          id: .chatGPTOperate,
+          permissions: fixturePermissions([
+            .machineInformation: .granted(.access), .skills: .granted(.access),
+            .screen: .granted(.access), .desktopControl: .granted(.access),
+            .unifiedLogs: .granted(.access), .localNetwork: .granted(.access),
+            .project("fixture"): .granted(.write), .mcpServer("*"): .granted(.all),
+            .plugin("*"): .granted(.use),
+          ]), allowedCallers: [.localCLI]))
       if plugin {
         let root = fixture.root.appendingPathComponent("http-plugin")
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: false)
@@ -221,17 +306,19 @@ struct MCPHTTPAuthenticationTests {
       let client = Client(name: "credential-workflow", version: "1")
       do {
         if plugin {
-          await #expect(throws: MCPHTTPAuthenticationError.missing) {
-            try await fixture.gateway.changePlugins(
-              .enabled(pluginID: "http-fixture", true), expectedRevision: pluginBefore.revision)
-          }
-          #expect(try fixture.database.pluginStoreSnapshot() == pluginBefore)
-        } else {
-          let missing = try await fixture.host.doctorMCPRegistration(
-            id: "remote", projectID: "fixture")
-          #expect(missing.status == .failed)
-          #expect(missing.stage == "authentication" && missing.errorCode == "mcp.authentication")
+          let change = PluginHostChange.enabled(pluginID: "http-fixture", true)
+          let review = try #require(
+            try await fixture.host.reviewPluginEnablement(
+              change, expectedRevision: pluginBefore.revision))
+          _ = try await fixture.gateway.changePlugins(
+            change, expectedRevision: pluginBefore.revision,
+            approval: .init(review: review, selection: .init(permissions: .newPrincipal)))
+          pluginBefore = try fixture.database.pluginStoreSnapshot()
         }
+        let missing = try await fixture.host.doctorMCPRegistration(
+          id: "remote", projectID: "fixture")
+        #expect(missing.status == .failed)
+        #expect(missing.stage == "authentication" && missing.errorCode == "mcp.authentication")
         #expect(try http.requests().isEmpty)
         let status = try await fixture.json(["credential", "status", "remote"])
         let digest = try #require(status.objectValue?["binding_digest"]?.stringValue)
@@ -240,39 +327,57 @@ struct MCPHTTPAuthenticationTests {
           "credential", "remove", "remote", "--expected-binding-digest", "stale",
         ])
         #expect(stale.exitCode != 0)
-        let executable = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
-          .deletingLastPathComponent().deletingLastPathComponent().appendingPathComponent(
-            ".build/debug/computer-mcp")
-        let execution = CLIProcessExecution()
-        let saved = try await execution.runAsync(
-          executable: executable.path,
-          invocation: .init(
-            arguments: [
-              "mcp", "credential", "set", "remote", "--expected-binding-digest", digest, "--stdin",
-              "--control-socket", fixture.directories.controlSocket.path,
-            ], standardInput: Data("fixture-token\n".utf8)),
-          cwd: fixture.root, environment: [:], timeoutMilliseconds: 5000, maxOutputBytes: 1_048_576)
+        let executable = try nativeGatewayTestExecutable()
+        let execution = CLIProcessExecution(
+          launcher: testExecutionLauncher(), inheritsEnvironment: false)
+        try #require(InvocationExecution.current == nil)
+        let saved = try await BlockingOperationExecutor(label: "mcp-http-credential-cli").perform {
+          let administration = ExecutionAdministration(
+            mode: .fullAccess,
+            environment: try ExecutionEnvironment(fullAccessVariables: ["PATH": "/usr/bin:/bin"]))
+          return try ExecutionAdministration.$current.withValue(administration) {
+            try execution.run(
+              executable: executable.path,
+              invocation: .init(
+                arguments: [
+                  "mcp", "credential", "set", "remote", "--expected-binding-digest", digest,
+                  "--stdin",
+                  "--control-socket", fixture.directories.controlSocket.path,
+                ], standardInput: Data("fixture-token\n".utf8)),
+              cwd: fixture.root, environment: ["PATH": "/usr/bin:/bin"], timeoutMilliseconds: 5000,
+              maxOutputBytes: 1_048_576)
+          }
+        }
         await execution.shutdown()
         #expect(saved.exitCode == 0)
         #expect(!String(describing: saved).contains("fixture-token"))
         #expect(try fixture.database.pluginStoreSnapshot() == pluginBefore)
         if plugin {
-          _ = try await fixture.gateway.changePlugins(
-            .enabled(pluginID: "http-fixture", true), expectedRevision: pluginBefore.revision)
-          pluginBefore = try fixture.database.pluginStoreSnapshot()
           #expect(try await fixture.host.mcpCredentialStatus(id: "remote").bindingDigest == digest)
         }
         let ready = try await fixture.host.doctorMCPRegistration(
           id: "remote", projectID: "fixture")
-        #expect(ready.status == .passed && ready.catalogReceived)
+        #expect(ready.status == .failed && !ready.catalogReceived)
+        #expect(ready.stage == "execution" && ready.errorCode == "execution.unavailable")
+        #expect(try http.requests().isEmpty)
         try await fixture.gateway.start(profile: .chatGPTOperate)
         _ = try await client.connect(transport: fixture.transport())
-        #expect(try await client.callTool(name: "remote.inspect", arguments: [:]).isError != true)
+        let discovery = try await client.callTool(
+          name: "mcp.tools.list",
+          arguments: ["server": .string("remote"), "project_id": .string("fixture")])
+        try #require(discovery.isError != true)
+        let inspect: [String: Value] = [
+          "server": .string("remote"), "tool": .string("inspect"), "arguments": .object([:]),
+          "project_id": .string("fixture"),
+        ]
+        #expect(
+          try await client.callTool(name: "mcp.tools.call", arguments: inspect).isError != true)
         let beforeRemoval = try http.requests().filter { $0["rpc"] == .string("tools/call") }.count
         _ = try await fixture.json([
           "credential", "remove", "remote", "--expected-binding-digest", digest,
         ])
-        #expect(try await client.callTool(name: "remote.inspect", arguments: [:]).isError == true)
+        #expect(
+          try await client.callTool(name: "mcp.tools.call", arguments: inspect).isError == true)
         #expect(
           try http.requests().filter { $0["rpc"] == .string("tools/call") }.count == beforeRemoval)
         #expect(try http.requests().allSatisfy { $0["authorized"] == .bool(true) })

@@ -8,7 +8,7 @@ struct Clients: AsyncParsableCommand {
     commandName: "clients",
     abstract: "Inspect and authorize connected clients through the local owner control socket.",
     discussion:
-      "Use list to review a connection. Full Access requires allow --full-access and defaults to This Session. Access changes apply to new requests; already started work retains its owner. Commands return JSON.",
+      "Use list to review a connection. Full Access requires allow --full-access and defaults to This Session. Revoking access ends work that uses it. Commands return JSON.",
     subcommands: [
       List.self, Allow.self, Limit.self, End.self, Trusts.self, Revoke.self,
       Authorizations.self, Authorize.self, Deny.self, Grants.self, RevokeGrant.self,
@@ -34,17 +34,16 @@ struct Clients: AsyncParsableCommand {
     @Option(name: .long) var tunnelID: String?
     @Option(
       name: .long,
-      help: "Profile to approve. Defaults to cloudflare-observe only while it is read-only.")
-    var profile: String?
+      help: "Explicit profile to approve. Review its saved permissions before authorizing.")
+    var profile: String
     @Option(
       name: .long,
       help: "Approve only if the chosen profile still has this authorization digest.")
     var authorizationDigest: String?
     func run() async throws {
       var arguments: [String: JSONValue] = [
-        "pairing_code": .string(pairingCode)
+        "pairing_code": .string(pairingCode), "profile_id": .string(profile),
       ]
-      if let profile { arguments["profile_id"] = .string(profile) }
       if let tunnelID { arguments["tunnel_id"] = .string(tunnelID) }
       if let authorizationDigest {
         arguments["authorization_digest"] = .string(authorizationDigest)
@@ -112,7 +111,7 @@ struct Clients: AsyncParsableCommand {
     static let configuration = CommandConfiguration(
       commandName: "allow", abstract: "Explicitly approve Full Access for one connection.",
       discussion:
-        "Full Access permits commands and access to files, processes, network and credentials available to your macOS user. A project is not a sandbox; macOS privacy permissions still apply. Standalone HTTP requires shell_enabled in its fixed configuration. The App safely enables the Shell facility when needed. Revisions are captured once when omitted; a stale request fails without retry."
+        "Full Access permits commands and access to files, processes, network and credentials available to your macOS user. A project is not a sandbox; macOS privacy permissions still apply. The selected profile must permit Full access. Host tools still require their permissions. Revisions are captured once when omitted; a stale request fails without retry."
     )
     @OptionGroup var selection: ClientSelectionOptions
     @Flag(name: .long, help: "Explicit consent to arbitrary execution as your macOS user.")
@@ -162,17 +161,23 @@ struct Clients: AsyncParsableCommand {
 
   struct Limit: AsyncParsableCommand {
     static let configuration = CommandConfiguration(
-      commandName: "limit", abstract: "Limit one connection to Observe or Restricted Access.")
+      commandName: "limit", abstract: "Narrow one connection with reviewed permission limits.")
     @OptionGroup var selection: ClientSelectionOptions
-    @Option(name: .long, help: "Access ceiling: observe or restricted.") var mode: ClientAccessLimit
+    @Option(name: .long, help: "JSON connection permission limits based on clients list.")
+    var limitsFile: String
     func run() async throws {
-      try await selection.mutate("clients.limit", extra: ["mode": .string(mode.rawValue)])
+      let limits = try JSONDecoder().decode(
+        JSONValue.self, from: Data(contentsOf: URL(fileURLWithPath: limitsFile)))
+      guard limits.objectValue != nil else {
+        throw ValidationError("The limits must be a JSON object.")
+      }
+      try await selection.mutate("clients.limit", extra: ["limits": limits])
     }
   }
 
   struct End: AsyncParsableCommand {
     static let configuration = CommandConfiguration(
-      commandName: "end", abstract: "End this connection's access without cancelling started work.")
+      commandName: "end", abstract: "End this connection's access and its connection-scoped work.")
     @OptionGroup var selection: ClientSelectionOptions
     func run() async throws { try await selection.mutate("clients.end") }
   }
@@ -202,10 +207,6 @@ struct Clients: AsyncParsableCommand {
     @OptionGroup var selection: ClientSelectionOptions
     func run() async throws { try await selection.mutate("clients.revoke", trusts: true) }
   }
-}
-
-enum ClientAccessLimit: String, ExpressibleByArgument {
-  case observe, restricted
 }
 
 struct ClientListOptions: ParsableArguments {

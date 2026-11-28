@@ -4,27 +4,35 @@
     {
       "name": "base",
       "targets": [
-        "ComputerMCPCore"
+        "ComputerMCPPermissions",
+        "ComputerMCPCore",
+        "ComputerMCPSandbox"
       ]
     },
     {
       "name": "platform",
       "targets": [
         "ComputerMCPPlatform",
+        "CSystemPOSIX",
+        "CSystemZlib",
         "ComputerMCPPlatformPOSIX",
         "CSystemArchive",
-        "ComputerMCPPlatformDarwin"
+        "CDarwinExecution",
+        "ComputerMCPPlatformDarwin",
+        "computer-mcp-execution-bootstrap"
       ]
     },
     {
       "name": "services",
       "targets": [
+        "ComputerMCPEgress",
         "ComputerMCPConfiguration",
         "ComputerMCPPersistence",
         "ComputerMCPProcess",
         "ComputerMCPTransport",
         "ComputerMCPDownstream",
-        "ComputerMCPTunnels"
+        "ComputerMCPTunnels",
+        "ComputerMCPWorktrees"
       ]
     },
     {
@@ -40,7 +48,6 @@
         "ComputerMCPToolsShell",
         "ComputerMCPToolsSkills",
         "ComputerMCPToolsSystem",
-        "ComputerMCPDelivery",
         "ComputerMCPAuthorization",
         "ComputerMCPPlugins",
         "ComputerMCPComputerUse"
@@ -63,15 +70,19 @@
       "name": "front-ends",
       "targets": [
         "ComputerMCPApp",
+        "ComputerMCPExecutionProbe",
         "computer-mcp"
       ]
     }
   ],
   "allow": [
+    "ComputerMCPCore->ComputerMCPPermissions",
     "ComputerMCPPlatformPOSIX->ComputerMCPPlatform",
+    "ComputerMCPPlatformPOSIX->CSystemPOSIX",
     "ComputerMCPPlatformDarwin->ComputerMCPPlatform",
     "ComputerMCPPlatformDarwin->ComputerMCPPlatformPOSIX",
     "ComputerMCPPlatformDarwin->CSystemArchive",
+    "ComputerMCPPlatformDarwin->CDarwinExecution",
     "ComputerMCPProcess->ComputerMCPConfiguration",
     "ComputerMCPTransport->ComputerMCPConfiguration",
     "ComputerMCPDownstream->ComputerMCPConfiguration",
@@ -85,7 +96,6 @@
     "ComputerMCPToolsProject->ComputerMCPToolKit",
     "ComputerMCPToolsStructured->ComputerMCPToolKit",
     "ComputerMCPToolsGit->ComputerMCPToolKit",
-    "ComputerMCPDelivery->ComputerMCPToolKit",
     "ComputerMCPToolsShell->ComputerMCPToolKit",
     "ComputerMCPToolsSkills->ComputerMCPToolKit",
     "ComputerMCPToolsSystem->ComputerMCPToolKit",
@@ -95,10 +105,14 @@
     "ComputerMCPToolsSkills->ComputerMCPToolsStructured",
     "ComputerMCPToolsSystem->ComputerMCPToolsFiles",
     "ComputerMCPPlugins->ComputerMCPToolsCLI",
-    "ComputerMCPControlPlane->ComputerMCPGateway"
+    "ComputerMCPControlPlane->ComputerMCPGateway",
+    "ComputerMCPPersistence->ComputerMCPWorktrees"
   ],
   "macos_only": [
+    "ComputerMCPDarwinTestSupport",
+    "ComputerMCPExecutionProbe",
     "CSystemArchive",
+    "CDarwinExecution",
     "ComputerMCPPlatformDarwin",
     "ComputerMCPComputerUse",
     "ComputerMCPComputerUseTests",
@@ -119,6 +133,7 @@
     "AppKit",
     "ApplicationServices",
     "CSystemArchive",
+    "CDarwinExecution",
     "Cocoa",
     "Combine",
     "CoreFoundation",
@@ -154,6 +169,7 @@
     "/usr/bin/env"
   ],
   "test_support": [
+    "ComputerMCPDarwinTestSupport",
     "ComputerMCPTestSupport"
   ]
 }

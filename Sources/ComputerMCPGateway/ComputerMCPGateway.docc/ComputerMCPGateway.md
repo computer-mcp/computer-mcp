@@ -11,8 +11,8 @@ services. Together they provide:
 
 - MCP Swift SDK server and client integration;
 - a private current-user Unix socket and stdio bridge;
-- registered projects and static capability profiles;
-- policy, single-use operation tickets, and redacted audit persistence;
+- registered projects and permission profiles;
+- permission requests, execution authority and redacted audit persistence;
 - bounded Builtin, Skill, CLI, Shell, process, downstream MCP, and Computer Use
   execution planes;
 - Codex execution through an independent standard MCP adapter plugin;
@@ -30,9 +30,24 @@ private socket. `computer-mcp bridge` is a transport adapter; it does not start
 a second gateway. Project bookmarks and secrets are App-managed state and do
 not belong in TOML.
 
-Tunnel profiles expose explicit capabilities only. Generic CLI execution,
-process spawning, and Full Shell remain off by default; only
-`chatgpt-operate` can receive them through an explicit local opt-in.
+Tool listings publish declared requirements; every call uses current permission
+authority. Full access needs separate local consent and grants no permissions.
+Shell remains disabled by default.
+
+### Execution lifecycle
+
+The macOS composition root injects `ExecutionLauncher` into shell, registered
+process, CLI and host command runners. Every principal launch requires an
+authorized prepared context; missing or unenforceable contexts are refused.
+Read helpers retain their semantic read restrictions in either principal mode.
+
+`GatewayTerminalSessions` outlives individual runtime generations and transport
+connections. Execution snapshots expose stable IDs, byte cursors, applied limits,
+dropped output and completion reasons. Waiting calls default to 120 seconds and
+accept at most 600 seconds; background calls have no default deadline. The default
+shared stdout/stderr budget is 8 MiB. Cancellation uses the launcher ownership
+handle. Durable server owners recover unfinished records as `interrupted` after
+cleaning up surviving recorded processes, retaining the last output checkpoint.
 
 ### Gateway Runtime
 
@@ -69,3 +84,166 @@ The following types belong to `ComputerMCPTunnels`:
 - `ClientRegistrationPlan`
 - `ClientRegistrationDisplayPlan`
 - `ClientRegistrationResult`
+
+## Host tool operation boundaries
+
+File and structured-data writes walk directory handles with `O_NOFOLLOW` and reject
+observed symlinks and existing regular files with multiple hard links. Entry
+creation, publication, rename and unlink recheck parent identity and containment
+before and after successful syscalls. On failed post-checks rollback compares device and inode
+before removing or renaming an entry; an observed mismatch leaves it in place and
+reports an error. `chmod`, `touch` and xattr removal record mode, access/modification
+times and affected xattrs before mutation; they recheck the parent chain, path
+identity and link count afterward, restoring recorded values through the same
+descriptor on failure. These checks do not lock out concurrent processes, detect
+changes reversed between checks, or cover changes after the last check. A
+replacement can race an identity comparison and syscall; restoring metadata can
+overwrite intervening metadata changes. Rollback failures are reported.
+
+The hard-link rule protects existing files from writes through pre-existing aliases
+to files outside the project. A file created by the operation can acquire a
+concurrent hard link while it is being written. Creating that link outside the
+project requires a process that can already create files there; a sandboxed
+principal cannot do so, and a process with that access could read the archive
+directly. After a created file is complete, `fstat` checks its descriptor's link
+count. Persistent multiple links fail the operation; cleanup removes only entries
+the operation created. The final check cannot retract bytes already exposed through a concurrent link or detect a link removed before the
+check.
+
+Mutation targets and move sources refuse `.git` components after Unicode
+normalization and case-insensitive comparison. At file-access creation, an
+isolated Git layout check refuses all project writes if the root's `.git` is a
+symlink or an in-project Git directory or common directory has no `.git` component
+in its project-relative path. Gitfiles pointing outside the project allow ordinary
+writes while `.git` remains protected. Git configuration paths are protected.
+
+Generated files are staged before publication. macOS copies use anchored
+`fcopyfile(COPYFILE_ALL)` to preserve data, xattrs, resource forks, ACLs, mode and
+times, check the source again and clean staging with identity checks. glibc Linux
+copies use descriptor reads/writes, `fchmod`, `futimens` and descriptor xattr calls
+to preserve data, mode, nanosecond access/modification times and visible xattrs,
+including POSIX ACLs; destination-only inherited xattrs are removed. Attribute
+copy failures stop publication. Ownership remains with the created destination;
+macOS resource forks, creation times and BSD flags have no Linux copy path.
+Moves use
+exclusive no-follow rename on one volume; cross-volume moves fail and callers must
+copy and then delete the source. Linux uses `renameat2(RENAME_NOREPLACE)` through
+the POSIX C bridge and fails if atomic exclusive rename is unsupported. Directory
+components use `O_NOFOLLOW` individually. Archive extraction validates one listing for
+paths and types, refusing absolute paths, `..`, Git metadata, links and special
+files. Tar starts through `posix_spawn_file_actions_addfchdir_np` on the staging
+directory descriptor (glibc 2.29+ on Linux), reads the archive on standard input and streams contents to
+a host-opened descriptor. The host creates relative entries, records each one's
+identity from the anchored descriptor at creation, compares the tree with the
+listing (including implicit parents), checks sizes, identities and links, and publishes files with anchored
+exclusive renames. A separate read-only metadata pass supplies exact member
+modification times, restored through checked descriptors. Listing, metadata and
+contents use the same selected archive reader.
+On Linux tar formats use GNU tar with explicit compression options for standard
+input; ZIP formats require a registered `bsdtar`. Missing archive or SQLite CLI
+bindings fail as unavailable before executing those utilities or creating destinations.
+Staging and destination
+directories are created with owner read, write and search permission. Directory
+archive modes and modification times are restored through checked descriptors,
+deepest first after publication and staging cleanup. An existing destination
+keeps its own mode, access time and modification time. An explicit `.` member
+supplies destination metadata only when extraction creates that directory.
+Cleanup matches device and inode against the creation record and proves the
+inode is the same one: APFS never reuses inode numbers within a volume, and on
+Linux the `name_to_handle_at` file handle, which encodes the inode generation,
+must match. Descriptors close after active use. Other filesystems, and Linux
+filesystems that cannot export handles, retain a close-on-exec descriptor per
+created entry so its inode cannot be reused, with a fixed limit of 64 per file
+operation and 16 reserved slots plus one per retained directory, released for
+cleanup, which holds one descriptor per directory level. Exceeding the limit stops
+creation, cleans staging and fails with an error naming the limit. Identity-read
+and reserve allocation errors fail the operation. Processes that can write the
+directories an operation works in are trusted not to race it: such a process can
+replace a new directory or symbolic link before its first descriptor, and cleanup
+then treats the replacement as created, restoring owner access to it and removing
+it when empty. Cleanup preserves foreign
+entries without recursing into them, and retains staging with an error naming
+its path. Earlier published entries remain after a later failure. `file.trash`
+refuses the project root and checks every member first; multiply linked regular
+files are allowed. Its platform path-based move to Trash has no descriptor-based
+post-check or rollback.
+
+SQLite uses a private
+empty home and `-init /dev/null -safe`, and CLI help returns registered metadata
+without executing commands. Host Git operations isolate system/global
+configuration, refuse local `include` and `includeIf` entries on every operation,
+and disable repository
+programs; `git.commit` commits only its
+explicit `paths`, preserving other staged changes.
+
+Downloads stream into host-opened descriptors and recheck the destination before
+publication. Recursive operations apply the same path
+checks to each member. Host worktree merges refuse attributes that assign filters.
+These operation checks apply within each tool's existing authorization policy.
+
+## Tool requirements
+
+Tool definitions declare path, project, privacy, execution and forwarding
+requirements using `ToolRequirement`. Catalog classification metadata supplies no
+permission authority. Catalog snapshots retain the declaration
+with the exact provider, and dispatch rejects changed descriptors. Every call
+resolves these declarations into a `ResolvedToolInvocation` containing its exact
+identity, conditions and typed plugin origins. The gateway evaluates it with the
+permission library before dispatch and passes the admitted invocation to the provider.
+Tool listings include requirements; missing requestable permission returns
+`permission.required`. A local owner can answer the request, and the client must
+retry the same call with the returned request IDs.
+
+## Permission library integration
+
+The neutral permission ledger models stable principals, host-authenticated
+connection ceilings and independently issued Full access consent. Requests can
+move between a principal's connections; every retry checks the destination
+connection before consuming a one-time answer. Executions retain their original
+authority, including the lifetime of connection-scoped consent.
+
+Execution records expose effective resource limits and termination reasons.
+Host-attributed path and network discoveries produce requests bound to the
+original call, carrying earlier one-time answers through subsequent retries.
+The gateway persists admission before preparing an execution context. Process
+adapters require an installed context and refuse unsupported execution modes.
+Full access consent selects a mode; Project and privacy permissions still apply.
+Apple events are blocked in the sandbox. A principal whose programs control other
+apps needs Full access; macOS requests consent under each program's own identity.
+
+### Durable permission ledger
+
+The persistence library provides `SQLitePermissionStore` for serialized permission
+transactions across processes. It reads the latest ledger under SQLite's immediate
+write lock, advances a platform-provided external counter, and commits the complete
+ledger together with related project/profile SQL changes. Failed retry validation
+that retires authority must be caught and returned as a value within the callback
+so that retirement commits. Dispatch occurs only after a successful commit.
+
+Counter mismatch or missing state starts a new authorization epoch. Transient
+permissions, consent and execution access are discarded; standing authority awaits
+owner confirmation against the displayed epoch and revision. A durable recovery
+handoff requires the runtime to stop work from every other epoch before admission
+resumes. Darwin supplies the counter through Keychain; unsupported platforms fail
+explicitly. The gateway uses this store for permission admission, request answers,
+profile publication and execution revocation.
+
+### Requests, results and audit
+
+Missing requestable permissions create durable requests; explicit denies and
+managed exclusions do not. Owner answers are checked against current policy and
+the reviewed permission revision. Only this time is consumed by one matching
+explicit retry, including across independent processes. Its execution results
+remain readable during retention, subject to current authority and revocation.
+Project registration requests offer Allow and Don't Allow and publish registration
+and access together. `project.instructions` reports instruction and skill sources,
+scopes and bounded unchanged UTF-8 content.
+
+Admission audit is durable before dispatch. Outcomes contain input/output digests
+and bounded metadata, never clear arguments or output. Audit retention is 90 days
+and at most one million entries; pruning does not change permission authority.
+Failure to persist completion reports an unknown outcome and does not replay work.
+Private `host.projects.worktree_add` and `host.projects.worktree_remove` calls verify
+a live admitted call record, its host-reserved operation, principal, captured
+lifecycle arguments and current authority, then run the shared worktree lifecycle.
+A durable operation record answers repeated calls and lost replies without replay.

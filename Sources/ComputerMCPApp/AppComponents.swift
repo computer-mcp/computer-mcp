@@ -233,18 +233,6 @@ extension EmbeddedCLIInstallationState {
   }
 }
 
-extension PermissionState {
-  var color: Color {
-    switch self {
-    case .granted: .green
-    case .denied: .red
-    case .notGranted: .orange
-    case .notDetermined: .orange
-    case .unavailable: .secondary
-    }
-  }
-}
-
 extension AuditDecision {
   var color: Color {
     switch self {

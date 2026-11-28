@@ -1,3 +1,4 @@
+import ComputerMCPTestSupport
 import Foundation
 import Testing
 
@@ -7,6 +8,10 @@ import Testing
 @testable import ComputerMCPPlatformPOSIX
 @testable import ComputerMCPProcess
 @testable import ComputerMCPToolsCLI
+
+#if os(macOS)
+  import ComputerMCPDarwinTestSupport
+#endif
 
 #if canImport(Darwin)
   import Darwin
@@ -20,7 +25,11 @@ struct CLITreeTests {
   @Test
   func alreadyCancelledCallPrecedesArgumentValidation() async throws {
     let provider = Self.provider(Self.printCommand(), executable: "/fixture/bin/printf")
-    let name = try #require(provider.definitions().first?.tool.name)
+    let definition = try #require(provider.definitions().first)
+    #expect(definition.requirement.access == .projectWrite)
+    #expect(definition.requirement.execution == .start)
+    #expect(!definition.requirement.requiresFullAccess)
+    let name = definition.tool.name
     let task = Task {
       withUnsafeCurrentTask { $0?.cancel() }
       return try await provider.callToolAsync(
@@ -70,6 +79,25 @@ struct CLITreeTests {
     #expect(
       command.inputSchema.objectValue?["properties"]?.objectValue?["limit"]?.objectValue?["default"]
         == .number(10))
+  }
+
+  @Test(arguments: [
+    (CLIArgumentToken.Style.separate, ["--value", "", "你好 world", "a\"b'c", "$(never-execute)\n"]),
+    (
+      .repeated,
+      ["--value", "", "--value", "你好 world", "--value", "a\"b'c", "--value", "$(never-execute)\n"]
+    ),
+    (.equals, ["--value=", "--value=你好 world", "--value=a\"b'c", "--value=$(never-execute)\n"]),
+  ])
+  func arrayOptionStylesPreserveArgumentBoundaries(
+    style: CLIArgumentToken.Style, expected: [String]
+  ) throws {
+    let command = CLICommandDescriptor(
+      id: "argv", path: [], description: "Encode exact argv",
+      parameters: [.init(name: "values", schema: Self.strings, required: true)],
+      argv: [.init(kind: .option, parameter: "values", flag: "--value", style: style)])
+    let invocation = try CLIArgumentEncoder.encode(Self.arrayOptionInput, command: command)
+    #expect(invocation.arguments == expected)
   }
 
   @Test
@@ -159,114 +187,132 @@ struct CLITreeTests {
   func validatedExportersUseTheSameTreeContract(_ kind: CLITreeSource.Kind) async throws {
     let fixture = try CLITreeFixture()
     defer { fixture.cleanup() }
-    let tree = Self.tree(Self.printCommand())
-    try fixture.write(tree)
-    let execution = CLIProcessExecution()
-    let source = CLITreeSource(
-      kind: kind, helper: kind == .helper ? "/bin/cat" : nil, args: [fixture.treeURL.path])
-    let loaded = try source.load(
-      command: .init(id: "cat", executable: "/bin/cat", allowAnyArgs: false),
-      project: fixture.root, execution: execution)
-    #expect(loaded == tree)
-    await execution.shutdown()
+    try await withCLIProcessScope(directory: fixture.root, readOnly: true) {
+      let tree = Self.tree(Self.printCommand())
+      try fixture.write(tree)
+      let execution = CLIProcessExecution(launcher: testExecutionLauncher())
+      let source = CLITreeSource(
+        kind: kind, helper: kind == .helper ? "/bin/cat" : nil, args: [fixture.treeURL.path])
+      let loaded = try source.load(
+        command: .init(id: "cat", executable: "/bin/cat", allowAnyArgs: false),
+        project: fixture.root, execution: execution)
+      #expect(loaded == tree)
+      await execution.shutdown()
+    }
   }
 
   @Test
   func binaryStdinAndOutputAreLossless() async throws {
-    let command = CLICommandDescriptor(
-      id: "copy", path: [], description: "Copy fixture bytes",
-      parameters: [.init(name: "input", schema: Self.string, required: true, secret: true)],
-      stdin: .init(parameter: "input", encoding: .base64), stdout: .binary)
-    let provider = Self.provider(command, executable: "/bin/cat")
-    let name = try #require(provider.definitions().first?.tool.name)
-    let bytes = Data([0, 255, 13, 10, 192, 128])
-    let result = try await provider.callToolAsync(
-      .init(
-        name: name, arguments: .object(["input": .string(bytes.base64EncodedString())]),
-        context: .empty))
-    #expect(Self.output(result)?["stdout"]?.objectValue?["encoding"] == .string("base64"))
-    #expect(
-      Self.output(result)?["stdout"]?.objectValue?["data"] == .string(bytes.base64EncodedString()))
-    #expect(result.objectValue?["isError"] == .bool(false))
-    await provider.execution.shutdown()
+    let fixture = try CLITreeFixture()
+    defer { fixture.cleanup() }
+    try await withCLIProcessScope(directory: fixture.root, readOnly: true) {
+      let command = CLICommandDescriptor(
+        id: "copy", path: [], description: "Copy fixture bytes",
+        parameters: [.init(name: "input", schema: Self.string, required: true, secret: true)],
+        stdin: .init(parameter: "input", encoding: .base64), stdout: .binary)
+      let provider = Self.provider(command, executable: "/bin/cat", project: fixture.root)
+      let name = try #require(provider.definitions().first?.tool.name)
+      let bytes = Data([0, 255, 13, 10, 192, 128])
+      let result = try await provider.callToolAsync(
+        .init(
+          name: name, arguments: .object(["input": .string(bytes.base64EncodedString())]),
+          context: .empty))
+      #expect(Self.output(result)?["stdout"]?.objectValue?["encoding"] == .string("base64"))
+      #expect(
+        Self.output(result)?["stdout"]?.objectValue?["data"] == .string(bytes.base64EncodedString())
+      )
+      #expect(result.objectValue?["isError"] == .bool(false))
+      await provider.execution.shutdown()
+    }
   }
 
   @Test(arguments: [("{\"ok\":true}", false), ("{\"ok\":1}", true), ("not JSON", true)])
   func jsonOutputIsActuallyValidated(_ text: String, fails: Bool) async throws {
-    let command = CLICommandDescriptor(
-      id: "json", path: [], description: "JSON fixture",
-      parameters: [.init(name: "input", schema: Self.string, required: true)],
-      stdin: .init(parameter: "input", encoding: .utf8), stdout: .json,
-      outputSchema: .object([
-        "type": .string("object"),
-        "properties": .object(["ok": .object(["type": .string("boolean")])]),
-        "required": .array([.string("ok")]), "additionalProperties": .bool(false),
-      ]))
-    let provider = Self.provider(command, executable: "/bin/cat")
-    let name = try #require(provider.definitions().first?.tool.name)
-    let result = try await provider.callToolAsync(
-      .init(
-        name: name, arguments: .object(["input": .string(text)]), context: .empty))
-    #expect(result.objectValue?["isError"] == .bool(fails))
-    #expect(Self.output(result)?["stdout"]?.objectValue?["data"] == .string(text))
-    await provider.execution.shutdown()
+    let fixture = try CLITreeFixture()
+    defer { fixture.cleanup() }
+    try await withCLIProcessScope(directory: fixture.root, readOnly: true) {
+      let command = CLICommandDescriptor(
+        id: "json", path: [], description: "JSON fixture",
+        parameters: [.init(name: "input", schema: Self.string, required: true)],
+        stdin: .init(parameter: "input", encoding: .utf8), stdout: .json,
+        outputSchema: .object([
+          "type": .string("object"),
+          "properties": .object(["ok": .object(["type": .string("boolean")])]),
+          "required": .array([.string("ok")]), "additionalProperties": .bool(false),
+        ]))
+      let provider = Self.provider(command, executable: "/bin/cat", project: fixture.root)
+      let name = try #require(provider.definitions().first?.tool.name)
+      let result = try await provider.callToolAsync(
+        .init(
+          name: name, arguments: .object(["input": .string(text)]), context: .empty))
+      #expect(result.objectValue?["isError"] == .bool(fails))
+      #expect(Self.output(result)?["stdout"]?.objectValue?["data"] == .string(text))
+      await provider.execution.shutdown()
+    }
   }
 
   @Test
   func cancellationReapsOnlyItsOwnedProcess() async throws {
     let fixture = try CLITreeFixture()
     defer { fixture.cleanup() }
-    let execution = CLIProcessExecution()
-    let marker = fixture.root.appendingPathComponent("pid")
-    let task = Task {
-      try await execution.runAsync(
-        executable: "/bin/sh",
-        invocation: .init(
-          arguments: [
-            "-c", "echo $$ > \"$1.pending\"; /bin/mv \"$1.pending\" \"$1\"; exec /bin/sleep 30",
-            "fixture", marker.path,
-          ],
-          standardInput: Data()),
-        cwd: fixture.root, environment: [:], timeoutMilliseconds: 30_000, maxOutputBytes: 1_024)
+    try await withCLIProcessScope(directory: fixture.root) {
+      let execution = CLIProcessExecution(launcher: testExecutionLauncher())
+      let marker = fixture.root.appendingPathComponent("pid")
+      let task = Task {
+        try await execution.runAsync(
+          executable: "/bin/sh",
+          invocation: .init(
+            arguments: [
+              "-c", "echo $$ > \"$1.pending\"; /bin/mv \"$1.pending\" \"$1\"; exec /bin/sleep 30",
+              "fixture", marker.path,
+            ],
+            standardInput: Data()),
+          cwd: fixture.root, environment: [:], timeoutMilliseconds: 30_000, maxOutputBytes: 1_024)
+      }
+      let clock = ContinuousClock()
+      let deadline = clock.now.advanced(by: .seconds(5))
+      while !FileManager.default.fileExists(atPath: marker.path), clock.now < deadline {
+        try await Task.sleep(for: .milliseconds(10))
+      }
+      // Always cancel, including a failed startup observation, so the fixture cannot leave sleep running.
+      task.cancel()
+      await #expect(throws: CancellationError.self) { try await task.value }
+      await execution.shutdown()
+      let pid = try #require(
+        Int32(
+          String(contentsOf: marker, encoding: .utf8).trimmingCharacters(
+            in: .whitespacesAndNewlines))
+      )
+      #expect(kill(pid, 0) == -1)
+      #expect(errno == ESRCH)
     }
-    let clock = ContinuousClock()
-    let deadline = clock.now.advanced(by: .seconds(5))
-    while !FileManager.default.fileExists(atPath: marker.path), clock.now < deadline {
-      try await Task.sleep(for: .milliseconds(10))
-    }
-    // Always cancel, including a failed startup observation, so the fixture cannot leave sleep running.
-    task.cancel()
-    await #expect(throws: CancellationError.self) { try await task.value }
-    await execution.shutdown()
-    let pid = try #require(
-      Int32(
-        String(contentsOf: marker, encoding: .utf8).trimmingCharacters(in: .whitespacesAndNewlines))
-    )
-    #expect(kill(pid, 0) == -1)
-    #expect(errno == ESRCH)
   }
 
   @Test
   func processContextAndTimeoutAreObservable() async throws {
     let fixture = try CLITreeFixture()
     defer { fixture.cleanup() }
-    let execution = CLIProcessExecution()
-    let context = try await execution.runAsync(
-      executable: "/bin/sh",
-      invocation: .init(
-        arguments: ["-c", "printf '%s\\n%s' \"$PWD\" \"$CLI_TREE_TEST_VALUE\""],
-        standardInput: Data()),
-      cwd: fixture.root, environment: ["CLI_TREE_TEST_VALUE": "not global"],
-      timeoutMilliseconds: 5_000, maxOutputBytes: 4_096)
-    let output = try #require(context.stdout.base64.flatMap { Data(base64Encoded: $0) })
-    let canonical = try ProjectPathResolver.canonicalProject(fixture.root).path
-    #expect(String(decoding: output, as: UTF8.self) == "\(canonical)\nnot global")
-    let timeout = try await execution.runAsync(
-      executable: "/bin/sleep", invocation: .init(arguments: ["30"], standardInput: Data()),
-      cwd: fixture.root, environment: [:], timeoutMilliseconds: 50, maxOutputBytes: 1_024)
-    #expect(timeout.timedOut)
-    #expect(!timeout.isRunning)
-    await execution.shutdown()
+    try await withCLIProcessScope(
+      directory: fixture.root, readOnly: true, variables: ["CLI_TREE_TEST_VALUE": "not global"]
+    ) {
+      let execution = CLIProcessExecution(launcher: testExecutionLauncher())
+      let context = try await execution.runAsync(
+        executable: "/bin/sh",
+        invocation: .init(
+          arguments: ["-c", "printf '%s\\n%s' \"$PWD\" \"$CLI_TREE_TEST_VALUE\""],
+          standardInput: Data()),
+        cwd: fixture.root, environment: ["CLI_TREE_TEST_VALUE": "not global"],
+        timeoutMilliseconds: 5_000, maxOutputBytes: 4_096)
+      let output = try #require(context.stdout.base64.flatMap { Data(base64Encoded: $0) })
+      let canonical = try ProjectPathResolver.canonicalProject(fixture.root).path
+      #expect(String(decoding: output, as: UTF8.self) == "\(canonical)\nnot global")
+      let timeout = try await execution.runAsync(
+        executable: "/bin/sleep", invocation: .init(arguments: ["30"], standardInput: Data()),
+        cwd: fixture.root, environment: [:], timeoutMilliseconds: 50, maxOutputBytes: 1_024)
+      #expect(timeout.timedOut)
+      #expect(!timeout.isRunning)
+      await execution.shutdown()
+    }
   }
 
   @Test
@@ -287,20 +333,24 @@ struct CLITreeTests {
 
   @Test
   func documentedExampleIsParsedAndExecuted() async throws {
-    let repo = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
-      .deletingLastPathComponent().deletingLastPathComponent()
-    let tree = try CLITree.parse(
-      Data(contentsOf: repo.appendingPathComponent("Examples/printf-cli-tree.json")))
-    #expect(tree.coverage == .partial)
-    let command = try #require(tree.commands.first)
-    let provider = Self.provider(command, executable: "printf")
-    let name = try #require(provider.definitions().first?.tool.name)
-    let response = try await provider.callToolAsync(
-      .init(
-        name: name, arguments: .object(["values": .array([.string("example works")])]),
-        context: .empty))
-    #expect(Self.output(response)?["stdout"]?.objectValue?["data"] == .string("example works\n"))
-    await provider.execution.shutdown()
+    let fixture = try CLITreeFixture()
+    defer { fixture.cleanup() }
+    try await withCLIProcessScope(directory: fixture.root, readOnly: true) {
+      let repo = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
+        .deletingLastPathComponent().deletingLastPathComponent()
+      let tree = try CLITree.parse(
+        Data(contentsOf: repo.appendingPathComponent("Examples/printf-cli-tree.json")))
+      #expect(tree.coverage == .partial)
+      let command = try #require(tree.commands.first)
+      let provider = Self.provider(command, executable: "printf", project: fixture.root)
+      let name = try #require(provider.definitions().first?.tool.name)
+      let response = try await provider.callToolAsync(
+        .init(
+          name: name, arguments: .object(["values": .array([.string("example works")])]),
+          context: .empty))
+      #expect(Self.output(response)?["stdout"]?.objectValue?["data"] == .string("example works\n"))
+      await provider.execution.shutdown()
+    }
   }
 
   @Test
@@ -316,7 +366,7 @@ struct CLITreeTests {
       at: fixture.treeURL, withDestinationURL: outside.treeURL)
     var source = CLITreeSource(kind: .file, path: fixture.treeURL.path)
     source.packageRoot = fixture.root
-    let execution = CLIProcessExecution()
+    let execution = CLIProcessExecution(launcher: testExecutionLauncher())
     let command = CLICommandConfig(id: "fixture", executable: "/bin/cat", allowAnyArgs: false)
     #expect(throws: (any Error).self) {
       try source.load(command: command, project: fixture.root, execution: execution)
@@ -376,6 +426,11 @@ struct CLITreeTests {
 
   static let string = JSONValue.object(["type": .string("string")])
   static let strings = JSONValue.object(["type": .string("array"), "items": string])
+  static let arrayOptionInput = JSONValue.object([
+    "values": .array([
+      .string(""), .string("你好 world"), .string("a\"b'c"), .string("$(never-execute)\n"),
+    ])
+  ])
 
   static func printCommand() -> CLICommandDescriptor {
     CLICommandDescriptor(
@@ -396,11 +451,13 @@ struct CLITreeTests {
       commands: [command])
   }
 
-  static func provider(_ command: CLICommandDescriptor, executable: String) -> CLITreeToolProvider {
+  static func provider(
+    _ command: CLICommandDescriptor, executable: String, project: URL = URL(fileURLWithPath: "/tmp")
+  ) -> CLITreeToolProvider {
     .init(
       registration: .init(id: "fixture", executable: executable, allowAnyArgs: false),
-      tree: tree(command), project: URL(fileURLWithPath: "/tmp"),
-      execution: CLIProcessExecution(),
+      tree: tree(command), project: project,
+      execution: CLIProcessExecution(launcher: testExecutionLauncher()),
       timeoutMilliseconds: 5_000, maxOutputBytes: 4_096)
   }
 
@@ -413,9 +470,10 @@ private struct CLITreeFixture {
   let root: URL
   var treeURL: URL { root.appendingPathComponent("tree.json") }
   init() throws {
-    root = FileManager.default.temporaryDirectory.appendingPathComponent(
+    let candidate = FileManager.default.temporaryDirectory.appendingPathComponent(
       "cli-tree-\(UUID().uuidString)")
-    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    try FileManager.default.createDirectory(at: candidate, withIntermediateDirectories: true)
+    root = try ProjectPathResolver.canonicalProject(candidate)
   }
   func write(_ tree: CLITree) throws {
     try JSONEncoder().encode(tree).write(to: treeURL, options: .atomic)

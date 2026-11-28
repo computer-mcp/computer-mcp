@@ -1,0 +1,367 @@
+#if os(Linux)
+  import ComputerMCPSandbox
+  import Foundation
+  import Glibc
+
+  /// Linux Full access backend. The unreaped leader pins the process-group identity.
+  /// Sandbox execution requires a separate Linux confinement backend.
+  package struct POSIXExecutionPlatform: ExecutionPlatform {
+    package init() {}
+    package var bootSessionID: String? {
+      try? String(contentsOfFile: "/proc/sys/kernel/random/boot_id", encoding: .utf8)
+        .trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    package func start(
+      _ command: ExecutionCommand, sandbox: SandboxConfiguration?, method: ExecutionLaunchMethod,
+      input: Int32, output: Int32, error: Int32,
+      bindOwnership: @Sendable (any ExecutionOwnership) -> Void
+    ) async throws -> any ExecutionOwnership {
+      guard sandbox == nil else {
+        throw ExecutionEnvironmentError.unavailable("Linux sandbox execution is unavailable")
+      }
+      try Task.checkCancellation()
+      let owner = POSIXExecutionOwnership()
+      bindOwnership(owner)
+      do {
+        try owner.launch(command, input: input, output: output, error: error)
+      } catch {
+        owner.failedLaunch(error)
+        throw error
+      }
+      return owner
+    }
+  }
+
+  @_silgen_name("posix_spawn_file_actions_addchdir_np")
+  private func addWorkingDirectory(
+    _ actions: UnsafeMutablePointer<posix_spawn_file_actions_t>, _ path: UnsafePointer<CChar>
+  ) -> Int32
+
+  @_silgen_name("posix_spawn_file_actions_addclosefrom_np")
+  private func closeDescriptors(
+    _ actions: UnsafeMutablePointer<posix_spawn_file_actions_t>, _ first: Int32
+  ) -> Int32
+
+  final class POSIXExecutionOwnership: ExecutionOwnership, @unchecked Sendable {
+    private let lock = NSLock()
+    private let signalGroup: @Sendable (pid_t, Int32) -> Void
+    private var pid: pid_t?
+    private var identity: UInt64 = 0
+    private var known: [pid_t: UInt64] = [:]
+    private var completion: Result<ExecutionExit, any Error>?
+    private var cancellationStarted: ContinuousClock.Instant?
+    private var cancellationDeadline: ContinuousClock.Instant?
+    private var waiters:
+      [(
+        deadline: ContinuousClock.Instant?,
+        continuation: CheckedContinuation<ExecutionExit, any Error>
+      )] = []
+    private var handlers: [@Sendable () -> Void] = []
+    private var launchHandlers: [@Sendable (ExecutionMember) throws -> Void] = []
+    private var timer: (any DispatchSourceTimer)?
+
+    init(signalGroup: @escaping @Sendable (pid_t, Int32) -> Void = { _ = kill(-$0, $1) }) {
+      self.signalGroup = signalGroup
+    }
+
+    func beforeStart(_ handler: @escaping @Sendable (ExecutionMember) throws -> Void) {
+      lock.withLock { launchHandlers.append(handler) }
+    }
+
+    func launch(_ command: ExecutionCommand, input: Int32, output: Int32, error: Int32) throws {
+      var actions = posix_spawn_file_actions_t()
+      var attributes = posix_spawnattr_t()
+      func check(_ status: Int32) throws {
+        guard status == 0 else {
+          throw ExecutionEnvironmentError.launchFailed("POSIX launch: \(status)")
+        }
+      }
+      try check(posix_spawn_file_actions_init(&actions))
+      defer { posix_spawn_file_actions_destroy(&actions) }
+      try check(posix_spawnattr_init(&attributes))
+      defer { posix_spawnattr_destroy(&attributes) }
+      // Change directories before dup2 can overwrite the directory descriptor.
+      if let directory = command.directoryDescriptor {
+        try check(LinuxSystemCalls.addWorkingDirectory(directory, to: &actions))
+      } else {
+        try command.directory.value.withCString { try check(addWorkingDirectory(&actions, $0)) }
+      }
+      let mappings =
+        [(Int32(0), input), (Int32(1), output), (Int32(2), error)]
+        + command.inheritedDescriptors.sorted { $0.key < $1.key }.map { ($0.key, $0.value) }
+      let minimum = (mappings.map { $0.0 }.max() ?? 2) + 1
+      var copies: [Int32] = []
+      defer { for descriptor in copies { close(descriptor) } }
+      for (_, source) in mappings {
+        let copy = fcntl(source, F_DUPFD_CLOEXEC, minimum)
+        guard copy >= 0 else {
+          throw ExecutionEnvironmentError.launchFailed("Cannot copy launch descriptor")
+        }
+        copies.append(copy)
+      }
+      for (mapping, copy) in zip(mappings, copies) {
+        try check(posix_spawn_file_actions_adddup2(&actions, copy, mapping.0))
+      }
+      let destinations = Set(mappings.map { $0.0 })
+      for descriptor in 3..<minimum where !destinations.contains(descriptor) {
+        try check(posix_spawn_file_actions_addclose(&actions, descriptor))
+      }
+      try check(closeDescriptors(&actions, minimum))
+      try check(posix_spawnattr_setpgroup(&attributes, 0))
+      var mask = sigset_t()
+      sigemptyset(&mask)
+      try check(posix_spawnattr_setsigmask(&attributes, &mask))
+      var defaults = sigset_t()
+      sigfillset(&defaults)
+      try check(posix_spawnattr_setsigdefault(&attributes, &defaults))
+      try check(
+        posix_spawnattr_setflags(
+          &attributes, Int16(POSIX_SPAWN_SETPGROUP | POSIX_SPAWN_SETSIGMASK | POSIX_SPAWN_SETSIGDEF)
+        ))
+      let bootstrap = URL(fileURLWithPath: CommandLine.arguments[0]).resolvingSymlinksInPath()
+        .deletingLastPathComponent().appendingPathComponent("computer-mcp-execution-bootstrap")
+      guard FileManager.default.isExecutableFile(atPath: bootstrap.path) else {
+        throw ExecutionEnvironmentError.unavailable(
+          "Execution requires the bundled execution bootstrap")
+      }
+      let argv =
+        ([bootstrap.path] + command.bootstrapOptions + [command.executable.value]
+        + command.arguments)
+        .map { strdup($0) } + [nil]
+      let env = command.environment.map { strdup($0.key + "=" + $0.value) } + [nil]
+      defer { for value in argv + env { free(value) } }
+      var child: pid_t = 0
+      try check(
+        argv.withUnsafeBufferPointer { argv in
+          env.withUnsafeBufferPointer { env in
+            posix_spawn(
+              &child, bootstrap.path, &actions, &attributes, argv.baseAddress!,
+              env.baseAddress!)
+          }
+        })
+      for descriptor in copies { close(descriptor) }
+      copies.removeAll()
+      // The bootstrap stops before exec. Keeping it unreaped pins its PID throughout admission.
+      lock.withLock { pid = child }
+      var status: Int32 = 0
+      var waited: pid_t
+      repeat { waited = waitpid(child, &status, WUNTRACED) } while waited < 0 && errno == EINTR
+      guard waited == child, status & 0xff == 0x7f, let process = Self.read(child) else {
+        if waited == child && status & 0xff != 0x7f { lock.withLock { pid = nil } }
+        throw ExecutionEnvironmentError.launchFailed("Execution bootstrap did not stop before exec")
+      }
+      let callbacks = lock.withLock {
+        identity = process.identity
+        known[child] = identity
+        return launchHandlers
+      }
+      defer { startMonitoring() }
+      for callback in callbacks {
+        try callback(.init(processID: child, identity: process.identity))
+      }
+      _ = kill(child, SIGCONT)
+    }
+
+    func failedLaunch(_ error: any Error) {
+      let active = lock.withLock {
+        guard pid != nil else {
+          finish(.success(.init(status: 126)))
+          return false
+        }
+        cancellationStarted = .now.advanced(by: .milliseconds(-500))
+        let deadline = ContinuousClock.now.advanced(by: .seconds(5))
+        cancellationDeadline = min(cancellationDeadline ?? deadline, deadline)
+        return true
+      }
+      if active { startMonitoring() }
+    }
+
+    private func startMonitoring() {
+      lock.withLock { startMonitor() }
+    }
+
+    private func startMonitor() {
+      guard timer == nil, completion == nil else { return }
+      let timer = DispatchSource.makeTimerSource(queue: DispatchQueue(label: "execution.posix"))
+      timer.schedule(deadline: .now(), repeating: .milliseconds(20))
+      timer.setEventHandler { self.poll() }
+      self.timer = timer
+      timer.resume()
+    }
+
+    func onCancellation(_ handler: @escaping @Sendable () -> Void) {
+      let cancelled = lock.withLock {
+        handlers.append(handler)
+        return cancellationStarted != nil
+      }
+      if cancelled { handler() }
+    }
+
+    func members() async throws -> [ExecutionMember] {
+      lock.withLock { known.map { .init(processID: $0.key, identity: $0.value) } }
+    }
+
+    func requestCancellation(
+      until deadline: ContinuousClock.Instant = .now.advanced(by: .seconds(5))
+    ) {
+      let callbacks: [@Sendable () -> Void]? = lock.withLock {
+        guard completion == nil else { return nil }
+        cancellationDeadline = min(cancellationDeadline ?? deadline, deadline)
+        guard cancellationStarted == nil else { return nil }
+        cancellationStarted = .now
+        return handlers
+      }
+      guard let callbacks else { return }
+      for callback in callbacks { callback() }
+    }
+
+    func cancel(until deadline: ContinuousClock.Instant) async throws -> ExecutionExit {
+      requestCancellation()
+      return try await wait(until: deadline)
+    }
+
+    func wait(until deadline: ContinuousClock.Instant) async throws -> ExecutionExit {
+      try await waitForCompletion(until: deadline)
+    }
+
+    func wait() async throws -> ExecutionExit {
+      try await waitForCompletion(until: nil)
+    }
+
+    private func waitForCompletion(until deadline: ContinuousClock.Instant?) async throws
+      -> ExecutionExit
+    {
+      try await withTaskCancellationHandler {
+        try await withCheckedThrowingContinuation { continuation in
+          lock.withLock {
+            if let completion {
+              continuation.resume(with: completion)
+            } else if let deadline, ContinuousClock.now >= deadline {
+              continuation.resume(throwing: ExecutionWaitExpired(ownership: self))
+            } else {
+              waiters.append((deadline, continuation))
+              startMonitor()
+            }
+          }
+        }
+      } onCancel: {
+        requestCancellation()
+      }
+    }
+
+    /// Termination failure retains the monitor and process group for continued cleanup.
+    private func expire() {
+      let now = ContinuousClock.now
+      if let deadline = cancellationDeadline, now >= deadline {
+        let failure = ExecutionCompletionFailure(
+          ownership: self,
+          members: known.map {
+            .init(
+              process: .init(processID: $0.key, identity: $0.value),
+              reason: "Exit has not been confirmed")
+          }.sorted { $0.process.processID < $1.process.processID },
+          reasons: ["Termination could not be confirmed within its budget"], bestEffort: true)
+        cancellationDeadline = nil
+        let pending = waiters
+        waiters.removeAll()
+        for waiter in pending { waiter.continuation.resume(throwing: failure) }
+      }
+      let expired = waiters.filter { $0.deadline.map { now >= $0 } == true }
+      waiters.removeAll { $0.deadline.map { now >= $0 } == true }
+      for waiter in expired {
+        waiter.continuation.resume(throwing: ExecutionWaitExpired(ownership: self))
+      }
+    }
+
+    private func finish(_ result: Result<ExecutionExit, any Error>) {
+      completion = result
+      cancellationDeadline = nil
+      handlers.removeAll()
+      launchHandlers.removeAll()
+      timer?.cancel()
+      timer?.setEventHandler {}
+      timer = nil
+      let pending = waiters
+      waiters.removeAll()
+      for waiter in pending { waiter.continuation.resume(with: result) }
+    }
+
+    private struct ProcessRecord {
+      let pid: pid_t
+      let identity: UInt64
+      let parent: pid_t
+      let group: pid_t
+      let zombie: Bool
+    }
+
+    private static func read(_ pid: pid_t) -> ProcessRecord? {
+      guard let text = try? String(contentsOfFile: "/proc/\(pid)/stat", encoding: .utf8),
+        let end = text.lastIndex(of: ")")
+      else { return nil }
+      let fields = text[text.index(after: end)...].split(separator: " ")
+      guard fields.count > 19, let parent = pid_t(fields[1]), let group = pid_t(fields[2]),
+        let identity = UInt64(fields[19])
+      else { return nil }
+      return .init(
+        pid: pid, identity: identity, parent: parent, group: group, zombie: fields[0] == "Z")
+    }
+
+    private static func signal(_ member: ProcessRecord, _ signal: Int32) {
+      typealias Open = @convention(c) (Int32, UInt32) -> Int32
+      typealias Send = @convention(c) (Int32, Int32, UnsafeRawPointer?, UInt32) -> Int32
+      guard let library = dlopen(nil, RTLD_LAZY) else { return }
+      defer { dlclose(library) }
+      guard let openAddress = dlsym(library, "pidfd_open"),
+        let sendAddress = dlsym(library, "pidfd_send_signal")
+      else { return }
+      let open = unsafeBitCast(openAddress, to: Open.self)
+      let send = unsafeBitCast(sendAddress, to: Send.self)
+      let descriptor = open(member.pid, 0)
+      guard descriptor >= 0 else { return }
+      defer { close(descriptor) }
+      guard read(member.pid)?.identity == member.identity else { return }
+      _ = send(descriptor, signal, nil, 0)
+    }
+
+    private func poll() {
+      lock.withLock {
+        guard completion == nil else { return }
+        expire()
+        guard let pid else { return }
+        let records = ((try? FileManager.default.contentsOfDirectory(atPath: "/proc")) ?? [])
+          .compactMap(pid_t.init).compactMap(Self.read)
+        var members = records.filter { $0.group == pid || known[$0.pid] == $0.identity }
+        var expanded = true
+        while expanded {
+          let parents = Set(members.map(\.pid))
+          let extra = records.filter { parents.contains($0.parent) && !parents.contains($0.pid) }
+          expanded = !extra.isEmpty
+          members += extra
+        }
+        for member in members { known[member.pid] = member.identity }
+        if let cancellationStarted {
+          let signal =
+            ContinuousClock.now - cancellationStarted >= .milliseconds(500) ? SIGKILL : SIGTERM
+          // The unreaped leader keeps this group ID reserved. Escaped children require pidfds.
+          signalGroup(pid, signal)
+          signalGroup(pid, SIGCONT)
+          for member in members where !member.zombie && member.group != pid {
+            Self.signal(member, signal)
+          }
+        }
+        guard let root = members.first(where: { $0.pid == pid }), root.zombie,
+          !members.contains(where: { $0.pid != pid && !$0.zombie })
+        else { return }
+        var status: Int32 = 0
+        guard waitpid(pid, &status, WNOHANG) == pid else { return }
+        let signal = status & 0x7f
+        let exit = ExecutionExit(
+          status: signal == 0 ? (status >> 8) & 0xff : 128 + signal,
+          signal: signal == 0 ? nil : signal)
+        known.removeAll()
+        finish(.success(exit))
+      }
+    }
+  }
+#endif

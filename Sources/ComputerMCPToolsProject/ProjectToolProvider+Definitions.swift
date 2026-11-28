@@ -15,6 +15,7 @@ extension ProjectToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "project.info", risk: .readOnly,
+          requirement: .init(access: .read, paths: [.project(.read)]),
           projectRequirement: .required,
           localOnly: false, usesNetwork: false
         )
@@ -37,6 +38,7 @@ extension ProjectToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "project.status", risk: .readOnly,
+          requirement: .init(access: .read, paths: [.project(.read)]),
           projectRequirement: .required,
           localOnly: false, usesNetwork: false
         )
@@ -61,6 +63,7 @@ extension ProjectToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "project.manifests", risk: .readOnly,
+          requirement: .init(access: .read, paths: [.project(.read)]),
           projectRequirement: .required,
           localOnly: false, usesNetwork: false
         )
@@ -86,6 +89,7 @@ extension ProjectToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "project.recent_files", risk: .readOnly,
+          requirement: .init(access: .read, paths: [.project(.read)]),
           projectRequirement: .required,
           localOnly: false, usesNetwork: false
         )
@@ -114,6 +118,8 @@ extension ProjectToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "project.directory_stats", risk: .readOnly,
+          requirement: .init(
+            access: .read, paths: [.init("path", .listDirectory, defaultToProject: true)]),
           projectRequirement: .required,
           localOnly: false, usesNetwork: false
         )
@@ -143,6 +149,7 @@ extension ProjectToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "project.artifact_directories", risk: .readOnly,
+          requirement: .init(access: .read, paths: [.init("path", .read, defaultToProject: true)]),
           projectRequirement: .required,
           localOnly: false, usesNetwork: false
         )
@@ -172,6 +179,8 @@ extension ProjectToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "project.empty_directories", risk: .readOnly,
+          requirement: .init(
+            access: .read, paths: [.init("path", .listDirectory, defaultToProject: true)]),
           projectRequirement: .required,
           localOnly: false, usesNetwork: false
         )
@@ -196,6 +205,8 @@ extension ProjectToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "project.git_changes", risk: .readOnly,
+          requirement: .init(
+            access: .read, paths: [.init("paths[]", .read, defaultToProject: true)]),
           projectRequirement: .required,
           localOnly: false, usesNetwork: false
         )
@@ -221,6 +232,7 @@ extension ProjectToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "project.file_types", risk: .readOnly,
+          requirement: .init(access: .read, paths: [.project(.read)]),
           projectRequirement: .required,
           localOnly: false, usesNetwork: false
         )
@@ -246,6 +258,7 @@ extension ProjectToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "project.large_files", risk: .readOnly,
+          requirement: .init(access: .read, paths: [.project(.read)]),
           projectRequirement: .required,
           localOnly: false, usesNetwork: false
         )
@@ -271,6 +284,7 @@ extension ProjectToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "project.symlinks", risk: .readOnly,
+          requirement: .init(access: .read, paths: [.project(.read)]),
           projectRequirement: .required,
           localOnly: false, usesNetwork: false
         )
@@ -297,6 +311,7 @@ extension ProjectToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "project.executable_files", risk: .readOnly,
+          requirement: .init(access: .read, paths: [.project(.read)]),
           projectRequirement: .required,
           localOnly: false, usesNetwork: false
         )
@@ -331,6 +346,7 @@ extension ProjectToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "project.todos", risk: .readOnly,
+          requirement: .init(access: .read, paths: [.init("path", .read, defaultToProject: true)]),
           projectRequirement: .required,
           localOnly: false, usesNetwork: false
         )
@@ -363,6 +379,7 @@ extension ProjectToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "project.env_files", risk: .readOnly,
+          requirement: .init(access: .read, paths: [.init("path", .read, defaultToProject: true)]),
           projectRequirement: .required,
           localOnly: false, usesNetwork: false
         )
@@ -392,6 +409,7 @@ extension ProjectToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "project.dependency_files", risk: .readOnly,
+          requirement: .init(access: .read, paths: [.init("path", .read, defaultToProject: true)]),
           projectRequirement: .required,
           localOnly: false, usesNetwork: false
         )
@@ -422,6 +440,7 @@ extension ProjectToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "project.project_roots", risk: .readOnly,
+          requirement: .init(access: .read, paths: [.init("path", .read, defaultToProject: true)]),
           projectRequirement: .required,
           localOnly: false, usesNetwork: false
         )
@@ -451,6 +470,7 @@ extension ProjectToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "project.documentation_files", risk: .readOnly,
+          requirement: .init(access: .read, paths: [.init("path", .read, defaultToProject: true)]),
           projectRequirement: .required,
           localOnly: false, usesNetwork: false
         )
@@ -481,6 +501,7 @@ extension ProjectToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "project.agent_files", risk: .readOnly,
+          requirement: .init(access: .read, paths: [.init("path", .read, defaultToProject: true)]),
           projectRequirement: .required,
           localOnly: false, usesNetwork: false
         )
@@ -489,7 +510,7 @@ extension ProjectToolProvider {
         tool: MCPTool(
           name: "project.instructions",
           description:
-            "Return the bounded agent instruction files that apply to a target project path by walking from the project root to that path's scope directory. This reads only fixed instruction filenames and rule directories, does not summarize or merge instructions, and returns apply_order for the MCP consumer.",
+            "Return bounded instruction files and SKILL.md packages from each directory between the project root and the target path's scope. Reads fixed instruction filenames, rule directories, and packages in skills, .agents/skills, .claude/skills, .codex/skills, and .github/skills. Returns unchanged content, source, scope, and apply_order for the client to interpret.",
           inputSchema: objectSchema(
             properties: [
               "path": stringSchema(
@@ -499,11 +520,11 @@ extension ProjectToolProvider {
                 "Whether to treat path as a directory. Defaults to filesystem metadata when the path exists, otherwise false unless path ends with '/'."
               ),
               "include_content": boolSchema(
-                "Whether to include bounded UTF-8 instruction content. Defaults to true."),
+                "Whether to include bounded UTF-8 instruction and skill content. Defaults to true."),
               "max_bytes_per_file": integerSchema(
-                "Maximum instruction bytes to read per file. Defaults to 65536."),
+                "Maximum instruction or skill bytes to read per file. Defaults to 65536."),
               "max_results": integerSchema(
-                "Maximum instruction files to return. Defaults to 50."),
+                "Maximum instruction and skill files to return. Defaults to 50."),
             ]
           ),
           annotations: MCPToolAnnotations(
@@ -512,6 +533,7 @@ extension ProjectToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "project.instructions", risk: .readOnly,
+          requirement: .init(access: .read, paths: [.init("path", .read, defaultToProject: true)]),
           projectRequirement: .required,
           localOnly: false, usesNetwork: false
         )
@@ -541,6 +563,7 @@ extension ProjectToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "project.test_files", risk: .readOnly,
+          requirement: .init(access: .read, paths: [.init("path", .read, defaultToProject: true)]),
           projectRequirement: .required,
           localOnly: false, usesNetwork: false
         )
@@ -571,6 +594,7 @@ extension ProjectToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "project.ci_files", risk: .readOnly,
+          requirement: .init(access: .read, paths: [.init("path", .read, defaultToProject: true)]),
           projectRequirement: .required,
           localOnly: false, usesNetwork: false
         )
@@ -601,6 +625,7 @@ extension ProjectToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "project.infra_files", risk: .readOnly,
+          requirement: .init(access: .read, paths: [.init("path", .read, defaultToProject: true)]),
           projectRequirement: .required,
           localOnly: false, usesNetwork: false
         )
@@ -631,6 +656,7 @@ extension ProjectToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "project.config_files", risk: .readOnly,
+          requirement: .init(access: .read, paths: [.init("path", .read, defaultToProject: true)]),
           projectRequirement: .required,
           localOnly: false, usesNetwork: false
         )
@@ -661,6 +687,7 @@ extension ProjectToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "project.ignore_files", risk: .readOnly,
+          requirement: .init(access: .read, paths: [.init("path", .read, defaultToProject: true)]),
           projectRequirement: .required,
           localOnly: false, usesNetwork: false
         )
@@ -690,6 +717,7 @@ extension ProjectToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "project.asset_files", risk: .readOnly,
+          requirement: .init(access: .read, paths: [.init("path", .read, defaultToProject: true)]),
           projectRequirement: .required,
           localOnly: false, usesNetwork: false
         )
@@ -719,6 +747,7 @@ extension ProjectToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "project.archive_files", risk: .readOnly,
+          requirement: .init(access: .read, paths: [.init("path", .read, defaultToProject: true)]),
           projectRequirement: .required,
           localOnly: false, usesNetwork: false
         )
@@ -748,6 +777,7 @@ extension ProjectToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "project.log_files", risk: .readOnly,
+          requirement: .init(access: .read, paths: [.init("path", .read, defaultToProject: true)]),
           projectRequirement: .required,
           localOnly: false, usesNetwork: false
         )
@@ -777,6 +807,7 @@ extension ProjectToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "project.data_files", risk: .readOnly,
+          requirement: .init(access: .read, paths: [.init("path", .read, defaultToProject: true)]),
           projectRequirement: .required,
           localOnly: false, usesNetwork: false
         )
@@ -806,6 +837,7 @@ extension ProjectToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "project.schema_files", risk: .readOnly,
+          requirement: .init(access: .read, paths: [.init("path", .read, defaultToProject: true)]),
           projectRequirement: .required,
           localOnly: false, usesNetwork: false
         )
@@ -838,6 +870,7 @@ extension ProjectToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "project.source_files", risk: .readOnly,
+          requirement: .init(access: .read, paths: [.init("path", .read, defaultToProject: true)]),
           projectRequirement: .required,
           localOnly: false, usesNetwork: false
         )
@@ -874,6 +907,7 @@ extension ProjectToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "project.outline", risk: .readOnly,
+          requirement: .init(access: .read, paths: [.init("path", .read, defaultToProject: true)]),
           projectRequirement: .required,
           localOnly: false, usesNetwork: false
         )
@@ -905,6 +939,7 @@ extension ProjectToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "project.commands", risk: .readOnly,
+          requirement: .init(access: .read, paths: [.init("path", .read, defaultToProject: true)]),
           projectRequirement: .required,
           localOnly: false, usesNetwork: false
         )
@@ -927,7 +962,7 @@ extension ProjectToolProvider {
           meta: toolMeta
         ),
         capability: CapabilityDescriptor(
-          id: "project.open", risk: .projectWrite,
+          id: "project.open", risk: .projectWrite, requirement: .privacy(.desktopControl),
           projectRequirement: .required,
           localOnly: false, usesNetwork: false
         )
@@ -949,7 +984,7 @@ extension ProjectToolProvider {
           meta: toolMeta
         ),
         capability: CapabilityDescriptor(
-          id: "project.reveal", risk: .projectWrite,
+          id: "project.reveal", risk: .projectWrite, requirement: .privacy(.desktopControl),
           projectRequirement: .required,
           localOnly: false, usesNetwork: false
         )

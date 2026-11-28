@@ -6,6 +6,10 @@ import Testing
 @testable import ComputerMCPPlatformPOSIX
 @testable import ComputerMCPProcess
 
+#if os(macOS)
+  import ComputerMCPDarwinTestSupport
+#endif
+
 #if canImport(Darwin)
   import Darwin
 #elseif canImport(Glibc)
@@ -137,11 +141,13 @@ struct ExecutableLaunchInspectionTests {
     let fixture = try ExecutableInspectionFixture()
     defer { fixture.cleanup() }
     let script = try fixture.script("tool", "#!/usr/bin/env fixture-runtime\n")
-    let runner = ProcessCommandRunner()
+    let runner = ProcessCommandRunner(launcher: testExecutionLauncher())
     func run() throws -> CommandResult {
-      try runner.run(
-        executable: "/usr/bin/env", arguments: [script.path], workingDirectory: fixture.root,
-        environment: ["PATH": fixture.root.path], timeoutMilliseconds: 3000, maxOutputBytes: 1024)
+      try withCommandAdministration(variables: ["PATH": fixture.root.path]) {
+        try runner.run(
+          executable: "/usr/bin/env", arguments: [script.path], workingDirectory: fixture.root,
+          environment: ["PATH": fixture.root.path], timeoutMilliseconds: 3000, maxOutputBytes: 1024)
+      }
     }
     #expect(fixture.inspect(script.path).status == .interpreterUnavailable)
     let missing = try run()

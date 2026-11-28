@@ -1,4 +1,5 @@
 import ComputerMCPCore
+import ComputerMCPPlatformPOSIX
 import ComputerMCPToolKit
 import Foundation
 
@@ -64,7 +65,7 @@ extension StructuredToolProvider {
       throw GatewayToolError.invalidArguments("Path is not a file: \(path)")
     }
 
-    let handle = try FileHandle(forReadingFrom: url)
+    let handle = try AuthorizedFileReader(url: url)
     defer {
       try? handle.close()
     }
@@ -271,7 +272,7 @@ extension StructuredToolProvider {
       throw GatewayToolError.invalidArguments("Path is not a file: \(path)")
     }
 
-    let handle = try FileHandle(forReadingFrom: url)
+    let handle = try AuthorizedFileReader(url: url)
     defer {
       try? handle.close()
     }
@@ -748,7 +749,7 @@ extension StructuredToolProvider {
       throw GatewayToolError.invalidArguments("Path is not a file: \(path)")
     }
 
-    let handle = try FileHandle(forReadingFrom: url)
+    let handle = try AuthorizedFileReader(url: url)
     defer {
       try? handle.close()
     }
@@ -1167,7 +1168,7 @@ extension StructuredToolProvider {
   }
 
   package func markdownAnchorScan(url: URL, maxBytes: Int) throws -> MarkdownAnchorScanResult {
-    let handle = try FileHandle(forReadingFrom: url)
+    let handle = try AuthorizedFileReader(url: url)
     defer {
       try? handle.close()
     }

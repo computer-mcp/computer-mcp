@@ -3,10 +3,15 @@ import ComputerMCPCore
 import ComputerMCPPlatform
 import ComputerMCPTestSupport
 import ComputerMCPToolKit
+import ComputerMCPWorktrees
 import Foundation
 import Testing
 
 @testable import ComputerMCPToolsProject
+
+#if os(macOS)
+  import ComputerMCPDarwinTestSupport
+#endif
 
 @Suite(.nativeIntegration, .serialized)
 final class ProjectToolProviderTests {
@@ -32,7 +37,8 @@ final class ProjectToolProviderTests {
       builtin: BuiltinConfig(enabled: ["project.info"]),
       projectDirectory: directory
     )
-    let provider = ProjectToolProvider(environment: ToolEnvironment(configuration: config))
+    let provider = ProjectToolProvider(
+      environment: ToolEnvironment(launcher: testExecutionLauncher(), configuration: config))
 
     let result = try provider.callTool(
       .init(
@@ -79,6 +85,7 @@ final class ProjectToolProviderTests {
 
     let provider = ProjectToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["project.status"]),
           projectDirectory: directory
@@ -139,6 +146,7 @@ final class ProjectToolProviderTests {
 
     let provider = ProjectToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["project.manifests"]),
           projectDirectory: directory
@@ -204,6 +212,7 @@ final class ProjectToolProviderTests {
 
     let provider = ProjectToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["project.recent_files"]),
           projectDirectory: directory
@@ -291,6 +300,7 @@ final class ProjectToolProviderTests {
 
     let provider = ProjectToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["project.directory_stats"]),
           projectDirectory: directory
@@ -375,6 +385,7 @@ final class ProjectToolProviderTests {
 
     let provider = ProjectToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["project.artifact_directories"]),
           projectDirectory: directory
@@ -493,6 +504,7 @@ final class ProjectToolProviderTests {
 
     let provider = ProjectToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["project.empty_directories"]),
           projectDirectory: directory
@@ -583,6 +595,7 @@ final class ProjectToolProviderTests {
       " M README.md\0A  Sources/App.swift\0R  Sources/New.swift\0Sources/Old.swift\0?? notes.txt\0"
     let provider = ProjectToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration.fixture(
           cli: CLISectionConfig(commands: [CLICommandConfig(id: "git", executable: "/bin/echo")]),
           builtin: BuiltinConfig(enabled: ["project.git_changes"])
@@ -603,8 +616,11 @@ final class ProjectToolProviderTests {
 
     #expect((runner.calls.first?.executable) == ("/bin/echo"))
     #expect(
-      (runner.calls.first?.arguments)
-        == (["status", "--porcelain=v1", "-z", "--untracked-files=all", "--", "Sources"]))
+      (runner.calls.last?.arguments)
+        == (HostGitConfiguration.arguments + [
+          "--literal-pathspecs", "status", "--porcelain=v1", "-z", "--untracked-files=all", "--",
+          "Sources",
+        ]))
     #expect((payload.objectValue?["operation"]) == (.string("project.git_changes")))
     #expect((payload.objectValue?["provider"]) == (.string("git")))
     #expect((payload.objectValue?["change_count"]) == (.number(4)))
@@ -641,6 +657,7 @@ final class ProjectToolProviderTests {
 
     let provider = ProjectToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["project.file_types"]),
           projectDirectory: directory
@@ -702,6 +719,7 @@ final class ProjectToolProviderTests {
 
     let provider = ProjectToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["project.large_files"]),
           projectDirectory: directory
@@ -770,6 +788,7 @@ final class ProjectToolProviderTests {
 
     let provider = ProjectToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["project.symlinks"]),
           projectDirectory: directory
@@ -840,6 +859,7 @@ final class ProjectToolProviderTests {
 
     let provider = ProjectToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["project.executable_files"]),
           projectDirectory: directory
@@ -899,6 +919,7 @@ final class ProjectToolProviderTests {
 
     let provider = ProjectToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["project.todos"]),
           projectDirectory: directory
@@ -1001,6 +1022,7 @@ final class ProjectToolProviderTests {
 
     let provider = ProjectToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["project.env_files"]),
           projectDirectory: directory
@@ -1108,6 +1130,7 @@ final class ProjectToolProviderTests {
 
     let provider = ProjectToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["project.dependency_files"]),
           projectDirectory: directory
@@ -1210,6 +1233,7 @@ final class ProjectToolProviderTests {
 
     let provider = ProjectToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["project.project_roots"]),
           projectDirectory: directory
@@ -1322,6 +1346,7 @@ final class ProjectToolProviderTests {
 
     let provider = ProjectToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["project.documentation_files"]),
           projectDirectory: directory
@@ -1451,6 +1476,7 @@ final class ProjectToolProviderTests {
 
     let provider = ProjectToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["project.agent_files"]),
           projectDirectory: directory
@@ -1566,6 +1592,7 @@ final class ProjectToolProviderTests {
 
     let provider = ProjectToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["project.instructions"]),
           projectDirectory: directory
@@ -1696,6 +1723,7 @@ final class ProjectToolProviderTests {
 
     let provider = ProjectToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["project.test_files"]),
           projectDirectory: directory
@@ -1808,6 +1836,7 @@ final class ProjectToolProviderTests {
 
     let provider = ProjectToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["project.ci_files"]),
           projectDirectory: directory
@@ -1949,6 +1978,7 @@ final class ProjectToolProviderTests {
 
     let provider = ProjectToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["project.infra_files"]),
           projectDirectory: directory
@@ -2088,6 +2118,7 @@ final class ProjectToolProviderTests {
 
     let provider = ProjectToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["project.config_files"]),
           projectDirectory: directory
@@ -2210,6 +2241,7 @@ final class ProjectToolProviderTests {
 
     let provider = ProjectToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["project.ignore_files"]),
           projectDirectory: directory
@@ -2327,6 +2359,7 @@ final class ProjectToolProviderTests {
 
     let provider = ProjectToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["project.asset_files"]),
           projectDirectory: directory
@@ -2484,6 +2517,7 @@ final class ProjectToolProviderTests {
 
     let provider = ProjectToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["project.archive_files"]),
           projectDirectory: directory
@@ -2627,6 +2661,7 @@ final class ProjectToolProviderTests {
 
     let provider = ProjectToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["project.log_files"]),
           projectDirectory: directory
@@ -2765,6 +2800,7 @@ final class ProjectToolProviderTests {
 
     let provider = ProjectToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["project.data_files"]),
           projectDirectory: directory
@@ -2934,6 +2970,7 @@ final class ProjectToolProviderTests {
 
     let provider = ProjectToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["project.schema_files"]),
           projectDirectory: directory
@@ -3077,6 +3114,7 @@ final class ProjectToolProviderTests {
 
     let provider = ProjectToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["project.source_files"]),
           projectDirectory: directory
@@ -3202,6 +3240,7 @@ final class ProjectToolProviderTests {
 
     let provider = ProjectToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["project.outline"]),
           projectDirectory: directory
@@ -3332,6 +3371,7 @@ final class ProjectToolProviderTests {
 
     let provider = ProjectToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration(
           cli: CLISectionConfig(commands: [
             CLICommandConfig(id: "npm", executable: "npm"),
@@ -3417,11 +3457,13 @@ final class ProjectToolProviderTests {
 
   @Test
   func testProjectGitChangesIsExposedOnlyWhenEnabled() throws {
-    let disabled = ProjectToolProvider(environment: ToolEnvironment(configuration: .fixture()))
+    let disabled = ProjectToolProvider(
+      environment: ToolEnvironment(launcher: testExecutionLauncher(), configuration: .fixture()))
     #expect(
       !((try disabled.definitions()).map(\.tool.name).contains("project.git_changes")))
     let enabled = ProjectToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: .fixture(builtin: .init(enabled: ["project.git_changes"]))))
     #expect((try enabled.definitions()).map(\.tool.name).contains("project.git_changes"))
   }
@@ -3430,6 +3472,7 @@ final class ProjectToolProviderTests {
   func testProjectGitChangesRequiresGitProvider() {
     let provider = ProjectToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: .fixture(builtin: .init(enabled: ["project.git_changes"]))))
     expectThrows(
       try provider.callTool(

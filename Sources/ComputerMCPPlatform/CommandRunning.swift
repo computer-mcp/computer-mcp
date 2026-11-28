@@ -1,3 +1,4 @@
+import ComputerMCPCore
 import Foundation
 
 package struct CommandResult: Codable, Equatable, Sendable {
@@ -9,6 +10,7 @@ package struct CommandResult: Codable, Equatable, Sendable {
   package var stderr: String
   package var stdoutTruncated: Bool
   package var stderrTruncated: Bool
+  package var ownership: ExecutionOwnershipReport?
 
   private enum CodingKeys: String, CodingKey {
     case executable
@@ -19,6 +21,7 @@ package struct CommandResult: Codable, Equatable, Sendable {
     case stderr
     case stdoutTruncated = "stdout_truncated"
     case stderrTruncated = "stderr_truncated"
+    case ownership
   }
 
   package init(
@@ -29,7 +32,7 @@ package struct CommandResult: Codable, Equatable, Sendable {
     stdout: String,
     stderr: String,
     stdoutTruncated: Bool,
-    stderrTruncated: Bool
+    stderrTruncated: Bool, ownership: ExecutionOwnershipReport? = nil
   ) {
     self.executable = executable
     self.arguments = arguments
@@ -39,6 +42,7 @@ package struct CommandResult: Codable, Equatable, Sendable {
     self.stderr = stderr
     self.stdoutTruncated = stdoutTruncated
     self.stderrTruncated = stderrTruncated
+    self.ownership = ownership
   }
 
 }
@@ -52,6 +56,7 @@ package struct CommandDataResult: Equatable, Sendable {
   package var stderr: Data
   package var stdoutTruncated: Bool
   package var stderrTruncated: Bool
+  package var ownership: ExecutionOwnershipReport?
 
   package init(
     executable: String,
@@ -61,7 +66,7 @@ package struct CommandDataResult: Equatable, Sendable {
     stdout: Data,
     stderr: Data,
     stdoutTruncated: Bool,
-    stderrTruncated: Bool
+    stderrTruncated: Bool, ownership: ExecutionOwnershipReport? = nil
   ) {
     self.executable = executable
     self.arguments = arguments
@@ -71,6 +76,7 @@ package struct CommandDataResult: Equatable, Sendable {
     self.stderr = stderr
     self.stdoutTruncated = stdoutTruncated
     self.stderrTruncated = stderrTruncated
+    self.ownership = ownership
   }
 
   package var stdoutString: String {
@@ -92,6 +98,29 @@ package protocol CommandRunning: Sendable {
     maxOutputBytes: Int
   ) throws -> CommandResult
 
+  /// Runs with a host-constructed environment, never inheriting process variables.
+  /// Full access uses exactly the supplied values; sandbox locations and network settings take precedence.
+  func runIsolated(
+    executable: String, arguments: [String], workingDirectory: URL?,
+    environment: [String: String], timeoutMilliseconds: Int, maxOutputBytes: Int
+  ) throws -> CommandResult
+
+  /// Writes stdout to an already-open host-owned descriptor without reopening its pathname.
+  /// The environment is an explicit caller-owned set; process and runner defaults are not merged.
+  func runToFile(
+    executable: String, arguments: [String], workingDirectory: URL?,
+    environment: [String: String], timeoutMilliseconds: Int, maxOutputBytes: Int,
+    outputDescriptor: Int32
+  ) throws -> CommandResult
+
+  /// The child uses the opened directory and streams through the supplied descriptors.
+  /// The environment is an explicit caller-owned set; process and runner defaults are not merged.
+  func runInDirectory(
+    executable: String, arguments: [String], directoryDescriptor: Int32,
+    inputDescriptor: Int32, outputDescriptor: Int32, environment: [String: String],
+    timeoutMilliseconds: Int, maxOutputBytes: Int
+  ) throws -> CommandResult
+
   func runData(
     executable: String,
     arguments: [String],
@@ -100,6 +129,35 @@ package protocol CommandRunning: Sendable {
     timeoutMilliseconds: Int,
     maxOutputBytes: Int
   ) throws -> CommandDataResult
+}
+
+extension CommandRunning {
+  package func runInDirectory(
+    executable: String, arguments: [String], directoryDescriptor: Int32,
+    inputDescriptor: Int32, outputDescriptor: Int32, environment: [String: String],
+    timeoutMilliseconds: Int, maxOutputBytes: Int
+  ) throws -> CommandResult {
+    throw CommandRunnerError.launchFailed(
+      "This command runner does not support descriptor working directories.")
+  }
+
+  package func runIsolated(
+    executable: String, arguments: [String], workingDirectory: URL?,
+    environment: [String: String], timeoutMilliseconds: Int, maxOutputBytes: Int
+  ) throws -> CommandResult {
+    try run(
+      executable: executable, arguments: arguments, workingDirectory: workingDirectory,
+      environment: environment, timeoutMilliseconds: timeoutMilliseconds,
+      maxOutputBytes: maxOutputBytes)
+  }
+
+  package func runToFile(
+    executable: String, arguments: [String], workingDirectory: URL?,
+    environment: [String: String], timeoutMilliseconds: Int, maxOutputBytes: Int,
+    outputDescriptor: Int32
+  ) throws -> CommandResult {
+    throw CommandRunnerError.launchFailed("This command runner does not support descriptor output.")
+  }
 }
 
 package enum CommandRunnerError: Error, LocalizedError, Equatable {

@@ -6,47 +6,73 @@ import Testing
 @testable import ComputerMCPConfiguration
 @testable import ComputerMCPCore
 @testable import ComputerMCPPlatform
+@testable import ComputerMCPPlatformPOSIX
 @testable import ComputerMCPProcess
 @testable import ComputerMCPToolsCLI
+
+#if os(macOS)
+  import ComputerMCPDarwinTestSupport
+#endif
 
 @Suite(.nativeIntegration, .timeLimit(.minutes(1)))
 struct CLIExecutionContextTests {
   @Test(arguments: ["probe", "./probe"], [String?.none, "nested"])
-  func rawHelpAndExecUseTheInspectedProjectAndEnvironment(executable: String, cwd: String?)
+  func metadataHelpAndExecUseRegisteredContext(executable: String, cwd: String?)
     async throws
   {
     let fixture = try ContextFixture(cwd: cwd)
     defer { fixture.cleanup() }
+    let host = [
+      "PATH": ".:/usr/bin:/bin", "CLI_CONTEXT_VALUE": "host", "CLI_CONTEXT_OVERRIDE": "base",
+    ]
+    let runner = CLIContextCommandRunner(environment: host)
     let provider = CLIToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: fixture.configuration(executable: executable, cwd: cwd),
-        environment: [
-          "PATH": ".:/usr/bin:/bin", "CLI_CONTEXT_VALUE": "host", "CLI_CONTEXT_OVERRIDE": "base",
-        ]))
+        commandRunner: runner, environment: host))
     let status = try payload(
       provider.callTool(.init(name: "cli.status", arguments: .object([:]), context: .empty)))
-    #expect(
-      status.objectValue?["commands"]?.arrayValue?.first?.objectValue?["resolved_path"]
-        == .string(fixture.executable.path))
+    let resolvedPath = try #require(
+      status.objectValue?["commands"]?.arrayValue?.first?.objectValue?["resolved_path"]?.stringValue
+    )
+    let resolvedExecutable = try ProjectPathResolver.canonicalProject(
+      URL(fileURLWithPath: resolvedPath))
+    #expect(resolvedExecutable.path == fixture.executable.path)
     let help = try payload(
       provider.callTool(
         .init(
           name: "cli.help", arguments: .object(["id": .string("probe")]), context: .empty)))
-    let execution = try payload(
-      provider.callTool(
-        .init(
-          name: "cli.exec",
-          arguments: .object([
-            "id": .string("probe"), "argv": .array([.string("hello world"), .string("")]),
-          ]), context: .empty)))
-    #expect(help.objectValue?["stdout"] == .string("host|override|--help\n"))
+    #expect(runner.calls.isEmpty)
+    let execution = try await withCLIProcessScope(
+      directory: fixture.executable.deletingLastPathComponent(), readOnly: true,
+      variables: host.merging(["CLI_CONTEXT_OVERRIDE": "override"]) { _, value in value }
+    ) {
+      try payload(
+        provider.callTool(
+          .init(
+            name: "cli.exec",
+            arguments: .object([
+              "id": .string("probe"), "argv": .array([.string("hello world"), .string("")]),
+            ]), context: .empty)))
+    }
+    #expect(help.objectValue?["executed"] == .bool(false))
     #expect(execution.objectValue?["stdout"] == .string("host|override|hello world\n"))
     #expect(execution.objectValue?["executable"] == .string(executable))
+    let call = try #require(runner.calls.first)
+    #expect(runner.calls.count == 1 && call.executable == executable)
+    #expect(call.arguments == ["hello world", ""])
+    #expect(call.directory == fixture.executable.deletingLastPathComponent())
+    #expect(call.environment == ["CLI_CONTEXT_OVERRIDE": "override"])
     await provider.environment.registeredCommands.execution.shutdown()
   }
 
-  @Test(arguments: [CLITreeSource.Kind.file, .introspection, .helper])
-  func treeDiscoveryAndExecutionUseTheInspectedEnvironment(kind: CLITreeSource.Kind) async throws {
+  @Test(
+    arguments: nativeSandboxAvailable
+      ? [CLITreeSource.Kind.file, .introspection, .helper] : [.file])
+  func treeDiscoveryUsesFixedEnvironmentAndExecutionUsesConfiguredEnvironment(
+    kind: CLITreeSource.Kind
+  ) async throws {
     let fixture = try ContextFixture(cwd: nil)
     defer { fixture.cleanup() }
     let command = CLICommandDescriptor(
@@ -56,13 +82,13 @@ struct CLIExecutionContextTests {
     let treeURL = fixture.root.appendingPathComponent("tree.json")
     try JSONEncoder().encode(tree).write(to: treeURL)
     let exporter = fixture.root.appendingPathComponent("exporter")
-    try "#!/bin/sh\n[ \"$CLI_CONTEXT_VALUE\" = host ] || exit 42\nexec /bin/cat tree.json\n".write(
+    try "#!/bin/sh\n[ -z \"$CLI_CONTEXT_VALUE\" ] || exit 42\nexec /bin/cat tree.json\n".write(
       to: exporter, atomically: true, encoding: .utf8)
     try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: exporter.path)
     var configuration = fixture.configuration(executable: "probe", cwd: nil)
     if kind == .introspection {
       try
-        "#!/bin/sh\nif [ \"$1\" = export ]; then\n [ \"$CLI_CONTEXT_VALUE\" = host ] || exit 42\n exec /bin/cat tree.json\nfi\nprintf '%s|%s|%s\\n' \"$CLI_CONTEXT_VALUE\" \"$CLI_CONTEXT_OVERRIDE\" \"$1\"\n"
+        "#!/bin/sh\nif [ \"$1\" = export ]; then\n [ -z \"$CLI_CONTEXT_VALUE\" ] || exit 42\n exec /bin/cat tree.json\nfi\nprintf '%s|%s|%s\\n' \"$CLI_CONTEXT_VALUE\" \"$CLI_CONTEXT_OVERRIDE\" \"$1\"\n"
         .write(to: fixture.executable, atomically: true, encoding: .utf8)
       try FileManager.default.setAttributes(
         [.posixPermissions: 0o700], ofItemAtPath: fixture.executable.path)
@@ -74,16 +100,27 @@ struct CLIExecutionContextTests {
       args: kind == .introspection ? ["export"] : [])
     let provider = CLIToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: configuration,
         environment: [
           "PATH": ".:/usr/bin:/bin", "CLI_CONTEXT_VALUE": "host", "CLI_CONTEXT_OVERRIDE": "base",
         ]))
-    let treeProvider = try #require(provider.treeProviders().first)
+    let treeProvider = try await withCLIProcessScope(directory: fixture.root, readOnly: true) {
+      try #require(provider.treeProviders().first)
+    }
+    let native = try #require(treeProvider as? CLITreeToolProvider)
+    #expect(
+      native.registration.env == [
+        "PATH": ".:/usr/bin:/bin", "CLI_CONTEXT_VALUE": "host", "CLI_CONTEXT_OVERRIDE": "override",
+      ])
     let tool = try #require(
       treeProvider.definitions().map(\.tool).first { $0.name.hasPrefix("cli_") })
-    let result = try await treeProvider.callToolAsync(
-      .init(
-        name: tool.name, arguments: .object([:]), context: .empty))
+    let result = try await withCLIProcessScope(
+      directory: fixture.root, readOnly: true, variables: native.registration.env
+    ) {
+      try await treeProvider.callToolAsync(
+        .init(name: tool.name, arguments: .object([:]), context: .empty))
+    }
     #expect(
       CLITreeTests.output(result)?["stdout"]?.objectValue?["data"]
         == .string("host|override|call\n"))
@@ -92,12 +129,20 @@ struct CLIExecutionContextTests {
 
   @Test
   func anExplicitRunnerEnvironmentDoesNotReintroduceAmbientValues() throws {
-    let result = try ProcessCommandRunner(environment: ["PATH": "/usr/bin:/bin"]).run(
-      executable: "/usr/bin/env",
-      arguments: [],
-      workingDirectory: FileManager.default.temporaryDirectory,
-      environment: ["CLI_CONTEXT_VALUE": "isolated"], timeoutMilliseconds: 2_000,
-      maxOutputBytes: 1_024)
+    let administration = try ExecutionAdministration(
+      mode: .fullAccess,
+      environment: .init(fullAccessVariables: [
+        "PATH": "/usr/bin:/bin", "CLI_CONTEXT_VALUE": "isolated",
+      ]))
+    let result = try ExecutionAdministration.$current.withValue(administration) {
+      try ProcessCommandRunner(
+        launcher: testExecutionLauncher(), environment: ["PATH": "/usr/bin:/bin"]
+      ).run(
+        executable: "/usr/bin/env", arguments: [],
+        workingDirectory: FileManager.default.temporaryDirectory,
+        environment: ["CLI_CONTEXT_VALUE": "isolated"], timeoutMilliseconds: 2_000,
+        maxOutputBytes: 1_024)
+    }
     #expect(result.exitCode == 0, "\(result.stderr)")
     #expect(!result.timedOut)
     let variables = result.stdout.split(separator: "\n")
@@ -106,7 +151,7 @@ struct CLIExecutionContextTests {
   }
 
   @Test
-  func aMissingInterpreterFailsBeforeRawHelpOrExecution() async throws {
+  func aMissingInterpreterAllowsMetadataHelpAndRejectsExecution() async throws {
     let fixture = try ContextFixture(cwd: nil)
     defer { fixture.cleanup() }
     try "#!/usr/bin/env unavailable-cli-context-interpreter\n".write(
@@ -115,6 +160,7 @@ struct CLIExecutionContextTests {
       [.posixPermissions: 0o700], ofItemAtPath: fixture.executable.path)
     let provider = CLIToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: fixture.configuration(executable: "./probe", cwd: nil),
         environment: ["PATH": fixture.root.path]))
     let status = try payload(
@@ -122,11 +168,10 @@ struct CLIExecutionContextTests {
     #expect(
       status.objectValue?["commands"]?.arrayValue?.first?.objectValue?["resolution"]?.objectValue?[
         "status"] == .string("interpreter_unavailable"))
-    #expect(throws: CommandRunnerError.self) {
-      try provider.callTool(
-        .init(
-          name: "cli.help", arguments: .object(["id": .string("probe")]), context: .empty))
-    }
+    let help = try payload(
+      provider.callTool(
+        .init(name: "cli.help", arguments: .object(["id": .string("probe")]), context: .empty)))
+    #expect(help.objectValue?["executed"] == .bool(false))
     #expect(throws: CommandRunnerError.self) {
       try provider.callTool(
         .init(
@@ -148,12 +193,14 @@ private struct ContextFixture {
   let executable: URL
 
   init(cwd: String?) throws {
-    let root = FileManager.default.temporaryDirectory.appendingPathComponent(
-      "cli-context-\(UUID().uuidString)"
-    ).standardizedFileURL.resolvingSymlinksInPath()
+    let candidate = FileManager.default.temporaryDirectory.appendingPathComponent(
+      "cli-context-\(UUID().uuidString)")
+    try FileManager.default.createDirectory(
+      at: cwd.map { candidate.appendingPathComponent($0) } ?? candidate,
+      withIntermediateDirectories: true)
+    let root = try ProjectPathResolver.canonicalProject(candidate)
     self.root = root
     let directory = cwd.map { root.appendingPathComponent($0) } ?? root
-    try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
     executable = directory.appendingPathComponent("probe")
     try "#!/bin/sh\nprintf '%s|%s|%s\\n' \"$CLI_CONTEXT_VALUE\" \"$CLI_CONTEXT_OVERRIDE\" \"$1\"\n"
       .write(to: executable, atomically: true, encoding: .utf8)

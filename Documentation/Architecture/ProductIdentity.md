@@ -18,7 +18,7 @@ on macOS 14 or later.
   Skills supply instructions; authorized tools perform execution.
 - **Multi-computer:** connect each computer's gateway to the client and select
   the intended host connection, then a project on that host. Each gateway
-  retains its own registrations, credentials, policy, approvals and audit.
+  retains its own registrations, credentials, permissions, requests and audit.
   Project IDs are host-scoped. This is not a shared filesystem or automatic
   cross-host task migration; availability depends on the client's connection
   support and each host staying online.
@@ -50,7 +50,7 @@ integration alongside other local capabilities. Codex can also be a client of
 Computer MCP. Neither relationship grants implicit authority to the other.
 The adapter owns its runtimes; it cannot stop an unrelated Desktop, IDE or CLI
 session. Native Codex configuration, authentication and action approvals remain
-Codex-owned. The host owns caller admission, its own approvals and audit.
+Codex-owned. The host owns caller admission, its own permission requests and audit.
 
 Computer MCP provides capabilities for an orchestrating client. Agent memory,
 proactive scheduling and a hosted cloud computer are separate product concerns.
@@ -78,10 +78,15 @@ This document owns product meaning, the tagline and voice; text rendered into
 brand images follows it. The organization
 [DESIGN.md](https://github.com/computer-mcp/.github/blob/master/DESIGN.md) owns
 the visual system for the App icon, README headers, social cards and the
-website. `Resources/ComputerMCPApp/AppIcon.icon`, `Documentation/Brand/` and
-`.github/brand/` are imports locked by `.github/brand/brand.lock.json`; update
-them with the organization repository's `python3 Brand/brand.py sync`, and CI
-verifies the lock. An App icon change alters candidate bytes; follow
+website. The organization generates App icons with `apple-app-icon-design` and
+component icons with `apple-framework-icon-design`. Deliver icon updates through
+a consumer pull request and record the destination and SHA-256 in the icon's
+`provenance.json`, following the organization's
+[icon update procedure](https://github.com/computer-mcp/.github#updating-icons).
+
+CI checks the imported files in `Resources/ComputerMCPApp/AppIcon.icon`,
+`Documentation/Brand/` and `.github/brand/` against
+`.github/brand/brand.lock.json`. An App icon change alters candidate bytes. Follow
 [Versioning](../../VERSIONING.md) for version rules and the
 [Release Reference](../Reference/Release.md#evidence-reuse-and-invalidation)
 for candidate and installed acceptance.

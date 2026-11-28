@@ -1,0 +1,756 @@
+import ComputerMCPConfiguration
+import ComputerMCPCore
+import ComputerMCPDownstream
+import ComputerMCPPermissions
+import ComputerMCPPersistence
+import ComputerMCPPlatform
+import ComputerMCPProcess
+import ComputerMCPSandbox
+import ComputerMCPTestSupport
+import ComputerMCPToolKit
+import ComputerMCPWorktrees
+import Foundation
+import Testing
+
+@testable import ComputerMCPGateway
+
+#if os(macOS)
+  import ComputerMCPDarwinTestSupport
+#endif
+
+@Suite(.nativeIntegration, .serialized)
+struct GatewayWorktreeServiceTests {
+  @Test func h12WorktreeInventoryValidatesResolvedSourceAndOwnership() throws {
+    let f = try WorktreeServiceFixture()
+    defer { f.remove() }
+    let managed = try f.repository().create(name: "privacy-inventory")
+    let foreign = f.root.appendingPathComponent("foreign")
+    _ = try f.git(["worktree", "add", "--detach", foreign.path, "HEAD"])
+
+    func inventory(resolving root: URL) throws -> ProjectWorktreeInventory {
+      let platform = PlatformServices(
+        launcher: f.platform.launcher, projectGrants: InventoryProjectBookmark(root: root),
+        pluginDirectories: f.platform.pluginDirectories, applications: f.platform.applications,
+        toolProviders: f.platform.toolProviders, managementToolNames: [],
+        executableSearchDirectories: [], gitExecutable: f.platform.gitExecutable,
+        fileChanges: f.platform.fileChanges,
+        permissionPolicyReader: f.platform.permissionPolicyReader)
+      let inventory = try f.database.projectWorktreeInventory(platform: platform)
+      return try #require(inventory.first { $0.source.id == "source" })
+    }
+
+    let current = try inventory(resolving: f.source)
+    #expect(current.isInventoryAvailable)
+    let managedRow = try #require(current.worktrees.first { $0.projectID == managed.projectID })
+    #expect(managedRow.lifecycleState == .active)
+    #expect(managedRow.worktreeID != nil && managedRow.isInspectable)
+    let canonicalForeign = try ProjectPathResolver.canonicalProject(foreign)
+    let checkout = try #require(
+      current.worktrees.first { entry in
+        guard let path = entry.path else { return false }
+        return (try? ProjectPathResolver.canonicalProject(URL(fileURLWithPath: path)))
+          == canonicalForeign
+      }, "\(current.worktrees.map(\.path))")
+    #expect(checkout.worktreeID == nil && checkout.isInspectable)
+
+    let moved = try inventory(resolving: foreign)
+    #expect(!moved.isInventoryAvailable)
+    let retained = try #require(moved.worktrees.first)
+    #expect(moved.worktrees.count == 1)
+    #expect(retained.worktreeID == managedRow.worktreeID)
+    #expect(retained.lifecycleRevision == managedRow.lifecycleRevision)
+    #expect(!retained.isInspectable)
+  }
+
+  @Test func recoveryOwnerRequiresAppAuthorityAndUsesFileBackedLedger() throws {
+    let f = try WorktreeServiceFixture()
+    defer { f.remove() }
+    let denied = try GatewayRecoveryOwnerService(
+      database: f.database, platform: f.platform,
+      owner: .init(caller: .localCLI, profileID: .localAdmin, trustedPrincipalID: "local-cli"))
+    #expect(throws: WorktreeRecoveryOwnerError.unauthorized) { try denied.list() }
+    let owner = try GatewayRecoveryOwnerService(
+      database: f.database, platform: f.platform,
+      owner: .init(caller: .localApp, profileID: .localAdmin, trustedPrincipalID: "local-app"))
+    #expect(try owner.list().isEmpty)
+    let worktrees = try f.repository()
+    let created = try worktrees.create(name: "recovery-owner")
+    let publication = try worktrees.publish(projectID: created.projectID) { _ in }
+    let view = try #require(owner.list().first)
+    let root = try #require(view.records.first { $0.oid == publication.oid })
+    let review = try owner.reviewRelease(
+      storeKey: view.key, generation: view.generation, selections: [root.selection])
+    let released = try owner.confirm(review)
+    #expect(released.outcome == .released)
+    #expect(try owner.resume(handle: review.handle) == released)
+  }
+
+  @Test func ownerReleaseResumesDuringExecutionReservationBeforeSQLAttachment() async throws {
+    let f = try WorktreeServiceHost()
+    defer { f.remove() }
+    let store = try f.database.configuredPermissionStore()
+    let service = GatewayPermissionService(
+      store: store, policyReader: f.platform.permissionPolicyReader)
+    try f.configureEnvironment(using: service)
+    try f.initializeRepository()
+    let worktrees = try f.repository()
+    let created = try worktrees.create(name: "reservation-gap")
+    let worktree = try #require(
+      try f.database.executionWorktree(
+        projectID: created.projectID, directory: created.path, platform: f.platform))
+    let oids = try ["first", "second"].map { name in
+      try Data(name.utf8).write(to: created.path.appendingPathComponent(name))
+      let oid = try f.git(["hash-object", "-w", name], at: created.path)
+        .trimmingCharacters(in: .newlines)
+      _ = try f.git(["update-ref", "refs/tags/" + name, oid], at: created.path)
+      return oid
+    }
+    _ = try worktrees.publish(projectID: created.projectID) { _ in }
+
+    let principal = ExecutionContext(
+      caller: .localApp, profileID: .localAdmin, trustedPrincipalID: "local-app")
+    let owner = try GatewayRecoveryOwnerService(
+      database: f.database, platform: f.platform, owner: principal)
+    let view = try #require(try owner.list().first)
+    let selected = view.records.filter { oids.contains($0.oid) }
+    try #require(selected.count == 2 && selected.allSatisfy { $0.state == .retained })
+    let review = try owner.reviewRelease(
+      storeKey: view.key, generation: view.generation, selections: selected.map(\.selection))
+    let recovery = try #require(f.database.worktreeStorage).recovery
+      .appendingPathComponent("stores/" + view.key)
+    let catalog = recovery.appendingPathComponent("catalog.json")
+    let originalCatalog = try Data(contentsOf: catalog)
+    let retained = try selected.map { record in
+      let name = record.id.uuidString.lowercased()
+      let anchor = recovery.appendingPathComponent("repository.git/refs/recovery/" + name)
+      let receipt = recovery.appendingPathComponent("released/" + name + ".json")
+      return (anchor: anchor, bytes: try Data(contentsOf: anchor), receipt: receipt)
+    }
+
+    // Stage a resumable confirmation with frozen gate identities and no holds.
+    let active = recovery.appendingPathComponent("owner-operation.json")
+    let submitter = try GatewayRecoveryOwnerService(
+      database: f.database, platform: f.platform, owner: principal,
+      journalIO: .init(beforeDirectorySync: {
+        let bytes = try Data(contentsOf: active)
+        let record = try JSONSerialization.jsonObject(with: bytes) as? [String: Any]
+        if let gates = record?["gates"] as? [[String: Any]], !gates.isEmpty {
+          throw WorktreeServiceTestFailure.releaseSubmissionInterrupted
+        }
+      }))
+    #expect(throws: WorktreeServiceTestFailure.releaseSubmissionInterrupted) {
+      try submitter.confirm(review)
+    }
+    guard case .submitted(let pending) = try owner.operation(handle: review.handle) else {
+      throw WorktreeServiceTestFailure.unexpected
+    }
+    try #require(pending.outcome == .pending && pending.request.handle == review.handle)
+    try #require(pending.gates.map(\.cleanup) == [.pending])
+
+    let reservation = AsyncStream<WorktreeWriterUse>.makeStream(
+      bufferingPolicy: .bufferingNewest(1))
+    let attachment = AsyncStream<Void>.makeStream()
+    let runtimeDirectory = f.database.permissionExecutionRoot
+    let coordinator = try ExecutionRevocationCoordinator(
+      store: store, launcher: f.platform.launcher, directory: runtimeDirectory,
+      afterWorktreeReservation: { use in
+        reservation.continuation.yield(use)
+        for await _ in attachment.stream {}
+      })
+    try await coordinator.recover()
+    let authorization = try service.admit(
+      subject: .init(
+        context: .init(
+          caller: .secureTunnel, profileID: .chatGPTOperate, trustedPrincipalID: "execution")),
+      tool: "fixture.write", projectID: created.projectID, argumentsDigest: UUID().uuidString,
+      requirements: .init(
+        actions: [.init(requirement: .init(.project("source"), .write), scope: .project("source"))],
+        paths: [.init(path: .init(worktree.directory.value), operation: .write)],
+        sandboxProjectID: "source"))
+    guard case .allowed(let proof) = authorization else {
+      throw WorktreeServiceTestFailure.unexpected
+    }
+    let scratch = runtimeDirectory.appendingPathComponent(proof.id.uuidString)
+    try FileManager.default.createDirectory(at: scratch, withIntermediateDirectories: false)
+    let context = try GatewaySandboxContext(
+      directory: worktree.directory,
+      temporaryDirectory: .init(ProjectPathResolver.canonicalProject(scratch).path),
+      fixedHostOperation: .init(
+        operation: .fileMutation, gitExecutable: .init(f.platform.gitExecutable),
+        directory: worktree.directory, allowsWrites: true), worktree: worktree)
+
+    func finish(_ prepared: PreparedExecutionContext) async throws {
+      try prepared.finishAdmission()
+      // The first pass can join a reconciliation that read before admission closed.
+      try await coordinator.reconcile()
+      try await coordinator.reconcile()
+    }
+    @Sendable func resumeDuringRace() throws -> RecoveryOperationStatus? {
+      do {
+        return try owner.resume(handle: review.handle)
+      } catch WorktreeError.busy("Recovery store is in use.") {
+        return nil
+      }
+    }
+    let preparing = Task {
+      defer { reservation.continuation.finish() }
+      return try await coordinator.prepare(
+        authorizationID: proof.id, context: context, worktreeAdmission: worktree.binding.admission)
+    }
+    do {
+      var reservations = reservation.stream.makeAsyncIterator()
+      guard let use = await reservations.next() else {
+        try Task.checkCancellation()
+        _ = try await preparing.value
+        Issue.record("Prepare completed without observing its durable worktree reservation.")
+        throw WorktreeServiceTestFailure.unexpected
+      }
+      try store.readWithDatabase { database, ledger in
+        let row = try #require(try ExecutionRuntimeRecord.load(use.executionID, database))
+        #expect(row.ownerID == use.ownerID && row.ownerID == coordinator.ownerIdentity)
+        #expect(row.worktreeUse == nil && !row.admissionFinished && !row.completed)
+        #expect(ledger.executions[use.executionID]?.isRunning == true)
+      }
+      try worktree.binding.admission.requireOpen(use)
+
+      async let first = resumeDuringRace()
+      async let second = resumeDuringRace()
+      let (firstAttempt, secondAttempt) = try await (first, second)
+      try #require(firstAttempt != nil || secondAttempt != nil)
+      // Store lock acquisition is nonblocking. A refused caller can replay
+      // after its peer settles while SQL attachment remains suspended.
+      let blocked = try firstAttempt ?? owner.resume(handle: review.handle)
+      let replay = try secondAttempt ?? owner.resume(handle: review.handle)
+      #expect(blocked == replay)
+      #expect(blocked.request.handle == review.handle)
+      #expect(
+        blocked.outcome == .busy("Worktree admission belongs to an active writer or operation."))
+      #expect(blocked.gates.map(\.cleanup) == [.cleared])
+      #expect(try Data(contentsOf: catalog) == originalCatalog)
+      for item in retained {
+        #expect(try Data(contentsOf: item.anchor) == item.bytes)
+        #expect(!FileManager.default.fileExists(atPath: item.receipt.path))
+      }
+      try worktree.binding.admission.requireOpen(use)
+      try store.readWithDatabase { database, _ in
+        let row = try #require(try ExecutionRuntimeRecord.load(use.executionID, database))
+        #expect(row.worktreeUse == nil && row.ownerID == use.ownerID && !row.completed)
+      }
+
+      attachment.continuation.finish()
+      let prepared = try await preparing.value
+      #expect(prepared.executionID == use.executionID)
+      try store.readWithDatabase { database, _ in
+        let row = try #require(try ExecutionRuntimeRecord.load(prepared.executionID, database))
+        #expect(
+          row.worktreeUse == use && row.invocationInFlight == true && row.worktreeDurable == true)
+      }
+      try worktree.binding.admission.requireOpen(use)
+      try await finish(prepared)
+      try store.readWithDatabase { database, ledger in
+        let row = try #require(try ExecutionRuntimeRecord.load(use.executionID, database))
+        #expect(row.completed && row.admissionFinished && row.invocationInFlight == false)
+        #expect(ledger.executions[use.executionID]?.isRunning == false)
+      }
+      #expect(throws: WorktreeError.busy("Worktree writer admission is closed.")) {
+        try worktree.binding.admission.requireOpen(use)
+      }
+      #expect(!FileManager.default.fileExists(atPath: scratch.path))
+
+      let fresh = try owner.reviewRelease(
+        storeKey: view.key, generation: view.generation, selections: selected.map(\.selection))
+      #expect(try owner.confirm(fresh).outcome == .released)
+      #expect(try owner.resume(handle: review.handle) == blocked)
+      for item in retained {
+        #expect(!FileManager.default.fileExists(atPath: item.anchor.path))
+        #expect(FileManager.default.fileExists(atPath: item.receipt.path))
+      }
+    } catch {
+      attachment.continuation.finish()
+      if let prepared = try? await preparing.value { try? await finish(prepared) }
+      throw error
+    }
+  }
+
+  @Test func sandboxLifecyclePreservesPrivateCommitAndProtectsBranches() throws {
+    let fixture = try WorktreeServiceFixture()
+    defer { fixture.remove() }
+    let created = try fixture.call(.add(name: "topic", branch: nil, base: nil))
+    let id = try #require(created.objectValue?["project_id"]?.stringValue)
+    let root = URL(fileURLWithPath: try #require(created.objectValue?["path"]?.stringValue))
+    #expect(created.objectValue?["base"] == .string("main"))
+    let record = try #require(try fixture.database.derivedProjects().first { $0.projectID == id })
+    let repository = try fixture.repository()
+    _ = try repository.topology(projectID: id)
+    try Data("private change".utf8).write(to: root.appendingPathComponent("value"))
+    let view: [String: String] = [:]
+    _ = try fixture.git(["add", "value"], at: root, environment: view)
+    _ = try fixture.git(
+      [
+        "-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid", "commit", "-m",
+        "Private",
+      ], at: root, environment: view)
+    let head = try fixture.git(["rev-parse", "HEAD"], at: root, environment: view)
+      .trimmingCharacters(in: .newlines)
+    #expect(try fixture.git(["rev-parse", "refs/heads/worktree/topic"]) != head + "\n")
+    #expect(throws: (any Error).self) {
+      try fixture.call(
+        .deleteBranch(name: "worktree/topic", force: true, dryRun: false, confirm: true))
+    }
+    #expect(throws: (any Error).self) {
+      try fixture.call(
+        .deleteBranch(name: "worktree/topic", force: false, dryRun: false, confirm: true))
+    }
+    let merged = try fixture.call(.merge(branch: "worktree/topic"))
+    #expect(merged.objectValue?["oid"] == .string(head))
+    #expect(
+      try String(contentsOf: fixture.source.appendingPathComponent("value"), encoding: .utf8)
+        == "private change")
+    let removed = try fixture.call(.remove(force: false), projectID: id)
+    #expect(removed.objectValue?["oid"] == .string(head))
+    #expect(removed.objectValue?["terminationWarnings"] == .array([]))
+    #expect(!FileManager.default.fileExists(atPath: root.path))
+    #expect(try fixture.database.project(id: id) == nil)
+    let deleted = try fixture.call(
+      .deleteBranch(name: record.worktree!.branchName, force: false, dryRun: false, confirm: true))
+    #expect(deleted.objectValue?["deleted"] == .bool(true))
+  }
+
+  @Test func hostServiceActionsPerformOnlyTheirLifecycleOperation() throws {
+    let fixture = try WorktreeServiceFixture()
+    defer { fixture.remove() }
+    let operation = GitWorktreeOperation.add(name: "topic", branch: nil, base: nil)
+    let proof = try fixture.admit(operation, projectID: "source")
+    for action in [MCPHostServiceAction.projectList, .projectRemoval, .diagnosticsSnapshot] {
+      #expect(throws: (any Error).self) {
+        try InvocationExecution.$current.withValue(
+          GatewayWorktreeInvocation(authorization: proof, hostAction: action)
+        ) { try fixture.service("source").perform(operation) }
+      }
+    }
+    #expect(try fixture.database.derivedProjects().isEmpty)
+    let operationID = UUID()
+    let outcome = try InvocationExecution.$current.withValue(
+      GatewayWorktreeInvocation(authorization: proof, hostAction: .projectProvision)
+    ) { try fixture.service("source").perform(operation, operationID: operationID) }
+    guard case .created(let created, let worktreeID) = outcome else {
+      Issue.record("Provisioning returned another outcome.")
+      return
+    }
+    // The reserved operation is the creation journal's operation and the worktree's ID.
+    #expect(worktreeID == operationID)
+    #expect(created.projectID == "worktree-" + operationID.uuidString.lowercased())
+    let storage = try #require(fixture.database.worktreeStorage)
+    #expect(try storage.creationOutcome(operationID: operationID) == .created(created))
+    #expect(try storage.creationOutcome(operationID: UUID()) == .notStarted)
+  }
+
+  @Test func restartReconcilesLifecycleOperationsFromTheirJournals() throws {
+    let fixture = try WorktreeServiceFixture()
+    defer { fixture.remove() }
+    let repository = try fixture.repository()
+    let storage = try #require(fixture.database.worktreeStorage)
+    let completedID = UUID()
+    let created = try repository.create(name: "completed", operationID: completedID)
+    let interruptedID = UUID()
+    _ = try repository.create(name: "interrupted", operationID: interruptedID)
+    // An in-progress creation journal leaves the outcome to journal recovery.
+    let name = "worktree-" + interruptedID.uuidString.lowercased() + ".json"
+    let journals = try WorktreeDirectory(storage.journals)
+    let original = try #require(try WorktreeJournalIO().read(name, in: journals, limit: 131_072))
+    var fields = try #require(try JSONSerialization.jsonObject(with: original) as? [String: Any])
+    fields["phase"] = "checkout"
+    let interrupted = try JSONSerialization.data(withJSONObject: fields, options: [.sortedKeys])
+    let removedID = UUID()
+    let removable = try repository.create(name: "removable")
+    let removal = try GatewaySynchronousOperation.run {
+      try await repository.remove(
+        projectID: removable.projectID, operationID: removedID, terminate: { _, _ in },
+        authorize: { _, _ in })
+    }
+    try WorktreeJournalIO().write(interrupted, name: name, in: journals, replacing: original)
+    let store = HostOperationStore(connection: fixture.database.connection)
+    let source = try #require(try fixture.database.project(id: "source"))
+    func record(
+      _ id: UUID, _ action: MCPHostServiceAction, project: String = "source", running: Bool
+    ) throws {
+      let admission = HostCallAdmission(
+        id: UUID(), generationID: UUID(), verifiedClientID: "client",
+        actingPrincipal: .plugin(.localServer("probe")), profileID: .chatGPTOperate,
+        caller: .secureTunnel, projectID: project, sourceProjectID: "source",
+        upstreamName: "adapter.lifecycle",
+        reference: .init(serverID: "probe", toolName: "lifecycle"),
+        action: action, argumentsDigest: "digest", authorizationID: UUID(),
+        authorizationRevision: 1, controlSessionID: nil, controlSessionRevision: nil,
+        requestID: "request")
+      try store.reserve(
+        .init(
+          id: id,
+          binding: .init(
+            admission: admission, action: action, pluginID: nil, contributionID: nil,
+            sourceRegisteredAt: source.createdAt, projectRegisteredAt: source.createdAt,
+            worktreeID: nil, arguments: [:])))
+      if running {
+        _ = try fixture.database.connection.writer.write {
+          try HostOperationStore.claim(id, in: $0)
+        }
+      }
+    }
+    let reservedID = UUID()
+    let absentID = UUID()
+    try record(reservedID, .projectProvision, running: false)
+    try record(completedID, .projectProvision, running: true)
+    try record(interruptedID, .projectProvision, running: true)
+    try record(absentID, .projectProvision, running: true)
+    try record(removedID, .projectRemoval, project: removable.projectID, running: true)
+    try fixture.database.reconcileHostOperations(owner: UUID())
+    #expect(try store.operation(id: reservedID)?.state == .failed)
+    #expect(try store.operation(id: absentID)?.state == .failed)
+    #expect(try store.operation(id: interruptedID)?.state == .recoveryRequired)
+    let completed = try #require(try store.operation(id: completedID))
+    #expect(completed.state == .completed)
+    #expect(completed.result?.objectValue?["path"] == .string(created.path.path))
+    #expect(
+      completed.result?.objectValue?["worktree_id"]
+        == .string(completedID.uuidString.lowercased()))
+    let removed = try #require(try store.operation(id: removedID))
+    #expect(removed.state == .completed)
+    #expect(removed.result?.objectValue?["oid"] == .string(removal.oid))
+    try fixture.database.reconcileHostOperations(owner: UUID())
+    #expect(try store.operation(id: completedID) == completed)
+    #expect(try store.unfinished().map(\.id) == [interruptedID])
+  }
+
+  @Test func preparedGitTransactionAbortsAndBoundsTheWholeSession() throws {
+    let fixture = try WorktreeServiceFixture()
+    defer { fixture.remove() }
+    let oid = try fixture.git(["rev-parse", "HEAD"]).trimmingCharacters(in: .newlines)
+    let command = WorktreeGitCommand(
+      arguments: ["update-ref", "--stdin"], directory: fixture.source,
+      environment: HostGitConfiguration.environment(home: fixture.root),
+      input: Data("start\ncreate refs/heads/prepared \(oid)\nprepare\n".utf8),
+      timeoutMilliseconds: 30_000, maxOutputBytes: 4096)
+    #expect(throws: WorktreeServiceTestFailure.self) {
+      try fixture.executor.withPreparedTransaction(command) {
+        #expect(
+          FileManager.default.fileExists(
+            atPath: fixture.source.appendingPathComponent(".git/refs/heads/prepared.lock").path))
+        throw WorktreeServiceTestFailure.unexpected
+      }
+    }
+    #expect(try fixture.git(["for-each-ref", "refs/heads/prepared"]).isEmpty)
+    var bounded = command
+    bounded.timeoutMilliseconds = 1000
+    var entered = false
+    #expect(throws: (any Error).self) {
+      try fixture.executor.withPreparedTransaction(bounded) {
+        entered = true
+        Thread.sleep(forTimeInterval: 1.2)
+      }
+    }
+    #expect(entered)
+    #expect(try fixture.git(["for-each-ref", "refs/heads/prepared"]).isEmpty)
+    #expect(
+      !FileManager.default.fileExists(
+        atPath: fixture.source.appendingPathComponent(".git/refs/heads/prepared.lock").path))
+  }
+
+  @Test func removalResumesAfterContentDisappearsBeforeRegistrationCleanup() throws {
+    let fixture = try WorktreeServiceFixture()
+    defer { fixture.remove() }
+    let result = try fixture.call(.add(name: "interrupted", branch: nil, base: nil))
+    let id = try #require(result.objectValue?["project_id"]?.stringValue)
+    let path = try #require(result.objectValue?["path"]?.stringValue)
+    let repository = try fixture.repository(
+      journalIO: .init(beforePublication: {
+        if !FileManager.default.fileExists(atPath: path) {
+          throw WorktreeServiceTestFailure.unexpected
+        }
+      }))
+    #expect(throws: WorktreeServiceTestFailure.self) {
+      try GatewaySynchronousOperation.run {
+        try await repository.remove(projectID: id, terminate: { _, _ in }, authorize: { _, _ in })
+      }
+    }
+    #expect(!FileManager.default.fileExists(atPath: path))
+    let record = try #require(try fixture.database.derivedProjects().first { $0.projectID == id })
+    #expect(record.state == .removing)
+    #expect(try GatewayDatabase.hostContentIdentity(record) == nil)
+    #expect(try fixture.database.project(id: id) != nil)
+    let removed = try fixture.call(.remove(force: false), projectID: id)
+    #expect(removed.objectValue?["project_id"] == .string(id))
+    #expect(try fixture.database.project(id: id) == nil)
+  }
+
+  @Test func sourceLocationAndCurrentAuthorityAreRequired() throws {
+    let fixture = try WorktreeServiceFixture()
+    defer { fixture.remove() }
+    let result = try fixture.call(.add(name: "guards", branch: nil, base: nil))
+    let id = try #require(result.objectValue?["project_id"]?.stringValue)
+    #expect(throws: (any Error).self) {
+      try fixture.call(.add(name: "nested", branch: nil, base: nil), projectID: id)
+    }
+    #expect(throws: (any Error).self) { try fixture.call(.remove(force: true)) }
+    #expect(throws: (any Error).self) {
+      try fixture.call(.add(name: "other", branch: "worktree/guards", base: nil))
+    }
+    let inventory = try fixture.call(.list)
+    let listProof = try fixture.admit(.list, projectID: "source")
+    let callback = try InvocationExecution.$current.withValue(
+      GatewayWorktreeInvocation(authorization: listProof, hostAction: .projectList)
+    ) { try fixture.service("source").perform(.list) }
+    guard case .listed(let items) = callback else {
+      Issue.record("The worktree list callback returned another outcome.")
+      return
+    }
+    let callbackInventory = MCPHostOperations.inventory(items)
+    #expect(inventory == callbackInventory)
+    let entries = try #require(inventory.objectValue?["worktrees"]?.arrayValue)
+    #expect(entries.count == 2)
+    let host = try #require(
+      entries.first { $0.objectValue?["project_id"] == .string(id) }?.objectValue)
+    let record = try #require(try fixture.database.derivedProjects().first { $0.projectID == id })
+    let path = try #require(result.objectValue?["path"]?.stringValue)
+    #expect(
+      host == [
+        "path": .string(path), "project_id": .string(id), "branch": .string("worktree/guards"),
+        "base": .string("main"), "ahead": .integer(0), "behind": .integer(0),
+        "dirty": .bool(false), "unavailable": .null,
+        "worktree_id": .string(record.provenance.worktreeID.uuidString.lowercased()),
+        "owner": .string("host"),
+      ])
+    if case .integer(0)? = host["ahead"] {
+    } else {
+      Issue.record("The builtin ahead count must use an integer value.")
+    }
+    if case .integer(0)? = host["behind"] {
+    } else {
+      Issue.record("The builtin behind count must use an integer value.")
+    }
+    let foreign = try #require(
+      entries.first { $0.objectValue?["owner"] == .string("foreign") }?.objectValue)
+    let foreignPath = try #require(foreign["path"]?.stringValue)
+    let sourceURL = try ProjectPathResolver.canonicalProject(URL(fileURLWithPath: foreignPath))
+    #expect(sourceURL.path == fixture.source.path)
+    #expect(
+      foreign == [
+        "path": .string(foreignPath), "project_id": .null, "branch": .string("main"),
+        "base": .null, "ahead": .null, "behind": .null, "dirty": .bool(false),
+        "unavailable": .string("No host-recorded base for this checkout."),
+        "worktree_id": .null, "owner": .string("foreign"),
+      ])
+    let proof = try fixture.admit(.remove(force: true), projectID: id)
+    var profile = try #require(try fixture.database.profiles().first { $0.id == .chatGPTOperate })
+    try profile.permissions.set(.granted(.read), for: .project("source"))
+    try fixture.database.saveProfile(profile)
+    #expect(throws: (any Error).self) {
+      try InvocationExecution.$current.withValue(GatewayWorktreeInvocation(authorization: proof)) {
+        try fixture.service(id).call(.remove(force: true))
+      }
+    }
+    #expect(try fixture.database.project(id: id) != nil)
+  }
+}
+
+private enum WorktreeServiceTestFailure: Error { case unexpected, releaseSubmissionInterrupted }
+
+struct WorktreeServiceFixture {
+  private let host: WorktreeServiceHost
+  let runtime: GatewayPermissionRuntime
+  var root: URL { host.root }
+  var source: URL { host.source }
+  var database: GatewayDatabase { host.database }
+  var platform: PlatformServices { host.platform }
+  var executor: GatewayWorktreeGit { host.executor }
+
+  init(policyReader: any ManagedPolicyReading = TestManagedPolicyReader()) throws {
+    host = try WorktreeServiceHost(policyReader: policyReader)
+    runtime = try host.database.permissionRuntime(platform: host.platform)
+    try host.configureEnvironment(using: runtime.service)
+    try host.initializeRepository()
+  }
+
+  func remove() { host.remove() }
+
+  func git(_ arguments: [String], at directory: URL? = nil, environment: [String: String] = [:])
+    throws -> String
+  {
+    try host.git(arguments, at: directory, environment: environment)
+  }
+
+  func service(_ projectID: String) -> GatewayWorktreeService {
+    .init(database: database, runtime: runtime, platform: platform, projectID: projectID)
+  }
+  func admit(_ operation: GitWorktreeOperation, projectID: String) throws -> InvocationAuthorization
+  {
+    let decision = try runtime.service.admit(
+      subject: .init(
+        context: .init(
+          caller: .secureTunnel,
+          profileID: .chatGPTOperate, trustedPrincipalID: "fixture")), tool: operation.toolName,
+      projectID: projectID, argumentsDigest: UUID().uuidString,
+      requirements: .init(
+        actions: [
+          .init(
+            requirement: .init(.project("source"), operation.isWriting ? .write : .read),
+            scope: .project("source"))
+        ],
+        paths: [.init(path: .init(source.path), operation: .read)], sandboxProjectID: "source"))
+    guard case .allowed(let proof) = decision else { throw WorktreeServiceTestFailure.unexpected }
+    return proof
+  }
+  func call(_ operation: GitWorktreeOperation, projectID: String = "source") throws -> JSONValue {
+    let proof = try admit(operation, projectID: projectID)
+    let invocation = try GatewaySynchronousOperation.run {
+      try await runtime.prepare(
+        authorization: proof,
+        descriptor: .init(
+          id: operation.toolName,
+          risk: .projectWrite, requirement: .init(access: .sourceProjectWrite),
+          projectRequirement: .required,
+          localOnly: false, usesNetwork: false, hostOperation: .worktreeLifecycle),
+        directory: source, connectionID: nil)
+    }
+    return try InvocationExecution.$current.withValue(invocation) {
+      try service(projectID).call(operation)
+    }
+  }
+  func repository(journalIO: WorktreeJournalIO = .init()) throws -> WorktreeRepository {
+    try host.repository(journalIO: journalIO)
+  }
+}
+
+private struct WorktreeServiceHost {
+  let root: URL
+  let source: URL
+  let database: GatewayDatabase
+  let platform: PlatformServices
+  let executor: GatewayWorktreeGit
+  init(policyReader: any ManagedPolicyReading = TestManagedPolicyReader()) throws {
+    let temporary = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    try FileManager.default.createDirectory(at: temporary, withIntermediateDirectories: true)
+    root = try ProjectPathResolver.canonicalProject(temporary)
+    source = root.appendingPathComponent("source")
+    let host = root.appendingPathComponent("host")
+    for directory in [source, host] {
+      try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: false)
+    }
+    database = try fixturePermissionDatabase(path: host.appendingPathComponent("state.sqlite").path)
+    try database.bootstrapPermissionProfiles([])
+    try database.saveProject(.init(id: "source", displayName: "Source", rootPath: source.path))
+    var permissions = Permissions()
+    try permissions.set(.granted(.write), for: .project("source"))
+    try database.saveProfile(
+      .init(id: .chatGPTOperate, permissions: permissions, allowedCallers: [.secureTunnel]))
+    let unused = WorktreeServicePlatform()
+    platform = PlatformServices(
+      launcher: testExecutionLauncher(), projectGrants: unused,
+      pluginDirectories: unused, applications: TestApplicationBundleLocator(),
+      toolProviders: unused,
+      managementToolNames: [], executableSearchDirectories: [],
+      gitExecutable: try testExecutable("git"),
+      fileChanges: { _ in throw WorktreeServiceTestFailure.unexpected },
+      permissionPolicyReader: policyReader)
+    executor = GatewayWorktreeGit(launcher: platform.launcher, executable: platform.gitExecutable)
+  }
+
+  func configureEnvironment(using service: GatewayPermissionService) throws {
+    try service.configureEnvironment(
+      .init(
+        projects: [.init(id: "source", root: .init(source.path))],
+        rules: [
+          .init(root: .init(root.path), kind: .userData),
+          .init(root: .init(root.appendingPathComponent("host").path), kind: .hostData),
+        ]),
+      trustedHosts: [], expectedProjects: database.projects(), expectedConfigurationRevision: nil)
+  }
+
+  func initializeRepository() throws {
+    _ = try git(["init", "--initial-branch=main"])
+    _ = try git(["config", "--local", "user.name", "Fixture"])
+    _ = try git(["config", "--local", "user.email", "fixture@example.invalid"])
+    try Data("initial".utf8).write(to: source.appendingPathComponent("value"))
+    _ = try git(["add", "value"])
+    _ = try git(["commit", "-m", "Initial"])
+  }
+  func remove() { try? FileManager.default.removeItem(at: root) }
+  func git(_ arguments: [String], at directory: URL? = nil, environment: [String: String] = [:])
+    throws -> String
+  {
+    let result = try executor.execute(
+      .init(
+        arguments: HostGitConfiguration.arguments + arguments,
+        directory: directory ?? source,
+        environment: HostGitConfiguration.environment(home: root).merging(environment) { _, value in
+          value
+        },
+        timeoutMilliseconds: 30_000, maxOutputBytes: 1_048_576))
+    try #require(result.exitCode == 0, "\(String(decoding: result.error, as: UTF8.self))")
+    return String(decoding: result.output, as: UTF8.self)
+  }
+  func repository(journalIO: WorktreeJournalIO = .init()) throws -> WorktreeRepository {
+    let project = try #require(try database.project(id: "source"))
+    return try WorktreeRepository(
+      source: .init(
+        id: "source", root: GatewayDatabase.canonicalProjectRoot(source.path),
+        registeredAt: project.createdAt),
+      store: database.derivedProjectStore(inspectNesting: { _ in [] }),
+      storage: database.worktreeStorage!, executor: executor,
+      registeredProjectRoots: database.projects().map { URL(fileURLWithPath: $0.rootPath) },
+      timeoutMilliseconds: 30_000, maxOutputBytes: 1_048_576, lockTimeout: .seconds(1),
+      journalIO: journalIO)
+  }
+}
+
+private struct InventoryProjectBookmark: ProjectBookmarkServicing {
+  let root: URL
+
+  func registerFolder(at url: URL, displayName: String?) throws -> ComputerMCPCore.RegisteredProject
+  {
+    throw WorktreeServiceTestFailure.unexpected
+  }
+
+  func resolve(_ project: ComputerMCPCore.RegisteredProject) throws -> ResolvedProjectAccess {
+    var resolved = project
+    resolved.rootPath = root.path
+    return try .init(
+      project: resolved, rootURL: root, bookmarkWasRefreshed: false, stopAccessing: nil)
+  }
+}
+
+private struct WorktreeServicePlatform: ProjectBookmarkServicing, PluginArchiveDirectoryFactory,
+  GatewayToolProviderFactory
+{
+  func registerFolder(at url: URL, displayName: String?) throws -> ComputerMCPCore.RegisteredProject
+  {
+    throw WorktreeServiceTestFailure.unexpected
+  }
+  func resolve(_ project: ComputerMCPCore.RegisteredProject) throws -> ResolvedProjectAccess {
+    throw WorktreeServiceTestFailure.unexpected
+  }
+  func create(at url: URL) throws -> any PluginArchiveStagingDirectory {
+    throw WorktreeServiceTestFailure.unexpected
+  }
+  func recover(_ identity: PluginDirectoryIdentity) throws -> any PluginArchiveStagingDirectory {
+    throw WorktreeServiceTestFailure.unexpected
+  }
+  func identity(url: URL, status: stat, descriptor: Int32) throws -> PluginDirectoryIdentity {
+    throw WorktreeServiceTestFailure.unexpected
+  }
+  func matches(_ identity: PluginDirectoryIdentity, status: stat, descriptor: Int32) throws -> Bool
+  {
+    throw WorktreeServiceTestFailure.unexpected
+  }
+  func renameExclusively(
+    from source: String, in sourceDirectory: Int32, to destination: String,
+    in destinationDirectory: Int32
+  ) throws { throw WorktreeServiceTestFailure.unexpected }
+  func makeProviders(
+    configuration: GatewayConfiguration, commandRunner: any CommandRunning,
+    processManager: any ProcessManaging, shellManager: any ShellManaging,
+    mcpClient: any DownstreamMCPClient, hostContext: MCPHostContext
+  ) -> GatewayToolRegistry {
+    .init(
+      providers: { [] }, downstreamPolicy: { _, _ in throw WorktreeServiceTestFailure.unexpected })
+  }
+}

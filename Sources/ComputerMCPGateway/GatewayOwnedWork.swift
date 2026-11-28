@@ -78,6 +78,15 @@ package final class GatewayOwnedWork: OwnedWorkTracking, Sendable {
 
   func closeAdmission() { state.withLockedValue { $0.admitsInvocations = false } }
 
+  /// Native cleanup joins admitted calls without asserting that reported remote
+  /// resources or uncertain provider observations completed.
+  func joinInvocations() async {
+    var updates = changes.stream().makeAsyncIterator()
+    while state.withLockedValue({ $0.records.values.contains { $0.kind == .invocation } }) {
+      guard await updates.next() != nil else { return }
+    }
+  }
+
   private func finish(_ id: UUID) {
     if state.withLockedValue({ $0.records.removeValue(forKey: id) != nil }) { changes.send() }
   }

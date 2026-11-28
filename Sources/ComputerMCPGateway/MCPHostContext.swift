@@ -2,11 +2,14 @@ import ComputerMCPConfiguration
 import ComputerMCPCore
 import ComputerMCPDownstream
 import ComputerMCPPlatform
+import ComputerMCPProcess
+import ComputerMCPToolKit
 import Foundation
 
 /// Project launch provenance and gateway-owned authority and lifecycle state.
 package struct MCPHostContext: MCPHostEnvironment {
   package let launchMetadata: MCPHostLaunchMetadata
+  package var worktrees: (any GitWorktreeServing)?
   package let tools: MCPHostToolDirectory?
   /// Host-local recovery storage; never serialized into downstream launch metadata.
   package var processOwnershipRoot: URL?
@@ -18,6 +21,9 @@ package struct MCPHostContext: MCPHostEnvironment {
   let executionDatabase: GatewayDatabase?
   /// Verified admission evidence for host ownership writes, never inferred from caller provenance.
   let verifiedPrincipalID: String?
+  var providerSource: (@Sendable (MCPServerConfig) throws -> MCPProviderExecutionSource)?
+  var providerExecution: PreparedExecutionContext?
+  package var cliDiscovery: (@Sendable (CLICommandConfig) throws -> CLIProviderDiscovery?)?
 
   package var projectRoot: URL { URL(fileURLWithPath: launchMetadata.project.rootPath) }
   package var providesHostServices: Bool { tools != nil }
@@ -36,7 +42,15 @@ package struct MCPHostContext: MCPHostEnvironment {
     verifiedPrincipalID = context.trustedPrincipalID
   }
 
-  package func makeHostSession(server: MCPServerConfig) throws -> any MCPHostSessionHandle {
-    try MCPHostSession(context: self, server: server)
+  package func makeHostSession(server: MCPServerConfig, execution: PreparedExecutionContext) throws
+    -> any MCPHostSessionHandle
+  {
+    guard execution.provider?.registrationID == server.id else {
+      throw GatewayToolError.executionFailed("Provider authority does not match the registration.")
+    }
+    try execution.validateProviderLaunch()
+    var bound = self
+    bound.providerExecution = execution
+    return try MCPHostSession(context: bound, server: server)
   }
 }

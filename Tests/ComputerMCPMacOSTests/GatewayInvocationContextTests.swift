@@ -1,5 +1,7 @@
 import ComputerMCPDownstream
 import ComputerMCPMacOS
+import ComputerMCPPermissions
+import ComputerMCPPlatform
 import ComputerMCPTestSupport
 import ComputerMCPToolKit
 import ComputerMCPToolsMCP
@@ -12,7 +14,14 @@ import Testing
 @testable import ComputerMCPGateway
 @testable import ComputerMCPPlugins
 
+#if os(macOS)
+  import ComputerMCPDarwinTestSupport
+#endif
+
 struct GatewayInvocationContextTests {
+  private static let synchronous = BlockingOperationExecutor(
+    label: "computer-mcp.test-invocation-context", serial: false)
+
   @Test(arguments: [false, true], [false, true])
   func downstreamRefusalPayloadIsNotPersistedAsHostAuditDetails(
     asynchronous: Bool, isError: Bool
@@ -27,25 +36,33 @@ struct GatewayInvocationContextTests {
         "content": .array([]), "isError": .bool(isError),
         "structuredContent": .object(["error": .object(["refusal": untrustedRefusal])]),
       ]))
+    let runtime = fixture.runtime
     do {
       let result: JSONValue
       if asynchronous {
         result = try await fixture.runtime.callToolAsync(
           name: "fixture.inspect", arguments: .object([:]), context: .empty)
       } else {
-        result = try fixture.runtime.callTool(
-          name: "fixture.inspect", arguments: .object([:]), context: .empty)
+        result = try await Self.synchronous.perform {
+          try runtime.callTool(
+            name: "fixture.inspect", arguments: .object([:]), context: .empty)
+        }
       }
       #expect(
         result.objectValue?["structuredContent"]?.objectValue?["error"]?.objectValue?["refusal"]
           == untrustedRefusal)
+      let requestID = try #require(
+        result.objectValue?["_meta"]?.objectValue?["computer_mcp"]?.objectValue?["request_id"]?
+          .stringValue)
       let events = try fixture.database.auditEvents()
-      #expect(events.count == 1)
-      let event = try #require(events.first)
-      #expect(event.decision == .allowed && event.errorCode == nil)
-      #expect(event.errorDetails == nil)
+      let terminal = events.filter { $0.requestID == requestID && $0.errorCode == nil }
+      #expect(terminal.count == 1)
+      let event = try #require(terminal.first)
+      #expect(event.decision == .allowed)
+      #expect(event.errorDetails?.objectValue?["refusal"] == nil)
+      #expect(event.errorDetails?.objectValue?["admission"] == .string("completed"))
       #expect(
-        !String(decoding: try JSONEncoder().encode(event), as: UTF8.self)
+        !String(decoding: try JSONEncoder().encode(events), as: UTF8.self)
           .contains("fixture-secret-from-downstream"))
       await fixture.runtime.shutdown()
     } catch {
@@ -68,11 +85,14 @@ struct GatewayInvocationContextTests {
       #expect(
         result.objectValue?["structuredContent"]?.objectValue?["error"]?.objectValue?["refusal"]
           == encoded)
-      let events = try fixture.database.auditEvents()
+      let requestID = try #require(
+        result.objectValue?["_meta"]?.objectValue?["computer_mcp"]?.objectValue?["request_id"]?
+          .stringValue)
+      let events = try fixture.database.auditEvents().filter { $0.requestID == requestID }
       #expect(events.count == 1)
       let event = try #require(events.first)
       #expect(event.decision == .failed && event.errorCode == refusal.code)
-      #expect(event.errorDetails == encoded)
+      #expect(event.errorDetails?.objectValue?["refusal"] == encoded)
       await fixture.runtime.shutdown()
     } catch {
       await fixture.runtime.shutdown()
@@ -89,6 +109,11 @@ struct GatewayInvocationContextTests {
       .mcpObservation, projectID: "fixture", registrationID: "fixture",
       resourceID: "observation", connectionID: connectionID)
     defer { lease.finish() }
+    fixture.runtime.ownedWork.continuations.update(
+      connectionID: connectionID,
+      entry: .init(
+        projectID: "fixture", registrationID: "fixture", instanceID: nil,
+        declarations: [:], resources: [], observationPending: true, connected: true))
     let owner = GatewayOwnerSelection(
       runtimeID: fixture.runtime.generationID, projectID: "fixture", ownershipID: lease.id)
     func call(_ tool: String) async throws -> JSONValue {
@@ -106,7 +131,11 @@ struct GatewayInvocationContextTests {
     do {
       #expect(GatewayOwnerRouting.call == nil)
       _ = try await call("change")
-      try fixture.session.limitAccess(to: .readOnly, expectedRevision: 0)
+      try fixture.session.limitAccess(
+        to: .init(
+          permissionCeilings: fixturePermissions([
+            .project("*"): .granted(.read), .mcpServer("*"): .granted(.read),
+          ]), allowsFullAccess: true), expectedRevision: fixture.session.revision)
       let result = try await call("inspect")
       #expect(result.objectValue?["isError"] != .bool(true))
       let observed = try #require(fixture.client.calls.last)
@@ -145,20 +174,21 @@ struct GatewayInvocationContextTests {
       caller: .localMCP, profileID: .localAdmin, trustedPrincipalID: "context-client")
     let client = AuthorizedMCPClient(
       base: fixture.client,
-      policy: .init(configuration: configuration, grant: grant, derivesObserveGrant: false),
+      policy: .init(configuration: configuration, grant: grant),
       policyProvider: { session in
         .init(
           configuration: configuration,
-          grant: try session?.apply(to: grant, context: executionContext) ?? grant,
-          derivesObserveGrant: false)
+          grant: try session?.apply(to: grant, context: executionContext) ?? grant
+        )
       })
     let provider = ConfiguredMCPToolProvider(
-      environment: ToolEnvironment(configuration: configuration), mcpClient: client)
+      environment: ToolEnvironment(launcher: testExecutionLauncher(), configuration: configuration),
+      mcpClient: client)
     let route = InvocationRouteProbe()
     let admission = try #require(
       InvocationAdmission(
         descriptor: .init(
-          id: "fixture.inspect", risk: .readOnly,
+          id: "fixture.inspect", risk: .readOnly, requirement: .none,
           mcpReference: .init(serverID: "fixture", toolName: "inspect")),
         hostInvocationID: UUID()))
     let context = InvocationContext(
@@ -175,7 +205,11 @@ struct GatewayInvocationContextTests {
           name: "fixture." + tool, arguments: .object([:]), context: context))
     }
     do {
-      try fixture.session.limitAccess(to: .readOnly, expectedRevision: 0)
+      try fixture.session.limitAccess(
+        to: .init(
+          permissionCeilings: fixturePermissions([
+            .project("*"): .granted(.read), .mcpServer("*"): .granted(.read),
+          ]), allowsFullAccess: true), expectedRevision: fixture.session.revision)
       _ = try await call("inspect")
       await #expect(throws: (any Error).self) { try await call("change") }
       let discoveries = Array(fixture.client.discoveries.dropFirst(initialDiscoveries))
@@ -207,6 +241,12 @@ struct GatewayInvocationContextTests {
     let route = MCPContinuationTarget(
       projectID: "fixture", reference: .init(serverID: "fixture", toolName: "inspect"),
       connectionID: UUID(), instanceID: UUID(), resources: [:])
+    let runtime = fixture.runtime
+    runtime.ownedWork.continuations.update(
+      connectionID: route.connectionID,
+      entry: .init(
+        projectID: "fixture", registrationID: "fixture", instanceID: route.instanceID,
+        declarations: [:], resources: [], observationPending: true, connected: true))
     do {
       var arguments = fixture.arguments(tool: "inspect")
       if path == "background" {
@@ -214,9 +254,12 @@ struct GatewayInvocationContextTests {
         arguments["request_id"] = .string("background-request")
       }
       if path == "sync" {
-        _ = try fixture.runtime.callTool(
-          name: "mcp.tools.call", arguments: .object(arguments),
-          context: .init(session: session, continuation: route))
+        let callArguments = arguments
+        _ = try await Self.synchronous.perform {
+          try runtime.callTool(
+            name: "mcp.tools.call", arguments: .object(callArguments),
+            context: .init(session: session, continuation: route))
+        }
       } else {
         _ = try await fixture.runtime.callToolAsync(
           name: "mcp.tools.call", arguments: .object(arguments),
@@ -230,10 +273,10 @@ struct GatewayInvocationContextTests {
       #expect((observed.continuation as? MCPContinuationTarget)?.connectionID == route.connectionID)
       let invocationID = try #require(admission.hostInvocationID)
       #expect(observed.correlationID == invocationID)
-      #expect(admission.correlationID(for: fixture.server, tool: "change") == nil)
+      #expect(admission.hostDispatch(for: fixture.server, tool: "change") == nil)
       var unbound = fixture.server
       unbound.hostServices = false
-      #expect(admission.correlationID(for: unbound, tool: "inspect") == nil)
+      #expect(admission.hostDispatch(for: unbound, tool: "inspect") == nil)
       await fixture.runtime.shutdown()
     } catch {
       await fixture.runtime.shutdown()
@@ -252,7 +295,8 @@ struct GatewayInvocationContextTests {
     other.prefix = "other"
     configuration.mcp.servers.insert(other, at: 0)
     let provider = ConfiguredMCPToolProvider(
-      environment: ToolEnvironment(configuration: configuration), mcpClient: fixture.client)
+      environment: ToolEnvironment(launcher: testExecutionLauncher(), configuration: configuration),
+      mcpClient: fixture.client)
     let selected = MCPContinuationTarget(
       projectID: "fixture", reference: .init(serverID: fixture.server.id, toolName: "inspect"),
       connectionID: UUID(), instanceID: UUID(), resources: [:])
@@ -304,7 +348,7 @@ struct GatewayInvocationContextTests {
       principalID: "context-client", profileID: .localAdmin, caller: .localMCP)
     let route = InvocationRouteProbe()
     let descriptor = CapabilityDescriptor(
-      id: "fixture.inspect", risk: .readOnly,
+      id: "fixture.inspect", risk: .readOnly, requirement: .none,
       mcpReference: .init(serverID: server.id, toolName: "inspect"))
     let admission = try #require(
       InvocationAdmission(descriptor: descriptor, hostInvocationID: UUID()))
@@ -335,20 +379,23 @@ struct GatewayInvocationContextTests {
     let admission = try #require(
       InvocationAdmission(
         descriptor: .init(
-          id: "fixture.inspect", risk: .readOnly,
+          id: "fixture.inspect", risk: .readOnly, requirement: .none,
           mcpReference: .init(serverID: "fixture", toolName: "inspect"))))
     let context = InvocationContext(
       admission: admission, session: fixture.session, continuation: route)
     let arguments = JSONValue.object([
       "server": .string("fixture"), "project_id": .string("fixture"),
     ])
+    let runtime = fixture.runtime
     do {
       if asynchronous {
         _ = try await fixture.runtime.callToolAsync(
           name: "mcp.tools.list", arguments: arguments, context: context)
       } else {
-        _ = try fixture.runtime.callTool(
-          name: "mcp.tools.list", arguments: arguments, context: context)
+        _ = try await Self.synchronous.perform {
+          try runtime.callTool(
+            name: "mcp.tools.list", arguments: arguments, context: context)
+        }
       }
       let observed = try #require(fixture.client.discoveries.last)
       #expect(observed.admission == nil)
@@ -367,6 +414,7 @@ struct GatewayInvocationContextTests {
     let fixture = try InvocationFixture(requiresControlSession: true)
     let context = InvocationContext(session: fixture.session)
     let arguments = JSONValue.object(fixture.arguments(tool: "inspect"))
+    let runtime = fixture.runtime
     do {
       _ = try await fixture.runtime.callToolAsync(
         name: "mcp.tools.call", arguments: arguments, context: context)
@@ -376,8 +424,10 @@ struct GatewayInvocationContextTests {
           _ = try await fixture.runtime.callToolAsync(
             name: "mcp.tools.call", arguments: arguments, context: .empty)
         } else {
-          _ = try fixture.runtime.callTool(
-            name: "mcp.tools.call", arguments: arguments, context: .empty)
+          _ = try await Self.synchronous.perform {
+            try runtime.callTool(
+              name: "mcp.tools.call", arguments: arguments, context: .empty)
+          }
         }
         Issue.record("A call without its required session reached the provider.")
       } catch {
@@ -400,16 +450,18 @@ struct GatewayInvocationContextTests {
   func sessionRefreshKeepsTheSharedCatalogIndependentOfItsRestrictions() async throws {
     let fixture = try InvocationFixture(reexportTools: true)
     let restricted = GatewayControlSessionServing(base: fixture.runtime, session: fixture.session)
-    let other = GatewayControlSessionServing(
-      base: fixture.runtime,
-      session: GatewayControlSession(
-        principalID: "context-client", profileID: .localAdmin, caller: .localMCP))
+    let otherSession = try fixture.runtime.makeControlSession()
+    let other = GatewayControlSessionServing(base: fixture.runtime, session: otherSession)
     do {
       let change = try #require(
         try await other.listToolsAsync(context: .empty).first {
           $0.mcpReference?.toolName == "change"
         })
-      try fixture.session.limitAccess(to: .readOnly, expectedRevision: 0)
+      try fixture.session.limitAccess(
+        to: .init(
+          permissionCeilings: fixturePermissions([
+            .project("*"): .granted(.read), .mcpServer("*"): .granted(.read),
+          ]), allowsFullAccess: true), expectedRevision: fixture.session.revision)
       try await restricted.refreshTools(context: .empty)
       #expect(
         try await restricted.listToolsAsync(context: .empty).contains { $0.name == change.name }
@@ -435,7 +487,11 @@ struct GatewayInvocationContextTests {
         name: "mcp.tools.call", arguments: .object(fixture.arguments(tool: "change")),
         context: .empty)
       #expect(fixture.client.calls.count == 1)
-      try fixture.session.limitAccess(to: .readOnly, expectedRevision: 0)
+      try fixture.session.limitAccess(
+        to: .init(
+          permissionCeilings: fixturePermissions([
+            .project("*"): .granted(.read), .mcpServer("*"): .granted(.read),
+          ]), allowsFullAccess: true), expectedRevision: fixture.session.revision)
       await #expect(throws: (any Error).self) {
         try await serving.callToolAsync(
           name: "mcp.tools.call", arguments: .object(fixture.arguments(tool: "change")),
@@ -467,13 +523,18 @@ struct GatewayInvocationContextTests {
     let trace = GatewayTransportTrace(
       transport: "gateway_socket", socketConnectionID: "trace-connection",
       tunnelInstanceID: "trace-instance", tunnelProfileID: "trace-profile")
+    let runtime = fixture.runtime
     do {
       let result = try await MCPRuntimeAdapter.$requestTrace.withValue(trace) {
         if asynchronous {
           return try await fixture.runtime.callToolAsync(
             name: "project.list", arguments: nil, context: .empty)
         }
-        return try fixture.runtime.callTool(name: "project.list", arguments: nil, context: .empty)
+        return try await Self.synchronous.perform {
+          try MCPRuntimeAdapter.$requestTrace.withValue(trace) {
+            try runtime.callTool(name: "project.list", arguments: nil, context: .empty)
+          }
+        }
       }
       let requestID = try #require(
         result.objectValue?["_meta"]?.objectValue?["computer_mcp"]?.objectValue?["request_id"]?
@@ -483,9 +544,16 @@ struct GatewayInvocationContextTests {
       #expect(audit.socketConnectionID == trace.socketConnectionID)
       #expect(audit.tunnelInstanceID == trace.tunnelInstanceID)
       #expect(audit.tunnelProfileID == trace.tunnelProfileID)
-      _ = try await fixture.runtime.callToolAsync(
+      let nextResult = try await fixture.runtime.callToolAsync(
         name: "project.list", arguments: nil, context: .empty)
-      let next = try #require(fixture.database.auditEvents().first { $0.requestID != requestID })
+      let nextRequestID = try #require(
+        nextResult.objectValue?["_meta"]?.objectValue?["computer_mcp"]?.objectValue?["request_id"]?
+          .stringValue)
+      #expect(nextRequestID != requestID)
+      let next = try #require(
+        fixture.database.auditEvents().first {
+          $0.requestID == nextRequestID && $0.errorCode == nil
+        })
       #expect(next.transport == nil)
       #expect(next.socketConnectionID == nil)
       #expect(next.tunnelInstanceID == nil)
@@ -504,8 +572,7 @@ private struct InvocationFixture {
   let client: InvocationClientSpy
   let configuration: GatewayConfiguration
   let runtime: GatewayRuntime
-  let session = GatewayControlSession(
-    principalID: "context-client", profileID: .localAdmin, caller: .localMCP)
+  let session: GatewayControlSession
   let server: MCPServerConfig
 
   init(
@@ -513,32 +580,54 @@ private struct InvocationFixture {
     result: JSONValue = .object(["content": .array([]), "isError": .bool(false)])
   ) throws {
     server = MCPServerConfig(
-      id: "fixture", transport: .stdio, command: "/unused/context-provider",
+      id: "fixture", transport: .stdio, command: "/usr/bin/true",
       exposure: reexportTools ? .reexport : .gateway, prefix: reexportTools ? "fixture" : nil,
       allowedTools: ["inspect", "change"],
       toolRisks: ["inspect": .readOnly, "change": .projectWrite], hostServices: true)
     project = try ScopedTemporaryDirectory()
-    database = try GatewayDatabase(inMemory: ())
+    let root = try ProjectPathResolver.canonicalProject(project.url)
+    database = try fixturePermissionDatabase(
+      path: project.url.appendingPathComponent("host.sqlite").path)
+    try database.saveProject(
+      .init(id: "fixture", displayName: "Fixture", rootPath: root.path))
     client = InvocationClientSpy(result: result)
     configuration = GatewayConfiguration(
       runtime: .init(caller: .localMCP, profileID: .localAdmin),
       profiles: [
         .init(
-          id: .localAdmin, capabilities: ["*"], projects: ["fixture"],
-          allowedCallers: [.localMCP], mode: .projectOperations, confirmationPolicy: .never)
+          id: .localAdmin,
+          permissions: fixturePermissions([
+            .machineInformation: .granted(.access), .skills: .granted(.access),
+            .screen: .granted(.access), .desktopControl: .granted(.access),
+            .unifiedLogs: .granted(.access), .localNetwork: .granted(.access),
+            .project("fixture"): .granted(.write), .mcpServer("*"): .granted(.all),
+            .plugin("*"): .granted(.use),
+          ]), fullAccess: true, allowedCallers: [.localMCP])
       ],
-      mcp: .init(servers: [server]), projectDirectory: project.url)
+      mcp: .init(servers: [server]), projectDirectory: root)
+    let grant = configuration.profiles[0].grant
+    try database.saveProfile(grant)
+    let consented = try fixtureConsentedContext(
+      database: database, grant: grant, caller: .localMCP,
+      principalID: "context-client", platform: fixtureHostedPlatform())
+    session = try #require(consented.controlSession as? GatewayControlSession)
+    var runtimeContext = consented
+    if requiresControlSession { runtimeContext.controlSession = nil }
     runtime = try GatewayRuntime(
       configuration: configuration,
-      context: .init(
-        caller: .localMCP, profileID: .localAdmin, trustedPrincipalID: "context-client"),
+      context: runtimeContext,
       database: database,
-      registeredProjects: [
-        .init(id: "fixture", displayName: "Fixture", rootPath: project.url.path)
-      ],
-      platform: MacOSPlatform.services, mcpClient: client, plugins: [],
+      registeredProjects: try database.projects(),
+      platform: fixtureHostedPlatform(), mcpClient: client,
+      plugins: [],
       bundledPlugins: .init(packages: [], issues: []),
       requiresControlSession: requiresControlSession)
+    _ = try runtime.makeControlSession()
+    try fixtureApproveLocalProvider(
+      server, database: database,
+      runtime: database.permissionRuntime(platform: fixtureHostedPlatform()),
+      permissions: fixturePermissions([.project("fixture"): .granted(.write)]), fullAccess: true)
+    _ = try session.approveFullAccess(expectedRevision: session.revision)
   }
 
   func arguments(tool: String) -> [String: JSONValue] {
@@ -551,6 +640,10 @@ private struct InvocationFixture {
 
 // Uses the protocol's asynchronous bridge so the observation occurs after its dispatch hop.
 private final class InvocationClientSpy: DownstreamMCPClient, Sendable {
+  func cachedTools(server: MCPServerConfig, context: InvocationContext) -> [MCPTool]? {
+    try? listTools(server: server, context: context)
+  }
+
   struct Observation: Sendable {
     let name: String
     let arguments: JSONValue
@@ -585,7 +678,7 @@ private final class InvocationClientSpy: DownstreamMCPClient, Sendable {
       $0.append(
         .init(
           name: name, arguments: arguments, admission: admission, session: context.session,
-          correlationID: admission?.correlationID(for: server, tool: name),
+          correlationID: admission?.hostDispatch(for: server, tool: name)?.invocationID,
           continuation: context.continuation))
     }
     return result

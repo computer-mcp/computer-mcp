@@ -1,5 +1,6 @@
 import ComputerMCPCore
 import ComputerMCPGateway
+import ComputerMCPPermissions
 import Foundation
 
 /// Local presentation delegates to the owner of the selected connection.
@@ -18,7 +19,7 @@ enum GatewayClientControl: Sendable {
         "pairing_code": .string, "tunnel_id": .string, "profile_id": .string,
         "authorization_digest": .string,
       ],
-      required: ["pairing_code"], readOnly: false),
+      required: ["pairing_code", "profile_id"], readOnly: false),
     .init(
       "clients.deny", arguments: ["pairing_code": .string, "tunnel_id": .string],
       required: ["pairing_code"], readOnly: false),
@@ -46,8 +47,9 @@ enum GatewayClientControl: Sendable {
       ], required: ["id", "full_access", "expected_revision", "expected_trust_revision"],
       readOnly: false),
     .init(
-      "clients.limit", arguments: ["id": .string, "mode": .string, "expected_revision": .integer],
-      required: ["id", "mode", "expected_revision"], readOnly: false),
+      "clients.limit",
+      arguments: ["id": .string, "limits": .object, "expected_revision": .integer],
+      required: ["id", "limits", "expected_revision"], readOnly: false),
     .init(
       "clients.end", arguments: ["id": .string, "expected_revision": .integer],
       required: ["id", "expected_revision"], readOnly: false),
@@ -75,14 +77,8 @@ enum GatewayClientControl: Sendable {
           try ControlToolResponse.encodedPayload($0)
         }
       case "clients.authorize":
-        let profileID: GatewayProfileID?
-        if let rawProfile = arguments["profile_id"]?.stringValue {
-          guard let selected = GatewayProfileID(rawValue: rawProfile) else {
-            throw GatewayToolError.invalidArguments("profile_id is invalid.")
-          }
-          profileID = selected
-        } else {
-          profileID = nil
+        guard let profileID = GatewayProfileID(rawValue: try string("profile_id", arguments)) else {
+          throw GatewayToolError.invalidArguments("profile_id is invalid.")
         }
         let authorizationDigest = arguments["authorization_digest"]?.stringValue
         let grant = try await service.authorizeOAuthClient(
@@ -138,7 +134,7 @@ enum GatewayClientControl: Sendable {
       case .app(let owner):
         snapshot = try await owner.approveControlSession(
           id: id, lifetime: lifetime, expectedRevision: revision,
-          expectedTrustRevision: trustRevision, enableShellFacility: true, approver: .localCLI)
+          expectedTrustRevision: trustRevision, approver: .localCLI)
       case .http(let owner, let generation):
         snapshot = try await owner.approveLocalControlSession(
           id: id, lifetime: lifetime, expectedRevision: revision,
@@ -148,19 +144,19 @@ enum GatewayClientControl: Sendable {
     case "clients.limit":
       let id = try string("id", arguments)
       let revision = try revision("expected_revision", arguments)
-      let mode: GatewayPermissionMode
-      switch try string("mode", arguments) {
-      case "observe": mode = .readOnly
-      case "restricted": mode = .projectOperations
-      default: throw GatewayToolError.invalidArguments("mode must be observe or restricted.")
+      guard let encoded = arguments["limits"] else {
+        throw GatewayToolError.invalidArguments("limits is required.")
       }
+      let limits = try CanonicalJSONCoding.decoder().decode(
+        ManagedPolicy.self, from: JSONEncoder().encode(encoded))
       let snapshot: GatewayControlSessionSnapshot
       switch self {
       case .app(let owner):
-        snapshot = try await owner.limitControlSession(id: id, to: mode, expectedRevision: revision)
+        snapshot = try await owner.limitControlSession(
+          id: id, to: limits, expectedRevision: revision)
       case .http(let owner, let generation):
         snapshot = try await owner.limitLocalControlSession(
-          id: id, to: mode, expectedRevision: revision, generation: generation)
+          id: id, to: limits, expectedRevision: revision, generation: generation)
       }
       return try ControlToolResponse.encodedPayload(snapshot)
     case "clients.end":
@@ -239,20 +235,34 @@ enum GatewayClientControl: Sendable {
 }
 
 package struct GatewayHTTPClientControl: GatewayClientControlProvider {
-  package init() {}
+  private let permissionControl: PermissionControlService?
+  package init(permissionControl: PermissionControlService? = nil) {
+    self.permissionControl = permissionControl
+  }
+
+  private var contracts: [ControlToolContract] {
+    GatewayClientControl.sessionContracts
+      + (permissionControl == nil ? [] : PermissionOwnerControl.contracts)
+  }
 
   package func listTools() throws -> [MCPTool] {
-    try GatewayClientControl.sessionContracts.map { try $0.tool() }
+    try contracts.map { try $0.tool() }
   }
 
   package func callTool(
     name: String, arguments: JSONValue?, owner: GatewayHTTPApp, generation: UUID
   ) async throws -> JSONValue {
-    guard let contract = GatewayClientControl.sessionContracts.first(where: { $0.name == name })
+    guard let contract = contracts.first(where: { $0.name == name })
     else {
       throw GatewayToolError.unknownTool(name)
     }
     let object = try contract.validate(arguments)
+    if PermissionOwnerControl.contracts.contains(where: { $0.name == name }), let permissionControl
+    {
+      return try await owner.withLocalControl(generation: generation) {
+        try PermissionOwnerControl.call(name: name, arguments: object, service: permissionControl)
+      }
+    }
     return try await GatewayClientControl.http(owner, generation: generation)
       .call(name: name, arguments: object)
   }

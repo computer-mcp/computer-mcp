@@ -1,5 +1,7 @@
 import ComputerMCPControlPlane
 import ComputerMCPCore
+import ComputerMCPGateway
+import ComputerMCPPermissions
 import ComputerMCPPlatform
 import ComputerMCPPlugins
 import ComputerMCPProcess
@@ -31,7 +33,7 @@ enum AppSection: String, CaseIterable, Identifiable, Sendable {
       case .providers: "Providers"
       case .plugins: "Plugins"
       case .tunnels: "Tunnels"
-      case .permissions: "Permissions"
+      case .permissions: "Privacy & Security"
       case .audit: "Audit"
       case .diagnostics: "Diagnostics"
       }
@@ -48,7 +50,7 @@ enum AppSection: String, CaseIterable, Identifiable, Sendable {
     case .providers: "shippingbox"
     case .plugins: "puzzlepiece.extension"
     case .tunnels: "point.3.connected.trianglepath.dotted"
-    case .permissions: "hand.raised"
+    case .permissions: "hand.raised.fill"
     case .audit: "list.bullet.rectangle"
     case .diagnostics: "stethoscope"
     }
@@ -167,16 +169,19 @@ enum ProjectHealth: String, Sendable {
   }
 }
 
-struct ProjectSummary: Identifiable, Sendable {
+struct ProjectSummary: Identifiable, Hashable, Sendable {
   var id: String
   var displayName: String
   var path: String
   var health: ProjectHealth
   var activeProfileID: String
-  var isEnabled: Bool
-  var isSelected: Bool
+  var access: ProjectAccess
+  var effectiveAccess: ProjectAccess
+  var profileRevision: Int64
+  var permissionRevision: UInt64
   var lastResolvedAt: Date?
   var healthDetail: String? = nil
+  var registeredAt: Date? = nil
 }
 
 struct ProfileSummary: Identifiable, Sendable {
@@ -324,18 +329,6 @@ enum PermissionState: String, Sendable {
   case notGranted
   case notDetermined
   case unavailable
-
-  var label: String {
-    let key =
-      switch self {
-      case .granted: "Granted"
-      case .denied: "Denied"
-      case .notGranted: "Not granted"
-      case .notDetermined: "Not determined"
-      case .unavailable: "Unavailable"
-      }
-    return AppLocalization.string(key)
-  }
 }
 
 struct PermissionSummary: Identifiable, Sendable {
@@ -418,7 +411,7 @@ struct DiagnosticsSnapshot: Sendable {
 
 @MainActor
 protocol AppControlPlane: PluginManaging, MCPRegistrationManaging, ClientAccessManaging,
-  ProfilePermissionManaging, LocalClientRegistering
+  LocalClientRegistering, WorktreeRecoveryServicing
 {
   func startApplication() async throws
   func maintainApplication() async
@@ -432,8 +425,22 @@ protocol AppControlPlane: PluginManaging, MCPRegistrationManaging, ClientAccessM
   func fetchOpenAITunnels() async throws -> [OpenAITunnelSummary]
   func fetchCloudflareTunnels() async throws -> [CloudflareTunnelSummary]
   func fetchPermissions() async throws -> [PermissionSummary]
-  func fetchOperationApprovals() async throws -> [OperationTicket]
-  func resolveOperationApproval(id: String, approved: Bool) async throws
+  func ownerPolicyEditorService() async throws -> OwnerPolicyEditorService
+  func fetchPrivacyPermissionInventory() async throws -> PrivacyPermissionInventory
+  func saveProviderPermissions(
+    reviewed: ProviderPermissionOptions, permissions: Permissions, fullAccess: Bool,
+    sandboxSettings: ProviderSandboxSettings, editingApproval: Bool
+  ) async throws
+  func revokeProviderPermissions(reviewed: ProviderPermissionOptions) async throws
+  func fetchPermissionRequests() async throws -> GatewayPermissionView
+  func fetchProfilePermissionOptions(id: GatewayProfileID) async throws -> ProfilePermissionOptions
+  func saveProfilePermissions(_ grant: ProfileGrant, reviewed: ProfilePermissionOptions)
+    async throws
+  func fetchPermissionObjectNames() async throws -> PermissionObjectNames
+  func confirmPermissionAuthority(epoch: UUID, expectedRevision: UInt64, profiles: [ProfileGrant])
+    async throws
+  func answerPermissionRequest(id: UUID, answer: PermissionAnswer?, expectedRevision: UInt64)
+    async throws
   func requestPermission(id: String) async throws -> PermissionRequestOutcome
   func fetchAudit() async throws -> [AuditEntrySummary]
   func fetchDiagnostics() async throws -> DiagnosticsSnapshot
@@ -445,10 +452,9 @@ protocol AppControlPlane: PluginManaging, MCPRegistrationManaging, ClientAccessM
   func registerProject(at url: URL) async throws
   func repairProject(id: String, at url: URL) async throws
   func removeProject(id: String) async throws
-  func setProjectEnabled(
-    _ enabled: Bool,
-    projectID: String,
-    profileID: String
+  func setProjectAccess(
+    _ access: ProjectAccess, projectID: String, profileID: String,
+    expectedProfileRevision: Int64, expectedPermissionRevision: UInt64
   ) async throws
 
   func activateProfile(id: String) async throws
@@ -547,8 +553,67 @@ final class UnavailableControlPlane: AppControlPlane {
   func fetchOpenAITunnels() async throws -> [OpenAITunnelSummary] { throw unavailable() }
   func fetchCloudflareTunnels() async throws -> [CloudflareTunnelSummary] { throw unavailable() }
   func fetchPermissions() async throws -> [PermissionSummary] { throw unavailable() }
-  func fetchOperationApprovals() async throws -> [OperationTicket] { throw unavailable() }
-  func resolveOperationApproval(id: String, approved: Bool) async throws { throw unavailable() }
+  func ownerPolicyEditorService() async throws -> OwnerPolicyEditorService {
+    throw unavailable()
+  }
+  func fetchPrivacyPermissionInventory() async throws -> PrivacyPermissionInventory {
+    throw unavailable()
+  }
+  func saveProviderPermissions(
+    reviewed: ProviderPermissionOptions, permissions: Permissions, fullAccess: Bool,
+    sandboxSettings: ProviderSandboxSettings, editingApproval: Bool
+  ) async throws { throw unavailable() }
+  func revokeProviderPermissions(reviewed: ProviderPermissionOptions) async throws {
+    throw unavailable()
+  }
+  func fetchProjectWorktrees() async throws -> [ProjectWorktreeInventory] { throw unavailable() }
+  func fetchRecoveryStores() async throws -> [RecoveryStoreView] { throw unavailable() }
+  func worktreeRecoveryEpoch() async throws -> UUID { throw unavailable() }
+  func reviewWorktreeRemoval(_ target: ManagedWorktreeRemovalTarget, epoch: UUID) async throws
+    -> ManagedWorktreeRemovalReview
+  { throw unavailable() }
+  func confirmWorktreeRemoval(
+    _ review: ManagedWorktreeRemovalReview, discard: Bool, epoch: UUID
+  ) async throws { throw unavailable() }
+  func worktreeRemovalOutcome(_ review: ManagedWorktreeRemovalReview) async throws
+    -> ManagedWorktreeRemovalOutcome
+  { throw unavailable() }
+  func reviewRecoveryRelease(
+    storeKey: String, generation: UUID, selections: [RecoveryRecordSelection], epoch: UUID
+  ) async throws -> RecoveryReleaseReview { throw unavailable() }
+  func confirmRecoveryRelease(_ review: RecoveryReleaseReview, epoch: UUID) async throws
+    -> RecoveryOperationStatus
+  { throw unavailable() }
+  func prepareRecoveryMaintenance(storeKey: String, generation: UUID, epoch: UUID) async throws
+    -> RecoveryMaintenancePreparation
+  { throw unavailable() }
+  func runRecoveryMaintenance(_ review: RecoveryMaintenanceReview, epoch: UUID) async throws
+    -> RecoveryOperationStatus
+  { throw unavailable() }
+  func recoveryOperation(handle: RecoveryOperationHandle) async throws -> RecoveryOperationLookup {
+    throw unavailable()
+  }
+  func resumeRecoveryOperation(handle: RecoveryOperationHandle, epoch: UUID) async throws
+    -> RecoveryOperationStatus
+  { throw unavailable() }
+
+  func fetchPermissionRequests() async throws -> GatewayPermissionView { throw unavailable() }
+  func fetchProfilePermissionOptions(id: GatewayProfileID) async throws -> ProfilePermissionOptions
+  {
+    throw unavailable()
+  }
+  func saveProfilePermissions(_ grant: ProfileGrant, reviewed: ProfilePermissionOptions)
+    async throws
+  {
+    throw unavailable()
+  }
+  func confirmPermissionAuthority(epoch: UUID, expectedRevision: UInt64, profiles: [ProfileGrant])
+    async throws
+  { throw unavailable() }
+  func answerPermissionRequest(id: UUID, answer: PermissionAnswer?, expectedRevision: UInt64)
+    async throws
+  { throw unavailable() }
+  func fetchPermissionObjectNames() async throws -> PermissionObjectNames { .init() }
   func requestPermission(id: String) async throws -> PermissionRequestOutcome {
     throw unavailable()
   }
@@ -561,10 +626,9 @@ final class UnavailableControlPlane: AppControlPlane {
   func registerProject(at url: URL) async throws { throw unavailable() }
   func repairProject(id: String, at url: URL) async throws { throw unavailable() }
   func removeProject(id: String) async throws { throw unavailable() }
-  func setProjectEnabled(
-    _ enabled: Bool,
-    projectID: String,
-    profileID: String
+  func setProjectAccess(
+    _ access: ProjectAccess, projectID: String, profileID: String,
+    expectedProfileRevision: Int64, expectedPermissionRevision: UInt64
   ) async throws {
     throw unavailable()
   }

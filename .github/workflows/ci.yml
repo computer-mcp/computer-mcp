@@ -21,16 +21,27 @@ jobs:
       image: swift:6.2.4-noble
       # Owned process groups finish only once PID 1 reaps their orphaned members.
       options: --init
-    timeout-minutes: 20
+    timeout-minutes: 30
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
       - name: Install SQLite headers and test tools
         run: apt-get update && apt-get install -y --no-install-recommends libsqlite3-dev python3 zsh
       - name: Build neutral targets
         run: swift build
       - name: Test neutral targets
-        run: swift test --no-parallel
+        env:
+          # File identity tests need exportable handles from the runner filesystem.
+          TMPDIR: ${{ runner.temp }}
+          PR_BASE: ${{ github.event.pull_request.base.sha }}
+        run: |
+          if [ "$GITHUB_EVENT_NAME" = pull_request ]; then
+            python3 Scripts/select-swift-tests.py --base "$PR_BASE"
+          else
+            swift test --no-parallel
+          fi
 
   dependency-gate:
     runs-on: macos-26
@@ -53,7 +64,8 @@ jobs:
   validate:
     needs: dependency-gate
     runs-on: macos-26
-    timeout-minutes: 120
+    # Serial CI stages have 330 minutes of combined deadlines.
+    timeout-minutes: 360
     env:
       DEVELOPER_DIR: /Applications/Xcode_26.4.app/Contents/Developer
     steps:
@@ -64,7 +76,14 @@ jobs:
       - name: Install gate tooling
         run: brew install actionlint jq ripgrep
       - name: Shared release checks
-        run: python3 Scripts/release.py run --run ci --profile ci
+        env:
+          PR_BASE: ${{ github.event.pull_request.base.sha }}
+        run: |
+          if [[ "$GITHUB_EVENT_NAME" == pull_request ]]; then
+            python3 Scripts/release.py run --run ci --profile ci --pr-base "$PR_BASE"
+          else
+            python3 Scripts/release.py run --run ci --profile ci
+          fi
       - name: Preserve check report and failure history
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7

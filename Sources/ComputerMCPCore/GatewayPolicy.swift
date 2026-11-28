@@ -92,47 +92,21 @@ package enum CapabilityRisk: String, Codable, Equatable, Sendable {
   case fullShell = "full-shell"
 }
 
-package enum GatewayPermissionMode: String, Codable, CaseIterable, Sendable {
-  case readOnly = "read-only"
-  case projectOperations = "project-operations"
-  case localFullAccess = "local-full-access"
-
-  /// The source configuration granted risk ceilings by built-in profile identity.
-  package static func legacy(profileID: GatewayProfileID, fullShellEnabled: Bool) -> Self {
-    if profileID == .chatGPTObserve || profileID == .cloudflareObserve { return .readOnly }
-    if fullShellEnabled && (profileID == .chatGPTOperate || profileID == .localAdmin) {
-      return .localFullAccess
-    }
-    return .projectOperations
-  }
-}
-
-package enum GatewayConfirmationPolicy: String, Codable, CaseIterable, Sendable {
-  case riskBased = "risk-based"
-  case allWrites = "all-writes"
-  case never
-
-  package func requiresConfirmation(for risk: CapabilityRisk) -> Bool {
-    switch self {
-    case .riskBased:
-      risk == .externalWrite || risk == .destructive || risk == .fullShell
-    case .allWrites:
-      risk != .readOnly
-    case .never:
-      false
-    }
-  }
-}
-
 package enum ProjectRequirement: String, Codable, Sendable {
   case none
   case optional
   case required
 }
 
+/// Trusted provider implementation, never conveyed by a serialized descriptor.
+package enum HostOperation: Equatable, Sendable {
+  case fileMutation, git, worktreeLifecycle
+}
+
 package struct CapabilityDescriptor: Codable, Equatable, Sendable {
   package var id: String
   package var risk: CapabilityRisk
+  package var requirement: ToolRequirement
   package var projectRequirement: ProjectRequirement
   package var localOnly: Bool
   package var usesNetwork: Bool
@@ -140,20 +114,29 @@ package struct CapabilityDescriptor: Codable, Equatable, Sendable {
   package var mcpReference: MCPToolReference?
   package var equivalentCapabilityIDs: [String]?
   package var hostServiceAction: MCPHostServiceAction?
+  package var hostOperation: HostOperation? = nil
+
+  private enum CodingKeys: String, CodingKey {
+    case id, risk, requirement, projectRequirement, localOnly, usesNetwork, tccServices
+    case mcpReference, equivalentCapabilityIDs, hostServiceAction
+  }
 
   package init(
     id: String,
     risk: CapabilityRisk,
+    requirement: ToolRequirement,
     projectRequirement: ProjectRequirement = .none,
     localOnly: Bool = false,
     usesNetwork: Bool = false,
     tccServices: [String] = [],
     mcpReference: MCPToolReference? = nil,
     equivalentCapabilityIDs: [String]? = nil,
-    hostServiceAction: MCPHostServiceAction? = nil
+    hostServiceAction: MCPHostServiceAction? = nil,
+    hostOperation: HostOperation? = nil
   ) {
     self.id = id
     self.risk = risk
+    self.requirement = requirement
     self.projectRequirement = projectRequirement
     self.localOnly = localOnly
     self.usesNetwork = usesNetwork
@@ -161,6 +144,7 @@ package struct CapabilityDescriptor: Codable, Equatable, Sendable {
     self.mcpReference = mcpReference
     self.equivalentCapabilityIDs = equivalentCapabilityIDs
     self.hostServiceAction = hostServiceAction
+    self.hostOperation = hostOperation
   }
 }
 
@@ -212,184 +196,14 @@ extension ExecutionContext: Equatable {
   }
 }
 
-package struct ProfileGrant: Codable, Equatable, Sendable {
-  package var id: GatewayProfileID
-  package var capabilityIDs: Set<String>
-  package var projectIDs: Set<String>
-  package var allowedCallers: Set<GatewayCallerKind>
-  package var fullShellEnabled: Bool
-  package var mcpServerIDs: Set<String>
-  package var mode: GatewayPermissionMode
-  package var confirmationPolicy: GatewayConfirmationPolicy
-  package var authorizationRevision: Int64
-
-  package var supportsFullShell: Bool { mode == .localFullAccess }
-
-  package init(
-    id: GatewayProfileID,
-    capabilityIDs: Set<String>,
-    projectIDs: Set<String> = [],
-    allowedCallers: Set<GatewayCallerKind>,
-    fullShellEnabled: Bool = false,
-    mcpServerIDs: Set<String> = [],
-    mode: GatewayPermissionMode = .readOnly,
-    confirmationPolicy: GatewayConfirmationPolicy = .riskBased,
-    authorizationRevision: Int64 = 1
-  ) {
-    self.id = id
-    self.capabilityIDs = capabilityIDs
-    self.projectIDs = projectIDs
-    self.allowedCallers = allowedCallers
-    self.fullShellEnabled = fullShellEnabled
-    self.mcpServerIDs = mcpServerIDs
-    self.mode = mode
-    self.confirmationPolicy = confirmationPolicy
-    self.authorizationRevision = authorizationRevision
-  }
-
-  private enum CodingKeys: String, CodingKey {
-    case id, capabilityIDs, projectIDs, allowedCallers, fullShellEnabled, mcpServerIDs
-    case mode, confirmationPolicy, authorizationRevision
-  }
-
-  package init(from decoder: any Decoder) throws {
-    let container = try decoder.container(keyedBy: CodingKeys.self)
-    id = try container.decode(GatewayProfileID.self, forKey: .id)
-    capabilityIDs = try container.decode(Set<String>.self, forKey: .capabilityIDs)
-    projectIDs = try container.decode(Set<String>.self, forKey: .projectIDs)
-    allowedCallers = try container.decode(Set<GatewayCallerKind>.self, forKey: .allowedCallers)
-    fullShellEnabled = try container.decode(Bool.self, forKey: .fullShellEnabled)
-    mcpServerIDs = try container.decodeIfPresent(Set<String>.self, forKey: .mcpServerIDs) ?? []
-    mode =
-      try container.decodeIfPresent(GatewayPermissionMode.self, forKey: .mode)
-      ?? .legacy(profileID: id, fullShellEnabled: fullShellEnabled)
-    confirmationPolicy =
-      try container.decodeIfPresent(GatewayConfirmationPolicy.self, forKey: .confirmationPolicy)
-      ?? .riskBased
-    authorizationRevision =
-      try container.decodeIfPresent(Int64.self, forKey: .authorizationRevision) ?? 0
-  }
-
-  package static let observe = ProfileGrant(
-    id: .chatGPTObserve,
-    capabilityIDs: [],
-    allowedCallers: [.secureTunnel]
-  )
-
-  package static let operate = ProfileGrant(
-    id: .chatGPTOperate,
-    capabilityIDs: [],
-    allowedCallers: [.secureTunnel],
-    mode: .projectOperations
-  )
-
-  package static let cloudflareObserve = ProfileGrant(
-    id: .cloudflareObserve,
-    capabilityIDs: [],
-    allowedCallers: [.cloudflareTunnel]
-  )
-
-  package static let cloudflareOperate = ProfileGrant(
-    id: .cloudflareOperate,
-    capabilityIDs: [],
-    allowedCallers: [.cloudflareTunnel],
-    mode: .projectOperations
-  )
-
-  package static let localAdmin = ProfileGrant(
-    id: .localAdmin,
-    capabilityIDs: ["*"],
-    projectIDs: ["*"],
-    allowedCallers: [.localApp, .localCLI, .localMCP],
-    fullShellEnabled: true,
-    mode: .localFullAccess
-  )
-
-  package static let fullShellCapabilities: Set<String> = [
-    "shell.run",
-    "shell.spawn",
-    "shell.list",
-    "shell.read",
-    "shell.write",
-    "shell.cancel",
-    "cli.exec",
-    "process.spawn",
-  ]
-
-  package func applyingPersistedRuntimeState(_ persisted: ProfileGrant) -> ProfileGrant {
-    guard persisted.id == id else {
-      return self
-    }
-    if persisted.authorizationRevision > 0 { return persisted }
-    let effectiveFullShellEnabled = persisted.fullShellEnabled && persisted.supportsFullShell
-    var effectiveCapabilities = capabilityIDs
-    if effectiveFullShellEnabled {
-      effectiveCapabilities.formUnion(Self.fullShellCapabilities)
-    }
-    return ProfileGrant(
-      id: id,
-      capabilityIDs: effectiveCapabilities,
-      projectIDs: persisted.projectIDs,
-      allowedCallers: allowedCallers,
-      fullShellEnabled: effectiveFullShellEnabled,
-      mcpServerIDs: mcpServerIDs,
-      mode: persisted.mode,
-      confirmationPolicy: persisted.confirmationPolicy,
-      authorizationRevision: 0
-    )
-  }
-
-  package func validate() throws {
-    if id == .localAdmin && allowedCallers.contains(where: \.isRemote) {
-      throw GatewayPolicyConfigurationError.localAdminCannotBeRemote
-    }
-    if fullShellEnabled && !supportsFullShell {
-      throw GatewayPolicyConfigurationError.fullShellRequiresFullAccess
-    }
-  }
-
-  package func permitsRisk(_ risk: CapabilityRisk) -> Bool {
-    switch mode {
-    case .readOnly: risk == .readOnly
-    case .projectOperations: risk != .fullShell
-    case .localFullAccess: true
-    }
-  }
-
-  package func grants(_ capability: CapabilityDescriptor) -> Bool {
-    if capabilityIDs.contains("*") { return true }
-    if let reference = capability.mcpReference {
-      // The generic call capability explicitly grants the host-selected tools across registrations.
-      if mcpServerIDs.contains(reference.serverID) || capabilityIDs.contains("mcp.tools.call") {
-        return true
-      }
-      let names = Set([capability.id] + (capability.equivalentCapabilityIDs ?? []))
-        .subtracting(Self.mcpSurfaceCapabilities)
-      return !capabilityIDs.isDisjoint(with: names)
-    }
-    if capabilityIDs.contains(capability.id) { return true }
-    return !mcpServerIDs.isEmpty && Self.mcpSurfaceCapabilities.contains(capability.id)
-  }
-
-  package static let mcpSurfaceCapabilities: Set<String> = [
-    "mcp.servers.list", "mcp.servers.status", "mcp.tools.list", "mcp.tools.describe",
-    "mcp.tools.find", "mcp.tools.call", "mcp.resources.list", "mcp.resources.templates.list",
-    "mcp.resources.read", "mcp.prompts.list", "mcp.prompts.get", "mcp.events.read",
-    "mcp.requests.list", "mcp.requests.read", "mcp.requests.cancel", "mcp.connections.close",
-  ]
-}
-
 package enum GatewayPolicyConfigurationError: Error, LocalizedError, Equatable {
   case localAdminCannotBeRemote
-  case fullShellRequiresFullAccess
 
   package var errorDescription: String? {
     switch self {
     case .localAdminCannotBeRemote:
       return "local-admin must never allow a remote caller."
-    case .fullShellRequiresFullAccess:
-      return
-        "Arbitrary execution requires local-full-access mode and separate Full Shell permission."
+
     }
   }
 }
@@ -399,11 +213,8 @@ package enum PolicyDenialCode: String, Codable, Sendable {
   case callerDenied = "policy.caller_denied"
   case localAdminRemote = "policy.local_admin_remote"
   case localOnly = "policy.local_only"
-  case capabilityDenied = "policy.capability_denied"
   case projectRequired = "policy.project_required"
   case projectDenied = "policy.project_denied"
-  case fullShellDisabled = "policy.full_shell_disabled"
-  case readOnlyProfile = "policy.read_only_profile"
 }
 
 package enum PolicyDecision: Equatable, Sendable {
@@ -452,27 +263,6 @@ package struct GatewayPolicyEvaluator: Sendable {
       )
     }
 
-    guard grant.grants(capability) else {
-      return .deny(
-        code: .capabilityDenied,
-        message: "The profile does not grant capability '\(capability.id)'."
-      )
-    }
-
-    if capability.risk == .fullShell && (!grant.supportsFullShell || !grant.fullShellEnabled) {
-      return .deny(
-        code: .fullShellDisabled,
-        message:
-          "Arbitrary execution requires local-full-access mode and separate Full Shell permission."
-      )
-    }
-
-    guard grant.permitsRisk(capability.risk) else {
-      return .deny(
-        code: .readOnlyProfile,
-        message: "Read-only mode requires a host-classified read-only capability.")
-    }
-
     if capability.projectRequirement == .required {
       guard let projectID = context.projectID else {
         return .deny(
@@ -480,21 +270,19 @@ package struct GatewayPolicyEvaluator: Sendable {
           message: "An explicit project_id is required."
         )
       }
-      guard registeredProjectIDs.contains(projectID),
-        grant.projectIDs.contains(projectID) || grant.projectIDs.contains("*")
+      guard registeredProjectIDs.contains(projectID)
       else {
         return .deny(
           code: .projectDenied,
-          message: "The requested project is not registered and granted to this profile."
+          message: "The requested project is not registered."
         )
       }
     } else if let projectID = context.projectID {
-      guard registeredProjectIDs.contains(projectID),
-        grant.projectIDs.contains(projectID) || grant.projectIDs.contains("*")
+      guard registeredProjectIDs.contains(projectID)
       else {
         return .deny(
           code: .projectDenied,
-          message: "The requested project is not registered and granted to this profile."
+          message: "The requested project is not registered."
         )
       }
     }

@@ -51,8 +51,8 @@
     {
       "id": "swift-tests",
       "needs": ["dependencies"],
-      "timeout_seconds": 5400,
-      "commands": [["/usr/bin/swift", "build"], ["/usr/bin/swift", "test", "--no-parallel"]],
+      "timeout_seconds": 10800,
+      "commands": [["/usr/bin/swift", "build"], ["python3", "Scripts/run-swift-tests.py"]],
       "access": "Local isolated regression fixtures"
     },
     {
@@ -60,8 +60,9 @@
       "needs": ["dependencies"],
       "timeout_seconds": 1800,
       "commands": [
+        ["/usr/bin/swift", "build", "--build-system", "native", "--product", "computer-mcp"],
         ["/usr/bin/swift", "build", "--package-path", "Tools/Validation"],
-        ["/usr/bin/swift", "test", "--package-path", "Tools/Validation", "--no-parallel"],
+        ["/bin/sh", "-c", "COMPUTER_MCP_EXECUTABLE=\"$PWD/.build/debug/computer-mcp\" exec /usr/bin/swift test --package-path Tools/Validation --no-parallel"],
         ["/usr/bin/swift", "run", "--package-path", "Tools/Validation", "computer-mcp-validate", "test-case", "validate"]
       ],
       "access": "Local Validation fixtures and catalog"
@@ -90,7 +91,7 @@
     },
     {
       "id": "candidate",
-      "timeout_seconds": 7500,
+      "timeout_seconds": 54000,
       "retain_outputs": true,
       "commands": [["python3", "Scripts/candidate.py", "request"]],
       "access": "Trusted master and protected cloud construction, signing, notarization and GitHub Release publication"

@@ -1,23 +1,45 @@
+import ComputerMCPConfiguration
 import ComputerMCPCore
+import ComputerMCPPermissions
 import ComputerMCPPersistence
 import Foundation
 
 /// Configuration writes discovered by runtime preparation, applied only at publication.
 package struct GatewayConfigurationResolution: Equatable, Sendable {
   package struct Project: Equatable, Sendable {
-    let original: RegisteredProject
-    let resolved: RegisteredProject
+    let original: ComputerMCPCore.RegisteredProject
+    let resolved: ComputerMCPCore.RegisteredProject
   }
 
   var projects: [Project] = []
-  var profiles: [ProfileGrant] = []
+  /// The complete explicit manifest source. An empty array removes its declarations.
+  var profileDeclarations: [ProfileGrant]?
+  var configurationPaths: Set<PathRule>?
+  var localProviders: [MCPServerConfig]?
 
-  package init(projects: [Project] = [], profiles: [ProfileGrant] = []) {
+  package init(
+    projects: [Project] = [], profileDeclarations: [ProfileGrant]? = nil,
+    configurationPaths: Set<PathRule>? = nil, localProviders: [MCPServerConfig]? = nil
+  ) {
     self.projects = projects
-    self.profiles = profiles
+    self.profileDeclarations = profileDeclarations
+    self.configurationPaths = configurationPaths
+    self.localProviders = localProviders
   }
 
   package mutating func merge(_ other: Self) throws {
+    if let incoming = other.localProviders {
+      guard localProviders == nil || localProviders == incoming else {
+        throw GatewayDatabaseError.configurationChanged
+      }
+      localProviders = incoming
+    }
+    if let incoming = other.configurationPaths {
+      guard configurationPaths == nil || configurationPaths == incoming else {
+        throw GatewayDatabaseError.configurationChanged
+      }
+      configurationPaths = incoming
+    }
     for project in other.projects {
       if let existing = projects.first(where: { $0.original.id == project.original.id }) {
         var comparable = project.resolved
@@ -30,11 +52,16 @@ package struct GatewayConfigurationResolution: Equatable, Sendable {
         projects.append(project)
       }
     }
-    for profile in other.profiles {
-      if let existing = profiles.first(where: { $0.id == profile.id }) {
-        guard existing == profile else { throw GatewayDatabaseError.configurationChanged }
+    if let incoming = other.profileDeclarations {
+      if let existing = profileDeclarations {
+        guard
+          try PermissionProfileManifest.encode(existing)
+            == PermissionProfileManifest.encode(incoming)
+        else {
+          throw GatewayDatabaseError.configurationChanged
+        }
       } else {
-        profiles.append(profile)
+        profileDeclarations = incoming
       }
     }
   }
@@ -45,11 +72,15 @@ package struct GatewayRuntimePreparation: Sendable {
   package let resolution: GatewayConfigurationResolution
 }
 
+package enum GatewayManifestRevision: Sendable {
+  case current
+  case captured(String?)
+}
+
 /// Discovery is allowed before publication; tool execution and child sessions are not.
 final class GatewayRuntimePublication: @unchecked Sendable {
   private let lock = NSLock()
   private var published = false
-
   func publish() { lock.withLock { published = true } }
 
   func requirePublished() throws {

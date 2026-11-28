@@ -45,6 +45,7 @@ final class ComputerMCPAppModel: ObservableObject {
   ]
 
   @Published var selectedSection: AppSection? = .home
+  @Published var projectRecoveryPath: [ProjectSummary] = []
   @Published private(set) var isPresentingWelcome: Bool
   @Published var pendingProjectRemoval: ProjectSummary?
   @Published var pendingProfileConfirmation: ProfileConfirmation?
@@ -58,8 +59,6 @@ final class ComputerMCPAppModel: ObservableObject {
   @Published private(set) var providers: LoadState<[ProviderSummary]> = .idle
   @Published private(set) var openAITunnels: LoadState<[OpenAITunnelSummary]> = .idle
   @Published private(set) var cloudflareTunnels: LoadState<[CloudflareTunnelSummary]> = .idle
-  @Published private(set) var permissions: LoadState<[PermissionSummary]> = .idle
-  @Published private(set) var operationApprovals: LoadState<[OperationTicket]> = .idle
   @Published private(set) var audit: LoadState<[AuditEntrySummary]> = .idle
   @Published private(set) var diagnostics: LoadState<DiagnosticsSnapshot> = .idle
   @Published private(set) var openAITunnelLogs: [String: LoadState<OpenAITunnelLogSnapshot>] = [:]
@@ -76,6 +75,8 @@ final class ComputerMCPAppModel: ObservableObject {
   let pluginManagement: PluginManagementModel
   let mcpRegistrations: MCPRegistrationModel
   let clientAccess: ClientAccessModel
+  let privacySecurity: PrivacySecurityModel
+  let worktreeRecovery: WorktreeRecoveryModel
   let localClients: LocalClientsModel
   private let onboardingPreferences: any OnboardingPreferenceStoring
   private let permissionCoach = PermissionCoachWindowController()
@@ -87,14 +88,21 @@ final class ComputerMCPAppModel: ObservableObject {
     controlPlane: any AppControlPlane,
     onboardingPreferences: any OnboardingPreferenceStoring = UserDefaultsOnboardingPreferences()
   ) {
+    let privacyService = LivePrivacySecurityService(controlPlane: controlPlane)
+    let clientAccess = ClientAccessModel(controlPlane: controlPlane)
+    self.privacySecurity = PrivacySecurityModel(service: privacyService, clientAccess: clientAccess)
+    self.worktreeRecovery = WorktreeRecoveryModel(service: controlPlane)
     self.controlPlane = controlPlane
     self.pluginManagement = PluginManagementModel(controlPlane: controlPlane)
     self.mcpRegistrations = MCPRegistrationModel(controlPlane: controlPlane)
-    self.clientAccess = ClientAccessModel(controlPlane: controlPlane)
+    self.clientAccess = clientAccess
     self.localClients = LocalClientsModel(controlPlane: controlPlane)
     self.onboardingPreferences = onboardingPreferences
     self.isPresentingWelcome =
       onboardingPreferences.completedVersion < UserDefaultsOnboardingPreferences.currentVersion
+    privacyService.requestPermission = { [weak self] permission in
+      self?.requestPermission(permission)
+    }
   }
 
   func finishWelcome(selecting section: AppSection = .home) {
@@ -161,7 +169,7 @@ final class ComputerMCPAppModel: ObservableObject {
         refresh(.home)
         refresh(.tunnels)
         await clientAccess.reload()
-        if selectedSection == .permissions { await loadOperationApprovals() }
+        await privacySecurity.refresh()
       }
     }
   }
@@ -219,8 +227,7 @@ final class ComputerMCPAppModel: ObservableObject {
       }
     case .permissions:
       Task {
-        await loadPermissions()
-        await loadOperationApprovals()
+        await privacySecurity.refresh()
       }
     case .audit:
       Task { await loadAudit() }
@@ -288,17 +295,15 @@ final class ComputerMCPAppModel: ObservableObject {
     }
   }
 
-  func setProjectEnabled(_ enabled: Bool, project: ProjectSummary) {
+  func setProjectAccess(_ access: ProjectAccess, project: ProjectSummary) {
     performAction(
-      key: "project.grant.\(project.id)",
-      title: "Unable to update project access",
-      refresh: [.projects, .home]
+      key: "project.access.\(project.id)", title: "Unable to update project access",
+      refresh: [.projects, .profiles, .home]
     ) {
-      try await self.controlPlane.setProjectEnabled(
-        enabled,
-        projectID: project.id,
-        profileID: project.activeProfileID
-      )
+      try await self.controlPlane.setProjectAccess(
+        access, projectID: project.id, profileID: project.activeProfileID,
+        expectedProfileRevision: project.profileRevision,
+        expectedPermissionRevision: project.permissionRevision)
     }
   }
 
@@ -320,8 +325,9 @@ final class ComputerMCPAppModel: ObservableObject {
     }
   }
 
-  func profilePermissionsEditor(id: GatewayProfileID) -> ProfilePermissionsModel {
-    ProfilePermissionsModel(profileID: id, controlPlane: controlPlane)
+  func showPrivacySecurity(for profileID: GatewayProfileID) {
+    privacySecurity.path = [.principal(profileID.rawValue)]
+    selectedSection = .permissions
   }
 
   func startProvider(id: String) {
@@ -668,31 +674,6 @@ final class ComputerMCPAppModel: ObservableObject {
       cloudflareTunnels = .loaded(try await controlPlane.fetchCloudflareTunnels())
     } catch {
       cloudflareTunnels.failRefresh(with: AppLocalization.errorDescription(error))
-    }
-  }
-
-  private func loadPermissions() async {
-    permissions.beginRefresh()
-    do {
-      permissions = .loaded(try await controlPlane.fetchPermissions())
-    } catch {
-      permissions.failRefresh(with: AppLocalization.errorDescription(error))
-    }
-  }
-
-  private func loadOperationApprovals() async {
-    operationApprovals.beginRefresh()
-    do { operationApprovals = .loaded(try await controlPlane.fetchOperationApprovals()) } catch {
-      operationApprovals.failRefresh(with: AppLocalization.errorDescription(error))
-    }
-  }
-
-  func resolveOperationApproval(id: String, approved: Bool) {
-    performAction(
-      key: "approval.resolve.\(id)", title: "Unable to resolve approval",
-      refresh: [.permissions, .audit]
-    ) {
-      try await self.controlPlane.resolveOperationApproval(id: id, approved: approved)
     }
   }
 

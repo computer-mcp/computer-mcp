@@ -6,7 +6,7 @@ import SwiftUI
 
 struct ClientAccessView: View {
   @ObservedObject var model: ClientAccessModel
-  var editPermissions: ((GatewayProfileID) -> Void)? = nil
+  var showPermissions: ((GatewayProfileID) -> Void)? = nil
 
   var body: some View {
     VStack(alignment: .leading, spacing: 16) {
@@ -42,7 +42,7 @@ struct ClientAccessView: View {
         }
         if !snapshot.sessions.isEmpty {
           Text(
-            "Access changes apply to new requests. Already started work is not cancelled.",
+            "Revoking access ends work that uses it.",
             bundle: AppLocalization.resourceBundle
           ).font(.callout).foregroundStyle(.secondary)
         }
@@ -122,33 +122,23 @@ struct ClientAccessView: View {
           ).font(.callout).foregroundStyle(.secondary)
         }
         HStack {
-          Menu {
-            Button {
-              Task { await model.limit(session, to: .readOnly) }
-            } label: {
-              Text("Observe", bundle: AppLocalization.resourceBundle)
-            }
-            Button {
-              Task { await model.limit(session, to: .projectOperations) }
-            } label: {
-              Text("Control — Restricted Access", bundle: AppLocalization.resourceBundle)
-            }
-            .disabled(session.profile?.grant.mode == .readOnly)
-            Button {
-              model.requestFullAccess(session)
-            } label: {
-              Text("Control — Full Access…", bundle: AppLocalization.resourceBundle)
-            }
+          Button {
+            Task { await model.useSandbox(session) }
           } label: {
-            Text("Change access", bundle: AppLocalization.resourceBundle)
-          }
-          .accessibilityIdentifier("client-access.session.\(session.id).change")
-          .disabled(!model.isAvailable || session.currentAccess == nil)
-          if let editPermissions, session.profileID != .localAdmin {
+            Text("Use sandbox", bundle: AppLocalization.resourceBundle)
+          }.disabled(!model.isAvailable || !session.hasAccess || session.fullAccessConsent == nil)
+          Button {
+            model.requestFullAccess(session)
+          } label: {
+            Text("Allow Full access…", bundle: AppLocalization.resourceBundle)
+          }.disabled(
+            !model.isAvailable || !session.hasAccess || session.profile?.grant.fullAccess != true
+              || !session.accessLimit.allowsFullAccess)
+          if let showPermissions, session.profileID != .localAdmin {
             Button {
-              editPermissions(session.profileID)
+              showPermissions(session.profileID)
             } label: {
-              Text("Choose restricted permissions…", bundle: AppLocalization.resourceBundle)
+              Text("Permissions…", bundle: AppLocalization.resourceBundle)
             }.disabled(!model.isAvailable)
           }
           Spacer()
@@ -166,7 +156,7 @@ struct ClientAccessView: View {
 
   private func accessLabel(_ session: GatewayControlSessionSnapshot) -> String {
     if session.ended { return "Access ended" }
-    return session.currentAccess?.clientAccessLabel ?? "Access unavailable"
+    return session.accessLabel
   }
 }
 
@@ -226,10 +216,10 @@ private struct OAuthRequestRow: View {
             profilePicker(selected: selected)
             if let selected {
               Text(
-                verbatim: AppLocalization.string(selected.mode.clientAccessLabel)
+                verbatim: AppLocalization.string(selected.fullAccess ? "Full access" : "Sandbox")
               )
               .font(.callout)
-              .foregroundStyle(selected.mode == .readOnly ? Color.secondary : Color.orange)
+              .foregroundStyle(!selected.fullAccess ? Color.secondary : Color.orange)
             }
           }
           Spacer()
@@ -256,9 +246,6 @@ private struct OAuthRequestRow: View {
   /// Groups profiles by access level; a missing choice shows a placeholder, never a default.
   private func profilePicker(selected: ProfileGrant?) -> some View {
     let options = model.oauthProfileOptions
-    let levels = GatewayPermissionMode.allCases.filter { mode in
-      options.contains { $0.mode == mode }
-    }
     return Picker(
       selection: Binding<GatewayProfileID?>(
         get: { selected?.id },
@@ -269,15 +256,9 @@ private struct OAuthRequestRow: View {
         Text("Choose a profile", bundle: AppLocalization.resourceBundle)
           .tag(GatewayProfileID?.none)
       }
-      ForEach(levels, id: \.self) { level in
-        Section {
-          ForEach(options.filter { $0.mode == level }, id: \.id) { profile in
-            Text(verbatim: AppLocalization.string(profile.id.displayName))
-              .tag(GatewayProfileID?.some(profile.id))
-          }
-        } header: {
-          Text(verbatim: AppLocalization.string(level.clientAccessLabel))
-        }
+      ForEach(options, id: \.id) { profile in
+        Text(verbatim: AppLocalization.string(profile.id.displayName))
+          .tag(GatewayProfileID?.some(profile.id))
       }
     } label: {
       Text("Profile", bundle: AppLocalization.resourceBundle)
@@ -319,7 +300,7 @@ private struct OAuthGrantRow: View {
   private var accessLevel: String {
     guard let profile = model.oauthProfileOptions.first(where: { $0.id == grant.profileID })
     else { return AppLocalization.string("Access unavailable") }
-    return AppLocalization.string(profile.mode.clientAccessLabel)
+    return AppLocalization.string(profile.fullAccess ? "Full access" : "Sandbox")
   }
 
   private var usage: String {
@@ -339,42 +320,47 @@ struct ClientConsentView: View {
   @ObservedObject var model: ClientAccessModel
   let draftID: UUID
   @Environment(\.dismiss) private var dismiss
+  @Environment(\.locale) private var locale
+  @Environment(\.localizationResources) private var resources
+  private var l: PrivacyText { PrivacyText(locale: locale, resources: resources) }
 
   var body: some View {
     VStack(alignment: .leading, spacing: 18) {
       if let draft = model.pendingConsent, draft.id == draftID {
-        Text("Allow Full Access?", bundle: AppLocalization.resourceBundle).font(.title2.bold())
-        Text(verbatim: AppLocalization.string(draft.session.caller.clientAccessLabel))
+        Text(verbatim: l("Allow Full Access?")).font(.title2.bold())
+        Text(verbatim: l(draft.session.caller.clientAccessLabel))
           .font(.headline)
-        Text(verbatim: clientAccessIdentity(draft.session.principalID))
+        let identity = clientAccessIdentity(draft.session.principalID, using: l)
+        Text(verbatim: identity)
         Text(
-          "This client can run commands and access files, processes, the network, and credentials available to your macOS user. A project does not limit this access. macOS privacy permissions still apply.",
-          bundle: AppLocalization.resourceBundle)
+          verbatim: l(
+            "This client can run commands and access files, processes, the network, and credentials available to your macOS user. A project does not limit this access. macOS privacy permissions still apply."
+          ))
         Picker(
           selection: Binding(
             get: { model.pendingConsent?.lifetime ?? .thisSession },
             set: { if model.pendingConsent?.id == draftID { model.pendingConsent?.lifetime = $0 } }
           )
         ) {
-          Text("This Session", bundle: AppLocalization.resourceBundle)
+          Text(verbatim: l("This Session"))
             .tag(GatewayFullAccessLifetime.thisSession)
-          Text("Always Allow this Client", bundle: AppLocalization.resourceBundle)
+          Text(verbatim: l("Always Allow this Client"))
             .tag(GatewayFullAccessLifetime.alwaysAllowClient)
         } label: {
-          Text("Allow for", bundle: AppLocalization.resourceBundle)
+          Text(verbatim: l("Allow for"))
         }
         .accessibilityIdentifier("client-access.consent.lifetime")
         Text(
-          "Clients sharing the same connection credential share a trusted identity. Ending this session does not revoke an always-allowed client.",
-          bundle: AppLocalization.resourceBundle
+          verbatim: l(
+            "Clients sharing the same connection credential share a trusted identity. Ending this session does not revoke an always-allowed client."
+          )
         ).font(.callout).foregroundStyle(.secondary)
         if let error = model.errorMessage {
           Text(verbatim: error).foregroundStyle(.red).textSelection(.enabled)
         }
         if !model.consentIsCurrent {
           Text(
-            "Client access changed. Close this window and review the connection again.",
-            bundle: AppLocalization.resourceBundle
+            verbatim: l("Client access changed. Close this window and review the connection again.")
           ).foregroundStyle(.secondary)
         }
         HStack {
@@ -382,14 +368,14 @@ struct ClientConsentView: View {
             model.pendingConsent = nil
             dismiss()
           } label: {
-            Text("Cancel", bundle: AppLocalization.resourceBundle)
+            Text(verbatim: l("Cancel"))
           }.keyboardShortcut(.cancelAction)
           Spacer()
           if model.isSaving { ProgressView().controlSize(.small) }
           Button(role: .destructive) {
             Task { if await model.approve() { dismiss() } }
           } label: {
-            Text("Allow Full Access", bundle: AppLocalization.resourceBundle)
+            Text(verbatim: l("Allow Full Access"))
           }
           .accessibilityIdentifier("client-access.consent.allow")
           .disabled(!model.isAvailable || !model.consentIsCurrent)
@@ -422,8 +408,8 @@ struct ClientAccessMenuLabel: View {
       Label(model.statusText, systemImage: "person.badge.key")
     } else {
       Label(
-        model.controllingSessions.isEmpty ? "Computer MCP" : model.statusText,
-        systemImage: model.controllingSessions.isEmpty ? serviceSystemImage : "cursorarrow.rays")
+        model.activeSessions.isEmpty ? "Computer MCP" : model.statusText,
+        systemImage: model.activeSessions.isEmpty ? serviceSystemImage : "cursorarrow.rays")
     }
   }
 }

@@ -21,6 +21,7 @@ extension NetworkToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "network.interfaces", risk: .readOnly,
+          requirement: .privacy(.machineInformation),
           projectRequirement: .none,
           localOnly: false, usesNetwork: true
         )
@@ -41,6 +42,7 @@ extension NetworkToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "network.dns", risk: .readOnly,
+          requirement: .privacy(.machineInformation),
           projectRequirement: .none,
           localOnly: false, usesNetwork: true
         )
@@ -65,6 +67,7 @@ extension NetworkToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "network.resolve", risk: .readOnly,
+          requirement: .privacy(.machineInformation),
           projectRequirement: .none,
           localOnly: false, usesNetwork: true
         )
@@ -85,6 +88,7 @@ extension NetworkToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "network.proxy", risk: .readOnly,
+          requirement: .privacy(.machineInformation),
           projectRequirement: .none,
           localOnly: false, usesNetwork: true
         )
@@ -107,6 +111,7 @@ extension NetworkToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "network.services", risk: .readOnly,
+          requirement: .privacy(.machineInformation),
           projectRequirement: .none,
           localOnly: false, usesNetwork: true
         )
@@ -129,6 +134,7 @@ extension NetworkToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "network.hardware_ports", risk: .readOnly,
+          requirement: .privacy(.machineInformation),
           projectRequirement: .none,
           localOnly: false, usesNetwork: true
         )
@@ -154,6 +160,7 @@ extension NetworkToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "network.wifi", risk: .readOnly,
+          requirement: .privacy(.machineInformation),
           projectRequirement: .none,
           localOnly: false, usesNetwork: true
         )
@@ -177,6 +184,7 @@ extension NetworkToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "network.vpn", risk: .readOnly,
+          requirement: .privacy(.machineInformation),
           projectRequirement: .none,
           localOnly: false, usesNetwork: true
         )
@@ -199,6 +207,7 @@ extension NetworkToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "network.locations", risk: .readOnly,
+          requirement: .privacy(.machineInformation),
           projectRequirement: .none,
           localOnly: false, usesNetwork: true
         )
@@ -222,6 +231,7 @@ extension NetworkToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "network.routes", risk: .readOnly,
+          requirement: .privacy(.machineInformation),
           projectRequirement: .none,
           localOnly: false, usesNetwork: true
         )
@@ -245,6 +255,7 @@ extension NetworkToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "network.connections", risk: .readOnly,
+          requirement: .privacy(.machineInformation),
           projectRequirement: .none,
           localOnly: false, usesNetwork: true
         )
@@ -267,6 +278,7 @@ extension NetworkToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "network.arp", risk: .readOnly,
+          requirement: .privacy(.machineInformation),
           projectRequirement: .none,
           localOnly: false, usesNetwork: true
         )
@@ -293,6 +305,7 @@ extension NetworkToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "network.ping", risk: .readOnly,
+          requirement: .privacy(.machineInformation),
           projectRequirement: .none,
           localOnly: false, usesNetwork: true
         )
@@ -321,6 +334,7 @@ extension NetworkToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "network.tcp_check", risk: .readOnly,
+          requirement: .privacy(.machineInformation),
           projectRequirement: .none,
           localOnly: false, usesNetwork: true
         )
@@ -360,6 +374,7 @@ extension NetworkToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "network.http_check", risk: .readOnly,
+          requirement: .privacy(.machineInformation),
           projectRequirement: .none,
           localOnly: false, usesNetwork: true
         )
@@ -383,6 +398,7 @@ extension NetworkToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "network.listeners", risk: .readOnly,
+          requirement: .privacy(.machineInformation),
           projectRequirement: .none,
           localOnly: false, usesNetwork: true
         )

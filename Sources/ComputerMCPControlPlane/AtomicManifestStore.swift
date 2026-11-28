@@ -1,6 +1,7 @@
 import ComputerMCPConfiguration
 import ComputerMCPCore
 import ComputerMCPGateway
+import ComputerMCPPermissions
 import ComputerMCPPlatform
 import ComputerMCPPlugins
 import Crypto
@@ -9,6 +10,8 @@ import Foundation
 internal enum ManifestChangeReason: String, Codable, Equatable, Sendable {
   case activated
   case projectTerminology = "project-terminology"
+  case builtinCapabilities = "builtin-capabilities"
+  case permissionProfiles = "permission-profiles"
   case rolledBack = "rolled-back"
   case externalReload = "external-reload"
 }
@@ -22,7 +25,7 @@ internal struct ManifestChange: Codable, Equatable, Sendable {
 struct PreparedManifestChange: Sendable {
   fileprivate let admissionID: UUID
   fileprivate let previous: Data?
-  fileprivate let revision: ConfigurationRevision
+  let revision: ConfigurationRevision
   fileprivate let reason: ManifestChangeReason
   let configuration: GatewayConfiguration
   let persisted: GatewayDatabase.ConfigurationState
@@ -71,11 +74,35 @@ package final class AtomicManifestStore: @unchecked Sendable {
   private var continuations: [UUID: AsyncStream<ManifestChange>.Continuation] = [:]
   private var knownDigest: String?
   // Protected by writeLock; disk edits become active only after validation.
-  private var configuration: GatewayConfiguration?
+  private var snapshot: Snapshot?
   private var admissionID = UUID()
 
   private var files: ManifestFileTransaction {
     ManifestFileTransaction(manifestURL: manifestURL, database: database, fileManager: fileManager)
+  }
+
+  package static func activatePermissionMigration(
+    manifestURL: URL, database: GatewayDatabase,
+    applications: any ApplicationBundleLocating, bundledPlugins: BundledPlugins = .current
+  ) throws -> PermissionMigrationReport? {
+    try Self.ensureDirectory(manifestURL.deletingLastPathComponent(), fileManager: .default)
+    let files = ManifestFileTransaction(
+      manifestURL: manifestURL, database: database, fileManager: .default)
+    return try files.withExclusiveAccess {
+      try files.recover()
+      let manifest: String
+      if let data = try files.currentData() {
+        guard let text = String(data: data, encoding: .utf8) else {
+          throw AtomicManifestStoreError.invalidManifestEncoding
+        }
+        manifest = text
+      } else {
+        return nil
+      }
+      return try database.activatePermissionMigration(
+        manifest: manifest, baseURL: manifestURL.deletingLastPathComponent(),
+        applications: applications, bundledPlugins: bundledPlugins)
+    }
   }
 
   package init(
@@ -102,10 +129,44 @@ package final class AtomicManifestStore: @unchecked Sendable {
       guard let text = String(data: data, encoding: .utf8) else {
         throw AtomicManifestStoreError.invalidManifestEncoding
       }
-      if let upgraded = try ProjectManifestUpgrade.upgraded(text) {
+      let renamed = try ProjectManifestUpgrade.upgraded(text)
+      let manifest = renamed?.manifest ?? text
+      if try PermissionManifestUpgrade.isRequired(manifest: manifest) {
+        try database.validatePermissionMigrationManifest(text)
+        let upgraded = try PermissionManifestUpgrade.upgraded(
+          manifest: manifest, profiles: database.profiles(),
+          baseURL: self.manifestURL.deletingLastPathComponent())
         _ = try write(
-          manifest: upgraded, reason: .projectTerminology, expectedDigest: Self.digest(of: data))
+          manifest: upgraded.exportedTOML(), reason: .permissionProfiles,
+          expectedDigest: Self.digest(of: data))
+      } else if let renamed {
+        _ = try write(
+          manifest: renamed.manifest,
+          reason: renamed.removedBuiltinIDs.isEmpty && renamed.renamedBuiltinIDs.isEmpty
+            ? .projectTerminology : .builtinCapabilities,
+          expectedDigest: Self.digest(of: data))
       }
+      try reconcileInitialManifest()
+    }
+  }
+
+  private func reconcileInitialManifest() throws {
+    let admitted = try activeSnapshot()
+    let source = Data(
+      try PermissionProfileManifest.encode(admitted.configuration.profiles.map(\.grant)).utf8)
+    guard try admitted.revisionID == nil || database.configurationState().profileSource != source
+    else { return }
+    let data = try Data(contentsOf: manifestURL)
+    guard let manifest = String(data: data, encoding: .utf8) else {
+      throw AtomicManifestStoreError.invalidManifestEncoding
+    }
+    do {
+      _ = try write(
+        manifest: manifest, reason: .externalReload, expectedDigest: Self.digest(of: data))
+    } catch PermissionModelError.authoritySuspended {
+      // Diagnostics can review saved authority; reading a source never adopts a recovered epoch.
+    } catch GatewayPermissionError.profileUnavailable {
+      // An unconfirmed profile remains inactive until the owner reviews its saved snapshot.
     }
   }
 
@@ -138,13 +199,19 @@ package final class AtomicManifestStore: @unchecked Sendable {
     try write(manifest: manifest, reason: .activated, expectedDigest: expectedDigest)
   }
 
-  internal func activeConfiguration() throws -> GatewayConfiguration {
+  package typealias Snapshot = (configuration: GatewayConfiguration, revisionID: String?)
+
+  package func activeConfiguration() throws -> GatewayConfiguration {
+    try activeSnapshot().configuration
+  }
+
+  package func activeSnapshot() throws -> Snapshot {
     writeLock.lock()
     defer { writeLock.unlock() }
-    if let configuration { return configuration }
+    if let snapshot { return snapshot }
     return try files.withExclusiveAccess {
       try files.recover()
-      return try admittedConfiguration()
+      return try admittedSnapshot()
     }
   }
 
@@ -157,7 +224,7 @@ package final class AtomicManifestStore: @unchecked Sendable {
     defer { writeLock.unlock() }
     return try files.withExclusiveAccess {
       try files.recover()
-      guard try admittedConfiguration() == expected,
+      guard try admittedSnapshot().configuration == expected,
         try Self.digest(of: Data(contentsOf: manifestURL)) == currentKnownDigest()
       else { throw AtomicManifestStoreError.staleDigest }
       return try publication()
@@ -171,19 +238,25 @@ package final class AtomicManifestStore: @unchecked Sendable {
     }
   }
 
-  private func admittedConfiguration() throws -> GatewayConfiguration {
-    if let configuration { return configuration }
+  private func admittedSnapshot() throws -> Snapshot {
+    if let snapshot { return snapshot }
     guard fileManager.fileExists(atPath: manifestURL.path) else {
       throw AtomicManifestStoreError.manifestMissing
     }
     let data = try Data(contentsOf: manifestURL)
-    let loaded = try loader.load(path: manifestURL.path)
+    var loaded = try loader.load(path: manifestURL.path)
+    loaded.hostDataPaths.insert(manifestURL)
     guard try Data(contentsOf: manifestURL) == data else {
       throw AtomicManifestStoreError.staleDigest
     }
-    configuration = loaded
-    setKnownDigest(try Self.digest(of: data))
-    return loaded
+    let digest = try Self.digest(of: data)
+    let revisionID = try database.activeConfigurationRevisionID()
+    let matches =
+      try revisionID.flatMap { try database.configurationRevision(id: $0)?.digest } == digest
+    let admitted = (loaded, matches ? revisionID : nil)
+    setKnownDigest(digest)
+    snapshot = admitted
+    return admitted
   }
 
   internal func history(limit: Int = 50) throws -> [ConfigurationRevision] {
@@ -201,7 +274,8 @@ package final class AtomicManifestStore: @unchecked Sendable {
     else {
       throw AtomicManifestStoreError.unknownRevision(revisionID)
     }
-    let manifest = try ProjectManifestUpgrade.upgraded(revision.manifest) ?? revision.manifest
+    let manifest =
+      try ProjectManifestUpgrade.upgraded(revision.manifest)?.manifest ?? revision.manifest
     return try write(
       manifest: manifest, reason: .rolledBack, expectedDigest: expectedDigest)
   }
@@ -223,7 +297,7 @@ package final class AtomicManifestStore: @unchecked Sendable {
     defer { writeLock.unlock() }
     return try files.withExclusiveAccess {
       try files.recover()
-      if let expectedConfiguration, try admittedConfiguration() != expectedConfiguration {
+      if let expectedConfiguration, try admittedSnapshot().configuration != expectedConfiguration {
         throw AtomicManifestStoreError.staleDigest
       }
       let previous = try files.currentData()
@@ -245,7 +319,9 @@ package final class AtomicManifestStore: @unchecked Sendable {
         ".\(manifestURL.lastPathComponent).staged.\(UUID().uuidString)")
       defer { try? fileManager.removeItem(at: stagedURL) }
       try ManifestFileTransaction.writeAndSynchronize(data, to: stagedURL)
-      let loaded = try loader.load(path: stagedURL.path)
+      var loaded = try loader.load(path: stagedURL.path)
+      loaded.hostDataPaths.remove(stagedURL.standardizedFileURL)
+      loaded.hostDataPaths.insert(manifestURL)
       guard try Data(contentsOf: stagedURL) == data else {
         throw AtomicManifestStoreError.staleDigest
       }
@@ -258,6 +334,7 @@ package final class AtomicManifestStore: @unchecked Sendable {
 
   func commit(
     _ prepared: PreparedManifestChange, resolution: GatewayConfigurationResolution = .init(),
+    providerActivation: GatewayProviderActivation? = nil,
     install: (GatewayDatabase.ConfigurationState) -> Void = { _ in }
   ) throws -> ConfigurationRevision {
     writeLock.lock()
@@ -271,6 +348,11 @@ package final class AtomicManifestStore: @unchecked Sendable {
       revision.activatedAt = Date()
       let persisted: GatewayDatabase.ConfigurationState
       let activeTunnelIDs = Set(prepared.configuration.transports.cloudflare.map(\.id))
+      var resolution = resolution
+      try resolution.merge(
+        .init(
+          profileDeclarations: prepared.configuration.profiles.map(\.grant),
+          configurationPaths: GatewayConfigurationPaths.capture(prepared.configuration)))
       if prepared.reason == .externalReload {
         // The editor owns these bytes. Admission records them without rewriting
         // the file or creating a new filesystem event on a failed DB commit.
@@ -292,9 +374,10 @@ package final class AtomicManifestStore: @unchecked Sendable {
         try ManifestFileTransaction.writeAndSynchronize(Data(revision.manifest.utf8), to: stagedURL)
         persisted = try files.commit(
           stagedURL: stagedURL, previous: prepared.previous, revision: revision,
-          expected: prepared.persisted, resolution: resolution, activeTunnelIDs: activeTunnelIDs)
+          expected: prepared.persisted, resolution: resolution, activeTunnelIDs: activeTunnelIDs,
+          providerActivation: providerActivation)
       }
-      configuration = prepared.configuration
+      snapshot = (prepared.configuration, revision.id)
       admissionID = UUID()
       setKnownDigest(revision.digest)
       install(persisted)

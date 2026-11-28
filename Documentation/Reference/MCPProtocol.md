@@ -26,17 +26,18 @@ this repository.
 ## Downstream tool risk
 
 A downstream tool can declare a minimum risk in
-`_meta["io.github.computer-mcp/risk"]`: `read-only`, `project-write`,
-`external-write`, `destructive` or `full-shell`. The host uses the higher of
-this classification and its configured tool risk. Metadata cannot lower host
-policy or grant a capability. Missing declarations retain configured behavior;
-malformed or unknown declarations fail closed. Standard MCP annotations remain
-hints, not permission grants.
+`_meta["io.github.computer-mcp/risk"]`. The
+[risk-to-permission table](Config.md#permissions-by-downstream-tool-risk)
+defines all accepted values, their required MCP server and Project permission
+values, and when execution requires Full access. The host uses the higher of this
+classification and its configured tool risk. Missing declarations retain configured
+behavior; malformed or unknown declarations fail closed. Standard MCP annotations
+remain hints and cannot lower host policy or grant permission.
 
 Reexported tools, configured aliases and `mcp.tools.call` use the selected
-project's current definition. The effective risk applies to discovery,
-authorization, approval preparation and ticket commit. Execution rechecks the
-declaration; a higher risk observed after admission is rejected with `mcp.risk_changed`
+project's current definition. The effective risk contributes to the resolved
+permission requirements. Execution rechecks the declaration; a higher risk
+observed after admission is rejected with `mcp.risk_changed`
 before dispatch. Retry through current host authorization and consent. Background
 calls use the same checks before starting work.
 
@@ -215,8 +216,8 @@ Clients can use the host's typed `runtime.owners.list` and `runtime.owners.call`
 tools to select a retained instance explicitly. A locator binds the runtime,
 project and a live host ownership lease, not just a reusable native handle.
 The selected lease and original connection are rechecked before dispatch.
-Current target authorization and operation approval remain mandatory; approval
-tickets also bind the selected locator. See [Execution owners](Tools.md#execution-owners)
+Current target permission and execution authority remain mandatory; permission
+retry identity also binds the selected locator. See [Execution owners](Tools.md#execution-owners)
 for paging, scope and call syntax. These host locators are not forwarded as
 downstream arguments or accepted as authorization.
 
@@ -276,9 +277,11 @@ For stdio registrations created by `GatewayRuntime`, the host supplies
 ```json
 {
   "formatVersion": 1,
+  "hostServiceContract": "projects-v1",
   "runtimeID": "ed2868d1-5a81-4b59-a84a-8618c174a648",
   "caller": "secure-tunnel",
   "profileID": "chatgpt-observe",
+  "principalID": "secure-tunnel:chatgpt-observe",
   "project": { "id": "project", "rootPath": "/absolute/project" },
   "readOnly": true,
   "transportTrace": {
@@ -303,7 +306,7 @@ override it. A standalone client or explicit connection validation without a
 gateway runtime removes inherited/configured values of this reserved key.
 Remote HTTP registrations do not receive this stdio environment contract.
 
-The value contains no credential, capability grant or Full Shell approval.
+The value contains no credential, permission grant or Full access consent.
 `readOnly` conveys the host profile's independent mutation boundary; `false`
 does not authorize a tool or grant unrestricted execution. The gateway checks
 the current registration selection, risk, caller and project grant at each
@@ -319,8 +322,8 @@ host-owned.
 
 When explicitly enabled by the host, `COMPUTER_MCP_HOST_FD` separately identifies
 an inherited connected Unix socket carrying standard MCP callbacks. The
-optional `managedProjectRoot` metadata field supplies the host-selected
-managed directory. Neither value changes the northbound caller identity or
+optional `managedProjectRoot` metadata field is host-selected storage
+provenance, not permission to create or delete a checkout. Neither value changes the northbound caller identity or
 permits a plugin to connect to the administrator socket. See
 [Scoped host services](HostServices.md) for authority, private tool discovery,
 message bounds and cleanup requirements.
@@ -541,3 +544,12 @@ Health check:
 ```sh
 curl http://127.0.0.1:8765/health
 ```
+
+## Worktree calls on an existing session
+
+The worktree lifecycle uses ordinary `tools/call`. `git.worktree_add` returns a
+new `project_id` that is available to the next call on that session; it creates no
+permission grant. Source permissions and limits are re-evaluated for each call.
+Tool-list change notifications continue across runtime generations. Background
+execution IDs retain their original owners; reconnect does not authorize another
+principal to read them. See [Worktrees](Worktrees.md).

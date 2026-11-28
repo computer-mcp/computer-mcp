@@ -1,5 +1,6 @@
 import ComputerMCPDownstream
 import ComputerMCPMacOS
+import ComputerMCPPermissions
 import ComputerMCPTestSupport
 import ComputerMCPToolKit
 import ComputerMCPToolsMCP
@@ -11,99 +12,85 @@ import Testing
 @testable import ComputerMCPCore
 @testable import ComputerMCPGateway
 
+#if os(macOS)
+  import ComputerMCPDarwinTestSupport
+#endif
+
 struct MCPAuthorizationTests {
   @Test
-  func genericCallsUseTheSameHostRiskAndOperationTickets() async throws {
-    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
-    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
-    defer { try? FileManager.default.removeItem(at: root) }
+  func allowedCallsExecuteDirectlyThroughGenericAndReexportedRoutes() async throws {
     let server = MCPServerConfig(
       id: "remote", transport: .stdio, command: "/bin/cat", exposure: .reexport,
       prefix: "remote", allowedTools: ["inspect"], toolRisks: ["inspect": .destructive])
-    let database = try GatewayDatabase(inMemory: ())
+    var permissions = Permissions()
+    try permissions.set(.granted(.all), for: .mcpServer("remote"))
+    try permissions.set(.granted(.write), for: .project("fixture"))
     let client = CatalogClient()
+    let root = try ScopedTemporaryDirectory()
+    let project = root.url.appendingPathComponent("project")
+    try FileManager.default.createDirectory(at: project, withIntermediateDirectories: false)
+    let database = try fixturePermissionDatabase(
+      path: root.url.appendingPathComponent("host.sqlite").path)
+    try database.saveProject(.init(id: "fixture", displayName: "Fixture", rootPath: project.path))
+    let grant = ProfileGrant(
+      id: .localAdmin, permissions: permissions, fullAccess: true, allowedCallers: [.localMCP])
+    try database.saveProfile(grant)
+    let context = try fixtureConsentedContext(
+      database: database, grant: grant, caller: .localMCP, projectID: "fixture",
+      platform: fixtureHostedPlatform())
     let runtime = try GatewayRuntime(
-      configuration: GatewayConfiguration(
+      configuration: .init(
         runtime: .init(caller: .localMCP, profileID: .localAdmin),
-        mcp: .init(servers: [server])), database: database,
-      registeredProjects: [.init(id: "fixture", displayName: "Fixture", rootPath: root.path)],
-      platform: MacOSPlatform.services, mcpClient: client)
-    let arguments: JSONValue = .object([
-      "server": .string("remote"), "tool": .string("inspect"), "arguments": .object([:]),
-    ])
-    expectThrows(
-      try runtime.callTool(name: "mcp.tools.call", arguments: arguments, context: .empty)
-    ) { error in
-      #expect(error.localizedDescription.contains("operations.approval_required"))
-    }
-    expectThrows(
-      try runtime.callTool(name: "remote.inspect", arguments: .object([:]), context: .empty)
-    ) { error in
-      #expect(error.localizedDescription.contains("operations.approval_required"))
-    }
-    for name in ["mcp.tools.call", "remote.inspect"] {
-      await #expect(throws: (any Error).self) {
-        try await runtime.callToolAsync(
-          name: name, arguments: name == "mcp.tools.call" ? arguments : .object([:]),
-          context: .empty)
+        profiles: [
+          .init(
+            grant: grant)
+        ],
+        mcp: .init(servers: [server]), projectDirectory: project), context: context,
+      database: database,
+      registeredProjects: database.projects(), platform: fixtureHostedPlatform(), mcpClient: client)
+    _ = try runtime.makeControlSession()
+    try fixtureApproveLocalProvider(
+      server, database: database,
+      runtime: database.permissionRuntime(platform: fixtureHostedPlatform()),
+      permissions: fixturePermissions([.project("fixture"): .granted(.write)]), fullAccess: true)
+    let session = try #require(context.controlSession as? GatewayControlSession)
+    _ = try session.approveFullAccess(expectedRevision: session.revision)
+    do {
+      for name in ["mcp.tools.call", "remote.inspect"] {
+        let arguments: JSONValue =
+          name == "mcp.tools.call"
+          ? .object([
+            "server": .string("remote"), "tool": .string("inspect"), "arguments": .object([:]),
+          ])
+          : .object([:])
+        _ = try runtime.callTool(name: name, arguments: arguments, context: .empty)
+        _ = try await runtime.callToolAsync(name: name, arguments: arguments, context: .empty)
       }
+      #expect(client.callCount == 4)
+      await runtime.shutdown()
+    } catch {
+      await runtime.shutdown()
+      throw error
     }
-    let prepared = try runtime.callTool(
-      name: "operations.prepare",
-      arguments: .object(["tool": .string("mcp.tools.call"), "arguments": arguments]),
-      context: .empty)
-    let ticket = try #require(
-      prepared.objectValue?["structuredContent"]?.objectValue?["result"]?.objectValue?["ticket_id"]?
-        .stringValue)
-    #expect(try database.operationTicket(id: ticket)?.state == .pendingApproval)
-    #expect(throws: (any Error).self) {
-      try runtime.callTool(
-        name: "operations.commit",
-        arguments: .object([
-          "ticket_id": .string(ticket), "tool": .string("mcp.tools.call"), "arguments": arguments,
-        ]), context: .empty)
-    }
-    #expect(client.callCount == 0)
-    try database.resolveOperationApproval(id: ticket, approved: true, resolver: .localCLI)
-    _ = try runtime.callTool(
-      name: "operations.commit",
-      arguments: .object([
-        "ticket_id": .string(ticket), "tool": .string("mcp.tools.call"), "arguments": arguments,
-      ]), context: .empty)
-    #expect(client.callCount == 1)
-    await runtime.shutdown()
   }
 
   @Test(arguments: [false, true])
-  func defaultObserveGrantUsesHostClassification(hostReadOnly: Bool) async throws {
-    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
-    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
-    defer { try? FileManager.default.removeItem(at: root) }
+  func defaultProfileListsCachedToolsAsRequestable(hostReadOnly: Bool) async throws {
     let server = MCPServerConfig(
       id: "remote", transport: .stdio, command: "/bin/cat", exposure: .reexport,
       prefix: "remote", allowedTools: ["inspect"],
       toolRisks: hostReadOnly ? ["inspect": .readOnly] : [:])
+    let client = CatalogClient()
     let runtime = try GatewayRuntime(
-      configuration: GatewayConfiguration(
+      configuration: .init(
         runtime: .init(caller: .secureTunnel, profileID: .chatGPTObserve),
         mcp: .init(servers: [server])),
-      registeredProjects: [.init(id: "fixture", displayName: "Fixture", rootPath: root.path)],
-      platform: MacOSPlatform.services, mcpClient: CatalogClient())
-    #expect(
-      try runtime.listTools(context: .empty).contains { $0.name == "remote.inspect" }
-        == hostReadOnly)
-    if !hostReadOnly {
-      #expect(throws: (any Error).self) {
-        try runtime.callTool(name: "remote.inspect", arguments: .object([:]), context: .empty)
-      }
-      await #expect(throws: (any Error).self) {
-        try await runtime.callToolAsync(
-          name: "remote.inspect", arguments: .object([:]), context: .empty)
-      }
-    } else {
-      _ = try await runtime.callToolAsync(
-        name: "remote.inspect", arguments: .object([:]), context: .empty)
-    }
+      context: .init(
+        caller: .secureTunnel, profileID: .chatGPTObserve,
+        trustedPrincipalID: "verified-requestable-client"),
+      platform: fixtureHostedPlatform(), mcpClient: client)
+    #expect(try runtime.listTools(context: .empty).contains { $0.name == "remote.inspect" })
+    #expect(client.callCount == 0)
     await runtime.shutdown()
   }
 
@@ -115,6 +102,7 @@ struct MCPAuthorizationTests {
       exposure: .reexport, prefix: "mcp", allowedTools: ["inspect"])
     let registry = MacOSToolProviders().makeProviders(
       toolEnvironment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: .fixture(mcp: .init(servers: [server]))), mcpClient: client)
     let router = try GatewayProviderRouter(registry: registry)
     let definition = try #require(
@@ -133,6 +121,7 @@ struct MCPAuthorizationTests {
       prefix: "remote", allowedTools: ["inspect"], toolRisks: ["inspect": .readOnly])
     let registry = MacOSToolProviders().makeProviders(
       toolEnvironment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: .fixture(
           mcp: .init(servers: [server]),
           tools: [.init(name: "alias.inspect", adapter: .mcp, source: "remote", tool: "inspect")])),
@@ -145,6 +134,7 @@ struct MCPAuthorizationTests {
   @Test
   func emptySelectionDeniesAliasesAndGenericCalls() throws {
     let registryEnvironment = ToolEnvironment(
+      launcher: testExecutionLauncher(),
       configuration: .fixture(
         mcp: .init(servers: [MCPServerConfig(id: "remote", transport: .stdio, command: "/bin/cat")]
         ),
@@ -177,10 +167,12 @@ struct MCPAuthorizationTests {
     ]
     let registry = MacOSToolProviders().makeProviders(
       toolEnvironment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: .fixture(mcp: .init(servers: servers))), mcpClient: client)
     let router = try GatewayProviderRouter(registry: registry)
     let direct = ConfiguredMCPToolProvider(
-      environment: ToolEnvironment(configuration: .fixture(mcp: .init(servers: servers))),
+      environment: ToolEnvironment(
+        launcher: testExecutionLauncher(), configuration: .fixture(mcp: .init(servers: servers))),
       mcpClient: client)
     let invocation = ToolInvocation(
       name: "shared.nested.inspect", arguments: .object([:]), context: .empty)
@@ -189,22 +181,6 @@ struct MCPAuthorizationTests {
       try router.callTool(
         name: invocation.name, arguments: invocation.arguments, context: invocation.context)
         == .string("second:inspect"))
-  }
-
-  @Test(arguments: [GatewayProfileID.chatGPTObserve, .cloudflareObserve, .chatGPTOperate])
-  func readOnlyModeRejectsWriteRiskEvenWithWildcardGrant(profileID: GatewayProfileID) {
-    let caller: GatewayCallerKind = profileID == .chatGPTObserve ? .secureTunnel : .cloudflareTunnel
-    let grant = ProfileGrant(
-      id: profileID, capabilityIDs: ["*"], allowedCallers: [caller], mode: .readOnly)
-    let decision = GatewayPolicyEvaluator().evaluate(
-      capability: .init(id: "remote.inspect", risk: .externalWrite),
-      context: .init(caller: caller, profileID: profileID), grant: grant,
-      registeredProjectIDs: [])
-    #expect(
-      decision
-        == .deny(
-          code: .readOnlyProfile,
-          message: "Read-only mode requires a host-classified read-only capability."))
   }
 
   @Test
@@ -262,6 +238,10 @@ struct MCPAuthorizationTests {
 }
 
 private struct CatalogClient: DownstreamMCPClient {
+  func cachedTools(server: MCPServerConfig, context: InvocationContext) -> [MCPTool]? {
+    try? listTools(server: server, context: context)
+  }
+
   private let calls = NIOLockedValueBox(0)
   var callCount: Int { calls.withLockedValue { $0 } }
   func makeScopedClient(

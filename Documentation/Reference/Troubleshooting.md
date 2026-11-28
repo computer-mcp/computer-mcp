@@ -193,8 +193,9 @@ startup, protocol, authentication, and downstream tool failures.
 
 Use `cli.describe` and `cli.help`, then execute the returned argv through
 `cli.exec`. No shell expansion is performed. `cli.exec` is unavailable to a
-remote caller unless its locally selected profile grants Full Shell-equivalent
-authority.
+caller without permission admission and an enforceable execution context.
+Missing sandbox worktree/plugin contexts and unsupported Darwin durable Full
+access execution are refused; granting a permission does not supply a backend.
 
 ## Plugin runtime failures
 
@@ -203,7 +204,10 @@ files. Runtime-specific diagnosis belongs to the plugin; see the [Codex plugin](
 
 ## Computer Use Is Denied
 
-Open **Permissions**. Grant Accessibility or Screen Recording to the signed
+Open **Privacy & Security**. Review the calling principal’s **Screen** permission
+for observation and **Desktop control** permission for actions. A missing grant
+creates an owner request; an explicit denial must be changed by the owner. Also
+grant Accessibility or Screen Recording to the signed
 `Computer MCP.app` with the local **Request Access** action, complete the
 highlighted step in System Settings, then relaunch if macOS requires it. The
 App automatically rechecks the permission while the guide is visible. Remote

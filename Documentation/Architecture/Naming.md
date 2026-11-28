@@ -8,7 +8,7 @@ stable responsibility or protocol concept, never a temporary delivery phase.
 | Surface | Name |
 | --- | --- |
 | Human-readable name | Computer MCP |
-| Swift module | Layered `ComputerMCPCore`, `ComputerMCPPlatform*`, `ComputerMCPConfiguration`, `ComputerMCPPersistence`, `ComputerMCPProcess`, `ComputerMCPTransport`, `ComputerMCPDownstream`, `ComputerMCPTunnels`, `ComputerMCPToolKit`, `ComputerMCPTools*`, `ComputerMCPDelivery`, `ComputerMCPAuthorization`, `ComputerMCPPlugins`, `ComputerMCPComputerUse`, `ComputerMCPGateway`, `ComputerMCPControlPlane`, `ComputerMCPMacOS`, `ComputerMCPApp`, and `computer_mcp`; see [Package](Package.md#structure) |
+| Swift module | Layered `ComputerMCPCore`, `ComputerMCPPlatform*`, `ComputerMCPConfiguration`, `ComputerMCPPersistence`, `ComputerMCPProcess`, `ComputerMCPTransport`, `ComputerMCPDownstream`, `ComputerMCPTunnels`, `ComputerMCPToolKit`, `ComputerMCPTools*`, `ComputerMCPAuthorization`, `ComputerMCPPlugins`, `ComputerMCPComputerUse`, `ComputerMCPGateway`, `ComputerMCPControlPlane`, `ComputerMCPMacOS`, `ComputerMCPApp`, and `computer_mcp`; see [Package](Package.md#structure) |
 | App | `Computer MCP.app` |
 | Embedded CLI | `computer-mcp` |
 | Validation package | Computer MCP Validation Suite |
@@ -41,7 +41,12 @@ stable responsibility or protocol concept, never a temporary delivery phase.
 ## Conventions
 
 - MCP tool and error IDs use a lowercase namespace and snake-case action.
-- JSON and TOML keys use `snake_case`.
+- Public manifest structure and gateway protocol keys use `snake_case`. Permission
+  vocabulary uses fixed kebab-case keys such as `desktop-control`, `local-network`,
+  `unified-logs`, `icloud-drive`, `network-volumes` and `removable-volumes`; see the
+  [complete permission tables](../Reference/Config.md#callers-and-profiles).
+- Swift Codable control snapshots retain their declared camelCase keys and enum
+  shapes; see [ManagedPolicy JSON](../Reference/Config.md#managedpolicy-json).
 - CLI commands and options use lowercase kebab-case.
 - Swift names use UpperCamelCase and preserve `ID`, `URL`, `HTTP`, `MCP`, and
   `CLI` initialisms.

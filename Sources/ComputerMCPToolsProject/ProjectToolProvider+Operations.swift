@@ -574,11 +574,10 @@ extension ProjectToolProvider {
       arguments.append(contentsOf: paths)
     }
 
-    let result = try registeredCommands.runRegisteredCLI(
+    let result = try registeredCommands.runHostGit(
       command: command,
       args: arguments,
-      timeout: optionalInt("timeout_ms", in: object),
-      requireArbitraryArgs: false
+      timeout: optionalInt("timeout_ms", in: object)
     )
     let changes = parseGitStatusPorcelainZ(result.stdout)
     let returnedChanges = Array(changes.prefix(maxResults))
@@ -1453,7 +1452,7 @@ extension ProjectToolProvider {
     try validateBoundedPositive(maxBytesPerFile, name: "max_bytes_per_file", upperBound: 1_048_576)
     try validateBoundedPositive(maxResults, name: "max_results", upperBound: 200)
 
-    let targetURL = try projectScope.lexicalProjectURL(path)
+    let targetURL = try projectScope.resolvedProjectURL(path)
     let targetExists = FileManager.default.fileExists(atPath: targetURL.path)
     let scopeURL = try projectScope.projectInstructionScopeURL(
       targetURL: targetURL,

@@ -9,13 +9,18 @@ import Testing
 
 @testable import ComputerMCPToolsGit
 
+#if os(macOS)
+  import ComputerMCPDarwinTestSupport
+#endif
+
 @Suite(.nativeIntegration, .serialized)
 final class GitToolProviderTests {
   @Test
   func alreadyCancelledCommitDoesNotReachRunner() async {
-    let runner = RecordingCommandRunner()
+    let runner = GitCommandRecorder()
     let provider = GitToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: .fixture(
           cli: .init(commands: [.init(id: "git", executable: "/fixture/bin/git")]),
           builtin: .init(enabled: ["git.commit"])),
@@ -34,14 +39,16 @@ final class GitToolProviderTests {
 
   @Test
   func testGitBuiltinsAreExposedOnlyWhenEnabled() throws {
-    let disabled = GitToolProvider(environment: ToolEnvironment(configuration: .fixture()))
+    let disabled = GitToolProvider(
+      environment: ToolEnvironment(launcher: testExecutionLauncher(), configuration: .fixture()))
     #expect(!(try disabled.definitions().map(\.tool).map(\.name).contains("git.status")))
 
     let enabled = GitToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration.fixture(
           builtin: BuiltinConfig(enabled: [
-            "git.root", "git.config", "git.remotes", "git.worktrees", "git.stashes",
+            "git.root", "git.config", "git.remotes", "git.worktree_list", "git.stashes",
             "git.stash_show",
             "git.tags",
             "git.tag_show", "git.tag_create", "git.tag_delete", "git.ignored", "git.submodules",
@@ -54,14 +61,14 @@ final class GitToolProviderTests {
             "git.commit_files", "git.show",
             "git.add", "git.unstage", "git.restore_worktree", "git.commit", "git.stash_push",
           ])
-        )
+        ), worktrees: GitLifecycleRecorder()
       ))
     let names = try enabled.definitions().map(\.tool).map(\.name)
 
     #expect(names.contains("git.root"))
     #expect(names.contains("git.config"))
     #expect(names.contains("git.remotes"))
-    #expect(names.contains("git.worktrees"))
+    #expect(names.contains("git.worktree_list"))
     #expect(names.contains("git.stashes"))
     #expect(names.contains("git.stash_show"))
     #expect(names.contains("git.stash_push"))
@@ -199,9 +206,10 @@ final class GitToolProviderTests {
 
   @Test
   func testGitRootUsesRegisteredGitProvider() throws {
-    let runner = RecordingCommandRunner()
+    let runner = GitCommandRecorder()
     let provider = GitToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration.fixture(
           cli: CLISectionConfig(commands: [CLICommandConfig(id: "git", executable: "/bin/echo")]),
           builtin: BuiltinConfig(enabled: ["git.root"])
@@ -241,7 +249,7 @@ final class GitToolProviderTests {
 
   @Test
   func testGitConfigParsesStructuredEntriesAndRedactsValues() throws {
-    let runner = RecordingCommandRunner()
+    let runner = GitCommandRecorder()
     runner.stdout =
       "system\0file:/etc/gitconfig\0core.autocrlf\ninput\0"
       + "global\0file:/Users/example/.gitconfig\0user.email\nuser@example.com\0"
@@ -250,6 +258,7 @@ final class GitToolProviderTests {
       + "local\0file:.git/config\0http.extraheader\nAUTHORIZATION: bearer abc123\0"
     let provider = GitToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration.fixture(
           cli: CLISectionConfig(commands: [CLICommandConfig(id: "git", executable: "/bin/echo")]),
           builtin: BuiltinConfig(enabled: ["git.config"])
@@ -304,12 +313,13 @@ final class GitToolProviderTests {
 
   @Test
   func testGitConfigFiltersScopeAndRejectsBadInputs() throws {
-    let runner = RecordingCommandRunner()
+    let runner = GitCommandRecorder()
     runner.stdout =
       "system\0file:/etc/gitconfig\0core.autocrlf\ninput\0"
       + "global\0file:/Users/example/.gitconfig\0user.name\nExample\0"
     let provider = GitToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration.fixture(
           cli: CLISectionConfig(commands: [CLICommandConfig(id: "git", executable: "/bin/echo")]),
           builtin: BuiltinConfig(enabled: ["git.config"])
@@ -358,9 +368,10 @@ final class GitToolProviderTests {
 
   @Test
   func testGitRemotesUsesRegisteredGitProvider() throws {
-    let runner = RecordingCommandRunner()
+    let runner = GitCommandRecorder()
     let provider = GitToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration.fixture(
           cli: CLISectionConfig(commands: [CLICommandConfig(id: "git", executable: "/bin/echo")]),
           builtin: BuiltinConfig(enabled: ["git.remotes"])
@@ -380,35 +391,11 @@ final class GitToolProviderTests {
   }
 
   @Test
-  func testGitWorktreesUsesRegisteredGitProvider() throws {
-    let runner = RecordingCommandRunner()
-    let provider = GitToolProvider(
-      environment: ToolEnvironment(
-        configuration: GatewayConfiguration.fixture(
-          cli: CLISectionConfig(commands: [CLICommandConfig(id: "git", executable: "/bin/echo")]),
-          builtin: BuiltinConfig(enabled: ["git.worktrees"])
-        ),
-        commandRunner: runner
-      ))
-
-    let result = try provider.callTool(
-      .init(
-        name: "git.worktrees", arguments: .object([:]), context: .empty))
-    let payload = try decodeTextPayload(result)
-
-    #expect((runner.calls.first?.executable) == ("/bin/echo"))
-    #expect((runner.calls.first?.arguments) == (["worktree", "list", "--porcelain"]))
-    #expect((payload.objectValue?["operation"]) == (.string("git.worktrees")))
-    #expect(
-      (payload.objectValue?["argv"])
-        == (.array([.string("worktree"), .string("list"), .string("--porcelain")])))
-  }
-
-  @Test
   func testGitStashesUsesRegisteredGitProvider() throws {
-    let runner = RecordingCommandRunner()
+    let runner = GitCommandRecorder()
     let provider = GitToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration.fixture(
           cli: CLISectionConfig(commands: [CLICommandConfig(id: "git", executable: "/bin/echo")]),
           builtin: BuiltinConfig(enabled: ["git.stashes"])
@@ -431,9 +418,12 @@ final class GitToolProviderTests {
 
   @Test
   func testGitStashShowBuildsReadOnlyArgv() throws {
-    let runner = RecordingCommandRunner()
+    let runner = GitCommandRecorder(resolving: [
+      "stash@{2}^{commit}": gitObjectA, "\(gitObjectA)^1^{commit}": gitObjectB,
+    ])
     let provider = GitToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration.fixture(
           cli: CLISectionConfig(commands: [CLICommandConfig(id: "git", executable: "/bin/echo")]),
           builtin: BuiltinConfig(enabled: ["git.stash_show"])
@@ -458,7 +448,7 @@ final class GitToolProviderTests {
     #expect(
       (runner.calls.first?.arguments)
         == ([
-          "diff", "--stat", "--patch", "-U1", "stash@{2}^1", "stash@{2}", "--", "Sources",
+          "diff", "--stat", "--patch", "-U1", gitObjectB, gitObjectA, "--", "Sources",
           "README.md",
         ]))
     #expect((payload.objectValue?["operation"]) == (.string("git.stash_show")))
@@ -466,16 +456,17 @@ final class GitToolProviderTests {
       (payload.objectValue?["argv"])
         == (.array([
           .string("diff"), .string("--stat"), .string("--patch"), .string("-U1"),
-          .string("stash@{2}^1"), .string("stash@{2}"), .string("--"), .string("Sources"),
+          .string(gitObjectB), .string(gitObjectA), .string("--"), .string("Sources"),
           .string("README.md"),
         ])))
   }
 
   @Test
   func testGitStashShowDefaultsToLatestStatAndNameOnlyFallback() throws {
-    let runner = RecordingCommandRunner()
+    let runner = GitCommandRecorder(resolving: ["stash@{0}^{commit}": gitObjectA])
     let provider = GitToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration.fixture(
           cli: CLISectionConfig(commands: [CLICommandConfig(id: "git", executable: "/bin/echo")]),
           builtin: BuiltinConfig(enabled: ["git.stash_show"])
@@ -494,13 +485,13 @@ final class GitToolProviderTests {
         ]), context: .empty
       ))
 
-    #expect((runner.calls[0].arguments) == (["stash", "show", "--stat", "stash@{0}"]))
-    #expect((runner.calls[1].arguments) == (["stash", "show", "--name-only", "stash@{0}"]))
+    #expect((runner.calls[0].arguments) == (["stash", "show", "--stat", gitObjectA]))
+    #expect((runner.calls[1].arguments) == (["stash", "show", "--name-only", gitObjectA]))
   }
 
   @Test
   func testGitStashPushBuildsWriteAndDryRunArgv() throws {
-    let runner = RecordingCommandRunner()
+    let runner = GitCommandRecorder()
     runner.outputs = [
       .init(stdout: "Sources/main.swift\0"),
       .init(stdout: "Saved working directory and index state"),
@@ -508,6 +499,7 @@ final class GitToolProviderTests {
     ]
     let provider = GitToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration.fixture(
           cli: CLISectionConfig(commands: [CLICommandConfig(id: "git", executable: "/bin/echo")]),
           builtin: BuiltinConfig(enabled: ["git.stash_push"])
@@ -559,13 +551,14 @@ final class GitToolProviderTests {
 
   @Test
   func testGitStashPushOmitsKeepIndexForExplicitUntrackedOnlyPaths() throws {
-    let runner = RecordingCommandRunner()
+    let runner = GitCommandRecorder()
     runner.outputs = [
       .init(stdout: ""),
       .init(stdout: "Saved working directory and index state"),
     ]
     let provider = GitToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration.fixture(
           cli: CLISectionConfig(commands: [CLICommandConfig(id: "git", executable: "/bin/echo")]),
           builtin: BuiltinConfig(enabled: ["git.stash_push"])
@@ -599,9 +592,10 @@ final class GitToolProviderTests {
 
   @Test
   func testGitStashPushDryRunWithPathsIncludesUntrackedPreview() throws {
-    let runner = RecordingCommandRunner()
+    let runner = GitCommandRecorder()
     let provider = GitToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration.fixture(
           cli: CLISectionConfig(commands: [CLICommandConfig(id: "git", executable: "/bin/echo")]),
           builtin: BuiltinConfig(enabled: ["git.stash_push"])
@@ -631,9 +625,10 @@ final class GitToolProviderTests {
 
   @Test
   func testGitTagsUsesRegisteredGitProvider() throws {
-    let runner = RecordingCommandRunner()
+    let runner = GitCommandRecorder()
     let provider = GitToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration.fixture(
           cli: CLISectionConfig(commands: [CLICommandConfig(id: "git", executable: "/bin/echo")]),
           builtin: BuiltinConfig(enabled: ["git.tags"])
@@ -659,13 +654,14 @@ final class GitToolProviderTests {
 
   @Test
   func testGitTagShowUsesLocalTagRef() throws {
-    let runner = RecordingCommandRunner()
+    let runner = GitCommandRecorder(resolving: ["refs/tags/v1.0.0^{object}": gitObjectA])
     runner.outputs = [
       RecordingCommandRunner.Output(stdout: "", exitCode: 0),
       RecordingCommandRunner.Output(stdout: "tag v1.0.0\ncommit abc123\n", exitCode: 0),
     ]
     let provider = GitToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration.fixture(
           cli: CLISectionConfig(commands: [CLICommandConfig(id: "git", executable: "/bin/echo")]),
           builtin: BuiltinConfig(enabled: ["git.tag_show"])
@@ -687,7 +683,7 @@ final class GitToolProviderTests {
       (runner.calls.map(\.arguments))
         == ([
           ["show-ref", "--verify", "--quiet", "refs/tags/v1.0.0"],
-          ["show", "--date=iso-strict", "--stat", "refs/tags/v1.0.0"],
+          ["show", "--no-ext-diff", "--no-textconv", "--date=iso-strict", "--stat", gitObjectA],
         ]))
     #expect((runner.calls.map(\.timeoutMilliseconds)) == ([1234, 1234]))
     #expect((payload.objectValue?["operation"]) == (.string("git.tag_show")))
@@ -698,8 +694,9 @@ final class GitToolProviderTests {
     #expect(
       (payload.objectValue?["argv"])
         == (.array([
-          .string("show"), .string("--date=iso-strict"), .string("--stat"),
-          .string("refs/tags/v1.0.0"),
+          .string("show"), .string("--no-ext-diff"), .string("--no-textconv"),
+          .string("--date=iso-strict"), .string("--stat"),
+          .string(gitObjectA),
         ])))
     #expect(
       (payload.objectValue?["result"]?.objectValue?["stdout"])
@@ -708,13 +705,14 @@ final class GitToolProviderTests {
 
   @Test
   func testGitTagShowCanOmitStat() throws {
-    let runner = RecordingCommandRunner()
+    let runner = GitCommandRecorder(resolving: ["refs/tags/v1.0.0^{object}": gitObjectA])
     runner.outputs = [
       RecordingCommandRunner.Output(stdout: "", exitCode: 0),
       RecordingCommandRunner.Output(stdout: "commit abc123\n", exitCode: 0),
     ]
     let provider = GitToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration.fixture(
           cli: CLISectionConfig(commands: [CLICommandConfig(id: "git", executable: "/bin/echo")]),
           builtin: BuiltinConfig(enabled: ["git.tag_show"])
@@ -736,16 +734,19 @@ final class GitToolProviderTests {
       (runner.calls.map(\.arguments))
         == ([
           ["show-ref", "--verify", "--quiet", "refs/tags/v1.0.0"],
-          ["show", "--date=iso-strict", "--no-patch", "refs/tags/v1.0.0"],
+          [
+            "show", "--no-ext-diff", "--no-textconv", "--date=iso-strict", "--no-patch", gitObjectA,
+          ],
         ]))
     #expect((payload.objectValue?["stat"]) == (.bool(false)))
   }
 
   @Test
   func testGitTagShowRejectsUnsafeInputs() throws {
-    let unsafeRunner = RecordingCommandRunner()
+    let unsafeRunner = GitCommandRecorder()
     let unsafeRegistry = GitToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration.fixture(
           cli: CLISectionConfig(commands: [CLICommandConfig(id: "git", executable: "/bin/echo")]),
           builtin: BuiltinConfig(enabled: ["git.tag_show"])
@@ -764,10 +765,11 @@ final class GitToolProviderTests {
       #expect(unsafeRunner.calls.isEmpty)
     }
 
-    let missingTagRunner = RecordingCommandRunner()
+    let missingTagRunner = GitCommandRecorder()
     missingTagRunner.outputs = [RecordingCommandRunner.Output(stdout: "", exitCode: 1)]
     let missingTagRegistry = GitToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration.fixture(
           cli: CLISectionConfig(commands: [CLICommandConfig(id: "git", executable: "/bin/echo")]),
           builtin: BuiltinConfig(enabled: ["git.tag_show"])
@@ -782,14 +784,16 @@ final class GitToolProviderTests {
           arguments: .object(["name": .string("v1.0.0")]), context: .empty
         ))
     ) { error in
-      #expect(error.localizedDescription.contains("does not exist"))
+      #expect(
+        error.localizedDescription.contains("does not exist")
+          || error.localizedDescription.contains("does not resolve"))
       #expect((missingTagRunner.calls.count) == (1))
     }
   }
 
   @Test
   func testGitTagCreateDryRunPreflightsWithoutCreating() throws {
-    let runner = RecordingCommandRunner()
+    let runner = GitCommandRecorder()
     runner.outputs = [
       RecordingCommandRunner.Output(stdout: "v1.0.0\n"),
       RecordingCommandRunner.Output(stdout: String(repeating: "a", count: 40) + "\n"),
@@ -797,6 +801,7 @@ final class GitToolProviderTests {
     ]
     let provider = GitToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration.fixture(
           cli: CLISectionConfig(commands: [CLICommandConfig(id: "git", executable: "/bin/echo")]),
           builtin: BuiltinConfig(enabled: ["git.tag_create"])
@@ -818,7 +823,7 @@ final class GitToolProviderTests {
       (runner.calls.map(\.arguments))
         == ([
           ["check-ref-format", "refs/tags/v1.0.0"],
-          ["rev-parse", "--verify", "HEAD^{object}"],
+          ["rev-parse", "--verify", "--end-of-options", "HEAD^{object}"],
           ["show-ref", "--verify", "--quiet", "refs/tags/v1.0.0"],
         ]))
     #expect((runner.calls.map(\.timeoutMilliseconds)) == ([1234, 1234, 1234]))
@@ -831,12 +836,12 @@ final class GitToolProviderTests {
     #expect((payload.objectValue?["result"]) == (.null))
     #expect(
       (payload.objectValue?["argv"])
-        == (.array([.string("tag"), .string("v1.0.0"), .string("HEAD")])))
+        == (.array([.string("tag"), .string("--"), .string("v1.0.0"), .string(gitObjectA)])))
   }
 
   @Test
   func testGitTagCreateRunsAfterConfirmation() throws {
-    let runner = RecordingCommandRunner()
+    let runner = GitCommandRecorder()
     runner.outputs = [
       RecordingCommandRunner.Output(stdout: "v1.0.0\n"),
       RecordingCommandRunner.Output(stdout: String(repeating: "b", count: 40) + "\n"),
@@ -845,6 +850,7 @@ final class GitToolProviderTests {
     ]
     let provider = GitToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration.fixture(
           cli: CLISectionConfig(commands: [CLICommandConfig(id: "git", executable: "/bin/echo")]),
           builtin: BuiltinConfig(enabled: ["git.tag_create"])
@@ -868,23 +874,24 @@ final class GitToolProviderTests {
       (runner.calls.map(\.arguments))
         == ([
           ["check-ref-format", "refs/tags/v1.0.0"],
-          ["rev-parse", "--verify", "main^{object}"],
+          ["rev-parse", "--verify", "--end-of-options", "main^{object}"],
           ["show-ref", "--verify", "--quiet", "refs/tags/v1.0.0"],
-          ["tag", "v1.0.0", "main"],
+          ["tag", "--", "v1.0.0", gitObjectB],
         ]))
     #expect((payload.objectValue?["dry_run"]) == (.bool(false)))
     #expect((payload.objectValue?["confirm_create"]) == (.bool(true)))
     #expect(
       (payload.objectValue?["result"]?.objectValue?["arguments"])
-        == (.array([.string("tag"), .string("v1.0.0"), .string("main")])))
+        == (.array([.string("tag"), .string("--"), .string("v1.0.0"), .string(gitObjectB)])))
     #expect((payload.objectValue?["result"]?.objectValue?["exit_code"]) == (.number(0)))
   }
 
   @Test
   func testGitTagCreateRejectsUnsafeInputs() throws {
-    let missingConfirmRunner = RecordingCommandRunner()
+    let missingConfirmRunner = GitCommandRecorder()
     let missingConfirmRegistry = GitToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration.fixture(
           cli: CLISectionConfig(commands: [CLICommandConfig(id: "git", executable: "/bin/echo")]),
           builtin: BuiltinConfig(enabled: ["git.tag_create"])
@@ -917,7 +924,7 @@ final class GitToolProviderTests {
       #expect(missingConfirmRunner.calls.isEmpty)
     }
 
-    let existingTagRunner = RecordingCommandRunner()
+    let existingTagRunner = GitCommandRecorder()
     existingTagRunner.outputs = [
       RecordingCommandRunner.Output(stdout: "v1.0.0\n"),
       RecordingCommandRunner.Output(stdout: String(repeating: "c", count: 40) + "\n"),
@@ -925,6 +932,7 @@ final class GitToolProviderTests {
     ]
     let existingTagRegistry = GitToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration.fixture(
           cli: CLISectionConfig(commands: [CLICommandConfig(id: "git", executable: "/bin/echo")]),
           builtin: BuiltinConfig(enabled: ["git.tag_create"])
@@ -943,13 +951,14 @@ final class GitToolProviderTests {
       #expect((existingTagRunner.calls.count) == (3))
     }
 
-    let badTargetRunner = RecordingCommandRunner()
+    let badTargetRunner = GitCommandRecorder()
     badTargetRunner.outputs = [
       RecordingCommandRunner.Output(stdout: "v1.0.0\n"),
       RecordingCommandRunner.Output(stdout: "", exitCode: 1),
     ]
     let badTargetRegistry = GitToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration.fixture(
           cli: CLISectionConfig(commands: [CLICommandConfig(id: "git", executable: "/bin/echo")]),
           builtin: BuiltinConfig(enabled: ["git.tag_create"])
@@ -974,13 +983,14 @@ final class GitToolProviderTests {
 
   @Test
   func testGitTagDeleteDryRunPreflightsWithoutDeleting() throws {
-    let runner = RecordingCommandRunner()
+    let runner = GitCommandRecorder()
     runner.outputs = [
       RecordingCommandRunner.Output(stdout: "", exitCode: 0),
       RecordingCommandRunner.Output(stdout: String(repeating: "d", count: 40) + "\n"),
     ]
     let provider = GitToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration.fixture(
           cli: CLISectionConfig(commands: [CLICommandConfig(id: "git", executable: "/bin/echo")]),
           builtin: BuiltinConfig(enabled: ["git.tag_delete"])
@@ -1002,7 +1012,7 @@ final class GitToolProviderTests {
       (runner.calls.map(\.arguments))
         == ([
           ["show-ref", "--verify", "--quiet", "refs/tags/v1.0.0"],
-          ["rev-parse", "--verify", "refs/tags/v1.0.0^{object}"],
+          ["rev-parse", "--verify", "--end-of-options", "refs/tags/v1.0.0^{object}"],
         ]))
     #expect((runner.calls.map(\.timeoutMilliseconds)) == ([1234, 1234]))
     #expect((payload.objectValue?["operation"]) == (.string("git.tag_delete")))
@@ -1018,7 +1028,7 @@ final class GitToolProviderTests {
 
   @Test
   func testGitTagDeleteRunsAfterConfirmation() throws {
-    let runner = RecordingCommandRunner()
+    let runner = GitCommandRecorder()
     runner.outputs = [
       RecordingCommandRunner.Output(stdout: "", exitCode: 0),
       RecordingCommandRunner.Output(stdout: String(repeating: "e", count: 40) + "\n"),
@@ -1026,6 +1036,7 @@ final class GitToolProviderTests {
     ]
     let provider = GitToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration.fixture(
           cli: CLISectionConfig(commands: [CLICommandConfig(id: "git", executable: "/bin/echo")]),
           builtin: BuiltinConfig(enabled: ["git.tag_delete"])
@@ -1048,7 +1059,7 @@ final class GitToolProviderTests {
       (runner.calls.map(\.arguments))
         == ([
           ["show-ref", "--verify", "--quiet", "refs/tags/v1.0.0"],
-          ["rev-parse", "--verify", "refs/tags/v1.0.0^{object}"],
+          ["rev-parse", "--verify", "--end-of-options", "refs/tags/v1.0.0^{object}"],
           ["tag", "-d", "v1.0.0"],
         ]))
     #expect((payload.objectValue?["dry_run"]) == (.bool(false)))
@@ -1061,9 +1072,10 @@ final class GitToolProviderTests {
 
   @Test
   func testGitTagDeleteRejectsUnsafeInputs() throws {
-    let missingConfirmRunner = RecordingCommandRunner()
+    let missingConfirmRunner = GitCommandRecorder()
     let missingConfirmRegistry = GitToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration.fixture(
           cli: CLISectionConfig(commands: [CLICommandConfig(id: "git", executable: "/bin/echo")]),
           builtin: BuiltinConfig(enabled: ["git.tag_delete"])
@@ -1096,10 +1108,11 @@ final class GitToolProviderTests {
       #expect(missingConfirmRunner.calls.isEmpty)
     }
 
-    let missingTagRunner = RecordingCommandRunner()
+    let missingTagRunner = GitCommandRecorder()
     missingTagRunner.outputs = [RecordingCommandRunner.Output(stdout: "", exitCode: 1)]
     let missingTagRegistry = GitToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration.fixture(
           cli: CLISectionConfig(commands: [CLICommandConfig(id: "git", executable: "/bin/echo")]),
           builtin: BuiltinConfig(enabled: ["git.tag_delete"])
@@ -1114,17 +1127,20 @@ final class GitToolProviderTests {
           arguments: .object(["name": .string("v1.0.0")]), context: .empty
         ))
     ) { error in
-      #expect(error.localizedDescription.contains("does not exist"))
+      #expect(
+        error.localizedDescription.contains("does not exist")
+          || error.localizedDescription.contains("does not resolve"))
       #expect((missingTagRunner.calls.count) == (1))
     }
 
-    let unresolvedTagRunner = RecordingCommandRunner()
+    let unresolvedTagRunner = GitCommandRecorder()
     unresolvedTagRunner.outputs = [
       RecordingCommandRunner.Output(stdout: "", exitCode: 0),
       RecordingCommandRunner.Output(stdout: "", exitCode: 1),
     ]
     let unresolvedTagRegistry = GitToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration.fixture(
           cli: CLISectionConfig(commands: [CLICommandConfig(id: "git", executable: "/bin/echo")]),
           builtin: BuiltinConfig(enabled: ["git.tag_delete"])
@@ -1146,9 +1162,10 @@ final class GitToolProviderTests {
 
   @Test
   func testGitIgnoredUsesRegisteredGitProvider() throws {
-    let runner = RecordingCommandRunner()
+    let runner = GitCommandRecorder()
     let provider = GitToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration.fixture(
           cli: CLISectionConfig(commands: [CLICommandConfig(id: "git", executable: "/bin/echo")]),
           builtin: BuiltinConfig(enabled: ["git.ignored"])
@@ -1179,9 +1196,10 @@ final class GitToolProviderTests {
 
   @Test
   func testGitSubmodulesUsesRegisteredGitProvider() throws {
-    let runner = RecordingCommandRunner()
+    let runner = GitCommandRecorder()
     let provider = GitToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration.fixture(
           cli: CLISectionConfig(commands: [CLICommandConfig(id: "git", executable: "/bin/echo")]),
           builtin: BuiltinConfig(enabled: ["git.submodules"])
@@ -1204,9 +1222,10 @@ final class GitToolProviderTests {
 
   @Test
   func testGitFilesUsesRegisteredGitProvider() throws {
-    let runner = RecordingCommandRunner()
+    let runner = GitCommandRecorder()
     let provider = GitToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration.fixture(
           cli: CLISectionConfig(commands: [CLICommandConfig(id: "git", executable: "/bin/echo")]),
           builtin: BuiltinConfig(enabled: ["git.files"])
@@ -1237,7 +1256,7 @@ final class GitToolProviderTests {
 
   @Test
   func testGitGrepParsesBoundedNullSeparatedMatches() throws {
-    let runner = RecordingCommandRunner()
+    let runner = GitCommandRecorder()
     runner.outputs = [
       RecordingCommandRunner.Output(
         stdout:
@@ -1246,6 +1265,7 @@ final class GitToolProviderTests {
     ]
     let provider = GitToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration.fixture(
           cli: CLISectionConfig(commands: [CLICommandConfig(id: "git", executable: "/bin/echo")]),
           builtin: BuiltinConfig(enabled: ["git.grep"])
@@ -1289,9 +1309,10 @@ final class GitToolProviderTests {
 
   @Test
   func testGitBlameUsesRegisteredGitProvider() throws {
-    let runner = RecordingCommandRunner()
+    let runner = GitCommandRecorder()
     let provider = GitToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration.fixture(
           cli: CLISectionConfig(commands: [CLICommandConfig(id: "git", executable: "/bin/echo")]),
           builtin: BuiltinConfig(enabled: ["git.blame"])
@@ -1325,11 +1346,12 @@ final class GitToolProviderTests {
 
   @Test
   func testGitFileHistoryParsesBoundedCommitRows() throws {
-    let runner = RecordingCommandRunner()
+    let runner = GitCommandRecorder()
     runner.stdout =
       "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\taaaaaaa\t2026-07-08T17:16:39+08:00\tAda\tupdate file\nbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\tbbbbbbb\t2026-07-08T17:15:00+08:00\tBen\tcreate file\n"
     let provider = GitToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration.fixture(
           cli: CLISectionConfig(commands: [CLICommandConfig(id: "git", executable: "/bin/echo")]),
           builtin: BuiltinConfig(enabled: ["git.file_history"])
@@ -1380,10 +1402,11 @@ final class GitToolProviderTests {
 
   @Test
   func testGitFileAtRevisionReturnsBoundedHistoricalContent() throws {
-    let runner = RecordingCommandRunner()
+    let runner = GitCommandRecorder(resolving: ["HEAD^{commit}": gitObjectA])
     runner.stdout = "line one\nline two\n"
     let provider = GitToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration.fixture(
           cli: CLISectionConfig(commands: [CLICommandConfig(id: "git", executable: "/bin/echo")]),
           policy: PolicyConfig(maxOutputBytes: 64),
@@ -1403,11 +1426,11 @@ final class GitToolProviderTests {
       ))
     let payload = try decodeTextPayload(result)
 
-    #expect((runner.calls.first?.arguments) == (["show", "HEAD:Sources/main.swift"]))
+    #expect((runner.calls.first?.arguments) == (["show", "\(gitObjectA):Sources/main.swift"]))
     #expect((payload.objectValue?["operation"]) == (.string("git.file_at_revision")))
     #expect((payload.objectValue?["revision"]) == (.string("HEAD")))
     #expect((payload.objectValue?["project_relative_path"]) == (.string("Sources/main.swift")))
-    #expect((payload.objectValue?["object_spec"]) == (.string("HEAD:Sources/main.swift")))
+    #expect((payload.objectValue?["object_spec"]) == (.string("\(gitObjectA):Sources/main.swift")))
     #expect((payload.objectValue?["content"]) == (.string("line one")))
     #expect((payload.objectValue?["bytes_returned"]) == (.number(8)))
     #expect((payload.objectValue?["content_truncated"]) == (.bool(true)))
@@ -1416,10 +1439,11 @@ final class GitToolProviderTests {
 
   @Test
   func testGitStagedFileReturnsBoundedIndexContent() throws {
-    let runner = RecordingCommandRunner()
+    let runner = GitCommandRecorder()
     runner.stdout = "staged one\nstaged two\n"
     let provider = GitToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration.fixture(
           cli: CLISectionConfig(commands: [CLICommandConfig(id: "git", executable: "/bin/echo")]),
           policy: PolicyConfig(maxOutputBytes: 64),
@@ -1452,9 +1476,10 @@ final class GitToolProviderTests {
 
   @Test
   func testGitConflictsUsesRegisteredGitProvider() throws {
-    let runner = RecordingCommandRunner()
+    let runner = GitCommandRecorder()
     let provider = GitToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration.fixture(
           cli: CLISectionConfig(commands: [CLICommandConfig(id: "git", executable: "/bin/echo")]),
           builtin: BuiltinConfig(enabled: ["git.conflicts"])
@@ -1485,9 +1510,10 @@ final class GitToolProviderTests {
 
   @Test
   func testGitStatusUsesRegisteredGitProvider() throws {
-    let runner = RecordingCommandRunner()
+    let runner = GitCommandRecorder()
     let provider = GitToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration.fixture(
           cli: CLISectionConfig(commands: [CLICommandConfig(id: "git", executable: "/bin/echo")]),
           builtin: BuiltinConfig(enabled: ["git.status"])
@@ -1517,7 +1543,7 @@ final class GitToolProviderTests {
 
   @Test
   func testGitTrackingStatusParsesBranchUpstreamStates() throws {
-    let runner = RecordingCommandRunner()
+    let runner = GitCommandRecorder()
     runner.outputs = [
       RecordingCommandRunner.Output(
         stdout: "## main...origin/main [ahead 2, behind 1]\n M file.txt\n"),
@@ -1527,6 +1553,7 @@ final class GitToolProviderTests {
     ]
     let provider = GitToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration.fixture(
           cli: CLISectionConfig(commands: [CLICommandConfig(id: "git", executable: "/bin/echo")]),
           builtin: BuiltinConfig(enabled: ["git.tracking_status"])
@@ -1576,7 +1603,7 @@ final class GitToolProviderTests {
 
   @Test
   func testGitCleanPreviewParsesDryRunOutput() throws {
-    let runner = RecordingCommandRunner()
+    let runner = GitCommandRecorder()
     runner.stdout = """
       Would remove build/
       Would remove scratch.txt
@@ -1584,6 +1611,7 @@ final class GitToolProviderTests {
       """
     let provider = GitToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration.fixture(
           cli: CLISectionConfig(commands: [CLICommandConfig(id: "git", executable: "/bin/echo")]),
           builtin: BuiltinConfig(enabled: ["git.clean_preview"])
@@ -1619,9 +1647,10 @@ final class GitToolProviderTests {
 
   @Test
   func testGitCleanBuildsDryRunAndWriteArgv() throws {
-    let runner = RecordingCommandRunner()
+    let runner = GitCommandRecorder()
     let provider = GitToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration.fixture(
           cli: CLISectionConfig(commands: [CLICommandConfig(id: "git", executable: "/bin/echo")]),
           builtin: BuiltinConfig(enabled: ["git.clean"])
@@ -1668,11 +1697,12 @@ final class GitToolProviderTests {
 
   @Test
   func testGitReflogParsesBoundedLocalEntries() throws {
-    let runner = RecordingCommandRunner()
+    let runner = GitCommandRecorder()
     runner.stdout =
       "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\taaaaaaa\tHEAD@{2026-07-08T17:16:39+08:00}\tcommit: second\t2026-07-08T17:16:39+08:00\nbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\tbbbbbbb\tHEAD@{2026-07-08T17:15:00+08:00}\tcheckout: moving from main to topic\t2026-07-08T17:15:00+08:00\n"
     let provider = GitToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration.fixture(
           cli: CLISectionConfig(commands: [CLICommandConfig(id: "git", executable: "/bin/echo")]),
           builtin: BuiltinConfig(enabled: ["git.reflog"])
@@ -1712,11 +1742,12 @@ final class GitToolProviderTests {
 
   @Test
   func testGitRefsParsesLocalRemoteAndTagRefs() throws {
-    let runner = RecordingCommandRunner()
+    let runner = GitCommandRecorder()
     runner.stdout =
       "refs/heads/main\tmain\taaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\taaaaaaa\tcommit\t2026-07-08T17:16:39+08:00\tInitial commit\nrefs/remotes/origin/topic\torigin/topic\tbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\tbbbbbbb\tcommit\t2026-07-08T17:15:00+08:00\tTopic work\nrefs/tags/v1.0\tv1.0\tcccccccccccccccccccccccccccccccccccccccc\tccccccc\ttag\t2026-07-08T17:14:00+08:00\tRelease v1.0\n"
     let provider = GitToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration.fixture(
           cli: CLISectionConfig(commands: [CLICommandConfig(id: "git", executable: "/bin/echo")]),
           builtin: BuiltinConfig(enabled: ["git.refs"])
@@ -1769,7 +1800,9 @@ final class GitToolProviderTests {
 
   @Test
   func testGitCompareRefsReturnsCountsMergeBaseAndLeftRightCommits() throws {
-    let runner = RecordingCommandRunner()
+    let runner = GitCommandRecorder(resolving: [
+      "main^{commit}": gitObjectA, "origin/topic^{commit}": gitObjectB,
+    ])
     runner.outputs = [
       RecordingCommandRunner.Output(stdout: "2\t3\n"),
       RecordingCommandRunner.Output(stdout: "dddddddddddddddddddddddddddddddddddddddd\n"),
@@ -1780,6 +1813,7 @@ final class GitToolProviderTests {
     ]
     let provider = GitToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration.fixture(
           cli: CLISectionConfig(commands: [CLICommandConfig(id: "git", executable: "/bin/echo")]),
           builtin: BuiltinConfig(enabled: ["git.compare_refs"])
@@ -1803,8 +1837,10 @@ final class GitToolProviderTests {
 
     #expect(
       (runner.calls[0].arguments)
-        == (["rev-list", "--left-right", "--count", "--cherry-pick", "main...origin/topic"]))
-    #expect((runner.calls[1].arguments) == (["merge-base", "main", "origin/topic"]))
+        == ([
+          "rev-list", "--left-right", "--count", "--cherry-pick", "\(gitObjectA)...\(gitObjectB)",
+        ]))
+    #expect((runner.calls[1].arguments) == (["merge-base", gitObjectA, gitObjectB]))
     #expect(
       (runner.calls[2].arguments)
         == ([
@@ -1815,12 +1851,12 @@ final class GitToolProviderTests {
           "--pretty=format:%m%x09%H%x09%h%x09%ad%x09%an%x09%s",
           "-n",
           "10",
-          "main...origin/topic",
+          "\(gitObjectA)...\(gitObjectB)",
         ]))
     #expect((payload.objectValue?["operation"]) == (.string("git.compare_refs")))
     #expect((payload.objectValue?["base"]) == (.string("main")))
     #expect((payload.objectValue?["head"]) == (.string("origin/topic")))
-    #expect((payload.objectValue?["range"]) == (.string("main...origin/topic")))
+    #expect((payload.objectValue?["range"]) == (.string("\(gitObjectA)...\(gitObjectB)")))
     #expect((payload.objectValue?["base_only_count"]) == (.number(2)))
     #expect((payload.objectValue?["head_only_count"]) == (.number(3)))
     #expect((payload.objectValue?["head_ahead"]) == (.number(3)))
@@ -1840,13 +1876,14 @@ final class GitToolProviderTests {
   @Test
   func testGitResolveRefReturnsObjectAndType() throws {
     let objectID = String(repeating: "a", count: 40)
-    let runner = RecordingCommandRunner()
+    let runner = GitCommandRecorder()
     runner.outputs = [
       RecordingCommandRunner.Output(stdout: "\(objectID)\n", exitCode: 0),
       RecordingCommandRunner.Output(stdout: "commit\n", exitCode: 0),
     ]
     let provider = GitToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration.fixture(
           cli: CLISectionConfig(commands: [CLICommandConfig(id: "git", executable: "/bin/echo")]),
           builtin: BuiltinConfig(enabled: ["git.resolve_ref"])
@@ -1867,7 +1904,7 @@ final class GitToolProviderTests {
     #expect(
       (runner.calls.map(\.arguments))
         == ([
-          ["rev-parse", "--verify", "HEAD^{object}"],
+          ["rev-parse", "--verify", "--end-of-options", "HEAD^{object}"],
           ["cat-file", "-t", objectID],
         ]))
     #expect((runner.calls.map(\.timeoutMilliseconds)) == ([1234, 1234]))
@@ -1878,7 +1915,10 @@ final class GitToolProviderTests {
     #expect((payload.objectValue?["object_type"]) == (.string("commit")))
     #expect(
       (payload.objectValue?["argv"]?.objectValue?["resolve"])
-        == (.array([.string("rev-parse"), .string("--verify"), .string("HEAD^{object}")])))
+        == (.array([
+          .string("rev-parse"), .string("--verify"), .string("--end-of-options"),
+          .string("HEAD^{object}"),
+        ])))
     #expect(
       (payload.objectValue?["argv"]?.objectValue?["type"])
         == (.array([.string("cat-file"), .string("-t"), .string(objectID)])))
@@ -1886,9 +1926,10 @@ final class GitToolProviderTests {
 
   @Test
   func testGitResolveRefRejectsInvalidRefsAndCommandFailures() throws {
-    let invalidRunner = RecordingCommandRunner()
+    let invalidRunner = GitCommandRecorder()
     let invalidRegistry = GitToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration.fixture(
           cli: CLISectionConfig(commands: [CLICommandConfig(id: "git", executable: "/bin/echo")]),
           builtin: BuiltinConfig(enabled: ["git.resolve_ref"])
@@ -1900,19 +1941,20 @@ final class GitToolProviderTests {
       try invalidRegistry.callTool(
         .init(
           name: "git.resolve_ref",
-          arguments: .object(["ref": .string("-bad")]), context: .empty
+          arguments: .object(["ref": .string("bad\nref")]), context: .empty
         ))
     ) { error in
       #expect(error.localizedDescription.contains("ref"))
       #expect(invalidRunner.calls.isEmpty)
     }
 
-    let revParseFailureRunner = RecordingCommandRunner()
+    let revParseFailureRunner = GitCommandRecorder()
     revParseFailureRunner.outputs = [
       RecordingCommandRunner.Output(stdout: "", stderr: "fatal: bad object\n", exitCode: 128)
     ]
     let revParseFailureRegistry = GitToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration.fixture(
           cli: CLISectionConfig(commands: [CLICommandConfig(id: "git", executable: "/bin/echo")]),
           builtin: BuiltinConfig(enabled: ["git.resolve_ref"])
@@ -1931,13 +1973,14 @@ final class GitToolProviderTests {
       #expect((revParseFailureRunner.calls.count) == (1))
     }
 
-    let typeFailureRunner = RecordingCommandRunner()
+    let typeFailureRunner = GitCommandRecorder()
     typeFailureRunner.outputs = [
       RecordingCommandRunner.Output(stdout: String(repeating: "a", count: 40) + "\n", exitCode: 0),
       RecordingCommandRunner.Output(stdout: "", stderr: "fatal: missing object\n", exitCode: 128),
     ]
     let typeFailureRegistry = GitToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration.fixture(
           cli: CLISectionConfig(commands: [CLICommandConfig(id: "git", executable: "/bin/echo")]),
           builtin: BuiltinConfig(enabled: ["git.resolve_ref"])
@@ -1961,13 +2004,17 @@ final class GitToolProviderTests {
   func testGitMergeBaseReturnsMergeBasesAndNoMergeBase() throws {
     let firstBase = String(repeating: "a", count: 40)
     let secondBase = String(repeating: "b", count: 40)
-    let runner = RecordingCommandRunner()
+    let runner = GitCommandRecorder(resolving: [
+      "main^{commit}": gitObjectA, "topic^{commit}": gitObjectB, "unrelated-a^{commit}": gitObjectA,
+      "unrelated-b^{commit}": gitObjectB,
+    ])
     runner.outputs = [
       RecordingCommandRunner.Output(stdout: "\(firstBase)\n\(secondBase)\n", exitCode: 0),
       RecordingCommandRunner.Output(stdout: "", exitCode: 1),
     ]
     let provider = GitToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration.fixture(
           cli: CLISectionConfig(commands: [CLICommandConfig(id: "git", executable: "/bin/echo")]),
           builtin: BuiltinConfig(enabled: ["git.merge_base"])
@@ -1997,8 +2044,8 @@ final class GitToolProviderTests {
     #expect(
       (runner.calls.map(\.arguments))
         == ([
-          ["merge-base", "--all", "main", "topic"],
-          ["merge-base", "unrelated-a", "unrelated-b"],
+          ["merge-base", "--all", gitObjectA, gitObjectB],
+          ["merge-base", gitObjectA, gitObjectB],
         ]))
     #expect((runner.calls[0].timeoutMilliseconds) == (1234))
     #expect((mergeBasePayload.objectValue?["operation"]) == (.string("git.merge_base")))
@@ -2020,9 +2067,10 @@ final class GitToolProviderTests {
 
   @Test
   func testGitMergeBaseRejectsInvalidRefsAndCommandFailures() throws {
-    let invalidRunner = RecordingCommandRunner()
+    let invalidRunner = GitCommandRecorder()
     let invalidRegistry = GitToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration.fixture(
           cli: CLISectionConfig(commands: [CLICommandConfig(id: "git", executable: "/bin/echo")]),
           builtin: BuiltinConfig(enabled: ["git.merge_base"])
@@ -2045,19 +2093,21 @@ final class GitToolProviderTests {
       try invalidRegistry.callTool(
         .init(
           name: "git.merge_base",
-          arguments: .object(["refs": .array([.string("main"), .string("-bad")])]), context: .empty
+          arguments: .object(["refs": .array([.string("main"), .string("bad\nref")])]),
+          context: .empty
         ))
     ) { error in
       #expect(error.localizedDescription.contains("refs[1]"))
       #expect(invalidRunner.calls.isEmpty)
     }
 
-    let failureRunner = RecordingCommandRunner()
+    let failureRunner = GitCommandRecorder()
     failureRunner.outputs = [
       RecordingCommandRunner.Output(stdout: "", stderr: "fatal: bad object\n", exitCode: 128)
     ]
     let failureRegistry = GitToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration.fixture(
           cli: CLISectionConfig(commands: [CLICommandConfig(id: "git", executable: "/bin/echo")]),
           builtin: BuiltinConfig(enabled: ["git.merge_base"])
@@ -2080,13 +2130,17 @@ final class GitToolProviderTests {
 
   @Test
   func testGitIsAncestorMapsExitCodeToBoolean() throws {
-    let runner = RecordingCommandRunner()
+    let runner = GitCommandRecorder(resolving: [
+      "main^{commit}": gitObjectA, "origin/main^{commit}": gitObjectB,
+      "feature^{commit}": gitObjectB,
+    ])
     runner.outputs = [
       RecordingCommandRunner.Output(stdout: "", exitCode: 0),
       RecordingCommandRunner.Output(stdout: "", exitCode: 1),
     ]
     let provider = GitToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration.fixture(
           cli: CLISectionConfig(commands: [CLICommandConfig(id: "git", executable: "/bin/echo")]),
           builtin: BuiltinConfig(enabled: ["git.is_ancestor"])
@@ -2117,8 +2171,8 @@ final class GitToolProviderTests {
     #expect(
       (runner.calls.map(\.arguments))
         == ([
-          ["merge-base", "--is-ancestor", "main", "origin/main"],
-          ["merge-base", "--is-ancestor", "feature", "main"],
+          ["merge-base", "--is-ancestor", gitObjectA, gitObjectB],
+          ["merge-base", "--is-ancestor", gitObjectB, gitObjectA],
         ]))
     #expect((runner.calls[0].timeoutMilliseconds) == (1234))
     #expect((truePayload.objectValue?["operation"]) == (.string("git.is_ancestor")))
@@ -2128,8 +2182,8 @@ final class GitToolProviderTests {
     #expect(
       (truePayload.objectValue?["argv"])
         == (.array([
-          .string("merge-base"), .string("--is-ancestor"), .string("main"),
-          .string("origin/main"),
+          .string("merge-base"), .string("--is-ancestor"), .string(gitObjectA),
+          .string(gitObjectB),
         ])))
     #expect((falsePayload.objectValue?["is_ancestor"]) == (.bool(false)))
     #expect((falsePayload.objectValue?["result"]?.objectValue?["exit_code"]) == (.number(1)))
@@ -2137,9 +2191,10 @@ final class GitToolProviderTests {
 
   @Test
   func testGitIsAncestorRejectsInvalidRefsAndCommandFailures() throws {
-    let invalidRunner = RecordingCommandRunner()
+    let invalidRunner = GitCommandRecorder()
     let invalidRegistry = GitToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration.fixture(
           cli: CLISectionConfig(commands: [CLICommandConfig(id: "git", executable: "/bin/echo")]),
           builtin: BuiltinConfig(enabled: ["git.is_ancestor"])
@@ -2152,7 +2207,7 @@ final class GitToolProviderTests {
         .init(
           name: "git.is_ancestor",
           arguments: .object([
-            "ancestor": .string("-bad"),
+            "ancestor": .string("bad\nref"),
             "descendant": .string("main"),
           ]), context: .empty
         ))
@@ -2161,12 +2216,13 @@ final class GitToolProviderTests {
       #expect(invalidRunner.calls.isEmpty)
     }
 
-    let failureRunner = RecordingCommandRunner()
+    let failureRunner = GitCommandRecorder()
     failureRunner.outputs = [
       RecordingCommandRunner.Output(stdout: "", stderr: "fatal: bad object\n", exitCode: 128)
     ]
     let failureRegistry = GitToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration.fixture(
           cli: CLISectionConfig(commands: [CLICommandConfig(id: "git", executable: "/bin/echo")]),
           builtin: BuiltinConfig(enabled: ["git.is_ancestor"])
@@ -2191,9 +2247,10 @@ final class GitToolProviderTests {
 
   @Test
   func testGitDiffBuildsReadOnlyArgv() throws {
-    let runner = RecordingCommandRunner()
+    let runner = GitCommandRecorder()
     let provider = GitToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration.fixture(
           cli: CLISectionConfig(commands: [CLICommandConfig(id: "git", executable: "/bin/echo")]),
           builtin: BuiltinConfig(enabled: ["git.diff"])
@@ -2214,12 +2271,14 @@ final class GitToolProviderTests {
 
     #expect(
       (runner.calls.first?.arguments)
-        == (["diff", "--no-ext-diff", "--cached", "--stat", "-U3", "--", "README.md"]))
+        == ([
+          "diff", "--no-ext-diff", "--no-textconv", "--cached", "--stat", "-U3", "--", "README.md",
+        ]))
   }
 
   @Test
   func testGitDiffSummaryParsesNumstatAndSummaryOutput() throws {
-    let runner = RecordingCommandRunner()
+    let runner = GitCommandRecorder()
     let nul = "\u{0}"
     let numstatOutput =
       "2\t1\tSources/App.swift\(nul)-\t-\tAssets/logo.png\(nul)1\t0\t\(nul)Old.swift\(nul)New.swift\(nul)"
@@ -2234,6 +2293,7 @@ final class GitToolProviderTests {
     ]
     let provider = GitToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration.fixture(
           cli: CLISectionConfig(commands: [CLICommandConfig(id: "git", executable: "/bin/echo")]),
           builtin: BuiltinConfig(enabled: ["git.diff_summary"])
@@ -2256,11 +2316,17 @@ final class GitToolProviderTests {
 
     #expect(
       (runner.calls[0].arguments)
-        == (["diff", "--no-ext-diff", "--no-color", "--cached", "--numstat", "-z", "--", "Sources"])
+        == ([
+          "diff", "--no-ext-diff", "--no-textconv", "--no-color", "--cached", "--numstat", "-z",
+          "--", "Sources",
+        ])
     )
     #expect(
       (runner.calls[1].arguments)
-        == (["diff", "--no-ext-diff", "--no-color", "--cached", "--summary", "--", "Sources"]))
+        == ([
+          "diff", "--no-ext-diff", "--no-textconv", "--no-color", "--cached", "--summary", "--",
+          "Sources",
+        ]))
     #expect((payload.objectValue?["operation"]) == (.string("git.diff_summary")))
     #expect((payload.objectValue?["file_count"]) == (.number(3)))
     #expect((payload.objectValue?["total_additions"]) == (.number(3)))
@@ -2285,7 +2351,7 @@ final class GitToolProviderTests {
 
   @Test
   func testGitDiffCheckParsesWhitespaceAndConflictMarkerIssues() throws {
-    let runner = RecordingCommandRunner()
+    let runner = GitCommandRecorder()
     runner.stdout = """
       Sources/App.swift:10: trailing whitespace.
       +let value = 1\u{20}\u{20}
@@ -2294,6 +2360,7 @@ final class GitToolProviderTests {
     runner.exitCode = 2
     let provider = GitToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration.fixture(
           cli: CLISectionConfig(commands: [CLICommandConfig(id: "git", executable: "/bin/echo")]),
           builtin: BuiltinConfig(enabled: ["git.diff_check"])
@@ -2315,7 +2382,10 @@ final class GitToolProviderTests {
 
     #expect(
       (runner.calls.first?.arguments)
-        == (["diff", "--no-ext-diff", "--no-color", "--check", "--cached", "--", "Sources"]))
+        == ([
+          "diff", "--no-ext-diff", "--no-textconv", "--no-color", "--check", "--cached", "--",
+          "Sources",
+        ]))
     #expect((payload.objectValue?["operation"]) == (.string("git.diff_check")))
     #expect((payload.objectValue?["passed"]) == (.bool(false)))
     #expect((payload.objectValue?["issue_count"]) == (.number(2)))
@@ -2329,7 +2399,7 @@ final class GitToolProviderTests {
 
   @Test
   func testGitCommitFilesParsesBoundedNameStatusRows() throws {
-    let runner = RecordingCommandRunner()
+    let runner = GitCommandRecorder(resolving: ["HEAD^{commit}": gitObjectA])
     runner.outputs = [
       RecordingCommandRunner.Output(
         stdout:
@@ -2341,6 +2411,7 @@ final class GitToolProviderTests {
     ]
     let provider = GitToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration.fixture(
           cli: CLISectionConfig(commands: [CLICommandConfig(id: "git", executable: "/bin/echo")]),
           builtin: BuiltinConfig(enabled: ["git.commit_files"])
@@ -2367,11 +2438,13 @@ final class GitToolProviderTests {
           "-s",
           "--date=iso-strict",
           "--format=%H%x09%h%x09%ad%x09%an%x09%s",
-          "HEAD",
+          gitObjectA,
         ]))
     #expect(
       (runner.calls[1].arguments)
-        == (["diff-tree", "--root", "--no-commit-id", "--name-status", "-M", "-r", "-z", "HEAD"]))
+        == ([
+          "diff-tree", "--root", "--no-commit-id", "--name-status", "-M", "-r", "-z", gitObjectA,
+        ]))
     #expect((payload.objectValue?["operation"]) == (.string("git.commit_files")))
     #expect((payload.objectValue?["commit_hash"]) == (.string(String(repeating: "a", count: 40))))
     #expect((payload.objectValue?["abbreviated_commit"]) == (.string("aaaaaaa")))
@@ -2389,9 +2462,12 @@ final class GitToolProviderTests {
 
   @Test
   func testGitBranchLogAndShowBuildExpectedArgv() throws {
-    let runner = RecordingCommandRunner()
+    let runner = GitCommandRecorder(resolving: [
+      "HEAD~1^{object}": gitObjectA, "HEAD^{object}": gitObjectB,
+    ])
     let provider = GitToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration.fixture(
           cli: CLISectionConfig(commands: [CLICommandConfig(id: "git", executable: "/bin/echo")]),
           builtin: BuiltinConfig(enabled: ["git.branch", "git.log", "git.show"])
@@ -2441,7 +2517,10 @@ final class GitToolProviderTests {
         ]))
     #expect(
       (runner.calls[2].arguments)
-        == (["show", "--date=iso-strict", "-U1", "HEAD~1", "--", "Package.swift"]))
+        == ([
+          "show", "--no-ext-diff", "--no-textconv", "--date=iso-strict", "-U1", gitObjectA, "--",
+          "Package.swift",
+        ]))
 
     _ = try provider.callTool(
       .init(
@@ -2452,12 +2531,14 @@ final class GitToolProviderTests {
         ]), context: .empty
       ))
 
-    #expect((runner.calls[3].arguments) == (["show", "--date=iso-strict", "--stat", "HEAD"]))
+    #expect(
+      (runner.calls[3].arguments)
+        == (["show", "--no-ext-diff", "--no-textconv", "--date=iso-strict", "--stat", gitObjectB]))
   }
 
   @Test
   func testGitBranchCreateDryRunPreflightsWithoutCreating() throws {
-    let runner = RecordingCommandRunner()
+    let runner = GitCommandRecorder()
     runner.outputs = [
       RecordingCommandRunner.Output(stdout: "feature/test\n"),
       RecordingCommandRunner.Output(stdout: "", exitCode: 1),
@@ -2465,6 +2546,7 @@ final class GitToolProviderTests {
     ]
     let provider = GitToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration.fixture(
           cli: CLISectionConfig(commands: [CLICommandConfig(id: "git", executable: "/bin/echo")]),
           builtin: BuiltinConfig(enabled: ["git.branch_create"])
@@ -2487,7 +2569,7 @@ final class GitToolProviderTests {
         == ([
           ["check-ref-format", "--branch", "feature/test"],
           ["show-ref", "--verify", "--quiet", "refs/heads/feature/test"],
-          ["rev-parse", "--verify", "HEAD^{commit}"],
+          ["rev-parse", "--verify", "--end-of-options", "HEAD^{commit}"],
         ]))
     #expect((runner.calls.map(\.timeoutMilliseconds)) == ([1234, 1234, 1234]))
     #expect((payload.objectValue?["operation"]) == (.string("git.branch_create")))
@@ -2499,7 +2581,8 @@ final class GitToolProviderTests {
     #expect((payload.objectValue?["result"]) == (.null))
     #expect(
       (payload.objectValue?["argv"])
-        == (.array([.string("branch"), .string("feature/test"), .string("HEAD")])))
+        == (.array([.string("branch"), .string("--"), .string("feature/test"), .string(gitObjectA)]))
+    )
     #expect(
       (payload.objectValue?["preflight"]?.objectValue?["existing_branch"]?.objectValue?[
         "exit_code"]) == (.number(1)))
@@ -2507,7 +2590,7 @@ final class GitToolProviderTests {
 
   @Test
   func testGitBranchCreateRunsAfterConfirmation() throws {
-    let runner = RecordingCommandRunner()
+    let runner = GitCommandRecorder()
     runner.outputs = [
       RecordingCommandRunner.Output(stdout: "feature/new\n"),
       RecordingCommandRunner.Output(stdout: "", exitCode: 1),
@@ -2516,6 +2599,7 @@ final class GitToolProviderTests {
     ]
     let provider = GitToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration.fixture(
           cli: CLISectionConfig(commands: [CLICommandConfig(id: "git", executable: "/bin/echo")]),
           builtin: BuiltinConfig(enabled: ["git.branch_create"])
@@ -2540,204 +2624,21 @@ final class GitToolProviderTests {
         == ([
           ["check-ref-format", "--branch", "feature/new"],
           ["show-ref", "--verify", "--quiet", "refs/heads/feature/new"],
-          ["rev-parse", "--verify", "main^{commit}"],
-          ["branch", "feature/new", "main"],
+          ["rev-parse", "--verify", "--end-of-options", "main^{commit}"],
+          ["branch", "--", "feature/new", gitObjectB],
         ]))
     #expect((payload.objectValue?["dry_run"]) == (.bool(false)))
     #expect((payload.objectValue?["confirm_create"]) == (.bool(true)))
     #expect(
       (payload.objectValue?["result"]?.objectValue?["arguments"])
-        == (.array([.string("branch"), .string("feature/new"), .string("main")])))
+        == (.array([.string("branch"), .string("--"), .string("feature/new"), .string(gitObjectB)]))
+    )
     #expect((payload.objectValue?["result"]?.objectValue?["exit_code"]) == (.number(0)))
-  }
-
-  @Test
-  func testGitBranchDeleteDryRunPreflightsWithoutDeleting() throws {
-    let runner = RecordingCommandRunner()
-    runner.outputs = [
-      RecordingCommandRunner.Output(stdout: "feature/old\n"),
-      RecordingCommandRunner.Output(stdout: "", exitCode: 0),
-      RecordingCommandRunner.Output(stdout: "main\n"),
-    ]
-    let provider = GitToolProvider(
-      environment: ToolEnvironment(
-        configuration: GatewayConfiguration.fixture(
-          cli: CLISectionConfig(commands: [CLICommandConfig(id: "git", executable: "/bin/echo")]),
-          builtin: BuiltinConfig(enabled: ["git.branch_delete"])
-        ),
-        commandRunner: runner
-      ))
-
-    let result = try provider.callTool(
-      .init(
-        name: "git.branch_delete",
-        arguments: .object([
-          "name": .string("feature/old"),
-          "timeout_ms": .number(1234),
-        ]), context: .empty
-      ))
-    let payload = try decodeTextPayload(result)
-
-    #expect(
-      (runner.calls.map(\.arguments))
-        == ([
-          ["check-ref-format", "--branch", "feature/old"],
-          ["show-ref", "--verify", "--quiet", "refs/heads/feature/old"],
-          ["branch", "--show-current"],
-        ]))
-    #expect((runner.calls.map(\.timeoutMilliseconds)) == ([1234, 1234, 1234]))
-    #expect((payload.objectValue?["operation"]) == (.string("git.branch_delete")))
-    #expect((payload.objectValue?["provider"]) == (.string("git")))
-    #expect((payload.objectValue?["name"]) == (.string("feature/old")))
-    #expect((payload.objectValue?["force"]) == (.bool(false)))
-    #expect((payload.objectValue?["dry_run"]) == (.bool(true)))
-    #expect((payload.objectValue?["confirm_delete"]) == (.bool(false)))
-    #expect((payload.objectValue?["current_branch"]) == (.string("main")))
-    #expect((payload.objectValue?["result"]) == (.null))
-    #expect(
-      (payload.objectValue?["argv"])
-        == (.array([.string("branch"), .string("-d"), .string("feature/old")])))
-  }
-
-  @Test
-  func testGitBranchDeleteRunsAfterConfirmation() throws {
-    let runner = RecordingCommandRunner()
-    runner.outputs = [
-      RecordingCommandRunner.Output(stdout: "feature/delete\n"),
-      RecordingCommandRunner.Output(stdout: "", exitCode: 0),
-      RecordingCommandRunner.Output(stdout: "main\n"),
-      RecordingCommandRunner.Output(stdout: "Deleted branch feature/delete.\n", exitCode: 0),
-    ]
-    let provider = GitToolProvider(
-      environment: ToolEnvironment(
-        configuration: GatewayConfiguration.fixture(
-          cli: CLISectionConfig(commands: [CLICommandConfig(id: "git", executable: "/bin/echo")]),
-          builtin: BuiltinConfig(enabled: ["git.branch_delete"])
-        ),
-        commandRunner: runner
-      ))
-
-    let result = try provider.callTool(
-      .init(
-        name: "git.branch_delete",
-        arguments: .object([
-          "name": .string("feature/delete"),
-          "force": .bool(true),
-          "dry_run": .bool(false),
-          "confirm_delete": .bool(true),
-        ]), context: .empty
-      ))
-    let payload = try decodeTextPayload(result)
-
-    #expect(
-      (runner.calls.map(\.arguments))
-        == ([
-          ["check-ref-format", "--branch", "feature/delete"],
-          ["show-ref", "--verify", "--quiet", "refs/heads/feature/delete"],
-          ["branch", "--show-current"],
-          ["branch", "-D", "feature/delete"],
-        ]))
-    #expect((payload.objectValue?["dry_run"]) == (.bool(false)))
-    #expect((payload.objectValue?["confirm_delete"]) == (.bool(true)))
-    #expect((payload.objectValue?["force"]) == (.bool(true)))
-    #expect(
-      (payload.objectValue?["result"]?.objectValue?["arguments"])
-        == (.array([.string("branch"), .string("-D"), .string("feature/delete")])))
-    #expect((payload.objectValue?["result"]?.objectValue?["exit_code"]) == (.number(0)))
-  }
-
-  @Test
-  func testGitBranchDeleteRejectsUnsafeInputs() throws {
-    let missingConfirmRunner = RecordingCommandRunner()
-    let missingConfirmRegistry = GitToolProvider(
-      environment: ToolEnvironment(
-        configuration: GatewayConfiguration.fixture(
-          cli: CLISectionConfig(commands: [CLICommandConfig(id: "git", executable: "/bin/echo")]),
-          builtin: BuiltinConfig(enabled: ["git.branch_delete"])
-        ),
-        commandRunner: missingConfirmRunner
-      ))
-
-    expectThrows(
-      try missingConfirmRegistry.callTool(
-        .init(
-          name: "git.branch_delete",
-          arguments: .object([
-            "name": .string("feature/delete"),
-            "dry_run": .bool(false),
-          ]), context: .empty
-        ))
-    ) { error in
-      #expect(error.localizedDescription.contains("confirm_delete"))
-      #expect(missingConfirmRunner.calls.isEmpty)
-    }
-
-    expectThrows(
-      try missingConfirmRegistry.callTool(
-        .init(
-          name: "git.branch_delete",
-          arguments: .object(["name": .string("refs/heads/main")]), context: .empty
-        ))
-    ) { error in
-      #expect(error.localizedDescription.contains("not a full ref"))
-      #expect(missingConfirmRunner.calls.isEmpty)
-    }
-
-    let missingBranchRunner = RecordingCommandRunner()
-    missingBranchRunner.outputs = [
-      RecordingCommandRunner.Output(stdout: "feature/missing\n"),
-      RecordingCommandRunner.Output(stdout: "", exitCode: 1),
-    ]
-    let missingBranchRegistry = GitToolProvider(
-      environment: ToolEnvironment(
-        configuration: GatewayConfiguration.fixture(
-          cli: CLISectionConfig(commands: [CLICommandConfig(id: "git", executable: "/bin/echo")]),
-          builtin: BuiltinConfig(enabled: ["git.branch_delete"])
-        ),
-        commandRunner: missingBranchRunner
-      ))
-
-    expectThrows(
-      try missingBranchRegistry.callTool(
-        .init(
-          name: "git.branch_delete",
-          arguments: .object(["name": .string("feature/missing")]), context: .empty
-        ))
-    ) { error in
-      #expect(error.localizedDescription.contains("does not exist"))
-      #expect((missingBranchRunner.calls.count) == (2))
-    }
-
-    let currentBranchRunner = RecordingCommandRunner()
-    currentBranchRunner.outputs = [
-      RecordingCommandRunner.Output(stdout: "feature/current\n"),
-      RecordingCommandRunner.Output(stdout: "", exitCode: 0),
-      RecordingCommandRunner.Output(stdout: "feature/current\n"),
-    ]
-    let currentBranchRegistry = GitToolProvider(
-      environment: ToolEnvironment(
-        configuration: GatewayConfiguration.fixture(
-          cli: CLISectionConfig(commands: [CLICommandConfig(id: "git", executable: "/bin/echo")]),
-          builtin: BuiltinConfig(enabled: ["git.branch_delete"])
-        ),
-        commandRunner: currentBranchRunner
-      ))
-
-    expectThrows(
-      try currentBranchRegistry.callTool(
-        .init(
-          name: "git.branch_delete",
-          arguments: .object(["name": .string("feature/current")]), context: .empty
-        ))
-    ) { error in
-      #expect(error.localizedDescription.contains("current branch"))
-      #expect((currentBranchRunner.calls.count) == (3))
-    }
   }
 
   @Test
   func testGitBranchRenameDryRunPreflightsWithoutRenaming() throws {
-    let runner = RecordingCommandRunner()
+    let runner = GitCommandRecorder()
     runner.outputs = [
       RecordingCommandRunner.Output(stdout: "feature/old\n"),
       RecordingCommandRunner.Output(stdout: "feature/new\n"),
@@ -2747,6 +2648,7 @@ final class GitToolProviderTests {
     ]
     let provider = GitToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration.fixture(
           cli: CLISectionConfig(commands: [CLICommandConfig(id: "git", executable: "/bin/echo")]),
           builtin: BuiltinConfig(enabled: ["git.branch_rename"])
@@ -2795,7 +2697,7 @@ final class GitToolProviderTests {
 
   @Test
   func testGitBranchRenameRunsAfterConfirmation() throws {
-    let runner = RecordingCommandRunner()
+    let runner = GitCommandRecorder()
     runner.outputs = [
       RecordingCommandRunner.Output(stdout: "feature/old\n"),
       RecordingCommandRunner.Output(stdout: "feature/new\n"),
@@ -2806,6 +2708,7 @@ final class GitToolProviderTests {
     ]
     let provider = GitToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration.fixture(
           cli: CLISectionConfig(commands: [CLICommandConfig(id: "git", executable: "/bin/echo")]),
           builtin: BuiltinConfig(enabled: ["git.branch_rename"])
@@ -2851,9 +2754,10 @@ final class GitToolProviderTests {
 
   @Test
   func testGitBranchRenameRejectsUnsafeInputs() throws {
-    let missingConfirmRunner = RecordingCommandRunner()
+    let missingConfirmRunner = GitCommandRecorder()
     let missingConfirmRegistry = GitToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration.fixture(
           cli: CLISectionConfig(commands: [CLICommandConfig(id: "git", executable: "/bin/echo")]),
           builtin: BuiltinConfig(enabled: ["git.branch_rename"])
@@ -2904,7 +2808,7 @@ final class GitToolProviderTests {
       #expect(missingConfirmRunner.calls.isEmpty)
     }
 
-    let missingBranchRunner = RecordingCommandRunner()
+    let missingBranchRunner = GitCommandRecorder()
     missingBranchRunner.outputs = [
       RecordingCommandRunner.Output(stdout: "feature/missing\n"),
       RecordingCommandRunner.Output(stdout: "feature/new\n"),
@@ -2912,6 +2816,7 @@ final class GitToolProviderTests {
     ]
     let missingBranchRegistry = GitToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration.fixture(
           cli: CLISectionConfig(commands: [CLICommandConfig(id: "git", executable: "/bin/echo")]),
           builtin: BuiltinConfig(enabled: ["git.branch_rename"])
@@ -2929,11 +2834,13 @@ final class GitToolProviderTests {
           ]), context: .empty
         ))
     ) { error in
-      #expect(error.localizedDescription.contains("does not exist"))
+      #expect(
+        error.localizedDescription.contains("does not exist")
+          || error.localizedDescription.contains("does not resolve"))
       #expect((missingBranchRunner.calls.count) == (3))
     }
 
-    let existingTargetRunner = RecordingCommandRunner()
+    let existingTargetRunner = GitCommandRecorder()
     existingTargetRunner.outputs = [
       RecordingCommandRunner.Output(stdout: "feature/old\n"),
       RecordingCommandRunner.Output(stdout: "feature/new\n"),
@@ -2942,6 +2849,7 @@ final class GitToolProviderTests {
     ]
     let existingTargetRegistry = GitToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration.fixture(
           cli: CLISectionConfig(commands: [CLICommandConfig(id: "git", executable: "/bin/echo")]),
           builtin: BuiltinConfig(enabled: ["git.branch_rename"])
@@ -2966,7 +2874,7 @@ final class GitToolProviderTests {
 
   @Test
   func testGitBranchSwitchDryRunPreflightsWithoutSwitching() throws {
-    let runner = RecordingCommandRunner()
+    let runner = GitCommandRecorder()
     runner.outputs = [
       RecordingCommandRunner.Output(stdout: "feature/target\n"),
       RecordingCommandRunner.Output(stdout: "", exitCode: 0),
@@ -2975,6 +2883,7 @@ final class GitToolProviderTests {
     ]
     let provider = GitToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration.fixture(
           cli: CLISectionConfig(commands: [CLICommandConfig(id: "git", executable: "/bin/echo")]),
           builtin: BuiltinConfig(enabled: ["git.branch_switch"])
@@ -3019,7 +2928,7 @@ final class GitToolProviderTests {
 
   @Test
   func testGitBranchSwitchRunsAfterConfirmation() throws {
-    let runner = RecordingCommandRunner()
+    let runner = GitCommandRecorder()
     runner.outputs = [
       RecordingCommandRunner.Output(stdout: "feature/target\n"),
       RecordingCommandRunner.Output(stdout: "", exitCode: 0),
@@ -3029,6 +2938,7 @@ final class GitToolProviderTests {
     ]
     let provider = GitToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration.fixture(
           cli: CLISectionConfig(commands: [CLICommandConfig(id: "git", executable: "/bin/echo")]),
           builtin: BuiltinConfig(enabled: ["git.branch_switch"])
@@ -3067,9 +2977,10 @@ final class GitToolProviderTests {
 
   @Test
   func testGitBranchSwitchRejectsUnsafeInputs() throws {
-    let missingConfirmRunner = RecordingCommandRunner()
+    let missingConfirmRunner = GitCommandRecorder()
     let missingConfirmRegistry = GitToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration.fixture(
           cli: CLISectionConfig(commands: [CLICommandConfig(id: "git", executable: "/bin/echo")]),
           builtin: BuiltinConfig(enabled: ["git.branch_switch"])
@@ -3102,13 +3013,14 @@ final class GitToolProviderTests {
       #expect(missingConfirmRunner.calls.isEmpty)
     }
 
-    let missingBranchRunner = RecordingCommandRunner()
+    let missingBranchRunner = GitCommandRecorder()
     missingBranchRunner.outputs = [
       RecordingCommandRunner.Output(stdout: "feature/missing\n"),
       RecordingCommandRunner.Output(stdout: "", exitCode: 1),
     ]
     let missingBranchRegistry = GitToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration.fixture(
           cli: CLISectionConfig(commands: [CLICommandConfig(id: "git", executable: "/bin/echo")]),
           builtin: BuiltinConfig(enabled: ["git.branch_switch"])
@@ -3123,11 +3035,13 @@ final class GitToolProviderTests {
           arguments: .object(["name": .string("feature/missing")]), context: .empty
         ))
     ) { error in
-      #expect(error.localizedDescription.contains("does not exist"))
+      #expect(
+        error.localizedDescription.contains("does not exist")
+          || error.localizedDescription.contains("does not resolve"))
       #expect((missingBranchRunner.calls.count) == (2))
     }
 
-    let dirtyRunner = RecordingCommandRunner()
+    let dirtyRunner = GitCommandRecorder()
     dirtyRunner.outputs = [
       RecordingCommandRunner.Output(stdout: "feature/target\n"),
       RecordingCommandRunner.Output(stdout: "", exitCode: 0),
@@ -3136,6 +3050,7 @@ final class GitToolProviderTests {
     ]
     let dirtyRegistry = GitToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration.fixture(
           cli: CLISectionConfig(commands: [CLICommandConfig(id: "git", executable: "/bin/echo")]),
           builtin: BuiltinConfig(enabled: ["git.branch_switch"])
@@ -3161,7 +3076,7 @@ final class GitToolProviderTests {
 
   @Test
   func testGitBranchSwitchAllowsDirtyWorktreeWhenExplicitAndSkipsAlreadyCurrent() throws {
-    let dirtyRunner = RecordingCommandRunner()
+    let dirtyRunner = GitCommandRecorder()
     dirtyRunner.outputs = [
       RecordingCommandRunner.Output(stdout: "feature/target\n"),
       RecordingCommandRunner.Output(stdout: "", exitCode: 0),
@@ -3171,6 +3086,7 @@ final class GitToolProviderTests {
     ]
     let dirtyRegistry = GitToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration.fixture(
           cli: CLISectionConfig(commands: [CLICommandConfig(id: "git", executable: "/bin/echo")]),
           builtin: BuiltinConfig(enabled: ["git.branch_switch"])
@@ -3196,7 +3112,7 @@ final class GitToolProviderTests {
       (dirtyPayload.objectValue?["result"]?.objectValue?["arguments"])
         == (.array([.string("switch"), .string("--no-guess"), .string("feature/target")])))
 
-    let currentRunner = RecordingCommandRunner()
+    let currentRunner = GitCommandRecorder()
     currentRunner.outputs = [
       RecordingCommandRunner.Output(stdout: "feature/current\n"),
       RecordingCommandRunner.Output(stdout: "", exitCode: 0),
@@ -3205,6 +3121,7 @@ final class GitToolProviderTests {
     ]
     let currentRegistry = GitToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration.fixture(
           cli: CLISectionConfig(commands: [CLICommandConfig(id: "git", executable: "/bin/echo")]),
           builtin: BuiltinConfig(enabled: ["git.branch_switch"])
@@ -3231,9 +3148,10 @@ final class GitToolProviderTests {
 
   @Test
   func testGitBranchCreateRejectsUnsafeInputs() throws {
-    let missingConfirmRunner = RecordingCommandRunner()
+    let missingConfirmRunner = GitCommandRecorder()
     let missingConfirmRegistry = GitToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration.fixture(
           cli: CLISectionConfig(commands: [CLICommandConfig(id: "git", executable: "/bin/echo")]),
           builtin: BuiltinConfig(enabled: ["git.branch_create"])
@@ -3283,7 +3201,7 @@ final class GitToolProviderTests {
           name: "git.branch_create",
           arguments: .object([
             "name": .string("feature/new"),
-            "start_point": .string("bad^{ref}"),
+            "start_point": .string("bad\nref"),
           ]), context: .empty
         ))
     ) { error in
@@ -3291,13 +3209,14 @@ final class GitToolProviderTests {
       #expect(missingConfirmRunner.calls.isEmpty)
     }
 
-    let existingRunner = RecordingCommandRunner()
+    let existingRunner = GitCommandRecorder()
     existingRunner.outputs = [
       RecordingCommandRunner.Output(stdout: "feature/existing\n"),
       RecordingCommandRunner.Output(stdout: "", exitCode: 0),
     ]
     let existingRegistry = GitToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration.fixture(
           cli: CLISectionConfig(commands: [CLICommandConfig(id: "git", executable: "/bin/echo")]),
           builtin: BuiltinConfig(enabled: ["git.branch_create"])
@@ -3316,7 +3235,7 @@ final class GitToolProviderTests {
       #expect((existingRunner.calls.count) == (2))
     }
 
-    let failedExistsRunner = RecordingCommandRunner()
+    let failedExistsRunner = GitCommandRecorder()
     failedExistsRunner.outputs = [
       RecordingCommandRunner.Output(stdout: "feature/fail\n"),
       RecordingCommandRunner.Output(
@@ -3324,6 +3243,7 @@ final class GitToolProviderTests {
     ]
     let failedExistsRegistry = GitToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration.fixture(
           cli: CLISectionConfig(commands: [CLICommandConfig(id: "git", executable: "/bin/echo")]),
           builtin: BuiltinConfig(enabled: ["git.branch_create"])
@@ -3345,9 +3265,10 @@ final class GitToolProviderTests {
 
   @Test
   func testGitAddUnstageAndCommitBuildExpectedWriteArgv() throws {
-    let runner = RecordingCommandRunner()
+    let runner = GitCommandRecorder()
     let provider = GitToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration.fixture(
           cli: CLISectionConfig(commands: [CLICommandConfig(id: "git", executable: "/bin/echo")]),
           builtin: BuiltinConfig(enabled: [
@@ -3392,7 +3313,7 @@ final class GitToolProviderTests {
         name: "git.commit",
         arguments: .object([
           "message": .string("Update gateway atomics"),
-          "all": .bool(true),
+          "paths": .array([.string("README.md")]),
           "allow_empty": .bool(true),
         ]), context: .empty
       ))
@@ -3405,7 +3326,9 @@ final class GitToolProviderTests {
       (runner.calls[2].arguments) == (["restore", "--worktree", "--", "Sources", "README.md"]))
     #expect(
       (runner.calls[3].arguments)
-        == (["commit", "-m", "Update gateway atomics", "--all", "--allow-empty"]))
+        == ([
+          "commit", "--only", "-m", "Update gateway atomics", "--allow-empty", "--", "README.md",
+        ]))
     #expect((addPayload.objectValue?["operation"]) == (.string("git.add")))
     #expect((unstagePayload.objectValue?["operation"]) == (.string("git.unstage")))
     #expect((restoreWorktreePayload.objectValue?["operation"]) == (.string("git.restore_worktree")))
@@ -3419,9 +3342,10 @@ final class GitToolProviderTests {
 
   @Test
   func testGitWriteAtomicsDryRunBuildPreviewArgv() throws {
-    let runner = RecordingCommandRunner()
+    let runner = GitCommandRecorder()
     let provider = GitToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration.fixture(
           cli: CLISectionConfig(commands: [CLICommandConfig(id: "git", executable: "/bin/echo")]),
           builtin: BuiltinConfig(enabled: [
@@ -3466,7 +3390,7 @@ final class GitToolProviderTests {
         name: "git.commit",
         arguments: .object([
           "message": .string("Update gateway atomics"),
-          "all": .bool(true),
+          "paths": .array([.string("README.md")]),
           "allow_empty": .bool(true),
           "dry_run": .bool(true),
         ]), context: .empty
@@ -3482,7 +3406,10 @@ final class GitToolProviderTests {
     #expect((runner.calls[2].arguments) == (["diff", "--name-only", "--", "Sources", "README.md"]))
     #expect(
       (runner.calls[3].arguments)
-        == (["commit", "--dry-run", "-m", "Update gateway atomics", "--all", "--allow-empty"]))
+        == ([
+          "commit", "--dry-run", "--only", "-m", "Update gateway atomics", "--allow-empty", "--",
+          "README.md",
+        ]))
     #expect((addPayload.objectValue?["operation"]) == (.string("git.add")))
     #expect((unstagePayload.objectValue?["operation"]) == (.string("git.unstage")))
     #expect((restoreWorktreePayload.objectValue?["operation"]) == (.string("git.restore_worktree")))
@@ -3498,10 +3425,11 @@ final class GitToolProviderTests {
   func testGitBuiltinsRequireGitProvider() {
     let provider = GitToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration.fixture(
           cli: CLISectionConfig(commands: [CLICommandConfig(id: "echo", executable: "/bin/echo")]),
           builtin: BuiltinConfig(enabled: [
-            "git.root", "git.config", "git.remotes", "git.worktrees", "git.stashes",
+            "git.root", "git.config", "git.remotes", "git.worktree_list", "git.stashes",
             "git.stash_show",
             "git.tags",
             "git.tag_show", "git.tag_create", "git.tag_delete", "git.ignored", "git.submodules",
@@ -3529,9 +3457,10 @@ final class GitToolProviderTests {
     }
 
     expectThrows(
-      try provider.callTool(.init(name: "git.worktrees", arguments: .object([:]), context: .empty))
+      try provider.callTool(
+        .init(name: "git.worktree_list", arguments: .object([:]), context: .empty))
     ) { error in
-      #expect(error.localizedDescription.contains("registered CLI provider with id 'git'"))
+      #expect(error.localizedDescription.contains("durable host storage"))
     }
 
     expectThrows(
@@ -3780,7 +3709,7 @@ final class GitToolProviderTests {
           arguments: .object(["name": .string("feature/old")]), context: .empty
         ))
     ) { error in
-      #expect(error.localizedDescription.contains("registered CLI provider with id 'git'"))
+      #expect(error.localizedDescription.contains("durable host storage"))
     }
 
     expectThrows(
@@ -3854,6 +3783,7 @@ final class GitToolProviderTests {
   func testGitBuiltinsValidateBounds() {
     let provider = GitToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration.fixture(
           cli: CLISectionConfig(commands: [CLICommandConfig(id: "git", executable: "/bin/echo")]),
           builtin: BuiltinConfig(enabled: [
@@ -3863,7 +3793,7 @@ final class GitToolProviderTests {
             "git.ignored", "git.blame", "git.add", "git.unstage", "git.restore_worktree",
             "git.commit", "git.stash_show", "git.stash_push",
           ])
-        )
+        ), commandRunner: GitCommandRecorder()
       ))
 
     expectThrows(
@@ -4089,7 +4019,8 @@ final class GitToolProviderTests {
       try provider.callTool(
         .init(
           name: "git.compare_refs",
-          arguments: .object(["base": .string("-main"), "head": .string("topic")]), context: .empty
+          arguments: .object(["base": .string("bad\nref"), "head": .string("topic")]),
+          context: .empty
         ))
     ) { error in
       #expect(error.localizedDescription.contains("base"))
@@ -4103,7 +4034,7 @@ final class GitToolProviderTests {
           context: .empty
         ))
     ) { error in
-      #expect(error.localizedDescription.contains("unsupported Git ref syntax"))
+      #expect(error.localizedDescription.contains("revision resolution failed"))
     }
 
     expectThrows(
@@ -4278,7 +4209,7 @@ final class GitToolProviderTests {
           arguments: .object([
             "revision": .string("HEAD"),
             "path": .string("Sources/main.swift"),
-            "max_bytes": .number(1_048_577),
+            "max_bytes": .number(8_388_609),
           ]), context: .empty
         ))
     ) { error in
@@ -4313,7 +4244,7 @@ final class GitToolProviderTests {
           name: "git.staged_file",
           arguments: .object([
             "path": .string("Sources/main.swift"),
-            "max_bytes": .number(1_048_577),
+            "max_bytes": .number(8_388_609),
           ]), context: .empty
         ))
     ) { error in
@@ -4382,6 +4313,7 @@ final class GitToolProviderTests {
   func testGitBuiltinsRejectEscapingPaths() {
     let provider = GitToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration.fixture(
           cli: CLISectionConfig(commands: [CLICommandConfig(id: "git", executable: "/bin/echo")]),
           builtin: BuiltinConfig(enabled: [
@@ -4500,16 +4432,6 @@ final class GitToolProviderTests {
       expectThrows(
         try provider.callTool(
           .init(
-            name: "git.ignored",
-            arguments: .object(["paths": .array([.string(path)])]), context: .empty
-          ))
-      ) { error in
-        #expect(!(error.localizedDescription.isEmpty))
-      }
-
-      expectThrows(
-        try provider.callTool(
-          .init(
             name: "git.files",
             arguments: .object(["paths": .array([.string(path)])]), context: .empty
           ))
@@ -4581,6 +4503,18 @@ final class GitToolProviderTests {
         #expect(!(error.localizedDescription.isEmpty))
       }
     }
+    for path in ["/tmp/file", "../outside"] {
+      expectThrows(
+        try provider.callTool(
+          .init(
+            name: "git.ignored", arguments: .object(["paths": .array([.string(path)])]),
+            context: .empty
+          ))
+      ) { error in
+        #expect(!error.localizedDescription.isEmpty)
+      }
+    }
+
   }
 
   private func decodeTextPayload(_ value: JSONValue) throws -> JSONValue {
@@ -4597,3 +4531,6 @@ final class GitToolProviderTests {
   }
 
 }
+
+private let gitObjectA = String(repeating: "a", count: 40)
+private let gitObjectB = String(repeating: "b", count: 40)

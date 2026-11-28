@@ -1,6 +1,7 @@
 import ComputerMCPConfiguration
 import ComputerMCPCore
 import ComputerMCPGateway
+import ComputerMCPPermissions
 import ComputerMCPPersistence
 import ComputerMCPPlatform
 import ComputerMCPPlatformPOSIX
@@ -192,6 +193,14 @@ package actor AppGatewayService {
       return
     }
 
+    let permissions = try controlPlane.database.permissionRuntime(platform: platform)
+    try await permissions.ready()
+    try terminalSessions.enablePersistence(
+      at: controlPlane.directories.applicationSupport
+        .appendingPathComponent("Executions/Socket", isDirectory: true),
+      launcher: platform.launcher,
+      authority: permissions.coordinator
+    )
     state = .starting
     listenerEpoch = UUID()
     lastError = nil
@@ -280,12 +289,20 @@ package actor AppGatewayService {
     }
     try Task.checkCancellation()
     try await controlPlane.start()
+    let permissions = try controlPlane.database.permissionRuntime(platform: platform)
+    try await permissions.ready()
+    try administrationTerminalSessions.enablePersistence(
+      at: controlPlane.directories.applicationSupport
+        .appendingPathComponent("Executions/Administration", isDirectory: true),
+      launcher: platform.launcher, authority: permissions.coordinator)
     let epoch = UUID()
     administrationEpoch = epoch
     do {
+      try await controlPlane.startPermissionAdministration(epoch: epoch)
       try await startManifestMonitoring()
       return epoch
     } catch {
+      await controlPlane.stopPermissionAdministration(epoch: epoch)
       administrationEpoch = nil
       throw error
     }
@@ -298,8 +315,10 @@ package actor AppGatewayService {
     defer { releaseLifecycle() }
     guard administrationEpoch == epoch else { return }
     administrationEpoch = nil
+    await controlPlane.stopPermissionAdministration(epoch: epoch)
     await stopManifestMonitoring()
     await stopRuntimes(owner: .administration)
+    try? administrationTerminalSessions.discardResults()
     administrationTerminalSessions = GatewayTerminalSessions()
     await resumeManifestMonitoring()
   }
@@ -362,7 +381,17 @@ package actor AppGatewayService {
     }
     try Task.checkCancellation()
     let id = UUID()
-    httpTerminalSessions[id] = GatewayTerminalSessions()
+    let sessions = GatewayTerminalSessions()
+    if let origin = trace.tunnelInstanceID {
+      let permissions = try controlPlane.database.permissionRuntime(platform: platform)
+      try await permissions.ready()
+      try sessions.enablePersistence(
+        in: controlPlane.directories.applicationSupport
+          .appendingPathComponent("Executions/HTTP", isDirectory: true),
+        ownerID: trace.transport + ":" + origin, launcher: platform.launcher,
+        authority: permissions.coordinator)
+    }
+    httpTerminalSessions[id] = sessions
     do {
       try await startManifestMonitoring()
       try Task.checkCancellation()
@@ -396,10 +425,11 @@ package actor AppGatewayService {
       await stopping.value
       return
     }
-    guard httpTerminalSessions.removeValue(forKey: id) != nil else { return }
+    guard let sessions = httpTerminalSessions.removeValue(forKey: id) else { return }
     // App shutdown can already own the socket lifecycle lock while joining its tunnels.
     let stopping = Task {
       await stopRuntimes(owner: .http(id))
+      try? sessions.discardResults()
       // Publication can still own candidates for this invalidated listener.
       // These joins are bounded by the HTTP owner capacity and cannot be cancelled.
       if preparingRuntimeCount > 0 {
@@ -452,6 +482,7 @@ package actor AppGatewayService {
     server = nil
     await activeServer?.stop()
     await stopRuntimes(owner: .listener)
+    try? terminalSessions.discardResults()
     terminalSessions = GatewayTerminalSessions()
     if let credentialFile = socketConfiguration.tunnelCredentialFile {
       GatewaySocketCredentialStore.remove(at: credentialFile)
@@ -523,43 +554,27 @@ package actor AppGatewayService {
   package func approveControlSession(
     id: String, lifetime: GatewayFullAccessLifetime = .thisSession,
     expectedRevision: Int64, expectedTrustRevision: Int64 = 0,
-    enableShellFacility: Bool = false, approver: GatewayCallerKind = .localApp
+    approver: GatewayCallerKind = .localApp
   ) async throws -> GatewayControlSessionSnapshot {
     guard approver == .localApp || approver == .localCLI else {
       throw GatewayToolError.invalidArguments("Client consent requires a local owner.")
     }
     guard let record = controlSessionRecords[id] else { throw GatewaySocketError.notConnected }
     try record.session.requireRevision(expectedRevision)
-    var configuration = try await controlPlane.activeConfiguration()
-    try record.session.requireRevision(expectedRevision)
-    if !configuration.policy.shellEnabled {
-      guard enableShellFacility else { throw AppControlPlaneServiceError.fullShellManifestDisabled }
-      guard
-        record.session.snapshot.profile?.grant.allowedCallers.contains(record.key.caller) == true
-      else {
-        throw GatewayToolError.invalidArguments(
-          "[policy.control_session_denied] The client is not admitted by its profile.")
-      }
-      let trust = try controlPlane.database.clientTrust(
-        principalID: record.key.principalID, profileID: record.key.profileID,
-        caller: record.key.caller)
-      guard (trust?.revision ?? 0) == expectedTrustRevision else {
-        throw GatewayDatabaseError.configurationChanged
-      }
-      let digest = try controlPlane.manifestStore.admittedDigest(for: configuration)
-      configuration.policy.shellEnabled = true
-      _ = try await changeManifest(configuration.exportedTOML(), expectedDigest: digest)
+    guard record.session.snapshot.profile?.grant.fullAccess == true else {
+      throw GatewayToolError.invalidArguments(
+        "Enable Full access in this profile before granting client consent.")
     }
-    return try record.session.approveFullAccess(
-      lifetime: lifetime, expectedRevision: expectedRevision,
+    return try await controlPlane.approveFullAccess(
+      session: record.session, lifetime: lifetime, expectedRevision: expectedRevision,
       expectedTrustRevision: expectedTrustRevision, approver: approver)
   }
 
   package func limitControlSession(
-    id: String, to mode: GatewayPermissionMode, expectedRevision: Int64
+    id: String, to limits: ManagedPolicy, expectedRevision: Int64
   ) throws -> GatewayControlSessionSnapshot {
     guard let record = controlSessionRecords[id] else { throw GatewaySocketError.notConnected }
-    try record.session.limitAccess(to: mode, expectedRevision: expectedRevision)
+    try record.session.limitAccess(to: limits, expectedRevision: expectedRevision)
     return record.session.snapshot
   }
 
@@ -606,7 +621,8 @@ package actor AppGatewayService {
     }
     if let pending = pendingRuntimes[key] { return try await pending.task.value }
     if let existing = runtimes[key], existing.inputs.configuration == current.configuration,
-      existing.inputs.projects == current.projects, existing.inputs.plugins == current.plugins
+      existing.inputs.projects == current.projects, existing.inputs.plugins == current.plugins,
+      existing.inputs.persisted.derivedProjects == current.persisted.derivedProjects
     {
       return existing
     }
@@ -804,12 +820,8 @@ package actor AppGatewayService {
         ownership: try runtime.ownedWork.admitInvocation(
           projectID: lookup.projectID, resourceID: name))
     }
-    var tool = name
-    var object = arguments?.objectValue ?? [:]
-    if tool == "operations.prepare" || tool == "operations.commit" {
-      tool = object["tool"]?.stringValue ?? ""
-      object = object["arguments"]?.objectValue ?? [:]
-    }
+    let tool = name
+    let object = arguments?.objectValue ?? [:]
     let kind: GatewayOwnedWork.Kind
     let id: String
     switch tool {
@@ -817,7 +829,7 @@ package actor AppGatewayService {
       kind = .shell
       guard let value = object["session_id"]?.stringValue else { return nil }
       id = value
-    case "process.read", "process.cancel":
+    case "process.read", "process.write", "process.cancel":
       kind = .shell
       guard let value = object["process_id"]?.stringValue else { return nil }
       id = value
@@ -930,6 +942,8 @@ package actor AppGatewayService {
   ) async throws -> JSONValue {
     try requireAdmission(key: key, epoch: epoch)
     guard let contract = GatewayRemoteManagement.byName[name],
+      let invocation = InvocationExecution.current as? GatewayManagementInvocation,
+      invocation.authorization.invocation.tool == name,
       let authority = context.controlSession, let record = controlSessionRecords[authority.id],
       record.key == key, record.session === authority,
       context.trustedPrincipalID == key.principalID,
@@ -938,10 +952,15 @@ package actor AppGatewayService {
     let session = record.session
     let args = try contract.input.validate(.object(arguments))
     let snapshot = session.snapshot
-    let authorization = GatewayManagementAuthorization(
+    let authorization = try GatewayManagementAuthorization(
       session: session, context: context, revision: snapshot.revision,
-      requiresFullAccess: contract.risk == .fullShell)
-    try authorization.perform {}
+      requiresFullAccess: contract.risk == .fullShell, invocation: invocation)
+    func requireAuthorization() throws {
+      try authorization.perform {
+        try controlPlane.database.validateManagementAuthorization(authorization)
+      }
+    }
+    try requireAuthorization()
     func string(_ key: String) -> String { args[key]?.stringValue ?? "" }
     func revision(_ key: String = "expected_revision") throws -> Int64 {
       guard let value = args[key]?.intValue, value >= 0 else {
@@ -959,18 +978,17 @@ package actor AppGatewayService {
     case "profile.show":
       result = try ControlToolResponse.encodedPayload(snapshot)
     case "profile.limit":
-      let mode: GatewayPermissionMode
-      switch string("mode") {
-      case "observe": mode = .readOnly
-      case "restricted": mode = .projectOperations
-      default: throw GatewayToolError.invalidArguments("mode must be observe or restricted.")
+      guard let limits = args["limits"] else {
+        throw GatewayToolError.invalidArguments("limits is required.")
       }
-      try session.limitAccess(to: mode, expectedRevision: revision(), allowIncrease: false)
+      let decoded = try CanonicalJSONCoding.decoder().decode(
+        ManagedPolicy.self, from: JSONEncoder().encode(limits))
+      try session.limitAccess(to: decoded, expectedRevision: revision(), allowIncrease: false)
       return try ControlToolResponse.encodedPayload(session.snapshot)
     case "project.add", "project.remove", "project.repair", "project.grant":
       let inputs = try await controlPlane.gatewayInputs()
       try requireAdmission(key: key, epoch: epoch)
-      try authorization.perform {}
+      try requireAuthorization()
       let id = string("id")
       if name != "project.add" {
         guard let project = inputs.projects.first(where: { $0.id == id }) else {
@@ -982,9 +1000,16 @@ package actor AppGatewayService {
       }
       if name == "project.grant" {
         guard let profile = snapshot.profile else { throw GatewaySocketError.notConnected }
+        let access: ComputerMCPPermissions.PermissionState
+        switch string("access") {
+        case "read": access = .granted(.read)
+        case "write": access = .granted(.write)
+        case "deny": access = .denied
+        default: throw GatewayToolError.invalidArguments("access must be read, write or deny.")
+        }
         let grant = try await withConfigurationChange {
           try await controlPlane.applyRemoteProjectGrant(
-            id: id, enabled: args["enabled"]?.boolValue == true, profile: profile,
+            id: id, access: access, profile: profile,
             expectedRevision: revision("expected_profile_revision"), inputs: inputs,
             authorization: authorization)
         }
@@ -1061,7 +1086,7 @@ package actor AppGatewayService {
       let expected = try revision()
       let plugins = try await controlPlane.pluginSnapshot()
       try requireAdmission(key: key, epoch: epoch)
-      try authorization.perform {}
+      try requireAuthorization()
       guard plugins.state.revision == expected else {
         throw PluginStoreError.staleRevision(expected: expected, actual: plugins.state.revision)
       }
@@ -1103,30 +1128,44 @@ package actor AppGatewayService {
       return .object(["revision": .integer(changed.state.revision), "changed": .bool(true)])
     }
     try requireAdmission(key: key, epoch: epoch)
-    try authorization.perform {}
+    try requireAuthorization()
     return result
   }
 
   /// Existing keys continue on their admitted generation while new keys await publication.
   package func changePlugins(
     _ change: PluginHostChange, expectedRevision: Int64,
-    authorization: GatewayManagementAuthorization? = nil
+    authorization: GatewayManagementAuthorization? = nil,
+    approval: ProviderEnablementApproval? = nil
   ) async throws
     -> PluginHostSnapshot
   {
     try await withConfigurationChange {
-      try await controlPlane.applyPluginChange(change, expectedRevision: expectedRevision) {
-        [self] expected, proposed, storage in
+      let bundled = await controlPlane.bundledPlugins.packages
+      return try await controlPlane.applyPluginChange(
+        change, expectedRevision: expectedRevision, approval: approval,
+        remoteManagement: authorization != nil
+      ) { [self] expected, proposed, storage, activation in
         let state = GatewayDatabase.ConfigurationState(
           projects: expected.projects, projectAliases: expected.persisted.projectAliases,
-          profiles: expected.profiles, plugins: proposed)
+          profiles: expected.profiles, plugins: proposed,
+          profileSource: expected.persisted.profileSource,
+          derivedProjects: expected.persisted.derivedProjects)
         _ = try await preparePublication(expected: expected, proposed: state, storage: storage) {
           resolution in
           let commit = {
-            try self.controlPlane.database.savePluginStoreSnapshot(
+            if let approval, case .package(let id) = approval.provider.identity {
+              guard
+                let (source, _) = try PluginStore.selectedPackage(
+                  id, in: proposed, bundled: bundled),
+                try PluginStore.manifestDigest(source.manifest)
+                  == approval.provider.sourceDigest
+              else { throw GatewayPermissionError.revisionConflict }
+            }
+            return try self.controlPlane.database.savePluginStoreSnapshot(
               proposed, expectedRevision: expected.plugins.revision,
               expectedConfiguration: expected.persisted, resolution: resolution,
-              authorization: authorization)
+              authorization: authorization, providerActivation: activation)
           }
           return try authorization.map { try $0.perform(commit) } ?? commit()
         }
@@ -1164,10 +1203,13 @@ package actor AppGatewayService {
   }
 
   func changeManifest(
-    _ manifest: String, reason: ManifestChangeReason = .activated, expectedDigest: String
+    _ manifest: String, reason: ManifestChangeReason = .activated, expectedDigest: String,
+    providerActivation: GatewayProviderActivation? = nil
   ) async throws -> ConfigurationRevision {
     let revision = try await withConfigurationChange {
-      try await publishManifest(manifest, reason: reason, expectedDigest: expectedDigest)
+      try await publishManifest(
+        manifest, reason: reason, expectedDigest: expectedDigest,
+        providerActivation: providerActivation)
     }
     manifestReloadError = nil
     lastManifestAttempt = nil
@@ -1175,7 +1217,8 @@ package actor AppGatewayService {
   }
 
   private func publishManifest(
-    _ manifest: String, reason: ManifestChangeReason, expectedDigest: String
+    _ manifest: String, reason: ManifestChangeReason, expectedDigest: String,
+    providerActivation: GatewayProviderActivation? = nil
   ) async throws -> ConfigurationRevision {
     try await controlPlane.applyManifestChange(
       manifest, reason: reason, expectedDigest: expectedDigest
@@ -1183,10 +1226,11 @@ package actor AppGatewayService {
       try await manifestWillPublish()
       return try await preparePublication(
         inputs: .init(configuration: prepared.configuration, persisted: prepared.persisted),
-        storage: nil
+        manifestRevision: .captured(prepared.revision.id), storage: nil
       ) { resolution, install in
         try self.controlPlane.manifestStore.commit(
-          prepared, resolution: resolution, install: install)
+          prepared, resolution: resolution, providerActivation: providerActivation, install: install
+        )
       }
     }
   }
@@ -1369,7 +1413,9 @@ package actor AppGatewayService {
   }
 
   private func preparePublication<Result: Sendable>(
-    inputs: AppControlPlaneService.GatewayInputs, storage: PluginInstallationStorage?,
+    inputs: AppControlPlaneService.GatewayInputs,
+    manifestRevision: GatewayManifestRevision = .current,
+    storage: PluginInstallationStorage?,
     requiredProject: (id: String, root: ProjectRootIdentity)? = nil,
     publish: (GatewayConfigurationResolution, (GatewayDatabase.ConfigurationState) -> Void) throws
       -> Result
@@ -1394,7 +1440,8 @@ package actor AppGatewayService {
       if keys.isEmpty {
         validation = try await controlPlane.prepareGateway(
           inputs: inputs, caller: .localCLI, profileID: .localAdmin, trustedPrincipalID: nil,
-          terminalSessions: terminalSessions, artifactStorage: storage)
+          terminalSessions: terminalSessions, artifactStorage: storage,
+          manifestRevision: manifestRevision)
       } else {
         for key in keys {
           guard let ownerEpoch = currentEpoch(for: key.owner) else {
@@ -1403,7 +1450,8 @@ package actor AppGatewayService {
           let preparation = try await controlPlane.prepareGateway(
             inputs: inputs, caller: key.caller, profileID: key.profileID,
             trustedPrincipalID: key.principalID, terminalSessions: try sessions(for: key.owner),
-            artifactStorage: storage, requiresControlSession: key.owner != .administration,
+            artifactStorage: storage, manifestRevision: manifestRevision,
+            requiresControlSession: key.owner != .administration,
             remoteManagement: management(key: key, epoch: ownerEpoch))
           candidates[key] = (preparation, ownerEpoch)
         }

@@ -101,7 +101,7 @@ extension PluginStore {
       throw error
     }
     let preparation = PluginArchivePreparation(
-      workerExecutable: workerExecutable,
+      launcher: launcher, workerExecutable: workerExecutable,
       stagingParent: identity.url.appendingPathComponent("staging"),
       inheritedLockDescriptor: storage.lockDescriptor,
       directoryFactory: directoryFactory)
@@ -154,7 +154,8 @@ extension PluginStore {
         githubRelease: githubRelease,
         artifactName: package.manifest.compatibility?.artifacts.isEmpty == false
           ? artifactName : nil),
-      manifestDigest: try Self.manifestDigest(package.manifest), registeredAt: .now)
+      manifestDigest: try Self.manifestDigest(package.manifest),
+      declarations: PluginPermissionDeclarations(package.manifest), registeredAt: .now)
     state.installations.append(record)
     state.selectedInstallations[record.pluginID] = record.id
     Self.addMissingSettings(for: package.manifest, to: &state)

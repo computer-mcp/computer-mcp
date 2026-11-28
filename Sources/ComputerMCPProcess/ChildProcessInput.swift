@@ -1,13 +1,10 @@
 import Foundation
 import NIOConcurrencyHelpers
-import Subprocess
 
 internal protocol ChildProcessInputWriting: Sendable {
   func write(_ bytes: [UInt8]) async throws -> Int
   func finish() async throws
 }
-
-extension StandardInputWriter: ChildProcessInputWriting {}
 
 /// The actor owns FIFO admission and the admitted task. The box also lets synchronous
 /// process cancellation stop admission without waiting for an actor hop or pipe I/O.
@@ -78,13 +75,16 @@ internal actor ChildProcessInput {
     handOffTurn()
   }
 
-  /// Does not cancel the admitted task. Process termination cancels the library's I/O.
+  /// Does not cancel the admitted task. Its descriptor owner retires I/O during teardown.
   nonisolated func stop(throwing error: (any Error)? = nil) {
     shared.withLockedValue { $0.error = error ?? closedError }
-    Task { await self.rejectWaiters() }
+    ExecutionTasks.start { await self.rejectWaiters() }
   }
 
-  func write(_ data: Data, close: Bool) async throws -> Int {
+  func write(
+    _ data: Data, close: Bool, beforeWrite: (@Sendable () async throws -> Void)? = nil,
+    onWriteCompleted: (@Sendable () -> Void)? = nil
+  ) async throws -> Int {
     let id = UUID()
     return try await withTaskCancellationHandler {
       try Task.checkCancellation()
@@ -105,15 +105,18 @@ internal actor ChildProcessInput {
 
       // An unstructured owner task shields a whole frame from caller cancellation.
       // It releases admission itself, even if the caller has not resumed yet.
-      let task = Task { try await self.performWrite(data, close: close) }
+      let task = ExecutionTasks.startThrowing {
+        try await self.performWrite(
+          data, close: close, beforeWrite: beforeWrite, onWriteCompleted: onWriteCompleted)
+      }
       writeTask = task
       return try await task.value
     } onCancel: {
-      Task { await self.cancelWaiter(id) }
+      ExecutionTasks.start { await self.cancelWaiter(id) }
     }
   }
 
-  /// Must complete inside the run body, before its automatic StandardInputWriter.finish().
+  /// Joins the admitted write before closing the descriptor.
   func finish() async {
     stop()
     if turnHeld {
@@ -186,11 +189,16 @@ internal actor ChildProcessInput {
     shared.withLockedValue { $0.snapshot.pendingWrites = waiters.count + (turnHeld ? 1 : 0) }
   }
 
-  private func performWrite(_ data: Data, close: Bool) async throws -> Int {
+  private func performWrite(
+    _ data: Data, close: Bool, beforeWrite: (@Sendable () async throws -> Void)?,
+    onWriteCompleted: (@Sendable () -> Void)?
+  ) async throws -> Int {
     defer { releaseTurn() }
     guard let writer else { throw closedError }
     var count = 0
     if !data.isEmpty {
+      try await beforeWrite?()
+      if beforeWrite != nil, let error = currentError { throw error }
       shared.withLockedValue { $0.snapshot.writeInProgress = true }
       observer?(.writeStarted)
       do {
@@ -210,6 +218,8 @@ internal actor ChildProcessInput {
         rejectWaiters()
       }
       guard count == data.count else { throw closedError }
+      // Teardown joins this turn, so publish the full write before handing it off.
+      onWriteCompleted?()
     }
     if close {
       try await finishWriter()
@@ -229,10 +239,8 @@ internal actor ChildProcessInput {
   private func finishWriter() async throws {
     if let finishTask { return try await finishTask.value }
     guard let writer else { return }
-    let task = Task {
-      self.observer?(.finishStarted)
-      try await writer.finish()
-    }
+    observer?(.finishStarted)
+    let task = ExecutionTasks.startThrowing { try await writer.finish() }
     finishTask = task
     try await task.value
   }

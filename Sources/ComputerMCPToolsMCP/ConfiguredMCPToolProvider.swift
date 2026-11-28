@@ -98,8 +98,8 @@ package final class ConfiguredMCPToolProvider: GatewayToolProvider, @unchecked S
     for configuredTool in mcp.configuration.tools {
       guard let target = configuredTool.tool,
         let server = mcp.configuration.mcp.servers.first(where: { $0.id == configuredTool.source }),
-        mcp.mcpClient.isServerVisible(server, context: context), server.permitsTool(target),
-        let downstream = try mcp.permittedDownstreamTools(server: server, context: context).first(
+        server.permitsTool(target),
+        let downstream = try mcp.mcpClient.cachedTools(server: server, context: context)?.first(
           where: { $0.name == target })
       else { continue }
       let tool = try toolDefinition(for: configuredTool, downstream: downstream)
@@ -111,8 +111,9 @@ package final class ConfiguredMCPToolProvider: GatewayToolProvider, @unchecked S
         throw GatewayToolError.invalidArguments(
           "MCP server '\(server.id)' uses reexport exposure but has no prefix.")
       }
-      let downstreamDefinitions = try mcp.permittedDownstreamTools(server: server, context: context)
-        .map {
+      let downstreamDefinitions = try
+        (mcp.mcpClient.cachedTools(server: server, context: context) ?? [])
+        .filter { server.permitsTool($0.name) }.map {
           try downstreamDefinition(for: $0.prefixed(prefix, serverID: server.id))
         }
       let existing = Set(definitions.map(\.tool.name))
@@ -182,16 +183,24 @@ package final class ConfiguredMCPToolProvider: GatewayToolProvider, @unchecked S
       throw GatewayToolError.invalidArguments(
         "Downstream tool '\(tool.name)' requires a registered MCP reference.")
     }
+    guard let server = mcp.configuration.mcp.servers.first(where: { $0.id == reference.serverID })
+    else {
+      throw GatewayToolError.unknownMCPServer(reference.serverID)
+    }
+    let policy = MCPToolAdmissionPolicy(
+      risk: try mcp.configuration.mcpRisk(for: reference, declaredBy: tool),
+      hostServiceAction: try tool.hostServiceAction)
     return ToolDefinition(
       tool: tool,
       capability: CapabilityDescriptor(
         id: tool.name,
-        risk: try mcp.configuration.mcpRisk(for: reference, declaredBy: tool),
-        projectRequirement: .optional,
+        risk: policy.risk,
+        requirement: server.requirement(for: policy),
+        projectRequirement: server.hostServices ? .required : .optional,
         usesNetwork: true,
         mcpReference: reference,
         equivalentCapabilityIDs: mcp.configuration.mcpCapabilityIDs(for: reference),
-        hostServiceAction: try tool.hostServiceAction
+        hostServiceAction: policy.hostServiceAction
       )
     )
   }

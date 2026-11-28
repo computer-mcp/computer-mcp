@@ -5,7 +5,7 @@ import ComputerMCPProcess
 import Foundation
 
 /// App-owned management is injected into each admitted generation; the normal
-/// gateway still owns tool admission, invocation leases, tickets and audit.
+/// gateway owns permission admission, invocation leases and audit.
 package struct GatewayRemoteManagement: GatewayManagementProvider {
   let call: @Sendable (String, [String: JSONValue], ExecutionContext) async throws -> JSONValue
 
@@ -24,6 +24,7 @@ package struct GatewayRemoteManagement: GatewayManagementProvider {
     let input: ControlToolContract
     let summary: String
     let risk: CapabilityRisk
+    let requirement: ToolRequirement
     var network = false
     var destructive = false
 
@@ -35,7 +36,7 @@ package struct GatewayRemoteManagement: GatewayManagementProvider {
             readOnlyHint: input.readOnly, destructiveHint: destructive,
             idempotentHint: input.readOnly, openWorldHint: network)),
         capability: CapabilityDescriptor(
-          id: input.name, risk: risk, projectRequirement: .none,
+          id: input.name, risk: risk, requirement: requirement, projectRequirement: .none,
           localOnly: false, usesNetwork: network))
     }
   }
@@ -44,21 +45,21 @@ package struct GatewayRemoteManagement: GatewayManagementProvider {
     .init(
       input: .init("profile.show", readOnly: true),
       summary: "Inspect this connection's current profile, session access and exact revisions.",
-      risk: .readOnly),
+      risk: .readOnly, requirement: .none),
     .init(
       input: .init(
-        "profile.limit", arguments: ["mode": .string, "expected_revision": .integer],
-        required: ["mode", "expected_revision"], readOnly: false),
+        "profile.limit", arguments: ["limits": .object, "expected_revision": .integer],
+        required: ["limits", "expected_revision"], readOnly: false),
       summary:
-        "Reduce only this session to observe or restricted using its reviewed revision. Full Access and persistent trust require local consent.",
-      risk: .projectWrite),
+        "Narrow only this connection’s permission and execution limits using its reviewed revision. Full Access and persistent trust require local consent.",
+      risk: .projectWrite, requirement: .none),
     .init(
       input: .init(
         "project.add", arguments: ["path": .string, "display_name": .string],
         required: ["path"], readOnly: false),
       summary:
         "Register an absolute local project path in an approved Full Access session. Connected clients see the new configuration; running work keeps its owner.",
-      risk: .fullShell),
+      risk: .fullShell, requirement: .fullAccess),
     .init(
       input: .init(
         "project.repair",
@@ -68,35 +69,38 @@ package struct GatewayRemoteManagement: GatewayManagementProvider {
         required: ["id", "path", "expected_root_path"], readOnly: false),
       summary:
         "Repair a registered project after comparing its reviewed root path. Requires approved Full Access; the selected folder must remain valid through publication.",
-      risk: .fullShell),
+      risk: .fullShell, requirement: .fullAccess),
     .init(
       input: .init(
         "project.remove", arguments: ["id": .string, "expected_root_path": .string],
         required: ["id", "expected_root_path"], readOnly: false),
       summary:
         "Remove a project registration matching the reviewed root path. Files and retained work are preserved. Requires approved Full Access.",
-      risk: .fullShell, destructive: true),
+      risk: .fullShell, requirement: .fullAccess,
+      destructive: true),
     .init(
       input: .init(
         "project.grant",
-        arguments: ["id": .string, "enabled": .boolean, "expected_profile_revision": .integer],
-        required: ["id", "enabled", "expected_profile_revision"], readOnly: false),
+        arguments: ["id": .string, "access": .string, "expected_profile_revision": .integer],
+        required: ["id", "access", "expected_profile_revision"], readOnly: false),
       summary:
         "Change one project grant for this connection's profile using its exact revision. Requires approved Full Access. Changing profile authority invalidates prior Full consent.",
-      risk: .fullShell),
+      risk: .fullShell, requirement: .fullAccess),
     .init(
       input: .init(
         "plugin.list", arguments: ["after_id": .string, "limit": .integer], readOnly: true),
       summary:
         "List installed and bundled plugin summaries without credentials or launch arguments. Live pages use after_id; limit defaults to 50 and is at most 200.",
-      risk: .readOnly),
+      risk: .readOnly,
+      requirement: .privacy(.machineInformation)),
     .init(
       input: .init(
         "plugin.describe", arguments: ["id": .string, "after_id": .string, "limit": .integer],
         required: ["id"], readOnly: true),
       summary:
         "Inspect one plugin's selection and safe settings, with a live page of installations and exact store revision. after_id continues the page; limit defaults to 50 and is at most 200. Credentials and launch arguments are omitted.",
-      risk: .readOnly),
+      risk: .readOnly,
+      requirement: .privacy(.machineInformation)),
     .init(
       input: .init(
         "plugin.search",
@@ -104,7 +108,9 @@ package struct GatewayRemoteManagement: GatewayManagementProvider {
         readOnly: true),
       summary:
         "Search the official static plugin catalog. Pages start at 1; optional kind is mcp, cli or skills.",
-      risk: .readOnly, network: true),
+      risk: .readOnly,
+      requirement: .privacy(.machineInformation),
+      network: true),
     .init(
       input: .init(
         "plugin.artifacts",
@@ -114,14 +120,16 @@ package struct GatewayRemoteManagement: GatewayManagementProvider {
         required: ["repository", "repository_id"], readOnly: true),
       summary:
         "Inspect official release artifacts for an exact catalog repository identity. Pass a returned artifact unchanged to plugin.install or plugin.update.",
-      risk: .readOnly, network: true),
+      risk: .readOnly,
+      requirement: .privacy(.machineInformation),
+      network: true),
     .init(
       input: .init(
         "plugin.install", arguments: ["artifact": .object, "expected_revision": .integer],
         required: ["artifact", "expected_revision"], readOnly: false),
       summary:
         "Install one official release after current GitHub provenance and archive-byte verification. Requires approved Full Access and exact store revision; activation is separate.",
-      risk: .fullShell, network: true),
+      risk: .fullShell, requirement: .fullAccess, network: true),
     .init(
       input: .init(
         "plugin.update",
@@ -129,7 +137,7 @@ package struct GatewayRemoteManagement: GatewayManagementProvider {
         required: ["id", "artifact", "expected_revision"], readOnly: false),
       summary:
         "Install a selected official release for an existing plugin, preserving saved settings and already-running work. Requires approved Full Access and exact store revision.",
-      risk: .fullShell, network: true),
+      risk: .fullShell, requirement: .fullAccess, network: true),
     .init(
       input: .init(
         "plugin.configure",
@@ -137,28 +145,29 @@ package struct GatewayRemoteManagement: GatewayManagementProvider {
         required: ["id", "settings", "expected_revision"], readOnly: false),
       summary:
         "Patch host settings for a bundled or verified official plugin. Requires approved Full Access and exact store revision. MCP authentication changes require the local credential owner.",
-      risk: .fullShell),
+      risk: .fullShell, requirement: .fullAccess),
     .init(
       input: .init(
         "plugin.enable", arguments: ["id": .string, "expected_revision": .integer],
         required: ["id", "expected_revision"], readOnly: false),
       summary:
         "Enable a bundled or verified official plugin in an approved Full Access session using the exact store revision.",
-      risk: .fullShell),
+      risk: .fullShell, requirement: .fullAccess),
     .init(
       input: .init(
         "plugin.disable", arguments: ["id": .string, "expected_revision": .integer],
         required: ["id", "expected_revision"], readOnly: false),
       summary:
         "Disable new calls to a plugin while retaining its active work. Requires approved Full Access and exact store revision.",
-      risk: .fullShell),
+      risk: .fullShell, requirement: .fullAccess),
     .init(
       input: .init(
         "plugin.uninstall", arguments: ["installation_id": .string, "expected_revision": .integer],
         required: ["installation_id", "expected_revision"], readOnly: false),
       summary:
         "Uninstall one plugin artifact installation using the exact store revision. Active work retains its artifact lease. Requires approved Full Access.",
-      risk: .fullShell, destructive: true),
+      risk: .fullShell, requirement: .fullAccess,
+      destructive: true),
   ]
 
   static let byName = Dictionary(uniqueKeysWithValues: contracts.map { ($0.input.name, $0) })

@@ -7,18 +7,250 @@ import Foundation
 import Logging
 import MCP
 
+/// The SDK installs its pending waiter before entering transport.send.
+package actor ManagedMCPRequest {
+  @TaskLocal package static var current: ManagedMCPRequest?
+
+  private var sending = false
+  private var cancelled = false
+
+  package init() {}
+
+  func beginSend() throws {
+    try checkCancellation()
+    sending = true
+  }
+
+  func checkCancellation() throws {
+    if cancelled { throw CancellationError() }
+  }
+
+  /// Before send, a refusal at the transport completes the SDK waiter itself.
+  package func cancel() -> Bool {
+    guard !cancelled else { return false }
+    cancelled = true
+    return sending
+  }
+}
+
+/// An ordinary call owns its pipe admission and its single cooperative stop.
+package final class MCPStdioCall: @unchecked Sendable {
+  @TaskLocal package static var current: MCPStdioCall?
+  @TaskLocal fileprivate static var suppressNotification = false
+
+  private enum Phase { case pending, admitted, finished }
+  private typealias StopResult = Result<Bool, any Error>
+  private struct Waiter {
+    let result: AsyncStream<StopResult>.Continuation
+    let onWriteAuthorized: (@Sendable () -> Void)?
+  }
+  private struct Attempt {
+    let task: Task<Void, Never>
+    var waiters: [Waiter]
+    var authorized = false
+    var onSettlement: (@Sendable () -> Void)?
+  }
+  private enum Stop {
+    case idle
+    case inProgress(Attempt)
+    case completed(Bool)
+    case closed
+  }
+
+  // Every state transition is synchronous. Pipe I/O and SDK calls run outside the lock.
+  private let lock = NSLock()
+  private var phase = Phase.pending
+  private var requestID: MCP.ID?
+  private var forwardedID: MCP.ID?
+  private var stopping = Stop.idle
+  private let written: AsyncStream<Void>
+  private let completion: AsyncStream<Void>.Continuation
+
+  package init() {
+    (written, completion) = AsyncStream.makeStream()
+  }
+
+  package func refuseBeforeAdmission() {
+    lock.withLock {
+      guard phase == .pending else { return }
+      phase = .finished
+      completion.finish()
+    }
+  }
+
+  package func identify(_ id: MCP.ID) {
+    lock.withLock { requestID = id }
+  }
+
+  package var writtenRequestID: MCP.ID? { lock.withLock { forwardedID } }
+
+  /// Returns whether a cancellation frame was written. Concurrent stops share
+  /// the attempt, and a failed delivery leaves the request available for retry.
+  package func stop(
+    client: MCP.Client, reason: String, observesResponse: Bool = false,
+    onWriteAuthorized: (@Sendable () -> Void)? = nil
+  ) async throws -> Bool {
+    try Task.checkCancellation()
+    refuseBeforeAdmission()
+    let (events, result) = AsyncStream<StopResult>.makeStream(bufferingPolicy: .bufferingNewest(1))
+    let waiter = Waiter(result: result, onWriteAuthorized: onWriteAuthorized)
+    let alreadyAuthorized = lock.withLock {
+      switch stopping {
+      case .idle:
+        let task = Task {
+          do {
+            let sent = try await sendStop(
+              client: client, reason: reason, observesResponse: observesResponse)
+            completeStop(.success(sent))
+          } catch {
+            completeStop(.failure(error))
+          }
+        }
+        stopping = .inProgress(Attempt(task: task, waiters: [waiter]))
+      case .inProgress(var attempt):
+        attempt.waiters.append(waiter)
+        stopping = .inProgress(attempt)
+        return attempt.authorized
+      case .completed(let sent):
+        result.yield(.success(sent))
+        result.finish()
+      case .closed:
+        result.finish()
+      }
+      return false
+    }
+    if alreadyAuthorized { onWriteAuthorized?() }
+    for await value in events { return try value.get() }
+    throw CancellationError()
+  }
+
+  package func closeStop() {
+    let attempt = lock.withLock {
+      let previous = stopping
+      stopping = .closed
+      return previous
+    }
+    if case .inProgress(let attempt) = attempt {
+      attempt.task.cancel()
+      for waiter in attempt.waiters { waiter.result.finish() }
+      attempt.onSettlement?()
+    }
+  }
+
+  /// The SDK can release its response waiter before the cancellation write.
+  /// A terminal close can still find the call until that write settles.
+  package func deferRemovalWhileStopping(_ remove: @escaping @Sendable () -> Void) -> Bool {
+    lock.withLock {
+      guard case .inProgress(var attempt) = stopping else { return false }
+      attempt.onSettlement = remove
+      stopping = .inProgress(attempt)
+      return true
+    }
+  }
+
+  private func sendStop(client: MCP.Client, reason: String, observesResponse: Bool) async throws
+    -> Bool
+  {
+    if lock.withLock({ phase != .finished }) {
+      for await _ in written {}
+    }
+    try Task.checkCancellation()
+    if let id = writtenRequestID {
+      let authorized: @Sendable () -> Void = { self.writeAuthorized() }
+      try await MCPChildProcessTransport.$onCancellationWriteAuthorized.withValue(authorized) {
+        if observesResponse {
+          try await client.notify(
+            CancelledNotification.message(.init(requestId: id, reason: reason)))
+        } else {
+          try await client.cancelRequest(id, reason: reason)
+        }
+      }
+      return true
+    }
+    try Task.checkCancellation()
+    if let id = lock.withLock({ requestID }) { await settleSDKWaiter(id, client: client) }
+    return false
+  }
+
+  private func settleSDKWaiter(_ id: MCP.ID, client: MCP.Client) async {
+    // The SDK couples waiter removal with a notification. The ordinary write
+    // state has already decided whether a wire notification is appropriate.
+    _ = await Self.$suppressNotification.withValue(true) {
+      try? await client.cancelRequest(id)
+    }
+  }
+
+  private func writeAuthorized() {
+    let waiters: [Waiter] = lock.withLock {
+      guard case .inProgress(var attempt) = stopping else { return [] }
+      attempt.authorized = true
+      stopping = .inProgress(attempt)
+      return attempt.waiters
+    }
+    for waiter in waiters { waiter.onWriteAuthorized?() }
+  }
+
+  private func completeStop(_ result: StopResult) {
+    let attempt: Attempt? = lock.withLock {
+      guard case .inProgress(let attempt) = stopping else { return nil }
+      if case .success(let sent) = result {
+        stopping = .completed(sent)
+      } else {
+        stopping = .idle
+      }
+      return attempt
+    }
+    guard let attempt else { return }
+    for waiter in attempt.waiters {
+      waiter.result.yield(result)
+      waiter.result.finish()
+    }
+    attempt.onSettlement?()
+  }
+
+  fileprivate func admit() throws {
+    try lock.withLock {
+      guard phase == .pending else { throw CancellationError() }
+      phase = .admitted
+    }
+  }
+
+  fileprivate func finishWrite(id: MCP.ID?) {
+    lock.withLock {
+      guard phase != .finished else { return }
+      phase = .finished
+      forwardedID = id
+      completion.finish()
+    }
+  }
+}
+
+/// The SDK can write before the caller of its submission API resumes.
+private struct StdioRequestIdentity: Decodable {
+  let id: MCP.ID
+}
+
 /// MCP framing over the same owned-process primitive used by other stdio adapters.
 package actor MCPChildProcessTransport: MCP.Transport {
+  @TaskLocal package static var onCancellationWriteAuthorized: (@Sendable () -> Void)?
+
   package nonisolated let logger: Logger
   /// Finishes after process and host-service cleanup, including failed startup.
   package nonisolated let termination: AsyncStream<Void>
   private let terminated: AsyncStream<Void>.Continuation
 
+  private let launcher: ExecutionLauncher
   private let server: MCPServerConfig
   private let command: String
   private let workingDirectory: URL
+  /// The base of an unprepared launch's relative command and of the ownership scope,
+  /// even when a prepared provider launches in its private scratch.
+  private let registrationDirectory: URL
   private let environment: [String: String]
+  private let hostProtocolMetadata: [String: String]
   private let hostContext: (any MCPHostEnvironment)?
+  private let preparedExecution: PreparedExecutionContext?
+  private let vendorSession: (any MCPHostSessionHandle)?
   private var hostSession: (any MCPHostSessionHandle)?
   private var process: ManagedLineProcess?
   private var ownership: MCPProcessOwnership?
@@ -26,12 +258,19 @@ package actor MCPChildProcessTransport: MCP.Transport {
   private var reader: Task<Void, Never>?
   private var closeTask: Task<Void, Never>?
   private var closed = false
+  private var initializationObserved = false
+  private var observedHostServiceContract: String?
+  private var vendorInitializeID: JSONValue?
+  private var observedVendorExecution = false
   private let stream: AsyncThrowingStream<Data, Swift.Error>
   private let continuation: AsyncThrowingStream<Data, Swift.Error>.Continuation
 
   package init(
-    server: MCPServerConfig, workingDirectory: URL, environment: [String: String],
-    hostContext: (any MCPHostEnvironment)? = nil, logger: Logger? = nil
+    launcher: ExecutionLauncher, server: MCPServerConfig, workingDirectory: URL,
+    environment: [String: String],
+    hostContext: (any MCPHostEnvironment)? = nil, logger: Logger? = nil,
+    preparedExecution: PreparedExecutionContext? = nil,
+    vendorSession: (any MCPHostSessionHandle)? = nil
   ) throws {
     guard let command = server.command, !command.isEmpty else {
       throw GatewayToolError.executionFailed("MCP server '\(server.id)' has no command.")
@@ -40,14 +279,44 @@ package actor MCPChildProcessTransport: MCP.Transport {
       throw GatewayToolError.executionFailed(
         "The stdio registration requires scoped host services.")
     }
+    // Host services bind to the provider's verified channel, never an inherited descriptor.
+    guard !server.hostServices || preparedExecution != nil else {
+      throw GatewayToolError.executionFailed(
+        "Host services require a prepared provider execution.")
+    }
+    self.launcher = launcher
     self.server = server
     self.hostContext = hostContext
+    self.preparedExecution = preparedExecution
+    self.vendorSession = vendorSession
+    guard vendorSession == nil || (preparedExecution != nil && !server.hostServices) else {
+      throw GatewayToolError.executionFailed(
+        "Private vendor execution requires its own provider channel.")
+    }
+    if let preparedExecution {
+      guard preparedExecution.provider?.registrationID == server.id else {
+        throw GatewayToolError.executionFailed(
+          "Provider authority does not match the registration.")
+      }
+      if let project = preparedExecution.provider?.delegatingAuthorization?.invocation.projectID {
+        guard hostContext?.launchMetadata.project.id == project else {
+          throw GatewayToolError.executionFailed("Provider project does not match its host scope.")
+        }
+      }
+      try preparedExecution.validateProviderLaunch()
+    }
     self.command = command
-    self.workingDirectory =
+    registrationDirectory =
       server.resolvedWorkingDirectory(base: workingDirectory)
       .standardizedFileURL
+    self.workingDirectory =
+      preparedExecution?.providerWorkingDirectory.map {
+        URL(fileURLWithPath: $0.value).standardizedFileURL
+      } ?? registrationDirectory
     self.environment = try MCPHostLaunchMetadata.launchEnvironment(
       inherited: environment, overrides: server.env, context: hostContext?.launchMetadata)
+    hostProtocolMetadata = try MCPHostLaunchMetadata.launchEnvironment(
+      inherited: [:], overrides: [:], context: hostContext?.launchMetadata)
     self.logger =
       logger
       ?? Logger(
@@ -60,38 +329,67 @@ package actor MCPChildProcessTransport: MCP.Transport {
     guard !closed else { throw MCPError.connectionClosed }
     try Task.checkCancellation()
     guard process == nil else { return }
-    let inspection = ExecutableInspection.inspect(
-      command, workingDirectory: workingDirectory, environment: environment)
-    guard !inspection.hasKnownFailure, let executable = inspection.path else {
-      throw GatewayToolError.executionFailed(
-        "Could not start MCP server '\(server.id)': \(inspection.message)")
+    try preparedExecution?.validateProviderLaunch()
+    let executable: String
+    if let verified = preparedExecution?.providerExecutable {
+      executable = verified.value
+    } else {
+      let inspection = ExecutableInspection.inspect(
+        command, workingDirectory: registrationDirectory, environment: environment)
+      guard !inspection.hasKnownFailure, let path = inspection.path else {
+        throw GatewayToolError.executionFailed(
+          "Could not start MCP server '\(server.id)': \(inspection.message)")
+      }
+      executable = path
     }
     let ownership = try MCPProcessOwnership.acquire(
       root: hostContext?.processOwnershipRoot ?? MCPProcessOwnership.defaultRoot,
       project: hostContext?.projectRoot
-        ?? workingDirectory,
-      registration: server.id, artifact: hostContext?.pluginArtifacts[server.id])
+        ?? registrationDirectory,
+      registration: server.id, artifact: hostContext?.pluginArtifacts[server.id],
+      provider: preparedExecution?.provider)
     self.ownership = ownership
-    let session =
-      try server.hostServices
-      ? hostContext.map { try $0.makeHostSession(server: server) } : nil
-    var environment = environment
-    if session != nil { environment[MCPHostLaunchMetadata.descriptorEnvironmentKey] = "3" }
+    let session: (any MCPHostSessionHandle)?
+    do {
+      if let vendorSession {
+        session = vendorSession
+      } else if server.hostServices, let hostContext, let preparedExecution {
+        session = try hostContext.makeHostSession(server: server, execution: preparedExecution)
+      } else {
+        session = nil
+      }
+    } catch {
+      try? ownership.finish(confirmed: true)
+      throw error
+    }
     let process: ManagedLineProcess
     do {
-      process = try ManagedLineProcess(
-        configuration: .init(
-          executable: executable, arguments: server.args, environment: environment,
-          workingDirectory: workingDirectory,
-          maximumMessageBytes: 16 * 1_024 * 1_024,
-          inheritedDescriptors: session.map { [3: $0.childHandle] } ?? [:],
-          ownershipHandle: try ownership.supervisorHandle()))
+      let execution: PreparedExecutionContext?
+      if let preparedExecution, let session {
+        execution = try preparedExecution.withHostServiceChannel(session.providerChannel)
+      } else {
+        execution = preparedExecution
+      }
+      let configuration = ManagedLineProcess.Configuration(
+        executable: executable,
+        arguments: server.args + (vendorSession == nil ? [] : ["--host-vendor-execution"]),
+        environment: environment,
+        hostProtocolMetadata: hostProtocolMetadata,
+        workingDirectory: workingDirectory,
+        maximumMessageBytes: 16 * 1_024 * 1_024,
+        ownershipHandle: try ownership.supervisorHandle())
+      if let execution {
+        process = try execution.withValue {
+          try ManagedLineProcess(launcher: launcher, configuration: configuration)
+        }
+      } else {
+        process = try ManagedLineProcess(launcher: launcher, configuration: configuration)
+      }
     } catch {
       await session?.close()
       try? ownership.finish(confirmed: await session?.shutdownConfirmed() ?? true)
       throw error
     }
-    try? session?.childHandle.close()
     self.hostSession = session
     self.process = process
     reader = Task { [continuation] in
@@ -99,6 +397,7 @@ package actor MCPChildProcessTransport: MCP.Transport {
         for try await line in process.inboundLines {
           try Task.checkCancellation()
           if line.isEmpty { continue }
+          await self.observeInitialization(line)
           switch continuation.yield(Data(line.utf8)) {
           case .enqueued: break
           case .dropped: throw ManagedLineProcessError.bufferOverflow
@@ -127,11 +426,12 @@ package actor MCPChildProcessTransport: MCP.Transport {
     closed = true
     continuation.finish()
     reader?.cancel()
-    let task = Task { [process, hostSession, ownership, terminated] in
+    let session = hostSession ?? vendorSession
+    let task = Task { [process, session, ownership, terminated] in
       defer { terminated.finish() }
-      await hostSession?.close()
+      await session?.close()
       await process?.close()
-      let confirmed = await hostSession?.shutdownConfirmed() ?? true
+      let confirmed = await session?.shutdownConfirmed() ?? true
       let exited = await process?.snapshot().hasExited ?? true
       do {
         try ownership?.finish(confirmed: confirmed && exited, hostServicesConfirmed: confirmed)
@@ -145,18 +445,67 @@ package actor MCPChildProcessTransport: MCP.Transport {
 
   package func shutdownConfirmed() async -> Bool {
     guard !ownershipError else { return false }
-    guard await hostSession?.shutdownConfirmed() ?? true else { return false }
+    guard await (hostSession ?? vendorSession)?.shutdownConfirmed() ?? true else { return false }
     guard let process else { return closed }
     return await process.snapshot().hasExited
   }
 
   package func send(_ data: Data) async throws {
+    try await send(data, afterStdioWrite: nil)
+  }
+
+  /// Lets tests hold the transport waiter after the input operation returns.
+  internal func send(_ data: Data, afterStdioWrite: (@Sendable () async -> Void)?) async throws {
+    if MCPStdioCall.suppressNotification { return }
+    let stdioCall = MCPStdioCall.current
+    defer { stdioCall?.finishWrite(id: nil) }
     guard !closed, let process else { throw MCPError.connectionClosed }
     guard let line = String(data: data, encoding: .utf8) else {
       throw MCPError.invalidRequest("MCP stdio requires UTF-8 JSON.")
     }
-    try await process.sendLine(line)
+    if vendorSession != nil, !observedVendorExecution, vendorInitializeID == nil,
+      let request = try? JSONDecoder().decode(JSONValue.self, from: data).objectValue,
+      request["method"]?.stringValue == "initialize"
+    {
+      vendorInitializeID = request["id"]
+    }
+    if let request = ManagedMCPRequest.current {
+      try await request.beginSend()
+      try await process.sendLine(line) { try await request.checkCancellation() }
+    } else if let stdioCall {
+      let id = try JSONDecoder().decode(StdioRequestIdentity.self, from: data).id
+      try await process.sendLine(
+        line, beforeWrite: { try stdioCall.admit() },
+        onWriteCompleted: { stdioCall.finishWrite(id: id) })
+      await afterStdioWrite?()
+    } else {
+      try await process.sendLine(line, onInputAuthorized: Self.onCancellationWriteAuthorized)
+    }
   }
 
   package func receive() -> AsyncThrowingStream<Data, Swift.Error> { stream }
+
+  /// The provider's advertised project service contract, from its initialization result.
+  /// Nil before initialization or when the provider omits the marker.
+  package var hostServiceContract: String? { observedHostServiceContract }
+
+  package var vendorExecutionNegotiated: Bool { observedVendorExecution }
+  package static let vendorExecutionCapability = "io.github.computer-mcp/vendor-execution-v1"
+
+  private func observeInitialization(_ line: String) {
+    guard !initializationObserved || vendorInitializeID != nil,
+      let message = try? JSONDecoder().decode(JSONValue.self, from: Data(line.utf8)).objectValue,
+      let result = message["result"]?.objectValue, result["protocolVersion"] != nil,
+      let capabilities = result["capabilities"]?.objectValue
+    else { return }
+    let experimental = capabilities["experimental"]?.objectValue
+    if let vendorInitializeID, message["id"] == vendorInitializeID {
+      observedVendorExecution = experimental?[Self.vendorExecutionCapability]?.boolValue == true
+      self.vendorInitializeID = nil
+    }
+    if !initializationObserved {
+      initializationObserved = true
+      observedHostServiceContract = experimental?[MCPHostServiceContract.capabilityKey]?.stringValue
+    }
+  }
 }

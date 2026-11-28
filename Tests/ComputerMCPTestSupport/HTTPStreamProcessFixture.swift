@@ -1,28 +1,32 @@
 import ComputerMCPCore
 import ComputerMCPProcess
+import ComputerMCPSandbox
 import Foundation
 import Testing
 
-package enum HTTPStreamTestError: Error { case timeout }
+package enum HTTPStreamTestError: Error {
+  case timeout
+  case startup(String)
+}
 
 package struct HTTPStreamProcessFixture {
   package let root: URL
   private let process: ManagedLineProcess
   package let endpoint: URL
 
-  package init() async throws {
+  package init(launcher: ExecutionLauncher) async throws {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent(
       "mcp-http-\(UUID().uuidString)")
     try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
     let script = root.appendingPathComponent("server.py")
     try Self.script.write(to: script, atomically: true, encoding: .utf8)
-    let process = try ManagedLineProcess(
-      configuration: .init(
-        executable: "/usr/bin/env", arguments: ["python3", script.path, root.path],
-        environment: ProcessInfo.processInfo.environment.merging(["PATH": systemUtilityPath]) {
-          $1
-        },
-        workingDirectory: root, terminationGraceMilliseconds: 100, killGraceMilliseconds: 2_000))
+    let process: ManagedLineProcess
+    do {
+      process = try Self.startServer(launcher: launcher, script: script, root: root)
+    } catch {
+      try? FileManager.default.removeItem(at: root)
+      throw error
+    }
     do {
       let deadline = ContinuousClock.now.advanced(by: .seconds(5))
       let ready = root.appendingPathComponent("port")
@@ -34,11 +38,14 @@ package struct HTTPStreamProcessFixture {
           port = value
           break
         }
-        guard !(await process.snapshot().hasExited) else { throw HTTPStreamTestError.timeout }
+        let snapshot = await process.snapshot()
+        guard !snapshot.hasExited else {
+          throw HTTPStreamTestError.startup(String(describing: snapshot))
+        }
         try await Task.sleep(for: .milliseconds(10))
       }
       guard let port, let endpoint = URL(string: "http://127.0.0.1:\(port)/mcp") else {
-        throw HTTPStreamTestError.timeout
+        throw HTTPStreamTestError.startup(String(describing: await process.snapshot()))
       }
       self.root = root
       self.process = process
@@ -47,6 +54,30 @@ package struct HTTPStreamProcessFixture {
       await Self.stop(process, root: root)
       if await process.snapshot().hasExited { try? FileManager.default.removeItem(at: root) }
       throw error
+    }
+  }
+
+  private static func startServer(
+    launcher: ExecutionLauncher, script: URL, root: URL
+  ) throws -> ManagedLineProcess {
+    let executable = try testExecutable("python3")
+    let arguments = ["-I", script.path, root.path]
+    guard InvocationExecution.current == nil,
+      script.resolvingSymlinksInPath()
+        == root.resolvingSymlinksInPath().appendingPathComponent("server.py"),
+      try String(contentsOf: script, encoding: .utf8) == Self.script
+    else { throw HTTPStreamTestError.startup("The reviewed HTTP fixture command is unavailable") }
+    let variables = [
+      "PATH": "/usr/bin:/bin", "HOME": root.path, "TMPDIR": root.path,
+      "LANG": "C", "LC_ALL": "C",
+    ]
+    let configuration = ManagedLineProcess.Configuration(
+      executable: executable, arguments: arguments, environment: variables,
+      workingDirectory: root, terminationGraceMilliseconds: 100, killGraceMilliseconds: 2_000)
+    let administration = ExecutionAdministration(
+      mode: .fullAccess, environment: try ExecutionEnvironment(fullAccessVariables: variables))
+    return try ExecutionAdministration.$current.withValue(administration) {
+      try ManagedLineProcess(launcher: launcher, configuration: configuration)
     }
   }
 
@@ -69,8 +100,10 @@ package struct HTTPStreamProcessFixture {
     throw HTTPStreamTestError.timeout
   }
 
-  package static func withFixture(_ operation: (Self) async throws -> Void) async throws {
-    let fixture = try await Self()
+  package static func withFixture(
+    launcher: ExecutionLauncher, _ operation: (Self) async throws -> Void
+  ) async throws {
+    let fixture = try await Self(launcher: launcher)
     do {
       try await operation(fixture)
       await fixture.cleanup()

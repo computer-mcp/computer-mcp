@@ -1,11 +1,15 @@
 import ComputerMCPCore
 import ComputerMCPPlatformPOSIX
+import ComputerMCPSandbox
 import ComputerMCPTestSupport
 import Foundation
-import Subprocess
 import Testing
 
 @testable import ComputerMCPProcess
+
+#if os(macOS)
+  import ComputerMCPDarwinTestSupport
+#endif
 
 #if canImport(Darwin)
   import Darwin
@@ -16,15 +20,81 @@ import Testing
 @Suite(.nativeIntegration, .timeLimit(.minutes(1)))
 struct SubprocessLifecycleTests {
   @Test
-  func managedWriterRemainsOpenAcrossRequestsAndDeliversEOF() async throws {
-    let process = try ManagedLineProcess(
-      configuration: .init(
+  func asynchronousCLIRequiresAndPreservesExplicitAdministration() async throws {
+    let scratch = try ScopedTemporaryDirectory()
+    let execution = CLIProcessExecution(launcher: testExecutionLauncher())
+    let administration = ExecutionAdministration(
+      mode: .fullAccess,
+      environment: try ExecutionEnvironment(fullAccessVariables: ["PATH": "/usr/bin:/bin"]))
+    func launch() async throws -> ShellSessionSnapshot {
+      try await execution.launchAsync(
         executable: "/bin/sh",
-        arguments: [
-          "-c", #"while IFS= read -r line; do printf '%s\n' "$line"; done; printf 'eof\n'"#,
-        ],
-        workingDirectory: FileManager.default.temporaryDirectory,
-        terminationGraceMilliseconds: 2_000))
+        invocation: .init(arguments: ["-c", "printf admitted"], standardInput: Data()),
+        cwd: scratch.url, environment: [:], timeoutMilliseconds: 2_000, maxOutputBytes: 1024)
+    }
+    await #expect(throws: (any Error).self) { try await launch() }
+    let result = try await ExecutionAdministration.$current.withValue(administration) {
+      try await launch()
+    }
+    #expect(
+      result.exitCode == 0 && result.stdout.base64 == Data("admitted".utf8).base64EncodedString())
+    await execution.shutdown()
+  }
+
+  #if os(Linux)
+    @Test
+    func closeReclaimsWatchdogAfterSupervisorAndCommandExit() async throws {
+      let scratch = try ScopedTemporaryDirectory()
+      let observations = ExecutionObservations()
+      let process = try withLifecycleAdministration(directory: scratch.url) {
+        try ManagedLineProcess(
+          launcher: testExecutionLauncher(observations: observations),
+          configuration: .init(
+            executable: "/bin/sh", arguments: ["-c", "printf 'ready\\n'; exec sleep 30"],
+            workingDirectory: scratch.url, terminationGraceMilliseconds: 100))
+      }
+      do {
+        var lines = process.inboundLines.makeAsyncIterator()
+        try #require(try await lines.next() == "ready")
+        let owner = try #require(observations.ownerships.first)
+        try await waitUntil {
+          let memberCount = (try? await owner.members().count) ?? 0
+          let snapshot = await process.snapshot()
+          return memberCount >= 3 && snapshot.state == .running
+        }
+        let snapshot = await process.snapshot()
+        let supervisor = try #require(snapshot.supervisorProcessID)
+        let child = try #require(snapshot.processID)
+        #expect(kill(supervisor, SIGKILL) == 0)
+        #expect(kill(-child, SIGKILL) == 0)
+        await process.close()
+        #expect(await process.snapshot().hasExited)
+        #expect(try await owner.members().isEmpty)
+        #expect(kill(supervisor, 0) == -1 && errno == ESRCH)
+      } catch {
+        for owner in observations.ownerships { await owner.cancelAndWait() }
+        await process.close()
+        throw error
+      }
+    }
+  #endif
+
+  @Test
+  func managedWriterRemainsOpenAcrossRequestsAndDeliversEOF() async throws {
+    let scratch = try ScopedTemporaryDirectory()
+    let directory = scratch.url
+    defer { withExtendedLifetime(scratch) {} }
+    let process = try withLifecycleAdministration(directory: directory) {
+      try ManagedLineProcess(
+        launcher: testExecutionLauncher(),
+        configuration: .init(
+          executable: "/bin/sh",
+          arguments: [
+            "-c", #"while IFS= read -r line; do printf '%s\n' "$line"; done; printf 'eof\n'"#,
+          ],
+          workingDirectory: directory,
+          terminationGraceMilliseconds: 2_000))
+    }
     do {
       var lines = process.inboundLines.makeAsyncIterator()
       for line in ["first", "second"] {
@@ -46,11 +116,14 @@ struct SubprocessLifecycleTests {
   @Test
   func managedOverlappingWritesDeliverCompleteFramesInOrder() async throws {
     let child = try GatedInputChild()
-    let process = try ManagedLineProcess(
-      configuration: .init(
-        executable: "/bin/sh", arguments: ["-c", GatedInputChild.command],
-        workingDirectory: child.directory.url,
-        terminationGraceMilliseconds: 100, maximumMessageBytes: 2_097_152))
+    let process = try withLifecycleAdministration(directory: child.directory.url) {
+      try ManagedLineProcess(
+        launcher: testExecutionLauncher(),
+        configuration: .init(
+          executable: "/bin/sh", arguments: ["-c", GatedInputChild.command],
+          workingDirectory: child.directory.url,
+          terminationGraceMilliseconds: 100, maximumMessageBytes: 2_097_152))
+    }
     do {
       var lines = process.inboundLines.makeAsyncIterator()
       try #require(try await lines.next() == "ready")
@@ -87,15 +160,18 @@ struct SubprocessLifecycleTests {
     let events = InputEvents()
     let settlement = InputSettlement()
     defer { settlement.release() }
-    let process = try ManagedLineProcess(
-      configuration: .init(
-        executable: "/bin/sh",
-        arguments: [
-          "-c",
-          #"trap '' TERM; /bin/sh -c 'trap "" TERM; sleep 30' & printf '%s\n' "$!"; /bin/dd bs=1 count=1 of=input-prefix 2>/dev/null; printf seen > input-seen; wait"#,
-        ],
-        workingDirectory: childInput.directory.url,
-        terminationGraceMilliseconds: 100, maximumMessageBytes: 2_097_152))
+    let process = try withLifecycleAdministration(directory: childInput.directory.url) {
+      try ManagedLineProcess(
+        launcher: testExecutionLauncher(),
+        configuration: .init(
+          executable: "/bin/sh",
+          arguments: [
+            "-c",
+            #"trap '' TERM; /bin/sh -c 'trap "" TERM; sleep 30' & printf '%s\n' "$!"; /bin/dd bs=1 count=1 of=input-prefix 2>/dev/null; printf seen > input-seen; wait"#,
+          ],
+          workingDirectory: childInput.directory.url,
+          terminationGraceMilliseconds: 100, maximumMessageBytes: 2_097_152))
+    }
     await process.observeInput { events.append($0) }
     await process.beforeInputWriteSettles { await settlement.pause() }
     do {
@@ -130,8 +206,9 @@ struct SubprocessLifecycleTests {
       switch await writing.result {
       case .failure(ManagedLineProcessError.closed):
         break
-      case .failure(let error as SubprocessError):
-        #expect(error.code == .failedToWriteToSubprocess)
+      case .failure(let error as POSIXError):
+        #expect(error.code == .EPIPE)
+      case .failure(_ as CancellationError): break
       case let result:
         Issue.record("Expected a blocked input write failure, got \(result).")
       }
@@ -158,12 +235,18 @@ struct SubprocessLifecycleTests {
 
   @Test(arguments: [false, true])
   func managedOutputRejectsOversizedFrames(newline: Bool) async throws {
-    let process = try ManagedLineProcess(
-      configuration: .init(
-        executable: "/bin/sh",
-        arguments: ["-c", newline ? "printf '%065d\\n' 0" : "printf '%065d' 0"],
-        workingDirectory: FileManager.default.temporaryDirectory,
-        terminationGraceMilliseconds: 100, maximumMessageBytes: 64))
+    let scratch = try ScopedTemporaryDirectory()
+    let directory = scratch.url
+    defer { withExtendedLifetime(scratch) {} }
+    let process = try withLifecycleAdministration(directory: directory) {
+      try ManagedLineProcess(
+        launcher: testExecutionLauncher(),
+        configuration: .init(
+          executable: "/bin/sh",
+          arguments: ["-c", newline ? "printf '%065d\\n' 0" : "printf '%065d' 0"],
+          workingDirectory: directory,
+          terminationGraceMilliseconds: 100, maximumMessageBytes: 64))
+    }
     await #expect(throws: (any Error).self) {
       for try await _ in process.inboundLines { Issue.record("Oversized frame was delivered.") }
     }
@@ -174,15 +257,19 @@ struct SubprocessLifecycleTests {
 
   @Test
   func shellWriterRemainsOpenUntilExplicitEOF() async throws {
-    let runtime = SubprocessShellRuntime()
+    let scratch = try ScopedTemporaryDirectory()
+    let directory = scratch.url
+    defer { withExtendedLifetime(scratch) {} }
+    let runtime = ShellSessionRuntime(launcher: testExecutionLauncher())
     let blocking = BlockingOperationExecutor(label: "test.shell-writer-lifetime")
     do {
       let id = try await blocking.perform {
-        try runtime.spawn(
-          request: .init(mode: .argv, executable: "/bin/cat"),
-          defaultShell: "/bin/sh", defaultWorkingDirectory: FileManager.default.temporaryDirectory,
-          timeoutMilliseconds: nil, maxOutputBytes: 8, maxSessions: 1,
-          terminationGraceMilliseconds: 100)
+        try withLifecycleAdministration(directory: directory) {
+          try runtime.spawn(
+            request: .init(mode: .argv, executable: "/bin/cat"),
+            defaultShell: "/bin/sh", defaultWorkingDirectory: directory,
+            timeoutMilliseconds: nil, maxOutputBytes: 8, maxSessions: 1)
+        }
       }
       for text in ["first", "second"] {
         let result = try await blocking.perform {
@@ -213,7 +300,7 @@ struct SubprocessLifecycleTests {
   func shellOverlappingWritesDeliverCompletePayloadsBeforeEOF(closeWithData: Bool) async throws {
     let child = try GatedInputChild()
     let directory = child.directory.url
-    let runtime = SubprocessShellRuntime()
+    let runtime = ShellSessionRuntime(launcher: testExecutionLauncher())
     let blocking = BlockingOperationExecutor(label: "test.shell-write-order", serial: false)
     let payloads = ["a", "b", "c"].map {
       Data((String(repeating: $0, count: 1_048_576) + "\n").utf8)
@@ -224,12 +311,13 @@ struct SubprocessLifecycleTests {
     let outputBytes = expected.count
     do {
       let id = try await blocking.perform {
-        try runtime.spawn(
-          request: .init(
-            mode: .argv, executable: "/bin/sh", argv: ["-c", GatedInputChild.command]),
-          defaultShell: "/bin/sh", defaultWorkingDirectory: directory,
-          timeoutMilliseconds: nil, maxOutputBytes: outputBytes, maxSessions: 1,
-          terminationGraceMilliseconds: 100)
+        try withLifecycleAdministration(directory: directory) {
+          try runtime.spawn(
+            request: .init(
+              mode: .argv, executable: "/bin/sh", argv: ["-c", GatedInputChild.command]),
+            defaultShell: "/bin/sh", defaultWorkingDirectory: directory,
+            timeoutMilliseconds: nil, maxOutputBytes: outputBytes, maxSessions: 1)
+        }
       }
       try await waitUntil {
         try runtime.read(
@@ -294,20 +382,21 @@ struct SubprocessLifecycleTests {
     let events = InputEvents()
     let settlement = InputSettlement()
     defer { settlement.release() }
-    let runtime = SubprocessShellRuntime()
+    let runtime = ShellSessionRuntime(launcher: testExecutionLauncher())
     let blocking = BlockingOperationExecutor(label: "test.shell-blocked-writer", serial: false)
     do {
       let id = try await blocking.perform {
-        try runtime.spawn(
-          request: .init(
-            mode: .argv, executable: "/bin/sh",
-            argv: [
-              "-c",
-              "trap '' TERM; printf 'ready\\n'; /bin/dd bs=1 count=1 of=input-prefix 2>/dev/null; printf seen > input-seen; exec sleep 30",
-            ]),
-          defaultShell: "/bin/sh", defaultWorkingDirectory: directory,
-          timeoutMilliseconds: nil, maxOutputBytes: 64, maxSessions: 1,
-          terminationGraceMilliseconds: 100)
+        try withLifecycleAdministration(directory: directory) {
+          try runtime.spawn(
+            request: .init(
+              mode: .argv, executable: "/bin/sh",
+              argv: [
+                "-c",
+                "trap '' TERM; printf 'ready\\n'; /bin/dd bs=1 count=1 of=input-prefix 2>/dev/null; printf seen > input-seen; exec sleep 30",
+              ]),
+            defaultShell: "/bin/sh", defaultWorkingDirectory: directory,
+            timeoutMilliseconds: nil, maxOutputBytes: 64, maxSessions: 1)
+        }
       }
       try await runtime.observeInput(sessionID: id) { events.append($0) }
       try await runtime.beforeInputWriteSettles(sessionID: id) { await settlement.pause() }
@@ -346,8 +435,9 @@ struct SubprocessLifecycleTests {
       switch await writing.result {
       case .failure(let error as ShellRuntimeError):
         #expect(error == .sessionNotRunning(id))
-      case .failure(let error as SubprocessError):
-        #expect(error.code == .failedToWriteToSubprocess)
+      case .failure(let error as POSIXError):
+        #expect(error.code == .EPIPE)
+      case .failure(_ as CancellationError): break
       case let result:
         Issue.record("Expected a blocked input write failure, got \(result).")
       }
@@ -509,15 +599,19 @@ struct SubprocessLifecycleTests {
 
   @Test
   func subprocessChildStartsWithDefaultSIGPIPE() async throws {
-    let runtime = SubprocessShellRuntime()
+    let scratch = try ScopedTemporaryDirectory()
+    let directory = scratch.url
+    defer { withExtendedLifetime(scratch) {} }
+    let runtime = ShellSessionRuntime(launcher: testExecutionLauncher())
     do {
       let result = try await BlockingOperationExecutor(label: "test.subprocess-sigpipe").perform {
-        try runtime.run(
-          request: .init(
-            mode: .argv, executable: "/bin/sh", argv: ["-c", "kill -PIPE $$; echo survived"]),
-          defaultShell: "/bin/sh", defaultWorkingDirectory: FileManager.default.temporaryDirectory,
-          timeoutMilliseconds: 2_000, maxOutputBytes: 64, maxSessions: 1,
-          terminationGraceMilliseconds: 100)
+        try withLifecycleAdministration(directory: directory) {
+          try runtime.run(
+            request: .init(
+              mode: .argv, executable: "/bin/sh", argv: ["-c", "kill -PIPE $$; echo survived"]),
+            defaultShell: "/bin/sh", defaultWorkingDirectory: directory,
+            timeoutMilliseconds: 2_000, maxOutputBytes: 64, maxSessions: 1)
+        }
       }
       #expect(!result.isRunning && !result.timedOut)
       #expect(result.signal == SIGPIPE)
@@ -534,13 +628,18 @@ struct SubprocessLifecycleTests {
     /// dispositions to children; only Darwin's Process resets them.
     @Test
     func foundationChildStartsWithDefaultSIGPIPE() async throws {
+      let scratch = try ScopedTemporaryDirectory()
+      let directory = scratch.url
+      defer { withExtendedLifetime(scratch) {} }
       // Creating a runtime installs the broken-pipe handler before the child is spawned.
-      let runtime = SubprocessShellRuntime()
+      let runtime = ShellSessionRuntime(launcher: testExecutionLauncher())
       let result = try await BlockingOperationExecutor(label: "test.foundation-sigpipe").perform {
-        try ProcessCommandRunner().run(
-          executable: "/bin/sh", arguments: ["-c", "kill -PIPE $$; echo survived"],
-          workingDirectory: FileManager.default.temporaryDirectory, environment: [:],
-          timeoutMilliseconds: 2_000, maxOutputBytes: 64)
+        try withLifecycleAdministration(directory: directory) {
+          try ProcessCommandRunner(launcher: testExecutionLauncher()).run(
+            executable: "/bin/sh", arguments: ["-c", "kill -PIPE $$; echo survived"],
+            workingDirectory: directory, environment: [:],
+            timeoutMilliseconds: 2_000, maxOutputBytes: 64)
+        }
       }
       #expect(!result.timedOut)
       #expect(result.exitCode == SIGPIPE)
@@ -552,14 +651,20 @@ struct SubprocessLifecycleTests {
   #if canImport(Darwin)
     @Test
     func inheritedDescriptorIsCopiedBeforeCallerClosesAndReusesIt() async throws {
+      let scratch = try ScopedTemporaryDirectory()
+      let directory = scratch.url
+      defer { withExtendedLifetime(scratch) {} }
       let inherited = Pipe()
-      let process = try ManagedLineProcess(
-        configuration: .init(
-          executable: "/bin/sh",
-          arguments: ["-c", "printf inherited >&3; exec 3>&-; while read line; do :; done"],
-          workingDirectory: FileManager.default.temporaryDirectory,
-          terminationGraceMilliseconds: 100,
-          inheritedDescriptors: [3: inherited.fileHandleForWriting]))
+      let process = try withLifecycleAdministration(directory: directory) {
+        try ManagedLineProcess(
+          launcher: testExecutionLauncher(),
+          configuration: .init(
+            executable: "/bin/sh",
+            arguments: ["-c", "printf inherited >&3; exec 3>&-; while read line; do :; done"],
+            workingDirectory: directory,
+            terminationGraceMilliseconds: 100,
+            inheritedDescriptors: [3: inherited.fileHandleForWriting]))
+      }
       try inherited.fileHandleForWriting.close()
       let replacement = Pipe()
       do {
@@ -695,10 +800,13 @@ private struct InputClient: Sendable {
   ) async throws -> Self {
     switch owner {
     case .managed:
-      let process = try ManagedLineProcess(
-        configuration: .init(
-          executable: executable, arguments: ["-c", command], workingDirectory: directory,
-          terminationGraceMilliseconds: 100, maximumMessageBytes: 2_097_152))
+      let process = try withLifecycleAdministration(directory: directory) {
+        try ManagedLineProcess(
+          launcher: testExecutionLauncher(),
+          configuration: .init(
+            executable: executable, arguments: ["-c", command], workingDirectory: directory,
+            terminationGraceMilliseconds: 100, maximumMessageBytes: 2_097_152))
+      }
       let output = InputOutput()
       let reading = Task {
         do {
@@ -716,13 +824,14 @@ private struct InputClient: Sendable {
         },
         isClosed: { if case ManagedLineProcessError.closed = $0 { true } else { false } })
     case .shell:
-      let runtime = SubprocessShellRuntime()
+      let runtime = ShellSessionRuntime(launcher: testExecutionLauncher())
       let id = try await BlockingOperationExecutor(label: "test.child-input-spawn").perform {
-        try runtime.spawn(
-          request: .init(mode: .argv, executable: executable, argv: ["-c", command]),
-          defaultShell: "/bin/sh", defaultWorkingDirectory: directory,
-          timeoutMilliseconds: nil, maxOutputBytes: 4_194_304, maxSessions: 1,
-          terminationGraceMilliseconds: 100)
+        try withLifecycleAdministration(directory: directory) {
+          try runtime.spawn(
+            request: .init(mode: .argv, executable: executable, argv: ["-c", command]),
+            defaultShell: "/bin/sh", defaultWorkingDirectory: directory,
+            timeoutMilliseconds: nil, maxOutputBytes: 4_194_304, maxSessions: 1)
+        }
       }
       return .init(
         write: { line, close in
@@ -741,4 +850,15 @@ private struct InputClient: Sendable {
         isClosed: { ($0 as? ShellRuntimeError) == .sessionNotRunning(id) })
     }
   }
+}
+
+private func withLifecycleAdministration<Value>(
+  directory: URL, _ operation: () throws -> Value
+) throws -> Value {
+  let context = ExecutionAdministration(
+    mode: .fullAccess,
+    environment: try ExecutionEnvironment(fullAccessVariables: [
+      "PATH": "/usr/bin:/bin", "HOME": directory.path, "TMPDIR": directory.path + "/",
+    ]))
+  return try ExecutionAdministration.$current.withValue(context, operation: operation)
 }

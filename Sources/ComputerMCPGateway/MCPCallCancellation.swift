@@ -7,7 +7,7 @@ final class MCPCallCancellation: Sendable {
   private struct State {
     var cancelled = false
     var finished = false
-    var action: (@Sendable () async -> Void)?
+    var action: (id: UUID, run: @Sendable () async -> Void)?
     var delivery: Task<Void, Never>?
   }
   private let state = NIOLockedValueBox(State())
@@ -18,39 +18,69 @@ final class MCPCallCancellation: Sendable {
   }
 
   func checkCancellation() throws {
-    if state.withLockedValue({ $0.cancelled }) { throw CancellationError() }
+    try whileActive {}
   }
 
+  func whileActive<Result>(_ operation: () throws -> Result) throws -> Result {
+    try state.withLockedValue {
+      if $0.cancelled { throw CancellationError() }
+      return try operation()
+    }
+  }
+
+  @discardableResult
   func install(
-    onDeliveryFailure: @escaping @Sendable () -> Void,
+    onDeliveryFailure: (@Sendable () -> Void)?,
     _ send: @escaping @Sendable () async throws -> Void
-  ) {
+  ) -> UUID {
+    let id = UUID()
     let action: @Sendable () async -> Void = { [deliveryTimeout] in
-      await withTaskGroup(of: Bool.self) { group in
-        group.addTask {
-          do {
-            try await send()
-            return true
-          } catch { return false }
-        }
-        group.addTask {
-          do { try await Task.sleep(for: deliveryTimeout) } catch { return true }
-          return false
-        }
-        if await group.next() == false { onDeliveryFailure() }
-        group.cancelAll()
-        // Failure retires the connection, unblocking a transport write that ignored cancellation.
-        await group.waitForAll()
-      }
+      await Self.deliver(within: deliveryTimeout, onDeliveryFailure: onDeliveryFailure, send)
     }
     state.withLockedValue {
-      guard !$0.finished else { return }
+      guard !$0.finished, $0.delivery == nil else { return }
       if $0.cancelled {
         $0.delivery = Task { await action() }
       } else {
-        $0.action = action
+        $0.action = (id, action)
       }
     }
+    return id
+  }
+
+  func clear(_ id: UUID) {
+    state.withLockedValue {
+      if $0.action?.id == id { $0.action = nil }
+    }
+  }
+
+  static func deliver(
+    within timeout: Duration, onDeliveryFailure: (@Sendable () -> Void)?,
+    _ send: @escaping @Sendable () async throws -> Void
+  ) async {
+    let (outcomes, outcome) = AsyncStream<Bool>.makeStream(bufferingPolicy: .bufferingOldest(1))
+    let writer = Task {
+      do {
+        try await send()
+        outcome.yield(true)
+      } catch { outcome.yield(false) }
+    }
+    let deadline = Task {
+      do {
+        try await Task.sleep(for: timeout)
+        outcome.yield(false)
+      } catch {}
+    }
+    for await delivered in outcomes {
+      if !delivered { onDeliveryFailure?() }
+      break
+    }
+    outcome.finish()
+    deadline.cancel()
+    writer.cancel()
+    // Advisory delivery may have reached transport-owned frame I/O. The connection
+    // keeps that frame indivisible and the caller can leave at the delivery deadline.
+    if onDeliveryFailure != nil { await writer.value }
   }
 
   func cancel() {
@@ -59,7 +89,7 @@ final class MCPCallCancellation: Sendable {
       $0.cancelled = true
       if let action = $0.action {
         $0.action = nil
-        $0.delivery = Task { await action() }
+        $0.delivery = Task { await action.run() }
       }
     }
   }

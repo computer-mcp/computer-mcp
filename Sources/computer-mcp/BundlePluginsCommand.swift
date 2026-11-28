@@ -21,7 +21,8 @@ struct BundlePluginsCommand: AsyncParsableCommand {
     do {
       guard let worker = Bundle.main.executableURL else { throw PluginArchiveError.invalidInput }
       let artifacts = try await BundledPluginDistribution.prepare(
-        index: URL(fileURLWithPath: index), destination: URL(fileURLWithPath: output),
+        launcher: MacOSPlatform.services.launcher, index: URL(fileURLWithPath: index),
+        destination: URL(fileURLWithPath: output),
         workerExecutable: worker, hostVersion: PluginVersion(ComputerMCPCLI.version),
         architectures: architectures, directoryFactory: MacOSPlatform.services.pluginDirectories)
       try FileHandle.standardOutput.write(contentsOf: JSONEncoder().encode(artifacts))

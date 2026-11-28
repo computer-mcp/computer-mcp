@@ -54,20 +54,117 @@ unavailable JSON contract. It never falls back to the production App. The
 isolated local-permission CLI acceptance test covers a running host's success
 path.
 
+## Plugin worktree consumer
+
+`MCPBoundHostServicesTests` includes a deterministic `projects-v1` caller that
+needs no plugin checkout. It checks the host contract marker, uses the
+host-reserved invocation and operation IDs with the dispatched arguments, creates,
+lists and removes a host worktree through the shared lifecycle, recovers a lost
+reply by operation inspection, and covers repeated callbacks, changed selections,
+unclaimed reservations, revoked authority and unknown or retired methods.
+`MCPProxyClientTests` refuses lifecycle dispatch to a real stdio provider whose
+marker is missing or different, before any host invocation or `tools/call`.
+
+`PluginWorktreeConsumerTests` runs a separately built consumer against the current
+host over the private socket. Creation and a deliberately dropped reply run in one
+host test process; that host exits, and a second host process opens the same
+store, answers the consumer's operation inspection and removes the worktree. A
+separate case serves a host without the contract marker and requires the consumer
+to refuse before any lifecycle call.
+
+In an isolated checkout of the consumer repository under review, copy
+`Tests/ComputerMCPMacOSTests/Fixtures/HostWorktreeConsumerBridgeTests.swift.txt`
+from this repository to `Tests/CodexAdapterTests/HostWorktreeConsumerBridgeTests.swift`
+and build its tests with SwiftPM's native build system. From this repository run:
+
+```sh
+COMPUTER_MCP_TEST_PLUGIN_CONSUMER_WORKTREE=/absolute/path/to/isolated/plugin-checkout \
+  /usr/bin/swift test --build-system native --filter PluginWorktreeConsumerTests
+```
+
+Record both revisions and remove the copied fixture and isolated consumer checkout
+after the run. The consumer process uses private HOME, TMPDIR and database state
+and invokes no vendor model or user App Server. This test validates the private
+host-service contract; it does not establish plugin enablement, delegated-principal
+launches or installed-App TCC acceptance.
+
+## Host worktree native acceptance
+
+The named **Host worktree HTTP acceptance** invocation is mandatory when accepting
+changes to the worktree lifecycle. It uses isolated repositories and file-backed
+hosts with production permission admission, Darwin execution and HTTP transport.
+Run it for each supported Git binary, recording the host revision, Git version,
+command and result:
+
+```sh
+COMPUTER_MCP_TEST_WORKTREE_HTTP_ACCEPTANCE=1 \
+COMPUTER_MCP_TEST_WORKTREE_GIT=/absolute/path/to/git \
+  /usr/bin/swift test --build-system native --no-parallel \
+  --filter 'WorktreeHTTPAcceptanceTests|WorktreeHTTPAdmissionTests|WorktreeHTTPRestartTests'
+```
+
+The primary create/edit/build/commit/rebase/merge/remove/delete sequence uses one
+session without approval or reconnect, in standalone and App-managed hosts.
+Separate cases cover standing-authority reconnect, foreign principals, expired
+connection consent, and a killed host reopening persisted state. Restart marks
+lost executions interrupted without replay and checks retained commit, tag, tree
+and blob objects after branch deletion and garbage collection. The restart child
+fixture is started only by its parent test.
+
+The named **Host worktree cold build acceptance** runs
+`GatewayWorktreeBuildTests/coldNativePackageBuildAndFilteredTests` with
+`COMPUTER_MCP_WORKTREE_BUILD_SPEC` naming a JSON object containing `source`,
+`mirrors`, `locations`, `swift`, `sdk`, `filter` and `evidence`. `source` is a
+fresh disposable source archive; `mirrors` contains independent local Git mirrors;
+`locations` maps dependency URLs to mirror names. The test copies these into an
+isolated host worktree, launches a native build and the selected tests through
+production execution admission, and uses private home and SwiftPM caches. Run it
+on both the host candidate and a pinned representative plugin. Record dependency
+pins, durations and storage sizes; remove all disposable inputs afterward.
+
+The named **Owner database upgrade acceptance** invocation is
+`OwnerDatabaseUpgradeAcceptanceTests` with `COMPUTER_MCP_TEST_OWNER_DB_COPY` naming
+an explicitly authorized, disposable copy directory containing `gateway.sqlite`,
+`computer-mcp.toml` and `source-base.txt` (the original manifest's base URL).
+Acquire the source files read-only and never open the installed database with
+SQLite. The test opens a second scratch copy, activates its upgraded manifest,
+compares identities, stored rows and permission migration, and checks retry.
+Verify the originals remain unchanged and delete both copies after the run.
+These opt-in cases being skipped does not constitute acceptance.
+
+## Native catalog fixture acceptance
+
+The Validation catalog fixture test requires an explicit native CLI path. The
+formal `validation` stage in `Scripts/release-checks.json` builds the CLI in the
+current checkout and binds it to `COMPUTER_MCP_EXECUTABLE` before running the
+Validation tests, including both catalog profiles. To run the catalog suite
+directly against this checkout:
+
+```sh
+COMPUTER_MCP_EXECUTABLE="$PWD/.build/debug/computer-mcp" \
+  /usr/bin/swift test --package-path Tools/Validation --build-system native \
+  --filter CapabilityFixturePlanTests
+```
+
+Direct test invocations without that opt-in skip the catalog test. The formal
+check supplies it on every run; a skip is not catalog acceptance. Independent read
+probes require both a read-only capability and its read-only annotation; a
+permission request is not an unattended read probe.
+
 ## Builtin catalog snapshot
 
 `BuiltinToolCatalogSnapshotTests` compares the complete host-owned MCP catalog
 with `Tests/ComputerMCPMacOSTests/Fixtures/builtin-tool-catalog.json`. It enables every
-default builtin, skills, CLI/MCP gateway surfaces, processes and Full Shell,
-and includes runtime discovery, execution owners, operations, Computer Use and
-remote management. An isolated project, an in-memory database, empty plugin
+default builtin, skills, CLI/MCP gateway surfaces and processes,
+and includes runtime discovery, execution owners, permission requirements,
+Computer Use and remote management. An isolated project, an in-memory database, empty plugin
 sources and a downstream stub keep discovery independent of installed tools,
 user directories and network access. No tool is executed.
 
 The snapshot records exported names, titles, descriptions, schemas, annotations,
-metadata and capability risk, project requirement, local-only and network
-flags. JSON keys are sorted; failures identify added, removed and changed tools
-and fields. Update it **only for intentional changes that receive review**:
+metadata, permission requirements, classification risk, project requirement,
+local-only and network flags. JSON keys are sorted; failures identify added, removed
+and changed tools and fields. Update it **only for intentional changes that receive review**:
 
 ```sh
 COMPUTER_MCP_UPDATE_CATALOG_SNAPSHOT=1 /usr/bin/swift test \
@@ -194,14 +291,14 @@ An error returned by the close action is not itself proof of failed cleanup.
 
 ## Plugin acceptance
 
-Host contract tests use local fixture adapters for callbacks, approvals, routing,
+Host contract tests use local fixture adapters for callbacks, permissions, routing,
 connection lifetime and cleanup. Installed release checks inspect a selected
 plugin through the generic management CLI. Codex runtime and end-to-end
 acceptance belong to the [Codex plugin](https://github.com/computer-mcp/plugin-codex).
 
 ## Evidence contract
 
-Validation Evidence Bundle schema 2 uses three layers:
+Validation Evidence Bundle schema 3 uses three layers:
 
 - `contract`: static inventory and schema identity;
 - `runtime`: transport request, execution, audit, and independent result;
@@ -222,10 +319,16 @@ optional for an external consumer whose UI does not expose its MCP JSON-RPC ID.
 The local audit must still contain the transport request when that transport
 can observe it. No local value is presented as if ChatGPT supplied it.
 
-Schema 2 records the reviewed result class explicitly. `passed` requires one
-exact `allowed` audit row without an error. `expected_denial` requires one exact
-policy `denied` row with a stable error code. A `failed` outcome never proves
-acceptance.
+Schema 3 records the reviewed result class and the dispatched call's admission
+record. Each request has exactly one terminal audit row. `passed` requires an
+`allowed` terminal without an error, plus one matching `permission.admitted`
+record written before gateway dispatch. The admission and terminal must identify
+the same request, caller, profile, capability, input and transport. An admission
+never proves an outcome. `expected_denial` requires a `denied` terminal with a
+stable error code. A pre-admission denial or failure has only its terminal;
+a dispatched failure also retains its admission. Owner Control Socket commands
+use their separate terminal recorder. A `failed` outcome never proves acceptance.
+Missing, duplicate or mismatched audit records reject the evidence.
 
 The lifecycle is:
 
@@ -252,8 +355,9 @@ instance, Tunnel profile, and Gateway Socket connection are all present; it
 remains runtime evidence and cannot claim a ChatGPT consumer result. Named and
 development-only Cloudflare HTTP calls can use `probe http call --observations
 ...`; the selected outer transport remains distinct from the inner loopback
-`streamable_http` audit. `evidence correlate` then queries exactly one audit row
-for every Gateway request and seals the canonical Evidence Bundle.
+`streamable_http` audit. `evidence correlate` queries the unique terminal and any
+required matching admission for every Gateway request, then seals both snapshots
+in the canonical Evidence Bundle.
 
 The specialized release-manifest catalog contains 22 publisher-verifiable Test
 Cases, all required when generating that manifest. It includes the isolated
@@ -263,13 +367,7 @@ outside this catalog because its account, domain, public hostname, and runtime
 token are owned by the deploying user. The Cloudflare runbook remains the
 deployment acceptance procedure when a user chooses that transport.
 
-Mutation probes inspect every prepared ticket's state before committing it.
-The default runner never approves a pending ticket: it reports that local
-approval is required and the target was not executed. Isolated acceptance code
-can inject a resolver backed by its explicitly selected owner-only Control
-Socket; the resolver must return the same ticket in `approved` state. There is
-no production auto-approval flag. A standalone probe without a local approval
-path cannot claim complete mutation coverage under a confirmation policy.
+Mutation probes call granted operations directly. A `permission.required` result contains durable request IDs and the `_permission_request_ids` retry field. The local owner answers in the App or through `computer-mcp permissions answer`; the original caller then explicitly retries the same tool with unchanged arguments and every request ID. Only this time applies to one matching retry and the execution it starts. The validation client checks this structured contract and never repeats an operation automatically.
 
 Cancellation delivery and downstream execution are distinct observations. The
 downstream lifecycle fixture requires its task's cancellation marker as an

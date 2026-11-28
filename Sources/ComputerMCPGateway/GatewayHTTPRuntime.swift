@@ -1,6 +1,7 @@
 import ComputerMCPAuthorization
 import ComputerMCPConfiguration
 import ComputerMCPCore
+import ComputerMCPPermissions
 import ComputerMCPTransport
 import ComputerMCPTunnels
 import Foundation
@@ -199,9 +200,9 @@ package final class GatewayHTTPRuntime: HTTPOriginLifecycle, @unchecked Sendable
   }
 
   package func limitControlSession(
-    id: String, to mode: GatewayPermissionMode, expectedRevision: Int64
+    id: String, to limits: ManagedPolicy, expectedRevision: Int64
   ) async throws -> GatewayControlSessionSnapshot {
-    try await app.limitControlSession(id: id, to: mode, expectedRevision: expectedRevision)
+    try await app.limitControlSession(id: id, to: limits, expectedRevision: expectedRevision)
   }
 
   package func endControlSession(id: String, expectedRevision: Int64) async throws {
@@ -235,6 +236,7 @@ package actor GatewayHTTPApp {
   private let limits: GatewayHTTPLimits
   private var channel: Channel?
   private var eventLoopGroup: MultiThreadedEventLoopGroup?
+  private var connections: GatewayHTTPConnections?
   private var sessions: [String: SessionContext] = [:]
   private var principalRegistries: [String: any GatewayAsyncToolServing] = [:]
   private var pendingSessionIDs = Set<String>()
@@ -321,11 +323,13 @@ package actor GatewayHTTPApp {
       oauth: oauth,
       limits: limits
     )
-    let connections = GatewayHTTPConnectionAdmission(limit: limits.maxUnauthenticatedConnections)
+    let connections = GatewayHTTPConnections(limit: limits.maxUnauthenticatedConnections)
+    self.connections = connections
     let bootstrap = ServerBootstrap(group: group)
       .serverChannelOption(ChannelOptions.backlog, value: 256)
       .serverChannelOption(ChannelOptions.socketOption(.so_reuseaddr), value: 1)
       .childChannelInitializer { channel in
+        guard connections.insert(channel) else { return channel.close() }
         let readBoundary = ingressPolicy.oauth == nil ? nil : GatewayHTTPReadBoundary()
         let boundaryAdded =
           readBoundary.map { channel.pipeline.addHandler($0) }
@@ -389,6 +393,8 @@ package actor GatewayHTTPApp {
       let ownerServer = controlServer
       controlServer = nil
       await ownerServer?.stop()
+      await connections.beginShutdown().value
+      self.connections = nil
       eventLoopGroup = nil
       try? await group.shutdownGracefully()
       throw error
@@ -430,6 +436,8 @@ package actor GatewayHTTPApp {
     if activeChannel?.isActive == true {
       try? await activeChannel?.close()
     }
+    let connectionsStopped = connections?.beginShutdown()
+    connections = nil
     // A disconnected channel can cancel its handler while OAuth still owns store work.
     // Admission is closed before this snapshot, and every admitted task is joined.
     let oauthTasks = Array(oauthRequestTasks.values)
@@ -444,6 +452,7 @@ package actor GatewayHTTPApp {
     if !pendingSessionIDs.isEmpty {
       await withCheckedContinuation { pendingSessionWaiters.append($0) }
     }
+    await connectionsStopped?.value
     if let group = eventLoopGroup {
       eventLoopGroup = nil
       try? await group.shutdownGracefully()
@@ -729,10 +738,15 @@ package actor GatewayHTTPApp {
         let bound = try gateway.authenticatedSession(
           principalID: principalID,
           transportTrace: GatewayTransportTrace(transport: "http"), requiresControlSession: true)
-        principalRegistries[principalID] = bound
-        admitted = bound
+        let generations = GatewayStandaloneGenerations(bound)
+        principalRegistries[principalID] = generations
+        admitted = generations
       } else {
         admitted = registry
+      }
+      if let generations = admitted as? GatewayStandaloneGenerations {
+        let scope = try await generations.makeControlSession()
+        return (GatewayControlSessionServing(base: generations, session: scope), scope)
       }
       guard let gateway = admitted as? GatewayRuntime else { return (admitted, nil) }
       let scope = try gateway.makeControlSession()
@@ -758,6 +772,13 @@ package actor GatewayHTTPApp {
       throw ConfigurationError.invalid("The HTTP owner connection is no longer active.")
     }
     return control.database
+  }
+
+  package func withLocalControl<Result: Sendable>(
+    generation: UUID, operation: @Sendable () throws -> Result
+  ) throws -> Result {
+    _ = try requireLocalControl(generation)
+    return try operation()
   }
 
   package func localControlSessions(generation: UUID) throws -> [GatewayControlSessionSnapshot] {
@@ -789,10 +810,10 @@ package actor GatewayHTTPApp {
   }
 
   package func limitLocalControlSession(
-    id: String, to mode: GatewayPermissionMode, expectedRevision: Int64, generation: UUID
+    id: String, to limits: ManagedPolicy, expectedRevision: Int64, generation: UUID
   ) throws -> GatewayControlSessionSnapshot {
     _ = try requireLocalControl(generation)
-    return try limitControlSession(id: id, to: mode, expectedRevision: expectedRevision)
+    return try limitControlSession(id: id, to: limits, expectedRevision: expectedRevision)
   }
 
   package func endLocalControlSession(id: String, expectedRevision: Int64, generation: UUID) throws
@@ -811,19 +832,16 @@ package actor GatewayHTTPApp {
     id: String, lifetime: GatewayFullAccessLifetime,
     expectedRevision: Int64, expectedTrustRevision: Int64, approver: GatewayCallerKind = .localApp
   ) throws -> GatewayControlSessionSnapshot {
-    guard configuration.policy.shellEnabled else {
-      throw GatewayControlError.fullShellManifestDisabled
-    }
     return try controlSession(id: id).approveFullAccess(
       lifetime: lifetime, expectedRevision: expectedRevision,
       expectedTrustRevision: expectedTrustRevision, approver: approver)
   }
 
   package func limitControlSession(
-    id: String, to mode: GatewayPermissionMode, expectedRevision: Int64
+    id: String, to limits: ManagedPolicy, expectedRevision: Int64
   ) throws -> GatewayControlSessionSnapshot {
     let scope = try controlSession(id: id)
-    try scope.limitAccess(to: mode, expectedRevision: expectedRevision)
+    try scope.limitAccess(to: limits, expectedRevision: expectedRevision)
     return scope.snapshot
   }
 
@@ -1152,22 +1170,6 @@ internal final class HTTPBearerAuthenticator: @unchecked Sendable {
   }
 }
 
-/// Counts sockets until MCP authentication succeeds. The lock covers all child event loops.
-private final class GatewayHTTPConnectionAdmission: @unchecked Sendable {
-  private let lock = NSLock()
-  private let limit: Int
-  private var count = 0
-  init(limit: Int) { self.limit = limit }
-  func reserve() -> Bool {
-    lock.withLock {
-      guard count < limit else { return false }
-      count += 1
-      return true
-    }
-  }
-  func release() { lock.withLock { count -= 1 } }
-}
-
 /// Mutable channel state is confined to the channel's event loop. Async admission
 /// returns through that loop; disconnect cancels the outstanding task and deadline.
 private final class GatewayHTTPHandler: ChannelInboundHandler, @unchecked Sendable {
@@ -1183,7 +1185,7 @@ private final class GatewayHTTPHandler: ChannelInboundHandler, @unchecked Sendab
 
   private let app: GatewayHTTPApp
   private let ingressPolicy: GatewayHTTPIngressPolicy
-  private let connections: GatewayHTTPConnectionAdmission
+  private let connections: GatewayHTTPConnections
   private let readBoundary: GatewayHTTPReadBoundary?
   private let allocator = ByteBufferAllocator()
   private var state: RequestState?
@@ -1197,7 +1199,7 @@ private final class GatewayHTTPHandler: ChannelInboundHandler, @unchecked Sendab
 
   init(
     app: GatewayHTTPApp, ingressPolicy: GatewayHTTPIngressPolicy,
-    connections: GatewayHTTPConnectionAdmission, readBoundary: GatewayHTTPReadBoundary?
+    connections: GatewayHTTPConnections, readBoundary: GatewayHTTPReadBoundary?
   ) {
     self.app = app
     self.ingressPolicy = ingressPolicy
@@ -1249,7 +1251,7 @@ private final class GatewayHTTPHandler: ChannelInboundHandler, @unchecked Sendab
         awaitingAdmission = true
         let request = makeRequest(state!, peerAddress: context.remoteAddress?.ipAddress)
         let writer = SendableChannelContext(context: context)
-        admissionTask = Task {
+        admissionTask = connections.start {
           let result = await self.app.admit(request)
           guard !Task.isCancelled else { return }
           writer.context.eventLoop.execute {
@@ -1365,7 +1367,7 @@ private final class GatewayHTTPHandler: ChannelInboundHandler, @unchecked Sendab
     readBoundary?.finishRequest(channel: context.channel)
     let request = makeRequest(state, peerAddress: context.remoteAddress?.ipAddress)
     let writer = SendableChannelContext(context: context)
-    requestTask = Task {
+    requestTask = connections.start {
       let response = await self.app.handle(request, admission: state.admission)
       guard !Task.isCancelled else { return }
       self.write(response, writer: writer, version: state.head.version)
@@ -1408,22 +1410,24 @@ private final class GatewayHTTPHandler: ChannelInboundHandler, @unchecked Sendab
         status: NIOHTTP1.HTTPResponseStatus(statusCode: response.statusCode),
         headers: responseHeaders
       )
-      let streamTask = Task {
-        do {
-          // SSE stays open; waiting for response end would buffer notifications indefinitely.
-          try await self.writeStreamPart(.head(head), writer: writer)
-          for try await data in stream {
+      guard
+        let streamTask = connections.start({
+          do {
+            // SSE stays open; waiting for response end would buffer notifications indefinitely.
+            try await self.writeStreamPart(.head(head), writer: writer)
+            for try await data in stream {
+              try Task.checkCancellation()
+              var buffer = self.allocator.buffer(capacity: data.count)
+              buffer.writeBytes(data)
+              try await self.writeStreamPart(.body(.byteBuffer(buffer)), writer: writer)
+            }
             try Task.checkCancellation()
-            var buffer = self.allocator.buffer(capacity: data.count)
-            buffer.writeBytes(data)
-            try await self.writeStreamPart(.body(.byteBuffer(buffer)), writer: writer)
+            try await self.writeStreamPart(.end(nil), writer: writer)
+          } catch {
+            writer.context.eventLoop.execute { writer.context.close(promise: nil) }
           }
-          try Task.checkCancellation()
-          try await self.writeStreamPart(.end(nil), writer: writer)
-        } catch {
-          writer.context.eventLoop.execute { writer.context.close(promise: nil) }
-        }
-      }
+        })
+      else { return }
       writer.context.eventLoop.execute {
         writer.context.channel.closeFuture.whenComplete { _ in streamTask.cancel() }
       }

@@ -78,6 +78,7 @@ package enum GatewayOwnerRouting {
           readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false)),
       capability: CapabilityDescriptor(
         id: "runtime.owners.list", risk: .readOnly,
+        requirement: .init(access: .read, paths: [.project(.read)]),
         projectRequirement: .required,
         localOnly: false, usesNetwork: false
       )
@@ -86,7 +87,7 @@ package enum GatewayOwnerRouting {
       tool: MCPTool(
         name: "runtime.owners.call",
         description:
-          "Call a gateway tool on one retained execution owner. Supply its exact owner, target tool and unchanged target arguments. Current target permissions and approvals still apply; stale owners fail without launching replacements. For operations.prepare or operations.commit, use the same owner for both calls.",
+          "Call a gateway tool on one retained execution owner. Supply its exact owner, target tool and unchanged target arguments. Current target permissions still apply; stale owners fail without launching replacements.",
         inputSchema: .object([
           "type": .string("object"),
           "properties": .object([
@@ -115,6 +116,8 @@ package enum GatewayOwnerRouting {
           readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: true)),
       capability: CapabilityDescriptor(
         id: "runtime.owners.call", risk: .readOnly,
+        requirement: .init(
+          access: .none, target: .forwarded(tool: "tool", arguments: "arguments", server: nil)),
         projectRequirement: .required,
         localOnly: false, usesNetwork: false
       )

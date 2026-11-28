@@ -1,47 +1,35 @@
 import ComputerMCPCore
 import ComputerMCPDownstream
-import ComputerMCPPlatform
+import ComputerMCPPermissions
+import ComputerMCPPersistence
 import ComputerMCPProcess
+import ComputerMCPToolKit
+import ComputerMCPWorktrees
 import Crypto
 import Foundation
 import MCP
 
-#if canImport(Darwin)
-  import Darwin
-#elseif canImport(Glibc)
-  import Glibc
-#elseif canImport(Musl)
-  import Musl
-#endif
-
-/// Private services on the inherited MCP channel. Durable authority stays with the
-/// host; an active forwarded invocation, not plugin-supplied identity, selects scope.
+/// Private `projects-v1` services on the inherited MCP channel. Durable authority stays
+/// with the host; an active forwarded invocation, not plugin-supplied identity, selects
+/// scope. The host lifecycle library performs every Git effect.
 actor MCPBoundHostServices {
   private let database: GatewayDatabase
   private let directory: MCPHostToolDirectory
   private let context: MCPHostContext
   private let origin: String
-  private let now: @Sendable () -> Date
-  private let commandRunner: any CommandRunning
-  private let gitExecutable: String
+  private let operations: HostOperationStore
   private let canonicalRoot: String
   private var closed = false
-  private var auditInvocation: MCPHostInvocation?
-  private var registrations: [String: UUID] = [:]
-  private var removalInvocations: [String: UUID] = [:]
 
   init(
     database: GatewayDatabase, directory: MCPHostToolDirectory, context: MCPHostContext,
-    origin: String, gitExecutable: String, now: @escaping @Sendable () -> Date = { Date() },
-    commandRunner: any CommandRunning = ProcessCommandRunner()
+    origin: String
   ) {
     self.database = database
     self.directory = directory
     self.context = context
     self.origin = origin
-    self.now = now
-    self.commandRunner = commandRunner
-    self.gitExecutable = gitExecutable
+    operations = HostOperationStore(connection: database.connection)
     canonicalRoot =
       URL(fileURLWithPath: context.launchMetadata.project.rootPath).standardizedFileURL
       .resolvingSymlinksInPath()
@@ -50,12 +38,17 @@ actor MCPBoundHostServices {
 
   nonisolated static let tools: [MCP.Tool] = {
     let identifier: JSONValue = .object([
+      "type": .string("string"), "minLength": .number(36), "maxLength": .number(36),
+    ])
+    let text: JSONValue = .object([
       "type": .string("string"), "minLength": .number(1), "maxLength": .number(1024),
     ])
-    let worktree: JSONValue = .object(["type": .string("object")])
+    let nullableText: JSONValue = .object([
+      "anyOf": .array([text, .object(["type": .string("null")])])
+    ])
     func tool(
       _ name: String, _ description: String, _ properties: [String: JSONValue],
-      _ required: [String], read: Bool = false
+      _ required: [String], read: Bool = false, destructive: Bool = false
     ) -> MCP.Tool {
       let schema = JSONValue.object([
         "type": .string("object"), "properties": .object(properties),
@@ -64,7 +57,8 @@ actor MCPBoundHostServices {
       return MCP.Tool(
         name: name, description: description, inputSchema: schema.sdkValue,
         annotations: .init(
-          readOnlyHint: read, destructiveHint: false, idempotentHint: false, openWorldHint: false),
+          readOnlyHint: read, destructiveHint: destructive, idempotentHint: false,
+          openWorldHint: false),
         outputSchema: .object([
           "type": .string("object"), "properties": .object(["result": .object([:])]),
           "required": .array([.string("result")]), "additionalProperties": .bool(false),
@@ -73,44 +67,75 @@ actor MCPBoundHostServices {
     return [
       tool(
         "host.invocations.describe",
-        "Inspect the host-bound scope and exact action of this channel's active invocation.",
+        "Inspect exactly one of this channel's invocation or a durable host operation.",
+        ["invocation_id": identifier, "operation_id": identifier], [], read: true),
+      tool(
+        "host.projects.worktree_add",
+        "Create a host worktree for the live projects.provision invocation's reserved operation.",
+        [
+          "invocation_id": identifier, "operation_id": identifier, "name": text,
+          "branch": nullableText, "base": nullableText,
+        ], ["invocation_id", "operation_id", "name"]),
+      tool(
+        "host.projects.worktree_list",
+        "List host and foreign worktrees for the live projects.list invocation.",
         ["invocation_id": identifier], ["invocation_id"], read: true),
       tool(
-        "host.workspaces.register",
-        "Atomically register the verified derived directory and its source profile grant during provisioning.",
-        ["worktree": worktree], ["worktree"]),
-      tool(
-        "host.workspaces.authorize_removal",
-        "Validate the exact live destructive operation ticket before the adapter changes its worktree.",
-        ["worktree": worktree], ["worktree"]),
-      tool(
-        "host.workspaces.unregister",
-        "Remove only the unchanged host registration owned by this worktree receipt, during removal or rollback.",
-        ["worktree": worktree], ["worktree"]),
+        "host.projects.worktree_remove",
+        "Remove the selected host worktree for the live projects.remove invocation's reserved operation.",
+        [
+          "invocation_id": identifier, "operation_id": identifier,
+          "force": .object(["type": .string("boolean")]),
+        ], ["invocation_id", "operation_id"], destructive: true),
       tool(
         "host.diagnostics.snapshot",
         "Return bounded audit metadata for the currently executing diagnostic request's immutable scope.",
         [
+          "invocation_id": identifier,
           "limit": .object([
             "type": .string("integer"), "minimum": .number(1), "maximum": .number(1000),
-          ])
+          ]),
         ], ["limit"], read: true),
     ]
   }()
 
-  func call(name: String, arguments: [String: JSONValue]) throws -> MCP.CallTool.Result {
+  private struct Reply {
+    var result: JSONValue
+    var isError = false
+    var errorCode: String?
+  }
+
+  /// Audit attribution for one call. Calls may interleave across lifecycle suspension.
+  private final class Scope: @unchecked Sendable {
+    var invocation: MCPHostInvocation?
+    var operationLease: GatewayOwnedWork.Lease?
+  }
+
+  func call(name: String, arguments: [String: JSONValue]) async throws -> MCP.CallTool.Result {
+    // The private services borrow the live call's authorizations.
+    let lifetime = GatewayHostCallbackLifetime(revoke: { _ in })
+    return try await lifetime.run {
+      try await self.dispatch(name: name, arguments: arguments, lifetime: lifetime)
+    }
+  }
+
+  private func dispatch(
+    name: String, arguments: [String: JSONValue], lifetime: GatewayHostCallbackLifetime
+  ) async throws -> MCP.CallTool.Result {
+    try Task.checkCancellation()
     guard !closed else { throw MCPError.connectionClosed }
-    // Rollback/removal authority lasts only for its forwarded invocation.
-    let live = Set(
-      directory.active(projectID: context.launchMetadata.project.id, origin: origin).map(\.id))
-    registrations = registrations.filter { live.contains($0.value) }
-    removalInvocations = removalInvocations.filter { live.contains($0.value) }
     let started = ContinuousClock.now
-    auditInvocation = nil
-    defer { auditInvocation = nil }
+    let scope = Scope()
+    defer { scope.operationLease?.finish() }
+    guard let tool = Self.tools.first(where: { $0.name == name }) else {
+      // Retired and unknown methods are not part of this contract under any spelling.
+      return refusal(
+        code: "host.unknown_method",
+        message: "The method is not part of the \(MCPHostServiceContract.identifier) contract.",
+        name: name, arguments: arguments, started: started, scope: scope)
+    }
     do {
-      guard let tool = Self.tools.first(where: { $0.name == name }),
-        let properties = tool.inputSchema.objectValue?["properties"]?.objectValue,
+      guard let properties = tool.inputSchema.objectValue?["properties"]?.objectValue,
         Set(arguments.keys).isSubset(of: Set(properties.keys)),
         (tool.inputSchema.objectValue?["required"]?.arrayValue ?? []).allSatisfy({
           $0.stringValue.map { arguments[$0] != nil } ?? false
@@ -119,41 +144,51 @@ actor MCPBoundHostServices {
         throw MCPHostServiceError.denied("Host service arguments do not match the declared schema.")
       }
       try validateSourceIdentity()
-      let result: JSONValue
+      let reply: Reply
       switch name {
-      case "host.invocations.describe": result = try describeInvocation(arguments)
-      case "host.workspaces.register": result = try register(arguments)
-      case "host.workspaces.authorize_removal": result = try authorizeRemoval(arguments)
-      case "host.workspaces.unregister": result = try unregister(arguments)
-      case "host.diagnostics.snapshot": result = try snapshot(arguments)
-      default: throw MCPHostServiceError.denied("Unknown host service.")
+      case "host.invocations.describe": reply = try describe(arguments, scope: scope)
+      case "host.projects.worktree_add":
+        reply = try await mutate(.projectProvision, arguments, scope: scope, lifetime: lifetime)
+      case "host.projects.worktree_remove":
+        reply = try await mutate(.projectRemoval, arguments, scope: scope, lifetime: lifetime)
+      case "host.projects.worktree_list": reply = try await list(arguments, scope: scope)
+      default: reply = Reply(result: try snapshot(arguments, scope: scope))
       }
-      let payload = JSONValue.object(["result": result])
+      let payload = JSONValue.object(["result": reply.result])
       guard try JSONEncoder().encode(payload).count <= 524_288 else {
         throw MCPHostServiceError.denied(
           "Host result exceeds its byte bound; request a smaller limit.")
       }
       try audit(
-        name: name, decision: .allowed, start: started, arguments: arguments, result: payload)
-      return try .init(content: [], structuredContent: payload.sdkValue, isError: false)
+        name: name, decision: reply.isError ? .failed : .allowed, errorCode: reply.errorCode,
+        start: started, arguments: arguments, result: payload, scope: scope)
+      return try .init(content: [], structuredContent: payload.sdkValue, isError: reply.isError)
     } catch {
-      let message = HostApprovalRedactor.redactString(
-        error.localizedDescription, maximumCharacters: 1024)
-      try? audit(name: name, decision: .denied, start: started, arguments: arguments, result: nil)
-      return .init(
-        content: [.text(text: message, annotations: nil, _meta: nil)],
-        structuredContent: .object([
-          "error": .object(["code": .string("host.service_denied"), "message": .string(message)])
-        ]), isError: true)
+      let message = SensitiveValueRedactor.redactString(
+        (error as? any LocalizedError)?.errorDescription ?? error.localizedDescription,
+        maximumCharacters: 1024)
+      return refusal(
+        code: MCPHostOperations.code(for: error), message: message, name: name,
+        arguments: arguments, started: started, scope: scope)
     }
   }
 
   var cleanupConfirmed: Bool { closed }
 
-  func close() {
-    closed = true
-    registrations.removeAll()
-    removalInvocations.removeAll()
+  func close() { closed = true }
+
+  private func refusal(
+    code: String, message: String, name: String, arguments: [String: JSONValue],
+    started: ContinuousClock.Instant, scope: Scope
+  ) -> MCP.CallTool.Result {
+    try? audit(
+      name: name, decision: .denied, errorCode: code, start: started, arguments: arguments,
+      result: nil, scope: scope)
+    return .init(
+      content: [.text(text: code + ": " + message, annotations: nil, _meta: nil)],
+      structuredContent: .object([
+        "error": .object(["code": .string(code), "message": .string(message)])
+      ]), isError: true)
   }
 
   private var owner: MCPHostServiceOwner {
@@ -179,21 +214,48 @@ actor MCPBoundHostServices {
   }
 
   private func invocation(
-    _ action: MCPHostServiceAction, matching: (MCPHostInvocation) -> Bool = { _ in true }
+    _ action: MCPHostServiceAction, scope: Scope,
+    matching: (MCPHostInvocation) -> Bool = { _ in true }
   ) throws -> MCPHostInvocation {
     let invocation = try directory.resolve().requireHostInvocation(
       projectID: context.launchMetadata.project.id, origin: origin,
-      action: action, matching: matching)
-    auditInvocation = invocation
+      action: action, providerExecution: context.providerExecution, matching: matching)
+    try requireCall(invocation)
+    scope.invocation = invocation
     return invocation
   }
 
-  private func snapshot(_ args: [String: JSONValue]) throws -> JSONValue {
+  private func requireCall(_ invocation: MCPHostInvocation) throws {
+    if let execution = context.providerExecution {
+      try execution.validateProviderLaunch()
+      guard let admitted = invocation.providerExecution,
+        try MCPProviderSessionAuthority(admitted) == MCPProviderSessionAuthority(execution)
+      else {
+        throw MCPHostServiceError.denied("The invocation belongs to another provider authority.")
+      }
+      try admitted.validateProviderLaunch()
+    }
+    try directory.requireRecord(invocation)
+    guard let admission = invocation.admission,
+      admission.verifiedClientID == context.verifiedPrincipalID,
+      admission.action?.reservesOperation != true || admission.verifiedClientID?.isEmpty == false,
+      admission.projectID == context.launchMetadata.project.id,
+      admission.profileID == context.launchMetadata.profileID,
+      admission.caller == context.launchMetadata.caller,
+      admission.reference.serverID == origin
+    else { throw MCPHostServiceError.denied("The live call does not match this host channel.") }
+  }
+
+  private func snapshot(_ args: [String: JSONValue], scope: Scope) throws -> JSONValue {
     guard let limit = args["limit"]?.intValue, (1...1000).contains(limit) else {
       throw MCPHostServiceError.denied("Diagnostic limit must be 1...1000.")
     }
-    _ = try invocation(.diagnosticsSnapshot) {
-      ($0.arguments["limit"]?.intValue ?? 100) >= limit
+    let invocationID = try Self.identifier("invocation_id", in: args)
+    let active = try invocation(.diagnosticsSnapshot, scope: scope) {
+      invocationID == nil || $0.id == invocationID
+    }
+    guard limit <= (active.arguments["limit"]?.intValue ?? 100) else {
+      throw MCPHostServiceError.denied("Diagnostic limit exceeds the active invocation's bound.")
     }
     var execution = ExecutionContext(
       caller: context.launchMetadata.caller, profileID: context.launchMetadata.profileID,
@@ -207,7 +269,7 @@ actor MCPBoundHostServices {
         audits.map { audit in
           .object([
             "id": .string(audit.id), "request_id": .string(audit.requestID),
-            "workspace_id": .string(context.launchMetadata.project.id),
+            "project_id": .string(context.launchMetadata.project.id),
             "profile_id": .string(audit.profileID.rawValue),
             "caller": .string(audit.caller.rawValue),
             "capability_id": .string(audit.capabilityID),
@@ -233,15 +295,49 @@ actor MCPBoundHostServices {
     ])
   }
 
-  private func describeInvocation(_ args: [String: JSONValue]) throws -> JSONValue {
-    guard let raw = args["invocation_id"]?.stringValue, let id = UUID(uuidString: raw) else {
-      throw MCPHostServiceError.denied("A host invocation identity is required.")
+  private static func identifier(_ key: String, in args: [String: JSONValue]) throws -> UUID? {
+    guard let value = args[key] else { return nil }
+    guard let text = value.stringValue, let id = UUID(uuidString: text) else {
+      throw MCPHostServiceError.denied("\(key) must be a host UUID.")
     }
-    let runtime = try directory.resolve()
-    let active = try runtime.requireHostInvocation(
-      projectID: context.launchMetadata.project.id, origin: origin, id: id)
-    auditInvocation = active
+    return id
+  }
+
+  private func describe(_ args: [String: JSONValue], scope: Scope) throws -> Reply {
+    let invocationID = try Self.identifier("invocation_id", in: args)
+    let operationID = try Self.identifier("operation_id", in: args)
+    guard (invocationID == nil) != (operationID == nil) else {
+      throw MCPHostServiceError.denied("Provide exactly one of invocation_id or operation_id.")
+    }
+    if let invocationID {
+      let runtime = try directory.resolve()
+      let active: MCPHostInvocation
+      do {
+        active = try runtime.requireHostInvocation(
+          projectID: context.launchMetadata.project.id, origin: origin, id: invocationID,
+          providerExecution: context.providerExecution)
+      } catch {
+        // After the live invocation ends only its operation projection survives.
+        guard let operation = try operations.operation(invocationID: invocationID) else {
+          throw error
+        }
+        return Reply(result: MCPHostOperations.envelope(try inspect(operation, scope: scope)))
+      }
+      try requireCall(active)
+      scope.invocation = active
+      return Reply(result: try projection(active, runtime: runtime))
+    }
+    guard let operation = try operations.operation(id: operationID!) else {
+      throw MCPHostOperationError.notFound
+    }
+    return Reply(result: MCPHostOperations.envelope(try inspect(operation, scope: scope)))
+  }
+
+  private func projection(_ active: MCPHostInvocation, runtime: GatewayRuntime) throws
+    -> JSONValue
+  {
     let plugin = runtime.pluginOrigins[.init(kind: .mcp, id: origin)]
+    let operation = try operations.operation(invocationID: active.id)
     return .object([
       "format_version": .integer(1), "invocation_id": .string(active.id.uuidString),
       "generation_id": .string(context.launchMetadata.runtimeID.uuidString),
@@ -251,345 +347,252 @@ actor MCPBoundHostServices {
       "principal_id": .string(active.context.principalID),
       "profile_id": .string(active.context.profileID.rawValue),
       "caller": .string(active.context.caller.rawValue),
-      "workspace_id": .string(context.launchMetadata.project.id),
+      "project_id": .string(context.launchMetadata.project.id),
       "request_id": .string(active.context.requestID),
       "authorization_revision": .integer(active.authorizationRevision),
       "capability_id": .string(active.upstreamName), "tool": .string(active.reference.toolName),
-      "risk": .string(
-        active.admittedCapability.risk == .projectWrite
-          ? "workspace-write" : active.admittedCapability.risk.rawValue),
+      "risk": .string(active.admittedCapability.risk.rawValue),
       "host_action": active.admittedCapability.hostServiceAction.map { .string($0.rawValue) }
         ?? .null,
-      "arguments_digest": .string(try Self.digest(.object(active.arguments))),
-      "ticket_id": active.ticketID.map(JSONValue.string) ?? .null,
+      "arguments_digest": .string(try MCPHostInvocation.argumentsDigest(active.arguments)),
+      "ticket_id": .null,
+      "operation": operation.map(MCPHostOperations.envelope) ?? .null,
     ])
   }
 
-  private func register(_ args: [String: JSONValue]) throws -> JSONValue {
-    let record = try derived(args)
-    let active = try provisionInvocation(record)
-    guard registrations.count < 128 else {
-      throw MCPHostServiceError.denied("Derived registration is unavailable in this scope.")
-    }
-    try verifyGit(record)
-    let registration: MCPDerivedProjectRegistration
-    if let old = try database.derivedProjectRegistration(id: record.projectID) {
-      try verifyOwnership(old, record)
-      registration = old
-    } else {
-      registration = MCPDerivedProjectRegistration(
-        origin: origin, receiptID: record.id,
-        sourceProjectID: context.launchMetadata.project.id, sourceRoot: canonicalRoot,
-        receiptDigest: try record.digest(),
-        profileID: context.launchMetadata.profileID,
-        principalID: context.launchMetadata.principalID, caller: context.launchMetadata.caller,
-        project: .init(
-          id: record.projectID, displayName: record.branch, rootPath: record.path,
-          createdAt: now(), updatedAt: now()))
-    }
-    try database.registerDerivedProject(
-      registration, verifiedPrincipalID: context.launchMetadata.principalID,
-      caller: context.launchMetadata.caller)
-    registrations[record.id] = active.id
-    return .object(["registered": .bool(true), "workspace_id": .string(record.projectID)])
-  }
-
-  private func authorizeRemoval(_ args: [String: JSONValue]) throws -> JSONValue {
-    let record = try derived(args)
-    let active = try invocation(.projectRemoval) {
-      $0.arguments["managed_worktree_id"] == .string(record.id)
-        && $0.arguments["expected_revision"]?.intValue == record.revision
-        && $0.arguments["confirm_remove"] == .bool(true)
-    }
-    guard record.state == "removal_planned" || record.state == "removing" else {
-      throw MCPHostServiceError.denied("No reviewed removal state is present.")
-    }
-    if let old = try database.derivedProjectRegistration(id: record.projectID) {
-      try verifyOwnership(old, record)
-    } else {
-      guard record.state == "removing", try database.project(id: record.projectID) == nil else {
-        throw MCPHostServiceError.denied(
-          "No owned registration or metadata-only recovery is available.")
-      }
-    }
-    try requireTicket(active)
-    if record.state == "removing" { try verifyRemovedGit(record) } else { try verifyGit(record) }
-    removalInvocations[record.id] = active.id
-    return .object(["authorized": .bool(true)])
-  }
-
-  private func unregister(_ args: [String: JSONValue]) throws -> JSONValue {
-    let record = try derived(args)
-    let old = try database.derivedProjectRegistration(id: record.projectID)
-    if let old {
-      try verifyOwnership(old, record)
-    } else {
-      guard try database.project(id: record.projectID) == nil else {
-        throw MCPHostServiceError.denied(
-          "The identity belongs to an independent project registration.")
-      }
-      if record.state == "provisioning", registrations[record.id] == nil {
-        _ = try provisionInvocation(record)
-        // This no-op confirms that a failed registration did not create host ownership.
-        return .object(["unregistered": .bool(true)])
-      }
-    }
-    let live = directory.active(projectID: context.launchMetadata.project.id, origin: origin)
-    if record.state == "provisioning" {
-      // Exact rollback can remove the registration we just created even after revocation.
-      guard let id = registrations[record.id], live.contains(where: { $0.id == id }) else {
-        throw MCPHostServiceError.denied(
-          "Rollback is not part of the registration's active invocation.")
-      }
-    } else {
-      guard record.state == "removing", let id = removalInvocations[record.id],
-        let active = live.first(where: { $0.id == id }),
-        active.arguments["expected_revision"]?.intValue == record.revision - 1
-      else {
-        throw MCPHostServiceError.denied("Removal was not authorized by this active invocation.")
-      }
-      auditInvocation = active
-      try requireTicket(active)
-      try verifyRemovedGit(record)
-    }
-    if let old {
-      try database.unregisterDerivedProject(
-        old, verifiedPrincipalID: context.launchMetadata.principalID,
-        caller: context.launchMetadata.caller,
-        allowRevokedSourceForRollback: record.state == "provisioning")
-    }
-    return .object(["unregistered": .bool(true), "workspace_id": .string(record.projectID)])
-  }
-
-  private func provisionInvocation(_ record: DerivedIdentity) throws -> MCPHostInvocation {
-    guard record.state == "provisioning" else {
-      throw MCPHostServiceError.denied("Registration requires a provisioning receipt.")
-    }
-    return try invocation(.projectProvision) {
-      $0.arguments["plan_id"] == .string(record.id)
-        && $0.arguments["expected_revision"]?.intValue == record.revision - 1
-        && $0.arguments["confirm_provision"] == .bool(true)
-    }
-  }
-
-  private func requireTicket(_ invocation: MCPHostInvocation) throws {
-    guard let id = invocation.ticketID, let ticket = try database.operationTicket(id: id),
-      ticket.state == .executing, ticket.invocationID == invocation.ticketInvocationID,
-      ticket.parentRequestID == invocation.parentRequestID,
-      invocation.context.principalID == context.launchMetadata.principalID,
-      ticket.projectID == context.launchMetadata.project.id,
-      ticket.profileID == context.launchMetadata.profileID,
-      ticket.caller == context.launchMetadata.caller, ticket.capabilityID == invocation.upstreamName
-    else {
-      throw MCPHostServiceError.denied("This operation has no matching executing host ticket.")
-    }
-  }
-
-  private func derived(_ args: [String: JSONValue]) throws -> DerivedIdentity {
-    guard let object = args["worktree"]?.objectValue else {
-      throw MCPHostServiceError.denied("A worktree receipt is required.")
-    }
-    let record = try DerivedIdentity(object)
-    guard let root = context.launchMetadata.managedProjectRoot,
-      context.verifiedPrincipalID == context.launchMetadata.principalID,
-      record.sourceProjectID == context.launchMetadata.project.id,
-      record.sourceRoot == canonicalRoot,
-      record.profileID == context.launchMetadata.profileID.rawValue,
-      record.principalID == context.launchMetadata.principalID,
-      record.projectID == "derived-workspace-" + record.id
-        || record.projectID == "codex-worktree-" + record.id,
-      UUID(uuidString: record.id)?.uuidString.lowercased() == record.id
-    else {
-      throw MCPHostServiceError.denied("The derived receipt does not match this host scope.")
-    }
-    let component = SHA256.hash(data: Data(context.launchMetadata.project.id.utf8)).prefix(12).map {
-      String(format: "%02x", $0)
-    }.joined()
-    let target = URL(fileURLWithPath: root).appendingPathComponent(component)
-      .appendingPathComponent(record.id).standardizedFileURL
-    guard record.path == target.path else {
-      throw MCPHostServiceError.denied(
-        "Derived path differs from the host-selected root and receipt identity.")
-    }
-    return record
-  }
-
-  private func verifyOwnership(_ old: MCPDerivedProjectRegistration, _ record: DerivedIdentity)
-    throws
+  /// Operation inspection never replays effects. It needs a currently authorized live
+  /// call on this channel from the same verified client and provider, in the captured
+  /// source or the surviving selected project, and current source Project write.
+  private func inspect(_ operation: HostOperationRecord, scope: Scope) throws
+    -> HostOperationRecord
   {
-    guard old.origin == origin, old.sourceProjectID == context.launchMetadata.project.id,
-      old.profileID == context.launchMetadata.profileID,
-      old.principalID == context.verifiedPrincipalID,
-      old.principalID != nil,
-      old.receiptID == record.id, old.receiptDigest == (try record.digest())
+    let admission = operation.binding.admission
+    let projectID = context.launchMetadata.project.id
+    let runtime = try directory.resolve()
+    let plugin = runtime.pluginOrigins[.init(kind: .mcp, id: origin)]
+    guard admission.reference.serverID == origin,
+      let client = admission.verifiedClientID, client == context.verifiedPrincipalID,
+      admission.actingPrincipal
+        == .plugin(plugin.map { .package($0.pluginID) } ?? .localServer(origin)),
+      operation.binding.pluginID == plugin?.pluginID,
+      operation.binding.contributionID == plugin?.componentID,
+      projectID == admission.sourceProjectID || projectID == admission.projectID,
+      let source = try database.project(id: admission.sourceProjectID),
+      source.createdAt == operation.binding.sourceRegisteredAt
+    else { throw MCPHostOperationError.notFound }
+    if projectID != admission.sourceProjectID {
+      guard try database.project(id: projectID)?.createdAt == operation.binding.projectRegisteredAt
+      else { throw MCPHostOperationError.notFound }
+    }
+    let live = directory.active(
+      projectID: projectID, origin: origin, includingRetainedWork: true,
+      provider: context.providerExecution
+    ).filter { $0.admission?.verifiedClientID == client }
+    guard let carrier = live.first else {
+      throw MCPHostServiceError.denied("Inspection requires a live call on this channel.")
+    }
+    let current = try runtime.requireHostInvocation(
+      projectID: projectID, origin: origin, id: carrier.id,
+      providerExecution: context.providerExecution)
+    try requireCall(current)
+    try current.providerExecution?.validateProviderLaunch()
+    scope.invocation = current
+    guard let clientID = current.admission?.authorizationID,
+      let provider = current.providerExecution?.provider
+    else { throw MCPHostOperationError.notFound }
+    let permitted = try runtime.permissionRuntime.store.transactionWithDatabase { _, ledger in
+      // Inspection acquires no authority and cannot consume a retry or create a request.
+      var evaluation = ledger
+      for id in [clientID, provider.providerAuthorization.id] {
+        do {
+          try evaluation.checkProjectWriteAuthority(
+            id, projectID: admission.sourceProjectID,
+            connectionID: id == clientID ? current.context.controlSession?.id : nil, now: Date())
+        } catch { return false }
+      }
+      return true
+    }
+    guard permitted else { throw MCPHostOperationError.notFound }
+    return operation
+  }
+
+  private func mutate(
+    _ action: MCPHostServiceAction, _ args: [String: JSONValue], scope: Scope,
+    lifetime: GatewayHostCallbackLifetime
+  ) async throws -> Reply {
+    guard let invocationID = try Self.identifier("invocation_id", in: args),
+      let operationID = try Self.identifier("operation_id", in: args)
     else {
-      throw MCPHostServiceError.denied(
-        "The persisted registration is owned by another receipt or source.")
+      throw MCPHostServiceError.denied("Lifecycle calls require host invocation and operation IDs.")
+    }
+    var lifecycle = args
+    lifecycle.removeValue(forKey: "invocation_id")
+    lifecycle.removeValue(forKey: "operation_id")
+    var requested = try MCPHostOperations.normalizedArguments(action, lifecycle)
+    let active = try invocation(action, scope: scope) { $0.id == invocationID }
+    guard let operation = try operations.operation(id: operationID) else {
+      throw MCPHostOperationError.notFound
+    }
+    if action == .projectProvision {
+      for field in ["branch", "base"] where lifecycle[field] == nil || lifecycle[field] == .null {
+        requested[field] = operation.binding.arguments[field]
+      }
+    }
+    // The admission binds the full dispatched argument digest; the normalized fields
+    // are the captured selection the callback must repeat exactly.
+    guard operation.binding.admission == active.admission, operation.binding.action == action,
+      operation.binding.arguments == requested
+    else {
+      throw MCPHostOperationError.conflict(
+        "The operation's identity, arguments or captured scope do not match this call.")
+    }
+    // Repeated callbacks report the recorded state and never start or resume work.
+    guard operation.state == .reserved else { return reply(operation) }
+    let runtime = try directory.resolve()
+    guard let service = context.worktrees as? GatewayWorktreeService,
+      let sourceID = active.admission?.sourceProjectID
+    else { throw MCPHostServiceError.denied("Durable lifecycle services are unavailable.") }
+    let authorized: GatewayWorktreeInvocation
+    let claimed: (record: HostOperationRecord, claimed: Bool)
+    do {
+      guard try database.project(id: sourceID)?.createdAt == operation.binding.sourceRegisteredAt
+      else { throw WorktreeError.identityChanged("Source registration changed.") }
+      // The reservation bound an admitted basis; the claim rechecks it and admits nothing.
+      authorized = try Self.callAuthority(active, action: action, service: service)
+      scope.operationLease = try runtime.ownedWork.admitInvocation(
+        projectID: context.launchMetadata.project.id, resourceID: operationID.uuidString)
+      // The claim and channel cancellation share a gate. After the claim, the
+      // callback receiver must be able to leave so the channel can retire its writer.
+      claimed = try lifetime.claimOperation {
+        try runtime.withHostMutation(active) { host in
+          try database.withHostAuthority(host) { sql in
+            try HostOperationStore.claim(operationID, in: sql)
+          }
+        }
+      }
+    } catch {
+      // The reservation cannot begin under changed scope or expired authority.
+      let failed = try operations.finish(
+        operationID, from: [.reserved], to: .failed, error: MCPHostOperations.failure(error))
+      return reply(failed)
+    }
+    guard claimed.claimed else { return reply(claimed.record) }
+    let effect: GitWorktreeOperation =
+      action == .projectProvision
+      ? .add(
+        name: requested["name"]!.stringValue!, branch: requested["branch"]?.stringValue,
+        base: requested["base"]?.stringValue)
+      : .remove(force: requested["force"]?.boolValue ?? false)
+    let store = operations
+    let fallback = claimed.record
+    // Run the synchronous Git effect off the actor so the channel can close during drain.
+    let settled = await Task.detached { () -> Result<HostOperationRecord, any Error> in
+      Result {
+        try Self.run(
+          effect, operationID: operationID, lifecycle: authorized, service: service,
+          store: store, fallback: fallback)
+      }
+    }.value
+    return reply(try settled.get())
+  }
+
+  private static func run(
+    _ effect: GitWorktreeOperation, operationID: UUID, lifecycle: GatewayWorktreeInvocation,
+    service: GatewayWorktreeService, store: HostOperationStore,
+    fallback: HostOperationRecord
+  ) throws -> HostOperationRecord {
+    do {
+      let outcome = try InvocationExecution.$current.withValue(lifecycle) {
+        try service.perform(effect, operationID: operationID)
+      }
+      switch outcome {
+      case .created(let result, let worktreeID):
+        return try store.finish(
+          operationID, from: [.running], to: .completed,
+          result: MCPHostOperations.created(result, worktreeID: worktreeID))
+      case .removed(let result, let worktreeID):
+        return try store.finish(
+          operationID, from: [.running], to: .completed,
+          result: MCPHostOperations.removed(result, worktreeID: worktreeID))
+      case .listed, .merged, .deletedBranch:
+        throw MCPHostServiceError.denied("The lifecycle returned an unexpected outcome.")
+      }
+    } catch {
+      let current = try store.operation(id: operationID) ?? fallback
+      return try MCPHostOperations.settle(
+        current, outcome: MCPHostOperations.journalOutcome(current, database: service.database),
+        cause: MCPHostOperations.failure(error), store: store)
     }
   }
 
-  private func validateManagedParents(_ record: DerivedIdentity, targetExists: Bool) throws {
-    guard let root = context.launchMetadata.managedProjectRoot else {
-      throw MCPHostServiceError.denied("Managed project root unavailable.")
+  private func reply(_ operation: HostOperationRecord) -> Reply {
+    Reply(
+      result: MCPHostOperations.envelope(operation),
+      isError: operation.state == .failed || operation.state == .recoveryRequired,
+      errorCode: operation.error?.code)
+  }
+
+  private func list(_ args: [String: JSONValue], scope: Scope) async throws -> Reply {
+    guard let invocationID = try Self.identifier("invocation_id", in: args) else {
+      throw MCPHostServiceError.denied("A host invocation identity is required.")
     }
-    let directory = URL(fileURLWithPath: record.path, isDirectory: true)
-    let base = URL(fileURLWithPath: root, isDirectory: true).standardizedFileURL
-    var cursor = targetExists ? directory : directory.deletingLastPathComponent()
-    while cursor.path.count >= base.path.count {
-      let values = try cursor.resourceValues(forKeys: [.isSymbolicLinkKey, .isDirectoryKey])
-      guard values.isDirectory == true, values.isSymbolicLink != true else {
-        throw MCPHostServiceError.denied("Derived directories must not contain links.")
-      }
-      let attributes = try FileManager.default.attributesOfItem(atPath: cursor.path)
-      guard (attributes[.ownerAccountID] as? NSNumber)?.uint32Value == getuid() else {
-        throw MCPHostServiceError.denied("Derived directory ownership differs.")
-      }
-      if cursor.path == base.path { break }
-      cursor.deleteLastPathComponent()
+    let active = try invocation(.projectList, scope: scope) { $0.id == invocationID }
+    guard case .listed(let items) = try await list(active)
+    else { throw MCPHostServiceError.denied("The lifecycle returned an unexpected outcome.") }
+    return Reply(result: MCPHostOperations.inventory(items))
+  }
+
+  /// Listing reads under the live call's authorization and the provider's own.
+  private func list(_ invocation: MCPHostInvocation) async throws -> GatewayWorktreeOutcome {
+    guard let service = context.worktrees as? GatewayWorktreeService,
+      let action = invocation.admission?.action
+    else { throw MCPHostServiceError.denied("Durable lifecycle services are unavailable.") }
+    let lifecycle = try Self.callAuthority(invocation, action: action, service: service)
+    return try await Task.detached {
+      try InvocationExecution.$current.withValue(lifecycle) { try service.perform(.list) }
+    }.value
+  }
+
+  /// Lifecycle phases authorize through the call's own authorizations: the delegating
+  /// client's call authorization and the provider execution's. Each phase rechecks them,
+  /// and only an invalidation of either ends a claimed effect.
+  private static func callAuthority(
+    _ invocation: MCPHostInvocation, action: MCPHostServiceAction,
+    service: GatewayWorktreeService
+  ) throws -> GatewayWorktreeInvocation {
+    guard let authorizationID = invocation.admission?.authorizationID else {
+      throw PermissionModelError.invalidAuthorization
     }
+    try service.runtime.service.validateAuthorization(authorizationID)
     guard
-      directory.resolvingSymlinksInPath().path.hasPrefix(base.resolvingSymlinksInPath().path + "/")
-    else {
-      throw MCPHostServiceError.denied("Derived directory escaped its host root.")
-    }
+      let authorization = try service.runtime.store.readWithDatabase({ _, ledger in
+        ledger.authorizations[authorizationID]
+      })
+    else { throw PermissionModelError.invalidAuthorization }
+    return GatewayWorktreeInvocation(
+      authorization: authorization,
+      additionalAuthorizationIDs: invocation.providerExecution?.provider?.authorizationIDs ?? [],
+      hostAction: action)
   }
 
-  private func gitOutput(_ args: [String], at url: URL) throws -> String {
-    let result = try commandRunner.run(
-      executable: gitExecutable, arguments: args, workingDirectory: url,
-      environment: ["GIT_TERMINAL_PROMPT": "0", "LC_ALL": "C"], timeoutMilliseconds: 5_000,
-      maxOutputBytes: 16_384)
-    guard result.exitCode == 0, !result.timedOut, !result.stdoutTruncated, !result.stderrTruncated
-    else {
-      throw MCPHostServiceError.denied("Git directory verification failed.")
-    }
-    return result.stdout
-  }
-
-  private func gitPath(_ args: [String], at url: URL) throws -> String {
-    let value = try gitOutput(args, at: url).trimmingCharacters(in: .newlines)
-    return (value.hasPrefix("/") ? URL(fileURLWithPath: value) : url.appendingPathComponent(value))
-      .standardizedFileURL.resolvingSymlinksInPath().path
-  }
-
-  private func verifySourceGit(_ record: DerivedIdentity) throws {
-    let source = URL(fileURLWithPath: canonicalRoot)
-    guard try gitPath(["rev-parse", "--show-toplevel"], at: source) == canonicalRoot,
-      try gitPath(["rev-parse", "--git-common-dir"], at: source) == record.gitCommonDirectory
-    else {
-      throw MCPHostServiceError.denied("The source repository identity changed.")
-    }
-  }
-
-  private func verifyGit(_ record: DerivedIdentity) throws {
-    try validateManagedParents(record, targetExists: true)
-    try verifySourceGit(record)
-    let directory = URL(fileURLWithPath: record.path, isDirectory: true)
-    guard
-      try gitPath(["rev-parse", "--show-toplevel"], at: directory)
-        == directory.resolvingSymlinksInPath().path,
-      try gitPath(["rev-parse", "--git-common-dir"], at: directory) == record.gitCommonDirectory
-    else {
-      throw MCPHostServiceError.denied(
-        "The target is not the exact source repository's derived worktree.")
-    }
-  }
-
-  private func verifyRemovedGit(_ record: DerivedIdentity) throws {
-    try validateManagedParents(record, targetExists: false)
-    var info = stat()
-    guard lstat(record.path, &info) != 0, errno == ENOENT else {
-      throw MCPHostServiceError.denied(
-        "Metadata-only cleanup refuses an existing or unverified path.")
-    }
-    try verifySourceGit(record)
-    let inventory = try gitOutput(
-      ["worktree", "list", "--porcelain", "-z"], at: URL(fileURLWithPath: canonicalRoot))
-    let present = inventory.split(separator: "\0").contains { field in
-      guard field.hasPrefix("worktree ") else { return false }
-      let path = String(field.dropFirst("worktree ".count))
-      return URL(fileURLWithPath: path).standardizedFileURL.path == record.path
-    }
-    guard !present else {
-      throw MCPHostServiceError.denied("Git still registers this worktree; cleanup cannot proceed.")
-    }
-  }
-
-  private struct DerivedIdentity: Encodable {
-    let id: String
-    let projectID: String
-    let sourceProjectID: String
-    let sourceRoot: String
-    let gitCommonDirectory: String
-    let path: String
-    let branch: String
-    let parentLeaseID: String
-    let profileID: String
-    let principalID: String
-    let caller: String
-    let revision: Int
-    let state: String
-    // Field names participate in the plugin receipt digest and remain stable on disk and wire.
-    private enum CodingKeys: String, CodingKey {
-      case id, sourceRoot, gitCommonDirectory, path, branch, parentLeaseID, profileID, principalID
-      case caller, revision, state
-      case projectID = "workspaceID"
-      case sourceProjectID = "sourceWorkspaceID"
-    }
-
-    init(_ value: [String: JSONValue]) throws {
-      id = try string("id", value)
-      projectID = try string("workspace_id", value)
-      sourceProjectID = try string("source_workspace_id", value)
-      sourceRoot = try string("source_repository_root", value, maximum: 16_384)
-      gitCommonDirectory = try string("git_common_directory", value, maximum: 16_384)
-      path = try string("path", value, maximum: 16_384)
-      branch = try string("branch", value)
-      parentLeaseID = try string("parent_lease_id", value)
-      profileID = try string("profile_id", value)
-      principalID = try string("principal_id", value)
-      caller = try string("caller", value)
-      state = try string("state", value)
-      guard let number = value["revision"]?.intValue, (1...1_000_000).contains(number) else {
-        throw MCPHostServiceError.denied("Invalid receipt revision.")
-      }
-      revision = number
-    }
-    func digest() throws -> String {
-      var value = try JSONValue.encoded(self).objectValue!
-      value.removeValue(forKey: "revision")
-      value.removeValue(forKey: "state")
-      return try MCPBoundHostServices.digest(.object(value))
-    }
-  }
-
-  private static func valid(_ value: String, maximum: Int = 1024) -> Bool {
-    !value.isEmpty && value.utf8.count <= maximum && !value.contains("\0")
-  }
-  private static func string(_ key: String, _ object: [String: JSONValue], maximum: Int = 1024)
-    throws -> String
-  {
-    guard let value = object[key]?.stringValue, valid(value, maximum: maximum) else {
-      throw MCPHostServiceError.denied("Invalid " + key + ".")
-    }
-    return value
-  }
   private static func digest(_ value: JSONValue) throws -> String {
     let encoder = JSONEncoder()
     encoder.outputFormatting = [.sortedKeys]
     return SHA256.hash(data: try encoder.encode(value)).map { String(format: "%02x", $0) }.joined()
   }
+
   private func audit(
-    name: String, decision: AuditDecision, start: ContinuousClock.Instant,
-    arguments: [String: JSONValue], result: JSONValue?
+    name: String, decision: AuditDecision, errorCode: String?, start: ContinuousClock.Instant,
+    arguments: [String: JSONValue], result: JSONValue?, scope: Scope
   ) throws {
     let duration = start.duration(to: .now)
-    let trace = auditInvocation?.context.transportTrace ?? context.launchMetadata.transportTrace
+    let invocation = scope.invocation
+    let trace = invocation?.context.transportTrace ?? context.launchMetadata.transportTrace
     try database.recordAudit(
       .init(
         requestID: "host-service:" + UUID().uuidString,
-        invocationID: auditInvocation?.ticketInvocationID,
-        parentRequestID: auditInvocation?.context.requestID, ticketID: auditInvocation?.ticketID,
+        invocationID: invocation?.id.uuidString,
+        parentRequestID: invocation?.context.requestID,
         caller: context.launchMetadata.caller,
         principalDigest: AuditEvent.verifiedPrincipalDigest(context.verifiedPrincipalID),
         transport: trace?.transport,
@@ -597,7 +600,7 @@ actor MCPBoundHostServices {
         tunnelInstanceID: trace?.tunnelInstanceID,
         tunnelProfileID: trace?.tunnelProfileID, profileID: context.launchMetadata.profileID,
         projectID: context.launchMetadata.project.id, capabilityID: name, decision: decision,
-        errorCode: decision == .allowed ? nil : "host.service_denied",
+        errorCode: errorCode,
         durationMilliseconds: Int(duration.components.seconds * 1000),
         inputDigest: try Self.digest(.object(arguments)), outputDigest: try result.map(Self.digest))
     )

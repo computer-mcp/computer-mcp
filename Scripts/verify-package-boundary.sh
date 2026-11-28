@@ -87,4 +87,6 @@ if rg -n 'swift-codex|CodexAppServer(Client|Protocol|Runtime)|CodexExec|CodexMCP
   exit 1
 fi
 
+python3 Scripts/verify-execution-launches.py
+
 echo "App/CLI package boundary gate passed."

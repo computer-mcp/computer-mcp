@@ -26,17 +26,21 @@ caller = "secure-tunnel"
 profile = "chatgpt-observe"
 
 [policy]
-default_timeout_ms = 30000
-max_output_bytes = 1048576
+default_timeout_ms = 120000
+max_output_bytes = 8388608
 shell_enabled = false
 
 [[profiles]]
 id = "chatgpt-observe"
-mode = "read-only"
-confirmation_policy = "risk-based"
-capabilities = ["project.list", "project.describe", "file.read"]
-projects = ["primary"]
 allowed_callers = ["secure-tunnel"]
+full_access = false
+
+[profiles.permissions]
+machine = "allow"
+skills = "allow"
+
+[profiles.projects]
+primary = { access = "read", network = "none" }
 
 [[projects]]
 id = "primary"
@@ -50,6 +54,15 @@ An App-managed project omits `path`; the App resolves its bookmark. In an
 explicit standalone manifest, a relative path resolves from the directory
 containing the TOML file.
 
+
+Profile declarations publish with the manifest transaction. Changing or adding a
+profile declaration updates its live permissions; removing a custom declaration
+retires that profile. Removing an explicit built-in declaration restores its
+Machine information and Skills defaults. When a declaration stays unchanged,
+local owner edits to the saved profile remain effective. The host records the
+last published declarations so a restart can distinguish these cases. A failed
+or stale manifest activation leaves profile authority unchanged.
+
 ## Callers and profiles
 
 Caller kinds are `secure-tunnel`, `cloudflare-tunnel`, `local-app`,
@@ -61,70 +74,201 @@ Caller kinds are `secure-tunnel`, `cloudflare-tunnel`, `local-app`,
 - `cloudflare-operate`
 - `local-admin`
 
-Third parties may define another validated ID with explicit capabilities,
-projects, and callers:
+Profiles store permissions, execution mode and per-project network settings. Their
+names do not confer authority. `local-admin` is a reserved local-only admission
+identity. Principals created by the App start with Machine information and Skills.
+An explicit manifest profile has exactly the permissions it lists, including when
+it uses a built-in profile ID; omitted entries do not receive those defaults.
+An omitted permission is requestable; `deny` is an explicit refusal that does not create a request.
 
 ```toml
 [[profiles]]
 id = "partner-observe"
-mode = "read-only"
-confirmation_policy = "risk-based"
-capabilities = ["project.list", "system.time"]
-projects = ["primary"]
 allowed_callers = ["cloudflare-tunnel"]
-full_shell_enabled = false
+full_access = false
+
+[profiles.permissions]
+machine = "allow"
+skills = "allow"
+screen = "allow"
+desktop-control = "deny"
+
+[profiles.projects]
+primary = { access = "read", network = "none" }
+
+[profiles.files_and_folders]
+downloads = "read"
+
+[profiles.plugins]
+codex = "use"
+
+[profiles.mcp_servers]
+design = "read"
 ```
 
-Profile names do not select permission modes. `local-admin` remains a reserved
-local-only admission identity. Modes are `read-only`, `project-operations`
-and `local-full-access`. The first permits only host-classified reads; the
-second permits explicitly granted typed writes; the third also permits
-separately enabled arbitrary execution. Full Shell requires
-`full_shell_enabled = true` and static `policy.shell_enabled = true` in addition
-to `local-full-access`. Mode alone never grants a tool, project or caller.
+| Table | Values |
+| --- | --- |
+| `permissions` | `screen`, `desktop-control`, `local-network`, `machine`, `unified-logs`, `skills`: `allow` or `deny` |
+| `projects` | Per project: `access` is `read`, `write` or `deny`; `network` is `none`, `trusted`, `full` or a custom table |
+| `files_and_folders` | Per category: `read` or `deny` |
+| `plugins` | Per plugin ID: `use` or `deny` |
+| `mcp_servers` | Per directly registered server ID: `read`, `all` or `deny` |
 
-Confirmation policies are `risk-based` (destructive, external-write and
-arbitrary-execution risks), `all-writes`, and `never`. The default for new
-grants is read-only with risk-based confirmation and no implicit caller or
-project access. `capabilities = ["*"]` does not grant projects;
-`projects = ["*"]` explicitly grants all registered projects.
+Project, plugin and MCP server tables accept `"*"` as a fallback. A concrete entry
+replaces the fallback for that object. Project access and network resolve their
+fallbacks independently; absent network settings mean none. A custom network
+entry is `{ level = "custom", hosts = ["example.com"], include_trusted = false }`.
+Files and Folders categories are `desktop`, `documents`, `downloads`,
+`icloud-drive`, `network-volumes` and `removable-volumes`.
 
-Manifests without a mode decode their former risk ceiling and built-in caller
-defaults to preserve existing authorization. Existing database grants at
-revision zero are normalized using their former merge semantics before new
-revisioned updates. This compatibility path does not expand authorization.
-App/CLI edits use the expected authorization revision to reject stale updates,
-invalidate outstanding approvals for that profile and apply to new calls
-without restarting unrelated transports. Export writes explicit mode and
-confirmation policy fields.
+`full_access = true` permits the owner to consent to Full access for a connection;
+it grants no permission by itself. Apple events are blocked in the sandbox. A
+principal whose programs control other apps needs Full access, where macOS asks
+for consent under each program's own identity. Managed limits can further narrow
+permissions, network access, execution mode and resource limits.
+`policy.shell_enabled` remains false by default. See the current
+[execution availability and launch scopes](../Architecture/SecurityAndPrivacy.md#execution-admission)
+for host helpers, local stdio MCP, plugin programs and remote HTTP services.
 
-`mcp_servers` grants the named registrations' MCP surface, intersected with each
-registration's host tool selection and the profile's risk/project boundaries:
+MCP `read` permits listing, resources, prompts and host-classified read-only tools;
+`all` permits the server's selected surface. Both intersect with the registration's
+`allowed_tools` or `allow_any_tool` selection. Plugin contributions require the
+owning Plugin permission. Aliases, reexports and generic calls resolve to the same
+host-owned target and requirements; discovery never grants tool execution.
+
+Permission revisions belong to the host and cannot be set in TOML. App/CLI edits
+compare the reviewed revision, update the shared profile and reconcile requests,
+consent and running executions atomically. Export writes the permission tables.
+Retired profile fields are rejected even when empty or false. Their replacements
+are:
+
+| Retired input | Current replacement |
+| --- | --- |
+| `mode` | `full_access` plus the permission tables; mode alone grants no permission. |
+| `capabilities` | `permissions`, `projects`, `plugins` and `mcp_servers` tables. |
+| `workspaces` | `projects` table with per-project `access` and `network`. |
+| `full_shell_enabled` | `full_access`, with local owner consent. |
+| `confirmation_policy` | Permission grants; calls within their grants execute directly. |
+| `authorization_revision` | Host-owned authorization revisions; omit from TOML. |
+| `projects` array | `projects` table with `access` and `network` entries. |
+| `mcp_servers` array | `mcp_servers` table with `read`, `all` or `deny` entries. |
+
+## Managed limits
+
+Managed limits cap permissions; they never grant them. The sources are:
+
+| Source | Location and control |
+| --- | --- |
+| Machine file | `/Library/Application Support/Computer MCP/policy.toml`; a protected administrator-owned regular file. The entire parent chain must resist replacement; symlinks and writable parents, including mutation grants in ACLs, are rejected. |
+| Managed preferences | Forced `Policy` key in the `com.showxu.computer-mcp` preferences domain, containing a UTF-8 TOML string in the same format. Ordinary user preferences do not supply this source. |
+| Owner policy | TOML stored in the permission database for a client profile, plugin package, or direct local MCP server with a saved approval. Privacy & Security uses the local owner authority to edit this source. Profile permissions and connection limits are separate controls. |
+| Connection limits | `clients limit` or `profile.limit`, using [ManagedPolicy JSON](#managedpolicy-json); can only narrow the existing connection ceiling. |
+
+Each TOML document is bounded to 1 MiB. Its top-level fields are:
+
+| Field | Shape and default when omitted |
+| --- | --- |
+| `permissions` | Same permission keys as a profile; `allow` or `deny`. Missing entries impose no ceiling. |
+| `projects` | Project ID or `"*"` → `read`, `write` or `deny` (a scalar value, not the profile's access/network table). |
+| `files_and_folders` | Folder category → `read` or `deny`. |
+| `plugins` | Plugin ID or `"*"` → `use` or `deny`. |
+| `mcp_servers` | Server ID or `"*"` → `read`, `all` or `deny`. |
+| `full_access`, `remote_full_access` | Booleans, both default `true`; remote callers must satisfy both. |
+| `network` | `none`, `trusted`, `full`, or `{ level = "custom", hosts = [...], include_trusted = false }`; defaults to `full`. The [trusted host list](../Architecture/ExecutionEnvironment.md#outbound-connections) is fixed by the host. |
+| `denied_read_locations` | Array of absolute normalized paths, default empty. Paths resolve through their nearest accessible prefix; missing or protected suffixes stay denied. |
+| `execution` | Optional positive integer ceilings: `time_ms`, `output_bytes`, `memory_bytes`, `retention_seconds`, `retained_output_bytes`. Omitted dimensions impose no additional ceiling. Unsupported enforcement, including memory ceilings on a backend without it, refuses execution. |
+
+For example, a machine file can cap all projects at Read, block remote Full access
+and restrict network destinations without granting access to any of them:
 
 ```toml
-[[profiles]]
-id = "chatgpt-operate"
-mode = "project-operations"
-confirmation_policy = "risk-based"
-allowed_callers = ["secure-tunnel"]
-mcp_servers = ["design"]
-projects = ["primary"]
+remote_full_access = false
+network = { level = "custom", hosts = ["github.com"], include_trusted = false }
+denied_read_locations = ["/Users/Shared/Private"]
+
+[permissions]
+screen = "deny"
+
+[projects]
+"*" = "read"
+
+[execution]
+time_ms = 30000
+output_bytes = 1048576
+retention_seconds = 3600
+retained_output_bytes = 8388608
 ```
 
-The IDs must reference configured MCP registrations and must be unique. This
-grant is independent of current tool names: a registration with
-`allow_any_tool = true` authorizes future discovered tools under the same host
-risk policy. A whitelist continues to select exact names. The local host may
-grant either choice to remote profiles; the remote caller cannot change these
-settings. Configuration export and profile persistence retain registration IDs.
+Each source resolves its concrete entries before its `*` fallback. Across sources,
+permission levels and numeric ceilings take the strictest value, every Boolean
+must allow, denied paths accumulate, and each network destination must satisfy
+every source. Absent sources impose no ceiling. An existing unreadable, malformed
+or unprotected source fails closed for every dimension it can limit; an unknown
+field is malformed. Nonblocking file checks also handle FIFO locations safely.
+Local owner diagnostics and revocation remain available.
 
-An explicit `mcp.tools.call` entry in `capabilities` grants the host-selected
-tools across all registrations. Use `mcp_servers` for a narrower registration
-scope, or an exact alias/reexport capability for one underlying tool. Aliases,
-reexports, and generic calls share that tool's authority. Discovery capabilities
-alone do not authorize downstream tools. Generic resource, prompt, event, and
-request capabilities explicitly grant their respective surface across
-registrations; a tool-only grant does not imply those surfaces.
+Privacy & Security keeps the saved owner TOML and its limits alongside the
+effective managed ceilings for the selected target. Machine file and managed
+preferences are read-only in the App. Their diagnostics show identity, revision
+and availability, including read failures. Administrators can maintain the
+machine file directly at the path above for standalone deployments.
+
+Saves and clears apply to the selected owner source at the reviewed permission
+revision and authorization epoch. Invalid TOML and stale authority leave the
+draft available for correction or review against a current snapshot. The
+gateway reconciles the change with running work. Unchanged meaning preserves
+authority evidence, and tighter resource ceilings also affect running work and
+retained output.
+
+### ManagedPolicy JSON
+
+The control interfaces accept the Codable `ManagedPolicy` object, not the TOML
+profile shape. Keys are camelCase. A complete draft that disables Full access and
+network access, without adding permission ceilings, is:
+
+```json
+{
+  "identity": {"id": "00000000-0000-0000-0000-000000000000", "generation": 0, "isEdited": false},
+  "permissionCeilings": {"entries": [], "grantIDs": []},
+  "allowsFullAccess": false,
+  "network": {"configuration": {"none": {}}, "customRules": []},
+  "executionLimits": {"timeMilliseconds": 30000, "outputBytes": 1048576},
+  "deniedReadRules": []
+}
+```
+
+All six top-level keys are required. Optional numeric ceiling members may be
+omitted or null; present values must be positive. `executionLimits` also accepts
+`memoryBytes`, `retentionSeconds` and `retainedOutputBytes`.
+
+- `identity` contains UUID `id`, unsigned `generation` and Boolean `isEdited`.
+  New draft identities use the zero values above. Existing snapshots retain their
+  identities; the host owns committed identities and generations.
+- `permissionCeilings.entries` and `grantIDs` are alternating key/value arrays,
+  because permission keys are enums. A permission is `{"screen": {}}`,
+  `{"desktopControl": {}}`, `{"localNetwork": {}}`, `{"machineInformation": {}}`,
+  `{"unifiedLogs": {}}`, `{"skills": {}}`, `{"project": {"_0": "project-id"}}`,
+  `{"plugin": {"_0": "plugin-id"}}`, `{"mcpServer": {"_0": "server-id"}}`, or
+  `{"filesAndFolders": {"_0": "downloads"}}`. Folder values are `desktop`,
+  `documents`, `downloads`, `iCloudDrive`, `networkVolumes`, `removableVolumes`.
+  A state is `{"denied": {}}`, `{"notGranted": {}}`, or
+  `{"granted": {"_0": "read"}}` (also `write`, `use`, `all`, `access`, as allowed
+  by that permission). Every granted entry needs a matching key and identity in
+  `grantIDs`; denied and notGranted entries have none. For example, a Screen
+  denial is `"entries": [{"screen": {}}, {"denied": {}}]`, `"grantIDs": []`.
+- `network.configuration` is `{"none": {}}`, `{"full": {}}`, `{"trusted": {}}`,
+  or `{"custom": {"hosts": ["example.com"], "includesTrusted": false}}`.
+  `customRules` contains `{ "identity": <identity>, "host": "example.com" }`
+  for each custom host. Full and trusted configurations carry `fullRule` or
+  `trustedRule` identities respectively; custom configurations including trusted
+  hosts also carry `trustedRule`.
+- `deniedReadRules` contains objects with `identity`, `root` (an absolute normalized
+  path string), and `kind: {"denied": {}}`.
+
+Use fresh draft identities for new rules or preserve the matching identities from
+a reviewed connection snapshot. Submission still needs the reviewed connection
+revision and must be no broader than its current limits. This shape grants no
+permission and cannot change the machine or owner policy.
 
 ## Transport definitions
 
@@ -253,15 +397,33 @@ selection fields, configured MCP `[[tools]]` mappings are normalized into the
 server's explicit whitelist when decoded, and export retains that selection.
 Explicit selection fields take precedence over mappings.
 
-`tool_risks` contains host classifications, independent of tool selection.
-Values are `read-only`, `project-write`, `external-write`, `destructive`, or
-`full-shell`. Unclassified downstream tools have `external-write` risk even
-when their MCP annotations claim read-only behavior. A configured MCP mapping's
-`risk` applies to the same underlying tool across aliases and reexports;
-conflicting host declarations are rejected. Classification alone does not
-select a tool or grant a profile access. Profiles in read-only mode accept
-only host-classified read-only capabilities, including when their capability
-grant contains `*`.
+### Permissions by downstream tool risk
+
+`tool_risks` contains host classifications, independently of tool selection.
+The host takes the higher of configured risk and a valid downstream declaration.
+These values map to the following requirements for directly registered servers:
+
+| Effective risk | MCP server permission | Project permission when the call names a project | Full access required |
+| --- | --- | --- | --- |
+| `read-only` | `read` (also satisfied by `all`) | `read` | No |
+| `project-write` | `all` | `write` | No |
+| `external-write` | `all` | `write` | No |
+| `destructive` | `all` | `write` | No |
+| `full-shell` (the current wire value for execution risk) | `all` | `write` | Yes for remote HTTP servers; local stdio follows the program execution path |
+
+`full-shell` remains the accepted risk field value; it does not name a profile
+permission. Plugin-owned servers require Plugin `use` in place of the directly
+registered MCP server permission. Declared host provisioning/removal actions also
+require Source Project `write`. Each target's path and execution requirements
+remain conjunctive. See [execution availability](../Architecture/SecurityAndPrivacy.md#execution-admission).
+
+Unclassified downstream tools default to `external-write` even when MCP annotations
+claim read-only behavior. A configured MCP mapping's `risk` applies to the same
+underlying tool across aliases and reexports; conflicting host declarations are
+rejected. Classification alone selects no tool and grants no permission. An MCP
+server permission of `read` accepts only host-classified read-only tools, even
+when `allow_any_tool = true`. These mappings apply to downstream MCP risk; builtin
+and CLI tool requirements come from their own catalog declarations.
 
 Local stdio providers use a fixed command and argv. Re-export requires an explicit
 `prefix`: a nonempty prefix produces `<prefix>.<downstream-name>`; `prefix = ""`
@@ -342,34 +504,84 @@ health_path = "/health"
 access_token_env = "COMPUTER_MCP_HTTP_ACCESS_TOKEN"
 ```
 
-## Delivery scopes
+## Worktree availability
 
-`[[delivery.scopes]]` declares isolated repository edits for one registered project.
-It is part of both the App-managed and standalone manifests, with unique IDs,
-relative repository/worktree paths, path globs, a default branch, optional sparse
-checkout and `land` or `commit-only` mode. See [Isolated delivery](Delivery.md#configuration)
-for the complete shape, defaults and validation.
+Worktree lifecycle tools use durable host storage: App distribution storage or
+regions beside a standalone database. Memory-only hosts omit the routes. Enable
+`git.worktree_add`, `git.worktree_list`, `git.worktree_remove`, `git.merge` and
+`git.branch_delete` in
+`[builtin].enabled`; the defaults already include them. The source Project grant
+and effective sandbox settings apply to derived projects on every call. Shell
+execution also requires `[policy].shell_enabled = true` and its declared limits
+and permissions. See [Worktrees](Worktrees.md).
 
-## Project terminology upgrade
+New manifests reject `git.worktrees` and the two retired delivery builtin IDs.
+During installed-manifest upgrade, `git.worktrees` becomes `git.worktree_list`;
+`delivery.apply` and `delivery.scopes.list` are removed from the enabled builtin
+list. The startup report identifies removed IDs; see
+[Permission store activation](#permission-store-activation) for diagnostic channels.
+The frozen permission migration catalog
+retains its historical classifications. Stored configuration revisions are unchanged.
 
-The App opens and migrates its database before opening its managed TOML manifest.
-The database migration renames project tables, columns and indexes in one
-transaction, translates live profile tool IDs and permission modes, and updates
-both grants in saved client trust snapshots and host-owned plugin tool risks. Project IDs and authorization
-revisions stay stable. Unfinished operation tickets keep their input digests; a
-changed descriptor fails the existing digest check and requires a fresh preparation.
-Audit values, configuration revision contents, completed
-operation tickets, execution receipts and deduplication receipt payloads retain
-their recorded values. Plugin ownership payloads and receipt digests are stable.
+A `delivery` configuration section still fails with worktree replacement guidance:
+it represents work state, so reconcile unfinished work with its existing owner
+before replacing it. Configuration loading does not delete historical journals.
 
-On opening an App-managed manifest, the App translates schema-owned project
-names and values, validates the staged candidate, then uses the manifest file
-transaction to activate a new configuration revision. IDs, paths, command
-arguments and plugin parameters are opaque. Unchanged manifests produce no
-revision. Validation or commit failure preserves the original file; the journal
-recovers interrupted file publication. Database and manifest upgrades are separate
-atomic operations: if the database succeeds and the manifest fails, startup
-reports the failure and the next startup retries the manifest upgrade.
+## Permission store activation
 
-Standalone `--config` files remain user-owned. Old names fail validation with
-the corresponding new names; the host never rewrites these files.
+Startup activates permission profiles before admitting client calls. Conversion
+uses a fixed migration catalog and a consistent snapshot of profiles, projects,
+aliases and plugin origins; it does not launch providers. The transaction binds
+converted authority to the external epoch, advances revisions, clears saved
+connection consent and removes the obsolete ticket table. Derived-project source
+relationships preserve ownership and receipt provenance. A completed activation
+is idempotent, including after later profile edits. A non-empty upgrade report
+appears once at activation: in the App's `computer-mcp.jsonl` log
+(`permissions.upgrade`), or on standalone CLI stderr. It lists removed builtin
+IDs and the total number of dropped grants; grant payloads and profile details
+are omitted. Subsequent startup without an upgrade emits no notice.
+Project network access starts at `none`, including when the old profile enabled
+`file.download`. A destination that needs access produces a request; an Always
+answer adds that host to the project's `custom` list.
+
+App-owned legacy manifests are converted through the existing manifest transaction.
+Standalone files are user-owned and must use the current table format. With a
+current manifest, startup can convert a legacy standalone database using the
+captured catalog and saved legacy grants, then publish the explicitly supplied
+profile declarations. The manifest bytes remain unchanged. App-managed databases
+cannot be adopted by standalone; use a separate database and the App control
+socket for App-owned state. Database restore detection suspends standing authority until owner confirmation and discards
+transient requests and answers. Historical project-terminology migration records
+retain their original contract; activation does not make their old profile format
+an accepted runtime input.
+
+A database migration converts stored profiles from their effective
+authorization (wildcards expanded against registered tools, projects and
+servers):
+
+| Old | New |
+| --- | --- |
+| `local-full-access` with Full Shell | `full_access = true` (consent still per connection or saved trust); projects at `write` |
+| `local-full-access` without Full Shell, or `workspace-operations` | sandbox; each project at `write` if the profile held any project write tool, else `read` |
+| Workspace `*` | project `*` at the same access, so projects registered later stay covered |
+| `read-only` | sandbox; each project at `read`; only Screen, Machine information, Unified logs and Skills can be granted |
+| Any tool of a per-principal permission | that permission, subject to the row above; `logs.query` maps to Unified logs |
+| Network-using project tools (`file.download`) | network access `none`; each host the tool reaches produces a request that adds the host to the project's `custom` list |
+| `mcp.tools.call` | `"*"` at `all`, or at `read` for a `read-only` profile; downstream tools classified as execution need Full access, as they needed Full Shell |
+| MCP listing, resource, prompt, event and request-reading tools without `mcp.tools.call` | `"*"` at `read`, the servers they applied to; `mcp.requests.cancel` and `mcp.connections.close` held without `mcp.tools.call` are dropped and reported |
+| `mcpServerIDs` | each server at `all`, or at `read` for a `read-only` profile |
+| Individual downstream tools or aliases | each tool's current server, at `read` if every granted tool of that server is read-only and the profile allowed no more, else at `all`; unresolvable grants are dropped and reported |
+| Plugins | Plugin `*` at `use` for profiles that held any plugin contribution, else not granted |
+| `confirmation_policy` | removed |
+
+Files and Folders, Local network and managed limits are new and start not
+granted or empty. Widened: profiles that held some tools of a permission
+receive the whole permission, and calls a confirmation policy held now
+execute. Narrowed: sandboxed principals write only in worktrees, so projects
+whose root is not a Git repository's top level become read-only to them;
+their programs run in the sandbox, where they cannot send Apple events;
+`file.download` asks once for each new host; `git.branch_create`, `rename`,
+`switch`, `git.tag_*` and `git.stash_push` need Full access.
+
+Conversion derives Machine information and Skills from the old effective tool grants;
+it does not insert them when those grants are absent.

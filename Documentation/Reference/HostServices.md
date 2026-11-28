@@ -1,9 +1,10 @@
 # Scoped host services
 
-An owned stdio MCP registration can use a private, inherited MCP connection to
-its originating Gateway. This is an explicit host choice, not a manifest grant
-or another plugin runtime. Both directly registered and plugin-provided MCP
-servers use the same transport and authorization path.
+This reference defines the accepted project host-service contract. An owned
+stdio MCP registration uses one private, inherited MCP connection to its
+originating Gateway. Both directly registered and plugin-provided servers use
+the same transport and permission checks. A declaration or copied launch context
+cannot create this channel or its authority.
 
 ## Enable and identify the scope
 
@@ -15,205 +16,561 @@ this option. Changing a package's manifest cannot enable it.
 Calls to these registrations require a project. With one registered project,
 the Gateway selects it automatically and still checks the caller's grant. With
 multiple projects, provide `project_id` or use a project-bound connection.
-For `mcp.tools.call`, `project_id` belongs in the outer Gateway arguments beside
-`server`, `tool` and `arguments`, not inside the downstream `arguments` object.
+For `mcp.tools.call`, this belongs in the outer Gateway arguments beside
+`server`, `tool` and `arguments`. For re-exported tools, the Gateway uses
+`project_id` for routing and omits it from the downstream arguments. A
+downstream argument cannot select another callback scope.
 
 Standalone manifest projects retain their configuration-owned scope even when
 the Gateway uses a database for audit or plugin state. Database-owned projects
-are checked against their current registration on every callback; deleting or
-changing that registration revokes the original scope.
-The host supplies an authenticated authorization subject independently of
-connection tracking. Reconnecting with the same credential retains that
-subject; a new transport connection receives a new tracking identity. Clients
-sharing a credential also share its subject and grants.
+are checked against their registration generation on every callback; changing
+or removing the registration revokes the original scope. The authenticated
+subject is independent of connection tracking. Reconnecting with the same
+credential retains that subject; a new connection has a new tracking identity.
+Clients sharing a credential share its subject and grants.
 
-Enable this only for an adapter trusted to use the already authorized scope.
-The adapter inherits a connected Unix stream descriptor identified by
-`COMPUTER_MCP_HOST_FD`. It receives no control-socket pathname, credential, or
-local-admin identity. The host replaces reserved environment entries after
-merging launch settings. Descriptor ownership is limited to the adapter; its
-supervisor/watchdog and vendor subprocesses do not retain the callback endpoint.
-The endpoint uses standard MCP initialization and newline-delimited JSON-RPC,
-including `tools/list` and `tools/call`.
+The prepared provider context carries one opaque, verified, host-created service
+channel, with an exact descriptor mapping. The adapter receives the connected
+Unix stream descriptor through `COMPUTER_MCP_HOST_FD`, never a control-socket
+path, credential or local-admin identity. The host replaces reserved environment
+entries after merging launch settings. A prepared provider launch has no host
+supervisor or watchdog. The adapter marks its inherited endpoint close-on-exec
+before spawning children, so vendor subprocesses do not retain it. Arbitrary
+descriptor inheritance is not allowed.
+The channel does not enlarge sandbox filesystem or network permissions.
 
-`COMPUTER_MCP_HOST_CONTEXT` remains provenance, not authentication. Its optional
-`managedWorkspaceRoot` is selected by the host beside its file-backed database,
-not by per-call arguments or a plugin manifest. Clients without the inherited
-endpoint cannot reconstruct authority from copied JSON. A same-user native
-executable still runs with the process's operating-system permissions; this
-channel is not an OS sandbox for malicious plugin code.
+An admitted sandboxed tool from an owner-enabled stdio plugin with scoped host
+services runs on a verified registered source with the project files and Git
+storage read-only. The provider can write to its private container and scratch.
+A tool that requires a concrete filesystem write path cannot run there. Project
+write for host-mediated actions still needs both the caller's and the provider's
+grants. A verified managed worktree uses its own admitted filesystem mode and
+private Git configuration.
 
-## Tool execution and private services
+Each provider connection is bound to its admitted authority, project
+registration and filesystem mode. Selecting a connection still requires a
+matching admission. A resource continuation uses the originating execution's
+recorded authority and rechecks its scope.
 
-Ordinary callbacks use the Gateway's authenticated subject, current profile,
-caller and project. Connection IDs correlate requests, not authority. The
-host filters discovery against the live grant and reauthorizes
-execution. Aliases, nested policy/ticket targets and other callback-enabled MCP
-registrations cannot create a recursive route or widen the project.
-Risky tools keep the ordinary `operations.prepare` / local approval /
-`operations.commit` contract. The adapter cannot approve its own pending ticket.
+The endpoint uses MCP initialization and newline-delimited JSON-RPC, including
+`tools/list` and `tools/call`. Ordinary callbacks use the authenticated subject,
+current profile and selected project. Aliases and forwarding cannot create a
+recursive route or widen scope. Every call goes through permission admission;
+a missing permission uses the ordinary request-and-explicit-retry flow. An
+adapter cannot answer its own request.
 
-Configuration and builtin profile grants do not require a persisted profile
-record. If the runtime was initialized with a persisted profile, deleting that
-record revokes host access instead of restoring configuration authority.
-Existing persisted restrictions are checked again during callback authorization.
+## Contract and launch context
 
-Private `host.*` tools are listed only on this inherited connection, never as
-northbound Gateway tools. Dynamic tool requests from a vendor cannot target the
-private namespace. The host records a short-lived, in-memory reference to each
-currently forwarded operation. Permission-sensitive private calls must match
-exactly one such operation and its arguments; a claimed caller or request ID
-from the adapter is insufficient. An independently started downstream request
-retains its reference after the Gateway returns its started receipt. A confirmed
-response or confirmed local teardown releases that request's reference;
-cancellation delivery alone does not.
+The contract identifier is the exact string `projects-v1`. It identifies this
+project lifecycle protocol independently of the manifest's `plugin_api = 1`.
+A package's stdio contribution declares `host_service_contract = "projects-v1"`
+in its reviewed manifest. Direct registrations use the same peer handshake
+without a package declaration. This protocol marker is excluded from the
+[declaration digest](PluginPackages.md#permission-entries); channel enablement
+remains host-owned.
 
-| Private tool | Required inputs | Purpose |
-| --- | --- | --- |
-| `host.invocations.describe` | `invocation_id` | Inspect an exact invocation retained by a request or validated work on this private channel |
-| `host.workspaces.register` | `worktree` | Register an exact derived worktree and its source profile grant atomically |
-| `host.workspaces.authorize_removal` | `worktree` | Check the live destructive operation ticket before removal |
-| `host.workspaces.unregister` | `worktree` | Remove the unchanged owned registration, or confirm an ownership-free no-op |
-| `host.diagnostics.snapshot` | `limit` | Read bounded host receipts for the verified subject/profile/project |
-
-These tools return `structuredContent.result`; rejected calls return `isError`
-and a bounded error. They do not accept caller-supplied identity, local approval authority
-or arbitrary database operations. Inspect their actual MCP schemas for input
-constraints. They require host persistence; directory metadata alone is not a
-host-service implementation.
-
-## Invocation context
-
-For callback-enabled registrations, the Gateway supplies its own invocation
-UUID in `tools/call` request metadata under
-`_meta["io.github.computer-mcp/host-invocation"]`. Ordinary registrations do not
-receive this entry. Downstream arguments cannot set or replace it. The adapter
-passes this UUID to `host.invocations.describe` on its inherited connection.
-The UUID is correlation, not a credential: another channel, an expired
-invocation, or revoked current authorization cannot use it.
-
-Providers that declare the ordinary MCP work resource retain this context while
-their validated resources reference the creating acquisition, including derived
-work after the initial call returns. The host releases it only after a complete
-observation establishes that no owner remains. Missing or invalid observations
-retain uncertainty. Background contexts have a separate lifetime from active
-request admission and do not extend an operation ticket's mutation window.
-
-The version-1 result includes `invocation_id`, `generation_id`,
-`registration_id`, `plugin_id`, `contribution_id`, `principal_id`, `profile_id`,
-`caller`, `workspace_id`, `request_id`, `authorization_revision`,
-`capability_id`, `tool`, `risk`, `host_action`, `arguments_digest` and `ticket_id`.
-`generation_id` identifies the originating runtime. `authorization_revision`
-is the grant revision admitted for that invocation; inspection checks current
-authorization again. Plugin/contribution identities come from host composition
-and are null for a direct registration. The argument digest uses SHA-256 over
-the host-recorded downstream argument object encoded as sorted-key JSON.
-`ticket_id` is null when no operation ticket applies. Identity fields and
-authorization revisions cannot be overridden in the inspection request.
-
-Concurrent invocations have distinct identities even when their tool and
-arguments match. This inspection contract carries no authority to start new
-work, approve operations or retain a background job after its downstream
-request has completed.
-
-## Derived projects and recovery
-
-The plugin owns Git and domain lease/plan records. The host independently
-checks the source repository, exact derived path, directory ownership, and Git
-common directory before adding registration authority. Its
-`pluginDerivedProjects` ledger binds the receipt, source, publisher registration,
-verified principal, profile and project snapshot. Caller records remain
-provenance: the same principal can reconnect through another authorized channel.
-Receipts without a verified principal remain historical records and cannot be
-adopted or removed through a new caller. Project registration, canonical-path ownership
-and the added profile grant commit in one transaction. Existing identities,
-pre-existing grants or independent path registrations are not adopted.
-
-Removal requires the exact executing outer operation ticket. The host refuses
-independent edits, aliases or grants held by another profile. It removes only
-its own unchanged registration and grant; filesystem removal remains with the
-plugin. A child lease is released through a child-project connection after
-that registration is available; an existing immutable Gateway runtime does not
-silently acquire a new project router.
-
-If Git removal succeeds but host metadata cleanup fails, the domain receipt
-remains `removing`, not `active`. Review it again with `remove.plan`, then use
-its current revision and a new host operation ticket with `remove.perform`.
-This recovery verifies that the path is absent, its parents/source remain
-valid, and Git no longer registers it. It then cleans metadata without repeating
-Git deletion. A replacement path, including a symbolic link, is never removed.
-
-If provisioning fails and host rollback is unconfirmed, the plugin preserves
-its remaining Git worktree and branch and reports incomplete recovery. Inspect
-the domain receipt and host registration before any manual reconciliation;
-uninstalling the plugin does not authorize deleting that content. A branch
-advanced independently is not removed by the rollback's compare-and-delete.
-
-## Diagnostic bounds
-
-Diagnostics report the immutable host subject and filter its verified digest,
-project and profile before applying `limit` (1–1000). The same subject can
-query its records after reconnecting; connection IDs only correlate individual
-calls. Historical records without a verified subject remain stored but are not
-exposed through this service. They return receipt identities and digests, not command bodies
-or raw output. Missing host data is reported as unavailable.
-Private service audits retain the originating request/ticket relationship when
-one is present.
-
-## Semantic action admission
-
-A downstream tool using private services declares its effect in MCP tool
-metadata, independently of its public name:
+Both the provider's ordinary MCP server and the private host MCP server advertise
+this entry in their initialization result's `capabilities.experimental`:
 
 ```json
-{"_meta":{"io.github.computer-mcp/host-action":"workspaces.provision"}}
+{"io.github.computer-mcp/host-service-contract":"projects-v1"}
 ```
 
-The host recognizes these actions and imposes the corresponding minimum risk:
+The host checks the reviewed contribution marker, when packaged, the provider's
+observed marker and project launch context before forwarding a lifecycle action.
+The adapter validates the host marker and context before accepting such an
+action or sending a lifecycle callback. Missing, unknown or mismatched markers
+fail before mutating dispatch. An obsolete adapter cannot be rescued by its
+API 1 declaration or by renaming a method.
 
-| Action | Minimum risk | Arguments bound to the forwarded invocation |
+The actionable error is `host.unsupported_contract`, with `required_contract:
+"projects-v1"`, `observed_contract` (string or null) and a message instructing
+the owner to update Computer MCP and the affected plugin together and restart
+the provider. An adapter connected to an older host reports this error itself.
+An updated manifest presented to an older strict parser can also be refused
+before launch for its unsupported fields. Peers must agree on the contract
+before lifecycle dispatch.
+
+`COMPUTER_MCP_HOST_CONTEXT` is JSON provenance, not authentication. Its fields
+are:
+
+| Field | Type and meaning |
+| --- | --- |
+| `formatVersion` | Integer `1` |
+| `hostServiceContract` | String `"projects-v1"` |
+| `runtimeID` | Host runtime UUID |
+| `caller` | Host-established caller kind |
+| `profileID`, `principalID` | Host-established profile and principal strings |
+| `project` | `{ "id": "<project-id>", "rootPath": "/canonical/project/root" }` |
+| `readOnly` | Boolean describing the bound channel's access; never an independent grant |
+| `transportTrace` | Optional host transport provenance, unchanged from the transport model |
+| `managedProjectRoot` | Optional host-selected storage root beside durable host storage; provenance only |
+
+The host owns storage paths; `managedProjectRoot` is not permission for a plugin
+to create, adopt or delete a checkout. Launch JSON is limited to 16 KiB. Clients
+without the inherited endpoint cannot reconstruct authority from it. Host tools
+and sandboxed programs enforce host-data protection and the
+[provider container boundary](PluginPackages.md#provider-containers-and-discovery).
+
+## Invocation inspection and action binding
+
+The Gateway supplies its invocation UUID in downstream `tools/call` metadata
+under `_meta["io.github.computer-mcp/host-invocation"]`. For a lifecycle mutation
+it also supplies the host-reserved operation UUID under
+`_meta["io.github.computer-mcp/host-operation"]`. Downstream arguments cannot
+set or replace either value. The adapter records these IDs before requesting
+an effect. They correlate host records; they are not bearer credentials.
+
+Private tools are listed only on the inherited channel, never northbound.
+Vendor-originated dynamic requests cannot target the private namespace.
+
+| Private tool | Request fields | Result |
 | --- | --- | --- |
-| `diagnostics.snapshot` | `read-only` | `limit` bounds the callback's requested count; omission means 100 |
-| `workspaces.provision` | `project-write` | `plan_id` equals the receipt ID, `expected_revision` is one below its provisioning revision, `confirm_provision` is true |
-| `workspaces.remove` | `destructive` | `managed_worktree_id` and `expected_revision` match the reviewed receipt, `confirm_remove` is true; an executing host ticket is required |
+| `host.invocations.describe` | Exactly one of `invocation_id`, `operation_id` | Invocation projection or durable operation projection described below |
+| `host.projects.worktree_add` | `invocation_id`, `operation_id`, `name`; optional string or null `branch` and `base` | Operation envelope with creation result |
+| `host.projects.worktree_list` | `invocation_id` | `worktrees` inventory |
+| `host.projects.worktree_remove` | `invocation_id`, `operation_id`; optional `force` | Operation envelope with removal result |
+| `host.diagnostics.snapshot` | `limit`; optional `invocation_id` | Bounded diagnostic audits for the authenticated scope |
 
-The declaration selects host validation; it grants no project or capability.
-Unknown or malformed declarations fail closed. The host records the recognized
-action in its admitted capability before policy and consent, and exposes it as
-`host_action` in invocation inspection. Operation tickets bind that capability,
-the exact arguments and provider identity. A changed action invalidates the
-binding even if its risk is unchanged, including during target admission after
-ticket consumption. Dispatch checks the current provider declaration again.
-Callbacks use the captured action without rediscovering a provider that may be
-waiting for the callback; current subject, profile and project access are
-still rechecked.
+Requests are objects with no unknown fields. Invocation and operation IDs are
+host UUID strings. Success uses `structuredContent.result`; a refusal without
+an operation projection uses `isError: true` and `structuredContent.error` with
+`code` and bounded `message`.
+Identity, permission answers and arbitrary database operations are not inputs.
+Durable lifecycle services require host persistence.
 
-Private callbacks require one matching active invocation on their inherited
-channel. Ambiguous concurrent matches are rejected, rather than assigning a
-callback to an arbitrary request. Retained background context can be inspected
-but does not extend the active mutation window. Callback arguments cannot
-declare an action, impersonate another principal or supply an approval.
+Inspection by `invocation_id` returns `format_version: 1`, `invocation_id`,
+`generation_id`, `registration_id`, `plugin_id`, `contribution_id`,
+`principal_id`, `profile_id`, `caller`, `project_id`, `request_id`,
+`authorization_revision`, `capability_id`, `tool`, `risk`, `host_action`,
+`arguments_digest`, `ticket_id`, and `operation`. The plugin/contribution fields
+are null for a direct registration; `ticket_id` is null. Project write risk is
+`project-write`. `arguments_digest` is SHA-256 over the host-recorded downstream
+arguments encoded as sorted-key JSON. It is an invocation audit binding.
+`operation` is null for non-lifecycle calls, or
+the durable operation projection below. Inspection cannot override identity or
+authorization revisions.
 
-Generic derived receipts use `derived-workspace-<lowercase-UUID>` as their
-project ID. The host also accepts the exact `codex-worktree-<lowercase-UUID>`
-format for compatible Codex receipts. Neither prefix conveys authority:
-registration origin, principal, source, exact receipt digest and Git identity
-remain mandatory. Persisted identities are never renamed during registration
-or cleanup. Private actions require the tool’s explicit host-action metadata.
+### Host actions
 
-## Transport bounds
+Tools using lifecycle services declare their semantic action in MCP metadata:
 
-The inherited transport bounds a message to 1 MiB and queues to 32 messages,
-with 16 concurrently admitted callback handlers. Private service arguments are
-limited to 64 KiB and responses to 512 KiB. Oversized diagnostics require a
-smaller limit. The client bounds host calls to 30 seconds and joins shutdown
-on timeout or cancellation; uncertain mutations are not automatically replayed.
-The descriptor is closed on EOF/retirement, and ownership cleanup participates
-in the same retirement barrier as the managed process.
+```json
+{"_meta":{"io.github.computer-mcp/host-action":"projects.provision"}}
+```
 
-Plugin launch metadata and private host services use stable wire names:
-`workspace`, `managedWorkspaceRoot`, `workspace_id` and `source_workspace_id`.
-The derived ownership payload uses `workspace` and `sourceWorkspaceID`; receipt
-hashes include `workspaceID` and `sourceWorkspaceID`. These names are part of the
-persistent plugin contract. Invocation inspection reports `workspace-write` for
-project write risk on this private interface.
+| Action | Host minimum | Downstream arguments bound before dispatch |
+| --- | --- | --- |
+| `projects.provision` | Source Project write; risk `project-write` | Required `name`, optional string or null `branch` and `base`, with the creation rules below |
+| `projects.remove` | Selected host worktree Project write; risk `destructive` | Optional `force`, default false, with the removal rules below |
+| `projects.list` | Project read; risk `read-only` | No lifecycle arguments |
+| `diagnostics.snapshot` | Read-only diagnostic access | Optional `limit`, default 100; the callback count cannot exceed it |
+
+Domain arguments such as a plugin's plan ID or expected revision remain plugin
+inputs. The host records the complete downstream argument digest, but only the
+fields in this table select lifecycle effects. A plugin must expose those fields
+in the dispatched call. Defaults are resolved and captured once by the host. The callback's
+normalized arguments must equal that captured selection; it cannot strengthen
+`force`, choose another branch or change the base after admission.
+
+The metadata selects validation and additive host requirements; it cannot
+replace manifest requirements or grant authority. The host checks the action
+again before dispatch, records it in `host_action`, and rejects changed,
+unknown or malformed actions. Callbacks use the captured action without
+rediscovering a provider that may be waiting for the callback. Current caller
+and provider permissions, project/source generation and admission revisions
+are still rechecked. Configuration and builtin profiles need no persisted
+profile; deletion of an originally persisted profile revokes its authority
+rather than restoring configuration authority.
+
+A mutation must name the exact live invocation on this channel, its reserved
+operation and matching action/arguments. Ambiguous matches, completed requests,
+lost leases, another provider or another client cannot authorize a mutation.
+Validated background work can retain inspection context, including derived work
+after the initial call returns; incomplete observations retain uncertainty.
+That context does not extend the active mutation window. Cancellation delivery
+alone does not prove local teardown.
+
+## Project worktree operations
+
+These methods call the same lifecycle library as the
+[builtin Git worktree tools](Tools.md#git-worktree-lifecycle), with the same
+permission, path, Git safety and retention rules. The host owns Git topology,
+paths, IDs, publication, protection and physical cleanup. The plugin keeps its
+domain plans/leases and host IDs; it never performs a local Git lifecycle fallback.
+The following examples use illustrative host-selected IDs and paths and show
+the complete JSON-RPC `tools/call` request and response envelopes.
+
+### `host.projects.worktree_add`
+
+Call in the source project, which must be a complete non-bare repository's top
+level. `name` matches `[a-z0-9]+(-[a-z0-9]+)*`, at most 48 characters. For
+`branch` and `base`, omission and explicit `null` select the default at
+reservation and the captured value at callback. `branch` defaults to
+`worktree/<name>` and must be a new branch. `base` defaults to the main
+checkout's current branch. Detached HEAD requires an explicit base. The
+captured source registration and repository identity must still match when
+effects begin. A pathname, repository layout or worktree ID is never an input.
+
+The completed result contains `worktree_id` (host lifecycle UUID), `project_id`,
+`path`, `branch`, `base` and `warnings` (string array). Its checkout has an
+independent private repository and detached HEAD; `origin` names the source.
+There are no alternates. Submodules remain uninitialized and LFS files remain
+pointers, with corresponding warnings. Only verified storage is registered.
+Runtime publication makes the returned project addressable on the next call;
+its permissions are inherited, not copied or widened.
+
+Request:
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "method": "tools/call",
+  "params": {
+    "name": "host.projects.worktree_add",
+    "arguments": {
+      "invocation_id": "22222222-2222-4222-8222-222222222222",
+      "operation_id": "33333333-3333-4333-8333-333333333333",
+      "name": "example-change",
+      "branch": "worktree/example-change",
+      "base": "main"
+    }
+  }
+}
+```
+
+Response:
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "result": {
+    "content": [],
+    "structuredContent": {
+      "result": {
+        "operation_id": "33333333-3333-4333-8333-333333333333",
+        "invocation_id": "22222222-2222-4222-8222-222222222222",
+        "action": "projects.provision",
+        "source_project_id": "example-source",
+        "project_id": "example-source",
+        "state": "completed",
+        "result": {
+          "worktree_id": "11111111-1111-4111-8111-111111111111",
+          "project_id": "worktree-11111111-1111-4111-8111-111111111111",
+          "path": "/var/example-host/worktrees/11111111-1111-4111-8111-111111111111/checkout",
+          "branch": "worktree/example-change",
+          "base": "main",
+          "warnings": []
+        },
+        "error": null
+      }
+    },
+    "isError": false
+  }
+}
+```
+
+### `host.projects.worktree_list`
+
+Call in a source or derived project with a live `projects.list` invocation.
+There are no operation arguments or mutation ID. It returns `worktrees`, each
+with exactly `path`, `project_id`, `branch`, `base`, `ahead`, `behind`, `dirty`,
+`unavailable`, `worktree_id` and `owner`. The builtin `git.worktree_list` entries
+carry the same fields, including `worktree_id` and `owner`.
+`worktree_id` is the host lifecycle UUID, null for foreign
+checkouts; `owner` is `"host"` or `"foreign"`. Paths, project IDs and branches
+are strings, counts are integers, and `dirty` is Boolean. Inaccessible fields
+and unavailable foreign metrics are null. `unavailable` is null when state is
+available, otherwise a reason string. Inventory combines host records with Git's
+foreign checkouts; a path or name does not establish lifecycle ownership. Listing does
+not repair, adopt, prune or delete anything.
+
+Request:
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 2,
+  "method": "tools/call",
+  "params": {
+    "name": "host.projects.worktree_list",
+    "arguments": {
+      "invocation_id": "44444444-4444-4444-8444-444444444444"
+    }
+  }
+}
+```
+
+Response:
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 2,
+  "result": {
+    "content": [],
+    "structuredContent": {
+      "result": {
+        "worktrees": [
+          {
+            "path": "/var/example-host/worktrees/11111111-1111-4111-8111-111111111111/checkout",
+            "project_id": "worktree-11111111-1111-4111-8111-111111111111",
+            "branch": "worktree/example-change",
+            "base": "main",
+            "ahead": 1,
+            "behind": 0,
+            "dirty": false,
+            "unavailable": null,
+            "worktree_id": "11111111-1111-4111-8111-111111111111",
+            "owner": "host"
+          },
+          {
+            "path": "/srv/example-foreign-checkout",
+            "project_id": null,
+            "branch": "main",
+            "base": null,
+            "ahead": null,
+            "behind": null,
+            "dirty": false,
+            "unavailable": "No host-recorded base for this checkout.",
+            "worktree_id": null,
+            "owner": "foreign"
+          }
+        ]
+      }
+    },
+    "isError": false
+  }
+}
+```
+
+### `host.projects.worktree_remove`
+
+Call in the selected host worktree project. `force` is Boolean, default false.
+The host resolves ownership from its ledger and the selected project. Supplied
+paths, source/project replacements, foreign checkouts and independent
+registrations cannot become removal targets.
+
+Removal closes admission, drains host mutations and terminates/reaps sandboxed
+writers across clients and providers before capture. Full access writers are
+terminated best-effort and possible survivors are reported. When the calling
+provider session is a writer of the selected worktree, it is terminated like any
+other writer; its reply is then lost, and the plugin reads the outcome with
+`host.invocations.describe` by `operation_id` from the source project. It first durably
+retains every private reference and reflog root with its complete closure in
+the host recovery store, then publishes HEAD with an expected-value source-ref
+update, then removes owned storage and unregisters the project last. The journal
+records intent before and durable completion after each boundary: recovery-store
+retention, source-ref update, storage removal and unregistration. Each completed
+boundary is required before the next phase begins; a failed source comparison
+may leave extra retention but cannot lose it. Publication without removal follows
+the same retention-before-source-update order. Dirty tracked, staged,
+untracked or ignored content blocks unless `force` was part of the admitted
+call. Force discards only uncommitted content; it does not discard commits,
+private roots, branch protection or recovery records.
+
+The completed result contains `worktree_id`, `project_id`, `branch`, `oid` and
+`termination_warnings` (string array). Branch and recovery records remain;
+branch deletion and owner recovery release are separate operations. A failed
+or uncertain removal stays bound to its host operation and journals.
+
+Request:
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 3,
+  "method": "tools/call",
+  "params": {
+    "name": "host.projects.worktree_remove",
+    "arguments": {
+      "invocation_id": "55555555-5555-4555-8555-555555555555",
+      "operation_id": "66666666-6666-4666-8666-666666666666",
+      "force": false
+    }
+  }
+}
+```
+
+Response:
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 3,
+  "result": {
+    "content": [],
+    "structuredContent": {
+      "result": {
+        "operation_id": "66666666-6666-4666-8666-666666666666",
+        "invocation_id": "55555555-5555-4555-8555-555555555555",
+        "action": "projects.remove",
+        "source_project_id": "example-source",
+        "project_id": "worktree-11111111-1111-4111-8111-111111111111",
+        "state": "completed",
+        "result": {
+          "worktree_id": "11111111-1111-4111-8111-111111111111",
+          "project_id": "worktree-11111111-1111-4111-8111-111111111111",
+          "branch": "worktree/example-change",
+          "oid": "0123456789abcdef0123456789abcdef01234567",
+          "termination_warnings": []
+        },
+        "error": null
+      }
+    },
+    "isError": false
+  }
+}
+```
+
+## Operation identity and lost responses
+
+Before forwarding a lifecycle mutation, the host durably reserves an operation
+ID, binding the originating invocation, verified client and provider identities,
+contribution/registration, source and selected project generations, action,
+normalized lifecycle arguments, full argument digest and authority basis.
+Reservation performs no Git mutation. The adapter receives the reserved ID in
+metadata before it can request an effect. It cannot choose a new operation ID.
+
+Each mutation result is an operation envelope:
+
+| Field | Meaning |
+| --- | --- |
+| `operation_id` | Host UUID; stable through retries, restart and reconciliation |
+| `invocation_id` | Originating host invocation UUID |
+| `action` | `projects.provision` or `projects.remove` |
+| `source_project_id`, `project_id` | Captured source and original call scope; these coincide for creation |
+| `state` | `reserved`, `running`, `completed`, `failed`, `recovery_required` |
+| `result` | Completed creation/removal object above; otherwise null |
+| `error` | Null or `{ "code": "...", "message": "..." }` describing refusal or required recovery |
+
+`reserved` means no lifecycle effects have begun; `running` is not a success
+claim. `failed` is terminal only when the host knows effects did not begin or
+its owned rollback completed. An interrupted or uncertain effect is
+`recovery_required` until host journal recovery establishes the outcome. A
+completed result remains available even after removal deleted the project row.
+Mutation replies with a recorded operation use `structuredContent.result` for
+this envelope, including on failure; `isError` is true for `failed` and
+`recovery_required`. A successful inspection of any recorded state has
+`isError: false`, since it reports state rather than attempting the effect.
+
+On a lost response, call `host.invocations.describe` with `operation_id` on a
+currently authorized channel for the same source or surviving selected project.
+It returns this envelope without replaying Git. The same verified client and
+provider/contribution must match, and current authority for the original effect
+is required. Reconnection changes neither ownership nor consent. The retained
+source generation authorizes inspection after worktree removal; it cannot
+recreate the removed project. Unknown IDs, a changed source or revoked authority
+are refused. The original `invocation_id` can also locate its durable operation
+when the live invocation has ended; only its operation projection, not expired
+call authority, survives.
+
+A repeated callback with the same operation ID and identical normalized arguments
+returns the current state while the operation is `reserved` or `running`, without
+starting a second execution. A `completed` or `failed` operation returns its
+stored outcome. A `recovery_required` operation returns that state and its
+recovery detail; the repeated call never starts or resumes work. Host recovery
+resolves the operation. The first effect still requires the live invocation and an
+atomic claim of the reservation. Changed arguments, identity or scope return
+`host.operation_conflict`. An adapter with uncertain
+outcome queries the recorded ID and reports pending/recovery-required state;
+it never fabricates a replacement operation or runs Git itself. Host journal
+recovery owns completion or rollback. An explicit new request after a confirmed
+terminal failure is a new operation and is admitted afresh.
+
+If admission returns `permission.required` after reservation, that reservation
+ends refused: `state` is `failed`, `result` is null and `error.code` is
+`permission.required`. No lifecycle effects begin. The host forwards the
+permission request to the owner. The owner's answer cannot resume that
+reservation: retrying requires a new northbound call after the answer, with a
+new invocation and a new operation ID. Repeating the refused operation ID
+only returns its stored refusal.
+
+A representative sequence is: receive both metadata IDs, persist them in domain
+state, inspect the invocation, call `worktree_add` with those IDs and the exact
+captured arguments, then address the returned project. If the reply is lost,
+query the stored operation ID, including after restart, and use its completed
+result or report its recovery state. The same sequence applies to removal;
+a missing checkout is not itself proof of success.
+
+### Errors
+
+| Code | Meaning and caller action |
+| --- | --- |
+| `host.unsupported_contract` | Update host and plugin together; no mutating dispatch occurred |
+| `host.unknown_method` | Method is not in this contract; do not retry under another spelling |
+| `host.service_denied` | Invalid schema, expired invocation, wrong channel/action or unavailable durable service; correct the request/scope |
+| `permission.required` | Current permission is missing; follow the host request and explicit retry rules |
+| `host.operation_conflict` | ID, arguments, ownership or captured scope do not match; inspect the original operation |
+| `host.operation_not_found` | No operation visible under the current authorized scope; do not infer permission to replay |
+| `worktree.invalid_request` | Invalid name, branch/base, call location or unsupported target; correct the input/state |
+| `gateway.execution_failed` | Dirty removal without admitted `force`, matching the builtin `git.worktree_remove` mapping of the lifecycle busy error; preserve or commit the changes, or explicitly request force in a new call |
+| `worktree.identity_changed` | Project, repository or owned path changed; retain state for reconciliation |
+| `worktree.unsafe_configuration` | Repository configuration violates lifecycle safety; correct it without bypassing host checks |
+| `worktree.unsupported_repository` | Repository format or topology is unsupported; use a supported source |
+| `worktree.command_failed` | Host Git command failed; inspect the recorded outcome before retrying |
+| `worktree.busy` | Concurrent writer, lock or incomplete capture; inspect the existing operation before any retry |
+| `worktree.recovery_required` | Journal outcome is uncertain; retain IDs and let host recovery reconcile it |
+
+Lifecycle errors retain the operation envelope whenever reservation succeeded;
+its state distinguishes a terminal refusal from an uncertain effect. No error
+implicitly permits Full access, a local fallback or automatic replay.
+
+## Startup retirement reports
+
+Startup removes plugin-registration-derived authority transactionally and keeps
+a durable notice for every affected checkout. A notice contains exactly:
+
+| Field | Meaning |
+| --- | --- |
+| `report_id` | Stable host UUID persisted with the retirement transaction |
+| `code` | `host.plugin_worktree_retired` |
+| `checkout_path` | Stored checkout path, safely escaped when rendered |
+| `source_project_id` | Recorded source project ID |
+| `source_registered_at` | Recorded source registration generation as an ISO 8601 timestamp |
+| `source_repository` | Recorded canonical source repository path |
+
+These are retirement facts, not proof of current filesystem identity. Startup
+emits all notices to the App log or CLI stderr before provider activation and
+acknowledges them durably. Output failure keeps the notice pending; a crash
+between emission and acknowledgement can duplicate the same `report_id` but
+cannot silently lose it. The output contains no credentials
+and does not truncate away individual checkout notices.
+
+The transaction leaves host-owned worktrees and independent explicit
+registrations/grants unchanged and performs no Git or filesystem mutation.
+Retired linked checkouts appear as foreign inventory. Plugin history referencing
+them is unmanaged and excluded from managed deletion and expiry cleanup. There
+is no historical adoption or reconciliation API. Older binaries refuse the
+upgraded store before provider activation; rollback requires a compatible repair
+build, not restoration of the retired authority. Rationale is retained in
+[Coding Harness](../Decisions/CodingHarness.md#configuration-and-migration).
+
+## Diagnostic and transport bounds
+
+`host.diagnostics.snapshot` requires `limit` from 1 through 1000. Pass the
+forwarded `invocation_id` to select the exact active `diagnostics.snapshot`
+call in the channel's authenticated scope. Concurrent diagnostics can each
+select their own call. A request that omits `invocation_id` requires exactly one
+active diagnostic call in scope, regardless of the requested limit. The Host
+checks the limit against the selected call's captured bound and uses that call
+as the audit parent. Retained work does not qualify as an active call.
+
+The result contains `owner` and `recent_tool_audits`. The owner uses
+`project_id`, `profile_id`, `caller`, transport tracking fields and
+`principal_id`. Audit rows use `project_id`. Verified subject, profile and
+project filtering occurs before the limit. Records without a verified subject
+remain stored but are not exposed.
+Results contain identities and digests, not command bodies or raw output.
+Missing data is reported as unavailable. Private service audits retain the
+originating invocation and permission authorization when present.
+
+Messages are bounded to 1 MiB, queues to 32 messages and concurrent handlers
+to 16. Private arguments are limited to 64 KiB and responses to 512 KiB;
+oversized diagnostics require a smaller limit. Calls are bounded to 30 seconds.
+Timeout or cancellation joins shutdown and leaves uncertain mutation outcomes
+for operation inspection, without automatic replay. EOF/retirement closes the
+descriptor, and confirmed cleanup participates in the managed process's
+retirement barrier.

@@ -1,4 +1,5 @@
 import ComputerMCPMacOS
+import ComputerMCPPermissions
 import ComputerMCPTestSupport
 import Foundation
 import Testing
@@ -9,13 +10,18 @@ import Testing
 @testable import ComputerMCPPersistence
 @testable import ComputerMCPPlugins
 
+#if os(macOS)
+  import ComputerMCPDarwinTestSupport
+#endif
+
 struct PluginStoreTests {
   @Test
   func unreadableFutureSchemaSurvivesStoreAndBundledInventoryIssues() async throws {
     let fixture = try PluginStoreFixture()
     defer { fixture.cleanup() }
-    let database = try GatewayDatabase(path: fixture.databaseURL.path)
-    let store = PluginStore(database: database, platform: MacOSPlatform.services)
+    let database = try fixturePermissionDatabase(path: fixture.databaseURL.path)
+    let store = PluginStore(
+      database: database, platform: MacOSPlatform.services(launcher: testExecutionLauncher()))
     _ = try await store.registerDevelopment(at: fixture.packageRoot, expectedRevision: 0)
     _ = try await store.setEnabled(true, for: "test-package", expectedRevision: 1)
     let text = PluginStoreFixture.manifest.replacingOccurrences(
@@ -37,7 +43,7 @@ struct PluginStoreTests {
       pluginID: "test-package", state: await store.snapshot(),
       bundled: .init(packages: [], issues: []),
       hostVersion: PluginVersion("1.0.0"), architecture: "arm64",
-      applications: MacOSPlatform.services.applications)
+      applications: MacOSPlatform.services(launcher: testExecutionLauncher()).applications)
     #expect(report.refusal == refusal)
     #expect(report.checks.first?.refusal == refusal)
     #expect(report.version == refusal.version)
@@ -47,18 +53,21 @@ struct PluginStoreTests {
   func configurationChangesDuringPreflightRejectPluginCommit(change: String) async throws {
     let fixture = try PluginStoreFixture()
     defer { fixture.cleanup() }
-    let database = try GatewayDatabase(path: fixture.databaseURL.path)
-    let concurrent = try GatewayDatabase(path: fixture.databaseURL.path)
+    let database = try fixturePermissionDatabase(path: fixture.databaseURL.path)
+    let concurrent = try fixturePermissionDatabase(path: fixture.databaseURL.path)
     let project = RegisteredProject(
       id: "fixture", displayName: "Fixture", rootPath: fixture.root.path)
     try database.saveProject(project)
-    let store = PluginStore(database: database, platform: MacOSPlatform.services) { _ in
+    let store = PluginStore(
+      database: database, platform: MacOSPlatform.services(launcher: testExecutionLauncher())
+    ) { _ in
       if change == "project" {
         try concurrent.deleteProject(id: project.id)
       } else {
         try concurrent.saveProfile(
           ProfileGrant(
-            id: .localAdmin, capabilityIDs: ["project.list"], projectIDs: [project.id],
+            id: .localAdmin,
+            permissions: fixturePermissions([.project(project.id): .granted(.read)]),
             allowedCallers: [.localCLI]))
       }
     }
@@ -82,11 +91,12 @@ struct PluginStoreTests {
   func preparationSnapshotRejectsChangesBeforePreflightBegins() async throws {
     let fixture = try PluginStoreFixture()
     defer { fixture.cleanup() }
-    let database = try GatewayDatabase(path: fixture.databaseURL.path)
+    let database = try fixturePermissionDatabase(path: fixture.databaseURL.path)
     let expected = try database.configurationState()
     let store = PluginStore(
-      database: database, platform: MacOSPlatform.services, expectedConfiguration: expected)
-    try GatewayDatabase(path: fixture.databaseURL.path).saveProject(
+      database: database, platform: MacOSPlatform.services(launcher: testExecutionLauncher()),
+      expectedConfiguration: expected)
+    try fixturePermissionDatabase(path: fixture.databaseURL.path).saveProject(
       RegisteredProject(id: "added", displayName: "Added", rootPath: fixture.root.path))
     await #expect(throws: GatewayDatabaseError.configurationChanged) {
       try await store.setEnabled(true, for: "candidate", expectedRevision: 0)
@@ -100,7 +110,8 @@ struct PluginStoreTests {
     let fixture = try PluginStoreFixture()
     defer { fixture.cleanup() }
     let store = PluginStore(
-      database: try GatewayDatabase(inMemory: ()), platform: MacOSPlatform.services)
+      database: try GatewayDatabase(inMemory: ()),
+      platform: MacOSPlatform.services(launcher: testExecutionLauncher()))
     let registered = try await store.registerDevelopment(
       at: fixture.packageRoot, expectedRevision: 0)
     #expect(registered.revision == 1)
@@ -134,16 +145,18 @@ struct PluginStoreTests {
     settings.mcp["native"]?.args = ["--local-setting", "", "exact value"]
     let expected: PluginStoreSnapshot
     do {
-      let database = try GatewayDatabase(path: fixture.databaseURL.path)
+      let database = try fixturePermissionDatabase(path: fixture.databaseURL.path)
       try database.saveProject(
         .init(id: "personal", displayName: "Personal", rootPath: fixture.root.path))
-      let store = PluginStore(database: database, platform: MacOSPlatform.services)
+      let store = PluginStore(
+        database: database, platform: MacOSPlatform.services(launcher: testExecutionLauncher()))
       _ = try await store.registerDevelopment(at: fixture.packageRoot, expectedRevision: 0)
       expected = try await store.setSettings(
         settings, for: "test-package", expectedRevision: 1)
     }
-    let reopened = try GatewayDatabase(path: fixture.databaseURL.path)
-    let store = PluginStore(database: reopened, platform: MacOSPlatform.services)
+    let reopened = try fixturePermissionDatabase(path: fixture.databaseURL.path)
+    let store = PluginStore(
+      database: reopened, platform: MacOSPlatform.services(launcher: testExecutionLauncher()))
     #expect(try await store.snapshot() == expected)
     #expect(try reopened.project(id: "personal")?.displayName == "Personal")
     let plugin = try #require(try await fixture.resolve(store).plugins.first)
@@ -160,11 +173,11 @@ struct PluginStoreTests {
     let fixture = try PluginStoreFixture()
     defer { fixture.cleanup() }
     let first = PluginStore(
-      database: try GatewayDatabase(path: fixture.databaseURL.path),
-      platform: MacOSPlatform.services)
+      database: try fixturePermissionDatabase(path: fixture.databaseURL.path),
+      platform: MacOSPlatform.services(launcher: testExecutionLauncher()))
     let second = PluginStore(
-      database: try GatewayDatabase(path: fixture.databaseURL.path),
-      platform: MacOSPlatform.services)
+      database: try fixturePermissionDatabase(path: fixture.databaseURL.path),
+      platform: MacOSPlatform.services(launcher: testExecutionLauncher()))
     let initial = try await first.snapshot()
     #expect(try await second.snapshot() == initial)
     let results = await withTaskGroup(of: StoreMutationOutcome.self) { group in
@@ -200,8 +213,8 @@ struct PluginStoreTests {
   func databaseRevisionComparisonRejectsAnAlreadyPreparedStaleSnapshot() throws {
     let fixture = try PluginStoreFixture()
     defer { fixture.cleanup() }
-    let first = try GatewayDatabase(path: fixture.databaseURL.path)
-    let second = try GatewayDatabase(path: fixture.databaseURL.path)
+    let first = try fixturePermissionDatabase(path: fixture.databaseURL.path)
+    let second = try fixturePermissionDatabase(path: fixture.databaseURL.path)
     var proposal = try first.pluginStoreSnapshot()
     proposal.revision = 1
     proposal.settings["first"] = PluginSettings(enabled: true)
@@ -218,7 +231,8 @@ struct PluginStoreTests {
   @Test(arguments: ["", "../plugin", "Plugin", "space id", "nul\0id"])
   func hostSettingsCannotPersistInvalidPackageIdentities(id: String) async throws {
     let store = PluginStore(
-      database: try GatewayDatabase(inMemory: ()), platform: MacOSPlatform.services)
+      database: try GatewayDatabase(inMemory: ()),
+      platform: MacOSPlatform.services(launcher: testExecutionLauncher()))
     await #expect(throws: PluginManifestError.self) {
       try await store.setEnabled(true, for: id, expectedRevision: 0)
     }
@@ -230,7 +244,8 @@ struct PluginStoreTests {
     let fixture = try PluginStoreFixture()
     defer { fixture.cleanup() }
     let store = PluginStore(
-      database: try GatewayDatabase(inMemory: ()), platform: MacOSPlatform.services)
+      database: try GatewayDatabase(inMemory: ()),
+      platform: MacOSPlatform.services(launcher: testExecutionLauncher()))
     let original = try await store.registerDevelopment(at: fixture.packageRoot, expectedRevision: 0)
     let invalid = try fixture.makePackage(directory: "invalid", text: "id = 'incomplete'")
     await #expect(throws: (any Error).self) {
@@ -244,7 +259,8 @@ struct PluginStoreTests {
     let fixture = try PluginStoreFixture()
     defer { fixture.cleanup() }
     let store = PluginStore(
-      database: try GatewayDatabase(inMemory: ()), platform: MacOSPlatform.services)
+      database: try GatewayDatabase(inMemory: ()),
+      platform: MacOSPlatform.services(launcher: testExecutionLauncher()))
     let first = try await store.registerDevelopment(at: fixture.packageRoot, expectedRevision: 0)
     let firstID = try #require(first.selectedInstallations["test-package"])
     _ = try await store.setSettings(fixture.settings, for: "test-package", expectedRevision: 1)
@@ -284,7 +300,8 @@ struct PluginStoreTests {
     let fixture = try PluginStoreFixture()
     defer { fixture.cleanup() }
     let store = PluginStore(
-      database: try GatewayDatabase(inMemory: ()), platform: MacOSPlatform.services)
+      database: try GatewayDatabase(inMemory: ()),
+      platform: MacOSPlatform.services(launcher: testExecutionLauncher()))
     _ = try await store.registerDevelopment(at: fixture.packageRoot, expectedRevision: 0)
     _ = try await store.setSettings(fixture.settings, for: "test-package", expectedRevision: 1)
     let bundledRoot = try fixture.makePackage(
@@ -316,7 +333,8 @@ struct PluginStoreTests {
     let fixture = try PluginStoreFixture()
     defer { fixture.cleanup() }
     let store = PluginStore(
-      database: try GatewayDatabase(inMemory: ()), platform: MacOSPlatform.services)
+      database: try GatewayDatabase(inMemory: ()),
+      platform: MacOSPlatform.services(launcher: testExecutionLauncher()))
     let original = try await store.registerDevelopment(at: fixture.packageRoot, expectedRevision: 0)
     let repeated = try await store.registerDevelopment(at: fixture.packageRoot, expectedRevision: 1)
     #expect(original.installations == repeated.installations)
@@ -339,7 +357,8 @@ struct PluginStoreTests {
     let fixture = try PluginStoreFixture()
     defer { fixture.cleanup() }
     let store = PluginStore(
-      database: try GatewayDatabase(inMemory: ()), platform: MacOSPlatform.services)
+      database: try GatewayDatabase(inMemory: ()),
+      platform: MacOSPlatform.services(launcher: testExecutionLauncher()))
     _ = try await store.registerDevelopment(at: fixture.packageRoot, expectedRevision: 0)
     _ = try await store.setEnabled(true, for: "test-package", expectedRevision: 1)
     let otherRoot = try fixture.makePackage(
@@ -360,7 +379,8 @@ struct PluginStoreTests {
     let fixture = try PluginStoreFixture()
     defer { fixture.cleanup() }
     let database = try GatewayDatabase(inMemory: ())
-    let store = PluginStore(database: database, platform: MacOSPlatform.services)
+    let store = PluginStore(
+      database: database, platform: MacOSPlatform.services(launcher: testExecutionLauncher()))
     let initial = try await store.setSettings(
       fixture.settings, for: "test-package", expectedRevision: 0)
     var invalid = fixture.settings
@@ -390,7 +410,8 @@ struct PluginStoreTests {
     let fixture = try PluginStoreFixture()
     defer { fixture.cleanup() }
     let store = PluginStore(
-      database: try GatewayDatabase(inMemory: ()), platform: MacOSPlatform.services)
+      database: try GatewayDatabase(inMemory: ()),
+      platform: MacOSPlatform.services(launcher: testExecutionLauncher()))
     let initial = try await store.registerDevelopment(at: fixture.packageRoot, expectedRevision: 0)
     let id = try #require(initial.installations.first?.id)
     await #expect(throws: PluginStoreError.unknownInstallation(id)) {

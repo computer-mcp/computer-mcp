@@ -2,6 +2,7 @@ import ComputerMCPConfiguration
 import ComputerMCPCore
 import ComputerMCPPlatform
 import ComputerMCPProcess
+import ComputerMCPSandbox
 import ComputerMCPTestSupport
 import Foundation
 import MCP
@@ -9,8 +10,61 @@ import Testing
 
 @testable import ComputerMCPDownstream
 
+#if os(macOS)
+  import ComputerMCPDarwinTestSupport
+#endif
+
 @Suite(.nativeIntegration, .timeLimit(.minutes(1)))
 struct MCPChildProcessTransportTests {
+  #if canImport(Darwin)
+    @Test
+    func writtenRequestIDIsSettledWhenDisconnectJoinsInput() async throws {
+      let root = try ScopedTemporaryDirectory()
+      let environment = ["PATH": "/usr/bin:/bin"]
+      let transport = try MCPChildProcessTransport(
+        launcher: testExecutionLauncher(),
+        server: .init(id: "write-join", transport: .stdio, command: "/bin/cat"),
+        workingDirectory: root.url, environment: environment,
+        hostContext: HostEnvironmentProbe(root: root.url))
+      let administration = ExecutionAdministration(
+        mode: .fullAccess, environment: try .init(fullAccessVariables: environment))
+      try await ExecutionAdministration.$current.withValue(administration) {
+        try await transport.connect()
+      }
+
+      let call = MCPStdioCall()
+      let frame = Data(#"{"jsonrpc":"2.0","id":"held-write","method":"tools/call"}"#.utf8)
+      let parked = AsyncStream<Bool>.makeStream(bufferingPolicy: .bufferingNewest(1))
+      let release = AsyncStream<Void>.makeStream()
+      let send = Task {
+        defer { parked.continuation.finish() }
+        try await MCPStdioCall.$current.withValue(call) {
+          try await transport.send(frame) {
+            parked.continuation.yield(true)
+            parked.continuation.finish()
+            for await _ in release.stream {}
+          }
+        }
+      }
+      do {
+        var checkpoint = parked.stream.makeAsyncIterator()
+        try #require(await checkpoint.next() == true)
+        var inbound = await transport.receive().makeAsyncIterator()
+        #expect(try await inbound.next() == frame)
+        await transport.disconnect()
+        #expect(await transport.shutdownConfirmed())
+        #expect(call.writtenRequestID == .string("held-write"))
+      } catch {
+        release.continuation.finish()
+        await transport.disconnect()
+        _ = await send.result
+        throw error
+      }
+      release.continuation.finish()
+      try await send.value
+    }
+  #endif
+
   @Test
   func hostServicesRequireAProvidingEnvironmentBeforeLaunch() throws {
     let server = MCPServerConfig(
@@ -20,50 +74,32 @@ struct MCPChildProcessTransportTests {
         "The stdio registration requires scoped host services.")
     ) {
       try MCPChildProcessTransport(
+        launcher: testExecutionLauncher(),
         server: server, workingDirectory: URL(fileURLWithPath: "/tmp"), environment: [:])
     }
   }
 
-  @Test(arguments: [false, true])
-  func suppliedSessionOwnsCleanupAndConfirmation(confirmed: Bool) async throws {
+  /// Host services bind only to a prepared provider's verified channel; a registration
+  /// without one is refused before ownership or a launch.
+  @Test
+  func hostServicesRequireAPreparedProviderExecution() throws {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
     try FileManager.default.createDirectory(
       at: root, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700])
     defer { try? FileManager.default.removeItem(at: root) }
-    let session = SessionProbe(confirmed: confirmed)
-    let environment = HostEnvironmentProbe(root: root, session: session)
-    let transport = try MCPChildProcessTransport(
-      server: .init(
-        id: "hosted", transport: .stdio, command: "/bin/sh",
-        args: ["-c", #"printf '%s\n' "$COMPUTER_MCP_HOST_FD""#],
-        env: [MCPHostLaunchMetadata.descriptorEnvironmentKey: "9"], hostServices: true),
-      workingDirectory: root, environment: [:], hostContext: environment)
-    try await transport.connect()
-    var lines: [String] = []
-    var streamError: (any Error)?
-    do {
-      for try await data in await transport.receive() {
-        lines.append(String(decoding: data, as: UTF8.self))
-      }
-    } catch { streamError = error }
-    await transport.disconnect()
-    #expect(await session.closed)
-    #expect(await transport.shutdownConfirmed() == confirmed)
-    #if os(Linux)
-      #expect(lines.isEmpty)
-      #expect(streamError is ManagedLineProcessError)
-    #else
-      #expect(lines == ["3"])
-    #endif
-    let receipts = try MCPProcessOwnership.inspect(
-      root: try #require(environment.processOwnershipRoot), project: root, registration: "hosted")
-    if confirmed {
-      #expect(receipts.isEmpty)
-    } else {
-      #expect(receipts.count == 1)
-      #expect(receipts.first?.state == "host_cleanup_unconfirmed")
-      #expect(receipts.first?.blocksLaunch == true)
+    let environment = HostEnvironmentProbe(root: root)
+    #expect(
+      throws: GatewayToolError.executionFailed(
+        "Host services require a prepared provider execution.")
+    ) {
+      try MCPChildProcessTransport(
+        launcher: testExecutionLauncher(),
+        server: .init(id: "hosted", transport: .stdio, command: "/bin/sh", hostServices: true),
+        workingDirectory: root, environment: [:], hostContext: environment)
     }
+    #expect(
+      !FileManager.default.fileExists(
+        atPath: try #require(environment.processOwnershipRoot).path))
   }
 }
 
@@ -73,39 +109,12 @@ private struct HostEnvironmentProbe: MCPHostEnvironment {
   let launchMetadata: MCPHostLaunchMetadata
   let pluginArtifacts: [String: PluginDirectoryIdentity] = [:]
   let providesHostServices = true
-  let session: SessionProbe
 
-  init(root: URL, session: SessionProbe) {
+  init(root: URL) {
     projectRoot = root
     processOwnershipRoot = root.appendingPathComponent("ownership")
     launchMetadata = .init(
       runtimeID: UUID(), context: .init(caller: .localMCP, profileID: .localAdmin),
       projectID: "test", rootURL: root, readOnly: true)
-    self.session = session
   }
-
-  func makeHostSession(server: MCPServerConfig) throws -> any MCPHostSessionHandle {
-    #expect(server.id == "hosted")
-    return session
-  }
-}
-
-private actor SessionProbe: MCPHostSessionHandle {
-  nonisolated let childHandle: FileHandle
-  private let pipe = Pipe()
-  private let confirmed: Bool
-  private(set) var closed = false
-
-  init(confirmed: Bool) {
-    childHandle = pipe.fileHandleForWriting
-    self.confirmed = confirmed
-  }
-
-  func close() async {
-    try? childHandle.close()
-    try? pipe.fileHandleForReading.close()
-    closed = true
-  }
-
-  func shutdownConfirmed() async -> Bool { closed && confirmed }
 }

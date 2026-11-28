@@ -2,12 +2,12 @@ import ComputerMCPCore
 
 extension GitToolProvider {
   static func toolDefinitions(toolMeta: JSONValue?) -> [ToolDefinition] {
-    [
+    lifecycleDefinitions(toolMeta: toolMeta) + [
       ToolDefinition(
         tool: MCPTool(
           name: "git.root",
           description:
-            "Return read-only git repository root and git-dir identity through the registered git CLI provider.",
+            "Return read-only git repository root and git-dir identity through the fixed host Git helper.",
           inputSchema: objectSchema(
             properties: [
               "timeout_ms": integerSchema("Optional timeout in milliseconds.")
@@ -19,15 +19,16 @@ extension GitToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "git.root", risk: .readOnly,
+          requirement: .init(access: .read, paths: [.project(.read)]),
           projectRequirement: .required,
-          localOnly: false, usesNetwork: false
+          localOnly: false, usesNetwork: false, hostOperation: .git
         )
       ),
       ToolDefinition(
         tool: MCPTool(
           name: "git.config",
           description:
-            "Return structured read-only Git configuration entries through the registered git CLI provider using fixed git config --list --show-origin --show-scope --null argv. Values are redacted by default, sensitive-looking values stay redacted even when include_values is true, and raw stdout is not returned.",
+            "Return structured read-only Git configuration entries through the fixed host Git helper using fixed git config --list --show-origin --show-scope --null argv. Values are redacted by default, sensitive-looking values stay redacted even when include_values is true, and raw stdout is not returned.",
           inputSchema: objectSchema(
             properties: [
               "include_values": boolSchema(
@@ -46,15 +47,16 @@ extension GitToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "git.config", risk: .readOnly,
+          requirement: .init(access: .read, paths: [.project(.read)]),
           projectRequirement: .required,
-          localOnly: false, usesNetwork: false
+          localOnly: false, usesNetwork: false, hostOperation: .git
         )
       ),
       ToolDefinition(
         tool: MCPTool(
           name: "git.remotes",
           description:
-            "Return read-only git remote URLs through the registered git CLI provider.",
+            "Return read-only git remote URLs through the fixed host Git helper.",
           inputSchema: objectSchema(
             properties: [
               "timeout_ms": integerSchema("Optional timeout in milliseconds.")
@@ -66,35 +68,16 @@ extension GitToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "git.remotes", risk: .readOnly,
+          requirement: .init(access: .read, paths: [.project(.read)]),
           projectRequirement: .required,
-          localOnly: false, usesNetwork: false
-        )
-      ),
-      ToolDefinition(
-        tool: MCPTool(
-          name: "git.worktrees",
-          description:
-            "Return read-only git worktree list through the registered git CLI provider.",
-          inputSchema: objectSchema(
-            properties: [
-              "timeout_ms": integerSchema("Optional timeout in milliseconds.")
-            ]
-          ),
-          annotations: MCPToolAnnotations(
-            readOnlyHint: true, destructiveHint: false, openWorldHint: false),
-          meta: toolMeta
-        ),
-        capability: CapabilityDescriptor(
-          id: "git.worktrees", risk: .readOnly,
-          projectRequirement: .required,
-          localOnly: false, usesNetwork: false
+          localOnly: false, usesNetwork: false, hostOperation: .git
         )
       ),
       ToolDefinition(
         tool: MCPTool(
           name: "git.stashes",
           description:
-            "Return read-only git stash list through the registered git CLI provider.",
+            "Return read-only git stash list through the fixed host Git helper.",
           inputSchema: objectSchema(
             properties: [
               "timeout_ms": integerSchema("Optional timeout in milliseconds.")
@@ -106,15 +89,16 @@ extension GitToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "git.stashes", risk: .readOnly,
+          requirement: .init(access: .read, paths: [.project(.read)]),
           projectRequirement: .required,
-          localOnly: false, usesNetwork: false
+          localOnly: false, usesNetwork: false, hostOperation: .git
         )
       ),
       ToolDefinition(
         tool: MCPTool(
           name: "git.stash_show",
           description:
-            "Return read-only details for one git stash through the registered git CLI provider. The stash ref is constrained to stash@{N}. When paths are supplied, the gateway uses fixed git diff argv so path filters are passed literally after --.",
+            "Return read-only details for one git stash through the fixed host Git helper. The stash ref is constrained to stash@{N}. When paths are supplied, the gateway uses fixed git diff argv so path filters are passed literally after --.",
           inputSchema: objectSchema(
             properties: [
               "stash": stringSchema(
@@ -134,15 +118,17 @@ extension GitToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "git.stash_show", risk: .readOnly,
+          requirement: .init(
+            access: .read, paths: [.init("paths[]", .read, defaultToProject: true)]),
           projectRequirement: .required,
-          localOnly: false, usesNetwork: false
+          localOnly: false, usesNetwork: false, hostOperation: .git
         )
       ),
       ToolDefinition(
         tool: MCPTool(
           name: "git.stash_push",
           description:
-            "Create a git stash through the registered git CLI provider. This is a write operation that requires explicit paths or all_paths=true.",
+            "Create a git stash through the fixed host Git helper. This is a write operation that requires explicit paths or all_paths=true.",
           inputSchema: objectSchema(
             properties: [
               "message": stringSchema("Required stash message, up to 10000 characters."),
@@ -171,15 +157,18 @@ extension GitToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "git.stash_push", risk: .destructive,
+          requirement: .init(
+            access: .projectWrite, requiresFullAccess: true,
+            paths: [.init("paths[]", .write, defaultToProject: true)]),
           projectRequirement: .required,
-          localOnly: false, usesNetwork: false
+          localOnly: false, usesNetwork: false, hostOperation: .git
         )
       ),
       ToolDefinition(
         tool: MCPTool(
           name: "git.tags",
           description:
-            "Return read-only git tag list through the registered git CLI provider.",
+            "Return read-only git tag list through the fixed host Git helper.",
           inputSchema: objectSchema(
             properties: [
               "timeout_ms": integerSchema("Optional timeout in milliseconds.")
@@ -191,15 +180,16 @@ extension GitToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "git.tags", risk: .readOnly,
+          requirement: .init(access: .read, paths: [.project(.read)]),
           projectRequirement: .required,
-          localOnly: false, usesNetwork: false
+          localOnly: false, usesNetwork: false, hostOperation: .git
         )
       ),
       ToolDefinition(
         tool: MCPTool(
           name: "git.tag_show",
           description:
-            "Return read-only details for one local Git tag through the registered git CLI provider using fixed refs/tags/<name>. This does not accept arbitrary revisions, contact remotes, or change the index or working tree.",
+            "Return read-only details for one local Git tag through the fixed host Git helper using fixed refs/tags/<name>. This does not accept arbitrary revisions, contact remotes, or change the index or working tree.",
           inputSchema: objectSchema(
             properties: [
               "name": stringSchema("Required local tag name to inspect."),
@@ -216,15 +206,16 @@ extension GitToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "git.tag_show", risk: .readOnly,
+          requirement: .init(access: .read, paths: [.project(.read)]),
           projectRequirement: .required,
-          localOnly: false, usesNetwork: false
+          localOnly: false, usesNetwork: false, hostOperation: .git
         )
       ),
       ToolDefinition(
         tool: MCPTool(
           name: "git.tag_create",
           description:
-            "Create one lightweight local Git tag through the registered git CLI provider using fixed git tag <name> <target> argv. This does not sign, annotate, force-replace, push, fetch, or change the index or working tree. It defaults to gateway preflight dry-run and requires confirm_create=true when dry_run is false.",
+            "Create one lightweight local Git tag through the fixed host Git helper using fixed git tag <name> <target> argv. This does not sign, annotate, force-replace, push, fetch, or change the index or working tree. It defaults to gateway preflight dry-run and requires confirm_create=true when dry_run is false.",
           inputSchema: objectSchema(
             properties: [
               "name": stringSchema("Required local tag name to create."),
@@ -246,15 +237,18 @@ extension GitToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "git.tag_create", risk: .projectWrite,
+          requirement: .init(
+            access: .projectWrite, requiresFullAccess: true,
+            paths: [.project(.read)]),
           projectRequirement: .required,
-          localOnly: false, usesNetwork: false
+          localOnly: false, usesNetwork: false, hostOperation: .git
         )
       ),
       ToolDefinition(
         tool: MCPTool(
           name: "git.tag_delete",
           description:
-            "Delete one local Git tag through the registered git CLI provider using fixed git tag -d <name> argv. This does not push remote tag deletion, fetch, force-delete anything else, or change the index or working tree. It defaults to gateway preflight dry-run and requires confirm_delete=true when dry_run is false.",
+            "Delete one local Git tag through the fixed host Git helper using fixed git tag -d <name> argv. This does not push remote tag deletion, fetch, force-delete anything else, or change the index or working tree. It defaults to gateway preflight dry-run and requires confirm_delete=true when dry_run is false.",
           inputSchema: objectSchema(
             properties: [
               "name": stringSchema("Required local tag name to delete."),
@@ -273,15 +267,18 @@ extension GitToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "git.tag_delete", risk: .destructive,
+          requirement: .init(
+            access: .projectWrite, requiresFullAccess: true,
+            paths: [.project(.read)]),
           projectRequirement: .required,
-          localOnly: false, usesNetwork: false
+          localOnly: false, usesNetwork: false, hostOperation: .git
         )
       ),
       ToolDefinition(
         tool: MCPTool(
           name: "git.ignored",
           description:
-            "Return read-only git check-ignore output for explicit project-relative paths through the registered git CLI provider.",
+            "Return read-only git check-ignore output for explicit project-relative paths through the fixed host Git helper.",
           inputSchema: objectSchema(
             properties: [
               "paths": stringArraySchema(
@@ -296,15 +293,16 @@ extension GitToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "git.ignored", risk: .readOnly,
+          requirement: .init(access: .read, paths: [.init("paths[]", .read)]),
           projectRequirement: .required,
-          localOnly: false, usesNetwork: false
+          localOnly: false, usesNetwork: false, hostOperation: .git
         )
       ),
       ToolDefinition(
         tool: MCPTool(
           name: "git.submodules",
           description:
-            "Return read-only git submodule status through the registered git CLI provider.",
+            "Return read-only git submodule status through the fixed host Git helper.",
           inputSchema: objectSchema(
             properties: [
               "timeout_ms": integerSchema("Optional timeout in milliseconds.")
@@ -316,15 +314,16 @@ extension GitToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "git.submodules", risk: .readOnly,
+          requirement: .init(access: .read, paths: [.project(.read)]),
           projectRequirement: .required,
-          localOnly: false, usesNetwork: false
+          localOnly: false, usesNetwork: false, hostOperation: .git
         )
       ),
       ToolDefinition(
         tool: MCPTool(
           name: "git.files",
           description:
-            "Return read-only git tracked file index metadata through the registered git CLI provider.",
+            "Return read-only git tracked file index metadata through the fixed host Git helper.",
           inputSchema: objectSchema(
             properties: [
               "paths": stringArraySchema(
@@ -338,15 +337,17 @@ extension GitToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "git.files", risk: .readOnly,
+          requirement: .init(
+            access: .read, paths: [.init("paths[]", .read, defaultToProject: true)]),
           projectRequirement: .required,
-          localOnly: false, usesNetwork: false
+          localOnly: false, usesNetwork: false, hostOperation: .git
         )
       ),
       ToolDefinition(
         tool: MCPTool(
           name: "git.grep",
           description:
-            "Search Git-tracked project content with fixed-string git grep through the registered git CLI provider. This is read-only, uses fixed argv, does not run shell commands, and returns file.read_lines context for selected matches.",
+            "Search Git-tracked project content with fixed-string git grep through the fixed host Git helper. This is read-only, uses fixed argv, does not run shell commands, and returns file.read_lines context for selected matches.",
           inputSchema: objectSchema(
             properties: [
               "query": stringSchema("Required literal fixed string to search for."),
@@ -366,15 +367,17 @@ extension GitToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "git.grep", risk: .readOnly,
+          requirement: .init(
+            access: .read, paths: [.init("paths[]", .read, defaultToProject: true)]),
           projectRequirement: .required,
-          localOnly: false, usesNetwork: false
+          localOnly: false, usesNetwork: false, hostOperation: .git
         )
       ),
       ToolDefinition(
         tool: MCPTool(
           name: "git.blame",
           description:
-            "Return bounded read-only git blame output for one project-relative file through the registered git CLI provider.",
+            "Return bounded read-only git blame output for one project-relative file through the fixed host Git helper.",
           inputSchema: objectSchema(
             properties: [
               "path": stringSchema(
@@ -392,15 +395,16 @@ extension GitToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "git.blame", risk: .readOnly,
+          requirement: .init(access: .read, paths: [.init("path", .read)]),
           projectRequirement: .required,
-          localOnly: false, usesNetwork: false
+          localOnly: false, usesNetwork: false, hostOperation: .git
         )
       ),
       ToolDefinition(
         tool: MCPTool(
           name: "git.file_history",
           description:
-            "Return bounded read-only commit history for one project-relative file through the registered git CLI provider. Defaults to --follow and returns structured commit rows without changing refs or the working tree.",
+            "Return bounded read-only commit history for one project-relative file through the fixed host Git helper. Defaults to --follow and returns structured commit rows without changing refs or the working tree.",
           inputSchema: objectSchema(
             properties: [
               "path": stringSchema(
@@ -425,15 +429,16 @@ extension GitToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "git.file_history", risk: .readOnly,
+          requirement: .init(access: .read, paths: [.init("path", .read)]),
           projectRequirement: .required,
-          localOnly: false, usesNetwork: false
+          localOnly: false, usesNetwork: false, hostOperation: .git
         )
       ),
       ToolDefinition(
         tool: MCPTool(
           name: "git.file_at_revision",
           description:
-            "Return bounded UTF-8 content for one project-relative file at a constrained Git revision through the registered git CLI provider. This uses fixed git show <revision>:<path> argv and does not change refs or the working tree.",
+            "Return bounded UTF-8 content for one project-relative file at a constrained Git revision through the fixed host Git helper. This uses fixed git show <revision>:<path> argv and does not change refs or the working tree.",
           inputSchema: objectSchema(
             properties: [
               "revision": stringSchema(
@@ -454,15 +459,16 @@ extension GitToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "git.file_at_revision", risk: .readOnly,
+          requirement: .init(access: .read, paths: [.init("path", .read)]),
           projectRequirement: .required,
-          localOnly: false, usesNetwork: false
+          localOnly: false, usesNetwork: false, hostOperation: .git
         )
       ),
       ToolDefinition(
         tool: MCPTool(
           name: "git.staged_file",
           description:
-            "Return bounded UTF-8 content for one project-relative file from the Git index through the registered git CLI provider. This uses fixed git show :<path> argv and does not change refs, the index, or the working tree.",
+            "Return bounded UTF-8 content for one project-relative file from the Git index through the fixed host Git helper. This uses fixed git show :<path> argv and does not change refs, the index, or the working tree.",
           inputSchema: objectSchema(
             properties: [
               "path": stringSchema(
@@ -481,15 +487,16 @@ extension GitToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "git.staged_file", risk: .readOnly,
+          requirement: .init(access: .read, paths: [.init("path", .read)]),
           projectRequirement: .required,
-          localOnly: false, usesNetwork: false
+          localOnly: false, usesNetwork: false, hostOperation: .git
         )
       ),
       ToolDefinition(
         tool: MCPTool(
           name: "git.conflicts",
           description:
-            "Return read-only git unmerged index entries through the registered git CLI provider.",
+            "Return read-only git unmerged index entries through the fixed host Git helper.",
           inputSchema: objectSchema(
             properties: [
               "paths": stringArraySchema(
@@ -503,15 +510,17 @@ extension GitToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "git.conflicts", risk: .readOnly,
+          requirement: .init(
+            access: .read, paths: [.init("paths[]", .read, defaultToProject: true)]),
           projectRequirement: .required,
-          localOnly: false, usesNetwork: false
+          localOnly: false, usesNetwork: false, hostOperation: .git
         )
       ),
       ToolDefinition(
         tool: MCPTool(
           name: "git.status",
           description:
-            "Return read-only git status through the registered git CLI provider.",
+            "Return read-only git status through the fixed host Git helper.",
           inputSchema: objectSchema(
             properties: [
               "paths": stringArraySchema(
@@ -525,8 +534,10 @@ extension GitToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "git.status", risk: .readOnly,
+          requirement: .init(
+            access: .read, paths: [.init("paths[]", .read, defaultToProject: true)]),
           projectRequirement: .required,
-          localOnly: false, usesNetwork: false
+          localOnly: false, usesNetwork: false, hostOperation: .git
         )
       ),
       ToolDefinition(
@@ -545,15 +556,16 @@ extension GitToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "git.tracking_status", risk: .readOnly,
+          requirement: .init(access: .read, paths: [.project(.read)]),
           projectRequirement: .required,
-          localOnly: false, usesNetwork: false
+          localOnly: false, usesNetwork: false, hostOperation: .git
         )
       ),
       ToolDefinition(
         tool: MCPTool(
           name: "git.clean_preview",
           description:
-            "Preview untracked files/directories Git would remove by running git clean --dry-run -d through the registered git CLI provider. This does not delete files.",
+            "Preview untracked files/directories Git would remove by running git clean --dry-run -d through the fixed host Git helper. This does not delete files.",
           inputSchema: objectSchema(
             properties: [
               "include_ignored": boolSchema(
@@ -575,15 +587,17 @@ extension GitToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "git.clean_preview", risk: .readOnly,
+          requirement: .init(
+            access: .read, paths: [.init("paths[]", .read, defaultToProject: true)]),
           projectRequirement: .required,
-          localOnly: false, usesNetwork: false
+          localOnly: false, usesNetwork: false, hostOperation: .git
         )
       ),
       ToolDefinition(
         tool: MCPTool(
           name: "git.clean",
           description:
-            "Remove untracked files/directories through the registered git CLI provider using git clean. This is destructive, defaults to dry-run, requires explicit paths or all_paths=true, and requires confirm_delete=true when dry_run is false.",
+            "Remove untracked files/directories through the fixed host Git helper using git clean. This is destructive, defaults to dry-run, requires explicit paths or all_paths=true, and requires confirm_delete=true when dry_run is false.",
           inputSchema: objectSchema(
             properties: [
               "paths": stringArraySchema(
@@ -612,15 +626,17 @@ extension GitToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "git.clean", risk: .destructive,
+          requirement: .init(
+            access: .projectWrite, paths: [.init("paths[]", .write, defaultToProject: true)]),
           projectRequirement: .required,
-          localOnly: false, usesNetwork: false
+          localOnly: false, usesNetwork: false, hostOperation: .git
         )
       ),
       ToolDefinition(
         tool: MCPTool(
           name: "git.reflog",
           description:
-            "Return bounded read-only local Git reflog entries for HEAD through the registered git CLI provider. This does not change refs or the working tree.",
+            "Return bounded read-only local Git reflog entries for HEAD through the fixed host Git helper. This does not change refs or the working tree.",
           inputSchema: objectSchema(
             properties: [
               "limit": integerSchema(
@@ -637,15 +653,16 @@ extension GitToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "git.reflog", risk: .readOnly,
+          requirement: .init(access: .read, paths: [.project(.read)]),
           projectRequirement: .required,
-          localOnly: false, usesNetwork: false
+          localOnly: false, usesNetwork: false, hostOperation: .git
         )
       ),
       ToolDefinition(
         tool: MCPTool(
           name: "git.refs",
           description:
-            "Return a bounded read-only inventory of local Git branch, remote branch, and tag refs through the registered git CLI provider. This does not change refs or the working tree.",
+            "Return a bounded read-only inventory of local Git branch, remote branch, and tag refs through the fixed host Git helper. This does not change refs or the working tree.",
           inputSchema: objectSchema(
             properties: [
               "include_branches": boolSchema(
@@ -667,15 +684,16 @@ extension GitToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "git.refs", risk: .readOnly,
+          requirement: .init(access: .read, paths: [.project(.read)]),
           projectRequirement: .required,
-          localOnly: false, usesNetwork: false
+          localOnly: false, usesNetwork: false, hostOperation: .git
         )
       ),
       ToolDefinition(
         tool: MCPTool(
           name: "git.compare_refs",
           description:
-            "Return bounded read-only topology for two Git refs through the registered git CLI provider: base/head ahead-behind counts, merge base, and limited left-right commit rows. This does not fetch, push, merge, or change refs.",
+            "Return bounded read-only topology for two Git refs through the fixed host Git helper: base/head ahead-behind counts, merge base, and limited left-right commit rows. This does not fetch, push, merge, or change refs.",
           inputSchema: objectSchema(
             properties: [
               "base": stringSchema(
@@ -703,15 +721,16 @@ extension GitToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "git.compare_refs", risk: .readOnly,
+          requirement: .init(access: .read, paths: [.project(.read)]),
           projectRequirement: .required,
-          localOnly: false, usesNetwork: false
+          localOnly: false, usesNetwork: false, hostOperation: .git
         )
       ),
       ToolDefinition(
         tool: MCPTool(
           name: "git.resolve_ref",
           description:
-            "Resolve one constrained Git ref, branch, tag, HEAD, or commit hash to an object id and object type through the registered git CLI provider using fixed git rev-parse and git cat-file argv. This does not fetch, push, merge, or change refs.",
+            "Resolve one constrained Git ref, branch, tag, HEAD, or commit hash to an object id and object type through the fixed host Git helper using fixed git rev-parse and git cat-file argv. This does not fetch, push, merge, or change refs.",
           inputSchema: objectSchema(
             properties: [
               "ref": stringSchema(
@@ -727,15 +746,16 @@ extension GitToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "git.resolve_ref", risk: .readOnly,
+          requirement: .init(access: .read, paths: [.project(.read)]),
           projectRequirement: .required,
-          localOnly: false, usesNetwork: false
+          localOnly: false, usesNetwork: false, hostOperation: .git
         )
       ),
       ToolDefinition(
         tool: MCPTool(
           name: "git.merge_base",
           description:
-            "Return read-only Git merge base object ids for 2 to 16 constrained refs through the registered git CLI provider using fixed git merge-base argv. Exit code 1 is reported as has_merge_base=false. This does not fetch, push, merge, or change refs.",
+            "Return read-only Git merge base object ids for 2 to 16 constrained refs through the fixed host Git helper using fixed git merge-base argv. Exit code 1 is reported as has_merge_base=false. This does not fetch, push, merge, or change refs.",
           inputSchema: objectSchema(
             properties: [
               "refs": stringArraySchema(
@@ -752,15 +772,16 @@ extension GitToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "git.merge_base", risk: .readOnly,
+          requirement: .init(access: .read, paths: [.project(.read)]),
           projectRequirement: .required,
-          localOnly: false, usesNetwork: false
+          localOnly: false, usesNetwork: false, hostOperation: .git
         )
       ),
       ToolDefinition(
         tool: MCPTool(
           name: "git.is_ancestor",
           description:
-            "Return whether one constrained Git ref is an ancestor of another through the registered git CLI provider using fixed git merge-base --is-ancestor argv. This does not fetch, push, merge, or change refs.",
+            "Return whether one constrained Git ref is an ancestor of another through the fixed host Git helper using fixed git merge-base --is-ancestor argv. This does not fetch, push, merge, or change refs.",
           inputSchema: objectSchema(
             properties: [
               "ancestor": stringSchema(
@@ -779,15 +800,16 @@ extension GitToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "git.is_ancestor", risk: .readOnly,
+          requirement: .init(access: .read, paths: [.project(.read)]),
           projectRequirement: .required,
-          localOnly: false, usesNetwork: false
+          localOnly: false, usesNetwork: false, hostOperation: .git
         )
       ),
       ToolDefinition(
         tool: MCPTool(
           name: "git.diff",
           description:
-            "Return read-only git diff through the registered git CLI provider.",
+            "Return read-only git diff through the fixed host Git helper.",
           inputSchema: objectSchema(
             properties: [
               "staged": boolSchema("Whether to diff staged changes with --cached."),
@@ -805,15 +827,17 @@ extension GitToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "git.diff", risk: .readOnly,
+          requirement: .init(
+            access: .read, paths: [.init("paths[]", .read, defaultToProject: true)]),
           projectRequirement: .required,
-          localOnly: false, usesNetwork: false
+          localOnly: false, usesNetwork: false, hostOperation: .git
         )
       ),
       ToolDefinition(
         tool: MCPTool(
           name: "git.diff_summary",
           description:
-            "Return structured read-only git diff file-level numstat and summary metadata through the registered git CLI provider. Use git.diff for raw patch text.",
+            "Return structured read-only git diff file-level numstat and summary metadata through the fixed host Git helper. Use git.diff for raw patch text.",
           inputSchema: objectSchema(
             properties: [
               "staged": boolSchema("Whether to summarize staged changes with --cached."),
@@ -830,15 +854,17 @@ extension GitToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "git.diff_summary", risk: .readOnly,
+          requirement: .init(
+            access: .read, paths: [.init("paths[]", .read, defaultToProject: true)]),
           projectRequirement: .required,
-          localOnly: false, usesNetwork: false
+          localOnly: false, usesNetwork: false, hostOperation: .git
         )
       ),
       ToolDefinition(
         tool: MCPTool(
           name: "git.diff_check",
           description:
-            "Run read-only git diff --check through the registered git CLI provider and return structured whitespace/conflict-marker issue lines plus bounded raw output.",
+            "Run read-only git diff --check through the fixed host Git helper and return structured whitespace/conflict-marker issue lines plus bounded raw output.",
           inputSchema: objectSchema(
             properties: [
               "staged": boolSchema("Whether to check staged changes with --cached."),
@@ -856,15 +882,17 @@ extension GitToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "git.diff_check", risk: .readOnly,
+          requirement: .init(
+            access: .read, paths: [.init("paths[]", .read, defaultToProject: true)]),
           projectRequirement: .required,
-          localOnly: false, usesNetwork: false
+          localOnly: false, usesNetwork: false, hostOperation: .git
         )
       ),
       ToolDefinition(
         tool: MCPTool(
           name: "git.branch",
           description:
-            "Return read-only git branch information through the registered git CLI provider.",
+            "Return read-only git branch information through the fixed host Git helper.",
           inputSchema: objectSchema(
             properties: [
               "all": boolSchema("Whether to include all branches."),
@@ -878,15 +906,16 @@ extension GitToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "git.branch", risk: .readOnly,
+          requirement: .init(access: .read, paths: [.project(.read)]),
           projectRequirement: .required,
-          localOnly: false, usesNetwork: false
+          localOnly: false, usesNetwork: false, hostOperation: .git
         )
       ),
       ToolDefinition(
         tool: MCPTool(
           name: "git.branch_create",
           description:
-            "Create a local Git branch through the registered git CLI provider using fixed git branch <name> <start_point> argv. This does not checkout, fetch, push, set upstreams, or change working-tree files. It defaults to dry-run and requires confirm_create=true when dry_run is false.",
+            "Create a local Git branch through the fixed host Git helper using fixed git branch <name> <start_point> argv. This does not checkout, fetch, push, set upstreams, or change working-tree files. It defaults to dry-run and requires confirm_create=true when dry_run is false.",
           inputSchema: objectSchema(
             properties: [
               "name": stringSchema("Required local branch name to create."),
@@ -908,26 +937,29 @@ extension GitToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "git.branch_create", risk: .projectWrite,
+          requirement: .init(
+            access: .projectWrite, requiresFullAccess: true,
+            paths: [.project(.read)]),
           projectRequirement: .required,
-          localOnly: false, usesNetwork: false
+          localOnly: false, usesNetwork: false, hostOperation: .git
         )
       ),
       ToolDefinition(
         tool: MCPTool(
           name: "git.branch_delete",
           description:
-            "Delete one local Git branch through the registered git CLI provider using fixed git branch -d/-D <name> argv. This does not checkout, fetch, push, delete remotes, or change working-tree files. It refuses to delete the current branch, defaults to dry-run, and requires confirm_delete=true when dry_run is false.",
+            "Delete a local branch with expected-value checks. Sandbox requires its tip to be reachable from its recorded base and cannot force. Live worktree branches are protected. Recovery objects outside the base remain retained after deletion. Defaults to dry-run; mutation requires confirm_delete=true in this call.",
           inputSchema: objectSchema(
             properties: [
               "name": stringSchema("Required local branch name to delete."),
               "force": boolSchema(
-                "Whether to use git branch -D instead of -d. Defaults to false."),
+                "Explicitly discard this branch generation’s unmerged history and recovery references. Requires Full access. Defaults to false."
+              ),
               "dry_run": boolSchema(
                 "Whether to run only preflight checks without deleting the branch. Defaults to true."
               ),
               "confirm_delete": boolSchema(
                 "Required as true when dry_run is false to delete the branch."),
-              "timeout_ms": integerSchema("Optional timeout in milliseconds."),
             ],
             required: ["name"]
           ),
@@ -937,15 +969,17 @@ extension GitToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "git.branch_delete", risk: .destructive,
+          requirement: .init(
+            access: .sourceProjectWrite, paths: [.project(.read)]),
           projectRequirement: .required,
-          localOnly: false, usesNetwork: false
+          localOnly: false, usesNetwork: false, hostOperation: .worktreeLifecycle
         )
       ),
       ToolDefinition(
         tool: MCPTool(
           name: "git.branch_rename",
           description:
-            "Rename one local Git branch through the registered git CLI provider using fixed git branch -m/-M <old_name> <new_name> argv. This does not checkout, fetch, push, set upstreams, delete remotes, or change working-tree files. It defaults to dry-run and requires confirm_rename=true when dry_run is false.",
+            "Rename one local Git branch through the fixed host Git helper using fixed git branch -m/-M <old_name> <new_name> argv. This does not checkout, fetch, push, set upstreams, delete remotes, or change working-tree files. It defaults to dry-run and requires confirm_rename=true when dry_run is false.",
           inputSchema: objectSchema(
             properties: [
               "old_name": stringSchema("Required existing local branch name to rename."),
@@ -968,15 +1002,18 @@ extension GitToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "git.branch_rename", risk: .destructive,
+          requirement: .init(
+            access: .projectWrite, requiresFullAccess: true,
+            paths: [.project(.read)]),
           projectRequirement: .required,
-          localOnly: false, usesNetwork: false
+          localOnly: false, usesNetwork: false, hostOperation: .git
         )
       ),
       ToolDefinition(
         tool: MCPTool(
           name: "git.branch_switch",
           description:
-            "Switch to one existing local Git branch through the registered git CLI provider using fixed git switch --no-guess <name> argv. This does not create, fetch, guess remote branches, detach HEAD, force checkout, discard changes, merge, push, or set upstreams. It defaults to gateway preflight dry-run and requires confirm_switch=true when dry_run is false. Dirty working trees require allow_dirty=true.",
+            "Switch to one existing local Git branch through the fixed host Git helper using fixed git switch --no-guess <name> argv. This does not create, fetch, guess remote branches, detach HEAD, force checkout, discard changes, merge, push, or set upstreams. It defaults to gateway preflight dry-run and requires confirm_switch=true when dry_run is false. Dirty working trees require allow_dirty=true.",
           inputSchema: objectSchema(
             properties: [
               "name": stringSchema("Required existing local branch name to switch to."),
@@ -998,15 +1035,18 @@ extension GitToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "git.branch_switch", risk: .destructive,
+          requirement: .init(
+            access: .projectWrite, requiresFullAccess: true,
+            paths: [.project(.read)]),
           projectRequirement: .required,
-          localOnly: false, usesNetwork: false
+          localOnly: false, usesNetwork: false, hostOperation: .git
         )
       ),
       ToolDefinition(
         tool: MCPTool(
           name: "git.log",
           description:
-            "Return bounded read-only git history through the registered git CLI provider.",
+            "Return bounded read-only git history through the fixed host Git helper.",
           inputSchema: objectSchema(
             properties: [
               "limit": integerSchema("Maximum commits to return, 1 through 200."),
@@ -1021,15 +1061,17 @@ extension GitToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "git.log", risk: .readOnly,
+          requirement: .init(
+            access: .read, paths: [.init("paths[]", .read, defaultToProject: true)]),
           projectRequirement: .required,
-          localOnly: false, usesNetwork: false
+          localOnly: false, usesNetwork: false, hostOperation: .git
         )
       ),
       ToolDefinition(
         tool: MCPTool(
           name: "git.commit_files",
           description:
-            "Return bounded read-only file change metadata for one constrained Git revision through the registered git CLI provider. This uses fixed git show -s and git diff-tree --name-status -M argv and does not change refs, the index, or the working tree.",
+            "Return bounded read-only file change metadata for one constrained Git revision through the fixed host Git helper. This uses fixed git show -s and git diff-tree --name-status -M argv and does not change refs, the index, or the working tree.",
           inputSchema: objectSchema(
             properties: [
               "revision": stringSchema(
@@ -1048,15 +1090,16 @@ extension GitToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "git.commit_files", risk: .readOnly,
+          requirement: .init(access: .read, paths: [.project(.read)]),
           projectRequirement: .required,
-          localOnly: false, usesNetwork: false
+          localOnly: false, usesNetwork: false, hostOperation: .git
         )
       ),
       ToolDefinition(
         tool: MCPTool(
           name: "git.show",
           description:
-            "Return bounded read-only git object details through the registered git CLI provider.",
+            "Return bounded read-only git object details through the fixed host Git helper.",
           inputSchema: objectSchema(
             properties: [
               "revision": stringSchema("Revision or object name. Defaults to HEAD."),
@@ -1075,15 +1118,17 @@ extension GitToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "git.show", risk: .readOnly,
+          requirement: .init(
+            access: .read, paths: [.init("paths[]", .read, defaultToProject: true)]),
           projectRequirement: .required,
-          localOnly: false, usesNetwork: false
+          localOnly: false, usesNetwork: false, hostOperation: .git
         )
       ),
       ToolDefinition(
         tool: MCPTool(
           name: "git.add",
           description:
-            "Stage explicit project-relative paths through the registered git CLI provider. This is a write operation.",
+            "Stage explicit project-relative paths through the fixed host Git helper. This is a write operation.",
           inputSchema: objectSchema(
             properties: [
               "paths": stringArraySchema(
@@ -1101,15 +1146,16 @@ extension GitToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "git.add", risk: .destructive,
+          requirement: .init(access: .projectWrite, paths: [.init("paths[]", .write)]),
           projectRequirement: .required,
-          localOnly: false, usesNetwork: false
+          localOnly: false, usesNetwork: false, hostOperation: .git
         )
       ),
       ToolDefinition(
         tool: MCPTool(
           name: "git.unstage",
           description:
-            "Unstage explicit project-relative paths through the registered git CLI provider using git restore --staged. This is a write operation on the Git index.",
+            "Unstage explicit project-relative paths through the fixed host Git helper using git restore --staged. This is a write operation on the Git index.",
           inputSchema: objectSchema(
             properties: [
               "paths": stringArraySchema(
@@ -1127,15 +1173,16 @@ extension GitToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "git.unstage", risk: .destructive,
+          requirement: .init(access: .projectWrite, paths: [.init("paths[]", .write)]),
           projectRequirement: .required,
-          localOnly: false, usesNetwork: false
+          localOnly: false, usesNetwork: false, hostOperation: .git
         )
       ),
       ToolDefinition(
         tool: MCPTool(
           name: "git.restore_worktree",
           description:
-            "Discard unstaged working-tree changes for explicit project-relative paths through the registered git CLI provider using git restore --worktree. This is a destructive write operation and requires confirm_discard=true when dry_run is false.",
+            "Discard unstaged working-tree changes for explicit project-relative paths through the fixed host Git helper using git restore --worktree. This is a destructive write operation and requires confirm_discard=true when dry_run is false.",
           inputSchema: objectSchema(
             properties: [
               "paths": stringArraySchema(
@@ -1156,25 +1203,26 @@ extension GitToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "git.restore_worktree", risk: .destructive,
+          requirement: .init(access: .projectWrite, paths: [.init("paths[]", .write)]),
           projectRequirement: .required,
-          localOnly: false, usesNetwork: false
+          localOnly: false, usesNetwork: false, hostOperation: .git
         )
       ),
       ToolDefinition(
         tool: MCPTool(
           name: "git.commit",
           description:
-            "Create a git commit through the registered git CLI provider. This is a write operation.",
+            "Commit only the specified project-relative paths with git commit --only, preserving other staged changes. This is a write operation.",
           inputSchema: objectSchema(
             properties: [
               "message": stringSchema("Commit message, up to 10000 characters."),
-              "all": boolSchema("Whether to stage tracked modifications with --all."),
+              "paths": stringArraySchema("Required literal project-relative paths to commit."),
               "allow_empty": boolSchema("Whether to allow an empty commit."),
               "dry_run": boolSchema(
                 "Whether to run git commit --dry-run without creating a commit."),
               "timeout_ms": integerSchema("Optional timeout in milliseconds."),
             ],
-            required: ["message"]
+            required: ["message", "paths"]
           ),
           annotations: MCPToolAnnotations(
             readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false
@@ -1183,14 +1231,15 @@ extension GitToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "git.commit", risk: .projectWrite,
+          requirement: .init(access: .projectWrite, paths: [.init("paths[]", .write)]),
           projectRequirement: .required,
-          localOnly: false, usesNetwork: false
+          localOnly: false, usesNetwork: false, hostOperation: .git
         )
       ),
     ]
   }
 
-  private static func objectSchema(
+  static func objectSchema(
     properties: [String: JSONValue] = [:],
     required: [String] = []
   ) -> JSONValue {
@@ -1205,7 +1254,7 @@ extension GitToolProvider {
     return .object(object)
   }
 
-  private static func stringSchema(_ description: String) -> JSONValue {
+  static func stringSchema(_ description: String) -> JSONValue {
     .object(["type": .string("string"), "description": .string(description)])
   }
 
@@ -1213,7 +1262,7 @@ extension GitToolProvider {
     .object(["type": .string("integer"), "description": .string(description)])
   }
 
-  private static func boolSchema(_ description: String) -> JSONValue {
+  static func boolSchema(_ description: String) -> JSONValue {
     .object(["type": .string("boolean"), "description": .string(description)])
   }
 

@@ -1,7 +1,6 @@
 import ComputerMCPComputerUse
 import ComputerMCPConfiguration
 import ComputerMCPCore
-import ComputerMCPDelivery
 import ComputerMCPDownstream
 import ComputerMCPGateway
 import ComputerMCPPlatform
@@ -19,7 +18,12 @@ import ComputerMCPToolsStructured
 import ComputerMCPToolsSystem
 
 package struct MacOSToolProviders: GatewayToolProviderFactory {
-  package init() {}
+  private let launcher: ExecutionLauncher
+
+  package init(launcher: ExecutionLauncher = ExecutionLauncher(platform: DarwinExecutionPlatform()))
+  {
+    self.launcher = launcher
+  }
 
   package func makeProviders(
     configuration: GatewayConfiguration,
@@ -30,7 +34,7 @@ package struct MacOSToolProviders: GatewayToolProviderFactory {
     hostContext: MCPHostContext
   ) -> GatewayToolRegistry {
     let environment = ToolEnvironment(
-      configuration: configuration, commandRunner: commandRunner,
+      launcher: launcher, configuration: configuration, commandRunner: commandRunner,
       processManager: processManager, shellManager: shellManager,
       mediaInspector: DarwinMediaInspector(),
       sqliteCommand: .init(id: "sqlite3", executable: "/usr/bin/sqlite3"),
@@ -39,7 +43,7 @@ package struct MacOSToolProviders: GatewayToolProviderFactory {
         "mdls": "/usr/bin/mdls", "diff": "/usr/bin/diff", "curl": "/usr/bin/curl",
         "zipinfo": "/usr/bin/zipinfo", "tar": "/usr/bin/tar", "unzip": "/usr/bin/unzip",
         "zip": "/usr/bin/zip",
-        "sw_vers": "/usr/bin/sw_vers", "pmset": "/usr/bin/pmset", "ps": "/bin/ps",
+        "sw_vers": "/usr/bin/sw_vers", "pmset": "/usr/bin/pmset",
         "log": "/usr/bin/log", "launchctl": "/bin/launchctl", "ifconfig": "/sbin/ifconfig",
         "scutil": "/usr/sbin/scutil", "networksetup": "/usr/sbin/networksetup",
         "netstat": "/usr/sbin/netstat", "arp": "/usr/sbin/arp", "ping": "/sbin/ping",
@@ -47,7 +51,7 @@ package struct MacOSToolProviders: GatewayToolProviderFactory {
       ],
       extendedAttributes: DarwinExtendedAttributes(), fileTrasher: DarwinFileTrasher(),
       projectOpener: DarwinProjectOpener(commandRunner: commandRunner),
-      systemProbe: DarwinSystemProbe())
+      systemProbe: DarwinSystemProbe(), worktrees: hostContext.worktrees)
     return makeProviders(
       toolEnvironment: environment, mcpClient: mcpClient, hostContext: hostContext)
   }
@@ -62,10 +66,10 @@ package struct MacOSToolProviders: GatewayToolProviderFactory {
       workingDirectory: configuration.projectDirectory, environment: environment.environment,
       hostContext: hostContext)
     let mcp = MCPToolProvider(environment: environment, mcpClient: client)
-    let cli = CLIToolProvider(environment: environment)
-    let delivery = DeliveryToolProvider(environment: environment)
+    let cli = CLIToolProvider(
+      environment: environment,
+      providerDiscovery: (hostContext as? MCPHostContext)?.cliDiscovery ?? { @Sendable _ in nil })
     let providers: [any GatewayToolProvider] = [
-      delivery,
       cli, ProcessToolProvider(environment: environment),
       ShellToolProvider(environment: environment),
       mcp, SkillsToolProvider(environment: environment),
@@ -79,7 +83,10 @@ package struct MacOSToolProviders: GatewayToolProviderFactory {
       providers: {
         let configured = try ConfiguredMCPToolProvider(environment: environment, mcpClient: client)
           .snapshot()
-        return try configured.listed(among: providers) + (try cli.treeProviders()) + [computerUse]
+        // Trees load before any definition is read, so `cli.list` reports this refresh's
+        // discovery failures.
+        let trees = try cli.treeProviders()
+        return try configured.listed(among: providers) + trees + [computerUse]
       },
       invalidations: client.toolChanges(),
       refreshInterval: configuration.mcp.servers.contains {
@@ -88,9 +95,9 @@ package struct MacOSToolProviders: GatewayToolProviderFactory {
         || configuration.cli.commands.contains { $0.tree != nil } ? .seconds(30) : nil,
       downstreamPolicy: { try mcp.downstreamPolicy(for: $0, context: $1) },
       shutdown: {
-        await delivery.shutdown()
         await environment.shellManager.shutdown()
         await environment.registeredCommands.execution.shutdown()
+        await environment.registeredCommands.inspectionExecution.shutdown()
         await client.shutdown()
       })
   }

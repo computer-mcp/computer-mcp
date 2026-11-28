@@ -1,4 +1,9 @@
 import ComputerMCPMacOS
+import ComputerMCPPermissions
+import ComputerMCPPlatform
+import ComputerMCPSandbox
+import ComputerMCPTestSupport
+import ComputerMCPToolKit
 import CryptoKit
 import Foundation
 import Testing
@@ -10,6 +15,10 @@ import Testing
 @testable import ComputerMCPProcess
 @testable import ComputerMCPToolsCLI
 
+#if os(macOS)
+  import ComputerMCPDarwinTestSupport
+#endif
+
 /// An explicit local dependency check, isolated from production App state and sockets.
 @Suite(
   .enabled(
@@ -19,11 +28,15 @@ import Testing
   .timeLimit(.minutes(1)))
 struct NativeCLITreeIntegrationTests {
   @Test
-  func independentPluginAndDirectRegistrationExecuteTheSameNativeTree() async throws {
+  func independentPluginAndDirectRegistrationShareTheNativeTree() async throws {
     let environment = ProcessInfo.processInfo.environment
-    let packageURL = URL(
-      fileURLWithPath: try #require(environment["COMPUTER_MCP_FORMATTER_PLUGIN"]))
-    let executable = try #require(environment["COMPUTER_MCP_FORMATTER_EXECUTABLE"])
+    let packageURL = try ProjectPathResolver.canonicalProject(
+      URL(
+        fileURLWithPath: #require(environment["COMPUTER_MCP_FORMATTER_PLUGIN"])))
+    let executable = try ProjectPathResolver.canonicalProject(
+      URL(
+        fileURLWithPath: #require(environment["COMPUTER_MCP_FORMATTER_EXECUTABLE"]))
+    ).path
     let package = try PluginPackage.load(at: packageURL)
     #expect(package.manifest.id == "swift-format")
     let manifestBefore = try Data(
@@ -39,8 +52,9 @@ struct NativeCLITreeIntegrationTests {
           stdoutSHA256: "afce7a2f8c5b0825b90ce7061c6508eb5545b07b1414ed853c23a0fb6ab8c14e"),
       ])
     let executableBefore = try Self.digest(executable)
-    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
-    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: false)
+    let temporary = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    try FileManager.default.createDirectory(at: temporary, withIntermediateDirectories: false)
+    let root = try ProjectPathResolver.canonicalProject(temporary)
     defer { try? FileManager.default.removeItem(at: root) }
     let plugin = try PluginResolver.resolve(
       package: package, source: .init(kind: .development, root: package.root),
@@ -48,20 +62,37 @@ struct NativeCLITreeIntegrationTests {
       dependencyExecutables: ["formatter": URL(fileURLWithPath: executable)],
       hostVersion: PluginVersion("1.0.29"), architecture: "arm64")
     try #require(plugin.diagnostics.isEmpty && plugin.cliCommands.count == 1)
-    let projects = [
-      RegisteredProject(id: "native-fixture", displayName: "Native fixture", rootPath: root.path)
-    ]
+    let fixture = try FixedHostFixture(fullAccess: false, lifecycle: true)
+    defer { try? FileManager.default.removeItem(at: fixture.root) }
+    try await fixture.initializeRepository()
+    let made = try await fixture.call("git.worktree_add", ["name": .string("formatter")])
+    let projectID = try #require(
+      made.objectValue?["structuredContent"]?.objectValue?["result"]?.objectValue?["project_id"]?
+        .stringValue)
     let configuration = GatewayConfiguration(
       runtime: .init(caller: .localCLI, profileID: .localAdmin),
       profiles: [
         .init(
-          id: .localAdmin, capabilities: ["*"], projects: ["native-fixture"],
-          allowedCallers: [.localCLI], fullShellEnabled: true, mode: .localFullAccess,
-          confirmationPolicy: .never)
+          id: .localAdmin,
+          permissions: fixturePermissions([
+            .project("fixture"): .granted(.write),
+            .plugin(package.manifest.id): .granted(.use),
+          ]), allowedCallers: [.localCLI])
       ])
+    let database = fixture.database
+    let profile = configuration.profiles[0].grant
+    try database.saveProfile(profile)
+    let registeredProjects = try database.projects()
+    let context = ExecutionContext(
+      caller: .localCLI, profileID: .localAdmin,
+      projectID: projectID, trustedPrincipalID: "formatter-owner")
     let runtime = try GatewayRuntime(
-      configuration: configuration, registeredProjects: projects,
-      platform: MacOSPlatform.services, plugins: [plugin])
+      configuration: configuration, context: context, database: database,
+      registeredProjects: registeredProjects, platform: fixture.platform, plugins: [plugin])
+    _ = try runtime.makeControlSession()
+    try fixtureApprovePlugin(
+      package, database: database, runtime: runtime.permissionRuntime,
+      permissions: fixturePermissions([.project("fixture"): .granted(.write)]))
     do {
       let tools = try runtime.listTools(context: .empty).filter { $0.name.hasPrefix("cli_") }
       #expect(tools.count == 5)
@@ -72,7 +103,9 @@ struct NativeCLITreeIntegrationTests {
           tree: .init(kind: .file, path: treeURL.path))
       ]
       let directRuntime = try GatewayRuntime(
-        configuration: direct, registeredProjects: projects, platform: MacOSPlatform.services,
+        configuration: direct, context: context, database: database,
+        registeredProjects: registeredProjects,
+        platform: MacOSPlatform.services(launcher: testExecutionLauncher()),
         plugins: [])
       let directTools = try directRuntime.listTools(context: .empty).filter {
         $0.name.hasPrefix("cli_")
@@ -87,63 +120,128 @@ struct NativeCLITreeIntegrationTests {
         "paths": .array([.string("-")]), "source": .string("let value=1\n"),
         "configuration": .string("{}"), "color_diagnostics": .bool(false),
       ])
-      let formatted = try await runtime.callToolAsync(
+      let observerDatabase = try GatewayDatabase(inMemory: ())
+      for project in registeredProjects { try observerDatabase.saveProject(project) }
+      let observe = try GatewayRuntime(
+        configuration: direct,
+        context: .init(
+          caller: .secureTunnel, profileID: .chatGPTObserve, projectID: "fixture",
+          trustedPrincipalID: "formatter-observer"),
+        database: observerDatabase, registeredProjects: observerDatabase.projects(),
+        platform: MacOSPlatform.services(launcher: testExecutionLauncher()), plugins: [])
+      do {
+        let requestable = try #require(
+          try observe.listTools(context: .empty).first { $0.name == format.name })
+        #expect(requestable.meta?.objectValue?["computer_mcp"]?.objectValue?["requirements"] != nil)
+        await #expect(throws: GatewayPermissionCallError.self) {
+          try await observe.callToolAsync(name: format.name, arguments: arguments, context: .empty)
+        }
+      } catch {
+        await observe.shutdown()
+        throw error
+      }
+      await observe.shutdown()
+      let admitted = try await runtime.callToolAsync(
         name: format.name, arguments: arguments, context: .empty)
+      #expect(admitted.objectValue?["isError"] == .bool(false))
+      #expect(Self.result(admitted)?["stdout"]?.objectValue?["data"] == .string("let value = 1\n"))
+      #expect(Self.result(admitted)?["exit_code"] == .integer(0))
+      let formatted = try await Self.callOwnedProvider(
+        registration: direct.cli.commands[0], tree: tree, project: root,
+        name: format.name, arguments: arguments, executableDigest: executableBefore)
       #expect(formatted.objectValue?["isError"] == .bool(false))
       #expect(Self.result(formatted)?["stdout"]?.objectValue?["data"] == .string("let value = 1\n"))
       #expect(Self.result(formatted)?["stderr"]?.objectValue?["data"] == .string(""))
-      let incompatible = CLITreeToolProvider(
-        registration: direct.cli.commands[0],
-        tree: .init(
-          formatVersion: tree.formatVersion, source: tree.source,
-          executableVersion: tree.executableVersion, coverage: tree.coverage,
-          omissions: tree.omissions, commands: tree.commands,
-          executableChecks: [.init(args: ["--version"], stdout: "incompatible\n")]),
-        project: root, execution: CLIProcessExecution(),
-        timeoutMilliseconds: 5_000, maxOutputBytes: 4_096)
+      let incompatible = CLITree(
+        formatVersion: tree.formatVersion, source: tree.source,
+        executableVersion: tree.executableVersion, coverage: tree.coverage,
+        omissions: tree.omissions, commands: tree.commands,
+        executableChecks: [.init(args: ["--version"], stdout: "incompatible\n")])
       await #expect(throws: CLITreeError.self) {
-        try await incompatible.callToolAsync(
-          .init(name: format.name, arguments: arguments, context: .empty))
+        try await Self.callOwnedProvider(
+          registration: direct.cli.commands[0], tree: incompatible, project: root,
+          name: format.name, arguments: arguments, executableDigest: executableBefore)
       }
-      await incompatible.execution.shutdown()
       var lintArguments = try #require(arguments.objectValue)
       lintArguments["strict"] = .bool(true)
-      let linted = try await runtime.callToolAsync(
-        name: lint.name, arguments: .object(lintArguments), context: .empty)
+      let linted = try await Self.callOwnedProvider(
+        registration: direct.cli.commands[0], tree: tree, project: root,
+        name: lint.name, arguments: .object(lintArguments), executableDigest: executableBefore)
       #expect(linted.objectValue?["isError"] == .bool(true))
       #expect(Self.result(linted)?["exit_code"] == .number(1))
       #expect(
         Self.result(linted)?["stderr"]?.objectValue?["data"]?.stringValue?.contains("[Spacing]")
           == true)
-      await #expect(
+      let raw = CLIToolProvider(
+        environment: ToolEnvironment(
+          launcher: testExecutionLauncher(), configuration: direct, environment: [:]))
+      #expect(
         throws: GatewayToolError.disabled(
           "CLI command 'native-formatter' does not allow arbitrary args.")
       ) {
-        try await runtime.callToolAsync(
-          name: "cli.exec",
-          arguments: .object([
-            "id": .string("native-formatter"), "argv": .array([.string("--version")]),
-          ]), context: .empty)
+        try raw.callTool(
+          .init(
+            name: "cli.exec",
+            arguments: .object([
+              "id": .string("native-formatter"), "argv": .array([.string("--version")]),
+            ]), context: .empty))
       }
-      let observe = try GatewayRuntime(
-        configuration: direct, context: .init(caller: .secureTunnel, profileID: .chatGPTObserve),
-        registeredProjects: projects, platform: MacOSPlatform.services, plugins: [])
-      #expect(try !observe.listTools(context: .empty).contains { $0.name == format.name })
-      await #expect(throws: (any Error).self) {
-        try await observe.callToolAsync(name: format.name, arguments: arguments, context: .empty)
-      }
-      await observe.shutdown()
     } catch {
       await runtime.shutdown()
+      await fixture.runtime.shutdown()
       throw error
     }
     await runtime.shutdown()
+    await fixture.runtime.shutdown()
     #expect(
       try Data(contentsOf: package.root.appendingPathComponent(PluginManifest.filename))
         == manifestBefore)
     #expect(try Data(contentsOf: treeURL) == treeBefore)
     #expect(try Self.digest(executable) == executableBefore)
     #expect(try FileManager.default.contentsOfDirectory(atPath: root.path).isEmpty)
+  }
+
+  private static func callOwnedProvider(
+    registration: CLICommandConfig, tree: CLITree, project: URL,
+    name: String, arguments: JSONValue, executableDigest: Data
+  ) async throws -> JSONValue {
+    let execution = CLIProcessExecution(
+      launcher: testExecutionLauncher(), inheritsEnvironment: false)
+    let provider = CLITreeToolProvider(
+      registration: registration, tree: tree, project: project, execution: execution,
+      timeoutMilliseconds: 5_000, maxOutputBytes: 4_096)
+    do {
+      let result = try await BlockingOperationExecutor(label: "native-formatter-owner").perform {
+        try #require(registration.id == "native-formatter" && !registration.allowAnyArgs)
+        try #require(registration.env.isEmpty && registration.interpreterBindings.isEmpty)
+        try #require(try digest(registration.executable) == executableDigest)
+        let commandID = name.hasSuffix("_lint") ? "lint" : "format"
+        try #require(name.hasSuffix("_" + commandID))
+        let command = try #require(tree.commands.first { $0.id == commandID })
+        try #require(command.path == [commandID] || commandID == "format" && command.path.isEmpty)
+        var expected: [String: JSONValue] = [
+          "paths": .array([.string("-")]), "source": .string("let value=1\n"),
+          "configuration": .string("{}"), "color_diagnostics": .bool(false),
+        ]
+        if commandID == "lint" { expected["strict"] = .bool(true) }
+        try #require(arguments == .object(expected))
+        try #require(
+          tree.executableChecks.allSatisfy {
+            $0.args == ["--version"] || $0.args == ["--experimental-dump-help"]
+          })
+        let administration = ExecutionAdministration(
+          mode: .fullAccess,
+          environment: try ExecutionEnvironment(fullAccessVariables: ["PATH": "/usr/bin:/bin"]))
+        return try ExecutionAdministration.$current.withValue(administration) {
+          try provider.callTool(.init(name: name, arguments: arguments, context: .empty))
+        }
+      }
+      await execution.shutdown()
+      return result
+    } catch {
+      await execution.shutdown()
+      throw error
+    }
   }
 
   private static func result(_ value: JSONValue) -> [String: JSONValue]? {

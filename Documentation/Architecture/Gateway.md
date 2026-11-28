@@ -10,7 +10,7 @@ authorization and lifecycle. The gateway does not plan, rank, select or
 semantically rewrite tools.
 
 `ComputerMCPGateway` owns the platform-neutral runtime, provider router, admission,
-approvals, receipts, continuations, host services, HTTP adapter, domain stores,
+permission requests, receipts, continuations, host services, HTTP adapter, domain stores,
 owned work and audit. `ComputerMCPMacOS` supplies platform services and assembles
 tool providers. The control plane supplies management through
 `GatewayManagementProvider` and local HTTP client control through
@@ -18,11 +18,11 @@ tool providers. The control plane supplies management through
 and audit. Proxy authentication uses the injected `SecretStore` with noninteractive
 MCP HTTP reads, and bound host services use the injected Git executable.
 
-`ComputerMCPDelivery` supplies the `delivery` provider for host-declared isolated
-repository edits. Project composition filters `delivery.scopes` by project ID.
-The provider owns the shared Git-directory lock, atomic file journals, execution
-and recovery; ordinary gateway policy owns grants and confirmation. See
-[Isolated delivery](../Reference/Delivery.md).
+`ComputerMCPWorktrees` owns repository coordination, private repository topology,
+publication, merge and removal journals. Gateway adapters authorize every touched
+path, bind execution use leases and publish derived project generations without
+restarting the connection. See [Worktrees](Worktrees.md) and the
+[operating flow](../Reference/Worktrees.md).
 
 ## App-owned Topology
 
@@ -56,7 +56,9 @@ bookmarks or Keychain state.
 `GatewayRuntime` composes `GatewayToolProvider` instances through
 `GatewayProviderRouter`. Providers return `ToolDefinition` values through
 `definitions()`, pairing MCP metadata with an explicit `CapabilityDescriptor`
-for risk, project requirements, network use, local-only access and TCC services.
+for catalog classification and a `ToolRequirement` for path, project, privacy,
+execution and forwarding requirements. Classification metadata is not grant
+authority.
 Configured and reexported MCP tools declare their descriptors during discovery
 using configuration risk and downstream declarations.
 
@@ -64,13 +66,13 @@ The execution sequence is:
 
 1. Resolve the exact tool name and host-owned provider identity.
 2. Bind the verified principal, configured caller, profile and `project_id`.
-3. Read the current grant revision and check mode, capability, caller, Full Shell, path/network
-   policy, and TCC requirements.
-4. Apply the confirmation policy and validate/consume an approved operation
-   ticket when required. Only local administration resolves approval.
-5. Dispatch to one provider.
-6. Bound output and return structured content or a stable error.
-7. Persist a redacted audit decision.
+3. Resolve current permissions, managed ceilings, project/path requirements and
+   the exact host-owned route through the permission library.
+4. Return a durable request for missing requestable permissions, or persist
+   permission admission and its audit event before preparing execution.
+5. Install the enforceable execution context and dispatch to one provider.
+6. Bound output and persist the digest-only outcome before returning it. A failed
+   completion write reports an unknown outcome and never authorizes replay.
 
 Unknown tools, projects and providers fail closed. Domain adapters validate
 their own protocol methods inside the scope delegated by the host.
@@ -79,7 +81,8 @@ Each provider call receives a `ToolInvocation` with an explicit
 `InvocationContext`: host admission, the live control session and the selected
 continuation route. Call-scoped downstream discovery, execution and observation
 receive the same context. Shared catalog refresh uses the empty context so one
-session cannot narrow another session’s catalog. Gateway constructs `InvocationAdmission` after authorization for
+session cannot narrow another session’s catalog; that context cannot launch a
+program. Cold downstream discovery requires an admitted catalog request. Gateway constructs `InvocationAdmission` after authorization for
 MCP tools; builtin tools carry nil admission. Blocking executor hops pass the
 context as an argument. Downstream authorization reads the live session at the
 time of each check, including after restriction or revocation.
@@ -93,12 +96,11 @@ their own lifetimes after the RPC returns. Host callbacks recover live authority
 from retained invocations. Execution-owner routing and request tracing remain
 Gateway-owned state.
 
-Profile permission updates apply to subsequent discovery and calls without
-restarting unrelated transports. A profile change invalidates its outstanding
-approvals. Existing sessions retain their verified principal and profile;
-selecting the default profile affects new admissions. Disconnecting a client
-does not stop owned execution. Revocation and explicit cancellation are
-separate operations.
+Profile permission updates apply without restarting unrelated transports. They
+invalidate stale consent, reconcile pending requests and revoke affected running
+executions. Sessions retain their verified principal and profile; selecting a
+default profile affects new admissions. Disconnect ends connection-scoped work;
+standing work remains subject to current authority and explicit cancellation.
 
 MCP requests with a caller-stable id reserve a durable receipt before dispatch.
 Synchronous and asynchronous routes use the same identity and input digest.
@@ -116,8 +118,9 @@ The symlink-resolved canonical root is the registration identity, so adding the
 same directory through another path spelling returns the existing project.
 Historical duplicate ids can be repaired through a reviewed, digest-bound
 deduplication plan; aliases preserve prior audit and ownership references.
-`project.list` and `project.describe` are always the discovery path. When
-multiple projects are granted, a scoped call must include `project_id`;
+`project.list` and `project.describe` expose only ID, display name and access
+status without Project permission; root and detailed metadata require access. When
+multiple projects are available, a scoped call must include `project_id`;
 there is no mutable global current directory.
 
 Manifest `[[projects]]` entries support standalone development. App bookmarks
@@ -130,9 +133,9 @@ are persisted separately and are not copied into TOML.
 | CLI | `[[cli.commands]]` or plugin contribution | Verified command-tree projection and deterministic argv; explicit raw CLI access |
 | MCP | `[[mcp.servers]]` or plugin contribution | Persistent stdio or Streamable HTTP client session |
 | Builtin | `[builtin].enabled` | Explicit typed local capability |
-| Skills | `[skills]` or plugin contribution | Bounded reads inside registered Skill roots |
-| Native AX fallback | profile capability | Generic UI observation/control with TCC preflight |
-| Shell | `[policy]` plus local grant | Direct argv or shell script with complete process I/O |
+| Skills | `[skills]` or accessible plugin contribution | Bounded reads inside admitted Skill roots; archive-installed contributions are unavailable |
+| Native AX fallback | Screen / Desktop control permissions | Generic UI observation/control with TCC preflight |
+| Shell | `policy.shell_enabled`, Project `write` and an enforceable execution context | Direct argv or shell script with complete process I/O |
 
 CLI trees define projected tools and exact argument constraints. Raw
 `cli.describe`, `cli.help` and `cli.exec` remain available under their own policy;
@@ -165,3 +168,12 @@ Codex has two distinct relationships:
 
 These relationships share no implicit authority. Both are evaluated by the
 same explicit gateway profile and project policy.
+
+Skills aggregate calls select accessible roots within the permission transaction.
+Each scanned root carries a library-purpose read requirement and, for a plugin
+contribution, Plugin use. An inaccessible root is omitted from aggregate results;
+an explicitly selected root retains its permission refusal or request.
+
+Archive-installed plugin Skills remain unavailable because their content resides
+under protected host storage alongside private installation state. Plugin use
+and Skills permissions do not bypass the host-data boundary.

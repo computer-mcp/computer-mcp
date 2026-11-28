@@ -4,6 +4,10 @@ import Testing
 
 @testable import ComputerMCPTransport
 
+#if os(macOS)
+  import ComputerMCPDarwinTestSupport
+#endif
+
 #if canImport(FoundationNetworking)
   import FoundationNetworking
 
@@ -62,7 +66,7 @@ import Testing
 
     @Test
     func stalledConsumerFailsAndCancelsNearTheQueueBound() async throws {
-      try await HTTPStreamProcessFixture.withFixture { fixture in
+      try await HTTPStreamProcessFixture.withFixture(launcher: testExecutionLauncher()) { fixture in
         let session = Self.session()
         defer { session.invalidateAndCancel() }
         try await Self.withTimeout {
@@ -96,7 +100,7 @@ import Testing
 
     @Test
     func keepingUpConsumerReceivesEveryByteInOrderBeyondTheQueueBound() async throws {
-      try await HTTPStreamProcessFixture.withFixture { fixture in
+      try await HTTPStreamProcessFixture.withFixture(launcher: testExecutionLauncher()) { fixture in
         let session = Self.session()
         defer { session.invalidateAndCancel() }
         try await Self.withTimeout {

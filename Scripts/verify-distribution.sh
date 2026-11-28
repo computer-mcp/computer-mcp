@@ -95,6 +95,8 @@ BUILD_IDENTITY="$APP_PATH/Contents/Resources/ComputerMCPBuildIdentity.plist"
 
 [[ -x "$APP_PATH/Contents/MacOS/Computer MCP" ]] || fail "Missing App executable."
 [[ -x "$CLI_PATH" ]] || fail "Missing embedded CLI."
+[[ -x "$APP_PATH/Contents/Helpers/computer-mcp-execution-bootstrap" ]] \
+  || fail "Missing execution bootstrap."
 [[ -f "$BUILD_IDENTITY" ]] || fail "Missing signed build identity."
 for key in CFBundleIconFile CFBundleIconName; do
   [[ "$(/usr/bin/plutil -extract "$key" raw -o - "$APP_PATH/Contents/Info.plist")" == "AppIcon" ]] \
@@ -289,6 +291,7 @@ for relative_path in \
   "Contents/Info.plist" \
   "Contents/MacOS/Computer MCP" \
   "Contents/Resources/computer-mcp" \
+  "Contents/Helpers/computer-mcp-execution-bootstrap" \
   "Contents/Resources/AppIcon.icns" \
   "Contents/Resources/Assets.car" \
   "Contents/Resources/ComputerMCPBuildIdentity.plist" \

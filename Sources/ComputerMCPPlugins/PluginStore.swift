@@ -1,5 +1,6 @@
 import ComputerMCPConfiguration
 import ComputerMCPPlatform
+import ComputerMCPProcess
 import Crypto
 import Foundation
 
@@ -33,7 +34,21 @@ package struct PluginInstallationRecord: Codable, Equatable, Sendable, Identifia
   package let source: PluginSource
   /// Fingerprint of the parsed declaration; not an artifact signature or package content hash.
   package let manifestDigest: String
+  package let declarations: PluginPermissionDeclarations?
   package let registeredAt: Date
+
+  package init(
+    id: String, pluginID: String, version: PluginVersion, source: PluginSource,
+    manifestDigest: String, declarations: PluginPermissionDeclarations? = nil, registeredAt: Date
+  ) {
+    self.id = id
+    self.pluginID = pluginID
+    self.version = version
+    self.source = source
+    self.manifestDigest = manifestDigest
+    self.declarations = declarations
+    self.registeredAt = registeredAt
+  }
 }
 
 package struct PluginStoreSnapshot: Codable, Equatable, Sendable {
@@ -161,17 +176,19 @@ package struct PluginStoreResolution: Sendable {
 /// Host-owned state changes are synchronous database transactions inside this actor.
 /// Revision comparison in the database also protects against other store instances/processes.
 package actor PluginStore {
+  let launcher: ExecutionLauncher
   let stateStore: any PluginStateStore
   let directoryFactory: any PluginArchiveDirectoryFactory
   let applications: any ApplicationBundleLocating
   private let validateSnapshot: @Sendable (PluginStoreSnapshot) throws -> Void
 
   package init(
-    stateStore: any PluginStateStore,
+    launcher: ExecutionLauncher = ExecutionLauncher(), stateStore: any PluginStateStore,
     directoryFactory: any PluginArchiveDirectoryFactory,
     applications: any ApplicationBundleLocating,
     validateSnapshot: @escaping @Sendable (PluginStoreSnapshot) throws -> Void = { _ in }
   ) {
+    self.launcher = launcher
     self.stateStore = stateStore
     self.directoryFactory = directoryFactory
     self.applications = applications
@@ -197,6 +214,7 @@ package actor PluginStore {
         id: UUID().uuidString,
         pluginID: plugin.manifest.id, version: plugin.manifest.version,
         source: PluginSource(kind: .development, root: plugin.root), manifestDigest: digest,
+        declarations: PluginPermissionDeclarations(plugin.manifest),
         registeredAt: .now)
     if existing == nil { state.installations.append(record) }
     state.selectedInstallations[record.pluginID] = record.id
@@ -403,7 +421,7 @@ package actor PluginStore {
     return next
   }
 
-  static func manifestDigest(_ manifest: PluginManifest) throws -> String {
+  package static func manifestDigest(_ manifest: PluginManifest) throws -> String {
     let encoder = JSONEncoder()
     encoder.outputFormatting = [.sortedKeys]
     return SHA256.hash(data: try encoder.encode(manifest)).map { String(format: "%02x", $0) }

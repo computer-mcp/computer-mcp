@@ -1,4 +1,5 @@
 import ComputerMCPCore
+import ComputerMCPPlatformPOSIX
 import ComputerMCPToolKit
 import Foundation
 import TOML
@@ -23,7 +24,7 @@ extension StructuredToolProvider {
       throw GatewayToolError.invalidArguments("File exceeds max_bytes: \(path)")
     }
 
-    let handle = try FileHandle(forReadingFrom: url)
+    let handle = try AuthorizedFileReader(url: url)
     defer {
       try? handle.close()
     }
@@ -67,7 +68,7 @@ extension StructuredToolProvider {
       throw GatewayToolError.invalidArguments("Path is not a file: \(path)")
     }
 
-    let handle = try FileHandle(forReadingFrom: url)
+    let handle = try AuthorizedFileReader(url: url)
     defer {
       try? handle.close()
     }
@@ -176,6 +177,9 @@ extension StructuredToolProvider {
   }
 
   internal func writeJSON(arguments object: [String: JSONValue]) throws -> JSONValue {
+    let files = try ProjectFileAccess(
+      project: projectScope.projectDirectory, environment: environment.environment,
+      commands: environment.registeredCommands)
     let path = try requiredString("path", in: object)
     guard let value = object["value"] else {
       throw GatewayToolError.invalidArguments("Missing required JSON argument: value")
@@ -220,7 +224,7 @@ extension StructuredToolProvider {
       throw GatewayToolError.invalidArguments("Encoded JSON exceeds max_bytes.")
     }
 
-    let url = try projectScope.resolvedProjectURL(path)
+    let url = try files.url(path)
     let parent = url.deletingLastPathComponent()
     let fileManager = FileManager.default
     var parentIsDirectory = ObjCBool(false)
@@ -251,13 +255,7 @@ extension StructuredToolProvider {
 
     let existingSizeBytes = try existingFileSizeBytes(url: url, existed: existed)
     if !dryRun {
-      if createDirectories && !parentExists {
-        try fileManager.createDirectory(
-          at: parent,
-          withIntermediateDirectories: true
-        )
-      }
-      try data.write(to: url, options: .atomic)
+      try files.write(data, to: url, overwrite: overwrite, createDirectories: createDirectories)
     }
 
     var payload: [String: JSONValue] = [
@@ -309,7 +307,7 @@ extension StructuredToolProvider {
       throw GatewayToolError.invalidArguments("File exceeds max_bytes: \(path)")
     }
 
-    let handle = try FileHandle(forReadingFrom: url)
+    let handle = try AuthorizedFileReader(url: url)
     defer {
       try? handle.close()
     }
@@ -361,7 +359,7 @@ extension StructuredToolProvider {
       throw GatewayToolError.invalidArguments("File exceeds max_bytes: \(path)")
     }
 
-    let handle = try FileHandle(forReadingFrom: url)
+    let handle = try AuthorizedFileReader(url: url)
     defer {
       try? handle.close()
     }
@@ -458,7 +456,7 @@ extension StructuredToolProvider {
       throw GatewayToolError.invalidArguments("File exceeds max_bytes: \(path)")
     }
 
-    let handle = try FileHandle(forReadingFrom: url)
+    let handle = try AuthorizedFileReader(url: url)
     defer {
       try? handle.close()
     }
@@ -528,7 +526,7 @@ extension StructuredToolProvider {
       throw GatewayToolError.invalidArguments("File exceeds max_bytes: \(path)")
     }
 
-    let handle = try FileHandle(forReadingFrom: url)
+    let handle = try AuthorizedFileReader(url: url)
     defer {
       try? handle.close()
     }
@@ -609,6 +607,9 @@ extension StructuredToolProvider {
   }
 
   internal func writePropertyList(arguments object: [String: JSONValue]) throws -> JSONValue {
+    let files = try ProjectFileAccess(
+      project: projectScope.projectDirectory, environment: environment.environment,
+      commands: environment.registeredCommands)
     let path = try requiredString("path", in: object)
     guard let value = object["value"] else {
       throw GatewayToolError.invalidArguments("Missing required property list argument: value")
@@ -654,7 +655,7 @@ extension StructuredToolProvider {
       throw GatewayToolError.invalidArguments("Encoded property list exceeds max_bytes.")
     }
 
-    let url = try projectScope.resolvedProjectURL(path)
+    let url = try files.url(path)
     let parent = url.deletingLastPathComponent()
     let fileManager = FileManager.default
     var parentIsDirectory = ObjCBool(false)
@@ -685,13 +686,7 @@ extension StructuredToolProvider {
 
     let existingSizeBytes = try existingFileSizeBytes(url: url, existed: existed)
     if !dryRun {
-      if createDirectories && !parentExists {
-        try fileManager.createDirectory(
-          at: parent,
-          withIntermediateDirectories: true
-        )
-      }
-      try data.write(to: url, options: .atomic)
+      try files.write(data, to: url, overwrite: overwrite, createDirectories: createDirectories)
     }
 
     var payload: [String: JSONValue] = [
@@ -739,7 +734,7 @@ extension StructuredToolProvider {
       throw GatewayToolError.invalidArguments("Path is not a file: \(path)")
     }
 
-    let handle = try FileHandle(forReadingFrom: url)
+    let handle = try AuthorizedFileReader(url: url)
     defer {
       try? handle.close()
     }
@@ -1023,11 +1018,10 @@ extension StructuredToolProvider {
       LIMIT \(maxEntries + 1);
       """
 
-    let result = try environment.registeredCommands.runRegisteredCLI(
+    let result = try environment.registeredCommands.runSQLite(
       command: environment.registeredCommands.sqliteCLICommand(),
       args: ["-batch", "-readonly", "-json", url.path, sql],
       timeout: timeout,
-      requireArbitraryArgs: false,
       maxOutputBytes: maxOutputBytes
     )
 
@@ -1121,11 +1115,10 @@ extension StructuredToolProvider {
       executableSQL = readonlyQuery.sql
     }
 
-    let result = try environment.registeredCommands.runRegisteredCLI(
+    let result = try environment.registeredCommands.runSQLite(
       command: environment.registeredCommands.sqliteCLICommand(),
       args: ["-batch", "-readonly", "-json", url.path, executableSQL],
       timeout: timeout,
-      requireArbitraryArgs: false,
       maxOutputBytes: maxOutputBytes
     )
 

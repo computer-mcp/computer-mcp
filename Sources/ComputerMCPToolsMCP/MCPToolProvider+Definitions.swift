@@ -14,6 +14,9 @@ extension MCPToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "mcp.servers.list", risk: .readOnly,
+          requirement: .init(
+            access: .none, target: .mcp(server: .catalog, access: .read),
+            contribution: .mcp(server: .catalog)),
           projectRequirement: .none,
           localOnly: false, usesNetwork: true
         )
@@ -34,6 +37,9 @@ extension MCPToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "mcp.servers.status", risk: .readOnly,
+          requirement: .init(
+            access: .none, target: .mcp(server: .argument(name: "server"), access: .read),
+            contribution: .mcp(server: .argument(name: "server"))),
           projectRequirement: .none,
           localOnly: false, usesNetwork: true
         )
@@ -52,6 +58,9 @@ extension MCPToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "mcp.tools.list", risk: .readOnly,
+          requirement: .init(
+            access: .none, target: .mcp(server: .argument(name: "server"), access: .read),
+            contribution: .mcp(server: .argument(name: "server"))),
           projectRequirement: .none,
           localOnly: false, usesNetwork: true
         )
@@ -74,6 +83,9 @@ extension MCPToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "mcp.tools.describe", risk: .readOnly,
+          requirement: .init(
+            access: .none, target: .mcp(server: .argument(name: "server"), access: .read),
+            contribution: .mcp(server: .argument(name: "server"))),
           projectRequirement: .none,
           localOnly: false, usesNetwork: true
         )
@@ -100,6 +112,9 @@ extension MCPToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "mcp.tools.find", risk: .readOnly,
+          requirement: .init(
+            access: .none, target: .mcp(server: .argument(name: "server"), access: .read),
+            contribution: .mcp(server: .argument(name: "server"))),
           projectRequirement: .none,
           localOnly: false, usesNetwork: true
         )
@@ -136,6 +151,9 @@ extension MCPToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "mcp.tools.call", risk: .destructive,
+          requirement: .init(
+            access: .none,
+            target: .forwarded(tool: "tool", arguments: "arguments", server: "server")),
           projectRequirement: .none,
           localOnly: false, usesNetwork: true
         )
@@ -158,6 +176,9 @@ extension MCPToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "mcp.resources.list", risk: .readOnly,
+          requirement: .init(
+            access: .none, target: .mcp(server: .argument(name: "server"), access: .read),
+            contribution: .mcp(server: .argument(name: "server"))),
           projectRequirement: .none,
           localOnly: false, usesNetwork: true
         )
@@ -180,6 +201,9 @@ extension MCPToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "mcp.resources.templates.list", risk: .readOnly,
+          requirement: .init(
+            access: .none, target: .mcp(server: .argument(name: "server"), access: .read),
+            contribution: .mcp(server: .argument(name: "server"))),
           projectRequirement: .none,
           localOnly: false, usesNetwork: true
         )
@@ -202,6 +226,9 @@ extension MCPToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "mcp.resources.read", risk: .readOnly,
+          requirement: .init(
+            access: .none, target: .mcp(server: .argument(name: "server"), access: .read),
+            contribution: .mcp(server: .argument(name: "server"))),
           projectRequirement: .none,
           localOnly: false, usesNetwork: true
         )
@@ -224,6 +251,9 @@ extension MCPToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "mcp.prompts.list", risk: .readOnly,
+          requirement: .init(
+            access: .none, target: .mcp(server: .argument(name: "server"), access: .read),
+            contribution: .mcp(server: .argument(name: "server"))),
           projectRequirement: .none,
           localOnly: false, usesNetwork: true
         )
@@ -252,6 +282,9 @@ extension MCPToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "mcp.prompts.get", risk: .readOnly,
+          requirement: .init(
+            access: .none, target: .mcp(server: .argument(name: "server"), access: .read),
+            contribution: .mcp(server: .argument(name: "server"))),
           projectRequirement: .none,
           localOnly: false, usesNetwork: true
         )
@@ -282,6 +315,9 @@ extension MCPToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "mcp.events.read", risk: .readOnly,
+          requirement: .init(
+            access: .none, target: .mcp(server: .argument(name: "server"), access: .read),
+            contribution: .mcp(server: .argument(name: "server"))),
           projectRequirement: .none,
           localOnly: false, usesNetwork: true
         )
@@ -303,6 +339,10 @@ extension MCPToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "mcp.requests.list", risk: .readOnly,
+          requirement: .init(
+            access: .none, execution: .list,
+            target: .mcp(server: .argument(name: "server"), access: .read),
+            contribution: .mcp(server: .argument(name: "server"))),
           projectRequirement: .none,
           localOnly: false, usesNetwork: true
         )
@@ -328,6 +368,10 @@ extension MCPToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "mcp.requests.cancel", risk: .destructive,
+          requirement: .init(
+            access: .none, execution: .cancel(argument: "request_id"),
+            target: .mcp(server: .argument(name: "server"), access: .all),
+            contribution: .mcp(server: .argument(name: "server"))),
           projectRequirement: .none,
           localOnly: false, usesNetwork: true
         )
@@ -336,7 +380,7 @@ extension MCPToolProvider {
         tool: MCPTool(
           name: "mcp.connections.close",
           description:
-            "Close one exact retained MCP connection and join its managed-process teardown. This stops all work on that connection, not just the locating resource. Requires a live owner selected through runtime.owners.call; use that same owner for operations.prepare/commit when approval is required. Remote or detached work may remain uncertain; transport closure does not prove work stopped.",
+            "Close one exact retained MCP connection and join its managed-process teardown. This stops all work on that connection, not just the locating resource. Requires a live owner selected through runtime.owners.call. Remote or detached work may remain uncertain; transport closure does not prove work stopped.",
           inputSchema: objectSchema(
             properties: ["server": stringSchema("Registered MCP server id of the selected owner.")],
             required: ["server"]),
@@ -345,6 +389,9 @@ extension MCPToolProvider {
           meta: toolMeta),
         capability: CapabilityDescriptor(
           id: "mcp.connections.close", risk: .destructive,
+          requirement: .init(
+            access: .none, target: .mcp(server: .argument(name: "server"), access: .all),
+            contribution: .mcp(server: .argument(name: "server"))),
           projectRequirement: .none,
           localOnly: false, usesNetwork: true
         )
@@ -369,6 +416,10 @@ extension MCPToolProvider {
           meta: toolMeta),
         capability: CapabilityDescriptor(
           id: "mcp.requests.read", risk: .readOnly,
+          requirement: .init(
+            access: .none, execution: .read(argument: "request_id"),
+            target: .mcp(server: .argument(name: "server"), access: .read),
+            contribution: .mcp(server: .argument(name: "server"))),
           projectRequirement: .none,
           localOnly: false, usesNetwork: true
         )

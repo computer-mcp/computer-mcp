@@ -30,6 +30,22 @@ final class GatewayDatabaseSchemaTests {
     #expect(ledger == ["gateway-initial"])
   }
 
+  @Test func activeSchemaContainsPermissionAuthorityAndNoOperationApprovalStore() throws {
+    let connection = try GatewayDatabaseConnection(inMemory: ())
+    try connection.writer.read { (database: Database) throws -> Void in
+      #expect(try database.tableExists("providerStorage"))
+      #expect(try database.tableExists("providerContainers"))
+      #expect(try database.tableExists("permissionProfiles"))
+      #expect(try database.tableExists("permissionProfilePublication"))
+      #expect(try database.tableExists("permissionLedger"))
+      #expect(try database.tableExists("derivedProjects"))
+      #expect(try database.tableExists("protectedWorktreeBranches"))
+      #expect(try !database.tableExists("permissionDerivedProjects"))
+      #expect(try !database.tableExists("operationTickets"))
+      #expect(try database.columns(in: "permissionProfiles").map(\.name).contains("authorityEpoch"))
+    }
+  }
+
   @Test func reopeningAppliesNothing() throws {
     let first = try Self.schema(GatewayDatabaseConnection(path: path).writer)
     #expect(try Self.schema(GatewayDatabaseConnection(path: path).writer) == first)

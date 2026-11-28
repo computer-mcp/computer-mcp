@@ -1,8 +1,6 @@
 import ComputerMCPMacOS
+import ComputerMCPSandbox
 import ComputerMCPTestSupport
-import ComputerMCPToolKit
-import ComputerMCPToolsFiles
-import ComputerMCPToolsSystem
 import Foundation
 import Testing
 
@@ -13,41 +11,56 @@ import Testing
 @testable import ComputerMCPProcess
 @testable import ComputerMCPTunnels
 
+#if os(macOS)
+  import ComputerMCPDarwinTestSupport
+#endif
+
 @Suite(.nativeIntegration, .serialized)
 
 final class ProcessAndOpenAITunnelTests {
   @Test
   func testCommandRunnerCapturesStdout() throws {
-    let result = try ProcessCommandRunner().run(
-      executable: "/bin/echo",
-      arguments: ["hello"],
-      workingDirectory: nil,
-      environment: [:],
-      timeoutMilliseconds: 5_000,
-      maxOutputBytes: 1024
-    )
+    try Self.withLocalProcessAdministration {
+      let result = try ProcessCommandRunner(launcher: testExecutionLauncher()).run(
+        executable: "/bin/echo",
+        arguments: ["hello"],
+        workingDirectory: nil,
+        environment: [:],
+        timeoutMilliseconds: 5_000,
+        maxOutputBytes: 1024
+      )
 
-    #expect((result.exitCode) == (0))
-    #expect((result.stdout) == ("hello\n"))
-    #expect(!(result.timedOut))
+      #expect((result.exitCode) == (0))
+      #expect((result.stdout) == ("hello\n"))
+      #expect(!(result.timedOut))
+    }
   }
 
   @Test
   func testCommandRunnerDrainsShortOutputUnderConcurrency() async throws {
+    let executor = BlockingOperationExecutor(
+      label: "computer-mcp.concurrent-command-test", serial: false)
     try await withThrowingTaskGroup(of: Void.self) { group in
-      for index in 0..<128 {
+      // Bound simultaneous blocking calls while exercising 128 independent output drains.
+      for lane in 0..<8 {
         group.addTask {
-          let expected = "result-\(index)\n"
-          let result = try ProcessCommandRunner().run(
-            executable: "/bin/echo",
-            arguments: ["result-\(index)"],
-            workingDirectory: nil,
-            environment: [:],
-            timeoutMilliseconds: 5_000,
-            maxOutputBytes: 1_024
-          )
-          #expect(result.exitCode == 0)
-          #expect(result.stdout == expected)
+          for index in stride(from: lane, to: 128, by: 8) {
+            let expected = "result-\(index)\n"
+            let result = try await executor.perform {
+              try Self.withLocalProcessAdministration {
+                try ProcessCommandRunner(launcher: testExecutionLauncher()).run(
+                  executable: "/bin/echo",
+                  arguments: ["result-\(index)"],
+                  workingDirectory: nil,
+                  environment: [:],
+                  timeoutMilliseconds: 5_000,
+                  maxOutputBytes: 1_024
+                )
+              }
+            }
+            #expect(result.exitCode == 0)
+            #expect(result.stdout == expected)
+          }
         }
       }
       try await group.waitForAll()
@@ -56,55 +69,70 @@ final class ProcessAndOpenAITunnelTests {
 
   @Test
   func testManagedProcessCanSpawnReadAndCancel() throws {
-    let registry = ManagedProcessRegistry()
-    let id = try registry.spawn(
-      executable: "/bin/echo",
-      arguments: ["process"],
-      workingDirectory: nil,
-      environment: [:],
-      maxOutputBytes: 1024
-    )
+    try Self.withLocalProcessAdministration {
+      let registry = ManagedProcessRegistry(launcher: testExecutionLauncher())
+      let id = try registry.spawn(
+        executable: "/bin/echo",
+        arguments: ["process"],
+        workingDirectory: nil,
+        environment: [:],
+        maxOutputBytes: 1024
+      )
 
-    Thread.sleep(forTimeInterval: 0.1)
-    let snapshot = try registry.read(processID: id)
+      Thread.sleep(forTimeInterval: 0.1)
+      let snapshot = try registry.read(processID: id)
 
-    #expect((snapshot.processID) == (id))
-    #expect((snapshot.stdout) == ("process\n"))
+      #expect((snapshot.processID) == (id))
+      #expect((snapshot.stdout) == ("process\n"))
+    }
   }
 
   @Test
   func testManagedProcessListReturnsManagedProcesses() throws {
-    let registry = ManagedProcessRegistry()
-    let id = try registry.spawn(
-      executable: "/bin/echo",
-      arguments: ["listed"],
-      workingDirectory: nil,
-      environment: [:],
-      maxOutputBytes: 1024
-    )
+    try Self.withLocalProcessAdministration {
+      let registry = ManagedProcessRegistry(launcher: testExecutionLauncher())
+      let id = try registry.spawn(
+        executable: "/bin/echo",
+        arguments: ["listed"],
+        workingDirectory: nil,
+        environment: [:],
+        maxOutputBytes: 1024
+      )
 
-    Thread.sleep(forTimeInterval: 0.1)
-    let snapshots = try registry.list()
+      Thread.sleep(forTimeInterval: 0.1)
+      let snapshots = try registry.list()
 
-    #expect((snapshots.map(\.processID)) == ([id]))
-    #expect((snapshots.first?.stdout) == ("listed\n"))
+      #expect((snapshots.map(\.processID)) == ([id]))
+      #expect((snapshots.first?.stdout) == ("listed\n"))
+    }
   }
 
   @Test
   func testManagedProcessCanCancelRunningProcess() throws {
-    let registry = ManagedProcessRegistry()
-    let id = try registry.spawn(
-      executable: "/bin/sleep",
-      arguments: ["5"],
-      workingDirectory: nil,
-      environment: [:],
-      maxOutputBytes: 1024
-    )
+    try Self.withLocalProcessAdministration {
+      let registry = ManagedProcessRegistry(launcher: testExecutionLauncher())
+      let id = try registry.spawn(
+        executable: "/bin/sleep",
+        arguments: ["5"],
+        workingDirectory: nil,
+        environment: [:],
+        maxOutputBytes: 1024
+      )
 
-    let result = try registry.cancel(processID: id)
+      let result = try registry.cancel(processID: id)
 
-    #expect((result.processID) == (id))
-    #expect(result.cancelled)
+      #expect((result.processID) == (id))
+      #expect(result.cancelled)
+    }
+  }
+
+  private static func withLocalProcessAdministration<Result>(
+    _ operation: () throws -> Result
+  ) throws -> Result {
+    let administration = ExecutionAdministration(
+      mode: .fullAccess,
+      environment: try ExecutionEnvironment(fullAccessVariables: ["PATH": "/usr/bin:/bin"]))
+    return try ExecutionAdministration.$current.withValue(administration, operation: operation)
   }
 
   @Test
@@ -267,102 +295,72 @@ final class ProcessAndOpenAITunnelTests {
   }
 
   @Test
-  func testChatGPTProfileAuditAcceptsReadOnlyProfile() throws {
-    let configuration = GatewayConfiguration.fixture(
-      cli: CLISectionConfig(),
-      mcp: MCPSectionConfig(),
-      builtin: BuiltinConfig(enabled: ["system.time"])
-    )
-
+  func catalogAuditReportsReadAndWriteToolsWithoutAnAuthorityGate() throws {
+    let read = try auditTool(
+      name: "system.time", readOnly: true, requirement: .privacy(.machineInformation))
+    let write = try auditTool(
+      name: "file.write", readOnly: false,
+      requirement: .init(access: .projectWrite, paths: [.init("path", .write)]))
     let audit = try ChatGPTProfileAuditor().audit(
-      configuration: configuration,
-      registry: GatewayProviderRouter(providers: [
-        SystemToolProvider(environment: ToolEnvironment(configuration: configuration))
-      ]),
-      allowWriteTools: false
-    )
-
-    #expect((audit.toolCount) == (1))
-    #expect((audit.readOnlyToolCount) == (1))
-    #expect((audit.writeCapableToolNames) == ([]))
+      registry: AuditToolRegistry(tools: [write, read]))
+    #expect(audit.toolCount == 2)
+    #expect(audit.readOnlyToolCount == 1)
+    #expect(audit.writeCapableToolNames == ["file.write"])
   }
 
   @Test
-  func testChatGPTProfileAuditRejectsWriteToolsByDefault() throws {
-    let configuration = GatewayConfiguration.fixture(
-      mcp: MCPSectionConfig(),
-      builtin: BuiltinConfig(enabled: ["file.write"])
-    )
-
-    expectThrows(
-      try ChatGPTProfileAuditor().audit(
-        configuration: configuration,
-        registry: GatewayProviderRouter(providers: [
-          FilesToolProvider(environment: ToolEnvironment(configuration: configuration))
-        ]),
-        allowWriteTools: false
-      )
-    ) { error in
-      #expect(error.localizedDescription.contains("ChatGPT Pro"))
-      #expect(error.localizedDescription.contains("file.write"))
+  func catalogAuditRejectsAnEmptyCatalog() {
+    #expect(throws: ChatGPTProfileAuditError.noTools) {
+      try ChatGPTProfileAuditor().audit(registry: AuditToolRegistry(tools: []))
     }
   }
 
   @Test
-  func testChatGPTProfileAuditAllowsExplicitWriteToolOptIn() throws {
-    let configuration = GatewayConfiguration.fixture(
-      mcp: MCPSectionConfig(),
-      builtin: BuiltinConfig(enabled: ["file.write"])
-    )
-
-    let audit = try ChatGPTProfileAuditor().audit(
-      configuration: configuration,
-      registry: GatewayProviderRouter(providers: [
-        FilesToolProvider(environment: ToolEnvironment(configuration: configuration))
-      ]),
-      allowWriteTools: true
-    )
-
-    #expect(audit.writeCapableToolNames.contains("file.write"))
-  }
-
-  @Test
-  func testChatGPTProfileAuditRejectsMissingReadOnlyAnnotation() throws {
-    let configuration = GatewayConfiguration.fixture(
-      cli: CLISectionConfig(),
-      mcp: MCPSectionConfig()
-    )
-
-    expectThrows(
-      try ChatGPTProfileAuditor().audit(
-        configuration: configuration,
-        registry: MissingAnnotationToolRegistry(),
-        allowWriteTools: true
-      )
-    ) { error in
-      #expect(error.localizedDescription.contains("readOnlyHint"))
-      #expect(error.localizedDescription.contains("fake.sample"))
+  func catalogAuditRequiresExplicitEffectAnnotations() throws {
+    let tool = try auditTool(name: "fixture.sample", readOnly: nil)
+    #expect(throws: ChatGPTProfileAuditError.missingReadOnlyAnnotations([tool.name])) {
+      try ChatGPTProfileAuditor().audit(registry: AuditToolRegistry(tools: [tool]))
     }
   }
 
-  @Test
-  func testChatGPTProfileAuditAcceptsCanonicalDottedToolNames() throws {
-    let configuration = GatewayConfiguration.fixture(
-      cli: CLISectionConfig(),
-      mcp: MCPSectionConfig(),
-      builtin: BuiltinConfig(enabled: ["system.time"])
-    )
+  @Test(arguments: ["input-type", "input-properties", "input-required", "output-type"])
+  func catalogAuditRequiresUsableObjectSchemas(invalid: String) throws {
+    let input: JSONValue
+    switch invalid {
+    case "input-type": input = .object(["type": .string("array")])
+    case "input-properties": input = .object(["type": .string("object"), "properties": .array([])])
+    case "input-required":
+      input = .object(["type": .string("object"), "required": .array([.bool(true)])])
+    default: input = .object(["type": .string("object")])
+    }
+    let tool = try auditTool(
+      name: "fixture.sample", readOnly: true, input: input,
+      output: invalid == "output-type" ? .object(["type": .string("array")]) : nil)
+    #expect(throws: ChatGPTProfileAuditError.invalidToolSchemas([tool.name])) {
+      try ChatGPTProfileAuditor().audit(registry: AuditToolRegistry(tools: [tool]))
+    }
+  }
 
-    let audit = try ChatGPTProfileAuditor().audit(
-      configuration: configuration,
-      registry: GatewayProviderRouter(providers: [
-        SystemToolProvider(environment: ToolEnvironment(configuration: configuration))
-      ]),
-      allowWriteTools: false
-    )
+  @Test(arguments: [false, true])
+  func catalogAuditRequiresHostPermissionDeclarations(malformed: Bool) throws {
+    let declaration: JSONValue? = malformed ? .object(["access": .string("invented")]) : nil
+    let tool = MCPTool(
+      name: "fixture.sample", description: "Fixture",
+      inputSchema: .object(["type": .string("object")]), annotations: .init(readOnlyHint: true),
+      meta: declaration.map { .object(["computer_mcp": .object(["requirements": $0])]) })
+    #expect(throws: ChatGPTProfileAuditError.invalidRequirements([tool.name])) {
+      try ChatGPTProfileAuditor().audit(registry: AuditToolRegistry(tools: [tool]))
+    }
+  }
 
-    #expect((audit.toolCount) == (1))
-    #expect((audit.readOnlyToolCount) == (1))
+  private func auditTool(
+    name: String, readOnly: Bool?, requirement: ToolRequirement = .none,
+    input: JSONValue = .object(["type": .string("object")]), output: JSONValue? = nil
+  ) throws -> MCPTool {
+    MCPTool(
+      name: name, description: "Fixture", inputSchema: input, outputSchema: output,
+      annotations: readOnly.map { .init(readOnlyHint: $0) },
+      meta: .object(["computer_mcp": .object(["requirements": try .encoded(requirement)])]))
   }
 
   @Test(arguments: [false, true])
@@ -378,7 +376,8 @@ final class ProcessAndOpenAITunnelTests {
     }
     #expect(throws: (any Error).self) {
       try OpenAITunnelClientResolver(
-        executableSearchDirectories: MacOSPlatform.services.executableSearchDirectories
+        executableSearchDirectories: MacOSPlatform.services(launcher: testExecutionLauncher())
+          .executableSearchDirectories
       ).resolve(
         requestedPath: executable.path,
         configuration: GatewayConfiguration(projectDirectory: root))
@@ -402,13 +401,10 @@ final class ProcessAndOpenAITunnelTests {
   }
 }
 
-private struct MissingAnnotationToolRegistry: GatewayToolServing {
-  func listTools(context: InvocationContext) throws -> [MCPTool] {
-    [.init(name: "fake.sample", description: "Fixture", inputSchema: .object([:]))]
-  }
-
-  func callTool(name: String, arguments: JSONValue?, context: InvocationContext) throws
-    -> JSONValue
+private struct AuditToolRegistry: GatewayToolServing {
+  let tools: [MCPTool]
+  func listTools(context: InvocationContext) throws -> [MCPTool] { tools }
+  func callTool(name: String, arguments: JSONValue?, context: InvocationContext) throws -> JSONValue
   {
     throw GatewayToolError.unknownTool(name)
   }

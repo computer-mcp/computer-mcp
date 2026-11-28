@@ -451,51 +451,50 @@ extension SystemToolProvider {
     try validateBoundedPositive(timeout, name: "timeout_ms", upperBound: 600_000)
     try validateBoundedPositive(maxOutputBytes, name: "max_output_bytes", upperBound: 20_971_520)
 
-    let arguments = [
-      "-axo",
-      "pid=,ppid=,user=,stat=,pcpu=,pmem=,etime=,comm=",
-    ]
-    let result = try commandRunner.run(
-      executable: registeredCommands.builtinExecutable("ps"),
-      arguments: arguments,
-      workingDirectory: configuration.projectDirectory,
-      environment: [:],
-      timeoutMilliseconds: timeout,
-      maxOutputBytes: maxOutputBytes
-    )
-
+    guard let probe = environment.systemProbe else {
+      throw GatewayToolError.executionFailed("Native process readings are unavailable.")
+    }
     var matched: [JSONValue] = []
-    var matchedBeforeLimit = 0
+    var outputBytes = 0
+    var outputTruncated = false
+    var resultsTruncated = false
     let normalizedQuery = query?.lowercased()
-    for line in result.stdout.split(separator: "\n", omittingEmptySubsequences: true).map(
-      String.init)
-    {
-      let process = systemProcess(line: line)
-      guard systemProcess(process, matches: normalizedQuery) else {
-        continue
+    let encoder = JSONEncoder()
+    let timedOut = try probe.processes(
+      deadline: ContinuousClock.now.advanced(by: .milliseconds(timeout))
+    ) { reading in
+      let process = systemProcess(reading)
+      let bytes = try encoder.encode(process).count + 1
+      guard bytes <= maxOutputBytes - outputBytes else {
+        outputTruncated = true
+        return false
       }
-      matchedBeforeLimit += 1
-      if matched.count < maxResults {
-        matched.append(process)
+      outputBytes += bytes
+      guard systemProcess(process, matches: normalizedQuery) else { return true }
+      guard matched.count < maxResults else {
+        resultsTruncated = true
+        return false
       }
+      matched.append(process)
+      return true
     }
 
     return .object([
       "operation": .string("system.processes"),
-      "argv": .array(arguments.map(JSONValue.string)),
+      "argv": .array([]),
       "query": query.map(JSONValue.string) ?? .null,
       "max_results": .integer(Int64(maxResults)),
       "process_count": .integer(Int64(matched.count)),
-      "truncated": .bool(result.stdoutTruncated || matchedBeforeLimit > matched.count),
+      "truncated": .bool(outputTruncated || resultsTruncated || timedOut),
       "processes": .array(matched),
       "result": .object([
-        "executable": .string(result.executable),
-        "arguments": .array(result.arguments.map(JSONValue.string)),
-        "exit_code": result.exitCode.map { .integer(Int64($0)) } ?? .null,
-        "timed_out": .bool(result.timedOut),
-        "stderr": .string(result.stderr),
-        "stderr_truncated": .bool(result.stderrTruncated),
-        "stdout_truncated": .bool(result.stdoutTruncated),
+        "executable": .null,
+        "arguments": .array([]),
+        "exit_code": .null,
+        "timed_out": .bool(timedOut),
+        "stderr": .string(""),
+        "stderr_truncated": .bool(false),
+        "stdout_truncated": .bool(outputTruncated),
       ]),
     ])
   }
@@ -906,31 +905,24 @@ extension SystemToolProvider {
     }
   }
 
-  private func systemProcess(line: String) -> JSONValue {
-    let parts = line.split(separator: " ", maxSplits: 7, omittingEmptySubsequences: true)
-      .map(String.init)
-    guard parts.count == 8,
-      let pid = Int(parts[0]),
-      let parentPID = Int(parts[1]),
-      let cpuPercent = Double(parts[4]),
-      let memoryPercent = Double(parts[5])
-    else {
-      return .object([
-        "parsed": .bool(false),
-        "raw_line": .string(line),
-      ])
-    }
-
+  private func systemProcess(_ process: SystemProcess) -> JSONValue {
+    let command =
+      process.arguments?.joined(separator: " ")
+      ?? process.executable + " [arguments unavailable]"
     return .object([
       "parsed": .bool(true),
-      "pid": .integer(Int64(pid)),
-      "parent_pid": .integer(Int64(parentPID)),
-      "user": .string(parts[2]),
-      "state": .string(parts[3]),
-      "cpu_percent": .number(cpuPercent),
-      "memory_percent": .number(memoryPercent),
-      "elapsed": .string(parts[6]),
-      "command": .string(parts[7]),
+      "pid": .integer(Int64(process.pid)),
+      "parent_pid": .integer(Int64(process.parentPID)),
+      "user": .string(process.user),
+      "state": .string(process.state),
+      "cpu_percent": process.cpuPercent.map(JSONValue.number) ?? .null,
+      "memory_percent": process.memoryPercent.map(JSONValue.number) ?? .null,
+      "elapsed": process.elapsedSeconds.map { seconds in
+        let total = Int(seconds)
+        let time = String(format: "%02d:%02d:%02d", total / 3600 % 24, total / 60 % 60, total % 60)
+        return .string(total >= 86_400 ? "\(total / 86_400)-\(time)" : time)
+      } ?? .null,
+      "command": .string(command),
     ])
   }
 

@@ -1,5 +1,6 @@
 import ComputerMCPCore
 import ComputerMCPPlatform
+import ComputerMCPPlatformPOSIX
 import ComputerMCPToolKit
 import Crypto
 import Foundation
@@ -40,7 +41,7 @@ extension FilesToolProvider {
       throw GatewayToolError.invalidArguments("max_entries must be less than or equal to 10000.")
     }
 
-    let directory = try projectScope.resolvedProjectURL(path)
+    let directory = try projectScope.resolvedProjectURL(path, operation: .listDirectory)
     var isDirectory: ObjCBool = false
     guard FileManager.default.fileExists(atPath: directory.path, isDirectory: &isDirectory) else {
       throw GatewayToolError.invalidArguments("Directory does not exist: \(path)")
@@ -84,7 +85,7 @@ extension FilesToolProvider {
     try validateBoundedNonNegative(maxDepth, name: "max_depth", upperBound: 20)
     try validateBoundedPositive(maxEntries, name: "max_entries", upperBound: 50_000)
 
-    let root = try projectScope.resolvedProjectURL(path)
+    let root = try projectScope.resolvedProjectURL(path, operation: .listDirectory)
     try requireDirectory(root, originalPath: path)
 
     var emitted = 0
@@ -158,12 +159,16 @@ extension FilesToolProvider {
   }
 
   internal func chmodFile(arguments object: [String: JSONValue]) throws -> JSONValue {
+    let files = try ProjectFileAccess(
+      project: projectScope.projectDirectory, environment: environment.environment,
+      commands: environment.registeredCommands,
+      mutationObserver: fileMutationObserver)
     let path = try requiredString("path", in: object)
     let mode = try parsePOSIXMode(try requiredString("mode", in: object), name: "mode")
     let expectedCurrentMode = try optionalString("expected_current_mode", in: object)
       .map { try parsePOSIXMode($0, name: "expected_current_mode") }
     let dryRun = try optionalBool("dry_run", in: object) ?? false
-    let url = try projectScope.resolvedProjectURL(path)
+    let url = try files.url(path)
 
     guard FileManager.default.fileExists(atPath: url.path) else {
       throw GatewayToolError.invalidArguments("Path does not exist: \(path)")
@@ -176,7 +181,7 @@ extension FilesToolProvider {
     }
 
     if !dryRun {
-      try FileManager.default.setAttributes([.posixPermissions: mode], ofItemAtPath: url.path)
+      try files.chmod(url, mode: mode)
     }
     let attributesAfter = try FileManager.default.attributesOfItem(atPath: url.path)
     let modeAfter = (attributesAfter[.posixPermissions] as? NSNumber)?.intValue
@@ -363,7 +368,7 @@ extension FilesToolProvider {
     try validateBoundedPositive(maxResults, name: "max_results", upperBound: 10_000)
     try validateBoundedPositive(maxVisited, name: "max_visited", upperBound: 200_000)
 
-    let directory = try projectScope.resolvedProjectURL(path)
+    let directory = try projectScope.resolvedProjectURL(path, operation: .listDirectory)
     try requireDirectory(directory, originalPath: path)
 
     var results: [FileInfo] = []
@@ -420,7 +425,7 @@ extension FilesToolProvider {
     try validateBoundedPositive(maxMatches, name: "max_matches", upperBound: 10_000)
     try validateBoundedPositive(maxBytesPerFile, name: "max_bytes_per_file", upperBound: 20_971_520)
 
-    let root = try projectScope.resolvedProjectURL(path)
+    let root = try projectScope.resolvedProjectURL(path, operation: .listDirectory)
     var matches: [FileSearchMatch] = []
     var filesScanned = 0
     var filesSkipped = 0
@@ -503,7 +508,7 @@ extension FilesToolProvider {
     try validateBoundedPositive(maxResults, name: "max_results", upperBound: 10_000)
     try validateBoundedPositive(maxScanEntries, name: "max_scan_entries", upperBound: 200_000)
 
-    let directory = try projectScope.resolvedProjectURL(path)
+    let directory = try projectScope.resolvedProjectURL(path, operation: .listDirectory)
     try requireDirectory(directory, originalPath: path)
 
     var scannedEntries = 0
@@ -576,7 +581,7 @@ extension FilesToolProvider {
     }
 
     let url = try projectScope.resolvedProjectURL(path)
-    let handle = try FileHandle(forReadingFrom: url)
+    let handle = try AuthorizedFileReader(url: url)
     defer {
       try? handle.close()
     }
@@ -650,7 +655,7 @@ extension FilesToolProvider {
       throw GatewayToolError.invalidArguments("Path is not a file: \(path)")
     }
 
-    let handle = try FileHandle(forReadingFrom: url)
+    let handle = try AuthorizedFileReader(url: url)
     defer {
       try? handle.close()
     }
@@ -687,7 +692,7 @@ extension FilesToolProvider {
       throw GatewayToolError.invalidArguments("Path is not a file: \(path)")
     }
 
-    let handle = try FileHandle(forReadingFrom: url)
+    let handle = try AuthorizedFileReader(url: url)
     defer {
       try? handle.close()
     }
@@ -735,7 +740,7 @@ extension FilesToolProvider {
     guard info.type == "file" else {
       throw GatewayToolError.invalidArguments("Path is not a file: \(path)")
     }
-    let handle = try FileHandle(forReadingFrom: url)
+    let handle = try AuthorizedFileReader(url: url)
     defer {
       try? handle.close()
     }
@@ -790,7 +795,7 @@ extension FilesToolProvider {
     guard info.type == "file" else {
       throw GatewayToolError.invalidArguments("Path is not a file: \(path)")
     }
-    let handle = try FileHandle(forReadingFrom: url)
+    let handle = try AuthorizedFileReader(url: url)
     defer {
       try? handle.close()
     }
@@ -851,7 +856,7 @@ extension FilesToolProvider {
       throw GatewayToolError.invalidArguments("Path is not a file: \(path)")
     }
 
-    let handle = try FileHandle(forReadingFrom: url)
+    let handle = try AuthorizedFileReader(url: url)
     defer {
       try? handle.close()
     }
@@ -912,7 +917,7 @@ extension FilesToolProvider {
       throw GatewayToolError.invalidArguments("Path is not a file: \(path)")
     }
 
-    let handle = try FileHandle(forReadingFrom: url)
+    let handle = try AuthorizedFileReader(url: url)
     defer {
       try? handle.close()
     }
@@ -965,7 +970,7 @@ extension FilesToolProvider {
       throw GatewayToolError.invalidArguments("Path is not a file: \(path)")
     }
 
-    let handle = try FileHandle(forReadingFrom: url)
+    let handle = try AuthorizedFileReader(url: url)
     defer {
       try? handle.close()
     }
@@ -1029,7 +1034,7 @@ extension FilesToolProvider {
       throw GatewayToolError.invalidArguments("Path is not a file: \(path)")
     }
 
-    let handle = try FileHandle(forReadingFrom: url)
+    let handle = try AuthorizedFileReader(url: url)
     defer {
       try? handle.close()
     }
@@ -1128,12 +1133,16 @@ extension FilesToolProvider {
   }
 
   internal func removeExtendedAttribute(arguments object: [String: JSONValue]) throws -> JSONValue {
+    let files = try ProjectFileAccess(
+      project: projectScope.projectDirectory, environment: environment.environment,
+      commands: environment.registeredCommands,
+      mutationObserver: fileMutationObserver)
     let path = try requiredString("path", in: object)
     let name = try requiredString("name", in: object)
     let dryRun = try optionalBool("dry_run", in: object) ?? false
     try validateExtendedAttributeName(name)
 
-    let url = try projectScope.resolvedProjectURL(path)
+    let url = try files.url(path)
     let info = try projectScope.fileInfo(url: url)
     guard let xattrs = environment.extendedAttributes else {
       throw GatewayToolError.disabled("Extended attributes are unavailable on this platform.")
@@ -1146,7 +1155,9 @@ extension FilesToolProvider {
     }
 
     if !dryRun {
-      try xattrs.remove(name, at: url)
+      try files.withDescriptor(url, operation: "fremovexattr", affectedXattrs: [name]) {
+        try xattrs.remove(name, descriptor: $0)
+      }
     }
     let namesAfter = try xattrs.names(at: url).sorted {
       $0.localizedStandardCompare($1) == .orderedAscending
@@ -1301,7 +1312,7 @@ extension FilesToolProvider {
   }
 
   private func sha256Hex(url: URL) throws -> (hex: String, bytesRead: Int) {
-    let handle = try FileHandle(forReadingFrom: url)
+    let handle = try AuthorizedFileReader(url: url)
     defer {
       try? handle.close()
     }
@@ -1619,7 +1630,7 @@ extension FilesToolProvider {
     try validateBoundedPositive(maxGroups, name: "max_groups", upperBound: 10_000)
     try validateBoundedPositive(maxFilesPerGroup, name: "max_files_per_group", upperBound: 1_000)
 
-    let root = try projectScope.resolvedProjectURL(path)
+    let root = try projectScope.resolvedProjectURL(path, operation: .listDirectory)
     try requireDirectory(root, originalPath: path)
 
     var scannedEntries = 0
@@ -1742,6 +1753,10 @@ extension FilesToolProvider {
   }
 
   internal func downloadFile(arguments object: [String: JSONValue]) throws -> JSONValue {
+    let files = try ProjectFileAccess(
+      project: projectScope.projectDirectory, environment: environment.environment,
+      commands: environment.registeredCommands,
+      mutationObserver: fileMutationObserver)
     let urlString = try requiredString("url", in: object)
     let path = try requiredString("path", in: object)
     let createDirectories = try optionalBool("create_directories", in: object) ?? false
@@ -1770,7 +1785,7 @@ extension FilesToolProvider {
       maxDownloadBytes, name: "max_download_bytes", upperBound: 104_857_600)
     try validateBoundedPositive(maxOutputBytes, name: "max_output_bytes", upperBound: 20_971_520)
 
-    let destinationURL = try projectScope.resolvedProjectURLPreservingFinalSymlink(path)
+    let destinationURL = try files.url(path)
     let parentURL = destinationURL.deletingLastPathComponent()
     let fileManager = FileManager.default
     var parentIsDirectory = ObjCBool(false)
@@ -1804,17 +1819,10 @@ extension FilesToolProvider {
       }
     }
 
-    let tempURL = parentURL.appendingPathComponent(
-      ".\(destinationURL.lastPathComponent).computer-mcp-download.tmp"
-    )
-    if fileManager.fileExists(atPath: tempURL.path) {
-      throw GatewayToolError.invalidArguments(
-        "Temporary download path already exists: \(projectScope.projectRelativePathPreservingSymlinks(tempURL))"
-      )
-    }
-
     let marker = "__COMPUTER_MCP_FILE_DOWNLOAD_META__"
     var arguments = [
+      "--disable",
+      "--proxytunnel",
       "--fail",
       "--silent",
       "--show-error",
@@ -1830,10 +1838,10 @@ extension FilesToolProvider {
     }
     arguments += [
       "--output",
-      tempURL.path,
+      "-",
       "--write-out",
-      "\n\(marker)\nhttp_code=%{http_code}\nurl_effective=%{url_effective}\ncontent_type=%{content_type}\nredirect_url=%{redirect_url}\ntime_total=%{time_total}\nsize_download=%{size_download}\n",
-      validatedURL.absoluteString,
+      "%{stderr}\n\(marker)\nhttp_code=%{http_code}\nurl_effective=%{url_effective}\ncontent_type=%{content_type}\nredirect_url=%{redirect_url}\ntime_total=%{time_total}\nsize_download=%{size_download}\n",
+      "--", validatedURL.absoluteString,
     ]
 
     var result: JSONValue = .null
@@ -1843,20 +1851,22 @@ extension FilesToolProvider {
     var downloadedSizeBytes: Int64?
 
     if !dryRun {
-      if !parentExists {
-        try fileManager.createDirectory(at: parentURL, withIntermediateDirectories: true)
+      let commandResult = try files.writeGenerated(
+        to: destinationURL, overwrite: overwrite, createDirectories: createDirectories,
+        maximumBytes: maxDownloadBytes
+      ) { fd in
+        let result = try commandRunner.runToFile(
+          executable: registeredCommands.builtinExecutable("curl"), arguments: arguments,
+          workingDirectory: configuration.projectDirectory, environment: [:],
+          timeoutMilliseconds: timeout, maxOutputBytes: maxOutputBytes, outputDescriptor: fd)
+        guard result.exitCode == 0, !result.timedOut else {
+          throw GatewayToolError.executionFailed("Download failed: \(result.stderr)")
+        }
+        return result
       }
-      let commandResult = try commandRunner.run(
-        executable: try registeredCommands.builtinExecutable("curl"),
-        arguments: arguments,
-        workingDirectory: configuration.projectDirectory,
-        environment: [:],
-        timeoutMilliseconds: timeout,
-        maxOutputBytes: maxOutputBytes
-      )
       result = networkCommandSummary(commandResult)
       let parsed = parseHTTPCheckOutput(
-        commandResult.stdout,
+        commandResult.stderr,
         marker: marker,
         includeBody: false,
         maxBodyBytes: 0,
@@ -1865,32 +1875,10 @@ extension FilesToolProvider {
       http = parsed
 
       if commandResult.exitCode == 0 && !commandResult.timedOut {
-        do {
-          let tempInfo = try projectScope.fileInfo(url: tempURL)
-          guard !tempInfo.isSymlink, tempInfo.type == "file" else {
-            try? fileManager.removeItem(at: tempURL)
-            throw GatewayToolError.executionFailed("Download temp path is not a regular file.")
-          }
-          let size = tempInfo.size ?? 0
-          guard size <= Int64(maxDownloadBytes) else {
-            try? fileManager.removeItem(at: tempURL)
-            throw GatewayToolError.executionFailed(
-              "Downloaded file exceeds max_download_bytes.")
-          }
-          if destinationExists && overwrite {
-            try fileManager.removeItem(at: destinationURL)
-          }
-          try fileManager.moveItem(at: tempURL, to: destinationURL)
-          let finalInfo = try projectScope.fileInfo(url: destinationURL)
-          downloaded = true
-          downloadedSizeBytes = finalInfo.size
-          downloadedFile = finalInfo.json
-        } catch {
-          try? fileManager.removeItem(at: tempURL)
-          throw error
-        }
-      } else {
-        try? fileManager.removeItem(at: tempURL)
+        let finalInfo = try projectScope.fileInfo(url: destinationURL)
+        downloaded = true
+        downloadedSizeBytes = finalInfo.size
+        downloadedFile = finalInfo.json
       }
     }
 
@@ -1907,9 +1895,6 @@ extension FilesToolProvider {
         "would_create_parent_directories": .bool(!parentExists && createDirectories),
         "would_overwrite": .bool(destinationExists && overwrite),
       ]),
-      "temporary_path": .string(tempURL.path),
-      "temporary_project_relative_path": .string(
-        projectScope.projectRelativePathPreservingSymlinks(tempURL)),
       "argv": .array(arguments.map(JSONValue.string)),
       "confirm_download": .bool(confirmDownload),
       "create_directories": .bool(createDirectories),
@@ -1934,6 +1919,10 @@ extension FilesToolProvider {
   }
 
   internal func writeFile(arguments object: [String: JSONValue]) throws -> JSONValue {
+    let files = try ProjectFileAccess(
+      project: projectScope.projectDirectory, environment: environment.environment,
+      commands: environment.registeredCommands,
+      mutationObserver: fileMutationObserver)
     let path = try requiredString("path", in: object)
     let content = try requiredString("content", in: object)
     let overwrite = try optionalBool("overwrite", in: object) ?? true
@@ -1942,7 +1931,7 @@ extension FilesToolProvider {
     let includePreview = try optionalBool("include_preview", in: object) ?? dryRun
     let previewMaxBytes = optionalInt("preview_max_bytes", in: object) ?? 8_192
     try validateBoundedPositive(previewMaxBytes, name: "preview_max_bytes", upperBound: 1_048_576)
-    let url = try projectScope.resolvedProjectURL(path)
+    let url = try files.url(path)
     let parent = url.deletingLastPathComponent()
     let fileManager = FileManager.default
 
@@ -1956,13 +1945,6 @@ extension FilesToolProvider {
       guard createDirectories else {
         throw GatewayToolError.invalidArguments("Parent directory does not exist: \(path)")
       }
-    }
-
-    if createDirectories && !dryRun {
-      try fileManager.createDirectory(
-        at: url.deletingLastPathComponent(),
-        withIntermediateDirectories: true
-      )
     }
 
     var isDirectory: ObjCBool = false
@@ -1980,7 +1962,7 @@ extension FilesToolProvider {
     let data = Data(content.utf8)
     let existingSizeBytes = try existingFileSizeBytes(url: url, existed: existed)
     if !dryRun {
-      try data.write(to: url, options: .atomic)
+      try files.write(data, to: url, overwrite: overwrite, createDirectories: createDirectories)
     }
 
     var payload: [String: JSONValue] = [
@@ -2013,6 +1995,10 @@ extension FilesToolProvider {
   }
 
   internal func writeFiles(arguments object: [String: JSONValue]) throws -> JSONValue {
+    let files = try ProjectFileAccess(
+      project: projectScope.projectDirectory, environment: environment.environment,
+      commands: environment.registeredCommands,
+      mutationObserver: fileMutationObserver)
     let entries = try requiredObjectArray("files", in: object)
     let overwrite = try optionalBool("overwrite", in: object) ?? false
     let createDirectories = try optionalBool("create_directories", in: object) ?? false
@@ -2046,7 +2032,7 @@ extension FilesToolProvider {
           "files[\(index)].content exceeds policy.max_output_bytes (\(configuration.policy.maxOutputBytes))."
         )
       }
-      let url = try projectScope.resolvedProjectURL(path)
+      let url = try files.url(path)
       guard seenPaths.insert(url.path).inserted else {
         throw GatewayToolError.invalidArguments("Duplicate output path: \(path)")
       }
@@ -2097,13 +2083,8 @@ extension FilesToolProvider {
 
     if !dryRun {
       for plan in plans {
-        if createDirectories && !plan.parentExists {
-          try fileManager.createDirectory(
-            at: plan.parent,
-            withIntermediateDirectories: true
-          )
-        }
-        try plan.data.write(to: plan.url, options: .atomic)
+        try files.write(
+          plan.data, to: plan.url, overwrite: overwrite, createDirectories: createDirectories)
       }
     }
 
@@ -2132,6 +2113,10 @@ extension FilesToolProvider {
   }
 
   internal func appendFile(arguments object: [String: JSONValue]) throws -> JSONValue {
+    let files = try ProjectFileAccess(
+      project: projectScope.projectDirectory, environment: environment.environment,
+      commands: environment.registeredCommands,
+      mutationObserver: fileMutationObserver)
     let path = try requiredString("path", in: object)
     let content = try requiredString("content", in: object)
     let createIfMissing = try optionalBool("create_if_missing", in: object) ?? true
@@ -2141,7 +2126,7 @@ extension FilesToolProvider {
     let includePreview = try optionalBool("include_preview", in: object) ?? dryRun
     let previewMaxBytes = optionalInt("preview_max_bytes", in: object) ?? 8_192
     try validateBoundedPositive(previewMaxBytes, name: "preview_max_bytes", upperBound: 1_048_576)
-    let url = try projectScope.resolvedProjectURL(path)
+    let url = try files.url(path)
     let parent = url.deletingLastPathComponent()
     let fileManager = FileManager.default
 
@@ -2164,13 +2149,6 @@ extension FilesToolProvider {
       }
     }
 
-    if createDirectories && !dryRun {
-      try fileManager.createDirectory(
-        at: url.deletingLastPathComponent(),
-        withIntermediateDirectories: true
-      )
-    }
-
     var isDirectory: ObjCBool = false
     let existed = fileManager.fileExists(atPath: url.path, isDirectory: &isDirectory)
     if existed {
@@ -2181,23 +2159,14 @@ extension FilesToolProvider {
       guard createIfMissing else {
         throw GatewayToolError.invalidArguments("Path does not exist: \(path)")
       }
-      if !dryRun {
-        guard fileManager.createFile(atPath: url.path, contents: Data()) else {
-          throw GatewayToolError.executionFailed("Failed to create file: \(path)")
-        }
-      }
     }
 
     let sizeBefore: UInt64
     if dryRun {
       sizeBefore = try existingFileSizeBytes(url: url, existed: existed)
     } else {
-      let handle = try FileHandle(forWritingTo: url)
-      defer {
-        try? handle.close()
-      }
-      sizeBefore = try handle.seekToEnd()
-      try handle.write(contentsOf: data)
+      sizeBefore = try files.append(
+        data, to: url, create: createIfMissing, createDirectories: createDirectories)
     }
     let sizeAfter = sizeBefore + UInt64(data.count)
 
@@ -2230,6 +2199,10 @@ extension FilesToolProvider {
   }
 
   internal func replaceTextInFile(arguments object: [String: JSONValue]) throws -> JSONValue {
+    let files = try ProjectFileAccess(
+      project: projectScope.projectDirectory, environment: environment.environment,
+      commands: environment.registeredCommands,
+      mutationObserver: fileMutationObserver)
     let path = try requiredString("path", in: object)
     let search = try requiredString("search", in: object)
     let replacement = try requiredStringAllowingEmpty("replacement", in: object)
@@ -2249,17 +2222,13 @@ extension FilesToolProvider {
       )
     }
 
-    let url = try projectScope.resolvedProjectURL(path)
+    let url = try files.url(path)
     let info = try projectScope.fileInfo(url: url)
     guard info.type == "file" else {
       throw GatewayToolError.invalidArguments("Path is not a file: \(path)")
     }
 
-    let handle = try FileHandle(forReadingFrom: url)
-    defer {
-      try? handle.close()
-    }
-    let data = try handle.read(upToCount: maxBytes + 1) ?? Data()
+    let data = try files.read(url, maximumBytes: maxBytes + 1)
     guard data.count <= maxBytes else {
       throw GatewayToolError.invalidArguments("File exceeds max_bytes: \(path)")
     }
@@ -2290,7 +2259,7 @@ extension FilesToolProvider {
     let updatedData = Data(updatedContent.utf8)
     let wouldChange = updatedContent != content
     if !dryRun && wouldChange {
-      try updatedData.write(to: url, options: .atomic)
+      try files.write(updatedData, to: url)
     }
 
     var payload: [String: JSONValue] = [
@@ -2323,6 +2292,10 @@ extension FilesToolProvider {
   }
 
   internal func insertTextInFile(arguments object: [String: JSONValue]) throws -> JSONValue {
+    let files = try ProjectFileAccess(
+      project: projectScope.projectDirectory, environment: environment.environment,
+      commands: environment.registeredCommands,
+      mutationObserver: fileMutationObserver)
     let path = try requiredString("path", in: object)
     let line = optionalInt("line", in: object) ?? 1
     try validateBoundedPositive(line, name: "line", upperBound: 10_000_000)
@@ -2343,17 +2316,13 @@ extension FilesToolProvider {
         "content exceeds policy.max_output_bytes (\(configuration.policy.maxOutputBytes)).")
     }
 
-    let url = try projectScope.resolvedProjectURL(path)
+    let url = try files.url(path)
     let info = try projectScope.fileInfo(url: url)
     guard info.type == "file" else {
       throw GatewayToolError.invalidArguments("Path is not a file: \(path)")
     }
 
-    let handle = try FileHandle(forReadingFrom: url)
-    defer {
-      try? handle.close()
-    }
-    let data = try handle.read(upToCount: maxBytes + 1) ?? Data()
+    let data = try files.read(url, maximumBytes: maxBytes + 1)
     guard data.count <= maxBytes else {
       throw GatewayToolError.invalidArguments("File exceeds max_bytes: \(path)")
     }
@@ -2392,7 +2361,7 @@ extension FilesToolProvider {
     let updatedData = Data(updatedContent.utf8)
     let wouldChange = updatedContent != content
     if !dryRun && wouldChange {
-      try updatedData.write(to: url, options: .atomic)
+      try files.write(updatedData, to: url)
     }
 
     var payload: [String: JSONValue] = [
@@ -2427,6 +2396,10 @@ extension FilesToolProvider {
   }
 
   internal func replaceLinesInFile(arguments object: [String: JSONValue]) throws -> JSONValue {
+    let files = try ProjectFileAccess(
+      project: projectScope.projectDirectory, environment: environment.environment,
+      commands: environment.registeredCommands,
+      mutationObserver: fileMutationObserver)
     let path = try requiredString("path", in: object)
     guard let startLine = optionalInt("start_line", in: object) else {
       throw GatewayToolError.invalidArguments("Missing required integer argument: start_line")
@@ -2464,17 +2437,13 @@ extension FilesToolProvider {
         "content exceeds policy.max_output_bytes (\(configuration.policy.maxOutputBytes)).")
     }
 
-    let url = try projectScope.resolvedProjectURL(path)
+    let url = try files.url(path)
     let info = try projectScope.fileInfo(url: url)
     guard info.type == "file" else {
       throw GatewayToolError.invalidArguments("Path is not a file: \(path)")
     }
 
-    let handle = try FileHandle(forReadingFrom: url)
-    defer {
-      try? handle.close()
-    }
-    let data = try handle.read(upToCount: maxBytes + 1) ?? Data()
+    let data = try files.read(url, maximumBytes: maxBytes + 1)
     guard data.count <= maxBytes else {
       throw GatewayToolError.invalidArguments("File exceeds max_bytes: \(path)")
     }
@@ -2510,7 +2479,7 @@ extension FilesToolProvider {
     let updatedData = Data(updatedContent.utf8)
     let wouldChange = updatedContent != content
     if !dryRun && wouldChange {
-      try updatedData.write(to: url, options: .atomic)
+      try files.write(updatedData, to: url)
     }
 
     var payload: [String: JSONValue] = [
@@ -2548,11 +2517,15 @@ extension FilesToolProvider {
   }
 
   internal func touchFile(arguments object: [String: JSONValue]) throws -> JSONValue {
+    let files = try ProjectFileAccess(
+      project: projectScope.projectDirectory, environment: environment.environment,
+      commands: environment.registeredCommands,
+      mutationObserver: fileMutationObserver)
     let path = try requiredString("path", in: object)
     let createIfMissing = try optionalBool("create_if_missing", in: object) ?? true
     let createDirectories = try optionalBool("create_directories", in: object) ?? false
     let dryRun = try optionalBool("dry_run", in: object) ?? false
-    let url = try projectScope.resolvedProjectURL(path)
+    let url = try files.url(path)
     let parent = url.deletingLastPathComponent()
     var parentIsDirectory: ObjCBool = false
     let parentExists = FileManager.default.fileExists(
@@ -2564,12 +2537,6 @@ extension FilesToolProvider {
       if parentExists && !parentIsDirectory.boolValue {
         throw GatewayToolError.invalidArguments("Parent path is not a directory: \(path)")
       }
-      if !dryRun {
-        try FileManager.default.createDirectory(
-          at: parent,
-          withIntermediateDirectories: true
-        )
-      }
     } else {
       guard parentExists && parentIsDirectory.boolValue
       else {
@@ -2577,31 +2544,20 @@ extension FilesToolProvider {
       }
     }
 
-    let now = Date()
     var isDirectory: ObjCBool = false
     let existed = FileManager.default.fileExists(atPath: url.path, isDirectory: &isDirectory)
     if existed {
       guard !isDirectory.boolValue else {
         throw GatewayToolError.invalidArguments("Path is a directory: \(path)")
       }
-      if !dryRun {
-        try FileManager.default.setAttributes([.modificationDate: now], ofItemAtPath: url.path)
-      }
     } else {
       guard createIfMissing else {
         throw GatewayToolError.invalidArguments("Path does not exist: \(path)")
       }
-      if !dryRun {
-        guard
-          FileManager.default.createFile(
-            atPath: url.path,
-            contents: Data(),
-            attributes: [.modificationDate: now]
-          )
-        else {
-          throw GatewayToolError.executionFailed("Failed to create file: \(path)")
-        }
-      }
+    }
+
+    if !dryRun {
+      try files.touch(url, create: createIfMissing, createDirectories: createDirectories)
     }
 
     var payload: [String: JSONValue] = [
@@ -2623,10 +2579,14 @@ extension FilesToolProvider {
   }
 
   internal func makeDirectory(arguments object: [String: JSONValue]) throws -> JSONValue {
+    let files = try ProjectFileAccess(
+      project: projectScope.projectDirectory, environment: environment.environment,
+      commands: environment.registeredCommands,
+      mutationObserver: fileMutationObserver)
     let path = try requiredString("path", in: object)
     let intermediateDirectories = try optionalBool("intermediate_directories", in: object) ?? true
     let dryRun = try optionalBool("dry_run", in: object) ?? false
-    let url = try projectScope.resolvedProjectURL(path)
+    let url = try files.url(path)
     var isDirectory: ObjCBool = false
 
     if FileManager.default.fileExists(atPath: url.path, isDirectory: &isDirectory) {
@@ -2661,10 +2621,7 @@ extension FilesToolProvider {
     }
 
     if !dryRun {
-      try FileManager.default.createDirectory(
-        at: url,
-        withIntermediateDirectories: intermediateDirectories
-      )
+      try files.mkdir(url, recursive: intermediateDirectories)
     }
     return .object([
       "path": .string(url.path),
@@ -2678,13 +2635,17 @@ extension FilesToolProvider {
   }
 
   internal func copyFile(arguments object: [String: JSONValue]) throws -> JSONValue {
+    let files = try ProjectFileAccess(
+      project: projectScope.projectDirectory, environment: environment.environment,
+      commands: environment.registeredCommands,
+      mutationObserver: fileMutationObserver)
     let sourcePath = try requiredString("source", in: object)
     let destinationPath = try requiredString("destination", in: object)
     let overwrite = try optionalBool("overwrite", in: object) ?? false
     let createDirectories = try optionalBool("create_directories", in: object) ?? false
     let dryRun = try optionalBool("dry_run", in: object) ?? false
-    let source = try projectScope.resolvedProjectURL(sourcePath)
-    let destination = try projectScope.resolvedProjectURL(destinationPath)
+    let source = try files.url(sourcePath)
+    let destination = try files.url(destinationPath)
 
     guard FileManager.default.fileExists(atPath: source.path) else {
       throw GatewayToolError.invalidArguments("Source does not exist: \(sourcePath)")
@@ -2695,14 +2656,11 @@ extension FilesToolProvider {
       overwrite: overwrite,
       createDirectories: createDirectories
     )
+    try files.validate(source, recursive: true)
+    try files.validate(destination, recursive: true)
     if !dryRun {
-      try prepareDestination(
-        destination,
-        originalPath: destinationPath,
-        overwrite: overwrite,
-        createDirectories: createDirectories
-      )
-      try FileManager.default.copyItem(at: source, to: destination)
+      try files.copy(
+        source, to: destination, overwrite: overwrite, createDirectories: createDirectories)
     }
     return try organizationResult(
       operation: "file.copy",
@@ -2718,13 +2676,17 @@ extension FilesToolProvider {
   }
 
   internal func moveFile(arguments object: [String: JSONValue]) throws -> JSONValue {
+    let files = try ProjectFileAccess(
+      project: projectScope.projectDirectory, environment: environment.environment,
+      commands: environment.registeredCommands,
+      mutationObserver: fileMutationObserver)
     let sourcePath = try requiredString("source", in: object)
     let destinationPath = try requiredString("destination", in: object)
     let overwrite = try optionalBool("overwrite", in: object) ?? false
     let createDirectories = try optionalBool("create_directories", in: object) ?? false
     let dryRun = try optionalBool("dry_run", in: object) ?? false
-    let source = try projectScope.resolvedProjectURL(sourcePath)
-    let destination = try projectScope.resolvedProjectURL(destinationPath)
+    let source = try files.url(sourcePath)
+    let destination = try files.url(destinationPath)
 
     guard FileManager.default.fileExists(atPath: source.path) else {
       throw GatewayToolError.invalidArguments("Source does not exist: \(sourcePath)")
@@ -2735,14 +2697,11 @@ extension FilesToolProvider {
       overwrite: overwrite,
       createDirectories: createDirectories
     )
+    try files.validate(source, recursive: true)
+    try files.validate(destination, recursive: true)
     if !dryRun {
-      try prepareDestination(
-        destination,
-        originalPath: destinationPath,
-        overwrite: overwrite,
-        createDirectories: createDirectories
-      )
-      try FileManager.default.moveItem(at: source, to: destination)
+      try files.move(
+        source, to: destination, overwrite: overwrite, createDirectories: createDirectories)
     }
     return try organizationResult(
       operation: "file.move",
@@ -2758,6 +2717,10 @@ extension FilesToolProvider {
   }
 
   internal func createSymbolicLink(arguments object: [String: JSONValue]) throws -> JSONValue {
+    let files = try ProjectFileAccess(
+      project: projectScope.projectDirectory, environment: environment.environment,
+      commands: environment.registeredCommands,
+      mutationObserver: fileMutationObserver)
     let path = try requiredString("path", in: object)
     let destination = try requiredString("destination", in: object)
     let overwrite = try optionalBool("overwrite", in: object) ?? false
@@ -2767,7 +2730,7 @@ extension FilesToolProvider {
       try optionalBool("allow_external_destination", in: object) ?? false
     try validateSymbolicLinkDestination(destination)
 
-    let link = try projectScope.resolvedProjectURLPreservingFinalSymlink(path)
+    let link = try files.url(path, allowFinalSymlink: true)
     let destinationURL =
       destination.hasPrefix("/")
       ? URL(fileURLWithPath: destination)
@@ -2788,14 +2751,8 @@ extension FilesToolProvider {
       treatsBrokenSymlinkAsExisting: true
     )
     if !dryRun {
-      try prepareSymlinkDestination(
-        link,
-        originalPath: path,
-        overwrite: overwrite,
-        createDirectories: createDirectories
-      )
-      try FileManager.default.createSymbolicLink(
-        atPath: link.path, withDestinationPath: destination)
+      try files.symlink(
+        destination, at: link, overwrite: overwrite, createDirectories: createDirectories)
     }
 
     return .object([
@@ -2821,13 +2778,18 @@ extension FilesToolProvider {
   }
 
   internal func trashFile(arguments object: [String: JSONValue]) throws -> JSONValue {
+    let files = try ProjectFileAccess(
+      project: projectScope.projectDirectory, environment: environment.environment,
+      commands: environment.registeredCommands,
+      mutationObserver: fileMutationObserver)
     let path = try requiredString("path", in: object)
     let dryRun = try optionalBool("dry_run", in: object) ?? false
-    let url = try projectScope.resolvedProjectURL(path)
+    let url = try files.url(path, allowHardLinks: true)
     guard FileManager.default.fileExists(atPath: url.path) else {
       throw GatewayToolError.invalidArguments("Path does not exist: \(path)")
     }
 
+    try files.validateTrash(url)
     var resultingURL: URL?
     if !dryRun {
       guard let trasher = environment.fileTrasher else {
@@ -3350,7 +3312,7 @@ extension FilesToolProvider {
       return
     }
 
-    let handle = try FileHandle(forReadingFrom: url)
+    let handle = try AuthorizedFileReader(url: url)
     defer {
       try? handle.close()
     }
@@ -3523,28 +3485,6 @@ extension FilesToolProvider {
     return String(content[start..<end])
   }
 
-  private func prepareDestination(
-    _ url: URL,
-    originalPath: String,
-    overwrite: Bool,
-    createDirectories: Bool
-  ) throws {
-    if createDirectories {
-      try FileManager.default.createDirectory(
-        at: url.deletingLastPathComponent(),
-        withIntermediateDirectories: true
-      )
-    }
-
-    guard FileManager.default.fileExists(atPath: url.path) else {
-      return
-    }
-    guard overwrite else {
-      throw GatewayToolError.invalidArguments("Destination already exists: \(originalPath)")
-    }
-    try FileManager.default.removeItem(at: url)
-  }
-
   private struct DestinationPreparation {
     let destinationExists: Bool
     let wouldCreateParentDirectories: Bool
@@ -3587,31 +3527,6 @@ extension FilesToolProvider {
       destinationExists: destinationExists,
       wouldCreateParentDirectories: !parentExists
     )
-  }
-
-  private func prepareSymlinkDestination(
-    _ url: URL,
-    originalPath: String,
-    overwrite: Bool,
-    createDirectories: Bool
-  ) throws {
-    if createDirectories {
-      try FileManager.default.createDirectory(
-        at: url.deletingLastPathComponent(),
-        withIntermediateDirectories: true
-      )
-    }
-
-    let exists =
-      FileManager.default.fileExists(atPath: url.path)
-      || (try? FileManager.default.destinationOfSymbolicLink(atPath: url.path)) != nil
-    guard exists else {
-      return
-    }
-    guard overwrite else {
-      throw GatewayToolError.invalidArguments("Destination already exists: \(originalPath)")
-    }
-    try FileManager.default.removeItem(at: url)
   }
 
   private func organizationResult(

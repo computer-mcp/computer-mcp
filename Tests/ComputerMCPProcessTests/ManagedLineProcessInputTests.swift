@@ -13,11 +13,20 @@ struct ManagedLineProcessInputTests {
   func writeResultControlsAdmissionBeforeTheNextTurn(_ end: WriteEnd) async throws {
     let input = ChildProcessInput(closedError: Failure.closed, inputClosedError: Failure.eof)
     let writer = ScriptedWriter(end: end)
+    let completed = AsyncStream<String>.makeStream()
     defer { writer.release.continuation.finish() }
     await input.attach(writer)
-    let first = Task { try await input.write(Data("first".utf8), close: false) }
+    let first = Task {
+      try await input.write(
+        Data("first".utf8), close: false,
+        onWriteCompleted: { completed.continuation.yield("first") })
+    }
     for await _ in writer.entered.stream {}
-    let second = Task { try await input.write(Data("second".utf8), close: true) }
+    let second = Task {
+      try await input.write(
+        Data("second".utf8), close: true,
+        onWriteCompleted: { completed.continuation.yield("second") })
+    }
     try await waitUntil { input.snapshot.pendingWrites == 2 }
     writer.release.continuation.finish()
     await #expect(throws: end == .error ? Failure.library : Failure.closed) {
@@ -34,6 +43,35 @@ struct ManagedLineProcessInputTests {
       #expect(!input.snapshot.retired)
     }
     #expect(input.snapshot.pendingWrites == 0)
+    await input.finish()
+    completed.continuation.finish()
+    var completedFrames: [String] = []
+    for await frame in completed.stream { completedFrames.append(frame) }
+    #expect(completedFrames == (end == .partial ? [] : ["second"]))
+  }
+
+  @Test
+  func queuedWriteRefusalSendsNoBytesAndPassesTheTurn() async throws {
+    let input = ChildProcessInput(closedError: Failure.closed, inputClosedError: Failure.eof)
+    let writer = ScriptedWriter(end: .zero)
+    defer { writer.release.continuation.finish() }
+    await input.attach(writer)
+
+    let first = Task { try await input.write(Data("first".utf8), close: false) }
+    for await _ in writer.entered.stream {}
+    let rejected = Task {
+      try await input.write(Data("expired".utf8), close: false) { throw Failure.library }
+    }
+    try await waitUntil { input.snapshot.pendingWrites == 2 }
+    let last = Task { try await input.write(Data("last".utf8), close: false) }
+    try await waitUntil { input.snapshot.pendingWrites == 3 }
+    writer.release.continuation.finish()
+
+    await #expect(throws: Failure.closed) { try await first.value }
+    await #expect(throws: Failure.library) { try await rejected.value }
+    #expect(try await last.value == 4)
+    #expect(await writer.operations == ["first", "last"])
+    #expect(!input.snapshot.retired)
     await input.finish()
   }
 
@@ -63,9 +101,10 @@ struct ManagedLineProcessInputTests {
   func cancellationBeforeProcessReadyRemovesTheWaiter() async throws {
     let input = ChildProcessInput(closedError: Failure.closed, inputClosedError: Failure.eof)
     let waiting = Task { try await input.write(Data("waiting".utf8), close: false) }
-    try await waitUntil { input.snapshot.pendingWrites == 1 }
-    waiting.cancel()
-    try await waitUntil { input.snapshot.pendingWrites == 0 }
+    for pendingWrites in [1, 0] {
+      try await waitUntil { input.snapshot.pendingWrites == pendingWrites }
+      if pendingWrites == 1 { waiting.cancel() }
+    }
     await #expect(throws: CancellationError.self) { try await waiting.value }
     await input.finish()
   }

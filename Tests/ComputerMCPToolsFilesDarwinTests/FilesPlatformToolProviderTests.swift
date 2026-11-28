@@ -2,6 +2,7 @@ import ComputerMCPConfiguration
 import ComputerMCPCore
 import ComputerMCPPlatform
 import ComputerMCPPlatformDarwin
+import ComputerMCPProcess
 import ComputerMCPTestSupport
 import ComputerMCPToolKit
 import Darwin
@@ -9,6 +10,10 @@ import Foundation
 import Testing
 
 @testable import ComputerMCPToolsFiles
+
+#if os(macOS)
+  import ComputerMCPDarwinTestSupport
+#endif
 
 @Suite(.nativeIntegration, .serialized)
 final class FilesPlatformToolProviderTests {
@@ -29,6 +34,7 @@ final class FilesPlatformToolProviderTests {
     )
     let provider = FilesToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["file.xattrs"]),
           projectDirectory: directory
@@ -115,6 +121,7 @@ final class FilesPlatformToolProviderTests {
     )
     let provider = FilesToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["file.xattrs"]),
           projectDirectory: directory
@@ -171,12 +178,13 @@ final class FilesPlatformToolProviderTests {
     )
     let provider = FilesToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["file.remove_xattr", "file.xattrs"]),
           projectDirectory: directory
         ), extendedAttributes: DarwinExtendedAttributes(), fileTrasher: DarwinFileTrasher()))
 
-    let result = try provider.callTool(
+    let result = try provider.callToolAsFixtureOwner(
       .init(
         name: "file.remove_xattr",
         arguments: .object([
@@ -221,12 +229,13 @@ final class FilesPlatformToolProviderTests {
     )
     let provider = FilesToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["file.remove_xattr", "file.xattrs"]),
           projectDirectory: directory
         ), extendedAttributes: DarwinExtendedAttributes(), fileTrasher: DarwinFileTrasher()))
 
-    let result = try provider.callTool(
+    let result = try provider.callToolAsFixtureOwner(
       .init(
         name: "file.remove_xattr",
         arguments: .object([
@@ -265,13 +274,14 @@ final class FilesPlatformToolProviderTests {
     try "download".write(to: file, atomically: true, encoding: .utf8)
     let provider = FilesToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["file.remove_xattr"]),
           projectDirectory: directory
         ), extendedAttributes: DarwinExtendedAttributes(), fileTrasher: DarwinFileTrasher()))
 
     expectThrows(
-      try provider.callTool(
+      try provider.callToolAsFixtureOwner(
         .init(
           name: "file.remove_xattr",
           arguments: .object([
@@ -284,7 +294,7 @@ final class FilesPlatformToolProviderTests {
     }
 
     expectThrows(
-      try provider.callTool(
+      try provider.callToolAsFixtureOwner(
         .init(
           name: "file.remove_xattr",
           arguments: .object([
@@ -297,7 +307,7 @@ final class FilesPlatformToolProviderTests {
     }
 
     expectThrows(
-      try provider.callTool(
+      try provider.callToolAsFixtureOwner(
         .init(
           name: "file.remove_xattr",
           arguments: .object([
@@ -317,12 +327,13 @@ final class FilesPlatformToolProviderTests {
     try "obsolete".write(to: file, atomically: true, encoding: .utf8)
     let provider = FilesToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["file.trash"]),
           projectDirectory: directory
         ), extendedAttributes: DarwinExtendedAttributes(), fileTrasher: DarwinFileTrasher()))
 
-    let result = try provider.callTool(
+    let result = try provider.callToolAsFixtureOwner(
       .init(
         name: "file.trash",
         arguments: .object(["path": .string("obsolete.txt")]), context: .empty
@@ -371,6 +382,28 @@ final class FilesPlatformToolProviderTests {
         code: Int(errno),
         userInfo: [NSLocalizedDescriptionKey: String(cString: strerror(errno))]
       )
+    }
+  }
+}
+
+extension FilesToolProvider {
+  fileprivate func callToolAsFixtureOwner(_ invocation: ToolInvocation) throws -> JSONValue {
+    try #require(InvocationExecution.current == nil)
+    let scratch = try ScopedTemporaryDirectory()
+    try FileManager.default.setAttributes(
+      [.posixPermissions: 0o700], ofItemAtPath: scratch.url.path)
+    let administration = ExecutionAdministration(
+      mode: .fullAccess,
+      environment: try .init(fullAccessVariables: [
+        "PATH": systemUtilityPath, "HOME": scratch.url.path, "TMPDIR": scratch.url.path + "/",
+        "XDG_CONFIG_HOME": scratch.url.appendingPathComponent(".config").path,
+        "XDG_CACHE_HOME": scratch.url.appendingPathComponent(".cache").path,
+        "LANG": "C", "LC_ALL": "C", "GIT_CONFIG_NOSYSTEM": "1", "GIT_CONFIG_GLOBAL": "/dev/null",
+        "GIT_TERMINAL_PROMPT": "0",
+      ]))
+    defer { withExtendedLifetime(scratch) {} }
+    return try ExecutionAdministration.$current.withValue(administration) {
+      try callTool(invocation)
     }
   }
 }

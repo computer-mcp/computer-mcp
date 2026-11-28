@@ -5,6 +5,10 @@ import Testing
 
 @testable import ComputerMCPPlugins
 
+#if os(macOS)
+  import ComputerMCPDarwinTestSupport
+#endif
+
 #if canImport(Darwin)
   import Darwin
 #elseif canImport(Glibc)
@@ -15,7 +19,8 @@ import Testing
 struct PluginArchiveWorkerLifecycleTests {
   @Test(arguments: [false, true], [false, true])
   func outputLimitsAreInclusiveAndOverflowReapsWorker(stderr: Bool, overflow: Bool) async throws {
-    let fixture = try await PreparationFixture.make(directoryFactory: WorkerDirectoryFactory())
+    let fixture = try await PreparationFixture.make(
+      launcher: testExecutionLauncher(), directoryFactory: WorkerDirectoryFactory())
     defer { fixture.files.remove() }
     let report = fixture.files.root.appendingPathComponent("pid")
     let watchdog = fixture.files.root.appendingPathComponent("watchdog-expired")
@@ -54,7 +59,8 @@ struct PluginArchiveWorkerLifecycleTests {
 
   @Test(arguments: [false, true])
   func cancellationAndTimeoutJoinWorkerBeforeDiscard(cancel: Bool) async throws {
-    let fixture = try await PreparationFixture.make(directoryFactory: WorkerDirectoryFactory())
+    let fixture = try await PreparationFixture.make(
+      launcher: testExecutionLauncher(), directoryFactory: WorkerDirectoryFactory())
     defer { fixture.files.remove() }
     let report = fixture.files.root.appendingPathComponent("pid")
     let watchdog = fixture.files.root.appendingPathComponent("watchdog-expired")
@@ -107,7 +113,8 @@ struct PluginArchiveWorkerLifecycleTests {
 
   @Test
   func explicitInheritanceBorrowsDescriptorAndPreservesCallerFlags() async throws {
-    let fixture = try await PreparationFixture.make(directoryFactory: WorkerDirectoryFactory())
+    let fixture = try await PreparationFixture.make(
+      launcher: testExecutionLauncher(), directoryFactory: WorkerDirectoryFactory())
     defer { fixture.files.remove() }
     let descriptor = open(fixture.archive.path, O_RDONLY | O_CLOEXEC)
     try #require(descriptor >= 0)
@@ -124,15 +131,11 @@ struct PluginArchiveWorkerLifecycleTests {
       sys.exit(1)
       """)
     var preparation = PluginArchivePreparation(
+      launcher: testExecutionLauncher(),
       workerExecutable: worker, stagingParent: fixture.staging,
       directoryFactory: WorkerDirectoryFactory())
     preparation.inheritedLockDescriptor = borrowed
-    #if canImport(Darwin)
-      let expected = PluginArchiveError.invalidArchive
-    #else
-      let expected = PluginArchiveError.workerFailed
-    #endif
-    await #expect(throws: expected) {
+    await #expect(throws: PluginArchiveError.invalidArchive) {
       try await preparation.withPreparedPackage(
         archive: fixture.archive, expectedSHA256: fixture.digest, pluginID: "combined",
         version: PluginVersion("1.2.3"), hostVersion: PluginVersion("1.0.0"), architecture: "arm64"

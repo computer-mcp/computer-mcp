@@ -18,6 +18,7 @@ struct MCPExecutionRecord: Codable, Sendable {
   let instanceID: String
   let tool: String
   let inputDigest: String
+  let executionID: UUID?
   let createdAt: Date
   var state: State = .dispatching
   var downstreamRequestID: String?
@@ -131,7 +132,10 @@ final class MCPExecutionJournal: @unchecked Sendable {
     self.database = Result { try database ?? GatewayDatabase(inMemory: ()) }
   }
 
-  func reserve(server: MCPServerConfig, tool: String, arguments: JSONValue, requestID: String)
+  func reserve(
+    server: MCPServerConfig, tool: String, arguments: JSONValue, requestID: String,
+    executionID: UUID?
+  )
     throws
     -> (record: MCPExecutionRecord, inserted: Bool)
   {
@@ -145,7 +149,8 @@ final class MCPExecutionJournal: @unchecked Sendable {
     _ = try encoder.encode(intent)
     let record = MCPExecutionRecord(
       scope: scope, serverID: server.id, requestID: requestID, instanceID: instanceID,
-      tool: tool, inputDigest: MCPExecutionRecord.digest(intent), createdAt: Date())
+      tool: tool, inputDigest: MCPExecutionRecord.digest(intent), executionID: executionID,
+      createdAt: Date())
     return try database.get().reserveMCPExecution(record)
   }
 

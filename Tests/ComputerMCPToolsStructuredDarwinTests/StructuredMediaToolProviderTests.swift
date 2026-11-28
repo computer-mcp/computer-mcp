@@ -12,6 +12,10 @@ import Testing
 
 @testable import ComputerMCPToolsStructured
 
+#if os(macOS)
+  import ComputerMCPDarwinTestSupport
+#endif
+
 @Suite(.nativeIntegration, .serialized)
 final class StructuredMediaToolProviderTests {
   @Test
@@ -38,6 +42,7 @@ final class StructuredMediaToolProviderTests {
 
     let provider = StructuredToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["image.info"]),
           projectDirectory: directory
@@ -74,6 +79,7 @@ final class StructuredMediaToolProviderTests {
     )
     let provider = StructuredToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["image.info"]),
           projectDirectory: directory
@@ -117,6 +123,7 @@ final class StructuredMediaToolProviderTests {
 
     let provider = StructuredToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["pdf.info"]),
           projectDirectory: directory
@@ -160,6 +167,7 @@ final class StructuredMediaToolProviderTests {
     )
     let provider = StructuredToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["pdf.info"]),
           projectDirectory: directory
@@ -201,6 +209,7 @@ final class StructuredMediaToolProviderTests {
     )
     let provider = StructuredToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["pdf.text"]),
           projectDirectory: directory
@@ -268,6 +277,7 @@ final class StructuredMediaToolProviderTests {
     try writeTextPDF(pages: ["Only page"], to: pdfURL)
     let provider = StructuredToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["pdf.text"]),
           projectDirectory: directory
@@ -330,6 +340,7 @@ final class StructuredMediaToolProviderTests {
 
     let provider = StructuredToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["media.info"]),
           projectDirectory: directory
@@ -372,6 +383,7 @@ final class StructuredMediaToolProviderTests {
     )
     let provider = StructuredToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: GatewayConfiguration(
           builtin: BuiltinConfig(enabled: ["media.info"]),
           projectDirectory: directory
@@ -396,6 +408,41 @@ final class StructuredMediaToolProviderTests {
     ) { error in
       #expect(error.localizedDescription.contains("Path is not a file"))
     }
+  }
+
+  @Test(arguments: ["image.info", "pdf.info", "pdf.text", "media.info"], [3, 4, 6, 8])
+  func mediaToolRechecksAfterPreflight(tool: String, trigger: Int) throws {
+    let root = try temporaryDirectory().resolvingSymlinksInPath()
+    let allowed = root.appendingPathComponent("allowed")
+    let denied = root.appendingPathComponent("denied")
+    for directory in [allowed, denied] {
+      try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+      try writeTextPDF(
+        pages: ["Private document"], to: directory.appendingPathComponent("input.pdf"))
+      try testWAVData(sampleRate: 8_000, sampleCount: 4_000)
+        .write(to: directory.appendingPathComponent("input.wav"))
+      let bitmap = try #require(
+        NSBitmapImageRep(
+          bitmapDataPlanes: nil, pixelsWide: 2,
+          pixelsHigh: 2, bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true,
+          isPlanar: false, colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0))
+      try #require(bitmap.representation(using: .png, properties: [:]))
+        .write(to: directory.appendingPathComponent("input.png"))
+    }
+    let fileExtension = tool == "image.info" ? "png" : tool == "media.info" ? "wav" : "pdf"
+    let checker = MediaEntryReadChecker(allowed: allowed, denied: denied, trigger: trigger)
+    let provider = StructuredToolProvider(
+      environment: .init(
+        launcher: testExecutionLauncher(),
+        configuration: .init(builtin: .init(enabled: [tool]), projectDirectory: root),
+        mediaInspector: DarwinMediaInspector(), pathAccess: checker))
+    #expect(throws: (any Error).self) {
+      try provider.callTool(
+        .init(
+          name: tool,
+          arguments: .object(["path": .string("allowed/input." + fileExtension)]), context: .empty))
+    }
+    #expect(checker.checkCount > trigger)
   }
 
   private var temporaryDirectories: [ScopedTemporaryDirectory] = []
@@ -482,6 +529,34 @@ final class StructuredMediaToolProviderTests {
     var littleEndian = value.littleEndian
     withUnsafeBytes(of: &littleEndian) { buffer in
       data.append(contentsOf: buffer)
+    }
+  }
+}
+
+private final class MediaEntryReadChecker: HostPathAccessChecking, @unchecked Sendable {
+  private let lock = NSLock()
+  let allowed: URL
+  let denied: URL
+  let trigger: Int
+  private var checks = 0
+  var checkCount: Int { lock.withLock { checks } }
+  init(allowed: URL, denied: URL, trigger: Int) {
+    self.allowed = allowed
+    self.denied = denied
+    self.trigger = trigger
+  }
+  func check(_ path: URL, operation: HostPathOperation) throws {
+    try lock.withLock {
+      checks += 1
+      if checks > trigger,
+        trigger > 4 || path.resolvingSymlinksInPath().path.hasPrefix(denied.path + "/")
+      {
+        throw CocoaError(.fileReadNoPermission)
+      }
+      if checks == trigger, trigger <= 4 {
+        try FileManager.default.moveItem(at: allowed, to: allowed.appendingPathExtension("retired"))
+        try FileManager.default.createSymbolicLink(at: allowed, withDestinationURL: denied)
+      }
     }
   }
 }

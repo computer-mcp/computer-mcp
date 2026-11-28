@@ -2,6 +2,7 @@ import ComputerMCPCore
 import ComputerMCPPlatform
 import ComputerMCPPlatformPOSIX
 import ComputerMCPProcess
+import ComputerMCPSandbox
 import ComputerMCPTestSupport
 import Foundation
 import Testing
@@ -276,6 +277,8 @@ struct ClientRegistrationTests {
   @Test(arguments: [RegistrationClient.codex, .claudeCode])
   func fakeClientPrintsOnlyTheAllowedEnvironment(client: RegistrationClient) throws {
     let fixture = try RegistrationFixture()
+    try FileManager.default.setAttributes(
+      [.posixPermissions: 0o700], ofItemAtPath: fixture.root.path)
     let source = fixture.root.appendingPathComponent("environment-client.c")
     try Data(
       """
@@ -298,11 +301,19 @@ struct ClientRegistrationTests {
       path.split(separator: ":").contains {
         FileManager.default.isExecutableFile(atPath: "\($0)/cc")
       } ? "cc" : "clang"
-    let compiled = try RegistrationProcessRunner().run(
-      executable: "/usr/bin/env",
-      arguments: [compiler, source.path, "-o", fixture.clientExecutable.path],
-      environment: ["PATH": path],
-      timeoutMilliseconds: 10_000, maxOutputBytes: 16_384)
+    let compilerEnvironment = [
+      "PATH": path, "HOME": fixture.root.path, "TMPDIR": fixture.root.path + "/",
+    ]
+    let administration = ExecutionAdministration(
+      mode: .fullAccess,
+      environment: try ExecutionEnvironment(fullAccessVariables: compilerEnvironment))
+    let compiled = try ExecutionAdministration.$current.withValue(administration) {
+      try ProcessCommandRunner(launcher: testExecutionLauncher()).run(
+        executable: "/usr/bin/env",
+        arguments: [compiler, source.path, "-o", fixture.clientExecutable.path],
+        workingDirectory: fixture.root, environment: compilerEnvironment,
+        timeoutMilliseconds: 10_000, maxOutputBytes: 16_384)
+    }
     #expect(compiled.exitCode == 0, "\(compiled.stderr)")
     let runner = EnvironmentRegistrationRunner()
     let variable = client == .codex ? "CODEX_HOME" : "CLAUDE_CONFIG_DIR"
@@ -1170,17 +1181,25 @@ private final class EnvironmentRegistrationRunner: RegistrationProcessRunning, @
     executable: String, arguments: [String], environment: [String: String],
     timeoutMilliseconds: Int, maxOutputBytes: Int
   ) throws -> CommandResult {
-    let result = try RegistrationProcessRunner().run(
+    guard arguments == ["--version"] else {
+      return .init(
+        executable: executable, arguments: arguments, exitCode: 1, timedOut: false,
+        stdout: "", stderr: "No MCP server named computer-mcp",
+        stdoutTruncated: false, stderrTruncated: false)
+    }
+    let result = try RegistrationProcessRunner(launcher: testExecutionLauncher()).run(
       executable: executable, arguments: arguments, environment: environment,
       timeoutMilliseconds: timeoutMilliseconds, maxOutputBytes: maxOutputBytes)
-    if arguments == ["--version"] {
-      let values = Dictionary(
-        uniqueKeysWithValues: result.stdout.split(separator: "\n").map { line in
-          let parts = line.split(separator: "=", maxSplits: 1, omittingEmptySubsequences: false)
-          return (String(parts[0]), String(parts[1]))
-        })
-      lock.withLock { captured = values }
-    }
+    let values = Dictionary(
+      uniqueKeysWithValues: result.stdout.split(separator: "\n").map { line in
+        let parts = line.split(separator: "=", maxSplits: 1, omittingEmptySubsequences: false)
+        return (String(parts[0]), String(parts[1]))
+      })
+    lock.withLock { captured = values }
     return result
   }
 }
+
+#if os(macOS)
+  import ComputerMCPDarwinTestSupport
+#endif

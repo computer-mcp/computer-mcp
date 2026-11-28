@@ -1,4 +1,5 @@
 import ComputerMCPCore
+import ComputerMCPProcess
 import ComputerMCPToolKit
 
 package struct ShellToolProvider: GatewayToolProvider {
@@ -18,6 +19,12 @@ package struct ShellToolProvider: GatewayToolProvider {
   }
 
   package func callTool(_ invocation: ToolInvocation) throws -> JSONValue {
+    return try ExecutionRecovery.$key.withValue(invocation.context.executionRecoveryKey) {
+      try dispatch(invocation)
+    }
+  }
+
+  private func dispatch(_ invocation: ToolInvocation) throws -> JSONValue {
     let name = invocation.name
     let object = invocation.arguments?.objectValue ?? [:]
     switch name {
@@ -54,8 +61,10 @@ package struct ShellToolProvider: GatewayToolProvider {
     try Task.checkCancellation()
     if invocation.name == "shell.write" {
       try requireShellEnabled()
-      return try textResult(
-        await writeShellSessionAsync(arguments: invocation.arguments?.objectValue ?? [:]))
+      return try await ExecutionRecovery.$key.withValue(invocation.context.executionRecoveryKey) {
+        try textResult(
+          await writeShellSessionAsync(arguments: invocation.arguments?.objectValue ?? [:]))
+      }
     }
     return try await Self.blocking.perform { try self.callTool(invocation) }
   }

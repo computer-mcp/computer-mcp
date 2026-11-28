@@ -1,5 +1,6 @@
 import ComputerMCPPlatform
 import ComputerMCPPlugins
+import ComputerMCPProcess
 import Crypto
 import Foundation
 import Testing
@@ -9,6 +10,10 @@ package struct PreparationFixture: Sendable {
   package let archive: URL
   package let digest: String
   package let staging: URL
+  private let launcher: ExecutionLauncher
+  #if os(macOS)
+    private let workerExecutable: URL
+  #endif
   private let directoryFactory: any PluginArchiveDirectoryFactory
 
   package static let manifest = """
@@ -49,18 +54,24 @@ package struct PreparationFixture: Sendable {
         """)
 
   package static func make(
-    directoryFactory: any PluginArchiveDirectoryFactory,
+    launcher: ExecutionLauncher, directoryFactory: any PluginArchiveDirectoryFactory,
     manifest: String = Self.manifest, format: String = "tar"
   ) async throws -> Self {
     try await blockingFixtureIO {
-      try Self(directoryFactory: directoryFactory, manifest: manifest, format: format)
+      try Self(
+        launcher: launcher, directoryFactory: directoryFactory, manifest: manifest, format: format)
     }
   }
 
   private init(
-    directoryFactory: any PluginArchiveDirectoryFactory, manifest: String, format: String
+    launcher: ExecutionLauncher, directoryFactory: any PluginArchiveDirectoryFactory,
+    manifest: String, format: String
   ) throws {
+    self.launcher = launcher
     self.directoryFactory = directoryFactory
+    #if os(macOS)
+      workerExecutable = try nativeGatewayTestExecutable()
+    #endif
     files = try ArchiveFixture()
     archive = try files.archive(
       [
@@ -76,23 +87,21 @@ package struct PreparationFixture: Sendable {
       attributes: [.posixPermissions: 0o700])
   }
 
-  package var preparation: PluginArchivePreparation {
-    let repository = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
-      .deletingLastPathComponent().deletingLastPathComponent()
-    return PluginArchivePreparation(
-      workerExecutable: repository.appendingPathComponent(".build/debug/computer-mcp"),
-      stagingParent: staging, directoryFactory: directoryFactory)
-  }
+  #if os(macOS)
+    package var preparation: PluginArchivePreparation {
+      PluginArchivePreparation(
+        launcher: launcher, workerExecutable: workerExecutable,
+        stagingParent: staging, directoryFactory: directoryFactory)
+    }
+  #endif
 
   package func prepare<Result: Sendable>(
     worker: URL? = nil, timeout: Duration = .seconds(60),
     operation: @Sendable (PluginPackage, PluginArchiveReceipt) async throws -> Result
   ) async throws -> Result {
-    var preparation = preparation
-    if let worker {
-      preparation = PluginArchivePreparation(
-        workerExecutable: worker, stagingParent: staging, directoryFactory: directoryFactory)
-    }
+    var preparation = PluginArchivePreparation(
+      launcher: launcher, workerExecutable: try worker ?? nativeGatewayTestExecutable(),
+      stagingParent: staging, directoryFactory: directoryFactory)
     preparation.timeout = timeout
     return try await preparation.withPreparedPackage(
       archive: archive, expectedSHA256: digest, pluginID: "combined",
@@ -119,28 +128,8 @@ package struct PreparationFixture: Sendable {
   }
 
   private func writeStub(_ script: String) throws -> URL {
-    // Bypass Apple's /usr/bin Python launcher, which injects Xcode toolchain
-    // environment variables before executing the actual interpreter.
-    let lookup = Process()
-    let output = Pipe()
-    lookup.executableURL = URL(fileURLWithPath: "/usr/bin/env")
-    #if os(macOS)
-      lookup.arguments = ["xcrun", "--find", "python3"]
-    #else
-      lookup.arguments = ["python3", "-c", "import sys; print(sys.executable)"]
-    #endif
-    lookup.standardOutput = output
-    lookup.standardError = FileHandle.nullDevice
-    try lookup.run()
-    let data = output.fileHandleForReading.readDataToEndOfFile()
-    lookup.waitUntilExit()
-    try #require(lookup.terminationStatus == 0)
-    let interpreter = String(decoding: data, as: UTF8.self).trimmingCharacters(
-      in: .whitespacesAndNewlines)
-    try #require(interpreter.hasPrefix("/") && !interpreter.contains("\n"))
     let executable = files.root.appendingPathComponent("worker")
-    try Data(("#!\(interpreter)\n" + script + "\n").utf8).write(to: executable)
-    try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: executable.path)
+    try writePythonTestExecutable(script, to: executable)
     return executable
   }
 }
@@ -156,3 +145,42 @@ private func blockingFixtureIO<Result: Sendable>(
     }
   }
 }
+
+/// The worker belongs to the running test build, including custom SwiftPM build roots.
+package func nativeGatewayTestExecutable() throws -> URL {
+  let files = FileManager.default
+  if let path = ProcessInfo.processInfo.environment["COMPUTER_MCP_TEST_GATEWAY_EXECUTABLE"] {
+    try #require(path.hasPrefix("/"), "COMPUTER_MCP_TEST_GATEWAY_EXECUTABLE must be absolute")
+    let executable = URL(fileURLWithPath: path).resolvingSymlinksInPath()
+    try #require(
+      files.isExecutableFile(atPath: executable.path),
+      "The exact native test executable is unavailable: \(path)")
+    return executable
+  }
+  return try #require(
+    nativeTestExecutable(named: "computer-mcp"),
+    "Set COMPUTER_MCP_TEST_GATEWAY_EXECUTABLE to the exact computer-mcp artifact next to the running native test build"
+  )
+}
+
+/// Finds a product in the running test build, including xctest-hosted test modules.
+package func nativeTestExecutable(named name: String) -> URL? {
+  let locations = [
+    URL(fileURLWithPath: CommandLine.arguments[0]).resolvingSymlinksInPath(),
+    Bundle(for: NativeGatewayTestBundle.self).bundleURL.resolvingSymlinksInPath(),
+  ]
+  var directories: [URL] = []
+  for location in locations {
+    directories.append(location.deletingLastPathComponent())
+    for ancestor in sequence(first: location, next: { $0.deletingLastPathComponent() }).prefix(6)
+    where ancestor.pathExtension == "xctest" {
+      directories.append(ancestor.deletingLastPathComponent())
+    }
+  }
+  let candidates = directories.map {
+    $0.appendingPathComponent(name).resolvingSymlinksInPath()
+  }
+  return candidates.first { FileManager.default.isExecutableFile(atPath: $0.path) }
+}
+
+private final class NativeGatewayTestBundle: NSObject {}

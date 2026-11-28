@@ -1,4 +1,5 @@
 import ComputerMCPCore
+import ComputerMCPProcess
 import ComputerMCPToolKit
 
 package struct GitToolProvider: GatewayToolProvider {
@@ -13,10 +14,15 @@ package struct GitToolProvider: GatewayToolProvider {
   package func definitions() throws -> [ToolDefinition] {
     Self.toolDefinitions(toolMeta: environment.projectScope.toolMeta).filter {
       environment.configuration.builtin.enabled.contains($0.tool.name)
+        && (!Self.lifecycleTools.contains($0.tool.name) || environment.worktrees != nil)
     }.sorted { $0.tool.name < $1.tool.name }
   }
 
   package func callTool(_ invocation: ToolInvocation) throws -> JSONValue {
+    return try dispatch(invocation)
+  }
+
+  private func dispatch(_ invocation: ToolInvocation) throws -> JSONValue {
     let name = invocation.name
     let object = invocation.arguments?.objectValue ?? [:]
     switch name {
@@ -32,9 +38,10 @@ package struct GitToolProvider: GatewayToolProvider {
       try requireBuiltinEnabled(name)
       return try textResult(gitRemotes(arguments: object))
 
-    case "git.worktrees":
+    case "git.worktree_add", "git.worktree_list", "git.worktree_remove", "git.merge",
+      "git.branch_delete":
       try requireBuiltinEnabled(name)
-      return try textResult(gitWorktrees(arguments: object))
+      return try textResult(gitWorktree(name, arguments: object))
 
     case "git.stashes":
       try requireBuiltinEnabled(name)
@@ -159,10 +166,6 @@ package struct GitToolProvider: GatewayToolProvider {
     case "git.branch_create":
       try requireBuiltinEnabled(name)
       return try textResult(gitBranchCreate(arguments: object))
-
-    case "git.branch_delete":
-      try requireBuiltinEnabled(name)
-      return try textResult(gitBranchDelete(arguments: object))
 
     case "git.branch_rename":
       try requireBuiltinEnabled(name)

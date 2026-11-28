@@ -18,10 +18,15 @@ package final class BlockingOperationExecutor: @unchecked Sendable {
   package func perform<Value: Sendable>(
     _ operation: @escaping @Sendable () throws -> Value
   ) async throws -> Value {
-    try await withCheckedThrowingContinuation { continuation in
+    let authority = InvocationExecution.current
+    let pathAccess = HostPathAccess.current ?? authority?.pathAccess
+    return try await withCheckedThrowingContinuation { continuation in
       queue.async {
         do {
-          continuation.resume(returning: try operation())
+          let result = try InvocationExecution.$current.withValue(authority) {
+            try HostPathAccess.$current.withValue(pathAccess, operation: operation)
+          }
+          continuation.resume(returning: result)
         } catch {
           continuation.resume(throwing: error)
         }

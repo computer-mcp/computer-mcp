@@ -1,12 +1,17 @@
 import ComputerMCPConfiguration
 import ComputerMCPCore
 import ComputerMCPDownstream
+import ComputerMCPPermissions
 import ComputerMCPTestSupport
 import ComputerMCPToolKit
 import Foundation
 import Testing
 
 @testable import ComputerMCPToolsMCP
+
+#if os(macOS)
+  import ComputerMCPDarwinTestSupport
+#endif
 
 struct ConfiguredMCPToolProviderTests {
   @Test(arguments: ["", "namespace"], [false, true])
@@ -18,6 +23,7 @@ struct ConfiguredMCPToolProviderTests {
     let client = ReexportNamingClient(["first": [firstName], "second": ["right"]])
     let provider = ConfiguredMCPToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: .fixture(
           mcp: .init(servers: [
             Self.server("second", prefix: secondPrefix), Self.server("first", prefix: prefix),
@@ -44,6 +50,7 @@ struct ConfiguredMCPToolProviderTests {
     let client = ReexportNamingClient(["first": ["left"], "second": ["right"]])
     let provider = ConfiguredMCPToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: .fixture(
           mcp: .init(servers: [Self.server("first", prefix: ""), Self.server("second", prefix: "")])
         )), mcpClient: client)
@@ -82,9 +89,14 @@ struct ConfiguredMCPToolProviderTests {
     #expect(decoded.mcp.servers[0].prefix == prefix)
     let provider = ConfiguredMCPToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: .fixture(mcp: .init(servers: [server]))), mcpClient: client)
     let exposed = prefix.isEmpty ? name : "\(prefix).\(name)"
-    let tool = try #require(provider.definitions().map(\.tool).first { $0.name == exposed })
+    let definition = try #require(provider.definitions().first { $0.tool.name == exposed })
+    let tool = definition.tool
+    #expect(
+      definition.requirement.contribution
+        == .mcp(server: .registered(id: try #require(tool.mcpReference).serverID)))
     let original = try #require(client.listTools(server: server, context: .empty).first)
     #expect(tool.inputSchema == original.inputSchema && tool.outputSchema == original.outputSchema)
     #expect(tool.title == original.title && tool.annotations == original.annotations)
@@ -95,34 +107,39 @@ struct ConfiguredMCPToolProviderTests {
   }
 
   @Test
-  func directResolutionUsesListingPermissionsAndVisibility() throws {
+  func knownToolsRemainRequestableAndDirectCallsEnforceTheirObjectGrant() throws {
     var first = Self.server("first", prefix: "")
     first.allowAnyTool = false
     first.allowedTools = ["inspect"]
     first.toolRisks = ["inspect": .readOnly]
     let configuration = GatewayConfiguration.fixture(
-      mcp: .init(servers: [Self.server("second", prefix: ""), first]))
+      mcp: .init(servers: [Self.server("second", prefix: "second"), first]))
     let base = ReexportNamingClient([
       "first": ["inspect", "blocked"], "second": ["inspect", "hidden"],
     ])
+    var permissions = Permissions()
+    try permissions.set(.granted(.read), for: .mcpServer("first"))
     let client = AuthorizedMCPClient(
       base: base,
       policy: .init(
         configuration: configuration,
         grant: .init(
-          id: .chatGPTObserve, capabilityIDs: [], allowedCallers: [.secureTunnel],
-          mcpServerIDs: ["first"]), derivesObserveGrant: false))
+          id: .chatGPTObserve, permissions: permissions, allowedCallers: [.secureTunnel])))
     let provider = ConfiguredMCPToolProvider(
-      environment: ToolEnvironment(configuration: configuration), mcpClient: client)
+      environment: ToolEnvironment(launcher: testExecutionLauncher(), configuration: configuration),
+      mcpClient: client)
+    #expect(
+      Set(try provider.definitions().map(\.tool.name))
+        == ["inspect", "second.inspect", "second.hidden"])
     #expect(
       try provider.callTool(.init(name: "inspect", arguments: nil, context: .empty))
         == .string("first:inspect"))
-    for name in ["blocked", "hidden"] {
-      #expect(throws: GatewayToolError.unknownTool(name)) {
-        try provider.callTool(.init(name: name, arguments: nil, context: .empty))
-      }
+    #expect(throws: GatewayToolError.unknownTool("blocked")) {
+      try provider.callTool(.init(name: "blocked", arguments: nil, context: .empty))
     }
-    #expect(base.discoveredServers == ["first", "first"])
+    #expect(throws: (any Error).self) {
+      try provider.callTool(.init(name: "second.hidden", arguments: nil, context: .empty))
+    }
     #expect(base.calls == ["first:inspect"])
   }
 
@@ -131,6 +148,7 @@ struct ConfiguredMCPToolProviderTests {
     let client = ReexportNamingClient(["first": ["inspect", "mcp.tools.list"]])
     let provider = ConfiguredMCPToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: .fixture(mcp: .init(servers: [Self.server("first", prefix: "")]))),
       mcpClient: client)
     let conflict = GatewayToolError.invalidArguments(
@@ -155,6 +173,7 @@ struct ConfiguredMCPToolProviderTests {
     let client = ReexportNamingClient(["first": ["inspect", "mcp.tools.list"]])
     let provider = ConfiguredMCPToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: .fixture(mcp: .init(servers: [Self.server("first", prefix: "")]))),
       mcpClient: client)
     await #expect(
@@ -175,6 +194,10 @@ struct ConfiguredMCPToolProviderTests {
 }
 
 private final class ReexportNamingClient: DownstreamMCPClient, @unchecked Sendable {
+  func cachedTools(server: MCPServerConfig, context: InvocationContext) throws -> [MCPTool]? {
+    try listTools(server: server, context: context)
+  }
+
   private let lock = NSLock()
   private var names: [String: [String]]
   private var discoveries: [String] = []

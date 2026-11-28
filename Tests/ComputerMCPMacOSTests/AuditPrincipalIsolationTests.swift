@@ -1,4 +1,7 @@
+import ComputerMCPConfiguration
 import ComputerMCPMacOS
+import ComputerMCPPermissions
+import ComputerMCPTestSupport
 import Foundation
 import GRDB
 import Testing
@@ -6,12 +9,18 @@ import Testing
 @testable import ComputerMCPCore
 @testable import ComputerMCPGateway
 
+#if os(macOS)
+  import ComputerMCPDarwinTestSupport
+#endif
+
 struct AuditPrincipalIsolationTests {
   @Test
   func unboundHistoryIsNotAttributedToAVerifiedPrincipal() throws {
     let database = try GatewayDatabase(inMemory: ())
     let unbound = AuditEvent(
-      id: "unbound", occurredAt: Date(timeIntervalSince1970: 1000), requestID: "unbound",
+      id: "unbound",
+      occurredAt: Date(timeIntervalSince1970: Date().timeIntervalSince1970.rounded(.down)),
+      requestID: "unbound",
       caller: .secureTunnel, transport: "http", profileID: .chatGPTOperate,
       projectID: "fixture", capabilityID: "file.read", decision: .allowed)
     try database.recordAudit(unbound)
@@ -37,18 +46,13 @@ struct AuditPrincipalIsolationTests {
     let first = try fixture.runtime(context: firstContext)
     let second = try fixture.runtime(context: secondContext)
     do {
-      try fixture.inspect(first, context: firstContext, requestID: "first-http")
-      try fixture.inspect(second, context: secondContext, requestID: "second-http")
-      let database = try GatewayDatabase(path: fixture.databasePath)
+      try await fixture.inspect(first, context: firstContext, requestID: "first-http")
+      try await fixture.inspect(second, context: secondContext, requestID: "second-http")
+      let database = try fixturePermissionDatabase(path: fixture.databasePath)
       let firstAudits = try database.hostDiagnosticAudits(context: firstContext, limit: 100)
       let secondAudits = try database.hostDiagnosticAudits(context: secondContext, limit: 100)
-      #expect(firstAudits.map(\.requestID) == ["first-http"])
-      #expect(secondAudits.map(\.requestID) == ["second-http"])
-      #expect(firstAudits.first?.socketConnectionID == nil)
-      #expect(secondAudits.first?.socketConnectionID == nil)
-      #expect(
-        firstAudits.first?.principalDigest
-          == AuditEvent.verifiedPrincipalDigest("credential:first"))
+      fixture.expectAuditPair(firstAudits, context: firstContext, requestID: "first-http")
+      fixture.expectAuditPair(secondAudits, context: secondContext, requestID: "second-http")
       var unverified = firstContext
       unverified.trustedPrincipalID = nil
       #expect(try database.hostDiagnosticAudits(context: unverified, limit: 100).isEmpty)
@@ -78,11 +82,16 @@ struct AuditPrincipalIsolationTests {
       principal: "tunnel-bridge:fixture", connection: "new-connection")
     let runtime = try fixture.runtime(context: original)
     do {
-      try fixture.inspect(runtime, context: original, requestID: "before-reconnect")
-      try fixture.inspect(runtime, context: reconnect, requestID: "after-reconnect")
+      try await fixture.inspect(runtime, context: original, requestID: "before-reconnect")
+      try await fixture.inspect(runtime, context: reconnect, requestID: "after-reconnect")
       let audits = try fixture.database.hostDiagnosticAudits(context: reconnect, limit: 100)
       #expect(Set(audits.map(\.requestID)) == ["before-reconnect", "after-reconnect"])
-      #expect(Set(audits.compactMap(\.socketConnectionID)) == ["old-connection", "new-connection"])
+      fixture.expectAuditPair(
+        audits.filter { $0.requestID == "before-reconnect" }, context: original,
+        requestID: "before-reconnect")
+      fixture.expectAuditPair(
+        audits.filter { $0.requestID == "after-reconnect" }, context: reconnect,
+        requestID: "after-reconnect")
       var impostor = reconnect
       impostor.trustedPrincipalID = "tunnel-bridge:another"
       #expect(try fixture.database.hostDiagnosticAudits(context: impostor, limit: 100).isEmpty)
@@ -104,16 +113,24 @@ struct AuditPrincipalIsolationTests {
 private struct AuditPrincipalFixture {
   let root: URL
   let database: GatewayDatabase
+  let project: ComputerMCPCore.RegisteredProject
+  let configuration: GatewayConfiguration
   var databasePath: String { root.appendingPathComponent("audits.sqlite").path }
 
   init() throws {
-    root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
-    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
-    database = try GatewayDatabase(path: root.appendingPathComponent("audits.sqlite").path)
-    try database.saveProfile(
-      .init(
-        id: .chatGPTOperate, capabilityIDs: ["project.describe"], projectIDs: ["fixture"],
-        allowedCallers: [.secureTunnel], mode: .readOnly))
+    let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+    root = directory.resolvingSymlinksInPath()
+    project = .init(id: "fixture", displayName: "Fixture", rootPath: root.path)
+    database = try fixturePermissionDatabase(
+      path: root.appendingPathComponent("audits.sqlite").path)
+    let profile = ProfileGrantConfig(
+      id: .chatGPTOperate,
+      permissions: fixturePermissions([.project("fixture"): .granted(.read)]),
+      allowedCallers: [.secureTunnel])
+    configuration = .init(profiles: [profile])
+    try database.bootstrapPermissionProfiles([profile.grant], declarations: [profile.grant])
+    try database.saveProject(project)
   }
 
   func context(principal: String, connection: String?) -> ExecutionContext {
@@ -125,18 +142,41 @@ private struct AuditPrincipalFixture {
   }
 
   func runtime(context: ExecutionContext) throws -> GatewayRuntime {
-    try GatewayRuntime(
-      configuration: .init(), context: context, database: database,
-      registeredProjects: [.init(id: "fixture", displayName: "Fixture", rootPath: root.path)],
-      platform: MacOSPlatform.services, plugins: [])
+    var platform = MacOSPlatform.services(launcher: testExecutionLauncher())
+    platform.permissionPolicyReader = TestManagedPolicyReader()
+    return try GatewayRuntime(
+      configuration: configuration, context: context, database: database,
+      registeredProjects: [project], platform: platform, plugins: [])
   }
 
-  func inspect(_ runtime: GatewayRuntime, context: ExecutionContext, requestID: String) throws {
+  func inspect(_ runtime: GatewayRuntime, context: ExecutionContext, requestID: String) async throws
+  {
     var request = context
     request.requestID = requestID
-    _ = try runtime.callTool(
+    _ = try await runtime.callToolAsync(
       name: "project.describe", arguments: .object(["project_id": .string("fixture")]),
       context: request, invocationContext: .empty)
+  }
+
+  func expectAuditPair(_ events: [AuditEvent], context: ExecutionContext, requestID: String) {
+    #expect(events.count == 2)
+    #expect(events.filter { $0.errorCode == "permission.admitted" }.count == 1)
+    #expect(events.filter { $0.errorCode == nil }.count == 1)
+    #expect(
+      Set(events.compactMap { $0.errorDetails?.objectValue?["admission"]?.stringValue })
+        == ["allowed", "completed"])
+    for event in events {
+      #expect(event.requestID == requestID)
+      #expect(
+        event.principalDigest == AuditEvent.verifiedPrincipalDigest(context.trustedPrincipalID))
+      #expect(event.caller == context.caller)
+      #expect(event.transport == context.transportTrace?.transport)
+      #expect(event.socketConnectionID == context.transportTrace?.socketConnectionID)
+      #expect(event.profileID == context.profileID)
+      #expect(event.projectID == context.projectID)
+      #expect(event.capabilityID == "project.describe")
+      #expect(event.decision == .allowed)
+    }
   }
 
   func remove() { try? FileManager.default.removeItem(at: root) }

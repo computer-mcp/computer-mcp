@@ -6,17 +6,24 @@ import Testing
 @Suite
 
 final class CapabilityFixturePlanTests {
-  @Test(arguments: [GatewayProfileID.chatGPTObserve, .cloudflareObserve])
-  func testObserveProfileHasBoundedFixtureArgumentsForEveryTool(profile: GatewayProfileID) throws {
+  @Test(
+    .enabled(
+      if: ProcessInfo.processInfo.environment["COMPUTER_MCP_EXECUTABLE"] != nil,
+      "Set COMPUTER_MCP_EXECUTABLE to the native host CLI for catalog acceptance."),
+    arguments: [GatewayProfileID.chatGPTObserve, .cloudflareObserve])
+  func testPublicCatalogHasRequirementsAndBoundedIndependentReadFixtures(profile: GatewayProfileID)
+    throws
+  {
     let manifestURL = FileManager.default.temporaryDirectory
       .appendingPathComponent("computer-mcp-observe-\(UUID().uuidString).toml")
     defer { try? FileManager.default.removeItem(at: manifestURL) }
     try ValidationDefaultManifest.write(to: manifestURL)
-    let observeCapabilities = try ValidationToolInventoryContract.load(
+    let tools = try ValidationToolInventoryContract.load(
       configurationURL: manifestURL,
       caller: profile == .chatGPTObserve ? .secureTunnel : .cloudflareTunnel,
       profileID: profile
-    ).tools.map(\.name)
+    ).tools
+    let readCapabilities = tools.filter(\.isIndependentReadProbe).map(\.name)
     let plan = CapabilityFixturePlan(
       projectID: "fixture",
       repositoryProjectID: "repository",
@@ -27,13 +34,21 @@ final class CapabilityFixturePlanTests {
       loopbackHTTPURL: URL(string: "http://127.0.0.1:64884/health")!
     )
 
-    let unsupported = observeCapabilities.filter {
+    let unsupported = readCapabilities.filter {
       plan.invocation(for: $0, pointerPosition: (x: 100, y: 100)) == nil
     }
 
-    #expect(!observeCapabilities.isEmpty)
-    #expect(observeCapabilities.contains("delivery.scopes.list"))
-    #expect(!observeCapabilities.contains("delivery.apply"))
+    #expect(!readCapabilities.isEmpty)
+    #expect(!tools.contains { $0.name.hasPrefix("delivery.") })
+    #expect(tools.contains { $0.name == "project.request" })
+    #expect(!readCapabilities.contains("project.request"))
+    #expect(!readCapabilities.contains("process.read"))
+    #expect(readCapabilities.contains("runtime.owners.list"))
+    for tool in tools {
+      #expect(
+        tool.meta?.objectValue?["computer_mcp"]?.objectValue?["requirements"] != nil,
+        "Missing requirements: \(tool.name)")
+    }
     #expect((unsupported) == ([]))
     #expect(
       plan.invocation(for: "project.executable_files")?.arguments["include_hidden"]
@@ -55,16 +70,7 @@ final class CapabilityFixturePlanTests {
     #expect((plan.invocation(for: "network.http_check")) == nil)
     #expect((plan.invocation(for: "network.tcp_check")) == nil)
     #expect((plan.invocation(for: "file.read")) != nil)
-    #expect((plan.invocation(for: "file.write")?.execution) == (.committed))
-    #expect((plan.invocation(for: "archive.create")?.execution) == (.committed))
 
-    let repositoryPlan = CapabilityFixturePlan(
-      projectID: "fixture",
-      repositoryProjectID: "repository",
-      accessibilityProcessID: 123
-    )
-    #expect((repositoryPlan.invocation(for: "git.add")?.execution) == (.committed))
-    #expect((repositoryPlan.invocation(for: "git.branch_create")?.execution) == (.direct))
   }
 
   @Test
@@ -90,7 +96,6 @@ final class CapabilityFixturePlanTests {
     ]
 
     #expect((supported.filter { plan.invocation(for: $0) == nil }) == ([]))
-    #expect((plan.invocation(for: "mcp.tools.call")?.execution) == (.committed))
     #expect((plan.invocation(for: "mcp.requests.cancel")) == nil)
   }
 

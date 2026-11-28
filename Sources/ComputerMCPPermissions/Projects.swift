@@ -1,0 +1,425 @@
+import Foundation
+
+/// An absolute, normalized real path supplied by the caller. This type validates
+/// lexical form only; resolving links, volume casing and filesystem races is the caller's job.
+package struct CanonicalPath: Hashable, Sendable, Codable {
+  package let string: String
+
+  package init(_ string: String) throws {
+    let components = string.split(separator: "/", omittingEmptySubsequences: false)
+    guard string.hasPrefix("/"), !string.contains("\0"),
+      string == "/"
+        || (!string.hasSuffix("/") && !components.dropFirst().contains("")
+          && !components.contains(".") && !components.contains(".."))
+    else { throw PermissionModelError.invalidPath }
+    self.string = string
+  }
+
+  package init(from decoder: any Decoder) throws {
+    try self.init(decoder.singleValueContainer().decode(String.self))
+  }
+
+  package func encode(to encoder: any Encoder) throws {
+    var container = encoder.singleValueContainer()
+    try container.encode(string)
+  }
+
+  package func contains(_ path: CanonicalPath) -> Bool {
+    string == "/" || path.string == string || path.string.hasPrefix(string + "/")
+  }
+
+  func projecting(_ path: CanonicalPath, from source: CanonicalPath) throws -> CanonicalPath {
+    let suffix = path.string.dropFirst(source.string == "/" ? 0 : source.string.count)
+    return try CanonicalPath((string == "/" ? "" : string) + suffix)
+  }
+}
+
+package struct RegisteredProject: Hashable, Sendable, Codable {
+  package let id: String
+  package var root: CanonicalPath {
+    didSet { if root != oldValue { identity = identity.edited() } }
+  }
+  package var sourceID: String? {
+    didSet { if sourceID != oldValue { identity = identity.edited() } }
+  }
+  /// Set only by the host adapter after checking durable content-directory ownership.
+  /// The storage generation prevents a replacement registration from inheriting this boundary.
+  package var hostContentIdentity: UUID? {
+    didSet { if hostContentIdentity != oldValue { identity = identity.edited() } }
+  }
+  package internal(set) var identity = BasisIdentity()
+
+  package init(
+    id: String, root: CanonicalPath, sourceID: String? = nil, hostContentIdentity: UUID? = nil
+  ) {
+    self.id = id
+    self.root = root
+    self.sourceID = sourceID
+    self.hostContentIdentity = hostContentIdentity
+  }
+}
+
+/// Git tracking is an input fact; path nesting alone does not establish shared history.
+package struct TrackedProjectNesting: Sendable {
+  package let innerID: String
+  package let outerID: String
+
+  package init(innerID: String, outerID: String) {
+    self.innerID = innerID
+    self.outerID = outerID
+  }
+}
+
+package struct ProjectLocation: Hashable, Sendable, Codable {
+  package let projectID: String
+  package let root: CanonicalPath
+  package let isDerived: Bool
+  package let registrations: Set<RegisteredProject>
+}
+
+package struct ProjectCatalog: Sendable {
+  package let projects: [RegisteredProject]
+  private let sources: [String: String]
+  private let locations: [ProjectLocation]
+
+  package init(_ projects: [RegisteredProject] = []) throws {
+    guard Set(projects.map(\.id)).count == projects.count,
+      Set(projects.map(\.root)).count == projects.count,
+      projects.allSatisfy({ !$0.id.isEmpty && $0.id != "*" })
+    else { throw PermissionModelError.invalidProjectGraph }
+    // Derived roots never contain one another, so a path's owner never depends on the order of
+    // derived projects; owner-consent digests omit derived projects on that basis.
+    let derived = projects.filter { $0.sourceID != nil }
+    guard
+      !derived.contains(where: { outer in
+        derived.contains { $0.id != outer.id && outer.root.contains($0.root) }
+      })
+    else { throw PermissionModelError.invalidProjectGraph }
+    let byID = Dictionary(uniqueKeysWithValues: projects.map { ($0.id, $0) })
+    var sources: [String: String] = [:]
+    for project in projects {
+      var current = project
+      var visited: Set<String> = [project.id]
+      while let sourceID = current.sourceID {
+        guard let source = byID[sourceID], visited.insert(sourceID).inserted else {
+          throw PermissionModelError.invalidProjectGraph
+        }
+        current = source
+      }
+      sources[project.id] = current.id
+    }
+    func registrations(for project: RegisteredProject) -> Set<RegisteredProject> {
+      var result: Set<RegisteredProject> = [project]
+      var current = project
+      while let sourceID = current.sourceID, let source = byID[sourceID] {
+        result.insert(source)
+        current = source
+      }
+      return result
+    }
+    var locations: [ProjectLocation] = []
+    for project in projects {
+      let enclosingDerived = projects.filter {
+        $0.sourceID != nil && $0.root.contains(project.root)
+      }
+      let isDerived = !enclosingDerived.isEmpty
+      let provenance = enclosingDerived.reduce(into: registrations(for: project)) {
+        $0.formUnion(registrations(for: $1))
+      }
+      locations.append(
+        ProjectLocation(
+          projectID: sources[project.id]!, root: project.root, isDerived: isDerived,
+          registrations: provenance))
+    }
+    for derived in projects where derived.sourceID != nil {
+      let source = byID[sources[derived.id]!]!
+      for nested in projects where nested.id != source.id && source.root.contains(nested.root) {
+        locations.append(
+          ProjectLocation(
+            projectID: sources[nested.id]!,
+            root: try derived.root.projecting(nested.root, from: source.root), isDerived: true,
+            registrations: registrations(for: derived).union(registrations(for: nested))))
+      }
+    }
+    self.projects = projects
+    self.sources = sources
+    // Explicit registrations win ties with projected locations.
+    self.locations = locations.enumerated().sorted {
+      if $0.element.root.string.count != $1.element.root.string.count {
+        return $0.element.root.string.count > $1.element.root.string.count
+      }
+      return $0.offset < $1.offset
+    }.map(\.element)
+  }
+
+  package func sourceID(for projectID: String) -> String? { sources[projectID] }
+
+  package func location(at path: CanonicalPath) -> ProjectLocation? {
+    locations.first { $0.root.contains(path) }
+  }
+
+  package var allLocations: [ProjectLocation] { locations }
+
+  package func validate(
+    nesting: [TrackedProjectNesting], permissions: [Principal: Permissions]
+  ) throws {
+    for pair in nesting {
+      guard let inner = sourceID(for: pair.innerID), let outer = sourceID(for: pair.outerID) else {
+        throw PermissionModelError.invalidProjectGraph
+      }
+      for (principal, rules) in permissions {
+        let outerState = rules.state(for: .project(outer))
+        let innerState = rules.state(for: .project(inner))
+        if case .granted(let value) = outerState, !innerState.allows(value) {
+          throw PermissionModelError.narrowerNestedProject(
+            inner: inner, outer: outer, principal: principal)
+        }
+      }
+    }
+  }
+}
+
+package struct NetworkAccess: Hashable, Sendable, Codable {
+  package enum Configuration: Hashable, Sendable, Codable {
+    case none, trusted, full
+    case custom(hosts: Set<String>, includesTrusted: Bool)
+  }
+
+  package private(set) var configuration: Configuration
+  package internal(set) var customRules: Set<HostRule> = []
+  var fullRule: BasisIdentity?
+  var trustedRule: BasisIdentity?
+
+  private init(_ configuration: Configuration) {
+    self.configuration = configuration
+    switch configuration {
+    case .full: fullRule = BasisIdentity()
+    case .trusted: trustedRule = BasisIdentity()
+    case .custom(let hosts, let includesTrusted):
+      customRules = Set(Set(hosts.map(NetworkHost.canonical)).map(HostRule.init))
+      if includesTrusted { trustedRule = BasisIdentity() }
+    case .none: break
+    }
+  }
+
+  package static var none: Self { Self(.none) }
+  package static var trusted: Self { Self(.trusted) }
+  package static var full: Self { Self(.full) }
+  package static func custom(hosts: Set<String>, includesTrusted: Bool) -> Self {
+    Self(.custom(hosts: Set(hosts.map(NetworkHost.canonical)), includesTrusted: includesTrusted))
+  }
+
+  func identity(for source: NetworkAccessBasis.Source, host: String) -> BasisIdentity? {
+    switch source {
+    case .full: fullRule
+    case .trusted: trustedRule
+    case .custom:
+      customRules.sorted { NetworkHost.precedes($0.host, $1.host) }.first {
+        NetworkHost.contains($0.host, rule: host)
+      }?
+      .identity
+    }
+  }
+
+  func preservesUnboundedRule(of previous: NetworkAccess) -> Bool {
+    previous.fullRule == nil || fullRule == previous.fullRule
+  }
+
+  package func allows(_ host: String, trustedHosts: Set<String>) -> Bool {
+    guard (try? NetworkHost.normalize(host)) != nil else { return false }
+    return hosts(trustedHosts: trustedHosts)?.contains { NetworkHost.matches(host, rule: $0) }
+      ?? true
+  }
+
+  func hosts(trustedHosts: Set<String>) -> Set<String>? {
+    configuration.hosts(trustedHosts: trustedHosts)
+  }
+
+  func isMoreRestrictive(than previous: NetworkAccess, trustedHosts: Set<String>) -> Bool {
+    configuration.isMoreRestrictive(than: previous.configuration, trustedHosts: trustedHosts)
+  }
+
+  /// Whether this setting stays within the ceiling, including future trusted-host changes.
+  package func fits(within ceiling: NetworkAccess, trustedHosts: Set<String>) -> Bool {
+    func includesTrusted(_ access: NetworkAccess) -> Bool {
+      switch access.configuration {
+      case .trusted, .full: true
+      case .custom(_, let included): included
+      case .none: false
+      }
+    }
+    if configuration == .full { return ceiling.configuration == .full }
+    if includesTrusted(self) && !includesTrusted(ceiling) { return false }
+    let limits = ManagedLimits(machine: .available(ManagedPolicy(network: ceiling)))
+    return limits.network(applying: self, trustedHosts: trustedHosts)
+      == ManagedLimits().network(applying: self, trustedHosts: trustedHosts)
+  }
+
+  /// Retains existing rule identities; a newly added host gets a new record.
+  package func adding(_ host: String) -> Self {
+    guard fullRule == nil else { return self }
+    let host = NetworkHost.canonical(host)
+    var result = self
+    if !customRules.contains(where: { $0.host == host }) {
+      result.customRules.insert(HostRule(host))
+    }
+    result.configuration = .custom(
+      hosts: Set(result.customRules.map(\.host)), includesTrusted: trustedRule != nil)
+    return result
+  }
+
+  package func removing(_ host: String) -> Self {
+    var result = self
+    result.customRules = customRules.filter { $0.host != NetworkHost.canonical(host) }
+    if case .custom = configuration {
+      result.configuration = .custom(
+        hosts: Set(result.customRules.map(\.host)), includesTrusted: trustedRule != nil)
+    }
+    return result
+  }
+}
+
+package struct SandboxSettings: Hashable, Sendable, Codable {
+  package var network: NetworkAccess
+  package var readExceptions: Set<ApprovedReadException>
+  /// The approved declaration constrains owner selections, including future trusted hosts.
+  package var networkCeiling: NetworkAccess?
+  package internal(set) var deniedReadRules: Set<PathRule>
+  package var deniedReadLocations: Set<CanonicalPath> {
+    get { Set(deniedReadRules.map(\.root)) }
+    set { deniedReadRules = PathRule.replacingRoots(deniedReadRules, with: newValue) }
+  }
+
+  package init(
+    network: NetworkAccess = .none, deniedReadLocations: Set<CanonicalPath> = [],
+    readExceptions: Set<ApprovedReadException> = [], networkCeiling: NetworkAccess? = nil
+  ) {
+    self.network = network
+    self.readExceptions = readExceptions
+    self.networkCeiling = networkCeiling
+    self.deniedReadRules = Set(deniedReadLocations.map { PathRule(root: $0, kind: .denied) })
+  }
+
+  private enum CodingKeys: String, CodingKey {
+    case network, deniedReadRules, readExceptions, networkCeiling
+  }
+
+  package init(from decoder: any Decoder) throws {
+    let values = try decoder.container(keyedBy: CodingKeys.self)
+    network = try values.decode(NetworkAccess.self, forKey: .network)
+    networkCeiling = try values.decodeIfPresent(NetworkAccess.self, forKey: .networkCeiling)
+    deniedReadRules = try values.decode(Set<PathRule>.self, forKey: .deniedReadRules)
+    readExceptions =
+      try values.decodeIfPresent(Set<ApprovedReadException>.self, forKey: .readExceptions) ?? []
+  }
+
+  package func encode(to encoder: any Encoder) throws {
+    var values = encoder.container(keyedBy: CodingKeys.self)
+    try values.encode(network, forKey: .network)
+    try values.encodeIfPresent(networkCeiling, forKey: .networkCeiling)
+    try values.encode(deniedReadRules, forKey: .deniedReadRules)
+    // Preserve existing client consent digests when no provider exceptions exist.
+    if !readExceptions.isEmpty { try values.encode(readExceptions, forKey: .readExceptions) }
+  }
+}
+
+extension SandboxSettings {
+  package func effectiveNetwork(limits: ManagedLimits, trustedHosts: Set<String>)
+    -> NetworkAccess.Configuration
+  {
+    let selected = limits.network(applying: network, trustedHosts: trustedHosts)
+    guard let ceiling = networkCeiling?.hosts(trustedHosts: trustedHosts) else { return selected }
+    let hosts =
+      selected.hosts(trustedHosts: trustedHosts).map { NetworkHost.intersection($0, ceiling) }
+      ?? ceiling
+    return hosts.isEmpty ? .none : .custom(hosts: hosts, includesTrusted: false)
+  }
+
+  func isMoreRestrictive(than previous: SandboxSettings, trustedHosts: Set<String>) -> Bool {
+    network.isMoreRestrictive(than: previous.network, trustedHosts: trustedHosts)
+      || !Set(previous.readExceptions.map(\.identity)).isSubset(
+        of: Set(readExceptions.map(\.identity)))
+      || deniedReadLocations.contains { path in
+        !previous.deniedReadLocations.contains { $0.contains(path) }
+      }
+  }
+}
+
+package struct SandboxSettingsKey: Hashable, Sendable, Codable {
+  package let principal: Principal
+  package let projectID: String
+
+  package init(principal: Principal, projectID: String) {
+    self.principal = principal
+    self.projectID = projectID
+  }
+}
+
+package struct ProjectSandboxSettings: Equatable, Sendable, Codable {
+  package var entries: [SandboxSettingsKey: SandboxSettings]
+  package var providers: [PluginIdentity: ProviderSandboxSettings]
+  package var isEmpty: Bool { entries.isEmpty && providers.isEmpty }
+
+  package init(
+    entries: [SandboxSettingsKey: SandboxSettings] = [:],
+    providers: [PluginIdentity: ProviderSandboxSettings] = [:]
+  ) {
+    self.entries = entries
+    self.providers = providers
+  }
+
+  private enum CodingKeys: String, CodingKey { case entries, providers }
+
+  package init(from decoder: any Decoder) throws {
+    let values = try decoder.container(keyedBy: CodingKeys.self)
+    entries = try values.decode([SandboxSettingsKey: SandboxSettings].self, forKey: .entries)
+    providers =
+      try values.decodeIfPresent([PluginIdentity: ProviderSandboxSettings].self, forKey: .providers)
+      ?? [:]
+  }
+
+  package func encode(to encoder: any Encoder) throws {
+    var values = encoder.container(keyedBy: CodingKeys.self)
+    try values.encode(entries, forKey: .entries)
+    if !providers.isEmpty { try values.encode(providers, forKey: .providers) }
+  }
+
+  package func settings(for principal: Principal, sourceProjectID: String?) -> SandboxSettings {
+    if case .plugin(let identity) = principal, let provider = providers[identity] {
+      return provider.settings(sourceProjectID: sourceProjectID)
+    }
+    return sourceProjectID.flatMap {
+      entries[SandboxSettingsKey(principal: principal, projectID: $0)]
+    } ?? .init()
+  }
+
+  package func settings(
+    for principal: Principal, projectID: String, projects: ProjectCatalog
+  ) throws -> SandboxSettings {
+    guard let source = projects.sourceID(for: projectID) else {
+      throw PermissionModelError.invalidProjectGraph
+    }
+    return settings(for: principal, sourceProjectID: source)
+  }
+}
+
+extension NetworkAccess.Configuration {
+  func hosts(trustedHosts: Set<String>) -> Set<String>? {
+    let trustedHosts = Set(trustedHosts.map(NetworkHost.canonical))
+    return switch self {
+    case .full: nil
+    case .none: []
+    case .trusted: trustedHosts
+    case .custom(let hosts, let includesTrusted): hosts.union(includesTrusted ? trustedHosts : [])
+    }
+  }
+
+  func isMoreRestrictive(than previous: NetworkAccess.Configuration, trustedHosts: Set<String>)
+    -> Bool
+  {
+    guard let current = hosts(trustedHosts: trustedHosts) else { return false }
+    guard let previous = previous.hosts(trustedHosts: trustedHosts) else { return true }
+    return !previous.allSatisfy { old in current.contains { NetworkHost.contains($0, rule: old) } }
+  }
+
+}

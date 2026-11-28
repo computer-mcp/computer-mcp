@@ -426,14 +426,14 @@ extension ComputerUseGatewayProvider {
           "Read current Accessibility and Screen Recording permission status. Never prompts.",
         input: objectSchema(),
         result: permissionSchema,
-        risk: .readOnly
+        risk: .readOnly, requirement: .privacy(.screen)
       ),
       definition(
         name: "computer.displays",
         description: "List active display geometry and pixel metadata without capturing pixels.",
         input: objectSchema(),
         result: arraySchema(displaySchema),
-        risk: .readOnly
+        risk: .readOnly, requirement: .privacy(.screen)
       ),
       definition(
         name: "computer.screenshot",
@@ -442,7 +442,7 @@ extension ComputerUseGatewayProvider {
           + "permission and never prompts for it.",
         input: screenshotInputSchema,
         result: screenshotSchema,
-        risk: .readOnly,
+        risk: .readOnly, requirement: .privacy(.screen),
         tccServices: ["screen-recording"]
       ),
       definition(
@@ -453,7 +453,7 @@ extension ComputerUseGatewayProvider {
           + "Recording permission and never prompts for it.",
         input: windowInputSchema,
         result: arraySchema(windowSchema),
-        risk: .readOnly,
+        risk: .readOnly, requirement: .privacy(.screen),
         tccServices: ["screen-recording"]
       ),
       definition(
@@ -462,14 +462,14 @@ extension ComputerUseGatewayProvider {
           "Read the current macOS pointer position without moving it or requesting permissions.",
         input: objectSchema(),
         result: pointSchema,
-        risk: .readOnly
+        risk: .readOnly, requirement: .privacy(.screen)
       ),
       definition(
         name: "computer.pointer.move",
         description: "Move the macOS pointer to an absolute display coordinate.",
         input: pointerMoveInputSchema,
         result: actionResultSchema,
-        risk: .externalWrite,
+        risk: .externalWrite, requirement: .privacy(.desktopControl),
         tccServices: ["accessibility"],
         idempotent: true
       ),
@@ -478,7 +478,7 @@ extension ComputerUseGatewayProvider {
         description: "Click a pointer button at a bounded coordinate or current pointer location.",
         input: pointerClickInputSchema,
         result: actionResultSchema,
-        risk: .externalWrite,
+        risk: .externalWrite, requirement: .privacy(.desktopControl),
         tccServices: ["accessibility"]
       ),
       definition(
@@ -486,7 +486,7 @@ extension ComputerUseGatewayProvider {
         description: "Press a macOS virtual key code with explicit modifiers and repeat count.",
         input: keyboardKeyInputSchema,
         result: actionResultSchema,
-        risk: .externalWrite,
+        risk: .externalWrite, requirement: .privacy(.desktopControl),
         tccServices: ["accessibility"]
       ),
       definition(
@@ -494,7 +494,7 @@ extension ComputerUseGatewayProvider {
         description: "Type bounded Unicode text through the macOS input event system.",
         input: keyboardTextInputSchema,
         result: actionResultSchema,
-        risk: .externalWrite,
+        risk: .externalWrite, requirement: .privacy(.desktopControl),
         tccServices: ["accessibility"]
       ),
       definition(
@@ -502,7 +502,7 @@ extension ComputerUseGatewayProvider {
         description: "Post a bounded two-axis line or pixel scroll event.",
         input: scrollInputSchema,
         result: actionResultSchema,
-        risk: .externalWrite,
+        risk: .externalWrite, requirement: .privacy(.desktopControl),
         tccServices: ["accessibility"]
       ),
       definition(
@@ -512,7 +512,7 @@ extension ComputerUseGatewayProvider {
           + "element references.",
         input: accessibilityQuerySchema,
         result: arraySchema(accessibilityObservationSchema),
-        risk: .readOnly,
+        risk: .readOnly, requirement: .privacy(.screen),
         tccServices: ["accessibility"]
       ),
       definition(
@@ -523,7 +523,7 @@ extension ComputerUseGatewayProvider {
           + "owner-only computer-mcp CLI.",
         input: accessibilityActionInputSchema,
         result: actionResultSchema,
-        risk: .externalWrite,
+        risk: .externalWrite, requirement: .privacy(.desktopControl),
         tccServices: ["accessibility"]
       ),
       definition(
@@ -532,7 +532,7 @@ extension ComputerUseGatewayProvider {
           "Poll a bounded mechanical postcondition without performing an input action.",
         input: verifyInputSchema,
         result: verificationResultSchema,
-        risk: .readOnly,
+        risk: .readOnly, requirement: .privacy(.screen),
         tccServices: ["accessibility"]
       ),
     ]
@@ -544,6 +544,7 @@ extension ComputerUseGatewayProvider {
     input: JSONValue,
     result: JSONValue,
     risk: CapabilityRisk,
+    requirement: ToolRequirement,
     tccServices: [String] = [],
     idempotent: Bool? = nil
   ) -> ToolDefinition {
@@ -562,7 +563,7 @@ extension ComputerUseGatewayProvider {
         )
       ),
       capability: CapabilityDescriptor(
-        id: name, risk: risk, projectRequirement: .none, localOnly: false,
+        id: name, risk: risk, requirement: requirement, projectRequirement: .none, localOnly: false,
         usesNetwork: false, tccServices: tccServices))
   }
 

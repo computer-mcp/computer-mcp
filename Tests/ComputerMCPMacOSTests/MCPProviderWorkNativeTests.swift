@@ -1,5 +1,7 @@
 import ComputerMCPDownstream
 import ComputerMCPMacOS
+import ComputerMCPPermissions
+import ComputerMCPProcess
 import ComputerMCPTestSupport
 import ComputerMCPToolKit
 import ComputerMCPToolsMCP
@@ -12,25 +14,40 @@ import Testing
 @testable import ComputerMCPGateway
 @testable import ComputerMCPPlatform
 
+#if os(macOS)
+  import ComputerMCPDarwinTestSupport
+#endif
+
 @Suite(.nativeIntegration, .serialized, .timeLimit(.minutes(1)))
 struct MCPProviderWorkNativeTests {
   @Test
   func runtimeResolvesCachedNativeAndGenericContinuationsWithoutDispatch() async throws {
-    try await withProvider { _, originalServer, _ in
+    try await withProvider(preload: false) { _, originalServer, _, authority in
       var server = originalServer
       server.exposure = .reexport
       server.prefix = "fixture"
       server.allowAnyTool = true
       server.toolRisks = ["start": .readOnly, "inspect": .readOnly, "finish": .readOnly]
-      let script = try #require(server.args.first)
-      let root = URL(fileURLWithPath: script).deletingLastPathComponent()
+      let profile = try #require(
+        try authority.database.profiles().first { $0.id == .chatGPTOperate })
       let runtime = try await GatewayRuntime.make(
-        configuration: GatewayConfiguration(mcp: .init(servers: [server])),
-        context: .init(caller: .localCLI, profileID: .localAdmin),
-        registeredProjects: [.init(id: "fixture", displayName: "Fixture", rootPath: root.path)],
-        platform: MacOSPlatform.services, plugins: [],
+        configuration: GatewayConfiguration(
+          runtime: .init(caller: .localMCP, profileID: profile.id),
+          profiles: [.init(grant: profile)], mcp: .init(servers: [server])),
+        context: authority.callerContext, database: authority.database,
+        registeredProjects: authority.database.projects(),
+        platform: MacOSPlatform.services(launcher: authority.launcher), plugins: [],
         bundledPlugins: .init(packages: [], issues: []))
+      _ = try runtime.makeControlSession()
+      try fixtureApproveLocalProvider(
+        server, database: authority.database, runtime: runtime.permissionRuntime,
+        permissions: fixturePermissions([.project("fixture"): .granted(.write)]), fullAccess: true)
       do {
+        let discovered = try await runtime.callToolAsync(
+          name: "mcp.tools.list", arguments: .object(["server": .string(server.id)]),
+          context: .empty)
+        try #require(discovered.objectValue?["isError"] == .bool(false))
+        try await runtime.refreshTools(context: .empty)
         _ = try await runtime.callToolAsync(
           name: "fixture.start", arguments: .object([:]), context: .empty)
         try await wait { runtime.ownedWork.snapshot.contains { $0.kind == .mcpResource } }
@@ -44,13 +61,8 @@ struct MCPProviderWorkNativeTests {
         #expect(first.observation.matches.count == 1)
         #expect(first.reference == .init(serverID: server.id, toolName: "inspect"))
         #expect(runtime.unambiguousProjectID == "fixture")
-        for name in ["mcp.tools.call", "operations.prepare", "operations.commit"] {
-          let arguments: JSONValue =
-            name == "mcp.tools.call"
-            ? generic
-            : .object([
-              "tool": .string("mcp.tools.call"), "arguments": generic,
-            ])
+        for name in ["mcp.tools.call"] {
+          let arguments = generic
           let lookup = try #require(
             try runtime.continuationLookup(name: name, arguments: arguments, projectID: "fixture")
           )
@@ -89,11 +101,11 @@ struct MCPProviderWorkNativeTests {
 
   @Test
   func exactContinuationRevalidatesAcquisitionAndCurrentAuthorization() async throws {
-    try await withProvider { client, server, work in
-      let started = try await call(client, server, "start")
+    try await withProvider { client, server, work, authority in
+      let started = try await call(client, server, "start", authority: authority)
       try await wait { work.snapshot.contains { $0.kind == .mcpResource } }
       let arguments = JSONValue.object(["handle": .integer(9_007_199_254_740_993)])
-      let target = try continuationTarget(work, server: server, arguments: arguments)
+      let target = try await continuationTarget(work, server: server, arguments: arguments)
       var configured = server
       configured.allowAnyTool = true
       configured.toolRisks = ["inspect": .readOnly]
@@ -102,9 +114,11 @@ struct MCPProviderWorkNativeTests {
         .init(
           configuration: configuration,
           grant: .init(
-            id: .chatGPTOperate, capabilityIDs: allowed ? ["mcp.tools.call"] : [],
-            allowedCallers: [.secureTunnel], mode: .projectOperations),
-          derivesObserveGrant: false)
+            id: .chatGPTOperate,
+            permissions: fixturePermissions([
+              .mcpServer(server.id): allowed ? .granted(.read) : .denied
+            ]),
+            allowedCallers: [.secureTunnel]))
       }
       let current = NIOLockedValueBox(policy(true))
       let authorized = AuthorizedMCPClient(
@@ -112,7 +126,7 @@ struct MCPProviderWorkNativeTests {
       // The policy's selected tools do not change the already-connected transport config.
       let result = try await authorized.callToolAsync(
         server: server, name: "inspect", arguments: arguments, requestID: nil,
-        context: .init(continuation: target))
+        context: authority.continuing(target))
       #expect(
         result.objectValue?["structuredContent"]?.objectValue?["pid"] == started.objectValue?["pid"]
       )
@@ -121,29 +135,29 @@ struct MCPProviderWorkNativeTests {
       await #expect(throws: GatewayToolError.self) {
         try await authorized.callToolAsync(
           server: server, name: "inspect", arguments: arguments, requestID: nil,
-          context: .init(continuation: target))
+          context: authority.continuing(target))
       }
-      _ = try await call(client, server, "finish")
+      _ = try await call(client, server, "finish", authority: authority)
       try await wait { work.snapshot.isEmpty }
-      _ = try await call(client, server, "start")
+      _ = try await call(client, server, "start", authority: authority)
       try await wait { work.snapshot.contains { $0.kind == .mcpResource } }
-      let next = try continuationTarget(work, server: server, arguments: arguments)
+      let next = try await continuationTarget(work, server: server, arguments: arguments)
       #expect(target.connectionID == next.connectionID && target.instanceID == next.instanceID)
       #expect(target.resources != next.resources)
       await #expect(throws: GatewayToolError.self) {
         try await client.callToolAsync(
           server: server, name: "inspect", arguments: arguments, requestID: nil,
-          context: .init(continuation: target))
+          context: authority.continuing(target))
       }
       let inspected = try await client.callToolAsync(
         server: server, name: "inspect", arguments: arguments, requestID: nil,
-        context: .init(continuation: next))
+        context: authority.continuing(next))
       #expect(
         inspected.objectValue?["structuredContent"]?.objectValue?["call_count"] == .integer(5))
       #expect(
         inspected.objectValue?["structuredContent"]?.objectValue?["pid"]
           == started.objectValue?["pid"])
-      _ = try await call(client, server, "finish")
+      _ = try await call(client, server, "finish", authority: authority)
       try await wait { work.snapshot.isEmpty }
     }
   }
@@ -152,13 +166,13 @@ struct MCPProviderWorkNativeTests {
   func existingConnectionRevalidatesSelectedOwnerInsideDetachedBridge(operation: String)
     async throws
   {
-    try await withProvider { client, server, work in
-      let started = try await call(client, server, "start")
+    try await withProvider { client, server, work, authority in
+      let started = try await call(client, server, "start", authority: authority)
       try await wait { work.snapshot.contains { $0.kind == .mcpResource } }
-      var selected = try continuationTarget(
+      var selected = try await continuationTarget(
         work, server: server, arguments: .object(["handle": .integer(9_007_199_254_740_993)]))
       selected.selectedOwnershipID = UUID()
-      let context = InvocationContext(continuation: selected)
+      let context = try authority.continuing(selected)
       let blocking = BlockingOperationExecutor(label: "selected-owner-test")
       do {
         _ = try await blocking.perform {
@@ -177,9 +191,9 @@ struct MCPProviderWorkNativeTests {
       } catch {
         #expect(error.localizedDescription.contains("mcp.continuation_unavailable"))
       }
-      let inspected = try await call(client, server, "inspect")
+      let inspected = try await call(client, server, "inspect", authority: authority)
       #expect(inspected.objectValue?["pid"] == started.objectValue?["pid"])
-      _ = try await call(client, server, "finish")
+      _ = try await call(client, server, "finish", authority: authority)
       try await wait { work.snapshot.isEmpty }
     }
   }
@@ -188,7 +202,7 @@ struct MCPProviderWorkNativeTests {
   func directConfiguredToolsRejectsAStaleContinuationWithoutDiscoveryOrReplacement(
     asynchronous: Bool
   ) async throws {
-    try await withProvider { client, original, _ in
+    try await withProvider(preload: false) { client, original, _, authority in
       var server = original
       server.exposure = .reexport
       server.prefix = "fixture"
@@ -197,22 +211,31 @@ struct MCPProviderWorkNativeTests {
       let script = try #require(server.args.first)
       let root = URL(fileURLWithPath: script).deletingLastPathComponent()
       let environment = ToolEnvironment(
+        launcher: authority.launcher,
         configuration: .init(mcp: .init(servers: [server]), projectDirectory: root))
       let scopedClient = client.makeScopedClient(
         workingDirectory: environment.configuration.projectDirectory,
         environment: environment.environment,
-        hostContext: nil)
+        hostContext: authority.hostContext)
       let provider = ConfiguredMCPToolProvider(environment: environment, mcpClient: scopedClient)
+      try authority.reconfigure(server)
+      let discoveryServer = server
       let selected = MCPContinuationTarget(
         projectID: "fixture", reference: .init(serverID: server.id, toolName: "inspect"),
         connectionID: UUID(), instanceID: UUID(), resources: [:])
-      let context = InvocationContext(continuation: selected)
+      let context = try authority.continuing(selected)
       let blocking = BlockingOperationExecutor(label: "configured-selected-connection-test")
       do {
+        _ = try await blocking.perform {
+          try scopedClient.listTools(server: discoveryServer, context: authority.context)
+        }
         _ = try await blocking.perform { try provider.definitions() }
-        let starts = try String(contentsOf: root.appendingPathComponent("starts"), encoding: .utf8)
+        let starts = try String(
+          contentsOf: authority.providerMarker(root.appendingPathComponent("starts")),
+          encoding: .utf8)
         let discoveries = try String(
-          contentsOf: root.appendingPathComponent("discoveries"), encoding: .utf8)
+          contentsOf: authority.providerMarker(root.appendingPathComponent("discoveries")),
+          encoding: .utf8)
         do {
           if asynchronous {
             _ = try await provider.callToolAsync(
@@ -231,12 +254,21 @@ struct MCPProviderWorkNativeTests {
         }
         #expect(starts == "started\n")
         #expect(
-          try String(contentsOf: root.appendingPathComponent("starts"), encoding: .utf8) == starts)
+          try String(
+            contentsOf: authority.providerMarker(root.appendingPathComponent("starts")),
+            encoding: .utf8) == starts)
         #expect(
-          try String(contentsOf: root.appendingPathComponent("discoveries"), encoding: .utf8)
+          try String(
+            contentsOf: authority.providerMarker(root.appendingPathComponent("discoveries")),
+            encoding: .utf8)
             == discoveries)
+        let source = try #require(try authority.hostContext.providerSource?(server))
+        let discovery = try source.prepareDiscovery(nil, nil)
+        defer { try? discovery.finishAdmission() }
         #expect(
-          try scopedClient.connectionStatus(server: server, context: .empty).objectValue?[
+          try scopedClient.connectionStatus(
+            server: server, context: .init(executionAuthority: discovery)
+          ).objectValue?[
             "state"]
             == .string("connected"))
         await scopedClient.shutdown()
@@ -251,7 +283,7 @@ struct MCPProviderWorkNativeTests {
   func directConfiguredToolsSelectedReexportDoesNotStartAnotherRegistration(
     asynchronous: Bool, prefix: String
   ) async throws {
-    try await withProvider { client, original, work in
+    try await withProvider(preload: false) { client, original, work, authority in
       var server = original
       server.exposure = .reexport
       server.prefix = prefix
@@ -262,30 +294,38 @@ struct MCPProviderWorkNativeTests {
       other.prefix = "other"
       let script = try #require(server.args.first)
       let root = URL(fileURLWithPath: script).deletingLastPathComponent()
-      var hostContext = MCPHostContext(
-        runtimeID: UUID(), context: .init(caller: .localCLI, profileID: .localAdmin),
-        projectID: "fixture", rootURL: root, readOnly: false)
+      var hostContext = authority.hostContext
       hostContext.ownedWork = work
       let environment = ToolEnvironment(
+        launcher: authority.launcher,
         configuration: .init(mcp: .init(servers: [other, server]), projectDirectory: root))
       let scopedClient = client.makeScopedClient(
         workingDirectory: environment.configuration.projectDirectory,
         environment: environment.environment,
         hostContext: hostContext)
       let provider = ConfiguredMCPToolProvider(environment: environment, mcpClient: scopedClient)
+      try authority.reconfigure(server)
+      let discoveryServer = server
       do {
         let blocking = BlockingOperationExecutor(label: "configured-reexport-test")
+        _ = try await blocking.perform {
+          try scopedClient.listTools(server: discoveryServer, context: authority.context)
+        }
         _ = try await blocking.perform { try provider.definitions() }
         let started = try await scopedClient.callToolAsync(
-          server: server, name: "start", arguments: .object([:]), requestID: nil, context: .empty)
+          server: server, name: "start", arguments: .object([:]), requestID: nil,
+          context: authority.context)
         try await wait { work.snapshot.contains { $0.kind == .mcpResource } }
         let arguments = JSONValue.object(["handle": .integer(9_007_199_254_740_993)])
-        let target = try continuationTarget(work, server: server, arguments: arguments)
-        let context = InvocationContext(continuation: target)
+        let target = try await continuationTarget(work, server: server, arguments: arguments)
+        let context = try authority.continuing(target)
         let name = prefix.isEmpty ? "inspect" : "\(prefix).inspect"
-        let starts = try String(contentsOf: root.appendingPathComponent("starts"), encoding: .utf8)
+        let starts = try String(
+          contentsOf: authority.providerMarker(root.appendingPathComponent("starts")),
+          encoding: .utf8)
         let discoveries = try String(
-          contentsOf: root.appendingPathComponent("discoveries"), encoding: .utf8)
+          contentsOf: authority.providerMarker(root.appendingPathComponent("discoveries")),
+          encoding: .utf8)
         let result: JSONValue
         if asynchronous {
           result = try await provider.callToolAsync(
@@ -302,15 +342,20 @@ struct MCPProviderWorkNativeTests {
             == started.objectValue?["structuredContent"]?.objectValue?["pid"])
         #expect(
           try scopedClient.connectionStatus(server: other, context: .empty).objectValue?[
-            "state"] == .string("connected"))
+            "state"] == .string("not_started"))
         #expect(starts == "started\nstarted\n")
         #expect(
-          try String(contentsOf: root.appendingPathComponent("starts"), encoding: .utf8) == starts)
+          try String(
+            contentsOf: authority.providerMarker(root.appendingPathComponent("starts")),
+            encoding: .utf8) == starts)
         #expect(
-          try String(contentsOf: root.appendingPathComponent("discoveries"), encoding: .utf8)
+          try String(
+            contentsOf: authority.providerMarker(root.appendingPathComponent("discoveries")),
+            encoding: .utf8)
             == discoveries)
         _ = try await scopedClient.callToolAsync(
-          server: server, name: "finish", arguments: .object([:]), requestID: nil, context: .empty)
+          server: server, name: "finish", arguments: .object([:]), requestID: nil,
+          context: authority.context)
         try await wait { work.snapshot.isEmpty }
         await scopedClient.shutdown()
       } catch {
@@ -322,74 +367,79 @@ struct MCPProviderWorkNativeTests {
 
   @Test
   func missingSelectedConnectionCannotStartOrReplaceAProvider() async throws {
-    try await withProvider { client, server, work in
-      let started = try await call(client, server, "start")
+    try await withProvider { client, server, work, authority in
+      let started = try await call(client, server, "start", authority: authority)
       try await wait { work.snapshot.contains { $0.kind == .mcpResource } }
       let arguments = JSONValue.object(["handle": .integer(9_007_199_254_740_993)])
-      let target = try continuationTarget(work, server: server, arguments: arguments)
+      let target = try await continuationTarget(work, server: server, arguments: arguments)
       let blocking = BlockingOperationExecutor(label: "continuation-selection-test")
       var replacement = server
       replacement.args.append("changed")
       let changed = replacement
       await #expect(throws: GatewayToolError.self) {
         try await blocking.perform {
-          try client.listTools(server: changed, context: .init(continuation: target))
+          try client.listTools(server: changed, context: authority.continuing(target))
         }
       }
-      let unchanged = try await call(client, server, "inspect")
+      let unchanged = try await call(client, server, "inspect", authority: authority)
       #expect(unchanged.objectValue?["pid"] == started.objectValue?["pid"])
-      try await withProvider { other, otherServer, _ in
+      try await withProvider(preload: false) { other, otherServer, _, otherAuthority in
         await #expect(throws: GatewayToolError.self) {
           try await other.callToolAsync(
             server: otherServer, name: "inspect", arguments: arguments, requestID: nil,
-            context: .init(continuation: target))
+            context: otherAuthority.continuing(target))
         }
         await #expect(throws: GatewayToolError.self) {
           try await blocking.perform {
             try other.startToolCall(
               server: otherServer, name: "inspect", arguments: arguments, requestID: "detached",
-              context: .init(continuation: target))
+              context: otherAuthority.continuing(target))
           }
         }
         let script = try #require(otherServer.args.first)
+        let marker = try otherAuthority.providerMarker(
+          URL(fileURLWithPath: script).deletingLastPathComponent().appendingPathComponent("starts"))
         #expect(
-          !FileManager.default.fileExists(
-            atPath: URL(fileURLWithPath: script).deletingLastPathComponent().appendingPathComponent(
-              "starts"
-            ).path))
+          !FileManager.default.fileExists(atPath: marker.path))
       }
-      _ = try await call(client, server, "finish")
+      _ = try await call(client, server, "finish", authority: authority)
       try await wait { work.snapshot.isEmpty }
     }
   }
 
   private func continuationTarget(
     _ work: GatewayOwnedWork, server: MCPServerConfig, arguments: JSONValue
-  ) throws -> MCPContinuationTarget {
-    let lookup = try work.continuations.lookup(
-      projectID: "fixture", registrationID: server.id, tool: "inspect", arguments: arguments)
-    let match = try #require(lookup.matches.first)
-    return MCPContinuationTarget(
-      projectID: "fixture", reference: .init(serverID: server.id, toolName: "inspect"),
-      connectionID: match.connectionID, instanceID: match.instanceID,
-      resources: [match.resource: match.acquiredBy])
+  ) async throws -> MCPContinuationTarget {
+    let deadline = ContinuousClock.now + .seconds(5)
+    while true {
+      let lookup = try work.continuations.lookup(
+        projectID: "fixture", registrationID: server.id, tool: "inspect", arguments: arguments)
+      if lookup.pendingConnections.isEmpty, let match = lookup.matches.first {
+        return MCPContinuationTarget(
+          projectID: "fixture", reference: .init(serverID: server.id, toolName: "inspect"),
+          connectionID: match.connectionID, instanceID: match.instanceID,
+          resources: [match.resource: match.acquiredBy])
+      }
+      try #require(ContinuousClock.now < deadline, "Continuation ownership did not settle")
+      try await Task.sleep(for: .milliseconds(10))
+    }
   }
 
   @Test
   func ordinaryProviderRetainsWorkAfterReplyAndRecoversObservation() async throws {
-    try await withProvider { client, server, work in
-      let started = try await call(client, server, "start")
+    try await withProvider { client, server, work, authority in
+      let started = try await call(client, server, "start", authority: authority)
       #expect(started.objectValue?["host_services"] == .bool(false))
       #expect(
         started.objectValue?["acquired_by"]?.stringValue.flatMap(UUID.init(uuidString:)) != nil)
       #expect(started.objectValue?["acquired_by"] != .string("caller-forged"))
       try await wait { work.snapshot.contains { $0.kind == .mcpResource && !$0.uncertain } }
       #expect(!work.snapshot.contains { $0.kind == .mcpRequest })
-      _ = try await call(client, server, "invalid")
+      _ = try await call(client, server, "invalid", authority: authority)
       try await wait { work.snapshot.contains { $0.kind == .mcpResource && $0.uncertain } }
-      _ = try await call(client, server, "valid")
+      _ = try await call(client, server, "valid", authority: authority)
       try await wait { work.snapshot.contains { $0.kind == .mcpResource && !$0.uncertain } }
-      _ = try await call(client, server, "finish")
+      _ = try await call(client, server, "finish", authority: authority)
       try await wait { work.snapshot.isEmpty }
       await client.shutdown()
       #expect(work.snapshot.isEmpty)
@@ -398,31 +448,31 @@ struct MCPProviderWorkNativeTests {
 
   @Test
   func stalledObservationIsSingleFlightAndDoesNotTerminateProvider() async throws {
-    try await withProvider { client, server, work in
-      let started = try await call(client, server, "start")
+    try await withProvider { client, server, work, authority in
+      let started = try await call(client, server, "start", authority: authority)
       try await wait { work.snapshot.contains { $0.kind == .mcpResource } }
-      _ = try await call(client, server, "hold")
+      _ = try await call(client, server, "hold", authority: authority)
       try await wait { work.snapshot.contains { $0.kind == .mcpResource && $0.uncertain } }
-      let first = try await call(client, server, "inspect")
+      let first = try await call(client, server, "inspect", authority: authority)
       #expect(first.objectValue?["pid"] == started.objectValue?["pid"])
       #expect(first.objectValue?["pending_reads"] == .integer(1))
       try await Task.sleep(for: .milliseconds(1_100))
-      let second = try await call(client, server, "inspect")
+      let second = try await call(client, server, "inspect", authority: authority)
       #expect(second.objectValue?["pending_reads"] == .integer(1))
       #expect(second.objectValue?["read_count"] == first.objectValue?["read_count"])
-      _ = try await call(client, server, "unhold")
+      _ = try await call(client, server, "unhold", authority: authority)
       try await wait { work.snapshot.contains { $0.kind == .mcpResource && !$0.uncertain } }
-      _ = try await call(client, server, "finish")
+      _ = try await call(client, server, "finish", authority: authority)
       try await wait { work.snapshot.isEmpty }
     }
   }
 
   @Test
-  func confirmedSupervisorExitCannotAssertDetachedWorkCompletion() async throws {
-    try await withProvider { client, server, work in
-      _ = try await call(client, server, "start")
+  func confirmedProviderExitCannotAssertDetachedWorkCompletion() async throws {
+    try await withProvider { client, server, work, authority in
+      _ = try await call(client, server, "start", authority: authority)
       try await wait { work.snapshot.contains { $0.kind == .mcpResource } }
-      _ = try await call(client, server, "hold")
+      _ = try await call(client, server, "hold", authority: authority)
       try await wait { work.snapshot.contains { $0.kind == .mcpResource && $0.uncertain } }
       await client.shutdown()
       #expect(work.snapshot.contains { $0.kind == .mcpResource && $0.uncertain })
@@ -432,7 +482,9 @@ struct MCPProviderWorkNativeTests {
   }
 
   private func withProvider(
-    _ body: (MCPProxyClient, MCPServerConfig, GatewayOwnedWork) async throws -> Void
+    preload: Bool = true,
+    _ body: (MCPProxyClient, MCPServerConfig, GatewayOwnedWork, ProxyExecutionFixture) async throws
+      -> Void
   ) async throws {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
     try FileManager.default.createDirectory(at: root, withIntermediateDirectories: false)
@@ -440,29 +492,34 @@ struct MCPProviderWorkNativeTests {
     let script = root.appendingPathComponent("provider.py")
     try Self.provider.write(to: script, atomically: true, encoding: .utf8)
     let work = GatewayOwnedWork()
-    var context = MCPHostContext(
-      runtimeID: UUID(), context: .init(caller: .localCLI, profileID: .localAdmin),
-      projectID: "fixture", rootURL: root, readOnly: false)
-    context.ownedWork = work
-    let client = MCPProxyClient(workingDirectory: root, hostContext: context)
     let server = MCPServerConfig(
       id: "work-provider", transport: .stdio, command: "/usr/bin/python3", args: [script.path],
       startupTimeoutMs: 5_000, requestTimeoutMs: 5_000, hostServices: false)
-    do { try await body(client, server, work) } catch {
-      await client.shutdown()
+    let authority = try ProxyExecutionFixture(server: server, root: root, ownedWork: work)
+    let client = authority.client
+    let blocking = BlockingOperationExecutor(label: "provider-fixture-lifecycle")
+    do {
+      if preload {
+        _ = try await blocking.perform {
+          try client.listTools(server: server, context: authority.context)
+        }
+      }
+      try await body(client, server, work, authority)
+    } catch {
+      try? await blocking.perform { try authority.close() }
       throw error
     }
-    await client.shutdown()
+    try await blocking.perform { try authority.close() }
   }
 
-  private func call(_ client: MCPProxyClient, _ server: MCPServerConfig, _ name: String)
-    async throws
-    -> JSONValue
-  {
+  private func call(
+    _ client: MCPProxyClient, _ server: MCPServerConfig, _ name: String,
+    authority: ProxyExecutionFixture
+  ) async throws -> JSONValue {
     let result = try await client.callToolAsync(
       server: server, name: name,
-      arguments: .object(["acquired_by": .string("caller-forged")]), requestID: nil, context: .empty
-    )
+      arguments: .object(["acquired_by": .string("caller-forged")]), requestID: nil,
+      context: authority.context)
     return result.objectValue?["structuredContent"] ?? .null
   }
 
@@ -476,7 +533,7 @@ struct MCPProviderWorkNativeTests {
 
   private static let provider = #"""
     import json, os, sys, uuid
-    with open(os.path.join(os.path.dirname(__file__), "starts"), "a") as marker:
+    with open(os.path.join(os.environ["HOME"], "starts"), "a") as marker:
         marker.write("started\n")
     uri = "computer-mcp://runtime/work/v1"
     instance = str(uuid.uuid4())
@@ -503,7 +560,7 @@ struct MCPProviderWorkNativeTests {
         if method == "initialize":
             result = {"protocolVersion": "2025-11-25", "capabilities": {"tools": {}, "resources": {}}, "serverInfo": {"name": "work-fixture", "version": "1"}}
         elif method == "tools/list":
-            with open(os.path.join(os.path.dirname(__file__), "discoveries"), "a") as marker:
+            with open(os.path.join(os.environ["HOME"], "discoveries"), "a") as marker:
                 marker.write("listed\n")
             result = {"tools": [{"name": name, "inputSchema": {"type": "object"}, "_meta": {"io.github.computer-mcp/work": {"format_version": 1, "uri": uri}}} for name in names]}
             for tool in result["tools"]:

@@ -6,18 +6,422 @@ annotations. Successful calls return the same bounded JSON value as readable
 JSON text and as `structuredContent.result`. Downstream MCP tools keep their
 provider-declared schemas and result shape when the Swift SDK exposes them.
 
-## `delivery.scopes.list` and `delivery.apply`
+## Permission requirements and retry
 
-The `delivery` provider lists host-declared scopes (read-only) and applies ordered
-UTF-8 edits in an isolated Git worktree (project write). Both require a project
-and declare no network use. Apply commits and fast-forwards onto the default branch
-or retains its branch, with durable recovery and bounded file snippets. See
-[Isolated delivery](Delivery.md) for schemas, reason codes and recovery.
+The [catalog table](#catalog-permission-requirements) states each tool’s declared
+permissions, values, Full access flag and conditional requirements. A declaration
+does not make an execution backend available. See the [execution availability matrix](../Architecture/SecurityAndPrivacy.md#execution-admission).
+Privacy permissions use `allow` in TOML (`access` in Codable values). Path-bearing
+calls additionally check every canonical path: Project `read`/`write`, Files and
+Folders `read` where applicable, and fixed host-data denials. The matrix also
+describes the current refusal of host file and Git writes in both modes.
+A tool's preview/dry-run flag does not lower its
+catalog requirement. Plugin contributions add Plugin `use`; for plugin-owned MCP
+servers that replaces the directly registered MCP server permission. Aggregate
+catalogs include only entries visible under the corresponding permissions.
+
+Execution continuation entries refer to the live authority of the originating
+execution, including its one-time grants; they do not require a new standing grant
+or permit another launch. Listings filter by that authority. Forwarders resolve
+the target's requirements as for a direct call.
+
+Tool listings publish the host declaration in `_meta.computer_mcp.requirements`.
+Requestable tools remain discoverable within managed limits; listing does not
+confer permission. The host resolves argument paths, project identity and plugin
+or server provenance before evaluating every call.
+
+`permission.required` returns `request_ids`, `request_group_id`, `requests` and
+`retry`. Each request names its principal, permission, object, required value,
+scope, purpose when available, expiry and local owner. After the owner answers,
+retry the same tool and unchanged arguments with `_permission_request_ids` set
+to all returned UUIDs. The host strips this reserved field before dispatch and
+binds it to the exact invocation, route and current authority. Answers never
+execute or automatically replay a call. Permission and execution availability are
+independent: a retry still requires an enforceable execution context and can
+return unavailable after permission is granted. Explicit denies and managed
+exclusions produce refusals without pending requests.
+
+A host file tool may discover another required folder while accessing a file or
+instruction chain. That access fails and returns requests bound to the original
+call. `call_dispatched: true` distinguishes this failure from admission requests
+(`false`). Earlier operations may have had effects: review them before explicitly
+retrying. An answer applies to the retry, never to the already admitted call.
+Directory inventories omit inaccessible children without requesting access to them.
+A `permission.denied` response does not state whether the call had already started;
+review the operation's result and effects before retrying.
+
+Programs can discover missing hosts through the execution's egress proxy and
+missing readable folders through trusted system sandbox reports. The denied
+operation still fails. Folder reports are best effort: missing reports or reports
+whose process lifetime cannot be attributed produce no request. Explicit denies,
+managed exclusions and fixed sandbox boundaries, including host data, produce none.
+The root process is recorded before release. A descendant becomes attributable
+only after the host verifies its membership; its first report can be lost, as can
+reports from short-lived descendants or while the system log reader is starting.
+Reports arriving after a synchronous result are not added to that already returned
+result. A retained execution's later result read can expose them.
+
+Known loopback destinations are refused without a request. An ungranted hostname
+produces its host request before DNS resolution. Once granted, its resolved
+addresses must still pass the fixed address and route boundaries; a hostname
+answer cannot open loopback or override those boundaries.
+If an admitted destination needs Local network, it can produce another request
+and require a further explicit retry carrying the earlier answer.
+
+Execution results retain their handles, output, exit status and provider errors.
+When requests are available, `_meta.computer_mcp.permission_requests` and
+`structuredContent.gateway_execution.permission_requests` contain groups with the
+same request and retry fields, `call_dispatched: true`, `execution_id`, and
+`original_call` (`tool` and `project_id`). Each runtime `request_group_id` is its
+execution ID: identical calls can have separate retry groups, whose IDs must not
+be combined. Control-interface errors also include these groups in the error's
+`permission_requests` field while preserving the provider's error details.
+Process and shell snapshots can also include `permission_request_ids`. Retry
+the original call with unchanged arguments, not the result-reading call. Only an
+explicit retry receives the answered permissions, including earlier **Only this
+time** answers carried by that retry. The running execution's grants stay fixed.
+
+Cold dynamic downstream tool calls can return `permission.catalog_required`.
+First make an admitted `mcp.tools.list` request to establish the exact catalog;
+then retry the tool call. Discovery that needs a program launch is subject to
+its own execution context and may be unavailable.
+
+## Catalog permission requirements
+
+This table is checked against the complete host catalog snapshot by
+`BuiltinToolCatalogSnapshotTests`. Each host tool has exactly one row. Dynamic
+CLI trees and downstream/plugin tools follow the conditional rules in their
+sections below.
+
+The permissions column records the catalog declaration. **Retained execution**
+conditions use the originating execution’s live grants, including Only this time,
+instead of obtaining fresh standing permissions; the declaration’s read/write
+values describe the continuation's operation. **Forward** checks the resolved
+target's requirements, including its Full access flag. **No** only means the
+wrapper's own declaration does not require Full access. Plugin-owned MCP targets
+use Plugin `use` in place of the directly registered MCP server permission.
+Catalog selections filter entries under their corresponding permissions.
+
+<!-- tool-requirements:start -->
+| Tool | Declared permissions | Full access required | Conditions |
+| --- | --- | --- | --- |
+| `archive.create` | Project `write`; Resolved paths (read, write) | No | None |
+| `archive.extract` | Project `write`; Resolved paths (read, write) | No | None |
+| `archive.list` | Project `read`; Resolved paths (read) | No | None |
+| `archive.read_file` | Project `read`; Resolved paths (read) | No | None |
+| `cli.describe` | Machine information `allow` | No | None |
+| `cli.exec` | Project `write` | No | Start execution; Plugin `use` if contributed: CLI argument id |
+| `cli.help` | Machine information `allow` | No | None |
+| `cli.list` | Machine information `allow` | No | None |
+| `cli.status` | Machine information `allow` | No | None |
+| `computer.accessibility.action` | Desktop control `allow` | No | None |
+| `computer.accessibility.query` | Screen `allow` | No | None |
+| `computer.displays` | Screen `allow` | No | None |
+| `computer.keyboard.key` | Desktop control `allow` | No | None |
+| `computer.keyboard.text` | Desktop control `allow` | No | None |
+| `computer.permissions` | Screen `allow` | No | None |
+| `computer.pointer.click` | Desktop control `allow` | No | None |
+| `computer.pointer.move` | Desktop control `allow` | No | None |
+| `computer.pointer.position` | Screen `allow` | No | None |
+| `computer.screenshot` | Screen `allow` | No | None |
+| `computer.scroll` | Desktop control `allow` | No | None |
+| `computer.verify` | Screen `allow` | No | None |
+| `computer.windows` | Screen `allow` | No | None |
+| `csv.read` | Project `read`; Resolved paths (read) | No | None |
+| `env.describe` | Machine information `allow` | No | None |
+| `file.append` | Project `write`; Resolved paths (write) | No | None |
+| `file.chmod` | Project `write`; Resolved paths (write) | No | None |
+| `file.compare_trees` | Project `read`; Resolved paths (read) | No | None |
+| `file.copy` | Project `write`; Resolved paths (read, write) | No | None |
+| `file.count` | Project `read`; Resolved paths (read) | No | None |
+| `file.diff` | Project `read`; Resolved paths (read) | No | None |
+| `file.disk_usage` | Project `read`; Resolved paths (read) | No | None |
+| `file.download` | Project `write`; Resolved paths (write) | No | Network URL: url |
+| `file.duplicates` | Project `read`; Resolved paths (read) | No | None |
+| `file.exists` | Project `read`; Resolved paths (read) | No | None |
+| `file.find` | Project `read`; Resolved paths (read) | No | None |
+| `file.hash` | Project `read`; Resolved paths (read) | No | None |
+| `file.head` | Project `read`; Resolved paths (read) | No | None |
+| `file.hexdump` | Project `read`; Resolved paths (read) | No | None |
+| `file.insert_text` | Project `write`; Resolved paths (write) | No | None |
+| `file.list` | Project `read`; Resolved paths (listDirectory) | No | None |
+| `file.metadata` | Project `read`; Resolved paths (read) | No | None |
+| `file.mkdir` | Project `write`; Resolved paths (write) | No | None |
+| `file.move` | Project `write`; Resolved paths (write) | No | None |
+| `file.outline` | Project `read`; Resolved paths (read) | No | None |
+| `file.permissions` | Project `read`; Resolved paths (read) | No | None |
+| `file.read` | Project `read`; Resolved paths (read) | No | None |
+| `file.read_context` | Project `read`; Resolved paths (read) | No | None |
+| `file.read_files` | Project `read`; Resolved paths (read) | No | None |
+| `file.read_lines` | Project `read`; Resolved paths (read) | No | None |
+| `file.read_window` | Project `read`; Resolved paths (read) | No | None |
+| `file.readlink` | Project `read`; Resolved paths (read) | No | None |
+| `file.remove_xattr` | Project `write`; Resolved paths (write) | No | None |
+| `file.replace_lines` | Project `write`; Resolved paths (write) | No | None |
+| `file.replace_text` | Project `write`; Resolved paths (write) | No | None |
+| `file.resolve` | Project `read`; Resolved paths (read) | No | None |
+| `file.search` | Project `read`; Resolved paths (read) | No | None |
+| `file.stat` | Project `read`; Resolved paths (read) | No | None |
+| `file.symlink` | Project `write`; Resolved paths (read, write) | No | None |
+| `file.tail` | Project `read`; Resolved paths (read) | No | None |
+| `file.timeline` | Project `read`; Resolved paths (read) | No | None |
+| `file.touch` | Project `write`; Resolved paths (write) | No | None |
+| `file.trash` | Project `write`; Resolved paths (write) | No | None |
+| `file.tree` | Project `read`; Resolved paths (listDirectory) | No | None |
+| `file.type` | Project `read`; Resolved paths (read) | No | None |
+| `file.volume_info` | Project `read`; Resolved paths (read) | No | None |
+| `file.write` | Project `write`; Resolved paths (write) | No | None |
+| `file.write_files` | Project `write`; Resolved paths (write) | No | None |
+| `file.xattrs` | Project `read`; Resolved paths (read) | No | None |
+| `git.add` | Project `write`; Resolved paths (write) | No | None |
+| `git.blame` | Project `read`; Resolved paths (read) | No | None |
+| `git.branch` | Project `read`; Resolved paths (read) | No | None |
+| `git.branch_create` | Project `write`; Resolved paths (read) | Yes | None |
+| `git.branch_delete` | Source Project `write`; Resolved paths (read) | No | None |
+| `git.branch_rename` | Project `write`; Resolved paths (read) | Yes | None |
+| `git.branch_switch` | Project `write`; Resolved paths (read) | Yes | None |
+| `git.clean` | Project `write`; Resolved paths (write) | No | None |
+| `git.clean_preview` | Project `read`; Resolved paths (read) | No | None |
+| `git.commit` | Project `write`; Resolved paths (write) | No | None |
+| `git.commit_files` | Project `read`; Resolved paths (read) | No | None |
+| `git.compare_refs` | Project `read`; Resolved paths (read) | No | None |
+| `git.config` | Project `read`; Resolved paths (read) | No | None |
+| `git.conflicts` | Project `read`; Resolved paths (read) | No | None |
+| `git.diff` | Project `read`; Resolved paths (read) | No | None |
+| `git.diff_check` | Project `read`; Resolved paths (read) | No | None |
+| `git.diff_summary` | Project `read`; Resolved paths (read) | No | None |
+| `git.file_at_revision` | Project `read`; Resolved paths (read) | No | None |
+| `git.file_history` | Project `read`; Resolved paths (read) | No | None |
+| `git.files` | Project `read`; Resolved paths (read) | No | None |
+| `git.grep` | Project `read`; Resolved paths (read) | No | None |
+| `git.ignored` | Project `read`; Resolved paths (read) | No | None |
+| `git.is_ancestor` | Project `read`; Resolved paths (read) | No | None |
+| `git.log` | Project `read`; Resolved paths (read) | No | None |
+| `git.merge` | Source Project `write`; Resolved paths (read) | No | None |
+| `git.merge_base` | Project `read`; Resolved paths (read) | No | None |
+| `git.reflog` | Project `read`; Resolved paths (read) | No | None |
+| `git.refs` | Project `read`; Resolved paths (read) | No | None |
+| `git.remotes` | Project `read`; Resolved paths (read) | No | None |
+| `git.resolve_ref` | Project `read`; Resolved paths (read) | No | None |
+| `git.restore_worktree` | Project `write`; Resolved paths (write) | No | None |
+| `git.root` | Project `read`; Resolved paths (read) | No | None |
+| `git.show` | Project `read`; Resolved paths (read) | No | None |
+| `git.staged_file` | Project `read`; Resolved paths (read) | No | None |
+| `git.stash_push` | Project `write`; Resolved paths (write) | Yes | None |
+| `git.stash_show` | Project `read`; Resolved paths (read) | No | None |
+| `git.stashes` | Project `read`; Resolved paths (read) | No | None |
+| `git.status` | Project `read`; Resolved paths (read) | No | None |
+| `git.submodules` | Project `read`; Resolved paths (read) | No | None |
+| `git.tag_create` | Project `write`; Resolved paths (read) | Yes | None |
+| `git.tag_delete` | Project `write`; Resolved paths (read) | Yes | None |
+| `git.tag_show` | Project `read`; Resolved paths (read) | No | None |
+| `git.tags` | Project `read`; Resolved paths (read) | No | None |
+| `git.tracking_status` | Project `read`; Resolved paths (read) | No | None |
+| `git.unstage` | Project `write`; Resolved paths (write) | No | None |
+| `git.worktree_add` | Source Project `write`; Resolved paths (read) | No | None |
+| `git.worktree_list` | Project `read`; Resolved paths (read) | No | None |
+| `git.worktree_remove` | Project `write`; Resolved paths (read) | No | None |
+| `image.info` | Project `read`; Resolved paths (read) | No | None |
+| `json.read` | Project `read`; Resolved paths (read) | No | None |
+| `json.write` | Project `write`; Resolved paths (write) | No | None |
+| `jsonl.read` | Project `read`; Resolved paths (read) | No | None |
+| `logs.query` | Unified logs `allow` | No | None |
+| `macos.applications` | Machine information `allow` | No | None |
+| `macos.default_application` | Machine information `allow`; Resolved paths (read) | No | None |
+| `macos.frontmost_application` | Machine information `allow` | No | None |
+| `macos.running_applications` | Machine information `allow` | No | None |
+| `macos.screens` | Machine information `allow` | No | None |
+| `macos.spotlight_search` | Machine information `allow`; Resolved paths (read) | No | None |
+| `macos.user_directories` | Machine information `allow` | No | None |
+| `markdown.frontmatter` | Project `read`; Resolved paths (read) | No | None |
+| `markdown.link_check` | Project `read`; Resolved paths (read) | No | None |
+| `markdown.links` | Project `read`; Resolved paths (read) | No | None |
+| `markdown.section` | Project `read`; Resolved paths (read) | No | None |
+| `markdown.tables` | Project `read`; Resolved paths (read) | No | None |
+| `mcp.connections.close` | MCP server `all` (argument server) | No | Plugin `use` if contributed: MCP argument server |
+| `mcp.events.read` | MCP server `read` (argument server) | No | Plugin `use` if contributed: MCP argument server |
+| `mcp.prompts.get` | MCP server `read` (argument server) | No | Plugin `use` if contributed: MCP argument server |
+| `mcp.prompts.list` | MCP server `read` (argument server) | No | Plugin `use` if contributed: MCP argument server |
+| `mcp.requests.cancel` | MCP server `all` (argument server) | No | Retained execution cancel (request_id); Plugin `use` if contributed: MCP argument server |
+| `mcp.requests.list` | MCP server `read` (argument server) | No | Retained execution list; Plugin `use` if contributed: MCP argument server |
+| `mcp.requests.read` | MCP server `read` (argument server) | No | Retained execution read (request_id); Plugin `use` if contributed: MCP argument server |
+| `mcp.resources.list` | MCP server `read` (argument server) | No | Plugin `use` if contributed: MCP argument server |
+| `mcp.resources.read` | MCP server `read` (argument server) | No | Plugin `use` if contributed: MCP argument server |
+| `mcp.resources.templates.list` | MCP server `read` (argument server) | No | Plugin `use` if contributed: MCP argument server |
+| `mcp.servers.list` | MCP server `read` (catalog) | No | Plugin `use` if contributed: MCP catalog |
+| `mcp.servers.status` | MCP server `read` (argument server) | No | Plugin `use` if contributed: MCP argument server |
+| `mcp.tools.call` | None | No | Forward tool(arguments) on server; check target requirements |
+| `mcp.tools.describe` | MCP server `read` (argument server) | No | Plugin `use` if contributed: MCP argument server |
+| `mcp.tools.find` | MCP server `read` (argument server) | No | Plugin `use` if contributed: MCP argument server |
+| `mcp.tools.list` | MCP server `read` (argument server) | No | Plugin `use` if contributed: MCP argument server |
+| `media.info` | Project `read`; Resolved paths (read) | No | None |
+| `network.arp` | Machine information `allow` | No | None |
+| `network.connections` | Machine information `allow` | No | None |
+| `network.dns` | Machine information `allow` | No | None |
+| `network.hardware_ports` | Machine information `allow` | No | None |
+| `network.http_check` | Machine information `allow` | No | None |
+| `network.interfaces` | Machine information `allow` | No | None |
+| `network.listeners` | Machine information `allow` | No | None |
+| `network.locations` | Machine information `allow` | No | None |
+| `network.ping` | Machine information `allow` | No | None |
+| `network.proxy` | Machine information `allow` | No | None |
+| `network.resolve` | Machine information `allow` | No | None |
+| `network.routes` | Machine information `allow` | No | None |
+| `network.services` | Machine information `allow` | No | None |
+| `network.tcp_check` | Machine information `allow` | No | None |
+| `network.vpn` | Machine information `allow` | No | None |
+| `network.wifi` | Machine information `allow` | No | None |
+| `pdf.info` | Project `read`; Resolved paths (read) | No | None |
+| `pdf.text` | Project `read`; Resolved paths (read) | No | None |
+| `plist.read` | Project `read`; Resolved paths (read) | No | None |
+| `plist.write` | Project `write`; Resolved paths (write) | No | None |
+| `plugin.artifacts` | Machine information `allow` | No | None |
+| `plugin.configure` | None | Yes | None |
+| `plugin.describe` | Machine information `allow` | No | None |
+| `plugin.disable` | None | Yes | None |
+| `plugin.enable` | None | Yes | None |
+| `plugin.install` | None | Yes | None |
+| `plugin.list` | Machine information `allow` | No | None |
+| `plugin.search` | Machine information `allow` | No | None |
+| `plugin.uninstall` | None | Yes | None |
+| `plugin.update` | None | Yes | None |
+| `policy.probe` | None | No | None |
+| `process.cancel` | Project `write` | No | Retained execution cancel (process_id) |
+| `process.list` | Project `read` | No | Retained execution list |
+| `process.read` | Project `read` | No | Retained execution read (process_id) |
+| `process.spawn` | Project `write` | No | Start execution; Plugin `use` if contributed: CLI argument id |
+| `process.write` | Project `write` | No | Retained execution input (process_id) |
+| `profile.limit` | None | No | None |
+| `profile.show` | None | No | None |
+| `project.add` | None | Yes | None |
+| `project.agent_files` | Project `read`; Resolved paths (read) | No | None |
+| `project.archive_files` | Project `read`; Resolved paths (read) | No | None |
+| `project.artifact_directories` | Project `read`; Resolved paths (read) | No | None |
+| `project.asset_files` | Project `read`; Resolved paths (read) | No | None |
+| `project.ci_files` | Project `read`; Resolved paths (read) | No | None |
+| `project.commands` | Project `read`; Resolved paths (read) | No | None |
+| `project.config_files` | Project `read`; Resolved paths (read) | No | None |
+| `project.data_files` | Project `read`; Resolved paths (read) | No | None |
+| `project.dependency_files` | Project `read`; Resolved paths (read) | No | None |
+| `project.describe` | None | No | None |
+| `project.directory_stats` | Project `read`; Resolved paths (listDirectory) | No | None |
+| `project.documentation_files` | Project `read`; Resolved paths (read) | No | None |
+| `project.empty_directories` | Project `read`; Resolved paths (listDirectory) | No | None |
+| `project.env_files` | Project `read`; Resolved paths (read) | No | None |
+| `project.executable_files` | Project `read`; Resolved paths (read) | No | None |
+| `project.file_types` | Project `read`; Resolved paths (read) | No | None |
+| `project.git_changes` | Project `read`; Resolved paths (read) | No | None |
+| `project.grant` | None | Yes | None |
+| `project.ignore_files` | Project `read`; Resolved paths (read) | No | None |
+| `project.info` | Project `read`; Resolved paths (read) | No | None |
+| `project.infra_files` | Project `read`; Resolved paths (read) | No | None |
+| `project.instructions` | Project `read`; Resolved paths (read) | No | None |
+| `project.large_files` | Project `read`; Resolved paths (read) | No | None |
+| `project.list` | None | No | None |
+| `project.log_files` | Project `read`; Resolved paths (read) | No | None |
+| `project.manifests` | Project `read`; Resolved paths (read) | No | None |
+| `project.open` | Desktop control `allow` | No | None |
+| `project.outline` | Project `read`; Resolved paths (read) | No | None |
+| `project.project_roots` | Project `read`; Resolved paths (read) | No | None |
+| `project.recent_files` | Project `read`; Resolved paths (read) | No | None |
+| `project.remove` | None | Yes | None |
+| `project.repair` | None | Yes | None |
+| `project.request` | None | No | None |
+| `project.reveal` | Desktop control `allow` | No | None |
+| `project.schema_files` | Project `read`; Resolved paths (read) | No | None |
+| `project.source_files` | Project `read`; Resolved paths (read) | No | None |
+| `project.status` | Project `read`; Resolved paths (read) | No | None |
+| `project.symlinks` | Project `read`; Resolved paths (read) | No | None |
+| `project.test_files` | Project `read`; Resolved paths (read) | No | None |
+| `project.todos` | Project `read`; Resolved paths (read) | No | None |
+| `runtime.owners.call` | None | No | Forward tool(arguments); check target requirements |
+| `runtime.owners.list` | Project `read`; Resolved paths (read) | No | None |
+| `service.status` | Machine information `allow` | No | None |
+| `shell.cancel` | Project `write` | No | Retained execution cancel (session_id) |
+| `shell.list` | Project `read` | No | Retained execution list |
+| `shell.read` | Project `read` | No | Retained execution read (session_id) |
+| `shell.run` | Project `write`; Resolved paths (write) | No | Start execution |
+| `shell.spawn` | Project `write`; Resolved paths (write) | No | Start execution |
+| `shell.write` | Project `write` | No | Retained execution input (session_id) |
+| `skills.describe` | Skills `allow` | No | Plugin `use` if contributed: Skills skill name in root_id |
+| `skills.files` | Skills `allow` | No | Plugin `use` if contributed: Skills skill name in root_id |
+| `skills.frontmatter` | Skills `allow` | No | Plugin `use` if contributed: Skills skill name in root_id |
+| `skills.link_check` | Skills `allow` | No | Plugin `use` if contributed: Skills skill name in root_id |
+| `skills.links` | Skills `allow` | No | Plugin `use` if contributed: Skills skill name in root_id |
+| `skills.list` | Skills `allow` | No | Plugin `use` if contributed: Skills argument root_id |
+| `skills.outline` | Skills `allow` | No | Plugin `use` if contributed: Skills skill name in root_id |
+| `skills.read` | Skills `allow` | No | Plugin `use` if contributed: Skills skill name in root_id |
+| `skills.read_file` | Skills `allow` | No | Plugin `use` if contributed: Skills skill name in root_id |
+| `skills.read_files` | Skills `allow` | No | Plugin `use` if contributed: Skills skill name in root_id |
+| `skills.read_package` | Skills `allow` | No | Plugin `use` if contributed: Skills skill name in root_id |
+| `skills.roots` | Skills `allow` | No | Plugin `use` if contributed: Skills catalog |
+| `skills.search` | Skills `allow` | No | Plugin `use` if contributed: Skills argument root_id |
+| `skills.search_files` | Skills `allow` | No | Plugin `use` if contributed: Skills skill name in root_id |
+| `skills.section` | Skills `allow` | No | Plugin `use` if contributed: Skills skill name in root_id |
+| `skills.tables` | Skills `allow` | No | Plugin `use` if contributed: Skills skill name in root_id |
+| `skills.validate` | Skills `allow` | No | Plugin `use` if contributed: Skills skill name in root_id |
+| `sqlite.query` | Project `read`; Resolved paths (read) | No | None |
+| `sqlite.schema` | Project `read`; Resolved paths (read) | No | None |
+| `structured.get` | Project `read`; Resolved paths (read) | No | None |
+| `system.cpu` | Machine information `allow` | No | None |
+| `system.groups` | Machine information `allow` | No | None |
+| `system.info` | Machine information `allow` | No | None |
+| `system.kernel` | Machine information `allow` | No | None |
+| `system.load` | Machine information `allow` | No | None |
+| `system.locale` | Machine information `allow` | No | None |
+| `system.memory` | Machine information `allow` | No | None |
+| `system.path` | Machine information `allow` | No | None |
+| `system.power` | Machine information `allow` | No | None |
+| `system.processes` | Machine information `allow` | No | None |
+| `system.software` | Machine information `allow` | No | None |
+| `system.thermal` | Machine information `allow` | No | None |
+| `system.time` | Machine information `allow` | No | None |
+| `system.uptime` | Machine information `allow` | No | None |
+| `system.user` | Machine information `allow` | No | None |
+| `system.volumes` | Machine information `allow` | No | None |
+| `system.which` | Machine information `allow` | No | None |
+| `toml.read` | Project `read`; Resolved paths (read) | No | None |
+| `xml.read` | Project `read`; Resolved paths (read) | No | None |
+| `yaml.read` | Project `read`; Resolved paths (read) | No | None |
+<!-- tool-requirements:end -->
+
+## `project.request`
+
+Requests registration of an existing absolute folder with `path` and `access`
+(`read` or `write`). It requires an authenticated principal, but no existing
+Project grant or Full access. The host returns a registration request naming the
+canonical folder and requested access. The local owner chooses **Allow** or
+**Don't Allow**; registration has no **Only this time** option.
+
+Allow verifies the folder and bookmark identity again, then commits registration
+and the profile's standing Project permission together. Don't Allow changes
+neither. Concurrent requests for the same canonical folder share its reserved
+project identity. Requests for an existing project can raise its access; a
+worktree inherits that grant from its source project, covering the source and its
+worktrees. The local prompt shows the requested folder and the source grant root.
+Retry `project.request` with unchanged arguments and its `_permission_request_ids`
+after the owner answers. While pending it returns the same request. After Allow
+it returns `{"project_id": "…"}` for the requested folder, including a worktree's
+own ID; after Don't Allow it returns `permission.denied` without another prompt.
+The retry rechecks current authority. Once registered, the next connected call
+can use the project.
+Registering a folder does not execute its instruction files, skills or project
+configuration. Direct project registration and removal remain owner operations.
+
+## Worktree workflow
+
+Use `git.worktree_add` in the source project, then use its returned `project_id`
+for file tools, sandbox programs and commits. Fetch and rebase explicitly when the
+base advances; `git.merge` fast-forwards committed work into the source checkout.
+Remove the worktree and then delete its merged branch. Standing source Project
+write permission applies throughout; no new grant or reconnect is needed.
+See [Worktrees](Worktrees.md) for the sequence and recovery, and the
+[Git lifecycle schemas](#git-worktree-lifecycle) for arguments and results.
 
 ## Execution owners
 
 `runtime.owners.list` lists retained work in one granted `project_id`. It
-requires its own capability grant. An optional `server` filters MCP registration
+requires current Project access and matching ownership. An optional `server` filters MCP registration
 IDs. `limit` defaults to 50 and accepts 1–100; pass the returned `next_cursor` as
 `after` to continue. Pages contain at most 128 KiB of encoded rows, so a byte
 budget can end a page before its requested count. This is a live directory;
@@ -32,8 +436,8 @@ available through ordinary result reads for its retention period, independently
 of execution ownership.
 
 `runtime.owners.call` selects an exact owner when duplicate native handles are
-ambiguous or a call needs a retained provider instance. It requires its own
-capability and the target's current permissions. Supply the `owner` unchanged,
+ambiguous or a call needs a retained provider instance. It evaluates the
+target's resolved requirements and current permissions. Supply the `owner` unchanged,
 the same `project_id`, the gateway `tool` name and its original `arguments`:
 
 ```json
@@ -57,10 +461,8 @@ a stale, foreign or disconnected owner fails without launching a replacement.
 Owner tools cannot recursively target themselves. Native tool arguments do not
 receive the locator.
 
-For writes requiring approval, select the same owner around both
-`operations.prepare` and `operations.commit`. The review and ticket bind that
-exact owner along with the tool, arguments, project and provider identity.
-Changing the owner does not transfer approval. `target_execution` in a successful
+A permission retry must select the same owner, tool, arguments, project and
+provider identity. Changing the owner cannot reuse an answer. `target_execution` in a successful
 wrapped result identifies the selected invocation; ordinary `gateway_execution`
 identifies the routing call. Permission checks still run immediately before the
 target executes.
@@ -112,11 +514,11 @@ For file-backed trees, returns the declared node's description, input schema,
 coverage and help argv with `executed: false`. Unknown paths are rejected.
 Executable tree exporters are not run by this read-only capability.
 
-For a CLI without a tree, runs a registered path with `--help` and returns raw text plus
-mechanical context for constructing a follow-up `cli.exec` MCP call. MCP
-consumers should not execute the shown command outside this gateway.
+For a CLI without a tree, accepts only an empty `path` and returns registration
+metadata (`id`, `path`, `description`, `interface`, `executed: false`). Help never
+starts the registered executable or an executable tree exporter.
 
-Arguments:
+Arguments for a file-backed tree:
 
 ```json
 {
@@ -125,34 +527,11 @@ Arguments:
 }
 ```
 
-Result text contains JSON like:
-
-```json
-{
-  "id": "lark",
-  "path": ["im", "+chat-search"],
-  "help_argv": ["im", "+chat-search", "--help"],
-  "exec_context": {
-    "tool": "cli.exec",
-    "id": "lark",
-    "argv_prefix": ["im", "+chat-search"]
-  },
-  "interface": {
-    "path_style": "argv",
-    "flag_style": "long_flags",
-    "flag_case": "kebab",
-    "value_style": "separate",
-    "format_flag": "--format",
-    "default_format": "json",
-    "dry_run_flag": "--dry-run"
-  },
-  "stdout": "...raw CLI help...",
-  "stderr": "",
-  "exit_code": 0
-}
-```
-
 ## `cli.exec`
+
+CLI command-tree tools, whose names come from the configured tree, have the same
+Project `write` and Plugin `use` (when contributed) requirements as `cli.exec`,
+and do not declare a Full access requirement.
 
 Executes a registered local CLI through this MCP gateway with explicit argv.
 Use this for raw registrations that permit arbitrary arguments. Tree-backed
@@ -261,9 +640,8 @@ Arguments:
 Calls a tool on one downstream MCP server.
 The exact tool name must be selected by the host's whitelist or all-tools policy;
 discovery itself grants no authority. An explicit all-tools grant includes future
-tools, while a whitelist grants only its selected names. Profile and host risk
-checks apply to the actual target, including operation tickets for destructive
-tools.
+tools, while a whitelist grants only its selected names. The host evaluates the actual target's requirements, selected server or plugin
+permission, project scope and execution context.
 Calls wait for the downstream result by default. For a long-running request
 that must remain controllable by a sequential MCP consumer, set
 `wait_for_result` to `false` and supply a nonempty caller-stable `request_id`.
@@ -311,8 +689,8 @@ Closes one exact retained downstream connection and joins its managed-process
 teardown. This destructive operation affects **all work on that connection**.
 Select a live owner with `runtime.owners.call` and pass `server` as the target's
 only argument. Unbound or stale selections fail without starting a replacement.
-Current target permissions apply. When approval is required, wrap both
-`operations.prepare` and `operations.commit` with the same owner.
+Current target permissions and live ownership apply. Permission retries must
+retain the same owner.
 
 The result separates the observed outcomes:
 
@@ -468,6 +846,12 @@ Arguments:
 
 ## MCP-Backed `[[tools]]`
 
+Required permissions and Full access follow the underlying server/tool's
+[effective risk mapping](Config.md#permissions-by-downstream-tool-risk).
+A named project additionally needs Project `read` for a read-only target or
+`write` for any other target. Host provisioning/removal actions require Source
+Project `write`. Plugin contributions also follow the ownership rule above.
+
 MCP-backed `[[tools]]` entries can expose selected downstream MCP tools as
 top-level gateway tools. CLI commands are not exposed through `[[tools]]`.
 
@@ -505,51 +889,80 @@ available. For tools, use `mcp.tools.list`, `mcp.tools.describe`,
 `mcp.resources.list`, `mcp.resources.templates.list`, and `mcp.resources.read`.
 For prompts, use `mcp.prompts.list` and `mcp.prompts.get`.
 
-## `process.spawn`, `process.list`, `process.read`, `process.cancel`
+## Shell executions
+
+`shell.run` waits for a command; `shell.spawn` returns a stable `session_id` for
+background work. Use `shell.read` with `stdout_cursor` and `stderr_cursor` from the
+previous response's `next_cursor`, `shell.write` to send text or base64 bytes or
+close stdin, and `shell.cancel` to terminate the owned execution tree. Calls remain
+subject to current permission-ledger execution authority. Starting work requires
+an enforceable prepared context; a continuation never authorizes another launch.
+
+Waiting commands default to `timeout_ms: 120000` and accept at most `600000`.
+Background commands have no timeout unless requested. The default output budget is
+8388608 bytes (8 MiB), shared by stdout and stderr; the newest bytes are retained.
+Each snapshot includes `limits`, `dropped_bytes` and, after completion, `end_reason`
+(`exited`, `signalled`, `timeout`, `cancelled`, `interrupted`, `launch_failed` or
+`execution_failed`). A missing `limits.timeout_ms` means no deadline. An old cursor
+returns retained data with `missed_bytes: true`; `start_cursor` identifies its
+starting offset. `truncated` indicates that the stream has discarded output under
+the retention limit; `next_cursor < end_cursor` indicates more retained data is
+available to read.
+
+Disconnecting a client does not change execution IDs or output cursors. Reconnect
+with the same authorized principal, profile and project to continue reading.
+Durable server owners retain periodic output checkpoints. Recovered output requires
+the original standing client trust revision or unchanged configured grant; output
+from connection-only consent is not recovered for a new connection. After a host restart,
+unfinished records become `interrupted` after surviving recorded processes are
+cleaned up; commands are not automatically restarted. Owner shutdown and result
+retention may remove records. Full access tree cancellation is best effort for
+descendants that escape observation or launch through another service.
+
+## `process.spawn`, `process.list`, `process.read`, `process.write`, `process.cancel`
 
 Spawn, list, inspect, and cancel long-running commands by registered CLI id.
 `process.list` reports only sessions created through `process.spawn`; it is not
-a macOS process-table tool. The default `chatgpt-operate` grant exposes only
-the read-only `process.list` surface. `process.spawn` is arbitrary execution:
-it requires an explicit capability grant, `local-full-access` mode, separate
-Full Shell permission, and the grant's confirmation policy. These checks apply
-equally to local and Tunnel callers; a Profile's name does not grant access.
+a macOS process-table tool. `process.spawn` and `process.write` declare execution
+requirements; stdin can direct an existing program to perform further work.
+Permission checks apply equally to local and tunnel callers; a profile name does
+not grant authority. A one-time admitted execution retains its authorized input,
+output and cancellation access until revocation or expiry.
 Use `policy.probe` to inspect the effective authorization without execution.
 `process.cancel` reports the owned process lifecycle; downstream MCP cancellation
 uses the separate `mcp.requests.cancel` and receipt-query surfaces.
 
+Registered processes use the same execution lifecycle as shell sessions.
+`process.read` accepts `stdout_cursor`, `stderr_cursor` and `max_bytes`; its
+`execution` object contains stream cursors, limits, dropped bytes and end reason.
+The existing top-level status, stdout and stderr fields remain available.
+`process.write` accepts `process_id`, either `text` or `base64`, and optional
+`close: true` to deliver EOF after queued writes. `process.cancel` uses the shared
+execution owner's process-tree cancellation.
+
+`cli.exec` uses the same bounded launcher and permission context. See
+[execution availability](../Architecture/SecurityAndPrivacy.md#execution-admission)
+for host helpers, Sandbox and Full access programs, and local MCP/plugin launches.
+Shell additionally requires `policy.shell_enabled = true`.
+
 ## `policy.probe`
 
-Evaluate one exact Gateway capability against the active caller, profile, and
-project without executing the target. An allowed target returns its risk and
-bound project. A denied target returns the same stable `policy.*` error that
-execution would produce, and the probe is written to the Gateway audit log.
+Preview one exact tool's resolved requirements for the active caller, profile,
+project and connection. The result reports requirements and an allowed, requestable
+or denied decision. It does not dispatch, create a pending request or consume
+Only this time authority.
 
-## Project And Operation Tools
+## Project discovery
 
-`project.list` returns stable projects granted to the caller.
-`project.describe` returns one project after grant and bookmark
-resolution. Every scoped tool accepts `project_id`; omission is rejected when
-more than one project is available.
+`project.list` and `project.describe` expose stable project ID, display name and
+access status without Project permission. Root paths and detailed metadata require
+Project access. Every scoped tool accepts `project_id`; omission is rejected when
+selection is ambiguous.
 
-Remote project tools never register an authorization root. Add or remove a
-project through the local App or `computer-mcp project …` CLI. Do not use
-Computer Use to operate Computer MCP's own UI as an administration fallback.
-
-`operations.prepare` creates a short-lived, single-use ticket for an authorized
-write. Depending on the profile's confirmation policy it returns `prepared`
-or `pending_approval`. A direct call requiring confirmation also returns an
-`operations.approval_required` error with the ticket id before any target side
-effect. The local App or `computer-mcp permissions approvals` commands approve
-or deny the request; a remote `confirm` argument cannot do so.
-
-`operations.commit` executes the exact canonical tool name and arguments bound
-into a prepared or locally approved ticket. It checks principal, profile,
-project, arguments, target state, expiry and grant revision, then consumes
-the ticket once. Parameter/target changes, rejection, expiry, revocation or
-reuse fail before execution. Tickets do not grant capabilities or expand a
-project. A preview that cannot safely fit the review budget is rejected
-instead of presenting an incomplete approval.
+Project registration is an owner-controlled operation. Use the local App or
+`computer-mcp project …` CLI, or the typed App-managed remote management contract
+when its requirements are satisfied. Computer Use cannot operate the host's own
+UI as an administration fallback.
 
 ## Plugin tools
 
@@ -560,15 +973,25 @@ for its coding tools, configuration, diagnostics and acceptance.
 
 `skills.*` belongs to the main gateway, independently of Codex. When
 `[skills].enabled = true`, ChatGPT, Codex, or any other authorized MCP client
-can discover and read configured skill packages directly. The mechanical flow
+can discover and read accessible configured skill packages directly. The mechanical flow
 is `skills.list` or `skills.search`, then `skills.read`, followed by
 `skills.files`, `skills.read_file(s)`, or `skills.read_package` for referenced
 content. Skill reads never execute bundled scripts; subsequent actions remain
 explicit calls through the same MCP gateway.
 
+Without `root_id`, list, search and name-based reads scan only accessible roots.
+Each scanned root is declared in the invocation's library read requirements;
+plugin roots also require Plugin use. A denied or protected root does not prevent
+results from other roots. Specifying `root_id` checks that root directly and can
+return a permission request or refusal.
+
+Archive-installed plugin Skills are unavailable while package content shares
+protected host storage with private plugin state. Plugin use and Skills permissions
+do not bypass the host-data boundary.
+
 ## `skills.roots`
 
-Available only when `[skills].enabled = true`. Lists configured local skill
+Available only when `[skills].enabled = true`. Lists accessible configured local skill
 roots and filesystem readiness metadata. It does not read skill contents.
 
 ## `skills.list`
@@ -1402,8 +1825,10 @@ returned path to read selected files through the gateway.
 Available only when `[builtin].enabled` includes `project.instructions`.
 Returns the bounded agent instruction files that apply to one target
 project-contained path. It walks from the project root to the target path's
-scope directory and checks fixed instruction filenames plus Cursor/Windsurf rule
-directories at each level. It does not recursively scan the full project,
+scope directory and checks fixed instruction filenames, Cursor/Windsurf rule
+directories, and immediate skill packages at each level. Skill entrypoints are
+`SKILL.md` files inside `skills/`, `.agents/skills/`, `.claude/skills/`,
+`.codex/skills/`, and `.github/skills/` packages. It does not recursively scan the full project,
 summarize instructions, merge rules, or infer policy.
 
 Arguments:
@@ -1426,7 +1851,16 @@ Returned file rows include `project_relative_path`, `kind`, `source`,
 `scope_project_relative_path`, `apply_order`, file metadata,
 `content_included`, bounded `content`, `content_bytes_read`,
 `content_truncated`, `valid_utf8`, and `read_context`. `apply_order` is root to
-leaf; closer directory instructions have larger values.
+leaf; closer directory instructions have larger values. Skill rows use
+`source: "skills_directory"`; their scope is the directory containing the skill
+library. Contents retain their original UTF-8 bytes (including whitespace and
+line endings). Truncation ends at a complete UTF-8 character within the bound;
+`content_bytes_read` reports the returned prefix length. The reader may inspect
+up to three additional bytes to validate a character crossing that bound.
+Malformed UTF-8 is reported as `content: null`, `valid_utf8: false`.
+Every source and target scope passes the
+path permission checks, including future targets and symlinks. Instruction files
+and skills are data: collecting them executes no project declaration.
 
 ## `project.test_files`
 
@@ -1976,12 +2410,32 @@ Arguments:
 
 ## `system.processes`
 
-Available only when `[builtin].enabled` includes `system.processes`. Runs fixed
-`/bin/ps` argv and returns a bounded read-only process snapshot. It reports
+Available only when `[builtin].enabled` includes `system.processes`. Reads a
+bounded process snapshot in the host through libproc and sysctl. It reports
 process ids, parent ids, user, state, CPU/memory percentages, elapsed time, and
-the executable command field; it does not request full argument strings or
-environment variables. This tool is not enabled in the ChatGPT tunnel sample
-profile by default because process names can reveal local activity.
+`command`. The command contains the argument strings when the kernel permits
+reading them. Otherwise it contains the executable path or name followed by
+` [arguments unavailable]`, including for other users' processes such as
+`launchd`. Environment variables are never returned. This tool is not enabled
+in the ChatGPT tunnel sample profile by default because process information can
+reveal local activity.
+
+`cpu_percent` is lifetime user and system CPU time divided by elapsed wall time,
+as a percentage of one CPU. `memory_percent` is resident bytes as a percentage of
+physical memory. Unreadable task information produces `null` for these fields;
+unreadable start time produces `null` for `elapsed`. State uses BSD state letters
+with available priority, tracing, session and foreground indicators. Processes
+that exit during inspection may be omitted. Results are ordered by PID.
+
+`query` filters readable user, state and command text case-insensitively.
+`max_results` limits matching records. `max_output_bytes` bounds the compact
+JSON records inspected before filtering, counting one newline per record;
+only complete records are returned. `timeout_ms` bounds enumeration. Any limit
+that leaves an incomplete snapshot sets `truncated`. `result.timed_out` and
+`result.stdout_truncated` identify timeout and byte limits respectively.
+The response retains `argv` and `result.arguments` as empty arrays,
+`result.executable` and `result.exit_code` as `null`, and empty `result.stderr`:
+the snapshot is an in-process reading.
 
 Arguments:
 
@@ -3545,6 +3999,11 @@ project-contained SQLite database schema using fixed
 `sqlite_schema`; it does not execute user-provided SQL and does not read table
 data.
 
+The host must supply a SQLite CLI binding; the SQLite library alone does not
+provide one. Without that binding, `sqlite.schema` and `sqlite.query` return
+`GatewayToolError.disabled` without launching a command. Registered SQLite
+commands run with `-init /dev/null -safe` and a private `HOME`.
+
 Arguments:
 
 ```json
@@ -3572,6 +4031,10 @@ read-only SQLite statement against a project-contained database using fixed
 `/usr/bin/sqlite3 -batch -readonly -json` argv. Accepted statements are
 `SELECT`, `WITH`, and non-assigning `PRAGMA`; mutating SQL, DDL, attach/detach,
 vacuum/reindex/analyze, and multiple statements are rejected before execution.
+
+The SQLite CLI runs with `-init /dev/null -safe -readonly` and a fresh private
+`HOME`, so it never reads `.sqliterc`. SQL functions such as `edit()` and
+`writefile()` cannot launch programs or write files.
 
 Arguments:
 
@@ -3737,10 +4200,76 @@ Arguments:
 Available only when `[builtin].enabled` includes `archive.extract`. Extracts a
 project-contained zip or tar archive into a project-contained destination
 directory using fixed argv. The tool defaults to `dry_run=true`, validates all
-entry paths before extraction, refuses link entries, and requires
+entry paths before extraction, refuses link entries, checks each destination
+through directory handles, and requires
 `confirm_extract=true` when `dry_run=false`.
 
-Zip-like archives use `/usr/bin/unzip`; tar-like archives use `/usr/bin/tar`.
+On macOS the registered `tar` executable is BSD tar. On Linux, tar formats use
+the registered GNU `tar`; ZIP formats (`.zip`, `.jar`, `.war`, `.ear`) require
+a separate registered `bsdtar` executable, including for dry runs. GNU tar does
+not read ZIP archives. If the required binding is absent, extraction returns
+`GatewayToolError.disabled` before listing or creating the destination. Listing,
+metadata and content passes all use the selected reader. ZIP extraction does
+not require `zipinfo` or `unzip`; the list and read tools use those independently.
+`archive.create` requires a registered `zip` for ZIP formats and a registered
+`tar` for tar formats; a missing binding also fails before writing.
+
+One `tar -tvf` listing validates paths, types, sizes and modes, refusing absolute
+paths, `..`, Git metadata, links and special files. The host creates a private
+staging directory with `mkdirat` inside the destination (on the same volume), opens
+it with `O_DIRECTORY | O_NOFOLLOW`, and starts tar with
+`posix_spawn_file_actions_addfchdir_np` on that descriptor. No staging pathname
+is passed to tar. For both zip and tar, `tar -xOf -` reads the archive through
+standard input and streams file contents once through a pipe to a host-opened
+temporary descriptor. The same tar reader determines listing and content order
+for ZIPs, including those with a reordered central directory. The pipe preserves
+sparse holes as logical zero bytes. `--no-same-owner` and
+`--no-same-permissions` are set; extraction does not use `-P`.
+The host creates entries through anchored descriptors from the validated relative
+names, checks byte counts, and records each created entry's identity immediately
+from its anchored descriptor.
+Listing escapes are decoded before path checks; member names must be valid UTF-8.
+An additional read-only tar pass obtains exact modification times: BSD tar exports
+`mtree` time metadata with `-P` to preserve original names during this read-only
+conversion, while GNU tar uses `--full-time` in UTC. GNU timestamp padding is
+removed separately from leading spaces in member names. Metadata must match
+the validated member names and types; it does not determine content order or add
+write targets. Modification times, including stored nanoseconds, are restored
+through checked descriptors. Files receive their times before publication.
+When reading GNU tar's standard input, the host selects `--gzip`, `--bzip2` or
+`--xz` from the supported archive suffix; the corresponding decompressor must
+be installed. BSD tar detects compression itself.
+Directories in staging and at the destination are created with owner read, write
+and search permission. After all contents are published and staging is cleaned,
+explicit directory members receive their archive modes and modification times
+through checked descriptors, deepest first. An existing destination keeps its own
+mode, access time and modification time; an archive `.` entry, including equivalent
+root paths, supplies metadata only when the tool creates the destination.
+Implicit parent directories have no archive mode or timestamp to restore.
+It compares the tree's paths and types, including implicit parent directories,
+with the listing and rejects foreign inodes, symlinks and multiply linked files.
+It then creates destination directories and publishes files with anchored
+exclusive renames. Cleanup, on success or failure, requires a matching device and
+inode and proof that the inode is the one created: APFS never reuses inode numbers
+within a volume, and on Linux the `name_to_handle_at` file handle, which encodes the
+inode generation, must match. Descriptors close when their active use ends.
+On other filesystems, and Linux filesystems that cannot export handles, the host
+retains a close-on-exec descriptor per created entry instead, so its inode cannot
+be reused, up to 64 per file operation. Before retaining one it reserves 16
+additional descriptor slots plus one per retained directory, and releases them
+for cleanup, which holds one descriptor per directory level. When the
+64-descriptor limit would be exceeded, creation stops, staging is cleaned, and the
+operation fails with an error naming the limit. Identity-read or reserve
+allocation errors also fail the operation. Processes that can write the
+directories an operation works in are trusted not to race it: such a process can
+replace a new directory or symbolic link before its first descriptor, and cleanup
+then treats the replacement as created, restoring owner access to it and removing
+it when empty.
+It preserves unknown entries without descending into foreign directories, retains
+their staging directory, and fails with the retained paths in the error.
+Entries already published before a later failure remain in place;
+extraction is not an all-or-nothing transaction. `result` is the extraction command
+result.
 The destination directory must already exist unless `create_directories=true`.
 Existing destination paths are rejected unless `overwrite=true`.
 
@@ -3799,8 +4328,14 @@ Available only when `[builtin].enabled` includes `file.download`. Downloads an
 absolute HTTP or HTTPS URL to a project-contained file using fixed
 `/usr/bin/curl` argv. The tool defaults to `dry_run=true`, rejects URLs with
 userinfo credentials, sends no custom headers, cookies, or request body, writes
-through a deterministic temp file in the destination directory, and requires
+through an exclusively created temporary descriptor in the destination directory, and requires
 `confirm_download=true` when `dry_run=false`.
+
+Sandboxed downloads use the project's network policy for the initial host and
+each redirect. A missing host produces an original-call retry request; **Always**
+adds it to the project's `custom` host list, while **Only this time** covers the
+matching retry. DNS and route boundaries are checked on each connection. Full
+access follows its execution mode, and Project write access remains required.
 
 The destination parent directory must already exist unless
 `create_directories=true`. Existing destination files are rejected unless
@@ -3825,6 +4360,79 @@ Arguments:
   "max_output_bytes": 16384
 }
 ```
+
+## File mutation boundaries
+
+File and structured-data writes walk project-relative paths with anchored directory
+handles and `O_NOFOLLOW`. Every recursive member and extracted archive entry is
+checked. Path walks refuse symlinks; content and metadata changes reject existing
+regular files observed to have multiple hard links. This protects existing files
+from writes through pre-existing hard links to files outside the project. A file
+created by the operation can acquire a concurrent hard link while it is being
+written. Creating that link outside the project requires a process that can
+already create files there; a sandboxed principal cannot do so, and a process with
+that access could read the archive directly. After a created file is complete,
+`fstat` checks its descriptor's link count. Persistent multiple links fail the
+operation; cleanup removes only entries the operation created.
+The final check cannot retract bytes already exposed through a concurrent link or
+detect a link removed before the check.
+
+Writes, creation, moves, renames, deletion and archive extraction refuse any target
+with a `.git` component at any depth, compared case-insensitively after Unicode
+normalization. Moves and renames also refuse such a source. The rule covers `.git`
+directories, gitfiles and paths beneath them. Git configuration paths are protected.
+At file-access creation, the host checks the Git layout once using its isolated Git
+invocation: `rev-parse --git-dir --git-common-dir`, resolving `core.worktree`
+relative to the Git directory if set. If the project's root `.git` entry is a
+symbolic link, or the resolved Git directory or common directory is inside the
+project at a path without a `.git` component, every in-process write fails. The
+error identifies the layout and says the project must use a standard Git layout
+for these tools. Git directories outside the project cannot be reached by project
+writes. A worktree whose gitfile points outside the project supports ordinary
+writes, with `.git` still protected. Each host Git operation refuses local `include`
+or `includeIf` configuration entries before running.
+If the host cannot verify the Git layout, in-process writes fail.
+`file.symlink` can replace an explicitly selected existing
+link without following it. `file.trash` refuses the project root and recursively
+checks all members before calling macOS Trash. It refuses Git metadata and
+configuration, symlinks and special files, but allows multiply linked regular
+files because it moves entries without writing their contents. Its platform call
+uses a path and has no descriptor-based post-check or rollback; its destination
+can be outside the project.
+
+Downloads and archive output stream to host-opened temporary file descriptors;
+the host rechecks the destination directory and file before publishing the result.
+Directory entry creation, publication, rename and unlink check their parent
+handles before and after successful syscalls, walking ancestors to the pinned
+project root. On a failed post-check they attempt rollback. Removal and rename
+during rollback compare device and inode immediately before their syscalls; an
+observed mismatch leaves the entry in place and reports an error. `chmod`, `touch` and xattr removal record mode,
+access/modification times and the affected xattr values through the opened
+descriptor. After mutation they recheck the parent chain, path identity and link
+count; failure restores those values through the same descriptor.
+These are observations at check time: they do not lock out other processes or
+detect changes made and reversed between checks, or changes after the final
+check. An entry can also be replaced after the identity comparison but before its
+syscall. Metadata restoration can overwrite another writer's intervening metadata
+changes. Rollback failures are reported; this is not atomic isolation.
+Copy uses descriptor-based `fcopyfile(COPYFILE_ALL)` on macOS, preserving data,
+xattrs, resource forks, ACLs, mode and access/modification times. It checks the source again before
+publishing the staged copy and cleans its staging entries with identity checks.
+On glibc Linux, descriptor reads/writes preserve data; `fchmod`, `futimens` and
+descriptor xattr calls preserve mode, nanosecond access/modification times and
+visible xattrs, including POSIX ACLs. Destination-only inherited xattrs are
+removed. Failure to copy a listed attribute fails publication. A source filesystem
+without xattrs contributes none. New copies retain the destination's ownership;
+macOS resource forks, creation times and BSD file flags have no Linux copy path.
+Exclusive rename uses `renameat2(RENAME_NOREPLACE)` with pinned directories and
+single-component names; unsupported kernels or filesystems fail without replacing
+an existing entry. The descriptor working-directory spawn action requires glibc
+2.29 or newer.
+The identity record is populated at creation, not by scanning staging afterward.
+A replaced copy temporary is unlinked only if it still names the inode written
+by the copy operation; foreign entries and directories remain in staging, named in the
+failure returned to the caller.
+Archive extraction uses the staging and validation procedure above.
 
 ## `file.write`
 
@@ -4035,10 +4643,13 @@ Arguments:
 ## `file.move`
 
 Available only when `[builtin].enabled` includes `file.move`. Moves or renames a
-file or directory between project-contained paths. Existing destinations are
-rejected unless `overwrite` is true. Set `dry_run` to validate source,
-destination, overwrite policy, and parent-directory creation intent without
-moving the source or overwriting the destination.
+file or directory between project-contained paths on the same volume, preserving
+metadata with an exclusive, no-follow rename. Different device numbers on the
+anchored source and destination descriptors cause an error before creating parent
+directories or overwriting the destination: copy and then delete the source.
+Existing destinations are rejected unless `overwrite` is true. Set `dry_run` to
+validate source, destination, overwrite policy, and parent-directory creation
+intent without moving the source or overwriting the destination.
 
 Arguments:
 
@@ -4077,7 +4688,9 @@ Arguments:
 
 ## `file.trash`
 
-Available only when `[builtin].enabled` includes `file.trash`. Moves a
+Available only when `[builtin].enabled` includes `file.trash`. Refuses the project
+root, checks every directory member for protected paths and unsafe types, and
+allows multiply linked regular files. Moves a
 project-contained file or directory to the macOS Trash. This is a write
 operation, but it is preferred over permanent delete for gateway-level file
 organization. Set `dry_run` to validate the path without moving it to Trash.
@@ -4164,19 +4777,36 @@ Arguments:
 }
 ```
 
-### `git.worktrees`
+### Git worktree lifecycle
 
-Runs fixed read-only `git worktree list --porcelain` through the registered
-`git` CLI provider. This reads local worktree metadata and does not create,
-move, prune, or remove worktrees.
+These tools require durable host storage and use the host's pinned Git executable.
+They inherit the source Project permission and do not run configured wrappers,
+hooks, signing helpers or filters. Unavailable lifecycle services are omitted from
+the catalog.
 
-Arguments:
+| Tool | Call location and arguments | Result |
+| --- | --- | --- |
+| `git.worktree_add` | Source project. Required `name`: `[a-z0-9]+(-[a-z0-9]+)*`, at most 48 characters. Optional new `branch` defaults to `worktree/<name>`; existing branches are refused. Optional `base` defaults to the main checkout's current branch and is required when detached. | `project_id`, `path`, `branch`, `base`, `warnings` (submodules stay uninitialized; LFS files stay pointers) |
+| `git.worktree_list` | Source or derived project; no operation arguments. | `worktrees`, each with `path`, `project_id`, `branch`, `base`, `ahead`, `behind`, `dirty`, `unavailable`, `worktree_id`, and `owner`. The host ledger sets `owner` to `host` or `foreign`. The host lifecycle UUID in `worktree_id` is null for foreign or inaccessible checkouts. Inaccessible details and unavailable foreign metrics are null. |
+| `git.merge` | Source project. Required `branch` selects a host worktree branch. Its recorded base must be checked out in the main checkout. | `project_id`, `branch`, `base`, `oid` |
+| `git.worktree_remove` | Host worktree project. Optional `force=false` discards uncommitted content only. | `project_id`, `branch`, `oid`, `terminationWarnings` |
 
-```json
-{
-  "timeout_ms": 30000
-}
-```
+Creation registers the returned project only after verifying its detached checkout
+and private object store. Use the returned `project_id` for subsequent calls.
+Callback-enabled plugins reach the same lifecycle through
+[project host services](HostServices.md#project-worktree-operations).
+Its private repository's `origin` points to the source; integration rebases onto
+`origin/<base>`. Submodules stay uninitialized and LFS files stay pointers.
+Merge verifies a captured copy of committed objects, publishes the worktree's
+committed HEAD to the managed branch with expected-value checks, and fast-forwards
+the main checkout. It refuses non-fast-forward history and local changes it would overwrite.
+Removal closes writer admission, terminates and reaps sandboxed writers, publishes
+the worktree's committed HEAD to the managed branch, preserves committed history,
+removes owned storage, and unregisters the project last. Full
+access writers are terminated best-effort; `terminationWarnings` reports possible
+detached survivors or unconfirmed termination. The branch remains after removal.
+Committing after merge and then removing advances it; branch deletion is refused
+until those new commits are merged into the recorded base.
 
 ### `git.stashes`
 
@@ -4307,7 +4937,10 @@ Arguments:
 ### `git.ignored`
 
 Runs fixed read-only `git check-ignore --verbose -- <paths...>` through the
-registered `git` CLI provider. It requires explicit project-relative paths.
+registered `git` CLI provider. It requires explicit project-relative paths,
+including literal names such as `:(glob)*`. `check-ignore` takes paths, so the host
+does not add `--literal-pathspecs` and prefixes colon-leading names with `./`;
+pathspec-taking commands receive the literal option.
 Git uses its exit code to distinguish ignored from non-ignored paths.
 
 Arguments:
@@ -4901,30 +5534,23 @@ Arguments:
 
 ### `git.branch_delete`
 
-Deletes one local branch ref with fixed `git branch -d <name>` or
-`git branch -D <name>` argv through the registered `git` CLI provider. This
-does not checkout or switch branches, fetch, push, delete remote branches, or
-change working-tree files. It defaults to dry-run and first runs deterministic
-preflight checks:
+Call in the source project with required `name`. The host checks the current
+worktree inventory and retained branch history, then compares the expected branch
+and base object IDs in a Git transaction. A live host or foreign worktree branch
+cannot be deleted. Sandbox requires the branch tip to be reachable from its
+recorded base. Deletion releases recovery references reachable from that base;
+other recovery objects remain retained independently after the branch is gone.
+Reachability compares original objects, so a tag is not released merely because
+its target commit is integrated.
 
-- `git check-ref-format --branch <name>`
-- `git show-ref --verify --quiet refs/heads/<name>`
-- `git branch --show-current`
-
-The tool refuses to delete the current branch. Set `confirm_delete` to true and
-`dry_run` to false to delete the branch after preflight checks pass. Set
-`force` to true to use `git branch -D`; otherwise it uses `git branch -d`.
-
-Arguments:
+`dry_run` defaults to true; deletion requires `dry_run=false` and
+`confirm_delete=true` in the same call. `force` defaults to false. Explicit Full
+access force may discard that branch generation’s unmerged history and recovery references; it does not
+bypass live-worktree, identity or expected-value checks. Results contain `name`,
+`oid`, `deleted`, `dry_run` and `force`.
 
 ```json
-{
-  "name": "feature/local-work",
-  "force": false,
-  "dry_run": true,
-  "confirm_delete": false,
-  "timeout_ms": 30000
-}
+{"name":"worktree/local-work","dry_run":false,"confirm_delete":true}
 ```
 
 ### `git.branch_rename`
@@ -4992,18 +5618,32 @@ Arguments:
 }
 ```
 
+Host-owned Git commands use an empty private `HOME` and `XDG_CONFIG_HOME`,
+`GIT_CONFIG_NOSYSTEM=1`, `GIT_CONFIG_GLOBAL=/dev/null` and `GIT_ATTR_NOSYSTEM=1`.
+Inherited `GIT_*` variables are removed; author name and email are read as data
+from the owner's configuration and passed explicitly when needed. Repository
+configuration with `include` or `includeIf` entries is refused. Commands disable
+filesystem and configured hooks, fsmonitor,
+editors, pagers, credential/SSH helpers, signing programs, diff/merge drivers and
+filters, reset `rebase.instructionFormat` to Git's default, and disable
+`uploadpack.packObjectsHook`. Caller-supplied revisions are first resolved with
+`rev-parse --verify --end-of-options` to validated object IDs; option-shaped
+strings such as `--output=report` remain revision input. Path arguments use
+literal pathspecs after `--`.
+
 ### `git.commit`
 
-Creates a commit with `git commit -m <message>`. The message is required and
-bounded to 10000 characters. Set `dry_run` to run `git commit --dry-run` without
-creating a commit.
+Creates a commit with `git commit --only -m <message> -- <paths>`. Both the
+message (at most 10000 characters) and a nonempty `paths` list are required.
+Only those paths are committed; other staged changes remain staged. Set
+`dry_run` to preview the same path selection without creating a commit.
 
 Arguments:
 
 ```json
 {
   "message": "Update gateway atomics",
-  "all": false,
+  "paths": ["README.md"],
   "allow_empty": false,
   "dry_run": false,
   "timeout_ms": 30000
@@ -5073,13 +5713,12 @@ need to consume a large unfiltered CoreGraphics window table:
 case-insensitive by default. `max_results` defaults to 10 and is capped at 200;
 filtering occurs before truncation.
 
-## Full Shell
+## Shell policy and retention
 
-`shell.run`, `shell.spawn`, `shell.list`, `shell.read`, `shell.write`, and
-`shell.cancel` require a profile whose permission mode allows local full
-access, the corresponding capabilities and Full Shell grant, and an enabled
-manifest Shell policy. Profile names and connection channels do not select
-the permission mode.
+Shell launches require the resolved permissions, an enforceable execution context
+and `policy.shell_enabled = true`. Profile names and transport channels convey no
+authority. Existing execution I/O and cancellation validate the original execution
+and its live ledger evidence, including Only this time lifetime authority.
 
 The plane supports explicit argv or shell-script mode, selected environment,
 project/cwd binding, stdin, separate stdout/stderr cursors, timeout,
@@ -5090,9 +5729,9 @@ The App gateway listener and owner control service retain Shell and
 registered-process sessions across runtime
 configuration changes within the same authenticated principal, profile, caller,
 project registration, and resolved folder identity. Reads, writes, cancellation,
-and listing still require current permission. A task continues using its original
-launch settings and output limit; the executing runtime owns it until the process
-and its output streams finish.
+and listing still require current permission. A task retains its original launch identity; permission revocation and tighter
+resource limits reconcile its authority and output. Its runtime owns cleanup until
+the process and output streams finish.
 
 Completed results remain in memory for up to 24 hours. Each serving scope has a
 budget of 64 completed sessions and 8 MiB of stdout/stderr, shared by its runtime
@@ -5108,12 +5747,7 @@ before the retention limits or the owning service stops. Stopping the gateway
 listener preserves local-admin work; stopping the owner control service preserves
 gateway work. App shutdown stops both scopes.
 
-Full Shell gives the caller the current macOS user's effective terminal
-authority. Prefer typed tools or registered CLI argv execution when that
-authority is unnecessary.
-
-For App-managed profiles, configure the permission mode and confirmation policy
-through the local App or management CLI. Shell also requires
-`policy.shell_enabled = true`. Risk-based confirmation requests local approval
-for arbitrary execution; changing its working directory is not process
-sandboxing.
+Full access is an execution mode requiring explicit local consent and does not
+supply missing permissions. Unsupported execution contexts are refused before
+launch. See [Shell executions](#shell-executions) for the current availability
+boundary and the permission retry contract above.

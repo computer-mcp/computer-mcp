@@ -1,4 +1,6 @@
 import ComputerMCPMacOS
+import ComputerMCPPermissions
+import ComputerMCPSandbox
 import ComputerMCPTestSupport
 import ComputerMCPTransport
 import ComputerMCPTunnels
@@ -16,8 +18,296 @@ import Testing
 @testable import ComputerMCPPlugins
 @testable import ComputerMCPProcess
 
+#if os(macOS)
+  import ComputerMCPDarwinTestSupport
+#endif
+
 @Suite(.nativeIntegration, .timeLimit(.minutes(1)))
 struct PluginControlPlaneTests {
+  @Test
+  func h12RunningGatewayPublishesPackageApproval() async throws {
+    let files = try PluginStoreFixture()
+    defer { files.cleanup() }
+    let package = try files.makePackage(
+      directory: "simple",
+      text: PluginManifestFixture.header + """
+        [[skills]]
+        id = 'guidance'
+        path = 'skills'
+        """)
+    let fixture = try PluginControlFixture(
+      bundled: .init(packages: [], issues: []), cliExecutable: URL(fileURLWithPath: "/usr/bin/true")
+    )
+    defer { fixture.remove() }
+    var configuration = try await fixture.host.activeConfiguration()
+    configuration.profiles = [
+      .init(
+        id: .chatGPTObserve,
+        permissions: fixturePermissions([
+          .skills: .granted(.access), .plugin("test-package"): .granted(.use),
+        ]), allowedCallers: [.localCLI])
+    ]
+    _ = try await fixture.host.activateManifest(
+      configuration.exportedTOML(), expectedDigest: fixture.host.configurationDigest())
+    _ = try await fixture.gateway.changePlugins(.registerDevelopment(package), expectedRevision: 0)
+    try await fixture.gateway.start(profile: .chatGPTObserve)
+    let transport = GatewaySocketTransport(
+      configuration: .init(socketURL: fixture.directories.gatewaySocket, clientIdentity: .localCLI))
+    let client = Client(name: "privacy-package-review", version: "1")
+    do {
+      _ = try await client.connect(transport: transport)
+      _ = try await client.listTools()
+      let before = try await fixture.host.privacyPermissionInventory()
+      let review = try #require(before.providers.first { $0.identity == .package("test-package") })
+      #expect(review.availability == .needsApproval)
+      let operations = AppControlPlaneOperations(
+        controlPlane: fixture.host, gatewayService: fixture.gateway)
+      try await operations.saveProviderPermissions(
+        reviewed: review, permissions: .newPrincipal, fullAccess: false, sandboxSettings: .init(),
+        editingApproval: false)
+      let after = try await fixture.host.privacyPermissionInventory()
+      let approved = try #require(after.providers.first { $0.identity == review.identity })
+      #expect(approved.availability == .active)
+      #expect(approved.effectiveMode == .sandbox)
+      #expect(approved.approval?.enabled == true)
+      #expect(
+        try await fixture.host.pluginSnapshot().state.settings["test-package"]?.enabled == true)
+      let request: RequestContext<MCP.CallTool.Result> = try await client.callTool(
+        name: "skills.read",
+        arguments: [
+          "root_id": .string("plugin-12-test-package-guidance"), "name": .string("example"),
+        ])
+      let result = try await request.value
+      #expect(result.isError != true, "\(result)")
+      #expect(
+        result.structuredContent?.objectValue?["result"]?.objectValue?["content"]?.stringValue?
+          .contains("Read safely.") == true)
+      await client.disconnect()
+      await fixture.gateway.stop()
+    } catch {
+      await client.disconnect()
+      await fixture.gateway.stop()
+      throw error
+    }
+  }
+
+  @Test
+  func h12InventoryCombinesClientsPackagesAndSavedUnavailableServers() async throws {
+    let files = try PluginStoreFixture()
+    defer { files.cleanup() }
+    let fixture = try PluginControlFixture(
+      bundled: .init(packages: [], issues: []), cliExecutable: URL(fileURLWithPath: "/usr/bin/true")
+    )
+    defer { fixture.remove() }
+    var config = try await fixture.host.activeConfiguration()
+    config.mcp.servers.append(
+      .init(id: "retired-server", transport: .stdio, command: "/usr/bin/true"))
+    config.mcp.servers.append(
+      .init(id: "current-server", transport: .stdio, command: "/usr/bin/true"))
+    _ = try await fixture.host.activateManifest(
+      config.exportedTOML(), expectedDigest: fixture.host.configurationDigest())
+    let initial = try await fixture.host.privacyPermissionInventory()
+    let retired = try #require(
+      initial.providers.first { $0.identity == .localServer("retired-server") })
+    var saved = Permissions()
+    try saved.set(.granted(.access), for: .screen)
+    _ = try await fixture.host.saveProviderPermissions(
+      reviewed: retired, permissions: saved, fullAccess: false, sandboxSettings: .init())
+    config.mcp.servers.removeAll { $0.id == "retired-server" }
+    _ = try await fixture.host.activateManifest(
+      config.exportedTOML(), expectedDigest: fixture.host.configurationDigest())
+    _ = try await fixture.gateway.changePlugins(
+      .registerDevelopment(files.packageRoot), expectedRevision: 0)
+
+    let inventory = try await fixture.host.privacyPermissionInventory()
+    #expect(inventory.permissions.profiles.contains { $0.id == .localAdmin })
+    #expect(
+      Set(inventory.providers.map(\.identity)) == [
+        .package("test-package"), .localServer("current-server"), .localServer("retired-server"),
+      ])
+    let unavailable = try #require(inventory.providers.first { $0.identity == retired.identity })
+    #expect(unavailable.availability == .unavailable)
+    #expect(unavailable.approval?.permissions.state(for: .screen) == .granted(.access))
+    #expect(unavailable.effectiveMode == nil)
+    #expect(
+      inventory.providers.first { $0.identity == .localServer("current-server") }?.availability
+        == .needsApproval)
+    #expect(
+      inventory.providers.first { $0.identity == .package("test-package") }?.availability
+        == .needsApproval)
+  }
+
+  @Test
+  func h12PackageReviewRejectsChangedDeclarationsAndProjectsUnavailableSource() async throws {
+    let files = try PluginStoreFixture()
+    defer { files.cleanup() }
+    let package = files.packageRoot
+    let fixture = try PluginControlFixture(
+      bundled: .init(packages: [], issues: []), cliExecutable: URL(fileURLWithPath: "/usr/bin/true")
+    )
+    defer { fixture.remove() }
+    _ = try await fixture.gateway.changePlugins(.registerDevelopment(package), expectedRevision: 0)
+    let operations = AppControlPlaneOperations(
+      controlPlane: fixture.host, gatewayService: fixture.gateway)
+    let initial = try await fixture.host.privacyPermissionInventory()
+    let review = try #require(initial.providers.first { $0.identity == .package("test-package") })
+    #expect(review.availability == .needsApproval)
+    #expect(review.declarationDigest != nil)
+
+    let changed = PluginStoreFixture.manifest.replacingOccurrences(
+      of: "1.2.3", with: "1.2.4")
+    try changed.write(
+      to: package.appendingPathComponent(PluginManifest.filename), atomically: true,
+      encoding: .utf8)
+    await #expect(throws: GatewayPermissionError.revisionConflict) {
+      try await operations.saveProviderPermissions(
+        reviewed: review, permissions: .init(), fullAccess: false, sandboxSettings: .init(),
+        editingApproval: false)
+    }
+    try FileManager.default.removeItem(at: package)
+    let current = try await fixture.host.privacyPermissionInventory()
+    let unavailable = try #require(current.providers.first { $0.identity == review.identity })
+    #expect(unavailable.availability == .unavailable)
+    #expect(unavailable.approval == nil)
+  }
+
+  @Test
+  func h13ApprovalRejectsChangedSourceAndRequiresExplicitFullAccess() async throws {
+    let files = try PluginStoreFixture()
+    defer { files.cleanup() }
+    let manifest =
+      PluginStoreFixture.manifest + """
+
+        [sandbox]
+        full_access = true
+        purpose = 'Run the selected fixture outside the sandbox'
+        """
+    let package = try files.makePackage(directory: "full-access", text: manifest)
+    let fixture = try PluginControlFixture(
+      bundled: .init(packages: [], issues: []), cliExecutable: URL(fileURLWithPath: "/usr/bin/true")
+    )
+    defer { fixture.remove() }
+    let operations = AppControlPlaneOperations(
+      controlPlane: fixture.host, gatewayService: fixture.gateway)
+    _ = try await operations.changePlugins(.registerDevelopment(package), expectedRevision: 0)
+    let enable = PluginHostChange.enabled(pluginID: "test-package", true)
+    let review = try #require(
+      try await fixture.host.reviewPluginEnablement(enable, expectedRevision: 1))
+    #expect(review.requestedMode == .fullAccess(.standing))
+    #expect(!review.allowsModeSelection)
+    await #expect(throws: GatewayPermissionError.invalidBinding) {
+      try await operations.changePlugins(
+        enable, expectedRevision: 1, approval: .init(review: review, selection: .init()))
+    }
+    #expect(try fixture.database.pluginStoreSnapshot().revision == 1)
+    #expect(try await fixture.host.privacyPermissionInventory().permissions.providers.isEmpty)
+
+    let selectedManifest = package.appendingPathComponent(PluginManifest.filename)
+    let edited = manifest.replacingOccurrences(of: "selected fixture", with: "updated fixture")
+    try edited.write(to: selectedManifest, atomically: true, encoding: .utf8)
+    let accepted = ProviderEnablementSelection(fullAccess: true)
+    await #expect(throws: GatewayPermissionError.revisionConflict) {
+      try await operations.changePlugins(
+        enable, expectedRevision: 1, approval: .init(review: review, selection: accepted))
+    }
+    #expect(try fixture.database.pluginStoreSnapshot().settings["test-package"]?.enabled == false)
+
+    _ = try await operations.changePlugins(.registerDevelopment(package), expectedRevision: 1)
+    let updated = try #require(
+      try await fixture.host.reviewPluginEnablement(enable, expectedRevision: 2))
+    #expect(updated.provider.sourceDigest != review.provider.sourceDigest)
+    let result = try await operations.changePlugins(
+      enable, expectedRevision: 2, approval: .init(review: updated, selection: accepted))
+    #expect(result.state.settings["test-package"]?.enabled == true)
+    let provider = try #require(try await fixture.host.privacyPermissionInventory().providers.first)
+    #expect(provider.sourceDigest == updated.provider.sourceDigest)
+    #expect(provider.effectiveMode == .fullAccess(.standing))
+  }
+
+  @Test
+  func h12PackageApprovalPublishesWithTheRunningGatewayAndRollsBackCompositionFailure() async throws
+  {
+    let files = try PluginStoreFixture()
+    defer { files.cleanup() }
+    let package = try files.makePackage(
+      directory: "activation",
+      text: PluginManifestFixture.header + """
+
+        [[mcp]]
+        id = 'fixture'
+        transport = 'stdio'
+        executable = { platform_paths = { macos = 'helper' } }
+        """)
+    let helper = package.appendingPathComponent("helper")
+    try "#!/bin/sh\nexit 0\n".write(to: helper, atomically: true, encoding: .utf8)
+    try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: helper.path)
+    let fixture = try PluginControlFixture(
+      bundled: .init(packages: [], issues: []), cliExecutable: URL(fileURLWithPath: "/usr/bin/true")
+    )
+    defer { fixture.remove() }
+    let operations = AppControlPlaneOperations(
+      controlPlane: fixture.host, gatewayService: fixture.gateway)
+
+    var configuration = try await fixture.host.activeConfiguration()
+    configuration.mcp.servers.append(
+      .init(id: "shared-fixture", transport: .stdio, command: "/usr/bin/true"))
+    _ = try await operations.activateManifest(
+      configuration.exportedTOML(), expectedDigest: fixture.host.configurationDigest())
+    _ = try await operations.changePlugins(.registerDevelopment(package), expectedRevision: 0)
+    let prepared = try await operations.changePlugins(
+      .settings(
+        pluginID: "test-package",
+        .init(
+          enabled: false, mcp: ["fixture": .init(registrationID: "shared-fixture")])),
+      expectedRevision: 1)
+
+    try await fixture.gateway.start()
+    do {
+      let client = try await GatewayClientSession.connectSocket(
+        socketURL: fixture.directories.gatewaySocket)
+      do {
+        _ = try await client.listTools()
+        let rejected = try await fixture.host.privacyPermissionInventory()
+        let review = try #require(
+          rejected.providers.first { $0.identity == .package("test-package") })
+        await #expect(throws: ConfigurationError.self) {
+          try await operations.saveProviderPermissions(
+            reviewed: review, permissions: .init(), fullAccess: false, sandboxSettings: .init(),
+            editingApproval: false)
+        }
+        #expect(try fixture.database.pluginStoreSnapshot() == prepared.state)
+        #expect(try await fixture.host.permissionRequests().providers.isEmpty)
+        #expect(
+          try await fixture.host.permissionRequests().revision == rejected.permissions.revision)
+
+        configuration.mcp.servers.removeAll { $0.id == "shared-fixture" }
+        _ = try await operations.activateManifest(
+          configuration.exportedTOML(), expectedDigest: fixture.host.configurationDigest())
+        let inventory = try await fixture.host.privacyPermissionInventory()
+        let current = try #require(inventory.providers.first { $0.identity == review.identity })
+        try await operations.saveProviderPermissions(
+          reviewed: current, permissions: .init(), fullAccess: false, sandboxSettings: .init(),
+          editingApproval: false)
+        let active = try await fixture.host.privacyPermissionInventory()
+        #expect(active.providers.first { $0.identity == review.identity }?.availability == .active)
+        #expect(
+          try await fixture.host.pluginSnapshot().contributions.contains {
+            $0.pluginID == "test-package"
+          })
+        #expect(await fixture.gateway.snapshot().state == .running)
+        _ = try await client.listTools()
+      } catch {
+        await client.disconnect()
+        throw error
+      }
+      await client.disconnect()
+    } catch {
+      await fixture.gateway.stop()
+      throw error
+    }
+    await fixture.gateway.stop()
+  }
+
   @Test(arguments: ["", "plugin_api = 0", "plugin_api = '1'"])
   func malformedGitHubManifestDiagnosticSurvivesControlClientAndCLI(declaration: String)
     async throws
@@ -236,19 +526,28 @@ struct PluginControlPlaneTests {
       var configuration = GatewayConfiguration(projectDirectory: fixture.root)
       configuration.knownPluginMCPServerIDs = ["plugin-12-test-package-native"]
       configuration.profiles = [
-        .init(id: .chatGPTOperate, mcpServers: ["plugin-12-test-package-native"])
+        .init(
+          id: .chatGPTOperate,
+          permissions: fixturePermissions([
+            .mcpServer("plugin-12-test-package-native"): .granted(.all)
+          ]))
       ]
       #expect(
         try await fixture.host.parseManifest(configuration.exportedTOML()).profiles.count == 1)
       let loader = GatewayManifestConfigurationLoader(
         database: fixture.database, bundledPlugins: bundled,
-        applications: MacOSPlatform.services.applications)
+        applications: MacOSPlatform.services(launcher: testExecutionLauncher()).applications)
       let manifest = fixture.root.appendingPathComponent("bundled-profile.toml")
       try configuration.exportedTOML().write(to: manifest, atomically: true, encoding: .utf8)
       #expect(try loader.load(path: manifest.path).profiles.count == 1)
-      let enabled = try await fixture.cli(["enable", "test-package", "--expected-revision", "0"])
-      #expect(enabled.exitCode == 0, "\(enabled.stdout)\n\(enabled.stderr)")
-      let active = try await fixture.host.pluginSnapshot()
+      let blocked = try await fixture.cli(["enable", "test-package", "--expected-revision", "0"])
+      #expect(blocked.exitCode == 1)
+      #expect(blocked.stdout.contains("provider.approval_required"))
+      let change = PluginHostChange.enabled(pluginID: "test-package", true)
+      let review = try #require(
+        try await fixture.host.reviewPluginEnablement(change, expectedRevision: 0))
+      let active = try await fixture.gateway.changePlugins(
+        change, expectedRevision: 0, approval: .init(review: review, selection: .init()))
       #expect(active.state.revision == 1 && active.state.installations.isEmpty)
       #expect(active.settings(for: "test-package").enabled)
       #expect(active.settings(for: "test-package").mcp["native"]?.allowedTools == [])
@@ -272,7 +571,7 @@ struct PluginControlPlaneTests {
       #expect(try fixture.database.pluginOwnedDirectories().isEmpty)
       #expect(try Data(contentsOf: manifestURL) == original)
       #expect(
-        try GatewayDatabase(path: fixture.directories.database.path).pluginStoreSnapshot()
+        try fixturePermissionDatabase(path: fixture.directories.database.path).pluginStoreSnapshot()
           == final.state)
     } catch {
       await fixture.socket.stop()
@@ -286,7 +585,9 @@ struct PluginControlPlaneTests {
     let manifest = PreparationFixture.manifest.replacingOccurrences(
       of: "architectures = ['arm64']", with: "architectures = ['arm64', 'x86_64']")
     let archive = try await PreparationFixture.make(
-      directoryFactory: MacOSPlatform.services.pluginDirectories, manifest: manifest, format: "zip")
+      launcher: testExecutionLauncher(),
+      directoryFactory: MacOSPlatform.services(launcher: testExecutionLauncher()).pluginDirectories,
+      manifest: manifest, format: "zip")
     defer { archive.files.remove() }
     let bytes = try Data(contentsOf: archive.archive)
     let server = try await CatalogHTTPFixture.start(script: pluginDownloadHTTPFixture(bytes: bytes))
@@ -327,7 +628,9 @@ struct PluginControlPlaneTests {
     let manifest = PreparationFixture.manifest.replacingOccurrences(
       of: "architectures = ['arm64']", with: "architectures = ['arm64', 'x86_64']")
     let archive = try await PreparationFixture.make(
-      directoryFactory: MacOSPlatform.services.pluginDirectories, manifest: manifest, format: "zip")
+      launcher: testExecutionLauncher(),
+      directoryFactory: MacOSPlatform.services(launcher: testExecutionLauncher()).pluginDirectories,
+      manifest: manifest, format: "zip")
     defer { archive.files.remove() }
     let bytes = try Data(contentsOf: archive.archive)
     let server = try await CatalogHTTPFixture.start(script: pluginDownloadHTTPFixture(bytes: bytes))
@@ -459,7 +762,8 @@ struct PluginControlPlaneTests {
   @Test
   func archiveLifecycleThroughRealCLIAndOwnerSocket() async throws {
     let archive = try await PreparationFixture.make(
-      directoryFactory: MacOSPlatform.services.pluginDirectories,
+      launcher: testExecutionLauncher(),
+      directoryFactory: MacOSPlatform.services(launcher: testExecutionLauncher()).pluginDirectories,
       manifest: PreparationFixture.manifest.replacingOccurrences(
         of: "architectures = ['arm64']", with: "architectures = ['arm64', 'x86_64']"))
     defer { archive.files.remove() }
@@ -493,7 +797,9 @@ struct PluginControlPlaneTests {
       #expect(try fixture.database.pluginStoreSnapshot() == snapshot.state)
 
       let update = try await PreparationFixture.make(
-        directoryFactory: MacOSPlatform.services.pluginDirectories,
+        launcher: testExecutionLauncher(),
+        directoryFactory: MacOSPlatform.services(launcher: testExecutionLauncher())
+          .pluginDirectories,
         manifest: PreparationFixture.manifest
           .replacingOccurrences(
             of: "architectures = ['arm64']", with: "architectures = ['arm64', 'x86_64']"
@@ -567,7 +873,8 @@ struct PluginControlPlaneTests {
   @Test
   func committedUninstallWarningsSurviveListAndShow() async throws {
     let archive = try await PreparationFixture.make(
-      directoryFactory: MacOSPlatform.services.pluginDirectories,
+      launcher: testExecutionLauncher(),
+      directoryFactory: MacOSPlatform.services(launcher: testExecutionLauncher()).pluginDirectories,
       manifest: PreparationFixture.manifest.replacingOccurrences(
         of: "architectures = ['arm64']", with: "architectures = ['arm64', 'x86_64']"))
     defer { archive.files.remove() }
@@ -616,7 +923,9 @@ struct PluginControlPlaneTests {
     let replacement: URL
     do {
       let storage = try PluginInstallationStorage(
-        at: fixture.directories.plugins, directoryFactory: MacOSPlatform.services.pluginDirectories)
+        at: fixture.directories.plugins,
+        directoryFactory: MacOSPlatform.services(launcher: testExecutionLauncher())
+          .pluginDirectories)
       defer { storage.finishTransaction() }
       identity = try storage.createInstallation()
       try fixture.database.recordPluginDirectory(
@@ -658,7 +967,9 @@ struct PluginControlPlaneTests {
     defer { fixture.remove() }
     do {
       let storage = try PluginInstallationStorage(
-        at: fixture.directories.plugins, directoryFactory: MacOSPlatform.services.pluginDirectories)
+        at: fixture.directories.plugins,
+        directoryFactory: MacOSPlatform.services(launcher: testExecutionLauncher())
+          .pluginDirectories)
       defer { storage.finishTransaction() }
       try await fixture.host.recoverPluginsAtStartup()
       #expect(
@@ -712,40 +1023,48 @@ struct PluginControlFixture: Sendable {
     worker: String = "computer-mcp", releases: GitHubPluginReleases = GitHubPluginReleases(),
     download: GitHubPluginDownload = GitHubPluginDownload(),
     bundled: BundledPlugins = .current,
-    cliExecutable: URL? = nil
+    cliExecutable: URL? = nil,
+    executionLauncher: (@Sendable (URL) throws -> ExecutionLauncher)? = nil,
+    permissionPolicyReader: (any ManagedPolicyReading)? = nil
   ) throws {
-    self.cliExecutable =
-      cliExecutable
-      ?? URL(fileURLWithPath: #filePath)
-      .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
-      .appendingPathComponent(".build/debug/computer-mcp")
+    self.cliExecutable = try cliExecutable ?? nativeGatewayTestExecutable()
     root = URL(fileURLWithPath: "/private/tmp/cm-pc-\(UUID().uuidString.prefix(8))")
     directories = AppControlPlaneServiceDirectories(
       applicationSupport: root.appendingPathComponent("support"),
       logs: root.appendingPathComponent("logs"))
     try directories.prepare()
-    database = try GatewayDatabase(path: directories.database.path)
+    try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: root.path)
+    database = try fixturePermissionDatabase(path: directories.database.path)
+    let launcher = try executionLauncher?(root) ?? testExecutionLauncher()
+    var platform = MacOSPlatform.services(launcher: launcher)
+    platform.permissionPolicyReader = permissionPolicyReader ?? TestManagedPolicyReader()
+    let permissionControl = try fixturePermissionControl(database: database, platform: platform)
     let manifestStore = try AtomicManifestStore(
       manifestURL: directories.manifest, database: database,
       loader: GatewayManifestConfigurationLoader(
         database: database, bundledPlugins: bundled,
-        applications: MacOSPlatform.services.applications))
+        applications: platform.applications))
     _ = try manifestStore.activate(
       manifest: GatewayConfiguration(projectDirectory: root).exportedTOML())
     let secrets = try KeychainSecretStore(adapter: MemoryKeychainAdapter())
     host = AppControlPlaneService(
-      directories: directories, database: database, manifestStore: manifestStore,
+      directories: directories, database: database,
+      permissionControl: permissionControl,
+      manifestStore: manifestStore,
       defaultManifest: DefaultGatewayConfiguration.manifest,
       secretStore: secrets,
       openAITunnelSupervisor: OpenAITunnelSupervisor(
+        launcher: testExecutionLauncher(),
         secretStore: secrets,
-        executableSearchDirectories: MacOSPlatform.services.executableSearchDirectories,
+        executableSearchDirectories: MacOSPlatform.services(launcher: testExecutionLauncher())
+          .executableSearchDirectories,
         proxyResolver: FixedOpenAITunnelHTTPProxyResolver()
       ),
       gatewayExecutablePath: worker,
       launchAtLoginController: SMAppServiceLaunchAtLoginController(),
       computerUsePermissionReader: FixedComputerUsePermissionReader(),
-      platform: MacOSPlatform.services, pluginReleases: releases,
+      platform: platform,
+      pluginReleases: releases,
       pluginDownload: download,
       bundledPlugins: bundled)
     gateway = AppGatewayService.live(controlPlane: host, directories: directories)
@@ -756,11 +1075,18 @@ struct PluginControlFixture: Sendable {
   func cli(_ arguments: [String]) async throws -> CommandResult {
     let executable = cliExecutable
     return try await BlockingOperationExecutor(label: "plugin-cli-test").perform {
-      try ProcessCommandRunner().run(
-        executable: executable.path,
-        arguments: ["plugins"] + arguments + ["--control-socket", directories.controlSocket.path],
-        workingDirectory: root, environment: [:], timeoutMilliseconds: 30_000,
-        maxOutputBytes: 1_048_576)
+      let environment = ["PATH": "/usr/bin:/bin", "HOME": root.path, "TMPDIR": root.path]
+      let administration = ExecutionAdministration(
+        mode: .fullAccess, environment: try ExecutionEnvironment(fullAccessVariables: environment))
+      return try ExecutionAdministration.$current.withValue(administration) {
+        try ProcessCommandRunner(launcher: testExecutionLauncher(), environment: environment).run(
+          executable: executable.path,
+          arguments: ["plugins"] + arguments + [
+            "--control-socket", directories.controlSocket.path,
+          ],
+          workingDirectory: root, environment: environment, timeoutMilliseconds: 30_000,
+          maxOutputBytes: 1_048_576)
+      }
     }
   }
 

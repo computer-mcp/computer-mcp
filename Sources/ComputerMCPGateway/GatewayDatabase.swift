@@ -4,19 +4,38 @@ import ComputerMCPCore
 import ComputerMCPDownstream
 import ComputerMCPPersistence
 import ComputerMCPPlatform
+import ComputerMCPPlatformPOSIX
 import ComputerMCPPlugins
 import ComputerMCPToolsProject
+import ComputerMCPWorktrees
 import Crypto
 import Foundation
 import GRDB
 
+import struct ComputerMCPPermissions.CanonicalPath
+import struct ComputerMCPPermissions.PathEnvironmentSnapshot
+import struct ComputerMCPPermissions.PermissionLedger
+import enum ComputerMCPPermissions.PermissionModelError
+import struct ComputerMCPPermissions.Permissions
+import struct ComputerMCPPermissions.RegisteredProject
+
 package final class GatewayDatabase: OAuthStore, @unchecked Sendable {
-  private let connection: GatewayDatabaseConnection
+  package let connection: GatewayDatabaseConnection
+  package let worktreeStorage: WorktreeStorage?
+  package let providerContainerRoot: URL?
   private var writer: any DatabaseWriter { connection.writer }
   private let profileChangeLock = NSLock()
   private var profileChangeBroadcasters: [GatewayProfileID: GatewayToolChangeBroadcaster] = [:]
   package var fileURL: URL? { connection.fileURL }
   private let transientOwnershipID = UUID()
+  private let permissionStoreLock = NSLock()
+  private var permissionStoreCache: SQLitePermissionStore?
+  private let transientCounter = TransientAuthorizationEpochCounter()
+  let permissionRuntimeLock = NSLock()
+  var permissionRuntimeCache: GatewayPermissionRuntime?
+  private var authorityChangeHandler: (@Sendable () -> Void)?
+
+  package var transientAuthorizationEpochCounter: any AuthorizationEpochCounter { transientCounter }
 
   package var mcpProcessOwnershipRoot: URL? {
     fileURL.map {
@@ -27,16 +46,472 @@ package final class GatewayDatabase: OAuthStore, @unchecked Sendable {
         "computer-mcp-mcp-processes-" + transientOwnershipID.uuidString, isDirectory: true)
   }
 
-  package init(path: String) throws {
+  package var permissionExecutionRoot: URL {
+    fileURL.map {
+      $0.deletingLastPathComponent().appendingPathComponent(
+        $0.lastPathComponent + ".executions", isDirectory: true)
+    }
+      ?? FileManager.default.temporaryDirectory.appendingPathComponent(
+        "computer-mcp-executions-" + transientOwnershipID.uuidString, isDirectory: true)
+  }
+
+  package init(path: String, applicationSupportRoot: URL? = nil) throws {
     connection = try GatewayDatabaseConnection(path: path)
+    providerContainerRoot = Self.providerStorageLocation(connection.fileURL)
+    worktreeStorage = WorktreeStorage(
+      databaseURL: connection.fileURL, applicationSupportRoot: applicationSupportRoot)
   }
 
   package init(inMemory: Void) throws {
     connection = try GatewayDatabaseConnection(inMemory: ())
+    providerContainerRoot = nil
+    worktreeStorage = nil
   }
 
   package init(connection: GatewayDatabaseConnection) {
     self.connection = connection
+    providerContainerRoot = Self.providerStorageLocation(connection.fileURL)
+    worktreeStorage = WorktreeStorage(databaseURL: connection.fileURL)
+  }
+
+  private static func providerStorageLocation(_ databaseURL: URL?) -> URL? {
+    guard let source = databaseURL,
+      let parent = try? ProjectPathResolver.canonicalProject(source.deletingLastPathComponent())
+    else { return nil }
+    return parent.appendingPathComponent(source.lastPathComponent + ".providers")
+  }
+
+  /// Uses this database's writer so permission and project/profile mutations can
+  /// share one durable transaction. Runtime dispatch follows a successful commit.
+  package func permissionStore(counter: any AuthorizationEpochCounter) -> SQLitePermissionStore {
+    permissionStoreLock.withLock {
+      if let permissionStoreCache { return permissionStoreCache }
+      let store = SQLitePermissionStore(connection: connection, counter: counter)
+      permissionStoreCache = store
+      return store
+    }
+  }
+
+  package func configuredPermissionStore() throws -> SQLitePermissionStore {
+    if let configured = permissionStoreLock.withLock({ permissionStoreCache }) { return configured }
+    guard fileURL == nil else { throw AuthorizationEpochCounterError.unavailable }
+    return permissionStore(counter: transientCounter)
+  }
+
+  package func setPermissionAuthorityChangeHandler(_ handler: @escaping @Sendable () -> Void) {
+    permissionStoreLock.withLock { authorityChangeHandler = handler }
+  }
+
+  /// The caller holds the App manifest's publication lock from source read
+  /// through activation. The returned report contains bounded dropped-grant facts.
+  package func activatePermissionMigration(
+    manifest: String, baseURL: URL, applications: any ApplicationBundleLocating,
+    bundledPlugins: BundledPlugins = .current
+  ) throws -> PermissionMigrationReport? {
+    let migration = PermissionMigrationStore(
+      connection: connection, store: try configuredPermissionStore())
+    let schemaUpgrade = try ProjectManifestUpgrade.upgraded(manifest)
+    func reporting(_ report: PermissionMigrationReport? = nil) -> PermissionMigrationReport? {
+      guard report != nil || schemaUpgrade?.removedBuiltinIDs.isEmpty == false else { return nil }
+      var result = report ?? PermissionMigrationReport(dropped: [], omittedCount: 0)
+      result.removedBuiltinIDs = schemaUpgrade?.removedBuiltinIDs ?? []
+      return result
+    }
+    let requiresUpgrade = try PermissionManifestUpgrade.isRequired(manifest: manifest)
+    if try migration.isActivated() {
+      if requiresUpgrade { try validatePermissionMigrationManifest(manifest) }
+      return reporting()
+    }
+    let hasLegacy = try writer.read { try LegacyProfileRecord.fetchCount($0) > 0 }
+    guard requiresUpgrade || hasLegacy else { return reporting() }
+    let source: (configuration: GatewayConfiguration, profiles: [LegacyProfileGrant])
+    if requiresUpgrade {
+      source = try PermissionManifestUpgrade.source(manifest: manifest, baseURL: baseURL)
+    } else {
+      source = (
+        try GatewayConfiguration.load(text: schemaUpgrade?.manifest ?? manifest, baseURL: baseURL),
+        []
+      )
+    }
+    let digest = Self.manifestDigest(manifest)
+    let sourceProjects = source.configuration.manifestProjects
+    func catalog() throws -> PermissionMigrationCatalog {
+      try .capture(
+        configuration: source.configuration, manifestProfiles: source.profiles,
+        configurationDigest: digest, plugins: pluginStoreSnapshot(),
+        applications: applications, bundledPlugins: bundledPlugins, manifestProjects: sourceProjects
+      )
+    }
+    let preparedCatalog = try catalog()
+    let (plan, state) = try migration.prepare(catalog: preparedCatalog)
+    _ = try migration.apply(
+      plan, expectedState: state, currentCatalog: catalog(), sourceManifestDigest: digest)
+    return reporting(plan.report)
+  }
+
+  package func validatePermissionMigrationManifest(_ manifest: String) throws {
+    let stored = try writer.read {
+      try String.fetchOne($0, sql: "SELECT manifestDigest FROM permissionMigration WHERE id = 1")
+    }
+    guard stored == Self.manifestDigest(manifest) else {
+      throw PermissionMigrationError.stateChanged
+    }
+  }
+
+  private static func manifestDigest(_ manifest: String) -> String {
+    SHA256.hash(data: Data(manifest.utf8)).map { String(format: "%02x", $0) }.joined()
+  }
+
+  /// The first source establishes provenance while preserving saved owner edits.
+  /// Later explicit source changes belong to atomic manifest publication.
+  package func bootstrapPermissionProfiles(
+    _ profiles: [ProfileGrant], declarations: [ProfileGrant]? = nil
+  ) throws {
+    let declarations = declarations ?? profiles
+    _ = try Self.profileSource(declarations)
+    let needsBootstrap = try writer.read { database in
+      guard
+        try LegacyProfileRecord.fetchCount(database) == 0
+          || Int.fetchOne(database, sql: "SELECT version FROM permissionMigration WHERE id = 1")
+            == 1
+      else { throw PermissionMigrationError.activationRequired }
+      if try Self.publishedProfileSource(in: database) == nil { return true }
+      let explicitIDs = Set(declarations.map(\.id))
+      let savedIDs = Set(try ProfileRecord.fetchAll(database).map(\.id))
+      return profiles.contains {
+        GatewayProfileID.builtIns.contains($0.id) && !explicitIDs.contains($0.id)
+          && !savedIDs.contains($0.id.rawValue)
+      }
+    }
+    guard needsBootstrap else { return }
+    do {
+      try permissionTransaction { database in
+        let initialSource = try Self.publishedProfileSource(in: database) == nil
+        let explicitIDs = Set(declarations.map(\.id))
+        for profile in profiles
+        where initialSource
+          || GatewayProfileID.builtIns.contains(profile.id) && !explicitIDs.contains(profile.id)
+        {
+          guard try ProfileRecord.fetchOne(database, key: profile.id.rawValue) == nil else {
+            continue
+          }
+          try Self.saveProfile(profile, updatedAt: Date(), expectedRevision: nil, in: database)
+        }
+        if initialSource { try Self.savePublishedProfileDeclarations(declarations, in: database) }
+      }
+    } catch PermissionModelError.authoritySuspended {
+      // Local diagnostics must start so the owner can confirm a recovered epoch.
+      // Missing profiles remain unconfigured until that confirmation is complete.
+      return
+    }
+  }
+
+  static func savePublishedProfileDeclarations(
+    _ profiles: [ProfileGrant], in database: Database
+  ) throws {
+    try database.execute(
+      sql: """
+        INSERT INTO permissionProfilePublication (id, payload) VALUES (1, ?)
+        ON CONFLICT(id) DO UPDATE SET payload = excluded.payload
+        """, arguments: [try profileSource(profiles)])
+  }
+
+  private static func profileSource(_ profiles: [ProfileGrant]) throws -> Data {
+    guard Set(profiles.map(\.id)).count == profiles.count else {
+      throw GatewayDatabaseError.configurationChanged
+    }
+    for profile in profiles { try profile.validate() }
+    let payload = Data(try PermissionProfileManifest.encode(profiles).utf8)
+    guard payload.count <= 4_194_304 else { throw PermissionPersistenceError.invalidCurrentState }
+    return payload
+  }
+
+  private static func profileDeclarations(from source: Data?) throws -> [ProfileGrant] {
+    guard let source else { return [] }
+    guard source.count <= 4_194_304, let text = String(data: source, encoding: .utf8) else {
+      throw PermissionPersistenceError.invalidCurrentState
+    }
+    return try PermissionProfileManifest.decode(text)
+  }
+
+  private static func publishedProfileSource(in database: Database) throws -> Data? {
+    let source = try Data.fetchOne(
+      database, sql: "SELECT payload FROM permissionProfilePublication WHERE id = 1")
+    guard source == nil || source!.count <= 4_194_304 else {
+      throw PermissionPersistenceError.invalidCurrentState
+    }
+    return source
+  }
+
+  private static func profiles(
+    publishing declarations: [ProfileGrant]?, over state: ConfigurationState
+  ) throws -> [ProfileGrant] {
+    guard let declarations else { return state.profiles }
+    _ = try profileSource(declarations)
+    let previous = try profileDeclarations(from: state.profileSource)
+    let previousByID = Dictionary(uniqueKeysWithValues: previous.map { ($0.id, $0) })
+    let proposedByID = Dictionary(uniqueKeysWithValues: declarations.map { ($0.id, $0) })
+    var profiles = Dictionary(uniqueKeysWithValues: state.profiles.map { ($0.id, $0) })
+    let defaults = Dictionary(
+      uniqueKeysWithValues: [
+        ProfileGrant.observe, .operate, .cloudflareObserve, .cloudflareOperate, .localAdmin,
+      ].map { ($0.id, $0) })
+    func replace(_ profile: ProfileGrant) throws {
+      let current = profiles[profile.id]
+      if let current, try profileSource([current]) == profileSource([profile]) { return }
+      let revision = current?.authorizationRevision ?? 0
+      guard revision < Int64.max else { throw PermissionMigrationError.revisionExhausted }
+      var updated = profile
+      updated.authorizationRevision = revision + 1
+      profiles[profile.id] = updated
+    }
+    for profile in declarations {
+      if let previous = previousByID[profile.id],
+        try profileSource([previous]) == profileSource([profile])
+      {
+        continue
+      }
+      try replace(profile)
+    }
+    for removed in previous where proposedByID[removed.id] == nil {
+      if let implicit = defaults[removed.id] {
+        try replace(implicit)
+      } else {
+        profiles[removed.id] = nil
+      }
+    }
+    return profiles.values.sorted { $0.id.rawValue < $1.id.rawValue }
+  }
+
+  func permissionTransaction<Result>(
+    authorizing authority: HostCallAuthoritySnapshot? = nil,
+    managementAuthorization: GatewayManagementAuthorization? = nil,
+    requiresProfilePolicy: Bool = false,
+    localProviders: [MCPServerConfig]? = nil,
+    providerActivation: GatewayProviderActivation? = nil,
+    _ body: (Database) throws -> Result
+  ) throws -> Result {
+    let store = try configuredPermissionStore()
+    let service = permissionRuntimeLock.withLock { permissionRuntimeCache?.service }
+    guard
+      (!requiresProfilePolicy && managementAuthorization == nil && providerActivation == nil)
+        || service != nil
+    else {
+      throw GatewayPermissionError.invalidPolicySnapshot
+    }
+    func apply(
+      _ database: Database, ledger: inout PermissionLedger,
+      policies: GatewayPermissionPolicySnapshot?
+    ) throws -> Swift.Result<Result, any Error> {
+      let before = try ProfileRecord.fetchAll(database)
+      let beforeConfiguration = try Self.configurationState(in: database)
+      if before.isEmpty, try LegacyProfileRecord.fetchCount(database) == 0,
+        try Int.fetchOne(database, sql: "SELECT count(*) FROM permissionSubjects") == 0,
+        ledger.suspendedAuthority?.permissions.values.allSatisfy({ $0.entries.isEmpty }) != false,
+        ledger.suspendedAuthority?.sandboxSettings.isEmpty != false
+      {
+        if let recovery = ledger.pendingEpochRecovery, recovery.executionsToTerminate.isEmpty {
+          try ledger.acknowledgeEpochRecovery(recovery.epochID)
+        }
+        if let epoch = ledger.authorizationEpochID, ledger.pendingEpochRecovery == nil,
+          ledger.suspendedAuthority != nil
+        {
+          try ledger.confirmSuspendedAuthority(epochID: epoch, expectedRevision: ledger.revision)
+        }
+      }
+      guard ledger.suspendedAuthority == nil, ledger.pendingEpochRecovery == nil,
+        let epoch = ledger.authorizationEpochID
+      else { throw PermissionModelError.authoritySuspended }
+      if let service, let policies {
+        _ = try service.refresh(database, ledger: &ledger, snapshot: policies, now: Date())
+      }
+      if let authority {
+        try Task.checkCancellation()
+        try GatewayHostToolScope.lifetime?.check()
+        guard let id = authority.authorizationID else {
+          throw PermissionModelError.invalidAuthorization
+        }
+        for id in authority.providerAuthorizationIDs.union([id]) {
+          do { _ = try ledger.invocationAccess(id) } catch {
+            guard let proof = ledger.authorizations[id], let executionID = proof.executionID,
+              let execution = ledger.executions[executionID], execution.isRunning,
+              execution.interruptedAt == nil,
+              !ledger.pendingExecutionTerminations.contains(executionID),
+              ledger.executionAccess(
+                executionID, principal: execution.owner,
+                operation: .readResult, now: Date()) == .allowed
+            else { throw error }
+          }
+        }
+      }
+      do {
+        try Self.requireManagementAuthorization(
+          managementAuthorization, in: database, ledger: &ledger)
+      } catch {
+        // Preserve observed retirement without beginning the rejected management mutation.
+        return .failure(error)
+      }
+      let approval: GatewayProviderApproval?
+      if let activation = providerActivation, let policies {
+        try Task.checkCancellation()
+        approval = try GatewayPermissionService.applyProviderApproval(
+          activation.review, permissions: activation.permissions, fullAccess: activation.fullAccess,
+          sandboxSettings: activation.sandboxSettings, owner: activation.owner,
+          expectedProviderRevision: activation.expectedProviderRevision,
+          expectedRevision: activation.expectedRevision, expectedEpoch: activation.expectedEpoch,
+          reviewedLimits: activation.limits, database: database,
+          ledger: &ledger, policies: policies, now: Date())
+      } else {
+        approval = nil
+      }
+      let value = try body(database)
+      try GatewayPermissionService.reconcileProviderSources(
+        database: database, ledger: &ledger, previous: beforeConfiguration.plugins)
+      if let localProviders {
+        try GatewayPermissionService.reconcileLocalProviderSources(
+          localProviders, database: database, ledger: &ledger)
+      }
+      try Self.reconcileDerivedSources(in: database)
+      for row in try ProfileRecord.fetchAll(database) {
+        let previous = before.first { $0.id == row.id }
+        guard
+          previous?.payload != row.payload
+            || previous?.authorizationRevision != row.authorizationRevision
+        else { continue }
+        guard previous == nil || previous?.authorityEpoch == epoch.uuidString else {
+          throw GatewayPermissionError.profileUnavailable
+        }
+        let profile = try row.value()
+        if requiresProfilePolicy, let policies {
+          try GatewayPermissionService.validateEdit(
+            profile, previous: try previous?.value(), snapshot: policies, ledger: ledger)
+        }
+        try ProfileRecord(profile, authorityEpoch: epoch).save(database)
+        try GatewayPermissionService.synchronizeBound(profile, database: database, ledger: &ledger)
+        try database.execute(
+          sql: "DELETE FROM clientControlTrust WHERE profileID = ?", arguments: [row.id])
+      }
+      let remainingIDs = Set(try ProfileRecord.fetchAll(database).map(\.id))
+      for removed in before where !remainingIDs.contains(removed.id) {
+        let profile = try removed.value()
+        try GatewayPermissionService.synchronizeBound(
+          ProfileGrant(id: profile.id, allowedCallers: []), database: database, ledger: &ledger)
+        try database.execute(
+          sql: "DELETE FROM clientControlTrust WHERE profileID = ?", arguments: [removed.id])
+        try database.execute(
+          sql: "DELETE FROM permissionOwnerPolicies WHERE profileID = ?", arguments: [removed.id])
+      }
+      let sourceRules = try GatewayConfigurationPaths.read(
+        GatewayConfigurationPaths.configurationKey, database: database)
+      let platformRules = try GatewayConfigurationPaths.read(
+        GatewayConfigurationPaths.platformKey, database: database)
+      if ledger.environment.paths != nil || sourceRules != nil || platformRules != nil {
+        var paths = try ledger.environment.paths ?? PathEnvironmentSnapshot()
+        if sourceRules != nil || platformRules != nil {
+          let proposed = (sourceRules ?? []).union(platformRules ?? [])
+          paths.pathRules = Set(
+            proposed.map { rule in
+              paths.pathRules.first { $0.root == rule.root && $0.kind == rule.kind } ?? rule
+            })
+        }
+        let prior = Dictionary(uniqueKeysWithValues: paths.registeredProjects.map { ($0.id, $0) })
+        let derived = try Self.availableDerivedProjects(in: database)
+        let projects = try Self.projects(in: database).map { project in
+          let root = try CanonicalPath(
+            ProjectPathResolver.resolve(
+              project.rootPath, relativeTo: URL(fileURLWithPath: "/")
+            ).path)
+          let source = derived.first { $0.projectID == project.id }?.source
+            .id
+          var current =
+            prior[project.id]
+            ?? ComputerMCPPermissions.RegisteredProject(
+              id: project.id, root: root, sourceID: source)
+          current.root = root
+          current.sourceID = source
+          current.hostContentIdentity = try Self.hostContentIdentity(
+            derived.first { $0.projectID == project.id })
+          return current
+        }
+        try paths.setProjects(projects)
+        var environment = ledger.environment
+        environment.paths = paths
+        if paths != ledger.environment.paths {
+          _ = try ledger.reconcile(environment: environment, expectedRevision: ledger.revision)
+        }
+      }
+      try GatewayPermissionService.reconcileStandingConsents(database: database, ledger: &ledger)
+      if let approval {
+        try Task.checkCancellation()
+        let record = try ProviderAuthorityRecord.load(approval.identity, in: database)
+        guard let record, try GatewayPermissionService.providerApproval(record) == approval,
+          approval.fullAccessConsent.map({ ledger.isConsentValid($0, for: approval.principal) })
+            ?? true
+        else { throw GatewayPermissionError.revisionConflict }
+      }
+      if try Self.configurationState(in: database) != beforeConfiguration {
+        guard
+          let revision = try Int64.fetchOne(
+            database,
+            sql: "SELECT revision FROM permissionControlRevision WHERE id = 1"),
+          revision < Int64.max
+        else { throw PermissionMigrationError.revisionExhausted }
+        try database.execute(
+          sql: "UPDATE permissionControlRevision SET revision = revision + 1 WHERE id = 1")
+      }
+      return .success(value)
+    }
+    let result: Swift.Result<Result, any Error>
+    if let service {
+      result = try service.transactionWithPolicy { database, ledger, policies in
+        try apply(database, ledger: &ledger, policies: policies)
+      }
+    } else {
+      result = try store.transactionWithDatabase { database, ledger in
+        try apply(database, ledger: &ledger, policies: nil)
+      }
+      permissionStoreLock.withLock { authorityChangeHandler }?()
+    }
+    return try result.get()
+  }
+
+  func hostCallRecordStore() -> HostCallRecordStore { HostCallRecordStore(connection: connection) }
+
+  /// Profile and persistent client trust are checked with the metadata write.
+  func withHostAuthority<Result>(
+    _ authority: HostCallAuthoritySnapshot, operation: () throws -> Result
+  ) throws -> Result {
+    try withHostAuthority(authority) { _ in try operation() }
+  }
+
+  /// The operation's writes commit in the same transaction as the authority check.
+  func withHostAuthority<Result>(
+    _ authority: HostCallAuthoritySnapshot, operation: (Database) throws -> Result
+  ) throws -> Result {
+    try permissionTransaction(authorizing: authority) { database in
+      try Self.requireHostAuthority(authority, database: database)
+      return try operation(database)
+    }
+  }
+
+  private static func requireHostAuthority(
+    _ authority: HostCallAuthoritySnapshot, database: Database
+  ) throws {
+    let context = authority.context
+    guard let profile = try ProfileRecord.fetchOne(database, key: context.profileID.rawValue),
+      profile.authorizationRevision == authority.profileRevision
+    else {
+      throw HostCallAuthorityConflict.profileRevision
+    }
+    guard let consent = authority.consent, consent.lifetime == .alwaysAllowClient else { return }
+    guard let id = consent.trustID, let revision = consent.trustRevision,
+      let trust = try GatewayClientTrust.fetchOne(database, key: id),
+      trust.fullAccessAllowed, trust.revision == revision,
+      trust.principalID == context.trustedPrincipalID, trust.profileID == context.profileID,
+      trust.caller == context.caller, trust.profile.hasSameAuthorization(as: consent.profile)
+    else {
+      throw MCPHostServiceError.denied("Client trust changed before this callback committed.")
+    }
   }
 
   package func oauthTransaction<Result>(
@@ -54,19 +529,24 @@ package final class GatewayDatabase: OAuthStore, @unchecked Sendable {
   /// Persisted inputs read under one SQLite snapshot. Alias bindings participate in
   /// comparison even though only canonical projects appear in the public directory.
   package struct ConfigurationState: Equatable, Sendable {
-    package let projects: [RegisteredProject]
+    package let projects: [ComputerMCPCore.RegisteredProject]
     package let projectAliases: [String: String]
     package let profiles: [ProfileGrant]
     package let plugins: PluginStoreSnapshot
+    package let profileSource: Data?
+    package let derivedProjects: [DerivedProjectRecord]
 
     package init(
-      projects: [RegisteredProject], projectAliases: [String: String],
-      profiles: [ProfileGrant], plugins: PluginStoreSnapshot
+      projects: [ComputerMCPCore.RegisteredProject], projectAliases: [String: String],
+      profiles: [ProfileGrant], plugins: PluginStoreSnapshot, profileSource: Data? = nil,
+      derivedProjects: [DerivedProjectRecord] = []
     ) {
       self.projects = projects
       self.projectAliases = projectAliases
       self.profiles = profiles
       self.plugins = plugins
+      self.profileSource = profileSource
+      self.derivedProjects = derivedProjects
     }
   }
 
@@ -75,8 +555,7 @@ package final class GatewayDatabase: OAuthStore, @unchecked Sendable {
   }
 
   package func prepareProjectChange(
-    _ mutation: ProjectConfigurationMutation, expected: ConfigurationState,
-    resolvedProfiles: [ProfileGrant] = []
+    _ mutation: ProjectConfigurationMutation, expected: ConfigurationState
   ) throws -> PreparedProjectChange<ConfigurationState> {
     let timestamp = Date()
     let receiptID = UUID().uuidString
@@ -87,12 +566,12 @@ package final class GatewayDatabase: OAuthStore, @unchecked Sendable {
       var prepared: PreparedProjectChange<ConfigurationState>?
       try database.inSavepoint {
         let result = try Self.applyProjectChange(
-          mutation, expected: expected, resolvedProfiles: resolvedProfiles,
+          mutation, expected: expected,
           timestamp: timestamp, receiptID: receiptID, in: database)
         prepared = PreparedProjectChange(
           mutation: mutation, expected: expected,
           proposed: try Self.configurationState(in: database),
-          resolvedProfiles: resolvedProfiles, result: result, timestamp: timestamp,
+          result: result, timestamp: timestamp,
           receiptID: receiptID)
         return .rollback
       }
@@ -106,13 +585,12 @@ package final class GatewayDatabase: OAuthStore, @unchecked Sendable {
     resolution: GatewayConfigurationResolution,
     authorization: GatewayManagementAuthorization? = nil
   ) throws -> ConfigurationState {
-    let committed = try writer.write { database in
-      try Self.requireManagementTrust(authorization, in: database)
+    let committed = try permissionTransaction(managementAuthorization: authorization) { database in
       guard try Self.configurationState(in: database) == prepared.expected else {
         throw GatewayDatabaseError.configurationChanged
       }
       let result = try Self.applyProjectChange(
-        prepared.mutation, expected: prepared.expected, resolvedProfiles: prepared.resolvedProfiles,
+        prepared.mutation, expected: prepared.expected,
         timestamp: prepared.timestamp, receiptID: prepared.receiptID, in: database)
       guard result == prepared.result,
         try Self.configurationState(in: database) == prepared.proposed
@@ -128,7 +606,7 @@ package final class GatewayDatabase: OAuthStore, @unchecked Sendable {
 
   private static func applyProjectChange(
     _ mutation: ProjectConfigurationMutation, expected: ConfigurationState,
-    resolvedProfiles: [ProfileGrant], timestamp: Date, receiptID: String, in database: Database
+    timestamp: Date, receiptID: String, in database: Database
   ) throws -> ProjectChangeResult {
     switch mutation {
     case .register(let project):
@@ -149,49 +627,40 @@ package final class GatewayDatabase: OAuthStore, @unchecked Sendable {
       let affectedIDs = Set(
         expected.projectAliases.filter { $0.value == project.id }.map(\.key) + [project.id])
       for stored in expected.profiles
-      where stored.projectIDs.contains("*") || !stored.projectIDs.isDisjoint(with: affectedIDs) {
-        let profile = try resolvedProjectProfile(stored, resolvedProfiles: resolvedProfiles)
+      where affectedIDs.contains(where: {
+        stored.permissions.state(for: .project($0)) != .notGranted
+      }) {
+        let profile = stored
         try profile.validate()
         try saveProfile(
           profile, updatedAt: timestamp, expectedRevision: stored.authorizationRevision,
           in: database)
       }
-      // Scope-bound tickets can outlive a stored profile. Repair must not reinterpret them.
-      for id in affectedIDs {
-        try database.execute(
-          sql: """
-            UPDATE operationTickets SET state = ?, completedAt = ?, failureCode = ?
-            WHERE projectID = ? AND state IN (?, ?, ?)
-            """,
-          arguments: [
-            OperationTicketState.denied.rawValue, timestamp, "operations.project_changed", id,
-            OperationTicketState.prepared.rawValue, OperationTicketState.pendingApproval.rawValue,
-            OperationTicketState.approved.rawValue,
-          ])
-      }
       return .repaired(project)
     case .remove(let id):
       _ = try removeProject(
-        id: id, expectedConfiguration: expected, resolvedProfiles: resolvedProfiles,
+        id: id, expectedConfiguration: expected,
         now: timestamp, in: database)
       return .removed
     case .deduplicate(let digest, let allowMetadataConflicts):
       return .deduplicated(
         try applyProjectDeduplication(
           expectedPlanDigest: digest, allowMetadataConflicts: allowMetadataConflicts,
-          now: timestamp, expectedConfiguration: expected, resolvedProfiles: resolvedProfiles,
+          now: timestamp, expectedConfiguration: expected,
           receiptID: receiptID, in: database))
     }
   }
 
-  private static func configurationState(in database: Database) throws -> ConfigurationState {
+  static func configurationState(in database: Database) throws -> ConfigurationState {
     try ConfigurationState(
       projects: projects(in: database),
       projectAliases: Dictionary(
         uniqueKeysWithValues: ProjectAliasRecord.fetchAll(database).map {
           ($0.aliasProjectID, $0.canonicalProjectID)
         }),
-      profiles: profiles(in: database), plugins: pluginStoreSnapshot(in: database))
+      profiles: profiles(in: database), plugins: pluginStoreSnapshot(in: database),
+      profileSource: publishedProfileSource(in: database),
+      derivedProjects: SQLiteDerivedProjectStore.records(database))
   }
 
   package func pluginStoreSnapshot() throws -> PluginStoreSnapshot {
@@ -219,25 +688,27 @@ package final class GatewayDatabase: OAuthStore, @unchecked Sendable {
     _ state: PluginStoreSnapshot, expectedRevision: Int64,
     expectedConfiguration: ConfigurationState? = nil,
     resolution: GatewayConfigurationResolution = .init(),
-    authorization: GatewayManagementAuthorization? = nil
+    authorization: GatewayManagementAuthorization? = nil,
+    providerActivation: GatewayProviderActivation? = nil
   ) throws -> ConfigurationState {
     try state.validate()
     guard
-      expectedConfiguration != nil || (resolution.projects.isEmpty && resolution.profiles.isEmpty)
+      expectedConfiguration != nil || resolution.projects.isEmpty
     else { throw PluginStoreError.invalidState }
     guard expectedRevision >= 0, expectedRevision < Int64.max,
       state.revision == expectedRevision + 1
     else {
       throw PluginStoreError.invalidState
     }
-    let encoder = JSONEncoder()
-    encoder.outputFormatting = [.sortedKeys]
-    let data = try encoder.encode(state)
-    guard data.count <= 4_194_304, let payload = String(data: data, encoding: .utf8) else {
-      throw PluginStoreError.invalidState
+    if let providerActivation {
+      guard let expectedConfiguration, case .package(let id) = providerActivation.review.identity,
+        state.settings[id]?.enabled == true,
+        state.selectedInstallations[id] == expectedConfiguration.plugins.selectedInstallations[id]
+      else { throw GatewayPermissionError.invalidBinding }
     }
-    let committed = try writer.write { database in
-      try Self.requireManagementTrust(authorization, in: database)
+    let committed = try permissionTransaction(
+      managementAuthorization: authorization, providerActivation: providerActivation
+    ) { database in
       let current =
         try Int64.fetchOne(database, sql: "SELECT revision FROM pluginState WHERE id = 1") ?? 0
       guard current == expectedRevision else {
@@ -248,54 +719,99 @@ package final class GatewayDatabase: OAuthStore, @unchecked Sendable {
       {
         throw GatewayDatabaseError.configurationChanged
       }
-      try database.execute(
-        sql: """
-          INSERT INTO pluginState (id, revision, payloadJSON) VALUES (1, ?, ?)
-          ON CONFLICT(id) DO UPDATE SET revision = excluded.revision, payloadJSON = excluded.payloadJSON
-          """, arguments: [state.revision, payload])
+      try Self.writePluginSnapshot(state, database: database)
       try Self.applyRuntimeResolution(resolution, in: database)
       return try Self.configurationState(in: database)
     }
-    notifyResolvedProfiles(resolution)
     return committed
+  }
+
+  static func writePluginSnapshot(_ state: PluginStoreSnapshot, database: Database) throws {
+    try state.validate()
+    let encoder = JSONEncoder()
+    encoder.outputFormatting = [.sortedKeys]
+    let data = try encoder.encode(state)
+    guard data.count <= 4_194_304, let payload = String(data: data, encoding: .utf8) else {
+      throw PluginStoreError.invalidState
+    }
+    try database.execute(
+      sql: """
+        INSERT INTO pluginState (id, revision, payloadJSON) VALUES (1, ?, ?)
+        ON CONFLICT(id) DO UPDATE SET revision = excluded.revision, payloadJSON = excluded.payloadJSON
+        """, arguments: [state.revision, payload])
   }
 
   private static func applyRuntimeResolution(
     _ resolution: GatewayConfigurationResolution, in database: Database
   ) throws {
+    if let rules = resolution.configurationPaths {
+      try GatewayConfigurationPaths.save(
+        rules, key: GatewayConfigurationPaths.configurationKey, database: database)
+    }
     for change in resolution.projects {
       guard change.original.id == change.resolved.id,
         try ProjectRecord.fetchOne(database, key: change.original.id)?.value == change.original
       else { throw GatewayDatabaseError.configurationChanged }
       try saveProject(change.resolved, in: database)
     }
-    for profile in resolution.profiles {
-      guard profile.authorizationRevision == 0,
-        try ProfileRecord.fetchOne(database, key: profile.id.rawValue)?.authorizationRevision == 0
-      else { throw GatewayDatabaseError.configurationChanged }
-      try profile.validate()
-      try saveProfile(profile, updatedAt: Date(), expectedRevision: 0, in: database)
-    }
   }
 
-  private func notifyResolvedProfiles(_ resolution: GatewayConfigurationResolution) {
-    for profile in resolution.profiles {
-      profileChangeLock.withLock { profileChangeBroadcasters[profile.id] }?.send()
-    }
-  }
-
-  package func saveProject(_ project: RegisteredProject) throws {
-    try writer.write { database in
+  package func saveProject(_ project: ComputerMCPCore.RegisteredProject) throws {
+    try permissionTransaction { database in
       try Self.saveProject(project, in: database)
+    }
+  }
+
+  /// A standalone manifest can initialize a fresh project table. Saved folder
+  /// registrations remain authoritative on later starts.
+  package func registerManifestProjectsForStartup(
+    _ declarations: [ComputerMCPCore.RegisteredProject]
+  ) throws {
+    guard !declarations.isEmpty else { return }
+    guard Set(declarations.map(\.id)).count == declarations.count else {
+      throw ConfigurationError.invalid(
+        "Standalone project declarations must have distinct identifiers.")
+    }
+    for project in declarations {
+      try ProjectManifestConfig(
+        id: project.id, displayName: project.displayName, path: project.rootPath
+      ).validate()
+    }
+    let roots = try Dictionary(
+      uniqueKeysWithValues: declarations.map {
+        ($0.id, try ProjectPathResolver.canonicalProject(URL(fileURLWithPath: $0.rootPath)).path)
+      })
+    guard Set(roots.values).count == declarations.count else {
+      throw ConfigurationError.invalid("Standalone project declarations must use distinct folders.")
+    }
+    try permissionTransaction { database in
+      let current = try Self.projects(in: database)
+      if current.isEmpty {
+        for project in declarations { try Self.saveProject(project, in: database) }
+      } else {
+        for declaration in declarations {
+          guard let existing = current.first(where: { $0.id == declaration.id }),
+            try ProjectPathResolver.canonicalProject(URL(fileURLWithPath: existing.rootPath)).path
+              == roots[declaration.id]
+          else {
+            throw ConfigurationError.invalid(
+              "Standalone project '\(declaration.id)' conflicts with saved folder authority. Use project management to review the registration, or select a fresh standalone database."
+            )
+          }
+        }
+      }
     }
   }
 
   /// Bookmark resolution must not overwrite a concurrent edit or recreate a removed registration.
   @discardableResult
-  func saveProject(_ project: RegisteredProject, replacing expected: RegisteredProject)
+  func saveProject(
+    _ project: ComputerMCPCore.RegisteredProject,
+    replacing expected: ComputerMCPCore.RegisteredProject
+  )
     throws -> Bool
   {
-    try writer.write { database in
+    try permissionTransaction { database in
       guard project.id == expected.id,
         try ProjectRecord.fetchOne(database, key: expected.id)?.value == expected
       else { return false }
@@ -304,8 +820,17 @@ package final class GatewayDatabase: OAuthStore, @unchecked Sendable {
     }
   }
 
-  private static func saveProject(_ project: RegisteredProject, in database: Database) throws {
+  private static func saveProject(
+    _ project: ComputerMCPCore.RegisteredProject, in database: Database
+  ) throws {
+    if let derived = try SQLiteDerivedProjectStore.record(project.id, in: database) {
+      guard derived.root == project.rootPath,
+        let old = try ProjectRecord.fetchOne(database, key: project.id),
+        old.createdAt.databaseValue == project.createdAt.databaseValue
+      else { throw DerivedProjectStoreError.invalidRecord }
+    }
     try ProjectRecord(project).save(database)
+    try reconcileDerivedSources(in: database)
     let canonicalRoot = Self.canonicalProjectRoot(project.rootPath)
     try ProjectCanonicalRootRecord
       .filter(Column("projectID") == project.id)
@@ -393,14 +918,14 @@ package final class GatewayDatabase: OAuthStore, @unchecked Sendable {
   }
 
   package func registerProjectIdempotently(
-    _ proposed: RegisteredProject
-  ) throws -> (project: RegisteredProject, created: Bool) {
-    try writer.write { try Self.registerProjectIdempotently(proposed, in: $0) }
+    _ proposed: ComputerMCPCore.RegisteredProject
+  ) throws -> (project: ComputerMCPCore.RegisteredProject, created: Bool) {
+    try permissionTransaction { try Self.registerProjectIdempotently(proposed, in: $0) }
   }
 
-  private static func registerProjectIdempotently(
-    _ proposed: RegisteredProject, in database: Database
-  ) throws -> (project: RegisteredProject, created: Bool) {
+  static func registerProjectIdempotently(
+    _ proposed: ComputerMCPCore.RegisteredProject, in database: Database
+  ) throws -> (project: ComputerMCPCore.RegisteredProject, created: Bool) {
     let canonicalRoot = canonicalProjectRoot(proposed.rootPath)
     if let existing = try registeredProject(canonicalRoot: canonicalRoot, in: database) {
       return (existing, false)
@@ -415,7 +940,7 @@ package final class GatewayDatabase: OAuthStore, @unchecked Sendable {
   }
 
   private static func registeredProject(canonicalRoot: String, in database: Database) throws
-    -> RegisteredProject?
+    -> ComputerMCPCore.RegisteredProject?
   {
     if let binding = try ProjectCanonicalRootRecord.fetchOne(
       database,
@@ -451,30 +976,33 @@ package final class GatewayDatabase: OAuthStore, @unchecked Sendable {
     return nil
   }
 
-  package func projects() throws -> [RegisteredProject] {
+  package func projects() throws -> [ComputerMCPCore.RegisteredProject] {
     try writer.read { try Self.projects(in: $0) }
   }
 
-  private static func projects(in database: Database) throws -> [RegisteredProject] {
+  static func projects(in database: Database) throws -> [ComputerMCPCore.RegisteredProject] {
     let aliasIDs = Set(try ProjectAliasRecord.fetchAll(database).map(\.aliasProjectID))
+    let derived = try SQLiteDerivedProjectStore.records(database)
+    let available = Set(try availableDerivedProjects(in: database).map(\.projectID))
+    let unavailable = Set(derived.map(\.projectID)).subtracting(available)
     return
       try ProjectRecord
       .order(Column("displayName").collating(.nocase), Column("id"))
       .fetchAll(database)
-      .filter { !aliasIDs.contains($0.id) }
+      .filter { !aliasIDs.contains($0.id) && !unavailable.contains($0.id) }
       .map(\.value)
   }
 
-  package func project(id: String) throws -> RegisteredProject? {
+  package func project(id: String) throws -> ComputerMCPCore.RegisteredProject? {
     try writer.read { database in
       let resolvedID =
         try ProjectAliasRecord.fetchOne(database, key: id)?.canonicalProjectID ?? id
-      return try ProjectRecord.fetchOne(database, key: resolvedID)?.value
+      return try Self.projects(in: database).first { $0.id == resolvedID }
     }
   }
 
   package func deleteProject(id: String) throws {
-    try writer.write { database in
+    try permissionTransaction { database in
       try Self.deleteProject(id: id, in: database)
     }
   }
@@ -482,6 +1010,11 @@ package final class GatewayDatabase: OAuthStore, @unchecked Sendable {
   private static func deleteProject(id: String, in database: Database) throws {
     let canonicalID =
       try ProjectAliasRecord.fetchOne(database, key: id)?.canonicalProjectID ?? id
+    guard try SQLiteDerivedProjectStore.record(canonicalID, in: database) == nil else {
+      throw GatewayDatabaseError.invalidStoredValue(
+        "Derived projects require their lifecycle owner.")
+    }
+    try invalidateDerivedSources([canonicalID], in: database)
     let aliasIDs =
       try ProjectAliasRecord
       .filter(Column("canonicalProjectID") == canonicalID)
@@ -497,15 +1030,13 @@ package final class GatewayDatabase: OAuthStore, @unchecked Sendable {
     }
   }
 
-  /// Registration, aliases, affected grants and unused approvals share one commit.
-  /// Legacy profiles must be resolved against the admitted manifest before entering SQLite.
+  /// Registration, aliases, affected permissions and revocations share one commit.
   package func removeProject(
-    id: String, expectedConfiguration: ConfigurationState,
-    resolvedProfiles: [ProfileGrant] = [], now: Date = Date()
+    id: String, expectedConfiguration: ConfigurationState, now: Date = Date()
   ) throws {
-    let changed = try writer.write { database in
+    let changed = try permissionTransaction { database in
       try Self.removeProject(
-        id: id, expectedConfiguration: expectedConfiguration, resolvedProfiles: resolvedProfiles,
+        id: id, expectedConfiguration: expectedConfiguration,
         now: now, in: database)
     }
     for id in changed { profileChangeLock.withLock { profileChangeBroadcasters[id] }?.send() }
@@ -513,7 +1044,7 @@ package final class GatewayDatabase: OAuthStore, @unchecked Sendable {
 
   private static func removeProject(
     id: String, expectedConfiguration: ConfigurationState,
-    resolvedProfiles: [ProfileGrant], now: Date, in database: Database
+    now: Date, in database: Database
   ) throws -> [GatewayProfileID] {
     guard try Self.configurationState(in: database) == expectedConfiguration else {
       throw GatewayDatabaseError.configurationChanged
@@ -527,9 +1058,16 @@ package final class GatewayDatabase: OAuthStore, @unchecked Sendable {
         + [canonicalID])
     var changed: [GatewayProfileID] = []
     for stored in expectedConfiguration.profiles {
-      guard !stored.projectIDs.isDisjoint(with: removedIDs) else { continue }
-      var profile = try Self.resolvedProjectProfile(stored, resolvedProfiles: resolvedProfiles)
-      profile.projectIDs.subtract(removedIDs)
+      guard
+        removedIDs.contains(where: {
+          stored.permissions.entries[.project($0)] != nil || stored.projectNetworks[$0] != nil
+        })
+      else { continue }
+      var profile = stored
+      for id in removedIDs {
+        profile.permissions.removeEntry(for: .project(id))
+        profile.projectNetworks[id] = nil
+      }
       try profile.validate()
       try Self.saveProfile(
         profile, updatedAt: now, expectedRevision: stored.authorizationRevision, in: database)
@@ -537,18 +1075,6 @@ package final class GatewayDatabase: OAuthStore, @unchecked Sendable {
     }
     try Self.deleteProject(id: canonicalID, in: database)
     return changed
-  }
-
-  private static func resolvedProjectProfile(
-    _ stored: ProfileGrant, resolvedProfiles: [ProfileGrant]
-  ) throws -> ProfileGrant {
-    guard stored.authorizationRevision == 0 else { return stored }
-    let matches = resolvedProfiles.filter { $0.id == stored.id && $0.authorizationRevision == 0 }
-    guard matches.count == 1, let profile = matches.first else {
-      throw GatewayDatabaseError.invalidStoredValue(
-        "Resolve legacy profile '\(stored.id.rawValue)' before changing its project grants.")
-    }
-    return profile
   }
 
   package func projectDeduplicationPlan() throws -> ProjectDeduplicationPlan {
@@ -561,13 +1087,12 @@ package final class GatewayDatabase: OAuthStore, @unchecked Sendable {
     expectedPlanDigest: String,
     allowMetadataConflicts: Bool,
     now: Date = Date(),
-    expectedConfiguration: ConfigurationState? = nil,
-    resolvedProfiles: [ProfileGrant] = []
+    expectedConfiguration: ConfigurationState? = nil
   ) throws -> ProjectDeduplicationResult {
-    let result = try writer.write { database in
+    let result = try permissionTransaction { database in
       try Self.applyProjectDeduplication(
         expectedPlanDigest: expectedPlanDigest, allowMetadataConflicts: allowMetadataConflicts,
-        now: now, expectedConfiguration: expectedConfiguration, resolvedProfiles: resolvedProfiles,
+        now: now, expectedConfiguration: expectedConfiguration,
         receiptID: UUID().uuidString, in: database)
     }
     for rawID in result.updatedProfileIDs {
@@ -580,7 +1105,7 @@ package final class GatewayDatabase: OAuthStore, @unchecked Sendable {
 
   private static func applyProjectDeduplication(
     expectedPlanDigest: String, allowMetadataConflicts: Bool, now: Date,
-    expectedConfiguration: ConfigurationState?, resolvedProfiles: [ProfileGrant],
+    expectedConfiguration: ConfigurationState?,
     receiptID: String, in database: Database
   ) throws -> ProjectDeduplicationResult {
     if let expectedConfiguration,
@@ -623,9 +1148,32 @@ package final class GatewayDatabase: OAuthStore, @unchecked Sendable {
     }
     var updatedProfileIDs: [String] = []
     for stored in try Self.profiles(in: database) {
-      guard stored.projectIDs.contains(where: { replacements[$0] != nil }) else { continue }
-      var profile = try Self.resolvedProjectProfile(stored, resolvedProfiles: resolvedProfiles)
-      profile.projectIDs = Set(profile.projectIDs.map { replacements[$0] ?? $0 })
+      guard
+        replacements.keys.contains(where: {
+          stored.permissions.entries[.project($0)] != nil || stored.projectNetworks[$0] != nil
+        })
+      else { continue }
+      var profile = stored
+      for (old, canonical) in replacements.sorted(by: { $0.key < $1.key }) {
+        if let state = profile.permissions.entries[.project(old)] {
+          if let existing = profile.permissions.entries[.project(canonical)], existing != state {
+            throw GatewayDatabaseError.invalidStoredValue(
+              "Conflicting project permission entries require an owner edit before deduplication.")
+          }
+          try profile.permissions.set(state, for: .project(canonical))
+          profile.permissions.removeEntry(for: .project(old))
+        }
+        if let network = profile.projectNetworks[old] {
+          if let existing = profile.projectNetworks[canonical],
+            existing.configuration != network.configuration
+          {
+            throw GatewayDatabaseError.invalidStoredValue(
+              "Conflicting project networks require an owner edit before deduplication.")
+          }
+          profile.projectNetworks[canonical] = network
+          profile.projectNetworks[old] = nil
+        }
+      }
       try profile.validate()
       try Self.saveProfile(
         profile, updatedAt: now, expectedRevision: stored.authorizationRevision, in: database)
@@ -702,7 +1250,7 @@ package final class GatewayDatabase: OAuthStore, @unchecked Sendable {
     _ profile: ProfileGrant, updatedAt: Date = Date(), expectedRevision: Int64? = nil
   ) throws {
     try profile.validate()
-    try writer.write { database in
+    try permissionTransaction { database in
       try Self.saveProfile(
         profile, updatedAt: updatedAt, expectedRevision: expectedRevision, in: database)
     }
@@ -714,8 +1262,7 @@ package final class GatewayDatabase: OAuthStore, @unchecked Sendable {
     authorization: GatewayManagementAuthorization? = nil
   ) throws {
     try profile.validate()
-    try writer.write { database in
-      try Self.requireManagementTrust(authorization, in: database)
+    try permissionTransaction(managementAuthorization: authorization) { database in
       guard try Self.configurationState(in: database) == expectedConfiguration else {
         throw GatewayDatabaseError.configurationChanged
       }
@@ -739,18 +1286,9 @@ package final class GatewayDatabase: OAuthStore, @unchecked Sendable {
     }
     var saved = profile
     saved.authorizationRevision = revision + 1
-    try ProfileRecord(saved, updatedAt: updatedAt).save(database)
-    try database.execute(
-      sql: """
-        UPDATE operationTickets SET state = ?, completedAt = ?, failureCode = ?
-        WHERE profileID = ? AND state IN (?, ?, ?)
-        """,
-      arguments: [
-        OperationTicketState.denied.rawValue, updatedAt,
-        "operations.authorization_changed", profile.id.rawValue,
-        OperationTicketState.prepared.rawValue, OperationTicketState.pendingApproval.rawValue,
-        OperationTicketState.approved.rawValue,
-      ])
+    try ProfileRecord(
+      saved, authorityEpoch: current?.authorityEpoch.flatMap(UUID.init(uuidString:))
+    ).save(database)
   }
 
   func profileChanges(for profileID: GatewayProfileID) -> AsyncStream<Void> {
@@ -802,7 +1340,7 @@ package final class GatewayDatabase: OAuthStore, @unchecked Sendable {
       throw GatewayDatabaseError.invalidStoredValue("Client consent requires a local owner.")
     }
     let profileID = authority.grant.id
-    let (consent, trustChanged) = try writer.write { database in
+    let (consent, trustChanged) = try permissionTransaction { database in
       let storedProfile = try ProfileRecord.fetchOne(database, key: profileID.rawValue)?.value()
       let profile = authority.grant
       guard !principalID.isEmpty, (storedProfile != nil) == authority.persisted,
@@ -859,6 +1397,23 @@ package final class GatewayDatabase: OAuthStore, @unchecked Sendable {
     return consent
   }
 
+  /// Refresh managed policy and revalidate the admitted invocation before dispatch.
+  package func validateManagementAuthorization(_ authorization: GatewayManagementAuthorization)
+    throws
+  {
+    try permissionTransaction(managementAuthorization: authorization) { _ in }
+  }
+
+  /// The caller already owns the permission writer and, for remote changes, the session lock.
+  static func requireManagementAuthorization(
+    _ authorization: GatewayManagementAuthorization?, in database: Database,
+    ledger: inout PermissionLedger
+  ) throws {
+    guard let authorization else { return }
+    try requireManagementTrust(authorization, in: database)
+    try authorization.requireInvocationAccess(ledger: &ledger)
+  }
+
   /// Persistent trust can be revoked independently of the in-memory session lock.
   /// Check its captured identity inside the same transaction as the configuration write.
   private static func requireManagementTrust(
@@ -890,7 +1445,7 @@ package final class GatewayDatabase: OAuthStore, @unchecked Sendable {
       throw GatewayDatabaseError.invalidStoredValue(
         "Client trust revocation requires a local owner.")
     }
-    let profileID = try writer.write { database in
+    let profileID = try permissionTransaction { database in
       guard var trust = try GatewayClientTrust.fetchOne(database, key: id),
         trust.revision == expectedRevision, trust.revision < Int64.max
       else {
@@ -1041,30 +1596,93 @@ package final class GatewayDatabase: OAuthStore, @unchecked Sendable {
     }
   }
 
-  /// The manifest replacement and activated revision share a single commit decision.
-  /// A recovery journal restores file state if SQLite rolls this transaction back.
+  /// The caller's recovery journal restores the prepared manifest when the SQL
+  /// activation marker does not commit. Publication precedes the authority lock.
   package func activateConfigurationRevision(
     _ revision: ConfigurationRevision, expected: ConfigurationState,
     resolution: GatewayConfigurationResolution, activeTunnelIDs: Set<String>,
+    providerActivation: GatewayProviderActivation? = nil,
     replaceManifest: (ConfigurationState) throws -> Void
   ) throws -> ConfigurationState {
-    let committed = try writer.write { database in
+    guard try configurationState() == expected else {
+      throw GatewayDatabaseError.configurationChanged
+    }
+    let resolved = Dictionary(
+      uniqueKeysWithValues: resolution.projects.map { ($0.original.id, $0.resolved) })
+    let profileSource =
+      try resolution.profileDeclarations.map(Self.profileSource) ?? expected.profileSource
+    let sourceChanged = profileSource != expected.profileSource
+    guard !sourceChanged || permissionRuntimeLock.withLock({ permissionRuntimeCache != nil }) else {
+      throw GatewayPermissionError.invalidPolicySnapshot
+    }
+    let proposed = ConfigurationState(
+      projects: expected.projects.map { resolved[$0.id] ?? $0 },
+      projectAliases: expected.projectAliases,
+      profiles: try Self.profiles(publishing: resolution.profileDeclarations, over: expected),
+      plugins: expected.plugins, profileSource: profileSource,
+      derivedProjects: expected.derivedProjects)
+    if let providerActivation {
+      guard case .localServer(let id) = providerActivation.review.identity,
+        let server = resolution.localProviders?.first(where: { $0.id == id }), server.enabled,
+        server.transport == .stdio,
+        try GatewayProviderReview.digest(server) == providerActivation.review.sourceDigest
+      else { throw GatewayPermissionError.invalidBinding }
+    }
+    try replaceManifest(proposed)
+    let committed = try permissionTransaction(
+      requiresProfilePolicy: sourceChanged, localProviders: resolution.localProviders,
+      providerActivation: providerActivation
+    ) { database in
       guard try Self.configurationState(in: database) == expected else {
         throw GatewayDatabaseError.configurationChanged
       }
       try Self.applyRuntimeResolution(resolution, in: database)
+      if sourceChanged {
+        let proposedIDs = Set(proposed.profiles.map(\.id))
+        for profile in expected.profiles where !proposedIDs.contains(profile.id) {
+          try ProfileRecord.deleteOne(database, key: profile.id.rawValue)
+        }
+        for profile in proposed.profiles where !expected.profiles.contains(profile) {
+          try Self.saveProfile(
+            profile, updatedAt: Date(),
+            expectedRevision: expected.profiles.first(where: { $0.id == profile.id })?
+              .authorizationRevision,
+            in: database)
+        }
+        try Self.savePublishedProfileDeclarations(resolution.profileDeclarations!, in: database)
+      }
       try GatewayOAuthTransaction(database: database).reconcileTunnels(activeIDs: activeTunnelIDs)
       try ConfigurationRevisionRecord(revision).insert(database)
       let state = try Self.configurationState(in: database)
-      try replaceManifest(state)
+      guard state == proposed else { throw GatewayDatabaseError.configurationChanged }
       return state
     }
-    notifyResolvedProfiles(resolution)
+    let ids = Set(expected.profiles.map(\.id)).union(committed.profiles.map(\.id))
+    for id in ids
+    where expected.profiles.first(where: { $0.id == id })
+      != committed.profiles.first(where: { $0.id == id })
+    {
+      profileChangeLock.withLock { profileChangeBroadcasters[id] }?.send()
+    }
     return committed
   }
 
   package func configurationRevision(id: String) throws -> ConfigurationRevision? {
     try writer.read { try ConfigurationRevisionRecord.fetchOne($0, key: id)?.value }
+  }
+
+  package func activeConfigurationRevisionID() throws -> String? {
+    try writer.read(Self.activeConfigurationRevisionID(in:))
+  }
+
+  static func activeConfigurationRevisionID(in database: Database) throws -> String? {
+    try String.fetchOne(
+      database,
+      sql: """
+        SELECT id FROM configurationRevisions
+        WHERE activatedAt IS NOT NULL AND activationError IS NULL
+        ORDER BY activatedAt DESC, createdAt DESC, id DESC LIMIT 1
+        """)
   }
 
   package func configurationRevisions(limit: Int = 50) throws -> [ConfigurationRevision] {
@@ -1079,7 +1697,7 @@ package final class GatewayDatabase: OAuthStore, @unchecked Sendable {
 
   package func recordAudit(_ event: AuditEvent) throws {
     try writer.write { database in
-      try AuditEventRecord(event).insert(database)
+      try AuditEventRecord(event).insertRetained(database)
     }
   }
 
@@ -1120,208 +1738,30 @@ package final class GatewayDatabase: OAuthStore, @unchecked Sendable {
     socketConnectionID: String
   ) throws -> Bool {
     try writer.write { database in
-      guard
-        var record =
-          try AuditEventRecord
-          .filter(Column("requestID") == gatewayRequestID)
-          .filter(Column("socketConnectionID") == socketConnectionID)
-          .order(Column("occurredAt").desc, Column("id").desc)
-          .fetchOne(database)
-      else {
-        return false
-      }
-      guard record.mcpRequestID == nil || record.mcpRequestID == mcpRequestID else {
-        return false
-      }
-      record.mcpRequestID = mcpRequestID
-      try record.update(database)
-      try AuditEventRecord
+      let records =
+        try AuditEventRecord
+        .filter(Column("requestID") == gatewayRequestID)
+        .filter(Column("socketConnectionID") == socketConnectionID)
+        .fetchAll(database)
+      let children =
+        try AuditEventRecord
         .filter(Column("parentRequestID") == gatewayRequestID)
-        .updateAll(database, Column("mcpRequestID").set(to: mcpRequestID))
-      return true
-    }
-  }
-
-  package func saveOperationTicket(_ ticket: OperationTicket) throws {
-    try writer.write { database in
-      try OperationTicketRecord(ticket).save(database)
-    }
-  }
-
-  package func operationTicket(id: String) throws -> OperationTicket? {
-    try writer.write { database in
-      try Self.expireOperationApprovals(in: database, at: Date())
-      return try OperationTicketRecord.fetchOne(database, key: id)?.value()
-    }
-  }
-
-  package func operationApprovals(limit: Int = 100) throws -> [OperationTicket] {
-    try writer.write { database in
-      try Self.expireOperationApprovals(in: database, at: Date())
-      return
-        try OperationTicketRecord
-        .filter(Column("authorizationRevision") != nil)
-        .order(Column("createdAt").desc, Column("id"))
-        .limit(max(1, min(limit, 500))).fetchAll(database).map { try $0.value() }
-    }
-  }
-
-  @discardableResult
-  package func resolveOperationApproval(
-    id: String, approved: Bool, resolver: GatewayCallerKind, at date: Date = Date()
-  ) throws -> OperationTicket {
-    guard resolver == .localApp || resolver == .localCLI else {
-      throw GatewayDatabaseError.invalidOperationTicketTransition(
-        "Only the local management interface may resolve host approvals.")
-    }
-    return try writer.write { database in
-      try Self.expireOperationApprovals(in: database, at: date)
-      guard var record = try OperationTicketRecord.fetchOne(database, key: id) else {
-        throw GatewayDatabaseError.operationTicketUnknown(id)
-      }
-      guard record.state == OperationTicketState.pendingApproval.rawValue else {
-        throw GatewayDatabaseError.operationTicketUnavailable(id: id, state: record.state)
-      }
-      if let profile = try ProfileRecord.fetchOne(database, key: record.profileID),
-        record.authorizationRevision != profile.authorizationRevision
-      {
-        throw GatewayDatabaseError.invalidOperationTicketTransition(
-          "Authorization changed after approval was requested.")
-      }
-      record.state =
-        approved ? OperationTicketState.approved.rawValue : OperationTicketState.denied.rawValue
-      record.completedAt = approved ? nil : date
-      record.failureCode = approved ? nil : "operations.user_denied"
-      try record.update(database)
-      return try record.value()
-    }
-  }
-
-  private static func expireOperationApprovals(in database: Database, at date: Date) throws {
-    try database.execute(
-      sql: """
-        UPDATE operationTickets SET state = ?, completedAt = ?, failureCode = ?
-        WHERE expiresAt <= ? AND state IN (?, ?, ?)
-        """,
-      arguments: [
-        OperationTicketState.expired.rawValue, date, "operations.ticket_expired", date,
-        OperationTicketState.prepared.rawValue, OperationTicketState.pendingApproval.rawValue,
-        OperationTicketState.approved.rawValue,
-      ])
-  }
-
-  package func beginOperationTicket(
-    id: String,
-    principalID: String,
-    invocationID: String,
-    parentRequestID: String,
-    at date: Date = Date()
-  ) throws -> OperationTicket {
-    let outcome = try writer.write { database -> OperationTicketBeginOutcome in
-      guard var record = try OperationTicketRecord.fetchOne(database, key: id) else {
-        return .rejected(.operationTicketUnknown(id))
-      }
-      guard record.principalID == principalID else {
-        return .rejected(.operationTicketPrincipalMismatch(id))
-      }
-      guard
-        record.state == OperationTicketState.prepared.rawValue
-          || record.state == OperationTicketState.approved.rawValue
-      else {
-        return .rejected(
-          .operationTicketUnavailable(
-            id: id,
-            state: record.state
-          )
-        )
-      }
-      guard record.expiresAt > date else {
-        record.state = OperationTicketState.expired.rawValue
-        record.completedAt = date
-        record.failureCode = "operations.ticket_expired"
+        .filter(Column("socketConnectionID") == socketConnectionID)
+        .fetchAll(database)
+      guard let origin = records.first,
+        (records + children).allSatisfy({
+          ($0.mcpRequestID == nil || $0.mcpRequestID == mcpRequestID)
+            && $0.caller == origin.caller && $0.profileID == origin.profileID
+            && $0.principalDigest == origin.principalDigest && $0.transport == origin.transport
+            && $0.tunnelInstanceID == origin.tunnelInstanceID
+            && $0.tunnelProfileID == origin.tunnelProfileID
+        })
+      else { return false }
+      for var record in records + children {
+        record.mcpRequestID = mcpRequestID
         try record.update(database)
-        return .rejected(.operationTicketExpired(id))
       }
-      if let profile = try ProfileRecord.fetchOne(database, key: record.profileID),
-        let revision = record.authorizationRevision, revision != profile.authorizationRevision
-      {
-        return .rejected(.operationTicketUnavailable(id: id, state: "authorization_changed"))
-      }
-      record.state = OperationTicketState.executing.rawValue
-      record.invocationID = invocationID
-      record.parentRequestID = parentRequestID
-      record.executingAt = date
-      try record.update(database)
-      return .began(try record.value())
-    }
-    switch outcome {
-    case .began(let ticket):
-      return ticket
-    case .rejected(let error):
-      throw error
-    }
-  }
-
-  package func finishOperationTicket(
-    id: String,
-    invocationID: String,
-    state: OperationTicketState,
-    failureCode: String? = nil,
-    at date: Date = Date()
-  ) throws -> OperationTicket {
-    guard state == .succeeded || state == .failed else {
-      throw GatewayDatabaseError.invalidOperationTicketTransition(
-        "Operation ticket completion state must be succeeded or failed."
-      )
-    }
-    return try writer.write { database in
-      guard var record = try OperationTicketRecord.fetchOne(database, key: id) else {
-        throw GatewayDatabaseError.operationTicketUnknown(id)
-      }
-      guard record.state == OperationTicketState.executing.rawValue,
-        record.invocationID == invocationID
-      else {
-        throw GatewayDatabaseError.operationTicketUnavailable(
-          id: id,
-          state: record.state
-        )
-      }
-      record.state = state.rawValue
-      record.completedAt = date
-      record.failureCode = state == .failed ? failureCode : nil
-      try record.update(database)
-      return try record.value()
-    }
-  }
-
-  @discardableResult
-  package func failPreparedOperationTicket(
-    id: String,
-    principalID: String,
-    failureCode: String,
-    at date: Date = Date()
-  ) throws -> OperationTicket {
-    try writer.write { database in
-      guard var record = try OperationTicketRecord.fetchOne(database, key: id) else {
-        throw GatewayDatabaseError.operationTicketUnknown(id)
-      }
-      guard record.principalID == principalID else {
-        throw GatewayDatabaseError.operationTicketPrincipalMismatch(id)
-      }
-      guard
-        [OperationTicketState.prepared, .pendingApproval, .approved].map(\.rawValue).contains(
-          record.state)
-      else {
-        throw GatewayDatabaseError.operationTicketUnavailable(
-          id: id,
-          state: record.state
-        )
-      }
-      record.state = OperationTicketState.failed.rawValue
-      record.completedAt = date
-      record.failureCode = failureCode
-      try record.update(database)
-      return try record.value()
+      return true
     }
   }
 
@@ -1353,7 +1793,10 @@ package final class GatewayDatabase: OAuthStore, @unchecked Sendable {
           createdAt: record.createdAt,
           referencedProfileIDs:
             profiles
-            .filter { $0.projectIDs.contains(record.id) }
+            .filter {
+              $0.permissions.entries[.project(record.id)] != nil
+                || $0.projectNetworks[record.id] != nil
+            }
             .map { $0.id.rawValue }
             .sorted()
         )
@@ -1381,7 +1824,7 @@ package final class GatewayDatabase: OAuthStore, @unchecked Sendable {
     )
   }
 
-  private static func canonicalProjectRoot(_ path: String) -> String {
+  static func canonicalProjectRoot(_ path: String) -> String {
     URL(fileURLWithPath: path, isDirectory: true)
       .standardizedFileURL.resolvingSymlinksInPath().path
   }
@@ -1401,185 +1844,8 @@ extension GatewayDatabase {
     }
   }
 
-  func derivedProjectRegistration(id: String) throws -> MCPDerivedProjectRegistration? {
-    try writer.read { try Self.derivedRegistration(id: id, database: $0) }
-  }
-
-  /// Registration and the single host-added grant are committed together.
-  func registerDerivedProject(
-    _ registration: MCPDerivedProjectRegistration, verifiedPrincipalID: String,
-    caller: GatewayCallerKind
-  ) throws {
-    try Self.requireDerivedPrincipal(registration, verifiedPrincipalID: verifiedPrincipalID)
-    let payload = try JSONEncoder().encode(registration)
-    guard payload.count <= 32_768 else {
-      throw MCPHostServiceError.denied("Registration exceeds its bound.")
-    }
-    let changed = try writer.write { database in
-      guard
-        let source = try ProjectRecord.fetchOne(database, key: registration.sourceProjectID),
-        Self.canonicalProjectRoot(source.rootPath) == registration.sourceRoot,
-        let profileRow = try ProfileRecord.fetchOne(database, key: registration.profileID.rawValue)
-      else {
-        throw MCPHostServiceError.denied("Source registration or profile is unavailable.")
-      }
-      var profile = try profileRow.value()
-      try Self.requireDerivedSourceGrant(profile, registration: registration, caller: caller)
-      if let old = try Self.derivedRegistration(id: registration.project.id, database: database) {
-        try Self.requireDerivedPrincipal(old, verifiedPrincipalID: verifiedPrincipalID)
-        guard old.origin == registration.origin, old.receiptDigest == registration.receiptDigest,
-          old.receiptID == registration.receiptID, old.profileID == registration.profileID,
-          old.sourceProjectID == registration.sourceProjectID,
-          old.sourceRoot == registration.sourceRoot,
-          Self.sameDerivedProject(old.project, registration.project),
-          let project = try ProjectRecord.fetchOne(database, key: old.project.id),
-          Self.sameDerivedProject(project.value, old.project)
-        else { throw MCPHostServiceError.denied("Existing derived registration changed.") }
-        return false
-      }
-      guard try ProjectRecord.fetchOne(database, key: registration.project.id) == nil,
-        try ProjectAliasRecord.fetchOne(database, key: registration.project.id) == nil
-      else {
-        throw MCPHostServiceError.denied("Derived identity or source registration is unavailable.")
-      }
-      guard
-        try !ProfileRecord.fetchAll(database).contains(where: {
-          try $0.value().projectIDs.contains(registration.project.id)
-        })
-      else {
-        throw MCPHostServiceError.denied(
-          "The derived identity already has an independently owned grant.")
-      }
-      let root = Self.canonicalProjectRoot(registration.project.rootPath)
-      guard try ProjectCanonicalRootRecord.fetchOne(database, key: root) == nil else {
-        throw MCPHostServiceError.denied(
-          "The directory already belongs to an independent registration.")
-      }
-      try ProjectRecord(registration.project).insert(database)
-      try ProjectCanonicalRootRecord(
-        canonicalRootPath: root, projectID: registration.project.id,
-        createdAt: registration.project.createdAt
-      ).insert(database)
-      profile.projectIDs.insert(registration.project.id)
-      try Self.saveDerivedProfileChange(profile, database: database)
-      try database.execute(
-        sql:
-          "INSERT INTO pluginDerivedProjects (projectID, origin, sourceProjectID, receiptID, payloadJSON) VALUES (?, ?, ?, ?, ?)",
-        arguments: [
-          registration.project.id, registration.origin, registration.sourceProjectID,
-          registration.receiptID, String(decoding: payload, as: UTF8.self),
-        ])
-      return true
-    }
-    if changed {
-      profileChangeLock.withLock { profileChangeBroadcasters[registration.profileID] }?.send()
-    }
-  }
-
-  /// Does not remove independently edited registrations, aliases, or grants.
-  func unregisterDerivedProject(
-    _ registration: MCPDerivedProjectRegistration, verifiedPrincipalID: String,
-    caller: GatewayCallerKind, allowRevokedSourceForRollback: Bool = false
-  ) throws {
-    try Self.requireDerivedPrincipal(registration, verifiedPrincipalID: verifiedPrincipalID)
-    let changedProfile = try writer.write { database -> Bool in
-      guard
-        let old = try Self.derivedRegistration(id: registration.project.id, database: database)
-      else { return false }
-      try Self.requireDerivedPrincipal(old, verifiedPrincipalID: verifiedPrincipalID)
-      guard old == registration,
-        let project = try ProjectRecord.fetchOne(database, key: old.project.id),
-        Self.sameDerivedProject(project.value, old.project),
-        try ProjectAliasRecord.filter(Column("canonicalProjectID") == old.project.id)
-          .fetchCount(database) == 0
-      else { throw MCPHostServiceError.denied("The derived registration has independent changes.") }
-      let profiles = try ProfileRecord.fetchAll(database)
-      if !allowRevokedSourceForRollback {
-        guard let source = try ProjectRecord.fetchOne(database, key: old.sourceProjectID),
-          Self.canonicalProjectRoot(source.rootPath) == old.sourceRoot,
-          let profile = try profiles.first(where: { $0.id == old.profileID.rawValue })?.value()
-        else {
-          throw MCPHostServiceError.denied("The source profile is unavailable.")
-        }
-        try Self.requireDerivedSourceGrant(profile, registration: old, caller: caller)
-      }
-      var changed = false
-      for row in profiles {
-        var profile = try row.value()
-        guard profile.projectIDs.contains(old.project.id) else { continue }
-        guard profile.id == old.profileID else {
-          throw MCPHostServiceError.denied(
-            "Another profile now holds an independent project grant.")
-        }
-        profile.projectIDs.remove(old.project.id)
-        try Self.saveDerivedProfileChange(profile, database: database)
-        changed = true
-      }
-      try ProjectCanonicalRootRecord.filter(Column("projectID") == old.project.id).deleteAll(
-        database)
-      _ = try ProjectRecord.deleteOne(database, key: old.project.id)
-      try database.execute(
-        sql: "DELETE FROM pluginDerivedProjects WHERE projectID = ?",
-        arguments: [old.project.id])
-      return changed
-    }
-    if changedProfile {
-      profileChangeLock.withLock { profileChangeBroadcasters[registration.profileID] }?.send()
-    }
-  }
-
-  private static func requireDerivedPrincipal(
-    _ registration: MCPDerivedProjectRegistration, verifiedPrincipalID: String
-  ) throws {
-    guard let principal = registration.principalID, !principal.isEmpty else {
-      throw MCPHostServiceError.denied(
-        "This historical registration has no bound principal; its data is preserved for explicit management."
-      )
-    }
-    guard !verifiedPrincipalID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
-      principal == verifiedPrincipalID
-    else {
-      throw MCPHostServiceError.denied("The derived registration belongs to another principal.")
-    }
-  }
-
-  private static func requireDerivedSourceGrant(
-    _ profile: ProfileGrant, registration: MCPDerivedProjectRegistration,
-    caller: GatewayCallerKind
-  ) throws {
-    guard
-      profile.projectIDs.contains(registration.sourceProjectID)
-        || profile.projectIDs.contains("*"),
-      profile.allowedCallers.contains(caller), profile.permitsRisk(.projectWrite)
-    else {
-      throw MCPHostServiceError.denied(
-        "The persisted source grant no longer permits derived registration changes.")
-    }
-  }
-
-  private static func saveDerivedProfileChange(_ profile: ProfileGrant, database: Database) throws {
-    guard profile.authorizationRevision < Int64.max else {
-      throw GatewayDatabaseError.invalidStoredValue("Profile authorization revision exhausted.")
-    }
-    var saved = profile
-    saved.authorizationRevision += 1
-    let date = Date()
-    try ProfileRecord(saved, updatedAt: date).update(database)
-    try database.execute(
-      sql: """
-        UPDATE operationTickets SET state = ?, completedAt = ?, failureCode = ?
-        WHERE profileID = ? AND state IN (?, ?, ?)
-        """,
-      arguments: [
-        OperationTicketState.denied.rawValue, date, "operations.authorization_changed",
-        profile.id.rawValue,
-        OperationTicketState.prepared.rawValue, OperationTicketState.pendingApproval.rawValue,
-        OperationTicketState.approved.rawValue,
-      ])
-  }
-
-  private static func sameDerivedProject(
-    _ current: RegisteredProject, _ expected: RegisteredProject
+  static func sameStoredProject(
+    _ current: ComputerMCPCore.RegisteredProject, _ expected: ComputerMCPCore.RegisteredProject
   ) -> Bool {
     // Compare timestamps at the database's exact serialization precision, not a time tolerance.
     current.id == expected.id && current.displayName == expected.displayName
@@ -1589,26 +1855,14 @@ extension GatewayDatabase {
       && current.updatedAt.databaseValue == expected.updatedAt.databaseValue
   }
 
-  private static func derivedRegistration(id: String, database: Database) throws
-    -> MCPDerivedProjectRegistration?
-  {
-    guard
-      let row = try Row.fetchOne(
-        database, sql: "SELECT * FROM pluginDerivedProjects WHERE projectID = ?",
-        arguments: [id])
-    else { return nil }
-    let payload: String = row["payloadJSON"]
-    guard payload.utf8.count <= 32_768 else {
-      throw MCPHostServiceError.denied("Invalid stored derived registration.")
-    }
-    let record = try JSONDecoder().decode(
-      MCPDerivedProjectRegistration.self, from: Data(payload.utf8))
-    guard record.project.id == id, record.origin == row["origin"],
-      record.sourceProjectID == row["sourceProjectID"], record.receiptID == row["receiptID"]
-    else {
-      throw MCPHostServiceError.denied("Stored registration identity differs from its record.")
-    }
-    return record
+  /// Startup emits each pending plugin worktree retirement notice before provider
+  /// activation and acknowledges it only after `emit` returns. A failing sink leaves
+  /// that notice and later ones pending for the next startup.
+  @discardableResult
+  package func drainPluginWorktreeRetirements(
+    _ emit: (PluginWorktreeRetirementNotice) throws -> Void
+  ) throws -> Int {
+    try PluginWorktreeRetirementStore(connection: connection).drain(emit)
   }
 }
 
@@ -1616,7 +1870,28 @@ extension GatewayClientTrust: FetchableRecord, PersistableRecord {
   package static let databaseTableName = "clientControlTrust"
 }
 
-private enum OperationTicketBeginOutcome {
-  case began(OperationTicket)
-  case rejected(GatewayDatabaseError)
+/// Isolated in-memory databases have no durable authority to restore. The object
+/// lives as long as its GatewayDatabase, so independent runtimes share one epoch.
+private final class TransientAuthorizationEpochCounter: AuthorizationEpochCounter,
+  @unchecked Sendable
+{
+  private let lock = NSLock()
+  private var watermark: AuthorizationEpochWatermark?
+
+  func withExclusiveAccess<Result>(_ body: (any AuthorizationEpochCounterAccess) throws -> Result)
+    throws -> Result
+  {
+    try lock.withLock { try body(Access(owner: self)) }
+  }
+
+  private struct Access: AuthorizationEpochCounterAccess {
+    let owner: TransientAuthorizationEpochCounter
+    func read() throws -> AuthorizationEpochWatermark? { owner.watermark }
+    func advance(to watermark: AuthorizationEpochWatermark) throws {
+      guard owner.watermark == nil || watermark.revision > owner.watermark!.revision else {
+        throw AuthorizationEpochCounterError.nonMonotonicWrite
+      }
+      owner.watermark = watermark
+    }
+  }
 }

@@ -25,8 +25,8 @@ integration.
   directly or together in a plugin package.
 - **Work across computers.** Connect each host, select its project, and use
   tools in that computer's environment.
-- **Choose the access.** Configure tools, projects and confirmation policy;
-  review host actions requiring approval locally.
+- **Choose the access.** Set permissions for projects, integrations and private
+  data; answer missing-permission requests locally.
 
 Computer MCP runs on macOS 14 or later and supports ChatGPT and other compatible
 MCP clients. Tools need installation and configuration, as described in each
@@ -42,7 +42,7 @@ ChatGPT · Codex · another MCP client
                  ▼
           Computer MCP.app
                  │
- caller → profile → registered project → policy → approval when required
+ caller → profile → declared requirements → permissions → execution context
                  │
                  ▼
  Builtin · Skills · CLI · MCP · AX fallback · Git · Shell
@@ -51,11 +51,11 @@ ChatGPT · Codex · another MCP client
        local execution → bounded result → redacted audit receipt
 ```
 
-Every call is tied to a caller, profile, capability, and—when relevant—a
-registered project. Unknown tools, ungranted projects, unsafe paths, and
+Every call is tied to a verified principal, caller, profile, tool and—when relevant—a
+registered project. Unknown tools, denied projects, unsafe paths, and
 unsupported ownership claims fail closed.
 
-Each host keeps its own credentials, registrations, approvals and audit.
+Each host keeps its own credentials, registrations, permissions and audit.
 Project IDs belong to that host; connecting several computers does not share
 their files or move running processes. See
 [Product Identity](Documentation/Architecture/ProductIdentity.md).
@@ -96,10 +96,10 @@ verified command projection and structured-coverage limits.
   implementation work to Codex.
 - Run a registered formatter, inspect a Git diff, or process files through
   authorized local commands, then use the result in the next step.
-- Deliver scoped text edits through `delivery.scopes.list` and `delivery.apply`,
-  using isolated Git worktrees and recoverable commit/land operations. Configure
-  `[[delivery.scopes]]` in the App-managed or standalone manifest; see
-  [Isolated delivery](Documentation/Reference/Delivery.md).
+- Create a host worktree with `git.worktree_add`, edit and run builds there, then
+  fast-forward committed work with `git.merge`. The returned project inherits its
+  source permissions and is usable immediately on the same connection. See
+  [Worktrees](Documentation/Reference/Worktrees.md).
 - Combine CLI commands, downstream MCP services and reusable Skills around a
   task through one gateway.
 - Connect from ChatGPT through Secure MCP Tunnel or from a reviewed remote
@@ -107,44 +107,77 @@ verified command projection and structured-coverage limits.
 - Connect desktop operations through the Computer Use plugin or native AX tools,
   subject to operation-specific macOS permissions and vendor caller authentication.
 
+See the [current execution availability](Documentation/Architecture/SecurityAndPrivacy.md#execution-admission)
+for Sandbox, Full access, local MCP and plugin programs. Permission grants alone
+do not make every launch available. Archive-installed plugin Skills remain
+unavailable because their content shares protected host storage with private state.
+
 ## Choose what your agents can use
 
-Computer MCP makes two separate decisions:
+The host checks every call against the profile's permissions and managed limits.
+Projects have independent read/write access and network settings. Screen,
+Desktop control, Files and Folders, plugins and MCP servers have their own
+permissions. See [profile defaults](Documentation/Reference/Config.md#callers-and-profiles)
+for App-created principals and explicit manifest profiles.
 
-1. **Policy authorization:** Is this caller allowed to use this capability in
-   this registered project at all?
-2. **Action consent:** If host policy requires confirmation, has the local user
-   approved this exact operation?
+An ungranted permission returns `permission.required` with a pending request.
+The owner answers **Only this time**, **Always**, or **Don’t Allow** in the App’s
+**Privacy & Security** page or through the local CLI. Project registration requests
+offer **Allow** and **Don’t Allow**. Always updates the shared profile; Only this
+time belongs to the exact invocation and its execution lifetime. Answering does not execute anything: the
+client explicitly retries. Explicit denies and managed exclusions do not prompt.
 
-In the App's **Client access** page, review connected clients and explicitly
-grant Full Access, defaulting to **This Session**. Full Access permits arbitrary
-execution as your macOS user; projects provide project context, not a sandbox.
-**Always Allow this Client** is a separate choice. You can downgrade or end a
-connection's access and separately revoke saved client approvals. Access changes
-apply to new requests without cancelling work already started. The local
-`computer-mcp clients` commands provide the same access controls; see
-[Client access](Documentation/Reference/CLI.md#client-access) for explicit
-consent and standalone HTTP usage.
+Execution mode is separate. Full access requires a profile configured for it
+and local owner consent; it does not supply missing host permissions.
+Where supported, Full access programs use the macOS user's operating-system
+authority, including accessible files and credentials. The App's **Client access** page and `computer-mcp clients` commands manage
+session consent and saved client trust. Editing permissions invalidates stale
+consent and reconciles running executions against the new authority.
 
-On an App-managed connection, approved Full Access also enables typed project
-management and verified official plugin installation, configuration and updates.
-Clients use these tools directly while existing work continues; see
-[Remote management](Documentation/Reference/ControlPlaneCapabilities.md#remote-management).
+The [execution availability matrix](Documentation/Architecture/SecurityAndPrivacy.md#execution-admission)
+describes what each mode can run, including host file/Git writes and local
+MCP/plugin launches. See [Client access](Documentation/Reference/CLI.md#client-access)
+and [Remote management](Documentation/Reference/ControlPlaneCapabilities.md#remote-management)
+for owner controls.
 
-Choose **restricted permissions** to select readable capabilities, projects and
-integrations, and the connection types allowed to use them. These defaults apply
-to clients sharing the profile; each session can impose a lower access level.
-Saving a selection invalidates previous Full Access approvals for that profile.
+Credentials stay in the signed App's macOS Data Protection Keychain. Examples,
+diagnostics, logs and audit contain placeholders or redacted summaries. Plugin
+callbacks pass through the same host permissions as direct calls.
 
-An individual action confirmation never expands the client's current access.
-Restricted Access uses its selected tools and projects and prohibits arbitrary
-execution. Credentials stay in the signed App's macOS Data Protection Keychain;
-examples, diagnostics, logs, and audit rows keep only placeholders or redacted
-summaries.
-
-Plugin execution settings and runtime permissions are documented by each plugin.
-Callbacks into Computer MCP require the corresponding host capabilities and
-local confirmation.
+File and structured-data writes check directory handles, refuse observed symlinks
+and existing files with multiple hard links, and protect Git metadata and
+configuration. Created files receive a final descriptor link-count check;
+concurrent links can
+expose bytes before that check; see the [tool reference](Documentation/Reference/Tools.md#file-mutation-boundaries).
+Metadata changes recheck the opened inode and restore mode, times and affected xattrs on
+failure. Archive extraction validates one listing and runs tar once with a staging
+directory descriptor, streaming contents into host-created files in the
+destination before checked publication. Cleanup removes only entries it can prove
+it created: by inode on APFS, by kernel file handle on Linux, and otherwise through
+retained descriptors with a 64-entry limit and a cleanup reserve. Foreign entries
+remain in staging and the error names the retained path.
+Extraction preserves member modification times; directory modes and times are
+restored deepest first after publication and staging cleanup.
+An existing destination keeps its own mode and times.
+`file.trash` refuses the project root and checks all members first; hard links are
+allowed. Checks do not provide atomic isolation from concurrent writers; details
+and rollback limits are in the tool reference. SQLite queries use safe
+mode, and CLI help returns registered metadata without executing commands.
+Writes protect every `.git` path component after Unicode normalization and
+case-insensitive comparison. A layout check at file-access creation refuses all
+project writes for a root `.git` symlink or an in-project Git directory or common
+directory outside a `.git` path. Host Git refuses local configuration includes
+before every call.
+In-process file moves stay on one volume; copy and then delete when crossing volumes.
+On glibc Linux, file copies preserve data, mode, access/modification times and
+visible xattrs including POSIX ACLs; copies keep destination ownership. macOS
+resource forks, creation times and BSD file flags have no Linux copy path.
+Linux archive extraction uses GNU tar for tar formats and requires a registered
+`bsdtar` executable for ZIP formats. Missing archive executable or SQLite CLI
+bindings produce an unavailable-tool error before creating destinations or
+running the corresponding command.
+Host Git operations disable repository programs; `git.commit` commits only its
+explicit `paths`, preserving other staged changes.
 
 See [Security and Privacy](Documentation/Architecture/SecurityAndPrivacy.md) for
 the complete trust model and [SECURITY.md](SECURITY.md) for reporting a
@@ -154,17 +187,23 @@ vulnerability.
 
 | Status | Capability | Notes |
 | --- | --- | --- |
-| Stable | App-owned local gateway, project registration, profiles, policy, operation tickets, and redacted audit | Default product control plane on macOS 14+ |
+| Stable | App-owned local gateway, project registration, profiles, permission requests and redacted audit | Default product control plane on macOS 14+ |
 | Stable | Local MCP, ChatGPT through OpenAI Secure MCP Tunnel, and Cloudflare named-tunnel connections | Each remote path has its own caller and profile boundary |
 | Stable | Builtin, Skill, registered CLI, downstream MCP, Shell, and native AX fallback | Availability still depends on the selected profile, project, dependency, and macOS permission |
-| Stable | Governed project and Git operations | Writes require policy; destructive atomics use reviewed single-use tickets; no implicit push |
-| Stable | Plugin package lifecycle, direct/plugin MCP registration, verified CLI trees and Skills | Host grants remain separate; external dependencies are not installed automatically |
+| Stable | Governed project and Git operations | Calls require permissions and an enforceable execution context; no implicit push |
+| Stable | Plugin package lifecycle, direct/plugin MCP registration, verified CLI trees and configured Skills libraries | Host grants remain separate; external dependencies are not installed automatically |
 | Planned | Broader platform support and more first-class UI for advanced orchestration | No committed release date; the current signed App is macOS-only |
+
+Shell and registered process executions expose stable IDs, output cursors, stdin
+writes and cancellation. Waiting calls default to two minutes (maximum ten);
+background work has no default deadline and retains the latest 8 MiB of output.
+See [execution tools](Documentation/Reference/Tools.md#shell-executions) for limits,
+reconnects and restart recovery. Launches require an authorized execution context.
 
 ## ChatGPT orchestrates, Codex executes
 
 ChatGPT can inspect a registered project and delegate coding work through the
-[Codex plugin](https://github.com/computer-mcp/plugin-codex). The host governs tool access, project grants, approvals and
+[Codex plugin](https://github.com/computer-mcp/plugin-codex). The host governs tool access, project permissions, permission requests and
 audit. The plugin owns coding execution and its runtime lifecycle.
 
 ## Computer MCP, Dots and Codex Remote
@@ -244,14 +283,14 @@ connection editor, or use the owner CLI or manifest. When a client signs in,
 compare the six-character pairing code on its browser page with the request in
 **Client access**, choose its profile and approve; `computer-mcp clients
 authorizations` and `computer-mcp clients authorize <code>` do the same from a
-terminal. Grants default to Observe and retain the existing local Full Access
+terminal. The owner selects a profile; grants retain the separate local Full Access
 consent boundary. See the
 [OAuth setup and revocation steps](Documentation/Reference/CloudflareRunbook.md#oauth-client-pairing).
 Verified follows the current Access Token or a live OAuth grant; replacing or
 revoking that credential requires fresh verification for its replacement.
 
 The gateway then resolves the exact tool, binds caller/profile/project,
-checks policy and any operation ticket, obtains action consent when needed,
+evaluates permissions and managed limits, admits the execution context,
 dispatches one bounded adapter, and records the redacted outcome. Standalone
 TOML modes are development and diagnostic surfaces; they do not share the
 App's bookmarks or Keychain state.

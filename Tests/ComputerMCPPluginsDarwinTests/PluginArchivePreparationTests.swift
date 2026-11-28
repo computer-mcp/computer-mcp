@@ -8,11 +8,16 @@ import Testing
 @testable import ComputerMCPPlatform
 @testable import ComputerMCPPlugins
 
+#if os(macOS)
+  import ComputerMCPDarwinTestSupport
+#endif
+
 @Suite(.nativeIntegration, .timeLimit(.minutes(1)))
 struct PluginArchivePreparationTests {
   @Test
   func newerPluginAPICarriesItsRefusalThroughTheRealArchiveWorker() async throws {
     let fixture = try await PreparationFixture.make(
+      launcher: testExecutionLauncher(),
       directoryFactory: DarwinPluginArchiveDirectoryFactory(),
       manifest: PreparationFixture.manifest.replacingOccurrences(
         of: "plugin_api = 1", with: "plugin_api = 2\nfuture = true"))
@@ -29,6 +34,7 @@ struct PluginArchivePreparationTests {
   @Test(arguments: ["mac.zip", "intel.zip", "unknown.zip", ""])
   func archiveTargetMustPermitThisHostBeforeActivation(name: String) async throws {
     let fixture = try await PreparationFixture.make(
+      launcher: testExecutionLauncher(),
       directoryFactory: DarwinPluginArchiveDirectoryFactory(),
       manifest: PreparationFixture.platformManifest)
     defer { fixture.files.remove() }
@@ -53,6 +59,7 @@ struct PluginArchivePreparationTests {
   @Test(arguments: ["tar", "tar.gz", "zip", "zip-stored"])
   func realWorkerPreparesCombinedPackageAndReclaimsItsScope(format: String) async throws {
     let fixture = try await PreparationFixture.make(
+      launcher: testExecutionLauncher(),
       directoryFactory: DarwinPluginArchiveDirectoryFactory(), format: format)
     defer { fixture.files.remove() }
     var before = rlimit()
@@ -88,6 +95,7 @@ struct PluginArchivePreparationTests {
   func validationFailuresDoNotReachActivationOrKeepPartialPackages(failure: String) async throws {
     let manifest = failure == "manifest" ? "invalid manifest" : PreparationFixture.manifest
     let fixture = try await PreparationFixture.make(
+      launcher: testExecutionLauncher(),
       directoryFactory: DarwinPluginArchiveDirectoryFactory(), manifest: manifest)
     defer { fixture.files.remove() }
     if failure == "archive" { try Data("invalid archive".utf8).write(to: fixture.archive) }
@@ -126,6 +134,7 @@ struct PluginArchivePreparationTests {
   @Test
   func failedActivationCleansStagingAndPreservesUnrelatedFiles() async throws {
     let fixture = try await PreparationFixture.make(
+      launcher: testExecutionLauncher(),
       directoryFactory: DarwinPluginArchiveDirectoryFactory(), )
     defer { fixture.files.remove() }
     let sibling = fixture.staging.appendingPathComponent("user-owned")
@@ -140,6 +149,7 @@ struct PluginArchivePreparationTests {
   @Test
   func workerReceivesOnlyExplicitEnvironmentReadOnlyInputAndPrivateCWD() async throws {
     let fixture = try await PreparationFixture.make(
+      launcher: testExecutionLauncher(),
       directoryFactory: DarwinPluginArchiveDirectoryFactory(), )
     defer { fixture.files.remove() }
     let report = fixture.files.root.appendingPathComponent("report.json")
@@ -189,6 +199,7 @@ struct PluginArchivePreparationTests {
   ])
   func rejectsInvalidWorkerReceipts(failure: String) async throws {
     let fixture = try await PreparationFixture.make(
+      launcher: testExecutionLauncher(),
       directoryFactory: DarwinPluginArchiveDirectoryFactory(), )
     defer { fixture.files.remove() }
     let worker = try await fixture.stub(
@@ -214,6 +225,7 @@ struct PluginArchivePreparationTests {
   @Test(arguments: [false, true])
   func timeoutAndCancellationReapTheWorkerBeforeCleanup(cancel: Bool) async throws {
     let fixture = try await PreparationFixture.make(
+      launcher: testExecutionLauncher(),
       directoryFactory: DarwinPluginArchiveDirectoryFactory(), )
     defer { fixture.files.remove() }
     let report = fixture.files.root.appendingPathComponent("pid")

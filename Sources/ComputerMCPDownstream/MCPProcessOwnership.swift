@@ -1,5 +1,6 @@
 import ComputerMCPCore
 import ComputerMCPPlatform
+import ComputerMCPProcess
 import Crypto
 import Foundation
 
@@ -99,6 +100,7 @@ package final class MCPProcessOwnership: @unchecked Sendable {
     var cleanupFailed: Bool
     var hostServicesConfirmed: Bool?
     var artifact: PluginDirectoryIdentity?
+    var authorityScope: String?
   }
 
   private let root: URL
@@ -116,9 +118,21 @@ package final class MCPProcessOwnership: @unchecked Sendable {
   }
 
   package static func acquire(
-    root: URL, project: URL, registration: String, artifact: PluginDirectoryIdentity? = nil
+    root: URL, project: URL, registration: String, artifact: PluginDirectoryIdentity? = nil,
+    provider: ProviderExecutionBinding? = nil
   ) throws -> MCPProcessOwnership {
     let scope = try scope(project: project, registration: registration)
+    let authorityScope = try provider.map { binding in
+      let encoder = JSONEncoder()
+      encoder.outputFormatting = .sortedKeys
+      let value = JSONValue.object([
+        "provider": try .encoded(binding.identity), "owner": try .encoded(binding.owner),
+        "project": binding.providerAuthorization.invocation.projectID.map(JSONValue.string)
+          ?? .null,
+      ])
+      return SHA256.hash(data: try encoder.encode(value)).map { String(format: "%02x", $0) }
+        .joined()
+    }
     return try withDirectory(root: root, scope: scope) { directory in
       let names = try entries(directory)
       guard names.count < 1_024 else { throw failure("MCP ownership receipt limit reached.") }
@@ -133,6 +147,11 @@ package final class MCPProcessOwnership: @unchecked Sendable {
           throw failure("Cannot inspect MCP process lock.")
         }
         let prior = try readReceipt(descriptor)
+        // An uncertain delegation blocks its own replacement. Older receipts lack
+        // that boundary and must remain a barrier for every delegation.
+        if let authorityScope, let previous = prior.authorityScope, authorityScope != previous {
+          continue
+        }
         guard !prior.cleanupFailed else {
           throw failure(
             "[mcp.cleanup_failed] Previous MCP cleanup is unconfirmed; inspect the owned session before recovery."
@@ -152,7 +171,8 @@ package final class MCPProcessOwnership: @unchecked Sendable {
         throw failure("Cannot identify the MCP host.")
       }
       let receipt = Receipt(
-        formatVersion: 2, owner: owner, cleanupFailed: false, artifact: artifact)
+        formatVersion: authorityScope == nil ? 2 : 3, owner: owner, cleanupFailed: false,
+        artifact: artifact, authorityScope: authorityScope)
       let name = UUID().uuidString
       let descriptor = try openFile(directory, name: name, flags: O_RDWR | O_CREAT | O_EXCL)
       do {
@@ -357,8 +377,16 @@ package final class MCPProcessOwnership: @unchecked Sendable {
     let count = data.withUnsafeMutableBytes { pread(descriptor, $0.baseAddress, $0.count, 0) }
     guard count == data.count else { throw failure("Cannot read MCP ownership receipt.") }
     let receipt = try JSONDecoder().decode(Receipt.self, from: data)
-    guard receipt.formatVersion == nil || receipt.formatVersion == 2 else {
+    guard receipt.formatVersion == nil || receipt.formatVersion == 2 || receipt.formatVersion == 3
+    else {
       throw failure("Unsupported MCP ownership receipt version.")
+    }
+    if receipt.formatVersion == 3 {
+      guard let scope = receipt.authorityScope, scope.utf8.count == 64,
+        scope.utf8.allSatisfy({ (48...57).contains($0) || (97...102).contains($0) })
+      else { throw failure("Invalid MCP provider ownership scope.") }
+    } else if receipt.authorityScope != nil {
+      throw failure("Unexpected MCP provider ownership scope.")
     }
     return receipt
   }

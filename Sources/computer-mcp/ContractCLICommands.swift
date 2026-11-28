@@ -60,12 +60,11 @@ struct ToolsInventory: AsyncParsableCommand {
       $0.exposure.includesReexport
     }.map(\.id).sorted()
     gateway.mcp.servers.removeAll { $0.exposure.includesReexport }
-    let context = gateway.executionContext(
-      caller: caller,
-      profileID: profile,
-      projectID: projectID,
-      transportTrace: GatewayTransportTrace(transport: "cli-inventory")
-    )
+    let context = LocalCLIExecutionIdentity.bind(
+      gateway.executionContext(
+        caller: caller, profileID: profile, projectID: projectID,
+        transportTrace: GatewayTransportTrace(transport: "cli-inventory")),
+      surface: .ownerTools)
     let runtime = try await GatewayRuntime.make(
       configuration: gateway,
       context: context,

@@ -83,9 +83,17 @@ interface. Existing registrations without a tree retain their raw CLI contract.
 | `introspection` | `args` | Run the registered executable with the exact declared argv and validate its JSON tree. |
 | `helper` | `helper`, `args` | Run the resolved exporter and validate its JSON tree. Direct helpers use absolute executable paths; Plugin helpers use package/dependency references. |
 
-Exporters run in the CLI's cwd/environment with closed stdin, a 5-second execution
-budget and a 4 MiB stdout bound. Enabling an exporter authorizes running that
+Plugin exporters run in the provider's projectless read-only discovery sandbox,
+with private scratch as the working directory and writes limited to that scratch
+and the persistent provider container; direct exporters use the registered CLI
+cwd/environment. Both use closed stdin, a 5-second execution budget and a 4 MiB
+stdout bound. Enabling an exporter authorizes running that
 package code for discovery; it does not grant projected tool calls to a profile.
+A plugin contribution whose exporter cannot run in that context, fails or returns
+an invalid tree publishes no projected tools. `tools/list` then reports the failure
+in the `cli.list` entry's `_meta.discovery_errors`, keyed by registration ID. A
+tree or failure is reused until the reviewed declaration, its approval or an
+executable identity changes.
 Exporters must return this contract. Native introspection using another format
 needs a verified package exporter; human-readable help is not parsed as a tree.
 The package manager does not run exporters while reading a manifest or installing
@@ -181,12 +189,20 @@ are generated from the same descriptors used during execution.
 
 Projected tools have stable names derived from the registration identity and
 command ID, with readable titles and source/path/coverage metadata. Obtain names
-from `tools/list`; do not construct them manually. Calls require the host's Full
-Shell permission and a project, just like `cli.exec`. A self-reported read-only
-hint cannot expose a command to an observe profile. `cli.exec` and
+from `tools/list`; do not construct them manually. Calls require execution
+permission admission, a project and an enforceable context, just like `cli.exec`.
+A self-reported read-only hint cannot remove execution requirements. `cli.exec` and
 `process.spawn` cannot bypass a declared tree. For file-backed trees, `cli.help`
 returns declared metadata without executing help argv; executable exporters are
 not run through that read-only capability.
+
+A prepared Full access CLI launch runs with the best-effort process-group
+ownership described in [Execution Environment](../Architecture/ExecutionEnvironment.md).
+Project and plugin grants plus local Full access consent still apply; they do not
+make a backend without enforceable ownership usable. Known projected tools remain listed
+with their permission requirements when managed limits allow them to be requested.
+A refused launch returns `execution.unavailable` before executable checks or the
+target command run.
 
 The executable and interpreters are resolved in the actual cwd/environment.
 The host supplies the base environment; registration `env` values override it.
@@ -253,15 +269,20 @@ COMPUTER_MCP_FORMATTER_EXECUTABLE=/absolute/path/to/swift-format \
   swift test --filter NativeCLITreeIntegrationTests
 ```
 
-The test checks the real version, loads the independent package, compares the
-five projected tools with direct registration, formats and lints explicit stdin,
-checks raw-call and observe-profile rejection, and verifies that package and
-executable bytes are unchanged. It uses a private temporary project and
-in-memory Gateway state; it does not connect to the App or production sockets.
-The generated tree retains explicit partial coverage and its publisher baseline.
-Its version and native-interface checks execute inside the same generic call
-path as direct registration; an incompatible assertion is also tested to reject
-an otherwise valid invocation.
+The test loads the independent package and compares its five projected tools
+with direct registration. Explicit owner administration runs only the reviewed
+direct-provider format and lint calls with fixed stdin, the supplied executable's
+recorded identity, and a controlled environment. Those calls check the real
+version and native interface; an incompatible assertion must reject the target
+command. Package, tree and executable bytes must remain unchanged.
+
+The Gateway path separately verifies that known tools carry requestable permission
+metadata, the verified observe client cannot execute them, and the native backend
+refuses a consented Full access launch. Direct-provider execution does not establish
+native Gateway Full access support. The check uses a private temporary project and
+in-memory Gateway state without App connections or production sockets. Its tree
+retains explicit partial coverage and the publisher baseline. A run without the
+external package and executable does not provide this native acceptance evidence.
 
 Plugin-provided CLI trees are loaded only after the package passes the host's
 plugin API, platform/artifact and host-range evaluation. The package declares

@@ -57,14 +57,15 @@ struct ProjectSchemaMigrationTests {
     }
     let before = try snapshot(earlier)
     try earlier.close()
-    let migrated = try GatewayDatabaseConnection(path: path)
-    let after = try snapshot(migrated.writer)
+    let migrated = try DatabaseQueue(path: path)
+    try GatewayDatabaseConnection.migrator.migrate(migrated, upTo: "project-terminology")
+    let after = try snapshot(migrated)
     for (table, rows) in before where table != "grdb_migrations" {
       let renamed = table.replacingOccurrences(of: "workspace", with: "project")
         .replacingOccurrences(of: "Workspace", with: "Project")
       #expect(after[renamed]?.count == rows.count)
     }
-    try migrated.writer.read { db in
+    try migrated.read { db in
       #expect(try db.tableExists("projects"))
       #expect(try !db.tableExists("workspaces"))
       #expect(try db.columns(in: "projectAliases").map(\.name).contains("canonicalProjectID"))
@@ -118,7 +119,9 @@ struct ProjectSchemaMigrationTests {
         try String.fetchOne(db, sql: "SELECT capabilityID FROM operationTickets WHERE id='live'")
           == "project.remove")
     }
-    #expect(try snapshot(GatewayDatabaseConnection(path: path).writer) == after)
+    let reopened = try DatabaseQueue(path: path)
+    try GatewayDatabaseConnection.migrator.migrate(reopened, upTo: "project-terminology")
+    #expect(try snapshot(reopened) == after)
   }
 
   @Test func failedMigrationRollsBackSchemaAndLiveState() throws {

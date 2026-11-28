@@ -1,133 +1,118 @@
 # Security And Privacy
 
-Computer MCP executes local capabilities as the current logged-in macOS user.
-Its primary security boundary is explicit local configuration and least
-authority, not sandboxing an arbitrary remote shell.
+Computer MCP evaluates every tool call with the permission library before provider
+dispatch. Profiles hold permissions, execution mode and sandbox settings. Verified
+identity, managed limits, current profile state and the exact invocation determine
+authority; tool names, client labels and risk annotations cannot supply it.
 
-Authorization has two levels: the host first decides whether a capability is
-permitted at all; the user or caller then decides whether a permitted
-higher-risk action is approved now. Changes preserve or strengthen registered
-project boundaries, profile capability and caller binding, path and symlink
-validation, explicit approval for mutation, registered tool dispatch, local-only
-sensitive execution, request audit, credential and sensitive-text redaction,
-fail-closed defaults, verified control of external processes, and bounded
-input, output, persistence and lifecycle resources.
+## Authority boundaries
 
-## Authority Boundaries
+- Project access is `read`, `write` or `deny`, independently of its network setting.
+- Screen, Desktop control, Machine information, Unified logs, Skills and Local
+  network are separate permissions. Files and Folders are per category; Plugin
+  and MCP server permissions are per object.
+- [Profile defaults](../Reference/Config.md#callers-and-profiles) distinguish App-created
+  principals from explicit manifest declarations. Missing permissions are requestable;
+  explicit denies and managed exclusions refuse without a request.
+- Tool listings include declared requirements. Project discovery without Project
+  permission exposes only ID, display name and access status, never root paths.
+- `local-admin` remains local-only. Unknown tools, routes and ownership claims
+  fail closed. Every file operation resolves and rechecks its authorized path.
+- Full access changes execution mode only. It does not grant Project, Screen or
+  any other permission. The profile must allow it and the owner must consent
+  locally. The static Shell facility stays off by default.
 
-- Each profile explicitly defines permission mode, capabilities, projects,
-  allowed callers and confirmation policy. Its name and transport do not
-  determine its permission mode.
-- `read-only` permits host-classified reads. `project-operations` permits
-  granted typed operations, subject to their path and confirmation rules.
-  `local-full-access` additionally permits separately enabled arbitrary
-  execution; choosing this mode alone does not enable Shell or grant tools.
-- `local-admin` is local-only and rejected for remote callers.
-- All project operations resolve a stable registered id and normalized path.
-- More than one project requires explicit selection.
-- Unknown tools, providers, paths, and capabilities fail
-  closed.
-- Remote callers cannot approve host tickets or expand their own grants.
+Downstream registrations own exact tool selection and classification. Aliases,
+reexports and generic calls resolve to the same server/tool and plugin origin.
+MCP `read` permits host-classified reads; `all` permits the selected surface.
+Plugin contributions additionally require their owning Plugin permission. Remote
+annotations cannot lower the host classification. Cached tool identity must be
+resolved before admission; discovery that starts a process requires its own
+admitted execution context.
 
-Arbitrary shell execution is equivalent to the current user's effective terminal
-authority. The effective grant must permit `local-full-access` and Full Shell,
-and the static TOML Shell policy must explicitly enable the facility. Both the
-facility and client Full Access are off by default. Project bookmarks are
-routing and audit context, not containment for an approved arbitrary command.
+## Principals, requests and consent
 
-Downstream MCP annotations are presentation hints, not host authorization.
-Registration assigns each exposed tool its actual server/tool identity;
-neither a tool-name prefix nor downstream `_meta` can supply that identity.
-Host risk classification and tool selection apply to configured aliases,
-reexports, and generic calls. A generic invocation resolves its target's host
-risk before policy, consent preflight, or operation-ticket handling. A
-target requiring confirmation uses the same ticket through every calling path.
+Verified local peer credentials, a registered tunnel bridge or an authenticated
+HTTP credential establish the principal. A connection ID is tracing information.
+Clients sharing a credential share principal permissions; their connections have
+separate live consent scopes. Tool arguments cannot replace the verified identity.
 
-Profiles may receive an entire MCP registration through host-owned
-`mcp_servers`, including remote profiles. Registration selection and profile
-authorization are intersected at discovery and execution; an all-tools
-selection follows future tools without copying a static capability list.
-Exact alias and reexport grants refer to the same underlying tool. The explicit
-generic `mcp.tools.call` capability grants host-selected tools across
-registrations; generic discovery alone grants no tool authority. Catalog
-counts and definitions are filtered before exposure. Permission-mode and
-Full Shell boundaries still apply. App-managed grants are versioned in the
-database and reread for calls and discovery; a change invalidates the affected
-pending approvals without restarting unrelated Gateways or tunnels.
+A missing permission returns `permission.required` and a durable pending request.
+Only the local owner answers it, using the reviewed control revision. **Only this
+time** binds to the initiating principal, exact canonical invocation, requirement
+set and retry chain. **Always** changes the profile shared by existing and future
+clients. **Don’t Allow** rejects the request. Requests expire after one day. Answering
+never dispatches the operation; the initiating caller explicitly retries, and
+changed arguments, routes, principals or stale authority cannot reuse an answer.
+`policy.probe` previews without consuming one-time authority.
 
-## Principals And Local Confirmation
+The App gateway and standalone HTTP gateway bind admitted MCP sessions to a
+host-created live authority object. Full access consent defaults to This Session;
+Always Allow this Client is a separate local choice bound to the verified
+principal, caller and reviewed profile. Consent never widens the permission table.
+Saved consent binds the principal’s grants and sandbox settings, provider settings,
+trusted hosts, owner-registered projects and path rules, and outside-user-data identity.
+A change to that reviewed authority permanently invalidates saved consent.
+Host-created derived worktrees inherit their registered source’s authority and do not
+change this binding when created or removed; their source project remains bound.
+A stored digest that differs from this binding requires fresh local approval.
+Session limits may only narrow the profile and managed ceilings.
+Disconnecting ends connection-scoped authority; saved consent and its standing
+execution authority survive disconnect and reconnect only while their ledger
+binding remains valid. Reconnect cannot replace a missing or invalidated binding:
+fresh local owner approval is required. Restoring previous settings cannot revive
+retired authority. Profile/trust revocation and retention apply even when no
+connection is active.
 
-Verified local peer credentials establish the local-user principal. Secure
-Tunnel admission binds the registered bridge identity; authenticated HTTP
-binds the validated credential. A connection id is tracing information, not
-authority. Reconnection with the same credential retains the same principal;
-clients sharing a credential share principal-level grants. Client-supplied labels
-cannot establish a separate principal. Profile, project and caller checks still apply.
+The App’s Privacy & Security owner policy controls target a saved client profile
+or a provider approval for a plugin package or direct local MCP server. The App
+uses the gateway's local owner proof and checks the reviewed permission revision
+and authorization epoch in the write transaction. The gateway resolves the
+updated source together with the read-only machine and managed preference
+sources. Saved permissions and policy text remain visible when the effective
+ceiling is lower or a managed source fails closed. The standalone machine file
+uses the same [policy format](../Reference/Config.md#managed-limits).
 
-The App gateway and standalone HTTP gateway bind each admitted MCP session to a
-host-created authorization object. The local owner can limit or end that session
-without changing another connection's grant or stopping its runtime. A new
-session starts with its profile's Observe or Restricted Control authority; a
-configured Full Access profile alone does not approve the connected client.
-New calls, discovery, selected
-execution-owner calls and retained Host Services invocations reread the session's
-current authority. A disconnected session loses this authority while its existing
-execution resources remain owned until they drain. Serialized execution context,
-connection labels and tool arguments cannot recreate the authorization object.
-An HTTP session retains its scope across requests and event-stream reconnections.
-Session DELETE, idle expiry and listener shutdown end that scope. A newly initialized
-session receives a new scope while the same principal retains its execution runtime
-until the listener stops.
-App HTTP origins participate in the App's atomic configuration publication and
-retained execution-owner routing. Runtime ownership is separate for each listener;
-sharing a credential does not share session consent or shutdown ownership across
-listeners. The App's local owner operations manage both socket and HTTP scopes.
+The durable permission ledger reconciles profile edits, requests, running work and
+result access. Revocation terminates affected executions and proxy streams. A
+one-time execution retains authorized input, output and cancellation access for
+its lifetime; it does not become a standing grant or authorize another launch.
+The external Keychain epoch detects restored permission databases: transient
+answers are discarded and standing authority stays suspended until local owner
+confirmation. Unknown execution outcomes are evidence, never permission to replay.
 
-The local control plane can explicitly approve Full Access for a selected
-session. The default lifetime is This Session. Its effective grant includes
-all enabled capabilities and projects and permits normal operations without
-repeated confirmation. Verified caller admission, local-only actions, the static
-Shell policy and macOS permissions remain enforced; the principal never becomes
-`local-admin`. This decision does not change the persisted profile.
+## Execution admission
 
-Always Allow this Client is a separate local choice. Client trust is bound to
-verified principal, profile and caller, with an expected trust revision. The
-consent audit and persistent trust update commit together before authority is
-published. Trust cannot be inferred from a client label or a configured profile.
-Only a new session with the same verified identity and unchanged profile can
-restore active trust. An already connected Restricted session does not acquire
-another session's approval. Selecting This Session replaces that client's
-persistent trust; revocation removes it from existing and future sessions.
+Program launches on a principal’s behalf require an admitted `PreparedExecutionContext`. Permission
+admission and execution availability are separate: a grant or Full access consent
+does not supply an unsupported backend. On the current Darwin backend:
 
-Consent binds the configured or persisted profile authorization and its source.
-Derived Observe catalog or project additions alone do not change that authorization. Database grants are reread for admission; atomic configuration
-publication updates the session baseline for current and retained invocations.
-A changed profile invalidates consent and advances the session revision. A
-TOML-only profile remains configuration-owned after approval. Disconnecting,
-limiting or ending a session removes its current Full Access; a separate persistent
-trust revocation controls whether future connections may restore it.
+| Execution | Available behavior |
+| --- | --- |
+| Sandboxed read helpers | Available to Sandbox and Full access principals, subject to the tool's permissions, canonical paths and resource limits. They retain their read-only sandbox in either mode. |
+| Sandboxed project programs | Available with admitted permissions in verified host worktrees. Writes open only the checkout and private repository, with immutable Git controls and nested path denials. Durable sandbox ownership and a worktree-use lease cover the complete execution. |
+| Local stdio MCP and plugin programs | Invocations require the verified provider source, owner approval and both the client's and provider's admitted permissions. Discovery uses only the provider's approval in a projectless sandbox. Sandboxed writes require the selected host worktree and its use lease; each provider also has its own persistent container and private execution scratch. Independently revocable delegations have separate process ownership. Full access requires local consent and retains best-effort process-group ownership. Linux explicitly refuses provider activation. |
+| Prepared unconfined project programs | Available with admitted permissions, local Full access consent and effective limits. Process-group ownership is best effort; unobserved detached descendants may survive. Host-worktree launches still require the verified worktree use lease. |
+| Bounded host file/structured mutations and fixed Git helpers | Available in verified host worktrees with Project `write`, or on admitted source paths with Full access consent. In-process mutations recheck live paths and worktree identity; fixed Git helpers remain sandboxed with precise write authority. Host-worktree operations hold their use lease. Shared-ref tools retain their Full access requirements and source-project routing. General archive/download implementations remain on the program preparation path. |
+| Remote HTTP MCP services | Use a prepared service context that cannot launch host programs. The server permission, named-project permission and host-classified execution requirement still apply. They use a private temporary directory and do not bind a worktree execution lease. |
+| In-process host management and Computer Use | Use their own admitted host paths and permissions; Computer Use also requires the corresponding macOS TCC grant. They do not require an arbitrary program launch. |
 
-Operation tickets issued in a control session also bind that session's identity
-and revision. Another session using the same credential cannot consume the ticket,
-and restoring access after a change does not revive an older ticket. Generic host
-callbacks require a common live control session among their originating invocations;
-ambiguous sessions cannot borrow one another's permissions.
+Local stdio MCP registrations and plugin-contributed stdio servers use the same
+principal execution path through the MCP connection pool and `ExecutionLauncher`.
+Discovery that would start one of these processes also needs that path; catalog
+refresh without an admitted context cannot start it. A configured environment,
+process supervisor or inherited host-service descriptor does not confer authority.
 
-The default `risk-based` policy requires local confirmation for host-classified
-destructive, external-write and arbitrary-execution operations. `all-writes`
-also confirms project writes; `never` is an explicit local operator choice.
-Classification cannot inspect all effects hidden inside an arbitrary script.
-Project checks remain application-level validation, not an OS sandbox.
-
-A ticket moves through `pending_approval`, `approved`, `denied` or `expired`;
-an operation not requiring confirmation starts `prepared`. Approval is an
-owner-only App/management CLI action. A model-supplied `confirm` field is not
-approval. Commit binds the verified principal, exact arguments, project,
-reviewed target state and authorization revision, then consumes the ticket
-once. Approval does not grant a missing capability. Changing the grant
-invalidates its pending tickets and prevents newly unauthorized calls;
-stopping owned in-flight work is a separate action, not a side effect of
-revocation or client disconnection.
+**Host administration** is a separate, explicitly selected local-owner scope:
+tunnel provisioning, diagnostics and transport supervision, client-registration
+helpers, and plugin archive preparation use it for unconfined infrastructure
+commands. It is not a principal's Full access permission or a fallback for failed
+tool preparation. When both scopes are installed, the prepared context takes
+precedence. The fixed archive worker uses host administration for its host-owned
+staging operation, explicitly clearing any principal execution context before
+launch. These subprocesses disclaim the App’s macOS privacy responsibility and
+use their own system identity.
+See [Execution Environment](ExecutionEnvironment.md) for supervision and recovery.
 
 ## Transport And Secrets
 
@@ -186,9 +171,9 @@ URI; registered loopback redirect ports are ignored during matching.
 The browser displays client and redirect hosts and a six-character pairing code.
 It can only poll a separate opaque status handle. Approval and denial require the
 local App control plane or owner CLI. Pairing expires after ten minutes. Approval
-creates a grant for the selected remote profile, default `cloudflare-observe`.
+creates a grant for the explicitly selected remote profile.
 Its principal is `oauth:<grant ID>` and its caller is `cloudflare-tunnel`.
-OAuth authenticates that identity; profile, project and per-session Full Access
+OAuth authenticates that identity; profile, project and local Full access
 consent still apply. Client secrets and Dynamic Client Registration are not part
 of this authorization surface.
 
@@ -306,15 +291,31 @@ SwiftUI adapter or owner-only `computer-mcp` control CLI.
 
 ## Plugin execution
 
-The host authorizes plugin invocations through caller identity, profile and
-registered project. Plugin runtime permissions and vendor configuration belong
-to the plugin; see the [Codex plugin](https://github.com/computer-mcp/plugin-codex) for its execution model.
+The host admits a plugin call against two authorities for its actual effect: the
+calling client's profile and the plugin's own provider principal, each with its
+registered project grants. A missing permission on either side uses the ordinary
+request-and-explicit-retry flow and does not spend the other side's one-time
+grant. Plugin runtime permissions and vendor configuration belong to the plugin;
+see the [Codex plugin](https://github.com/computer-mcp/plugin-codex) for its
+execution model.
 
-Callbacks into host tools require current host grants and operation approvals.
-A plugin approval does not authorize a host operation. Verified builtin dry runs
-can have read-only consent risk; unverified downstream `dry_run` arguments do not
-lower risk. Host approval previews and audit summaries redact credentials and
-bound their size. Canonical inputs remain bound to the exact operation ticket.
+Callbacks into host tools require current permissions from both authorities and
+a live call record bound to permission-ledger admission. An Only This Time grant
+serves callbacks only within the execution it admitted. A callback cannot target
+a route that reaches a provider session: MCP registrations, plugin contributions,
+and aliases or forwarding to them are refused before admission. A plugin's native
+approval does not answer a host permission request. Raw arguments and output stay
+out of redacted audit; canonical invocation digests bind retries and private
+host-action validation.
+
+Work a callback creates carries its session's complete delegation basis.
+Revocation, disable, update or uninstall, connection or consent expiry, and an
+authority revision change end that work together with the session. Idle
+retirement, process exit and channel close do not end it; closing the channel or
+retiring the session cancels only its in-flight synchronous callbacks.
+An unconfined program retains its admitted permission requirements, connection
+consent and execution limits. Only a sandboxed launch pins the implicit file and
+system-service openings of its sandbox; host callbacks still recheck each use.
 
 ## Stable Denials And Audit Decisions
 
@@ -324,18 +325,24 @@ Representative codes include:
 
 - `policy.project_denied` for traversal, symlink escape, and cross-project
   access;
-- `operations.approval_required`, `operations.ticket_invalid`, and
-  `operations.ticket_expired_or_used` for operation approval and consumption;
+- `permission.required` for a missing requestable permission;
+- explicit permission and managed-policy denials for non-requestable access;
 - `mcp.tool_not_approved` for downstream catalog drift.
 
 Malformed arguments and provider/runtime failures remain `failed`. Acceptance
 tests must correlate the client-visible code, Gateway request ID, and exact
 audit row rather than inferring a denial from message text alone.
 
+Call admission must be persisted before dispatch. Audit entries retain identity,
+decision, outcome and input/output digests, never clear arguments or output. The
+default retention is 90 days with a hard ceiling of one million entries. A failure
+to persist the terminal outcome is reported as `outcome_unknown`; it never causes
+the host to dispatch the operation again.
+
 ## Persistence And Logging
 
 GRDB stores projects, profiles, provider health, manifest revisions,
-operation tickets, OAuth requests/grants and credential digests, bounded MCP execution receipts and redacted audit metadata. The Data Protection Keychain
+permission requests, execution authority, OAuth requests/grants and credential digests, bounded MCP execution receipts and redacted audit metadata. The Data Protection Keychain
 stores transport keys and access token values.
 App logs are JSONL, mode `0600`, rotated, bounded, and redact secret-like
 fields.
@@ -351,13 +358,144 @@ deduplication metadata remains when output expires. See the
 
 - A registered CLI or downstream MCP provider can act with its own local
   credentials.
-- Full Shell can read, modify, execute, and communicate as the user.
+- Full access programs, where supported, run with the user's operating-system authority.
 - Computer Use can operate visible UI after local TCC grants.
 - A leaked remote bearer or overly broad caller/profile grant can expose the
   configured remote surface.
 - Provider output may itself contain secrets despite audit redaction.
 
-Minimize enabled capabilities, use read-only mode first, keep Full Shell off
-unless the target ChatGPT workspace is trusted for terminal-equivalent access,
-review Tunnel tool snapshots after metadata changes, and remove sensitive data
+Grant only the permissions a principal needs, keep Shell disabled unless needed,
+review tool requirements and registration selection, and remove sensitive data
 from diagnostics before sharing it.
+
+## Host tool operations
+
+File and structured-data writes walk path components through directory descriptors
+with `O_NOFOLLOW`, checking protected names and refusing observed symlinks and
+existing regular files with multiple hard links. Directory entry creation,
+publication, rename and unlink check parent identity and containment before and
+after successful syscalls, with an ancestor walk to the pinned project root.
+Failed post-checks attempt rollback;
+entry removal and rename during rollback compare device and inode immediately
+before the syscall. An observed mismatch leaves the entry in place; rollback
+failures are reported.
+Metadata changes (`chmod`, `touch`, xattr removal) record mode, access/modification
+times and affected xattr values on the opened inode. They recheck the parent chain,
+path identity and link count afterward, restoring those values through the same
+descriptor on failure. Checks do not lock out concurrent writers or detect changes
+reversed between observations or made after the last check. Rollback is not an
+atomic isolation guarantee: replacement can race the final identity comparison
+and syscall, and restoring recorded metadata can overwrite intervening changes.
+
+The hard-link rule protects existing files from writes through pre-existing aliases
+to files outside the project. A file created by the operation can acquire a
+concurrent hard link while it is being written. Creating that link outside the
+project requires a process that can already create files there; a sandboxed
+principal cannot do so, and a process with that access could read the archive
+directly. After a created file is complete, `fstat` checks its descriptor's link
+count. If multiple links persist, the operation fails and cleanup removes only
+entries this operation created. This final check cannot retract bytes already
+exposed through a concurrent link or detect a link removed before
+the check.
+
+Generated files are staged in the target directory before publication. macOS
+copies use `fcopyfile(COPYFILE_ALL)` between anchored descriptors to preserve data,
+xattrs, resource forks, ACLs, mode and access/modification times; source checks precede publication,
+and failed copies clean staging with identity checks. Moves preserve metadata
+through exclusive, no-follow rename on the same volume. Cross-volume moves fail
+before changing either entry; callers must copy and then delete the source.
+
+The neutral and POSIX targets also build on glibc Linux. Tool guards use these
+platform equivalents; macOS-only platform services remain in `PlatformDarwin`.
+
+| Operation | macOS | glibc Linux |
+| --- | --- | --- |
+| Component traversal and entry checks | `openat(O_NOFOLLOW)`, `fstatat(AT_SYMLINK_NOFOLLOW)`, `unlinkat(AT_REMOVEDIR)` | Same POSIX APIs and flags, walking one component at a time; `O_NOFOLLOW_ANY` is not needed |
+| Exclusive publication and rollback | `renameatx_np(RENAME_EXCL \| RENAME_NOFOLLOW_ANY)` | `renameat2(RENAME_NOREPLACE)` through `CSystemPOSIX`; both names are single components of pinned directories and the leaf is not followed. Unsupported kernels or filesystems fail without a replacement fallback |
+| Cleanup identity handles | Reopen with `O_EVTONLY` and no-follow flags; verify device and inode (and, off APFS, the retained descriptor) before changing directory permissions | Reopen with `O_PATH` and no-follow flags; compare the `name_to_handle_at` file handle through the handle and verify identity before restoring directory permissions through `/proc/self/fd/<fd>` |
+| Retained staging path in errors | `fcntl(F_GETPATH)` | `readlink(/proc/self/fd/<fd>)`, used only for diagnostics; the original path is reported if procfs is unavailable |
+| File data and metadata copy | `fcopyfile(COPYFILE_ALL / COPYFILE_METADATA)` | Descriptor reads/writes plus `flistxattr`, `fgetxattr`, `fsetxattr`, `fremovexattr`, `fchmod` and `futimens`; xattr signatures are bridged through C |
+| Metadata rollback and file identity timestamps | Darwin descriptor xattr signatures and `stat.st_atimespec/st_mtimespec/st_ctimespec` | Linux descriptor xattr signatures and `stat.st_atim/st_mtim/st_ctim`, preserving nanosecond precision |
+| Child working directory | `posix_spawn_file_actions_addfchdir_np`, `POSIX_SPAWN_CLOEXEC_DEFAULT` | The same fchdir action, available in glibc 2.29+, through C; host descriptors use `O_CLOEXEC` |
+| Archive metadata and extraction options | BSD tar's `--format=mtree` conversion supplies exact times; extraction disables BSD flags with `--no-fflags` | GNU tar's `--numeric-owner --full-time -tvf` supplies times; extraction uses the shared no-owner, no-permissions, no-ACL and no-xattr options |
+
+Linux copies preserve data, mode, access/modification times and visible xattrs,
+including POSIX access/default ACLs. Destination-only inherited xattrs are removed;
+listed attributes that cannot be read, written or removed fail the copy before
+publication. A source filesystem without xattr support has no xattrs to copy.
+Ownership stays with the created destination. Linux has no native macOS resource
+fork, creation-time setter or BSD `st_flags` copy in this path. `getattrlist`/`fgetattrlist` and
+Darwin resource-fork APIs belong to macOS-only services and are not called by the
+Linux tool guards. The application-level concurrency limits above still apply.
+
+SQLite uses a private empty home and `-init /dev/null -safe`, and CLI help returns
+registered metadata without executing commands. Host Git operations isolate
+system/global configuration, refuse repository configuration includes and disable
+repository programs; `git.commit` commits only its
+explicit `paths`, preserving other staged changes.
+
+Path checks use `openat`/`fstatat`, `O_NOFOLLOW`, and directory descriptors.
+Every `.git` path component is protected after Unicode normalization and
+case-insensitive comparison. Writes, creation, moves, renames, deletion and archive
+extraction refuse a target with such a component; moves and renames also refuse
+such a source. This covers `.git` directories, gitfiles and paths beneath them.
+When project file access is created, the host checks the Git layout once through
+its isolated Git invocation: `rev-parse --git-dir --git-common-dir`, with
+`core.worktree` resolved relative to the Git directory if set. All in-process
+writes in the project fail with a layout error if the root's `.git` entry is a
+symbolic link, or if the resolved Git directory or common directory is inside the
+project at a path without a `.git` component. The error identifies the layout and
+requires a standard Git layout for these tools. Git directories outside the
+project cannot be reached by project writes; worktrees whose gitfile points
+outside the project support ordinary writes while the `.git` name stays protected.
+If the host cannot verify the Git layout, in-process writes fail.
+Git configuration paths are also protected. Each host Git operation inspects local
+configuration and refuses `include` or `includeIf` entries before running,
+including entries added by the owner since the preceding call.
+Recursive operations validate each member. Archive extraction lists once and
+rejects absolute paths, `..`, Git metadata, links and special files before one
+extraction in a fresh staging directory inside the destination. Tar starts with
+`posix_spawn_file_actions_addfchdir_np` on its no-follow directory descriptor,
+reads the archive on standard input, and streams contents to a host-opened
+descriptor. The host creates entries from the validated relative names, checking
+sizes and recording each entry's identity from its anchored descriptor
+immediately after creation. The extracted tree must match
+the listing's paths and types, including implicit parents, and pass identity and
+link checks before files are published with anchored exclusive renames.
+A separate read-only metadata pass supplies each member's modification time,
+including nanoseconds. File times are restored through checked descriptors.
+Staging and destination directories are created with owner read, write and search
+permission so children can be written. Explicit directory members receive their
+archive modes and modification times through checked descriptors after publication
+and staging cleanup, deepest first. An existing destination keeps its own mode,
+access time and modification time; a `.` member supplies destination metadata only
+when extraction creates that directory.
+Cleanup removes an entry only when its device and inode match a creation record
+and the inode is provably the same one. APFS never reuses inode numbers within a
+volume, so there the device and inode suffice; on Linux the kernel file handle
+from `name_to_handle_at`, which encodes the inode generation, must match as well.
+Writing descriptors close when the operation finishes using them. On other
+filesystems, and Linux filesystems that cannot export handles, the operation
+instead keeps a close-on-exec descriptor to each created entry, so its inode
+cannot be reused while the operation runs. Each file operation keeps at most 64
+such descriptors and reserves 16 additional slots plus one per retained
+directory, releasing the reserve for cleanup, which holds one descriptor per
+directory level. At the limit, creation stops, staging is cleaned and the error
+names the 64-descriptor limit. Failure to read identity or allocate the reserve
+also fails the operation. Processes that can write the directories an operation
+works in are trusted not to race it: such a process can replace a new directory
+or symbolic link between its creation and its first descriptor, and cleanup then
+treats the replacement as created by the operation, restoring owner access to it
+and removing it when empty.
+Unknown entries are preserved without
+descending into foreign directories. The staging directory is retained and named
+in the error if cleanup cannot remove it. Earlier published entries remain if a
+later publication fails. `file.trash` refuses the project root, recursively checks
+members for protected paths and unsafe types, and allows multiply linked regular
+files because moving entries does not write file content. The platform Trash call
+uses a path, with no descriptor-based post-check or rollback.
+Git revisions are resolved to object IDs before use in fixed argument shapes;
+`--literal-pathspecs` applies to pathspec commands; `check-ignore` receives literal
+paths after `--`, without that option;
+merge checks reject assigned filter attributes in the working tree or either
+commit. These boundaries do not change permission requirements.

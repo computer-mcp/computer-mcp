@@ -1,0 +1,1467 @@
+{
+  "authorizationEpochID" : "11111111-2222-3333-4444-555555555555",
+  "authorizations" : [
+    "0F498DA7-03E4-4B4D-9E7D-6E23C5D336ED",
+    {
+      "basis" : [
+        {
+          "managed" : {
+            "identity" : {
+              "generation" : 9,
+              "id" : "BEE258D2-CE40-4BBF-ACB6-0151D209F098",
+              "isEdited" : false
+            },
+            "source" : "owner"
+          }
+        },
+        {
+          "permission" : {
+            "_0" : {
+              "principal" : {
+                "client" : {
+                  "_0" : "codec-fixture"
+                }
+              },
+              "requirement" : {
+                "permission" : {
+                  "screen" : {
+
+                  }
+                },
+                "value" : "access"
+              },
+              "scope" : {
+                "principal" : {
+
+                }
+              },
+              "source" : {
+                "onlyThisTime" : {
+                  "permit" : {
+                    "generation" : 15,
+                    "id" : "E01BA04B-62D7-4407-9540-35CD67309D59",
+                    "isEdited" : false
+                  },
+                  "request" : {
+                    "generation" : 14,
+                    "id" : "A3DFFF3B-C029-43B0-BA9E-059A5BC69EB4",
+                    "isEdited" : false
+                  }
+                }
+              }
+            }
+          }
+        },
+        {
+          "mode" : {
+            "_0" : {
+              "sandbox" : {
+
+              }
+            }
+          }
+        },
+        {
+          "sandbox" : {
+            "_0" : {
+              "managedDeniedReadLocations" : [
+
+              ],
+              "network" : {
+                "none" : {
+
+                }
+              },
+              "projectID" : "fixture",
+              "settings" : {
+                "deniedReadRules" : [
+
+                ],
+                "network" : {
+                  "configuration" : {
+                    "none" : {
+
+                    }
+                  },
+                  "customRules" : [
+
+                  ]
+                }
+              }
+            }
+          }
+        },
+        {
+          "request" : {
+            "_0" : {
+              "generation" : 14,
+              "id" : "A3DFFF3B-C029-43B0-BA9E-059A5BC69EB4",
+              "isEdited" : false
+            }
+          }
+        }
+      ],
+      "executionID" : "2AE93D18-C7E9-4B87-AE6E-F421EC659051",
+      "finished" : false,
+      "identity" : {
+        "generation" : 16,
+        "id" : "0F498DA7-03E4-4B4D-9E7D-6E23C5D336ED",
+        "isEdited" : false
+      },
+      "invocation" : {
+        "argumentsDigest" : "codec-v1",
+        "principal" : {
+          "client" : {
+            "_0" : "codec-fixture"
+          }
+        },
+        "projectID" : "fixture",
+        "tool" : "fixture.run"
+      },
+      "requirements" : {
+        "actions" : [
+          {
+            "pathOperation" : {
+              "read" : {
+
+              }
+            },
+            "requirement" : {
+              "permission" : {
+                "screen" : {
+
+                }
+              },
+              "value" : "access"
+            },
+            "requiresFullAccess" : false,
+            "scope" : {
+              "principal" : {
+
+              }
+            }
+          }
+        ],
+        "execution" : {
+          "background" : true
+        },
+        "mode" : {
+          "sandbox" : {
+
+          }
+        },
+        "networks" : [
+
+        ],
+        "paths" : [
+
+        ],
+        "sandboxProjectID" : "fixture"
+      },
+      "revoked" : false,
+      "revokesRetries" : false
+    }
+  ],
+  "environment" : {
+    "connections" : {
+
+    },
+    "endedConnections" : [
+
+    ],
+    "limits" : [
+      {
+        "client" : {
+          "_0" : "codec-fixture"
+        }
+      },
+      {
+        "sources" : [
+          "machine",
+          {
+            "absent" : {
+
+            }
+          },
+          "owner",
+          {
+            "available" : {
+              "_0" : {
+                "allowsFullAccess" : true,
+                "deniedReadRules" : [
+
+                ],
+                "executionLimits" : {
+
+                },
+                "identity" : {
+                  "generation" : 9,
+                  "id" : "BEE258D2-CE40-4BBF-ACB6-0151D209F098",
+                  "isEdited" : false
+                },
+                "network" : {
+                  "configuration" : {
+                    "full" : {
+
+                    }
+                  },
+                  "customRules" : [
+
+                  ],
+                  "fullRule" : {
+                    "generation" : 10,
+                    "id" : "5B81AB0E-DB02-499D-92CB-FE123BB96F68",
+                    "isEdited" : false
+                  }
+                },
+                "permissionCeilings" : {
+                  "entries" : [
+
+                  ],
+                  "grantIDs" : [
+
+                  ]
+                }
+              }
+            }
+          }
+        ]
+      }
+    ],
+    "modes" : [
+      {
+        "client" : {
+          "_0" : "codec-fixture"
+        }
+      },
+      {
+        "identity" : {
+          "generation" : 22,
+          "id" : "365A4BB2-7F52-4C13-ACA7-390891F89E48",
+          "isEdited" : false
+        },
+        "mode" : {
+          "fullAccess" : {
+            "_0" : {
+              "standing" : {
+
+              }
+            }
+          }
+        },
+        "profileDigest" : "be225caec669f43bb7d5c58c6cc5275df9e6fae64c02d45edd685d73c9bb6186"
+      }
+    ],
+    "paths" : {
+      "outsideUserDataIdentity" : {
+        "generation" : 13,
+        "id" : "90BAA37A-7B94-4B47-AE33-BD5F04BA7550",
+        "isEdited" : false
+      },
+      "pathRules" : [
+        {
+          "identity" : {
+            "generation" : 12,
+            "id" : "41C02CC4-5381-4889-8FF7-12302F9CB8EF",
+            "isEdited" : false
+          },
+          "kind" : {
+            "developer" : {
+
+            }
+          },
+          "root" : "\/fixtures"
+        }
+      ],
+      "registeredProjects" : [
+        {
+          "id" : "fixture",
+          "identity" : {
+            "generation" : 11,
+            "id" : "E57C1F3F-EA67-408F-9EC8-BE295E60C4CB",
+            "isEdited" : false
+          },
+          "root" : "\/fixtures\/project"
+        }
+      ]
+    },
+    "trustedHosts" : [
+
+    ]
+  },
+  "executions" : [
+    "2AE93D18-C7E9-4B87-AE6E-F421EC659051",
+    {
+      "authorizationIDs" : [
+        "0F498DA7-03E4-4B4D-9E7D-6E23C5D336ED"
+      ],
+      "id" : "2AE93D18-C7E9-4B87-AE6E-F421EC659051",
+      "isRunning" : true,
+      "limitCapabilities" : {
+        "liveMemory" : false,
+        "memory" : false
+      },
+      "limitRequest" : {
+        "background" : true
+      },
+      "limits" : {
+        "outputBytes" : 8388608,
+        "retainedOutputBytes" : 1073741824,
+        "retentionSeconds" : 86400,
+        "sources" : [
+          "owner",
+          {
+
+          }
+        ]
+      },
+      "owner" : {
+        "client" : {
+          "_0" : "codec-fixture"
+        }
+      },
+      "revoked" : false,
+      "startedAt" : 721692800
+    }
+  ],
+  "issuedConsents" : [
+    {
+      "client" : {
+        "_0" : "codec-fixture"
+      }
+    },
+    [
+      {
+        "identity" : {
+          "generation" : 22,
+          "id" : "365A4BB2-7F52-4C13-ACA7-390891F89E48",
+          "isEdited" : false
+        },
+        "mode" : {
+          "fullAccess" : {
+            "_0" : {
+              "standing" : {
+
+              }
+            }
+          }
+        },
+        "profileDigest" : "be225caec669f43bb7d5c58c6cc5275df9e6fae64c02d45edd685d73c9bb6186"
+      }
+    ]
+  ],
+  "pendingExecutionTerminations" : [
+
+  ],
+  "requests" : [
+    "A3DFFF3B-C029-43B0-BA9E-059A5BC69EB4",
+    {
+      "basis" : [
+        {
+          "mode" : {
+            "_0" : {
+              "sandbox" : {
+
+              }
+            }
+          }
+        },
+        {
+          "managed" : {
+            "identity" : {
+              "generation" : 9,
+              "id" : "BEE258D2-CE40-4BBF-ACB6-0151D209F098",
+              "isEdited" : false
+            },
+            "source" : "owner"
+          }
+        },
+        {
+          "permission" : {
+            "_0" : {
+              "principal" : {
+                "client" : {
+                  "_0" : "codec-fixture"
+                }
+              },
+              "requirement" : {
+                "permission" : {
+                  "screen" : {
+
+                  }
+                },
+                "value" : "access"
+              },
+              "scope" : {
+                "principal" : {
+
+                }
+              },
+              "source" : {
+                "onlyThisTime" : {
+                  "permit" : {
+                    "generation" : 15,
+                    "id" : "E01BA04B-62D7-4407-9540-35CD67309D59",
+                    "isEdited" : false
+                  },
+                  "request" : {
+                    "generation" : 14,
+                    "id" : "A3DFFF3B-C029-43B0-BA9E-059A5BC69EB4",
+                    "isEdited" : false
+                  }
+                }
+              }
+            }
+          }
+        },
+        {
+          "sandbox" : {
+            "_0" : {
+              "managedDeniedReadLocations" : [
+
+              ],
+              "network" : {
+                "none" : {
+
+                }
+              },
+              "projectID" : "fixture",
+              "settings" : {
+                "deniedReadRules" : [
+
+                ],
+                "network" : {
+                  "configuration" : {
+                    "none" : {
+
+                    }
+                  },
+                  "customRules" : [
+
+                  ]
+                }
+              }
+            }
+          }
+        },
+        {
+          "request" : {
+            "_0" : {
+              "generation" : 14,
+              "id" : "A3DFFF3B-C029-43B0-BA9E-059A5BC69EB4",
+              "isEdited" : false
+            }
+          }
+        }
+      ],
+      "content" : {
+        "permission" : {
+          "_0" : {
+            "principal" : {
+              "client" : {
+                "_0" : "codec-fixture"
+              }
+            },
+            "requirement" : {
+              "permission" : {
+                "screen" : {
+
+                }
+              },
+              "value" : "access"
+            },
+            "scope" : {
+              "principal" : {
+
+              }
+            }
+          }
+        }
+      },
+      "createdAt" : 721692800,
+      "identity" : {
+        "generation" : 14,
+        "id" : "A3DFFF3B-C029-43B0-BA9E-059A5BC69EB4",
+        "isEdited" : false
+      },
+      "invocation" : {
+        "argumentsDigest" : "codec-v1",
+        "principal" : {
+          "client" : {
+            "_0" : "codec-fixture"
+          }
+        },
+        "projectID" : "fixture",
+        "tool" : "fixture.run"
+      },
+      "observedPermission" : {
+        "notGranted" : {
+
+        }
+      },
+      "permitIdentity" : {
+        "generation" : 15,
+        "id" : "E01BA04B-62D7-4407-9540-35CD67309D59",
+        "isEdited" : false
+      },
+      "requirements" : {
+        "actions" : [
+          {
+            "pathOperation" : {
+              "read" : {
+
+              }
+            },
+            "requirement" : {
+              "permission" : {
+                "screen" : {
+
+                }
+              },
+              "value" : "access"
+            },
+            "requiresFullAccess" : false,
+            "scope" : {
+              "principal" : {
+
+              }
+            }
+          }
+        ],
+        "execution" : {
+          "background" : true
+        },
+        "mode" : {
+          "sandbox" : {
+
+          }
+        },
+        "networks" : [
+
+        ],
+        "paths" : [
+
+        ],
+        "sandboxProjectID" : "fixture"
+      },
+      "status" : {
+        "consumed" : {
+          "_0" : "0F498DA7-03E4-4B4D-9E7D-6E23C5D336ED"
+        }
+      }
+    },
+    "C2C4A319-5989-4793-8F50-9818518B468C",
+    {
+      "basis" : [
+        {
+          "permit" : {
+            "identity" : {
+              "generation" : 21,
+              "id" : "D01264CA-5A40-4FF7-858E-1EC9A0D604EA",
+              "isEdited" : false
+            },
+            "request" : {
+              "generation" : 20,
+              "id" : "C2C4A319-5989-4793-8F50-9818518B468C",
+              "isEdited" : false
+            }
+          }
+        },
+        {
+          "mode" : {
+            "_0" : {
+              "sandbox" : {
+
+              }
+            }
+          }
+        },
+        {
+          "retryOrigin" : {
+            "_0" : {
+              "generation" : 16,
+              "id" : "0F498DA7-03E4-4B4D-9E7D-6E23C5D336ED",
+              "isEdited" : false
+            }
+          }
+        },
+        {
+          "permission" : {
+            "_0" : {
+              "principal" : {
+                "client" : {
+                  "_0" : "codec-fixture"
+                }
+              },
+              "requirement" : {
+                "permission" : {
+                  "screen" : {
+
+                  }
+                },
+                "value" : "access"
+              },
+              "scope" : {
+                "principal" : {
+
+                }
+              },
+              "source" : {
+                "onlyThisTime" : {
+                  "permit" : {
+                    "generation" : 19,
+                    "id" : "2979EB39-82F5-493E-A1F6-7F9BB6F9D3D4",
+                    "isEdited" : false
+                  },
+                  "request" : {
+                    "generation" : 18,
+                    "id" : "E25A9092-BE12-4CC9-A159-E662295F5A89",
+                    "isEdited" : false
+                  }
+                }
+              }
+            }
+          }
+        },
+        {
+          "request" : {
+            "_0" : {
+              "generation" : 20,
+              "id" : "C2C4A319-5989-4793-8F50-9818518B468C",
+              "isEdited" : false
+            }
+          }
+        },
+        {
+          "managed" : {
+            "identity" : {
+              "generation" : 9,
+              "id" : "BEE258D2-CE40-4BBF-ACB6-0151D209F098",
+              "isEdited" : false
+            },
+            "source" : "owner"
+          }
+        },
+        {
+          "sandbox" : {
+            "_0" : {
+              "managedDeniedReadLocations" : [
+
+              ],
+              "network" : {
+                "none" : {
+
+                }
+              },
+              "projectID" : "fixture",
+              "settings" : {
+                "deniedReadRules" : [
+
+                ],
+                "network" : {
+                  "configuration" : {
+                    "none" : {
+
+                    }
+                  },
+                  "customRules" : [
+
+                  ]
+                }
+              }
+            }
+          }
+        },
+        {
+          "network" : {
+            "_0" : {
+              "host" : "api.example.test",
+              "policySource" : "owner",
+              "projectID" : "fixture",
+              "ruleIdentity" : {
+                "generation" : 10,
+                "id" : "5B81AB0E-DB02-499D-92CB-FE123BB96F68",
+                "isEdited" : false
+              },
+              "source" : {
+                "full" : {
+
+                }
+              }
+            }
+          }
+        },
+        {
+          "request" : {
+            "_0" : {
+              "generation" : 18,
+              "id" : "E25A9092-BE12-4CC9-A159-E662295F5A89",
+              "isEdited" : false
+            }
+          }
+        }
+      ],
+      "content" : {
+        "network" : {
+          "_0" : {
+            "host" : "api.example.test",
+            "principal" : {
+              "client" : {
+                "_0" : "codec-fixture"
+              }
+            },
+            "projectID" : "fixture"
+          }
+        }
+      },
+      "createdAt" : 721692800,
+      "identity" : {
+        "generation" : 20,
+        "id" : "C2C4A319-5989-4793-8F50-9818518B468C",
+        "isEdited" : false
+      },
+      "invocation" : {
+        "argumentsDigest" : "codec-v1",
+        "principal" : {
+          "client" : {
+            "_0" : "codec-fixture"
+          }
+        },
+        "projectID" : "fixture",
+        "tool" : "fixture.run"
+      },
+      "observedPermission" : {
+        "notGranted" : {
+
+        }
+      },
+      "permitIdentity" : {
+        "generation" : 21,
+        "id" : "D01264CA-5A40-4FF7-858E-1EC9A0D604EA",
+        "isEdited" : false
+      },
+      "requirements" : {
+        "actions" : [
+          {
+            "pathOperation" : {
+              "read" : {
+
+              }
+            },
+            "requirement" : {
+              "permission" : {
+                "screen" : {
+
+                }
+              },
+              "value" : "access"
+            },
+            "requiresFullAccess" : false,
+            "scope" : {
+              "principal" : {
+
+              }
+            }
+          }
+        ],
+        "execution" : {
+          "background" : true
+        },
+        "mode" : {
+          "sandbox" : {
+
+          }
+        },
+        "networks" : [
+          {
+            "host" : "api.example.test",
+            "isLocalNetwork" : false,
+            "projectID" : "fixture"
+          }
+        ],
+        "paths" : [
+
+        ],
+        "sandboxProjectID" : "fixture"
+      },
+      "status" : {
+        "onlyThisTime" : {
+
+        }
+      }
+    },
+    "E25A9092-BE12-4CC9-A159-E662295F5A89",
+    {
+      "basis" : [
+        {
+          "request" : {
+            "_0" : {
+              "generation" : 20,
+              "id" : "C2C4A319-5989-4793-8F50-9818518B468C",
+              "isEdited" : false
+            }
+          }
+        },
+        {
+          "request" : {
+            "_0" : {
+              "generation" : 18,
+              "id" : "E25A9092-BE12-4CC9-A159-E662295F5A89",
+              "isEdited" : false
+            }
+          }
+        },
+        {
+          "network" : {
+            "_0" : {
+              "host" : "api.example.test",
+              "policySource" : "owner",
+              "projectID" : "fixture",
+              "ruleIdentity" : {
+                "generation" : 10,
+                "id" : "5B81AB0E-DB02-499D-92CB-FE123BB96F68",
+                "isEdited" : false
+              },
+              "source" : {
+                "full" : {
+
+                }
+              }
+            }
+          }
+        },
+        {
+          "managed" : {
+            "identity" : {
+              "generation" : 9,
+              "id" : "BEE258D2-CE40-4BBF-ACB6-0151D209F098",
+              "isEdited" : false
+            },
+            "source" : "owner"
+          }
+        },
+        {
+          "retryOrigin" : {
+            "_0" : {
+              "generation" : 16,
+              "id" : "0F498DA7-03E4-4B4D-9E7D-6E23C5D336ED",
+              "isEdited" : false
+            }
+          }
+        },
+        {
+          "sandbox" : {
+            "_0" : {
+              "managedDeniedReadLocations" : [
+
+              ],
+              "network" : {
+                "none" : {
+
+                }
+              },
+              "projectID" : "fixture",
+              "settings" : {
+                "deniedReadRules" : [
+
+                ],
+                "network" : {
+                  "configuration" : {
+                    "none" : {
+
+                    }
+                  },
+                  "customRules" : [
+
+                  ]
+                }
+              }
+            }
+          }
+        },
+        {
+          "mode" : {
+            "_0" : {
+              "sandbox" : {
+
+              }
+            }
+          }
+        },
+        {
+          "permission" : {
+            "_0" : {
+              "principal" : {
+                "client" : {
+                  "_0" : "codec-fixture"
+                }
+              },
+              "requirement" : {
+                "permission" : {
+                  "screen" : {
+
+                  }
+                },
+                "value" : "access"
+              },
+              "scope" : {
+                "principal" : {
+
+                }
+              },
+              "source" : {
+                "onlyThisTime" : {
+                  "permit" : {
+                    "generation" : 19,
+                    "id" : "2979EB39-82F5-493E-A1F6-7F9BB6F9D3D4",
+                    "isEdited" : false
+                  },
+                  "request" : {
+                    "generation" : 18,
+                    "id" : "E25A9092-BE12-4CC9-A159-E662295F5A89",
+                    "isEdited" : false
+                  }
+                }
+              }
+            }
+          }
+        }
+      ],
+      "content" : {
+        "permission" : {
+          "_0" : {
+            "principal" : {
+              "client" : {
+                "_0" : "codec-fixture"
+              }
+            },
+            "requirement" : {
+              "permission" : {
+                "screen" : {
+
+                }
+              },
+              "value" : "access"
+            },
+            "scope" : {
+              "principal" : {
+
+              }
+            }
+          }
+        }
+      },
+      "createdAt" : 721692800,
+      "identity" : {
+        "generation" : 18,
+        "id" : "E25A9092-BE12-4CC9-A159-E662295F5A89",
+        "isEdited" : false
+      },
+      "invocation" : {
+        "argumentsDigest" : "codec-v1",
+        "principal" : {
+          "client" : {
+            "_0" : "codec-fixture"
+          }
+        },
+        "projectID" : "fixture",
+        "tool" : "fixture.run"
+      },
+      "observedPermission" : {
+        "notGranted" : {
+
+        }
+      },
+      "permitIdentity" : {
+        "generation" : 19,
+        "id" : "2979EB39-82F5-493E-A1F6-7F9BB6F9D3D4",
+        "isEdited" : false
+      },
+      "requirements" : {
+        "actions" : [
+          {
+            "pathOperation" : {
+              "read" : {
+
+              }
+            },
+            "requirement" : {
+              "permission" : {
+                "screen" : {
+
+                }
+              },
+              "value" : "access"
+            },
+            "requiresFullAccess" : false,
+            "scope" : {
+              "principal" : {
+
+              }
+            }
+          }
+        ],
+        "execution" : {
+          "background" : true
+        },
+        "mode" : {
+          "sandbox" : {
+
+          }
+        },
+        "networks" : [
+          {
+            "host" : "api.example.test",
+            "isLocalNetwork" : false,
+            "projectID" : "fixture"
+          }
+        ],
+        "paths" : [
+
+        ],
+        "sandboxProjectID" : "fixture"
+      },
+      "status" : {
+        "onlyThisTime" : {
+
+        }
+      }
+    },
+    "4EAEDF90-A5B9-46AD-A6A8-96198485B7AE",
+    {
+      "basis" : [
+        {
+          "managed" : {
+            "identity" : {
+              "generation" : 9,
+              "id" : "BEE258D2-CE40-4BBF-ACB6-0151D209F098",
+              "isEdited" : false
+            },
+            "source" : "owner"
+          }
+        },
+        {
+          "request" : {
+            "_0" : {
+              "generation" : 24,
+              "id" : "4EAEDF90-A5B9-46AD-A6A8-96198485B7AE",
+              "isEdited" : false
+            }
+          }
+        },
+        {
+          "mode" : {
+            "_0" : {
+              "sandbox" : {
+
+              }
+            }
+          }
+        }
+      ],
+      "content" : {
+        "projectRegistration" : {
+          "_0" : {
+            "access" : "read",
+            "path" : "\/fixtures\/new",
+            "principal" : {
+              "client" : {
+                "_0" : "codec-fixture"
+              }
+            },
+            "projectID" : "new"
+          }
+        }
+      },
+      "createdAt" : 721692800,
+      "identity" : {
+        "generation" : 24,
+        "id" : "4EAEDF90-A5B9-46AD-A6A8-96198485B7AE",
+        "isEdited" : false
+      },
+      "invocation" : {
+        "argumentsDigest" : "register",
+        "principal" : {
+          "client" : {
+            "_0" : "codec-fixture"
+          }
+        },
+        "tool" : "project.request"
+      },
+      "observedPermission" : {
+        "notGranted" : {
+
+        }
+      },
+      "requirements" : {
+        "actions" : [
+
+        ],
+        "execution" : {
+          "background" : false
+        },
+        "mode" : {
+          "sandbox" : {
+
+          }
+        },
+        "networks" : [
+
+        ],
+        "paths" : [
+
+        ],
+        "registration" : {
+          "access" : "read",
+          "path" : "\/fixtures\/new",
+          "principal" : {
+            "client" : {
+              "_0" : "codec-fixture"
+            }
+          },
+          "projectID" : "new"
+        },
+        "sandboxProjectID" : "new"
+      },
+      "status" : {
+        "pending" : {
+
+        }
+      }
+    }
+  ],
+  "retiredConsents" : [
+
+  ],
+  "retryOrigins" : [
+    "0F498DA7-03E4-4B4D-9E7D-6E23C5D336ED",
+    {
+      "actions" : [
+        {
+          "pathOperation" : {
+            "read" : {
+
+            }
+          },
+          "requirement" : {
+            "permission" : {
+              "screen" : {
+
+              }
+            },
+            "value" : "access"
+          },
+          "requiresFullAccess" : false,
+          "scope" : {
+            "principal" : {
+
+            }
+          }
+        }
+      ],
+      "execution" : {
+        "background" : true
+      },
+      "mode" : {
+        "sandbox" : {
+
+        }
+      },
+      "networks" : [
+
+      ],
+      "paths" : [
+
+      ],
+      "sandboxProjectID" : "fixture"
+    }
+  ],
+  "revision" : 24,
+  "rules" : [
+    {
+      "client" : {
+        "_0" : "codec-fixture"
+      }
+    },
+    {
+      "entries" : [
+        {
+          "project" : {
+            "_0" : "fixture"
+          }
+        },
+        {
+          "granted" : {
+            "_0" : "read"
+          }
+        },
+        {
+          "machineInformation" : {
+
+          }
+        },
+        {
+          "granted" : {
+            "_0" : "access"
+          }
+        },
+        {
+          "skills" : {
+
+          }
+        },
+        {
+          "granted" : {
+            "_0" : "access"
+          }
+        }
+      ],
+      "grantIDs" : [
+        {
+          "machineInformation" : {
+
+          }
+        },
+        {
+          "generation" : 5,
+          "id" : "4722820D-144F-4B0E-8DFE-F2A88539FA4A",
+          "isEdited" : false
+        },
+        {
+          "skills" : {
+
+          }
+        },
+        {
+          "generation" : 6,
+          "id" : "697D87AA-4D1E-42A3-8FBA-BE078FEE30FC",
+          "isEdited" : false
+        },
+        {
+          "project" : {
+            "_0" : "fixture"
+          }
+        },
+        {
+          "generation" : 7,
+          "id" : "8E07CF48-C0B4-40A9-A30C-3C0FE305A787",
+          "isEdited" : false
+        }
+      ]
+    }
+  ],
+  "runtimeChains" : [
+    "E25A9092-BE12-4CC9-A159-E662295F5A89",
+    {
+      "carriedIDs" : [
+        "E25A9092-BE12-4CC9-A159-E662295F5A89"
+      ],
+      "invocation" : {
+        "argumentsDigest" : "codec-v1",
+        "principal" : {
+          "client" : {
+            "_0" : "codec-fixture"
+          }
+        },
+        "projectID" : "fixture",
+        "tool" : "fixture.run"
+      },
+      "originalRequirements" : {
+        "actions" : [
+          {
+            "pathOperation" : {
+              "read" : {
+
+              }
+            },
+            "requirement" : {
+              "permission" : {
+                "screen" : {
+
+                }
+              },
+              "value" : "access"
+            },
+            "requiresFullAccess" : false,
+            "scope" : {
+              "principal" : {
+
+              }
+            }
+          }
+        ],
+        "execution" : {
+          "background" : true
+        },
+        "mode" : {
+          "sandbox" : {
+
+          }
+        },
+        "networks" : [
+
+        ],
+        "paths" : [
+
+        ],
+        "sandboxProjectID" : "fixture"
+      },
+      "requirements" : {
+        "actions" : [
+          {
+            "pathOperation" : {
+              "read" : {
+
+              }
+            },
+            "requirement" : {
+              "permission" : {
+                "screen" : {
+
+                }
+              },
+              "value" : "access"
+            },
+            "requiresFullAccess" : false,
+            "scope" : {
+              "principal" : {
+
+              }
+            }
+          }
+        ],
+        "execution" : {
+          "background" : true
+        },
+        "mode" : {
+          "sandbox" : {
+
+          }
+        },
+        "networks" : [
+          {
+            "host" : "api.example.test",
+            "isLocalNetwork" : false,
+            "projectID" : "fixture"
+          }
+        ],
+        "paths" : [
+
+        ],
+        "sandboxProjectID" : "fixture"
+      }
+    },
+    "C2C4A319-5989-4793-8F50-9818518B468C",
+    {
+      "carriedIDs" : [
+        "E25A9092-BE12-4CC9-A159-E662295F5A89"
+      ],
+      "invocation" : {
+        "argumentsDigest" : "codec-v1",
+        "principal" : {
+          "client" : {
+            "_0" : "codec-fixture"
+          }
+        },
+        "projectID" : "fixture",
+        "tool" : "fixture.run"
+      },
+      "originalRequirements" : {
+        "actions" : [
+          {
+            "pathOperation" : {
+              "read" : {
+
+              }
+            },
+            "requirement" : {
+              "permission" : {
+                "screen" : {
+
+                }
+              },
+              "value" : "access"
+            },
+            "requiresFullAccess" : false,
+            "scope" : {
+              "principal" : {
+
+              }
+            }
+          }
+        ],
+        "execution" : {
+          "background" : true
+        },
+        "mode" : {
+          "sandbox" : {
+
+          }
+        },
+        "networks" : [
+
+        ],
+        "paths" : [
+
+        ],
+        "sandboxProjectID" : "fixture"
+      },
+      "requirements" : {
+        "actions" : [
+          {
+            "pathOperation" : {
+              "read" : {
+
+              }
+            },
+            "requirement" : {
+              "permission" : {
+                "screen" : {
+
+                }
+              },
+              "value" : "access"
+            },
+            "requiresFullAccess" : false,
+            "scope" : {
+              "principal" : {
+
+              }
+            }
+          }
+        ],
+        "execution" : {
+          "background" : true
+        },
+        "mode" : {
+          "sandbox" : {
+
+          }
+        },
+        "networks" : [
+          {
+            "host" : "api.example.test",
+            "isLocalNetwork" : false,
+            "projectID" : "fixture"
+          }
+        ],
+        "paths" : [
+
+        ],
+        "sandboxProjectID" : "fixture"
+      }
+    }
+  ],
+  "runtimeSuccessors" : [
+    "0F498DA7-03E4-4B4D-9E7D-6E23C5D336ED",
+    [
+      "C2C4A319-5989-4793-8F50-9818518B468C"
+    ]
+  ],
+  "sandboxSettings" : {
+    "entries" : [
+
+    ]
+  },
+  "transactionIdentity" : "53BEFA00-83EE-4086-AA3E-548F8E491F32"
+}

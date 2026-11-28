@@ -16,6 +16,10 @@ package final class GatewayDatabaseConnection: @unchecked Sendable {
     var configuration = Configuration()
     // Independent management connections must acquire the write lock before checking revisions.
     configuration.busyMode = .timeout(5)
+    configuration.prepareDatabase { database in
+      try database.execute(sql: "PRAGMA synchronous = FULL")
+      try database.execute(sql: "PRAGMA fullfsync = ON")
+    }
     writer = try DatabaseQueue(path: path, configuration: configuration)
     try Self.open(writer)
   }
@@ -38,18 +42,147 @@ package final class GatewayDatabaseConnection: @unchecked Sendable {
       try database.alter(table: "auditEvents") { $0.add(column: "errorDetailsJSON", .text) }
     }
     migrator.registerMigration("project-terminology", migrate: ProjectSchemaMigration.migrate)
+    migrator.registerMigration("permission-ledger") { database in
+      try database.execute(
+        sql: """
+          CREATE TABLE permissionLedger (
+            id INTEGER PRIMARY KEY CHECK (id = 1),
+            codecVersion INTEGER NOT NULL,
+            databaseID TEXT NOT NULL,
+            epoch TEXT NOT NULL,
+            counter INTEGER NOT NULL CHECK (counter > 0),
+            payload BLOB NOT NULL
+          )
+          """)
+    }
+    migrator.registerMigration("permission-profiles") { database in
+      try database.execute(
+        sql: """
+          CREATE TABLE permissionProfiles (
+            id TEXT PRIMARY KEY,
+            authorizationRevision INTEGER NOT NULL CHECK (authorizationRevision > 0),
+            payload BLOB NOT NULL
+          );
+          CREATE TABLE permissionDerivedProjects (
+            projectID TEXT PRIMARY KEY,
+            sourceProjectID TEXT NOT NULL,
+            payload BLOB NOT NULL
+          );
+          CREATE TABLE permissionMigration (
+            id INTEGER PRIMARY KEY CHECK (id = 1),
+            version INTEGER NOT NULL,
+            inputDigest TEXT NOT NULL,
+            catalogDigest TEXT NOT NULL
+          );
+          """)
+    }
+    migrator.registerMigration("permission-services") { database in
+      try database.alter(table: "permissionProfiles") { $0.add(column: "authorityEpoch", .text) }
+      try database.execute(
+        sql: """
+          CREATE TABLE permissionControlRevision (
+            id INTEGER PRIMARY KEY CHECK (id = 1),
+            revision INTEGER NOT NULL CHECK (revision >= 0)
+          );
+          INSERT INTO permissionControlRevision VALUES (1, 0);
+          CREATE TABLE permissionSubjects (
+            principal BLOB PRIMARY KEY,
+            profileID TEXT NOT NULL,
+            caller TEXT NOT NULL
+          );
+          CREATE TABLE permissionOwnerPolicies (
+            profileID TEXT PRIMARY KEY,
+            payload BLOB,
+            authorityEpoch TEXT NOT NULL
+          );
+          CREATE TABLE permissionPolicySources (
+            source TEXT PRIMARY KEY,
+            payload BLOB NOT NULL
+          );
+          """)
+    }
+    migrator.registerMigration("host-call-records") { database in
+      try database.execute(
+        sql: """
+          CREATE TABLE hostCallRecords (id TEXT PRIMARY KEY, payload BLOB NOT NULL, completedAt REAL);
+          CREATE INDEX hostCallRecordsCompletion ON hostCallRecords(completedAt);
+          """)
+    }
+    migrator.registerMigration("execution-runtime") { database in
+      try database.execute(
+        sql: "CREATE TABLE permissionRuntimeExecutions (id TEXT PRIMARY KEY, payload BLOB NOT NULL)"
+      )
+    }
+    migrator.registerMigration("permission-activation") { database in
+      try database.execute(sql: "DROP TABLE operationTickets")
+      try database.alter(table: "permissionMigration") { $0.add(column: "manifestDigest", .text) }
+    }
+    migrator.registerMigration("permission-profile-publication") { database in
+      try database.execute(
+        sql: """
+          CREATE TABLE permissionProfilePublication (
+            id INTEGER PRIMARY KEY CHECK (id = 1),
+            payload BLOB NOT NULL
+          )
+          """)
+    }
+    migrator.registerMigration("derived-project-ledger", migrate: DerivedProjectMigration.migrate)
+    migrator.registerMigration("provider-authority") { database in
+      try database.execute(
+        sql: """
+          CREATE TABLE permissionProviders (
+            kind TEXT NOT NULL CHECK (kind IN ('package', 'local-server')),
+            name TEXT NOT NULL,
+            payload BLOB NOT NULL,
+            ownerPolicy BLOB,
+            policyEpoch TEXT,
+            PRIMARY KEY (kind, name)
+          )
+          """)
+    }
+    migrator.registerMigration("provider-containers") { database in
+      try database.execute(
+        sql: """
+          CREATE TABLE providerStorage (
+            id INTEGER PRIMARY KEY CHECK (id = 1),
+            reservation TEXT NOT NULL,
+            payload BLOB
+          );
+          CREATE TABLE providerContainers (
+            kind TEXT NOT NULL CHECK (kind IN ('package', 'local-server')),
+            name TEXT NOT NULL,
+            reservation TEXT NOT NULL UNIQUE,
+            payload BLOB,
+            PRIMARY KEY (kind, name)
+          );
+          """)
+    }
+    migrator.registerMigration("host-operations") { database in
+      try database.execute(
+        sql: """
+          CREATE TABLE hostOperations (
+            id TEXT PRIMARY KEY,
+            invocationID TEXT NOT NULL UNIQUE,
+            state TEXT NOT NULL,
+            payload BLOB NOT NULL
+          );
+          CREATE INDEX hostOperationStates ON hostOperations(state);
+          """)
+    }
+    migrator.registerMigration(
+      "plugin-worktree-retirement", migrate: PluginWorktreeRetirement.migrate)
     return migrator
   }()
 
   private static func open(_ writer: any DatabaseWriter) throws {
-    try writer.read(checkSchema)
+    try writer.read { try checkSchema($0) }
     try migrator.migrate(writer)
   }
 
   /// Throws `UnsupportedDatabaseSchema` unless `database` is empty or has only migrations
-  /// this version registers.
-  static func checkSchema(_ database: Database) throws {
-    let unknown = try migrator.appliedIdentifiers(database).subtracting(migrator.migrations)
+  /// in `known`, which defaults to the migrations this version registers.
+  static func checkSchema(_ database: Database, known: [String] = migrator.migrations) throws {
+    let unknown = try migrator.appliedIdentifiers(database).subtracting(known)
     guard unknown.isEmpty else {
       throw UnsupportedDatabaseSchema(identifiers: unknown.sorted())
     }

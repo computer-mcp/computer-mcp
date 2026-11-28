@@ -1,17 +1,13 @@
+import ComputerMCPCore
 import ComputerMCPPlatformPOSIX
+import ComputerMCPSandbox
 import Foundation
-import Subprocess
+import NIOConcurrencyHelpers
 
 #if canImport(Darwin)
   import Darwin
 #elseif canImport(Glibc)
   import Glibc
-#endif
-
-#if canImport(System)
-  @preconcurrency import System
-#else
-  import SystemPackage
 #endif
 
 package struct ManagedLineProcessSnapshot: Codable, Equatable, Sendable {
@@ -30,8 +26,8 @@ package struct ManagedLineProcessSnapshot: Codable, Equatable, Sendable {
   let processGroupID: Int32?
   let startedAt: Date?
   let stoppedAt: Date?
-  let exitCode: Int32?
-  let signal: Int32?
+  package let exitCode: Int32?
+  package let signal: Int32?
   let terminationEscalated: Bool
   let pendingWrites: Int
   package let hasExited: Bool
@@ -61,6 +57,7 @@ package enum ManagedLineProcessError: Error, LocalizedError, Sendable {
   case bufferOverflow
   case launchFailed(String)
   case oversizedMessage(Int)
+  case unterminatedOutput
   case terminationTimedOut(processID: Int32?)
 
   package var errorDescription: String? {
@@ -75,6 +72,8 @@ package enum ManagedLineProcessError: Error, LocalizedError, Sendable {
       return "Could not launch the gateway-owned process: \(message)"
     case .oversizedMessage(let limit):
       return "Managed process emitted a protocol line larger than \(limit) bytes."
+    case .unterminatedOutput:
+      return "Managed process stdout ended within a protocol line."
     case .terminationTimedOut(let processID):
       return
         "Managed process \(processID.map(String.init) ?? "unknown") did not exit after SIGKILL."
@@ -82,43 +81,56 @@ package enum ManagedLineProcessError: Error, LocalizedError, Sendable {
   }
 }
 
-/// Owns one supervisor generation. The lock protects closeTask; all process state is actor-owned.
-/// Foundation's callback reader is the only other lock boundary; no host process is adopted.
+/// Owns one process generation. The lock protects closeTask; all process state is actor-owned.
+/// Stream readers and descriptor input own their I/O locks; no host process is adopted.
 package final class ManagedLineProcess: @unchecked Sendable {
+  private let prepared: PreparedExecutionContext?
+
   package struct Configuration: Sendable {
     var executable: String
     var arguments: [String]
     var environment: [String: String]
+    /// Host-selected protocol provenance, separate from the command environment.
+    var hostProtocolMetadata: [String: String]
     var workingDirectory: URL
     var terminationGraceMilliseconds: Int
     var killGraceMilliseconds: Int
     var maximumMessageBytes: Int
     var ownerProcessID: Int32
+    var closesInputOnLaunch: Bool
+    var requiresCompleteOutputLines: Bool
     /// Explicit descriptors inherited only by the owned command, never its watchdog.
     var inheritedDescriptors: [Int32: FileHandle]
-    /// Inherited by the supervisor and its cleanup watchdog, not the vendor command.
+    /// Retained through prepared execution completion. Owner-administration
+    /// supervisors and their cleanup watchdog inherit it; the vendor command does not.
     var ownershipHandle: FileHandle?
 
     package init(
       executable: String,
       arguments: [String] = [],
       environment: [String: String] = ProcessInfo.processInfo.environment,
+      hostProtocolMetadata: [String: String] = [:],
       workingDirectory: URL,
       terminationGraceMilliseconds: Int = 1_000,
       killGraceMilliseconds: Int = 2_000,
       maximumMessageBytes: Int = 1_024 * 1_024,
       ownerProcessID: Int32 = getpid(),
+      closesInputOnLaunch: Bool = false,
+      requiresCompleteOutputLines: Bool = false,
       inheritedDescriptors: [Int32: FileHandle] = [:],
       ownershipHandle: FileHandle? = nil
     ) {
       self.executable = executable
       self.arguments = arguments
       self.environment = environment
+      self.hostProtocolMetadata = hostProtocolMetadata
       self.workingDirectory = workingDirectory.standardizedFileURL
       self.terminationGraceMilliseconds = terminationGraceMilliseconds
       self.killGraceMilliseconds = killGraceMilliseconds
       self.maximumMessageBytes = maximumMessageBytes
       self.ownerProcessID = ownerProcessID
+      self.closesInputOnLaunch = closesInputOnLaunch
+      self.requiresCompleteOutputLines = requiresCompleteOutputLines
       self.inheritedDescriptors = inheritedDescriptors
       self.ownershipHandle = ownershipHandle
     }
@@ -157,11 +169,17 @@ package final class ManagedLineProcess: @unchecked Sendable {
   private let closeLock = NSLock()
   private var closeTask: Task<Void, Never>?
 
-  package init(configuration: Configuration) throws {
+  package init(launcher: ExecutionLauncher, configuration: Configuration) throws {
     try configuration.validate()
     installBrokenPipeHandler()
     // Copy while the caller still owns its descriptors. Launch and shutdown may race,
     // so asynchronous spawn must never refer to a descriptor the caller can close/reuse.
+    self.prepared = try PreparedExecutionContext.current()
+    if prepared?.provider != nil {
+      guard configuration.inheritedDescriptors.isEmpty,
+        configuration.hostProtocolMetadata["COMPUTER_MCP_HOST_FD"] == nil
+      else { throw ManagedLineProcessError.invalidConfiguration }
+    }
     var configuration = configuration
     var ownedDescriptors: [Int32: FileHandle] = [:]
     for (destination, handle) in configuration.inheritedDescriptors {
@@ -185,13 +203,31 @@ package final class ManagedLineProcess: @unchecked Sendable {
       ownerProcessID: configuration.ownerProcessID
     )
     self.state = state
-    self.launchTask = Task.detached(priority: .userInitiated) {
-      await Self.launch(configuration: configuration, state: state)
+    self.launchTask = ExecutionTasks.start(priority: .userInitiated) { [configuration] in
+      await Self.launch(launcher: launcher, configuration: configuration, state: state)
     }
   }
 
-  package func sendLine(_ line: String) async throws {
-    try await state.send(line: line)
+  package func sendLine(
+    _ line: String, beforeWrite: (@Sendable () async throws -> Void)? = nil,
+    onInputAuthorized: (@Sendable () -> Void)? = nil,
+    onWriteCompleted: (@Sendable () -> Void)? = nil
+  ) async throws {
+    if let prepared {
+      let checking: any ExecutionAccessChecking
+      if let current = InvocationExecution.current {
+        guard let authority = current as? any ExecutionAccessChecking else {
+          throw ExecutionEnvironmentError.unavailable(
+            "The current invocation cannot authorize input to this execution")
+        }
+        checking = authority
+      } else {
+        checking = prepared
+      }
+      _ = try checking.accessExecution(prepared.executionID, operation: .writeInput)
+    }
+    onInputAuthorized?()
+    try await state.send(line: line, beforeWrite: beforeWrite, onWriteCompleted: onWriteCompleted)
   }
 
   package func close() async {
@@ -214,9 +250,9 @@ package final class ManagedLineProcess: @unchecked Sendable {
     let writing = await state.beginShutdown()
     let finishInput = Task { await state.finishInput() }
 
-    // The child has a separate job-control group. Do not kill its supervisor before
-    // it publishes that group's identity, or a concurrently spawned child could escape.
-    let startupDeadline = ContinuousClock.now + .seconds(5)
+    // Wait for the exact launch to publish its identity before teardown. Owner
+    // administration also waits for its supervisor's child-group publication.
+    let startupDeadline = ContinuousClock.now + .seconds(35)
     while !(await state.canSignalOwnedProcess()) {
       if ContinuousClock.now >= startupDeadline {
         await state.failTerminationTimeout()
@@ -233,8 +269,19 @@ package final class ManagedLineProcess: @unchecked Sendable {
       return
     }
 
+    if prepared != nil {
+      if let execution = await state.runningExecution() { await execution.cancelAndWait() }
+      guard await waitForExit(milliseconds: configuration.killGraceMilliseconds) else {
+        await state.failTerminationTimeout()
+        return
+      }
+      await launchTask.value
+      await finishInput.value
+      return
+    }
+
     if !(await state.signalChildGroup(SIGTERM)), let execution = await state.runningExecution() {
-      try? execution.send(signal: .terminate, toProcessGroup: true)
+      await execution.cancelAndWait()
     }
     if await waitForExit(milliseconds: configuration.terminationGraceMilliseconds) {
       await launchTask.value
@@ -244,9 +291,10 @@ package final class ManagedLineProcess: @unchecked Sendable {
 
     if let execution = await state.runningExecution() {
       await state.recordTerminationEscalation()
-      if !(await state.signalChildGroup(SIGKILL)) {
-        try? execution.send(signal: .kill, toProcessGroup: true)
-      }
+      _ = await state.signalChildGroup(SIGKILL)
+      // A terminated command can leave supervisor resources alive in other groups.
+      // Completion requires the ownership handle to settle all recorded members.
+      await execution.cancelAndWait()
     }
 
     if !(await waitForExit(milliseconds: configuration.killGraceMilliseconds)) {
@@ -289,7 +337,7 @@ package final class ManagedLineProcess: @unchecked Sendable {
   }
 
   private static func launch(
-    configuration: Configuration,
+    launcher: ExecutionLauncher, configuration: Configuration,
     state: ManagedLineProcessState
   ) async {
     var supervisorDirectory: URL?
@@ -299,94 +347,105 @@ package final class ManagedLineProcess: @unchecked Sendable {
     }
     do {
       if await state.isShuttingDown() {
-        await state.finish(status: .exited(0))
+        await state.finish(status: ExecutionExit(status: 0))
         return
       }
-      let environment = Dictionary(
-        uniqueKeysWithValues: configuration.environment.compactMap { key, value in
-          Subprocess.Environment.Key(rawValue: key).map { ($0, value) }
-        }
-      )
-      let supervisor = try makeSupervisor(configuration: configuration)
-      supervisorDirectory = supervisor.directory
+      let prepared = try PreparedExecutionContext.current()
+      let supervisor = try prepared == nil ? makeSupervisor(configuration: configuration) : nil
+      supervisorDirectory = supervisor?.directory
       #if os(Linux)
-        // The supervisor needs job control without a terminal; Ubuntu's sh is dash.
-        let executable: Executable = .path(FilePath("/bin/bash"))
+        let supervisorExecutable = "/bin/bash"
       #else
-        let executable: Executable = .path(FilePath("/bin/sh"))
+        let supervisorExecutable = "/bin/sh"
       #endif
-      var platformOptions = PlatformOptions()
-      platformOptions.processGroupID = 0
-      var inheritedDescriptors = configuration.inheritedDescriptors
-      if let handle = configuration.ownershipHandle { inheritedDescriptors[9] = handle }
-      let descriptorMappings = inheritedDescriptors.map {
-        (destination: $0.key, source: $0.value.fileDescriptor)
-      }.sorted { $0.destination < $1.destination }
-      #if canImport(Darwin)
-        platformOptions.preSpawnProcessConfigurator = { _, actions in
-          for mapping in descriptorMappings {
-            guard
-              posix_spawn_file_actions_adddup2(&actions, mapping.source, mapping.destination) == 0
-            else { throw ManagedLineProcessError.invalidConfiguration }
-          }
-        }
-      #else
-        // swift-subprocess has no spawn file actions on this platform, so a child can
-        // receive only its standard descriptors.
-        guard descriptorMappings.isEmpty else { throw ManagedLineProcessError.invalidConfiguration }
-      #endif
-      let standardOutput = try FileDescriptor.pipe()
+      var inheritedDescriptors = configuration.inheritedDescriptors.mapValues(\.fileDescriptor)
+      if supervisor != nil, let handle = configuration.ownershipHandle {
+        inheritedDescriptors[9] = handle.fileDescriptor
+      }
+      let standardInput = Pipe()
+      let standardOutput = Pipe()
+      let standardError = Pipe()
+      let writer: DescriptorInputWriter?
+      if configuration.closesInputOnLaunch {
+        try standardInput.fileHandleForWriting.close()
+        writer = nil
+      } else {
+        writer = try DescriptorInputWriter(handle: standardInput.fileHandleForWriting)
+      }
       let outputReader = try ProcessOutputReader(
-        handle: FileHandle(fileDescriptor: standardOutput.readEnd.rawValue, closeOnDealloc: true),
+        handle: standardOutput.fileHandleForReading,
         consume: { try await state.appendStandardOutput($0) },
-        onError: { await state.recordStreamError($0) }
-      )
+        onError: { await state.recordStreamError($0) })
+      let errorReader = try ProcessOutputReader(
+        handle: standardError.fileHandleForReading, consume: { _ in },
+        onError: { await state.recordStreamError($0) })
       outputReader.start()
+      errorReader.start()
+      let owner = NIOLockedValueBox<(any ExecutionOwnership)?>(nil)
+      let root = NIOLockedValueBox<Int32?>(nil)
       do {
-        let outcome = try await Subprocess.run(
-          executable,
-          arguments: Arguments(supervisor.arguments),
-          environment: .custom(environment),
-          workingDirectory: FilePath(configuration.workingDirectory.path),
-          platformOptions: platformOptions,
-          input: .inputWriter,
-          output: .fileDescriptor(
-            standardOutput.writeEnd,
-            closeAfterSpawningProcess: true
-          ),
-          error: .sequence
-        ) { execution in
-          for handle in configuration.inheritedDescriptors.values { try? handle.close() }
-          try? configuration.ownershipHandle?.close()
-          await state.attach(
-            execution: execution,
-            inputWriter: execution.standardInputWriter
-          )
-          guard let processID = await waitForProcessID(at: supervisor.processIDFile)
-          else {
-            try? execution.send(signal: .kill, toProcessGroup: true)
-            await state.finishInput()
-            await state.inputBodyReturning()
-            throw ManagedLineProcessError.launchFailed(
-              "The process supervisor did not report the child PID."
-            )
-          }
-          await state.attachChild(processID: processID)
-          if await state.isShuttingDown() {
+        let execution = try await launcher.start(
+          executable: SandboxPath(
+            supervisor == nil ? configuration.executable : supervisorExecutable),
+          arguments: supervisor?.arguments ?? configuration.arguments,
+          directory: SandboxPath(configuration.workingDirectory.path),
+          environment: ExecutionEnvironment(fullAccessVariables: configuration.environment),
+          mode: .fullAccess,
+          input: standardInput.fileHandleForReading.fileDescriptor,
+          output: standardOutput.fileHandleForWriting.fileDescriptor,
+          error: standardError.fileHandleForWriting.fileDescriptor,
+          inheritedDescriptors: inheritedDescriptors,
+          hostProtocolMetadata: configuration.hostProtocolMetadata,
+          bindOwnership: { handle in
+            owner.withLockedValue { $0 = handle }
+            handle.beforeStart { member in root.withLockedValue { $0 = member.processID } }
+          })
+        try standardInput.fileHandleForReading.close()
+        try standardOutput.fileHandleForWriting.close()
+        try standardError.fileHandleForWriting.close()
+        for handle in configuration.inheritedDescriptors.values { try? handle.close() }
+        if supervisor != nil { try? configuration.ownershipHandle?.close() }
+        await state.attach(
+          execution: execution,
+          supervisorProcessID: supervisor == nil ? nil : root.withLockedValue { $0 },
+          inputWriter: writer)
+        let processID: Int32?
+        if let supervisor {
+          processID = await waitForProcessID(at: supervisor.processIDFile)
+        } else {
+          processID = root.withLockedValue { $0 }
+        }
+        guard let processID else {
+          throw ManagedLineProcessError.launchFailed(
+            "The owned launch did not report its process identity.")
+        }
+        await state.attachChild(processID: processID)
+        if await state.isShuttingDown() {
+          if prepared != nil {
+            await execution.cancelAndWait()
+          } else {
             _ = await state.signalChildGroup(SIGTERM)
           }
-          do {
-            for try await _ in execution.standardError {}
-          } catch {
-            await state.recordStreamError(error)
-          }
-          await state.finishInput()
-          await state.inputBodyReturning()
         }
+        let outcome = try await execution.waitForExit()
+        writer?.cancel()
+        await state.finishInput()
+        await state.inputBodyReturning()
         await outputReader.stop(drainRemainingOutput: true)
-        await state.finish(status: outcome.terminationStatus)
+        await errorReader.stop(drainRemainingOutput: true)
+        await state.finish(
+          status: outcome, requiresCompleteOutputLines: configuration.requiresCompleteOutputLines)
       } catch {
+        writer?.cancel()
+        if let execution = owner.withLockedValue({ $0 }) { await execution.cancelAndWait() }
+        try? standardInput.fileHandleForReading.close()
+        try? standardOutput.fileHandleForWriting.close()
+        try? standardError.fileHandleForWriting.close()
+        await state.finishInput()
+        try? await writer?.finish()
+        await state.inputBodyReturning()
         await outputReader.stop(drainRemainingOutput: false)
+        await errorReader.stop(drainRemainingOutput: false)
         throw error
       }
     } catch {
@@ -466,6 +525,9 @@ package final class ManagedLineProcess: @unchecked Sendable {
 
       "$@" <&0 >&1 2>&2 \(configuration.ownershipHandle == nil ? "" : "9>&-") &
       child=$!
+      # Only the command needs a separate group. Supervision helpers must stay
+      # in the supervisor's owned group so cancellation also joins the watchdog.
+      set +m
       exec 0<&-
       \(configuration.inheritedDescriptors.keys.sorted().map { "exec \($0)>&-" }.joined(separator: "\n"))
       if ! printf '%s\n' "$child" > "$pid_file"; then exit 1; fi
@@ -504,7 +566,8 @@ package final class ManagedLineProcess: @unchecked Sendable {
   }
 
   private static func waitForProcessID(at file: URL) async -> Int32? {
-    for _ in 0..<500 {
+    let deadline = ContinuousClock.now + .seconds(5)
+    while ContinuousClock.now < deadline {
       if Task.isCancelled { return nil }
       if let text = try? String(contentsOf: file, encoding: .utf8),
         let processID = Int32(text.trimmingCharacters(in: .whitespacesAndNewlines))
@@ -518,16 +581,12 @@ package final class ManagedLineProcess: @unchecked Sendable {
 
 }
 
-private typealias ManagedLineExecution = Execution<
-  CustomWriteInput, FileDescriptorOutput, SequenceOutput
->
-
 private actor ManagedLineProcessState {
   private let continuation: AsyncThrowingStream<String, Error>.Continuation
   private let maximumMessageBytes: Int
   private let ownerProcessID: Int32
   private var state: ManagedLineProcessSnapshot.State = .starting
-  private var execution: ManagedLineExecution?
+  private var execution: (any ExecutionOwnership)?
   private let input = ChildProcessInput(
     closedError: ManagedLineProcessError.closed, inputClosedError: ManagedLineProcessError.closed)
   private var processID: Int32?
@@ -552,10 +611,17 @@ private actor ManagedLineProcessState {
     self.ownerProcessID = ownerProcessID
   }
 
-  func attach(execution: ManagedLineExecution, inputWriter: StandardInputWriter) async {
+  func attach(
+    execution: any ExecutionOwnership, supervisorProcessID: Int32?,
+    inputWriter: DescriptorInputWriter?
+  ) async {
     self.execution = execution
-    await input.attach(inputWriter, ready: false)
-    supervisorProcessID = Int32(execution.processIdentifier.value)
+    if let inputWriter {
+      await input.attach(inputWriter, ready: false)
+    } else {
+      await input.finish()
+    }
+    self.supervisorProcessID = supervisorProcessID
     startedAt = Date()
     if shutdownRequested {
       state = .stopping
@@ -570,7 +636,10 @@ private actor ManagedLineProcessState {
     await input.activate()
   }
 
-  func send(line: String) async throws {
+  func send(
+    line: String, beforeWrite: (@Sendable () async throws -> Void)?,
+    onWriteCompleted: (@Sendable () -> Void)?
+  ) async throws {
     try Task.checkCancellation()
     guard state == .starting || state == .running else {
       if state == .failed {
@@ -582,7 +651,9 @@ private actor ManagedLineProcessState {
       throw ManagedLineProcessError.oversizedMessage(maximumMessageBytes)
     }
     guard !line.contains("\n") else { throw ManagedLineProcessError.invalidConfiguration }
-    _ = try await input.write(Data((line + "\n").utf8), close: false)
+    _ = try await input.write(
+      Data((line + "\n").utf8), close: false, beforeWrite: beforeWrite,
+      onWriteCompleted: onWriteCompleted)
   }
 
   func inputSnapshot() -> ChildProcessInput.Snapshot { input.snapshot }
@@ -603,9 +674,7 @@ private actor ManagedLineProcessState {
     guard !data.isEmpty else { return }
     outputBuffer.append(data)
     guard outputBuffer.count <= maximumMessageBytes || outputBuffer.contains(0x0A) else {
-      let error = ManagedLineProcessError.oversizedMessage(maximumMessageBytes)
-      continuation.finish(throwing: error)
-      throw error
+      throw ManagedLineProcessError.oversizedMessage(maximumMessageBytes)
     }
 
     while let newline = outputBuffer.firstIndex(of: 0x0A) {
@@ -615,16 +684,12 @@ private actor ManagedLineProcessState {
       }
       outputBuffer.removeSubrange(...newline)
       guard line.count <= maximumMessageBytes else {
-        let error = ManagedLineProcessError.oversizedMessage(maximumMessageBytes)
-        continuation.finish(throwing: error)
-        throw error
+        throw ManagedLineProcessError.oversizedMessage(maximumMessageBytes)
       }
       guard let text = String(data: line, encoding: .utf8) else {
-        let error = ManagedLineProcessError.launchFailed(
+        throw ManagedLineProcessError.launchFailed(
           "Managed process stdout was not valid UTF-8."
         )
-        continuation.finish(throwing: error)
-        throw error
       }
       switch continuation.yield(text) {
       case .enqueued: break
@@ -647,7 +712,7 @@ private actor ManagedLineProcessState {
     return input.snapshot.pendingWrites > 0
   }
 
-  func runningExecution() -> ManagedLineExecution? {
+  func runningExecution() -> (any ExecutionOwnership)? {
     guard !hasFinished() else { return nil }
     return execution
   }
@@ -666,22 +731,22 @@ private actor ManagedLineProcessState {
   }
 
   func recordStreamError(_ error: Error) {
-    guard state != .stopped else { return }
+    guard state != .stopped, lastError == nil else { return }
     lastError = Self.safeMessage(error)
     continuation.finish(throwing: error)
   }
 
-  func finish(status: TerminationStatus) {
+  func finish(status: ExecutionExit, requiresCompleteOutputLines: Bool = false) {
     launchFinished = true
-    switch status {
-    case .exited(let code):
-      exitCode = code
-    case .signaled(let code):
-      signal = code
-    }
+    exitCode = status.signal == nil ? status.status : nil
+    signal = status.signal
     input.stop()
     execution = nil
     stoppedAt = Date()
+    if requiresCompleteOutputLines, !outputBuffer.isEmpty {
+      recordStreamError(ManagedLineProcessError.unterminatedOutput)
+    }
+    outputBuffer.removeAll()
     if state != .failed {
       state = .stopped
     }
@@ -735,6 +800,10 @@ private actor ManagedLineProcessState {
   }
 
   private static func safeMessage(_ error: Error) -> String {
+    // Only the bootstrap diagnostic envelope bypasses generic I/O redaction.
+    if let launch = error as? ExecutionEnvironmentError, case .bootstrapFailed = launch {
+      return launch.description
+    }
     // Generic I/O errors can contain argv, environment values or protocol payloads.
     guard let error = error as? ManagedLineProcessError else {
       return "Managed process I/O failed."

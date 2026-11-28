@@ -9,6 +9,10 @@ import Testing
 @testable import ComputerMCPProcess
 @testable import ComputerMCPToolsShell
 
+#if os(macOS)
+  import ComputerMCPDarwinTestSupport
+#endif
+
 @Suite(.nativeIntegration, .serialized)
 final class ShellToolProviderTests {
   @Test
@@ -17,6 +21,7 @@ final class ShellToolProviderTests {
     let shells = RecordingShellManager()
     let provider = ShellToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: .fixture(policy: .init(shellEnabled: true)), commandRunner: runner,
         shellManager: shells))
     let task = Task {
@@ -34,7 +39,8 @@ final class ShellToolProviderTests {
 
   @Test
   func testShellRunIsDisabledByDefault() {
-    let provider = ShellToolProvider(environment: ToolEnvironment(configuration: .fixture()))
+    let provider = ShellToolProvider(
+      environment: ToolEnvironment(launcher: testExecutionLauncher(), configuration: .fixture()))
 
     expectThrows(
       try provider.callTool(
@@ -51,14 +57,20 @@ final class ShellToolProviderTests {
   func testGatewayExposesCompleteShellSurfaceOnlyWhenEnabled() async throws {
     let disabled = ShellToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: .fixture(policy: PolicyConfig(shellEnabled: false))
       ))
     #expect(!(try disabled.definitions().map(\.tool).contains { $0.name.hasPrefix("shell.") }))
 
+    let directory = FileManager.default.temporaryDirectory.appendingPathComponent(
+      "shell-provider-\(UUID().uuidString)", isDirectory: true)
+    try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: false)
+    defer { try? FileManager.default.removeItem(at: directory) }
+    var configuration = GatewayConfiguration.fixture(policy: PolicyConfig(shellEnabled: true))
+    configuration.projectDirectory = directory
     let enabled = ShellToolProvider(
       environment: ToolEnvironment(
-        configuration: .fixture(policy: PolicyConfig(shellEnabled: true))
-      ))
+        launcher: testExecutionLauncher(), configuration: configuration))
     let names = Set(try enabled.definitions().map(\.tool).map(\.name))
     #expect(
       Set([
@@ -71,15 +83,23 @@ final class ShellToolProviderTests {
       ]).isSubset(of: names))
 
     let result = try await BlockingOperationExecutor(label: "test.shell-call").perform {
-      try enabled.callTool(
-        .init(
-          name: "shell.run",
-          arguments: .object([
-            "mode": .string("argv"),
-            "executable": .string("/bin/cat"),
-            "stdin_text": .string("gateway"),
-          ]), context: .empty
-        ))
+      let administration = ExecutionAdministration(
+        mode: .fullAccess,
+        environment: try .init(fullAccessVariables: [
+          "HOME": directory.path, "ZDOTDIR": directory.path, "TMPDIR": directory.path + "/",
+          "PATH": systemUtilityPath,
+        ]))
+      return try ExecutionAdministration.$current.withValue(administration) {
+        try enabled.callTool(
+          .init(
+            name: "shell.run",
+            arguments: .object([
+              "mode": .string("argv"),
+              "executable": .string("/bin/cat"),
+              "stdin_text": .string("gateway"),
+            ]), context: .empty
+          ))
+      }
     }
     let envelope = try #require(result.objectValue)
     #expect((envelope["isError"]) == (.bool(false)))
@@ -114,8 +134,7 @@ private final class RecordingShellManager: ShellManaging, @unchecked Sendable {
 
   func spawn(
     request: ShellLaunchRequest, defaultShell: String, defaultWorkingDirectory: URL,
-    timeoutMilliseconds: Int?, maxOutputBytes: Int, maxSessions: Int,
-    terminationGraceMilliseconds: Int
+    timeoutMilliseconds: Int?, maxOutputBytes: Int, maxSessions: Int
   ) throws -> String {
     lock.withLock { spawns += 1 }
     return "session-1"
@@ -123,8 +142,7 @@ private final class RecordingShellManager: ShellManaging, @unchecked Sendable {
 
   func run(
     request: ShellLaunchRequest, defaultShell: String, defaultWorkingDirectory: URL,
-    standardInput: Data, timeoutMilliseconds: Int, maxOutputBytes: Int, maxSessions: Int,
-    terminationGraceMilliseconds: Int
+    standardInput: Data, timeoutMilliseconds: Int, maxOutputBytes: Int, maxSessions: Int
   ) throws -> ShellSessionSnapshot {
     throw GatewayToolError.executionFailed("Unexpected shell manager call.")
   }

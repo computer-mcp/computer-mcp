@@ -97,6 +97,10 @@ discarded and automatically retried when configuration changes.
 Cloudflare startup has one owned task per profile. Stop cancels and joins a
 pending start before closing any published origin and process; concurrent stops
 join the same task, and replacement starts are refused during either transition.
+The process starts through `ExecutionLauncher` under
+[host administration](SecurityAndPrivacy.md#execution-admission). Stop joins
+confirmed execution cleanup before releasing
+the origin, token file and log descriptors.
 Startup rechecks the host configuration, project, grant and plugin inputs
 around origin creation and process publication. Its downstream MCP client uses
 the host's credential provider. Version probes use the bounded command runner on
@@ -226,15 +230,18 @@ establishes their signing identity, publisher provenance or runtime compatibilit
   Declared executable checks run inside each authorized call, before target argv,
   with bounded capture/time and executable/interpreter identity comparisons.
   Listings and static diagnostics do not execute file-backed compatibility checks.
-  Publisher hints do not change the host Full Shell boundary. See
+  Publisher hints do not change the host execution-permission boundary. See
   [CLI Trees](../Reference/CLITrees.md) for the contract and refresh behavior.
-- Shell/process: `swift-subprocess` sessions with stdin, cursor output,
+- Shell/process: launcher-owned sessions with stdin, cursor output,
   timeouts, cancellation, process-group cleanup, and byte limits. A shared
   nonblocking pipe reader delivers available bytes without waiting for a full
   buffer and applies consumer backpressure between bounded reads. Session
   completion joins both output readers, including inherited pipe writers.
 - Downstream MCP: persistent MCP SDK clients over stdio or Streamable
-  HTTP, including tools, resources, prompts, list-changed events, and
+  HTTP. Stdio launch admission and current availability follow
+  [Security and Privacy](SecurityAndPrivacy.md#execution-admission); configured
+  environments and explicit host-service descriptors do not supply launch authority.
+  Clients support tools, resources, prompts, list-changed events, and
   cancellation. Each project registry owns an independently scoped client,
   connection pool, and tool-change stream. Authorization wrappers preserve the
   host policy when creating that scope. Stopping one registry closes its own
@@ -345,14 +352,15 @@ listener-wait callers join that same cleanup. Listener restart is rejected while
 cleanup is pending, and a waiter from a completed listener generation cannot
 stop a subsequent listener.
 
-The shared managed-line process primitive supplies protocol-independent stdio
-ownership for downstream MCP adapters. It launches an owned
-supervisor and child group, bounds protocol lines and receive queues, drains
-stderr, and closes stdin before escalating through TERM and KILL. Shutdown
-joins startup, readers and pipe writes; only the recorded owned group is
-signalled. The supervisor also cleans up when its owner exits. This is process
-ownership, not an OS sandbox, and does not claim containment of descendants
-that deliberately leave the group.
+The shared managed-line process primitive bounds protocol lines and receive
+queues, drains stderr, and joins startup, readers and pipe writes on shutdown.
+For a prepared provider, the transport uses the verified executable and working
+directory from its execution context and attaches the host-created channel when
+the provider uses scoped Host services. An unprepared launch uses a supervisor
+that owns the child process group and cleans it up when its owner exits.
+Shutdown closes stdin before escalating through TERM and KILL against the
+recorded group. Process-group ownership covers descendants that stay in the
+group.
 
 For stdio, the scoped client's project directory is the base for an absent,
 empty, `project`, or relative registration `cwd`. The transport resolves the
@@ -373,10 +381,13 @@ for the wire contract and authorization boundary.
 ## Scoped Plugin Host Services
 
 Callback-enabled owned stdio adapters receive a private standard MCP endpoint.
-The host retains caller grants, project registrations, approval authority and
+The host retains caller grants, project registrations, permission authority and
 audit; the adapter owns domain state and vendor protocol execution.
 `MCPHostInvocation` records the live outer call without exporting a credential.
-The host sends only its correlation UUID in downstream request metadata.
+The host sends the invocation UUID in downstream request metadata. For a
+worktree add or remove, it also sends the operation UUID reserved for that
+mutation. See the [Host Services wire reference](../Reference/HostServices.md)
+for the metadata keys and request fields.
 `host.invocations.describe` resolves that identity within the private channel
 and checks current authorization. Independently started MCP requests retain the
 record until their response or confirmed local cleanup, including after their
@@ -385,12 +396,14 @@ Validated provider work retains the creating call's context through its immutabl
 acquisition reference, including derived work after the response. Complete work
 observations release the context only after its final owner disappears; failed
 observations retain it. Background contexts do not consume active-call slots.
-Exact-ID context inspection rechecks the current grant. Services that require
-an executing operation ticket continue to require an active forwarded request;
-background retention does not extend that mutation window.
-Private services match that reference, current grants and, for destructive
-removal, the executing operation ticket. Binding is lazy so plugin catalog
-startup does not depend on a partially constructed Gateway runtime.
+Exact-ID context inspection rechecks the current grant. Mutation services require
+an active forwarded request; background retention does not extend that mutation
+window. Private services compare the durable call record with its in-process lease,
+exact action and arguments, then check current grants. Before forwarding a
+lifecycle mutation the host durably reserves an operation; a callback atomically
+claims that reservation under current authority, and the operation records the
+outcome. Binding is lazy so plugin catalog startup does not depend on a partially
+constructed Gateway runtime.
 
 Callback-enabled calls require a bound project, including the generic MCP
 entry point. A sole registered project can be selected automatically;
@@ -399,11 +412,14 @@ its initialization source: configuration and builtin grants can exist without
 a profile row, while runtimes initialized with persisted authority require that
 row to remain present. Current persisted restrictions are reapplied to callbacks.
 
-`MCPBoundHostServices` owns the atomic derived-project registration ledger
-and projects bounded diagnostics. Its private namespace permits only
-invocation inspection, project registration, verified removal, and diagnostic reads for matching
-live invocations. Plugins declare their semantic actions in tool metadata;
-host operation tickets and project grants remain in the Gateway Database.
+`MCPBoundHostServices` serves the `projects-v1` private namespace: invocation and
+operation inspection, host worktree creation, listing and removal through
+`GatewayWorktreeService` and the worktree lifecycle library, and bounded
+diagnostics. The host and provider each advertise the contract marker; lifecycle
+dispatch requires both. Plugins declare their semantic actions in tool metadata;
+call records, operations and project grants remain in the Gateway Database.
+Permission-ledger admission binds the live call record, and nothing a plugin
+stores substitutes for current ledger and invocation proof.
 
 See [Scoped host services](../Reference/HostServices.md) for configuration,
 wire surface, scope checks, bounds and recovery behavior.
@@ -440,9 +456,10 @@ directory. Recovery requires the same storage namespace. HTTP connections do
 not own local processes and do not use these receipts.
 
 The receipt records the host PID and process start time, not credentials,
-arguments, plugin grants or executable authorization. The supervisor and its
-watchdog inherit the locked file reference before the native command starts;
-the native command does not inherit it. New sessions from live host owners
+arguments, plugin grants or executable authorization. In an unprepared launch,
+the supervisor and watchdog inherit the receipt lock. In a prepared provider
+launch, the lock stays in the host and the launcher tracks the provider
+execution. The native command never inherits the receipt lock. New sessions from live host owners
 remain independent. If an owner has exited or its PID has been reused while
 the process lock remains held, startup fails with `mcp.cleanup_pending`.
 Releasing the orphaned lock permits the next startup to reconcile the receipt.
@@ -477,13 +494,11 @@ are separate: an installation recovery operation cannot clear process receipts.
 ## Policy And Results
 
 Every call is bound to `ExecutionContext` containing a verified authorization
-principal, caller provenance, profile, and optional project id. `GatewayPolicy`
-checks the provider's `CapabilityDescriptor` against the explicit grant mode,
-capabilities, project access, and confirmation policy. `operations.prepare`
-binds the exact arguments and supported target state to a short-lived,
-single-use ticket. A `pending_approval` ticket requires local App or management
-CLI approval before `operations.commit`; preparing a ticket or supplying a
-model-authored confirmation flag is not approval.
+principal, caller provenance, profile, and optional project id. The gateway
+resolves declared requirements and evaluates them with `GatewayPermissionService`.
+Missing requestable permissions return a durable request. Explicit denies and
+managed exclusions fail without a prompt. Owner answers bind exact retry identity;
+allowed calls execute directly with a prepared context and never implicitly replay.
 
 MCP tools advertise a title, input schema, output schema, standard annotations,
 and return the bounded JSON value as both compatible text and structured
@@ -506,3 +521,12 @@ Remote transports are separate App-owned lifecycles:
 
 They may run concurrently and have independent profile, health, log, restart,
 and audit provenance.
+
+## Worktree publication
+
+Source and derived projects share live source permission authority. A lifecycle
+mutation publishes a fresh project/provider generation for later calls on the
+same session. App-managed and standalone composition retain the originating
+execution owner so output IDs and cursors continue to resolve. Source removal
+retains derived storage as inaccessible recovery state; reusing a path or ID does
+not adopt it. See [Worktrees](Worktrees.md).

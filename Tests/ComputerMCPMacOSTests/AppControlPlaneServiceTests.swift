@@ -1,4 +1,7 @@
+import ComputerMCPDownstream
 import ComputerMCPMacOS
+import ComputerMCPPermissions
+import ComputerMCPSandbox
 import ComputerMCPTestSupport
 import ComputerMCPTransport
 import ComputerMCPTunnels
@@ -19,11 +22,16 @@ import Testing
 @testable import ComputerMCPPlugins
 @testable import ComputerMCPProcess
 
+#if os(macOS)
+  import ComputerMCPDarwinTestSupport
+#endif
+
 @Suite(.nativeIntegration, .serialized)
 
 final class AppControlPlaneServiceTests {
   @Test
   func rollbackUpgradesHistoricalManifestWithoutChangingHistory() async throws {
+    let projectRoot = try ScopedTemporaryDirectory()
     let text = """
       schema_version = 1
       [server]
@@ -33,7 +41,7 @@ final class AppControlPlaneServiceTests {
       [[workspaces]]
       id = "workspace-id"
       display_name = "workspace.list"
-      path = "/tmp/workspace"
+      path = "\(projectRoot.url.path)"
       [[profiles]]
       id = "local-admin"
       mode = "workspace-operations"
@@ -50,10 +58,10 @@ final class AppControlPlaneServiceTests {
     let configuration = try await fixture.controlPlane.activeConfiguration()
     #expect(configuration.projects.first?.id == "workspace-id")
     #expect(configuration.projects.first?.displayName == "workspace.list")
-    #expect(configuration.projects.first?.path == "/tmp/workspace")
-    #expect(configuration.profiles.first?.projects == ["workspace-id"])
-    #expect(configuration.profiles.first?.capabilities == ["project.list"])
-    #expect(configuration.profiles.first?.mode == .projectOperations)
+    #expect(configuration.projects.first?.path == projectRoot.url.path)
+    #expect(
+      configuration.profiles.first?.grant.permissions.state(for: .project("workspace-id"))
+        == .granted(.read))
     #expect(configuration.builtin.enabled == ["project.instructions"])
 
     let gateway = AppGatewayService.live(
@@ -64,23 +72,12 @@ final class AppControlPlaneServiceTests {
     changed.server.name = "changed"
     let activated = try await operations.activateManifest(
       changed.exportedTOML(), expectedDigest: upgraded.digest)
-    let rollback = try await operations.rollbackManifest(to: historical.id)
-
-    #expect(rollback.id != historical.id && rollback.id != upgraded.id)
-    #expect(rollback.id != activated.id)
-    #expect(rollback.digest == (try AtomicManifestStore.digest(of: Data(rollback.manifest.utf8))))
-    #expect(
-      try GatewayConfiguration.load(
-        text: rollback.manifest, baseURL: fixture.directories.manifest.deletingLastPathComponent())
-        == configuration)
-    #expect(try await fixture.controlPlane.activeConfiguration() == configuration)
-    #expect(try Data(contentsOf: fixture.directories.manifest) == Data(rollback.manifest.utf8))
+    await #expect(throws: (any Error).self) {
+      try await operations.rollbackManifest(to: historical.id)
+    }
     #expect(try fixture.database.configurationRevision(id: historical.id) == historical)
-    let stored = try #require(try fixture.database.configurationRevision(id: rollback.id))
-    #expect(stored.manifest == rollback.manifest)
-    #expect(stored.digest == rollback.digest)
-    #expect(stored.activatedAt != nil)
-    #expect(try await fixture.controlPlane.configurationHistory().count == 4)
+    #expect(try await fixture.controlPlane.activeConfiguration() == changed)
+    #expect(activated.id != historical.id)
   }
 
   @Test(arguments: [
@@ -98,14 +95,17 @@ final class AppControlPlaneServiceTests {
   }
 
   @Test
-  func clientControlCommandsShareAppAuthorityAndPublishShellWithoutRestarting() async throws {
+  func clientControlCommandsShareAppAuthorityWithoutRestarting() async throws {
     let fixture = try AppControlPlaneServiceFixture()
     defer { fixture.cleanup() }
     let configuration = GatewayConfiguration(
+      policy: .init(shellEnabled: true),
       profiles: [
         .init(
-          id: .chatGPTOperate, capabilities: ["system.time"], projects: ["fixture"],
-          allowedCallers: [.localMCP], mode: .projectOperations)
+          id: .chatGPTOperate,
+          permissions: fixturePermissions([
+            .machineInformation: .granted(.access), .project("fixture"): .granted(.read),
+          ]), fullAccess: true, allowedCallers: [.localMCP])
       ],
       builtin: .init(enabled: ["system.time"]), projectDirectory: fixture.root)
     _ = try await fixture.controlPlane.activateManifest(
@@ -147,9 +147,12 @@ final class AppControlPlaneServiceTests {
         "clients.limit",
         arguments: .object([
           "id": .string(id), "expected_revision": .integer(Int64(approvedRevision)),
-          "mode": .string("restricted"),
+          "limits": try ControlToolResponse.encodedPayload(ManagedPolicy(allowsFullAccess: false)),
         ]))
-      #expect(try await !remote.listToolNames().contains("shell.run"))
+      #expect(try await remote.listToolNames().contains("shell.run"))
+      let limitedSession = try #require(await gateway.controlSessions().first { $0.id == id })
+      #expect(
+        !limitedSession.accessLimit.allowsFullAccess && limitedSession.fullAccessConsent == nil)
       _ = try await client.call(
         "clients.end",
         arguments: .object([
@@ -188,12 +191,8 @@ final class AppControlPlaneServiceTests {
     #expect(try fixture.database.configurationState() == before)
     #expect(options.projects.map(\.displayName) == ["My Project"])
     #expect(options.integrations.contains { $0.id == "notes" && !$0.isEnabled })
-    #expect(
-      options.capabilities.contains {
-        $0.id == "file.write" && !$0.title.isEmpty && !$0.summary.isEmpty
-      })
-    #expect(options.capabilities.allSatisfy { $0.descriptor.risk != .fullShell })
-    #expect(!options.capabilities.contains { $0.id == "mcp.tools.call" || $0.id == "shell.run" })
+    #expect(options.permissionRevision > 0)
+    #expect(options.grant.id == .chatGPTOperate)
   }
 
   @Test(arguments: ["profile", "manifest", "external-edit", "project", "plugin"])
@@ -208,8 +207,9 @@ final class AppControlPlaneServiceTests {
       profileID: .chatGPTOperate)
     switch change {
     case "profile":
-      _ = try await fixture.controlPlane.updateProfilePermissions(
-        profileID: .chatGPTOperate, capabilityIDs: ["system.time"])
+      _ = try fixture.editProfile(.chatGPTOperate) {
+        try $0.permissions.set(.granted(.access), for: .screen)
+      }
     case "manifest":
       configuration.policy.shellEnabled = true
       _ = try await fixture.controlPlane.activateManifest(
@@ -232,8 +232,7 @@ final class AppControlPlaneServiceTests {
     let manifest = try Data(contentsOf: fixture.directories.manifest)
     await #expect(throws: (any Error).self) {
       try await fixture.controlPlane.updateProfilePermissions(
-        profileID: .chatGPTOperate, capabilityIDs: ["file.write"],
-        expectedRevision: options.grant.authorizationRevision, reviewedOptions: options)
+        options.grant, expectedRevision: options.permissionRevision, reviewedOptions: options)
     }
     #expect(try fixture.database.profiles() == profiles)
     #expect(try Data(contentsOf: fixture.directories.manifest) == manifest)
@@ -241,14 +240,28 @@ final class AppControlPlaneServiceTests {
 
   @Test
   func explicitFullAccessFollowsTheSelectedSocketSessionAndPersistentClientTrust() async throws {
-    let fixture = try AppControlPlaneServiceFixture()
+    let program =
+      "from pathlib import Path\np = Path('consent.txt')\np.write_text((p.read_text() if p.exists() else '') + 'approved')\n"
+    let fixture = try AppControlPlaneServiceFixture(executionLauncher: { root in
+      fixtureProtocolExecutionLauncher(root: root, scripts: [program], arguments: [[]])
+    })
     defer { fixture.cleanup() }
+    let script = fixture.root.appendingPathComponent("consent.py")
+    try program.write(to: script, atomically: true, encoding: .utf8)
+    let run = JSONValue.object([
+      "project_id": .string("fixture"), "mode": .string("argv"),
+      "executable": .string("/usr/bin/python3"), "argv": .array([.string(script.path)]),
+      "cwd": .string(fixture.root.path),
+    ])
     var configuration = GatewayConfiguration(
       runtime: .init(caller: .localMCP, profileID: .chatGPTOperate),
+      policy: .init(shellEnabled: true),
       profiles: [
         .init(
-          id: .chatGPTOperate, capabilities: ["system.time"], projects: ["fixture"],
-          allowedCallers: [.localMCP], mode: .projectOperations)
+          id: .chatGPTOperate,
+          permissions: fixturePermissions([
+            .machineInformation: .granted(.access), .project("fixture"): .granted(.write),
+          ]), fullAccess: true, allowedCallers: [.localMCP])
       ], projectDirectory: fixture.root)
     _ = try await fixture.controlPlane.activateManifest(
       configuration.exportedTOML(),
@@ -265,26 +278,15 @@ final class AppControlPlaneServiceTests {
       let first = try await GatewayClientSession.connectSocket(
         socketURL: service.socketConfiguration.socketURL)
       let firstScope = try #require(await operations.controlSessions().first)
-      #expect(try await !first.listToolNames().contains("shell.run"))
-      await #expect(throws: AppControlPlaneServiceError.fullShellManifestDisabled) {
-        try await operations.approveControlSession(
-          id: firstScope.id, expectedRevision: firstScope.revision)
-      }
-      configuration.policy.shellEnabled = true
-      _ = try await operations.activateManifest(
-        configuration.exportedTOML(),
-        expectedDigest: try await operations.controlPlane.configurationDigest())
+      #expect(try await first.listToolNames().contains("shell.run"))
+      #expect(
+        try await first.call(toolName: "shell.run", arguments: run).result.objectValue?["isError"]
+          == .bool(true))
       let approved = try await operations.approveControlSession(
         id: firstScope.id, expectedRevision: firstScope.revision)
       #expect(approved.fullAccessConsent?.lifetime == .thisSession)
       #expect(try operations.clientTrusts().isEmpty)
       #expect(try await first.listToolNames().contains("shell.run"))
-      let run = JSONValue.object([
-        "project_id": .string("fixture"), "mode": .string("argv"),
-        "executable": .string("/bin/sh"),
-        "argv": .array([.string("-c"), .string("printf approved >> consent.txt")]),
-        "cwd": .string(fixture.root.path),
-      ])
       #expect(
         try await first.call(toolName: "shell.run", arguments: run).result.objectValue?["isError"]
           != .bool(true))
@@ -292,7 +294,7 @@ final class AppControlPlaneServiceTests {
         socketURL: service.socketConfiguration.socketURL)
       let siblingScope = try #require(
         await operations.controlSessions().first { $0.id != firstScope.id })
-      #expect(try await !sibling.listToolNames().contains("shell.run"))
+      #expect(try await sibling.listToolNames().contains("shell.run"))
       #expect(
         try await sibling.call(toolName: "shell.run", arguments: run).result.objectValue?["isError"]
           == .bool(true))
@@ -307,13 +309,13 @@ final class AppControlPlaneServiceTests {
           $0.id != siblingScope.id && $0.id != firstScope.id
         })
       #expect(try await reconnected.listToolNames().contains("shell.run"))
-      #expect(try await !sibling.listToolNames().contains("shell.run"))
+      #expect(try await sibling.listToolNames().contains("shell.run"))
       #expect(
         try await reconnected.call(toolName: "shell.run", arguments: run).result.objectValue?[
           "isError"]
           != .bool(true))
       try operations.revokeClientTrust(id: trust.id, expectedRevision: trust.revision)
-      #expect(try await !reconnected.listToolNames().contains("shell.run"))
+      #expect(try await reconnected.listToolNames().contains("shell.run"))
       #expect(
         try await reconnected.call(toolName: "shell.run", arguments: run).result.objectValue?[
           "isError"]
@@ -327,15 +329,15 @@ final class AppControlPlaneServiceTests {
       _ = try await operations.approveControlSession(
         id: limited.id, lifetime: .alwaysAllowClient, expectedRevision: limited.revision,
         expectedTrustRevision: revokedTrust.revision)
-      configuration.profiles[0].mode = .readOnly
+      configuration.profiles[0].grant.fullAccess = false
       _ = try await operations.activateManifest(
         configuration.exportedTOML(),
         expectedDigest: try await operations.controlPlane.configurationDigest())
       let changed = try #require(
         await operations.controlSessions().first { $0.id == limited.id })
       #expect(changed.fullAccessConsent == nil)
-      #expect(changed.accessLimit == .readOnly)
-      #expect(try fixture.database.profiles().isEmpty)
+      #expect(changed.profile?.grant.fullAccess == false)
+      #expect(try !fixture.database.profiles().isEmpty)
       await reconnected.disconnect()
       await sibling.disconnect()
       await service.stop()
@@ -354,14 +356,21 @@ final class AppControlPlaneServiceTests {
       runtime: .init(caller: .localMCP, profileID: .chatGPTOperate),
       profiles: [
         .init(
-          id: .chatGPTOperate, capabilities: ["*"], projects: ["fixture"],
-          allowedCallers: [.localMCP], mode: .projectOperations, confirmationPolicy: .never)
-      ], builtin: .init(enabled: ["system.time", "file.write"]), projectDirectory: fixture.root)
+          id: .chatGPTOperate,
+          permissions: fixturePermissions([
+            .machineInformation: .granted(.access), .skills: .granted(.access),
+            .screen: .granted(.access), .desktopControl: .granted(.access),
+            .unifiedLogs: .granted(.access), .localNetwork: .granted(.access),
+            .project("fixture"): .granted(.write), .mcpServer("*"): .granted(.all),
+            .plugin("*"): .granted(.use),
+          ]), allowedCallers: [.localMCP])
+      ], builtin: .init(enabled: ["system.time", "file.read"]), projectDirectory: fixture.root)
     _ = try await fixture.controlPlane.activateManifest(
       configuration.exportedTOML(),
       expectedDigest: try? await fixture.controlPlane.configurationDigest())
     try fixture.database.saveProject(
       .init(id: "fixture", displayName: "Fixture", rootPath: fixture.root.path))
+    try Data("second".utf8).write(to: fixture.root.appendingPathComponent("session.txt"))
     let service = AppGatewayService(
       controlPlane: fixture.controlPlane,
       socketConfiguration: .init(socketURL: fixture.root.appendingPathComponent("gateway.sock")))
@@ -379,21 +388,19 @@ final class AppControlPlaneServiceTests {
       #expect(firstScope.principalID == secondScope.principalID)
       let saved = try fixture.database.profiles()
       _ = try await operations.limitControlSession(
-        id: firstScope.id, to: .readOnly, expectedRevision: firstScope.revision)
-      #expect(try await !first.listToolNames().contains("file.write"))
-      #expect(try await second.listToolNames().contains("file.write"))
+        id: firstScope.id,
+        to: ManagedPolicy(permissionCeilings: fixturePermissions([.project("fixture"): .denied])),
+        expectedRevision: firstScope.revision)
+      #expect(try await first.listToolNames().contains("file.read"))
+      #expect(try await second.listToolNames().contains("file.read"))
       let target = JSONValue.object([
         "project_id": .string("fixture"), "path": .string("session.txt"),
-        "content": .string("second"), "confirm": .bool(true),
       ])
       #expect(
-        try await first.call(toolName: "file.write", arguments: target).result.objectValue?[
+        try await first.call(toolName: "file.read", arguments: target).result.objectValue?[
           "isError"] == .bool(true))
       #expect(
-        !FileManager.default.fileExists(
-          atPath: fixture.root.appendingPathComponent("session.txt").path))
-      #expect(
-        try await second.call(toolName: "file.write", arguments: target).result.objectValue?[
+        try await second.call(toolName: "file.read", arguments: target).result.objectValue?[
           "isError"] != .bool(true))
       #expect(
         try String(contentsOf: fixture.root.appendingPathComponent("session.txt"), encoding: .utf8)
@@ -417,92 +424,21 @@ final class AppControlPlaneServiceTests {
     }
   }
 
-  @Test(arguments: ["remove", "deduplicate", "repair", "repair-wildcard"])
-  func projectChangesPreserveResolvedLegacyPermissions(operation: String) async throws {
-    let removing = operation == "remove"
-    let wildcard = operation == "repair-wildcard"
-    let fixture = try AppControlPlaneServiceFixture()
-    defer { fixture.cleanup() }
-    let configuration = GatewayConfiguration(
-      profiles: [
-        .init(
-          id: .chatGPTOperate, capabilities: ["file.read", "file.write"],
-          allowedCallers: [.secureTunnel], mode: .projectOperations),
-        .init(
-          id: .chatGPTObserve, capabilities: ["project.list"], allowedCallers: [.secureTunnel]),
-        .init(
-          id: .cloudflareObserve, capabilities: ["project.list"],
-          allowedCallers: [.cloudflareTunnel]),
-      ], projectDirectory: fixture.root)
-    _ = try await fixture.controlPlane.activateManifest(
-      configuration.exportedTOML(),
-      expectedDigest: try? await fixture.controlPlane.configurationDigest())
-    for (id, date) in [("canonical", 1.0), ("duplicate", 2.0)] {
-      try fixture.database.saveProject(
-        RegisteredProject(
-          id: id, displayName: "Shared", rootPath: fixture.root.path,
-          createdAt: Date(timeIntervalSince1970: date)))
-    }
-    var profile = ProfileGrant.operate
-    profile.projectIDs = wildcard ? ["*"] : ["duplicate", "unrelated"]
-    profile.confirmationPolicy = .allWrites
-    try fixture.database.saveProfile(profile)
-    let connection = try DatabaseQueue(path: fixture.directories.database.path)
-    try await connection.write {
-      try $0.execute(sql: "UPDATE profiles SET authorizationRevision = 0")
-    }
-    try connection.close()
-    if operation.hasPrefix("repair") {
-      let destination = fixture.root.appendingPathComponent("selected")
-      try FileManager.default.createDirectory(at: destination, withIntermediateDirectories: true)
-      let service = AppGatewayService(
-        controlPlane: fixture.controlPlane,
-        socketConfiguration: .init(socketURL: fixture.root.appendingPathComponent("repair.sock")))
-      _ = try await AppControlPlaneOperations(
-        controlPlane: fixture.controlPlane, gatewayService: service
-      ).repairProject(id: "duplicate", at: destination)
-      await service.stop()
-    } else if removing {
-      try await fixture.controlPlane.removeProject(id: "duplicate")
-    } else {
-      let plan = try fixture.database.projectDeduplicationPlan()
-      _ = try await fixture.controlPlane.applyProjectDeduplication(
-        expectedPlanDigest: plan.planDigest, allowMetadataConflicts: false)
-    }
-    let saved = try #require(try fixture.database.profiles().first { $0.id == profile.id })
-    #expect(saved.capabilityIDs == ["file.read", "file.write"])
-    let expectedIDs: Set<String> =
-      removing
-      ? ["unrelated"]
-      : operation == "deduplicate" ? ["canonical", "unrelated"] : profile.projectIDs
-    #expect(saved.projectIDs == expectedIDs)
-    #expect(saved.allowedCallers == [.secureTunnel])
-    #expect(saved.mode == .projectOperations)
-    #expect(saved.confirmationPolicy == .allWrites)
-    #expect(saved.authorizationRevision == 1)
-  }
-
   @Test
-  func projectRemovalRollsBackGrantsAndTicketsWhenDeletionFails() async throws {
+  func projectRemovalRollsBackGrantsWhenDeletionFails() async throws {
     let fixture = try AppControlPlaneServiceFixture()
     defer { fixture.cleanup() }
     try fixture.database.saveProject(
-      RegisteredProject(id: "removed", displayName: "Removed", rootPath: fixture.root.path))
+      ComputerMCPCore.RegisteredProject(
+        id: "removed", displayName: "Removed", rootPath: fixture.root.path))
     for id in [GatewayProfileID.chatGPTObserve, .chatGPTOperate] {
       try fixture.database.saveProfile(
         ProfileGrant(
-          id: id, capabilityIDs: ["project.list"], projectIDs: ["removed"],
+          id: id, permissions: fixturePermissions([.project("removed"): .granted(.read)]),
           allowedCallers: [.secureTunnel]))
     }
-    try fixture.database.saveOperationTicket(
-      OperationTicket(
-        id: "pending", capabilityID: "file.trash", caller: .secureTunnel,
-        profileID: .chatGPTOperate, projectID: "removed", inputDigest: "fixture",
-        state: .approved, expiresAt: Date().addingTimeInterval(60)))
     let before = try fixture.database.configurationState()
-    let ticket = try fixture.database.operationTicket(id: "pending")
-    let connection = try DatabaseQueue(path: fixture.directories.database.path)
-    try await connection.write {
+    try await fixture.database.connection.writer.write {
       try $0.execute(
         sql: """
           CREATE TRIGGER refuse_project_deletion BEFORE DELETE ON projects
@@ -514,8 +450,6 @@ final class AppControlPlaneServiceTests {
       Issue.record("Expected the final deletion to fail")
     } catch is DatabaseError {}
     #expect(try fixture.database.configurationState() == before)
-    #expect(try fixture.database.operationTicket(id: "pending") == ticket)
-    try connection.close()
   }
 
   @Test(arguments: [false, true])
@@ -524,6 +458,7 @@ final class AppControlPlaneServiceTests {
     defer { fixture.cleanup() }
     _ = try await fixture.controlPlane.activateManifest(
       validManifest, expectedDigest: try? await fixture.controlPlane.configurationDigest())
+    _ = try fixture.editProfile(.chatGPTObserve) { $0.allowedCallers.insert(.localMCP) }
     let socketURL = fixture.root.appendingPathComponent("gateway.sock")
     let service = AppGatewayService(
       controlPlane: fixture.controlPlane,
@@ -561,66 +496,57 @@ final class AppControlPlaneServiceTests {
   func permissionEditsRoundTripAndRejectStaleAuthorization() async throws {
     let fixture = try AppControlPlaneServiceFixture()
     defer { fixture.cleanup() }
-    let id = GatewayProfileID(rawValue: "custom-client")!
-    let configuration = GatewayConfiguration(
-      profiles: [
-        .init(id: id, capabilities: ["file.read"], allowedCallers: [.localMCP], mode: .readOnly)
-      ],
-      projectDirectory: fixture.root)
     _ = try await fixture.controlPlane.activateManifest(
-      configuration.exportedTOML(),
-      expectedDigest: try? await fixture.controlPlane.configurationDigest())
+      validManifest, expectedDigest: try? await fixture.controlPlane.configurationDigest())
+    let options = try await fixture.controlPlane.profilePermissionOptions(
+      profileID: .chatGPTOperate)
+    var proposed = options.grant
+    try proposed.permissions.set(.granted(.access), for: .screen)
+    proposed.allowedCallers = [.cloudflareTunnel]
     let saved = try await fixture.controlPlane.updateProfilePermissions(
-      profileID: id, mode: .projectOperations, confirmationPolicy: .allWrites,
-      capabilityIDs: ["file.read", "file.write"], allowedCallers: [.cloudflareTunnel],
-      expectedRevision: 0)
-    #expect(saved.authorizationRevision == 1)
-    #expect(saved.mode == .projectOperations)
-    #expect(saved.allowedCallers == [.cloudflareTunnel])
-    #expect(!saved.fullShellEnabled)
+      proposed, expectedRevision: options.permissionRevision)
+    #expect(saved.authorizationRevision > options.grant.authorizationRevision)
+    #expect(saved.permissions.state(for: .screen) == .granted(.access))
     let exported = try await fixture.controlPlane.effectiveConfigurationForExport()
     let reloaded = try GatewayConfiguration.load(
       text: exported.exportedTOML(), baseURL: fixture.root)
-    let grant = reloaded.profileGrant(for: id)
-    #expect(grant.mode == saved.mode)
-    #expect(grant.confirmationPolicy == saved.confirmationPolicy)
-    #expect(grant.capabilityIDs == saved.capabilityIDs)
-    #expect(grant.allowedCallers == saved.allowedCallers)
-    do {
-      _ = try await fixture.controlPlane.updateProfilePermissions(
-        profileID: id, mode: .localFullAccess, expectedRevision: 0)
-      Issue.record("A stale permission edit overwrote the current authorization.")
-    } catch is GatewayDatabaseError {}
-    #expect(try fixture.database.profiles().first { $0.id == id }?.authorizationRevision == 1)
+    #expect(reloaded.profileGrant(for: saved.id).permissions.entries == saved.permissions.entries)
+    #expect(reloaded.profileGrant(for: saved.id).allowedCallers == saved.allowedCallers)
+    await #expect(throws: GatewayPermissionError.revisionConflict) {
+      try await fixture.controlPlane.updateProfilePermissions(
+        proposed, expectedRevision: options.permissionRevision)
+    }
   }
 
   @Test
-  func hostApprovalRequiresLocalResolutionAndPermissionEditsInvalidateIt() async throws {
+  func permissionRequestAnswerRequiresTheReviewedDurableRevision() async throws {
     let fixture = try AppControlPlaneServiceFixture()
     defer { fixture.cleanup() }
-    _ = try await fixture.controlPlane.activateManifest(
-      validManifest, expectedDigest: try? await fixture.controlPlane.configurationDigest())
-    let grant = try await fixture.controlPlane.updateProfilePermissions(
-      profileID: .chatGPTOperate, mode: .projectOperations)
-    let ticket = OperationTicket(
-      capabilityID: "file.remove", caller: .secureTunnel, profileID: .chatGPTOperate,
-      principalID: "registered-client", projectID: nil, inputDigest: "digest",
-      state: .pendingApproval, expiresAt: Date().addingTimeInterval(300),
-      authorizationRevision: grant.authorizationRevision, reviewSummary: "fixture target")
-    try fixture.database.saveOperationTicket(ticket)
-    do {
-      _ = try await fixture.controlPlane.resolveOperationApproval(
-        id: ticket.id, approved: true, resolver: .localMCP)
-      Issue.record("An execution client approved its own operation.")
-    } catch is GatewayDatabaseError {}
-    #expect(try fixture.database.operationTicket(id: ticket.id)?.state == .pendingApproval)
-    let approved = try await fixture.controlPlane.resolveOperationApproval(
-      id: ticket.id, approved: true, resolver: .localApp)
-    #expect(approved.state == .approved)
-    _ = try await fixture.controlPlane.updateProfilePermissions(
-      profileID: .chatGPTOperate, mode: .readOnly, expectedRevision: grant.authorizationRevision)
-    #expect(try fixture.database.operationTicket(id: ticket.id)?.state == .denied)
-    #expect(try await fixture.controlPlane.operationApprovals().contains { $0.id == ticket.id })
+    let subject = try GatewayPermissionSubject(
+      context: .init(
+        caller: .secureTunnel, profileID: .chatGPTOperate, trustedPrincipalID: "client"))
+    let requirements = InvocationRequirements(actions: [
+      PermissionAction(
+        requirement: try .init(.screen, .access))
+    ])
+    let decision = try fixture.permissionGateway.admit(
+      subject: subject, tool: "computer.screenshot", projectID: nil,
+      argumentsDigest: "request", requirements: requirements)
+    guard case .requests(let requests) = decision else {
+      Issue.record("Expected a permission request")
+      return
+    }
+    let request = try #require(requests.first)
+    let reviewed = try fixture.permissionControl.view()
+    try await fixture.controlPlane.answerPermissionRequest(
+      request.id, answer: .onlyThisTime, expectedRevision: reviewed.revision)
+    #expect(
+      try fixture.permissionControl.view().requests.first { $0.request.id == request.id }?.request
+        .status == .onlyThisTime)
+    #expect(throws: GatewayPermissionError.revisionConflict) {
+      try fixture.permissionControl.answerRequest(
+        request.id, answer: .always, expectedRevision: reviewed.revision)
+    }
   }
 
   @Test
@@ -630,14 +556,22 @@ final class AppControlPlaneServiceTests {
     _ = try await fixture.controlPlane.activateManifest(
       validManifest, expectedDigest: try? await fixture.controlPlane.configurationDigest())
     for id in ["one", "two"] {
+      let root = fixture.root.appendingPathComponent(id, isDirectory: true)
+      try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
       try fixture.database.saveProject(
-        .init(id: id, displayName: id, rootPath: fixture.root.path))
+        .init(id: id, displayName: id, rootPath: root.path))
     }
-    _ = try await fixture.controlPlane.updateProfilePermissions(
-      profileID: .chatGPTOperate, projectIDs: ["*"])
-    let grant = try await fixture.controlPlane.setProjectEnabled(
-      false, projectID: "one", profileID: .chatGPTOperate)
-    #expect(grant.projectIDs == ["two"])
+    _ = try fixture.editProfile(.chatGPTOperate) {
+      try $0.permissions.set(.granted(.write), for: .project("*"))
+    }
+    let grant = try await fixture.setProjectAccess(
+      .deny, projectID: "one", profileID: .chatGPTOperate)
+    #expect(grant.permissions.state(for: .project("one")) == .denied)
+    #expect(grant.permissions.state(for: .project("two")) == .granted(.write))
+    let inherited = try await fixture.setProjectAccess(
+      .ask, projectID: "one", profileID: .chatGPTOperate)
+    #expect(inherited.permissions.entries[.project("one")] == nil)
+    #expect(inherited.permissions.state(for: .project("one")) == .granted(.write))
   }
 
   @Test
@@ -651,7 +585,7 @@ final class AppControlPlaneServiceTests {
   }
 
   @Test
-  func localControlRoundTripsPermissionChangesAndOperationApproval() async throws {
+  func localControlRoundTripsPermissionChangesAndRequests() async throws {
     let fixture = try AppControlPlaneServiceFixture()
     defer { fixture.cleanup() }
     _ = try await fixture.controlPlane.activateManifest(
@@ -664,45 +598,41 @@ final class AppControlPlaneServiceTests {
     try await service.start()
     do {
       let client = AppControlPlaneServiceClient(socketURL: fixture.directories.controlSocket)
+      _ = try fixture.editProfile(.chatGPTOperate) {
+        try $0.permissions.set(.granted(.write), for: .project("saved-project"))
+        try $0.permissions.set(.granted(.use), for: .plugin("saved-plugin"))
+        try $0.permissions.set(.granted(.all), for: .mcpServer("saved-server"))
+        $0.projectNetworks["saved-project"] = .custom(
+          hosts: ["api.example.com"], includesTrusted: true)
+      }
+      let options = try await fixture.controlPlane.profilePermissionOptions(
+        profileID: .chatGPTOperate)
+      let shown = try await client.call(
+        "profile.show",
+        arguments: .object(["profile": .string(GatewayProfileID.chatGPTOperate.rawValue)]))
       let response = try await client.call(
         "profile.permissions",
         arguments: .object([
-          "profile": .string("chatgpt-operate"), "mode": .string("project-operations"),
-          "confirmation_policy": .string("all-writes"),
-          "capabilities": .array([.string("file.write")]),
-          "allowed_callers": .array([.string("local-mcp")]), "expected_revision": .number(0),
+          "grant": shown,
+          "expected_permission_revision": .integer(Int64(options.permissionRevision)),
         ]))
-      #expect(response.objectValue?["mode"] == .string("project-operations"))
-      #expect(response.objectValue?["confirmation_policy"] == .string("all-writes"))
-      let grant = try #require(try fixture.database.profiles().first { $0.id == .chatGPTOperate })
-      #expect(grant.allowedCallers == [.localMCP])
-      for invalid: JSONValue in [
-        .object(["profile": .string("chatgpt-operate")]),
-        .object(["profile": .string("chatgpt-operate"), "mode": .string("unknown")]),
-        .object(["profile": .string("chatgpt-operate"), "capabilities": .array([.number(1)])]),
-        .object([
-          "profile": .string("chatgpt-operate"), "mode": .string("read-only"),
-          "expected_revision": .number(0),
-        ]),
-      ] {
-        await #expect(throws: ControlSocketCallError.self) {
-          _ = try await client.call("profile.permissions", arguments: invalid)
-        }
+      #expect(
+        response.objectValue?["allowedCallers"] != nil
+          || response.objectValue?["allowed_callers"] != nil)
+      let decoded = try CanonicalJSONCoding.decoder().decode(
+        ProfileGrant.self, from: JSONEncoder().encode(response))
+      #expect(decoded.permissions.state(for: .project("saved-project")) == .granted(.write))
+      #expect(decoded.permissions.state(for: .plugin("saved-plugin")) == .granted(.use))
+      #expect(decoded.permissions.state(for: .mcpServer("saved-server")) == .granted(.all))
+      #expect(
+        decoded.projectNetworks["saved-project"]?.configuration
+          == options.grant.projectNetworks["saved-project"]?.configuration)
+      let listed = try await client.call("permissions.requests")
+      #expect(listed.objectValue?["revision"]?.intValue != nil)
+      #expect(listed.objectValue?["requests"]?.arrayValue != nil)
+      await #expect(throws: ControlSocketCallError.self) {
+        try await client.call("profile.permissions", arguments: .object(["grant": .object([:])]))
       }
-      for approved in [true, false] {
-        let ticket = OperationTicket(
-          capabilityID: "file.write", caller: .localMCP, profileID: .chatGPTOperate,
-          principalID: "local-user:fixture", projectID: nil, inputDigest: "test-digest",
-          state: .pendingApproval, expiresAt: Date().addingTimeInterval(300),
-          authorizationRevision: grant.authorizationRevision, reviewSummary: "fixture write")
-        try fixture.database.saveOperationTicket(ticket)
-        let resolved = try await client.call(
-          approved ? "approvals.approve" : "approvals.deny",
-          arguments: .object(["id": .string(ticket.id)]))
-        #expect(resolved.objectValue?["state"] == .string(approved ? "approved" : "denied"))
-      }
-      let listed = try await client.call("approvals.list")
-      #expect(listed.objectValue?["result"]?.arrayValue?.count == 2)
       #expect((await gateway.snapshot()).state == .stopped)
       await service.stop()
     } catch {
@@ -711,42 +641,228 @@ final class AppControlPlaneServiceTests {
     }
   }
 
+  @Test
+  func stoppedAndRestartedOwnerRejectsCapturedPermissionRouters() async throws {
+    let fixture = try AppControlPlaneServiceFixture()
+    defer { fixture.cleanup() }
+    _ = try await fixture.controlPlane.activateManifest(
+      validManifest, expectedDigest: try? await fixture.controlPlane.configurationDigest())
+    let project = ComputerMCPCore.RegisteredProject(
+      id: "permission-project", displayName: "Permission Project", rootPath: fixture.root.path)
+    try fixture.database.saveProject(project)
+    _ = try fixture.editProfile(.chatGPTOperate) {
+      $0.allowedCallers = [.localMCP]
+      try $0.permissions.set(.notGranted, for: .screen)
+    }
+    let subject = try GatewayPermissionSubject(
+      context: .init(
+        caller: .localMCP, profileID: .chatGPTOperate, trustedPrincipalID: "permission-client"))
+    let requirements = try InvocationRequirements(actions: [
+      .init(requirement: .init(.screen, .access))
+    ])
+    guard
+      case .requests(let requests) = try fixture.permissionGateway.admit(
+        subject: subject, tool: "screen.capture", projectID: nil,
+        argumentsDigest: "permission-input", requirements: requirements),
+      let request = requests.first
+    else {
+      Issue.record("Expected a pending request")
+      return
+    }
+    let owner = AppGatewayService.live(
+      controlPlane: fixture.controlPlane, directories: fixture.directories)
+    let epoch = try await owner.startLocalAdministration()
+    let identity = GatewaySocketConnectionIdentity(trustedPrincipalID: "owner", origin: .localCLI)
+    func registry(_ epoch: UUID) -> ControlToolRegistry {
+      ControlToolRegistry(
+        controlPlane: fixture.controlPlane, gatewayService: owner,
+        operations: AppControlPlaneOperations(
+          controlPlane: fixture.controlPlane, gatewayService: owner),
+        identity: identity, administrationEpoch: epoch)
+    }
+    let stale = registry(epoch)
+    let activeView = try await stale.callToolAsync(
+      name: "permissions.requests", arguments: nil, context: .empty)
+    #expect(activeView.objectValue?["isError"]?.boolValue != true)
+    let reviewed = try fixture.permissionControl.view()
+    let reviewedProfile = try #require(reviewed.profiles.first { $0.id == .chatGPTOperate })
+    let answer: JSONValue = .object([
+      "id": .string(request.id.uuidString), "answer": .string("always"),
+      "expected_revision": .integer(Int64(reviewed.revision)),
+    ])
+    let confirmation: JSONValue = .object([
+      "epoch": .string(try #require(reviewed.epoch).uuidString),
+      "expected_permission_revision": .integer(Int64(reviewed.revision)),
+      "profiles": try ControlToolResponse.encodedPayload(reviewed.profiles),
+    ])
+    let projectAccess: JSONValue = .object([
+      "project_id": .string(project.id), "profile": .string(reviewedProfile.id.rawValue),
+      "access": .string("write"),
+      "expected_profile_revision": .integer(reviewedProfile.authorizationRevision),
+      "expected_permission_revision": .integer(Int64(reviewed.revision)),
+    ])
+    var proposed = reviewedProfile
+    try proposed.permissions.set(.denied, for: .skills)
+    let profilePermissions: JSONValue = .object([
+      "grant": try ControlToolResponse.encodedPayload(proposed),
+      "expected_permission_revision": .integer(Int64(reviewed.revision)),
+    ])
+    await owner.stopLocalAdministration(epoch: epoch)
+    var currentEpoch: UUID?
+    do {
+      for restarted in [false, true] {
+        if restarted { currentEpoch = try await owner.startLocalAdministration() }
+        for (name, arguments) in [
+          ("permissions.requests", JSONValue.object([:])), ("permissions.answer", answer),
+          ("permissions.confirm_authority", confirmation),
+          ("project.access", projectAccess), ("profile.permissions", profilePermissions),
+        ] {
+          let rejected = try await stale.callToolAsync(
+            name: name, arguments: arguments, context: .empty)
+          #expect(rejected.objectValue?["isError"]?.boolValue == true)
+          let unchanged = try fixture.permissionControl.view()
+          #expect(unchanged.revision == reviewed.revision)
+          #expect(unchanged.profiles == reviewed.profiles)
+        }
+      }
+      let current = registry(try #require(currentEpoch))
+      let answered = try await current.callToolAsync(
+        name: "permissions.answer", arguments: answer, context: .empty)
+      #expect(answered.objectValue?["isError"]?.boolValue != true)
+      #expect(
+        try fixture.permissionControl.view().profiles.first { $0.id == .chatGPTOperate }?
+          .permissions.state(for: .screen) == .granted(.access))
+      let projectReview = try fixture.permissionControl.view()
+      let currentProfile = try #require(
+        projectReview.profiles.first { $0.id == reviewedProfile.id })
+      var projectArguments = try #require(projectAccess.objectValue)
+      projectArguments["expected_profile_revision"] = .integer(currentProfile.authorizationRevision)
+      projectArguments["expected_permission_revision"] = .integer(Int64(projectReview.revision))
+      let granted = try await current.callToolAsync(
+        name: "project.access", arguments: .object(projectArguments), context: .empty)
+      #expect(granted.objectValue?["isError"]?.boolValue != true)
+      let profileReview = try fixture.permissionControl.view()
+      var edited = try #require(profileReview.profiles.first { $0.id == reviewedProfile.id })
+      #expect(edited.permissions.state(for: .project(project.id)) == .granted(.write))
+      try edited.permissions.set(.denied, for: .skills)
+      let updated = try await current.callToolAsync(
+        name: "profile.permissions",
+        arguments: .object([
+          "grant": try ControlToolResponse.encodedPayload(edited),
+          "expected_permission_revision": .integer(Int64(profileReview.revision)),
+        ]), context: .empty)
+      #expect(updated.objectValue?["isError"]?.boolValue != true)
+      #expect(
+        try fixture.permissionControl.view().profiles.first { $0.id == reviewedProfile.id }?
+          .permissions.state(for: .skills) == .denied)
+      if let currentEpoch { await owner.stopLocalAdministration(epoch: currentEpoch) }
+    } catch {
+      if let currentEpoch { await owner.stopLocalAdministration(epoch: currentEpoch) }
+      throw error
+    }
+  }
+
+  @Test
+  func unconfirmedSavedProfilesRequireCompleteEpochBoundOwnerReview() async throws {
+    let fixture = try AppControlPlaneServiceFixture()
+    defer { fixture.cleanup() }
+    _ = try await fixture.controlPlane.activateManifest(
+      validManifest, expectedDigest: try? await fixture.controlPlane.configurationDigest())
+    _ = try fixture.editProfile(.chatGPTOperate) {
+      $0.allowedCallers = [.localMCP]
+      try $0.permissions.set(.granted(.access), for: .screen)
+    }
+    try await fixture.database.connection.writer.write {
+      try $0.execute(
+        sql: "UPDATE permissionProfiles SET authorityEpoch = NULL WHERE id = ?",
+        arguments: [GatewayProfileID.chatGPTOperate.rawValue])
+    }
+    let subject = try GatewayPermissionSubject(
+      context: .init(
+        caller: .localMCP, profileID: .chatGPTOperate, trustedPrincipalID: "review-client"))
+    let requirements = try InvocationRequirements(actions: [
+      .init(requirement: .init(.screen, .access))
+    ])
+    func admission() throws -> AuthorizationDecision {
+      try fixture.permissionGateway.admit(
+        subject: subject, tool: "screen.capture", projectID: nil,
+        argumentsDigest: "review-input", requirements: requirements)
+    }
+    #expect(try admission() == .denied(.authoritySuspended))
+    let gateway = AppGatewayService.live(
+      controlPlane: fixture.controlPlane, directories: fixture.directories)
+    let socket = ControlSocketService(
+      controlPlane: fixture.controlPlane, gatewayService: gateway,
+      socketURL: fixture.directories.controlSocket)
+    try await socket.start()
+    do {
+      let client = AppControlPlaneServiceClient(socketURL: fixture.directories.controlSocket)
+      let response = try await client.call("permissions.requests")
+      let row = try #require(response.objectValue)
+      let epoch = try #require(row["epoch"]?.stringValue)
+      let revision = try #require(row["revision"]?.int64Value)
+      let profiles = try #require(row["profiles"])
+      #expect(
+        row["unconfirmed_profile_ids"]?.arrayValue?.contains(
+          .string(GatewayProfileID.chatGPTOperate.rawValue)) == true)
+      let reviewed: [String: JSONValue] = [
+        "epoch": .string(epoch), "expected_permission_revision": .integer(revision),
+        "profiles": profiles,
+      ]
+      var missingProfiles = reviewed
+      missingProfiles.removeValue(forKey: "profiles")
+      var incomplete = reviewed
+      incomplete["profiles"] = .array([])
+      var wrongEpoch = reviewed
+      wrongEpoch["epoch"] = .string(UUID().uuidString)
+      var stale = reviewed
+      stale["expected_permission_revision"] = .integer(revision - 1)
+      for invalid in [missingProfiles, incomplete, wrongEpoch, stale] {
+        await #expect(throws: ControlSocketCallError.self) {
+          try await client.call("permissions.confirm_authority", arguments: .object(invalid))
+        }
+        #expect(try admission() == .denied(.authoritySuspended))
+      }
+      _ = try await client.call("permissions.confirm_authority", arguments: .object(reviewed))
+      #expect(try fixture.permissionControl.view().unconfirmedProfileIDs.isEmpty)
+      guard case .allowed = try admission() else {
+        Issue.record("Explicit reviewed authority was not activated")
+        await socket.stop()
+        return
+      }
+      await socket.stop()
+    } catch {
+      await socket.stop()
+      throw error
+    }
+  }
+
   @Test(
-    arguments: [
-      "tools", "call", "call-error", "socket", "profiles", "export", "project", "shell", "tunnel",
-      "tunnel-rejected",
-    ],
+    arguments: ["tools", "call", "call-error", "socket", "tunnel", "tunnel-invalid-metadata"],
     ["complete", "cancel", "configuration", "project", "grant", "plugin"])
-  func gatewayConstructionKeepsManagementResponsiveAndJoinsOwnedProcesses(
+  func gatewayConstructionKeepsManagementResponsiveAndDiscardsObsoleteInputs(
     operation: String, change: String
   ) async throws {
-    let fixture = try AppControlPlaneServiceFixture()
+    let bookmarks = GatedConstructionBookmarkService()
+    let fixture = try AppControlPlaneServiceFixture(
+      projectBookmarks: bookmarks, invalidCatalogMetadata: operation == "tunnel-invalid-metadata")
     defer { fixture.cleanup() }
     let script = fixture.root.appendingPathComponent("catalog.py")
     try Data(Self.gatedCatalogScript.utf8).write(to: script)
-    let release = fixture.root.appendingPathComponent("release")
-    let waiting = fixture.root.appendingPathComponent("waiting")
-    let expired = fixture.root.appendingPathComponent("expired")
-    var configuration = GatewayConfiguration(
+    let configuration = GatewayConfiguration(
       mcp: .init(servers: [
         .init(
           id: "fixture", transport: .stdio, command: "/usr/bin/python3",
           args: [script.path, fixture.root.path, operation], exposure: .reexport, prefix: "fixture",
           allowAnyTool: true, startupTimeoutMs: 5000, requestTimeoutMs: 5000,
           toolRisks: ["inspect": .readOnly])
-      ]), projectDirectory: fixture.root)
-    configuration.policy.shellEnabled = true
-    if operation == "shell" {
-      configuration.profiles = [
-        .init(
-          id: .chatGPTOperate, capabilities: Array(ProfileGrant.operate.capabilityIDs),
-          allowedCallers: Array(ProfileGrant.operate.allowedCallers), mode: .localFullAccess)
-      ]
-    }
+      ]),
+      builtin: .init(enabled: ["system.time", "file.write"]),
+      projectDirectory: fixture.root)
     _ = try await fixture.controlPlane.activateManifest(
       configuration.exportedTOML(),
       expectedDigest: try? await fixture.controlPlane.configurationDigest())
-    let project = RegisteredProject(
+    let project = ComputerMCPCore.RegisteredProject(
       id: "fixture", displayName: "Fixture", rootPath: fixture.root.path,
       bookmarkIsStale: change == "project")
     try fixture.database.saveProject(project)
@@ -766,71 +882,53 @@ final class AppControlPlaneServiceTests {
     let identity = GatewaySocketConnectionIdentity(
       trustedPrincipalID: "test-owner", origin: .localCLI)
     let originalProfiles = try fixture.database.profiles()
+    bookmarks.arm()
     let pending = Task {
       switch operation {
       case "tools":
         let tools = try await owner.localAdminTools(identity: identity, epoch: ownerEpoch)
-        #expect(tools.contains { $0.name == "fixture.inspect" })
+        #expect(tools.contains { $0.name == "system.time" })
       case "call", "call-error":
         let result = try await owner.callLocalAdminTool(
-          name: operation == "call" ? "fixture.inspect" : "fixture.missing",
-          arguments: .object(["project_id": .string(project.id)]), identity: identity,
-          epoch: ownerEpoch)
+          name: operation == "call" ? "system.time" : "fixture.missing",
+          arguments: .object([:]), identity: identity, epoch: ownerEpoch)
         #expect(result.objectValue?["isError"] == .bool(operation == "call-error"))
       case "socket":
         let session = try await fixture.controlPlane.makeGatewaySocketSession(
-          caller: .localMCP, profileID: .localAdmin)
+          caller: .localMCP, profileID: .localAdmin, trustedPrincipalID: "socket-fixture")
         await session.server.stop()
         await session.shutdown()
-      case "profiles":
-        let grants = try await fixture.controlPlane.profileGrants()
-        #expect(
-          grants.contains {
-            $0.id == .chatGPTObserve && $0.capabilityIDs.contains("fixture.inspect")
-          })
-      case "export":
-        let exported = try await fixture.controlPlane.effectiveConfigurationForExport()
-        #expect(exported.projects.contains { $0.id == project.id })
-      case "project":
-        _ = try await fixture.controlPlane.setProjectEnabled(
-          true, projectID: project.id, profileID: .chatGPTOperate)
-      case "shell":
-        _ = try await fixture.controlPlane.setFullShellEnabled(true, profileID: .chatGPTOperate)
       default:
         do {
           _ = try await fixture.controlPlane.doctorOpenAITunnel(profileID: "fixture")
           #expect(operation == "tunnel")
-        } catch let error as ChatGPTProfileAuditError where operation == "tunnel-rejected" {
-          #expect(
-            error == .writeToolsRequireExplicitOptIn(["fixture.inspect"]))
+        } catch let error as ChatGPTProfileAuditError where operation == "tunnel-invalid-metadata" {
+          #expect(error == .missingReadOnlyAnnotations(["fixture.unannotated"]))
         }
       }
     }
     do {
       let clock = ContinuousClock()
       let deadline = clock.now.advanced(by: .seconds(5))
-      while !FileManager.default.fileExists(atPath: waiting.path), clock.now < deadline {
+      while !bookmarks.entered, clock.now < deadline {
         try await Task.sleep(for: .milliseconds(10))
       }
-      try #require(FileManager.default.fileExists(atPath: waiting.path))
+      try #require(bookmarks.entered)
       var current = try await fixture.controlPlane.activeConfiguration()
-      // The vendor is still waiting for this test to release its catalog response.
-      #expect(!FileManager.default.fileExists(atPath: expired.path))
       switch change {
       case "cancel": pending.cancel()
       case "configuration":
-        current.server.name = "changed-while-discovering"
+        current.server.name = "changed-during-construction"
         _ = try await fixture.controlPlane.activateManifest(
           current.exportedTOML(),
           expectedDigest: try? await fixture.controlPlane.configurationDigest())
       case "project":
         var updated = project
-        updated.displayName = "Changed while discovering"
+        updated.displayName = "Changed during construction"
         try fixture.database.saveProject(updated)
       case "grant":
         try fixture.database.saveProfile(
-          ProfileGrant(id: .chatGPTOperate, capabilityIDs: [], projectIDs: [], allowedCallers: [])
-        )
+          ProfileGrant(id: .chatGPTOperate, allowedCallers: []))
       case "plugin":
         var snapshot = try fixture.database.pluginStoreSnapshot()
         snapshot.revision += 1
@@ -840,7 +938,7 @@ final class AppControlPlaneServiceTests {
       }
       let profilesBeforeCompletion = try fixture.database.profiles()
       let projectsBeforeCompletion = try fixture.database.projects()
-      try Data().write(to: release)
+      bookmarks.release()
       switch await pending.result {
       case .success:
         #expect(change == "complete")
@@ -856,29 +954,238 @@ final class AppControlPlaneServiceTests {
       if change != "complete" {
         #expect(try fixture.database.profiles() == profilesBeforeCompletion)
         #expect(try fixture.database.projects() == projectsBeforeCompletion)
-      } else if operation != "project" && operation != "shell" {
+      } else {
         #expect(try fixture.database.profiles() == originalProfiles)
       }
       await owner.stopLocalAdministration(epoch: ownerEpoch)
-      let pids = try FileManager.default.contentsOfDirectory(atPath: fixture.root.path)
-        .filter { $0.hasPrefix("pid-") }.compactMap { Int32($0.dropFirst(4)) }
-      #expect(!pids.isEmpty)
-      for pid in pids {
-        #expect(kill(pid, 0) == -1 && errno == ESRCH, "Owned catalog process \(pid) must be joined")
-      }
-      #expect(!FileManager.default.fileExists(atPath: expired.path))
+      #expect(bookmarks.opened > 0)
+      #expect(bookmarks.closed == bookmarks.opened)
+      #expect(
+        try FileManager.default.contentsOfDirectory(atPath: fixture.root.path)
+          .allSatisfy { !$0.hasPrefix("pid-") })
     } catch {
       pending.cancel()
-      try? Data().write(to: release)
+      bookmarks.release()
       _ = await pending.result
       await owner.stopLocalAdministration(epoch: ownerEpoch)
       throw error
     }
   }
 
+  @Test(arguments: ["chatgpt-observe", "custom-editor"])
+  func tunnelCatalogListsRequestableWritesAndCallsRequireLiveAuthority(profileName: String)
+    async throws
+  {
+    let fixture = try AppControlPlaneServiceFixture()
+    defer { fixture.cleanup() }
+    let profileID = try #require(GatewayProfileID(rawValue: profileName))
+    let project = fixture.root.appendingPathComponent("project")
+    try FileManager.default.createDirectory(at: project, withIntermediateDirectories: false)
+    let providerHome = URL(
+      fileURLWithPath: try fixture.database.prepareProviderContainer(.localServer("fixture"))
+        .sandbox.home.value)
+    let script = fixture.root.appendingPathComponent("catalog.py")
+    try Data(Self.gatedCatalogScript.utf8).write(to: script)
+    let configuration = GatewayConfiguration(
+      profiles: [.init(id: profileID, fullAccess: true, allowedCallers: [.secureTunnel])],
+      mcp: .init(servers: [
+        .init(
+          id: "fixture", transport: .stdio, command: "/usr/bin/python3",
+          args: [script.path, fixture.root.path, "catalog"], exposure: .reexport, prefix: "fixture",
+          allowAnyTool: true)
+      ]), builtin: .init(enabled: ["file.write"]), projectDirectory: project)
+    _ = try await fixture.controlPlane.activateManifest(
+      configuration.exportedTOML(),
+      expectedDigest: try? await fixture.controlPlane.configurationDigest())
+    try fixture.database.saveProject(
+      .init(id: "fixture", displayName: "Fixture", rootPath: project.path))
+    try await fixture.controlPlane.saveOpenAITunnelConfiguration(
+      .init(
+        id: "catalog", tunnelClientProfile: "catalog", tunnelID: "tunnel_catalog",
+        gatewayProfile: profileID, manifestPath: fixture.directories.manifest.path,
+        gatewayExecutablePath: "/tmp/computer-mcp",
+        gatewaySocketPath: fixture.directories.gatewaySocket.path))
+    _ = try await fixture.controlPlane.doctorOpenAITunnel(profileID: "catalog")
+    var socket = GatewaySocketConfiguration(
+      socketURL: fixture.root.appendingPathComponent("gateway.sock"))
+    let credential = fixture.root.appendingPathComponent("tunnel-credential")
+    socket.tunnelCredentialFile = credential
+    let service = AppGatewayService(controlPlane: fixture.controlPlane, socketConfiguration: socket)
+    let operations = AppControlPlaneOperations(
+      controlPlane: fixture.controlPlane, gatewayService: service)
+    try await service.start(profile: profileID)
+    var authenticated = socket
+    authenticated.clientIdentity = .secureTunnel(
+      credentialFile: credential, tunnelInstanceID: "catalog-client", tunnelProfileID: "catalog")
+    let client = try await GatewayClientSession.connectSocket(configuration: authenticated)
+    do {
+      let tools = try await client.listTools()
+      try fixture.approveProvider(configuration.mcp.servers[0])
+      let write = try #require(tools.first { $0.name == "file.write" })
+      #expect(write.readOnlyHint == false)
+      let metadata = try #require(
+        write.meta?.objectValue?["computer_mcp"]?.objectValue?["requirements"])
+      let requirement = try JSONDecoder().decode(
+        ToolRequirement.self, from: JSONEncoder().encode(metadata))
+      #expect(requirement.access == .projectWrite)
+      #expect(requirement.paths.contains { $0.operation == .write })
+      #expect(!requirement.requiresFullAccess)
+      let session = try #require(await operations.controlSessions().first)
+      #expect(session.caller == .secureTunnel)
+      _ = try await operations.approveControlSession(
+        id: session.id, expectedRevision: session.revision)
+      let target = JSONValue.object([
+        "project_id": .string("fixture"), "path": .string("requested.txt"),
+        "content": .string("reviewed"),
+      ])
+      let pending = try await client.call(toolName: "file.write", arguments: target)
+      let requested = try #require(
+        pending.result.objectValue?["structuredContent"]?.objectValue?["error"]?.objectValue)
+      #expect(requested["code"] == .string("permission.required"), "\(pending.result)")
+      #expect(requested["request_ids"]?.arrayValue?.isEmpty == false)
+      #expect(
+        !FileManager.default.fileExists(
+          atPath: project.appendingPathComponent("requested.txt").path))
+      _ = try fixture.editProfile(profileID) {
+        try $0.permissions.set(.denied, for: .project("fixture"))
+      }
+      let denied = try await client.call(toolName: "file.write", arguments: target)
+      #expect(
+        denied.result.objectValue?["structuredContent"]?.objectValue?["error"]?.objectValue?["code"]
+          == .string("permission.denied"), "\(denied.result)")
+      #expect(
+        !FileManager.default.fileExists(
+          atPath: project.appendingPathComponent("requested.txt").path))
+      _ = try fixture.editProfile(profileID) {
+        try $0.permissions.set(.granted(.write), for: .project("fixture"))
+        try $0.permissions.set(.granted(.read), for: .mcpServer("fixture"))
+      }
+      let current = try #require(await operations.controlSessions().first { $0.id == session.id })
+      _ = try await operations.approveControlSession(
+        id: current.id, expectedRevision: current.revision)
+      try Data().write(to: providerHome.appendingPathComponent("release"))
+      let admitted = try await client.call(
+        toolName: "mcp.tools.list",
+        arguments: .object([
+          "project_id": .string("fixture"), "server": .string("fixture"),
+        ]))
+      #expect(admitted.result.objectValue?["isError"] != .bool(true), "\(admitted.result)")
+      #expect(
+        admitted.result.objectValue?["structuredContent"]?.objectValue?["result"]?.arrayValue?
+          .compactMap { $0.objectValue?["name"]?.stringValue } == ["inspect"], "\(admitted.result)")
+      #expect(
+        try FileManager.default.contentsOfDirectory(atPath: providerHome.path).contains {
+          $0.hasPrefix("pid-")
+        })
+      await client.disconnect()
+      await service.stop()
+    } catch {
+      await client.disconnect()
+      await service.stop()
+      throw error
+    }
+  }
+
+  @Test(arguments: [false, true])
+  func admittedCatalogJoinsItsProcessAfterCompletionOrOwnerStop(ownerStop: Bool) async throws {
+    let fixture = try AppControlPlaneServiceFixture(executionLauncher: { root in
+      fixtureProtocolExecutionLauncher(
+        root: root, scripts: [Self.gatedCatalogScript], arguments: [[root.path, "admitted"]])
+    })
+    defer { fixture.cleanup() }
+    let project = fixture.root.appendingPathComponent("project")
+    try FileManager.default.createDirectory(at: project, withIntermediateDirectories: false)
+    let providerHome = URL(
+      fileURLWithPath: try fixture.database.prepareProviderContainer(.localServer("fixture"))
+        .sandbox.home.value)
+    let script = fixture.root.appendingPathComponent("catalog.py")
+    try Data(Self.gatedCatalogScript.utf8).write(to: script)
+    let waiting = providerHome.appendingPathComponent("waiting")
+    let release = providerHome.appendingPathComponent("release")
+    let configuration = GatewayConfiguration(
+      profiles: [
+        .init(
+          id: .chatGPTOperate,
+          permissions: fixturePermissions([
+            .project("fixture"): .granted(.write), .mcpServer("fixture"): .granted(.all),
+          ]), fullAccess: true, allowedCallers: [.localMCP])
+      ],
+      mcp: .init(servers: [
+        .init(
+          id: "fixture", transport: .stdio, command: "/usr/bin/python3",
+          args: [script.path, fixture.root.path, "admitted"], exposure: .reexport,
+          prefix: "fixture", allowAnyTool: true, startupTimeoutMs: 5000, requestTimeoutMs: 5000)
+      ]), projectDirectory: project)
+    _ = try await fixture.controlPlane.activateManifest(
+      configuration.exportedTOML(),
+      expectedDigest: try? await fixture.controlPlane.configurationDigest())
+    try fixture.database.saveProject(
+      .init(id: "fixture", displayName: "Fixture", rootPath: project.path))
+    let service = AppGatewayService(
+      controlPlane: fixture.controlPlane,
+      socketConfiguration: .init(socketURL: fixture.root.appendingPathComponent("gateway.sock")))
+    let operations = AppControlPlaneOperations(
+      controlPlane: fixture.controlPlane, gatewayService: service)
+    try await service.start(profile: .chatGPTOperate)
+    let client = try await GatewayClientSession.connectSocket(
+      socketURL: service.socketConfiguration.socketURL)
+    _ = try await client.listTools()
+    try fixture.approveProvider(configuration.mcp.servers[0])
+    let session = try #require(await operations.controlSessions().first)
+    _ = try await operations.approveControlSession(
+      id: session.id, expectedRevision: session.revision)
+    let pending = Task {
+      try await client.call(
+        toolName: "mcp.tools.list",
+        arguments: .object([
+          "project_id": .string("fixture"), "server": .string("fixture"),
+        ]))
+    }
+    do {
+      let clock = ContinuousClock()
+      let deadline = clock.now.advanced(by: .seconds(5))
+      while !FileManager.default.fileExists(atPath: waiting.path), clock.now < deadline {
+        try await Task.sleep(for: .milliseconds(10))
+      }
+      try #require(FileManager.default.fileExists(atPath: waiting.path))
+      #expect(
+        try await fixture.controlPlane.activeConfiguration().mcp.servers.first?.id == "fixture")
+      #expect(
+        !FileManager.default.fileExists(atPath: providerHome.appendingPathComponent("expired").path)
+      )
+      if ownerStop { await service.stop() } else { try Data().write(to: release) }
+      switch await pending.result {
+      case .success(let report):
+        #expect(
+          (report.result.objectValue?["isError"] == .bool(true)) == ownerStop,
+          "\(report.result)")
+      case .failure(let error):
+        #expect(ownerStop, "\(error)")
+      }
+      await client.disconnect()
+      await service.stop()
+      let pids = try FileManager.default.contentsOfDirectory(atPath: providerHome.path)
+        .filter { $0.hasPrefix("pid-") }.compactMap { Int32($0.dropFirst(4)) }
+      #expect(!pids.isEmpty)
+      for pid in pids {
+        #expect(kill(pid, 0) == -1 && errno == ESRCH, "Owned catalog process \(pid) must be joined")
+      }
+      #expect(
+        !FileManager.default.fileExists(atPath: providerHome.appendingPathComponent("expired").path)
+      )
+    } catch {
+      pending.cancel()
+      try? Data().write(to: release)
+      _ = await pending.result
+      await client.disconnect()
+      await service.stop()
+      throw error
+    }
+  }
+
   private static let gatedCatalogScript = #"""
     import json, os, pathlib, sys, time
-    root = pathlib.Path(sys.argv[1])
+    root = pathlib.Path(os.environ["HOME"] if sys.argv[-1] in ("catalog", "admitted") else sys.argv[1])
     (root / ("pid-" + str(os.getpid()))).touch()
     for line in sys.stdin:
         request = json.loads(line)
@@ -892,7 +1199,7 @@ final class AppControlPlaneServiceTests {
                 time.sleep(0.01)
             if not (root / "release").exists():
                 (root / "expired").touch()
-            result = {"tools":[{"name":"inspect", "description":"Inspect fixture", "inputSchema":{"type":"object"}, "annotations":{"readOnlyHint":sys.argv[2] != "tunnel-rejected"}}]}
+            result = {"tools":[{"name":"inspect", "description":"Inspect fixture", "inputSchema":{"type":"object"}, "annotations":{"readOnlyHint":True}}]}
         elif method == "tools/call":
             result = {"content":[{"type":"text", "text":"fixture"}], "isError":False}
         else:
@@ -917,13 +1224,11 @@ final class AppControlPlaneServiceTests {
       configuration.exportedTOML(),
       expectedDigest: try? await fixture.controlPlane.configurationDigest())
     try fixture.database.saveProject(
-      RegisteredProject(id: "fixture", displayName: "Fixture", rootPath: fixture.root.path))
+      ComputerMCPCore.RegisteredProject(
+        id: "fixture", displayName: "Fixture", rootPath: fixture.root.path))
     await #expect(throws: AppControlPlaneServiceError.unknownProject("missing")) {
-      _ = try await fixture.controlPlane.setProjectEnabled(
-        true, projectID: "missing", profileID: .chatGPTOperate)
-    }
-    await #expect(throws: AppControlPlaneServiceError.fullShellManifestDisabled) {
-      _ = try await fixture.controlPlane.setFullShellEnabled(true, profileID: .chatGPTOperate)
+      _ = try await fixture.setProjectAccess(
+        .read, projectID: "missing", profileID: .chatGPTOperate)
     }
     try await fixture.controlPlane.setActiveGatewayProfile(.chatGPTOperate)
     #expect(try await fixture.controlPlane.activeGatewayProfile() == .chatGPTOperate)
@@ -938,7 +1243,7 @@ final class AppControlPlaneServiceTests {
     }
     await #expect(throws: CancellationError.self) { try await cancelled.value }
     await owner.stopLocalAdministration(epoch: epoch)
-    #expect(try fixture.database.profiles().isEmpty)
+    #expect(try !fixture.database.profiles().isEmpty)
     #expect(
       try FileManager.default.contentsOfDirectory(atPath: fixture.root.path)
         .allSatisfy { !$0.hasPrefix("pid-") })
@@ -1008,7 +1313,7 @@ final class AppControlPlaneServiceTests {
         "plugins", "search", "工作", "--kind", "mcp", "--page", "2", "--refresh",
         "--control-socket", fixture.directories.controlSocket.path,
       ]
-      let success = try ProcessCommandRunner().run(
+      let success = try fixture.runCLI(
         executable: executable.path, arguments: args,
         workingDirectory: fixture.root, environment: [:], timeoutMilliseconds: 30_000,
         maxOutputBytes: 1_048_576)
@@ -1023,7 +1328,7 @@ final class AppControlPlaneServiceTests {
       #expect(json.objectValue?["entries"]?.arrayValue?.count == 1)
       #expect(await catalog.refreshRequested)
       await catalog.fail()
-      let failure = try ProcessCommandRunner().run(
+      let failure = try fixture.runCLI(
         executable: executable.path, arguments: args,
         workingDirectory: fixture.root, environment: [:], timeoutMilliseconds: 30_000,
         maxOutputBytes: 1_048_576)
@@ -1118,7 +1423,7 @@ final class AppControlPlaneServiceTests {
           "v1.0.0",
         ],
       ] {
-        let command = try ProcessCommandRunner().run(
+        let command = try fixture.runCLI(
           executable: executable.path,
           arguments: arguments + ["--control-socket", fixture.directories.controlSocket.path],
           workingDirectory: fixture.root, environment: [:], timeoutMilliseconds: 30_000,
@@ -1167,7 +1472,7 @@ final class AppControlPlaneServiceTests {
       let executable = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
         .deletingLastPathComponent().deletingLastPathComponent()
         .appendingPathComponent(".build/debug/computer-mcp")
-      let command = try ProcessCommandRunner().run(
+      let command = try fixture.runCLI(
         executable: executable.path,
         arguments: [
           "plugins", "search", "--refresh", "--control-socket",
@@ -1304,7 +1609,7 @@ final class AppControlPlaneServiceTests {
         .deletingLastPathComponent().deletingLastPathComponent()
       let executable = repository.appendingPathComponent(".build/debug/computer-mcp")
       #expect(FileManager.default.isExecutableFile(atPath: executable.path))
-      let command = try ProcessCommandRunner().run(
+      let command = try fixture.runCLI(
         executable: executable.path,
         arguments: [
           "plugins", "register", packageRoot.path, "--expected-revision", "0", "--control-socket",
@@ -1330,7 +1635,7 @@ final class AppControlPlaneServiceTests {
           ]))
       }
       #expect(try fixture.database.pluginStoreSnapshot().revision == 1)
-      let stale = try ProcessCommandRunner().run(
+      let stale = try fixture.runCLI(
         executable: executable.path,
         arguments: [
           "plugins", "enable", "test-package", "--expected-revision", "0", "--control-socket",
@@ -1341,17 +1646,17 @@ final class AppControlPlaneServiceTests {
       #expect(stale.exitCode != 0)
       #expect(stale.stdout.contains("Reload"))
       settings.cli["commands"]?.registrationID = "package-cli"
-      _ = try await client.call(
-        "plugin.configure",
-        arguments: .object([
-          "id": .string("test-package"), "settings": try .encoded(settings),
-          "expected_revision": .number(1),
-        ]))
+      let change = PluginHostChange.settings(pluginID: "test-package", settings)
+      let review = try #require(
+        try await fixture.controlPlane.reviewPluginEnablement(change, expectedRevision: 1))
+      _ = try await gateway.changePlugins(
+        change, expectedRevision: 1, approval: .init(review: review, selection: .init()))
       let source = try await fixture.controlPlane.activeConfiguration()
       #expect(source.cli.commands.map(\.id) == ["personal"])
       #expect(source.knownPluginMCPServerIDs.contains("plugin-12-test-package-native"))
       let runtime = try GatewayRuntime(
-        configuration: source, database: fixture.database, platform: MacOSPlatform.services)
+        configuration: source, database: fixture.database,
+        platform: MacOSPlatform.services(launcher: testExecutionLauncher()))
       #expect(runtime.pluginOrigins.count == 2)
       #expect(runtime.pluginDiagnostics.isEmpty && runtime.pluginIssues.isEmpty)
       #expect(
@@ -1368,7 +1673,7 @@ final class AppControlPlaneServiceTests {
           == exportedSettings)
       let settingsFile = fixture.root.appendingPathComponent("settings.json")
       try JSONEncoder().encode(exportedSettings).write(to: settingsFile)
-      let configured = try ProcessCommandRunner().run(
+      let configured = try fixture.runCLI(
         executable: executable.path,
         arguments: [
           "plugins", "configure", "test-package", "--settings-file", settingsFile.path,
@@ -1392,7 +1697,8 @@ final class AppControlPlaneServiceTests {
       #expect(
         disabled.settings["test-package"]?.dependencyExecutables == settings.dependencyExecutables)
       let disabledRuntime = try GatewayRuntime(
-        configuration: source, database: fixture.database, platform: MacOSPlatform.services)
+        configuration: source, database: fixture.database,
+        platform: MacOSPlatform.services(launcher: testExecutionLauncher()))
       #expect(disabledRuntime.pluginOrigins.isEmpty)
       await disabledRuntime.shutdown()
       let audit = try #require(
@@ -1469,7 +1775,9 @@ final class AppControlPlaneServiceTests {
     _ = try await fixture.controlPlane.activateManifest(
       GatewayConfiguration().exportedTOML(),
       expectedDigest: try? await fixture.controlPlane.configurationDigest())
-    let store = PluginStore(database: fixture.database, platform: MacOSPlatform.services)
+    let store = PluginStore(
+      database: fixture.database,
+      platform: MacOSPlatform.services(launcher: testExecutionLauncher()))
     _ = try await store.setSettings(
       .init(mcp: ["native": .init(registrationID: "plugin-native")]), for: "test-package",
       expectedRevision: 0)
@@ -1477,15 +1785,23 @@ final class AppControlPlaneServiceTests {
       schema_version = 1
       [[profiles]]
       id = 'chatgpt-operate'
-      mcp_servers = ['plugin-native']
+      allowed_callers = ['secure-tunnel']
+      [profiles.mcp_servers]
+      plugin-native = 'all'
       """
-    #expect(throws: ConfigurationError.self) { try GatewayConfiguration.load(text: text) }
+    let standalone = try GatewayConfiguration.load(
+      text: text, knownPluginMCPServerIDs: ["plugin-native"])
+    #expect(
+      standalone.profiles.first?.grant.permissions.state(for: .mcpServer("plugin-native"))
+        == .granted(.all))
     _ = try await fixture.controlPlane.activateManifest(
       text, expectedDigest: try? await fixture.controlPlane.configurationDigest())
     let exported = try await fixture.controlPlane.effectiveConfigurationForExport().exportedTOML()
     let loaded = try await fixture.controlPlane.parseManifest(exported)
     #expect(loaded.mcp.servers.isEmpty)
-    #expect(loaded.profiles.first { $0.id == .chatGPTOperate }?.mcpServers == ["plugin-native"])
+    #expect(
+      loaded.profiles.first { $0.id == .chatGPTOperate }?.grant.permissions.state(
+        for: .mcpServer("plugin-native")) == .granted(.all))
     #expect(!exported.contains("knownPluginMCPServerIDs"))
   }
 
@@ -1701,16 +2017,18 @@ final class AppControlPlaneServiceTests {
 
       await expectThrowsAsync(
         try await client.call(
-          "project.enable",
+          "project.access",
           arguments: .object([
             "project_id": .string("project"),
             "profile": .string("chatgpt-observe"),
-            "enabled": .string("true"),
+            "access": .bool(true),
+            "expected_profile_revision": .integer(1),
+            "expected_permission_revision": .integer(0),
           ])
         )
       ) { error in
-        #expect(error.localizedDescription.contains("enabled"))
-        #expect(error.localizedDescription.contains("Boolean"))
+        #expect(error.localizedDescription.contains("access"))
+        #expect(error.localizedDescription.contains("string"))
       }
 
       await expectThrowsAsync(
@@ -1850,17 +2168,26 @@ final class AppControlPlaneServiceTests {
         try await fixture.controlPlane.activeGatewayProfile() == GatewayProfileID.chatGPTOperate
       )
 
+      let reviewed = try await client.call(
+        "profile.show",
+        arguments: .object(["profile": .string(GatewayProfileID.chatGPTOperate.rawValue)]))
+      let profileRevision = try #require(
+        reviewed.objectValue?["authorization_revision"]?.int64Value)
+      let permissionRevision = try #require(
+        reviewed.objectValue?["permission_revision"]?.int64Value)
       let granted = try await client.call(
-        "project.enable",
+        "project.access",
         arguments: .object([
           "project_id": .string(projectID),
           "profile": .string(GatewayProfileID.chatGPTOperate.rawValue),
-          "enabled": .bool(true),
+          "access": .string("read"),
+          "expected_profile_revision": .integer(profileRevision),
+          "expected_permission_revision": .integer(permissionRevision),
         ])
       )
-      #expect(
-        granted.objectValue?["project_ids"]?.arrayValue?.contains(.string(projectID)) == true
-      )
+      let savedGrant = try CanonicalJSONCoding.decoder().decode(
+        ProfileGrant.self, from: JSONEncoder().encode(granted))
+      #expect(savedGrant.permissions.state(for: .project(projectID)) == .granted(.read))
       #expect((await gatewayService.snapshot()).state == .running)
 
       let permissions = try await client.call("permissions.status")
@@ -1949,18 +2276,19 @@ final class AppControlPlaneServiceTests {
       allow_any_tool = true
       [[profiles]]
       id = "chatgpt-operate"
-      mcp_servers = ["fixture-mcp"]
+      allowed_callers = ["secure-tunnel"]
+      [profiles.mcp_servers]
+      fixture-mcp = "all"
       """, expectedDigest: try? await fixture.controlPlane.configurationDigest())
     let exported = try await fixture.controlPlane.effectiveConfigurationForExport()
     let reloaded = try GatewayConfiguration.load(text: exported.exportedTOML())
     let grant = try #require(reloaded.profiles.first { $0.id == .chatGPTOperate })
-    #expect(grant.mcpServers == ["fixture-mcp"])
-    #expect(grant.capabilities.isEmpty)
+    #expect(grant.grant.permissions.entries == [.mcpServer("fixture-mcp"): .granted(.all)])
     #expect(reloaded.mcp.servers.first?.allowAnyTool == true)
   }
 
   @Test
-  func testConfigExportProjectsPersistedProjectAndFullShellRuntimeState() async throws {
+  func testConfigExportIncludesPersistedProjectsAndPermissions() async throws {
     let fixture = try AppControlPlaneServiceFixture()
     defer { fixture.cleanup() }
     _ = try await fixture.controlPlane.activateManifest(
@@ -1984,17 +2312,12 @@ final class AppControlPlaneServiceTests {
       at: projectURL,
       displayName: "Exported Project"
     )
-    _ = try await fixture.controlPlane.updateProfilePermissions(
-      profileID: .chatGPTOperate, mode: .localFullAccess)
-    _ = try await fixture.controlPlane.setProjectEnabled(
-      true,
+    _ = try await fixture.setProjectAccess(
+      .read,
       projectID: project.id,
       profileID: .chatGPTOperate
     )
-    _ = try await fixture.controlPlane.setFullShellEnabled(
-      true,
-      profileID: .chatGPTOperate
-    )
+    _ = try fixture.editProfile(.chatGPTOperate) { $0.fullAccess = true }
 
     let gatewayService = AppGatewayService.live(
       controlPlane: fixture.controlPlane,
@@ -2032,11 +2355,8 @@ final class AppControlPlaneServiceTests {
       let exportedGrant = try #require(
         exportedConfiguration.profiles.first { $0.id == .chatGPTOperate }
       )
-      #expect(exportedGrant.fullShellEnabled)
-      #expect(exportedGrant.projects == [project.id])
-      #expect(
-        Set(exportedGrant.capabilities).isSuperset(of: ProfileGrant.fullShellCapabilities)
-      )
+      #expect(exportedGrant.grant.fullAccess)
+      #expect(exportedGrant.grant.permissions.state(for: .project(project.id)) == .granted(.read))
 
       let preview = try await client.call(
         "config.import",
@@ -2269,64 +2589,26 @@ final class AppControlPlaneServiceTests {
   }
 
   @Test
-  func testActiveProfileAndFullShellSettingsPersistThroughControlPlane() async throws {
+  func activeProfileAndFullAccessPersistThroughControlPlane() async throws {
     let fixture = try AppControlPlaneServiceFixture()
     defer { fixture.cleanup() }
     _ = try await fixture.controlPlane.activateManifest(
       validManifest, expectedDigest: try? await fixture.controlPlane.configurationDigest())
-
-    let initialProfile = try await fixture.controlPlane.activeGatewayProfile()
-    #expect((initialProfile) == (.chatGPTObserve))
     try await fixture.controlPlane.setActiveGatewayProfile(.chatGPTOperate)
-    let selectedProfile = try await fixture.controlPlane.activeGatewayProfile()
-    #expect((selectedProfile) == (.chatGPTOperate))
-
-    do {
-      _ = try await fixture.controlPlane.setFullShellEnabled(
-        true,
-        profileID: .chatGPTOperate
-      )
-      Issue.record("Expected manifest-level Full Shell denial.")
-    } catch let error as AppControlPlaneServiceError {
-      #expect((error) == (.fullShellManifestDisabled))
-    }
-
-    _ = try await fixture.controlPlane.activateManifest(
-      """
-      schema_version = 1
-
-      [server]
-      name = "computer-mcp-test"
-
-      [policy]
-      shell_enabled = true
-      """, expectedDigest: try? await fixture.controlPlane.configurationDigest())
-    _ = try await fixture.controlPlane.updateProfilePermissions(
-      profileID: .chatGPTOperate, mode: .localFullAccess)
-    let grant = try await fixture.controlPlane.setFullShellEnabled(
-      true,
-      profileID: .chatGPTOperate
+    #expect(try await fixture.controlPlane.activeGatewayProfile() == .chatGPTOperate)
+    let saved = try fixture.editProfile(.chatGPTOperate) { $0.fullAccess = true }
+    #expect(saved.fullAccess)
+    #expect(
+      try await fixture.controlPlane.profileGrants().first { $0.id == saved.id }?.fullAccess == true
     )
-    #expect(grant.fullShellEnabled)
-    #expect(grant.capabilityIDs.contains("shell.run"))
-
-    let localGrant = try await fixture.controlPlane.setFullShellEnabled(
-      true,
-      profileID: .localAdmin
-    )
-    #expect(localGrant.fullShellEnabled)
-    #expect(localGrant.capabilityIDs.contains("shell.run"))
-
-    do {
+    #expect(try await fixture.controlPlane.activeConfiguration().policy.shellEnabled == false)
+    await #expect(throws: AppControlPlaneServiceError.localAdminCannotBeSocketProfile) {
       try await fixture.controlPlane.setActiveGatewayProfile(.localAdmin)
-      Issue.record("Expected local-admin socket profile denial.")
-    } catch let error as AppControlPlaneServiceError {
-      #expect((error) == (.localAdminCannotBeSocketProfile))
     }
   }
 
   @Test
-  func testProjectGrantCanBeChangedForAProfile() async throws {
+  func projectAccessSupportsAskDenyReadAndWrite() async throws {
     let fixture = try AppControlPlaneServiceFixture()
     defer { fixture.cleanup() }
     _ = try await fixture.controlPlane.activateManifest(
@@ -2338,23 +2620,32 @@ final class AppControlPlaneServiceTests {
     )
     let project = try await fixture.controlPlane.registerProject(at: projectURL)
 
-    var grant = try await fixture.controlPlane.setProjectEnabled(
-      true,
+    var grant = try await fixture.setProjectAccess(
+      .read,
       projectID: project.id,
       profileID: .chatGPTOperate
     )
-    #expect(grant.projectIDs.contains(project.id))
+    #expect(grant.permissions.state(for: .project(project.id)) == .granted(.read))
+    for _ in 0..<2 {
+      grant = try await fixture.setProjectAccess(
+        .write, projectID: project.id, profileID: .chatGPTOperate)
+      #expect(grant.permissions.state(for: .project(project.id)) == .granted(.write))
+    }
 
-    grant = try await fixture.controlPlane.setProjectEnabled(
-      false,
+    grant = try await fixture.setProjectAccess(
+      .deny,
       projectID: project.id,
       profileID: .chatGPTOperate
     )
-    #expect(!(grant.projectIDs.contains(project.id)))
+    #expect(grant.permissions.state(for: .project(project.id)) == .denied)
+    grant = try await fixture.setProjectAccess(
+      .ask, projectID: project.id, profileID: .chatGPTOperate)
+    #expect(grant.permissions.entries[.project(project.id)] == nil)
+    #expect(grant.permissions.state(for: .project(project.id)) == .notGranted)
 
     do {
-      _ = try await fixture.controlPlane.setProjectEnabled(
-        true,
+      _ = try await fixture.setProjectAccess(
+        .read,
         projectID: "missing",
         profileID: .chatGPTOperate
       )
@@ -2364,63 +2655,51 @@ final class AppControlPlaneServiceTests {
     }
   }
 
-  @Test
-  func testExplicitPermissionsRemainAuthoritativeAfterManifestUpdates() async throws {
+  @Test(arguments: ["profile", "permission"])
+  func projectAccessRejectsEitherStaleReviewedRevision(revision: String) async throws {
     let fixture = try AppControlPlaneServiceFixture()
     defer { fixture.cleanup() }
     _ = try await fixture.controlPlane.activateManifest(
-      profileManifest(
-        observeCapabilities: ["project.list", "project.describe", "file.exists"],
-        observeSecureTunnelAccess: true
-      ), expectedDigest: try? await fixture.controlPlane.configurationDigest())
-    let projectURL = fixture.root.appendingPathComponent("Evolving Project")
-    try FileManager.default.createDirectory(
-      at: projectURL,
-      withIntermediateDirectories: true
-    )
-    let project = try await fixture.controlPlane.registerProject(at: projectURL)
-    _ = try await fixture.controlPlane.setProjectEnabled(
-      true,
-      projectID: project.id,
-      profileID: .chatGPTObserve
-    )
+      validManifest, expectedDigest: try? await fixture.controlPlane.configurationDigest())
+    let project = try await fixture.controlPlane.registerProject(at: fixture.root)
+    let prior = try fixture.permissionControl.view()
+    let priorProfile = try #require(prior.profiles.first { $0.id == .chatGPTOperate })
+    _ = try await fixture.setProjectAccess(
+      .write, projectID: project.id, profileID: .chatGPTOperate)
+    let current = try fixture.permissionControl.view()
+    let currentProfile = try #require(current.profiles.first { $0.id == .chatGPTOperate })
+    await #expect(throws: GatewayPermissionError.revisionConflict) {
+      try await fixture.controlPlane.setProjectAccess(
+        .deny, projectID: project.id, profileID: .chatGPTOperate,
+        expectedProfileRevision: revision == "profile"
+          ? priorProfile.authorizationRevision : currentProfile.authorizationRevision,
+        expectedPermissionRevision: revision == "permission" ? prior.revision : current.revision)
+    }
+    let after = try fixture.permissionControl.view()
+    #expect(after.revision == current.revision)
+    #expect(after.profiles.first { $0.id == .chatGPTOperate } == currentProfile)
+  }
 
+  @Test
+  func explicitPermissionsRemainAuthoritativeAfterManifestUpdates() async throws {
+    let fixture = try AppControlPlaneServiceFixture()
+    defer { fixture.cleanup() }
     _ = try await fixture.controlPlane.activateManifest(
-      profileManifest(
-        observeCapabilities: ["project.list", "project.describe", "file.read"],
-        observeSecureTunnelAccess: false
-      ), expectedDigest: try? await fixture.controlPlane.configurationDigest())
-
-    let profileGrants = try await fixture.controlPlane.profileGrants()
-    let grant = try #require(
-      profileGrants.first { $0.id == .chatGPTObserve }
-    )
-    #expect(grant.projectIDs.contains(project.id))
-    #expect(!grant.capabilityIDs.contains("file.read"))
-    #expect(grant.capabilityIDs.contains("file.exists"))
-    #expect(grant.allowedCallers == [.secureTunnel])
-    #expect(grant.authorizationRevision > 0)
-
-    let gateway = try GatewayRuntime(
-      configuration: try await fixture.controlPlane.activeConfiguration(),
-      context: ExecutionContext(
-        caller: .secureTunnel,
-        profileID: .chatGPTObserve,
-        projectID: project.id
-      ),
-      database: fixture.database,
-      registeredProjects: [project], platform: MacOSPlatform.services
-    )
-    let toolNames = Set(try gateway.listTools(context: .empty).map(\.name))
-    #expect(!toolNames.contains("file.read"))
-    #expect(toolNames.contains("file.exists"))
-    let changed = try await fixture.controlPlane.updateProfilePermissions(
-      profileID: .chatGPTObserve,
-      capabilityIDs: ["project.list", "project.describe", "file.read"],
-      allowedCallers: [.localApp], expectedRevision: grant.authorizationRevision)
-    #expect(changed.authorizationRevision > grant.authorizationRevision)
-    #expect(try gateway.listTools(context: .empty).isEmpty)
-    await gateway.shutdown()
+      validManifest, expectedDigest: try? await fixture.controlPlane.configurationDigest())
+    let saved = try fixture.editProfile(.chatGPTObserve) {
+      try $0.permissions.set(.denied, for: .screen)
+      $0.allowedCallers = [.secureTunnel]
+    }
+    var configuration = try await fixture.controlPlane.activeConfiguration()
+    configuration.server.name = "updated"
+    _ = try await fixture.controlPlane.activateManifest(
+      configuration.exportedTOML(),
+      expectedDigest: try await fixture.controlPlane.configurationDigest())
+    let current = try #require(
+      try await fixture.controlPlane.profileGrants().first { $0.id == saved.id })
+    #expect(current.permissions.entries == saved.permissions.entries)
+    #expect(current.allowedCallers == saved.allowedCallers)
+    #expect(current.authorizationRevision == saved.authorizationRevision)
   }
 
   @Test
@@ -2428,7 +2707,8 @@ final class AppControlPlaneServiceTests {
     let fixture = try AppControlPlaneServiceFixture()
     defer { fixture.cleanup() }
     _ = try await fixture.controlPlane.activateManifest(
-      validManifest, expectedDigest: try? await fixture.controlPlane.configurationDigest())
+      validManifest + "\n[builtin]\nenabled = ['system.time']\n",
+      expectedDigest: try? await fixture.controlPlane.configurationDigest())
     let profile = OpenAITunnelConfiguration(
       id: "recoverable",
       tunnelClientProfile: "computer-mcp",
@@ -2475,6 +2755,7 @@ final class AppControlPlaneServiceTests {
     defer { fixture.cleanup() }
     _ = try await fixture.controlPlane.activateManifest(
       validManifest, expectedDigest: try? await fixture.controlPlane.configurationDigest())
+    _ = try fixture.editProfile(.chatGPTOperate) { $0.allowedCallers = [] }
     let profile = OpenAITunnelConfiguration(
       id: "empty-operate",
       tunnelClientProfile: "computer-mcp",
@@ -2504,7 +2785,7 @@ final class AppControlPlaneServiceTests {
       withIntermediateDirectories: true
     )
     try fixture.database.saveProject(
-      RegisteredProject(
+      ComputerMCPCore.RegisteredProject(
         id: "project-1",
         displayName: "Project",
         rootPath: projectURL.path
@@ -2524,6 +2805,8 @@ final class AppControlPlaneServiceTests {
       [builtin]
       enabled = ["system.time"]
       """, expectedDigest: try? await fixture.controlPlane.configurationDigest())
+
+    _ = try fixture.editProfile(.chatGPTObserve) { $0.allowedCallers.insert(.localMCP) }
 
     let socketURL = URL(
       fileURLWithPath: "/tmp/cm-\(UUID().uuidString.prefix(8))/gateway.sock"
@@ -2655,13 +2938,14 @@ final class AppControlPlaneServiceTests {
   }
 
   @Test
-  func testFreshInstallInitializesWithOnboardingToolsBeforeProjectRegistration()
+  func freshInstallListsOnboardingAndRequestableToolsBeforeProjectRegistration()
     async throws
   {
     let fixture = try AppControlPlaneServiceFixture()
     defer { fixture.cleanup() }
     _ = try await fixture.controlPlane.activateManifest(
       validManifest, expectedDigest: try? await fixture.controlPlane.configurationDigest())
+    _ = try fixture.editProfile(.chatGPTObserve) { $0.allowedCallers.insert(.localMCP) }
     let socketURL = URL(
       fileURLWithPath: "/tmp/cm-\(UUID().uuidString.prefix(8))/gateway.sock"
     )
@@ -2683,11 +2967,27 @@ final class AppControlPlaneServiceTests {
     #expect((initialization.serverInfo.name) == ("computer-mcp-test"))
 
     let (tools, _) = try await client.listTools()
+    let onboarding: Set<String> = [
+      "project.list", "project.describe", "profile.show", "plugin.list", "plugin.describe",
+      "plugin.search", "plugin.artifacts",
+    ]
+    #expect(onboarding.isSubset(of: Set(tools.map(\.name))))
+    let requestable = try #require(tools.first { $0.name == "computer.keyboard.text" })
+    let metadata = try #require(
+      GatewaySocketCatalogTool(tool: requestable).meta?.objectValue?["computer_mcp"]?
+        .objectValue?["requirements"])
+    let requirement = try JSONDecoder().decode(
+      ToolRequirement.self, from: JSONEncoder().encode(metadata))
+    #expect(requirement.permissions.contains { $0.permission == .desktopControl })
+    let privacyRequest: RequestContext<CallTool.Result> = try await client.callTool(
+      name: requestable.name, arguments: ["text": .string("Unadmitted input")])
+    let privacy = try await privacyRequest.value
+    let privacyEnvelope = try JSONValue.sdkToolResult(
+      content: privacy.content, structuredContent: privacy.structuredContent,
+      isError: privacy.isError, meta: privacy._meta)
     #expect(
-      Set(tools.map(\.name)) == [
-        "project.list", "project.describe", "profile.show", "plugin.list", "plugin.describe",
-        "plugin.search", "plugin.artifacts",
-      ])
+      privacyEnvelope.objectValue?["structuredContent"]?.objectValue?["error"]?
+        .objectValue?["code"] == .string("permission.required"), "\(privacyEnvelope)")
     let result = try await client.callTool(name: "project.list")
     #expect((result.isError) != (true))
     let text = try #require(
@@ -2776,14 +3076,14 @@ final class AppControlPlaneServiceTests {
   func testRemovingProjectAliasRemovesCanonicalProfileReference() async throws {
     let fixture = try AppControlPlaneServiceFixture()
     defer { fixture.cleanup() }
-    let canonical = RegisteredProject(
+    let canonical = ComputerMCPCore.RegisteredProject(
       id: "project-canonical",
       displayName: "Shared Project",
       rootPath: fixture.root.appendingPathComponent("Shared Project").path,
       createdAt: Date(timeIntervalSince1970: 1),
       updatedAt: Date(timeIntervalSince1970: 1)
     )
-    let duplicate = RegisteredProject(
+    let duplicate = ComputerMCPCore.RegisteredProject(
       id: "project-duplicate",
       displayName: canonical.displayName,
       rootPath: canonical.rootPath,
@@ -2793,7 +3093,7 @@ final class AppControlPlaneServiceTests {
     try fixture.database.saveProject(canonical)
     try fixture.database.saveProject(duplicate)
     var profile = ProfileGrant.operate
-    profile.projectIDs = [duplicate.id]
+    try profile.permissions.set(.granted(.write), for: .project(duplicate.id))
     try fixture.database.saveProfile(profile)
     let plan = try await fixture.controlPlane.projectDeduplicationPlan()
     _ = try await fixture.controlPlane.applyProjectDeduplication(
@@ -2806,7 +3106,9 @@ final class AppControlPlaneServiceTests {
     #expect(try fixture.database.projects().isEmpty)
     #expect(try fixture.database.project(id: canonical.id) == nil)
     #expect(try fixture.database.project(id: duplicate.id) == nil)
-    #expect(try fixture.database.profiles().first?.projectIDs.isEmpty == true)
+    #expect(
+      try fixture.database.profiles().first { $0.id == profile.id }?.permissions.entries[
+        .project(canonical.id)] == nil)
   }
 
   private var validManifest: String {
@@ -2816,28 +3118,6 @@ final class AppControlPlaneServiceTests {
     [server]
     name = "computer-mcp-test"
     """
-  }
-
-  private func profileManifest(
-    observeCapabilities: [String],
-    observeSecureTunnelAccess: Bool
-  ) -> String {
-    let capabilities = observeCapabilities.map { "\"\($0)\"" }.joined(separator: ", ")
-    return """
-      schema_version = 1
-
-      [server]
-      name = "computer-mcp-profile-test"
-
-      [[profiles]]
-      id = "chatgpt-observe"
-      capabilities = [\(capabilities)]
-      allowed_callers = \(observeSecureTunnelAccess ? "[\"secure-tunnel\"]" : "[\"local-app\"]")
-      full_shell_enabled = false
-
-      [builtin]
-      enabled = ["file.exists", "file.read"]
-      """
   }
 
   private func permissions(at url: URL) throws -> Int {
@@ -2852,6 +3132,8 @@ private final class AppControlPlaneServiceFixture: @unchecked Sendable {
   let database: GatewayDatabase
   let secretStore: KeychainSecretStore
   let controlPlane: AppControlPlaneService
+  let permissionGateway: GatewayPermissionService
+  let permissionControl: PermissionControlService
 
   init(
     keychainAdapter: (any KeychainAdapter)? = nil,
@@ -2861,7 +3143,10 @@ private final class AppControlPlaneServiceFixture: @unchecked Sendable {
     gatewayExecutablePath: String = "computer-mcp",
     pluginCatalog: (any PluginCatalogBrowsing)? = nil,
     providerDiscovery: any ControlPlaneProviderDiscovering = TestProviderDiscovery(),
-    initialManifest: String? = nil
+    initialManifest: String? = nil,
+    executionLauncher: ((URL) -> ExecutionLauncher)? = nil,
+    projectBookmarks: (any ProjectBookmarkServicing)? = nil,
+    invalidCatalogMetadata: Bool = false
   ) throws {
     root = URL(
       fileURLWithPath: "/private/tmp/cm-cp-\(UUID().uuidString.prefix(8))",
@@ -2874,6 +3159,34 @@ private final class AppControlPlaneServiceFixture: @unchecked Sendable {
     try directories.prepare()
     database = try GatewayDatabase(path: directories.database.path)
     try directories.secureDatabaseFiles()
+    _ = database.permissionStore(counter: TestAuthorizationEpochCounter())
+    let launcher = executionLauncher?(root) ?? testExecutionLauncher()
+    let native = MacOSPlatform.services(launcher: launcher)
+    let platform = PlatformServices(
+      launcher: launcher, projectGrants: projectBookmarks ?? native.projectGrants,
+      pluginDirectories: native.pluginDirectories, applications: native.applications,
+      toolProviders: invalidCatalogMetadata
+        ? UnannotatedCatalogProviderFactory(base: native.toolProviders) : native.toolProviders,
+      managementToolNames: native.managementToolNames,
+      executableSearchDirectories: native.executableSearchDirectories,
+      gitExecutable: native.gitExecutable, fileChanges: native.fileChanges,
+      permissionPolicyReader: TestManagedPolicyReader(), executionProxy: native.executionProxy)
+    if let initialManifest {
+      _ = try database.activatePermissionMigration(
+        manifest: initialManifest, baseURL: directories.configuration,
+        applications: MacOSPlatform.services(launcher: testExecutionLauncher()).applications)
+    } else {
+      try database.bootstrapPermissionProfiles(
+        GatewayProfileID.builtIns.map { GatewayConfiguration().profileGrant(for: $0) },
+        declarations: [])
+    }
+    permissionGateway = try database.permissionRuntime(platform: platform).service
+    let owner = try GatewayPermissionOwner(
+      context: .init(
+        caller: .localApp, profileID: .localAdmin, trustedPrincipalID: "fixture-owner"),
+      validate: {})
+    permissionControl = PermissionControlService(service: permissionGateway, owner: { owner })
+
     if let initialManifest {
       let data = Data(initialManifest.utf8)
       try data.write(to: directories.manifest)
@@ -2885,11 +3198,14 @@ private final class AppControlPlaneServiceFixture: @unchecked Sendable {
       manifestURL: directories.manifest,
       database: database,
       loader: GatewayManifestConfigurationLoader(
-        database: database, applications: MacOSPlatform.services.applications))
+        database: database,
+        applications: MacOSPlatform.services(launcher: testExecutionLauncher()).applications))
     secretStore = try KeychainSecretStore(adapter: keychainAdapter ?? MemoryKeychainAdapter())
     let openAITunnelSupervisor = OpenAITunnelSupervisor(
+      launcher: testExecutionLauncher(),
       secretStore: secretStore,
-      executableSearchDirectories: MacOSPlatform.services.executableSearchDirectories,
+      executableSearchDirectories: MacOSPlatform.services(launcher: testExecutionLauncher())
+        .executableSearchDirectories,
       resolver: FixedOpenAITunnelClientResolver(),
       planBuilder: FixedOpenAITunnelPlanBuilder(),
       proxyResolver: FixedOpenAITunnelHTTPProxyResolver(),
@@ -2899,6 +3215,7 @@ private final class AppControlPlaneServiceFixture: @unchecked Sendable {
     controlPlane = AppControlPlaneService(
       directories: directories,
       database: database,
+      permissionControl: permissionControl,
       manifestStore: manifestStore,
       defaultManifest: DefaultGatewayConfiguration.manifest,
       secretStore: secretStore,
@@ -2907,8 +3224,69 @@ private final class AppControlPlaneServiceFixture: @unchecked Sendable {
       providerDiscovery: providerDiscovery,
       launchAtLoginController: launchAtLoginController,
       computerUsePermissionReader: computerUsePermissionReader,
-      platform: MacOSPlatform.services, pluginCatalog: pluginCatalog
+      platform: platform,
+      pluginCatalog: pluginCatalog
     )
+  }
+
+  func approveProvider(_ server: MCPServerConfig) throws {
+    let owner = try GatewayPermissionOwner(
+      context: .init(
+        caller: .localApp, profileID: .localAdmin, trustedPrincipalID: "provider-owner"),
+      validate: {})
+    let review = try GatewayProviderReview(
+      server: server, configuration: database.configurationState())
+    let view = try permissionGateway.view(owner: owner)
+    _ = try permissionGateway.approveProvider(
+      review, permissions: .newPrincipal, fullAccess: false, owner: owner,
+      expectedProviderRevision: nil, expectedRevision: view.revision,
+      expectedEpoch: #require(view.epoch))
+  }
+
+  func runCLI(
+    executable: String, arguments: [String], workingDirectory: URL,
+    environment: [String: String], timeoutMilliseconds: Int, maxOutputBytes: Int
+  ) throws -> CommandResult {
+    let repository = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
+      .deletingLastPathComponent().deletingLastPathComponent()
+    let expected = repository.appendingPathComponent(".build/debug/computer-mcp")
+      .standardizedFileURL
+    guard URL(fileURLWithPath: executable).standardizedFileURL == expected else {
+      throw CocoaError(.fileReadNoPermission)
+    }
+    let administration = ExecutionAdministration(
+      mode: .fullAccess,
+      environment: try ExecutionEnvironment(fullAccessVariables: ["PATH": "/usr/bin:/bin"]))
+    return try ExecutionAdministration.$current.withValue(administration) {
+      try ProcessCommandRunner(launcher: testExecutionLauncher()).run(
+        executable: executable, arguments: arguments, workingDirectory: workingDirectory,
+        environment: environment, timeoutMilliseconds: timeoutMilliseconds,
+        maxOutputBytes: maxOutputBytes)
+    }
+  }
+
+  func setProjectAccess(
+    _ access: ProjectAccess, projectID: String, profileID: GatewayProfileID
+  ) async throws -> ProfileGrant {
+    let review = try permissionControl.view()
+    let profile = try #require(review.profiles.first { $0.id == profileID })
+    return try await controlPlane.setProjectAccess(
+      access, projectID: projectID, profileID: profileID,
+      expectedProfileRevision: profile.authorizationRevision,
+      expectedPermissionRevision: review.revision)
+  }
+
+  func editProfile(_ id: GatewayProfileID, edit: (inout ProfileGrant) throws -> Void) throws
+    -> ProfileGrant
+  {
+    let view = try permissionControl.view()
+    guard var grant = view.profiles.first(where: { $0.id == id }) else {
+      throw GatewayPermissionError.unknownProfile
+    }
+    try edit(&grant)
+    try permissionControl.updateProfile(
+      grant, expectedProfileRevision: grant.authorizationRevision, expectedRevision: view.revision)
+    return try permissionControl.view().profiles.first { $0.id == id }!
   }
 
   func cleanup() {
@@ -3094,5 +3472,86 @@ private final class MemoryLaunchAtLoginController: LaunchAtLoginControlling, @un
     lock.lock()
     self.enabled = enabled
     lock.unlock()
+  }
+}
+
+private final class GatedConstructionBookmarkService: ProjectBookmarkServicing, @unchecked Sendable
+{
+  private let condition = NSCondition()
+  private let base = ProjectBookmarkService()
+  private var armed = false
+  private var isEntered = false
+  private var isReleased = false
+  private var openCount = 0
+  private var closeCount = 0
+
+  var entered: Bool { condition.withLock { isEntered } }
+  var opened: Int { condition.withLock { openCount } }
+  var closed: Int { condition.withLock { closeCount } }
+
+  func arm() { condition.withLock { armed = true } }
+  func release() {
+    condition.withLock {
+      isReleased = true
+      condition.broadcast()
+    }
+  }
+
+  func registerFolder(at url: URL, displayName: String?) throws -> ComputerMCPCore.RegisteredProject
+  {
+    try base.registerFolder(at: url, displayName: displayName)
+  }
+
+  func resolve(_ project: ComputerMCPCore.RegisteredProject) throws -> ResolvedProjectAccess {
+    condition.lock()
+    if armed && !isEntered {
+      isEntered = true
+      condition.broadcast()
+      let deadline = Date().addingTimeInterval(5)
+      while !isReleased && condition.wait(until: deadline) {}
+    }
+    condition.unlock()
+    let access = try base.resolve(project)
+    condition.withLock { openCount += 1 }
+    return try ResolvedProjectAccess(
+      project: access.project, rootURL: access.rootURL,
+      bookmarkWasRefreshed: access.bookmarkWasRefreshed,
+      stopAccessing: {
+        access.close()
+        self.condition.withLock { self.closeCount += 1 }
+      })
+  }
+}
+
+private struct UnannotatedCatalogProviderFactory: GatewayToolProviderFactory {
+  let base: any GatewayToolProviderFactory
+  func makeProviders(
+    configuration: GatewayConfiguration, commandRunner: any CommandRunning,
+    processManager: any ProcessManaging, shellManager: any ShellManaging,
+    mcpClient: any DownstreamMCPClient, hostContext: MCPHostContext
+  ) -> GatewayToolRegistry {
+    let registry = base.makeProviders(
+      configuration: configuration, commandRunner: commandRunner, processManager: processManager,
+      shellManager: shellManager, mcpClient: mcpClient, hostContext: hostContext)
+    return GatewayToolRegistry(
+      providers: { try registry.providers() + [UnannotatedCatalogProvider()] },
+      refreshInterval: registry.refreshInterval, downstreamPolicy: registry.downstreamPolicy,
+      shutdown: { await registry.shutdown() })
+  }
+}
+
+private struct UnannotatedCatalogProvider: GatewayToolProvider {
+  let id = "fixture-metadata"
+  func definitions() throws -> [ToolDefinition] {
+    [
+      .init(
+        tool: .init(
+          name: "fixture.unannotated", description: "Metadata fixture",
+          inputSchema: .object(["type": .string("object")])),
+        capability: .init(id: "fixture.unannotated", risk: .readOnly, requirement: .none))
+    ]
+  }
+  func callTool(_ invocation: ToolInvocation) throws -> JSONValue {
+    throw GatewayToolError.unknownTool(invocation.name)
   }
 }

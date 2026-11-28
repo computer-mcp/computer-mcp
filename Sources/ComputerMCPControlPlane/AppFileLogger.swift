@@ -1,3 +1,4 @@
+import ComputerMCPPersistence
 import Foundation
 
 package enum AppLogLevel: String, Codable, Sendable {
@@ -49,6 +50,33 @@ package final class AppFileLogger: @unchecked Sendable {
     event: String,
     fields: [String: String] = [:]
   ) {
+    // Logging must never prevent the gateway or App from operating.
+    try? record(level, event: event, fields: fields)
+  }
+
+  /// Writes one record and reports failure, for callers that acknowledge delivery.
+  package func record(
+    _ level: AppLogLevel,
+    event: String,
+    fields: [String: String] = [:]
+  ) throws {
+    try record(level, event: event, fields: fields, fieldLimit: 2_048)
+  }
+
+  /// Retirement facts are bounded by the migration input, but must be emitted in full
+  /// before their durable delivery acknowledgement. Other log records retain their cap.
+  package func recordPluginWorktreeRetirement(_ notice: PluginWorktreeRetirementNotice) throws {
+    let fields = notice.fields.mapValues { $0.stringValue ?? "null" }
+    guard fields.values.reduce(0, { $0 + $1.utf8.count }) <= 262_144 else {
+      throw AppFileLoggerError.oversizedRetirementNotice
+    }
+    try record(
+      .warning, event: PluginWorktreeRetirementNotice.code, fields: fields, fieldLimit: 262_144)
+  }
+
+  private func record(
+    _ level: AppLogLevel, event: String, fields: [String: String], fieldLimit: Int
+  ) throws {
     lock.lock()
     defer { lock.unlock() }
 
@@ -63,7 +91,7 @@ package final class AppFileLogger: @unchecked Sendable {
               Self.bounded(key, maxBytes: 128),
               Self.isSensitiveField(key)
                 ? "[REDACTED]"
-                : Self.bounded(value, maxBytes: 2_048)
+                : Self.bounded(value, maxBytes: fieldLimit)
             )
           }
         )
@@ -89,8 +117,6 @@ package final class AppFileLogger: @unchecked Sendable {
         [.posixPermissions: NSNumber(value: Int16(0o600))],
         ofItemAtPath: fileURL.path
       )
-    } catch {
-      // Logging must never prevent the gateway or App from operating.
     }
   }
 
@@ -149,6 +175,7 @@ package final class AppFileLogger: @unchecked Sendable {
 package enum AppFileLoggerError: Error, Equatable, Sendable {
   case invalidMaxBytes
   case invalidRetainedFiles
+  case oversizedRetirementNotice
 }
 
 private struct AppLogRecord: Codable {

@@ -1,4 +1,6 @@
 import ComputerMCPMacOS
+import ComputerMCPPermissions
+import ComputerMCPTestSupport
 import Darwin
 import Foundation
 import Testing
@@ -7,112 +9,12 @@ import Testing
 @testable import ComputerMCPCore
 @testable import ComputerMCPGateway
 
+#if os(macOS)
+  import ComputerMCPDarwinTestSupport
+#endif
+
 @Suite(.serialized)
 struct GatewayHTTPRuntimeTests {
-  @Test
-  func testOperationConsentRequiresItsSessionAndFreshApprovalAfterReconnect() async throws {
-    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
-    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
-    defer { try? FileManager.default.removeItem(at: root) }
-    let database = try GatewayDatabase(inMemory: ())
-    let configuration = GatewayConfiguration(
-      runtime: RuntimeBindingConfig(caller: .secureTunnel, profileID: .chatGPTOperate),
-      profiles: [
-        ProfileGrantConfig(
-          id: .chatGPTOperate,
-          capabilities: ["operations.prepare", "operations.commit", "file.write"],
-          projects: ["fixture"], allowedCallers: [.secureTunnel], mode: .projectOperations)
-      ], builtin: BuiltinConfig(enabled: ["file.write"]))
-    func runtime(token: String) throws -> GatewayHTTPRuntime {
-      GatewayHTTPRuntime(
-        configuration: configuration,
-        registry: try GatewayRuntime(
-          configuration: configuration, database: database,
-          registeredProjects: [
-            RegisteredProject(id: "fixture", displayName: "Fixture", rootPath: root.path)
-          ], platform: MacOSPlatform.services), host: "127.0.0.1", port: 0, publicBaseURL: nil,
-        accessToken: token)
-    }
-    let first = try runtime(token: "first-fixture-credential")
-    let other = try runtime(token: "other-fixture-credential")
-    try await first.startListening()
-    do {
-      try await other.startListening()
-      let firstPort = try #require(await first.boundPort())
-      let otherPort = try #require(await other.boundPort())
-      let endpoint = try #require(URL(string: "http://127.0.0.1:\(firstPort)/mcp"))
-      let firstSession = try await GatewayClientSession.connectHTTP(
-        endpoint: endpoint, accessToken: "first-fixture-credential")
-      let target: JSONValue = .object([
-        "path": .string("owned.txt"), "content": .string("verified owner"),
-        "dry_run": .bool(false), "confirm": .bool(true),
-      ])
-      let prepared = try await firstSession.call(
-        toolName: "operations.prepare",
-        arguments: .object([
-          "project_id": .string("fixture"), "tool": .string("file.write"), "arguments": target,
-        ]))
-      let ticketID = try #require(
-        prepared.result.objectValue?["structuredContent"]?.objectValue?["result"]?
-          .objectValue?["ticket_id"]?.stringValue)
-      let firstScope = try #require(await first.controlSessions().first)
-      #expect(try database.operationTicket(id: ticketID)?.controlSessionID == firstScope.id)
-      try database.resolveOperationApproval(id: ticketID, approved: true, resolver: .localCLI)
-      await firstSession.disconnect()
-      #expect(await first.controlSessions().isEmpty)
-
-      let otherSession = try await GatewayClientSession.connectHTTP(
-        endpoint: try #require(URL(string: "http://127.0.0.1:\(otherPort)/mcp")),
-        accessToken: "other-fixture-credential")
-      let commit: JSONValue = .object([
-        "project_id": .string("fixture"), "ticket_id": .string(ticketID),
-        "tool": .string("file.write"), "arguments": target,
-      ])
-      let denied = try await otherSession.call(toolName: "operations.commit", arguments: commit)
-      #expect(denied.result.objectValue?["isError"] == .bool(true))
-      #expect(
-        !FileManager.default.fileExists(atPath: root.appendingPathComponent("owned.txt").path))
-      await otherSession.disconnect()
-
-      let reconnected = try await GatewayClientSession.connectHTTP(
-        endpoint: endpoint, accessToken: "first-fixture-credential")
-      let nextScope = try #require(await first.controlSessions().first)
-      #expect(nextScope.principalID == firstScope.principalID)
-      #expect(nextScope.id != firstScope.id)
-      let stale = try await reconnected.call(toolName: "operations.commit", arguments: commit)
-      #expect(stale.result.objectValue?["isError"] == .bool(true))
-      #expect(try database.operationTicket(id: ticketID)?.state == .approved)
-      #expect(
-        !FileManager.default.fileExists(atPath: root.appendingPathComponent("owned.txt").path))
-      let fresh = try await reconnected.call(
-        toolName: "operations.prepare",
-        arguments: .object([
-          "project_id": .string("fixture"), "tool": .string("file.write"), "arguments": target,
-        ]))
-      let freshID = try #require(
-        fresh.result.objectValue?["structuredContent"]?.objectValue?["result"]?
-          .objectValue?["ticket_id"]?.stringValue)
-      try database.resolveOperationApproval(id: freshID, approved: true, resolver: .localCLI)
-      let completed = try await reconnected.call(
-        toolName: "operations.commit",
-        arguments: .object([
-          "project_id": .string("fixture"), "ticket_id": .string(freshID),
-          "tool": .string("file.write"), "arguments": target,
-        ]))
-      #expect(completed.result.objectValue?["isError"] != .bool(true))
-      #expect(
-        try String(contentsOf: root.appendingPathComponent("owned.txt"), encoding: .utf8)
-          == "verified owner")
-      await reconnected.disconnect()
-      await other.stop()
-      await first.stop()
-    } catch {
-      await other.stop()
-      await first.stop()
-      throw error
-    }
-  }
-
   @Test
   func sameCredentialSessionsObserveIndependentCurrentConsent() async throws {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
@@ -121,17 +23,22 @@ struct GatewayHTTPRuntimeTests {
     let value = root.appendingPathComponent("value.txt")
     try Data("original".utf8).write(to: value)
     let database = try GatewayDatabase(inMemory: ())
+    let project = ComputerMCPCore.RegisteredProject(
+      id: "fixture", displayName: "Fixture", rootPath: root.path)
+    try database.saveProject(project)
     let profile = ProfileGrantConfig(
-      id: .chatGPTOperate, capabilities: ["file.read", "file.write"], projects: ["fixture"],
-      allowedCallers: [.secureTunnel], mode: .projectOperations, confirmationPolicy: .never)
+      id: .chatGPTOperate, permissions: fixturePermissions([.project("fixture"): .granted(.write)]),
+      fullAccess: true,
+      allowedCallers: [.secureTunnel])
     try database.saveProfile(profile.grant)
+    let fixture = try fixtureNonGitProject(root: root)
     let configuration = GatewayConfiguration(
       runtime: .init(caller: .secureTunnel, profileID: .chatGPTOperate), profiles: [profile],
+      cli: .init(commands: [fixture.git]),
       builtin: .init(enabled: ["file.read", "file.write"]))
     let gateway = try GatewayRuntime(
       configuration: configuration, database: database,
-      registeredProjects: [.init(id: "fixture", displayName: "Fixture", rootPath: root.path)],
-      platform: MacOSPlatform.services)
+      registeredProjects: [project], platform: fixture.platform)
     let runtime = GatewayHTTPRuntime(
       configuration: configuration, registry: gateway, host: "127.0.0.1", port: 0,
       publicBaseURL: nil, accessToken: "shared-fixture-credential")
@@ -147,19 +54,29 @@ struct GatewayHTTPRuntimeTests {
       let secondScope = try #require(
         await runtime.controlSessions().first { $0.id != firstScope.id })
       #expect(firstScope.principalID == secondScope.principalID)
+      _ = try await runtime.approveControlSession(
+        id: firstScope.id, lifetime: .thisSession, expectedRevision: firstScope.revision,
+        expectedTrustRevision: 0)
+      _ = try await runtime.approveControlSession(
+        id: secondScope.id, lifetime: .thisSession, expectedRevision: secondScope.revision,
+        expectedTrustRevision: 0)
+      let firstApproved = try #require(
+        await runtime.controlSessions().first { $0.id == firstScope.id })
       let restricted = try await runtime.limitControlSession(
-        id: firstScope.id, to: .readOnly, expectedRevision: firstScope.revision)
-      #expect(restricted.revision == firstScope.revision + 1)
+        id: firstScope.id,
+        to: .init(permissionCeilings: fixturePermissions([.project("fixture"): .granted(.read)])),
+        expectedRevision: firstApproved.revision)
+      #expect(restricted.revision == firstApproved.revision + 1)
       await #expect(throws: (any Error).self) {
         try await runtime.limitControlSession(
-          id: firstScope.id, to: .localFullAccess, expectedRevision: firstScope.revision)
+          id: firstScope.id, to: .init(), expectedRevision: firstScope.revision)
       }
       #expect(try await first.listToolNames().contains("file.read"))
-      #expect(try await !first.listToolNames().contains("file.write"))
+      #expect(try await first.listToolNames().contains("file.write"))
       #expect(try await second.listToolNames().contains("file.write"))
       let write: JSONValue = .object([
         "project_id": .string("fixture"), "path": .string("value.txt"),
-        "content": .string("authorized"), "confirm": .bool(true),
+        "content": .string("authorized"),
       ])
       let denied = try await first.call(toolName: "file.write", arguments: write)
       #expect(denied.result.objectValue?["isError"] == .bool(true))
@@ -178,7 +95,7 @@ struct GatewayHTTPRuntimeTests {
       #expect(
         try await second.call(toolName: "file.read", arguments: read).result.objectValue?["isError"]
           == .bool(false))
-      #expect(try database.profiles().first?.mode == .projectOperations)
+      #expect(try database.profiles().first { $0.id == .chatGPTOperate }?.fullAccess == true)
       await first.disconnect()
       #expect(await runtime.controlSessions().map(\.id) == [secondScope.id])
       await second.disconnect()
@@ -206,7 +123,8 @@ struct GatewayHTTPRuntimeTests {
     #expect(configuration.server.http.port != port)
 
     let registry = try GatewayRuntime(
-      configuration: configuration, platform: MacOSPlatform.services)
+      configuration: configuration,
+      platform: MacOSPlatform.services(launcher: testExecutionLauncher()))
     let runtime = GatewayHTTPRuntime(
       configuration: configuration,
       registry: registry,
@@ -235,7 +153,8 @@ struct GatewayHTTPRuntimeTests {
     let port = try availableHTTPRuntimeLoopbackPort()
     let configuration = GatewayConfiguration()
     let registry = try GatewayRuntime(
-      configuration: configuration, platform: MacOSPlatform.services)
+      configuration: configuration,
+      platform: MacOSPlatform.services(launcher: testExecutionLauncher()))
     let runtime = GatewayHTTPRuntime(
       configuration: configuration,
       registry: registry,
@@ -256,7 +175,9 @@ struct GatewayHTTPRuntimeTests {
     let configuration = GatewayConfiguration()
     let runtime = GatewayHTTPRuntime(
       configuration: configuration,
-      registry: try GatewayRuntime(configuration: configuration, platform: MacOSPlatform.services),
+      registry: try GatewayRuntime(
+        configuration: configuration,
+        platform: MacOSPlatform.services(launcher: testExecutionLauncher())),
       host: "127.0.0.1",
       port: port,
       publicBaseURL: nil,
@@ -291,7 +212,9 @@ struct GatewayHTTPRuntimeTests {
     let configuration = GatewayConfiguration()
     let runtime = GatewayHTTPRuntime(
       configuration: configuration,
-      registry: try GatewayRuntime(configuration: configuration, platform: MacOSPlatform.services),
+      registry: try GatewayRuntime(
+        configuration: configuration,
+        platform: MacOSPlatform.services(launcher: testExecutionLauncher())),
       host: "127.0.0.1",
       port: port,
       publicBaseURL: nil,
@@ -327,7 +250,9 @@ struct GatewayHTTPRuntimeTests {
     let configuration = GatewayConfiguration()
     let runtime = GatewayHTTPRuntime(
       configuration: configuration,
-      registry: try GatewayRuntime(configuration: configuration, platform: MacOSPlatform.services),
+      registry: try GatewayRuntime(
+        configuration: configuration,
+        platform: MacOSPlatform.services(launcher: testExecutionLauncher())),
       host: "127.0.0.1",
       port: port,
       publicBaseURL: nil,
@@ -364,7 +289,9 @@ struct GatewayHTTPRuntimeTests {
     let configuration = GatewayConfiguration()
     let runtime = GatewayHTTPRuntime(
       configuration: configuration,
-      registry: try GatewayRuntime(configuration: configuration, platform: MacOSPlatform.services),
+      registry: try GatewayRuntime(
+        configuration: configuration,
+        platform: MacOSPlatform.services(launcher: testExecutionLauncher())),
       host: "127.0.0.1",
       port: port,
       publicBaseURL: nil,
@@ -402,7 +329,9 @@ struct GatewayHTTPRuntimeTests {
     let configuration = GatewayConfiguration()
     let runtime = GatewayHTTPRuntime(
       configuration: configuration,
-      registry: try GatewayRuntime(configuration: configuration, platform: MacOSPlatform.services),
+      registry: try GatewayRuntime(
+        configuration: configuration,
+        platform: MacOSPlatform.services(launcher: testExecutionLauncher())),
       host: "127.0.0.1",
       port: port,
       publicBaseURL: nil,
@@ -448,7 +377,9 @@ struct GatewayHTTPRuntimeTests {
     let configuration = GatewayConfiguration()
     let runtime = GatewayHTTPRuntime(
       configuration: configuration,
-      registry: try GatewayRuntime(configuration: configuration, platform: MacOSPlatform.services),
+      registry: try GatewayRuntime(
+        configuration: configuration,
+        platform: MacOSPlatform.services(launcher: testExecutionLauncher())),
       host: "127.0.0.1",
       port: port,
       publicBaseURL: nil,
@@ -480,7 +411,9 @@ struct GatewayHTTPRuntimeTests {
     let configuration = GatewayConfiguration()
     let runtime = GatewayHTTPRuntime(
       configuration: configuration,
-      registry: try GatewayRuntime(configuration: configuration, platform: MacOSPlatform.services),
+      registry: try GatewayRuntime(
+        configuration: configuration,
+        platform: MacOSPlatform.services(launcher: testExecutionLauncher())),
       host: "127.0.0.1",
       port: port,
       publicBaseURL: nil
@@ -507,7 +440,9 @@ struct GatewayHTTPRuntimeTests {
     let configuration = GatewayConfiguration()
     let runtime = GatewayHTTPRuntime(
       configuration: configuration,
-      registry: try GatewayRuntime(configuration: configuration, platform: MacOSPlatform.services),
+      registry: try GatewayRuntime(
+        configuration: configuration,
+        platform: MacOSPlatform.services(launcher: testExecutionLauncher())),
       host: "127.0.0.1",
       port: port,
       publicBaseURL: nil

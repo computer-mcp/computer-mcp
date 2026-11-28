@@ -372,6 +372,17 @@ struct ProjectsView: View {
   @EnvironmentObject private var model: ComputerMCPAppModel
 
   var body: some View {
+    NavigationStack(path: $model.projectRecoveryPath) {
+      projectsPage
+        .navigationDestination(for: ProjectSummary.self) { project in
+          WorktreeStorageView(model: model.worktreeRecovery, project: project)
+            .task { await model.worktreeRecovery.refresh() }
+        }
+    }
+    .onDisappear { model.projectRecoveryPath.removeAll() }
+  }
+
+  private var projectsPage: some View {
     VStack(spacing: 0) {
       ProjectHeader(
         "Projects",
@@ -488,21 +499,36 @@ enum ProjectOpenPanelFactory {
 
 private struct ProjectRow: View {
   @EnvironmentObject private var model: ComputerMCPAppModel
+  @Environment(\.locale) private var locale
+  @Environment(\.localizationResources) private var resources
 
   let project: ProjectSummary
   let repair: () -> Void
 
   var body: some View {
     HStack(spacing: 12) {
-      Image(systemName: project.isSelected ? "folder.fill.badge.checkmark" : "folder")
+      Image(systemName: project.effectiveAccess.isGranted ? "folder.fill" : "folder")
         .font(.title3)
-        .foregroundStyle(project.isEnabled ? Color.accentColor : Color.secondary)
+        .foregroundStyle(project.effectiveAccess.isGranted ? Color.accentColor : Color.secondary)
         .frame(width: 24)
 
       VStack(alignment: .leading, spacing: 3) {
         HStack(spacing: 8) {
-          Text(project.displayName)
-            .fontWeight(.medium)
+          NavigationLink(value: project) {
+            HStack(spacing: 5) {
+              Text(verbatim: project.displayName).fontWeight(.medium)
+              Image(systemName: "chevron.right")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .accessibilityHidden(true)
+            }
+            .contentShape(Rectangle())
+          }
+          .buttonStyle(.plain)
+          .accessibilityIdentifier("project.\(project.id).worktrees")
+          .accessibilityHint(
+            AppLocalization.string(
+              "entry.projects.section_title", locale: locale, resources: resources))
           StateBadge(
             text: project.health.label,
             color: project.health.color
@@ -519,8 +545,9 @@ private struct ProjectRow: View {
         if let lastResolvedAt = project.lastResolvedAt {
           AppLocalization.verbatimText(
             AppLocalization.formatted(
-              "Resolved %@",
-              lastResolvedAt.formatted(.relative(presentation: .named))
+              "Resolved %@", locale: locale, bundle: resources,
+              lastResolvedAt.formatted(
+                Date.RelativeFormatStyle(presentation: .named, locale: locale))
             )
           )
           .font(.caption)
@@ -536,24 +563,37 @@ private struct ProjectRow: View {
 
       Spacer()
 
-      Toggle(
-        isOn: Binding(
-          get: { project.isSelected },
-          set: { enabled in
-            model.setProjectEnabled(enabled, project: project)
+      VStack(alignment: .leading, spacing: 4) {
+        Picker(
+          selection: Binding(
+            get: { project.access },
+            set: { model.setProjectAccess($0, project: project) })
+        ) {
+          ForEach(ProjectAccess.allCases, id: \.self) { access in
+            Text(verbatim: access.localizedTitle).tag(access)
           }
-        )
-      ) {
+        } label: {
+          AppLocalization.verbatimText(
+            AppLocalization.formatted("Access for %@", project.activeProfileID))
+        }
+        .accessibilityIdentifier("project.\(project.id).access")
+        .disabled(model.isActionRunning("project.access.\(project.id)"))
+        .help(
+          Text(
+            "Ask uses the profile's default project rule. A wildcard rule still applies.",
+            bundle: AppLocalization.resourceBundle))
         AppLocalization.verbatimText(
           AppLocalization.formatted(
-            "Enabled for %@",
-            project.activeProfileID
-          )
+            "Effective access: %@", project.effectiveAccess.localizedTitle)
         )
-      }
-      .accessibilityIdentifier("project.\(project.id).enabled")
-      .toggleStyle(.switch)
-      .help("Grant this project to the active profile")
+        .font(.caption).foregroundStyle(.secondary)
+        AppLocalization.verbatimText(
+          AppLocalization.formatted(
+            "Profile revision: %@ · Permission revision: %@",
+            String(project.profileRevision), String(project.permissionRevision))
+        )
+        .font(.caption2).foregroundStyle(.secondary)
+      }.frame(width: 230)
 
       Button("Repair…", action: repair)
         .disabled(model.isActionRunning("project.repair.\(project.id)"))

@@ -339,7 +339,7 @@ package struct GatewaySocketMCPResponseCorrelation: Equatable, Sendable {
     let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
     if !trimmed.isEmpty, trimmed == value, value.utf8.count <= 1_024,
       value.rangeOfCharacter(from: .controlCharacters) == nil,
-      HostApprovalRedactor.redactString(value, maximumCharacters: 1_024) == value
+      SensitiveValueRedactor.redactString(value, maximumCharacters: 1_024) == value
     {
       return value
     }

@@ -1,5 +1,7 @@
 import AppKit
 import ComputerMCPMacOS
+import ComputerMCPSandbox
+import ComputerMCPTestSupport
 import Foundation
 import SwiftUI
 import Testing
@@ -8,6 +10,10 @@ import Testing
 @testable import ComputerMCPControlPlane
 @testable import ComputerMCPPlugins
 @testable import ComputerMCPProcess
+
+#if os(macOS)
+  import ComputerMCPDarwinTestSupport
+#endif
 
 @MainActor
 @Suite(.timeLimit(.minutes(1)))
@@ -61,14 +67,25 @@ struct PluginReleaseTests {
     let output = FileManager.default.temporaryDirectory
       .appendingPathComponent("ComputerMCPReleaseLocalization-\(UUID().uuidString)")
     defer { try? FileManager.default.removeItem(at: output) }
-    let result = try ProcessCommandRunner().run(
-      executable: "/usr/bin/xcrun",
-      arguments: [
-        "xcstringstool", "compile",
-        root.appendingPathComponent("Sources/ComputerMCPApp/Resources/Localizable.xcstrings").path,
-        "--output-directory", output.path, "--serialization-format", "binary",
-      ], workingDirectory: root, environment: [:], timeoutMilliseconds: 30_000,
-      maxOutputBytes: 16_384)
+    try FileManager.default.createDirectory(
+      at: output, withIntermediateDirectories: false,
+      attributes: [.posixPermissions: 0o700])
+    let environment = [
+      "PATH": "/usr/bin:/bin", "HOME": output.path, "TMPDIR": output.path + "/",
+    ]
+    let administration = ExecutionAdministration(
+      mode: .fullAccess, environment: try ExecutionEnvironment(fullAccessVariables: environment))
+    let result = try ExecutionAdministration.$current.withValue(administration) {
+      try ProcessCommandRunner(launcher: testExecutionLauncher()).run(
+        executable: "/usr/bin/xcrun",
+        arguments: [
+          "xcstringstool", "compile",
+          root.appendingPathComponent("Sources/ComputerMCPApp/Resources/Localizable.xcstrings")
+            .path,
+          "--output-directory", output.path, "--serialization-format", "binary",
+        ], workingDirectory: output, environment: environment, timeoutMilliseconds: 30_000,
+        maxOutputBytes: 16_384)
+    }
     try #require(result.exitCode == 0, "\(result.stderr)")
     let bundle = try #require(Bundle(url: output))
     #expect(
@@ -204,10 +221,16 @@ struct PluginReleaseTests {
     let management = PluginManagementModel(controlPlane: service)
     await management.reload()
     let selection = service.artifact
-    #expect(await management.apply(.installRelease(selection), expectedRevision: 0))
+    let activation = try #require(
+      await management.install(.installRelease(selection), expectedRevision: 0))
     #expect(service.installed == [selection])
     #expect(service.revisions == [0])
     #expect(management.snapshot?.state.revision == 1)
+    #expect(activation.id == selection.declaration.pluginID)
+    #expect(activation.revision == 1)
+    #expect(activation.installation.version == selection.declaration.version)
+    #expect(activation.installation.source.artifactSHA256 == selection.sha256)
+    #expect(activation.requiresActivation)
   }
 
   @Test
@@ -328,7 +351,9 @@ private final class ReleaseAppFake: PluginManaging {
     return result(page: page)
   }
   func fetchPlugins() async throws -> PluginHostSnapshot {
-    try PluginHostSnapshot(state: state, applications: MacOSPlatform.services.applications)
+    try PluginHostSnapshot(
+      state: state,
+      applications: MacOSPlatform.services(launcher: testExecutionLauncher()).applications)
   }
   func changePlugins(_ change: PluginHostChange, expectedRevision: Int64) async throws
     -> PluginHostSnapshot
@@ -343,8 +368,18 @@ private final class ReleaseAppFake: PluginManaging {
     guard expectedRevision == state.revision else {
       throw PluginStoreError.staleRevision(expected: expectedRevision, actual: state.revision)
     }
+    let record = PluginInstallationRecord(
+      id: artifact.id, pluginID: artifact.declaration.pluginID,
+      version: artifact.declaration.version,
+      source: .init(
+        kind: .artifact, root: URL(fileURLWithPath: "/fixture"), artifactSHA256: artifact.sha256),
+      manifestDigest: artifact.declaration.manifestSHA256, registeredAt: .now)
+    state.installations.append(record)
+    state.selectedInstallations[record.pluginID] = record.id
     state.revision += 1
-    return try PluginHostSnapshot(state: state, applications: MacOSPlatform.services.applications)
+    return try PluginHostSnapshot(
+      state: state,
+      applications: MacOSPlatform.services(launcher: testExecutionLauncher()).applications)
   }
   func searchPlugins(query: String, kind: IntegrationKind?, page: Int, refresh: Bool) async throws
     -> PluginCatalogSearchResult

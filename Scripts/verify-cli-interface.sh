@@ -71,7 +71,6 @@ verify_help "$ROOT_CLI" permissions
 verify_help "$ROOT_CLI" tunnel
 verify_help "$ROOT_CLI" tunnel openai
 verify_help "$ROOT_CLI" tunnel cloudflare
-verify_help "$ROOT_CLI" permissions approvals
 verify_help "$ROOT_CLI" tools
 verify_help "$ROOT_CLI" audit
 verify_help "$ROOT_CLI" providers
@@ -114,13 +113,11 @@ public_leaf_commands=(
   "project add"
   "project repair"
   "project remove"
-  "project enable"
+  "project access"
   "project deduplicate"
   "profile list"
   "profile show"
   "profile activate"
-  "profile grant"
-  "profile shell"
   "profile permissions"
   "tunnel openai list"
   "tunnel openai doctor"
@@ -143,9 +140,9 @@ public_leaf_commands=(
   "tools call"
   "tools inventory"
   "permissions status"
-  "permissions approvals list"
-  "permissions approvals approve"
-  "permissions approvals deny"
+  "permissions requests"
+  "permissions answer"
+  "permissions confirm-authority"
   "audit list"
   "audit export"
   "providers list"
@@ -271,7 +268,11 @@ REGISTRATION_HOME="$OUTSIDE_DIR/registration-home"
 mkdir -p "$REGISTRATION_HOME"
 touch "$REGISTRATION_HOME/.registration-fixture"
 FAKE_CLIENT="$REGISTRATION_HOME/client"
-cp "$ROOT_DIR/Tests/ComputerMCPMacOSTests/Fixtures/registration-client.py" "$FAKE_CLIENT"
+REGISTRATION_PYTHON=$(xcrun --find python3)
+{
+  printf '#!%s\n' "$REGISTRATION_PYTHON"
+  cat "$ROOT_DIR/Tests/ComputerMCPMacOSTests/Fixtures/registration-client.py"
+} > "$FAKE_CLIENT"
 chmod 700 "$FAKE_CLIENT"
 trap 'rm -rf "$REGISTRATION_HOME"; rm -f "$FIXTURE_MANIFEST" "$FIXTURE_MARKER" "$DOCTOR_JSON" "$CAPABILITIES_JSON" "$CODEX_APP_PLAN"; rmdir "$OUTSIDE_DIR" 2>/dev/null || true' EXIT
 (

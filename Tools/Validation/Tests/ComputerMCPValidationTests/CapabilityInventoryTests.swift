@@ -211,7 +211,8 @@ final class CapabilityInventoryTests {
     )
     #expect((Set(report.profiles[0].toolNames)) == (Set(observeInventory.tools.map(\.name))))
     #expect(report.profiles[1].toolNames.contains("file.write"))
-    #expect(!(report.profiles[1].toolNames.contains("cli.exec")))
+    #expect(report.profiles[1].toolNames.contains("cli.exec"))
+    #expect(!report.profiles[1].toolNames.contains("shell.run"))
     #expect(report.profiles.allSatisfy { $0.requiresRuntimeEvidence })
     #expect(report.profiles.allSatisfy { $0.acceptanceDigest.count == 64 })
   }

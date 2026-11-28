@@ -102,7 +102,8 @@ public enum ValidationObservationCollectorError: Error, LocalizedError, Equatabl
     case .invalidObservation(let detail):
       return "Invalid Validation observation: \(detail)"
     case .auditCardinality(let requestID, let count):
-      return "Expected exactly one audit row for Gateway request '\(requestID)'; found \(count)."
+      return
+        "Expected exactly one terminal audit row for Gateway request '\(requestID)'; found \(count)."
     case .auditMismatch(let requestID, let detail):
       return "Audit row for Gateway request '\(requestID)' is not admissible: \(detail)"
     case .verificationRejected(let issues):
@@ -138,12 +139,8 @@ public struct ValidationObservationCollector: Sendable {
         )
       }
       let rows = try database.auditEvents(requestID: observation.gatewayRequestID)
-      guard rows.count == 1, let audit = rows.first else {
-        throw ValidationObservationCollectorError.auditCardinality(
-          requestID: observation.gatewayRequestID,
-          count: rows.count
-        )
-      }
+      let trail = try ValidationAuditTrail(events: rows, requestID: observation.gatewayRequestID)
+      let audit = trail.terminal
       guard auditEventIDs.insert(audit.id).inserted else {
         throw ValidationObservationCollectorError.invalidObservation(
           "audit event '\(audit.id)' is duplicated"
@@ -165,6 +162,7 @@ public struct ValidationObservationCollector: Sendable {
           consumerResultID: observation.consumerResultID,
           gatewayRequestID: audit.requestID,
           auditEvent: audit,
+          admissionAuditEvent: trail.admission,
           result: ValidationResultDigest(
             digest: audit.outputDigest ?? "",
             byteCount: audit.outputByteCount ?? -1,

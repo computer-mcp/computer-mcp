@@ -41,7 +41,6 @@ final class GatewayProbeVerifyCoverageTests {
           "file.write_files",
           "git.add",
           "git.branch_create",
-          "git.branch_delete",
           "git.branch_rename",
           "git.branch_switch",
           "git.clean",
@@ -54,6 +53,7 @@ final class GatewayProbeVerifyCoverageTests {
           "json.write",
           "plist.write",
           "project.open",
+          "project.request",
           "project.reveal",
         ])))
     #expect((mutableTools.count) == (33))

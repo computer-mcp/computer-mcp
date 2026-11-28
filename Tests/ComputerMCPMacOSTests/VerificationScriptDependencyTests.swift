@@ -1,9 +1,14 @@
+import ComputerMCPSandbox
 import ComputerMCPTestSupport
 import Foundation
 import Testing
 
 @testable import ComputerMCPPlatform
 @testable import ComputerMCPProcess
+
+#if os(macOS)
+  import ComputerMCPDarwinTestSupport
+#endif
 
 @Suite(.nativeIntegration, .timeLimit(.minutes(1)))
 struct VerificationScriptDependencyTests {
@@ -56,8 +61,10 @@ private struct GateFixture {
   init(script name: String) throws {
     root = FileManager.default.temporaryDirectory.appendingPathComponent(
       "verification-gate-" + UUID().uuidString)
+    try FileManager.default.createDirectory(
+      at: root, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700])
     let scripts = root.appendingPathComponent("Scripts")
-    try FileManager.default.createDirectory(at: scripts, withIntermediateDirectories: true)
+    try FileManager.default.createDirectory(at: scripts, withIntermediateDirectories: false)
     let repository = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
       .deletingLastPathComponent().deletingLastPathComponent()
     script = scripts.appendingPathComponent(name)
@@ -72,10 +79,22 @@ private struct GateFixture {
   }
 
   func run() throws -> CommandResult {
-    try ProcessCommandRunner().run(
-      executable: "/bin/zsh", arguments: [script.path],
-      workingDirectory: root, environment: ["RIPGREP_EXECUTABLE": dependency.path],
-      timeoutMilliseconds: 30_000, maxOutputBytes: 32_768)
+    let environment = [
+      "PATH": "/usr/bin:/bin:/usr/sbin:/sbin", "HOME": root.path,
+      "TMPDIR": root.path + "/", "TMP": root.path, "TEMP": root.path,
+      "XDG_CACHE_HOME": root.appendingPathComponent("cache").path,
+      "CLANG_MODULE_CACHE_PATH": root.appendingPathComponent("clang-cache").path,
+      "SWIFT_MODULECACHE_PATH": root.appendingPathComponent("swift-cache").path,
+      "RIPGREP_EXECUTABLE": dependency.path,
+    ]
+    let administration = ExecutionAdministration(
+      mode: .fullAccess,
+      environment: try ExecutionEnvironment(fullAccessVariables: environment))
+    return try ExecutionAdministration.$current.withValue(administration) {
+      try ProcessCommandRunner(launcher: testExecutionLauncher(), environment: [:]).run(
+        executable: "/bin/zsh", arguments: [script.path], workingDirectory: root,
+        environment: environment, timeoutMilliseconds: 30_000, maxOutputBytes: 32_768)
+    }
   }
 
   func remove() { try? FileManager.default.removeItem(at: root) }

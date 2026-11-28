@@ -1,10 +1,15 @@
 import ComputerMCPCore
+import ComputerMCPTestSupport
 import Foundation
 import Testing
 
 @testable import ComputerMCPConfiguration
 @testable import ComputerMCPPlatform
 @testable import ComputerMCPProcess
+
+#if os(macOS)
+  import ComputerMCPDarwinTestSupport
+#endif
 
 @Suite
 
@@ -432,7 +437,7 @@ final class ExternalProviderDiscoveryTests {
     #expect(runner.recordedCalls.map(\.arguments) == [["--version"]])
   }
 
-  @Test(arguments: ["mcp", "cli"])
+  @Test(.enabled(if: nativeSandboxAvailable), arguments: ["mcp", "cli"])
   func realScriptFindsItsInterpreterAndReadsItsRegisteredDirectory(_ source: String) async throws {
     let root = try makeTemporaryDirectory()
     defer { try? FileManager.default.removeItem(at: root) }
@@ -442,9 +447,9 @@ final class ExternalProviderDiscoveryTests {
     let executable = try makeExecutable(named: "probe", in: cwd)
     try """
     #!/usr/bin/env fixture-runtime
-    [ "$PROVIDER_SECRET" = 'fixture-secret' ] || exit 12
-    [ "${EMPTY+x}" = x ] && [ "$EMPTY" = '' ] || exit 13
-    [ "$INHERITED" = host ] || exit 14
+    [ -z "$PROVIDER_SECRET" ] || exit 12
+    [ -z "${EMPTY+x}" ] || exit 13
+    [ -z "$INHERITED" ] || exit 14
     \(source == "mcp" ? "[ \"$1\" = serve ] || exit 15; shift" : "")
     [ "$1" = --version ] && [ "$#" = 1 ] || exit 16
     /bin/cat version.txt
@@ -469,10 +474,16 @@ final class ExternalProviderDiscoveryTests {
     let discovery = ExternalProviderDiscovery(
       configuration: configuration,
       definitions: [codexDefinition],
+      commandRunner: ManagedCommandRunner(launcher: testExecutionLauncher()),
       environment: ["PATH": "/unrelated", "EMPTY": "host", "INHERITED": "host"],
       commonSearchDirectories: [])
     let results = try await BlockingOperationExecutor(label: "test.provider-context").perform {
-      try discovery.discover()
+      try withCommandAdministration(
+        readOnly: true, workingDirectory: cwd,
+        variables: ["PATH": bin.path + ":" + systemUtilityPath]
+      ) {
+        try discovery.discover()
+      }
     }
     let result = try #require(results.first)
     #expect(result.resolvedPath == executable.path)
@@ -481,6 +492,33 @@ final class ExternalProviderDiscoveryTests {
     #expect(result.diagnostics.isEmpty)
     #expect(
       !String(decoding: try JSONEncoder().encode(result), as: UTF8.self).contains("fixture-secret"))
+  }
+
+  @Test
+  func realProviderProbeWithoutExecutionContextDoesNotStart() async throws {
+    let root = try makeTemporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: root) }
+    let executable = try makeExecutable(named: "codex", in: root)
+    try "#!/bin/sh\n: > launched\nprintf 'fixture 1.0\\n'\n".write(
+      to: executable, atomically: false, encoding: .utf8)
+    let marker = root.appendingPathComponent("launched")
+    let discovery = ExternalProviderDiscovery(
+      configuration: GatewayConfiguration(
+        cli: .init(commands: [.init(id: "codex", executable: executable.path)]),
+        projectDirectory: root),
+      definitions: [codexDefinition],
+      commandRunner: ManagedCommandRunner(launcher: testExecutionLauncher()),
+      environment: ["PATH": systemUtilityPath], commonSearchDirectories: [])
+    let results = try await BlockingOperationExecutor(label: "test.provider-no-context").perform {
+      try discovery.discover()
+    }
+    let result = try #require(results.first)
+    #expect(result.resolvedPath == executable.path)
+    #expect(result.version == nil)
+    #expect(result.doctorStatus.state == .failed)
+    #expect(result.diagnostics.map(\.code) == [.probeLaunchFailed])
+    #expect(result.diagnostics.first?.message == "Version probe could not be launched.")
+    #expect(!FileManager.default.fileExists(atPath: marker.path))
   }
 
   @Test

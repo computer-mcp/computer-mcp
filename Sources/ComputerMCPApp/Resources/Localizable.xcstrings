@@ -1,6 +1,1552 @@
 {
   "sourceLanguage" : "en",
   "strings" : {
+    "commits.action.review": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Review Selected…"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "查看所选…"
+          }
+        }
+      }
+    },
+    "commits.dialog.release.confirm": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Release Selected"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "释放所选"
+          }
+        }
+      }
+    },
+    "commits.dialog.release.title": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Release selected records (%lld)?"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "释放所选的 %lld 条记录？"
+          }
+        }
+      }
+    },
+    "commits.empty.message": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The host has no records retained for recovery."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "主机当前没有保留用于恢复的记录。"
+          }
+        }
+      }
+    },
+    "commits.empty.title": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "No Retained Commits"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "无保留的提交"
+          }
+        }
+      }
+    },
+    "commits.section.title": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Retained Commits"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "保留的提交"
+          }
+        }
+      }
+    },
+    "commits.selection.count": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%lld selected"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "已选择 %lld 项"
+          }
+        }
+      }
+    },
+    "commits.selection.none": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Select records to review or release"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "选择记录以查看或释放"
+          }
+        }
+      }
+    },
+    "commits.standalone.footer": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Retained commits remain available for review and release even after their branch or project is removed."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "即使分支或项目已被移除，保留的提交仍可在此处查看与释放。"
+          }
+        }
+      }
+    },
+    "commits.standalone.title": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Retained Commits & Storage"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "保留的提交与存储"
+          }
+        }
+      }
+    },
+    "commits.tag.project_removed": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Project removed"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "项目已移除"
+          }
+        }
+      }
+    },
+    "common.cancel": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Cancel"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "取消"
+          }
+        }
+      }
+    },
+    "common.clear_selection": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Clear"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "清除选择"
+          }
+        }
+      }
+    },
+    "common.refresh": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Refresh"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "刷新"
+          }
+        }
+      }
+    },
+    "common.resume": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Resume"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "继续"
+          }
+        }
+      }
+    },
+    "common.select_all": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Select All"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "全选"
+          }
+        }
+      }
+    },
+    "entry.privacy.row_subtitle": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Review retained commits and reclaim released storage"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "查看保留的提交并回收已释放的存储空间"
+          }
+        }
+      }
+    },
+    "entry.privacy.row_title": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Retained Commits & Storage"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "保留的提交与存储"
+          }
+        }
+      }
+    },
+    "entry.projects.section_title": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Worktrees & Recovery"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "工作树与恢复"
+          }
+        }
+      }
+    },
+    "operation.kind.reclaiming_storage": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Reclaiming storage"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "正在回收存储空间"
+          }
+        }
+      }
+    },
+    "operation.kind.releasing_commits": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Releasing retained commits"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "正在释放保留的提交"
+          }
+        }
+      }
+    },
+    "operation.kind.removing_worktree": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Removing worktree"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "正在移除工作树"
+          }
+        }
+      }
+    },
+    "recovery.gate_identity_changed": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Writer admission now belongs to a different generation."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "写入准入现已属于另一代工作树。"
+          }
+        }
+      }
+    },
+    "recovery.gate_pending": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Writer admission is still being reopened."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "写入准入仍在重新开放。"
+          }
+        }
+      }
+    },
+    "recovery.last_branch": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Recorded branch: %@"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "记录的分支：%@"
+          }
+        }
+      }
+    },
+    "recovery.object.blob": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Blob"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "数据对象"
+          }
+        }
+      }
+    },
+    "recovery.object.commit": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Commit"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "提交"
+          }
+        }
+      }
+    },
+    "recovery.object.tag": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Tag"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "标签"
+          }
+        }
+      }
+    },
+    "recovery.object.tree": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Tree"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "目录树"
+          }
+        }
+      }
+    },
+    "recovery.operation_failed": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The operation could not be completed."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "无法完成此操作。"
+          }
+        }
+      }
+    },
+    "recovery.operation_interrupted": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Recovery operation interrupted"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "恢复操作已中断"
+          }
+        }
+      }
+    },
+    "recovery.record_in_use": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Required by another operation or protected history"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "其他操作或受保护的历史记录仍需要此记录"
+          }
+        }
+      }
+    },
+    "recovery.record_pending": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Operation pending"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "操作待完成"
+          }
+        }
+      }
+    },
+    "recovery.release_completed": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Released records: %lld"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "已释放记录：%lld 条"
+          }
+        }
+      }
+    },
+    "recovery.release_completed_detail": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Run storage reclamation separately to measure reclaimed space."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "请单独运行存储空间回收以测量回收的空间。"
+          }
+        }
+      }
+    },
+    "recovery.release_review_detail": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Review the exact records to release. Storage reclamation can run separately afterward."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "请核对要释放的具体记录。随后可以单独运行存储空间回收。"
+          }
+        }
+      }
+    },
+    "recovery.requires_attention": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Recovery needs attention"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "恢复操作需要处理"
+          }
+        }
+      }
+    },
+    "recovery.restore_review": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Review restored permissions in Privacy & Security before making changes."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "请先在“隐私与安全性”中检查恢复的权限，再进行更改。"
+          }
+        }
+      }
+    },
+    "recovery.review_changed": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The reviewed selection changed. Refresh and review it again."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "已审阅的选择发生变化，请刷新后重新审阅。"
+          }
+        }
+      }
+    },
+    "recovery.store_generation": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Store generation"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "存储实例"
+          }
+        }
+      }
+    },
+    "recovery.store_identity": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Recovery store"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "恢复存储"
+          }
+        }
+      }
+    },
+    "storage.action.reclaim": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Reclaim Storage…"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "回收存储空间…"
+          }
+        }
+      }
+    },
+    "storage.allocation": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Allocated before: %@ · After: %@"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "回收前分配：%@ · 回收后：%@"
+          }
+        }
+      }
+    },
+    "storage.description": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Logical release removes recovery records without immediately freeing disk space. Run reclamation when you want to reclaim storage."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "逻辑释放仅移除恢复记录，不会立即腾出磁盘空间。需要时请单独执行存储空间回收。"
+          }
+        }
+      }
+    },
+    "storage.dialog.reclaim.confirm": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Reclaim Storage"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "回收存储空间"
+          }
+        }
+      }
+    },
+    "storage.dialog.reclaim.message": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Runs storage reclamation for logically released records and reports measured reclaimed space after completion."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "对已逻辑释放的记录执行存储空间回收，并在完成后报告实测回收的空间大小。"
+          }
+        }
+      }
+    },
+    "storage.dialog.reclaim.title": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Reclaim released storage?"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "回收已释放的存储空间？"
+          }
+        }
+      }
+    },
+    "storage.reclamation_deferred": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Recovery store is busy"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "恢复存储正忙"
+          }
+        }
+      }
+    },
+    "storage.result.measured": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Measured %@ reclaimed on %@."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "实测已回收 %@（%@）。"
+          }
+        }
+      }
+    },
+    "storage.result.none_reclaimed": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Reclamation checked on %@. No disk space was reclaimed."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "已于 %@ 检查回收。未回收额外磁盘空间。"
+          }
+        }
+      }
+    },
+    "storage.review.allocated": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Current allocated space"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "当前已分配空间"
+          }
+        }
+      }
+    },
+    "storage.review.pack": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Pack identity"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "包文件标识"
+          }
+        }
+      }
+    },
+    "storage.section.title": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Storage Reclamation"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "存储空间回收"
+          }
+        }
+      }
+    },
+    "worktree.action.remove": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Remove…"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "移除…"
+          }
+        }
+      }
+    },
+    "worktree.action.review_discard": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Review Discard…"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "审阅放弃操作…"
+          }
+        }
+      }
+    },
+    "worktree.dialog.discard.title": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Discard uncommitted changes in “%@”?"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "放弃“%@”中的未提交更改？"
+          }
+        }
+      }
+    },
+    "worktree.dialog.discard_remove.confirm": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Discard Changes and Remove"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "放弃更改并移除"
+          }
+        }
+      }
+    },
+    "worktree.dialog.discard_remove.message": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Removing this checkout permanently discards all of its uncommitted changes, including staged, untracked, and ignored files."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "移除此检出目录会永久放弃其中所有未提交的更改，包括已暂存、未跟踪和已忽略的文件。"
+          }
+        }
+      }
+    },
+    "worktree.dialog.remove.confirm": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Remove Worktree"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "移除工作树"
+          }
+        }
+      }
+    },
+    "worktree.dialog.remove.title": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Remove worktree “%@”?"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "移除工作树“%@”？"
+          }
+        }
+      }
+    },
+    "worktree.empty.message": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "No managed or detected worktrees are recorded for this project."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "此项目暂无托管或检测到的工作树记录。"
+          }
+        }
+      }
+    },
+    "worktree.empty.title": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "No Worktrees"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "无工作树"
+          }
+        }
+      }
+    },
+    "worktree.inventory.unavailable": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The source checkout is unavailable."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "无法访问源检出目录。"
+          }
+        }
+      }
+    },
+    "worktree.removal.pending": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Worktree removal awaiting confirmation"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "正在等待确认工作树移除结果"
+          }
+        }
+      }
+    },
+    "worktree.removal.refused": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Worktree removal was refused"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "工作树移除已被拒绝"
+          }
+        }
+      }
+    },
+    "worktree.removal.review_detail": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Stops writers and removes this managed checkout. Committed recovery records remain available."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "停止写入进程并移除此托管检出目录。已提交内容的恢复记录仍可使用。"
+          }
+        }
+      }
+    },
+    "worktree.removal.verified": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Worktree removal verified"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "已确认工作树移除"
+          }
+        }
+      }
+    },
+    "worktree.review.head": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Current commit"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "当前提交"
+          }
+        }
+      }
+    },
+    "worktree.section.title": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Worktrees"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "工作树"
+          }
+        }
+      }
+    },
+    "worktree.state.external": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "External"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "外部"
+          }
+        }
+      }
+    },
+    "worktree.state.managed": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Managed"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "托管"
+          }
+        }
+      }
+    },
+    "worktree.state.removed": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Removed"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "已移除"
+          }
+        }
+      }
+    },
+    "worktree.state.unavailable": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Unavailable"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "暂不可用"
+          }
+        }
+      }
+    },
+    "worktree.status.clean": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Clean"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "无未提交更改"
+          }
+        }
+      }
+    },
+    "worktree.status.uncommitted": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Uncommitted changes"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "有未提交更改"
+          }
+        }
+      }
+    },
+    "worktree.writers.drained": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Admitted writers stopped and removal was confirmed."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "获准写入的进程已停止，工作树移除已确认。"
+          }
+        }
+      }
+    },
+    "Use Sandbox" : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Use Sandbox"}},"zh-Hans":{"stringUnit":{"state":"translated","value":"使用沙盒"}}}},
+    "No approval" : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"No approval"}},"zh-Hans":{"stringUnit":{"state":"translated","value":"未批准"}}}},
+    "Default setting" : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Default setting"}},"zh-Hans":{"stringUnit":{"state":"translated","value":"默认设置"}}}},
+    "Always adds this host to the project’s saved network access." : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Always adds this host to the project’s saved network access."}},"zh-Hans":{"stringUnit":{"state":"translated","value":"“始终允许”会将此主机添加到项目已保存的网络访问设置中。"}}}},
+    "grant.choice.allow" : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Allow"}},"zh-Hans":{"stringUnit":{"state":"translated","value":"允许"}}}},
+    "grant.choice.askEveryTime" : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Ask Every Time"}},"zh-Hans":{"stringUnit":{"state":"translated","value":"每次询问"}}}},
+    "grant.choice.dontAllow" : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Don't Allow"}},"zh-Hans":{"stringUnit":{"state":"translated","value":"不允许"}}}},
+    "grant.status.limited" : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Limited"}},"zh-Hans":{"stringUnit":{"state":"translated","value":"受限"}}}},
+    "grant.status.unavailable" : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Unavailable"}},"zh-Hans":{"stringUnit":{"state":"translated","value":"不可用"}}}},
+    "grant.status.inherited" : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Inherited"}},"zh-Hans":{"stringUnit":{"state":"translated","value":"继承"}}}},
+    "grant.saved.format" : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Saved: %@"}},"zh-Hans":{"stringUnit":{"state":"translated","value":"已保存：%@"}}}},
+    "grant.effective.format" : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Effective: %@"}},"zh-Hans":{"stringUnit":{"state":"translated","value":"实际生效：%@"}}}},
+    "grant.source.editAction" : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Edit Source"}},"zh-Hans":{"stringUnit":{"state":"translated","value":"编辑来源"}}}},
+    "grant.oneTime.retryClarification" : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"After approval, the requester must explicitly retry the same action."}},"zh-Hans":{"stringUnit":{"state":"translated","value":"批准后，请求方必须显式重试同一操作。"}}}},
+    "grant.projectRegistration.title" : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Project Registration"}},"zh-Hans":{"stringUnit":{"state":"translated","value":"项目注册"}}}},
+    "grant.a11y.savedAndEffective" : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Saved %1$@, effective %2$@"}},"zh-Hans":{"stringUnit":{"state":"translated","value":"已保存为%1$@，实际生效为%2$@"}}}},
+    "grant.a11y.openSourceHint" : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Opens the source setting where this permission can be edited."}},"zh-Hans":{"stringUnit":{"state":"translated","value":"打开可编辑此权限的来源设置。"}}}},
+    "principal.action.revoke" : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Revoke…"}},"zh-Hans":{"stringUnit":{"state":"translated","value":"撤销…"}}}},
+    "principal.a11y.revoke" : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Revoke access for %@"}},"zh-Hans":{"stringUnit":{"state":"translated","value":"撤销%@的访问权限"}}}},
+    "revocation.dialog.scopedTitle" : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Revoke “%1$@” for “%2$@”?"}},"zh-Hans":{"stringUnit":{"state":"translated","value":"要撤销“%2$@”的“%1$@”权限吗？"}}}},
+    "revocation.dialog.message" : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"This denies this permission and ends running programs that depend on it."}},"zh-Hans":{"stringUnit":{"state":"translated","value":"此操作会拒绝这项权限，并结束依赖该权限的程序。"}}}},
+    "revocation.dialog.confirm" : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Revoke Access"}},"zh-Hans":{"stringUnit":{"state":"translated","value":"撤销访问权限"}}}},
+    "revocation.dialog.cancel" : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Cancel"}},"zh-Hans":{"stringUnit":{"state":"translated","value":"取消"}}}},
+    "Clients, Plugins, and Local Servers" : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Clients, Plugins, and Local Servers"}},"zh-Hans":{"stringUnit":{"state":"translated","value":"客户端、插件和本地服务器"}}}},
+    "No clients, plugins, or local servers are available." : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"No clients, plugins, or local servers are available."}},"zh-Hans":{"stringUnit":{"state":"translated","value":"没有可用的客户端、插件或本地服务器。"}}}},
+    "This principal is no longer available." : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"This principal is no longer available."}},"zh-Hans":{"stringUnit":{"state":"translated","value":"此客户端、插件或本地服务器已不可用。"}}}},
+    "Provider source unavailable" : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Provider source unavailable"}},"zh-Hans":{"stringUnit":{"state":"translated","value":"提供方来源不可用"}}}},
+    "Approval required" : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Approval required"}},"zh-Hans":{"stringUnit":{"state":"translated","value":"需要批准"}}}},
+    "Source review required" : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Source review required"}},"zh-Hans":{"stringUnit":{"state":"translated","value":"需要审查来源"}}}},
+    "Permission review required" : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Permission review required"}},"zh-Hans":{"stringUnit":{"state":"translated","value":"需要审查权限"}}}},
+    "Client profile unavailable" : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Client profile unavailable"}},"zh-Hans":{"stringUnit":{"state":"translated","value":"客户端配置不可用"}}}},
+    "Connection type restricted" : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Connection type restricted"}},"zh-Hans":{"stringUnit":{"state":"translated","value":"连接类型受限"}}}},
+    "Inherited from project %@" : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Inherited from project %@"}},"zh-Hans":{"stringUnit":{"state":"translated","value":"继承自项目%@"}}}},
+    "Shared profile: %@" : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Shared profile: %@"}},"zh-Hans":{"stringUnit":{"state":"translated","value":"共享配置：%@"}}}},
+    "Saved by the owner" : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Saved by the owner"}},"zh-Hans":{"stringUnit":{"state":"translated","value":"由所有者保存"}}}},
+    "Plugin declaration allows at most %@" : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Plugin declaration allows at most %@"}},"zh-Hans":{"stringUnit":{"state":"translated","value":"插件声明最多允许%@"}}}},
+    "Permission outside plugin declarations" : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Permission outside plugin declarations"}},"zh-Hans":{"stringUnit":{"state":"translated","value":"此权限不在插件声明范围内"}}}},
+    "Plugin Declaration" : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Plugin Declaration"}},"zh-Hans":{"stringUnit":{"state":"translated","value":"插件声明"}}}},
+    "Permission Source" : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Permission Source"}},"zh-Hans":{"stringUnit":{"state":"translated","value":"权限来源"}}}},
+    "Permission source unavailable" : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Permission source unavailable"}},"zh-Hans":{"stringUnit":{"state":"translated","value":"权限来源不可用"}}}},
+    "Plugin execution mode is set when you review its declarations." : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Plugin execution mode is set when you review its declarations."}},"zh-Hans":{"stringUnit":{"state":"translated","value":"插件的执行模式在审查其声明时设置。"}}}},
+    "Sandboxed local servers use a private container for their state." : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Sandboxed local servers use a private container for their state."}},"zh-Hans":{"stringUnit":{"state":"translated","value":"沙盒中的本地服务器将其状态保存在专用容器中。"}}}},
+    "Requires connection approval" : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Requires connection approval"}},"zh-Hans":{"stringUnit":{"state":"translated","value":"需要批准连接"}}}},
+    "Uses the default project network setting" : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Uses the default project network setting"}},"zh-Hans":{"stringUnit":{"state":"translated","value":"使用默认项目网络设置"}}}},
+    "Switching to Full Access clears this server’s saved sandbox settings." : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Switching to Full Access clears this server’s saved sandbox settings."}},"zh-Hans":{"stringUnit":{"state":"translated","value":"切换到完全访问会清除该服务器已保存的沙盒设置。"}}}},
+    "Saved permissions are revoked and running programs that depend on them end." : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Saved permissions are revoked and running programs that depend on them end."}},"zh-Hans":{"stringUnit":{"state":"translated","value":"已保存的授权将被撤销，依赖这些授权的程序将结束。"}}}},
+    "%@ bytes" : {"localizations": {"en": {"stringUnit": {"state": "translated", "value": "%@ bytes"}}, "zh-Hans": {"stringUnit": {"state": "translated", "value": "%@ 字节"}}}},
+    "%@ ms" : {"localizations": {"en": {"stringUnit": {"state": "translated", "value": "%@ ms"}}, "zh-Hans": {"stringUnit": {"state": "translated", "value": "%@ 毫秒"}}}},
+    "%@ seconds" : {"localizations": {"en": {"stringUnit": {"state": "translated", "value": "%@ seconds"}}, "zh-Hans": {"stringUnit": {"state": "translated", "value": "%@ 秒"}}}},
+    "%@ · %@" : {"localizations": {"en": {"stringUnit": {"state": "translated", "value": "%@ · %@"}}, "zh-Hans": {"stringUnit": {"state": "translated", "value": "%@（%@）"}}}},
+    "Access Blocked" : {"localizations": {"en": {"stringUnit": {"state": "translated", "value": "Access Blocked"}}, "zh-Hans": {"stringUnit": {"state": "translated", "value": "访问已阻止"}}}},
+    "Add owner policy for %@" : {"localizations": {"en": {"stringUnit": {"state": "translated", "value": "Add owner policy for %@"}}, "zh-Hans": {"stringUnit": {"state": "translated", "value": "为“%@”添加所有者策略"}}}},
+    "Add…" : {"localizations": {"en": {"stringUnit": {"state": "translated", "value": "Add…"}}, "zh-Hans": {"stringUnit": {"state": "translated", "value": "添加…"}}}},
+    "An applicable policy source can't be read." : {"localizations": {"en": {"stringUnit": {"state": "translated", "value": "An applicable policy source can't be read."}}, "zh-Hans": {"stringUnit": {"state": "translated", "value": "无法读取一项适用的策略来源。"}}}},
+    "Background" : {"localizations": {"en": {"stringUnit": {"state": "translated", "value": "Background"}}, "zh-Hans": {"stringUnit": {"state": "translated", "value": "后台"}}}},
+    "Blocked Read Location" : {"localizations": {"en": {"stringUnit": {"state": "translated", "value": "Blocked Read Location"}}, "zh-Hans": {"stringUnit": {"state": "translated", "value": "禁止读取的位置"}}}},
+    "Blocked Read Locations" : {"localizations": {"en": {"stringUnit": {"state": "translated", "value": "Blocked Read Locations"}}, "zh-Hans": {"stringUnit": {"state": "translated", "value": "禁止读取的位置"}}}},
+    "Clear Policy" : {"localizations": {"en": {"stringUnit": {"state": "translated", "value": "Clear Policy"}}, "zh-Hans": {"stringUnit": {"state": "translated", "value": "清除策略"}}}},
+    "Clear Policy…" : {"localizations": {"en": {"stringUnit": {"state": "translated", "value": "Clear Policy…"}}, "zh-Hans": {"stringUnit": {"state": "translated", "value": "清除策略…"}}}},
+    "Clear the saved policy for %@?" : {"localizations": {"en": {"stringUnit": {"state": "translated", "value": "Clear the saved policy for %@?"}}, "zh-Hans": {"stringUnit": {"state": "translated", "value": "要清除“%@”的已保存策略吗？"}}}},
+    "Clearing removes this owner's policy. Limits from other sources still apply." : {"localizations": {"en": {"stringUnit": {"state": "translated", "value": "Clearing removes this owner's policy. Limits from other sources still apply."}}, "zh-Hans": {"stringUnit": {"state": "translated", "value": "清除后将移除此所有者的策略。其他来源的限制仍会生效。"}}}},
+    "Computer MCP App" : {"localizations": {"en": {"stringUnit": {"state": "translated", "value": "Computer MCP App"}}, "zh-Hans": {"stringUnit": {"state": "translated", "value": "Computer MCP 应用"}}}},
+    "Confirm the restored permissions in Privacy & Security to edit this policy." : {"localizations": {"en": {"stringUnit": {"state": "translated", "value": "Confirm the restored permissions in Privacy & Security to edit this policy."}}, "zh-Hans": {"stringUnit": {"state": "translated", "value": "请先在“隐私与安全”中确认恢复的权限，再编辑此策略。"}}}},
+    "Current Saved Policy" : {"localizations": {"en": {"stringUnit": {"state": "translated", "value": "Current Saved Policy"}}, "zh-Hans": {"stringUnit": {"state": "translated", "value": "当前保存的策略"}}}},
+    "Current Saved Source" : {"localizations": {"en": {"stringUnit": {"state": "translated", "value": "Current Saved Source"}}, "zh-Hans": {"stringUnit": {"state": "translated", "value": "当前保存的来源"}}}},
+    "Discard" : {"localizations": {"en": {"stringUnit": {"state": "translated", "value": "Discard"}}, "zh-Hans": {"stringUnit": {"state": "translated", "value": "放弃"}}}},
+    "Discard and Reload" : {"localizations": {"en": {"stringUnit": {"state": "translated", "value": "Discard and Reload"}}, "zh-Hans": {"stringUnit": {"state": "translated", "value": "放弃并重新加载"}}}},
+    "Discard unsaved draft changes and reload?" : {"localizations": {"en": {"stringUnit": {"state": "translated", "value": "Discard unsaved draft changes and reload?"}}, "zh-Hans": {"stringUnit": {"state": "translated", "value": "要放弃未保存的草稿更改并重新加载吗？"}}}},
+    "Discard unsaved draft changes?" : {"localizations": {"en": {"stringUnit": {"state": "translated", "value": "Discard unsaved draft changes?"}}, "zh-Hans": {"stringUnit": {"state": "translated", "value": "要放弃未保存的草稿更改吗？"}}}},
+    "Edit owner policy for %@" : {"localizations": {"en": {"stringUnit": {"state": "translated", "value": "Edit owner policy for %@"}}, "zh-Hans": {"stringUnit": {"state": "translated", "value": "编辑“%@”的所有者策略"}}}},
+    "Edit the TOML policy. Press Command-S to save." : {"localizations": {"en": {"stringUnit": {"state": "translated", "value": "Edit the TOML policy. Press Command-S to save."}}, "zh-Hans": {"stringUnit": {"state": "translated", "value": "编辑 TOML 策略。按 Command-S 保存。"}}}},
+    "Edit…" : {"localizations": {"en": {"stringUnit": {"state": "translated", "value": "Edit…"}}, "zh-Hans": {"stringUnit": {"state": "translated", "value": "编辑…"}}}},
+    "Effective Limits" : {"localizations": {"en": {"stringUnit": {"state": "translated", "value": "Effective Limits"}}, "zh-Hans": {"stringUnit": {"state": "translated", "value": "实际生效的限制"}}}},
+    "Enter a TOML policy to set limits for this owner." : {"localizations": {"en": {"stringUnit": {"state": "translated", "value": "Enter a TOML policy to set limits for this owner."}}, "zh-Hans": {"stringUnit": {"state": "translated", "value": "输入 TOML 策略，为此所有者设置限制。"}}}},
+    "Execution Context" : {"localizations": {"en": {"stringUnit": {"state": "translated", "value": "Execution Context"}}, "zh-Hans": {"stringUnit": {"state": "translated", "value": "执行情境"}}}},
+    "Execution Time" : {"localizations": {"en": {"stringUnit": {"state": "translated", "value": "Execution Time"}}, "zh-Hans": {"stringUnit": {"state": "translated", "value": "执行时长"}}}},
+    "Foreground" : {"localizations": {"en": {"stringUnit": {"state": "translated", "value": "Foreground"}}, "zh-Hans": {"stringUnit": {"state": "translated", "value": "前台"}}}},
+    "Host Default" : {"localizations": {"en": {"stringUnit": {"state": "translated", "value": "Host Default"}}, "zh-Hans": {"stringUnit": {"state": "translated", "value": "宿主默认值"}}}},
+    "Invalid TOML" : {"localizations": {"en": {"stringUnit": {"state": "translated", "value": "Invalid TOML"}}, "zh-Hans": {"stringUnit": {"state": "translated", "value": "TOML 无效"}}}},
+    "Keep Draft on Current Revision" : {"localizations": {"en": {"stringUnit": {"state": "translated", "value": "Keep Draft on Current Revision"}}, "zh-Hans": {"stringUnit": {"state": "translated", "value": "保留草稿并采用当前版本"}}}},
+    "Loading Owner Policy…" : {"localizations": {"en": {"stringUnit": {"state": "translated", "value": "Loading Owner Policy…"}}, "zh-Hans": {"stringUnit": {"state": "translated", "value": "正在加载所有者策略…"}}}},
+    "Local CLI" : {"localizations": {"en": {"stringUnit": {"state": "translated", "value": "Local CLI"}}, "zh-Hans": {"stringUnit": {"state": "translated", "value": "本机命令行"}}}},
+    "Local MCP" : {"localizations": {"en": {"stringUnit": {"state": "translated", "value": "Local MCP"}}, "zh-Hans": {"stringUnit": {"state": "translated", "value": "本机 MCP"}}}},
+    "Memory" : {"localizations": {"en": {"stringUnit": {"state": "translated", "value": "Memory"}}, "zh-Hans": {"stringUnit": {"state": "translated", "value": "内存"}}}},
+    "No Policy Ceiling" : {"localizations": {"en": {"stringUnit": {"state": "translated", "value": "No Policy Ceiling"}}, "zh-Hans": {"stringUnit": {"state": "translated", "value": "策略未设上限"}}}},
+    "No policy is saved for this owner." : {"localizations": {"en": {"stringUnit": {"state": "translated", "value": "No policy is saved for this owner."}}, "zh-Hans": {"stringUnit": {"state": "translated", "value": "此所有者尚未保存策略。"}}}},
+    "No readable saved policy for this owner." : {"localizations": {"en": {"stringUnit": {"state": "translated", "value": "No readable saved policy for this owner."}}, "zh-Hans": {"stringUnit": {"state": "translated", "value": "此所有者没有可读取的已保存策略。"}}}},
+    "Not Set" : {"localizations": {"en": {"stringUnit": {"state": "translated", "value": "Not Set"}}, "zh-Hans": {"stringUnit": {"state": "translated", "value": "未设置"}}}},
+    "Operation Failed" : {"localizations": {"en": {"stringUnit": {"state": "translated", "value": "Operation Failed"}}, "zh-Hans": {"stringUnit": {"state": "translated", "value": "操作失败"}}}},
+    "Outbound Network" : {"localizations": {"en": {"stringUnit": {"state": "translated", "value": "Outbound Network"}}, "zh-Hans": {"stringUnit": {"state": "translated", "value": "出站网络"}}}},
+    "Output" : {"localizations": {"en": {"stringUnit": {"state": "translated", "value": "Output"}}, "zh-Hans": {"stringUnit": {"state": "translated", "value": "输出"}}}},
+    "Owner Policy for %@" : {"localizations": {"en": {"stringUnit": {"state": "translated", "value": "Owner Policy for %@"}}, "zh-Hans": {"stringUnit": {"state": "translated", "value": "“%@”的所有者策略"}}}},
+    "Owner policies are saved in Computer MCP. Use the machine policy file or configuration profile to manage limits for this Mac." : {"localizations": {"en": {"stringUnit": {"state": "translated", "value": "Owner policies are saved in Computer MCP. Use the machine policy file or configuration profile to manage limits for this Mac."}}, "zh-Hans": {"stringUnit": {"state": "translated", "value": "所有者策略保存在 Computer MCP 中。请使用本机策略文件或配置描述文件管理这台 Mac 的限制。"}}}},
+    "Owner policy cannot be read." : {"localizations": {"en": {"stringUnit": {"state": "translated", "value": "Owner policy cannot be read."}}, "zh-Hans": {"stringUnit": {"state": "translated", "value": "无法读取所有者策略。"}}}},
+    "Owner policy draft" : {"localizations": {"en": {"stringUnit": {"state": "translated", "value": "Owner policy draft"}}, "zh-Hans": {"stringUnit": {"state": "translated", "value": "所有者策略草稿"}}}},
+    "Owner policy requires confirmation." : {"localizations": {"en": {"stringUnit": {"state": "translated", "value": "Owner policy requires confirmation."}}, "zh-Hans": {"stringUnit": {"state": "translated", "value": "需要确认所有者策略。"}}}},
+    "Policy Source" : {"localizations": {"en": {"stringUnit": {"state": "translated", "value": "Policy Source"}}, "zh-Hans": {"stringUnit": {"state": "translated", "value": "策略来源"}}}},
+    "Policy Source Changed" : {"localizations": {"en": {"stringUnit": {"state": "translated", "value": "Policy Source Changed"}}, "zh-Hans": {"stringUnit": {"state": "translated", "value": "策略来源已更改"}}}},
+    "Policy cleared. Reload to see the current limits." : {"localizations": {"en": {"stringUnit": {"state": "translated", "value": "Policy cleared. Reload to see the current limits."}}, "zh-Hans": {"stringUnit": {"state": "translated", "value": "策略已清除。重新加载即可查看当前限制。"}}}},
+    "Policy contains malformed, unsupported or unavailable settings." : {"localizations": {"en": {"stringUnit": {"state": "translated", "value": "Policy contains malformed, unsupported or unavailable settings."}}, "zh-Hans": {"stringUnit": {"state": "translated", "value": "策略包含格式错误、不受支持或不可用的设置。"}}}},
+    "Policy saved. Reload to see the current limits." : {"localizations": {"en": {"stringUnit": {"state": "translated", "value": "Policy saved. Reload to see the current limits."}}, "zh-Hans": {"stringUnit": {"state": "translated", "value": "策略已保存。重新加载即可查看当前限制。"}}}},
+    "Policy source snapshot is missing or ambiguous." : {"localizations": {"en": {"stringUnit": {"state": "translated", "value": "Policy source snapshot is missing or ambiguous."}}, "zh-Hans": {"stringUnit": {"state": "translated", "value": "策略来源的快照缺失或不明确。"}}}},
+    "Read-Only" : {"localizations": {"en": {"stringUnit": {"state": "translated", "value": "Read-Only"}}, "zh-Hans": {"stringUnit": {"state": "translated", "value": "只读"}}}},
+    "Reload" : {"localizations": {"en": {"stringUnit": {"state": "translated", "value": "Reload"}}, "zh-Hans": {"stringUnit": {"state": "translated", "value": "重新加载"}}}},
+    "Reload Now" : {"localizations": {"en": {"stringUnit": {"state": "translated", "value": "Reload Now"}}, "zh-Hans": {"stringUnit": {"state": "translated", "value": "立即重新加载"}}}},
+    "Reload Required" : {"localizations": {"en": {"stringUnit": {"state": "translated", "value": "Reload Required"}}, "zh-Hans": {"stringUnit": {"state": "translated", "value": "需要重新加载"}}}},
+    "Replace Draft" : {"localizations": {"en": {"stringUnit": {"state": "translated", "value": "Replace Draft"}}, "zh-Hans": {"stringUnit": {"state": "translated", "value": "替换草稿"}}}},
+    "Retained Output" : {"localizations": {"en": {"stringUnit": {"state": "translated", "value": "Retained Output"}}, "zh-Hans": {"stringUnit": {"state": "translated", "value": "保留的输出"}}}},
+    "Retention" : {"localizations": {"en": {"stringUnit": {"state": "translated", "value": "Retention"}}, "zh-Hans": {"stringUnit": {"state": "translated", "value": "保留时长"}}}},
+    "Revert" : {"localizations": {"en": {"stringUnit": {"state": "translated", "value": "Revert"}}, "zh-Hans": {"stringUnit": {"state": "translated", "value": "还原"}}}},
+    "Review Current Source" : {"localizations": {"en": {"stringUnit": {"state": "translated", "value": "Review Current Source"}}, "zh-Hans": {"stringUnit": {"state": "translated", "value": "查看当前来源"}}}},
+    "Saved" : {"localizations": {"en": {"stringUnit": {"state": "translated", "value": "Saved"}}, "zh-Hans": {"stringUnit": {"state": "translated", "value": "已保存"}}}},
+    "Saved Policy Source" : {"localizations": {"en": {"stringUnit": {"state": "translated", "value": "Saved Policy Source"}}, "zh-Hans": {"stringUnit": {"state": "translated", "value": "已保存的策略来源"}}}},
+    "Source revision %@" : {"localizations": {"en": {"stringUnit": {"state": "translated", "value": "Source revision %@"}}, "zh-Hans": {"stringUnit": {"state": "translated", "value": "来源版本 %@"}}}},
+    "Source: %@" : {"localizations": {"en": {"stringUnit": {"state": "translated", "value": "Source: %@"}}, "zh-Hans": {"stringUnit": {"state": "translated", "value": "来源：%@"}}}},
+    "The current saved source can't be read." : {"localizations": {"en": {"stringUnit": {"state": "translated", "value": "The current saved source can't be read."}}, "zh-Hans": {"stringUnit": {"state": "translated", "value": "无法读取当前保存的来源。"}}}},
+    "The saved policy has no readable limits." : {"localizations": {"en": {"stringUnit": {"state": "translated", "value": "The saved policy has no readable limits."}}, "zh-Hans": {"stringUnit": {"state": "translated", "value": "已保存的策略没有可读取的限制。"}}}},
+    "The saved policy sets no limits for this context." : {"localizations": {"en": {"stringUnit": {"state": "translated", "value": "The saved policy sets no limits for this context."}}, "zh-Hans": {"stringUnit": {"state": "translated", "value": "已保存的策略未对此情境设置限制。"}}}},
+    "These ceilings combine the applicable policy sources. Grants and individual connections can restrict access further." : {"localizations": {"en": {"stringUnit": {"state": "translated", "value": "These ceilings combine the applicable policy sources. Grants and individual connections can restrict access further."}}, "zh-Hans": {"stringUnit": {"state": "translated", "value": "这些上限综合了适用的策略来源。授权和单个连接可进一步限制访问。"}}}},
+    "This profile has no allowed callers." : {"localizations": {"en": {"stringUnit": {"state": "translated", "value": "This profile has no allowed callers."}}, "zh-Hans": {"stringUnit": {"state": "translated", "value": "此配置档案没有获准的调用方。"}}}},
+    "This source limits everything it could limit until it can be read." : {"localizations": {"en": {"stringUnit": {"state": "translated", "value": "This source limits everything it could limit until it can be read."}}, "zh-Hans": {"stringUnit": {"state": "translated", "value": "在恢复读取前，此来源会阻止其管控范围内的所有访问。"}}}},
+    "Unbounded" : {"localizations": {"en": {"stringUnit": {"state": "translated", "value": "Unbounded"}}, "zh-Hans": {"stringUnit": {"state": "translated", "value": "无上限"}}}},
+    "Working…" : {"localizations": {"en": {"stringUnit": {"state": "translated", "value": "Working…"}}, "zh-Hans": {"stringUnit": {"state": "translated", "value": "正在处理…"}}}},
+    "Your draft is preserved. Review the current source before saving or clearing." : {"localizations": {"en": {"stringUnit": {"state": "translated", "value": "Your draft is preserved. Review the current source before saving or clearing."}}, "zh-Hans": {"stringUnit": {"state": "translated", "value": "草稿已保留。请在保存或清除之前查看当前来源。"}}}},
+    "Same as %1$@ (%2$@)" : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Same as %1$@ (%2$@)"}},"zh-Hans":{"stringUnit":{"state":"translated","value":"与%1$@相同（%2$@）"}}}},
+    "Not registered" : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Not registered"}},"zh-Hans":{"stringUnit":{"state":"translated","value":"未注册"}}}},
+    "%@ can't be read. Until it can, nothing it limits is allowed; the settings below apply again once it can be read." : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"%@ can't be read. Until it can, nothing it limits is allowed; the settings below apply again once it can be read."}},"zh-Hans":{"stringUnit":{"state":"translated","value":"无法读取%@。在能读取之前，它所限制的一切都不允许；能读取后，下面的设置会重新生效。"}}}},
+    "Not allowed while %@ can't be read" : {"localizations" : {"en" : {"stringUnit" : {"state" : "translated", "value" : "Not allowed while %@ can't be read"}}, "zh-Hans" : {"stringUnit" : {"state" : "translated", "value" : "无法读取%@时不允许"}}}},
+    "%@ allows at most %@" : {"localizations" : {"en" : {"stringUnit" : {"state" : "translated", "value" : "%@ allows at most %@"}}, "zh-Hans" : {"stringUnit" : {"state" : "translated", "value" : "%@最多允许%@"}}}},
+    "Not allowed by %@" : {"localizations" : {"en" : {"stringUnit" : {"state" : "translated", "value" : "Not allowed by %@"}}, "zh-Hans" : {"stringUnit" : {"state" : "translated", "value" : "%@不允许"}}}},
+    "The permissions changed while you were editing. Review them and try again." : {"localizations": {"en": {"stringUnit": {"state": "translated", "value": "The permissions changed while you were editing. Review them and try again."}}, "zh-Hans": {"stringUnit": {"state": "translated", "value": "权限在你编辑时发生了变化。请检查后重试。"}}}},
+    "Full Access Allowed" : {"localizations": {"en": {"stringUnit": {"state": "translated", "value": "Full Access Allowed"}}, "zh-Hans": {"stringUnit": {"state": "translated", "value": "允许完全访问"}}}},
+    "Full Access for This Session" : {"localizations": {"en": {"stringUnit": {"state": "translated", "value": "Full Access for This Session"}}, "zh-Hans": {"stringUnit": {"state": "translated", "value": "本次会话完全访问"}}}},
+    "Each connection needs approval on this Mac before programs can run without the sandbox." : {"localizations": {"en": {"stringUnit": {"state": "translated", "value": "Each connection needs approval on this Mac before programs can run without the sandbox."}}, "zh-Hans": {"stringUnit": {"state": "translated", "value": "每个连接都需要在这台 Mac 上获得批准，程序才能在沙盒外运行。"}}}},
+    "Always applies to every connection that uses “%@”." : {"localizations": {"en": {"stringUnit": {"state": "translated", "value": "Always applies to every connection that uses “%@”."}}, "zh-Hans": {"stringUnit": {"state": "translated", "value": "“始终允许”适用于使用“%@”的每个连接。"}}}},
+    "This network access is not allowed by the managed limits." : {"localizations": {"en": {"stringUnit": {"state": "translated", "value": "This network access is not allowed by the managed limits."}}, "zh-Hans": {"stringUnit": {"state": "translated", "value": "受管限制不允许此网络访问。"}}}},
+    "Give Full Access…" : {"localizations": {"en": {"stringUnit": {"state": "translated", "value": "Give Full Access…"}}, "zh-Hans": {"stringUnit": {"state": "translated", "value": "授予完全访问权限…"}}}},
+    "Allowing registers this folder as a project and gives “%@” access to it and its worktrees until you revoke it." : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Allowing registers this folder as a project and gives “%@” access to it and its worktrees until you revoke it."}},"zh-Hans":{"stringUnit":{"state":"translated","value":"允许后，此文件夹会注册为项目，“%@”可以访问它及其所有 worktree，直到你撤销权限。"}}}},
+    "Allowing gives “%@” access to this project and all its worktrees until you revoke it." : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Allowing gives “%@” access to this project and all its worktrees until you revoke it."}},"zh-Hans":{"stringUnit":{"state":"translated","value":"允许后，“%@”可以访问此项目及其所有 worktree，直到你撤销权限。"}}}},
+    "Trusted Hosts and %@" : {"localizations" : {"en" : {"stringUnit" : {"state" : "translated", "value" : "Trusted Hosts and %@"}}, "zh-Hans" : {"stringUnit" : {"state" : "translated", "value" : "可信主机及 %@"}}}},
+    "Denied" : { "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Denied" } }, "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "已拒绝" } } } },
+    "Permissions…" : {"localizations": {"en": {"stringUnit": {"state": "translated", "value": "Permissions…"}}, "zh-Hans": {"stringUnit": {"state": "translated", "value": "权限…"}}}},
+
+    "Trusted Hosts" : {"localizations": {"en": {"stringUnit": {"state": "translated", "value": "Trusted Hosts"}}, "zh-Hans": {"stringUnit": {"state": "translated", "value": "受信任的主机"}}}},
+    "Any Host" : {"localizations": {"en": {"stringUnit": {"state": "translated", "value": "Any Host"}}, "zh-Hans": {"stringUnit": {"state": "translated", "value": "任意主机"}}}},
+    "Custom…" : {"localizations": {"en": {"stringUnit": {"state": "translated", "value": "Custom…"}}, "zh-Hans": {"stringUnit": {"state": "translated", "value": "自定义…"}}}},
+    "Custom Network Access" : {"localizations": {"en": {"stringUnit": {"state": "translated", "value": "Custom Network Access"}}, "zh-Hans": {"stringUnit": {"state": "translated", "value": "自定义网络访问"}}}},
+    "Hosts" : {"localizations": {"en": {"stringUnit": {"state": "translated", "value": "Hosts"}}, "zh-Hans": {"stringUnit": {"state": "translated", "value": "主机"}}}},
+    "Enter one host per line or separate hosts with commas. Use *. to include subdomains." : {"localizations": {"en": {"stringUnit": {"state": "translated", "value": "Enter one host per line or separate hosts with commas. Use *. to include subdomains."}}, "zh-Hans": {"stringUnit": {"state": "translated", "value": "每行输入一个主机，或用逗号分隔。使用 *. 前缀以包含子域名。"}}}},
+
+    "“%1$@” would like to connect to “%2$@” from “%3$@”." : {"localizations" : {"en" : {"stringUnit" : {"state" : "translated", "value" : "“%1$@” would like to connect to “%2$@” from “%3$@”."}}, "zh-Hans" : {"stringUnit" : {"state" : "translated", "value" : "“%1$@”想要连接“%2$@”（来自“%3$@”）。"}}}},
+    "Allowing adds the host to the project's network access in the sandbox." : {"localizations" : {"en" : {"stringUnit" : {"state" : "translated", "value" : "Allowing adds the host to the project's network access in the sandbox."}}, "zh-Hans" : {"stringUnit" : {"state" : "translated", "value" : "允许后，这个主机会加入该项目在沙盒中的网络访问。"}}}},
+    "Secure Tunnel" : {"localizations" : {"en" : {"stringUnit" : {"state" : "translated", "value" : "Secure Tunnel"}}, "zh-Hans" : {"stringUnit" : {"state" : "translated", "value" : "安全隧道"}}}},
+    "Cloudflare Tunnel" : {"localizations" : {"en" : {"stringUnit" : {"state" : "translated", "value" : "Cloudflare Tunnel"}}, "zh-Hans" : {"stringUnit" : {"state" : "translated", "value" : "Cloudflare 隧道"}}}},
+    "Owner Policy" : {"localizations" : {"en" : {"stringUnit" : {"state" : "translated", "value" : "Owner Policy"}}, "zh-Hans" : {"stringUnit" : {"state" : "translated", "value" : "所有者策略"}}}},
+    "All Projects" : {"localizations" : {"en" : {"stringUnit" : {"state" : "translated", "value" : "All Projects"}}, "zh-Hans" : {"stringUnit" : {"state" : "translated", "value" : "所有项目"}}}},
+    "All Plugins" : {"localizations" : {"en" : {"stringUnit" : {"state" : "translated", "value" : "All Plugins"}}, "zh-Hans" : {"stringUnit" : {"state" : "translated", "value" : "所有插件"}}}},
+    "All MCP Servers" : {"localizations" : {"en" : {"stringUnit" : {"state" : "translated", "value" : "All MCP Servers"}}, "zh-Hans" : {"stringUnit" : {"state" : "translated", "value" : "所有 MCP 服务器"}}}},
+    "Network Volumes" : {"localizations" : {"en" : {"stringUnit" : {"state" : "translated", "value" : "Network Volumes"}}, "zh-Hans" : {"stringUnit" : {"state" : "translated", "value" : "网络宗卷"}}}},
+    "Removable Volumes" : {"localizations" : {"en" : {"stringUnit" : {"state" : "translated", "value" : "Removable Volumes"}}, "zh-Hans" : {"stringUnit" : {"state" : "translated", "value" : "可移除宗卷"}}}},
+    "Network: None" : {"localizations" : {"en" : {"stringUnit" : {"state" : "translated", "value" : "Network: None"}}, "zh-Hans" : {"stringUnit" : {"state" : "translated", "value" : "网络：无"}}}},
+    "Network: Trusted Hosts" : {"localizations" : {"en" : {"stringUnit" : {"state" : "translated", "value" : "Network: Trusted Hosts"}}, "zh-Hans" : {"stringUnit" : {"state" : "translated", "value" : "网络：可信主机"}}}},
+    "Network: Any Host" : {"localizations" : {"en" : {"stringUnit" : {"state" : "translated", "value" : "Network: Any Host"}}, "zh-Hans" : {"stringUnit" : {"state" : "translated", "value" : "网络：任意主机"}}}},
+    "Network: Trusted Hosts and %@" : {"localizations" : {"en" : {"stringUnit" : {"state" : "translated", "value" : "Network: Trusted Hosts and %@"}}, "zh-Hans" : {"stringUnit" : {"state" : "translated", "value" : "网络：可信主机及 %@"}}}},
+    "Network: %@" : {"localizations" : {"en" : {"stringUnit" : {"state" : "translated", "value" : "Network: %@"}}, "zh-Hans" : {"stringUnit" : {"state" : "translated", "value" : "网络：%@"}}}},
+    "Privacy & Security" : {"localizations" : {"en" : {"stringUnit" : {"state" : "translated", "value" : "Privacy & Security"}}, "zh-Hans" : {"stringUnit" : {"state" : "translated", "value" : "隐私与安全性"}}}},
+    "The change couldn't be made." : {"localizations" : {"en" : {"stringUnit" : {"state" : "translated", "value" : "The change couldn't be made."}}, "zh-Hans" : {"stringUnit" : {"state" : "translated", "value" : "无法完成更改。"}}}},
+    "Permissions are paused" : {"localizations" : {"en" : {"stringUnit" : {"state" : "translated", "value" : "Permissions are paused"}}, "zh-Hans" : {"stringUnit" : {"state" : "translated", "value" : "权限已暂停"}}}},
+    "The permission store is older than the authority already used, for example after a restore from a backup. Review the permissions below, then confirm them to resume." : {"localizations" : {"en" : {"stringUnit" : {"state" : "translated", "value" : "The permission store is older than the authority already used, for example after a restore from a backup. Review the permissions below, then confirm them to resume."}}, "zh-Hans" : {"stringUnit" : {"state" : "translated", "value" : "权限存储比已经使用过的授权更旧，例如从备份恢复之后。请检查下面的权限，确认后恢复使用。"}}}},
+    "Confirm Permissions" : {"localizations" : {"en" : {"stringUnit" : {"state" : "translated", "value" : "Confirm Permissions"}}, "zh-Hans" : {"stringUnit" : {"state" : "translated", "value" : "确认权限"}}}},
+    "Requests" : {"localizations" : {"en" : {"stringUnit" : {"state" : "translated", "value" : "Requests"}}, "zh-Hans" : {"stringUnit" : {"state" : "translated", "value" : "请求"}}}},
+    "Clients and Plugins" : {"localizations" : {"en" : {"stringUnit" : {"state" : "translated", "value" : "Clients and Plugins"}}, "zh-Hans" : {"stringUnit" : {"state" : "translated", "value" : "客户端与插件"}}}},
+    "No clients or plugins are connected yet." : {"localizations" : {"en" : {"stringUnit" : {"state" : "translated", "value" : "No clients or plugins are connected yet."}}, "zh-Hans" : {"stringUnit" : {"state" : "translated", "value" : "还没有客户端或插件连接。"}}}},
+    "Managed Limits" : {"localizations" : {"en" : {"stringUnit" : {"state" : "translated", "value" : "Managed Limits"}}, "zh-Hans" : {"stringUnit" : {"state" : "translated", "value" : "托管限制"}}}},
+    "Managed limits cap what can be granted here. A source that can't be read limits everything it could limit until it can be read." : {"localizations" : {"en" : {"stringUnit" : {"state" : "translated", "value" : "Managed limits cap what can be granted here. A source that can't be read limits everything it could limit until it can be read."}}, "zh-Hans" : {"stringUnit" : {"state" : "translated", "value" : "托管限制决定这里最多能授予什么。无法读取的来源，在能读取之前，会把它可以限制的设置全部按最严处理。"}}}},
+    "This Mac" : {"localizations" : {"en" : {"stringUnit" : {"state" : "translated", "value" : "This Mac"}}, "zh-Hans" : {"stringUnit" : {"state" : "translated", "value" : "这台 Mac"}}}},
+    "Computer MCP holds these macOS permissions for everything it runs in the sandbox. What each client or plugin may use of them is set above." : {"localizations" : {"en" : {"stringUnit" : {"state" : "translated", "value" : "Computer MCP holds these macOS permissions for everything it runs in the sandbox. What each client or plugin may use of them is set above."}}, "zh-Hans" : {"stringUnit" : {"state" : "translated", "value" : "Computer MCP 为它在沙盒中运行的程序持有这些 macOS 权限。每个客户端或插件能用到多少，在上面设置。"}}}},
+    "Full Access is turned on from a client's or plugin's page, and needs your confirmation on this Mac." : {"localizations" : {"en" : {"stringUnit" : {"state" : "translated", "value" : "Full Access is turned on from a client's or plugin's page, and needs your confirmation on this Mac."}}, "zh-Hans" : {"stringUnit" : {"state" : "translated", "value" : "完全访问需要在客户端或插件的页面中开启，并在这台 Mac 上确认。"}}}},
+    "No clients or plugins have asked for this permission." : {"localizations" : {"en" : {"stringUnit" : {"state" : "translated", "value" : "No clients or plugins have asked for this permission."}}, "zh-Hans" : {"stringUnit" : {"state" : "translated", "value" : "还没有客户端或插件请求此权限。"}}}},
+    "Don't Allow" : {"localizations" : {"en" : {"stringUnit" : {"state" : "translated", "value" : "Don't Allow"}}, "zh-Hans" : {"stringUnit" : {"state" : "translated", "value" : "不允许"}}}},
+    "Declared by the plugin" : {"localizations" : {"en" : {"stringUnit" : {"state" : "translated", "value" : "Declared by the plugin"}}, "zh-Hans" : {"stringUnit" : {"state" : "translated", "value" : "由插件声明"}}}},
+    "Set by %@" : {"localizations" : {"en" : {"stringUnit" : {"state" : "translated", "value" : "Set by %@"}}, "zh-Hans" : {"stringUnit" : {"state" : "translated", "value" : "由“%@”设置"}}}},
+    "Revoke All Access…" : {"localizations" : {"en" : {"stringUnit" : {"state" : "translated", "value" : "Revoke All Access…"}}, "zh-Hans" : {"stringUnit" : {"state" : "translated", "value" : "撤销全部权限…"}}}},
+    "Revoke all access for “%@”?" : {"localizations" : {"en" : {"stringUnit" : {"state" : "translated", "value" : "Revoke all access for “%@”?"}}, "zh-Hans" : {"stringUnit" : {"state" : "translated", "value" : "撤销“%@”的全部权限？"}}}},
+    "Revoke All Access" : {"localizations" : {"en" : {"stringUnit" : {"state" : "translated", "value" : "Revoke All Access"}}, "zh-Hans" : {"stringUnit" : {"state" : "translated", "value" : "撤销全部权限"}}}},
+    "Every permission returns to Ask, and running programs that depend on them end." : {"localizations" : {"en" : {"stringUnit" : {"state" : "translated", "value" : "Every permission returns to Ask, and running programs that depend on them end."}}, "zh-Hans" : {"stringUnit" : {"state" : "translated", "value" : "所有权限恢复为“询问”，依赖这些权限的运行中程序会结束。"}}}},
+    "Give “%@” Full Access?" : {"localizations" : {"en" : {"stringUnit" : {"state" : "translated", "value" : "Give “%@” Full Access?"}}, "zh-Hans" : {"stringUnit" : {"state" : "translated", "value" : "给“%@”完全访问？"}}}},
+    "Give Full Access" : {"localizations" : {"en" : {"stringUnit" : {"state" : "translated", "value" : "Give Full Access"}}, "zh-Hans" : {"stringUnit" : {"state" : "translated", "value" : "给予完全访问"}}}},
+    "This client or plugin is no longer available." : {"localizations" : {"en" : {"stringUnit" : {"state" : "translated", "value" : "This client or plugin is no longer available."}}, "zh-Hans" : {"stringUnit" : {"state" : "translated", "value" : "此客户端或插件已不可用。"}}}},
+    "Full Access" : {"localizations" : {"en" : {"stringUnit" : {"state" : "translated", "value" : "Full Access"}}, "zh-Hans" : {"stringUnit" : {"state" : "translated", "value" : "完全访问"}}}},
+    "Execution" : {"localizations" : {"en" : {"stringUnit" : {"state" : "translated", "value" : "Execution"}}, "zh-Hans" : {"stringUnit" : {"state" : "translated", "value" : "执行方式"}}}},
+    "Only This Time" : {"localizations" : {"en" : {"stringUnit" : {"state" : "translated", "value" : "Only This Time"}}, "zh-Hans" : {"stringUnit" : {"state" : "translated", "value" : "仅这一次"}}}},
+    "Only This Time covers the retried request and the program it starts." : {"localizations" : {"en" : {"stringUnit" : {"state" : "translated", "value" : "Only This Time covers the retried request and the program it starts."}}, "zh-Hans" : {"stringUnit" : {"state" : "translated", "value" : "“仅这一次”只对这次重试及其启动的程序有效。"}}}},
+    "“%1$@” would like to read and change “%2$@”." : {"localizations" : {"en" : {"stringUnit" : {"state" : "translated", "value" : "“%1$@” would like to read and change “%2$@”."}}, "zh-Hans" : {"stringUnit" : {"state" : "translated", "value" : "“%1$@”想要读取和修改“%2$@”。"}}}},
+    "“%1$@” would like to read “%2$@”." : {"localizations" : {"en" : {"stringUnit" : {"state" : "translated", "value" : "“%1$@” would like to read “%2$@”."}}, "zh-Hans" : {"stringUnit" : {"state" : "translated", "value" : "“%1$@”想要读取“%2$@”。"}}}},
+    "“%1$@” would like to use “%2$@”." : {"localizations" : {"en" : {"stringUnit" : {"state" : "translated", "value" : "“%1$@” would like to use “%2$@”."}}, "zh-Hans" : {"stringUnit" : {"state" : "translated", "value" : "“%1$@”想要使用“%2$@”。"}}}},
+    "Not Allowed" : {"localizations" : {"en" : {"stringUnit" : {"state" : "translated", "value" : "Not Allowed"}}, "zh-Hans" : {"stringUnit" : {"state" : "translated", "value" : "未允许"}}}},
+    "Not Requested" : {"localizations" : {"en" : {"stringUnit" : {"state" : "translated", "value" : "Not Requested"}}, "zh-Hans" : {"stringUnit" : {"state" : "translated", "value" : "未请求"}}}},
+    "Full Access for This Connection" : {"localizations" : {"en" : {"stringUnit" : {"state" : "translated", "value" : "Full Access for This Connection"}}, "zh-Hans" : {"stringUnit" : {"state" : "translated", "value" : "仅本次连接完全访问"}}}},
+    "Programs run in the sandbox and change projects only in worktrees." : {"localizations" : {"en" : {"stringUnit" : {"state" : "translated", "value" : "Programs run in the sandbox and change projects only in worktrees."}}, "zh-Hans" : {"stringUnit" : {"state" : "translated", "value" : "程序在沙盒中运行，只在 worktree 中修改项目。"}}}},
+    "Programs run as you without the sandbox. They don't inherit Computer MCP's macOS permissions." : {"localizations" : {"en" : {"stringUnit" : {"state" : "translated", "value" : "Programs run as you without the sandbox. They don't inherit Computer MCP's macOS permissions."}}, "zh-Hans" : {"stringUnit" : {"state" : "translated", "value" : "程序以你的身份运行，不经过沙盒，也不继承 Computer MCP 的 macOS 权限。"}}}},
+    "Desktop Control" : {"localizations" : {"en" : {"stringUnit" : {"state" : "translated", "value" : "Desktop Control"}}, "zh-Hans" : {"stringUnit" : {"state" : "translated", "value" : "桌面控制"}}}},
+    "Local Network" : {"localizations" : {"en" : {"stringUnit" : {"state" : "translated", "value" : "Local Network"}}, "zh-Hans" : {"stringUnit" : {"state" : "translated", "value" : "本地网络"}}}},
+    "MCP Servers" : {"localizations" : {"en" : {"stringUnit" : {"state" : "translated", "value" : "MCP Servers"}}, "zh-Hans" : {"stringUnit" : {"state" : "translated", "value" : "MCP 服务器"}}}},
+    "Machine Information" : {"localizations" : {"en" : {"stringUnit" : {"state" : "translated", "value" : "Machine Information"}}, "zh-Hans" : {"stringUnit" : {"state" : "translated", "value" : "设备信息"}}}},
+    "Unified Logs" : {"localizations" : {"en" : {"stringUnit" : {"state" : "translated", "value" : "Unified Logs"}}, "zh-Hans" : {"stringUnit" : {"state" : "translated", "value" : "统一日志"}}}},
+    "Clients and plugins with access to a project can read it. With Read & Write they can change it in worktrees and merge their work back." : {"localizations" : {"en" : {"stringUnit" : {"state" : "translated", "value" : "Clients and plugins with access to a project can read it. With Read & Write they can change it in worktrees and merge their work back."}}, "zh-Hans" : {"stringUnit" : {"state" : "translated", "value" : "有项目权限的客户端和插件可以读取项目；有“读写”权限的还可以在 worktree 中修改并把改动合并回去。"}}}},
+    "Allow host tools and sandboxed programs to read files in these folders." : {"localizations" : {"en" : {"stringUnit" : {"state" : "translated", "value" : "Allow host tools and sandboxed programs to read files in these folders."}}, "zh-Hans" : {"stringUnit" : {"state" : "translated", "value" : "允许宿主工具和沙盒程序读取这些文件夹中的文件。"}}}},
+    "Take screenshots and read windows, displays and accessibility information." : {"localizations" : {"en" : {"stringUnit" : {"state" : "translated", "value" : "Take screenshots and read windows, displays and accessibility information."}}, "zh-Hans" : {"stringUnit" : {"state" : "translated", "value" : "截屏，读取窗口、显示器和辅助功能信息。"}}}},
+    "Use the keyboard and pointer, perform accessibility actions and open files in apps. This acts on your whole desktop, outside any sandbox." : {"localizations" : {"en" : {"stringUnit" : {"state" : "translated", "value" : "Use the keyboard and pointer, perform accessibility actions and open files in apps. This acts on your whole desktop, outside any sandbox."}}, "zh-Hans" : {"stringUnit" : {"state" : "translated", "value" : "使用键盘和指针、执行辅助功能操作、在应用中打开文件。它作用于整个桌面，不受沙盒限制。"}}}},
+    "Connect from the sandbox to devices on your local network." : {"localizations" : {"en" : {"stringUnit" : {"state" : "translated", "value" : "Connect from the sandbox to devices on your local network."}}, "zh-Hans" : {"stringUnit" : {"state" : "translated", "value" : "允许沙盒连接本地网络中的设备。"}}}},
+    "Use the tools and skills that plugins contribute." : {"localizations" : {"en" : {"stringUnit" : {"state" : "translated", "value" : "Use the tools and skills that plugins contribute."}}, "zh-Hans" : {"stringUnit" : {"state" : "translated", "value" : "使用插件提供的工具和技能。"}}}},
+    "Use the MCP servers you registered." : {"localizations" : {"en" : {"stringUnit" : {"state" : "translated", "value" : "Use the MCP servers you registered."}}, "zh-Hans" : {"stringUnit" : {"state" : "translated", "value" : "使用你登记的 MCP 服务器。"}}}},
+    "Read system, network and service status." : {"localizations" : {"en" : {"stringUnit" : {"state" : "translated", "value" : "Read system, network and service status."}}, "zh-Hans" : {"stringUnit" : {"state" : "translated", "value" : "读取系统、网络和服务状态。"}}}},
+    "Query the macOS unified log, which can reveal activity on this Mac." : {"localizations" : {"en" : {"stringUnit" : {"state" : "translated", "value" : "Query the macOS unified log, which can reveal activity on this Mac."}}, "zh-Hans" : {"stringUnit" : {"state" : "translated", "value" : "查询 macOS 统一日志，其中可能记录这台 Mac 上的活动。"}}}},
+    "Read the skill library." : {"localizations" : {"en" : {"stringUnit" : {"state" : "translated", "value" : "Read the skill library."}}, "zh-Hans" : {"stringUnit" : {"state" : "translated", "value" : "读取技能库。"}}}},
+    "Run programs without the sandbox, as you, in any directory. Host tools still check every permission." : {"localizations" : {"en" : {"stringUnit" : {"state" : "translated", "value" : "Run programs without the sandbox, as you, in any directory. Host tools still check every permission."}}, "zh-Hans" : {"stringUnit" : {"state" : "translated", "value" : "在任意目录以你的身份运行程序，不经过沙盒。宿主工具仍会检查每项权限。"}}}},
+    "Read & Write" : {"localizations" : {"en" : {"stringUnit" : {"state" : "translated", "value" : "Read & Write"}}, "zh-Hans" : {"stringUnit" : {"state" : "translated", "value" : "读写"}}}},
+    "Use" : {"localizations" : {"en" : {"stringUnit" : {"state" : "translated", "value" : "Use"}}, "zh-Hans" : {"stringUnit" : {"state" : "translated", "value" : "使用"}}}},
+    "All" : {"localizations" : {"en" : {"stringUnit" : {"state" : "translated", "value" : "All"}}, "zh-Hans" : {"stringUnit" : {"state" : "translated", "value" : "全部"}}}},
+    "Local MCP Server" : {"localizations" : {"en" : {"stringUnit" : {"state" : "translated", "value" : "Local MCP Server"}}, "zh-Hans" : {"stringUnit" : {"state" : "translated", "value" : "本地 MCP 服务器"}}}},
+    "Applied" : {"localizations" : {"en" : {"stringUnit" : {"state" : "translated", "value" : "Applied"}}, "zh-Hans" : {"stringUnit" : {"state" : "translated", "value" : "已生效"}}}},
+    "Can't Be Read" : {"localizations" : {"en" : {"stringUnit" : {"state" : "translated", "value" : "Can't Be Read"}}, "zh-Hans" : {"stringUnit" : {"state" : "translated", "value" : "无法读取"}}}},
+    "Machine Policy" : {"localizations" : {"en" : {"stringUnit" : {"state" : "translated", "value" : "Machine Policy"}}, "zh-Hans" : {"stringUnit" : {"state" : "translated", "value" : "机器策略"}}}},
+    "Configuration Profile" : {"localizations" : {"en" : {"stringUnit" : {"state" : "translated", "value" : "Configuration Profile"}}, "zh-Hans" : {"stringUnit" : {"state" : "translated", "value" : "配置描述文件"}}}},
+    "Access for %@" : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Access for %@"}},"zh-Hans":{"stringUnit":{"state":"translated","value":"%@ 的访问权限"}}}},
+    "Effective access: %@" : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Effective access: %@"}},"zh-Hans":{"stringUnit":{"state":"translated","value":"实际访问权限：%@"}}}},
+    "Profile revision: %@ · Permission revision: %@" : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Profile revision: %@ · Permission revision: %@"}},"zh-Hans":{"stringUnit":{"state":"translated","value":"配置修订号：%@ · 权限修订号：%@"}}}},
+    "Ask uses the profile's default project rule. A wildcard rule still applies." : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Ask uses the profile's default project rule. A wildcard rule still applies."}},"zh-Hans":{"stringUnit":{"state":"translated","value":"“询问”使用配置方案的默认项目规则。通配规则仍然生效。"}}}},
+    "MCP server" : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"MCP server"}},"zh-Hans":{"stringUnit":{"state":"translated","value":"MCP 服务器"}}}},
+    "Allow" : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Allow"}},"zh-Hans":{"stringUnit":{"state":"translated","value":"允许"}}}},
+    "Include trusted hosts" : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Include trusted hosts"}},"zh-Hans":{"stringUnit":{"state":"translated","value":"包含可信主机"}}}},
+    "Enter valid host names or IP addresses for custom network access." : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Enter valid host names or IP addresses for custom network access."}},"zh-Hans":{"stringUnit":{"state":"translated","value":"请为自定义网络访问输入有效的主机名或 IP 地址。"}}}},
+    "None" : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"None"}},"zh-Hans":{"stringUnit":{"state":"translated","value":"无"}}}},
+    "Allow Full access…" : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Allow Full access…"}},"zh-Hans":{"stringUnit":{"state":"translated","value":"允许完全访问…"}}}},
+    "Connected clients: %@" : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Connected clients: %@"}},"zh-Hans":{"stringUnit":{"state":"translated","value":"已连接的客户端：%@"}}}},
+    "Files & Folders" : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Files & Folders"}},"zh-Hans":{"stringUnit":{"state":"translated","value":"文件与文件夹"}}}},
+    "Full access" : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Full access"}},"zh-Hans":{"stringUnit":{"state":"translated","value":"完全访问"}}}},
+    "No connected clients" : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"No connected clients"}},"zh-Hans":{"stringUnit":{"state":"translated","value":"没有已连接的客户端"}}}},
+    "Programs may use Full access with client consent." : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Programs may use Full access with client consent."}},"zh-Hans":{"stringUnit":{"state":"translated","value":"程序可在客户端获得同意后使用完全访问。"}}}},
+    "Programs run in the sandbox." : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Programs run in the sandbox."}},"zh-Hans":{"stringUnit":{"state":"translated","value":"程序在沙盒中运行。"}}}},
+    "Revoking access ends work that uses it." : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Revoking access ends work that uses it."}},"zh-Hans":{"stringUnit":{"state":"translated","value":"撤销访问权限会终止使用该权限的工作。"}}}},
+    "Use sandbox" : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Use sandbox"}},"zh-Hans":{"stringUnit":{"state":"translated","value":"使用沙盒"}}}},
+    "iCloud Drive" : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"iCloud Drive"}},"zh-Hans":{"stringUnit":{"state":"translated","value":"iCloud 云盘"}}}},
+    "Ask" : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Ask"}},"zh-Hans":{"stringUnit":{"state":"translated","value":"询问"}}}},
+    "Sandbox" : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Sandbox"}},"zh-Hans":{"stringUnit":{"state":"translated","value":"沙盒"}}}},
+    "Always" : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Always"}},"zh-Hans":{"stringUnit":{"state":"translated","value":"始终允许"}}}},
+    "Write" : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Write"}},"zh-Hans":{"stringUnit":{"state":"translated","value":"写入"}}}},
+    "Read" : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Read"}},"zh-Hans":{"stringUnit":{"state":"translated","value":"读取"}}}},
+    "Network" : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Network"}},"zh-Hans":{"stringUnit":{"state":"translated","value":"网络"}}}},
+    "Screen" : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Screen"}},"zh-Hans":{"stringUnit":{"state":"translated","value":"屏幕"}}}},
+    "Downloads" : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Downloads"}},"zh-Hans":{"stringUnit":{"state":"translated","value":"下载"}}}},
+    "Documents" : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Documents"}},"zh-Hans":{"stringUnit":{"state":"translated","value":"文稿"}}}},
+    "Desktop" : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Desktop"}},"zh-Hans":{"stringUnit":{"state":"translated","value":"桌面"}}}},
     "Update Computer MCP to use this plugin" : {"localizations" : {"en" : {"stringUnit" : {"state" : "translated", "value" : "Update Computer MCP to use this plugin"}}, "zh-Hans" : {"stringUnit" : {"state" : "translated", "value" : "更新 Computer MCP 后才能使用此插件"}}}},
     "This plugin needs an update" : {"localizations" : {"en" : {"stringUnit" : {"state" : "translated", "value" : "This plugin needs an update"}}, "zh-Hans" : {"stringUnit" : {"state" : "translated", "value" : "此插件需要更新"}}}},
     "This plugin isn't available for this Mac" : {"localizations" : {"en" : {"stringUnit" : {"state" : "translated", "value" : "This plugin isn't available for this Mac"}}, "zh-Hans" : {"stringUnit" : {"state" : "translated", "value" : "此插件没有适用于这台 Mac 的版本"}}}},
@@ -34,8 +1580,6 @@
     "Allowed client hosts" : {"localizations" : {"en" : {"stringUnit" : {"state" : "translated", "value" : "Allowed client hosts"}}, "zh-Hans" : {"stringUnit" : {"state" : "translated", "value" : "允许的客户端主机"}}}},
     "Sign-in for clients such as claude.ai" : {"localizations" : {"en" : {"stringUnit" : {"state" : "translated", "value" : "Sign-in for clients such as claude.ai"}}, "zh-Hans" : {"stringUnit" : {"state" : "translated", "value" : "供 claude.ai 等客户端登录"}}}},
     "Clients that cannot send a custom header, such as claude.ai, sign in with OAuth. You approve each new client in Client access by matching the code shown on its browser page. Separate client hosts with commas." : {"localizations" : {"en" : {"stringUnit" : {"state" : "translated", "value" : "Clients that cannot send a custom header, such as claude.ai, sign in with OAuth. You approve each new client in Client access by matching the code shown on its browser page. Separate client hosts with commas."}}, "zh-Hans" : {"stringUnit" : {"state" : "translated", "value" : "无法发送自定义请求头的客户端（例如 claude.ai）通过 OAuth 登录。您需要在“客户端权限”中核对其浏览器页面显示的代码，逐个批准新客户端。多个客户端主机用逗号分隔。"}}}},
-    "Delivery" : {"localizations" : {"en" : {"stringUnit" : {"state" : "translated", "value" : "Delivery"}}, "zh-Hans" : {"stringUnit" : {"state" : "translated", "value" : "交付"}}}},
-    "%@ delivery scope(s)" : {"localizations" : {"en" : {"stringUnit" : {"state" : "translated", "value" : "%@ delivery scope(s)"}}, "zh-Hans" : {"stringUnit" : {"state" : "translated", "value" : "%@ 个交付范围"}}}},
     "Result unknown — refresh to check" : {"localizations" : {"en" : {"stringUnit" : {"state" : "translated", "value" : "Result unknown — refresh to check"}}, "zh-Hans" : {"stringUnit" : {"state" : "translated", "value" : "结果未知，请刷新确认"}}}},
     "Not installed, or its command didn't respond." : {"localizations" : {"en" : {"stringUnit" : {"state" : "translated", "value" : "Not installed, or its command didn't respond."}}, "zh-Hans" : {"stringUnit" : {"state" : "translated", "value" : "未安装，或其命令没有响应。"}}}},
     "%@ isn't available: it isn't installed, or its command didn't respond." : {"localizations" : {"en" : {"stringUnit" : {"state" : "translated", "value" : "%@ isn't available: it isn't installed, or its command didn't respond."}}, "zh-Hans" : {"stringUnit" : {"state" : "translated", "value" : "%@ 不可用：未安装，或其命令没有响应。"}}}},
@@ -98,44 +1642,12 @@
     "Reopen Claude Desktop." : {"localizations" : {"en" : {"stringUnit" : {"state" : "translated", "value" : "Reopen Claude Desktop."}}, "zh-Hans" : {"stringUnit" : {"state" : "translated", "value" : "重新打开 Claude Desktop。"}}}},
     "Claude Desktop must be closed before applying this plan." : {"localizations" : {"en" : {"stringUnit" : {"state" : "translated", "value" : "Claude Desktop must be closed before applying this plan."}}, "zh-Hans" : {"stringUnit" : {"state" : "translated", "value" : "应用此更改前必须先退出 Claude Desktop。"}}}},
     "Close other programs that edit this file. A write after the final check can be lost." : {"localizations" : {"en" : {"stringUnit" : {"state" : "translated", "value" : "Close other programs that edit this file. A write after the final check can be lost."}}, "zh-Hans" : {"stringUnit" : {"state" : "translated", "value" : "请关闭会编辑此文件的其他程序。最终检查之后的写入可能会丢失。"}}}},
-    "Operation request" : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Operation request"}},"zh-Hans":{"stringUnit":{"state":"translated","value":"操作请求"}}}},
-    "Empty text" : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Empty text"}},"zh-Hans":{"stringUnit":{"state":"translated","value":"空文本"}}}},
-    "Not set" : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Not set"}},"zh-Hans":{"stringUnit":{"state":"translated","value":"未设置"}}}},
-    "Empty list" : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Empty list"}},"zh-Hans":{"stringUnit":{"state":"translated","value":"空列表"}}}},
-    "No fields" : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"No fields"}},"zh-Hans":{"stringUnit":{"state":"translated","value":"无字段"}}}},
-    "Request details are unavailable. Ask the client to send a new request." : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Request details are unavailable. Ask the client to send a new request."}},"zh-Hans":{"stringUnit":{"state":"translated","value":"请求详情不可用，请让客户端重新发送请求。"}}}},
-    "Technical details" : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Technical details"}},"zh-Hans":{"stringUnit":{"state":"translated","value":"技术详情"}}}},
-    "A client's current session can impose a lower access level." : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"A client's current session can impose a lower access level."}},"zh-Hans":{"stringUnit":{"state":"translated","value":"客户端当前会话仍可能限制为更低的访问级别。"}}}},
-    "Close and reopen to review current permission choices." : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Close and reopen to review current permission choices."}},"zh-Hans":{"stringUnit":{"state":"translated","value":"请关闭后重新打开，以查看当前权限选项。"}}}},
-    "Permission choices are unavailable. Close and try again." : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Permission choices are unavailable. Close and try again."}},"zh-Hans":{"stringUnit":{"state":"translated","value":"权限选项暂不可用，请关闭后重试。"}}}},
-    "Connection permissions" : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Connection permissions"}},"zh-Hans":{"stringUnit":{"state":"translated","value":"连接权限"}}}},
-    "Access" : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Access"}},"zh-Hans":{"stringUnit":{"state":"translated","value":"访问权限"}}}},
-    "These permissions apply to every client using this connection profile. Full Access is approved separately for a connected client." : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"These permissions apply to every client using this connection profile. Full Access is approved separately for a connected client."}},"zh-Hans":{"stringUnit":{"state":"translated","value":"这些权限适用于使用此连接配置的所有客户端。完全访问需要为已连接的客户端单独授权。"}}}},
-    "Saving replaces broad access with the projects, capabilities, and integrations selected below. New projects and integrations require selection." : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Saving replaces broad access with the projects, capabilities, and integrations selected below. New projects and integrations require selection."}},"zh-Hans":{"stringUnit":{"state":"translated","value":"保存后，将仅允许下方选中的项目、能力和集成。新增项目和集成需要另行选择。"}}}},
-    "Allow connections from" : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Allow connections from"}},"zh-Hans":{"stringUnit":{"state":"translated","value":"允许以下来源连接"}}}},
     "Projects" : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Projects"}},"zh-Hans":{"stringUnit":{"state":"translated","value":"项目"}}}},
-    "Integrations" : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Integrations"}},"zh-Hans":{"stringUnit":{"state":"translated","value":"集成"}}}},
-    "No integrations are registered." : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"No integrations are registered."}},"zh-Hans":{"stringUnit":{"state":"translated","value":"尚未注册任何集成。"}}}},
-    "An integration includes its current and future host-allowed tools. Observe permits reading only. Restricted Access never permits arbitrary execution." : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"An integration includes its current and future host-allowed tools. Observe permits reading only. Restricted Access never permits arbitrary execution."}},"zh-Hans":{"stringUnit":{"state":"translated","value":"选择集成会包含主机允许的当前及后续工具。观察模式仅允许读取；受限访问不允许任意执行。"}}}},
-    "Search capabilities" : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Search capabilities"}},"zh-Hans":{"stringUnit":{"state":"translated","value":"搜索能力"}}}},
-    "No matching capabilities." : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"No matching capabilities."}},"zh-Hans":{"stringUnit":{"state":"translated","value":"没有匹配的能力。"}}}},
-    "Capabilities" : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Capabilities"}},"zh-Hans":{"stringUnit":{"state":"translated","value":"能力"}}}},
-    "Some saved capabilities are currently unavailable. They remain selected until you remove them." : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Some saved capabilities are currently unavailable. They remain selected until you remove them."}},"zh-Hans":{"stringUnit":{"state":"translated","value":"部分已保存的能力当前不可用，在取消选择前会保留授权。"}}}},
-    "All clients using this profile receive the selected permissions on their next request. Full Access approvals and pending confirmations become invalid. Already started work is not stopped." : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"All clients using this profile receive the selected permissions on their next request. Full Access approvals and pending confirmations become invalid. Already started work is not stopped."}},"zh-Hans":{"stringUnit":{"state":"translated","value":"使用此配置的所有客户端将在下一次请求时应用所选权限。完全访问授权和待确认操作将失效，已开始的工作不会停止。"}}}},
-    "Read only" : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Read only"}},"zh-Hans":{"stringUnit":{"state":"translated","value":"仅限读取"}}}},
-    "Changes project files" : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Changes project files"}},"zh-Hans":{"stringUnit":{"state":"translated","value":"修改项目文件"}}}},
-    "Affects other apps or services" : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Affects other apps or services"}},"zh-Hans":{"stringUnit":{"state":"translated","value":"影响其他应用或服务"}}}},
-    "May delete data" : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"May delete data"}},"zh-Hans":{"stringUnit":{"state":"translated","value":"可能删除数据"}}}},
-    "Arbitrary execution" : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Arbitrary execution"}},"zh-Hans":{"stringUnit":{"state":"translated","value":"任意执行"}}}},
     "This connection type is not allowed by its profile. Review the connection permissions to allow it." : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"This connection type is not allowed by its profile. Review the connection permissions to allow it."}},"zh-Hans":{"stringUnit":{"state":"translated","value":"此配置尚未允许该连接类型，请检查连接权限并明确选择是否允许。"}}}},
-    "Choose restricted permissions…" : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Choose restricted permissions…"}},"zh-Hans":{"stringUnit":{"state":"translated","value":"选择受限权限…"}}}},
-    "Access changes apply to new requests. Already started work is not cancelled." : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Access changes apply to new requests. Already started work is not cancelled."}},"zh-Hans":{"stringUnit":{"state":"translated","value":"权限变更立即适用于新请求，已开始的工作不会被取消。"}}}},
     "Choose what connected clients can do" : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Choose what connected clients can do"}},"zh-Hans":{"stringUnit":{"state":"translated","value":"选择已连接客户端可以执行的操作"}}}},
     "Client access" : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Client access"}},"zh-Hans":{"stringUnit":{"state":"translated","value":"客户端权限"}}}},
     "Client access is unavailable. Refresh to check current connections." : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Client access is unavailable. Refresh to check current connections."}},"zh-Hans":{"stringUnit":{"state":"translated","value":"客户端权限暂不可用，请刷新以检查当前连接。"}}}},
     "Client access status unavailable" : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Client access status unavailable"}},"zh-Hans":{"stringUnit":{"state":"translated","value":"客户端权限状态不可用"}}}},
-    "No clients have control" : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"No clients have control"}},"zh-Hans":{"stringUnit":{"state":"translated","value":"没有客户端具有控制权限"}}}},
-    "Clients with control: %@" : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Clients with control: %@"}},"zh-Hans":{"stringUnit":{"state":"translated","value":"具有控制权限的客户端：%@"}}}},
     "Client %@" : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Client %@"}},"zh-Hans":{"stringUnit":{"state":"translated","value":"客户端 %@"}}}},
     "Local command line" : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Local command line"}},"zh-Hans":{"stringUnit":{"state":"translated","value":"本机命令行"}}}},
     "Local MCP client" : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Local MCP client"}},"zh-Hans":{"stringUnit":{"state":"translated","value":"本机 MCP 客户端"}}}},
@@ -151,10 +1663,6 @@
     "This Session" : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"This Session"}},"zh-Hans":{"stringUnit":{"state":"translated","value":"仅此会话"}}}},
     "Always Allow this Client" : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Always Allow this Client"}},"zh-Hans":{"stringUnit":{"state":"translated","value":"始终允许此客户端"}}}},
     "Observe" : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Observe"}},"zh-Hans":{"stringUnit":{"state":"translated","value":"观察"}}}},
-    "Control — Restricted Access" : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Control — Restricted Access"}},"zh-Hans":{"stringUnit":{"state":"translated","value":"控制 — 受限访问"}}}},
-    "Control — Full Access" : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Control — Full Access"}},"zh-Hans":{"stringUnit":{"state":"translated","value":"控制 — 完全访问"}}}},
-    "Control — Full Access…" : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Control — Full Access…"}},"zh-Hans":{"stringUnit":{"state":"translated","value":"控制 — 完全访问…"}}}},
-    "Change access" : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Change access"}},"zh-Hans":{"stringUnit":{"state":"translated","value":"更改权限"}}}},
     "End access" : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"End access"}},"zh-Hans":{"stringUnit":{"state":"translated","value":"结束访问"}}}},
     "Access ended" : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Access ended"}},"zh-Hans":{"stringUnit":{"state":"translated","value":"访问已结束"}}}},
     "Access unavailable" : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Access unavailable"}},"zh-Hans":{"stringUnit":{"state":"translated","value":"权限不可用"}}}},
@@ -197,40 +1705,12 @@
     "Unable to repair project" : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Unable to repair project"}},"zh-Hans":{"stringUnit":{"state":"translated","value":"无法修复项目"}}}},
     "Choose the folder for %@. Existing project permissions will apply to this folder." : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Choose the folder for %@. Existing project permissions will apply to this folder."}},"zh-Hans":{"stringUnit":{"state":"translated","value":"为 %@ 选择文件夹。现有项目权限将适用于此文件夹。"}}}},
     "Profile" : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Profile"}},"zh-Hans":{"stringUnit":{"state":"translated","value":"权限方案"}}}},
-    "Secure Tunnel" : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Secure Tunnel"}},"zh-Hans":{"stringUnit":{"state":"translated","value":"安全隧道"}}}},
-    "Cloudflare Tunnel" : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Cloudflare Tunnel"}},"zh-Hans":{"stringUnit":{"state":"translated","value":"Cloudflare 隧道"}}}},
     "Permissions for selected tools, projects, and connections" : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Permissions for selected tools, projects, and connections"}},"zh-Hans":{"stringUnit":{"state":"translated","value":"配置工具、项目和连接的权限"}}}},
-    "Edit permissions" : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Edit permissions"}},"zh-Hans":{"stringUnit":{"state":"translated","value":"编辑权限"}}}},
-    "Confirmation policy" : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Confirmation policy"}},"zh-Hans":{"stringUnit":{"state":"translated","value":"确认策略"}}}},
-    "Confirm risky actions" : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Confirm risky actions"}},"zh-Hans":{"stringUnit":{"state":"translated","value":"高风险操作需确认"}}}},
-    "Confirm all writes" : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Confirm all writes"}},"zh-Hans":{"stringUnit":{"state":"translated","value":"所有写操作需确认"}}}},
-    "No confirmation" : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"No confirmation"}},"zh-Hans":{"stringUnit":{"state":"translated","value":"无需确认"}}}},
-    "Register a project to select it here." : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Register a project to select it here."}},"zh-Hans":{"stringUnit":{"state":"translated","value":"注册项目后，即可在此选择。"}}}},
-    "Advanced permissions" : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Advanced permissions"}},"zh-Hans":{"stringUnit":{"state":"translated","value":"高级权限"}}}},
-    "Apply permission changes?" : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Apply permission changes?"}},"zh-Hans":{"stringUnit":{"state":"translated","value":"应用权限更改？"}}}},
-    "Local App" : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Local App"}},"zh-Hans":{"stringUnit":{"state":"translated","value":"本机应用"}}}},
-    "Local CLI" : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Local CLI"}},"zh-Hans":{"stringUnit":{"state":"translated","value":"本机命令行"}}}},
-    "Local MCP clients" : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Local MCP clients"}},"zh-Hans":{"stringUnit":{"state":"translated","value":"本机 MCP 客户端"}}}},
-    "Read selected tools and projects without changing them." : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Read selected tools and projects without changing them."}},"zh-Hans":{"stringUnit":{"state":"translated","value":"读取所选工具和项目，不修改内容。"}}}},
-    "Control selected capabilities, projects, and integrations." : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Control selected capabilities, projects, and integrations."}},"zh-Hans":{"stringUnit":{"state":"translated","value":"控制所选能力、项目和集成。"}}}},
-    "Control selected capabilities. Full Access requires approval for a connected client." : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Control selected capabilities. Full Access requires approval for a connected client."}},"zh-Hans":{"stringUnit":{"state":"translated","value":"控制所选能力；完全访问需要为已连接的客户端单独授权。"}}}},
-    "Host operation approvals and macOS privacy access" : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Host operation approvals and macOS privacy access"}},"zh-Hans":{"stringUnit":{"state":"translated","value":"宿主操作审批与 macOS 隐私权限"}}}},
-    "Operation approvals" : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Operation approvals"}},"zh-Hans":{"stringUnit":{"state":"translated","value":"操作审批"}}}},
-    "macOS privacy" : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"macOS privacy"}},"zh-Hans":{"stringUnit":{"state":"translated","value":"macOS 隐私权限"}}}},
-    "Loading operation approvals" : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Loading operation approvals"}},"zh-Hans":{"stringUnit":{"state":"translated","value":"正在读取操作审批"}}}},
-    "No operation approvals" : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"No operation approvals"}},"zh-Hans":{"stringUnit":{"state":"translated","value":"暂无操作审批"}}}},
-    "Requests that need your approval appear here." : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Requests that need your approval appear here."}},"zh-Hans":{"stringUnit":{"state":"translated","value":"需要您批准的请求会显示在此处。"}}}},
     "Caller" : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Caller"}},"zh-Hans":{"stringUnit":{"state":"translated","value":"调用渠道"}}}},
     "Client" : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Client"}},"zh-Hans":{"stringUnit":{"state":"translated","value":"客户端"}}}},
-    "Expires" : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Expires"}},"zh-Hans":{"stringUnit":{"state":"translated","value":"到期时间"}}}},
     "Deny" : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Deny"}},"zh-Hans":{"stringUnit":{"state":"translated","value":"拒绝"}}}},
-    "Approve once" : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Approve once"}},"zh-Hans":{"stringUnit":{"state":"translated","value":"仅批准本次"}}}},
-    "Waiting for your approval" : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Waiting for your approval"}},"zh-Hans":{"stringUnit":{"state":"translated","value":"等待您批准"}}}},
     "Approved" : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Approved"}},"zh-Hans":{"stringUnit":{"state":"translated","value":"已批准"}}}},
     "Expired" : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Expired"}},"zh-Hans":{"stringUnit":{"state":"translated","value":"已过期"}}}},
-    "Executing" : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Executing"}},"zh-Hans":{"stringUnit":{"state":"translated","value":"执行中"}}}},
-    "Succeeded" : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Succeeded"}},"zh-Hans":{"stringUnit":{"state":"translated","value":"成功"}}}},
-    "Unable to resolve approval" : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Unable to resolve approval"}},"zh-Hans":{"stringUnit":{"state":"translated","value":"无法处理审批"}}}},
     "Recover released record" : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Recover released record"}},"zh-Hans":{"stringUnit":{"state":"translated","value":"恢复已释放记录"}}}},
     "Recovery requires released process locks and confirmed host authorization cleanup. Damaged or unconfirmed records remain blocked." : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Recovery requires released process locks and confirmed host authorization cleanup. Damaged or unconfirmed records remain blocked."}},"zh-Hans":{"stringUnit":{"state":"translated","value":"恢复要求进程锁已释放，并且宿主授权清理已确认。损坏或未确认的记录仍会阻止启动。"}}}},
     "Process record recovered. Check the connection again when ready; no process was started." : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Process record recovered. Check the connection again when ready; no process was started."}},"zh-Hans":{"stringUnit":{"state":"translated","value":"进程记录已恢复。准备好后可再次检查连接；本次未启动进程。"}}}},
@@ -264,7 +1744,8 @@
     "Choose a project" : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Choose a project"}},"zh-Hans":{"stringUnit":{"state":"translated","value":"选择项目"}}}},
     "Register a project before checking a connection." : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Register a project before checking a connection."}},"zh-Hans":{"stringUnit":{"state":"translated","value":"请先注册项目，再检查连接。"}}}},
     "Server version" : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Server version"}},"zh-Hans":{"stringUnit":{"state":"translated","value":"服务器版本"}}}},
-    "Starts only this enabled MCP to check its connection and catalog. No tools are called, dependencies installed or grants changed." : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Starts only this enabled MCP to check its connection and catalog. No tools are called, dependencies installed or grants changed."}},"zh-Hans":{"stringUnit":{"state":"translated","value":"仅启动当前已启用的 MCP，检查连接和工具目录。不调用工具、不安装依赖，也不更改授权。"}}}},
+    "Connection checks are unavailable in this build." : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Connection checks are unavailable in this build."}},"zh-Hans":{"stringUnit":{"state":"translated","value":"此版本暂不支持连接检查。"}}}},
+    "Checks this MCP’s configuration, credentials and process records. Connection and catalog checks are unavailable in this build." : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Checks this MCP’s configuration, credentials and process records. Connection and catalog checks are unavailable in this build."}},"zh-Hans":{"stringUnit":{"state":"translated","value":"检查此 MCP 的配置、凭据和进程记录。此版本暂不支持连接和工具目录检查。"}}}},
     "Not verified: tool execution, remote profile permissions, system permissions and persistent host services." : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Not verified: tool execution, remote profile permissions, system permissions and persistent host services."}},"zh-Hans":{"stringUnit":{"state":"translated","value":"未验证：工具执行、远程配置权限、系统权限及持久化宿主服务。"}}}},
     "The registration is disabled; no connection was started." : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"The registration is disabled; no connection was started."}},"zh-Hans":{"stringUnit":{"state":"translated","value":"此注册已禁用，未启动连接。"}}}},
     "The selected MCP initialized and returned its tool catalog. Tool execution and production permissions were not checked." : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"The selected MCP initialized and returned its tool catalog. Tool execution and production permissions were not checked."}},"zh-Hans":{"stringUnit":{"state":"translated","value":"所选 MCP 已初始化并返回工具目录。尚未检查工具执行和生产权限。"}}}},
@@ -938,7 +2419,6 @@
     "Ready" : { "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Ready" } }, "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "已就绪" } } } },
     "Refresh" : { "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Refresh" } }, "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "刷新" } } } },
     "Remote connections" : { "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Remote connections" } }, "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "远程连接" } } } },
-    "Request Access" : { "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Request Access" } }, "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "请求权限" } } } },
     "Retry" : { "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Retry" } }, "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "重试" } } } },
     "Retry All Checks" : { "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Retry All Checks" } }, "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "重试所有检查" } } } },
     "Run Diagnostics" : { "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Run Diagnostics" } }, "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "运行诊断" } } } },
@@ -954,21 +2434,16 @@
     "Available" : { "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Available" } }, "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "可用" } } } },
     "Bookmark stale" : { "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Bookmark stale" } }, "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "书签已失效" } } } },
     "Degraded" : { "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Degraded" } }, "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "性能下降" } } } },
-    "Denied" : { "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Denied" } }, "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "已拒绝" } } } },
     "Allowed" : { "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Allowed" } }, "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "已允许" } } } },
-    "Prepared" : { "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Prepared" } }, "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "已准备" } } } },
     "Committed" : { "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Committed" } }, "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "已提交" } } } },
     "Disabled" : { "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Disabled" } }, "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "已关闭" } } } },
     "Download tunnel-client" : { "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Download tunnel-client" } }, "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "下载 tunnel-client" } } } },
     "Elevated" : { "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Elevated" } }, "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "较高风险" } } } },
     "Enabled" : { "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Enabled" } }, "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "已启用" } } } },
     "Failed" : { "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Failed" } }, "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "失败" } } } },
-    "Granted" : { "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Granted" } }, "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "已授权" } } } },
     "High" : { "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "High" } }, "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "高风险" } } } },
     "Low" : { "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Low" } }, "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "低风险" } } } },
     "Missing" : { "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Missing" } }, "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "缺失" } } } },
-    "Not determined" : { "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Not determined" } }, "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "尚未决定" } } } },
-    "Not granted" : { "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Not granted" } }, "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "未授权" } } } },
     "Requires approval" : { "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Requires approval" } }, "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "需要批准" } } } },
     "Running" : { "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Running" } }, "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "运行中" } } } },
     "Starting" : { "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Starting" } }, "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "正在启动" } } } },
@@ -997,7 +2472,6 @@
     "Changes are validated, versioned, and activated atomically." : { "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Changes are validated, versioned, and activated atomically." } }, "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "更改会经过验证、版本化，并以原子方式激活。" } } } },
     "ChatGPT Observe" : { "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "ChatGPT Observe" } }, "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "ChatGPT 观察" } } } },
     "ChatGPT Control" : { "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "ChatGPT Control" } }, "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "ChatGPT 控制" } } } },
-    "Checked %@" : { "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Checked %@" } }, "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "检查于 %@" } } } },
     "Cloudflare Access service tokens belong to consumers and are never stored here." : { "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Cloudflare Access service tokens belong to consumers and are never stored here." } }, "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "Cloudflare Access 服务令牌属于消费者，绝不会存储在这里。" } } } },
     "Cloudflare Observe" : { "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Cloudflare Observe" } }, "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "Cloudflare 观察" } } } },
     "Cloudflare Control" : { "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Cloudflare Control" } }, "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "Cloudflare 控制" } } } },
@@ -1147,9 +2621,6 @@
     "No registered projects" : { "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "No registered projects" } }, "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "没有已注册的项目" } } } },
     "Add a folder to create a persistent local project grant." : { "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Add a folder to create a persistent local project grant." } }, "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "添加文件夹以创建持久的本地项目授权。" } } } },
     "macOS privacy access used by enabled endpoints" : { "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "macOS privacy access used by enabled endpoints" } }, "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "已启用端点使用的 macOS 隐私访问权限" } } } },
-    "Checking permissions" : { "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Checking permissions" } }, "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "正在检查权限" } } } },
-    "No permission checks available" : { "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "No permission checks available" } }, "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "没有可用的权限检查" } } } },
-    "Enabled providers have not reported any macOS permission requirements." : { "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Enabled providers have not reported any macOS permission requirements." } }, "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "已启用的提供方未报告任何 macOS 权限要求。" } } } },
     "Redacted capability decisions and execution outcomes" : { "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Redacted capability decisions and execution outcomes" } }, "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "已脱敏的能力决策与执行结果" } } } },
     "Loading audit log" : { "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Loading audit log" } }, "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "正在加载审计日志" } } } },
     "No audit entries" : { "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "No audit entries" } }, "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "没有审计条目" } } } },
@@ -1227,7 +2698,6 @@
     "Unable to request %@" : { "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Unable to request %@" } }, "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "无法请求%@权限" } } } },
     "Unable to select project" : { "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Unable to select project" } }, "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "无法选择项目" } } } },
     "Opens the %@ setup page" : { "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Opens the %@ setup page" } }, "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "打开%@设置页面" } } } },
-    "Open %@ settings" : { "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Open %@ settings" } }, "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "打开%@设置" } } } },
     "Show %@ in Finder" : { "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Show %@ in Finder" } }, "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "在访达中显示%@" } } } },
     "Remove %@" : { "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Remove %@" } }, "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "移除%@" } } } },
     "Export Diagnostics" : { "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Export Diagnostics" } }, "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "导出诊断信息" } } } },
@@ -1270,7 +2740,6 @@
     "Gateway profile" : { "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Gateway profile" } }, "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "网关配置方案" } } } },
     "Generate a new Computer MCP Access Token" : { "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Generate a new Computer MCP Access Token" } }, "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "生成新的 Computer MCP 访问令牌" } } } },
     "Generated" : { "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Generated" } }, "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "生成时间" } } } },
-    "Grant this project to the active profile" : { "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Grant this project to the active profile" } }, "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "将此项目授权给当前配置方案" } } } },
     "HTTP proxy" : { "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "HTTP proxy" } }, "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "HTTP 代理" } } } },
     "Hosted in the gateway process." : { "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Hosted in the gateway process." } }, "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "托管在网关进程中。" } } } },
     "Last error" : { "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Last error" } }, "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "最近错误" } } } },
@@ -1322,7 +2791,6 @@
     "tunnel-client executable" : { "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "tunnel-client executable" } }, "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "tunnel-client 可执行文件" } } } },
     "%@ of %@ running" : { "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "%@ of %@ running" } }, "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "%@/%@ 正在运行" } } } },
     "%@ registered root(s)" : { "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "%@ registered root(s)" } }, "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "%@ 个已注册根目录" } } } },
-    "Enabled for %@" : { "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Enabled for %@" } }, "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "已为 %@ 启用" } } } },
     "A remote Cloudflare gateway profile is required." : { "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "A remote Cloudflare gateway profile is required." } }, "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "需要远程 Cloudflare 网关配置方案。" } } } },
     "A remotely managed named-tunnel token is required. Quick Tunnel and noauth are not supported." : { "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "A remotely managed named-tunnel token is required. Quick Tunnel and noauth are not supported." } }, "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "需要远程管理的命名隧道令牌。不支持 Quick Tunnel 和 noauth。" } } } },
     "An OpenAI API key is required when creating a Tunnel profile." : { "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "An OpenAI API key is required when creating a Tunnel profile." } }, "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "创建隧道配置方案时需要 OpenAI API 密钥。" } } } },
@@ -1339,7 +2807,71 @@
     "Unknown macOS permission: %@" : { "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Unknown macOS permission: %@" } }, "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "未知 macOS 权限：%@" } } } },
     "%@ must not be empty." : { "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "%@ must not be empty." } }, "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "%@不能为空。" } } } },
     "Gateway state changing" : { "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Gateway state changing" } }, "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "网关状态正在变化" } } } },
-    "The operation failed. Open Diagnostics for technical details." : { "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "The operation failed. Open Diagnostics for technical details." } }, "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "操作失败。请打开“诊断”查看技术细节。" } } } }
+    "The operation failed. Open Diagnostics for technical details." : { "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "The operation failed. Open Diagnostics for technical details." } }, "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "操作失败。请打开“诊断”查看技术细节。" } } } },
+    "All MCP servers and CLIs contributed by this package share one provider sandbox container, along with its approved permissions, network access, and read exceptions." : {"localizations" : {"en" : {"stringUnit" : {"state" : "translated", "value" : "All MCP servers and CLIs contributed by this package share one provider sandbox container, along with its approved permissions, network access, and read exceptions."}}, "zh-Hans" : {"stringUnit" : {"state" : "translated", "value" : "此插件包提供的所有 MCP 服务器和 CLI 共享同一个提供方沙盒容器，并共用其已批准的权限、网络访问与读取例外。"}}}},
+    "All current and future MCP servers" : {"localizations" : {"en" : {"stringUnit" : {"state" : "translated", "value" : "All current and future MCP servers"}}, "zh-Hans" : {"stringUnit" : {"state" : "translated", "value" : "当前及未来的所有 MCP 服务器"}}}},
+    "All current and future plugins" : {"localizations" : {"en" : {"stringUnit" : {"state" : "translated", "value" : "All current and future plugins"}}, "zh-Hans" : {"stringUnit" : {"state" : "translated", "value" : "当前及未来的所有插件"}}}},
+    "All current and future projects" : {"localizations" : {"en" : {"stringUnit" : {"state" : "translated", "value" : "All current and future projects"}}, "zh-Hans" : {"stringUnit" : {"state" : "translated", "value" : "当前及未来的所有项目"}}}},
+    "Approve & Enable" : {"localizations" : {"en" : {"stringUnit" : {"state" : "translated", "value" : "Approve & Enable"}}, "zh-Hans" : {"stringUnit" : {"state" : "translated", "value" : "批准并启用"}}}},
+    "Approved read exceptions grant read-only access inside the sandbox to the exact resolved paths shown." : {"localizations" : {"en" : {"stringUnit" : {"state" : "translated", "value" : "Approved read exceptions grant read-only access inside the sandbox to the exact resolved paths shown."}}, "zh-Hans" : {"stringUnit" : {"state" : "translated", "value" : "已批准的读取例外仅在沙盒内授予所示确切解析路径的只读访问权限。"}}}},
+    "Choose path…" : {"localizations" : {"en" : {"stringUnit" : {"state" : "translated", "value" : "Choose path…"}}, "zh-Hans" : {"stringUnit" : {"state" : "translated", "value" : "选择路径…"}}}},
+    "Container & Execution" : {"localizations" : {"en" : {"stringUnit" : {"state" : "translated", "value" : "Container & Execution"}}, "zh-Hans" : {"stringUnit" : {"state" : "translated", "value" : "容器与执行方式"}}}},
+    "Contribution Requirements" : {"localizations" : {"en" : {"stringUnit" : {"state" : "translated", "value" : "Contribution Requirements"}}, "zh-Hans" : {"stringUnit" : {"state" : "translated", "value" : "组件需求"}}}},
+    "Declaration digest" : {"localizations" : {"en" : {"stringUnit" : {"state" : "translated", "value" : "Declaration digest"}}, "zh-Hans" : {"stringUnit" : {"state" : "translated", "value" : "声明摘要"}}}},
+    "Declared Permissions" : {"localizations" : {"en" : {"stringUnit" : {"state" : "translated", "value" : "Declared Permissions"}}, "zh-Hans" : {"stringUnit" : {"state" : "translated", "value" : "已声明的权限"}}}},
+    "Declared network" : {"localizations" : {"en" : {"stringUnit" : {"state" : "translated", "value" : "Declared network"}}, "zh-Hans" : {"stringUnit" : {"state" : "translated", "value" : "已声明的网络访问"}}}},
+    "Declared purpose" : {"localizations" : {"en" : {"stringUnit" : {"state" : "translated", "value" : "Declared purpose"}}, "zh-Hans" : {"stringUnit" : {"state" : "translated", "value" : "声明用途"}}}},
+    "Declared: %@" : {"localizations" : {"en" : {"stringUnit" : {"state" : "translated", "value" : "Declared: %@"}}, "zh-Hans" : {"stringUnit" : {"state" : "translated", "value" : "已声明：%@"}}}},
+    "Decline" : {"localizations" : {"en" : {"stringUnit" : {"state" : "translated", "value" : "Decline"}}, "zh-Hans" : {"stringUnit" : {"state" : "translated", "value" : "拒绝"}}}},
+    "Default tool requirements" : {"localizations" : {"en" : {"stringUnit" : {"state" : "translated", "value" : "Default tool requirements"}}, "zh-Hans" : {"stringUnit" : {"state" : "translated", "value" : "默认工具需求"}}}},
+    "Enable…" : {"localizations" : {"en" : {"stringUnit" : {"state" : "translated", "value" : "Enable…"}}, "zh-Hans" : {"stringUnit" : {"state" : "translated", "value" : "启用…"}}}},
+    "Execution: Full Access" : {"localizations" : {"en" : {"stringUnit" : {"state" : "translated", "value" : "Execution: Full Access"}}, "zh-Hans" : {"stringUnit" : {"state" : "translated", "value" : "执行方式：完全访问"}}}},
+    "Execution: Sandbox" : {"localizations" : {"en" : {"stringUnit" : {"state" : "translated", "value" : "Execution: Sandbox"}}, "zh-Hans" : {"stringUnit" : {"state" : "translated", "value" : "执行方式：沙盒"}}}},
+    "Files & Folders: %@" : {"localizations" : {"en" : {"stringUnit" : {"state" : "translated", "value" : "Files & Folders: %@"}}, "zh-Hans" : {"stringUnit" : {"state" : "translated", "value" : "文件和文件夹：%@"}}}},
+    "Full Access plugins run outside the sandbox as your user account." : {"localizations" : {"en" : {"stringUnit" : {"state" : "translated", "value" : "Full Access plugins run outside the sandbox as your user account."}}, "zh-Hans" : {"stringUnit" : {"state" : "translated", "value" : "拥有完全访问权限的插件在沙盒外以你的用户身份运行。"}}}},
+    "Full Access runs this provider outside the sandbox with direct access to your Mac as your user account. Sandbox network and read-exception restrictions do not apply." : {"localizations" : {"en" : {"stringUnit" : {"state" : "translated", "value" : "Full Access runs this provider outside the sandbox with direct access to your Mac as your user account. Sandbox network and read-exception restrictions do not apply."}}, "zh-Hans" : {"stringUnit" : {"state" : "translated", "value" : "“完全访问”会在沙盒之外以你的用户账户身份直接运行此提供方并访问这台 Mac。沙盒网络与读取例外限制将不适用。"}}}},
+    "I understand and consent on this Mac to run this provider with Full Access." : {"localizations" : {"en" : {"stringUnit" : {"state" : "translated", "value" : "I understand and consent on this Mac to run this provider with Full Access."}}, "zh-Hans" : {"stringUnit" : {"state" : "translated", "value" : "我了解并同意在这台 Mac 上以“完全访问”模式运行此提供方。"}}}},
+    "Local MCP registrations do not include a permission manifest. Permissions default to Ask unless granted below." : {"localizations" : {"en" : {"stringUnit" : {"state" : "translated", "value" : "Local MCP registrations do not include a permission manifest. Permissions default to Ask unless granted below."}}, "zh-Hans" : {"stringUnit" : {"state" : "translated", "value" : "本地 MCP 注册不包含权限清单。除非在下方另行授予，否则所有权限均默认为“询问”。"}}}},
+    "Managed limits prevent Full Access." : {"localizations" : {"en" : {"stringUnit" : {"state" : "translated", "value" : "Managed limits prevent Full Access."}}, "zh-Hans" : {"stringUnit" : {"state" : "translated", "value" : "受管限制禁止完全访问。"}}}},
+    "No resolvable read exceptions." : {"localizations" : {"en" : {"stringUnit" : {"state" : "translated", "value" : "No resolvable read exceptions."}}, "zh-Hans" : {"stringUnit" : {"state" : "translated", "value" : "没有可解析的读取例外。"}}}},
+    "No specific tool requirements declared." : {"localizations" : {"en" : {"stringUnit" : {"state" : "translated", "value" : "No specific tool requirements declared."}}, "zh-Hans" : {"stringUnit" : {"state" : "translated", "value" : "未声明特定的工具需求。"}}}},
+    "No tools selected" : {"localizations" : {"en" : {"stringUnit" : {"state" : "translated", "value" : "No tools selected"}}, "zh-Hans" : {"stringUnit" : {"state" : "translated", "value" : "未选择工具"}}}},
+    "Optional initial permissions" : {"localizations" : {"en" : {"stringUnit" : {"state" : "translated", "value" : "Optional initial permissions"}}, "zh-Hans" : {"stringUnit" : {"state" : "translated", "value" : "可选初始权限"}}}},
+    "Permissions were restored from an earlier state. Review and confirm them before enabling." : {"localizations" : {"en" : {"stringUnit" : {"state" : "translated", "value" : "Permissions were restored from an earlier state. Review and confirm them before enabling."}}, "zh-Hans" : {"stringUnit" : {"state" : "translated", "value" : "权限已从较早的状态恢复。启用前请重新审查并确认。"}}}},
+    "Plugin Package" : {"localizations" : {"en" : {"stringUnit" : {"state" : "translated", "value" : "Plugin Package"}}, "zh-Hans" : {"stringUnit" : {"state" : "translated", "value" : "插件包"}}}},
+    "Plugin installed" : {"localizations" : {"en" : {"stringUnit" : {"state" : "translated", "value" : "Plugin installed"}}, "zh-Hans" : {"stringUnit" : {"state" : "translated", "value" : "插件已安装"}}}},
+    "Project: None" : {"localizations" : {"en" : {"stringUnit" : {"state" : "translated", "value" : "Project: None"}}, "zh-Hans" : {"stringUnit" : {"state" : "translated", "value" : "项目：无"}}}},
+    "Project: Read" : {"localizations" : {"en" : {"stringUnit" : {"state" : "translated", "value" : "Project: Read"}}, "zh-Hans" : {"stringUnit" : {"state" : "translated", "value" : "项目：只读"}}}},
+    "Project: Read & Write" : {"localizations" : {"en" : {"stringUnit" : {"state" : "translated", "value" : "Project: Read & Write"}}, "zh-Hans" : {"stringUnit" : {"state" : "translated", "value" : "项目：读写"}}}},
+    "Requested: %@" : {"localizations" : {"en" : {"stringUnit" : {"state" : "translated", "value" : "Requested: %@"}}, "zh-Hans" : {"stringUnit" : {"state" : "translated", "value" : "请求权限：%@"}}}},
+    "Reset path" : {"localizations" : {"en" : {"stringUnit" : {"state" : "translated", "value" : "Reset path"}}, "zh-Hans" : {"stringUnit" : {"state" : "translated", "value" : "重置路径"}}}},
+    "Resolved file: %@" : {"localizations" : {"en" : {"stringUnit" : {"state" : "translated", "value" : "Resolved file: %@"}}, "zh-Hans" : {"stringUnit" : {"state" : "translated", "value" : "已解析文件：%@"}}}},
+    "Resolved folder: %@" : {"localizations" : {"en" : {"stringUnit" : {"state" : "translated", "value" : "Resolved folder: %@"}}, "zh-Hans" : {"stringUnit" : {"state" : "translated", "value" : "已解析文件夹：%@"}}}},
+    "Review Permissions…" : {"localizations" : {"en" : {"stringUnit" : {"state" : "translated", "value" : "Review Permissions…"}}, "zh-Hans" : {"stringUnit" : {"state" : "translated", "value" : "审查权限…"}}}},
+    "Review Provider Enablement" : {"localizations" : {"en" : {"stringUnit" : {"state" : "translated", "value" : "Review Provider Enablement"}}, "zh-Hans" : {"stringUnit" : {"state" : "translated", "value" : "审查提供方启用"}}}},
+    "Sandbox Network" : {"localizations" : {"en" : {"stringUnit" : {"state" : "translated", "value" : "Sandbox Network"}}, "zh-Hans" : {"stringUnit" : {"state" : "translated", "value" : "沙盒网络"}}}},
+    "Sandbox Read Exceptions" : {"localizations" : {"en" : {"stringUnit" : {"state" : "translated", "value" : "Sandbox Read Exceptions"}}, "zh-Hans" : {"stringUnit" : {"state" : "translated", "value" : "沙盒读取例外"}}}},
+    "Sandbox and Full Access (%@)" : {"localizations" : {"en" : {"stringUnit" : {"state" : "translated", "value" : "Sandbox and Full Access (%@)"}}, "zh-Hans" : {"stringUnit" : {"state" : "translated", "value" : "沙盒与完全访问（%@）"}}}},
+    "Sandbox container" : {"localizations" : {"en" : {"stringUnit" : {"state" : "translated", "value" : "Sandbox container"}}, "zh-Hans" : {"stringUnit" : {"state" : "translated", "value" : "沙盒容器"}}}},
+    "Source digest" : {"localizations" : {"en" : {"stringUnit" : {"state" : "translated", "value" : "Source digest"}}, "zh-Hans" : {"stringUnit" : {"state" : "translated", "value" : "来源摘要"}}}},
+    "The provider source changed since your previous approval. Review and confirm its permissions before enabling." : {"localizations" : {"en" : {"stringUnit" : {"state" : "translated", "value" : "The provider source changed since your previous approval. Review and confirm its permissions before enabling."}}, "zh-Hans" : {"stringUnit" : {"state" : "translated", "value" : "自上次批准以来，此提供方的来源已发生变化。启用前请重新审查并确认其权限。"}}}},
+    "This declared path could not be resolved automatically. Choose an existing local path to allow it, or leave it off." : {"localizations" : {"en" : {"stringUnit" : {"state" : "translated", "value" : "This declared path could not be resolved automatically. Choose an existing local path to allow it, or leave it off."}}, "zh-Hans" : {"stringUnit" : {"state" : "translated", "value" : "无法自动解析此声明的路径。请选择一个现有的本地路径以允许访问，或保持关闭。"}}}},
+    "This local MCP server runs in its own provider sandbox container when Sandbox is selected, using the permissions, network access, and read exceptions approved here." : {"localizations" : {"en" : {"stringUnit" : {"state" : "translated", "value" : "This local MCP server runs in its own provider sandbox container when Sandbox is selected, using the permissions, network access, and read exceptions approved here."}}, "zh-Hans" : {"stringUnit" : {"state" : "translated", "value" : "选择“沙盒”时，此本地 MCP 服务器会在其独立的提供方沙盒容器中运行，并使用此处批准的权限、网络访问和读取例外。"}}}},
+    "This network access exceeds the reviewed limits." : {"localizations" : {"en" : {"stringUnit" : {"state" : "translated", "value" : "This network access exceeds the reviewed limits."}}, "zh-Hans" : {"stringUnit" : {"state" : "translated", "value" : "此网络访问超出审查范围。"}}}},
+    "This package does not declare additional permissions." : {"localizations" : {"en" : {"stringUnit" : {"state" : "translated", "value" : "This package does not declare additional permissions."}}, "zh-Hans" : {"stringUnit" : {"state" : "translated", "value" : "此插件包未声明额外的权限。"}}}},
+    "Trusted hosts" : {"localizations" : {"en" : {"stringUnit" : {"state" : "translated", "value" : "Trusted hosts"}}, "zh-Hans" : {"stringUnit" : {"state" : "translated", "value" : "受信任的主机"}}}},
+    "Verification details" : {"localizations" : {"en" : {"stringUnit" : {"state" : "translated", "value" : "Verification details"}}, "zh-Hans" : {"stringUnit" : {"state" : "translated", "value" : "验证详情"}}}},
+    "Review changes…" : {"localizations" : {"en" : {"stringUnit" : {"state" : "translated", "value" : "Review changes…"}}, "zh-Hans" : {"stringUnit" : {"state" : "translated", "value" : "审查变更…"}}}},
+    "Review required" : {"localizations" : {"en" : {"stringUnit" : {"state" : "translated", "value" : "Review required"}}, "zh-Hans" : {"stringUnit" : {"state" : "translated", "value" : "需要审查"}}}},
+    "Execution blocked" : {"localizations" : {"en" : {"stringUnit" : {"state" : "translated", "value" : "Execution blocked"}}, "zh-Hans" : {"stringUnit" : {"state" : "translated", "value" : "执行已被阻止"}}}},
+    "Execution unavailable" : {"localizations" : {"en" : {"stringUnit" : {"state" : "translated", "value" : "Execution unavailable"}}, "zh-Hans" : {"stringUnit" : {"state" : "translated", "value" : "无法执行"}}}},
+    "Execution blocked for %@" : {"localizations" : {"en" : {"stringUnit" : {"state" : "translated", "value" : "Execution blocked for %@"}}, "zh-Hans" : {"stringUnit" : {"state" : "translated", "value" : "%@的执行已被阻止"}}}},
+    "Execution unavailable for %@" : {"localizations" : {"en" : {"stringUnit" : {"state" : "translated", "value" : "Execution unavailable for %@"}}, "zh-Hans" : {"stringUnit" : {"state" : "translated", "value" : "%@无法执行"}}}},
+    "Other principals’ host tools and sandboxed programs cannot read files in the plugin’s sandbox container. Files in shared projects follow the project’s permissions." : {"localizations" : {"en" : {"stringUnit" : {"state" : "translated", "value" : "Other principals’ host tools and sandboxed programs cannot read files in the plugin’s sandbox container. Files in shared projects follow the project’s permissions."}}, "zh-Hans" : {"stringUnit" : {"state" : "translated", "value" : "其他主体的宿主工具和沙盒程序无法读取该插件沙盒容器中的文件。共享项目中的文件遵循项目权限。"}}}},
+    "Use wildcard setting (%@)" : {"localizations" : {"en" : {"stringUnit" : {"state" : "translated", "value" : "Use wildcard setting (%@)"}}, "zh-Hans" : {"stringUnit" : {"state" : "translated", "value" : "使用通配设置（%@）"}}}},
+    "Managed limits restrict these choices." : {"localizations" : {"en" : {"stringUnit" : {"state" : "translated", "value" : "Managed limits restrict these choices."}}, "zh-Hans" : {"stringUnit" : {"state" : "translated", "value" : "受管限制缩小了此处的可选范围。"}}}},
+    "Edit permissions on the source project to change access for its worktrees." : {"localizations" : {"en" : {"stringUnit" : {"state" : "translated", "value" : "Edit permissions on the source project to change access for its worktrees."}}, "zh-Hans" : {"stringUnit" : {"state" : "translated", "value" : "请在源项目中编辑权限，以更改其工作树的访问权限。"}}}},
+    "Edit the shared client profile to change its permissions." : {"localizations" : {"en" : {"stringUnit" : {"state" : "translated", "value" : "Edit the shared client profile to change its permissions."}}, "zh-Hans" : {"stringUnit" : {"state" : "translated", "value" : "请编辑共享客户端配置以更改其权限。"}}}}
   },
   "version" : "1.0"
 }

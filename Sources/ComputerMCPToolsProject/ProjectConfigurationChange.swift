@@ -39,20 +39,18 @@ package struct PreparedProjectChange<State: Sendable>: Sendable {
   package let mutation: ProjectConfigurationMutation
   package let expected: State
   package let proposed: State
-  package let resolvedProfiles: [ProfileGrant]
   package let result: ProjectChangeResult
   package let timestamp: Date
   package let receiptID: String
 
   package init(
     mutation: ProjectConfigurationMutation, expected: State, proposed: State,
-    resolvedProfiles: [ProfileGrant], result: ProjectChangeResult, timestamp: Date,
+    result: ProjectChangeResult, timestamp: Date,
     receiptID: String
   ) {
     self.mutation = mutation
     self.expected = expected
     self.proposed = proposed
-    self.resolvedProfiles = resolvedProfiles
     self.result = result
     self.timestamp = timestamp
     self.receiptID = receiptID

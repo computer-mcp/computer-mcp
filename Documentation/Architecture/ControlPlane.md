@@ -15,8 +15,8 @@ owner-only CLI ──┘                              └─ AppGatewayService
 ```
 
 `AppControlPlaneOperations` owns lifecycle-aware use cases: gateway start,
-stop, and restart; project registration/grants; profile activation and Full
-Shell state; manifest activation/rollback; provider refresh; and Tunnel
+stop, and restart; project registration/grants; profile activation and execution
+mode; manifest activation/rollback; provider refresh; and Tunnel
 configuration/lifecycle. It preserves desired state, validates compatible
 Tunnel profiles, restarts an already-running gateway when required, reconnects
 desired Tunnels, and rolls profile changes back when activation fails. Managed
@@ -66,22 +66,22 @@ configuration publication and exact continuation routing as gateway runtimes.
 The control service and gateway listener have separate admission epochs and
 shutdown ownership. Either can stop without discarding the other's work; App
 shutdown stops and joins both. Local tool calls also work while the gateway
-listener is stopped, with current authorization and operation approvals intact.
+listener is stopped, with current permission authority intact.
 
 The `computer-mcp` control CLI is not a registered remote `cli.exec` provider.
 Executing it from a Tunnel-originated gateway process would convert a remote
-profile into the owner-only `local-admin` identity. Restricted MCP clients use
-only their granted projects and capabilities. An explicitly approved Full Access
+profile into the owner-only `local-admin` identity. MCP clients use
+the catalog with declared requirements and access only authorized objects. An explicitly approved Full Access
 session can manage projects and verified official plugins through typed tools.
 It retains its remote identity and never acquires the local-admin control socket.
 
-`GatewayRuntime` owns discovery, capability classification, approval and audit for
+`GatewayRuntime` owns discovery, requirement resolution, permission admission and audit for
 these tools. `AppGatewayService` injects management dispatch bound to the admitted
 runtime key and listener epoch; each request must also hold the actual registered
 control-session reference. Calls delegate to existing App state and prepared
 publication, retaining old execution generations. Read tools and monotonic session
-limits are selectable in the Restricted editor. Configuration and installation
-writes have a host-owned Full Access risk floor.
+limits use typed permission contracts. Configuration and installation
+writes require host-authorized Full access.
 
 An asynchronous management operation captures the session revision and input
 state. Its final non-suspending durable commit rechecks current consent under the
@@ -107,35 +107,38 @@ The App's Client access page presents connected socket/HTTP sessions separately
 from saved client approvals. Its ObservableObject feature model captures the
 reviewed session and trust revisions; refresh cannot rebase an open confirmation.
 Pending OAuth sign-in requests and live grants appear on the same page. Approval
-offers the profiles the authorization server accepts, preselects only a read-only
-one, and submits only the profile and access level the owner reviewed before the
-request expires.
+offers the profiles the authorization server accepts and requires an explicit
+selection, submitting the profile and authorization digest the owner reviewed
+before the request expires.
 The menu shows current control status, or the number of waiting sign-in requests,
 and directs the owner to that page. A failed refresh remains unavailable while
 retaining the last visible records.
 
-Restricted permission editing uses the host's current classified tool catalog,
-registered projects and composed MCP integrations. The App presents readable
-capability titles and explicit selections; arbitrary execution stays outside this
-flow. Broad grants become explicit current choices when saved. An integration
-selection includes its future host-allowed tools within the permission mode's
-risk ceiling. Caller types require deliberate selection. Current session limits
-can further restrict a profile, and Full Access remains a separate session consent.
+Profile editing presents permission values, projects, integrations, execution mode
+and network settings for current registered objects. The editor retains the
+reviewed profile, its authorization revision and the permission-store revision.
+The service compares those inputs
+under the manifest publication boundary before committing. A stale editor cannot
+overwrite an external edit or approve changed profile, project or plugin state.
+Saving updates the shared profile, invalidates stale Full access consent and
+reconciles requests and executions against current authority.
 
-The editor retains its reviewed profile and gateway inputs. After async discovery,
-the service checks that snapshot again before saving the profile under the
-manifest admission lock and exact authorization revision. A stale editor cannot
-overwrite an external manifest edit or silently approve changed profile, project
-or plugin state. Catalog discovery uses temporary non-persisting runtimes and
-joins their shutdown. Saving changes affects subsequent requests for connections
-sharing the profile and invalidates earlier approvals without stopping owned work.
+Privacy & Security presents permissions by category and by client profile, with
+project access, inherited grants, per-project network settings and managed-source
+diagnostics. Ask, Allow and Deny edits use the same revision-bound permission
+service as the CLI. Full access eligibility and per-connection local consent are
+separate controls.
 
-Explicit owner Full Access consent can enable the Shell facility through prepared
-manifest publication before granting the selected session. The admitted manifest
-digest prevents overwriting external edits; session and trust checks still precede
-the authority transaction. A failed consent grants no client authority even if a
-facility update already committed. Profile authorization changes advance session
-revisions before initial consent as well as after it.
+The request view shows the requesting principal, scope and whether Always changes
+a shared profile. Ordinary requests offer Only this time, Always and Don't Allow;
+project registration offers Allow and Don't Allow. Only the local owner answers.
+The reviewed snapshot travels with the answer; a refresh cannot silently replace
+it. Answers never replay the initiating call. The CLI exposes the same request
+projection, managed-source diagnostics and revision-bound answer operation.
+
+Full access consent requires `full_access` in the current profile and never
+changes its permissions or enables `policy.shell_enabled`. Session limits are
+`ManagedPolicy` values and may only narrow their effective predecessor.
 
 The `clients` CLI family and App delegate to the same connection authority.
 Standalone `serve http --control-socket` owns an optional current-user local
@@ -143,7 +146,7 @@ control listener exposing only the six client-access contracts. The listener
 starts before HTTP admission; startup failure closes it, and runtime stop joins
 its accepted connections. Every request retains its admitting HTTP generation;
 closed or superseded generations cannot read or mutate current authority.
-Standalone Full Access requires the fixed manifest's Shell facility to be enabled.
+Standalone Full Access requires the fixed profile to allow that mode.
 Persistent trust additionally requires durable storage and an authenticated
 principal. Standalone control cannot mutate App state or publish configuration.
 Shared schemas, exact session/trust revisions and structured replies keep both
@@ -166,10 +169,9 @@ without publishing it to remote gateway profiles.
 
 `OAuthApprovalProfile` pairs each resolved remote grant with its
 `authorization_digest`. The digest is the lowercase SHA-256 hex of compact UTF-8
-JSON, with keys sorted and slashes unescaped. Its keys are `mode`, `capabilities`,
-`projects`, `callers`, `full_shell_enabled`, `mcp_servers` and
-`confirmation_policy`. Set-valued fields are arrays sorted by their string
-values; the other values are the grant's enum raw values or Boolean. Profile
+JSON, with keys sorted and slashes unescaped. Its keys are `permissions`,
+`networks`, `fullAccess` and `callers`. Permission entries and other
+arrays are canonically sorted by their serialized values. Profile
 identity and persistence revision are excluded. `profile.list` and
 `profile.show` include the digest, and the App's Client access snapshot carries
 it alongside each profile.

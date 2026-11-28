@@ -129,7 +129,9 @@ def validate_definition(definition):
             raise ValueError(f"Invalid or duplicate stage: {name}")
         if not set(stage.get("needs", [])) <= seen:
             raise ValueError(f"Stage dependencies must precede {name}")
-        if not stage.get("commands") or not 0 < stage["timeout_seconds"] <= 14400:
+        # The cloud candidate spans the CI wait, source verification, and protected build jobs.
+        max_timeout = 54000 if name == "candidate" else 14400
+        if not stage.get("commands") or not 0 < stage["timeout_seconds"] <= max_timeout:
             raise ValueError(f"Stage {name} needs commands and a bounded timeout")
         if not all(isinstance(c, list) and c and all(isinstance(a, str) for a in c) for c in stage["commands"]):
             raise ValueError(f"Invalid commands for {name}")
@@ -379,7 +381,6 @@ class Runner:
             retained.parent.mkdir(parents=True, exist_ok=True)
             work.rename(retained)
             previous = retained
-        work.mkdir(parents=True)
         log = self.run_dir / "logs" / (attempt + ".log")
         log.parent.mkdir(parents=True, exist_ok=True)
         log.touch()
@@ -388,6 +389,8 @@ class Runner:
                   "run_dir": str(self.run_dir), "log": str(log.relative_to(self.run_dir)),
                   "started_at": time.time(), "outputs": {}}
         self.save(result)
+        # An empty work directory must belong to the new receipt if setup is interrupted.
+        work.mkdir(parents=True)
         started = time.monotonic()
         environment = dict(os.environ, RELEASE_WORK_DIR=str(work), RELEASE_RUN_DIR=str(self.run_dir),
                            OUTPUT_DIR=str(work / "dist"), BUILD_ROOT=str(self.root / ".build/distribution"))
@@ -473,8 +476,10 @@ def main():
     parser.add_argument("operation", choices=("plan", "run", "status", "resume", "publish", "cleanup"))
     parser.add_argument("--run", default="local", help="Local run identifier; receipts stay in .agent/releases/")
     parser.add_argument("--profile", default="ci")
+    parser.add_argument("--pr-base", metavar="COMMIT", help="Select root Swift tests for a pull request CI run")
     parser.add_argument("--apply", action="store_true", help="Apply cleanup; otherwise preview")
-    parser.add_argument("--reuse-ci", action="store_true", help="Import matching checks from a trusted successful master CI run")
+    parser.add_argument("--reuse-ci", nargs="?", const="latest", metavar="RUN",
+                        help="Import matching master CI checks, optionally from the selected run ID or 'none'")
     parser.add_argument("--reuse-candidate", action="store_true",
                         help="Bind an existing successful candidate after a trusted check-only revision")
     args = parser.parse_args()
@@ -484,6 +489,18 @@ def main():
     profile = "publish" if args.operation == "publish" else args.profile
     if profile not in definition["profiles"]:
         parser.error("Unknown profile: " + profile)
+    if args.pr_base is not None:
+        if profile != "ci" or args.operation not in ("plan", "run", "resume", "status"):
+            parser.error("--pr-base applies to CI checks only")
+        stage = next(stage for stage in definition["stages"] if stage["id"] == "swift-tests")
+        # Keep the selected command and its base in the stage receipt's fingerprint.
+        commands = stage["commands"]
+        index = commands.index(["python3", "Scripts/run-swift-tests.py"])
+        try:
+            base = output(["git", "rev-parse", "--verify", "--end-of-options", args.pr_base + "^{commit}"], ROOT)
+        except subprocess.CalledProcessError:
+            base = ""  # An unavailable base selects the full suite.
+        commands[index] = ["python3", "Scripts/select-swift-tests.py", "--base", base]
     git_dir = Path(output(["git", "rev-parse", "--git-common-dir"], ROOT))
     if not git_dir.is_absolute():
         git_dir = ROOT / git_dir
@@ -506,9 +523,9 @@ def main():
     if args.operation == "cleanup":
         print(json.dumps(runner.cleanup(args.apply), indent=2))
         return 0
-    if args.reuse_ci:
+    if args.reuse_ci is not None:
         from candidate import reuse_ci
-        reuse_ci(runner, profile)
+        reuse_ci(runner, profile, args.reuse_ci)
     return runner.run(profile)
 
 

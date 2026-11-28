@@ -7,38 +7,48 @@ import Testing
 
 @Suite(.nativeIntegration, .timeLimit(.minutes(1)))
 struct CLIParameterMappingTests {
-  @Test(arguments: [
-    (CLIArgumentToken.Style.separate, ["--value", "", "你好 world", "a\"b'c", "$(never-execute)\n"]),
-    (
-      .repeated,
-      ["--value", "", "--value", "你好 world", "--value", "a\"b'c", "--value", "$(never-execute)\n"]
-    ),
-    (.equals, ["--value=", "--value=你好 world", "--value=a\"b'c", "--value=$(never-execute)\n"]),
-  ])
-  func anActualProcessReceivesTheDeclaredOptionArray(
-    style: CLIArgumentToken.Style, expected: [String]
-  ) async throws {
+  @Test
+  func anActualProcessReceivesTheRepeatedOptionArray() async throws {
+    let scratch = try ScopedTemporaryDirectory()
+    defer { withExtendedLifetime(scratch) {} }
+    let directory = scratch.url
+    #if os(macOS)
+      let script = directory.appendingPathComponent("argv.pl")
+      try Data(
+        """
+        use Encode qw(decode_utf8 FB_CROAK);
+        use JSON::PP;
+        print encode_json([map { decode_utf8($_, FB_CROAK) } @ARGV]);
+        """.utf8
+      ).write(to: script)
+      let program = [script.lastPathComponent]
+    #else
+      let program = ["-c", "import json,sys; print(json.dumps(sys.argv[1:], ensure_ascii=False))"]
+    #endif
     let command = CLICommandDescriptor(
       id: "argv", path: [], description: "Read exact argv",
       parameters: [.init(name: "values", schema: CLITreeTests.strings, required: true)],
-      argv: [
-        .init(kind: .literal, value: "-c"),
-        .init(
-          kind: .literal,
-          value: "import json,sys; print(json.dumps(sys.argv[1:], ensure_ascii=False))"),
-        .init(kind: .option, parameter: "values", flag: "--value", style: style),
+      argv: program.map { .init(kind: .literal, value: $0) } + [
+        .init(kind: .option, parameter: "values", flag: "--value", style: .repeated)
       ], stdout: .json, outputSchema: CLITreeTests.strings)
-    let provider = CLITreeTests.provider(command, executable: "python3")
+    let provider = CLITreeTests.provider(
+      command, executable: try testExecutable(Self.interpreter), project: directory)
     let tool = try #require(provider.definitions().first?.tool.name)
-    let values: JSONValue = .array([
-      .string(""), .string("你好 world"), .string("a\"b'c"), .string("$(never-execute)\n"),
-    ])
-    let result = try await provider.callToolAsync(
-      .init(
-        name: tool, arguments: .object(["values": values]), context: .empty))
-    #expect(result.objectValue?["isError"] == .bool(false))
-    #expect(CLITreeTests.output(result)?["data"] == .array(expected.map(JSONValue.string)))
+    let result = try await withCLIProcessScope(
+      directory: directory, readOnly: true
+    ) {
+      try await provider.callToolAsync(
+        .init(
+          name: tool, arguments: CLITreeTests.arrayOptionInput, context: .empty))
+    }
     await provider.execution.shutdown()
+    #expect(result.objectValue?["isError"] == .bool(false), "\(result)")
+    #expect(
+      CLITreeTests.output(result)?["data"]
+        == .array([
+          .string("--value"), .string(""), .string("--value"), .string("你好 world"),
+          .string("--value"), .string("a\"b'c"), .string("--value"), .string("$(never-execute)\n"),
+        ]))
   }
 
   @Test func nativeCLIArgumentsAndJSONOutputPreserveLargeIntegers() async throws {
@@ -47,19 +57,39 @@ struct CLIParameterMappingTests {
     let command = CLICommandDescriptor(
       id: "exact", path: [], description: "Echo an exact integer",
       parameters: [.init(name: "value", schema: schema, required: true)],
-      argv: [
-        .init(kind: .literal, value: "-c"),
-        .init(kind: .literal, value: "import json,sys; print(json.dumps(int(sys.argv[1])))"),
-        .init(kind: .positional, parameter: "value"),
-      ], stdout: .json, outputSchema: schema)
-    let provider = CLITreeTests.provider(command, executable: "python3")
+      argv: Self.fixtureArguments(
+        perl: "use JSON::PP; print JSON::PP->new->allow_nonref->encode(int($ARGV[0]));",
+        python: "import json,sys; print(json.dumps(int(sys.argv[1])))") + [
+          .init(kind: .positional, parameter: "value")
+        ], stdout: .json, outputSchema: schema)
+    let directory = FileManager.default.temporaryDirectory
+    let provider = CLITreeTests.provider(
+      command, executable: try testExecutable(Self.interpreter), project: directory)
     let tool = try #require(provider.definitions().first?.tool.name)
-    let result = try await provider.callToolAsync(
-      .init(
-        name: tool, arguments: .object(["value": .integer(integer)]), context: .empty))
+    let result = try await withCLIProcessScope(
+      directory: directory, readOnly: true
+    ) {
+      try await provider.callToolAsync(
+        .init(
+          name: tool, arguments: .object(["value": .integer(integer)]), context: .empty))
+    }
     await provider.execution.shutdown()
-    #expect(result.objectValue?["isError"] == .bool(false))
+    #expect(result.objectValue?["isError"] == .bool(false), "\(result)")
     #expect(CLITreeTests.output(result)?["data"]?.int64Value == integer)
+  }
+
+  #if os(macOS)
+    private static let interpreter = "perl"
+  #else
+    private static let interpreter = "python3"
+  #endif
+
+  private static func fixtureArguments(perl: String, python: String) -> [CLIArgumentToken] {
+    #if os(macOS)
+      ["-e", perl, "--"].map { .init(kind: .literal, value: $0) }
+    #else
+      ["-c", python].map { .init(kind: .literal, value: $0) }
+    #endif
   }
 
   @Test(arguments: [

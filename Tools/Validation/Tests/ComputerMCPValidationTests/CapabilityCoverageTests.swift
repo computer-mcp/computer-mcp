@@ -230,6 +230,8 @@ struct CapabilityCoverageTests {
       consumerResultID: "chatgpt-result-observe-denial",
       gatewayRequestID: audit.requestID,
       auditEvent: audit,
+      admissionAuditEvent: audit.decision == .allowed && audit.transport != "control_socket"
+        ? fixtureAdmissionAudit(audit) : nil,
       result: ValidationResultDigest(digest: outputDigest, byteCount: 64),
       outcome: .passed,
       assertions: assertionIDs.map {
@@ -307,6 +309,8 @@ struct CapabilityCoverageTests {
       transportRequestID: "client-installation",
       gatewayRequestID: audit.requestID,
       auditEvent: audit,
+      admissionAuditEvent: audit.decision == .allowed && audit.transport != "control_socket"
+        ? fixtureAdmissionAudit(audit) : nil,
       result: ValidationResultDigest(digest: outputDigest, byteCount: 64),
       outcome: .passed,
       assertions: [

@@ -28,10 +28,13 @@ package struct PluginManifest: Codable, Equatable, Sendable {
   package let mcp: [PluginMCPContribution]
   package let cli: [PluginCLIContribution]
   package let skills: [PluginSkillContribution]
+  package let permissions: [PluginPermissionDeclaration]?
+  package let sandbox: PluginSandboxDeclaration?
 
   private enum CodingKeys: String, CodingKey, CaseIterable {
     case id, name, version, description, repository, compatibility, dependencies, mcp, cli, skills
     case pluginAPI = "plugin_api"
+    case permissions, sandbox
   }
 
   package init(from decoder: any Decoder) throws {
@@ -53,6 +56,8 @@ package struct PluginManifest: Codable, Equatable, Sendable {
     mcp = try c.decodeIfPresent([PluginMCPContribution].self, forKey: .mcp) ?? []
     cli = try c.decodeIfPresent([PluginCLIContribution].self, forKey: .cli) ?? []
     skills = try c.decodeIfPresent([PluginSkillContribution].self, forKey: .skills) ?? []
+    permissions = try c.decodeIfPresent([PluginPermissionDeclaration].self, forKey: .permissions)
+    sandbox = try c.decodeIfPresent(PluginSandboxDeclaration.self, forKey: .sandbox)
     try validate()
   }
 
@@ -91,6 +96,10 @@ package struct PluginManifest: Codable, Equatable, Sendable {
     }
     if let repository {
       try validatePluginHTTPURL(repository, label: "repository", httpsOnly: true)
+    }
+    let permissionIDs = (permissions ?? []).map(\.identity)
+    guard Set(permissionIDs).count == permissionIDs.count else {
+      throw PluginManifestError.invalid("Duplicate permission declaration.")
     }
     let contributionIDs = mcp.map(\.id) + cli.map(\.id) + skills.map(\.id)
     guard !contributionIDs.isEmpty, contributionIDs.count <= 1_024 else {
@@ -231,6 +240,31 @@ package struct PluginExecutable: Codable, Equatable, Sendable {
   }
 }
 
+package struct PluginVendorExecution: Codable, Equatable, Sendable {
+  package let dependency: String
+  package let signature: String
+  package let files: [String: String]
+
+  private enum CodingKeys: String, CodingKey, CaseIterable {
+    case dependency, signature, files
+  }
+
+  package init(from decoder: any Decoder) throws {
+    let c = try decoder.pluginContainer(keyedBy: CodingKeys.self)
+    dependency = try c.decode(String.self, forKey: .dependency)
+    signature = try c.decode(String.self, forKey: .signature)
+    files = try c.decode([String: String].self, forKey: .files)
+    try validatePluginID(dependency)
+    guard files[signature] != nil, files.count <= 32,
+      files.values.allSatisfy({
+        $0.utf8.count == 64
+          && $0.utf8.allSatisfy { (48...57).contains($0) || (97...102).contains($0) }
+      })
+    else { throw PluginManifestError.invalid("Invalid managed vendor file inventory.") }
+    for path in files.keys { try validatePluginRelativePath(path) }
+  }
+}
+
 package struct PluginMCPContribution: Codable, Equatable, Sendable {
   package let id: String
   package let transport: MCPTransport
@@ -240,9 +274,16 @@ package struct PluginMCPContribution: Codable, Equatable, Sendable {
   package let cwd: String?
   package let prefix: String?
   package let capabilities: [String]
+  package let requirements: PluginToolRequirements?
+  package let toolRequirements: [String: PluginToolRequirements]?
+  package let hostServiceContract: String?
+  package let vendorExecution: PluginVendorExecution?
 
   private enum CodingKeys: String, CodingKey, CaseIterable {
-    case id, transport, executable, url, args, cwd, prefix, capabilities
+    case id, transport, executable, url, args, cwd, prefix, capabilities, requirements
+    case toolRequirements = "tool_requirements"
+    case hostServiceContract = "host_service_contract"
+    case vendorExecution = "vendor_execution"
   }
 
   package init(from decoder: any Decoder) throws {
@@ -255,6 +296,21 @@ package struct PluginMCPContribution: Codable, Equatable, Sendable {
     cwd = try c.decodeIfPresent(String.self, forKey: .cwd)
     prefix = try c.decodeIfPresent(String.self, forKey: .prefix)
     capabilities = try c.decodeIfPresent([String].self, forKey: .capabilities) ?? ["tools"]
+    requirements = try c.decodeIfPresent(PluginToolRequirements.self, forKey: .requirements)
+    toolRequirements = try c.decodeIfPresent(
+      [String: PluginToolRequirements].self, forKey: .toolRequirements)
+    hostServiceContract = try c.decodeIfPresent(String.self, forKey: .hostServiceContract)
+    vendorExecution = try c.decodeIfPresent(PluginVendorExecution.self, forKey: .vendorExecution)
+    guard (toolRequirements ?? [:]).keys.allSatisfy({ !$0.isEmpty && !$0.contains("\0") }),
+      hostServiceContract == nil
+        || (hostServiceContract == MCPHostServiceContract.identifier && transport == .stdio)
+    else { throw PluginManifestError.invalid("Invalid tool name or host service contract.") }
+    if let vendorExecution {
+      guard transport == .stdio, hostServiceContract == nil,
+        let path = try executable?.packagePath(), vendorExecution.files[path] != nil,
+        !args.contains("--host-vendor-execution")
+      else { throw PluginManifestError.invalid("Invalid managed vendor contribution.") }
+    }
     if transport == .stdio {
       guard executable != nil, url == nil else {
         throw PluginManifestError.invalid("Stdio contributions require an executable and no URL.")

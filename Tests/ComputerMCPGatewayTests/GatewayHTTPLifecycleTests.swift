@@ -1,5 +1,6 @@
 import Foundation
 import NIOConcurrencyHelpers
+import NIOPosix
 import Testing
 
 @testable import ComputerMCPConfiguration
@@ -13,12 +14,56 @@ import Testing
 @Suite(.timeLimit(.minutes(1)))
 struct GatewayHTTPLifecycleTests {
   @Test
-  func fullShellPreconditionPrecedesSessionLookup() async throws {
+  func connectionShutdownJoinsCancelledProducersBeforeTheirEventLoopStops() async throws {
+    let connections = GatewayHTTPConnections(limit: 1)
+    let group = MultiThreadedEventLoopGroup(numberOfThreads: 1)
+    let entered = GatewayToolChangeBroadcaster()
+    let cancelled = GatewayToolChangeBroadcaster()
+    let entry = entered.stream()
+    let cancellation = cancelled.stream()
+    let cleanup = HTTPShutdownGate()
+    let finished = NIOLockedValueBox(false)
+    _ = try #require(
+      connections.start {
+        await withTaskCancellationHandler {
+          entered.send()
+          await cleanup.wait()
+          do {
+            try await group.next().submit { finished.withLockedValue { $0 = true } }.get()
+          } catch { Issue.record(error) }
+        } onCancel: {
+          cancelled.send()
+        }
+      })
+    do {
+      try await next(entry)
+      let stopping = connections.beginShutdown()
+      try await next(cancellation)
+      #expect(!finished.withLockedValue { $0 })
+      #expect(connections.start { Issue.record("A producer started during shutdown") } == nil)
+      #expect(!connections.reserve())
+      await cleanup.release()
+      await stopping.value
+      #expect(finished.withLockedValue { $0 })
+      await connections.beginShutdown().value
+      try await group.shutdownGracefully()
+    } catch {
+      await cleanup.release()
+      await connections.beginShutdown().value
+      try await group.shutdownGracefully()
+      throw error
+    }
+  }
+
+  @Test
+  func consentLookupIsIndependentOfTheShellFacility() async throws {
     let runtime = GatewayHTTPRuntime(
       configuration: .init(), registry: HTTPLifecycleRegistry(pauseDiscovery: false),
       host: "127.0.0.1", port: 0, publicBaseURL: nil)
-    await #expect(throws: GatewayControlError.fullShellManifestDisabled) {
-      try await runtime.approveControlSession(id: "missing", expectedRevision: 0)
+    await #expect(throws: ConfigurationError.self) {
+      try await runtime.approveControlSession(
+        id: "missing", lifetime: .thisSession,
+        expectedRevision: 0, expectedTrustRevision: 0)
     }
   }
 

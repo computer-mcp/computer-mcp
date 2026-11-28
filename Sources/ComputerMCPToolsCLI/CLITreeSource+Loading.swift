@@ -4,11 +4,14 @@ import ComputerMCPProcess
 import Foundation
 
 extension CLITreeSource {
-  func load(command: CLICommandConfig, project: URL, execution: CLIProcessExecution) throws
+  func load(
+    command: CLICommandConfig, project: URL, execution: CLIProcessExecution,
+    executionDirectory: URL? = nil
+  ) throws
     -> CLITree
   {
     try validate()
-    let cwd = command.resolvedWorkingDirectory(base: project) ?? project
+    let cwd = executionDirectory ?? command.resolvedWorkingDirectory(base: project) ?? project
     let data: Data
     switch kind {
     case .file:

@@ -1,4 +1,5 @@
 import ComputerMCPCore
+import ComputerMCPPlugins
 import Foundation
 import NIOConcurrencyHelpers
 
@@ -15,12 +16,14 @@ internal final class GatewayProviderRouter: GatewayToolServing, Sendable {
   private let state: NIOLockedValueBox<State>
   private let source: @Sendable () throws -> [any GatewayToolProvider]
   private let reservedToolNames: Set<String>
+  private let origins: [IntegrationRegistration: PluginContributionOrigin]
   private let shutdownSource: @Sendable () async -> Void
   private let mcpPolicyResolver:
     (@Sendable (MCPToolReference, InvocationContext) throws -> MCPToolAdmissionPolicy)?
   private let retainsContinuation: @Sendable (MCPToolReference) -> Bool
   private let refreshCoordinator = GatewayCatalogRefreshCoordinator()
   private let changes = GatewayToolChangeBroadcaster()
+  private let discovery = BlockingOperationExecutor(label: "computer-mcp.catalog-discovery")
 
   internal convenience init(providers: [any GatewayToolProvider]) throws {
     try self.init(source: { providers })
@@ -31,6 +34,7 @@ internal final class GatewayProviderRouter: GatewayToolServing, Sendable {
     invalidations: AsyncStream<Void>? = nil,
     refreshInterval: Duration? = nil,
     reservedToolNames: Set<String> = [],
+    origins: [IntegrationRegistration: PluginContributionOrigin] = [:],
     mcpPolicyResolver: (
       @Sendable (MCPToolReference, InvocationContext) throws -> MCPToolAdmissionPolicy
     )? = nil,
@@ -39,12 +43,14 @@ internal final class GatewayProviderRouter: GatewayToolServing, Sendable {
   ) throws {
     self.source = source
     self.reservedToolNames = reservedToolNames
+    self.origins = origins
     self.shutdownSource = shutdownSource
     self.mcpPolicyResolver = mcpPolicyResolver
     self.retainsContinuation = retainsContinuation
     self.state = NIOLockedValueBox(
       State(
-        snapshot: try .init(providers: source(), reservedToolNames: reservedToolNames)))
+        snapshot: try .init(
+          providers: source(), reservedToolNames: reservedToolNames, origins: origins)))
     if let invalidations {
       let monitor = Task { [weak self] in
         for await _ in invalidations {
@@ -76,6 +82,7 @@ internal final class GatewayProviderRouter: GatewayToolServing, Sendable {
   internal convenience init(
     registry: GatewayToolRegistry,
     reservedToolNames: Set<String> = [],
+    origins: [IntegrationRegistration: PluginContributionOrigin] = [:],
     retainsContinuation: @escaping @Sendable (MCPToolReference) -> Bool = { _ in false }
   ) throws {
     try self.init(
@@ -83,6 +90,7 @@ internal final class GatewayProviderRouter: GatewayToolServing, Sendable {
       invalidations: registry.invalidations,
       refreshInterval: registry.refreshInterval,
       reservedToolNames: reservedToolNames,
+      origins: origins,
       mcpPolicyResolver: registry.downstreamPolicy,
       retainsContinuation: retainsContinuation,
       shutdownSource: { await registry.shutdown() }
@@ -100,6 +108,12 @@ internal final class GatewayProviderRouter: GatewayToolServing, Sendable {
     -> CapabilityDescriptor
   {
     try route(named: name, context: context).capability
+  }
+
+  internal func requirement(named name: String, context: InvocationContext) throws
+    -> ToolRequirement
+  {
+    try route(named: name, context: context).capability.requirement
   }
 
   /// A private locator survives catalog hiding while native work still owns its binding.
@@ -186,16 +200,9 @@ internal final class GatewayProviderRouter: GatewayToolServing, Sendable {
     try await refreshCoordinator.run { [self] in
       do {
         try Task.checkCancellation()
-        let snapshot: GatewayToolCatalogSnapshot = try await withCheckedThrowingContinuation {
-          continuation in
-          // Existing providers have synchronous discovery; keep it off cooperative executors.
-          DispatchQueue.global(qos: .utility).async { [source, reservedToolNames] in
-            continuation.resume(
-              with: Result {
-                try GatewayToolCatalogSnapshot(
-                  providers: source(), reservedToolNames: reservedToolNames)
-              })
-          }
+        let snapshot = try await discovery.perform { [source, reservedToolNames, origins] in
+          try GatewayToolCatalogSnapshot(
+            providers: source(), reservedToolNames: reservedToolNames, origins: origins)
         }
         try Task.checkCancellation()
         let changed = try state.withLockedValue { state in

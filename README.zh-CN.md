@@ -21,7 +21,7 @@ Codex 是可选集成。
 - **在对话里调用 Codex 写代码。** 使用独立 Codex 插件启动任务、跟进进度、查看结果。
 - **用 MCP 和 Skills 扩展工作方式。** 直接接入 MCP 服务与可复用说明，或通过插件组合。
 - **跨多台电脑工作。** 连接各台宿主，选择对应项目，在那台电脑的环境里使用工具。
-- **开放什么，由你决定。** 配置工具、项目与确认策略，在本机批准需要确认的宿主操作。
+- **开放什么，由你决定。** 配置项目、集成与隐私权限，在本机回答缺失权限请求。
 
 Computer MCP 支持 macOS 14 或更新系统，可供 ChatGPT 和其他兼容 MCP 的客户端使用。
 工具需按各插件的说明安装并配置。
@@ -36,7 +36,7 @@ ChatGPT · Codex · 其他 MCP 客户端
                  ▼
           Computer MCP.app
                  │
- 调用方 → Profile → 已注册项目 → 策略 → 必要时审批
+ 调用方 → Profile → 声明需求 → 权限判定 → 执行上下文
                  │
                  ▼
  Builtin · Skills · CLI · MCP · AX 兜底 · Git · Shell
@@ -48,7 +48,7 @@ ChatGPT · Codex · 其他 MCP 客户端
 每次调用都绑定到调用方、Profile、能力和相关的已注册项目。未知工具、未授权
 项目、不安全路径和无法验证的所有权声明都会 fail closed。
 
-每台宿主独立保有凭据、注册、审批和审计。项目 ID 只属于对应宿主；连接多台
+每台宿主独立保有凭据、注册、权限和审计。项目 ID 只属于对应宿主；连接多台
 电脑不会共享文件或迁移运行中的进程。完整模型见
 [产品定位](Documentation/Architecture/ProductIdentity.md)。
 
@@ -92,30 +92,54 @@ macOS 隐私权限即可保证可用；原生 AX 工具继续作为兜底路径�
 
 ## 决定 Agent 能使用什么
 
-Computer MCP 始终把两个决定分开：
+宿主对每次调用检查 Profile 权限和托管限制。项目分别设置读写权限与网络访问；
+屏幕、桌面控制、文件与文件夹、插件和 MCP 服务器都有独立权限。新主体默认拥有
+机器信息与 Skills 权限。归档安装插件贡献的 Skills 暂不可用，
+需先将公开包内容与宿主私有插件状态分离。
 
-1. **策略授权**：这个调用方是否可以在这个已注册项目使用该能力？
-2. **操作同意**：如果该能力已获准但本次操作风险较高，用户或被授权调用方现在是否
-   同意？
+未授予的权限返回 `permission.required` 和待处理请求。用户在本机 App 或 CLI
+选择**仅这一次**、**始终**或**拒绝**；“始终”更新所有共享该 Profile 的客户端，
+“仅这一次”绑定原调用及其执行生命周期。回答请求不会执行操作，客户端必须明确
+重试原调用。显式拒绝和托管限制不会产生授权提示。
 
-在 App 的**客户端权限**页面查看已连接的客户端，并明确授予完全访问权限，默认
-**仅此会话**。完全访问允许以您的 macOS 用户身份执行任意命令；项目提供项目
-上下文，不是沙箱。**始终允许此客户端**是独立的选择。您可以降级或结束某个连接
-的访问，也可以单独撤销已保存的客户端授权。权限变更立即适用于新请求，不会取消
-已开始的工作。本地 `computer-mcp clients` 命令提供相同的权限控制，明确授权和
-独立 HTTP 用法见[客户端权限](Documentation/Reference/CLI.md#client-access)。
+执行方式独立于权限。完全访问需要 Profile 允许，并由用户在本机对连接明确同意；
+它不会授予项目、屏幕或其他宿主权限。支持完全访问执行的后端会以 macOS 用户的
+操作系统权限运行程序，包括用户可访问的文件与凭据。**仅此会话**与**始终允许此客户端**分别控制
+连接同意和保存的信任。修改权限使旧同意失效，并撤销依赖被收回权限的执行。
+本机控制方式见[客户端权限](Documentation/Reference/CLI.md#client-access)。
 
-通过**选择受限权限**按名称勾选能力、项目和集成，并明确允许哪些连接类型使用它们。
-这些默认权限适用于共享该配置的客户端，每个会话仍可限制为更低的访问级别。
-保存新的选择会使该配置之前的完全访问授权失效。
+所有程序启动都必须有可强制执行的授权上下文。通用沙盒写入所需的 worktree／私有
+Git 上下文，以及项目绑定的插件／服务器上下文尚未接入，相应操作会被拒绝。
+缺少上下文不会回退到完全访问。Darwin 无法证明持久进程归属的任意完全访问执行
+也仍不可用。凭据保存在 App 的 macOS Data Protection Keychain；示例、诊断、
+日志和审计只保留占位符或脱敏摘要。
 
-在 App 管理的连接中，已批准的完全访问还可使用类型明确的工具管理项目，以及
-安装、配置和更新经过验证的官方插件。配置变化会保留已有任务，具体参数见
-[远程管理](Documentation/Reference/ControlPlaneCapabilities.md#remote-management)。
-
-单次操作审批不会扩大客户端的当前权限。受限访问只能使用所选工具和项目，
-禁止任意执行。凭据保存在签名 App 的 macOS Data Protection Keychain；示例、
-诊断、日志和审计只保留占位符或脱敏摘要。
+文件与结构化工具逐级检查目录句柄，拒绝检查时发现的符号链接和已有多硬链接文件，
+保护 Git 元数据与配置。新建文件完成后通过描述符检查链接数；并发链接可能在检查前
+读到内容，具体边界见[工具参考](Documentation/Reference/Tools.md#file-mutation-boundaries)。
+元数据修改后重查路径、父目录与链接数，失败时通过原句柄
+恢复模式、时间和受影响的扩展属性。解压只列举一次，通过暂存目录描述符启动 tar，
+将单次提取的内容流写入宿主创建的文件，核对后通过锚定重命名发布。
+解压保留归档成员的修改时间；目录模式与时间在内容发布和暂存清理完成后，从深到浅恢复。
+已有的目标目录保留自身的模式与时间。
+清理只删除能证明由本次操作创建的条目：APFS 上按 inode，Linux 上按内核文件句柄，
+其他文件系统使用保留描述符，每次操作最多 64 个，并预留清理容量。
+外来条目保留在暂存目录中，错误会列出保留路径。
+废纸篓操作拒绝项目根目录、先检查所有成员，允许
+多硬链接普通文件。这些检查不构成并发事务隔离；检查时点和回滚限制见工具参考。
+SQLite 查询使用安全模式，CLI 帮助只返回登记的元数据。
+Linux 的 tar 格式解压使用 GNU tar，ZIP 格式解压需要登记 `bsdtar` 可执行文件。
+未提供归档工具或 SQLite CLI 绑定时，工具在创建目标或启动相应命令前返回不可用错误。
+文件移动仅限同卷；
+macOS 复制保留数据、扩展属性、资源叉、ACL、模式和时间，跨卷请先复制，再删除源文件。
+glibc Linux 复制保留数据、模式、访问与修改时间、可见扩展属性（含 POSIX ACL），
+所有权沿用新建目标；macOS 资源叉、创建时间和 BSD 文件标志不在 Linux 复制范围内。
+写入保护各层级的 `.git` 路径分量，比较前做 Unicode 规范化并忽略大小写。
+文件访问创建时检查布局：根目录 `.git` 为符号链接，或项目内的 Git 目录、公共目录
+不在含 `.git` 的路径下时，拒绝该项目的全部写入。宿主 Git 在每次调用前拒绝
+含 `include` 或 `includeIf` 条目的本地配置。
+宿主 Git 操作禁用仓库配置指定的程序，`git.commit` 只提交
+明确的 `paths`，保留其他已暂存改动。
 
 完整边界见[安全与隐私架构](Documentation/Architecture/SecurityAndPrivacy.md)，安全问题
 请按 [SECURITY.md](SECURITY.md) 报告。
@@ -124,17 +148,21 @@ Computer MCP 始终把两个决定分开：
 
 | 状态 | 能力 | 说明 |
 | --- | --- | --- |
-| 稳定 | App-owned 本地网关、项目注册、Profile、策略、Operation Ticket 和脱敏审计 | macOS 14+ 默认产品控制平面 |
+| 稳定 | App-owned 本地网关、项目注册、Profile、权限请求和脱敏审计 | macOS 14+ 默认产品控制平面 |
 | 稳定 | 本地 MCP、经 OpenAI Secure MCP Tunnel 连接 ChatGPT、Cloudflare Named Tunnel | 每条远程路径都有独立 Caller 与 Profile 边界 |
 | 稳定 | Builtin、Skill、已注册 CLI、下游 MCP、Shell 与原生 AX 兜底 | 是否可用仍取决于 Profile、项目、依赖和 macOS 权限 |
-| 稳定 | 受治理的项目与 Git 操作 | 写入需要策略授权；破坏性原子操作使用经审查的一次性 Ticket；不会隐式 Push |
-| 稳定 | 插件包生命周期、直接／插件 MCP 注册、经过验证的 CLI Tree 与 Skills | 宿主授权独立，不自动安装外部依赖 |
+| 稳定 | 受治理的项目与 Git 操作 | 调用需要权限及可强制执行的上下文；不会隐式 Push |
+| 稳定 | 插件包生命周期、直接／插件 MCP 注册、经过验证的 CLI Tree 与配置的 Skills 库 | 宿主授权独立，不自动安装外部依赖 |
 | 规划中 | 更广的平台支持和更完整的高级编排 UI | 暂无承诺日期；当前签名 App 仅支持 macOS |
+
+Shell 与已注册进程提供稳定 ID、输出游标、标准输入写入和取消。等待调用默认两分钟、
+最多十分钟；后台执行默认无时限，保留最近 8 MiB 输出。断线续读、重启恢复与限额
+见[执行工具](Documentation/Reference/zh-CN/Executions.md)。程序启动需要已授权的执行上下文。
 
 ## ChatGPT 编排，Codex 执行
 
 ChatGPT 可以查看已注册项目，并通过独立的 [Codex 插件](https://github.com/computer-mcp/plugin-codex)
-执行编程任务。宿主管理工具授权、项目、审批与审计；插件负责执行与运行时生命周期。
+执行编程任务。宿主管理工具授权、项目、权限请求与审计；插件负责执行与运行时生命周期。
 
 ## Computer MCP、Dots 与 Codex Remote
 
@@ -203,13 +231,12 @@ Cloudflare 连接支持可选的 OAuth，可供 claude.ai 等使用 CIMD 的公�
 在 App 的 Cloudflare 连接编辑器中打开「允许通过 OAuth 登录」（也可用所有者 CLI
 或清单）后，客户端登录时在「客户端权限」页核对六位配对码、选择配置方案并批准；
 终端中对应 `computer-mcp clients authorizations` 与
-`computer-mcp clients authorize <code>`。授权默认使用只读配置档，完全访问仍需
+`computer-mcp clients authorize <code>`。授权要求明确选择配置档，完全访问仍需
 本机逐会话同意。设置与吊销步骤见 [Cloudflare 参考](Documentation/Reference/zh-CN/Cloudflare.md)。
 Verified 只接受当前访问令牌或仍有效 OAuth 授权的成功工具请求；替换或吊销凭据后，
 对应证据失效，新凭据需要重新验证。
 
-Gateway 解析精确工具名，绑定 Caller/Profile/Project，检查策略和 Operation
-Ticket，在需要时获得操作同意，分发一个有界 Adapter，并记录脱敏结果。Standalone
+Gateway 解析精确工具名，绑定 Caller/Profile/Project，检查权限与托管限制，安装可强制执行的上下文，分发一个有界 Adapter，并记录脱敏结果。Standalone
 TOML 模式只用于开发和诊断，不共享 App 的 Bookmark 或 Keychain 状态。
 
 当前架构见 [Gateway](Documentation/Architecture/Gateway.md)、

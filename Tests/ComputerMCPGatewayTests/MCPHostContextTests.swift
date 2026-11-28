@@ -8,6 +8,10 @@ import Testing
 @testable import ComputerMCPGateway
 @testable import ComputerMCPPlatform
 
+#if os(macOS)
+  import ComputerMCPDarwinTestSupport
+#endif
+
 @Suite
 struct MCPHostContextTests {
   @Test
@@ -22,7 +26,7 @@ struct MCPHostContextTests {
         runtimeID: UUID(), context: .init(caller: .localCLI, profileID: .chatGPTObserve),
         projectID: "fixture", rootURL: root, readOnly: true),
       projectRoot: root, processOwnershipRoot: storage)
-    let client = MCPProxyClient()
+    let client = MCPProxyClient(launcher: testExecutionLauncher())
     let scoped = client.makeScopedClient(
       workingDirectory: root, environment: [:], hostContext: hostContext)
     let marker = root.appendingPathComponent("launched")
@@ -59,7 +63,7 @@ struct MCPHostContextTests {
     let context = MCPHostContext(
       runtimeID: UUID(), context: .init(caller: .localCLI, profileID: .chatGPTObserve),
       projectID: "fixture", rootURL: root, readOnly: true)
-    let client = MCPProxyClient(processOwnershipRoot: storage)
+    let client = MCPProxyClient(launcher: testExecutionLauncher(), processOwnershipRoot: storage)
     let scoped = client.makeScopedClient(
       workingDirectory: root, environment: [:], hostContext: context)
     let marker = root.appendingPathComponent("launched")
@@ -95,8 +99,4 @@ private struct NonGatewayHostEnvironment: MCPHostEnvironment {
   let processOwnershipRoot: URL?
   let pluginArtifacts: [String: PluginDirectoryIdentity] = [:]
   let providesHostServices = false
-
-  func makeHostSession(server: MCPServerConfig) throws -> any MCPHostSessionHandle {
-    throw GatewayToolError.executionFailed("Host services are unavailable.")
-  }
 }

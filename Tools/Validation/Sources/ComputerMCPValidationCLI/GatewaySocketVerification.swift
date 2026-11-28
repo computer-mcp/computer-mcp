@@ -76,11 +76,6 @@ struct AppFullCatalogProbe: AsyncParsableCommand {
   var strict = false
 
   mutating func run() async throws {
-    try await run(localApprovalResolver: nil)
-  }
-
-  // Approval authority is an explicit fixture dependency, never inferred from the active socket.
-  mutating func run(localApprovalResolver: ValidationLocalApprovalResolver?) async throws {
     let home = FileManager.default.homeDirectoryForCurrentUser
     let socketURL =
       socket.map { URL(fileURLWithPath: $0) }
@@ -116,8 +111,7 @@ struct AppFullCatalogProbe: AsyncParsableCommand {
     let fixtureReport = try loadFixtureReport()
     let socketConfiguration = try socketIdentity.configuration(socketURL: socketURL)
     let session = try await GatewayClientSession.connectSocket(
-      configuration: socketConfiguration,
-      localApprovalResolver: localApprovalResolver
+      configuration: socketConfiguration
     )
     do {
       var runner = AppFullCatalogProbeRunner(
@@ -482,8 +476,6 @@ private struct AppFullCatalogProbeRunner {
       && schemaMismatchedTools.isEmpty
     var results: [AppFullCatalogProbeToolResult] = []
     var pointerPosition: (x: Double, y: Double)?
-    var operationPrepareResult: AppFullCatalogProbeToolResult?
-    var operationCommitResult: AppFullCatalogProbeToolResult?
 
     guard let projectListInvocation = fixturePlan.invocation(for: "project.list") else {
       throw ValidationError("The fixture plan does not support project.list.")
@@ -503,25 +495,13 @@ private struct AppFullCatalogProbeRunner {
         ? left.offset < right.offset : leftPriority < rightPriority
     }.map(\.element)
     for tool in orderedCatalog
-    where tool != "project.list"
-      && tool != "operations.prepare"
-      && tool != "operations.commit"
-    {
+    where tool != "project.list" {
       if let lifecycleResult = lifecycleResults[tool] {
         results.append(lifecycleResult)
         continue
       }
       if tool == "mcp.requests.cancel" {
-        let cancellation = await callDownstreamCancellation()
-        results.append(cancellation.target)
-        if operationPrepareResult == nil || operationPrepareResult?.status != "passed" {
-          operationPrepareResult = cancellation.prepare
-        }
-        if let commit = cancellation.commit,
-          operationCommitResult == nil || operationCommitResult?.status != "passed"
-        {
-          operationCommitResult = commit
-        }
+        results.append(await callDownstreamCancellation())
         continue
       }
       guard
@@ -548,52 +528,11 @@ private struct AppFullCatalogProbeRunner {
         )
         continue
       }
-      let callResult:
-        (
-          result: AppFullCatalogProbeToolResult,
-          report: GatewayCallReport?
-        )
-      switch invocation.execution {
-      case .direct:
-        callResult = await call(
-          tool,
-          invocation: invocation
-        )
-      case .committed:
-        let committed = await callCommitted(tool, invocation: invocation)
-        callResult = (committed.target, committed.report)
-        if operationPrepareResult == nil || operationPrepareResult?.status != "passed" {
-          operationPrepareResult = committed.prepare
-        }
-        if let commit = committed.commit,
-          operationCommitResult == nil || operationCommitResult?.status != "passed"
-        {
-          operationCommitResult = commit
-        }
-      }
+      let callResult = await call(tool, invocation: invocation)
       results.append(callResult.result)
       if tool == "computer.pointer.position", let report = callResult.report {
         pointerPosition = extractedPointerPosition(from: report)
       }
-    }
-
-    if catalogSet.contains("operations.prepare") {
-      results.append(
-        operationPrepareResult
-          ?? unsupportedResult(
-            tool: "operations.prepare",
-            detail: "No destructive fixture target produced an operation ticket."
-          )
-      )
-    }
-    if catalogSet.contains("operations.commit") {
-      results.append(
-        operationCommitResult
-          ?? unsupportedResult(
-            tool: "operations.commit",
-            detail: "No destructive fixture target produced a committed operation."
-          )
-      )
     }
 
     results.sort { $0.toolName < $1.toolName }
@@ -728,152 +667,39 @@ private struct AppFullCatalogProbeRunner {
     }
   }
 
-  private func callCommitted(
-    _ tool: String,
-    invocation: CapabilityFixtureInvocation
-  ) async -> (
-    target: AppFullCatalogProbeToolResult,
-    prepare: AppFullCatalogProbeToolResult,
-    commit: AppFullCatalogProbeToolResult?,
-    report: GatewayCallReport?
-  ) {
-    var operationArguments: [String: JSONValue] = [
-      "tool": .string(tool),
-      "arguments": .object(invocation.arguments),
-      "ttl_ms": .number(300_000),
-    ]
-    if let projectID = invocation.arguments["project_id"] {
-      operationArguments["project_id"] = projectID
-    }
-    let prepareInvocation = CapabilityFixtureInvocation(arguments: operationArguments)
-    let prepared = await call("operations.prepare", invocation: prepareInvocation)
-    guard prepared.result.status == "passed", let preparedReport = prepared.report,
-      let ticketID = preparedReport.result.objectValue?["structuredContent"]?.objectValue?[
-        "result"]?
-        .objectValue?["ticket_id"]?.stringValue
-    else {
-      return (
-        target: failedCommittedTarget(
-          tool: tool,
-          detail: "operations.prepare did not produce a bound operation ticket."
-        ),
-        prepare: prepared.result,
-        commit: nil,
-        report: nil
-      )
-    }
-
-    do {
-      let payload = preparedReport.result.objectValue?["structuredContent"]?.objectValue?["result"]
-      try await session.resolvePreparedOperation(payload ?? .null)
-    } catch {
-      return (
-        target: failedCommittedTarget(tool: tool, detail: error.localizedDescription),
-        prepare: prepared.result, commit: nil, report: nil
-      )
-    }
-    operationArguments.removeValue(forKey: "ttl_ms")
-    operationArguments["ticket_id"] = .string(ticketID)
-    let committed = await call(
-      "operations.commit",
-      invocation: CapabilityFixtureInvocation(arguments: operationArguments)
-    )
-    guard let committedReport = committed.report else {
-      return (
-        target: failedCommittedTarget(
-          tool: tool,
-          detail: "operations.commit did not return a target result."
-        ),
-        prepare: prepared.result,
-        commit: committed.result,
-        report: nil
-      )
-    }
-    return (
-      target: committedTargetResult(
-        tool: tool,
-        report: committedReport,
-        expectedMarker: invocation.expectedMarker
-      ),
-      prepare: prepared.result,
-      commit: committed.result,
-      report: committedReport
-    )
-  }
-
-  private func callDownstreamCancellation() async -> (
-    target: AppFullCatalogProbeToolResult,
-    prepare: AppFullCatalogProbeToolResult,
-    commit: AppFullCatalogProbeToolResult?
-  ) {
+  private func callDownstreamCancellation() async -> AppFullCatalogProbeToolResult {
     let requestID = "validation-cancel-\(UUID().uuidString)"
-    let started = await callCommitted(
+    let started = await call(
       "mcp.tools.call",
-      invocation: CapabilityFixtureInvocation(
+      invocation: .init(
         arguments: [
-          "server": .string("fixture-stdio"),
-          "tool": .string("fixture_hang"),
-          "request_id": .string(requestID),
-          "wait_for_result": .bool(false),
-        ],
-        expectedMarker: "running",
-        execution: .committed
-      )
-    )
-    guard started.target.status == "passed" else {
-      return (
-        target: failedCommittedTarget(
-          tool: "mcp.requests.cancel",
-          detail: "The bounded downstream request did not enter the running state."
-        ),
-        prepare: started.prepare,
-        commit: started.commit
-      )
+          "server": .string("fixture-stdio"), "tool": .string("fixture_hang"),
+          "request_id": .string(requestID), "wait_for_result": .bool(false),
+        ], expectedMarker: "running"))
+    guard started.result.status == "passed" else {
+      return lifecycleFailure(
+        tool: "mcp.requests.cancel", detail: "The bounded downstream request did not start.")
     }
-
-    var activeRequestObserved = false
     for _ in 0..<40 {
       let listed = await call(
         "mcp.requests.list",
-        invocation: CapabilityFixtureInvocation(
-          arguments: ["server": .string("fixture-stdio")],
-          expectedMarker: requestID
-        )
-      )
+        invocation: .init(
+          arguments: ["server": .string("fixture-stdio")], expectedMarker: requestID))
       if listed.result.status == "passed" {
-        activeRequestObserved = true
-        break
+        return await call(
+          "mcp.requests.cancel",
+          invocation: .init(
+            arguments: [
+              "server": .string("fixture-stdio"), "request_id": .string(requestID),
+              "reason": .string("Validation Suite lifecycle verification"),
+            ], expectedMarker: "cancellation_requested")
+        ).result
       }
       try? await Task.sleep(for: .milliseconds(25))
     }
-    guard activeRequestObserved else {
-      return (
-        target: failedCommittedTarget(
-          tool: "mcp.requests.cancel",
-          detail: "The bounded downstream request was not observable before cancellation."
-        ),
-        prepare: started.prepare,
-        commit: started.commit
-      )
-    }
-
-    let cancelled = await callCommitted(
-      "mcp.requests.cancel",
-      invocation: CapabilityFixtureInvocation(
-        arguments: [
-          "server": .string("fixture-stdio"),
-          "request_id": .string(requestID),
-          "reason": .string("Validation Suite lifecycle verification"),
-        ],
-        expectedMarker: "cancellation_requested",
-        execution: .committed
-      )
-    )
-    return (
-      target: cancelled.target,
-      prepare: cancelled.prepare.status == "passed" ? cancelled.prepare : started.prepare,
-      commit: cancelled.commit?.status == "passed" ? cancelled.commit : started.commit
-    )
+    return lifecycleFailure(
+      tool: "mcp.requests.cancel",
+      detail: "The bounded downstream request was not observable before cancellation.")
   }
 
   private func callExecutionLifecycle(
@@ -946,7 +772,7 @@ private struct AppFullCatalogProbeRunner {
       return completingLifecycleFailures(
         results,
         tools: requiredTools,
-        detail: "The Full Shell lifecycle fixture did not reach this capability."
+        detail: "The shell lifecycle fixture did not reach this capability."
       )
     }
 
@@ -1004,7 +830,7 @@ private struct AppFullCatalogProbeRunner {
     if requiredTools.contains("shell.read") {
       var readResult = lifecycleFailure(
         tool: "shell.read",
-        detail: "The Full Shell session did not emit its bounded stdin marker."
+        detail: "The shell session did not emit its bounded stdin marker."
       )
       for _ in 0..<100 {
         let current = await call(
@@ -1039,7 +865,7 @@ private struct AppFullCatalogProbeRunner {
     return completingLifecycleFailures(
       results,
       tools: requiredTools,
-      detail: "The Full Shell lifecycle fixture did not reach this capability."
+      detail: "The shell lifecycle fixture did not reach this capability."
     )
   }
 
@@ -1325,87 +1151,6 @@ private struct AppFullCatalogProbeRunner {
       }
     }
     return nil
-  }
-
-  private func committedTargetResult(
-    tool: String,
-    report: GatewayCallReport,
-    expectedMarker: String?
-  ) -> AppFullCatalogProbeToolResult {
-    let targetRequestID = report.result.objectValue?["structuredContent"]?.objectValue?[
-      "target_execution"
-    ]?.objectValue?["request_id"]?.stringValue
-    let audit = targetRequestID.flatMap(auditEvent(requestID:))
-    let isError = report.result.objectValue?["isError"]?.boolValue == true
-    let structured = report.result.objectValue?["structuredContent"] != nil
-    let semantic = semanticCheck(
-      tool: tool,
-      report: report,
-      expectedMarker: expectedMarker
-    )
-    let resultData = try? sortedJSON(report.result)
-    let status =
-      !isError && structured && semantic.passed && audit?.decision == .allowed
-      ? "passed"
-      : "failed"
-    return AppFullCatalogProbeToolResult(
-      toolName: tool,
-      status: status,
-      transportRequestID: report.requestID,
-      gatewayRequestID: targetRequestID,
-      auditEventID: audit?.id,
-      auditDecision: audit?.decision.rawValue,
-      structuredContent: structured,
-      semanticValidated: semantic.passed,
-      outputByteCount: resultData?.count,
-      resultDigest: resultData.map(digest),
-      auditEvent: audit,
-      detail:
-        status == "passed"
-        ? nil
-        : semantic.detail
-          ?? "Committed target result or target audit correlation was incomplete."
-    )
-  }
-
-  private func failedCommittedTarget(
-    tool: String,
-    detail: String
-  ) -> AppFullCatalogProbeToolResult {
-    AppFullCatalogProbeToolResult(
-      toolName: tool,
-      status: "failed",
-      transportRequestID: nil,
-      gatewayRequestID: nil,
-      auditEventID: nil,
-      auditDecision: nil,
-      structuredContent: false,
-      semanticValidated: false,
-      outputByteCount: nil,
-      resultDigest: nil,
-      auditEvent: nil,
-      detail: detail
-    )
-  }
-
-  private func unsupportedResult(
-    tool: String,
-    detail: String
-  ) -> AppFullCatalogProbeToolResult {
-    AppFullCatalogProbeToolResult(
-      toolName: tool,
-      status: "unsupported-fixture",
-      transportRequestID: nil,
-      gatewayRequestID: nil,
-      auditEventID: nil,
-      auditDecision: nil,
-      structuredContent: false,
-      semanticValidated: false,
-      outputByteCount: nil,
-      resultDigest: nil,
-      auditEvent: nil,
-      detail: detail
-    )
   }
 
   private func executionRequestID(from report: GatewayCallReport) -> String? {

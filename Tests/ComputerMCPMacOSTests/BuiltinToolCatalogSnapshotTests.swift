@@ -1,6 +1,6 @@
-import ComputerMCPDelivery
 import ComputerMCPDownstream
 import ComputerMCPMacOS
+import ComputerMCPPermissions
 import ComputerMCPProcess
 import ComputerMCPTestSupport
 import ComputerMCPToolKit
@@ -21,6 +21,10 @@ import Testing
 @testable import ComputerMCPCore
 @testable import ComputerMCPGateway
 
+#if os(macOS)
+  import ComputerMCPDarwinTestSupport
+#endif
+
 struct BuiltinToolCatalogSnapshotTests {
   @Test(arguments: [(false, true), (true, true), (false, false), (true, false)])
   func shellAndProcessRoutesKeepSeparateProviderOwnership(
@@ -31,14 +35,17 @@ struct BuiltinToolCatalogSnapshotTests {
       mcp: .init(), policy: .init(shellEnabled: shellEnabled))
     let registry = MacOSToolProviders().makeProviders(
       configuration: configuration, commandRunner: RecordingCommandRunner(),
-      processManager: ManagedProcessRegistry(), shellManager: SubprocessShellRuntime(),
+      processManager: ManagedProcessRegistry(launcher: testExecutionLauncher()),
+      shellManager: ShellSessionRuntime(launcher: testExecutionLauncher()),
       mcpClient: CatalogDiscoveryStub(),
       hostContext: .init(
         runtimeID: UUID(), context: .init(caller: .localMCP, profileID: .localAdmin),
         projectID: "catalog", rootURL: configuration.projectDirectory, readOnly: false))
     do {
       let snapshot = try GatewayToolCatalogSnapshot(providers: registry.providers())
-      for name in ["process.spawn", "process.list", "process.read", "process.cancel"] {
+      for name in [
+        "process.spawn", "process.list", "process.read", "process.write", "process.cancel",
+      ] {
         #expect(snapshot.routes[name]?.provider.id == (hasCLI ? "process" : nil))
       }
       for name in [
@@ -57,12 +64,12 @@ struct BuiltinToolCatalogSnapshotTests {
   @Test
   func builtinDefinitionsDeclareMatchingCapabilityIDs() throws {
     let environment = ToolEnvironment(
+      launcher: testExecutionLauncher(),
       configuration: .fixture(
         policy: .init(shellEnabled: true),
         builtin: .init(enabled: DefaultGatewayConfiguration.enabledBuiltinCapabilities),
         skills: .init(enabled: true)))
     let providers: [any GatewayToolProvider] = [
-      DeliveryToolProvider(environment: environment),
       ProjectToolProvider(environment: environment), FilesToolProvider(environment: environment),
       SkillsToolProvider(environment: environment),
       StructuredToolProvider(environment: environment),
@@ -87,7 +94,13 @@ struct BuiltinToolCatalogSnapshotTests {
       }
     }
 
-    #expect(definitions.count == 241)
+    #expect(definitions.count == 238)
+    for name in [
+      "git.worktree_add", "git.worktree_list", "git.worktree_remove", "git.merge",
+      "git.branch_delete", "git.worktrees",
+    ] {
+      #expect(snapshot.routes[name] == nil)
+    }
     #expect(Set(definitions.map(\.tool.name)).count == definitions.count)
     for definition in definitions {
       #expect(definition.capability.id == definition.tool.name)
@@ -98,6 +111,7 @@ struct BuiltinToolCatalogSnapshotTests {
   @Test
   func builtinProviderNamespacesAreDisjointAndCoverEveryDefinition() async throws {
     let environment = ToolEnvironment(
+      launcher: testExecutionLauncher(),
       configuration: .fixture(
         policy: .init(shellEnabled: true),
         builtin: .init(enabled: DefaultGatewayConfiguration.enabledBuiltinCapabilities),
@@ -106,7 +120,7 @@ struct BuiltinToolCatalogSnapshotTests {
       toolEnvironment: environment, mcpClient: CatalogDiscoveryStub())
     do {
       let providers = try registry.providers().filter { $0.id != "computer-use" }
-      #expect(providers.count == 13)
+      #expect(providers.count == 12)
       var namespaces: Set<String> = []
       for provider in providers {
         #expect(!provider.namespaces.isEmpty, "Provider: \(provider.id)")
@@ -131,13 +145,20 @@ struct BuiltinToolCatalogSnapshotTests {
   @Test
   func completeHostCatalogMatchesReviewedSnapshot() async throws {
     let project = try ScopedTemporaryDirectory()
+    let state = try ScopedTemporaryDirectory()
     let configuration = GatewayConfiguration(
       runtime: .init(caller: .localMCP, profileID: .localAdmin),
       policy: .init(shellEnabled: true),
       profiles: [
         .init(
-          id: .localAdmin, capabilities: ["*"], projects: ["catalog"],
-          allowedCallers: [.localMCP], fullShellEnabled: true, mode: .localFullAccess)
+          id: .localAdmin,
+          permissions: fixturePermissions([
+            .machineInformation: .granted(.access), .skills: .granted(.access),
+            .screen: .granted(.access), .desktopControl: .granted(.access),
+            .unifiedLogs: .granted(.access), .localNetwork: .granted(.access),
+            .project("catalog"): .granted(.write), .mcpServer("*"): .granted(.all),
+            .plugin("*"): .granted(.use),
+          ]), fullAccess: true, allowedCallers: [.localMCP])
       ],
       cli: .init(commands: [.init(id: "fixture", executable: "/unused/catalog-cli")]),
       mcp: .init(servers: [.init(id: "fixture", transport: .stdio, command: "/unused/catalog-mcp")]
@@ -149,11 +170,16 @@ struct BuiltinToolCatalogSnapshotTests {
     // Runtime composition supplies core tools, project schemas, Computer Use and management.
     // Discovery has no plugin sources, CLI trees or downstream tool contributions.
     let runtime = try await GatewayRuntime.make(
-      configuration: configuration, database: GatewayDatabase(inMemory: ()),
+      configuration: configuration,
+      context: .init(
+        caller: .localMCP, profileID: .localAdmin, trustedPrincipalID: "catalog-fixture"),
+      database: fixturePermissionDatabase(
+        path: state.url.appendingPathComponent("state.sqlite").path),
       registeredProjects: [
         .init(id: "catalog", displayName: "Catalog", rootPath: project.url.path)
       ],
-      platform: MacOSPlatform.services, mcpClient: CatalogDiscoveryStub(), plugins: [],
+      platform: MacOSPlatform.services(launcher: testExecutionLauncher()),
+      mcpClient: CatalogDiscoveryStub(), plugins: [],
       bundledPlugins: .init(packages: [], issues: []),
       remoteManagement: GatewayRemoteManagement(call: { _, _, _ in
         throw GatewayToolError.executionFailed("Catalog discovery must not execute management.")
@@ -171,6 +197,8 @@ struct BuiltinToolCatalogSnapshotTests {
           }
           fields["capability"] = .object([
             "risk": .string(descriptor.risk.rawValue),
+            "requirement": try .encoded(descriptor.requirement),
+            "hostServiceAction": descriptor.hostServiceAction.map { .string($0.rawValue) } ?? .null,
             "projectRequirement": .string(descriptor.projectRequirement.rawValue),
             "localOnly": .bool(descriptor.localOnly), "usesNetwork": .bool(descriptor.usesNetwork),
           ])
@@ -200,6 +228,205 @@ struct BuiltinToolCatalogSnapshotTests {
     }
   }
 
+  @Test func documentedToolRequirementsMatchCatalogSnapshot() throws {
+    let (document, expected) = try Self.requirementReference()
+    if ProcessInfo.processInfo.environment["COMPUTER_MCP_UPDATE_CATALOG_SNAPSHOT"] == "1" {
+      let start = try #require(document.range(of: Self.requirementStart))
+      let end = try #require(document.range(of: Self.requirementEnd))
+      let table =
+        "\n" + Self.requirementHeader + "\n| --- | --- | --- | --- |\n"
+        + expected.keys.sorted().compactMap { expected[$0] }.joined(separator: "\n") + "\n"
+      let updated = document.replacingCharacters(in: start.upperBound..<end.lowerBound, with: table)
+      let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
+        .deletingLastPathComponent().deletingLastPathComponent()
+      try updated.write(
+        to: root.appendingPathComponent("Documentation/Reference/Tools.md"), atomically: true,
+        encoding: .utf8)
+      return
+    }
+    let differences = Self.requirementDifferences(document: document, expected: expected)
+    #expect(
+      differences.isEmpty,
+      "Tool requirement reference drift:\n\(differences.joined(separator: "\n"))")
+  }
+
+  @Test(arguments: [
+    "missing", "duplicate", "permission", "value", "fullAccess", "forwarding", "continuation",
+  ])
+  func requirementReferenceRejectsDrift(change: String) throws {
+    let (document, expected) = try Self.requirementReference()
+    let name =
+      change == "forwarding"
+      ? "mcp.tools.call" : change == "continuation" ? "shell.read" : "file.write"
+    let row = try #require(expected[name])
+    let replacement: String
+    switch change {
+    case "missing": replacement = ""
+    case "duplicate": replacement = row + "\n" + row
+    case "permission":
+      replacement = row.replacingOccurrences(of: "Project `write`", with: "Skills `allow`")
+    case "value":
+      replacement = row.replacingOccurrences(of: "Project `write`", with: "Project `read`")
+    case "fullAccess": replacement = row.replacingOccurrences(of: "| No |", with: "| Yes |")
+    case "forwarding", "continuation":
+      var cells = row.components(separatedBy: " | ")
+      cells[3] = "None |"
+      replacement = cells.joined(separator: " | ")
+    default: throw RequirementReferenceError.invalidFixture
+    }
+    try #require(replacement != row)
+    let changed = document.replacingOccurrences(of: row, with: replacement)
+    #expect(!Self.requirementDifferences(document: changed, expected: expected).isEmpty)
+  }
+
+  private static let requirementStart = "<!-- tool-requirements:start -->"
+  private static let requirementEnd = "<!-- tool-requirements:end -->"
+  private static let requirementHeader =
+    "| Tool | Declared permissions | Full access required | Conditions |"
+  private enum RequirementReferenceError: Error { case invalidFixture }
+
+  private static func requirementReference() throws -> (String, [String: String]) {
+    let tests = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
+    let snapshot = try JSONDecoder().decode(
+      [String: JSONValue].self,
+      from: Data(contentsOf: tests.appendingPathComponent("Fixtures/builtin-tool-catalog.json")))
+    let document = try String(
+      contentsOf: tests.deletingLastPathComponent().deletingLastPathComponent()
+        .appendingPathComponent("Documentation/Reference/Tools.md"), encoding: .utf8)
+    let expected = try snapshot.mapValues { tool in
+      let value = try #require(tool.objectValue?["capability"]?.objectValue?["requirement"])
+      return try JSONDecoder().decode(ToolRequirement.self, from: JSONEncoder().encode(value))
+    }.map { name, requirement in (name, requirementRow(name, requirement)) }
+    return (document, Dictionary(uniqueKeysWithValues: expected))
+  }
+
+  private static func requirementDifferences(document: String, expected: [String: String])
+    -> [String]
+  {
+    let sections = document.components(separatedBy: requirementStart)
+    guard sections.count == 2 else { return ["Expected exactly one requirement table"] }
+    let end = sections[1].components(separatedBy: requirementEnd)
+    guard end.count == 2 else { return ["Expected exactly one requirement table end"] }
+    let lines = end[0].split(separator: "\n").map(String.init)
+    guard lines.first == requirementHeader, lines.dropFirst().first == "| --- | --- | --- | --- |"
+    else {
+      return ["Invalid requirement table header"]
+    }
+    var seen: Set<String> = []
+    var differences: [String] = []
+    for line in lines.dropFirst(2) {
+      let cells = line.components(separatedBy: "|").map { $0.trimmingCharacters(in: .whitespaces) }
+      guard cells.count == 6, cells.first == "", cells.last == "",
+        cells[1].hasPrefix("`"), cells[1].hasSuffix("`")
+      else {
+        differences.append("Malformed requirement row: \(line)")
+        continue
+      }
+      let name = String(cells[1].dropFirst().dropLast())
+      if !seen.insert(name).inserted { differences.append("Duplicate: \(name)") }
+      if expected[name] != line { differences.append("Changed or unknown: \(name)") }
+    }
+    differences += Set(expected.keys).subtracting(seen).sorted().map { "Missing: \($0)" }
+    let outside = sections[0] + end[1]
+    if outside.contains("Required permission:")
+      || outside.contains("| Tool | Required permission |")
+    {
+      differences.append("Duplicate permission declarations outside the canonical table")
+    }
+    return differences
+  }
+
+  private static func requirementRow(_ name: String, _ requirement: ToolRequirement) -> String {
+    var permissions: [String] = []
+    switch requirement.access {
+    case .none: break
+    case .read: permissions.append("Project `read`")
+    case .projectWrite: permissions.append("Project `write`")
+    case .sourceProjectWrite: permissions.append("Source Project `write`")
+    }
+    if let value = requirement.namedProjectAccess {
+      permissions.append("Named Project `\(value.rawValue)`")
+    }
+    permissions += requirement.permissions.map { entry in
+      let value = entry.value == .access ? "allow" : entry.value.rawValue
+      return "\(permissionName(entry.permission)) `\(value)`"
+    }.sorted()
+    if !requirement.paths.isEmpty {
+      let operations = Set(
+        requirement.paths.map { path in
+          switch path.operation {
+          case .read: "read"
+          case .write: "write"
+          case .openDirectory: "openDirectory"
+          case .listDirectory: "listDirectory"
+          }
+        }
+      ).sorted().joined(separator: ", ")
+      permissions.append("Resolved paths (\(operations))")
+    }
+    var conditions: [String] = []
+    switch requirement.target {
+    case .none: break
+    case .mcp(let server, let value):
+      permissions.append("MCP server `\(value.rawValue)` (\(objectName(server)))")
+    case .forwarded(let tool, let arguments, let server):
+      conditions.append(
+        "Forward \(tool)(\(arguments))" + (server.map { " on \($0)" } ?? "")
+          + "; check target requirements")
+    }
+    switch requirement.execution {
+    case .none: break
+    case .start: conditions.append("Start execution")
+    case .list: conditions.append("Retained execution list")
+    case .read(let argument): conditions.append("Retained execution read (\(argument))")
+    case .input(let argument): conditions.append("Retained execution input (\(argument))")
+    case .cancel(let argument): conditions.append("Retained execution cancel (\(argument))")
+    }
+    if let contribution = requirement.contribution {
+      let kind: String
+      let object: ToolRequirement.Object
+      switch contribution {
+      case .cli(let selection):
+        kind = "CLI"
+        object = selection
+      case .skills(let selection):
+        kind = "Skills"
+        object = selection
+      case .mcp(let selection):
+        kind = "MCP"
+        object = selection
+      }
+      conditions.append("Plugin `use` if contributed: \(kind) \(objectName(object))")
+    }
+    if let url = requirement.networkURL { conditions.append("Network URL: \(url)") }
+    return "| `\(name)` | \(permissions.isEmpty ? "None" : permissions.joined(separator: "; ")) | "
+      + "\(requirement.requiresFullAccess ? "Yes" : "No") | \(conditions.isEmpty ? "None" : conditions.joined(separator: "; ")) |"
+  }
+
+  private static func objectName(_ object: ToolRequirement.Object) -> String {
+    switch object {
+    case .argument(let name): "argument \(name)"
+    case .registered(let id): "registered \(id)"
+    case .catalog: "catalog"
+    case .skill(let name, let root): "skill \(name) in \(root)"
+    }
+  }
+
+  private static func permissionName(_ permission: Permission) -> String {
+    switch permission {
+    case .project(let id): "Project \(id)"
+    case .plugin(let id): "Plugin \(id)"
+    case .mcpServer(let id): "MCP server \(id)"
+    case .filesAndFolders(let category): "Files and Folders \(category.rawValue)"
+    case .screen: "Screen"
+    case .desktopControl: "Desktop control"
+    case .localNetwork: "Local network"
+    case .machineInformation: "Machine information"
+    case .unifiedLogs: "Unified logs"
+    case .skills: "Skills"
+    }
+  }
+
   private static func differences(expected: [String: JSONValue], actual: [String: JSONValue])
     -> [String]
   {
@@ -217,7 +444,11 @@ struct BuiltinToolCatalogSnapshotTests {
   }
 }
 
-private struct CatalogDiscoveryStub: DownstreamMCPClient {
+struct CatalogDiscoveryStub: DownstreamMCPClient {
+  func cachedTools(server: MCPServerConfig, context: InvocationContext) -> [MCPTool]? {
+    try? listTools(server: server, context: context)
+  }
+
   func makeScopedClient(
     workingDirectory: URL, environment: [String: String], hostContext: (any MCPHostEnvironment)?
   ) -> any DownstreamMCPClient { self }

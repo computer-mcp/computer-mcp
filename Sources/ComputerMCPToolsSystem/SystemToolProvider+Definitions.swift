@@ -15,6 +15,7 @@ extension SystemToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "system.info", risk: .readOnly,
+          requirement: .privacy(.machineInformation),
           projectRequirement: .none,
           localOnly: false, usesNetwork: false
         )
@@ -31,6 +32,7 @@ extension SystemToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "system.kernel", risk: .readOnly,
+          requirement: .privacy(.machineInformation),
           projectRequirement: .none,
           localOnly: false, usesNetwork: false
         )
@@ -51,6 +53,7 @@ extension SystemToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "system.software", risk: .readOnly,
+          requirement: .privacy(.machineInformation),
           projectRequirement: .none,
           localOnly: false, usesNetwork: false
         )
@@ -67,6 +70,7 @@ extension SystemToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "system.locale", risk: .readOnly,
+          requirement: .privacy(.machineInformation),
           projectRequirement: .none,
           localOnly: false, usesNetwork: false
         )
@@ -83,6 +87,7 @@ extension SystemToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "system.memory", risk: .readOnly,
+          requirement: .privacy(.machineInformation),
           projectRequirement: .none,
           localOnly: false, usesNetwork: false
         )
@@ -99,6 +104,7 @@ extension SystemToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "system.load", risk: .readOnly,
+          requirement: .privacy(.machineInformation),
           projectRequirement: .none,
           localOnly: false, usesNetwork: false
         )
@@ -115,6 +121,7 @@ extension SystemToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "system.cpu", risk: .readOnly,
+          requirement: .privacy(.machineInformation),
           projectRequirement: .none,
           localOnly: false, usesNetwork: false
         )
@@ -131,6 +138,7 @@ extension SystemToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "system.thermal", risk: .readOnly,
+          requirement: .privacy(.machineInformation),
           projectRequirement: .none,
           localOnly: false, usesNetwork: false
         )
@@ -147,6 +155,7 @@ extension SystemToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "system.time", risk: .readOnly,
+          requirement: .privacy(.machineInformation),
           projectRequirement: .none,
           localOnly: false, usesNetwork: false
         )
@@ -163,6 +172,7 @@ extension SystemToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "system.uptime", risk: .readOnly,
+          requirement: .privacy(.machineInformation),
           projectRequirement: .none,
           localOnly: false, usesNetwork: false
         )
@@ -179,6 +189,7 @@ extension SystemToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "system.user", risk: .readOnly,
+          requirement: .privacy(.machineInformation),
           projectRequirement: .none,
           localOnly: false, usesNetwork: false
         )
@@ -195,6 +206,7 @@ extension SystemToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "system.groups", risk: .readOnly,
+          requirement: .privacy(.machineInformation),
           projectRequirement: .none,
           localOnly: false, usesNetwork: false
         )
@@ -215,6 +227,7 @@ extension SystemToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "system.power", risk: .readOnly,
+          requirement: .privacy(.machineInformation),
           projectRequirement: .none,
           localOnly: false, usesNetwork: false
         )
@@ -236,6 +249,7 @@ extension SystemToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "system.volumes", risk: .readOnly,
+          requirement: .privacy(.machineInformation),
           projectRequirement: .none,
           localOnly: false, usesNetwork: false
         )
@@ -244,7 +258,7 @@ extension SystemToolProvider {
         tool: MCPTool(
           name: "system.processes",
           description:
-            "Return a bounded read-only macOS process snapshot using fixed /bin/ps argv. This reports executable command names, not full argument strings.",
+            "Return a bounded read-only macOS process snapshot through native host APIs. Command includes readable arguments; otherwise it contains the executable path or name with [arguments unavailable]. Unreadable CPU, memory, or elapsed values are null.",
           inputSchema: objectSchema(
             properties: [
               "query": stringSchema(
@@ -261,6 +275,7 @@ extension SystemToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "system.processes", risk: .readOnly,
+          requirement: .privacy(.machineInformation),
           projectRequirement: .none,
           localOnly: false, usesNetwork: false
         )
@@ -286,6 +301,7 @@ extension SystemToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "system.which", risk: .readOnly,
+          requirement: .privacy(.machineInformation),
           projectRequirement: .none,
           localOnly: false, usesNetwork: false
         )
@@ -310,6 +326,7 @@ extension SystemToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "system.path", risk: .readOnly,
+          requirement: .privacy(.machineInformation),
           projectRequirement: .none,
           localOnly: false, usesNetwork: false
         )
@@ -346,6 +363,7 @@ extension SystemToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "logs.query", risk: .readOnly,
+          requirement: .privacy(.unifiedLogs),
           projectRequirement: .optional,
           localOnly: false, usesNetwork: false
         )
@@ -377,6 +395,7 @@ extension SystemToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "service.status", risk: .readOnly,
+          requirement: .privacy(.machineInformation),
           projectRequirement: .optional,
           localOnly: false, usesNetwork: false
         )
@@ -393,6 +412,7 @@ extension SystemToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "env.describe", risk: .readOnly,
+          requirement: .privacy(.machineInformation),
           projectRequirement: .optional,
           localOnly: false, usesNetwork: false
         )

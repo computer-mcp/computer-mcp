@@ -4,6 +4,7 @@ import ComputerMCPControlPlane
 import ComputerMCPCore
 import ComputerMCPGateway
 import ComputerMCPMacOS
+import ComputerMCPPermissions
 import ComputerMCPPlatform
 import ComputerMCPPlatformDarwin
 import ComputerMCPPlugins
@@ -20,6 +21,7 @@ final class LiveAppControlPlane: AppControlPlane {
   private let controlSocketService: ControlSocketService?
   private let fileLogger: AppFileLogger
   private let registrationService: ClientRegistrationService
+  private let diagnosticOperations = BlockingOperationExecutor(label: "computer-mcp.diagnostics")
   private let registrationOperations = BlockingOperationExecutor(
     label: "computer-mcp.client-registration")
   private let permissionRequester: any SystemPermissionRequesting
@@ -175,7 +177,10 @@ final class LiveAppControlPlane: AppControlPlane {
 
   func fetchProjects() async throws -> [ProjectSummary] {
     let activeProfile = try await controlPlane.activeGatewayProfile()
-    let grant = try await controlPlane.profileGrants().first { $0.id == activeProfile }
+    let view = try await controlPlane.permissionRequests()
+    guard let grant = view.profiles.first(where: { $0.id == activeProfile }) else {
+      throw AppControlPlaneServiceError.unknownGatewayProfile(activeProfile.rawValue)
+    }
     return try await controlPlane.projectAccessReports().map { report in
       let project = report.project
       let health: ProjectHealth
@@ -193,12 +198,13 @@ final class LiveAppControlPlane: AppControlPlane {
         path: project.rootPath,
         health: health,
         activeProfileID: activeProfile.rawValue,
-        isEnabled: grant?.projectIDs.contains("*") == true
-          || grant?.projectIDs.contains(project.id) == true,
-        isSelected: grant?.projectIDs.contains("*") == true
-          || grant?.projectIDs.contains(project.id) == true,
+        access: try ProjectAccess(
+          permissionState: grant.permissions.entries[.project(project.id)] ?? .notGranted),
+        effectiveAccess: try ProjectAccess(
+          permissionState: grant.permissions.state(for: .project(project.id))),
+        profileRevision: grant.authorizationRevision, permissionRevision: view.revision,
         lastResolvedAt: report.error == nil ? Date() : nil,
-        healthDetail: report.error?.localizedDescription
+        healthDetail: report.error?.localizedDescription, registeredAt: project.createdAt
       )
     }
   }
@@ -209,10 +215,11 @@ final class LiveAppControlPlane: AppControlPlane {
       ProfileSummary(
         id: grant.id.rawValue,
         displayName: grant.id.displayName,
-        summary: grant.mode.summary,
+        summary: grant.fullAccess
+          ? "Programs may use Full access with client consent." : "Programs run in the sandbox.",
         isActive: grant.id == activeProfile,
         isEnabled: grant.id != .localAdmin,
-        riskLevel: grant.mode.riskLevel,
+        riskLevel: grant.fullAccess ? .high : .elevated,
         permitsRemoteAccess: grant.allowedCallers.contains(where: \.isRemote),
         permissions: grant
       )
@@ -259,14 +266,14 @@ final class LiveAppControlPlane: AppControlPlane {
   ) async throws {
     _ = try await operations.approveControlSession(
       id: id, lifetime: lifetime, expectedRevision: expectedRevision,
-      expectedTrustRevision: expectedTrustRevision, enableShellFacility: true)
+      expectedTrustRevision: expectedTrustRevision)
   }
 
-  func limitClientAccess(id: String, mode: GatewayPermissionMode, expectedRevision: Int64)
+  func limitClientAccess(id: String, limits: ManagedPolicy, expectedRevision: Int64)
     async throws
   {
     _ = try await operations.limitControlSession(
-      id: id, to: mode, expectedRevision: expectedRevision)
+      id: id, to: limits, expectedRevision: expectedRevision)
   }
 
   func endClientAccess(id: String, expectedRevision: Int64) async throws {
@@ -282,7 +289,7 @@ final class LiveAppControlPlane: AppControlPlane {
   }
 
   func fetchPlugins() async throws -> PluginHostSnapshot {
-    try await controlPlane.pluginSnapshot()
+    try await controlPlane.pluginSnapshot(includingSourceReviews: true)
   }
 
   func fetchMCPRegistrations() async throws -> MCPRegistrationSnapshot {
@@ -320,6 +327,24 @@ final class LiveAppControlPlane: AppControlPlane {
       change, apply: apply, expectedCurrentDigest: expectedCurrentDigest)
   }
 
+  func reviewMCPRegistrationEnablement(
+    _ change: MCPRegistrationChange, preview: MCPRegistrationChangePreview
+  ) async throws -> ProviderEnablementReview? {
+    try await controlPlane.reviewMCPRegistrationEnablement(change, preview: preview)
+  }
+
+  func changeMCPRegistration(
+    _ change: MCPRegistrationChange, expectedCurrentDigest: String,
+    approval: ProviderEnablementApproval
+  ) async throws -> MCPRegistrationChangePreview {
+    do {
+      return try await operations.changeMCPRegistration(
+        change, apply: true, expectedCurrentDigest: expectedCurrentDigest, approval: approval)
+    } catch GatewayPermissionError.revisionConflict {
+      throw LivePrivacySecurityService.changedPermissions()
+    }
+  }
+
   func doctorPlugin(id: String) async throws -> PluginDoctorReport {
     try await controlPlane.doctorPlugin(id: id)
   }
@@ -335,6 +360,19 @@ final class LiveAppControlPlane: AppControlPlane {
     -> PluginCatalogSearchResult
   {
     try await controlPlane.searchPlugins(query: query, kind: kind, page: page, refresh: refresh)
+  }
+
+  func reviewPluginEnablement(_ change: PluginHostChange, expectedRevision: Int64) async throws
+    -> ProviderEnablementReview?
+  {
+    try await controlPlane.reviewPluginEnablement(change, expectedRevision: expectedRevision)
+  }
+
+  func changePlugins(
+    _ change: PluginHostChange, expectedRevision: Int64, approval: ProviderEnablementApproval
+  ) async throws -> PluginHostSnapshot {
+    try await operations.changePlugins(
+      change, expectedRevision: expectedRevision, approval: approval)
   }
 
   func changePlugins(_ change: PluginHostChange, expectedRevision: Int64) async throws
@@ -601,29 +639,21 @@ final class LiveAppControlPlane: AppControlPlane {
     fileLogger.append(.info, event: "project.removed", fields: ["project_id": id])
   }
 
-  func setProjectEnabled(
-    _ enabled: Bool,
-    projectID: String,
-    profileID: String
+  func setProjectAccess(
+    _ access: ProjectAccess, projectID: String, profileID: String,
+    expectedProfileRevision: Int64, expectedPermissionRevision: UInt64
   ) async throws {
     guard let profile = GatewayProfileID(rawValue: profileID) else {
       throw AppControlPlaneError.unavailable(
-        AppLocalization.formatted("Unknown gateway profile: %@", profileID)
-      )
+        AppLocalization.formatted("Unknown gateway profile: %@", profileID))
     }
-    _ = try await operations.setProjectEnabled(
-      enabled,
-      projectID: projectID,
-      profileID: profile
-    )
+    _ = try await operations.setProjectAccess(
+      access, projectID: projectID, profileID: profile,
+      expectedProfileRevision: expectedProfileRevision,
+      expectedPermissionRevision: expectedPermissionRevision)
     fileLogger.append(
-      .info,
-      event: enabled ? "project.granted" : "project.revoked",
-      fields: [
-        "profile_id": profileID,
-        "project_id": projectID,
-      ]
-    )
+      .info, event: "project.access.updated",
+      fields: ["profile_id": profileID, "project_id": projectID, "access": access.rawValue])
   }
 
   func activateProfile(id: String) async throws {
@@ -649,22 +679,118 @@ final class LiveAppControlPlane: AppControlPlane {
     async throws
   {
     _ = try await operations.updateProfilePermissions(
-      profileID: grant.id, mode: grant.mode, confirmationPolicy: grant.confirmationPolicy,
-      fullShellEnabled: grant.fullShellEnabled, capabilityIDs: grant.capabilityIDs,
-      projectIDs: grant.projectIDs, mcpServerIDs: grant.mcpServerIDs,
-      allowedCallers: grant.allowedCallers, expectedRevision: grant.authorizationRevision,
-      reviewedOptions: reviewed)
+      grant, expectedRevision: reviewed.permissionRevision, reviewedOptions: reviewed)
     fileLogger.append(
       .info, event: "profile.permissions.updated", fields: ["profile_id": grant.id.rawValue])
   }
 
-  func fetchOperationApprovals() async throws -> [OperationTicket] {
-    try await controlPlane.operationApprovals()
+  func ownerPolicyEditorService() async throws -> OwnerPolicyEditorService {
+    try await controlPlane.ownerPolicyEditorService()
   }
 
-  func resolveOperationApproval(id: String, approved: Bool) async throws {
-    _ = try await controlPlane.resolveOperationApproval(
-      id: id, approved: approved, resolver: .localApp)
+  func fetchPrivacyPermissionInventory() async throws -> PrivacyPermissionInventory {
+    try await controlPlane.privacyPermissionInventory()
+  }
+
+  func saveProviderPermissions(
+    reviewed: ProviderPermissionOptions, permissions: Permissions, fullAccess: Bool,
+    sandboxSettings: ProviderSandboxSettings, editingApproval: Bool
+  ) async throws {
+    try await operations.saveProviderPermissions(
+      reviewed: reviewed, permissions: permissions, fullAccess: fullAccess,
+      sandboxSettings: sandboxSettings, editingApproval: editingApproval)
+  }
+
+  func revokeProviderPermissions(reviewed: ProviderPermissionOptions) async throws {
+    try await controlPlane.revokeProviderPermissions(reviewed: reviewed)
+  }
+
+  func fetchProjectWorktrees() async throws -> [ProjectWorktreeInventory] {
+    try await controlPlane.projectWorktreeInventory()
+  }
+
+  func fetchRecoveryStores() async throws -> [RecoveryStoreView] {
+    try await controlPlane.recoveryStores()
+  }
+
+  func worktreeRecoveryEpoch() async throws -> UUID {
+    try await controlPlane.worktreeRecoveryEpoch()
+  }
+
+  func reviewWorktreeRemoval(_ target: ManagedWorktreeRemovalTarget, epoch: UUID) async throws
+    -> ManagedWorktreeRemovalReview
+  {
+    try await controlPlane.reviewWorktreeRemoval(target, epoch: epoch)
+  }
+
+  func confirmWorktreeRemoval(
+    _ review: ManagedWorktreeRemovalReview, discard: Bool, epoch: UUID
+  ) async throws {
+    try await controlPlane.confirmWorktreeRemoval(review, discard: discard, epoch: epoch)
+  }
+
+  func worktreeRemovalOutcome(_ review: ManagedWorktreeRemovalReview) async throws
+    -> ManagedWorktreeRemovalOutcome
+  {
+    try await controlPlane.worktreeRemovalOutcome(review)
+  }
+
+  func reviewRecoveryRelease(
+    storeKey: String, generation: UUID, selections: [RecoveryRecordSelection], epoch: UUID
+  ) async throws -> RecoveryReleaseReview {
+    try await controlPlane.reviewRecoveryRelease(
+      storeKey: storeKey, generation: generation, selections: selections, epoch: epoch)
+  }
+
+  func confirmRecoveryRelease(_ review: RecoveryReleaseReview, epoch: UUID) async throws
+    -> RecoveryOperationStatus
+  {
+    try await controlPlane.confirmRecoveryRelease(review, epoch: epoch)
+  }
+
+  func prepareRecoveryMaintenance(storeKey: String, generation: UUID, epoch: UUID) async throws
+    -> RecoveryMaintenancePreparation
+  {
+    try await controlPlane.prepareRecoveryMaintenance(
+      storeKey: storeKey, generation: generation, epoch: epoch)
+  }
+
+  func runRecoveryMaintenance(_ review: RecoveryMaintenanceReview, epoch: UUID) async throws
+    -> RecoveryOperationStatus
+  {
+    try await controlPlane.runRecoveryMaintenance(review, epoch: epoch)
+  }
+
+  func recoveryOperation(handle: RecoveryOperationHandle) async throws -> RecoveryOperationLookup {
+    try await controlPlane.recoveryOperation(handle: handle)
+  }
+
+  func resumeRecoveryOperation(handle: RecoveryOperationHandle, epoch: UUID) async throws
+    -> RecoveryOperationStatus
+  {
+    try await controlPlane.resumeRecoveryOperation(handle: handle, epoch: epoch)
+  }
+
+  func fetchPermissionRequests() async throws -> GatewayPermissionView {
+    try await controlPlane.permissionRequests()
+  }
+
+  func fetchPermissionObjectNames() async throws -> PermissionObjectNames {
+    try await controlPlane.privacyPermissionInventory().names
+  }
+
+  func confirmPermissionAuthority(epoch: UUID, expectedRevision: UInt64, profiles: [ProfileGrant])
+    async throws
+  {
+    try await controlPlane.confirmPermissionAuthority(
+      epoch: epoch, expectedRevision: expectedRevision, profiles: profiles)
+  }
+
+  func answerPermissionRequest(id: UUID, answer: PermissionAnswer?, expectedRevision: UInt64)
+    async throws
+  {
+    try await controlPlane.answerPermissionRequest(
+      id, answer: answer, expectedRevision: expectedRevision)
   }
 
   func startProvider(id: String) async throws {
@@ -896,7 +1022,7 @@ final class LiveAppControlPlane: AppControlPlane {
     let diagnostics = try await fetchDiagnostics()
     let audit = try await fetchAudit()
     let text = Self.diagnosticText(diagnostics: diagnostics, audit: audit)
-    try await Task.detached {
+    try await diagnosticOperations.perform {
       let root = FileManager.default.temporaryDirectory
         .appendingPathComponent(UUID().uuidString, isDirectory: true)
       defer { try? FileManager.default.removeItem(at: root) }
@@ -909,7 +1035,7 @@ final class LiveAppControlPlane: AppControlPlane {
       if FileManager.default.fileExists(atPath: destination.path) {
         try FileManager.default.removeItem(at: destination)
       }
-      let result = try ProcessCommandRunner().run(
+      let result = try ProcessCommandRunner(launcher: MacOSPlatform.services.launcher).run(
         executable: "/usr/bin/ditto",
         arguments: ["-c", "-k", "--sequesterRsrc", root.path, destination.path],
         workingDirectory: nil,
@@ -922,7 +1048,7 @@ final class LiveAppControlPlane: AppControlPlane {
           result.stderr.isEmpty ? "Could not create diagnostics archive." : result.stderr
         )
       }
-    }.value
+    }
   }
 
   private func restartGatewayIfRunning(
@@ -1150,16 +1276,6 @@ final class LiveAppControlPlane: AppControlPlane {
         )
       )
     }
-    if !configuration.delivery.scopes.isEmpty {
-      summaries.append(
-        ProviderSummary(
-          id: "delivery", displayName: "Delivery", kind: .builtin, state: inProcessState,
-          version: nil, executablePath: nil,
-          toolCount: configuration.builtin.enabled.filter { $0.hasPrefix("delivery.") }.count,
-          lastDoctorMessage: AppLocalization.formatted(
-            "%@ delivery scope(s)", String(configuration.delivery.scopes.count)),
-          lastError: nil, lifecycleManaged: false))
-    }
     if configuration.skills.enabled {
       summaries.append(
         ProviderSummary(
@@ -1311,25 +1427,6 @@ extension GatewayProfileID {
     return rawValue
   }
 
-}
-
-extension GatewayPermissionMode {
-  fileprivate var summary: String {
-    switch self {
-    case .readOnly: "Read selected tools and projects without changing them."
-    case .projectOperations:
-      "Control selected capabilities, projects, and integrations."
-    case .localFullAccess:
-      "Control selected capabilities. Full Access requires approval for a connected client."
-    }
-  }
-  fileprivate var riskLevel: RiskLevel {
-    switch self {
-    case .readOnly: .low
-    case .projectOperations: .elevated
-    case .localFullAccess: .high
-    }
-  }
 }
 
 extension OpenAITunnelLifecycleState {

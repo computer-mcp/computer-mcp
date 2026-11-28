@@ -5,6 +5,7 @@ import ComputerMCPCore
 import ComputerMCPGateway
 import ComputerMCPMacOS
 import ComputerMCPPlatform
+import ComputerMCPProcess
 import ComputerMCPTransport
 import Foundation
 
@@ -67,9 +68,54 @@ struct StandaloneRuntimeOptions: ParsableArguments {
   )
   var database: String?
 
+  func makePlatform() throws -> PlatformServices {
+    var platform = MacOSPlatform.services
+    if database != nil {
+      platform.hostDataPaths.formUnion(try StandalonePermissionAuthority.hostDataPaths())
+    }
+    return platform
+  }
+
+  func loadConfiguration(
+    database: GatewayDatabase, platform: PlatformServices,
+    diagnosticOutput: FileHandle = .standardError
+  ) async throws -> AtomicManifestStore.Snapshot {
+    let manifestURL = URL(fileURLWithPath: config).standardizedFileURL
+    let configuration = try GatewayConfiguration.load(
+      path: manifestURL.path,
+      knownPluginMCPServerIDs: database.pluginStoreSnapshot().knownMCPRegistrationIDs)
+    guard database.fileURL != nil else { return (configuration, nil) }
+    let report = try database.activatePermissionMigration(
+      manifest: String(contentsOf: manifestURL, encoding: .utf8),
+      baseURL: manifestURL.deletingLastPathComponent(), applications: platform.applications)
+    if let message = report?.startupDiagnostic {
+      try? diagnosticOutput.write(contentsOf: Data((message + "\n").utf8))
+    }
+    // Every retired checkout is reported before any provider starts.
+    try database.drainPluginWorktreeRetirements { notice in
+      try diagnosticOutput.write(contentsOf: Data((notice.rendered + "\n").utf8))
+    }
+    let ids = Set(GatewayProfileID.builtIns + configuration.profiles.map(\.id))
+    let seeds = ids.sorted { $0.rawValue < $1.rawValue }.map { configuration.profileGrant(for: $0) }
+    try database.bootstrapPermissionProfiles(
+      seeds, declarations: configuration.profiles.map(\.grant))
+    try database.registerManifestProjectsForStartup(configuration.manifestProjects)
+    let permissions = try database.permissionRuntime(platform: platform)
+    try await permissions.ready()
+    let store = try AtomicManifestStore(
+      manifestURL: manifestURL, database: database,
+      loader: GatewayManifestConfigurationLoader(
+        database: database, applications: platform.applications))
+    return try store.activeSnapshot()
+  }
+
   func makeDatabase() throws -> GatewayDatabase {
     if let database {
-      return try GatewayDatabase(path: URL(fileURLWithPath: database).standardizedFileURL.path)
+      let location = URL(fileURLWithPath: database).standardizedFileURL
+      try StandalonePermissionAuthority.validateLocation(location)
+      let persistent = try GatewayDatabase(path: location.path)
+      try StandalonePermissionAuthority.configure(persistent, at: location)
+      return persistent
     }
     return try GatewayDatabase(inMemory: ())
   }
@@ -85,23 +131,45 @@ struct ServeStdio: AsyncParsableCommand {
 
   func run() async throws {
     let database = try runtime.makeDatabase()
-    let gateway = try GatewayConfiguration.load(
-      path: runtime.config,
-      knownPluginMCPServerIDs: database.pluginStoreSnapshot().knownMCPRegistrationIDs)
-    let context = gateway.executionContext(
-      caller: runtime.caller,
-      profileID: runtime.profile,
-      projectID: runtime.projectID,
-      transportTrace: GatewayTransportTrace(
-        transport: "stdio", socketConnectionID: UUID().uuidString)
-    )
+    let platform = try runtime.makePlatform()
+    let manifest = try await runtime.loadConfiguration(database: database, platform: platform)
+    let gateway = manifest.configuration
+    let context = LocalCLIExecutionIdentity.bind(
+      gateway.executionContext(
+        caller: runtime.caller,
+        profileID: runtime.profile,
+        projectID: runtime.projectID,
+        transportTrace: GatewayTransportTrace(
+          transport: "stdio", socketConnectionID: UUID().uuidString)
+      ), surface: .stdio)
+
+    let sessions = try await makeTerminalSessions(database: database, platform: platform)
     let registry = try await GatewayRuntime.make(
       configuration: gateway,
       context: context,
       database: database,
-      platform: MacOSPlatform.services
+      platform: platform, manifestRevision: .captured(manifest.revisionID),
+      terminalSessions: sessions
     )
-    try await MCPRuntimeAdapter.runStdioGateway(configuration: gateway, registry: registry)
+    let serving: any GatewayAsyncToolServing =
+      database.fileURL == nil ? registry : GatewayStandaloneGenerations(registry)
+    try await MCPRuntimeAdapter.runStdioGateway(configuration: gateway, registry: serving)
+  }
+
+  func makeTerminalSessions(database: GatewayDatabase, platform: PlatformServices) async throws
+    -> GatewayTerminalSessions
+  {
+    let sessions = GatewayTerminalSessions()
+    if let path = database.fileURL?.deletingLastPathComponent() {
+      let permissions = try database.permissionRuntime(platform: platform)
+      try await permissions.ready()
+      try sessions.enablePersistence(
+        in: path.appendingPathComponent("Executions"),
+        ownerID: (database.fileURL?.standardizedFileURL.path ?? "") + ":stdio:"
+          + URL(fileURLWithPath: runtime.config).standardizedFileURL.path,
+        launcher: platform.launcher, authority: permissions.coordinator)
+    }
+    return sessions
   }
 }
 
@@ -126,9 +194,14 @@ struct ServeHTTP: AsyncParsableCommand {
 
   func run() async throws {
     let database = try runtime.makeDatabase()
-    let gateway = try GatewayConfiguration.load(
-      path: runtime.config,
-      knownPluginMCPServerIDs: database.pluginStoreSnapshot().knownMCPRegistrationIDs)
+    var platform = try runtime.makePlatform()
+    if let controlSocket {
+      platform.hostDataPaths.insert(URL(fileURLWithPath: controlSocket).standardizedFileURL)
+    }
+    let manifest = try await runtime.loadConfiguration(database: database, platform: platform)
+    let gateway = manifest.configuration
+    let sessions = try await makeTerminalSessions(
+      database: database, platform: platform, configuration: gateway)
     let registry = try await GatewayRuntime.make(
       configuration: gateway,
       context: gateway.executionContext(
@@ -138,8 +211,17 @@ struct ServeHTTP: AsyncParsableCommand {
         transportTrace: GatewayTransportTrace(transport: "streamable_http")
       ),
       database: database,
-      platform: MacOSPlatform.services
+      platform: platform, manifestRevision: .captured(manifest.revisionID),
+      terminalSessions: sessions
     )
+    let permissionControl = PermissionControlService(
+      service: try database.permissionRuntime(platform: platform).service,
+      owner: {
+        try GatewayPermissionOwner(
+          context: .init(
+            caller: .localCLI, profileID: .localAdmin, trustedPrincipalID: "local-cli"),
+          validate: {})
+      })
     try await MCPRuntimeAdapter.runHTTPGateway(
       configuration: gateway,
       registry: registry,
@@ -149,9 +231,25 @@ struct ServeHTTP: AsyncParsableCommand {
       control: controlSocket.map {
         GatewayHTTPControlConfiguration(
           socketURL: URL(fileURLWithPath: $0), database: database,
-          clientControl: GatewayHTTPClientControl())
+          clientControl: GatewayHTTPClientControl(permissionControl: permissionControl))
       }
     )
+  }
+  func makeTerminalSessions(
+    database: GatewayDatabase, platform: PlatformServices, configuration: GatewayConfiguration
+  ) async throws -> GatewayTerminalSessions {
+    let sessions = GatewayTerminalSessions()
+    if let path = database.fileURL?.deletingLastPathComponent() {
+      let permissions = try database.permissionRuntime(platform: platform)
+      try await permissions.ready()
+      try sessions.enablePersistence(
+        in: path.appendingPathComponent("Executions"),
+        ownerID: (database.fileURL?.standardizedFileURL.path ?? "") + ":http:"
+          + URL(fileURLWithPath: runtime.config).standardizedFileURL.path + ":"
+          + String(port ?? configuration.server.http.port),
+        launcher: platform.launcher, authority: permissions.coordinator)
+    }
+    return sessions
   }
 }
 
@@ -342,11 +440,10 @@ private func withStandaloneToolSurface(
   let gateway = try GatewayConfiguration.load(path: config)
   let registry = try await GatewayRuntime.make(
     configuration: gateway,
-    context: gateway.executionContext(
-      caller: options.caller,
-      profileID: options.profile,
-      projectID: options.projectID
-    ),
+    context: LocalCLIExecutionIdentity.bind(
+      gateway.executionContext(
+        caller: options.caller, profileID: options.profile, projectID: options.projectID),
+      surface: .ownerTools),
     database: GatewayDatabase(inMemory: ()),
     platform: MacOSPlatform.services
   )
@@ -405,7 +502,7 @@ struct Validate: AsyncParsableCommand {
     var object: [String: JSONValue] = ["ok": .bool(true)]
     if connect {
       object["mcp"] = try await ComputerMCPProductContracts.validateMCPConnections(
-        configuration: gateway)
+        configuration: gateway, platform: MacOSPlatform.services)
     }
     printJSON(.object(object))
   }
@@ -452,4 +549,5 @@ func decodeArguments(_ text: String) throws -> JSONValue {
     throw ValidationError("--arguments-json must be a JSON object.")
   }
   return value
+
 }

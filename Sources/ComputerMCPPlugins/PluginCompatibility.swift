@@ -94,7 +94,7 @@ package struct PluginArtifactDeclaration: Codable, Equatable, Sendable {
 }
 
 extension PluginManifest {
-  func refusal(
+  package func refusal(
     host: PluginVersion, architecture: String,
     platform: String = PluginPlatformCompatibility.currentPlatform,
     artifactName: String? = nil

@@ -7,11 +7,14 @@ import Foundation
 
 /// Stable, executable-facing artifacts used by the CLI product boundary.
 package enum ComputerMCPProductContracts {
-  package static func validateMCPConnections(configuration: GatewayConfiguration) async throws
+  package static func validateMCPConnections(
+    configuration: GatewayConfiguration, platform: PlatformServices
+  ) async throws
     -> JSONValue
   {
     try Task.checkCancellation()
-    let client = MCPProxyClient(workingDirectory: configuration.projectDirectory)
+    let client = MCPProxyClient(
+      launcher: platform.launcher, workingDirectory: configuration.projectDirectory)
     do {
       let result = try await BlockingOperationExecutor(label: "computer-mcp.config-connect").perform
       {
@@ -45,6 +48,7 @@ package enum ComputerMCPProductContracts {
     let gateway = try GatewayConfiguration.load(path: configurationURL.path)
     let providers = try ExternalProviderDiscovery(
       configuration: gateway,
+      commandRunner: ManagedCommandRunner(launcher: platform.launcher),
       systemSearchDirectories: platform.executableSearchDirectories
     ).discover().sorted {
       $0.providerID < $1.providerID

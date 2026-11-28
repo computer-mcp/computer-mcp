@@ -73,7 +73,8 @@ package struct ChatGPTProfileAudit: Codable, Equatable, Sendable {
 package enum ChatGPTProfileAuditError: Error, LocalizedError, Equatable {
   case noTools
   case missingReadOnlyAnnotations([String])
-  case writeToolsRequireExplicitOptIn([String])
+  case invalidToolSchemas([String])
+  case invalidRequirements([String])
 
   package var errorDescription: String? {
     switch self {
@@ -82,9 +83,12 @@ package enum ChatGPTProfileAuditError: Error, LocalizedError, Equatable {
     case .missingReadOnlyAnnotations(let names):
       return
         "ChatGPT tunnel tools must declare readOnlyHint explicitly. Missing annotations: \(names.joined(separator: ", "))."
-    case .writeToolsRequireExplicitOptIn(let names):
+    case .invalidToolSchemas(let names):
       return
-        "ChatGPT Pro supports read/fetch MCP access only. These tools are not read-only: \(names.joined(separator: ", ")). Use a read-only profile, or pass --allow-write-tools only for an eligible Business, Enterprise, or Edu workspace."
+        "ChatGPT tunnel tools must declare valid object input and output schemas. Invalid schemas: \(names.joined(separator: ", "))."
+    case .invalidRequirements(let names):
+      return
+        "ChatGPT tunnel tools must declare host permission requirements. Invalid requirements: \(names.joined(separator: ", "))."
     }
   }
 }

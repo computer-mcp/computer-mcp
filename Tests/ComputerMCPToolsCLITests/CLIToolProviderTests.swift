@@ -1,13 +1,17 @@
 import ComputerMCPConfiguration
 import ComputerMCPCore
 import ComputerMCPPlatform
-import ComputerMCPProcess
 import ComputerMCPTestSupport
 import ComputerMCPToolKit
 import Foundation
 import Testing
 
+@testable import ComputerMCPProcess
 @testable import ComputerMCPToolsCLI
+
+#if os(macOS)
+  import ComputerMCPDarwinTestSupport
+#endif
 
 @Suite(.nativeIntegration, .serialized)
 final class CLIToolProviderTests {
@@ -15,7 +19,8 @@ final class CLIToolProviderTests {
   func alreadyCancelledExecDoesNotReachRunner() async {
     let runner = RecordingCommandRunner()
     let provider = CLIToolProvider(
-      environment: ToolEnvironment(configuration: .fixture(), commandRunner: runner))
+      environment: ToolEnvironment(
+        launcher: testExecutionLauncher(), configuration: .fixture(), commandRunner: runner))
     let task = Task {
       withUnsafeCurrentTask { $0?.cancel() }
       return try await provider.callToolAsync(
@@ -31,7 +36,8 @@ final class CLIToolProviderTests {
 
   @Test
   func testNoAuthToolsAdvertiseNoAuthSecurityScheme() throws {
-    let provider = CLIToolProvider(environment: ToolEnvironment(configuration: .fixture()))
+    let provider = CLIToolProvider(
+      environment: ToolEnvironment(launcher: testExecutionLauncher(), configuration: .fixture()))
     let tool = try #require(try provider.definitions().map(\.tool).first { $0.name == "cli.list" })
 
     #expect(
@@ -51,7 +57,8 @@ final class CLIToolProviderTests {
           accessTokenEnv: "COMPUTER_MCP_TOKEN"
         ))
     )
-    let provider = CLIToolProvider(environment: ToolEnvironment(configuration: config))
+    let provider = CLIToolProvider(
+      environment: ToolEnvironment(launcher: testExecutionLauncher(), configuration: config))
     let tool = try #require(try provider.definitions().map(\.tool).first { $0.name == "cli.list" })
 
     #expect((tool.meta) == nil)
@@ -68,7 +75,8 @@ final class CLIToolProviderTests {
         )
       ])
     )
-    let provider = CLIToolProvider(environment: ToolEnvironment(configuration: config))
+    let provider = CLIToolProvider(
+      environment: ToolEnvironment(launcher: testExecutionLauncher(), configuration: config))
 
     let result = try provider.callTool(
       .init(name: "cli.list", arguments: .object([:]), context: .empty))
@@ -92,7 +100,8 @@ final class CLIToolProviderTests {
         )
       ])
     )
-    let provider = CLIToolProvider(environment: ToolEnvironment(configuration: config))
+    let provider = CLIToolProvider(
+      environment: ToolEnvironment(launcher: testExecutionLauncher(), configuration: config))
 
     let result = try provider.callTool(
       .init(
@@ -121,7 +130,8 @@ final class CLIToolProviderTests {
         CLICommandConfig(id: "missing", executable: "definitely-missing-computer-mcp-test"),
       ])
     )
-    let provider = CLIToolProvider(environment: ToolEnvironment(configuration: config))
+    let provider = CLIToolProvider(
+      environment: ToolEnvironment(launcher: testExecutionLauncher(), configuration: config))
 
     let result = try provider.callTool(
       .init(
@@ -145,7 +155,8 @@ final class CLIToolProviderTests {
 
   @Test
   func testCLIStatusRejectsUnknownID() {
-    let provider = CLIToolProvider(environment: ToolEnvironment(configuration: .fixture()))
+    let provider = CLIToolProvider(
+      environment: ToolEnvironment(launcher: testExecutionLauncher(), configuration: .fixture()))
 
     expectThrows(
       try provider.callTool(
@@ -159,49 +170,97 @@ final class CLIToolProviderTests {
   }
 
   @Test
-  func testCLIHelpReturnsRawHelpAndExecContext() throws {
-    let runner = RecordingCommandRunner()
-    let config = GatewayConfiguration.fixture(
-      cli: CLISectionConfig(commands: [
-        CLICommandConfig(
-          id: "echo",
-          executable: "/bin/echo",
-          interface: CLIInterfaceConfig(formatFlag: "--format", defaultFormat: "json")
-        )
-      ])
-    )
+  func helpReturnsMetadataWithoutStartingExecutable() throws {
+    let temporary = try ScopedTemporaryDirectory()
+    let script = temporary.url.appendingPathComponent("command")
+    let marker = temporary.url.appendingPathComponent("marker")
+    try Data("#!/bin/sh\ntouch '\(marker.path)'\n".utf8).write(to: script)
+    try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: script.path)
     let provider = CLIToolProvider(
-      environment: ToolEnvironment(configuration: config, commandRunner: runner))
+      environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
+        configuration: .fixture(
+          cli: .init(commands: [
+            .init(id: "fixture", executable: script.path, description: "Registered help")
+          ]))))
+    let payload = try decodeTextPayload(
+      provider.callTool(
+        .init(
+          name: "cli.help",
+          arguments: .object([
+            "id": .string("fixture")
+          ]), context: .empty)))
+    #expect(payload.objectValue?["description"] == .string("Registered help"))
+    #expect(payload.objectValue?["executed"] == .bool(false))
+    #expect(!FileManager.default.fileExists(atPath: marker.path))
+    #expect(throws: (any Error).self) {
+      _ = try provider.callTool(
+        .init(
+          name: "cli.help",
+          arguments: .object([
+            "id": .string("fixture"), "path": .array([.string("unregistered")]),
+          ]), context: .empty))
+    }
+  }
 
-    let result = try provider.callTool(
-      .init(
-        name: "cli.help",
-        arguments: .object([
-          "id": .string("echo"),
-          "path": .array([.string("sub")]),
-        ]), context: .empty
-      ))
-    let payload = try decodeTextPayload(result)
+  @Test
+  func pluginTreeWithoutProviderDiscoveryRunsNoExporterAndReportsTheFailure() async throws {
+    let temporary = try ScopedTemporaryDirectory()
+    let script = temporary.url.appendingPathComponent("exporter")
+    let marker = temporary.url.appendingPathComponent("started")
+    try "#!/bin/sh\nprintf started > '\(marker.path)'\n".write(
+      to: script, atomically: true, encoding: .utf8)
+    try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: script.path)
+    var tree = CLITreeSource(kind: .introspection, args: ["--tree"])
+    tree.packageRoot = temporary.url
+    var configuration = GatewayConfiguration.fixture(
+      cli: .init(commands: [.init(id: "plugin-cli", executable: script.path, tree: tree)]))
+    configuration.projectDirectory = temporary.url
+    let provider = CLIToolProvider(
+      environment: .init(launcher: testExecutionLauncher(), configuration: configuration))
+    let trees = try await withCLIProcessScope(directory: temporary.url) {
+      try provider.treeProviders()
+    }
+    #expect(trees.isEmpty)
+    #expect(!FileManager.default.fileExists(atPath: marker.path))
+    let list = try #require(try provider.definitions().first { $0.tool.name == "cli.list" })
+    #expect(list.tool.meta?.objectValue?["discovery_errors"]?.objectValue?["plugin-cli"] != nil)
+  }
 
-    #expect((runner.calls.first?.arguments) == (["sub", "--help"]))
-    #expect((payload.objectValue?["path"]) == (.array([.string("sub")])))
-    #expect((payload.objectValue?["help_argv"]) == (.array([.string("sub"), .string("--help")])))
-    #expect((payload.objectValue?["exec_context"]?.objectValue?["tool"]) == (.string("cli.exec")))
-    #expect(
-      (payload.objectValue?["exec_context"]?.objectValue?["argv_prefix"])
-        == (.array([.string("sub")])))
-    #expect(
-      (payload.objectValue?["interface"]?.objectValue?["format_flag"]) == (.string("--format")))
-    #expect((payload.objectValue?["stdout"]) == (.string("ok")))
-    #expect((payload.objectValue?["stderr"]) == (.string("")))
-    #expect((payload.objectValue?["exit_code"]) == (.number(0)))
+  @Test
+  func execWithoutExecutionContextDoesNotStartTheRegisteredCommand() throws {
+    let temporary = try ScopedTemporaryDirectory()
+    let script = temporary.url.appendingPathComponent("command")
+    let marker = temporary.url.appendingPathComponent("started")
+    try "#!/bin/sh\nprintf started > started\n".write(
+      to: script, atomically: true, encoding: .utf8)
+    try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: script.path)
+    var configuration = GatewayConfiguration.fixture(
+      cli: .init(commands: [.init(id: "fixture", executable: script.path)]))
+    configuration.projectDirectory = temporary.url
+    let provider = CLIToolProvider(
+      environment: .init(launcher: testExecutionLauncher(), configuration: configuration))
+    InvocationExecution.$current.withValue(nil) {
+      ExecutionAdministration.$current.withValue(nil) {
+        #expect(
+          throws: ShellRuntimeError.launchFailed("No authorized execution context is installed")
+        ) {
+          try provider.callTool(
+            .init(
+              name: "cli.exec",
+              arguments: .object(["id": .string("fixture"), "argv": .array([])]), context: .empty))
+        }
+      }
+    }
+    #expect(!FileManager.default.fileExists(atPath: marker.path))
   }
 
   @Test
   func testCLIExecUsesRegisteredExecutable() throws {
     let runner = RecordingCommandRunner()
     let provider = CLIToolProvider(
-      environment: ToolEnvironment(configuration: .fixture(), commandRunner: runner))
+      environment: ToolEnvironment(
+        launcher: testExecutionLauncher(), configuration: .fixture(), commandRunner: runner))
 
     let result = try provider.callTool(
       .init(
@@ -220,7 +279,8 @@ final class CLIToolProviderTests {
 
   @Test
   func testCLIExecSchemaRequiresArgv() throws {
-    let provider = CLIToolProvider(environment: ToolEnvironment(configuration: .fixture()))
+    let provider = CLIToolProvider(
+      environment: ToolEnvironment(launcher: testExecutionLauncher(), configuration: .fixture()))
     let tools = try provider.definitions().map(\.tool)
 
     let cliExec = try #require(tools.first { $0.name == "cli.exec" })
@@ -231,7 +291,8 @@ final class CLIToolProviderTests {
 
   @Test
   func testCLIExecRejectsMissingArgv() {
-    let provider = CLIToolProvider(environment: ToolEnvironment(configuration: .fixture()))
+    let provider = CLIToolProvider(
+      environment: ToolEnvironment(launcher: testExecutionLauncher(), configuration: .fixture()))
 
     expectThrows(
       try provider.callTool(
@@ -246,7 +307,8 @@ final class CLIToolProviderTests {
 
   @Test
   func testCLIExecRejectsUnknownID() {
-    let provider = CLIToolProvider(environment: ToolEnvironment(configuration: .fixture()))
+    let provider = CLIToolProvider(
+      environment: ToolEnvironment(launcher: testExecutionLauncher(), configuration: .fixture()))
 
     expectThrows(
       try provider.callTool(
@@ -266,6 +328,7 @@ final class CLIToolProviderTests {
   func testCLIExecRejectsCommandThatDisallowsArbitraryArgs() {
     let provider = CLIToolProvider(
       environment: ToolEnvironment(
+        launcher: testExecutionLauncher(),
         configuration: .fixture(
           cli: CLISectionConfig(commands: [
             CLICommandConfig(id: "echo", executable: "/bin/echo", allowAnyArgs: false)
@@ -306,7 +369,8 @@ final class CLIToolProviderTests {
       ]))
     let cli = try decodeTextPayload(
       CLIToolProvider(
-        environment: ToolEnvironment(configuration: config, environment: ["PATH": "/bin"])
+        environment: ToolEnvironment(
+          launcher: testExecutionLauncher(), configuration: config, environment: ["PATH": "/bin"])
       ).callTool(.init(name: "cli.status", arguments: .object([:]), context: .empty)))
     let commands = try #require(cli.objectValue?["commands"]?.arrayValue)
     #expect(

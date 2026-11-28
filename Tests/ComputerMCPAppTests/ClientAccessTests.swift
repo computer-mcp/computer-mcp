@@ -1,4 +1,5 @@
 import AppKit
+import ComputerMCPPermissions
 import Foundation
 import SwiftUI
 import Testing
@@ -81,7 +82,7 @@ struct ClientAccessTests {
     let service = ClientAccessFake()
     let model = ClientAccessModel(controlPlane: service)
     await model.reload()
-    #expect(model.controllingSessions.count == 1)
+    #expect(model.activeSessions.count == 1)
     model.requestFullAccess(service.session)
     service.failWrite = true
     #expect(!(await model.approve()))
@@ -90,7 +91,7 @@ struct ClientAccessTests {
     service.failRead = true
     await model.reload()
     #expect(!model.isAvailable)
-    #expect(model.controllingSessions.count == 1)
+    #expect(model.activeSessions.count == 1)
     #expect(model.statusText == AppLocalization.string("Client access status unavailable"))
     #expect(!(await model.approve()))
     #expect(service.approvals.count == 1)
@@ -101,29 +102,23 @@ struct ClientAccessTests {
     let service = ClientAccessFake()
     let model = ClientAccessModel(controlPlane: service)
     await model.reload()
-    await model.limit(service.session, to: .localFullAccess)
-    #expect(service.actions.isEmpty)
-    await model.limit(service.session, to: .readOnly)
+    await model.useSandbox(service.session)
     await model.end(service.session)
     await model.revoke(service.trust)
     #expect(
-      service.actions == ["limit:6F83917A:4:read-only", "end:6F83917A:4", "revoke:trust:7"])
+      service.actions == ["limit:6F83917A:4:sandbox", "end:6F83917A:4", "revoke:trust:7"])
     #expect(service.approvals.isEmpty)
   }
 
   @Test
-  func profileCeilingAndEndedStateHaveTruthfulPresentation() {
+  func profileAndEndedStateHaveTruthfulPresentation() {
     let service = ClientAccessFake()
     var session = service.session
-    #expect(session.currentAccess == .projectOperations)
-    var grant = service.profile.grant
-    grant.mode = .readOnly
-    session.profile = .init(grant: grant, persisted: false)
-    #expect(session.currentAccess == .readOnly)
+    #expect(session.hasAccess && session.accessLabel == "Sandbox")
     session.profile = nil
-    #expect(session.currentAccess == nil)
+    #expect(!session.hasAccess)
     service.ended = true
-    #expect(service.session.currentAccess == nil)
+    #expect(!service.session.hasAccess)
   }
 
   @Test
@@ -146,7 +141,7 @@ struct ClientAccessTests {
   }
 
   @Test
-  func signInApprovalDefaultsToReadOnlyAndKeepsTheOwnersChoice() async throws {
+  func signInApprovalRequiresTheOwnersReviewedChoice() async throws {
     let service = ClientAccessFake()
     service.oauth = true
     let observeProfile = ProfileGrant.cloudflareObserve
@@ -159,8 +154,10 @@ struct ClientAccessTests {
     #expect(model.statusText == AppLocalization.formatted("Sign-in requests waiting: %@", "2"))
     let first = model.pendingOAuthRequests[0]
     let second = model.pendingOAuthRequests[1]
+    #expect(model.oauthProfile(for: first) == nil)
+    model.chooseOAuthProfile(.cloudflareObserve, for: first)
     let observe = try #require(model.oauthProfile(for: first))
-    #expect(observe.id == .cloudflareObserve && observe.mode == .readOnly)
+    #expect(observe.id == .cloudflareObserve)
     #expect(await model.approve(first, reviewed: observe))
     model.chooseOAuthProfile(.cloudflareOperate, for: second)
     model.chooseOAuthProfile(.chatGPTOperate, for: second)
@@ -182,15 +179,16 @@ struct ClientAccessTests {
   }
 
   @Test
-  func reviewedPermissionsMustMatchEvenWhenTheAccessModeIsUnchanged() async throws {
+  func reviewedPermissionsMustMatchTheCurrentProfile() async throws {
     let service = ClientAccessFake()
     service.oauth = true
     let model = ClientAccessModel(controlPlane: service)
     await model.reload()
     let request = try #require(model.pendingOAuthRequests.first)
+    model.chooseOAuthProfile(.cloudflareObserve, for: request)
     let reviewed = try #require(model.oauthProfile(for: request))
     var current = reviewed
-    current.capabilityIDs.insert("file.read")
+    try current.permissions.set(.granted(.read), for: .project("new-project"))
     service.remoteProfiles = [current]
     await model.reload()
     #expect(!(await model.approve(request, reviewed: reviewed)))
@@ -199,15 +197,16 @@ struct ClientAccessTests {
   }
 
   @Test
-  func aProfileNamedObserveThatAllowsChangesIsNeverTheDefault() async throws {
+  func changedPermissionsRequireAnotherProfileChoice() async throws {
     let service = ClientAccessFake()
     service.oauth = true
     let model = ClientAccessModel(controlPlane: service)
     await model.reload()
     let request = try #require(model.pendingOAuthRequests.first)
+    model.chooseOAuthProfile(.cloudflareObserve, for: request)
     let reviewed = try #require(model.oauthProfile(for: request))
     var observe = ProfileGrant.cloudflareObserve
-    observe.mode = .projectOperations
+    try observe.permissions.set(.granted(.write), for: .project("project"))
     service.remoteProfiles = [observe, .cloudflareOperate]
     await model.reload()
     #expect(model.oauthProfile(for: request) == nil)
@@ -226,7 +225,7 @@ struct ClientAccessTests {
     model.chooseOAuthProfile(.cloudflareOperate, for: request)
     let reviewed = try #require(model.oauthProfile(for: request))
     var operate = ProfileGrant.cloudflareOperate
-    operate.mode = .localFullAccess
+    operate.fullAccess = true
     service.remoteProfiles = [operate, .cloudflareObserve]
     await model.reload()
     #expect(model.oauthProfile(for: request) == nil)
@@ -348,14 +347,13 @@ private struct CompletedOnboarding: OnboardingPreferenceStoring {
 private final class ClientAccessFake: ClientAccessManaging {
   let profile = GatewayControlProfile(
     grant: .init(
-      id: .chatGPTOperate, capabilityIDs: ["file.read"], projectIDs: ["fixture"],
-      allowedCallers: [.localMCP], mode: .projectOperations), persisted: false)
+      id: .chatGPTOperate, fullAccess: true, allowedCallers: [.localMCP]), persisted: false)
   var revision: Int64 = 4
   var ended = false
   var session: GatewayControlSessionSnapshot {
     .init(
       id: "6F83917A", principalID: "verified-client", profileID: .chatGPTOperate,
-      caller: .localMCP, revision: revision, accessLimit: .projectOperations, ended: ended,
+      caller: .localMCP, revision: revision, accessLimit: .init(), ended: ended,
       fullAccessConsent: nil, profile: profile)
   }
   lazy var trust = GatewayClientTrust(
@@ -438,10 +436,11 @@ private final class ClientAccessFake: ClientAccessManaging {
     if failWrite { throw AppControlPlaneError.unavailable("Write unavailable") }
     if let committedRevision { revision = committedRevision }
   }
-  func limitClientAccess(id: String, mode: GatewayPermissionMode, expectedRevision: Int64)
+  func limitClientAccess(id: String, limits: ManagedPolicy, expectedRevision: Int64)
     async throws
   {
-    actions.append("limit:\(id):\(expectedRevision):\(mode.rawValue)")
+    actions.append(
+      "limit:\(id):\(expectedRevision):\(limits.allowsFullAccess ? "full" : "sandbox")")
   }
   func endClientAccess(id: String, expectedRevision: Int64) async throws {
     actions.append("end:\(id):\(expectedRevision)")

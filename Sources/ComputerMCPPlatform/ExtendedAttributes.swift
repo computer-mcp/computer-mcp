@@ -6,5 +6,5 @@ package protocol ExtendedAttributes: Sendable {
   func names(at url: URL) throws -> [String]
   func size(of name: String, at url: URL) throws -> Int
   func value(of name: String, at url: URL, size: Int, maxBytes: Int) throws -> Data
-  func remove(_ name: String, at url: URL) throws
+  func remove(_ name: String, descriptor: Int32) throws
 }

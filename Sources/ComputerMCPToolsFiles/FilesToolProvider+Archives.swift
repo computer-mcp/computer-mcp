@@ -156,6 +156,10 @@ extension FilesToolProvider {
   }
 
   internal func extractArchive(arguments object: [String: JSONValue]) throws -> JSONValue {
+    let files = try ProjectFileAccess(
+      project: projectScope.projectDirectory, environment: environment.environment,
+      commands: environment.registeredCommands,
+      mutationObserver: fileMutationObserver)
     let path = try requiredString("path", in: object)
     let destinationPath = try requiredString("destination", in: object)
     let createDirectories = try optionalBool("create_directories", in: object) ?? false
@@ -187,7 +191,7 @@ extension FilesToolProvider {
     guard archiveInfo.type == "file" else {
       throw GatewayToolError.invalidArguments("Path is not a file: \(path)")
     }
-    let destinationURL = try projectScope.resolvedProjectURL(destinationPath)
+    let destinationURL = try files.url(destinationPath)
     let fileManager = FileManager.default
     var destinationIsDirectory = ObjCBool(false)
     let destinationExists = fileManager.fileExists(
@@ -204,65 +208,120 @@ extension FilesToolProvider {
         "Destination directory does not exist; set create_directories=true to create it.")
     }
 
-    let archive = try archiveListCommand(for: archiveURL)
+    let format = try archiveFormat(for: archiveURL)
+    let reader = try archiveReader(for: format)
+    let listing = archiveVerboseListCommand(archiveURL: archiveURL, reader: reader)
     let listResult = try commandRunner.run(
-      executable: archive.executable,
-      arguments: archive.arguments,
-      workingDirectory: configuration.projectDirectory,
-      environment: [:],
-      timeoutMilliseconds: timeout,
-      maxOutputBytes: maxOutputBytes
-    )
+      executable: listing.executable, arguments: listing.arguments,
+      workingDirectory: configuration.projectDirectory, environment: ["LC_ALL": "C"],
+      timeoutMilliseconds: timeout, maxOutputBytes: maxOutputBytes)
     try requireSuccessfulArchivePreflight(listResult, operation: "archive list")
-    let rawEntries = listResult.stdout.split(separator: "\n", omittingEmptySubsequences: true)
-      .map(String.init)
-    guard rawEntries.count <= maxEntries else {
+    let listedEntries = try parseArchiveListing(listResult.stdout)
+    guard listedEntries.count <= maxEntries else {
       throw GatewayToolError.invalidArguments(
         "archive contains more than max_entries entries; increase max_entries to validate extraction."
       )
     }
-    let linkEntries = try archiveLinkEntries(
-      archiveURL: archiveURL,
-      archive: archive,
-      timeout: timeout,
-      maxOutputBytes: maxOutputBytes
-    )
-    guard linkEntries.isEmpty else {
-      throw GatewayToolError.invalidArguments(
-        "archive.extract refuses archives containing link entries: \(linkEntries.prefix(5).joined(separator: ", "))"
-      )
-    }
-
     let entries = try validateArchiveEntries(
-      rawEntries,
-      destination: destinationURL,
-      overwrite: overwrite
-    )
+      listedEntries, destination: destinationURL, overwrite: overwrite, files: files)
     let previewEntries = entries.prefix(maxPreviewEntries).map(\.json)
-    let extractCommand = try archiveExtractCommand(
-      archive: archive,
-      archiveURL: archiveURL,
-      destinationURL: destinationURL,
-      overwrite: overwrite
-    )
-
-    var result: JSONValue = .null
+    var extractionResult: JSONValue = .null
     if !dryRun {
-      if !destinationExists {
-        try fileManager.createDirectory(
-          at: destinationURL,
-          withIntermediateDirectories: true
-        )
+      let modificationTimes = try archiveModificationTimes(
+        archiveURL, reader: reader, entries: entries, timeout: timeout,
+        maxOutputBytes: maxOutputBytes)
+      let createdDestination = try files.mkdir(destinationURL, recursive: createDirectories)
+      extractionResult = try files.withStagingDirectory(
+        in: destinationURL, destinationIdentity: createdDestination,
+        preservingDestinationTimes: createdDestination == nil
+      ) { staging, directory in
+        let command = archiveExtractCommand(archiveURL: archiveURL, reader: reader)
+        let result = try files.withTemporaryFile(in: staging) { contents in
+          try fileMutationObserver?("archive.extract", staging, .willMutate)
+          let result = try files.withReadDescriptor(archiveURL) { input in
+            try commandRunner.runInDirectory(
+              executable: command.executable, arguments: command.arguments,
+              directoryDescriptor: directory, inputDescriptor: input, outputDescriptor: contents,
+              environment: ["LC_ALL": "C"], timeoutMilliseconds: timeout,
+              maxOutputBytes: maxOutputBytes)
+          }
+          try requireSuccessfulArchivePreflight(result, operation: "archive extract")
+          // Only host-created inodes are eligible for cleanup. Tar streams contents rather
+          // than replacing files whose identities could otherwise be learned only afterward.
+          let stream = FileHandle(fileDescriptor: contents, closeOnDealloc: false)
+          try stream.seek(toOffset: 0)
+          for entry in entries where entry.normalizedPath != "." {
+            let target = staging.appendingPathComponent(entry.normalizedPath)
+            if entry.isDirectory {
+              try files.mkdir(target, recursive: true, mode: entry.mode | 0o700)
+            } else {
+              try files.writeGenerated(
+                to: target, overwrite: false, createDirectories: true, creationMode: entry.mode
+              ) { output in
+                let writer = FileHandle(fileDescriptor: output, closeOnDealloc: false)
+                var remaining = entry.byteCount
+                while remaining > 0 {
+                  guard let data = try stream.read(upToCount: Int(min(65_536, remaining))),
+                    !data.isEmpty
+                  else {
+                    throw GatewayToolError.invalidArguments(
+                      "Archive contents do not match the listing.")
+                  }
+                  try writer.write(contentsOf: data)
+                  remaining -= Int64(data.count)
+                }
+              }
+              let time = modificationTimes[entry.normalizedPath]!
+              try files.setArchiveMetadata(
+                target, seconds: time.seconds, nanoseconds: time.nanoseconds)
+            }
+          }
+          guard try stream.read(upToCount: 1)?.isEmpty != false else {
+            throw GatewayToolError.invalidArguments("Archive contents do not match the listing.")
+          }
+          return result
+        }
+        try fileMutationObserver?("archive.extract", staging, .didMutate)
+        var expected: [String: Bool] = [:]
+        for entry in entries where entry.normalizedPath != "." {
+          let parts = entry.normalizedPath.split(separator: "/")
+          for count in 1..<parts.count {
+            expected[parts.prefix(count).joined(separator: "/")] = true
+          }
+          expected[entry.normalizedPath] = entry.isDirectory
+        }
+        guard try files.tree(staging) == expected else {
+          throw GatewayToolError.invalidArguments(
+            "Extracted tree does not match the archive listing.")
+        }
+        for (path, directory) in expected.sorted(by: { $0.key < $1.key }) {
+          let target = destinationURL.appendingPathComponent(path)
+          if directory {
+            try files.mkdir(target, recursive: true)
+          } else {
+            try files.move(
+              staging.appendingPathComponent(path), to: target,
+              overwrite: overwrite, createDirectories: true)
+          }
+        }
+        return result.json
       }
-      let commandResult = try commandRunner.run(
-        executable: extractCommand.executable,
-        arguments: extractCommand.arguments,
-        workingDirectory: configuration.projectDirectory,
-        environment: [:],
-        timeoutMilliseconds: timeout,
-        maxOutputBytes: maxOutputBytes
-      )
-      result = commandResult.json
+      // Keep directories writable until publication and staging cleanup finish.
+      for entry in entries.filter(\.isDirectory).sorted(by: {
+        $0.normalizedPath.split(separator: "/").count
+          > $1.normalizedPath.split(separator: "/").count
+      }) where entry.normalizedPath != "." {
+        let time = modificationTimes[entry.normalizedPath]!
+        try files.setArchiveMetadata(
+          destinationURL.appendingPathComponent(entry.normalizedPath),
+          mode: entry.mode, seconds: time.seconds, nanoseconds: time.nanoseconds)
+      }
+      if let createdDestination, let entry = entries.first(where: { $0.normalizedPath == "." }) {
+        let time = modificationTimes["."]!
+        try files.setArchiveMetadata(
+          destinationURL, identity: createdDestination,
+          mode: entry.mode, seconds: time.seconds, nanoseconds: time.nanoseconds)
+      }
     }
 
     return .object([
@@ -270,7 +329,7 @@ extension FilesToolProvider {
       "archive": .object([
         "path": .string(archiveURL.path),
         "project_relative_path": .string(archiveInfo.projectRelativePath),
-        "format": .string(archive.format),
+        "format": .string(format),
       ]),
       "destination": .object([
         "path": .string(destinationURL.path),
@@ -278,24 +337,28 @@ extension FilesToolProvider {
         "exists": .bool(destinationExists),
         "would_create": .bool(!destinationExists && createDirectories),
       ]),
-      "argv": .array(extractCommand.arguments.map(JSONValue.string)),
+
       "confirm_extract": .bool(confirmExtract),
       "create_directories": .bool(createDirectories),
       "dry_run": .bool(dryRun),
       "entry_count": .integer(Int64(entries.count)),
       "entries": .array(Array(previewEntries)),
       "entries_truncated": .bool(entries.count > previewEntries.count),
-      "format": .string(archive.format),
-      "link_entry_count": .integer(Int64(linkEntries.count)),
+      "format": .string(format),
+      "link_entry_count": .integer(0),
       "max_entries": .integer(Int64(maxEntries)),
       "max_preview_entries": .integer(Int64(maxPreviewEntries)),
       "overwrite": .bool(overwrite),
-      "result": result,
+      "result": extractionResult,
       "would_extract": .bool(true),
     ])
   }
 
   internal func createArchive(arguments object: [String: JSONValue]) throws -> JSONValue {
+    let files = try ProjectFileAccess(
+      project: projectScope.projectDirectory, environment: environment.environment,
+      commands: environment.registeredCommands,
+      mutationObserver: fileMutationObserver)
     let path = try requiredString("path", in: object)
     let sourcePaths = try requiredStringArray("sources", in: object)
     guard !sourcePaths.isEmpty else {
@@ -326,7 +389,7 @@ extension FilesToolProvider {
     try validateBoundedPositive(timeout, name: "timeout_ms", upperBound: 600_000)
     try validateBoundedPositive(maxOutputBytes, name: "max_output_bytes", upperBound: 20_971_520)
 
-    let archiveURL = try projectScope.resolvedProjectURLPreservingFinalSymlink(path)
+    let archiveURL = try files.url(path)
     let archiveParentURL = archiveURL.deletingLastPathComponent()
     let fileManager = FileManager.default
     var parentIsDirectory = ObjCBool(false)
@@ -376,23 +439,16 @@ extension FilesToolProvider {
 
     var result: JSONValue = .null
     if !dryRun {
-      if !parentExists {
-        try fileManager.createDirectory(
-          at: archiveParentURL,
-          withIntermediateDirectories: true
-        )
+      let commandResult = try files.writeGenerated(
+        to: archiveURL, overwrite: overwrite, createDirectories: createDirectories
+      ) { fd in
+        let result = try commandRunner.runToFile(
+          executable: createCommand.executable, arguments: createCommand.arguments,
+          workingDirectory: configuration.projectDirectory, environment: [:],
+          timeoutMilliseconds: timeout, maxOutputBytes: maxOutputBytes, outputDescriptor: fd)
+        try requireSuccessfulArchivePreflight(result, operation: "archive create")
+        return result
       }
-      if archiveExists && overwrite {
-        try fileManager.removeItem(at: archiveURL)
-      }
-      let commandResult = try commandRunner.run(
-        executable: createCommand.executable,
-        arguments: createCommand.arguments,
-        workingDirectory: configuration.projectDirectory,
-        environment: [:],
-        timeoutMilliseconds: timeout,
-        maxOutputBytes: maxOutputBytes
-      )
       result = commandResult.json
     }
 
@@ -426,26 +482,26 @@ extension FilesToolProvider {
   }
 
   private func archiveListCommand(for url: URL) throws -> ArchiveListCommand {
+    let format = try archiveFormat(for: url)
+    return ArchiveListCommand(
+      format: format,
+      executable: try registeredCommands.builtinExecutable(format == "zip" ? "zipinfo" : "tar"),
+      arguments: [format == "zip" ? "-1" : "-tf", url.path])
+  }
+
+  private func archiveFormat(for url: URL) throws -> String {
     let name = url.lastPathComponent.lowercased()
     if name.hasSuffix(".zip") || name.hasSuffix(".jar") || name.hasSuffix(".war")
       || name.hasSuffix(".ear")
     {
-      return ArchiveListCommand(
-        format: "zip",
-        executable: try registeredCommands.builtinExecutable("zipinfo"),
-        arguments: ["-1", url.path]
-      )
+      return "zip"
     }
 
     let tarSuffixes = [
       ".tar", ".tar.gz", ".tgz", ".tar.bz2", ".tbz", ".tbz2", ".tar.xz", ".txz",
     ]
     if tarSuffixes.contains(where: { name.hasSuffix($0) }) {
-      return ArchiveListCommand(
-        format: "tar",
-        executable: try registeredCommands.builtinExecutable("tar"),
-        arguments: ["-tf", url.path]
-      )
+      return "tar"
     }
 
     throw GatewayToolError.invalidArguments(
@@ -453,54 +509,24 @@ extension FilesToolProvider {
     )
   }
 
-  private func archiveVerboseListCommand(
-    archive: ArchiveListCommand,
-    archiveURL: URL
-  ) throws -> ArchiveListCommand {
-    switch archive.format {
-    case "zip":
-      return ArchiveListCommand(
-        format: archive.format,
-        executable: try registeredCommands.builtinExecutable("zipinfo"),
-        arguments: ["-l", archiveURL.path]
-      )
-    case "tar":
-      return ArchiveListCommand(
-        format: archive.format,
-        executable: try registeredCommands.builtinExecutable("tar"),
-        arguments: ["-tvf", archiveURL.path]
-      )
-    default:
-      throw GatewayToolError.invalidArguments("Unsupported archive format: \(archive.format)")
-    }
+  private func archiveReader(for format: String) throws -> ArchiveReader {
+    #if canImport(Darwin)
+      return ArchiveReader(
+        executable: try registeredCommands.builtinExecutable("tar"), implementation: .bsd)
+    #else
+      return ArchiveReader(
+        executable: try registeredCommands.builtinExecutable(format == "zip" ? "bsdtar" : "tar"),
+        implementation: format == "zip" ? .bsd : .gnu)
+    #endif
   }
 
-  private func archiveExtractCommand(
-    archive: ArchiveListCommand,
-    archiveURL: URL,
-    destinationURL: URL,
-    overwrite: Bool
-  ) throws -> ArchiveListCommand {
-    switch archive.format {
-    case "zip":
-      return ArchiveListCommand(
-        format: archive.format,
-        executable: try registeredCommands.builtinExecutable("unzip"),
-        arguments: ["-q", overwrite ? "-o" : "-n", archiveURL.path, "-d", destinationURL.path]
-      )
-    case "tar":
-      let args =
-        overwrite
-        ? ["-xf", archiveURL.path, "-C", destinationURL.path]
-        : ["-xkf", archiveURL.path, "-C", destinationURL.path]
-      return ArchiveListCommand(
-        format: archive.format,
-        executable: try registeredCommands.builtinExecutable("tar"),
-        arguments: args
-      )
-    default:
-      throw GatewayToolError.invalidArguments("Unsupported archive format: \(archive.format)")
-    }
+  private func archiveVerboseListCommand(archiveURL: URL, reader: ArchiveReader)
+    -> ArchiveListCommand
+  {
+    // ZIP central directory order may differ from local headers; both passes use tar's reader.
+    ArchiveListCommand(
+      format: "tar", executable: reader.executable,
+      arguments: ["--numeric-owner", "-tvf", archiveURL.path])
   }
 
   private func archiveReadFileCommand(
@@ -508,6 +534,11 @@ extension FilesToolProvider {
     archiveURL: URL,
     entry: String
   ) throws -> ArchiveListCommand {
+    guard !entry.hasPrefix("-"), !entry.contains("\0"),
+      entry.rangeOfCharacter(from: CharacterSet(charactersIn: "*?[]")) == nil
+    else {
+      throw GatewayToolError.invalidArguments("Archive member must be a literal file path.")
+    }
     switch archive.format {
     case "zip":
       return ArchiveListCommand(
@@ -519,7 +550,7 @@ extension FilesToolProvider {
       return ArchiveListCommand(
         format: archive.format,
         executable: try registeredCommands.builtinExecutable("tar"),
-        arguments: ["-xOf", archiveURL.path, entry]
+        arguments: ["-xOf", archiveURL.path, "--", entry]
       )
     default:
       throw GatewayToolError.invalidArguments("Unsupported archive format: \(archive.format)")
@@ -546,7 +577,7 @@ extension FilesToolProvider {
       return ArchiveListCommand(
         format: "zip",
         executable: try registeredCommands.builtinExecutable("zip"),
-        arguments: ["-qry", archiveURL.path] + sourcePaths
+        arguments: ["-qry", "-", "--"] + sourcePaths
       )
     }
 
@@ -569,7 +600,7 @@ extension FilesToolProvider {
       return ArchiveListCommand(
         format: "tar",
         executable: try registeredCommands.builtinExecutable("tar"),
-        arguments: [tarFlag, archiveURL.path] + sourcePaths
+        arguments: [tarFlag, "-", "--"] + sourcePaths
       )
     }
 
@@ -728,50 +759,231 @@ extension FilesToolProvider {
     }
   }
 
-  private func archiveLinkEntries(
-    archiveURL: URL,
-    archive: ArchiveListCommand,
-    timeout: Int,
-    maxOutputBytes: Int
-  ) throws -> [String] {
-    let verboseCommand = try archiveVerboseListCommand(archive: archive, archiveURL: archiveURL)
-    let result = try commandRunner.run(
-      executable: verboseCommand.executable,
-      arguments: verboseCommand.arguments,
-      workingDirectory: configuration.projectDirectory,
-      environment: [:],
-      timeoutMilliseconds: timeout,
-      maxOutputBytes: maxOutputBytes
-    )
-    try requireSuccessfulArchivePreflight(result, operation: "archive verbose list")
-    return result.stdout.split(separator: "\n", omittingEmptySubsequences: true)
-      .map(String.init)
-      .filter { line in
-        guard let first = line.first else {
-          return false
-        }
-        return first == "l" || first == "h"
+  private func archiveExtractCommand(archiveURL: URL, reader: ArchiveReader) -> ArchiveListCommand {
+    var options = ["--no-same-owner", "--no-same-permissions", "--no-acls", "--no-xattrs"]
+    if reader.implementation == .bsd {
+      options.append("--no-fflags")
+    } else {
+      // GNU tar cannot autodetect compressed archives on standard input.
+      let name = archiveURL.lastPathComponent.lowercased()
+      if name.hasSuffix(".tar.gz") || name.hasSuffix(".tgz") {
+        options.append("--gzip")
+      } else if [".tar.bz2", ".tbz", ".tbz2"].contains(where: name.hasSuffix) {
+        options.append("--bzip2")
+      } else if name.hasSuffix(".tar.xz") || name.hasSuffix(".txz") {
+        options.append("--xz")
       }
+    }
+    return ArchiveListCommand(
+      format: "tar", executable: reader.executable,
+      arguments: ["-xOf", "-"] + options)
+  }
+
+  private func archiveModificationTimes(
+    _ archive: URL, reader: ArchiveReader, entries: [ArchiveValidatedEntry], timeout: Int,
+    maxOutputBytes: Int
+  ) throws -> [String: ArchiveModificationTime] {
+    let arguments: [String]
+    let metadataEnvironment: [String: String]
+    if reader.implementation == .bsd {
+      // BSD tar's verbose listing omits seconds and nanoseconds. Mtree carries
+      // both, but sorts names, so it supplies metadata rather than content order.
+      // -P preserves leading backslashes during this read-only format conversion.
+      arguments = [
+        "-cf", "-", "--format=mtree", "--options=!all,type,time", "-P", "--", "@" + archive.path,
+      ]
+      // ZIP DOS timestamps use local time, as they do during ordinary extraction.
+      metadataEnvironment = ["LC_ALL": "C"]
+    } else {
+      arguments = ["--numeric-owner", "--full-time", "-tvf", archive.path]
+      metadataEnvironment = ["LC_ALL": "C", "TZ": "UTC"]
+    }
+    let result = try commandRunner.run(
+      executable: reader.executable, arguments: arguments,
+      workingDirectory: configuration.projectDirectory, environment: metadataEnvironment,
+      timeoutMilliseconds: timeout, maxOutputBytes: maxOutputBytes)
+    try requireSuccessfulArchivePreflight(result, operation: "archive timestamp metadata")
+    var times: [String: ArchiveModificationTime] = [:]
+    var directories: [String: Bool] = [:]
+    if reader.implementation == .bsd {
+      for line in result.stdout.split(separator: "\n") where !line.hasPrefix("#") {
+        let columns = line.split(whereSeparator: { $0 == " " || $0 == "\t" })
+        guard columns.count == 3,
+          let timeColumn = columns.first(where: { $0.hasPrefix("time=") }),
+          let type = columns.first(where: { $0.hasPrefix("type=") }),
+          type == "type=dir" || type == "type=file"
+        else { throw GatewayToolError.invalidArguments("Cannot parse archive timestamp metadata.") }
+        let name = try decodedArchiveListingPath(columns[0])
+        let path = try normalizedArchiveEntryPath(name == "/." ? "." : name)
+        let parts = timeColumn.dropFirst(5).split(separator: ".", omittingEmptySubsequences: false)
+        // Mtree writes seconds and a nanosecond integer, without decimal padding.
+        guard parts.count == 2, let seconds = Int64(parts[0]), let nanoseconds = Int(parts[1]),
+          (0..<1_000_000_000).contains(nanoseconds), times[path] == nil
+        else {
+          throw GatewayToolError.invalidArguments("Cannot parse archive modification time: \(name)")
+        }
+        times[path] = .init(seconds: seconds, nanoseconds: nanoseconds)
+        directories[path] = type == "type=dir"
+      }
+    } else {
+      for entry in try parseArchiveListing(result.stdout, includingTimes: true) {
+        let path = try normalizedArchiveEntryPath(entry.path)
+        guard let time = entry.modificationTime, times[path] == nil else {
+          throw GatewayToolError.invalidArguments(
+            "Cannot parse archive modification time: \(entry.path)")
+        }
+        times[path] = time
+        directories[path] = entry.isDirectory
+      }
+    }
+    guard times.count == entries.count,
+      entries.allSatisfy({
+        times[$0.normalizedPath] != nil && directories[$0.normalizedPath] == $0.isDirectory
+      })
+    else {
+      throw GatewayToolError.invalidArguments(
+        "Archive timestamp metadata does not match the listing.")
+    }
+    return times
+  }
+
+  private func parseArchiveListing(_ output: String, includingTimes: Bool = false) throws
+    -> [ArchiveListedEntry]
+  {
+    var entries: [ArchiveListedEntry] = []
+    var gnuDateWidth = 16
+    for line in output.split(separator: "\n", omittingEmptySubsequences: true) {
+      guard let kind = line.first else { continue }
+      guard kind == "-" || kind == "d" else {
+        throw GatewayToolError.invalidArguments(
+          kind == "l" || kind == "h"
+            ? "archive.extract refuses archives containing link entries."
+            : "archive.extract refuses special file entries.")
+      }
+      // BSD tar has separate owner/group columns; GNU tar prints owner/group together.
+      let prefix = line.split(whereSeparator: { $0 == " " || $0 == "\t" })
+      let fields = prefix.count > 1 && prefix[1].contains("/") ? 5 : 8
+      var cursor = line.startIndex
+      var columns: [Substring] = []
+      for _ in 0..<fields {
+        while cursor < line.endIndex, line[cursor] == " " || line[cursor] == "\t" {
+          cursor = line.index(after: cursor)
+        }
+        let start = cursor
+        while cursor < line.endIndex, line[cursor] != " " && line[cursor] != "\t" {
+          cursor = line.index(after: cursor)
+        }
+        columns.append(line[start..<cursor])
+      }
+      // GNU tar pads dates to the widest timestamp seen so far. That padding
+      // is distinct from leading spaces in the member name.
+      var separatorCount = 1
+      if fields == 5 {
+        let dateWidth = columns[3].count + 1 + columns[4].count
+        gnuDateWidth = max(gnuDateWidth, dateWidth)
+        separatorCount += gnuDateWidth - dateWidth
+      }
+      guard let nameStart = line.index(cursor, offsetBy: separatorCount, limitedBy: line.endIndex),
+        line[cursor..<nameStart].allSatisfy({ $0 == " " }), nameStart < line.endIndex
+      else {
+        throw GatewayToolError.invalidArguments("Cannot parse archive entry listing.")
+      }
+      let path = try decodedArchiveListingPath(line[nameStart...])
+      let sizeIndex = fields == 5 ? 2 : 4
+      guard let byteCount = Int64(columns[sizeIndex]), byteCount >= 0,
+        columns[0].count >= 10
+      else { throw GatewayToolError.invalidArguments("Cannot parse archive entry size or mode.") }
+      var mode: UInt16 = 0
+      for (index, bit) in Array(columns[0].dropFirst().prefix(9)).enumerated() {
+        if "rwxst".contains(bit) { mode |= 1 << (8 - index) }
+      }
+      entries.append(
+        .init(
+          path: path, isDirectory: kind == "d", byteCount: byteCount, mode: mode,
+          modificationTime: includingTimes
+            ? try archiveFullModificationTime(date: columns[3], time: columns[4]) : nil)
+      )
+    }
+    return entries
+  }
+
+  private func archiveFullModificationTime(date: Substring, time: Substring) throws
+    -> ArchiveModificationTime
+  {
+    let parts = time.split(separator: ".", omittingEmptySubsequences: false)
+    let formatter = ISO8601DateFormatter()
+    guard let clock = parts.first, parts.count <= 2,
+      let value = formatter.date(from: "\(date)T\(clock)Z"),
+      let seconds = Int64(exactly: value.timeIntervalSince1970)
+    else { throw GatewayToolError.invalidArguments("Cannot parse archive modification time.") }
+    let fraction = parts.count == 2 ? String(parts[1]) : ""
+    guard fraction.count <= 9, fraction.utf8.allSatisfy({ (48...57).contains($0) }),
+      let nanoseconds = Int(fraction + String(repeating: "0", count: 9 - fraction.count))
+    else { throw GatewayToolError.invalidArguments("Cannot parse archive modification time.") }
+    return .init(seconds: seconds, nanoseconds: nanoseconds)
+  }
+
+  private func decodedArchiveListingPath(_ path: Substring) throws -> String {
+    let bytes = Array(path.utf8)
+    var decoded: [UInt8] = []
+    var index = 0
+    let escapes: [UInt8: UInt8] = [
+      97: 7, 98: 8, 102: 12, 110: 10, 114: 13, 116: 9, 118: 11, 92: 92,
+    ]
+    while index < bytes.count {
+      let byte = bytes[index]
+      index += 1
+      if byte != 92 {
+        decoded.append(byte)
+        continue
+      }
+      guard index < bytes.count else {
+        throw GatewayToolError.invalidArguments("Invalid escape in archive listing.")
+      }
+      if let value = escapes[bytes[index]] {
+        decoded.append(value)
+        index += 1
+      } else {
+        guard index + 3 <= bytes.count,
+          bytes[index..<index + 3].allSatisfy({ (48...55).contains($0) }),
+          let value = UInt8(String(decoding: bytes[index..<index + 3], as: UTF8.self), radix: 8)
+        else { throw GatewayToolError.invalidArguments("Invalid escape in archive listing.") }
+        decoded.append(value)
+        index += 3
+      }
+    }
+    guard let name = String(bytes: decoded, encoding: .utf8) else {
+      throw GatewayToolError.invalidArguments("Archive member names must be valid UTF-8.")
+    }
+    return name
   }
 
   private func validateArchiveEntries(
-    _ rawEntries: [String],
+    _ rawEntries: [ArchiveListedEntry],
     destination: URL,
-    overwrite: Bool
+    overwrite: Bool,
+    files: ProjectFileAccess
   ) throws -> [ArchiveValidatedEntry] {
     let fileManager = FileManager.default
-    let destinationBase = destination.standardizedFileURL.resolvingSymlinksInPath()
+    let destinationBase = destination.standardizedFileURL
     let destinationBasePath = destinationBase.path
     let destinationBasePrefix =
       destinationBasePath.hasSuffix("/") ? destinationBasePath : "\(destinationBasePath)/"
     var entries: [ArchiveValidatedEntry] = []
 
-    for rawEntry in rawEntries {
+    var kinds: [String: Bool] = [:]
+    for raw in rawEntries {
+      let rawEntry = raw.path
+      let isDirectory = raw.isDirectory
       let normalizedPath = try normalizedArchiveEntryPath(rawEntry)
-      let isDirectory = rawEntry.hasSuffix("/") || normalizedPath == "."
+      guard kinds[normalizedPath] == nil, normalizedPath != "." || isDirectory else {
+        throw GatewayToolError.invalidArguments(
+          "Archive contains duplicate or conflicting entries.")
+      }
+      kinds[normalizedPath] = isDirectory
       let targetURL = destination.appendingPathComponent(normalizedPath)
         .standardizedFileURL
-        .resolvingSymlinksInPath()
+      try files.validate(targetURL)
       guard targetURL.path == destinationBasePath || targetURL.path.hasPrefix(destinationBasePrefix)
       else {
         throw GatewayToolError.invalidArguments(
@@ -815,11 +1027,20 @@ extension FilesToolProvider {
           originalPath: rawEntry,
           normalizedPath: normalizedPath,
           isDirectory: isDirectory,
+          byteCount: raw.byteCount,
+          mode: raw.mode,
           destinationProjectRelativePath: projectScope.projectRelativePath(targetURL),
           wouldOverwrite: targetExists && !isDirectory
         ))
     }
 
+    for path in kinds.keys {
+      let parts = path.split(separator: "/")
+      for count in 1..<parts.count where kinds[parts.prefix(count).joined(separator: "/")] == false
+      {
+        throw GatewayToolError.invalidArguments("Archive entry parent is not a directory.")
+      }
+    }
     return entries
   }
 
@@ -845,7 +1066,7 @@ extension FilesToolProvider {
   }
 
   private func normalizedArchiveEntryPath(_ entry: String) throws -> String {
-    guard !entry.isEmpty else {
+    guard !entry.isEmpty, !entry.contains("\0") else {
       throw GatewayToolError.invalidArguments("archive contains an empty entry path.")
     }
     guard !entry.hasPrefix("/") else {
@@ -872,10 +1093,21 @@ private struct ArchiveListCommand {
   var arguments: [String]
 }
 
+private struct ArchiveReader {
+  enum Implementation {
+    case bsd, gnu
+  }
+
+  var executable: String
+  var implementation: Implementation
+}
+
 private struct ArchiveValidatedEntry {
   var originalPath: String
   var normalizedPath: String
   var isDirectory: Bool
+  var byteCount: Int64
+  var mode: UInt16
   var destinationProjectRelativePath: String
   var wouldOverwrite: Bool
 
@@ -888,6 +1120,19 @@ private struct ArchiveValidatedEntry {
       "would_overwrite": .bool(wouldOverwrite),
     ])
   }
+}
+
+private struct ArchiveListedEntry {
+  var path: String
+  var isDirectory: Bool
+  var byteCount: Int64
+  var mode: UInt16
+  var modificationTime: ArchiveModificationTime?
+}
+
+private struct ArchiveModificationTime {
+  var seconds: Int64
+  var nanoseconds: Int
 }
 
 private struct ArchiveCreateSourceSnapshot {

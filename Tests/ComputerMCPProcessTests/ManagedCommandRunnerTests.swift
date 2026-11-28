@@ -1,11 +1,16 @@
 import ComputerMCPCore
 import ComputerMCPPlatformPOSIX
+import ComputerMCPSandbox
 import ComputerMCPTestSupport
 import Foundation
 import Testing
 
 @testable import ComputerMCPPlatform
 @testable import ComputerMCPProcess
+
+#if os(macOS)
+  import ComputerMCPDarwinTestSupport
+#endif
 
 #if canImport(Darwin)
   import Darwin
@@ -18,16 +23,18 @@ struct ManagedCommandRunnerTests {
   @Test
   func closesInputAndUsesOnlyTheCompleteEnvironment() async throws {
     let result = try await BlockingOperationExecutor(label: "test.managed-command").perform {
-      // A shell adds nothing to its environment, unlike interpreter launchers.
-      try ManagedCommandRunner().run(
-        executable: "/bin/sh",
-        arguments: [
-          "-c",
-          #"if IFS= read -r line; then exit 3; fi; [ -z "${HOME+x}" ] || exit 4; printf '%s\n' "$PROBE_VALUE""#,
-        ],
-        workingDirectory: FileManager.default.temporaryDirectory,
-        environment: ["PATH": "/usr/bin:/bin", "PROBE_VALUE": "isolated"],
-        timeoutMilliseconds: 2000, maxOutputBytes: 1024)
+      try withCommandAdministration(variables: ["PROBE_VALUE": "isolated"]) {
+        // A shell adds nothing to its environment, unlike interpreter launchers.
+        try ManagedCommandRunner(launcher: testExecutionLauncher()).run(
+          executable: "/bin/sh",
+          arguments: [
+            "-c",
+            #"if IFS= read -r line; then exit 3; fi; [ "$HOME" = "${TMPDIR%/}" ] || exit 4; printf '%s\n' "$PROBE_VALUE""#,
+          ],
+          workingDirectory: FileManager.default.temporaryDirectory,
+          environment: ["PATH": "/usr/bin:/bin", "PROBE_VALUE": "isolated"],
+          timeoutMilliseconds: 2000, maxOutputBytes: 1024)
+      }
     }
     #expect(result.exitCode == 0 && !result.timedOut, "\(result.stderr)")
     #expect(result.stdout == "isolated\n")
@@ -35,21 +42,25 @@ struct ManagedCommandRunnerTests {
 
   @Test
   func binaryOutputAndTruncationRemainExplicit() async throws {
-    let runner = ManagedCommandRunner()
+    let runner = ManagedCommandRunner(launcher: testExecutionLauncher())
     let bytes = try await BlockingOperationExecutor(label: "test.managed-command").perform {
-      try runner.runData(
-        executable: "/bin/sh", arguments: ["-c", #"printf '\000\377\200\n'; printf error >&2"#],
-        workingDirectory: nil, environment: ["PATH": "/usr/bin:/bin"],
-        timeoutMilliseconds: 2000, maxOutputBytes: 1024)
+      try withCommandAdministration {
+        try runner.runData(
+          executable: "/bin/sh", arguments: ["-c", #"printf '\000\377\200\n'; printf error >&2"#],
+          workingDirectory: nil, environment: ["PATH": "/usr/bin:/bin"],
+          timeoutMilliseconds: 2000, maxOutputBytes: 1024)
+      }
     }
     #expect(!bytes.timedOut)
     #expect(bytes.stdout == Data([0, 255, 128, 10]))
     #expect(bytes.stderr == Data("error".utf8))
     let truncated = try await BlockingOperationExecutor(label: "test.managed-command").perform {
-      try runner.run(
-        executable: "/bin/sh", arguments: ["-c", "printf '%8192s' '' | tr ' ' x"],
-        workingDirectory: nil, environment: ["PATH": "/usr/bin:/bin"],
-        timeoutMilliseconds: 2000, maxOutputBytes: 64)
+      try withCommandAdministration {
+        try runner.run(
+          executable: "/bin/sh", arguments: ["-c", "printf '%8192s' '' | tr ' ' x"],
+          workingDirectory: nil, environment: ["PATH": "/usr/bin:/bin"],
+          timeoutMilliseconds: 2000, maxOutputBytes: 64)
+      }
     }
     #expect(!truncated.timedOut)
     #expect(truncated.stdout == String(repeating: "x", count: 64) && truncated.stdoutTruncated)
@@ -60,16 +71,84 @@ struct ManagedCommandRunnerTests {
   func invocationInputRoundTripsAndCloses() async throws {
     let input = Data([0, 255, 128, 10]) + Data(repeating: 97, count: 131_072)
     let result = try await BlockingOperationExecutor(label: "test.managed-command").perform {
-      try ManagedCommandRunner().runData(
-        executable: try testExecutable("cat"),
-        invocation: .init(arguments: [], standardInput: input),
-        workingDirectory: FileManager.default.temporaryDirectory,
-        environment: ["PATH": systemUtilityPath], timeoutMilliseconds: 5000,
-        maxOutputBytes: input.count)
+      try withCommandAdministration {
+        try ManagedCommandRunner(launcher: testExecutionLauncher()).runData(
+          executable: try testExecutable("cat"),
+          invocation: .init(arguments: [], standardInput: input),
+          workingDirectory: FileManager.default.temporaryDirectory,
+          environment: ["PATH": systemUtilityPath], timeoutMilliseconds: 5000,
+          maxOutputBytes: input.count)
+      }
     }
     #expect(result.exitCode == 0 && !result.timedOut, "\(result.stderrString)")
     #expect(result.stdout == input)
     #expect(!result.stdoutTruncated && !result.stderrTruncated)
+  }
+
+  @Test
+  func doesNotInheritUnrelatedDescriptors() async throws {
+    let scratch = try ScopedTemporaryDirectory()
+    defer { withExtendedLifetime(scratch) {} }
+    let directory = scratch.url
+    let sentinel = directory.appendingPathComponent("sentinel")
+    try Data().write(to: sentinel)
+    let file = try FileHandle(forReadingFrom: sentinel)
+    let descriptor = fcntl(file.fileDescriptor, F_DUPFD, 64)
+    try #require(descriptor >= 64)
+    defer { _ = close(descriptor) }
+    let flags = fcntl(descriptor, F_GETFD)
+    try #require(flags >= 0 && flags & FD_CLOEXEC == 0)
+    var identity = stat()
+    try #require(fstat(descriptor, &identity) == 0)
+    #if os(macOS)
+      let interpreter = "perl"
+      let probe = [
+        "-e",
+        #"""
+        use Errno qw(EBADF);
+        use POSIX qw(fstat);
+        my ($descriptor, $device, $inode) = @ARGV;
+        my @identity = fstat($descriptor);
+        if (@identity) {
+            die "inherited sentinel descriptor\n" if $identity[0] eq $device && $identity[1] eq $inode;
+        } elsif ($! != EBADF) {
+            die "stat descriptor: $!";
+        }
+        print "checked\n";
+        """#,
+      ]
+    #else
+      let interpreter = "python3"
+      let probe = [
+        "-c",
+        """
+        import errno, os, sys
+        descriptor, device, inode = map(int, sys.argv[1:])
+        try:
+            identity = os.fstat(descriptor)
+        except OSError as error:
+            if error.errno != errno.EBADF:
+                raise
+        else:
+            if (identity.st_dev, identity.st_ino) == (device, inode):
+                sys.exit("inherited sentinel descriptor")
+        print("checked")
+        """,
+      ]
+    #endif
+    let arguments = probe + [String(descriptor), String(identity.st_dev), String(identity.st_ino)]
+    let result = try await BlockingOperationExecutor(label: "test.managed-command").perform {
+      try withCommandAdministration {
+        try ManagedCommandRunner(launcher: testExecutionLauncher()).run(
+          executable: try testExecutable(interpreter), arguments: arguments,
+          workingDirectory: directory,
+          environment: ["PATH": systemUtilityPath],
+          timeoutMilliseconds: 2000, maxOutputBytes: 1024)
+      }
+    }
+    #expect(!result.timedOut)
+    #expect(result.exitCode == 0, "\(result.stderr)")
+    #expect(result.stdout == "checked\n")
   }
 
   @Test
@@ -87,10 +166,12 @@ struct ManagedCommandRunnerTests {
       """#
     let started = ContinuousClock.now
     let result = try await BlockingOperationExecutor(label: "managed-probe-test").perform {
-      try ManagedCommandRunner().run(
-        executable: "/bin/sh", arguments: ["-c", source, receipt.path],
-        workingDirectory: root, environment: ["PATH": "/usr/bin:/bin"],
-        timeoutMilliseconds: 1000, maxOutputBytes: 1024)
+      try withCommandAdministration {
+        try ManagedCommandRunner(launcher: testExecutionLauncher()).run(
+          executable: "/bin/sh", arguments: ["-c", source, receipt.path],
+          workingDirectory: root, environment: ["PATH": "/usr/bin:/bin"],
+          timeoutMilliseconds: 1000, maxOutputBytes: 1024)
+      }
     }
     #expect(result.timedOut && result.exitCode != nil)
     // Reclaiming ends the run long before the children's 30-second sleep; the bound leaves room
@@ -107,29 +188,93 @@ struct ManagedCommandRunnerTests {
     #expect(pids.allSatisfy(Self.exited))
   }
 
-  @Test
-  func discoveryUsesTheManagedDefaultWithoutInstallingAnything() async throws {
+  @Test(.enabled(if: nativeSandboxAvailable))
+  func discoveryUsesAnExplicitReadOnlyContextWithoutInstallingAnything() async throws {
     let result = try await BlockingOperationExecutor(label: "test.managed-command").perform {
-      try ExternalProviderDiscovery(
-        definitions: [.init(id: "probe", kind: .tunnelClient, executableNames: ["probe"])],
-        configuredProviders: [
-          "probe": [
-            .init(
-              executable: "/bin/sh",
-              arguments: [
-                "-c",
-                #"[ -z "${HOME+x}" ] || exit 4; if IFS= read -r line || [ -n "$line" ]; then exit 3; fi; echo 'probe 1.2.3'"#,
-              ])
-          ]
-        ],
-        environment: ["PATH": "/usr/bin:/bin"], commonSearchDirectories: []
-      ).discover()
+      try withCommandAdministration(readOnly: true) {
+        try ExternalProviderDiscovery(
+          definitions: [.init(id: "probe", kind: .tunnelClient, executableNames: ["probe"])],
+          configuredProviders: [
+            "probe": [
+              .init(
+                executable: "/bin/sh",
+                arguments: [
+                  "-c",
+                  #"[ "$HOME" = "${TMPDIR%/}" ] || exit 4; if IFS= read -r line || [ -n "$line" ]; then exit 3; fi; echo 'probe 1.2.3'"#,
+                ])
+            ]
+          ],
+          commandRunner: ManagedCommandRunner(launcher: testExecutionLauncher()),
+          environment: ["PATH": "/usr/bin:/bin"], commonSearchDirectories: []
+        ).discover()
+      }
     }
     #expect(result.first?.version == "probe 1.2.3")
     #expect(result.first?.doctorStatus.state == .notApplicable)
     #expect(result.first?.diagnostics.isEmpty == true)
   }
 
+  @Test(arguments: [false, true])
+  func commandsRequireAnInstalledContext(managed: Bool) throws {
+    let temporary = try ScopedTemporaryDirectory()
+    let marker = temporary.url.appendingPathComponent("launched")
+    let runner: any CommandRunning =
+      managed
+      ? ManagedCommandRunner(launcher: testExecutionLauncher())
+      : ProcessCommandRunner(launcher: testExecutionLauncher())
+    ExecutionAdministration.$current.withValue(nil) {
+      #expect(
+        throws: ShellRuntimeError.launchFailed(
+          "No authorized execution context is installed")
+      ) {
+        try runner.run(
+          executable: "/bin/sh", arguments: ["-c", "touch \"$1\"", "probe", marker.path],
+          workingDirectory: temporary.url, environment: ["PATH": systemUtilityPath],
+          timeoutMilliseconds: 2000, maxOutputBytes: 1024)
+      }
+    }
+    #expect(!FileManager.default.fileExists(atPath: marker.path))
+  }
+
   /// A killed process whose new parent never reaps it remains a zombie; it has still exited.
   private static func exited(_ pid: Int32) -> Bool { ProcessTable.hasExited(pid) }
+}
+
+/// Tests that own a local process must also own its launch authority and scratch lifetime.
+func withCommandAdministration<T>(
+  readOnly: Bool = false, workingDirectory: URL? = nil,
+  variables: [String: String] = [:], _ operation: () throws -> T
+) throws -> T {
+  let scratch = try ScopedTemporaryDirectory()
+  let home = try SandboxPath(ProjectPathResolver.canonicalProject(scratch.url).path)
+  let administration: ExecutionAdministration
+  if readOnly {
+    let projectURL =
+      workingDirectory ?? URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
+    let root = try SandboxPath(ProjectPathResolver.canonicalProject(projectURL).path)
+    let reads = [root] + testExecutionLauncher().hostSystemReadPaths
+    var ancestorPaths: Set<String> = ["/"]
+    for path in reads + [home] {
+      var parent = (path.value as NSString).deletingLastPathComponent
+      while parent != "/" {
+        ancestorPaths.insert(parent)
+        parent = (parent as NSString).deletingLastPathComponent
+      }
+    }
+    let sandbox = try SandboxConfiguration(
+      readOnly: true, worktree: root, temporaryDirectory: home, homeDirectory: home,
+      cacheDirectory: home, readableRoots: reads,
+      listableAncestors: ancestorPaths.sorted().map(SandboxPath.init))
+    administration = try .init(
+      mode: .sandbox(sandbox),
+      environment: .init(
+        searchPath: systemUtilityPath.split(separator: ":").map { try SandboxPath(String($0)) },
+        home: home, temporary: home, cache: home, hostVariables: variables))
+  } else {
+    let complete = ["PATH": systemUtilityPath, "HOME": home.value, "TMPDIR": home.value + "/"]
+      .merging(variables) { _, value in value }
+    administration = try .init(mode: .fullAccess, environment: .init(fullAccessVariables: complete))
+  }
+  defer { withExtendedLifetime(scratch) {} }
+  return try ExecutionAdministration.$current.withValue(administration, operation: operation)
 }

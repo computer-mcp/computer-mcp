@@ -20,14 +20,14 @@ struct MCPHostLaunchMetadataTests {
     let metadata = MCPHostLaunchMetadata(
       runtimeID: runtimeID, context: context, projectID: "project", rootURL: root,
       readOnly: !managed, managedProjectRoot: managedRoot)
-    let legacy = LegacyHostLaunchContext(
+    let contract = ContractHostLaunchContext(
       runtimeID: runtimeID, caller: context.caller, profileID: context.profileID,
       project: .init(id: "project", rootPath: root.path), readOnly: !managed,
       transportTrace: context.transportTrace,
       managedProjectRoot: managedRoot?.standardizedFileURL.path,
       principalID: context.principalID)
     let expected = try JSONDecoder().decode(
-      [String: JSONValue].self, from: JSONEncoder().encode(legacy))
+      [String: JSONValue].self, from: JSONEncoder().encode(contract))
     let actual = try JSONDecoder().decode(
       [String: JSONValue].self, from: JSONEncoder().encode(metadata))
     #expect(actual == expected)
@@ -63,10 +63,11 @@ struct MCPHostLaunchMetadataTests {
       #expect(value.objectValue?["caller"] == .string("local-cli"))
       #expect(value.objectValue?["runtimeID"] == .string(metadata.runtimeID.uuidString))
       #expect(value.objectValue?["principalID"] == .string("local-cli:local-admin"))
+      #expect(value.objectValue?["hostServiceContract"] == .string("projects-v1"))
       #expect(
         Set(try #require(value.objectValue).keys) == [
-          "formatVersion", "runtimeID", "caller", "profileID", "workspace", "readOnly",
-          "principalID",
+          "formatVersion", "hostServiceContract", "runtimeID", "caller", "profileID", "project",
+          "readOnly", "principalID",
         ])
     } else {
       #expect(environment[MCPHostLaunchMetadata.environmentKey] == nil)
@@ -100,13 +101,14 @@ struct MCPHostLaunchMetadataTests {
   }
 }
 
-/// The host launch wire contract, including its original optional-field encoding.
-private struct LegacyHostLaunchContext: Encodable {
+/// The frozen `projects-v1` launch context, including its optional-field encoding.
+private struct ContractHostLaunchContext: Encodable {
   struct Project: Encodable {
     let id: String
     let rootPath: String
   }
   let formatVersion = 1
+  let hostServiceContract = "projects-v1"
   let runtimeID: UUID
   let caller: GatewayCallerKind
   let profileID: GatewayProfileID
@@ -115,10 +117,4 @@ private struct LegacyHostLaunchContext: Encodable {
   let transportTrace: GatewayTransportTrace?
   let managedProjectRoot: String?
   let principalID: String
-
-  private enum CodingKeys: String, CodingKey {
-    case formatVersion, runtimeID, caller, profileID, readOnly, transportTrace, principalID
-    case project = "workspace"
-    case managedProjectRoot = "managedWorkspaceRoot"
-  }
 }

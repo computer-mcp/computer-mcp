@@ -19,7 +19,7 @@ struct CLITreeToolProvider: GatewayToolProvider {
   func definitions() throws -> [ToolDefinition] {
     tree.commands.filter(\.executable).map { command in
       let name = toolName(command)
-      // Publisher risk hints do not change the host Full Shell boundary for CLI execution.
+      // Publisher hints cannot supply Project or execution-context authority.
       return ToolDefinition(
         tool: MCPTool(
           name: name, title: ([registration.id] + command.path).joined(separator: " "),
@@ -38,7 +38,11 @@ struct CLITreeToolProvider: GatewayToolProvider {
             ])
           ])),
         capability: CapabilityDescriptor(
-          id: name, risk: .fullShell, projectRequirement: .required))
+          id: name, risk: .fullShell,
+          requirement: .init(
+            access: .projectWrite, execution: .start,
+            contribution: .cli(registration: .registered(id: registration.id))),
+          projectRequirement: .required))
     }
   }
 

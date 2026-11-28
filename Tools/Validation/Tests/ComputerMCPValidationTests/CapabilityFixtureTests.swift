@@ -200,13 +200,24 @@ final class CapabilityFixtureTests {
     let destination = FileManager.default.temporaryDirectory
       .appendingPathComponent("computer-mcp-fixture-\(UUID().uuidString).toml")
     let builtinValues = builtins.sorted().map { "  \(tomlString($0))," }.joined(separator: "\n")
+    let gitExecutable: String
+    if includeGit {
+      let result = try ProcessCommandRunner().run(
+        executable: "/usr/bin/xcrun", arguments: ["--find", "git"], workingDirectory: nil,
+        environment: [:], timeoutMilliseconds: 10_000, maxOutputBytes: 4096)
+      try #require(result.exitCode == 0 && !result.timedOut && !result.stdoutTruncated)
+      gitExecutable = result.stdout.trimmingCharacters(in: .whitespacesAndNewlines)
+      try #require(gitExecutable.hasPrefix("/") && !gitExecutable.contains("\n"))
+    } else {
+      gitExecutable = ""
+    }
     let git =
       includeGit
       ? """
 
       [[cli.commands]]
       id = "git"
-      executable = "/usr/bin/git"
+      executable = \(tomlString(gitExecutable))
       cwd = "project"
       allow_any_args = true
       risk = "project-write-capable"
@@ -230,10 +241,10 @@ final class CapabilityFixtureTests {
 
       [[profiles]]
       id = "local-admin"
-      capabilities = ["*"]
-      projects = ["default"]
+      permissions = { machine = "allow", skills = "allow" }
+      projects = { default = { access = "write" } }
       allowed_callers = ["local-mcp"]
-      full_shell_enabled = false
+      full_access = false
       \(git)
 
       [builtin]
@@ -253,16 +264,25 @@ final class CapabilityFixtureTests {
     arguments: JSONValue,
     configURL: URL
   ) throws -> JSONValue {
-    let argumentData = try ValidationCanonicalJSONCoding.encoder().encode(arguments)
-    let data = try ValidationProductCommand().run([
-      "tools", "call", name,
-      "--arguments-json", String(decoding: argumentData, as: UTF8.self),
-      "--config", configURL.path,
-      "--caller", "local-mcp",
-      "--profile", "local-admin",
-      "--project-id", "default",
-    ])
-    return try ValidationCanonicalJSONCoding.decoder().decode(JSONValue.self, from: data)
+    do {
+      let argumentData = try ValidationCanonicalJSONCoding.encoder().encode(arguments)
+      let data = try ValidationProductCommand().run([
+        "tools", "call", name,
+        "--arguments-json", String(decoding: argumentData, as: UTF8.self),
+        "--config", configURL.path,
+        "--caller", "local-mcp",
+        "--profile", "local-admin",
+        "--project-id", "default",
+      ])
+      return try ValidationCanonicalJSONCoding.decoder().decode(JSONValue.self, from: data)
+    } catch {
+      throw FixtureToolFailure(name: name, underlying: error)
+    }
+  }
+
+  private struct FixtureToolFailure: Error {
+    let name: String
+    let underlying: any Error
   }
 
   private func tomlString(_ value: String) -> String {

@@ -7,6 +7,10 @@ import Testing
 @testable import ComputerMCPConfiguration
 @testable import ComputerMCPGateway
 
+#if os(macOS)
+  import ComputerMCPDarwinTestSupport
+#endif
+
 @Suite
 
 final class GatewayMCPToolSurfaceTests {
@@ -19,7 +23,9 @@ final class GatewayMCPToolSurfaceTests {
     )
     let surface = try GatewayMCPToolSurface(
       registry: GatewayProviderRouter(providers: [
-        SystemToolProvider(environment: ToolEnvironment(configuration: configuration))
+        SystemToolProvider(
+          environment: ToolEnvironment(
+            launcher: testExecutionLauncher(), configuration: configuration))
       ])
     )
 

@@ -1,3 +1,4 @@
+import ComputerMCPPermissions
 import ComputerMCPTestSupport
 import Foundation
 import Testing
@@ -8,6 +9,29 @@ import Testing
 @Suite
 
 final class GatewayConfigurationTests {
+  @Test
+  func anEmptyManifestDoesNotRegisterTheConfigurationDirectory() throws {
+    let configuration = try GatewayConfiguration.load(text: "schema_version = 1")
+    #expect(configuration.manifestProjects.isEmpty)
+    let legacy = try PermissionManifestUpgrade.source(
+      manifest: """
+        schema_version = 1
+        [[profiles]]
+        id = "local-admin"
+        capabilities = ["system.info"]
+        """)
+    #expect(legacy.configuration.manifestProjects.map(\.id) == ["default"])
+  }
+
+  @Test
+  func executionDefaultsMatchDecodedPolicy() throws {
+    let decoded = try JSONDecoder().decode(PolicyConfig.self, from: Data("{}".utf8))
+    #expect(decoded.defaultTimeoutMs == 120_000)
+    #expect(decoded.maxOutputBytes == 8_388_608)
+    #expect(decoded.defaultTimeoutMs == PolicyConfig().defaultTimeoutMs)
+    #expect(decoded.maxOutputBytes == PolicyConfig().maxOutputBytes)
+  }
+
   @Test
   func testSchemaV1SupportsValidatedCustomProfilesAndCallerSpecificDefaults() throws {
     let custom = try #require(GatewayProfileID(rawValue: "partner-observe"))
@@ -24,12 +48,13 @@ final class GatewayConfigurationTests {
 
         [[profiles]]
         id = "partner-observe"
-        capabilities = ["system.time"]
+        permissions = { machine = "allow" }
         allowed_callers = ["local-cli"]
 
         [[profiles]]
         id = "cloudflare-observe"
-        capabilities = ["system.time"]
+        permissions = { machine = "allow" }
+        allowed_callers = ["cloudflare-tunnel"]
         """,
       baseURL: URL(fileURLWithPath: "/tmp/computer-mcp-schema-1")
     )
@@ -51,13 +76,14 @@ final class GatewayConfigurationTests {
 
           [[profiles]]
           id = "chatgpt-observe"
-          capabilities = ["system.time"]
+          allowed_callers = []
+          permissions = { machine = "allow" }
           obsolete_access = true
           """,
         baseURL: URL(fileURLWithPath: "/tmp/computer-mcp-schema-1")
       )
     ) { error in
-      #expect(error.localizedDescription.contains("Unknown configuration field"))
+      #expect(error.localizedDescription.contains("Unknown"))
       #expect(error.localizedDescription.contains("obsolete_access"))
     }
   }
@@ -187,7 +213,7 @@ final class GatewayConfigurationTests {
     let config = try GatewayConfiguration.load(path: path)
 
     #expect((config.server.name) == ("test-gateway"))
-    #expect((config.policy.defaultTimeoutMs) == (30_000))
+    #expect(config.policy.defaultTimeoutMs == 120_000)
     #expect(!(config.policy.shellEnabled))
     #expect((config.cli.commands.first?.id) == ("echo"))
     #expect((config.cli.commands.first?.interface?.formatFlag) == ("--format"))
@@ -536,24 +562,6 @@ final class GatewayConfigurationTests {
   }
 
   @Test
-  func testRejectsNoncanonicalProfileCapabilityIDs() throws {
-    for capability in ["project", "Project.info", "project.bad-name", "project.bad__name"] {
-      let path = try writeConfig(
-        """
-        [[profiles]]
-        id = "custom-observe"
-        capabilities = ["\(capability)"]
-        allowed_callers = ["secure-tunnel"]
-        """
-      )
-
-      expectThrows(try GatewayConfiguration.load(path: path)) { error in
-        #expect(error.localizedDescription.contains("lowercase namespace"))
-      }
-    }
-  }
-
-  @Test
   func testRejectsCLIBackedTool() throws {
     let path = try writeConfig(
       """
@@ -727,7 +735,8 @@ final class GatewayConfigurationTests {
 
         [[profiles]]
         id = "chatgpt-observe"
-        capabilities = ["project.info", "project.governance_files"]
+        allowed_callers = []
+        permissions = { machine = "allow" }
 
         [builtin]
         enabled = ["project.info", "project.governance_files"]
@@ -736,7 +745,9 @@ final class GatewayConfigurationTests {
     )
 
     #expect(configuration.builtin.enabled == ["project.info"])
-    #expect(configuration.profiles.first?.capabilities == ["project.info"])
+    #expect(
+      configuration.profiles.first?.grant.permissions.state(for: .machineInformation)
+        == .granted(.access))
   }
 
   @Test
@@ -744,7 +755,7 @@ final class GatewayConfigurationTests {
     let path = try writeConfig(
       """
       [builtin]
-      enabled = ["project.info", "project.status", "project.manifests", "project.recent_files", "project.directory_stats", "project.artifact_directories", "project.empty_directories", "project.git_changes", "project.file_types", "project.large_files", "project.symlinks", "project.executable_files", "project.todos", "project.env_files", "project.dependency_files", "project.project_roots", "project.documentation_files", "project.agent_files", "project.instructions", "project.test_files", "project.ci_files", "project.infra_files", "project.config_files", "project.ignore_files", "project.asset_files", "project.archive_files", "project.log_files", "project.data_files", "project.schema_files", "project.source_files", "project.outline", "project.commands", "system.info", "system.kernel", "system.software", "system.locale", "system.memory", "system.load", "system.cpu", "system.thermal", "system.time", "system.uptime", "system.user", "system.groups", "system.power", "system.volumes", "system.processes", "system.which", "system.path", "logs.query", "service.status", "network.interfaces", "network.dns", "network.resolve", "network.proxy", "network.services", "network.hardware_ports", "network.wifi", "network.vpn", "network.locations", "network.routes", "network.connections", "network.arp", "network.ping", "network.tcp_check", "network.http_check", "network.listeners", "macos.user_directories", "macos.default_application", "macos.applications", "macos.screens", "macos.spotlight_search", "macos.running_applications", "macos.frontmost_application", "env.describe", "file.exists", "file.list", "file.tree", "file.stat", "file.permissions", "file.chmod", "file.type", "file.count", "file.disk_usage", "file.volume_info", "file.find", "file.search", "file.timeline", "file.read", "file.read_files", "file.read_window", "file.read_lines", "file.read_context", "file.head", "file.outline", "markdown.links", "markdown.tables", "markdown.section", "markdown.frontmatter", "markdown.link_check", "file.tail", "file.hexdump", "file.xattrs", "file.remove_xattr", "file.metadata", "file.readlink", "file.resolve", "image.info", "pdf.info", "pdf.text", "media.info", "json.read", "jsonl.read", "json.write", "toml.read", "yaml.read", "xml.read", "plist.read", "structured.get", "plist.write", "csv.read", "sqlite.schema", "sqlite.query", "file.hash", "file.diff", "file.compare_trees", "file.duplicates", "archive.list", "archive.extract", "archive.create", "file.download", "file.write", "file.write_files", "file.append", "file.replace_text", "file.insert_text", "file.replace_lines", "file.touch", "file.mkdir", "file.copy", "file.move", "file.symlink", "file.trash", "project.open", "project.reveal", "git.root", "git.config", "git.remotes", "git.worktrees", "git.stashes", "git.stash_show", "git.stash_push", "git.tags", "git.tag_show", "git.tag_create", "git.tag_delete", "git.ignored", "git.submodules", "git.files", "git.grep", "git.blame", "git.file_history", "git.file_at_revision", "git.staged_file", "git.conflicts", "git.status", "git.tracking_status", "git.clean_preview", "git.clean", "git.reflog", "git.refs", "git.resolve_ref", "git.merge_base", "git.compare_refs", "git.is_ancestor", "git.diff", "git.diff_summary", "git.diff_check", "git.branch", "git.branch_create", "git.branch_delete", "git.branch_rename", "git.branch_switch", "git.log", "git.commit_files", "git.show", "git.add", "git.unstage", "git.restore_worktree", "git.commit"]
+      enabled = ["project.info", "project.status", "project.manifests", "project.recent_files", "project.directory_stats", "project.artifact_directories", "project.empty_directories", "project.git_changes", "project.file_types", "project.large_files", "project.symlinks", "project.executable_files", "project.todos", "project.env_files", "project.dependency_files", "project.project_roots", "project.documentation_files", "project.agent_files", "project.instructions", "project.test_files", "project.ci_files", "project.infra_files", "project.config_files", "project.ignore_files", "project.asset_files", "project.archive_files", "project.log_files", "project.data_files", "project.schema_files", "project.source_files", "project.outline", "project.commands", "system.info", "system.kernel", "system.software", "system.locale", "system.memory", "system.load", "system.cpu", "system.thermal", "system.time", "system.uptime", "system.user", "system.groups", "system.power", "system.volumes", "system.processes", "system.which", "system.path", "logs.query", "service.status", "network.interfaces", "network.dns", "network.resolve", "network.proxy", "network.services", "network.hardware_ports", "network.wifi", "network.vpn", "network.locations", "network.routes", "network.connections", "network.arp", "network.ping", "network.tcp_check", "network.http_check", "network.listeners", "macos.user_directories", "macos.default_application", "macos.applications", "macos.screens", "macos.spotlight_search", "macos.running_applications", "macos.frontmost_application", "env.describe", "file.exists", "file.list", "file.tree", "file.stat", "file.permissions", "file.chmod", "file.type", "file.count", "file.disk_usage", "file.volume_info", "file.find", "file.search", "file.timeline", "file.read", "file.read_files", "file.read_window", "file.read_lines", "file.read_context", "file.head", "file.outline", "markdown.links", "markdown.tables", "markdown.section", "markdown.frontmatter", "markdown.link_check", "file.tail", "file.hexdump", "file.xattrs", "file.remove_xattr", "file.metadata", "file.readlink", "file.resolve", "image.info", "pdf.info", "pdf.text", "media.info", "json.read", "jsonl.read", "json.write", "toml.read", "yaml.read", "xml.read", "plist.read", "structured.get", "plist.write", "csv.read", "sqlite.schema", "sqlite.query", "file.hash", "file.diff", "file.compare_trees", "file.duplicates", "archive.list", "archive.extract", "archive.create", "file.download", "file.write", "file.write_files", "file.append", "file.replace_text", "file.insert_text", "file.replace_lines", "file.touch", "file.mkdir", "file.copy", "file.move", "file.symlink", "file.trash", "project.open", "project.reveal", "git.root", "git.config", "git.remotes", "git.worktree_list", "git.stashes", "git.stash_show", "git.stash_push", "git.tags", "git.tag_show", "git.tag_create", "git.tag_delete", "git.ignored", "git.submodules", "git.files", "git.grep", "git.blame", "git.file_history", "git.file_at_revision", "git.staged_file", "git.conflicts", "git.status", "git.tracking_status", "git.clean_preview", "git.clean", "git.reflog", "git.refs", "git.resolve_ref", "git.merge_base", "git.compare_refs", "git.is_ancestor", "git.diff", "git.diff_summary", "git.diff_check", "git.branch", "git.branch_create", "git.branch_delete", "git.branch_rename", "git.branch_switch", "git.log", "git.commit_files", "git.show", "git.add", "git.unstage", "git.restore_worktree", "git.commit"]
       """
     )
 
@@ -826,7 +837,7 @@ final class GatewayConfigurationTests {
           "file.move", "file.symlink",
           "file.trash", "project.open", "project.reveal", "git.root", "git.config",
           "git.remotes",
-          "git.worktrees", "git.stashes", "git.stash_show", "git.stash_push", "git.tags",
+          "git.worktree_list", "git.stashes", "git.stash_show", "git.stash_push", "git.tags",
           "git.tag_show", "git.tag_create", "git.tag_delete", "git.ignored",
           "git.submodules",
           "git.files", "git.grep", "git.blame", "git.file_history", "git.file_at_revision",
@@ -876,14 +887,12 @@ final class GatewayConfigurationTests {
 
       [[profiles]]
       id = "chatgpt-observe"
-      capabilities = ["project.list", "file.read"]
-      projects = ["primary"]
+      projects = { primary = { access = "read" } }
       allowed_callers = ["secure-tunnel"]
 
       [[profiles]]
       id = "chatgpt-operate"
-      capabilities = ["file.read", "file.write"]
-      projects = ["primary"]
+      projects = { primary = { access = "write" } }
       allowed_callers = ["secure-tunnel"]
       """
     )
@@ -902,8 +911,9 @@ final class GatewayConfigurationTests {
     #expect((config.projects.last?.path) == nil)
     #expect((config.manifestProjects.map(\.id)) == (["primary"]))
     #expect(
-      (config.profileGrant(for: .chatGPTOperate).capabilityIDs) == (["file.read", "file.write"]))
-    #expect(!(config.profileGrant(for: .chatGPTOperate).fullShellEnabled))
+      config.profileGrant(for: .chatGPTOperate).permissions.state(for: .project("primary"))
+        == .granted(.write))
+    #expect(!(config.profileGrant(for: .chatGPTOperate).fullAccess))
   }
 
   @Test
@@ -935,8 +945,8 @@ final class GatewayConfigurationTests {
 
       [[profiles]]
       id = "chatgpt-operate"
-      capabilities = ["file.read"]
-      projects = ["unknown"]
+      allowed_callers = []
+      projects = { unknown = { access = "read" } }
       """
     )
     expectThrows(try GatewayConfiguration.load(path: unknownProject)) { error in
@@ -968,46 +978,6 @@ final class GatewayConfigurationTests {
     }
   }
 
-  @Test(
-    arguments: [
-      GatewayProfileID.chatGPTObserve, .chatGPTOperate, .cloudflareObserve, .cloudflareOperate,
-      GatewayProfileID(rawValue: "custom-shell")!,
-    ], GatewayPermissionMode.allCases)
-  func testSchemaV1FullShellEligibilityDependsOnMode(
-    profileID: GatewayProfileID, mode: GatewayPermissionMode
-  ) throws {
-    let manifest = try writeConfig(
-      """
-      schema_version = 1
-
-      [policy]
-      shell_enabled = true
-
-      [[profiles]]
-      id = "\(profileID.rawValue)"
-      capabilities = ["shell.run"]
-      allowed_callers = ["secure-tunnel", "cloudflare-tunnel"]
-      mode = "\(mode.rawValue)"
-      full_shell_enabled = true
-      """
-    )
-    if mode == .localFullAccess {
-      let configuration = try GatewayConfiguration.load(path: manifest)
-      let grant = configuration.profileGrant(for: profileID)
-      #expect(configuration.policy.shellEnabled)
-      #expect(grant.mode == .localFullAccess)
-      #expect(grant.fullShellEnabled)
-      #expect(grant.capabilityIDs == ["shell.run"])
-      #expect(grant.allowedCallers == [.secureTunnel, .cloudflareTunnel])
-    } else {
-      expectThrows(try GatewayConfiguration.load(path: manifest)) { error in
-        #expect(
-          error.localizedDescription.contains(
-            GatewayPolicyConfigurationError.fullShellRequiresFullAccess.localizedDescription))
-      }
-    }
-  }
-
   @Test
   func testSchemaV1RejectsRemoteCallersForLocalAdministrationProfile() throws {
     let remoteAdmin = try writeConfig(
@@ -1016,7 +986,6 @@ final class GatewayConfigurationTests {
 
       [[profiles]]
       id = "local-admin"
-      capabilities = ["*"]
       allowed_callers = ["secure-tunnel"]
       """
     )

@@ -18,6 +18,10 @@ import Testing
 @testable import ComputerMCPPlatformPOSIX
 @testable import ComputerMCPProcess
 
+#if os(macOS)
+  import ComputerMCPDarwinTestSupport
+#endif
+
 @Suite(.nativeIntegration, .serialized)
 
 final class GatewayToolRegistryTests {
@@ -59,14 +63,17 @@ final class GatewayToolRegistryTests {
     #expect((tools.first?.annotations?.readOnlyHint) == (true))
     #expect((tools.first?.annotations?.destructiveHint) == (false))
     expectThrows(
-      try CLIToolProvider(environment: ToolEnvironment(configuration: config)).callTool(
+      try CLIToolProvider(
+        environment: ToolEnvironment(launcher: testExecutionLauncher(), configuration: config)
+      ).callTool(
         .init(name: "cli.list", arguments: .object([:]), context: .empty))
     ) { error in
       #expect(error.localizedDescription.contains("at least one configured provider"))
     }
     expectThrows(
       try MCPToolProvider(
-        environment: ToolEnvironment(configuration: config), mcpClient: RegistryDiscoveryStub()
+        environment: ToolEnvironment(launcher: testExecutionLauncher(), configuration: config),
+        mcpClient: RegistryDiscoveryStub()
       ).callTool(
         .init(name: "mcp.servers.list", arguments: .object([:]), context: .empty))
     ) { error in
@@ -126,7 +133,8 @@ final class GatewayToolRegistryTests {
   }
 
   private func toolRouter(configuration: GatewayConfiguration) throws -> GatewayProviderRouter {
-    let environment = ToolEnvironment(configuration: configuration)
+    let environment = ToolEnvironment(
+      launcher: testExecutionLauncher(), configuration: configuration)
     return try GatewayProviderRouter(providers: [
       CLIToolProvider(environment: environment), ShellToolProvider(environment: environment),
       ProcessToolProvider(environment: environment), GitToolProvider(environment: environment),
@@ -146,6 +154,10 @@ final class GatewayToolRegistryTests {
 }
 
 private struct RegistryDiscoveryStub: DownstreamMCPClient {
+  func cachedTools(server: MCPServerConfig, context: InvocationContext) -> [MCPTool]? {
+    try? listTools(server: server, context: context)
+  }
+
   func makeScopedClient(
     workingDirectory: URL, environment: [String: String], hostContext: (any MCPHostEnvironment)?
   ) -> any DownstreamMCPClient { self }

@@ -3,13 +3,14 @@ import ComputerMCPControlPlane
 import ComputerMCPCore
 import ComputerMCPPlatform
 import ComputerMCPProcess
+import ComputerMCPSandbox
 import ComputerMCPTestSupport
 import Foundation
 import Testing
 
 @testable import computer_mcp
 
-@Suite(.timeLimit(.minutes(2)))
+@Suite(.nativeIntegration, .serialized, .timeLimit(.minutes(2)))
 struct ClientRegistrationCLITests {
   @Test(arguments: ["codex", "claude-code"])
   func dryRunConfirmationAndExpectedFingerprint(client: String) throws {
@@ -200,21 +201,25 @@ private struct RegistrationCLIFixture {
     temporary = try ScopedTemporaryDirectory()
     let repository = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
       .deletingLastPathComponent().deletingLastPathComponent()
-    executable = repository.appendingPathComponent(".build/debug/computer-mcp")
-      .resolvingSymlinksInPath()
+    executable = try nativeGatewayTestExecutable()
     _ = try #require(FileManager.default.isExecutableFile(atPath: executable.path))
+    try FileManager.default.setAttributes(
+      [.posixPermissions: 0o700], ofItemAtPath: root.path)
     try Data().write(to: root.appendingPathComponent(".registration-fixture"))
-    try FileManager.default.copyItem(
-      at: repository.appendingPathComponent(
-        "Tests/ComputerMCPMacOSTests/Fixtures/registration-client.py"), to: client)
-    try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: client.path)
+    let script = try String(
+      contentsOf: repository.appendingPathComponent(
+        "Tests/ComputerMCPMacOSTests/Fixtures/registration-client.py"), encoding: .utf8)
+    try writePythonTestExecutable(script, to: client)
   }
 
   func configurationFile(_ client: String) -> URL {
     root.appendingPathComponent(
       client == "codex" ? "codex/fixture-mcp.json" : "claude/.claude.json")
   }
-  func service(processRunner: any RegistrationProcessRunning = RegistrationProcessRunner())
+  func service(
+    processRunner: any RegistrationProcessRunning = RegistrationProcessRunner(
+      launcher: testExecutionLauncher())
+  )
     -> ClientRegistrationService
   {
     ClientRegistrationService(
@@ -243,15 +248,19 @@ private struct RegistrationCLIFixture {
     ).write(to: file)
   }
   func run(_ arguments: [String]) throws -> CommandResult {
-    try RegistrationProcessRunner().run(
-      executable: executable.path, arguments: arguments,
-      environment: [
-        "HOME": root.path, "USER": "fixture", "LOGNAME": "fixture", "LANG": "C",
-        "TMPDIR": root.path,
-        "PATH": "/usr/bin:/bin", "CODEX_HOME": root.appendingPathComponent("codex").path,
-        "CLAUDE_CONFIG_DIR": root.appendingPathComponent("claude").path,
-      ],
-      timeoutMilliseconds: 10_000, maxOutputBytes: 1_048_576)
+    let environment = [
+      "HOME": root.path, "USER": "fixture", "LOGNAME": "fixture", "LANG": "C",
+      "TMPDIR": root.path,
+      "PATH": "/usr/bin:/bin", "CODEX_HOME": root.appendingPathComponent("codex").path,
+      "CLAUDE_CONFIG_DIR": root.appendingPathComponent("claude").path,
+    ]
+    let administration = ExecutionAdministration(
+      mode: .fullAccess, environment: try ExecutionEnvironment(fullAccessVariables: environment))
+    return try ExecutionAdministration.$current.withValue(administration) {
+      try RegistrationProcessRunner(launcher: testExecutionLauncher()).run(
+        executable: executable.path, arguments: arguments, environment: environment,
+        timeoutMilliseconds: 10_000, maxOutputBytes: 1_048_576)
+    }
   }
   func json(_ result: CommandResult) throws -> [String: JSONValue] {
     try #require(JSONDecoder().decode(JSONValue.self, from: Data(result.stdout.utf8)).objectValue)
@@ -268,7 +277,7 @@ private struct RecoveryCLIRegistrationRunner: RegistrationProcessRunning {
   ) throws -> CommandResult {
     let restore = arguments.contains("add-json")
     if !arguments.contains("add"), !restore || writesEntry {
-      let result = try RegistrationProcessRunner().run(
+      let result = try RegistrationProcessRunner(launcher: testExecutionLauncher()).run(
         executable: executable, arguments: arguments, environment: environment,
         timeoutMilliseconds: timeoutMilliseconds, maxOutputBytes: maxOutputBytes)
       if !restore { return result }
@@ -301,8 +310,12 @@ private final class UnconfirmedCLIRegistrationRunner: RegistrationProcessRunning
         stdout: "PRIVATE_SENTINEL", stderr: "PRIVATE_SENTINEL", stdoutTruncated: false,
         stderrTruncated: false)
     }
-    return try RegistrationProcessRunner().run(
+    return try RegistrationProcessRunner(launcher: testExecutionLauncher()).run(
       executable: executable, arguments: arguments, environment: environment,
       timeoutMilliseconds: timeoutMilliseconds, maxOutputBytes: maxOutputBytes)
   }
 }
+
+#if os(macOS)
+  import ComputerMCPDarwinTestSupport
+#endif

@@ -1,4 +1,5 @@
 import ComputerMCPCore
+import ComputerMCPPermissions
 import Foundation
 
 package enum GatewayFullAccessLifetime: String, Codable, CaseIterable, Sendable {
@@ -10,7 +11,6 @@ package enum GatewayFullAccessLifetime: String, Codable, CaseIterable, Sendable 
 package struct GatewayControlProfile: Codable, Equatable, Sendable {
   package let grant: ProfileGrant
   package let persisted: Bool
-  // Configured Observe profiles derive their visible read tools and projects at runtime.
   package var configuredGrant: ProfileGrant? = nil
 
   func hasSameAuthorization(as other: Self) -> Bool {
@@ -47,22 +47,24 @@ package final class GatewayControlSession: GatewaySessionAuthority, @unchecked S
   package let changes = GatewayToolChangeBroadcaster()
   private let lock = NSLock()
   private var currentRevision: Int64 = 0
-  private var accessLimit = GatewayPermissionMode.projectOperations
+  private var accessLimit = ManagedPolicy()
   private var fullAccessConsent: GatewayFullAccessConsent?
   private let database: GatewayDatabase?
+  private let permissionService: GatewayPermissionService?
   private var profile: GatewayControlProfile?
   private var ended = false
 
   package init(
     principalID: String, profileID: GatewayProfileID, caller: GatewayCallerKind,
-    database: GatewayDatabase? = nil, profile: GatewayControlProfile? = nil
+    database: GatewayDatabase? = nil, profile: GatewayControlProfile? = nil,
+    permissionService: GatewayPermissionService? = nil
   ) {
     self.principalID = principalID
     self.profileID = profileID
     self.caller = caller
     self.database = database
     self.profile = profile
-    accessLimit = profile?.grant.mode == .readOnly ? .readOnly : .projectOperations
+    self.permissionService = permissionService
   }
 
   func restoreTrustedAccess() throws {
@@ -74,10 +76,15 @@ package final class GatewayControlSession: GatewaySessionAuthority, @unchecked S
         let current = try currentProfile(), current.hasSameAuthorization(as: trust.profile),
         current.grant.allowedCallers.contains(caller)
       else { return }
-      fullAccessConsent = .init(
+      try ensureConnection()
+      let consent = GatewayFullAccessConsent(
         lifetime: .alwaysAllowClient, grantedAt: trust.updatedAt,
         profile: current, trustID: trust.id, trustRevision: trust.revision)
-      accessLimit = .localFullAccess
+      guard
+        try permissionService?.hasValidFullAccessConsent(
+          subject: subject, connectionID: id, consent: consent) == true
+      else { return }
+      fullAccessConsent = consent
     }
   }
 
@@ -94,11 +101,20 @@ package final class GatewayControlSession: GatewaySessionAuthority, @unchecked S
         let database, !principalID.isEmpty, let current
       else { throw Self.denied("Reload the connected client before granting access.") }
       // Persistence and audit must succeed before this session receives authority.
+      guard current.grant.fullAccess, accessLimit.allowsFullAccess else {
+        throw Self.denied("Enable Full access in the profile before granting local consent.")
+      }
+      try ensureConnection()
       let consent = try database.recordFullAccessConsent(
         sessionID: id, principalID: principalID, profile: current, caller: caller,
         lifetime: lifetime, expectedTrustRevision: expectedTrustRevision, approver: approver)
+      do {
+        try permissionService?.setConnectionConsent(
+          subject: subject, id: id, allowed: true, consent: consent)
+      } catch {
+        throw Self.denied("The durable permission connection could not select Full access.")
+      }
       fullAccessConsent = consent
-      accessLimit = .localFullAccess
       currentRevision += 1
     }
     changes.send()
@@ -118,7 +134,7 @@ package final class GatewayControlSession: GatewaySessionAuthority, @unchecked S
     profile = current
     if changed {
       if fullAccessConsent != nil {
-        clearConsent(mode: current.grant.mode)
+        clearConsent()
       } else {
         if currentRevision < Int64.max { currentRevision += 1 } else { ended = true }
         changes.send()
@@ -146,13 +162,17 @@ package final class GatewayControlSession: GatewaySessionAuthority, @unchecked S
       current?.hasSameAuthorization(as: consent.profile) != true
         || current?.grant.allowedCallers.contains(caller) != true
         || !trusted
+        || (try? permissionService?.hasValidFullAccessConsent(
+          subject: subject, connectionID: id, consent: consent)) != true
     else { return }
-    clearConsent(mode: current?.grant.mode)
+    clearConsent()
   }
 
-  private func clearConsent(mode: GatewayPermissionMode?) {
+  private func clearConsent() {
     fullAccessConsent = nil
-    accessLimit = mode == .readOnly ? .readOnly : .projectOperations
+    if let subject = try? subject {
+      try? permissionService?.setConnectionConsent(subject: subject, id: id, allowed: false)
+    }
     if currentRevision < Int64.max { currentRevision += 1 } else { ended = true }
     changes.send()
   }
@@ -181,22 +201,20 @@ package final class GatewayControlSession: GatewaySessionAuthority, @unchecked S
   }
 
   package func limitAccess(
-    to mode: GatewayPermissionMode, expectedRevision: Int64, allowIncrease: Bool = true
+    to limits: ManagedPolicy, expectedRevision: Int64, allowIncrease: Bool = false
   ) throws {
     try lock.withLock {
       _ = try currentProfile()
       refreshConsent()
-      guard !ended, currentRevision == expectedRevision, currentRevision < Int64.max else {
-        throw Self.denied("The control session changed. Reload before changing its access.")
+      guard !ended, currentRevision == expectedRevision, currentRevision < Int64.max,
+        limits.narrows(accessLimit)
+      else {
+        throw Self.denied("A connection may only narrow its current permission limits.")
       }
-      guard allowIncrease || accessLimit != .readOnly || mode == .readOnly else {
-        throw Self.denied("Remote clients can only reduce their session access.")
-      }
-      guard mode != .localFullAccess else {
-        throw Self.denied("Full Access requires explicit local consent.")
-      }
-      fullAccessConsent = nil
-      accessLimit = mode
+      try ensureConnection()
+      try permissionService?.limitConnection(subject: subject, id: id, to: limits)
+      accessLimit = limits
+      if !limits.allowsFullAccess { fullAccessConsent = nil }
       currentRevision += 1
     }
     changes.send()
@@ -206,41 +224,68 @@ package final class GatewayControlSession: GatewaySessionAuthority, @unchecked S
     lock.withLock {
       ended = true
       fullAccessConsent = nil
+      if let subject = try? subject {
+        try? permissionService?.endConnection(subject: subject, id: id)
+      }
     }
     changes.send()
   }
 
   package func apply(to grant: ProfileGrant, context: ExecutionContext) throws -> ProfileGrant {
+    try lock.withLock { try appliedGrant(grant, context: context) }
+  }
+
+  /// Orders a short host mutation against consent changes. The closure must not
+  /// suspend, perform subprocess I/O, or reenter this session.
+  func withHostAuthorization<Result>(
+    grant: ProfileGrant, context: ExecutionContext,
+    operation: (ProfileGrant, GatewayFullAccessConsent?) throws -> Result
+  ) throws -> Result {
     try lock.withLock {
-      guard !ended, !principalID.isEmpty,
-        context.trustedPrincipalID == principalID,
-        context.profileID == profileID, context.caller == caller, grant.id == profileID
-      else { throw Self.denied("The control session is no longer authorized for this caller.") }
-      let current = try currentProfile()
-      guard current != nil || profile == nil else {
-        throw Self.denied("The client profile is no longer available.")
-      }
-      refreshConsent(profile: current)
-      var effective = current?.grant ?? grant
-      if fullAccessConsent != nil, accessLimit == .localFullAccess {
-        effective.mode = .localFullAccess
-        effective.fullShellEnabled = true
-        effective.capabilityIDs = ["*"]
-        effective.projectIDs = ["*"]
-        effective.confirmationPolicy = .never
-      }
-      switch accessLimit {
-      case .readOnly:
-        effective.mode = .readOnly
-        effective.fullShellEnabled = false
-      case .projectOperations:
-        if effective.mode == .localFullAccess { effective.mode = .projectOperations }
-        effective.fullShellEnabled = false
-      case .localFullAccess:
-        break
-      }
-      return effective
+      let effective = try appliedGrant(grant, context: context)
+      return try operation(effective, fullAccessConsent)
     }
+  }
+
+  private func appliedGrant(_ grant: ProfileGrant, context: ExecutionContext) throws -> ProfileGrant
+  {
+    guard !ended, !principalID.isEmpty,
+      context.trustedPrincipalID == principalID,
+      context.profileID == profileID, context.caller == caller, grant.id == profileID
+    else { throw Self.denied("The control session is no longer authorized for this caller.") }
+    let current = try currentProfile()
+    guard current != nil || profile == nil else {
+      throw Self.denied("The client profile is no longer available.")
+    }
+    refreshConsent(profile: current)
+    try ensureConnection()
+    var effective = current?.grant ?? grant
+    effective.fullAccess =
+      effective.fullAccess && fullAccessConsent != nil && accessLimit.allowsFullAccess
+    let original = effective.permissions
+    let objects = Set(original.entries.keys).union(accessLimit.permissionCeilings.entries.keys)
+    for permission in objects {
+      let state = original.state(for: permission)
+      let ceiling = accessLimit.permissionCeilings.state(for: permission)
+      let hasCeiling =
+        accessLimit.permissionCeilings.entries[permission] != nil
+        || {
+          switch permission {
+          case .project: return accessLimit.permissionCeilings.entries[.project("*")] != nil
+          case .plugin: return accessLimit.permissionCeilings.entries[.plugin("*")] != nil
+          case .mcpServer: return accessLimit.permissionCeilings.entries[.mcpServer("*")] != nil
+          default: return false
+          }
+        }()
+      guard hasCeiling else { continue }
+      switch (state, ceiling) {
+      case (.granted(.write), .granted(.read)), (.granted(.all), .granted(.read)):
+        try effective.permissions.set(.granted(.read), for: permission)
+      case (_, .denied), (_, .notGranted): try effective.permissions.set(.denied, for: permission)
+      default: break
+      }
+    }
+    return effective
   }
 
   package func requireRevision(_ expected: Int64?) throws {
@@ -248,7 +293,7 @@ package final class GatewayControlSession: GatewaySessionAuthority, @unchecked S
       _ = try currentProfile()
       refreshConsent()
       guard !ended, expected == currentRevision else {
-        throw Self.denied("The control session changed after this operation was prepared.")
+        throw Self.denied("The control session changed after authorization.")
       }
     }
   }
@@ -265,10 +310,28 @@ package final class GatewayControlSession: GatewaySessionAuthority, @unchecked S
         context.trustedPrincipalID == principalID, context.profileID == profileID,
         context.caller == caller, current?.grant.allowedCallers.contains(caller) == true
       else { throw Self.denied("The management session changed before publication.") }
-      guard !requiresFullAccess || (accessLimit == .localFullAccess && fullAccessConsent != nil)
+      guard
+        !requiresFullAccess
+          || (accessLimit.allowsFullAccess && fullAccessConsent != nil
+            && current?.grant.fullAccess == true)
       else { throw Self.denied("This management operation requires approved Full Access.") }
       return try operation()
     }
+  }
+
+  private var subject: GatewayPermissionSubject {
+    get throws {
+      try GatewayPermissionSubject(
+        context: ExecutionContext(
+          caller: caller, profileID: profileID, trustedPrincipalID: principalID))
+    }
+  }
+
+  private func ensureConnection() throws {
+    guard let permissionService else {
+      throw Self.denied("The durable permission service is unavailable.")
+    }
+    try permissionService.connect(subject: subject, id: id, attenuation: accessLimit)
   }
 
   private static func denied(_ message: String) -> GatewayToolError {
@@ -340,7 +403,7 @@ package struct GatewayControlSessionSnapshot: Codable, Equatable, Sendable, Iden
   package let profileID: GatewayProfileID
   package let caller: GatewayCallerKind
   package let revision: Int64
-  package let accessLimit: GatewayPermissionMode
+  package let accessLimit: ManagedPolicy
   package let ended: Bool
   package let fullAccessConsent: GatewayFullAccessConsent?
   package var profile: GatewayControlProfile? = nil

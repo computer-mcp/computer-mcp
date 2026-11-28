@@ -1,6 +1,7 @@
 import ComputerMCPConfiguration
 import ComputerMCPCore
 import ComputerMCPGateway
+import ComputerMCPPermissions
 import ComputerMCPPlugins
 import ComputerMCPProcess
 import ComputerMCPTransport
@@ -267,7 +268,7 @@ private struct ControlProjectSummary: Encodable {
   let updatedAt: Date
   let access: JSONValue?
 
-  init(_ project: RegisteredProject, access: JSONValue? = nil) {
+  init(_ project: ComputerMCPCore.RegisteredProject, access: JSONValue? = nil) {
     self.id = project.id
     self.displayName = project.displayName
     self.rootPath = project.rootPath
@@ -278,7 +279,7 @@ private struct ControlProjectSummary: Encodable {
   }
 }
 
-private final class ControlToolRegistry: GatewayToolServing, @unchecked Sendable {
+final class ControlToolRegistry: GatewayToolServing, @unchecked Sendable {
   private let controlPlane: AppControlPlaneService
   private let gatewayService: AppGatewayService
   private let operations: AppControlPlaneOperations
@@ -320,6 +321,21 @@ private final class ControlToolRegistry: GatewayToolServing, @unchecked Sendable
     async throws -> JSONValue
   {
     let requestID = UUID().uuidString
+    let auditContext = ExecutionContext(
+      requestID: requestID, caller: .localCLI, profileID: .localAdmin,
+      transportTrace: .init(
+        transport: "control_socket", socketConnectionID: identity.connectionID),
+      trustedPrincipalID: identity.trustedPrincipalID)
+    return try await PermissionOwnerAuditScope.$administrationEpoch.withValue(administrationEpoch) {
+      try await PermissionOwnerAuditScope.$context.withValue(auditContext) {
+        try await performToolCall(name: name, arguments: arguments, requestID: requestID)
+      }
+    }
+  }
+
+  private func performToolCall(name: String, arguments: JSONValue?, requestID: String)
+    async throws -> JSONValue
+  {
     let startedAt = ContinuousClock.now
     let rawArguments = arguments ?? .object([:])
     var digestArguments = rawArguments
@@ -446,61 +462,50 @@ private final class ControlToolRegistry: GatewayToolServing, @unchecked Sendable
         let id = try requiredString("id", in: object)
         try await operations.removeProject(id: id)
         payload = .object(["removed": .string(id)])
-      case "project.enable", "profile.grant":
+      case "project.access":
         let profile = try requiredProfile(in: object)
         let projectID = try requiredString("project_id", in: object)
-        let grant = try await operations.setProjectEnabled(
-          object["enabled"]?.boolValue ?? true,
-          projectID: projectID,
-          profileID: profile
-        )
-        payload = try encodedPayload(grant)
+        guard let access = ProjectAccess(rawValue: try requiredString("access", in: object)),
+          let profileRevision = object["expected_profile_revision"]?.int64Value,
+          profileRevision > 0,
+          let permissionRevision = object["expected_permission_revision"]?.int64Value,
+          permissionRevision >= 0
+        else {
+          throw GatewayToolError.invalidArguments(
+            "access must be ask, deny, read or write; reviewed profile and permission revisions are required."
+          )
+        }
+        let grant = try await operations.setProjectAccess(
+          access, projectID: projectID, profileID: profile,
+          expectedProfileRevision: profileRevision,
+          expectedPermissionRevision: UInt64(permissionRevision))
+        let currentPermissionRevision = try await controlPlane.permissionRequests().revision
+        payload = try profilePayload(grant, permissionRevision: currentPermissionRevision)
       case "profile.list":
+        let view = try await controlPlane.permissionRequests()
         payload = .array(
-          try await controlPlane.profileGrants().map { grant in
-            try profilePayload(grant)
-          })
+          try view.profiles.map { try profilePayload($0, permissionRevision: view.revision) })
       case "profile.show":
         let profile = try requiredProfile(in: object)
-        guard let grant = try await controlPlane.profileGrants().first(where: { $0.id == profile })
+        let view = try await controlPlane.permissionRequests()
+        guard let grant = view.profiles.first(where: { $0.id == profile })
         else { throw AppControlPlaneServiceError.unknownGatewayProfile(profile.rawValue) }
-        payload = try profilePayload(grant)
+        payload = try profilePayload(grant, permissionRevision: view.revision)
       case "profile.activate":
         payload = try encodedPayload(
           try await operations.activateProfile(requiredProfile(in: object))
         )
-      case "profile.shell":
-        let profile = try requiredProfile(in: object)
-        let grant = try await operations.setFullShellEnabled(
-          object["enabled"]?.boolValue ?? true,
-          profileID: profile
-        )
-        payload = try encodedPayload(grant)
       case "profile.permissions":
-        guard !Set(object.keys).subtracting(["profile", "expected_revision"]).isEmpty else {
-          throw GatewayToolError.invalidArguments("Provide at least one permission setting.")
+        guard let value = object["grant"],
+          let revision = object["expected_permission_revision"]?.intValue, revision >= 0
+        else {
+          throw GatewayToolError.invalidArguments(
+            "grant and expected_permission_revision are required.")
         }
-        let mode: GatewayPermissionMode? = try optionalChoice("mode", in: object)
-        let confirmation: GatewayConfirmationPolicy? = try optionalChoice(
-          "confirmation_policy", in: object)
-        let callerNames = optionalStringSet("allowed_callers", in: object)
-        let callers = try callerNames.map { names in
-          try Set(
-            names.map { name in
-              guard let caller = GatewayCallerKind(rawValue: name) else {
-                throw GatewayToolError.invalidArguments("Unknown caller '\(name)'.")
-              }
-              return caller
-            })
-        }
+        let grant = try CanonicalJSONCoding.decoder().decode(
+          ProfileGrant.self, from: JSONEncoder().encode(value))
         payload = try encodedPayload(
-          try await operations.updateProfilePermissions(
-            profileID: requiredProfile(in: object), mode: mode, confirmationPolicy: confirmation,
-            fullShellEnabled: object["full_shell_enabled"]?.boolValue,
-            capabilityIDs: optionalStringSet("capabilities", in: object),
-            projectIDs: optionalStringSet("projects", in: object),
-            mcpServerIDs: optionalStringSet("mcp_servers", in: object), allowedCallers: callers,
-            expectedRevision: object["expected_revision"]?.intValue.map(Int64.init)))
+          try await operations.updateProfilePermissions(grant, expectedRevision: UInt64(revision)))
       case "provider.list":
         payload = try encodedPayload(try await controlPlane.providerStates())
       case "provider.doctor":
@@ -509,15 +514,9 @@ private final class ControlToolRegistry: GatewayToolServing, @unchecked Sendable
         )
       case "permissions.status":
         payload = try encodedPayload(await controlPlane.computerUsePermissions())
-      case "approvals.list":
-        payload = try encodedPayload(
-          try await controlPlane.operationApprovals(
-            limit: boundedLimit(object["limit"], default: 100, maximum: 500)))
-      case "approvals.approve", "approvals.deny":
-        payload = try encodedPayload(
-          try await controlPlane.resolveOperationApproval(
-            id: requiredString("id", in: object), approved: name == "approvals.approve",
-            resolver: .localCLI))
+      case "permissions.requests", "permissions.answer", "permissions.confirm_authority":
+        payload = try await controlPlane.callPermissionOwnerTool(
+          name: name, arguments: object, administrationEpoch: administrationEpoch)
       case "mcp.credential.status":
         payload = try encodedPayload(
           try await controlPlane.mcpCredentialStatus(id: requiredString("id", in: object)))
@@ -857,8 +856,10 @@ private final class ControlToolRegistry: GatewayToolServing, @unchecked Sendable
     }
   }
 
-  private func profilePayload(_ grant: ProfileGrant) throws -> JSONValue {
+  private func profilePayload(_ grant: ProfileGrant, permissionRevision: UInt64) throws -> JSONValue
+  {
     var fields = try encodedPayload(grant).objectValue ?? [:]
+    fields["permission_revision"] = .integer(Int64(permissionRevision))
     fields["authorization_digest"] = .string(
       try OAuthApprovalProfile(grant: grant).authorizationDigest)
     return .object(fields)
@@ -1166,9 +1167,15 @@ private final class ControlToolRegistry: GatewayToolServing, @unchecked Sendable
       readOnly: false
     ),
     ControlToolContract(
-      "project.enable",
-      arguments: ["project_id": .string, "profile": .string, "enabled": .boolean],
-      required: ["project_id", "profile"],
+      "project.access",
+      arguments: [
+        "project_id": .string, "profile": .string, "access": .string,
+        "expected_profile_revision": .integer, "expected_permission_revision": .integer,
+      ],
+      required: [
+        "project_id", "profile", "access", "expected_profile_revision",
+        "expected_permission_revision",
+      ],
       readOnly: false
     ),
     ControlToolContract("profile.list", readOnly: true),
@@ -1185,25 +1192,9 @@ private final class ControlToolRegistry: GatewayToolServing, @unchecked Sendable
       readOnly: false
     ),
     ControlToolContract(
-      "profile.grant",
-      arguments: ["profile": .string, "project_id": .string, "enabled": .boolean],
-      required: ["profile", "project_id"],
-      readOnly: false
-    ),
-    ControlToolContract(
-      "profile.shell",
-      arguments: ["profile": .string, "enabled": .boolean],
-      required: ["profile"],
-      readOnly: false
-    ),
-    ControlToolContract(
       "profile.permissions",
-      arguments: [
-        "profile": .string, "mode": .string, "confirmation_policy": .string,
-        "full_shell_enabled": .boolean, "capabilities": .strings, "projects": .strings,
-        "mcp_servers": .strings, "allowed_callers": .strings, "expected_revision": .integer,
-      ],
-      required: ["profile"], readOnly: false),
+      arguments: ["grant": .object, "expected_permission_revision": .integer],
+      required: ["grant", "expected_permission_revision"], readOnly: false),
     ControlToolContract("provider.list", readOnly: true),
     ControlToolContract(
       "provider.doctor",
@@ -1211,11 +1202,6 @@ private final class ControlToolRegistry: GatewayToolServing, @unchecked Sendable
       readOnly: true
     ),
     ControlToolContract("permissions.status", readOnly: true),
-    ControlToolContract("approvals.list", arguments: ["limit": .integer], readOnly: true),
-    ControlToolContract(
-      "approvals.approve", arguments: ["id": .string], required: ["id"], readOnly: false),
-    ControlToolContract(
-      "approvals.deny", arguments: ["id": .string], required: ["id"], readOnly: false),
     ControlToolContract(
       "audit.list",
       arguments: ["limit": .integer],
@@ -1288,7 +1274,8 @@ private final class ControlToolRegistry: GatewayToolServing, @unchecked Sendable
     tunnelContract("tunnel.cloudflare.remove", readOnly: false),
   ]
 
-  private static let toolContracts = appToolContracts + GatewayClientControl.contracts
+  private static let toolContracts =
+    appToolContracts + PermissionOwnerControl.contracts + GatewayClientControl.contracts
 
   private static let toolContractsByName = Dictionary(
     uniqueKeysWithValues: toolContracts.map { ($0.name, $0) }

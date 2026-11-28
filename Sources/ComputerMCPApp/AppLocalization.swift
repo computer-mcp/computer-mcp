@@ -19,6 +19,15 @@ enum AppLocalization {
     resourceBundle.localizedString(forKey: key, value: key, table: nil)
   }
 
+  /// Resolves a key for a view's environment locale rather than the process language.
+  static func string(_ key: String, locale: Locale, resources: Bundle? = nil) -> String {
+    let localization =
+      Bundle.preferredLocalizations(from: ["en", "zh-Hans"], forPreferences: [locale.identifier])
+      .first ?? "en"
+    return localizedString(
+      key, localization: localization, localizationBundle: nil, resources: resources)
+  }
+
   static func errorDescription(_ error: any Error) -> String {
     errorDescription(error.localizedDescription)
   }

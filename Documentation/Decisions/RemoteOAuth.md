@@ -100,8 +100,9 @@ Approval binds a client to exactly the authorization the owner reviewed, and
 OAuth state exists only for tunnels in the active configuration:
 
 - A profile's authorization digest is the SHA-256 of the canonical encoding of
-  its effective grant (mode, capabilities, workspaces, callers, Full Access,
-  MCP servers and confirmation policy) as resolved from the active
+  its effective permission entries and states, per-project network settings,
+  Full access eligibility and allowed callers (the `OAuthApprovalProfile` inputs)
+  as resolved from the active
   configuration and persisted authorization, whether or not the profile has an
   override. The App shows remote profiles with their digest and approves with
   the digest it displayed; the owner CLI may pass one.

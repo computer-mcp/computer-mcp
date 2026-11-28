@@ -1,0 +1,116 @@
+import ComputerMCPCore
+import ComputerMCPPermissions
+import ComputerMCPPersistence
+import ComputerMCPProcess
+import Foundation
+import GRDB
+
+/// Captured under the admission writer; later profile or policy edits cannot
+/// relabel the authority used by an already recorded call.
+package struct GatewayPermissionAuditEvidence: Codable, Sendable {
+  let epoch: UUID?
+  let permissionRevision: UInt64
+  let profileRevision: Int64?
+  let policyRevisions: [String: String]
+
+  init(database: Database, ledger: PermissionLedger, profileID: GatewayProfileID) throws {
+    epoch = ledger.authorizationEpochID
+    permissionRevision = ledger.revision
+    profileRevision = try ProfileRecord.fetchOne(database, key: profileID.rawValue)?
+      .authorizationRevision
+    let decoder = JSONDecoder()
+    let sources = try Row.fetchAll(
+      database, sql: "SELECT source, payload FROM permissionPolicySources")
+    policyRevisions = try Dictionary(
+      uniqueKeysWithValues: sources.compactMap { row -> (String, String)? in
+        let view = try decoder.decode(GatewayManagedPolicyView.self, from: row["payload"] as Data)
+        guard view.profileID == nil || view.profileID == profileID else { return nil }
+        // Provider policies have distinct persisted source identities even when
+        // their policy category is the same as the client's owner policy.
+        let key = view.provider == nil ? view.source.rawValue : row["source"] as String
+        return (key, view.revision)
+      })
+  }
+
+  var fields: [String: JSONValue] {
+    [
+      "authorization_epoch": epoch.map { .string($0.uuidString) } ?? .null,
+      "permission_revision": .number(Double(permissionRevision)),
+      "profile_revision": profileRevision.map { .number(Double($0)) } ?? .null,
+      "policy_revisions": .object(policyRevisions.mapValues(JSONValue.string)),
+    ]
+  }
+}
+
+struct GatewayPermissionEvaluation: Sendable {
+  let decision: AuthorizationDecision
+  let evidence: GatewayPermissionAuditEvidence
+  var provider: ProviderExecutionBinding? = nil
+}
+
+/// Lifecycle rows have their own request IDs and link to the originating call.
+/// Their payload contains authority identities and revisions, never command text.
+struct GatewayExecutionAuditIdentity: Codable, Sendable {
+  let caller: GatewayCallerKind
+  let profileID: GatewayProfileID
+  let principalDigest: String?
+  let transport: String?
+  let socketConnectionID: String?
+  let tunnelInstanceID: String?
+  let tunnelProfileID: String?
+  let projectID: String?
+  let parentRequestID: String?
+  let authorizationID: UUID
+  let requestIDs: Set<UUID>
+  let evidence: GatewayPermissionAuditEvidence
+
+  init(
+    database: Database, ledger: PermissionLedger, authorization: InvocationAuthorization,
+    context: ExecutionContext?
+  ) throws {
+    let row = try Row.fetchOne(
+      database,
+      sql: "SELECT profileID, caller FROM permissionSubjects WHERE principal = ?",
+      arguments: [try JSONEncoder().encode(authorization.invocation.principal)])
+    caller =
+      context?.caller ?? row.flatMap { GatewayCallerKind(rawValue: $0["caller"]) } ?? .localApp
+    profileID =
+      context?.profileID ?? row.flatMap { GatewayProfileID(rawValue: $0["profileID"]) }
+      ?? .localAdmin
+    principalDigest = context.flatMap { AuditEvent.verifiedPrincipalDigest($0.trustedPrincipalID) }
+    transport = context?.transportTrace?.transport
+    socketConnectionID = context?.transportTrace?.socketConnectionID
+    tunnelInstanceID = context?.transportTrace?.tunnelInstanceID
+    tunnelProfileID = context?.transportTrace?.tunnelProfileID
+    projectID = authorization.invocation.projectID
+    parentRequestID = context?.requestID
+    authorizationID = authorization.id
+    requestIDs = authorization.requestIDs
+    evidence = try GatewayPermissionAuditEvidence(
+      database: database, ledger: ledger, profileID: profileID)
+  }
+
+  func record(
+    _ action: String, executionID: UUID, database: Database,
+    decision: AuditDecision = .allowed, childID: UUID? = nil,
+    permissionRequestIDs: Set<UUID> = [], requestEvidence: GatewayPermissionAuditEvidence? = nil
+  ) throws {
+    var details = (requestEvidence ?? evidence).fields
+    details["authorization_id"] = .string(authorizationID.uuidString)
+    details["permission_request_ids"] = .array(
+      requestIDs.union(permissionRequestIDs).map { .string($0.uuidString) }
+        .sorted { $0.stringValue! < $1.stringValue! })
+    details["execution_id"] = .string(executionID.uuidString)
+    if let childID { details["child_id"] = .string(childID.uuidString) }
+    try AuditEventRecord(
+      AuditEvent(
+        requestID: UUID().uuidString,
+        invocationID: executionID.uuidString, parentRequestID: parentRequestID,
+        caller: caller, principalDigest: principalDigest, transport: transport,
+        socketConnectionID: socketConnectionID, tunnelInstanceID: tunnelInstanceID,
+        tunnelProfileID: tunnelProfileID, profileID: profileID,
+        projectID: projectID, capabilityID: "execution." + action, decision: decision,
+        errorDetails: .object(details))
+    ).insertRetained(database)
+  }
+}

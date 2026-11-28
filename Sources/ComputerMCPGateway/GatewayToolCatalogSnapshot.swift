@@ -1,10 +1,12 @@
 import ComputerMCPCore
+import ComputerMCPPlugins
 import Foundation
 
 /// Definitions, capabilities, and provider ownership are published together.
 struct GatewayToolCatalogSnapshot: Sendable {
   struct Route: Sendable {
     let tool: MCPTool
+    var requirement: ToolRequirement { capability.requirement }
     let capability: CapabilityDescriptor
     let provider: any GatewayToolProvider
   }
@@ -13,7 +15,10 @@ struct GatewayToolCatalogSnapshot: Sendable {
   let routes: [String: Route]
   let providers: [any GatewayToolProvider]
 
-  init(providers: [any GatewayToolProvider], reservedToolNames: Set<String> = []) throws {
+  init(
+    providers: [any GatewayToolProvider], reservedToolNames: Set<String> = [],
+    origins: [IntegrationRegistration: PluginContributionOrigin] = [:]
+  ) throws {
     var tools: [MCPTool] = []
     var routes: [String: Route] = [:]
     for provider in providers {
@@ -25,9 +30,15 @@ struct GatewayToolCatalogSnapshot: Sendable {
         guard routes[tool.name] == nil, !reservedToolNames.contains(tool.name) else {
           throw GatewayProviderRouterError.duplicateTool(tool.name)
         }
+        var capability = definition.capability
+        if let reference = capability.mcpReference,
+          let origin = origins[.init(kind: .mcp, id: reference.serverID)]
+        {
+          capability = try origin.applyingRequirements(to: capability)
+        }
         tools.append(tool)
         routes[tool.name] = Route(
-          tool: tool, capability: definition.capability, provider: provider)
+          tool: tool, capability: capability, provider: provider)
       }
     }
     self.tools = tools

@@ -1,5 +1,6 @@
 import ComputerMCPConfiguration
 import ComputerMCPCore
+import ComputerMCPPlatformPOSIX
 import ComputerMCPToolKit
 import ComputerMCPToolsStructured
 import Foundation
@@ -12,7 +13,7 @@ extension SkillsToolProvider {
   }
 
   internal func skillsRoots() throws -> JSONValue {
-    let roots = configuration.skills.roots.map(skillRootStatus)
+    let roots = configuration.skills.roots.compactMap { try? skillRootStatus($0) }
     return .object([
       "operation": .string("skills.roots"),
       "enabled": .bool(configuration.skills.enabled),
@@ -812,7 +813,7 @@ extension SkillsToolProvider {
       throw GatewayToolError.invalidArguments("Skill path is a directory: \(relativePath)")
     }
 
-    let handle = try FileHandle(forReadingFrom: file)
+    let handle = try AuthorizedFileReader(url: file)
     defer {
       try? handle.close()
     }
@@ -1342,7 +1343,7 @@ extension SkillsToolProvider {
       throw GatewayToolError.invalidArguments("Skill path is a directory: \(relativePath)")
     }
 
-    let handle = try FileHandle(forReadingFrom: file)
+    let handle = try AuthorizedFileReader(url: file)
     defer {
       try? handle.close()
     }
@@ -1991,12 +1992,18 @@ extension SkillsToolProvider {
     var resultTruncated = false
 
     for root in roots {
-      let status = skillRootStatus(root)
-      statuses.append(status)
-      guard status.exists, status.isDirectory, status.isReadable else {
-        continue
+      do {
+        let status = try skillRootStatus(root)
+        guard status.exists, status.isDirectory, status.isReadable else {
+          statuses.append(status)
+          continue
+        }
+        let found = try skillInfos(in: root)
+        statuses.append(status)
+        skills.append(contentsOf: found)
+      } catch {
+        if rootID != nil { throw error }
       }
-      skills.append(contentsOf: try skillInfos(in: root))
     }
 
     skills.sort { lhs, rhs in
@@ -2043,8 +2050,9 @@ extension SkillsToolProvider {
     return matches[0]
   }
 
-  private func skillRootStatus(_ root: SkillRootConfig) -> SkillRootStatus {
+  private func skillRootStatus(_ root: SkillRootConfig) throws -> SkillRootStatus {
     let url = URL(fileURLWithPath: root.path).standardizedFileURL
+    try HostPathAccess.current?.check(url, operation: .read)
     var isDirectory = ObjCBool(false)
     let exists = FileManager.default.fileExists(atPath: url.path, isDirectory: &isDirectory)
     return SkillRootStatus(
@@ -2068,6 +2076,7 @@ extension SkillsToolProvider {
       skills.append(rootSkill)
     }
 
+    try HostPathAccess.current?.check(rootURL, operation: .listDirectory)
     let children = try FileManager.default.contentsOfDirectory(
       at: rootURL,
       includingPropertiesForKeys: [.isDirectoryKey, .isSymbolicLinkKey],
@@ -2079,6 +2088,7 @@ extension SkillsToolProvider {
       guard child.lastPathComponent != "SKILL.md" else {
         continue
       }
+      do { try HostPathAccess.current?.check(child, operation: .read) } catch { continue }
       let values = try? child.resourceValues(forKeys: [.isDirectoryKey])
       guard values?.isDirectory == true else {
         continue
@@ -2096,6 +2106,7 @@ extension SkillsToolProvider {
     canonicalRoot: URL
   ) throws -> SkillInfo? {
     let fileURL = directoryURL.appendingPathComponent("SKILL.md")
+    try HostPathAccess.current?.check(fileURL, operation: .read)
     var isDirectory = ObjCBool(false)
     guard FileManager.default.fileExists(atPath: fileURL.path, isDirectory: &isDirectory),
       !isDirectory.boolValue
@@ -2109,8 +2120,8 @@ extension SkillsToolProvider {
     }
 
     let attributes = try? FileManager.default.attributesOfItem(atPath: fileURL.path)
-    let content = try? readSkillContent(fileURL, maxBytes: 65_536)
-    let frontmatter = skillFrontmatterStatus(content?.content)
+    let content = try readSkillContent(fileURL, maxBytes: 65_536)
+    let frontmatter = skillFrontmatterStatus(content.content)
     let directoryName = directoryURL.lastPathComponent
     return SkillInfo(
       root: root,
@@ -2129,7 +2140,7 @@ extension SkillsToolProvider {
   }
 
   private func readSkillContent(_ url: URL, maxBytes: Int) throws -> SkillContent {
-    let handle = try FileHandle(forReadingFrom: url)
+    let handle = try AuthorizedFileReader(url: url)
     defer {
       try? handle.close()
     }
@@ -2148,7 +2159,7 @@ extension SkillsToolProvider {
   private func readSkillFileContent(_ url: URL, maxBytes: Int, encoding: String) throws
     -> SkillFileContent
   {
-    let handle = try FileHandle(forReadingFrom: url)
+    let handle = try AuthorizedFileReader(url: url)
     defer {
       try? handle.close()
     }
@@ -2185,7 +2196,7 @@ extension SkillsToolProvider {
   private func readSkillPackageFileContent(_ url: URL, maxBytes: Int, encoding: String) throws
     -> SkillPackageFileContent
   {
-    let handle = try FileHandle(forReadingFrom: url)
+    let handle = try AuthorizedFileReader(url: url)
     defer {
       try? handle.close()
     }
@@ -2271,6 +2282,7 @@ extension SkillsToolProvider {
       guard !scanTruncated else {
         return
       }
+      try HostPathAccess.current?.check(current, operation: .listDirectory)
       let entries = try FileManager.default.contentsOfDirectory(
         at: current,
         includingPropertiesForKeys: [
@@ -2294,6 +2306,7 @@ extension SkillsToolProvider {
           return
         }
         scannedCount += 1
+        do { try HostPathAccess.current?.check(entry, operation: .read) } catch { continue }
         guard
           let info = try skillFileInfo(
             skill: skill,

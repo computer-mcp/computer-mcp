@@ -37,24 +37,20 @@ package protocol GatewayToolServing: GatewayAsyncToolServing {
 
 extension GatewayToolServing {
   package func listToolsAsync(context: InvocationContext) async throws -> [MCPTool] {
-    try await withCheckedThrowingContinuation { continuation in
-      DispatchQueue.global(qos: .userInitiated).async {
-        continuation.resume(with: Result { try self.listTools(context: context) })
-      }
+    try await gatewayServingOperations.perform {
+      try self.listTools(context: context)
     }
   }
 
   package func callToolAsync(
     name: String, arguments: JSONValue?, context: InvocationContext
   ) async throws -> JSONValue {
-    try await withCheckedThrowingContinuation { continuation in
-      DispatchQueue.global(qos: .userInitiated).async {
-        continuation.resume(
-          with: Result {
-            try self.callTool(name: name, arguments: arguments, context: context)
-          })
-      }
+    try await gatewayServingOperations.perform {
+      try self.callTool(name: name, arguments: arguments, context: context)
     }
   }
 
 }
+
+private let gatewayServingOperations = BlockingOperationExecutor(
+  label: "computer-mcp.gateway-serving", serial: false)

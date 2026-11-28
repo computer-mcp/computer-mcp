@@ -5,6 +5,7 @@ enum ControlArgumentType: Sendable {
   case boolean
   case integer
   case object
+  case objects
   case string
   case strings
 
@@ -16,6 +17,8 @@ enum ControlArgumentType: Sendable {
       return .object(["type": .string("integer")])
     case .object:
       return .object(["type": .string("object")])
+    case .objects:
+      return .object(["type": .string("array"), "items": .object(["type": .string("object")])])
     case .string:
       return .object(["type": .string("string")])
     case .strings:
@@ -31,6 +34,8 @@ enum ControlArgumentType: Sendable {
       return value.intValue != nil
     case .object:
       return value.objectValue != nil
+    case .objects:
+      return value.arrayValue?.allSatisfy { $0.objectValue != nil } == true
     case .string:
       return value.stringValue != nil
     case .strings:
@@ -43,6 +48,7 @@ enum ControlArgumentType: Sendable {
     case .boolean: "a Boolean"
     case .integer: "an integer"
     case .object: "an object"
+    case .objects: "an array of objects"
     case .string: "a string"
     case .strings: "an array of strings"
     }

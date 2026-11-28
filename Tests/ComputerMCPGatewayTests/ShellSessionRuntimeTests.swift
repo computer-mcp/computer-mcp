@@ -8,27 +8,39 @@ import Testing
 @testable import ComputerMCPPlatform
 @testable import ComputerMCPProcess
 
+#if os(macOS)
+  import ComputerMCPDarwinTestSupport
+#endif
+
 @Suite(.serialized)
 
 final class ShellSessionRuntimeTests {
-  private let project = URL(fileURLWithPath: NSTemporaryDirectory())
+  private let directory: ScopedTemporaryDirectory
+  private var project: URL { directory.url }
+  private var shellEnvironment: [String: String] {
+    ["HOME": project.path, "ZDOTDIR": project.path, "PATH": "/usr/bin:/bin:/usr/sbin:/sbin"]
+  }
+
+  init() throws { directory = try ScopedTemporaryDirectory() }
 
   @Test
   func testRunCapturesStdoutAndStderr() async throws {
-    let runtime = SubprocessShellRuntime()
+    let runtime = ShellSessionRuntime(launcher: testExecutionLauncher())
     let result = try await BlockingOperationExecutor(label: "test.shell-call").perform {
-      [project] in
-      try runtime.run(
-        request: ShellLaunchRequest(
-          command: #"printf "stdout"; printf "stderr" >&2"#
-        ),
-        defaultShell: "/bin/zsh",
-        defaultWorkingDirectory: project,
-        timeoutMilliseconds: 2_000,
-        maxOutputBytes: 1_024,
-        maxSessions: 4,
-        terminationGraceMilliseconds: 100
-      )
+      [project, shellEnvironment] in
+      try withShellAdministration(workingDirectory: project, variables: shellEnvironment) {
+        try runtime.run(
+          request: ShellLaunchRequest(
+            command: #"printf "stdout"; printf "stderr" >&2"#,
+            environment: shellEnvironment, inheritsEnvironment: false
+          ),
+          defaultShell: "/bin/zsh",
+          defaultWorkingDirectory: project,
+          timeoutMilliseconds: 2_000,
+          maxOutputBytes: 1_024,
+          maxSessions: 4
+        )
+      }
     }
 
     #expect(!(result.isRunning))
@@ -40,24 +52,27 @@ final class ShellSessionRuntimeTests {
 
   @Test
   func testArgvModeSupportsEnvironmentAndWorkingDirectory() async throws {
-    let runtime = SubprocessShellRuntime()
+    let runtime = ShellSessionRuntime(launcher: testExecutionLauncher())
     let result = try await BlockingOperationExecutor(label: "test.shell-call").perform {
       [project] in
-      try runtime.run(
-        request: ShellLaunchRequest(
-          mode: .argv,
-          executable: "/usr/bin/env",
-          argv: [],
-          workingDirectory: project.path,
-          environment: ["COMPUTER_MCP_TEST_VALUE": "present"]
-        ),
-        defaultShell: "/bin/zsh",
-        defaultWorkingDirectory: URL(fileURLWithPath: "/"),
-        timeoutMilliseconds: 2_000,
-        maxOutputBytes: 64 * 1_024,
-        maxSessions: 4,
-        terminationGraceMilliseconds: 100
-      )
+      try withShellAdministration(
+        workingDirectory: project, variables: ["COMPUTER_MCP_TEST_VALUE": "present"]
+      ) {
+        try runtime.run(
+          request: ShellLaunchRequest(
+            mode: .argv,
+            executable: "/usr/bin/env",
+            argv: [],
+            workingDirectory: project.path,
+            environment: ["COMPUTER_MCP_TEST_VALUE": "present"]
+          ),
+          defaultShell: "/bin/zsh",
+          defaultWorkingDirectory: URL(fileURLWithPath: "/"),
+          timeoutMilliseconds: 2_000,
+          maxOutputBytes: 64 * 1_024,
+          maxSessions: 4
+        )
+      }
     }
 
     #expect((result.exitCode) == (0))
@@ -66,19 +81,20 @@ final class ShellSessionRuntimeTests {
 
   @Test
   func testRunWritesStandardInputAndClosesPipe() async throws {
-    let runtime = SubprocessShellRuntime()
+    let runtime = ShellSessionRuntime(launcher: testExecutionLauncher())
     let result = try await BlockingOperationExecutor(label: "test.shell-call").perform {
       [project] in
-      try runtime.run(
-        request: ShellLaunchRequest(mode: .argv, executable: "/bin/cat"),
-        defaultShell: "/bin/zsh",
-        defaultWorkingDirectory: project,
-        standardInput: Data("stdin-payload".utf8),
-        timeoutMilliseconds: 2_000,
-        maxOutputBytes: 1_024,
-        maxSessions: 4,
-        terminationGraceMilliseconds: 100
-      )
+      try withShellAdministration(workingDirectory: project) {
+        try runtime.run(
+          request: ShellLaunchRequest(mode: .argv, executable: "/bin/cat"),
+          defaultShell: "/bin/zsh",
+          defaultWorkingDirectory: project,
+          standardInput: Data("stdin-payload".utf8),
+          timeoutMilliseconds: 2_000,
+          maxOutputBytes: 1_024,
+          maxSessions: 4
+        )
+      }
     }
 
     #expect((result.exitCode) == (0))
@@ -89,18 +105,19 @@ final class ShellSessionRuntimeTests {
 
   @Test
   func testSpawnWriteCloseAndIncrementalRead() async throws {
-    let runtime = SubprocessShellRuntime()
+    let runtime = ShellSessionRuntime(launcher: testExecutionLauncher())
     let sessionID = try await BlockingOperationExecutor(label: "test.shell-call").perform {
       [project] in
-      try runtime.spawn(
-        request: ShellLaunchRequest(mode: .argv, executable: "/bin/cat"),
-        defaultShell: "/bin/zsh",
-        defaultWorkingDirectory: project,
-        timeoutMilliseconds: nil,
-        maxOutputBytes: 1_024,
-        maxSessions: 4,
-        terminationGraceMilliseconds: 100
-      )
+      try withShellAdministration(workingDirectory: project) {
+        try runtime.spawn(
+          request: ShellLaunchRequest(mode: .argv, executable: "/bin/cat"),
+          defaultShell: "/bin/zsh",
+          defaultWorkingDirectory: project,
+          timeoutMilliseconds: nil,
+          maxOutputBytes: 1_024,
+          maxSessions: 4
+        )
+      }
     }
 
     let write = try await BlockingOperationExecutor(label: "test.shell-call").perform {
@@ -131,14 +148,16 @@ final class ShellSessionRuntimeTests {
   @Test
   func processOwnershipOutlivesSpawnAndEndsAfterProcessCleanup() async throws {
     let ownedWork = GatewayOwnedWork()
-    let runtime = SubprocessShellRuntime(ownedWork: ownedWork, projectID: "fixture")
+    let runtime = ShellSessionRuntime(
+      launcher: testExecutionLauncher(), ownedWork: ownedWork, projectID: "fixture")
     let sessionID = try await BlockingOperationExecutor(label: "test.shell-call").perform {
       [project] in
-      try runtime.spawn(
-        request: ShellLaunchRequest(mode: .argv, executable: "/bin/cat"),
-        defaultShell: "/bin/zsh", defaultWorkingDirectory: project,
-        timeoutMilliseconds: nil, maxOutputBytes: 1_024, maxSessions: 4,
-        terminationGraceMilliseconds: 100)
+      try withShellAdministration(workingDirectory: project) {
+        try runtime.spawn(
+          request: ShellLaunchRequest(mode: .argv, executable: "/bin/cat"),
+          defaultShell: "/bin/zsh", defaultWorkingDirectory: project,
+          timeoutMilliseconds: nil, maxOutputBytes: 1_024, maxSessions: 4)
+      }
     }
     defer { _ = try? runtime.cancel(sessionID: sessionID) }
     let record = try #require(ownedWork.snapshot.first)
@@ -162,24 +181,26 @@ final class ShellSessionRuntimeTests {
 
   @Test(arguments: [false, true])
   func testSpawnExposesShortOutputBeforeProcessExit(standardError: Bool) async throws {
-    let runtime = SubprocessShellRuntime()
+    let runtime = ShellSessionRuntime(launcher: testExecutionLauncher())
     let sessionID = try await BlockingOperationExecutor(label: "test.shell-call").perform {
       [project] in
-      try runtime.spawn(
-        request: ShellLaunchRequest(
-          mode: .argv,
-          executable: "/bin/sh",
-          argv: [
-            "-c", standardError ? "printf live-output >&2; sleep 5" : "printf live-output; sleep 5",
-          ]
-        ),
-        defaultShell: "/bin/zsh",
-        defaultWorkingDirectory: project,
-        timeoutMilliseconds: nil,
-        maxOutputBytes: 1_024,
-        maxSessions: 4,
-        terminationGraceMilliseconds: 100
-      )
+      try withShellAdministration(workingDirectory: project) {
+        try runtime.spawn(
+          request: ShellLaunchRequest(
+            mode: .argv,
+            executable: "/bin/sh",
+            argv: [
+              "-c",
+              standardError ? "printf live-output >&2; sleep 5" : "printf live-output; sleep 5",
+            ]
+          ),
+          defaultShell: "/bin/zsh",
+          defaultWorkingDirectory: project,
+          timeoutMilliseconds: nil,
+          maxOutputBytes: 1_024,
+          maxSessions: 4
+        )
+      }
     }
     defer { _ = try? runtime.cancel(sessionID: sessionID) }
 
@@ -209,25 +230,37 @@ final class ShellSessionRuntimeTests {
   }
 
   @Test
-  func testSpawnDoesNotReportZombieLauncherAsRunningWhenDescendantKeepsPipeOpen() async throws {
-    let runtime = SubprocessShellRuntime()
+  func testSpawnOwnsDescendantsAfterLauncherExits() async throws {
+    let observations = ExecutionObservations()
+    let runtime = ShellSessionRuntime(launcher: testExecutionLauncher(observations: observations))
     let sessionID = try await BlockingOperationExecutor(label: "test.shell-call").perform {
       [project] in
-      try runtime.spawn(
-        request: ShellLaunchRequest(
-          mode: .argv,
-          executable: "/bin/sh",
-          argv: ["-c", "sleep 30 &"]
-        ),
-        defaultShell: "/bin/zsh",
-        defaultWorkingDirectory: project,
-        timeoutMilliseconds: nil,
-        maxOutputBytes: 1_024,
-        maxSessions: 4,
-        terminationGraceMilliseconds: 100
-      )
+      try withShellAdministration(workingDirectory: project) {
+        try runtime.spawn(
+          request: ShellLaunchRequest(
+            mode: .argv,
+            executable: "/bin/sh",
+            argv: ["-c", "sleep 30 & read token"]
+          ),
+          defaultShell: "/bin/zsh",
+          defaultWorkingDirectory: project,
+          timeoutMilliseconds: nil,
+          maxOutputBytes: 1_024,
+          maxSessions: 4
+        )
+      }
     }
     defer { _ = try? runtime.cancel(sessionID: sessionID) }
+
+    let owner = try #require(observations.ownerships.first)
+    let discoveryDeadline = ContinuousClock.now.advanced(by: .seconds(5))
+    var members = try await owner.members()
+    while members.count < 2 && ContinuousClock.now < discoveryDeadline {
+      try await Task.sleep(for: .milliseconds(10))
+      members = try await owner.members()
+    }
+    try #require(members.count >= 2)
+    _ = try await runtime.writeAsync(sessionID: sessionID, data: Data("exit\n".utf8), close: true)
 
     let deadline = Date().addingTimeInterval(2)
     var snapshot = try runtime.read(
@@ -248,25 +281,33 @@ final class ShellSessionRuntimeTests {
       )
     }
 
-    #expect(!(snapshot.isRunning))
-    #expect(
-      snapshot.streamErrors.contains("Process exited before inherited output streams closed."))
+    #expect(snapshot.isRunning)
+    _ = try runtime.cancel(sessionID: sessionID)
+    await runtime.shutdown()
+    snapshot = try runtime.read(
+      sessionID: sessionID, stdoutCursor: 0, stderrCursor: 0,
+      maxReadBytes: 1024, encoding: .utf8)
+    #expect(!snapshot.isRunning)
+    #expect(snapshot.endReason == .cancelled)
+    #expect(snapshot.streamErrors.isEmpty)
   }
 
   @Test
   func testTimeoutTerminatesProcessGroup() async throws {
-    let runtime = SubprocessShellRuntime()
+    let runtime = ShellSessionRuntime(launcher: testExecutionLauncher())
     let result = try await BlockingOperationExecutor(label: "test.shell-call").perform {
-      [project] in
-      try runtime.run(
-        request: ShellLaunchRequest(command: "sleep 5"),
-        defaultShell: "/bin/zsh",
-        defaultWorkingDirectory: project,
-        timeoutMilliseconds: 100,
-        maxOutputBytes: 1_024,
-        maxSessions: 4,
-        terminationGraceMilliseconds: 100
-      )
+      [project, shellEnvironment] in
+      try withShellAdministration(workingDirectory: project, variables: shellEnvironment) {
+        try runtime.run(
+          request: ShellLaunchRequest(
+            command: "sleep 5", environment: shellEnvironment, inheritsEnvironment: false),
+          defaultShell: "/bin/zsh",
+          defaultWorkingDirectory: project,
+          timeoutMilliseconds: 100,
+          maxOutputBytes: 1_024,
+          maxSessions: 4
+        )
+      }
     }
 
     #expect(result.timedOut)
@@ -276,18 +317,20 @@ final class ShellSessionRuntimeTests {
 
   @Test
   func testRingBufferReportsMissedBytesWithAbsoluteCursor() async throws {
-    let runtime = SubprocessShellRuntime()
+    let runtime = ShellSessionRuntime(launcher: testExecutionLauncher())
     let result = try await BlockingOperationExecutor(label: "test.shell-call").perform {
-      [project] in
-      try runtime.run(
-        request: ShellLaunchRequest(command: "printf 0123456789"),
-        defaultShell: "/bin/zsh",
-        defaultWorkingDirectory: project,
-        timeoutMilliseconds: 2_000,
-        maxOutputBytes: 4,
-        maxSessions: 4,
-        terminationGraceMilliseconds: 100
-      )
+      [project, shellEnvironment] in
+      try withShellAdministration(workingDirectory: project, variables: shellEnvironment) {
+        try runtime.run(
+          request: ShellLaunchRequest(
+            command: "printf 0123456789", environment: shellEnvironment, inheritsEnvironment: false),
+          defaultShell: "/bin/zsh",
+          defaultWorkingDirectory: project,
+          timeoutMilliseconds: 2_000,
+          maxOutputBytes: 4,
+          maxSessions: 4
+        )
+      }
     }
 
     #expect((result.stdout.text) == ("6789"))
@@ -300,15 +343,18 @@ final class ShellSessionRuntimeTests {
   @Test(arguments: [false, true])
   func bulkOutputFinishesWithinItsBudgetWhileRetentionStaysBounded(standardError: Bool) async throws
   {
-    let runtime = SubprocessShellRuntime()
+    let runtime = ShellSessionRuntime(launcher: testExecutionLauncher())
     let command = "/bin/dd if=/dev/zero bs=1048576 count=5 2>/dev/null"
     let result = try await BlockingOperationExecutor(label: "test.shell-bulk").perform {
-      [project] in
-      try runtime.run(
-        request: ShellLaunchRequest(command: standardError ? "{ \(command); } >&2" : command),
-        defaultShell: "/bin/sh", defaultWorkingDirectory: project,
-        timeoutMilliseconds: 5_000, maxOutputBytes: 4_096, maxSessions: 1,
-        terminationGraceMilliseconds: 250)
+      [project, shellEnvironment] in
+      try withShellAdministration(workingDirectory: project, variables: shellEnvironment) {
+        try runtime.run(
+          request: ShellLaunchRequest(
+            command: standardError ? "{ \(command); } >&2" : command, environment: shellEnvironment,
+            inheritsEnvironment: false),
+          defaultShell: "/bin/sh", defaultWorkingDirectory: project,
+          timeoutMilliseconds: 5_000, maxOutputBytes: 4_096, maxSessions: 1)
+      }
     }
     #expect(result.exitCode == 0)
     #expect(!result.timedOut)
@@ -320,7 +366,7 @@ final class ShellSessionRuntimeTests {
   }
 
   private func waitForExit(
-    runtime: SubprocessShellRuntime,
+    runtime: ShellSessionRuntime,
     sessionID: String
   ) async throws -> ShellSessionSnapshot {
     let deadline = Date().addingTimeInterval(2)
@@ -346,4 +392,17 @@ final class ShellSessionRuntimeTests {
       encoding: .utf8
     )
   }
+}
+
+/// The fixture owns the temporary home and explicitly authorizes its local shell processes.
+private func withShellAdministration<T>(
+  workingDirectory: URL, variables: [String: String] = [:], _ operation: () throws -> T
+) throws -> T {
+  let environment = [
+    "HOME": workingDirectory.path, "ZDOTDIR": workingDirectory.path,
+    "TMPDIR": workingDirectory.path + "/", "PATH": systemUtilityPath,
+  ].merging(variables) { _, value in value }
+  let administration = ExecutionAdministration(
+    mode: .fullAccess, environment: try .init(fullAccessVariables: environment))
+  return try ExecutionAdministration.$current.withValue(administration, operation: operation)
 }

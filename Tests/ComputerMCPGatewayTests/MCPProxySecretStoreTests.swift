@@ -6,12 +6,16 @@ import Testing
 @testable import ComputerMCPGateway
 @testable import ComputerMCPPlatform
 
+#if os(macOS)
+  import ComputerMCPDarwinTestSupport
+#endif
+
 struct MCPProxySecretStoreTests {
   @Test
   func injectedSecretStoreRetainsNoninteractiveAuthentication() async throws {
-    try await HTTPStreamProcessFixture.withFixture { fixture in
+    try await HTTPStreamProcessFixture.withFixture(launcher: testExecutionLauncher()) { fixture in
       let store = RecordingSecretStore()
-      let client = MCPProxyClient(secretStore: store)
+      let client = MCPProxyClient(launcher: testExecutionLauncher(), secretStore: store)
       let endpoint = fixture.endpoint.absoluteString
       let server = MCPServerConfig(
         id: "remote", transport: .http, url: endpoint,

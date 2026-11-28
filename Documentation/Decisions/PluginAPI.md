@@ -33,7 +33,7 @@ The host declares the plugin API versions it supports as one closed range in
 `ComputerMCPPlugins`, currently `1...1`, and reports it in `computer-mcp
 build-info` as `plugin_api` with `minimum` and `maximum`.
 
-- Any change to the manifest schema (a field added, removed or reinterpreted)
+- After an API is released, any change to its manifest schema (a field added, removed or reinterpreted)
   or to the runtime contract defines a new plugin API version. A manifest uses
   only the fields its declared version defines.
 - A host may support several consecutive versions and decodes each manifest by
@@ -42,6 +42,15 @@ build-info` as `plugin_api` with `minimum` and `maximum`.
 - `minimum_host` and `maximum_host` remain for constraints within one API
   version, such as a host fix a plugin depends on. They are no longer how a
   package signals use of new manifest fields.
+
+Before the first release, API 1 includes the permission declarations, reviewed
+MCP requirements, sandbox settings and project host services accepted in
+[Coding Harness](CodingHarness.md#plugins). The project service contract has an
+explicit peer marker; `plugin_api = 1` alone does not establish compatibility
+between development revisions. The host and plugins switch together, without
+an API 2 or a fictitious minimum host release. The supported peer sets and
+store retirement are defined in the
+[host-service contract](../Reference/HostServices.md#contract-and-launch-context).
 
 ### Reading a manifest
 
@@ -107,7 +116,7 @@ requires the plugin release with the same archive digest to be public first.
 
 - Plugin authors read one number to know whether a host can load their package,
   and refused packages tell users which side to update.
-- Adding a manifest field is a plugin API change, even when optional, because
+- Adding a manifest field to a released API is a plugin API change, even when optional, because
   hosts reject unknown fields.
 - Catalog schemas 1 and 2 are no longer read; nothing was published with them.
 

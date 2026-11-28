@@ -12,7 +12,7 @@ the files are alternatives, not fragments to merge.
 | --- | --- | --- |
 | `computer-mcp.toml` | Default standalone development configuration | Local development; shell remains disabled |
 | `computer-mcp-chatgpt-tunnel.toml` | ChatGPT observe surface | Read-only Secure MCP Tunnel development |
-| `computer-mcp-chatgpt-operate.toml` | ChatGPT operate surface | Write and Computer Use review; grant only intended projects |
+| `computer-mcp-chatgpt-operate.toml` | ChatGPT operate surface | Project reading and Computer Use actions; grants Project Read |
 | `computer-mcp-local-providers.toml` | Local downstream provider integration | Requires separately installed provider CLIs |
 | `mcp-inspector.json` | MCP Inspector fixture | Test/development data, not an App configuration |
 | `sample.json`, `sample.plist`, `sample.toml` | Structured-data fixtures | Test data only |

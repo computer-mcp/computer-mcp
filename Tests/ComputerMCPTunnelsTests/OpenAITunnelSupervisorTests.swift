@@ -7,6 +7,10 @@ import Testing
 @testable import ComputerMCPProcess
 @testable import ComputerMCPTunnels
 
+#if os(macOS)
+  import ComputerMCPDarwinTestSupport
+#endif
+
 @Suite(.nativeIntegration, .serialized)
 
 final class OpenAITunnelSupervisorTests {
@@ -45,6 +49,7 @@ final class OpenAITunnelSupervisorTests {
     let commandRunner = OpenAITunnelCommandRunner(output: "key=super-secret")
     let process = TestOpenAITunnelProcessManager(output: "connected super-secret")
     let supervisor = OpenAITunnelSupervisor(
+      launcher: testExecutionLauncher(),
       secretStore: secretStore,
       executableSearchDirectories: [],
       resolver: FixedOpenAITunnelClientResolver(),
@@ -108,6 +113,7 @@ final class OpenAITunnelSupervisorTests {
   func testExplicitHTTPProxyOverridesSystemProxyAndBlankUsesSystemProxy() async throws {
     let process = TestOpenAITunnelProcessManager()
     let supervisor = OpenAITunnelSupervisor(
+      launcher: testExecutionLauncher(),
       secretStore: InMemoryTunnelSecretStore(),
       executableSearchDirectories: [],
       resolver: ExecutableOpenAITunnelClientResolver(),
@@ -135,6 +141,7 @@ final class OpenAITunnelSupervisorTests {
     let commandRunner = OpenAITunnelCommandRunner()
     let process = TestOpenAITunnelProcessManager()
     let supervisor = OpenAITunnelSupervisor(
+      launcher: testExecutionLauncher(),
       secretStore: InMemoryTunnelSecretStore(),
       executableSearchDirectories: [],
       resolver: FixedOpenAITunnelClientResolver(),
@@ -167,6 +174,7 @@ final class OpenAITunnelSupervisorTests {
     )
     let process = TestOpenAITunnelProcessManager()
     let supervisor = OpenAITunnelSupervisor(
+      launcher: testExecutionLauncher(),
       secretStore: InMemoryTunnelSecretStore(),
       executableSearchDirectories: [],
       resolver: FixedOpenAITunnelClientResolver(),
@@ -204,6 +212,7 @@ final class OpenAITunnelSupervisorTests {
     )
     let process = TestOpenAITunnelProcessManager()
     let supervisor = OpenAITunnelSupervisor(
+      launcher: testExecutionLauncher(),
       secretStore: secretStore,
       executableSearchDirectories: [],
       resolver: FixedOpenAITunnelClientResolver(),
@@ -236,6 +245,7 @@ final class OpenAITunnelSupervisorTests {
   func testMissingReferencedSecretFailsClosed() async throws {
     let secretStore = InMemoryTunnelSecretStore()
     let supervisor = OpenAITunnelSupervisor(
+      launcher: testExecutionLauncher(),
       secretStore: secretStore,
       executableSearchDirectories: [],
       resolver: FixedOpenAITunnelClientResolver(),
@@ -263,6 +273,7 @@ final class OpenAITunnelSupervisorTests {
     let reference = try SecretReference(account: "tunnel.primary.openai-api-key")
     try await secretStore.setAsynchronously("super-secret", for: reference)
     let supervisor = OpenAITunnelSupervisor(
+      launcher: testExecutionLauncher(),
       secretStore: secretStore,
       executableSearchDirectories: [],
       resolver: FixedOpenAITunnelClientResolver(),
@@ -285,6 +296,7 @@ final class OpenAITunnelSupervisorTests {
     let secretStore = SuspendingTunnelSecretStore(secret: "super-secret")
     let reference = try SecretReference(account: "tunnel.primary.openai-api-key")
     let supervisor = OpenAITunnelSupervisor(
+      launcher: testExecutionLauncher(),
       secretStore: secretStore,
       executableSearchDirectories: [],
       resolver: FixedOpenAITunnelClientResolver(),
@@ -331,6 +343,7 @@ final class OpenAITunnelSupervisorTests {
     let reference = try SecretReference(account: "tunnel.primary.openai-api-key")
     try await secretStore.setAsynchronously("super-secret", for: reference)
     let supervisor = OpenAITunnelSupervisor(
+      launcher: testExecutionLauncher(),
       secretStore: secretStore,
       executableSearchDirectories: [],
       resolver: FixedOpenAITunnelClientResolver(),
@@ -358,6 +371,7 @@ final class OpenAITunnelSupervisorTests {
     let secretStore = InMemoryTunnelSecretStore()
     let process = TestOpenAITunnelProcessManager()
     let supervisor = OpenAITunnelSupervisor(
+      launcher: testExecutionLauncher(),
       secretStore: secretStore,
       executableSearchDirectories: [],
       resolver: FixedOpenAITunnelClientResolver(),
@@ -381,6 +395,7 @@ final class OpenAITunnelSupervisorTests {
     let secretStore = InMemoryTunnelSecretStore()
     let process = TestOpenAITunnelProcessManager(exitAfterReadCount: 2)
     let supervisor = OpenAITunnelSupervisor(
+      launcher: testExecutionLauncher(),
       secretStore: secretStore,
       executableSearchDirectories: [],
       resolver: FixedOpenAITunnelClientResolver(),

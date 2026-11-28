@@ -15,6 +15,9 @@ extension SkillsToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "skills.roots", risk: .readOnly,
+          requirement: .init(
+            access: .none, permissions: [try! .init(.skills, .access)],
+            contribution: .skills(selection: .catalog)),
           projectRequirement: .none,
           localOnly: false, usesNetwork: false
         )
@@ -36,6 +39,9 @@ extension SkillsToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "skills.list", risk: .readOnly,
+          requirement: .init(
+            access: .none, permissions: [try! .init(.skills, .access)],
+            contribution: .skills(selection: .argument(name: "root_id"))),
           projectRequirement: .none,
           localOnly: false, usesNetwork: false
         )
@@ -63,6 +69,9 @@ extension SkillsToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "skills.describe", risk: .readOnly,
+          requirement: .init(
+            access: .none, permissions: [try! .init(.skills, .access)],
+            contribution: .skills(selection: .skill(name: "name", root: "root_id"))),
           projectRequirement: .none,
           localOnly: false, usesNetwork: false
         )
@@ -93,6 +102,9 @@ extension SkillsToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "skills.validate", risk: .readOnly,
+          requirement: .init(
+            access: .none, permissions: [try! .init(.skills, .access)],
+            contribution: .skills(selection: .skill(name: "name", root: "root_id"))),
           projectRequirement: .none,
           localOnly: false, usesNetwork: false
         )
@@ -126,6 +138,9 @@ extension SkillsToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "skills.frontmatter", risk: .readOnly,
+          requirement: .init(
+            access: .none, permissions: [try! .init(.skills, .access)],
+            contribution: .skills(selection: .skill(name: "name", root: "root_id"))),
           projectRequirement: .none,
           localOnly: false, usesNetwork: false
         )
@@ -151,6 +166,9 @@ extension SkillsToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "skills.read", risk: .readOnly,
+          requirement: .init(
+            access: .none, permissions: [try! .init(.skills, .access)],
+            contribution: .skills(selection: .skill(name: "name", root: "root_id"))),
           projectRequirement: .none,
           localOnly: false, usesNetwork: false
         )
@@ -181,6 +199,9 @@ extension SkillsToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "skills.files", risk: .readOnly,
+          requirement: .init(
+            access: .none, permissions: [try! .init(.skills, .access)],
+            contribution: .skills(selection: .skill(name: "name", root: "root_id"))),
           projectRequirement: .none,
           localOnly: false, usesNetwork: false
         )
@@ -208,6 +229,9 @@ extension SkillsToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "skills.read_file", risk: .readOnly,
+          requirement: .init(
+            access: .none, permissions: [try! .init(.skills, .access)],
+            contribution: .skills(selection: .skill(name: "name", root: "root_id"))),
           projectRequirement: .none,
           localOnly: false, usesNetwork: false
         )
@@ -236,6 +260,9 @@ extension SkillsToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "skills.read_files", risk: .readOnly,
+          requirement: .init(
+            access: .none, permissions: [try! .init(.skills, .access)],
+            contribution: .skills(selection: .skill(name: "name", root: "root_id"))),
           projectRequirement: .none,
           localOnly: false, usesNetwork: false
         )
@@ -275,6 +302,9 @@ extension SkillsToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "skills.read_package", risk: .readOnly,
+          requirement: .init(
+            access: .none, permissions: [try! .init(.skills, .access)],
+            contribution: .skills(selection: .skill(name: "name", root: "root_id"))),
           projectRequirement: .none,
           localOnly: false, usesNetwork: false
         )
@@ -306,6 +336,9 @@ extension SkillsToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "skills.outline", risk: .readOnly,
+          requirement: .init(
+            access: .none, permissions: [try! .init(.skills, .access)],
+            contribution: .skills(selection: .skill(name: "name", root: "root_id"))),
           projectRequirement: .none,
           localOnly: false, usesNetwork: false
         )
@@ -345,6 +378,9 @@ extension SkillsToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "skills.section", risk: .readOnly,
+          requirement: .init(
+            access: .none, permissions: [try! .init(.skills, .access)],
+            contribution: .skills(selection: .skill(name: "name", root: "root_id"))),
           projectRequirement: .none,
           localOnly: false, usesNetwork: false
         )
@@ -378,6 +414,9 @@ extension SkillsToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "skills.tables", risk: .readOnly,
+          requirement: .init(
+            access: .none, permissions: [try! .init(.skills, .access)],
+            contribution: .skills(selection: .skill(name: "name", root: "root_id"))),
           projectRequirement: .none,
           localOnly: false, usesNetwork: false
         )
@@ -416,6 +455,9 @@ extension SkillsToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "skills.links", risk: .readOnly,
+          requirement: .init(
+            access: .none, permissions: [try! .init(.skills, .access)],
+            contribution: .skills(selection: .skill(name: "name", root: "root_id"))),
           projectRequirement: .none,
           localOnly: false, usesNetwork: false
         )
@@ -460,6 +502,9 @@ extension SkillsToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "skills.link_check", risk: .readOnly,
+          requirement: .init(
+            access: .none, permissions: [try! .init(.skills, .access)],
+            contribution: .skills(selection: .skill(name: "name", root: "root_id"))),
           projectRequirement: .none,
           localOnly: false, usesNetwork: false
         )
@@ -490,6 +535,9 @@ extension SkillsToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "skills.search", risk: .readOnly,
+          requirement: .init(
+            access: .none, permissions: [try! .init(.skills, .access)],
+            contribution: .skills(selection: .argument(name: "root_id"))),
           projectRequirement: .none,
           localOnly: false, usesNetwork: false
         )
@@ -528,6 +576,9 @@ extension SkillsToolProvider {
         ),
         capability: CapabilityDescriptor(
           id: "skills.search_files", risk: .readOnly,
+          requirement: .init(
+            access: .none, permissions: [try! .init(.skills, .access)],
+            contribution: .skills(selection: .skill(name: "name", root: "root_id"))),
           projectRequirement: .none,
           localOnly: false, usesNetwork: false
         )

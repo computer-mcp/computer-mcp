@@ -8,15 +8,29 @@ import Foundation
 package struct ProjectScope: Sendable {
   package let projectDirectory: URL
   package let toolMeta: JSONValue?
+  private let pathAccess: (any HostPathAccessChecking)?
 
-  package init(configuration: GatewayConfiguration, toolMeta: JSONValue?) {
+  package init(
+    configuration: GatewayConfiguration, toolMeta: JSONValue?,
+    pathAccess: (any HostPathAccessChecking)? = nil
+  ) {
+    self.pathAccess = pathAccess
     self.projectDirectory = configuration.projectDirectory
     self.toolMeta = toolMeta
   }
 
-  package func resolvedProjectURL(_ path: String) throws -> URL {
+  /// Keeps an injected checker active for shared readers and directory helpers.
+  package func withPathAccess<Value>(_ operation: () throws -> Value) rethrows -> Value {
+    try HostPathAccess.$current.withValue(
+      pathAccess ?? HostPathAccess.current, operation: operation)
+  }
+
+  package func resolvedProjectURL(_ path: String, operation: HostPathOperation = .read) throws
+    -> URL
+  {
+    let resolved: URL
     do {
-      return try ProjectPathResolver.resolve(
+      resolved = try ProjectPathResolver.resolve(
         path,
         relativeTo: projectDirectory
       )
@@ -24,6 +38,8 @@ package struct ProjectScope: Sendable {
       throw GatewayToolError.invalidArguments(
         "[policy.project_denied] Path escapes project: \(path)")
     }
+    try (pathAccess ?? HostPathAccess.current)?.check(resolved, operation: operation)
+    return resolved
   }
 
   package func lexicalProjectURL(_ path: String) throws -> URL {
@@ -167,8 +183,18 @@ package struct ProjectScope: Sendable {
   }
 
   package func fileInfo(url: URL) throws -> FileInfo {
+    let access = pathAccess ?? HostPathAccess.current
+    var traversalOnly = false
+    do { try access?.check(url, operation: .read) } catch {
+      try access?.check(url, operation: .openDirectory)
+      traversalOnly = true
+    }
     let attributes = try FileManager.default.attributesOfItem(atPath: url.path)
     let type = fileType(attributes[.type])
+    guard !traversalOnly || type == "directory" else {
+      throw GatewayToolError.invalidArguments("[policy.project_denied] Path is not readable")
+    }
+    try access?.check(url, operation: traversalOnly ? .openDirectory : .read)
     let symlinkDestination = try? FileManager.default.destinationOfSymbolicLink(atPath: url.path)
     let relativePath =
       symlinkDestination == nil

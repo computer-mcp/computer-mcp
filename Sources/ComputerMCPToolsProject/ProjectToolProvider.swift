@@ -1,5 +1,6 @@
 import ComputerMCPConfiguration
 import ComputerMCPCore
+import ComputerMCPProcess
 import ComputerMCPToolKit
 
 package struct ProjectToolProvider: GatewayToolProvider {
@@ -27,6 +28,12 @@ package struct ProjectToolProvider: GatewayToolProvider {
   }
 
   package func callTool(_ invocation: ToolInvocation) throws -> JSONValue {
+    return try projectScope.withPathAccess {
+      try dispatch(invocation)
+    }
+  }
+
+  private func dispatch(_ invocation: ToolInvocation) throws -> JSONValue {
     let name = invocation.name
     let object = invocation.arguments?.objectValue ?? [:]
     switch name {

@@ -5,7 +5,6 @@ import SwiftUI
 
 struct ProfilesView: View {
   @EnvironmentObject private var model: ComputerMCPAppModel
-  @State private var editingProfile: GatewayProfileID?
 
   var body: some View {
     VStack(spacing: 0) {
@@ -22,22 +21,10 @@ struct ProfilesView: View {
 
       ScrollView {
         VStack(alignment: .leading, spacing: 20) {
-          ClientAccessView(model: model.clientAccess) { editingProfile = $0 }
+          ClientAccessView(model: model.clientAccess) { model.showPrivacySecurity(for: $0) }
           Divider()
           profileDefaults
         }.padding(16)
-      }
-    }
-    .sheet(
-      isPresented: Binding(
-        get: { editingProfile != nil },
-        set: { if !$0 { editingProfile = nil } }
-      )
-    ) {
-      if let profile = editingProfile {
-        ProfilePermissionsEditor(model: model.profilePermissionsEditor(id: profile)) {
-          model.refresh(.profiles)
-        }
       }
     }
     .alert(item: $model.pendingProfileConfirmation) { confirmation in
@@ -86,9 +73,9 @@ struct ProfilesView: View {
         Spacer()
 
         Button {
-          editingProfile = profile.permissions.id
+          model.showPrivacySecurity(for: profile.permissions.id)
         } label: {
-          Text("Edit permissions", bundle: AppLocalization.resourceBundle)
+          Text("Permissions…", bundle: AppLocalization.resourceBundle)
         }
         .accessibilityIdentifier("profile.\(profile.id).permissions")
 

@@ -8,27 +8,29 @@ Accepted.
 
 The gateway implementation is split into SwiftPM targets arranged in layers. A
 target depends only on targets in lower layers, or on lower targets within its
-own layer as listed below. Only the App and the CLI are package products, and
-every target keeps `package` access; no declaration is `public`.
+own layer as listed below. The App and CLI ship with a private execution bootstrap.
+A test executable verifies privacy responsibility under Launch Services; it is not
+bundled. Swift targets keep `package` access; no declaration is `public`.
 
 | Layer | Targets | Platform |
 | --- | --- | --- |
-| Front ends | `ComputerMCPApp`, `computer-mcp` | macOS |
+| Front ends | `ComputerMCPApp`, `computer-mcp`; test executable `ComputerMCPExecutionProbe` | macOS |
 | Composition root | `ComputerMCPMacOS` | macOS |
 | Composition | `ComputerMCPControlPlane`, `ComputerMCPGateway` | neutral |
-| Capabilities | `ComputerMCPToolKit`; tool domains `ComputerMCPToolsMCP`, `ComputerMCPToolsCLI`, `ComputerMCPToolsFiles`, `ComputerMCPToolsProject`, `ComputerMCPToolsStructured`, `ComputerMCPToolsGit`, `ComputerMCPToolsShell`, `ComputerMCPToolsSkills`, `ComputerMCPToolsSystem`; `ComputerMCPPlugins`, `ComputerMCPDelivery`, `ComputerMCPAuthorization`; `ComputerMCPComputerUse` | neutral; ComputerUse macOS |
-| Services | `ComputerMCPConfiguration`, `ComputerMCPPersistence`, `ComputerMCPProcess`, `ComputerMCPTransport`, `ComputerMCPDownstream`, `ComputerMCPTunnels` | neutral |
-| Platform | `ComputerMCPPlatform` (protocols and values), `ComputerMCPPlatformPOSIX`, `ComputerMCPPlatformDarwin`, `CSystemArchive` | neutral; POSIX; macOS |
-| Base | `ComputerMCPCore` | neutral |
+| Capabilities | `ComputerMCPToolKit`; tool domains `ComputerMCPToolsMCP`, `ComputerMCPToolsCLI`, `ComputerMCPToolsFiles`, `ComputerMCPToolsProject`, `ComputerMCPToolsStructured`, `ComputerMCPToolsGit`, `ComputerMCPToolsShell`, `ComputerMCPToolsSkills`, `ComputerMCPToolsSystem`; `ComputerMCPPlugins`, `ComputerMCPAuthorization`; `ComputerMCPComputerUse` | neutral; ComputerUse macOS |
+| Services | `ComputerMCPEgress`, `ComputerMCPConfiguration`, `ComputerMCPPersistence`, `ComputerMCPProcess`, `ComputerMCPTransport`, `ComputerMCPDownstream`, `ComputerMCPTunnels`, `ComputerMCPWorktrees` | neutral |
+| Platform | `ComputerMCPPlatform` (protocols and values), `ComputerMCPPlatformPOSIX`, `CSystemPOSIX`, `CSystemZlib`, `ComputerMCPPlatformDarwin`, `CSystemArchive`, `CDarwinExecution`, `computer-mcp-execution-bootstrap` | neutral; POSIX; macOS |
+| Base | `ComputerMCPCore`, `ComputerMCPSandbox`; lower `ComputerMCPPermissions` (Foundation and Swift Crypto) | neutral |
 
 Dependencies inside a layer are limited to these:
 
 - Platform: `PlatformPOSIX` and `PlatformDarwin` use `Platform`;
-  `PlatformDarwin` may use `PlatformPOSIX` and `CSystemArchive`.
+  `PlatformPOSIX` may use `CSystemPOSIX` for Linux libc declarations;
+  `PlatformDarwin` may use `PlatformPOSIX`, `CSystemArchive` and `CDarwinExecution`.
 - Services: `Process`, `Transport`, `Downstream` and `Tunnels` may use
   `Configuration`; `Downstream` and `Tunnels` may use `Process`; `Downstream` may use
-  `Transport`.
-- Capabilities: tool domains and `Delivery` may use `ToolKit`; `ToolsProject`,
+  `Transport`; `Persistence` may implement the derived-project store in `Worktrees`.
+- Capabilities: tool domains may use `ToolKit`; `ToolsProject`,
   `ToolsStructured`, `ToolsSkills` and `ToolsSystem` may use `ToolsFiles`;
   `ToolsSkills` may use `ToolsStructured`; `Plugins` composes contributions and
   may use `ToolsCLI`.
@@ -39,13 +41,25 @@ Dependencies inside a layer are limited to these:
 - `Core`: JSON values, gateway models, policy and capability descriptors, tool
   definitions and the provider protocol, workspace identity, product version
   metadata, invocation values and protocols, and the blocking executor.
+- `Sandbox`: dependency-free execution configuration values and platform contracts;
+  contains no gateway, tool definitions, or permission storage. Seatbelt lives in
+  `PlatformDarwin`, supplied to the process launcher through the sandbox contract.
+- `computer-mcp-execution-bootstrap`: private launch handshake executable;
+  holds the target before exec for host ownership admission. Darwin establishes an
+  isolated session; Linux uses the launcher's isolated process group.
 - `Platform`: the platform service protocols listed below and their value types.
 - `Configuration`: manifest model and defaults, including MCP HTTP
   authentication values.
-- `Persistence`: the database connection, schema and transaction API. Each domain
-  owns its own store on top of it.
+- `Persistence`: the database connection, schema, transaction API and durable
+  permission store. Other domain stores compose its shared connection.
+- `Worktrees`: neutral repository coordination, durable journal I/O and host Git
+  configuration safety, with injected command execution. It contains no gateway
+  or tool models.
 - `Process`: bounded process execution, managed processes, shell sessions and
-  executable discovery.
+  executable discovery. An injected `ExecutionLauncher` owns launches; session
+  storage and its optional recovery journal own output and cursor retention.
+- `Egress`: execution-scoped CONNECT/SOCKS listeners, destination policy, bounded
+  relaying and revocation, independent of MCP routing and permission storage.
 - `Transport`: socket and stream primitives and MCP framing.
 - `Downstream`: downstream MCP clients, child-process transports, catalog
   loading and value bridging.
@@ -55,13 +69,11 @@ Dependencies inside a layer are limited to these:
 - `Plugins`: package manifests, catalogs, installation, resolution of plugin
   contributions into ordinary registrations, and archive preparation through the
   archive extractor interface.
-- `Delivery`: governed edits in isolated worktrees that land on the default
-  branch, within host-declared path scopes.
 - `Authorization`: the OAuth authorization surface for remote clients, with
   grants approved locally.
 - `ComputerUse`: the native Accessibility provider; macOS only, registered by
   the composition root.
-- `Gateway`: runtime and routing, admission, approvals and operation tickets,
+- `Gateway`: runtime and routing, permission admission and requests,
   receipts, continuations, host services, the HTTP server adapter, owned work
   and audit.
 - `ControlPlane`: App and CLI administration, remote management, client control,
@@ -116,7 +128,6 @@ above them and supplied by the composition root:
 | `OpenAITunnelHTTPProxyResolving` | `Tunnels` | system proxy lookup in tunnel supervision; `PlatformDarwin` reads system settings and `MacOS` supplies the conformance that parses them in `Tunnels` |
 | `AuditErrorClassifying` | `Core` | concrete Computer Use error checks in gateway runtime audit classification; errors supply an optional audit decision and code |
 | `ControlErrorClassifying` | `Gateway` | concrete control-plane error checks in control responses; errors supply an optional audit decision and code |
-| `GatewayControlError` | `Gateway` | the HTTP Full Shell approval precondition, with localized messages and the existing audit and control-response defaults |
 | `GatewayManagementProvider` | `Gateway` | control-plane management definitions, read capabilities, name lookup and asynchronous dispatch; `PlatformServices` reserves contract names independently of provider availability |
 | `GatewayClientControlProvider` | `Gateway` | control-plane client-control contracts, argument validation and HTTP generation dispatch |
 | `SecretStore` | `Platform` | `KeychainSecretStore` in configuration, tunnels, gateway and control plane |
@@ -162,3 +173,7 @@ cycles, no upward edges and no neutral target that depends on a Darwin target.
   neutral targets.
 - A builtin tool catalog snapshot (names, metadata, schemas and descriptors)
   guards extraction; it changes only for reviewed, intended differences.
+- `ComputerMCPDarwinTestSupport` is a macOS-only test adapter that injects the
+  Darwin execution backend and locates the private bootstrap for integration
+  tests. Production neutral modules and `ComputerMCPTestSupport` retain their
+  platform-independent dependencies.

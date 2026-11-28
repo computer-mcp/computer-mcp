@@ -91,7 +91,7 @@
     },
     {
       "id": "candidate",
-      "timeout_seconds": 7500,
+      "timeout_seconds": 54000,
       "retain_outputs": true,
       "commands": [["python3", "Scripts/candidate.py", "request"]],
       "access": "Trusted master and protected cloud construction, signing, notarization and GitHub Release publication"

@@ -129,7 +129,9 @@ def validate_definition(definition):
             raise ValueError(f"Invalid or duplicate stage: {name}")
         if not set(stage.get("needs", [])) <= seen:
             raise ValueError(f"Stage dependencies must precede {name}")
-        if not stage.get("commands") or not 0 < stage["timeout_seconds"] <= 14400:
+        # The cloud candidate spans the CI wait, source verification, and protected build jobs.
+        max_timeout = 54000 if name == "candidate" else 14400
+        if not stage.get("commands") or not 0 < stage["timeout_seconds"] <= max_timeout:
             raise ValueError(f"Stage {name} needs commands and a bounded timeout")
         if not all(isinstance(c, list) and c and all(isinstance(a, str) for a in c) for c in stage["commands"]):
             raise ValueError(f"Invalid commands for {name}")
@@ -474,7 +476,8 @@ def main():
     parser.add_argument("--run", default="local", help="Local run identifier; receipts stay in .agent/releases/")
     parser.add_argument("--profile", default="ci")
     parser.add_argument("--apply", action="store_true", help="Apply cleanup; otherwise preview")
-    parser.add_argument("--reuse-ci", action="store_true", help="Import matching checks from a trusted successful master CI run")
+    parser.add_argument("--reuse-ci", nargs="?", const="latest", metavar="RUN",
+                        help="Import matching master CI checks, optionally from the selected run ID or 'none'")
     parser.add_argument("--reuse-candidate", action="store_true",
                         help="Bind an existing successful candidate after a trusted check-only revision")
     args = parser.parse_args()
@@ -506,9 +509,9 @@ def main():
     if args.operation == "cleanup":
         print(json.dumps(runner.cleanup(args.apply), indent=2))
         return 0
-    if args.reuse_ci:
+    if args.reuse_ci is not None:
         from candidate import reuse_ci
-        reuse_ci(runner, profile)
+        reuse_ci(runner, profile, args.reuse_ci)
     return runner.run(profile)
 
 

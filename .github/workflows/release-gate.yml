@@ -30,12 +30,34 @@ env:
   DEVELOPER_DIR: /Applications/Xcode_26.4.app/Contents/Developer
 
 jobs:
+  wait-ci:
+    name: Wait for trusted master CI
+    if: github.repository == 'computer-mcp/computer-mcp' && github.ref == 'refs/heads/master' && inputs.operation == 'publish'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 360
+    outputs:
+      ci-run: ${{ steps.ci.outputs.run }}
+    steps:
+      - name: Checkout candidate commit
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Wait for matching master CI
+        id: ci
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 Scripts/candidate.py wait-ci
+
   verify:
     name: Verify trusted candidate source
-    if: github.repository == 'computer-mcp/computer-mcp' && github.ref == 'refs/heads/master'
+    needs: wait-ci
+    if: >-
+      !cancelled() && github.repository == 'computer-mcp/computer-mcp' && github.ref == 'refs/heads/master' &&
+      ((inputs.operation == 'publish' && needs.wait-ci.result == 'success') ||
+      (inputs.operation == 'verify-public' && needs.wait-ci.result == 'skipped'))
     runs-on: macos-26
-    # Allow 270 minutes for source checks, 60 for CI polling, and time for artifact retrieval and setup.
-    timeout-minutes: 360
+    # Allow 270 minutes for source checks and 30 for artifact retrieval and setup.
+    timeout-minutes: 300
     steps:
       - name: Checkout candidate commit
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -51,7 +73,8 @@ jobs:
         if: inputs.operation == 'publish'
         env:
           GH_TOKEN: ${{ github.token }}
-        run: python3 Scripts/release.py run --run candidate-checks --profile source --reuse-ci
+          CI_RUN: ${{ needs.wait-ci.outputs.ci-run }}
+        run: python3 Scripts/release.py run --run candidate-checks --profile source --reuse-ci "$CI_RUN"
 
   release:
     name: Build and publish signed release

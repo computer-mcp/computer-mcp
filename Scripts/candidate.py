@@ -23,6 +23,9 @@ from release import ROOT, atomic_json, file_digest, inventory, output
 
 REPOSITORY = "computer-mcp/computer-mcp"
 WORKFLOW = ".github/workflows/release-gate.yml"
+MASTER_CI_RUNS = "actions/workflows/ci.yml/runs?branch=master&event=push&per_page=100"
+CI_WAIT_SECONDS = 350 * 60
+RELEASE_WAIT_SECONDS = 14 * 60 * 60
 
 
 def api(path, *arguments):
@@ -112,7 +115,8 @@ def request():
         api("actions/workflows/release-gate.yml/dispatches", "--method", "POST",
             "--field", "ref=master", "--field", "inputs[request_id]=" + record["request_id"])
     atomic_json(request_path, record)
-    deadline = time.monotonic() + 7200
+    # The workflow may spend 360, 300, and 120 minutes in its three jobs.
+    deadline = time.monotonic() + RELEASE_WAIT_SECONDS
     while time.monotonic() < deadline:
         runs = api("actions/workflows/release-gate.yml/runs?branch=master&event=workflow_dispatch&per_page=100")["workflow_runs"]
         matches = [run for run in runs if run["display_title"] == "Computer MCP release " + record["request_id"]]
@@ -180,27 +184,74 @@ def download(run, work, commit):
                       "artifact_id": artifact["id"], "digest": checksum}))
 
 
-def reuse_ci(runner, profile):
-    """Trust GitHub's immutable artifact, never a caller-supplied receipt/key."""
-    commit = runner.source["commit"]
-    deadline = time.monotonic() + 3600
-    while True:
-        runs = api("actions/workflows/ci.yml/runs?branch=master&event=push&per_page=100")["workflow_runs"]
-        matching = [r for r in runs if r["head_sha"] == commit]
-        if not matching:
-            print("No matching master CI evidence; executing checks locally.")
-            return
-        run = matching[0]
-        if (run["path"] != ".github/workflows/ci.yml" or run["head_repository"]["full_name"] != REPOSITORY
-                or run["head_branch"] != "master" or run["event"] != "push"):
-            raise ValueError("Untrusted CI workflow source")
-        if run["status"] == "completed":
-            break
-        if time.monotonic() >= deadline:
-            raise TimeoutError(f"Matching master CI has not completed ({run['html_url']}). Rerun failed release jobs after CI completes.")
-        time.sleep(10)
+def verify_ci_run(run, commit):
+    if (run["head_sha"] != commit or run["path"] != ".github/workflows/ci.yml"
+            or run["head_repository"]["full_name"] != REPOSITORY
+            or run["head_branch"] != "master" or run["event"] != "push"):
+        raise ValueError("Untrusted CI workflow source")
+
+
+def require_successful_ci(run):
+    if run["status"] != "completed":
+        raise ValueError(f"Matching master CI has not completed ({run['html_url']})")
     if run["conclusion"] != "success":
         raise ValueError("The matching master CI failed; candidate construction cannot bypass it")
+
+
+def read_ci_run(run_id, commit):
+    run = api(f"actions/runs/{run_id}")
+    verify_ci_run(run, commit)
+    if str(run["id"]) != run_id:
+        raise ValueError("Master CI run identity changed")
+    return run
+
+
+def wait_for_ci(commit):
+    started = time.monotonic()
+    run_id = None
+    while True:
+        if run_id is None:
+            runs = api(MASTER_CI_RUNS)["workflow_runs"]
+            run = next((r for r in runs if r["head_sha"] == commit), None)
+            if run is not None:
+                verify_ci_run(run, commit)
+                run_id = str(run["id"])
+        else:
+            run = read_ci_run(run_id, commit)
+        elapsed = time.monotonic() - started
+        if run is not None:
+            if run["status"] == "completed":
+                require_successful_ci(run)
+                return run
+            if elapsed >= CI_WAIT_SECONDS:
+                raise TimeoutError(f"Matching master CI has not completed ({run['html_url']})")
+        elif elapsed >= 120:
+            # A concurrent push run can take time to appear in the workflow list.
+            return None
+        time.sleep(10)
+
+
+def write_ci_selection():
+    run = wait_for_ci(os.environ["GITHUB_SHA"])
+    with Path(os.environ["GITHUB_OUTPUT"]).open("a") as stream:
+        print(f"run={run['id'] if run else 'none'}", file=stream)
+
+
+def reuse_ci(runner, profile, selection="latest"):
+    """Trust GitHub's immutable artifact, never a caller-supplied receipt/key."""
+    commit = runner.source["commit"]
+    if selection == "latest":
+        run = wait_for_ci(commit)
+    elif selection == "none":
+        run = None
+    elif re.fullmatch(r"[1-9][0-9]*", selection):
+        run = read_ci_run(selection, commit)
+        require_successful_ci(run)
+    else:
+        raise ValueError("Invalid master CI run selection")
+    if run is None:
+        print("No matching master CI evidence; executing checks locally.")
+        return
     name = f"check-report-{run['id']}-{run['run_attempt']}"
     matches = [a for a in api(f"actions/runs/{run['id']}/artifacts")["artifacts"]
                if a["name"] == name and not a["expired"]]
@@ -244,9 +295,9 @@ def reuse_ci(runner, profile):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("operation", choices=("bundle", "request"))
+    parser.add_argument("operation", choices=("bundle", "request", "wait-ci"))
     args = parser.parse_args()
-    return bundle() if args.operation == "bundle" else request()
+    return {"bundle": bundle, "request": request, "wait-ci": write_ci_selection}[args.operation]()
 
 
 if __name__ == "__main__":

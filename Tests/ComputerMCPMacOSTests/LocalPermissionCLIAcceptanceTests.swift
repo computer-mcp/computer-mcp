@@ -490,9 +490,9 @@ private struct PermissionCLIFixture: Sendable {
   }
 
   func requestIDs(_ envelope: JSONValue) throws -> [String] {
-    let error = try #require(error(envelope))
-    try #require(error["code"] == .string("permission.required"), "\(envelope)")
-    let ids = try #require(error["request_ids"]?.arrayValue).map { value in
+    let permissionError = try #require(error(envelope))
+    try #require(permissionError["code"] == .string("permission.required"), "\(envelope)")
+    let ids = try #require(permissionError["request_ids"]?.arrayValue).map { value in
       let id = try #require(value.stringValue)
       try #require(UUID(uuidString: id) != nil)
       return id

@@ -30,6 +30,9 @@ jobs:
       - name: Build neutral targets
         run: swift build
       - name: Test neutral targets
+        env:
+          # File identity tests need exportable handles from the runner filesystem.
+          TMPDIR: ${{ runner.temp }}
         run: swift test --no-parallel
 
   dependency-gate:

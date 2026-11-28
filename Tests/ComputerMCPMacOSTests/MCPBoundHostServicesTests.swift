@@ -2065,7 +2065,7 @@ private enum ProjectServiceCaller {
         guard !chunk.isEmpty else { break }
         buffer.append(chunk)
       }
-      return buffer.split(separator: 0x0A).first.map(Data.init) ?? Data()
+      return buffer.split(separator: 0x0A).first.map { Data($0) } ?? Data()
     }.value
     let message = try JSONDecoder().decode(JSONValue.self, from: line)
     return try #require(message.objectValue?["result"]?.objectValue)

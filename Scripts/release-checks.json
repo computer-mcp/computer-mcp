@@ -52,7 +52,7 @@
       "id": "swift-tests",
       "needs": ["dependencies"],
       "timeout_seconds": 10800,
-      "commands": [["/usr/bin/swift", "build"], ["/usr/bin/swift", "test", "--no-parallel"]],
+      "commands": [["/usr/bin/swift", "build"], ["python3", "Scripts/run-swift-tests.py"]],
       "access": "Local isolated regression fixtures"
     },
     {

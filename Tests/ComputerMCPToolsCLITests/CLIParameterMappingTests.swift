@@ -21,16 +21,15 @@ struct CLIParameterMappingTests {
     let command = CLICommandDescriptor(
       id: "argv", path: [], description: "Read exact argv",
       parameters: [.init(name: "values", schema: CLITreeTests.strings, required: true)],
-      argv: [
-        .init(kind: .literal, value: "-c"),
-        .init(
-          kind: .literal,
-          value: "import json,sys; print(json.dumps(sys.argv[1:], ensure_ascii=False))"),
-        .init(kind: .option, parameter: "values", flag: "--value", style: style),
-      ], stdout: .json, outputSchema: CLITreeTests.strings)
+      argv: Self.fixtureArguments(
+        perl:
+          "use Encode qw(decode_utf8 FB_CROAK); use JSON::PP; print encode_json([map { decode_utf8($_, FB_CROAK) } @ARGV]);",
+        python: "import json,sys; print(json.dumps(sys.argv[1:], ensure_ascii=False))") + [
+          .init(kind: .option, parameter: "values", flag: "--value", style: style)
+        ], stdout: .json, outputSchema: CLITreeTests.strings)
     let directory = FileManager.default.temporaryDirectory
     let provider = CLITreeTests.provider(
-      command, executable: try testExecutable("python3"), project: directory)
+      command, executable: try testExecutable(Self.interpreter), project: directory)
     let tool = try #require(provider.definitions().first?.tool.name)
     let values: JSONValue = .array([
       .string(""), .string("你好 world"), .string("a\"b'c"), .string("$(never-execute)\n"),
@@ -53,14 +52,14 @@ struct CLIParameterMappingTests {
     let command = CLICommandDescriptor(
       id: "exact", path: [], description: "Echo an exact integer",
       parameters: [.init(name: "value", schema: schema, required: true)],
-      argv: [
-        .init(kind: .literal, value: "-c"),
-        .init(kind: .literal, value: "import json,sys; print(json.dumps(int(sys.argv[1])))"),
-        .init(kind: .positional, parameter: "value"),
-      ], stdout: .json, outputSchema: schema)
+      argv: Self.fixtureArguments(
+        perl: "use JSON::PP; print JSON::PP->new->allow_nonref->encode(int($ARGV[0]));",
+        python: "import json,sys; print(json.dumps(int(sys.argv[1])))") + [
+          .init(kind: .positional, parameter: "value")
+        ], stdout: .json, outputSchema: schema)
     let directory = FileManager.default.temporaryDirectory
     let provider = CLITreeTests.provider(
-      command, executable: try testExecutable("python3"), project: directory)
+      command, executable: try testExecutable(Self.interpreter), project: directory)
     let tool = try #require(provider.definitions().first?.tool.name)
     let result = try await withCLIProcessScope(
       directory: directory, readOnly: true
@@ -72,6 +71,20 @@ struct CLIParameterMappingTests {
     await provider.execution.shutdown()
     #expect(result.objectValue?["isError"] == .bool(false), "\(result)")
     #expect(CLITreeTests.output(result)?["data"]?.int64Value == integer)
+  }
+
+  #if os(macOS)
+    private static let interpreter = "perl"
+  #else
+    private static let interpreter = "python3"
+  #endif
+
+  private static func fixtureArguments(perl: String, python: String) -> [CLIArgumentToken] {
+    #if os(macOS)
+      ["-e", perl, "--"].map { .init(kind: .literal, value: $0) }
+    #else
+      ["-c", python].map { .init(kind: .literal, value: $0) }
+    #endif
   }
 
   @Test(arguments: [

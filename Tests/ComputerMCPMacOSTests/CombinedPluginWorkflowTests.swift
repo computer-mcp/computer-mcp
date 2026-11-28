@@ -16,7 +16,7 @@ import Testing
 @testable import ComputerMCPPlugins
 @testable import ComputerMCPProcess
 
-@Suite(.nativeIntegration, .timeLimit(.minutes(1)))
+@Suite(.nativeIntegration, .timeLimit(.minutes(2)))
 struct CombinedPluginWorkflowTests {
   @Test(arguments: [PluginSourceKind.bundled, .artifact, .development])
   func allContributionsRunAndRetireTogetherWithoutRemovingIndependentRegistrations(

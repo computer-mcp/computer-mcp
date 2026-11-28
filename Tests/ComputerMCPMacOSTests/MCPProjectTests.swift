@@ -245,10 +245,12 @@ struct MCPProjectTests {
     let directory = cwd == "nested" ? fixture.first.appendingPathComponent("nested") : fixture.first
     let bin = directory.appendingPathComponent("bin")
     try FileManager.default.createDirectory(at: bin, withIntermediateDirectories: true)
+    let server = fixture.root.appendingPathComponent("path-resolved-peer.pl")
+    try MCPProjectFixture.writeServer(to: server, interpreter: "/usr/bin/env fixture-perl")
     let link = directory.appendingPathComponent("probe")
-    try FileManager.default.createSymbolicLink(at: link, withDestinationURL: fixture.script)
-    let interpreter = bin.appendingPathComponent("fixture-runtime")
-    try Data("#!/bin/sh\nexec /usr/bin/python3 \"$@\"\n".utf8).write(to: interpreter)
+    try FileManager.default.createSymbolicLink(at: link, withDestinationURL: server)
+    let interpreter = bin.appendingPathComponent("fixture-perl")
+    try Data("#!/bin/sh\nexec /usr/bin/perl \"$@\"\n".utf8).write(to: interpreter)
     try FileManager.default.setAttributes(
       [.posixPermissions: 0o755], ofItemAtPath: interpreter.path)
     var configuration = fixture.configuration()
@@ -309,9 +311,8 @@ private struct MCPProjectFixture: Sendable {
     for url in [first, second] {
       try FileManager.default.createDirectory(at: url, withIntermediateDirectories: false)
     }
-    script = root.appendingPathComponent("probe.py")
-    try Data(Self.server.utf8).write(to: script)
-    try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: script.path)
+    script = root.appendingPathComponent("probe.pl")
+    try Self.writeServer(to: script, interpreter: "/usr/bin/perl")
   }
 
   func configuration() -> GatewayConfiguration {
@@ -324,7 +325,7 @@ private struct MCPProjectFixture: Sendable {
       ],
       mcp: .init(servers: [
         .init(
-          id: "shared", transport: .stdio, command: "/usr/bin/python3", args: [script.path],
+          id: "shared", transport: .stdio, command: "/usr/bin/perl", args: [script.path],
           exposure: .reexport, prefix: "fixture", allowAnyTool: true,
           requestTimeoutMs: 5_000, toolRisks: ["context": .readOnly])
       ]), projectDirectory: root)
@@ -358,9 +359,7 @@ private struct MCPProjectFixture: Sendable {
     }
     try database.bootstrapPermissionProfiles([grant])
     var configuration = configuration
-    let nativeScript = root.appendingPathComponent("runtime.py")
-    try writePythonTestExecutable(Self.server, to: nativeScript)
-    configuration.mcp.servers[0].command = nativeScript.path
+    configuration.mcp.servers[0].command = script.path
     configuration.mcp.servers[0].args = []
     configuration.profiles = [.init(grant: grant)]
     let runtime = try await GatewayRuntime.make(
@@ -398,36 +397,48 @@ private struct MCPProjectFixture: Sendable {
 
   func remove() { try? FileManager.default.removeItem(at: root) }
 
-  private static let server = """
-    #!/usr/bin/env fixture-runtime
-    import json, os, sys
-    marker = os.environ.get("START_MARKER")
-    if marker:
-        with open(marker, "a") as output:
-            output.write(json.dumps({"pid": os.getpid(), "cwd": os.getcwd()}) + "\\n")
-    for line in sys.stdin:
-        message = json.loads(line)
-        if "id" not in message:
-            continue
-        method = message.get("method")
-        response = {"jsonrpc": "2.0", "id": message["id"]}
-        if method == "initialize":
-            response["result"] = {
-                "protocolVersion": "2025-11-25", "capabilities": {"tools": {}},
-                "serverInfo": {"name": "project-fixture", "version": "1"}}
-        elif method == "tools/list":
-            response["result"] = {"tools": [{
-                "name": "context", "description": os.getcwd(),
-                "inputSchema": {"type": "object"}}]}
-        elif method == "tools/call":
-            response["result"] = {"content": [], "structuredContent": {
-                "cwd": os.getcwd(), "pid": os.getpid(), "script": sys.argv[0],
-                "scope": os.environ.get("SCOPE_VALUE"), "empty": os.environ.get("EMPTY"),
-                "hostContext": json.loads(os.environ.get("COMPUTER_MCP_HOST_CONTEXT", "null"))}}
-        else:
-            response["error"] = {"code": -32601, "message": "not found"}
-        print(json.dumps(response), flush=True)
-    """
+  fileprivate static func writeServer(to script: URL, interpreter: String) throws {
+    try Data(("#!\(interpreter)\n" + server + "\n").utf8).write(to: script)
+    try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: script.path)
+  }
+
+  private static let server = #"""
+    use strict;
+    use warnings;
+    use Cwd qw(getcwd);
+    use Encode qw(decode_utf8);
+    use JSON::PP qw(decode_json encode_json);
+    $| = 1;
+
+    my $cwd = decode_utf8(getcwd());
+    if (my $marker = $ENV{START_MARKER}) {
+        open my $output, '>>', $marker or die "open start marker: $!";
+        print {$output} encode_json({pid => $$, cwd => $cwd}), "\n";
+        close $output or die "close start marker: $!";
+    }
+    while (my $line = <STDIN>) {
+        my $message = decode_json($line);
+        next unless exists $message->{id};
+        my $method = $message->{method};
+        my $response = {jsonrpc => '2.0', id => $message->{id}};
+        if ($method eq 'initialize') {
+            $response->{result} = {
+                protocolVersion => '2025-11-25', capabilities => {tools => {}},
+                serverInfo => {name => 'project-fixture', version => '1'}};
+        } elsif ($method eq 'tools/list') {
+            $response->{result} = {tools => [{
+                name => 'context', description => $cwd, inputSchema => {type => 'object'}}]};
+        } elsif ($method eq 'tools/call') {
+            $response->{result} = {content => [], structuredContent => {
+                cwd => $cwd, pid => $$, script => decode_utf8($0),
+                scope => $ENV{SCOPE_VALUE}, empty => $ENV{EMPTY},
+                hostContext => decode_json($ENV{COMPUTER_MCP_HOST_CONTEXT} // 'null')}};
+        } else {
+            $response->{error} = {code => -32601, message => 'not found'};
+        }
+        print encode_json($response), "\n";
+    }
+    """#
 }
 
 /// Direct transport fixtures own native Sandbox trees; Gateway tests use durable admission.

@@ -87,34 +87,68 @@ struct ManagedCommandRunnerTests {
 
   @Test
   func doesNotInheritUnrelatedDescriptors() async throws {
-    let pipe = Pipe()
-    let descriptor = fcntl(pipe.fileHandleForReading.fileDescriptor, F_DUPFD, 64)
+    let scratch = try ScopedTemporaryDirectory()
+    defer { withExtendedLifetime(scratch) {} }
+    let directory = scratch.url
+    let sentinel = directory.appendingPathComponent("sentinel")
+    try Data().write(to: sentinel)
+    let file = try FileHandle(forReadingFrom: sentinel)
+    let descriptor = fcntl(file.fileDescriptor, F_DUPFD, 64)
     try #require(descriptor >= 64)
     defer { _ = close(descriptor) }
-    #expect(fcntl(descriptor, F_GETFD) & FD_CLOEXEC == 0)
+    let flags = fcntl(descriptor, F_GETFD)
+    try #require(flags >= 0 && flags & FD_CLOEXEC == 0)
+    var identity = stat()
+    try #require(fstat(descriptor, &identity) == 0)
+    #if os(macOS)
+      let interpreter = "perl"
+      let probe = [
+        "-e",
+        #"""
+        use Errno qw(EBADF);
+        use POSIX qw(fstat);
+        my ($descriptor, $device, $inode) = @ARGV;
+        my @identity = fstat($descriptor);
+        if (@identity) {
+            die "inherited sentinel descriptor\n" if $identity[0] eq $device && $identity[1] eq $inode;
+        } elsif ($! != EBADF) {
+            die "stat descriptor: $!";
+        }
+        print "checked\n";
+        """#,
+      ]
+    #else
+      let interpreter = "python3"
+      let probe = [
+        "-c",
+        """
+        import errno, os, sys
+        descriptor, device, inode = map(int, sys.argv[1:])
+        try:
+            identity = os.fstat(descriptor)
+        except OSError as error:
+            if error.errno != errno.EBADF:
+                raise
+        else:
+            if (identity.st_dev, identity.st_ino) == (device, inode):
+                sys.exit("inherited sentinel descriptor")
+        print("checked")
+        """,
+      ]
+    #endif
+    let arguments = probe + [String(descriptor), String(identity.st_dev), String(identity.st_ino)]
     let result = try await BlockingOperationExecutor(label: "test.managed-command").perform {
       try withCommandAdministration {
         try ManagedCommandRunner(launcher: testExecutionLauncher()).run(
-          executable: try testExecutable("python3"),
-          arguments: [
-            "-c",
-            """
-            import errno, os, sys
-            try:
-                os.fstat(int(sys.argv[1]))
-            except OSError as error:
-                assert error.errno == errno.EBADF
-            else:
-                sys.exit("inherited unrelated descriptor")
-            """,
-            String(descriptor),
-          ],
-          workingDirectory: FileManager.default.temporaryDirectory,
+          executable: try testExecutable(interpreter), arguments: arguments,
+          workingDirectory: directory,
           environment: ["PATH": systemUtilityPath],
           timeoutMilliseconds: 2000, maxOutputBytes: 1024)
       }
     }
-    #expect(result.exitCode == 0 && !result.timedOut, "\(result.stderr)")
+    #expect(!result.timedOut)
+    #expect(result.exitCode == 0, "\(result.stderr)")
+    #expect(result.stdout == "checked\n")
   }
 
   @Test

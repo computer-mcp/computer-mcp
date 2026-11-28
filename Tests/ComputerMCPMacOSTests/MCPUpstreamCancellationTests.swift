@@ -5,6 +5,7 @@ import ComputerMCPTransport
 import Darwin
 import Foundation
 import MCP
+import NIOConcurrencyHelpers
 import Testing
 
 @testable import ComputerMCPConfiguration
@@ -138,22 +139,30 @@ struct MCPUpstreamCancellationTests {
         name: name, arguments: firstArguments)
       let sibling: RequestContext<CallTool.Result> = try await client.callTool(
         name: "native.wait", arguments: ["label": .string("sibling")])
-      try await wait(root: providerRoot, for: "started:sibling")
-      try await wait(root: providerRoot, for: "started:first")
+      let outcomes = NIOLockedValueBox<[String: String]>([:])
+      observe(first, label: "first", outcomes: outcomes)
+      observe(sibling, label: "sibling", outcomes: outcomes)
+      let starts = ["started:first", "started:sibling"]
+      let observed = try await wait(root: providerRoot, for: starts, timeout: .seconds(10))
+      let replies = outcomes.withLockedValue { $0 }
+      try #require(
+        starts.allSatisfy(observed.contains),
+        "Native readiness: markers=\(observed), first=\(replies["first"] ?? "pending"), sibling=\(replies["sibling"] ?? "pending")"
+      )
       try await client.cancelRequest(first.requestID, reason: "Cancel the first fixture call.")
       await #expect(throws: CancellationError.self) { _ = try await first.value }
-      try await wait(root: providerRoot, for: "cancelled:first")
-      let afterCancellation = try events(providerRoot)
-      let cancellationTrace = try String(
-        contentsOf: providerRoot.appendingPathComponent("trace"), encoding: .utf8)
+      let afterCancellation = try await wait(
+        root: providerRoot, for: ["cancelled:first"], timeout: .seconds(4))
+      try #require(
+        afterCancellation.contains("cancelled:first"), "Native cancellation: \(afterCancellation)")
       try #require(
         !afterCancellation.contains("cancelled:sibling"),
-        "Unexpected sibling cancellation: \(cancellationTrace)"
+        "Unexpected sibling cancellation: \(afterCancellation)"
       )
       let release: RequestContext<CallTool.Result> = try await client.callTool(
         name: "native.release", arguments: [:])
       let released = try await release.value
-      try #require(released.isError != true, "Sibling release failed: \(released.content)")
+      try #require(released.isError != true, "Sibling release returned a tool error")
       #expect(try await sibling.value.isError != true)
       let receipt = try events(providerRoot)
       #expect(receipt.filter { $0 == "started:first" }.count == 1)
@@ -195,16 +204,32 @@ struct MCPUpstreamCancellationTests {
     return try String(contentsOf: file, encoding: .utf8).split(separator: "\n").map(String.init)
   }
 
-  private func wait(root: URL, for event: String) async throws {
-    let deadline = ContinuousClock.now.advanced(by: .seconds(4))
-    while ContinuousClock.now < deadline {
-      if try events(root).contains(event) { return }
+  private func wait(root: URL, for expected: [String], timeout: Duration) async throws -> [String] {
+    let deadline = ContinuousClock.now.advanced(by: timeout)
+    var observed = try events(root)
+    while !expected.allSatisfy(observed.contains), ContinuousClock.now < deadline {
       try await Task.sleep(for: .milliseconds(10))
+      observed = try events(root)
     }
-    throw CancellationFixtureError.missing(event)
+    return observed
   }
 
-  private enum CancellationFixtureError: Error { case missing(String) }
+  private func observe(
+    _ request: RequestContext<CallTool.Result>, label: String,
+    outcomes: NIOLockedValueBox<[String: String]>
+  ) {
+    Task {
+      let outcome: String
+      do {
+        outcome = try await request.value.isError == true ? "tool error" : "success"
+      } catch is CancellationError {
+        outcome = "cancelled"
+      } catch {
+        outcome = "request failed"
+      }
+      outcomes.withLockedValue { $0[label] = outcome }
+    }
+  }
 
   private static let script = #"""
     import json, os, pathlib, sys
@@ -219,10 +244,6 @@ struct MCPUpstreamCancellationTests {
     for line in sys.stdin:
         request = json.loads(line)
         method = request.get("method")
-        with (root / "trace").open("a") as trace:
-            trace.write(json.dumps({"method":method, "id":request.get("id"),
-                "request_id":request.get("params",{}).get("requestId"),
-                "reason":request.get("params",{}).get("reason")}) + "\n")
         if method == "notifications/cancelled":
             label = waiting.pop(request["params"]["requestId"], None)
             if label is not None: record("cancelled:" + label)

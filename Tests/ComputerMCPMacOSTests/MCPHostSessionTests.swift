@@ -419,7 +419,9 @@ struct MCPHostSessionTests {
     let catalog = try fixture.runtime.hostToolCatalog(projectID: "first", origin: "plugin")
     try #require(catalog.contains { $0.name == "file.read" })
     let path = try #require(fixture.database.fileURL).path
-    let writer = try DatabaseQueue(path: path)
+    var writerConfiguration = Configuration()
+    writerConfiguration.busyMode = .timeout(5)
+    let writer = try DatabaseQueue(path: path, configuration: writerConfiguration)
     try await writer.write { database in
       try database.execute(
         sql: "DELETE FROM permissionProfiles WHERE id = ?", arguments: ["chatgpt-operate"])

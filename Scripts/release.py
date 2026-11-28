@@ -381,7 +381,6 @@ class Runner:
             retained.parent.mkdir(parents=True, exist_ok=True)
             work.rename(retained)
             previous = retained
-        work.mkdir(parents=True)
         log = self.run_dir / "logs" / (attempt + ".log")
         log.parent.mkdir(parents=True, exist_ok=True)
         log.touch()
@@ -390,6 +389,8 @@ class Runner:
                   "run_dir": str(self.run_dir), "log": str(log.relative_to(self.run_dir)),
                   "started_at": time.time(), "outputs": {}}
         self.save(result)
+        # An empty work directory must belong to the new receipt if setup is interrupted.
+        work.mkdir(parents=True)
         started = time.monotonic()
         environment = dict(os.environ, RELEASE_WORK_DIR=str(work), RELEASE_RUN_DIR=str(self.run_dir),
                            OUTPUT_DIR=str(work / "dist"), BUILD_ROOT=str(self.root / ".build/distribution"))

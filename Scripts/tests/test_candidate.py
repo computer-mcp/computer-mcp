@@ -26,6 +26,7 @@ class CandidateTrust(unittest.TestCase):
             helper.write_text('''import json
 import os
 from pathlib import Path
+import subprocess
 import sys
 import time
 from types import SimpleNamespace
@@ -38,13 +39,24 @@ import release
 root = Path(__file__).parent
 commit = "a" * 40
 if sys.argv[2] == "worker":
+    def git(command, cwd):
+        if command[1] == "ls-remote":
+            if (root / "interrupt-precheck").exists():
+                (root / "precheck-started").touch()
+                time.sleep(30)
+            if (root / "fail-precheck").exists():
+                raise subprocess.CalledProcessError(1, command)
+            return commit + " refs/heads/master"
+        return commit if command[1] == "rev-parse" else ""
+
     def api(path, *arguments):
         if path.endswith("/dispatches"):
             with (root / "dispatches").open("a") as stream:
                 print(arguments[-1].split("=", 1)[1], file=stream)
+            assert not (root / "finish").exists(), "resume attempted another dispatch"
             return None
         assert path.startswith("actions/workflows/release-gate.yml/runs?")
-        request_id = (root / "dispatches").read_text().strip()
+        request_id = (root / "dispatches").read_text().splitlines()[0]
         return {"workflow_runs": [{
             "id": 42, "display_title": "Computer MCP release " + request_id,
             "head_sha": commit, "head_branch": "master", "event": "workflow_dispatch",
@@ -58,7 +70,7 @@ if sys.argv[2] == "worker":
 
     clock = iter([0, 13 * 60 * 60])
     with patch.object(candidate, "api", side_effect=api), \\
-            patch.object(candidate, "output", side_effect=[commit, "", commit + " refs/heads/master"]), \\
+            patch.object(candidate, "output", side_effect=git), \\
             patch.object(candidate, "download", side_effect=download), \\
             patch.object(candidate, "time", SimpleNamespace(monotonic=lambda: next(clock), time=time.time, sleep=time.sleep)):
         raise SystemExit(candidate.request())
@@ -73,45 +85,58 @@ raise SystemExit(runner.run("publish", enforce_source=False))
 ''')
             command = [sys.executable, "-B", str(helper), str(Path(candidate.__file__).parent), "runner"]
             work = root / "run" / "work" / "candidate"
-            with subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True) as process:
-                try:
-                    deadline = time.monotonic() + 5
-                    request = {}
-                    while time.monotonic() < deadline and process.poll() is None:
-                        if (work / "request.json").exists():
-                            request = json.loads((work / "request.json").read_text())
-                            if request.get("run_id") == 42:
-                                break
-                        time.sleep(0.01)
-                    self.assertEqual(request.get("run_id"), 42)
-                    process.send_signal(signal.SIGINT)
-                    output, _ = process.communicate(timeout=5)
-                    self.assertEqual(process.returncode, 1, output)
-                    self.assertIn("Interrupted by operator", output)
-                finally:
-                    if process.poll() is None:
+            def interrupt_when(ready):
+                with subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True) as process:
+                    try:
+                        deadline = time.monotonic() + 5
+                        while time.monotonic() < deadline and process.poll() is None and not ready():
+                            time.sleep(0.01)
+                        self.assertTrue(ready())
                         process.send_signal(signal.SIGINT)
-                        process.wait(timeout=5)
+                        output, _ = process.communicate(timeout=5)
+                        self.assertEqual(process.returncode, 1, output)
+                        self.assertIn("Interrupted by operator", output)
+                    finally:
+                        if process.poll() is None:
+                            process.send_signal(signal.SIGINT)
+                            process.wait(timeout=5)
+
+            request_path = work / "request.json"
+            interrupt_when(lambda: request_path.exists() and json.loads(request_path.read_text()).get("run_id") == 42)
+            request = json.loads(request_path.read_text())
+            stable_request = root / "run" / "candidate-request.json"
+            self.assertEqual(json.loads(stable_request.read_text()), request)
+            (root / "interrupt-precheck").touch()
+            interrupt_when((root / "precheck-started").exists)
+            (root / "interrupt-precheck").unlink()
+            (root / "fail-precheck").touch()
+            failed = subprocess.run(command, capture_output=True, text=True, timeout=5)
+            self.assertEqual(failed.returncode, 1, failed.stdout + failed.stderr)
+            self.assertIn("ls-remote", (root / "run" / json.loads(failed.stdout)["log"]).read_text())
+            (root / "fail-precheck").unlink()
             (root / "finish").touch()
             resumed = subprocess.run(command, capture_output=True, text=True, timeout=5)
-            self.assertEqual(resumed.returncode, 0, resumed.stdout + resumed.stderr)
             self.assertEqual((root / "dispatches").read_text().splitlines(), [request["request_id"]])
+            self.assertEqual(resumed.returncode, 0, resumed.stdout + resumed.stderr)
             self.assertEqual(json.loads((work / "request.json").read_text()), request)
+            self.assertEqual(json.loads(stable_request.read_text()), request)
             self.assertEqual(json.loads((work / "candidate.json").read_text())["run_id"], 42)
 
     def test_interrupted_and_timed_out_waits_resume_without_redispatch(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
-            previous, work = root / "previous", root / "work"
-            previous.mkdir()
+            previous, work = root / "retained" / "candidate-original", root / "work"
+            previous.mkdir(parents=True)
+            (previous.parent / "candidate-latest").mkdir()
             work.mkdir()
             commit = "a" * 40
             record = {"source_commit": commit, "request_id": "original", "requested_at": time.time()}
             release.atomic_json(previous / "request.json", record)
+            stable_request = root / "candidate-request.json"
             run = {"id": 42, "display_title": "Computer MCP release original", "head_sha": commit,
                    "head_branch": "master", "event": "workflow_dispatch", "path": candidate.WORKFLOW,
                    "head_repository": {"full_name": candidate.REPOSITORY}, "status": "in_progress", "html_url": "fixture"}
-            with patch.dict(os.environ, {"RELEASE_WORK_DIR": str(work), "RELEASE_INTERRUPTED_WORK_DIR": str(previous)}, clear=True), \
+            with patch.dict(os.environ, {"RELEASE_WORK_DIR": str(work), "RELEASE_RUN_DIR": str(root)}, clear=True), \
                     patch.object(candidate, "output", side_effect=[commit, "", commit + " refs/heads/master"]), \
                     patch.object(candidate, "api", return_value={"workflow_runs": [run]}) as api, \
                     patch.object(candidate.time, "monotonic", side_effect=[0, 0, candidate.RELEASE_WAIT_SECONDS]), \
@@ -121,10 +146,11 @@ raise SystemExit(runner.run("publish", enforce_source=False))
                 api.assert_called_once()
                 self.assertNotIn("dispatches", api.call_args.args[0])
                 self.assertEqual(json.loads((work / "request.json").read_text()), dict(record, run_id=42))
+                self.assertEqual(json.loads(stable_request.read_text()), dict(record, run_id=42))
             resumed = root / "resumed"
             resumed.mkdir()
             run["status"] = "waiting"
-            with patch.dict(os.environ, {"RELEASE_WORK_DIR": str(resumed), "RELEASE_PREVIOUS_WORK_DIR": str(work)}, clear=True), \
+            with patch.dict(os.environ, {"RELEASE_WORK_DIR": str(resumed), "RELEASE_RUN_DIR": str(root)}, clear=True), \
                     patch.object(candidate, "output", side_effect=[commit, "", commit + " refs/heads/master"]), \
                     patch.object(candidate, "api", return_value={"workflow_runs": [run]}) as api:
                 self.assertEqual(candidate.request(), 75)
@@ -132,13 +158,28 @@ raise SystemExit(runner.run("publish", enforce_source=False))
                 self.assertNotIn("dispatches", api.call_args.args[0])
                 self.assertEqual(json.loads((resumed / "request.json").read_text()), dict(record, run_id=42))
             record["source_commit"] = "b" * 40
-            release.atomic_json(previous / "request.json", record)
-            with patch.dict(os.environ, {"RELEASE_WORK_DIR": str(work), "RELEASE_INTERRUPTED_WORK_DIR": str(previous)}, clear=True), \
-                    patch.object(candidate, "output", side_effect=[commit, "", commit + " refs/heads/master"]), \
+            release.atomic_json(stable_request, record)
+            with patch.dict(os.environ, {"RELEASE_WORK_DIR": str(work), "RELEASE_RUN_DIR": str(root)}, clear=True), \
+                    patch.object(candidate, "output", side_effect=[commit, ""]), \
                     patch.object(candidate, "api") as api:
                 with self.assertRaisesRegex(ValueError, "another commit"):
                     candidate.request()
                 api.assert_not_called()
+
+    def test_conflicting_or_invalid_prior_requests_block_recovery(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            stable = root / "candidate-request.json"
+            commit = "a" * 40
+            for request_id in ("first", "second"):
+                release.atomic_json(root / "retained" / f"candidate-{request_id}" / "request.json",
+                                    {"source_commit": commit, "request_id": request_id, "requested_at": 1})
+            with self.assertRaisesRegex(ValueError, "Conflicting retained candidate requests"):
+                candidate.load_request(stable, commit)
+            self.assertFalse(stable.exists())
+            release.atomic_json(stable, None)
+            with self.assertRaisesRegex(ValueError, "Invalid candidate request"):
+                candidate.load_request(stable, commit)
 
     def test_only_matching_master_dispatch_is_trusted(self):
         run = {"head_sha": "a" * 40, "head_branch": "master", "event": "workflow_dispatch",
@@ -210,6 +251,21 @@ raise SystemExit(runner.run("publish", enforce_source=False))
                 candidate.reuse_ci(SimpleNamespace(source={"commit": "a" * 40}), "source", "none")
                 api.assert_not_called()
             self.assertEqual(output.read_text(), "run=none\n")
+
+    def test_ci_recheck_after_source_fallback_requires_late_run_success(self):
+        unrelated = self.ci_run(head_sha="b" * 40, conclusion="failure")
+        for runs, error in (([], None), ([self.ci_run()], None),
+                            ([self.ci_run(conclusion="failure")], "CI failed"),
+                            ([self.ci_run(status="in_progress")], "has not completed"),
+                            ([self.ci_run(event="pull_request")], "Untrusted CI")):
+            with self.subTest(runs=runs), patch.dict(os.environ, {"GITHUB_SHA": "a" * 40}), \
+                    patch.object(candidate, "api", return_value={"workflow_runs": [unrelated, *runs]}) as api:
+                if error:
+                    with self.assertRaisesRegex(ValueError, error):
+                        candidate.recheck_ci_after_fallback()
+                else:
+                    candidate.recheck_ci_after_fallback()
+                api.assert_called_once_with(candidate.MASTER_CI_RUNS)
 
     def test_both_jobs_reject_failed_ci_and_import_checks_exact_run_identity(self):
         runner = SimpleNamespace(source={"commit": "a" * 40})

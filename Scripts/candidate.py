@@ -93,28 +93,51 @@ def extract_bundle(archive, destination):
         source.extractall(destination)
 
 
+def read_request(path, commit):
+    record = json.loads(path.read_text())
+    if (not isinstance(record, dict) or not isinstance(record.get("request_id"), str)
+            or not record["request_id"] or not isinstance(record.get("requested_at"), (int, float))):
+        raise ValueError("Invalid candidate request. Inspect Actions before retrying.")
+    if record.get("source_commit") != commit:
+        raise ValueError("Previous candidate request belongs to another commit")
+    return record
+
+
+def load_request(path, commit):
+    try:
+        return read_request(path, commit)
+    except FileNotFoundError:
+        # Older attempts kept the identity with their outputs, which Runner rotates on retry.
+        record = None
+        for previous in sorted(path.parent.glob("retained/candidate-*/request.json")):
+            saved = read_request(previous, commit)
+            if record and (saved["request_id"] != record["request_id"]
+                           or ("run_id" in saved and "run_id" in record and saved["run_id"] != record["run_id"])):
+                raise ValueError("Conflicting retained candidate requests. Inspect Actions before retrying.")
+            if record is None or "run_id" in saved:
+                record = saved
+        if record is not None:
+            atomic_json(path, record)
+        return record
+
+
 def request():
     commit = output(["git", "rev-parse", "HEAD"], ROOT)
     if output(["git", "status", "--porcelain"], ROOT):
         raise ValueError("Commit and merge the candidate changes before protected construction")
+    work = Path(os.environ["RELEASE_WORK_DIR"])
+    request_path = Path(os.environ["RELEASE_RUN_DIR"]) / "candidate-request.json"
+    record = load_request(request_path, commit)
     current = output(["git", "ls-remote", "https://github.com/" + REPOSITORY + ".git", "refs/heads/master"], ROOT).split()[0]
     if current != commit:
         raise ValueError("The daily checkout must match published master before requesting a candidate")
-    work = Path(os.environ["RELEASE_WORK_DIR"])
-    previous_path = os.environ.get("RELEASE_PREVIOUS_WORK_DIR") or os.environ.get("RELEASE_INTERRUPTED_WORK_DIR")
-    previous = Path(previous_path) if previous_path else None
-    request_path = work / "request.json"
-    if previous and (previous / "request.json").is_file():
-        record = json.loads((previous / "request.json").read_text())
-        if record["source_commit"] != commit:
-            raise ValueError("Previous candidate request belongs to another commit")
-    else:
+    if record is None:
         record = {"source_commit": commit, "request_id": uuid.uuid4().hex, "requested_at": time.time()}
-        atomic_json(request_path, record)
         # Persist the dispatch identity first so an uncertain request is never blindly repeated.
+        atomic_json(request_path, record)
         api("actions/workflows/release-gate.yml/dispatches", "--method", "POST",
             "--field", "ref=master", "--field", "inputs[request_id]=" + record["request_id"])
-    atomic_json(request_path, record)
+    atomic_json(work / "request.json", record)
     # The workflow may spend 360, 300, and 120 minutes in its three jobs.
     deadline = time.monotonic() + RELEASE_WAIT_SECONDS
     while time.monotonic() < deadline:
@@ -129,8 +152,12 @@ def request():
             raise ValueError("Ambiguous candidate workflow identity")
         run = matches[0]
         verify_run(run, commit)
-        record["run_id"] = run["id"]
-        atomic_json(request_path, record)
+        if "run_id" not in record:
+            record["run_id"] = run["id"]
+            atomic_json(request_path, record)
+            atomic_json(work / "request.json", record)
+        elif record["run_id"] != run["id"]:
+            raise ValueError("Candidate workflow run identity changed")
         if run["status"] == "waiting":
             print("Required action: approve the production environment for " + run["html_url"], flush=True)
             return 75
@@ -206,15 +233,27 @@ def read_ci_run(run_id, commit):
     return run
 
 
+def find_ci_run(commit):
+    runs = api(MASTER_CI_RUNS)["workflow_runs"]
+    run = next((run for run in runs if run["head_sha"] == commit), None)
+    if run is not None:
+        verify_ci_run(run, commit)
+    return run
+
+
+def recheck_ci_after_fallback():
+    run = find_ci_run(os.environ["GITHUB_SHA"])
+    if run is not None:
+        require_successful_ci(run)
+
+
 def wait_for_ci(commit):
     started = time.monotonic()
     run_id = None
     while True:
         if run_id is None:
-            runs = api(MASTER_CI_RUNS)["workflow_runs"]
-            run = next((r for r in runs if r["head_sha"] == commit), None)
+            run = find_ci_run(commit)
             if run is not None:
-                verify_ci_run(run, commit)
                 run_id = str(run["id"])
         else:
             run = read_ci_run(run_id, commit)
@@ -295,9 +334,11 @@ def reuse_ci(runner, profile, selection="latest"):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("operation", choices=("bundle", "request", "wait-ci"))
+    operations = {"bundle": bundle, "request": request, "wait-ci": write_ci_selection,
+                  "recheck-ci": recheck_ci_after_fallback}
+    parser.add_argument("operation", choices=operations)
     args = parser.parse_args()
-    return {"bundle": bundle, "request": request, "wait-ci": write_ci_selection}[args.operation]()
+    return operations[args.operation]()
 
 
 if __name__ == "__main__":

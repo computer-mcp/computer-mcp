@@ -58,6 +58,8 @@ jobs:
     runs-on: macos-26
     # Allow 270 minutes for source checks and 30 for artifact retrieval and setup.
     timeout-minutes: 300
+    outputs:
+      ci-run: ${{ needs.wait-ci.outputs.ci-run }}
     steps:
       - name: Checkout candidate commit
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -94,6 +96,12 @@ jobs:
           persist-credentials: false
       - name: Recheck candidate source before signing
         run: Scripts/verify-publisher-ref.sh
+
+      - name: Check for master CI after source fallback
+        if: inputs.operation == 'publish' && needs.verify.outputs.ci-run == 'none'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 Scripts/candidate.py recheck-ci
 
       - name: Restore preserved cloud release
         id: recovery

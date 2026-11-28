@@ -56,7 +56,8 @@ jobs:
   validate:
     needs: dependency-gate
     runs-on: macos-26
-    timeout-minutes: 120
+    # Serial CI stages have 330 minutes of combined deadlines.
+    timeout-minutes: 360
     env:
       DEVELOPER_DIR: /Applications/Xcode_26.4.app/Contents/Developer
     steps:

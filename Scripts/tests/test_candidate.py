@@ -6,6 +6,7 @@ import sys
 import tarfile
 import tempfile
 import time
+from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
 import zipfile
@@ -16,7 +17,7 @@ import release
 
 
 class CandidateTrust(unittest.TestCase):
-    def test_interrupted_request_resumes_official_run_without_redispatch(self):
+    def test_interrupted_and_timed_out_waits_resume_without_redispatch(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             previous, work = root / "previous", root / "work"
@@ -27,14 +28,27 @@ class CandidateTrust(unittest.TestCase):
             release.atomic_json(previous / "request.json", record)
             run = {"id": 42, "display_title": "Computer MCP release original", "head_sha": commit,
                    "head_branch": "master", "event": "workflow_dispatch", "path": candidate.WORKFLOW,
-                   "head_repository": {"full_name": candidate.REPOSITORY}, "status": "waiting", "html_url": "fixture"}
+                   "head_repository": {"full_name": candidate.REPOSITORY}, "status": "in_progress", "html_url": "fixture"}
             with patch.dict(os.environ, {"RELEASE_WORK_DIR": str(work), "RELEASE_INTERRUPTED_WORK_DIR": str(previous)}, clear=True), \
+                    patch.object(candidate, "output", side_effect=[commit, "", commit + " refs/heads/master"]), \
+                    patch.object(candidate, "api", return_value={"workflow_runs": [run]}) as api, \
+                    patch.object(candidate.time, "monotonic", side_effect=[0, 0, 7200]), \
+                    patch.object(candidate.time, "sleep"):
+                with self.assertRaisesRegex(TimeoutError, r"request original\. Resume with the same --run"):
+                    candidate.request()
+                api.assert_called_once()
+                self.assertNotIn("dispatches", api.call_args.args[0])
+                self.assertEqual(json.loads((work / "request.json").read_text()), dict(record, run_id=42))
+            resumed = root / "resumed"
+            resumed.mkdir()
+            run["status"] = "waiting"
+            with patch.dict(os.environ, {"RELEASE_WORK_DIR": str(resumed), "RELEASE_PREVIOUS_WORK_DIR": str(work)}, clear=True), \
                     patch.object(candidate, "output", side_effect=[commit, "", commit + " refs/heads/master"]), \
                     patch.object(candidate, "api", return_value={"workflow_runs": [run]}) as api:
                 self.assertEqual(candidate.request(), 75)
                 self.assertEqual(api.call_count, 1)
                 self.assertNotIn("dispatches", api.call_args.args[0])
-                self.assertEqual(json.loads((work / "request.json").read_text()), dict(record, run_id=42))
+                self.assertEqual(json.loads((resumed / "request.json").read_text()), dict(record, run_id=42))
             record["source_commit"] = "b" * 40
             release.atomic_json(previous / "request.json", record)
             with patch.dict(os.environ, {"RELEASE_WORK_DIR": str(work), "RELEASE_INTERRUPTED_WORK_DIR": str(previous)}, clear=True), \
@@ -75,6 +89,16 @@ class CandidateTrust(unittest.TestCase):
             self.assertEqual(executable.read_bytes(), b"tool")
             self.assertEqual(executable.stat().st_mode & 0o777, 0o755)
 
+    def test_pending_master_ci_expires_without_using_source_fallback(self):
+        commit = "a" * 40
+        run = {"head_sha": commit, "path": ".github/workflows/ci.yml", "head_branch": "master", "event": "push",
+               "head_repository": {"full_name": candidate.REPOSITORY}, "status": "in_progress", "html_url": "fixture"}
+        with patch.object(candidate, "api", return_value={"workflow_runs": [run]}) as api, \
+                patch.object(candidate.time, "monotonic", side_effect=[0, 3600]):
+            with self.assertRaisesRegex(TimeoutError, r"fixture\)\. Rerun failed release jobs"):
+                candidate.reuse_ci(SimpleNamespace(source={"commit": commit}), "source")
+            api.assert_called_once()
+
     def test_ci_reuse_requires_trusted_artifact_and_exact_inputs(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
@@ -111,6 +135,7 @@ class CandidateTrust(unittest.TestCase):
                 changed = target("changed", {"swift": "two"})
                 candidate.reuse_ci(changed, "source")
                 self.assertEqual(changed.status("source")[0]["status"], "invalidated")
+                self.assertEqual(changed.run("source", enforce_source=False), 0)
                 artifact["digest"] = "sha256:" + "0" * 64
                 with self.assertRaisesRegex(ValueError, "immutable digest"):
                     candidate.reuse_ci(target("forged", {"swift": "one"}), "source")

@@ -136,7 +136,7 @@ def request():
             download(run, work, commit)
             return 0
         time.sleep(10)
-    raise TimeoutError("Candidate workflow exceeded the two-hour deadline")
+    raise TimeoutError(f"Local wait ended for request {record['request_id']}. Resume with the same --run and --profile publish.")
 
 
 def download(run, work, commit):
@@ -183,7 +183,7 @@ def download(run, work, commit):
 def reuse_ci(runner, profile):
     """Trust GitHub's immutable artifact, never a caller-supplied receipt/key."""
     commit = runner.source["commit"]
-    deadline = time.monotonic() + 5400
+    deadline = time.monotonic() + 3600
     while True:
         runs = api("actions/workflows/ci.yml/runs?branch=master&event=push&per_page=100")["workflow_runs"]
         matching = [r for r in runs if r["head_sha"] == commit]
@@ -197,7 +197,7 @@ def reuse_ci(runner, profile):
         if run["status"] == "completed":
             break
         if time.monotonic() >= deadline:
-            raise TimeoutError("Matching master CI did not finish before the deadline")
+            raise TimeoutError(f"Matching master CI has not completed ({run['html_url']}). Rerun failed release jobs after CI completes.")
         time.sleep(10)
     if run["conclusion"] != "success":
         raise ValueError("The matching master CI failed; candidate construction cannot bypass it")

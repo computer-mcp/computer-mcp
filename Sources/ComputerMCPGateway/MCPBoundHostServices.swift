@@ -91,9 +91,10 @@ actor MCPBoundHostServices {
         "host.diagnostics.snapshot",
         "Return bounded audit metadata for the currently executing diagnostic request's immutable scope.",
         [
+          "invocation_id": identifier,
           "limit": .object([
             "type": .string("integer"), "minimum": .number(1), "maximum": .number(1000),
-          ])
+          ]),
         ], ["limit"], read: true),
     ]
   }()
@@ -249,8 +250,12 @@ actor MCPBoundHostServices {
     guard let limit = args["limit"]?.intValue, (1...1000).contains(limit) else {
       throw MCPHostServiceError.denied("Diagnostic limit must be 1...1000.")
     }
-    _ = try invocation(.diagnosticsSnapshot, scope: scope) {
-      ($0.arguments["limit"]?.intValue ?? 100) >= limit
+    let invocationID = try Self.identifier("invocation_id", in: args)
+    let active = try invocation(.diagnosticsSnapshot, scope: scope) {
+      invocationID == nil || $0.id == invocationID
+    }
+    guard limit <= (active.arguments["limit"]?.intValue ?? 100) else {
+      throw MCPHostServiceError.denied("Diagnostic limit exceeds the active invocation's bound.")
     }
     var execution = ExecutionContext(
       caller: context.launchMetadata.caller, profileID: context.launchMetadata.profileID,

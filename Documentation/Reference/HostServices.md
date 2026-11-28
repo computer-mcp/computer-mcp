@@ -17,8 +17,9 @@ Calls to these registrations require a project. With one registered project,
 the Gateway selects it automatically and still checks the caller's grant. With
 multiple projects, provide `project_id` or use a project-bound connection.
 For `mcp.tools.call`, this belongs in the outer Gateway arguments beside
-`server`, `tool` and `arguments`. A downstream argument cannot select another
-callback scope.
+`server`, `tool` and `arguments`. For re-exported tools, the Gateway uses
+`project_id` for routing and omits it from the downstream arguments. A
+downstream argument cannot select another callback scope.
 
 Standalone manifest projects retain their configuration-owned scope even when
 the Gateway uses a database for audit or plugin state. Database-owned projects
@@ -126,10 +127,10 @@ Vendor-originated dynamic requests cannot target the private namespace.
 | Private tool | Request fields | Result |
 | --- | --- | --- |
 | `host.invocations.describe` | Exactly one of `invocation_id`, `operation_id` | Invocation projection or durable operation projection described below |
-| `host.projects.worktree_add` | `invocation_id`, `operation_id`, `name`; optional `branch`, `base` | Operation envelope with creation result |
+| `host.projects.worktree_add` | `invocation_id`, `operation_id`, `name`; optional string or null `branch` and `base` | Operation envelope with creation result |
 | `host.projects.worktree_list` | `invocation_id` | `worktrees` inventory |
 | `host.projects.worktree_remove` | `invocation_id`, `operation_id`; optional `force` | Operation envelope with removal result |
-| `host.diagnostics.snapshot` | `limit` | Bounded diagnostic audits for the authenticated scope |
+| `host.diagnostics.snapshot` | `limit`; optional `invocation_id` | Bounded diagnostic audits for the authenticated scope |
 
 Requests are objects with no unknown fields. Invocation and operation IDs are
 host UUID strings. Success uses `structuredContent.result`; a refusal without
@@ -160,7 +161,7 @@ Tools using lifecycle services declare their semantic action in MCP metadata:
 
 | Action | Host minimum | Downstream arguments bound before dispatch |
 | --- | --- | --- |
-| `projects.provision` | Source Project write; risk `project-write` | Required `name`, optional `branch`, `base`, with the creation rules below |
+| `projects.provision` | Source Project write; risk `project-write` | Required `name`, optional string or null `branch` and `base`, with the creation rules below |
 | `projects.remove` | Selected host worktree Project write; risk `destructive` | Optional `force`, default false, with the removal rules below |
 | `projects.list` | Project read; risk `read-only` | No lifecycle arguments |
 | `diagnostics.snapshot` | Read-only diagnostic access | Optional `limit`, default 100; the callback count cannot exceed it |
@@ -203,12 +204,13 @@ the complete JSON-RPC `tools/call` request and response envelopes.
 ### `host.projects.worktree_add`
 
 Call in the source project, which must be a complete non-bare repository's top
-level. `name` matches `[a-z0-9]+(-[a-z0-9]+)*`, at most 48 characters. `branch`
-defaults to `worktree/<name>` and must be a new branch. `base` is a branch,
-defaulting to the main checkout's current branch; detached HEAD requires it
-explicitly. The captured source registration and repository identity must still
-match when effects begin. A pathname, repository layout or worktree ID is never
-an input.
+level. `name` matches `[a-z0-9]+(-[a-z0-9]+)*`, at most 48 characters. For
+`branch` and `base`, omission and explicit `null` select the default at
+reservation and the captured value at callback. `branch` defaults to
+`worktree/<name>` and must be a new branch. `base` defaults to the main
+checkout's current branch. Detached HEAD requires an explicit base. The
+captured source registration and repository identity must still match when
+effects begin. A pathname, repository layout or worktree ID is never an input.
 
 The completed result contains `worktree_id` (host lifecycle UUID), `project_id`,
 `path`, `branch`, `base` and `warnings` (string array). Its checkout has an
@@ -548,12 +550,19 @@ build, not restoration of the retired authority. Rationale is retained in
 
 ## Diagnostic and transport bounds
 
-`host.diagnostics.snapshot` keeps its name and requires `limit` from 1 through
-1000 within the active `diagnostics.snapshot` call's captured bound. It returns
-`owner` and `recent_tool_audits`. The owner uses `project_id`, `profile_id`,
-`caller`, transport tracking fields and `principal_id`; audit rows use
-`project_id`. Verified subject, profile and project filtering occurs before the
-limit. Records without a verified subject remain stored but are not exposed.
+`host.diagnostics.snapshot` requires `limit` from 1 through 1000. Pass the
+forwarded `invocation_id` to select the exact active `diagnostics.snapshot`
+call in the channel's authenticated scope. Concurrent diagnostics can each
+select their own call. A request that omits `invocation_id` requires exactly one
+active diagnostic call in scope, regardless of the requested limit. The Host
+checks the limit against the selected call's captured bound and uses that call
+as the audit parent. Retained work does not qualify as an active call.
+
+The result contains `owner` and `recent_tool_audits`. The owner uses
+`project_id`, `profile_id`, `caller`, transport tracking fields and
+`principal_id`. Audit rows use `project_id`. Verified subject, profile and
+project filtering occurs before the limit. Records without a verified subject
+remain stored but are not exposed.
 Results contain identities and digests, not command bodies or raw output.
 Missing data is reported as unavailable. Private service audits retain the
 originating invocation and permission authorization when present.

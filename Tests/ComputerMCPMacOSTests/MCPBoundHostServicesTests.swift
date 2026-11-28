@@ -387,6 +387,10 @@ struct MCPBoundHostServicesTests {
       _ = try await Task.detached {
         try fixture.runtime.requireHostInvocation(projectID: "scope", origin: "probe", id: id)
       }.value
+      let snapshot = try await fixture.service.call(
+        name: "host.diagnostics.snapshot",
+        arguments: ["invocation_id": .string(id.uuidString), "limit": .integer(1)])
+      #expect(snapshot.isError == true)
       try session.limitAccess(
         to: .init(
           permissionCeilings: fixturePermissions([
@@ -458,14 +462,23 @@ struct MCPBoundHostServicesTests {
     }
   }
 
-  @Test(.timeLimit(.minutes(1)))
-  func vendorNeutralDiagnosticsUseTheAdmittedSemanticAction() async throws {
+  @Test(.timeLimit(.minutes(1)), arguments: [false, true])
+  func vendorNeutralDiagnosticsUseTheAdmittedSemanticAction(explicitID: Bool) async throws {
     let fixture = try HostAuthorityFixture()
     defer { fixture.remove() }
     let result = try await fixture.during("fixture.audit", ["limit": .integer(1)]) {
-      service, _ in
-      try await .encoded(
-        service.call(name: "host.diagnostics.snapshot", arguments: ["limit": .integer(1)]))
+      service, context in
+      var arguments: [String: JSONValue] = ["limit": .integer(2)]
+      if explicitID {
+        let id = try #require(context.admission?.hostInvocationID)
+        arguments["invocation_id"] = .string(id.uuidString)
+      }
+      let refused = try await service.call(name: "host.diagnostics.snapshot", arguments: arguments)
+      #expect(refused.isError == true)
+      #expect(try ProjectServiceCaller.reply(refused).code == "host.service_denied")
+      arguments["limit"] = .integer(1)
+      return try await .encoded(
+        service.call(name: "host.diagnostics.snapshot", arguments: arguments))
     }
     #expect(result.objectValue?["isError"] == .bool(false))
     await fixture.close()
@@ -1252,16 +1265,67 @@ struct MCPBoundHostServicesTests {
     await fixture.close()
   }
 
-  @Test(.timeLimit(.minutes(1)))
-  func concurrentIdenticalActionsNeverSelectAnArbitraryInvocation() async throws {
+  @Test(.timeLimit(.minutes(1)), arguments: [1, 2])
+  func concurrentDiagnosticCallbacksKeepTheirInvocationAndLimit(secondLimit: Int64) async throws {
     let fixture = try HostAuthorityFixture(multiplexed: true)
     defer { fixture.remove() }
+    let directory = try #require(fixture.peer.context(for: "scope")?.tools)
     let entered = HostServicePairBarrier()
     let finished = HostServicePairBarrier()
-    fixture.peer.setHandler { _ in
+    fixture.peer.setHandler { context in
+      let id = try #require(context.admission?.hostInvocationID)
       await entered.arrive()
+      let invocation = try #require(
+        directory.active(projectID: "scope", origin: "probe").first { $0.id == id })
+      let limit = try #require(invocation.arguments["limit"]?.int64Value)
       let result = try await fixture.service.call(
-        name: "host.diagnostics.snapshot", arguments: ["limit": .integer(1)])
+        name: "host.diagnostics.snapshot",
+        arguments: ["invocation_id": .string(id.uuidString.lowercased()), "limit": .integer(limit)])
+      await finished.arrive()
+      let reply = try ProjectServiceCaller.reply(result)
+      #expect(!reply.isError)
+      #expect(reply.result?["recent_tool_audits"]?.arrayValue?.count == Int(limit))
+      let audit = try #require(
+        fixture.database.auditEvents().first {
+          $0.capabilityID == "host.diagnostics.snapshot" && $0.invocationID == id.uuidString
+        })
+      #expect(audit.parentRequestID == invocation.context.requestID)
+      #expect(audit.decision == .allowed)
+      return try .encoded(result)
+    }
+    async let first = fixture.runtime.callToolAsync(
+      name: "adapter.fixture.audit",
+      arguments: .object(["project_id": .string("scope"), "limit": .integer(1)]), context: .empty)
+    async let second = fixture.runtime.callToolAsync(
+      name: "adapter.fixture.audit",
+      arguments: .object(["project_id": .string("scope"), "limit": .integer(secondLimit)]),
+      context: .empty)
+    _ = try await [first, second]
+    let audits = try fixture.database.auditEvents().filter {
+      $0.capabilityID == "host.diagnostics.snapshot"
+    }
+    #expect(Set(audits.compactMap(\.invocationID)).count == 2)
+    #expect(Set(audits.compactMap(\.parentRequestID)).count == 2)
+    await fixture.close()
+  }
+
+  @Test(.timeLimit(.minutes(1)), arguments: [1, 2])
+  func concurrentLegacyDiagnosticCallbacksRequireOneActiveInvocation(secondLimit: Int64)
+    async throws
+  {
+    let fixture = try HostAuthorityFixture(multiplexed: true)
+    defer { fixture.remove() }
+    let directory = try #require(fixture.peer.context(for: "scope")?.tools)
+    let entered = HostServicePairBarrier()
+    let finished = HostServicePairBarrier()
+    fixture.peer.setHandler { context in
+      let id = try #require(context.admission?.hostInvocationID)
+      await entered.arrive()
+      let invocation = try #require(
+        directory.active(projectID: "scope", origin: "probe").first { $0.id == id })
+      let limit = try #require(invocation.arguments["limit"])
+      let result = try await fixture.service.call(
+        name: "host.diagnostics.snapshot", arguments: ["limit": limit])
       let encoded = try JSONValue.encoded(result)
       #expect(
         encoded.objectValue?["content"]?.arrayValue?.first?.objectValue?["text"]?.stringValue?
@@ -1269,11 +1333,13 @@ struct MCPBoundHostServicesTests {
       await finished.arrive()
       return encoded
     }
-    let args = JSONValue.object(["project_id": .string("scope"), "limit": .integer(1)])
     async let first = fixture.runtime.callToolAsync(
-      name: "adapter.fixture.audit", arguments: args, context: .empty)
+      name: "adapter.fixture.audit",
+      arguments: .object(["project_id": .string("scope"), "limit": .integer(1)]), context: .empty)
     async let second = fixture.runtime.callToolAsync(
-      name: "adapter.fixture.audit", arguments: args, context: .empty)
+      name: "adapter.fixture.audit",
+      arguments: .object(["project_id": .string("scope"), "limit": .integer(secondLimit)]),
+      context: .empty)
     let results = try await [first, second]
     #expect(results.allSatisfy { $0.objectValue?["isError"] == .bool(true) })
     await fixture.close()
@@ -1362,6 +1428,13 @@ struct MCPBoundHostServicesTests {
         "host.invocations.describe", "host.projects.worktree_add", "host.projects.worktree_list",
         "host.projects.worktree_remove", "host.diagnostics.snapshot",
       ])
+    let snapshot = try #require(
+      MCPBoundHostServices.tools.first { $0.name == "host.diagnostics.snapshot" })
+    let schema = try #require(snapshot.inputSchema.objectValue)
+    #expect(schema["required"] == .array([.string("limit")]))
+    #expect(
+      schema["properties"]?.objectValue?["invocation_id"]?.objectValue?["type"]
+        == .string("string"))
     let result = try await fixture.direct("host.unknown", [:])
     #expect(result.objectValue?["isError"] == .bool(true))
     #expect(

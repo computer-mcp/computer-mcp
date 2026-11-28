@@ -39,7 +39,7 @@ class SwiftTestPartition(unittest.TestCase):
             self.assertIsNone(re.search(selector, f"{module_suite}/{method[:-2]}Suffix()"))
             self.assertEqual(list(Path(work).iterdir()), [])
 
-    def test_optimized_only_run_requires_a_report_proving_exactly_one_pass(self):
+    def test_optimized_only_run_requires_exactly_one_passing_case(self):
         module_suite, method = swift_tests.OPTIMIZED_TEST.split("/")
         for cases in ([], ["wrong()"], [method, "other()"], [method, method], [method, "skipped"]):
             with self.subTest(cases=cases):

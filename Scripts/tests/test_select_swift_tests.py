@@ -125,6 +125,13 @@ class TestSelection(unittest.TestCase):
         self.write(path, suite + helper.replace("first", "second"))
         self.commit()
         self.assertEqual(self.selected(base), set(self.inventory[:2]))
+        indirect = 'func shared() -> String { hidden() }\nprivate func hidden() -> String { "before" }\n'
+        self.write(path, suite + indirect)
+        self.write("Tests/AlphaTests/Sibling.swift", "struct Sibling { func read() -> String { shared() } }\n")
+        base = self.commit()
+        self.write(path, suite + indirect.replace("before", "after"))
+        self.commit()
+        self.assertEqual(self.selected(base), set(self.inventory[:2]))
         consumer = "func shared() -> Int { Example.value() }\n"
         self.write(path, consumer + suite)
         base = self.commit()

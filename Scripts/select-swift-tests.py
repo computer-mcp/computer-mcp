@@ -16,7 +16,6 @@ ROOT = SCRIPTS.parent
 SWIFT = "/usr/bin/swift" if sys.platform == "darwin" else "swift"
 TEST = re.compile(r"[A-Za-z_]\w*(?:\.[^\s/]+)?/[^\s/]+", re.ASCII)
 SUITE = re.compile(r"(?:final )?(?:struct|class|enum) ([A-Za-z_]\w*)\s*(?:: [^;{}]+)?\s*\{\}", re.ASCII)
-FUNCTION_BLOCK = re.compile(r"^func \w+[^\n]*\}$|^func \w+[\s\S]*?^\}$", re.MULTILINE)
 SOURCE_SUFFIXES = {".swift", ".c", ".h", ".modulemap"}
 
 # These adapters locate the bootstrap executable at runtime.
@@ -107,43 +106,60 @@ def declarations(source):
 
 
 def suite_names(source):
-    declared = []
+    declared, shared = [], False
     for outline, body in declarations(source):
         if re.fullmatch(r"(?:@testable )?import [\w.]+|#(?:if|elseif|else|endif)(?: [^;{}]+)?|@Suite(?:\(\))?", outline):
             continue
         suite = SUITE.fullmatch(re.sub(r"^@Suite(?:\(\))? ", "", outline))
-        if not suite and not re.fullmatch(r"(?:private|fileprivate) (?:final )?(?:struct|class|enum|func) \w+[^;{}]*\{\}", outline):
-            return set()
+        if re.fullmatch(r"func \w+[^;{}]*\{\}", outline):
+            shared = True
+        elif not suite and not re.fullmatch(r"(?:private|fileprivate) (?:final )?(?:struct|class|enum|func) \w+[^;{}]*\{\}", outline):
+            return set(), False
         declared.append((suite[1] if suite else None, body))
     names = {name for name, _ in declared if name}
     for name in names:
         if any(re.search(rf"\b{name}\b", body) for other, body in declared if other != name):
-            return set()
-    return names
+            return set(), False
+    return names, shared
+
+
+def outside_suite(source, name, code_text):
+    """Return original text around one complete, conventionally formatted suite."""
+    block = re.search(
+        rf"^(?:final )?(?:struct|class|enum) {name}\b[^{{\n]*\{{(?:[^\n]*\}}$|[\s\S]*?^\}}$)",
+        source, re.MULTILINE,
+    )
+    if not block:
+        return None
+    parts = declarations(code_text(block[0]))
+    suite = SUITE.fullmatch(parts[0][0]) if len(parts) == 1 else None
+    if not suite or suite[1] != name:
+        return None
+    prefix, suffix = source[:block.start()], source[block.end():]
+    if re.search(rf"\b{name}\b", prefix) or re.search(rf"\b{name}\b", suffix):
+        return None
+    return prefix, suffix
 
 
 def file_suites(base, status, path, directory, code_text):
     current = capture("git", "show", f"HEAD:{path}")
+    names, shared = suite_names(code_text(current))
+    if not names or (shared and status == "A"):
+        return set()
     if status == "M":
         previous = capture("git", "show", f"{base}:{path}")
-        # Compare original blobs so changes inside strings count. Only a complete,
-        # unchanged function may be treated like a file-local helper.
-        unchanged = set(FUNCTION_BLOCK.findall(previous)) & set(FUNCTION_BLOCK.findall(current))
-        helpers = set()
-        for block in unchanged:
-            parts = declarations(code_text(block))
-            if len(parts) == 1 and re.fullmatch(r"func \w+[^;{}]*\{\}", parts[0][0]):
-                helpers.add(block)
-
-        def localize(match):
-            return ("private " if match[0] in helpers else "") + match[0]
-
-        current = FUNCTION_BLOCK.sub(localize, current)
-        previous_names = suite_names(code_text(FUNCTION_BLOCK.sub(localize, previous)))
-        if not previous_names:
+        previous_names, previously_shared = suite_names(code_text(previous))
+        if not previous_names or not previous_names <= names:
             return set()
-    names = suite_names(code_text(current))
-    if not names or (status == "M" and not previous_names <= names):
+        if shared or previously_shared:
+            candidates = previous_names & names
+            names = set()
+            for name in candidates:
+                # Byte-for-byte surroundings include helpers, their strings and compilation conditions.
+                outside = outside_suite(current, name, code_text)
+                if outside is not None and outside == outside_suite(previous, name, code_text):
+                    names.add(name)
+    if not names:
         return set()
     # A suite type can also supply helpers to sibling files in its target.
     patterns = [argument for name in sorted(names) for argument in ("-e", name)]

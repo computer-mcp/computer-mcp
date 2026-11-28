@@ -125,6 +125,9 @@ def suite_names(source):
 
 def outside_suite(source, name, code_text):
     """Return original text around one complete, conventionally formatted suite."""
+    # A unique name anchors the raw match to the type found in the top-level outline.
+    if len(re.findall(rf"\b{name}\b", source)) != 1:
+        return None
     block = re.search(
         rf"^(?:final )?(?:struct|class|enum) {name}\b[^{{\n]*\{{(?:[^\n]*\}}$|[\s\S]*?^\}}$)",
         source, re.MULTILINE,
@@ -135,10 +138,7 @@ def outside_suite(source, name, code_text):
     suite = SUITE.fullmatch(parts[0][0]) if len(parts) == 1 else None
     if not suite or suite[1] != name:
         return None
-    prefix, suffix = source[:block.start()], source[block.end():]
-    if re.search(rf"\b{name}\b", prefix) or re.search(rf"\b{name}\b", suffix):
-        return None
-    return prefix, suffix
+    return source[:block.start()], source[block.end():]
 
 
 def file_suites(base, status, path, directory, code_text):
@@ -152,9 +152,8 @@ def file_suites(base, status, path, directory, code_text):
         if not previous_names or not previous_names <= names:
             return set()
         if shared or previously_shared:
-            candidates = previous_names & names
             names = set()
-            for name in candidates:
+            for name in previous_names:
                 # Byte-for-byte surroundings include helpers, their strings and compilation conditions.
                 outside = outside_suite(current, name, code_text)
                 if outside is not None and outside == outside_suite(previous, name, code_text):

@@ -1,7 +1,8 @@
 import Foundation
 
-/// Path authority, sandbox policy and connection ceilings are constant within
-/// one fixed-point pass. Request, consent and execution dependencies stay live.
+/// Standing permissions, path authority, sandbox policy and connection ceilings
+/// are constant within one fixed-point pass. Request, consent and execution
+/// dependencies stay live.
 private final class BasisValidationMemo {
   private struct Key: Hashable {
     let path: PathAccessBasis
@@ -11,6 +12,15 @@ private final class BasisValidationMemo {
     let ceiling: BasisIdentity?
   }
   private var results: [Key: Bool] = [:]
+
+  private struct StandingGrantKey: Hashable {
+    let grant: PermissionGrant
+    let principal: Principal
+    let mode: ExecutionMode
+    let connectionID: String?
+    let ceiling: BasisIdentity?
+  }
+  private var standingGrantResults: [StandingGrantKey: Bool] = [:]
 
   private struct ResolutionKey: Hashable {
     let requirements: InvocationRequirements
@@ -46,6 +56,18 @@ private final class BasisValidationMemo {
     if let result = results[key] { return result }
     let result = operation()
     results[key] = result
+    return result
+  }
+
+  func validateStandingGrant(
+    _ grant: PermissionGrant, principal: Principal, mode: ExecutionMode,
+    connectionID: String?, ceiling: BasisIdentity?, operation: () -> Bool
+  ) -> Bool {
+    let key = StandingGrantKey(
+      grant: grant, principal: principal, mode: mode, connectionID: connectionID, ceiling: ceiling)
+    if let result = standingGrantResults[key] { return result }
+    let result = operation()
+    standingGrantResults[key] = result
     return result
   }
 
@@ -1950,16 +1972,27 @@ package struct PermissionLedger: Equatable, Sendable, Codable {
         {
           return false
         }
-        return PermissionEvaluation.resolveRequirement(
-          principal: principal,
-          action: PermissionAction(
-            requirement: grant.requirement, scope: grant.scope, pluginPurpose: grant.pluginPurpose),
-          permissions: permissions, mode: mode, limits: limits,
-          oneTimeRequests: grant.source.requestID.flatMap { requests[$0] }.map { [$0] } ?? [],
-          recordedGrant: grant,
-          authorizationID: grant.source.requestID.flatMap { callbackRequestOwner($0, basis: basis) }
-            ?? authorizationID
-        ).decision == .allowed
+        let validate = { [self] in
+          PermissionEvaluation.resolveRequirement(
+            principal: principal,
+            action: PermissionAction(
+              requirement: grant.requirement, scope: grant.scope, pluginPurpose: grant.pluginPurpose
+            ),
+            permissions: permissions, mode: mode, limits: limits,
+            oneTimeRequests: grant.source.requestID.flatMap { requests[$0] }.map { [$0] } ?? [],
+            recordedGrant: grant,
+            authorizationID: grant.source.requestID.flatMap {
+              callbackRequestOwner($0, basis: basis)
+            }
+              ?? authorizationID
+          ).decision == .allowed
+        }
+        if case .standing = grant.source, let memo {
+          return memo.validateStandingGrant(
+            grant, principal: principal, mode: mode, connectionID: connection?.0,
+            ceiling: connectionCeiling?.identity, operation: validate)
+        }
+        return validate()
       case .traversal(let requirement):
         return PermissionEvaluation.denial(
           for: PermissionAction(requirement: requirement), permissions: permissions,

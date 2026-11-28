@@ -18,16 +18,28 @@ struct CLIParameterMappingTests {
   func anActualProcessReceivesTheDeclaredOptionArray(
     style: CLIArgumentToken.Style, expected: [String]
   ) async throws {
+    let scratch = try ScopedTemporaryDirectory()
+    defer { withExtendedLifetime(scratch) {} }
+    let directory = scratch.url
+    #if os(macOS)
+      let script = directory.appendingPathComponent("argv.pl")
+      try Data(
+        """
+        use Encode qw(decode_utf8 FB_CROAK);
+        use JSON::PP;
+        print encode_json([map { decode_utf8($_, FB_CROAK) } @ARGV]);
+        """.utf8
+      ).write(to: script)
+      let program = [script.lastPathComponent]
+    #else
+      let program = ["-c", "import json,sys; print(json.dumps(sys.argv[1:], ensure_ascii=False))"]
+    #endif
     let command = CLICommandDescriptor(
       id: "argv", path: [], description: "Read exact argv",
       parameters: [.init(name: "values", schema: CLITreeTests.strings, required: true)],
-      argv: Self.fixtureArguments(
-        perl:
-          "use Encode qw(decode_utf8 FB_CROAK); use JSON::PP; print encode_json([map { decode_utf8($_, FB_CROAK) } @ARGV]);",
-        python: "import json,sys; print(json.dumps(sys.argv[1:], ensure_ascii=False))") + [
-          .init(kind: .option, parameter: "values", flag: "--value", style: style)
-        ], stdout: .json, outputSchema: CLITreeTests.strings)
-    let directory = FileManager.default.temporaryDirectory
+      argv: program.map { .init(kind: .literal, value: $0) } + [
+        .init(kind: .option, parameter: "values", flag: "--value", style: style)
+      ], stdout: .json, outputSchema: CLITreeTests.strings)
     let provider = CLITreeTests.provider(
       command, executable: try testExecutable(Self.interpreter), project: directory)
     let tool = try #require(provider.definitions().first?.tool.name)
